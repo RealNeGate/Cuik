@@ -75,7 +75,7 @@ X(XADD,      "xadd",        BINOP_EXT,  0xC0)
 X(IMUL,      "imul",        BINOP_EXT,  0xAF)
 X(MOVSXB,    "movsxb",      BINOP_EXT2, 0xBE)
 X(MOVSXW,    "movsxw",      BINOP_EXT2, 0xBF)
-X(MOVSXD,    "movsxd",      BINOP_EXT2, 0x63)
+X(MOVSXD,    "movsxd",      BINOP,      0x63)
 X(MOVZXB,    "movzxb",      BINOP_EXT2, 0xB6)
 X(MOVZXW,    "movzxw",      BINOP_EXT2, 0xB7)
 

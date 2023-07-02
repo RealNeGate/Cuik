@@ -144,19 +144,7 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
     }
 
     // Cast into correct type
-    if (cuik_type_is_integer(src) && cuik_type_is_integer(dst)) {
-        if (dst->size > src->size) {
-            // up-casts
-            if (src->is_unsigned) {
-                reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
-            } else {
-                reg = tb_inst_sxt(func, reg, ctype_to_tbtype(dst));
-            }
-        } else if (dst->size < src->size) {
-            // down-casts
-            reg = tb_inst_trunc(func, reg, ctype_to_tbtype(dst));
-        }
-    } else if (src->kind == KIND_ARRAY && dst->kind == KIND_BOOL) {
+    if (src->kind == KIND_ARRAY && dst->kind == KIND_BOOL) {
         reg = tb_inst_bool(func, true);
     } else if (src->kind != KIND_BOOL && dst->kind == KIND_BOOL) {
         TB_DataType dt = reg->dt;
@@ -178,6 +166,18 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
         }
     } else if (src->kind == KIND_BOOL && cuik_type_is_integer(dst)) {
         reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
+    } else if (cuik_type_is_integer(src) && cuik_type_is_integer(dst)) {
+        if (dst->size > src->size) {
+            // up-casts
+            if (src->is_unsigned) {
+                reg = tb_inst_zxt(func, reg, ctype_to_tbtype(dst));
+            } else {
+                reg = tb_inst_sxt(func, reg, ctype_to_tbtype(dst));
+            }
+        } else if (dst->size < src->size) {
+            // down-casts
+            reg = tb_inst_trunc(func, reg, ctype_to_tbtype(dst));
+        }
     } else if (cuik_type_is_integer(src) && dst->kind == KIND_FUNC) {
         // integer -> function
         reg = tb_inst_int2ptr(func, reg);
@@ -236,8 +236,7 @@ static TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
             TB_Node* zero = tb_inst_bool(func, false);
 
             tb_inst_set_control(func, merger);
-            // we're expecting the predecessors to be ordered as FALSE then TRUE
-            reg = tb_inst_phi2(func, v->phi.parent, zero, one);
+            reg = tb_inst_phi2(func, merger, one, zero);
             break;
         }
         case LVALUE: {
@@ -390,23 +389,39 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
         return;
     }
 
-    // try to emit constant integer
-    Cuik_ConstInt value;
-    if (const_eval_int(NULL, e, &value)) {
-        uint8_t* region = tb_global_add_region(tu->ir_mod, g, offset, type_size);
+    // try to emit constant integer + constant addresses
+    Cuik_ConstVal value;
+    if (const_eval(NULL, e, &value)) {
+        assert(value.tag != CUIK_CONST_FLOAT);
 
-        if (TARGET_NEEDS_BYTESWAP(tu->target)) {
-            // reverse copy
-            uint8_t* src = (uint8_t*) &value;
-            size_t top = type_size - 1;
+        uint64_t int_form = 0;
+        if (value.tag == CUIK_CONST_ADDR) {
+            Stmt* stmt = e->exprs[value.s.base].sym.stmt;
+            assert((stmt->op == STMT_GLOBAL_DECL || stmt->op == STMT_FUNC_DECL) && "could not resolve as constant initializer");
 
-            for (size_t i = 0; i < type_size; i++) {
-                region[i] = src[top - i];
-            }
+            tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
+            int_form = value.s.offset;
+        } else if (value.tag == CUIK_CONST_INT) {
+            int_form = value.i;
         } else {
-            memcpy(region, &value, type->size);
+            assert(0 && "TODO");
         }
 
+        if (int_form != 0) {
+            uint8_t* region = tb_global_add_region(tu->ir_mod, g, offset, type_size);
+
+            if (TARGET_NEEDS_BYTESWAP(tu->target)) {
+                // reverse copy
+                uint8_t* src = (uint8_t*) &value;
+                size_t top = type_size - 1;
+
+                for (size_t i = 0; i < type_size; i++) {
+                    region[i] = src[top - i];
+                }
+            } else {
+                memcpy(region, &value, type->size);
+            }
+        }
         return;
     }
 
@@ -1505,7 +1520,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             TB_Node* try_rhs_lbl = tb_inst_region(func);
 
             // Eval first operand
-            IRVal a = GET_ARG(0);
+            IRVal a = irgen_expr(tu, func, e->logical_binop.left);
 
             TB_Node *true_lbl, *false_lbl;
             if (a.value_type == RVALUE_PHI) {
@@ -1540,7 +1555,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             // Eval second operand
             tb_inst_set_control(func, try_rhs_lbl);
 
-            TB_Node* b = RVAL(1);
+            TB_Node* b = irgen_as_rvalue(tu, func, e->logical_binop.right);
             tb_inst_if(func, b, true_lbl, false_lbl);
 
             // Just in case
@@ -1548,7 +1563,43 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
 
             return (IRVal){
                 .value_type = RVALUE_PHI,
-                .phi = { try_rhs_lbl, true_lbl, false_lbl },
+                .phi = { true_lbl, false_lbl },
+            };
+        }
+        case EXPR_PTRADD:
+        case EXPR_PTRSUB: {
+            TB_Node* l = RVAL(e->ptrop.flipped);
+            TB_Node* r = RVAL(!e->ptrop.flipped);
+
+            Cuik_Type* type = cuik_canonical_type(GET_TYPE());
+
+            // pointer arithmatic
+            int dir = e->op == EXPR_PTRADD ? 1 : -1;
+            int stride = cuik_canonical_type(type->ptr_to)->size;
+
+            assert(stride);
+            return (IRVal){
+                .value_type = RVALUE,
+                .reg = tb_inst_array_access(func, l, r, dir * stride),
+            };
+        }
+        case EXPR_PTRDIFF: {
+            TB_Node* l = RVAL(0);
+            TB_Node* r = RVAL(1);
+
+            Cuik_Type* type = cuik_canonical_type(GET_ARG(0).cast_type);
+            int stride = cuik_canonical_type(type->ptr_to)->size;
+
+            // TODO(NeGate): consider a ptrdiff operation in TB
+            l = tb_inst_ptr2int(func, l, TB_TYPE_I64);
+            r = tb_inst_ptr2int(func, r, TB_TYPE_I64);
+
+            TB_Node* diff = tb_inst_sub(func, l, r, TB_ARITHMATIC_NSW | TB_ARITHMATIC_NUW);
+            TB_Node* diff_in_elems = tb_inst_div(func, diff, tb_inst_sint(func, diff->dt, stride), true);
+
+            return (IRVal){
+                .value_type = RVALUE,
+                .reg = diff_in_elems,
             };
         }
         case EXPR_PLUS:
@@ -1940,7 +1991,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
 
             return (IRVal){
                 .value_type = RVALUE,
-                .reg = tb_inst_phi2(func, exit, false_val, true_val),
+                .reg = tb_inst_phi2(func, exit, true_val, false_val),
             };
         }
 
@@ -1959,6 +2010,8 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
     size_t top = 0;
     Subexpr* exprs = e->exprs;
 
+    static int counter = 0;
+
     size_t i = 0;
     for (; i < e->count; i++) {
         Subexpr* s = &exprs[i];
@@ -1967,6 +2020,8 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
         int arity = cuik_get_expr_arity(s);
         top -= arity;
         IRVal* args = &stack[top];
+
+        int id = counter++;
 
         assert(top < 1024 && "Too complex of a constant expression");
         stack[top] = irgen_subexpr(tu, func, e, s, arity, args);
@@ -2382,20 +2437,23 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         TB_Node** params = parameter_map = tls_push(param_count * sizeof(TB_Node*));
         Cuik_Type* return_type = cuik_canonical_type(type->func.return_type);
 
+        TB_FunctionPrototype* proto = tb_function_get_prototype(func);
+
         bool is_aggregate_return = !tu->target->pass_return_via_reg(tu, return_type);
+        size_t param_bias = 0;
         if (is_aggregate_return) {
             return_value_address = tb_inst_param_addr(func, 0);
-
-            // gimme stack slots
-            for (size_t i = 0; i < param_count; i++) {
-                params[i] = tb_inst_param_addr(func, 1 + i);
-            }
+            param_bias = 1;
         } else {
             return_value_address = TB_NULL_REG;
+        }
 
-            // gimme stack slots
-            for (size_t i = 0; i < param_count; i++) {
-                params[i] = tb_inst_param_addr(func, i);
+        // gimme stack slots
+        for (size_t i = 0; i < param_count; i++) {
+            params[i] = tb_inst_param_addr(func, i + param_bias);
+
+            if (proto->params[i].name) {
+                tb_function_attrib_variable(func, params[i], proto->params[i].name, proto->params[i].debug_type);
             }
         }
 

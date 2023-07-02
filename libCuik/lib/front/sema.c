@@ -1554,8 +1554,11 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
         case EXPR_LOGICAL_OR: {
             Cuik_QualType boolean = cuik_uncanonical_type(&cuik__builtin_bool);
 
-            SET_CAST(0, boolean);
-            SET_CAST(1, boolean);
+            cuik__sema_expr(tu, e->logical_binop.left);
+            cuik__sema_expr(tu, e->logical_binop.right);
+
+            set_root_cast(e->logical_binop.left,  boolean);
+            set_root_cast(e->logical_binop.right, boolean);
 
             return boolean;
         }
@@ -1597,14 +1600,12 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             Cuik_Type* rhs = cuik_canonical_type(GET_TYPE(1));
 
             if ((e->op == EXPR_PLUS || e->op == EXPR_MINUS) && (cuik_type_can_deref(lhs) || cuik_type_can_deref(rhs))) {
-                // Pointer arithmatic
-                if (e->op == EXPR_PLUS && (rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY)) {
-                    SWAP(Cuik_Type*, lhs, rhs);
-                    SWAP(size_t, args[0], args[1]);
-                }
-
                 Cuik_QualType ptrdiff_ty = cuik_uncanonical_type(tu->target->ptrdiff_type);
-                if (rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY) {
+
+                bool lhs_is_ptr = lhs->kind == KIND_PTR || lhs->kind == KIND_ARRAY;
+                bool rhs_is_ptr = rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY;
+
+                if (lhs_is_ptr && rhs_is_ptr) {
                     if (e->op == EXPR_MINUS) {
                         // ptr - ptr = ptrdiff_t
                         SET_CAST(0, GET_TYPE(0));
@@ -1617,6 +1618,13 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                         return CUIK_QUAL_TYPE_NULL;
                     }
                 } else {
+                    // Pointer arithmatic
+                    if (e->op == EXPR_PLUS && rhs_is_ptr) {
+                        SWAP(Cuik_Type*, lhs, rhs);
+                        SWAP(size_t, args[0], args[1]);
+                        e->ptrop.flipped = true;
+                    }
+
                     SET_CAST(0, GET_TYPE(0));
                     SET_CAST(1, ptrdiff_ty);
 

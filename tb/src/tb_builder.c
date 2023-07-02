@@ -916,15 +916,6 @@ TB_API void tb_inst_goto(TB_Function* f, TB_Node* target) {
 }
 
 TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_false) {
-    #if 0
-    if (cond->type == TB_INTEGER_CONST && TB_NODE_GET_EXTRA_T(cond, TB_NodeInt)->num_words == 1) {
-        // peephole
-        TB_NodeInt* i = TB_NODE_GET_EXTRA(cond);
-        tb_inst_goto(f, i->words[0] ? if_true : if_false);
-        return;
-    }
-    #endif
-
     // generate control projections
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(int64_t));
     n->inputs[0] = f->active_control_node; // control edge

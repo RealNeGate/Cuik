@@ -723,17 +723,6 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         .stack_slots = ctx.debug_stack_slots
     };
 
-    // convert into TB_StackSlot
-    FOREACH_N(i, 0, nl_map_get_capacity(ctx.stack_slots)) if (ctx.stack_slots[i].k != NULL) {
-        TB_Node* n = ctx.stack_slots[i].k;
-
-        // reject parameters, we've handled them already
-        if (ctx.stack_slots[i].v >= 0) {
-            continue;
-        }
-
-    }
-
     tb_function_free_postorder(&ctx.order);
     arena_clear(&tb__arena);
     nl_map_free(ctx.stack_slots);

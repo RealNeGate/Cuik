@@ -1,12 +1,5 @@
 #include "../front/sema.h"
 
-#define SWITCH_ITER switch (it->index_++)
-#define CASE_YIELD(k, v) case k: return (it->stmt = (v), true);
-#define CASE_END(k) case k: return false;
-
-#define SWITCH1(a)    SWITCH_ITER { CASE_YIELD(0, a); CASE_END(1); }
-#define SWITCH2(a, b) SWITCH_ITER { CASE_YIELD(0, a); CASE_YIELD(1, b); CASE_END(2); }
-
 int cuik_get_expr_arity(Subexpr* e) {
     switch (e->op) {
         case EXPR_INT:
@@ -24,6 +17,8 @@ int cuik_get_expr_arity(Subexpr* e) {
         case EXPR_INITIALIZER: // { }
         case EXPR_SIZEOF_T:    // sizeof(T)
         case EXPR_CONSTRUCTOR: // ty
+        case EXPR_LOGICAL_AND:
+        case EXPR_LOGICAL_OR:
         return 0;
 
         case EXPR_CALL:
@@ -78,8 +73,6 @@ int cuik_get_expr_arity(Subexpr* e) {
         case EXPR_PTRSUB:
         case EXPR_PTRDIFF:
         case EXPR_COMMA:
-        case EXPR_LOGICAL_AND:
-        case EXPR_LOGICAL_OR:
         return 2;
 
         // ternary only keeps the condition here

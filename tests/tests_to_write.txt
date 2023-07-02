@@ -1,0 +1,5 @@
+Should write regression tests for these:
+
+- [ ] ternaries face the correct direction
+- [ ] short circuit ops work
+- [ ] sign extension

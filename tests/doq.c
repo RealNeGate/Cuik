@@ -4,7 +4,6 @@
 #include <ctype.h>
 #include <stdbool.h>
 
-
 enum {
     PRE    = 1 << 0,
     CODE   = 1 << 1,
@@ -185,7 +184,6 @@ static int process_line(FILE *fp, char *line, int flags) {
 
     return flags;
 }
-
 
 int main(int argc, char **argv) {
     FILE *css = NULL;

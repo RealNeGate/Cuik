@@ -34,6 +34,20 @@ typedef struct Cuik_Type Cuik_Type;
 
 typedef uint64_t Cuik_ConstInt;
 
+typedef struct {
+    enum { CUIK_CONST_NONE, CUIK_CONST_INT, CUIK_CONST_FLOAT, CUIK_CONST_ADDR } tag;
+    union {
+        uint64_t i;
+        double f;
+
+        // symbols refer to their creator + an offset
+        struct {
+            uint32_t base;
+            int32_t offset;
+        } s;
+    };
+} Cuik_ConstVal;
+
 // LEGACY, WE'RE REMOVING IT SOON
 typedef struct Expr Expr;
 
@@ -785,6 +799,11 @@ struct Subexpr {
         } init;
 
         struct {
+            // tells us the base is on the right side
+            bool flipped;
+        } ptrop;
+
+        struct {
             // if case_count == 0, then controlling_expr is the matched expression
             int case_count;
             C11GenericEntry* cases;
@@ -805,6 +824,11 @@ struct Subexpr {
             // the sides aren't in the same Cuik_Expr because they're conditionally run
             Cuik_Expr *left, *right;
         } ternary;
+
+        struct {
+            // the sides aren't in the same Cuik_Expr because they're conditionally run
+            Cuik_Expr *left, *right;
+        } logical_binop;
 
         struct {
             int param_count;
@@ -871,6 +895,8 @@ static bool cuik_type_is_aggregate(const Cuik_Type* t) { return t->kind >= KIND_
 static bool cuik_type_is_arithmatic(const Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
 
 static bool cuik_type_can_deref(const Cuik_Type* t) { return t->kind == KIND_PTR || t->kind == KIND_ARRAY; }
+
+static bool cuik_type_implicit_ptr(const Cuik_Type* t) { return t->kind == KIND_FUNC || t->kind == KIND_ARRAY; }
 
 static bool cuik_type_can_swizzle(const Cuik_Type* t) {
     if (t->kind == KIND_VECTOR && t->vector.base->kind != KIND_VECTOR && cuik_type_can_swizzle(t->vector.base)) {

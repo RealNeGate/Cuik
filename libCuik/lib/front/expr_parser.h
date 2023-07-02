@@ -900,13 +900,27 @@ static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, i
     while (binop = get_binop(tokens_get(s)->type), binop.prec != 0 && binop.prec >= min_prec) {
         tokens_next(s);
 
-        parse_binop(parser, s, binop.prec + 1);
+        if (binop.op == EXPR_LOGICAL_AND || binop.op == EXPR_LOGICAL_OR) {
+            Cuik_Expr* left = complete_expr(parser);
 
-        SourceLoc end_loc = tokens_get_last_location(s);
-        *push_expr(parser) = (Subexpr){
-            .op = binop.op,
-            .loc = { start_loc, end_loc },
-        };
+            parse_binop(parser, s, binop.prec + 1);
+            Cuik_Expr* right = complete_expr(parser);
+
+            SourceLoc end_loc = tokens_get_last_location(s);
+            *push_expr(parser) = (Subexpr){
+                .op = binop.op,
+                .loc = { start_loc, end_loc },
+                .logical_binop = { left, right }
+            };
+        } else {
+            parse_binop(parser, s, binop.prec + 1);
+
+            SourceLoc end_loc = tokens_get_last_location(s);
+            *push_expr(parser) = (Subexpr){
+                .op = binop.op,
+                .loc = { start_loc, end_loc },
+            };
+        }
     }
 }
 
@@ -1029,11 +1043,16 @@ static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s) {
     parse_assignment(parser, s);
     Cuik_Expr* e = complete_expr(parser);
 
-    Cuik_ConstInt value;
-    if (!const_eval_int(parser, e, &value)) {
+    Cuik_ConstVal value;
+    if (!const_eval(parser, e, &value)) {
         // the const_eval_int will handle errors
         return 0;
     }
 
-    return value;
+    if (value.tag != CUIK_CONST_INT) {
+        diag_err(&parser->tokens, e->exprs[e->count - 1].loc, "Constant expression was not an integer");
+        return 0;
+    }
+
+    return value.i;
 }

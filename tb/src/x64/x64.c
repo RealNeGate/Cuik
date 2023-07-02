@@ -606,7 +606,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                         int pos = 16 + (p->index * 8);
                         nl_map_put(ctx->stack_slots, curr->inputs[1], pos);
 
-                        if (p->index > 4 && ctx->target_abi == TB_ABI_WIN64) {
+                        if (p->index >= 4 && ctx->target_abi == TB_ABI_WIN64) {
                             nl_map_put(ctx->values, curr, -1); // marks as visited (stores don't return so we can -1)
                         }
 
@@ -988,7 +988,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_Node* addr = n->inputs[1];
             TB_Node* src_n = n->inputs[2];
 
-            if (!TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile && src_n->type >= TB_AND && src_n->type <= TB_SUB) {
+            /*if (!TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile && src_n->type >= TB_AND && src_n->type <= TB_SUB) {
                 const static InstType ops[] = { AND, OR, XOR, ADD, SUB };
 
                 TB_Node* ld = src_n->inputs[0];
@@ -1004,7 +1004,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     }
                     break;
                 }
-            }
+            }*/
 
             int src = ISEL(n->inputs[2]);
             Inst st = isel_store(ctx, n->dt, n->inputs[1], src);
@@ -1019,7 +1019,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             TB_DataType src_dt = src->dt;
             bool sign_ext = (type == TB_SIGN_EXT);
-            int bits_in_type = n->dt.type == TB_PTR ? 64 : n->dt.data;
+            int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
 
             dst = DEF(n, REG_CLASS_GPR);
 
@@ -1044,17 +1044,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }
 
             int op = MOV;
-            switch (bits_in_type) {
-                case 64: op = MOV; break;
-                case 32: op = sign_ext ? MOVSXD : MOV; break;
-                case 16: op = sign_ext ? MOVSXW : MOVZXW; break;
-                case 8:  op = sign_ext ? MOVSXB : MOVZXB; break;
-                default: tb_todo();
-            }
+            if (bits_in_type <= 8) op = sign_ext ? MOVSXB : MOVZXB;
+            else if (bits_in_type <= 16) op = sign_ext ? MOVSXW : MOVZXW;
+            else if (bits_in_type <= 32) op = sign_ext ? MOVSXD : MOV;
+            else if (bits_in_type <= 64) op = MOV;
+            else tb_todo();
 
             if (src->type == TB_LOAD) {
                 Inst inst = isel_load(ctx, src, dst);
                 inst.type = op;
+                inst.data_type = legalize(n->dt);
                 SUBMIT(inst);
             } else {
                 int src = ISEL(n->inputs[0]);
@@ -1335,6 +1334,19 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_PROJ: {
             isel(ctx, n->inputs[0]);
 
+            if (n->inputs[0]->type == TB_START) {
+                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+                // past the first 4 parameters, it's all stack
+                if (index >= 4 && ctx->target_abi == TB_ABI_WIN64) {
+                    dst = DEF(n, classify_reg_class(n->dt));
+
+                    InstType i = n->dt.type == TB_FLOAT ? FP_MOV : MOV;
+                    SUBMIT(inst_m(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, 16 + (index * 8)));
+                    break;
+                }
+            }
+
             ptrdiff_t search = nl_map_get(ctx->values, n);
             assert(search >= 0);
 
@@ -1446,7 +1458,13 @@ static void emit_code(Ctx* restrict ctx) {
             uint32_t pos = GET_CODE_POS(&ctx->emit);
             tb_resolve_rel32(&ctx->emit, &nl_map_get_checked(ctx->emit.labels, bb), pos);
 
-            ASM printf("L%p:\n", bb);
+            ASM {
+                if (bb == ctx->f->start_node) {
+                    printf("%s:\n", ctx->f->super.name);
+                } else {
+                    printf("L%p:\n", bb);
+                }
+            }
             continue;
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;

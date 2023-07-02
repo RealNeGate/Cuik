@@ -1,9 +1,128 @@
 
+#define GET_CONST_INT(e) (e.i)
+#define SET_CONST_INT(lhs, rhs) (lhs.tag = CUIK_CONST_INT, lhs.i = (rhs))
+
+static bool const_eval(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstVal* out_val);
+
+static bool const_eval_int_single(Cuik_Parser* restrict parser, Cuik_Expr* e, Subexpr* s, Cuik_ConstVal* args, uint64_t* result) {
+    switch (s->op) {
+        case EXPR_CHAR: *result = s->char_lit; break;
+        case EXPR_INT: *result = s->int_lit.lit; break;
+        case EXPR_SIZEOF_T: {
+            Cuik_Type* src = cuik_canonical_type(s->x_of_type.type);
+            if (src->size == 0) {
+                type_layout2(parser, &parser->tokens, src);
+
+                if (src->size == 0) {
+                    diag_err(&parser->tokens, s->loc, "Could not resolve type");
+                    return false;
+                }
+            }
+
+            *result = src->size;
+            break;
+        }
+
+        case EXPR_ENUM: {
+            if (s->enum_val.num->lexer_pos != 0) {
+                type_layout2(parser, &parser->tokens, cuik_canonical_type(s->enum_val.type));
+            }
+
+            *result = s->enum_val.num->value;
+            break;
+        }
+
+        case EXPR_CAST: {
+            Cuik_Type* t = cuik_canonical_type(s->cast.type);
+
+            if (!cuik_type_is_integer(t)) {
+                diag_err(&parser->tokens, s->loc, "Cannot perform constant cast to %!T", cuik_canonical_type(s->cast.type));
+                return false;
+            }
+
+            // TODO(NeGate): Perform masking
+            *result = args[0].i;
+            break;
+        }
+
+        // operators
+        case EXPR_NEGATE:*result = -args[0].i;             break;
+        case EXPR_PLUS:  *result = args[0].i + args[1].i;  break;
+        case EXPR_MINUS: *result = args[0].i - args[1].i;  break;
+        case EXPR_TIMES: *result = args[0].i * args[1].i;  break;
+        case EXPR_SLASH: *result = args[0].i / args[1].i;  break;
+        case EXPR_SHL:   *result = args[0].i << args[1].i; break;
+        case EXPR_SHR:   *result = args[0].i >> args[1].i; break;
+        case EXPR_AND:   *result = args[0].i & args[1].i;  break;
+        case EXPR_OR:    *result = args[0].i | args[1].i;  break;
+
+        // comparisons
+        case EXPR_CMPEQ: *result = args[0].i == args[1].i; break;
+        case EXPR_CMPNE: *result = args[0].i != args[1].i; break;
+        case EXPR_CMPGE: *result = args[0].i >= args[1].i; break;
+        case EXPR_CMPLE: *result = args[0].i <= args[1].i; break;
+        case EXPR_CMPGT: *result = args[0].i > args[1].i;  break;
+        case EXPR_CMPLT: *result = args[0].i < args[1].i;  break;
+
+        // misc
+        case EXPR_TERNARY: {
+            Cuik_ConstVal v;
+            if (!const_eval(parser, args[0].i ? s->ternary.left : s->ternary.right, &v)) {
+                diag_err(&parser->tokens, s->loc, "Cannot fold ternary");
+                return false;
+            }
+
+            if (v.tag != CUIK_CONST_INT) {
+                diag_err(&parser->tokens, s->loc, "Ternary folded into non-integer");
+                return false;
+            }
+
+            *result = v.i;
+            break;
+        }
+
+        default:
+        diag_err(parser ? &parser->tokens : NULL, s->loc, "could not parse subexpression '%s' as constant.", cuik_get_expr_name(s));
+        return false;
+    }
+
+    return true;
+}
+
+static bool const_eval_addr_single(Cuik_Parser* restrict parser, Cuik_Expr* e, Subexpr* s, Cuik_ConstVal* args) {
+    switch (s->op) {
+        // try pointer arith
+        case EXPR_PLUS: {
+            if (args[1].tag == CUIK_CONST_ADDR) {
+                SWAP(Cuik_ConstVal, args[0], args[1]);
+            }
+
+            if (args[1].tag == CUIK_CONST_ADDR) {
+                diag_err(&parser->tokens, s->loc, "cannot add two pointers");
+                return false;
+            } else if (args[1].tag == CUIK_CONST_FLOAT) {
+                diag_err(&parser->tokens, s->loc, "cannot offset float to pointer");
+                return false;
+            }
+
+            args[0].s.offset += args[1].i;
+            return true;
+        }
+
+        default: break;
+    }
+
+    diag_err(&parser->tokens, s->loc, "could not parse subexpression '%s' as constant.", cuik_get_expr_name(s));
+    return false;
+}
+
 // does constant eval on integer values, if it ever fails it'll exit with false
-static bool const_eval_int(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstInt* out_val) {
-    Cuik_ConstInt stack[128], top = 0;
+static bool const_eval(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstVal* out_val) {
+    size_t top = 0;
+    Cuik_ConstVal stack[128];
 
     Subexpr* exprs = e->exprs;
+    bool has_symbols = false;
 
     size_t i = 0;
     for (; i < e->count; i++) {
@@ -12,95 +131,64 @@ static bool const_eval_int(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_Cons
         // once we know this we can organize the top slice of the stack as the inputs
         int arity = cuik_get_expr_arity(s);
         top -= arity;
-        Cuik_ConstInt* args = &stack[top];
+        Cuik_ConstVal* args = &stack[top];
+        top += 1;
 
-        Cuik_ConstInt result = 0;
-        switch (exprs[i].op) {
-            case EXPR_CHAR: result = s->char_lit; break;
-            case EXPR_INT: result = s->int_lit.lit; break;
-            case EXPR_SIZEOF_T: {
-                Cuik_Type* src = cuik_canonical_type(s->x_of_type.type);
-                if (src->size == 0) {
-                    type_layout2(parser, &parser->tokens, src);
+        // symbols + address is allowed to push (the backend uses this)
+        if (s->op == EXPR_SYMBOL && (s->sym.stmt->op == STMT_GLOBAL_DECL || s->sym.stmt->op == STMT_FUNC_DECL)) {
+            if (cuik_type_implicit_ptr(cuik_canonical_type(s->sym.stmt->decl.type))) {
+                args[0].tag = CUIK_CONST_ADDR;
+                args[0].s.base = i;
+                args[0].s.offset = 0;
 
-                    if (src->size == 0) {
-                        diag_err(&parser->tokens, s->loc, "Could not resolve type");
-                        return false;
-                    }
-                }
+                has_symbols = true;
+                continue;
+            } else if (exprs[i+1].op == EXPR_ADDR) {
+                args[0].tag = CUIK_CONST_ADDR;
+                args[0].s.base = i;
+                args[0].s.offset = 0;
+                i += 1;
 
-                result = src->size;
-                break;
+                has_symbols = true;
+                continue;
+            } else {
+                diag_err(&parser->tokens, s->loc, "Cannot evaluate symbol as constant");
+                return false;
             }
-
-            case EXPR_ENUM: {
-                if (s->enum_val.num->lexer_pos != 0) {
-                    type_layout2(parser, &parser->tokens, cuik_canonical_type(s->enum_val.type));
-                }
-                result = s->enum_val.num->value;
-                break;
-            }
-
-            case EXPR_CAST: {
-                Cuik_Type* t = cuik_canonical_type(s->cast.type);
-
-                // &((T*)0)->x
-                if (i + 2 < e->count && exprs[i+1].op == EXPR_ARROW && exprs[i+2].op == EXPR_ADDR) {
-                    __debugbreak();
-                }
-
-                if (!cuik_type_is_integer(t)) {
-                    diag_err(&parser->tokens, s->loc, "Cannot perform constant cast to %!T", cuik_canonical_type(s->cast.type));
-                    return false;
-                }
-
-                // TODO(NeGate): Perform masking
-                result = args[0];
-                break;
-            }
-
-            // operators
-            case EXPR_NEGATE:result = -args[0];           break;
-            case EXPR_PLUS:  result = args[0] + args[1];  break;
-            case EXPR_MINUS: result = args[0] - args[1];  break;
-            case EXPR_TIMES: result = args[0] * args[1];  break;
-            case EXPR_SLASH: result = args[0] / args[1];  break;
-            case EXPR_SHL:   result = args[0] << args[1]; break;
-            case EXPR_SHR:   result = args[0] >> args[1]; break;
-            case EXPR_AND:   result = args[0] & args[1];  break;
-            case EXPR_OR:    result = args[0] | args[1];  break;
-
-            // comparisons
-            case EXPR_CMPEQ: result = args[0] == args[1]; break;
-            case EXPR_CMPNE: result = args[0] != args[1]; break;
-            case EXPR_CMPGE: result = args[0] >= args[1]; break;
-            case EXPR_CMPLE: result = args[0] <= args[1]; break;
-            case EXPR_CMPGT: result = args[0] > args[1];  break;
-            case EXPR_CMPLT: result = args[0] < args[1];  break;
-
-            // misc
-            case EXPR_TERNARY: {
-                if (!const_eval_int(parser, args[0] ? s->ternary.left : s->ternary.right, &result)) {
-                    diag_err(&parser->tokens, s->loc, "Cannot fold ternary");
-                    return false;
-                }
-                break;
-            }
-
-            default: goto failure;
         }
 
-        assert(top < 128 && "Too complex of a constant expression");
-        stack[top++] = result;
+        // speed optimization because most folding ops don't care about
+        // constant addresses. if we do have constant addresses we need
+        // to handle pointer arithmatic and pointer difference.
+        if (UNLIKELY(has_symbols)) {
+            for (size_t j = 0; j < arity; j++) {
+                if (UNLIKELY(args[j].tag != CUIK_CONST_ADDR)) continue;
+
+                if (const_eval_addr_single(parser, e, s, args)) {
+                    goto skip;
+                } else {
+                    return false;
+                }
+            }
+        }
+
+        // normie integers, these get all integer args
+        // if any aren't we do some of the special cases.
+        uint64_t result;
+        if (!const_eval_int_single(parser, e, s, args, &result)) {
+            return false;
+        }
+
+        args[0].tag = CUIK_CONST_INT;
+        args[0].i = result;
+        continue;
+
+        skip:;
     }
 
     assert(top == 1);
     *out_val = stack[0];
     return true;
-
-    failure:
-    diag_err(&parser->tokens, e->exprs[i].loc, "could not parse subexpression '%s' as constant.", cuik_get_expr_name(&e->exprs[i]));
-    return false;
 }
 
 #if 0
