@@ -74,7 +74,7 @@ static Unwind generate_unwind_info(const ICodeGen* restrict code_gen, size_t sec
     uint32_t* pdata = (uint32_t*) u.pdata_chunk->data;
 
     bool overflow = count * 3 >= 0xFFFF;
-    u.pdata_relocs = tb_export_make_chunk(overflow + (count * 3 * sizeof(COFF_ImageReloc)));
+    u.pdata_relocs = tb_export_make_chunk((overflow + count*3) * sizeof(COFF_ImageReloc));
     COFF_ImageReloc* relocs = (COFF_ImageReloc*) u.pdata_relocs->data;
 
     if (overflow) {
@@ -132,7 +132,7 @@ static Unwind generate_unwind_info(const ICodeGen* restrict code_gen, size_t sec
         .name = ".pdata",
         .characteristics = COFF_CHARACTERISTICS_RODATA | (u.patch_count >= 0xFFFF ? IMAGE_SCN_LNK_NRELOC_OVFL : 0),
         .raw_data_size = u.pdata_chunk->size,
-        .num_reloc = u.patch_count,
+        .num_reloc = (u.patch_count >= 0xFFFF ? 0xFFFF : u.patch_count),
     };
 
     u.xdata_header = (COFF_SectionHeader){
@@ -258,7 +258,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         output_size += unwinds[i].xdata_header.raw_data_size;
 
         unwinds[i].pdata_header.pointer_to_reloc = output_size;
-        output_size += unwinds[i].pdata_header.num_reloc * sizeof(COFF_ImageReloc);
+        output_size += unwinds[i].pdata_relocs->size;
     }
 
     // calculate relocation layout
@@ -385,6 +385,8 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         FOREACH_N(i, 0, unwind_count) {
             tb_export_append_chunk(&buffer, unwinds[i].pdata_chunk);
             tb_export_append_chunk(&buffer, unwinds[i].xdata_chunk);
+
+            assert(unwinds[i].pdata_header.pointer_to_reloc == buffer.total);
             tb_export_append_chunk(&buffer, unwinds[i].pdata_relocs);
         }
 
