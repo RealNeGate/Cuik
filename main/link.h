@@ -102,24 +102,12 @@ int run_link(int argc, const char** argv) {
         return EXIT_FAILURE;
     }
 
-    TB_Exports exports = tb_linker_export(l);
-    if (exports.count == 0) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
-        return false;
-    }
-
-    FILE* file = fopen(output_name, "wb");
-    if (file == NULL) {
-        fprintf(stderr, "could not open file for writing! %s", output_name);
+    TB_ExportBuffer buffer = tb_linker_export(l);
+    if (!tb_export_buffer_to_file(buffer, output_name)) {
         return EXIT_FAILURE;
     }
 
-    CUIK_TIMED_BLOCK("fwrite") {
-        fwrite(exports.files[0].data, 1, exports.files[0].length, file);
-    }
-
-    fclose(file);
-    tb_exporter_free(exports);
+    tb_export_buffer_free(buffer);
     tb_linker_destroy(l);
     return EXIT_SUCCESS;
 }

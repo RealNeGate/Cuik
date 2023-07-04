@@ -9,8 +9,7 @@ static ptrdiff_t find_last_slash(const char* str) {
     return -1;
 }
 
-static ptrdiff_t find_ext(const char* str) {
-    size_t len = strlen(str);
+static ptrdiff_t find_ext(size_t len, const char* str) {
     for (size_t i = len; i--;) {
         if (str[i] == '/' || str[i] == '\\') return -1;
         if (str[i] == '.') return i;
@@ -20,7 +19,7 @@ static ptrdiff_t find_ext(const char* str) {
 }
 
 bool cuik_path_set_no_ext(Cuik_Path* restrict dst, const char* src) {
-    ptrdiff_t slash_pos = find_ext(src);
+    ptrdiff_t slash_pos = find_ext(strlen(src), src);
     if (slash_pos >= 0) {
         // copy everything before that last slash, then normalize the slash to the OS
         memcpy(dst->data, src, slash_pos);
@@ -44,6 +43,12 @@ bool cuik_path_set(Cuik_Path* restrict dst, const char* src) {
     dst->data[len] = 0;
     dst->length = len;
     return true;
+}
+
+bool cuik_path_set_ext(Cuik_Path* restrict dst, Cuik_Path* restrict src, size_t ext_len, const char* ext) {
+    ptrdiff_t dot_pos = find_ext(src->length, src->data);
+
+    return cuik_path_append2(dst, dot_pos >= 0 ? dot_pos : src->length, src->data, ext_len, ext);
 }
 
 bool cuik_path_set_dir(Cuik_Path* restrict dst, const char* src) {

@@ -7,6 +7,7 @@ static thread_local uint8_t* tb_thread_storage;
 static thread_local int tid;
 static tb_atomic_int total_tid;
 
+TB_Arena* tb_node_arena(void);
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size);
 
 ICodeGen* tb__find_code_generator(TB_Module* m) {
@@ -183,32 +184,11 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
     return true;
 }
 
-TB_API void tb_function_drop_ir(TB_Function* f) {
-    TB_NodePage* p = f->head;
-    while (p) {
-        TB_NodePage* next = p->next;
-        tb_platform_vfree(p, 4096);
-        p = next;
-    }
-    f->head = f->tail = NULL;
-}
-
 TB_API size_t tb_module_get_function_count(TB_Module* m) {
     return m->symbol_count[TB_SYMBOL_FUNCTION];
 }
 
 TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
-    switch (sym->tag) {
-        case TB_SYMBOL_TOMBSTONE: break;
-        case TB_SYMBOL_FUNCTION: {
-            tb_function_drop_ir((TB_Function*) sym);
-            break;
-        }
-        case TB_SYMBOL_EXTERNAL: break;
-        case TB_SYMBOL_GLOBAL: break;
-        default: tb_unreachable();
-    }
-
     sym->tag = TB_SYMBOL_TOMBSTONE;
 }
 
@@ -282,10 +262,6 @@ TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc
     return p;
 }
 
-TB_API void tb_symbol_set_ordinal(TB_Symbol* s, int ordinal) {
-    s->ordinal = ordinal;
-}
-
 TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage, TB_ComdatType comdat) {
     TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, name, sizeof(TB_Function));
     f->linkage = linkage;
@@ -301,12 +277,18 @@ TB_API const char* tb_symbol_get_name(TB_Symbol* s) {
     return s->name;
 }
 
-TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p) {
+TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena) {
     assert(f->prototype == NULL);
     const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
     size_t param_count = p->param_count;
     size_t extra_size = sizeof(TB_NodeRegion) + (param_count * sizeof(TB_Node*));
+
+    if (arena == NULL) {
+        f->arena = tb_node_arena();
+    } else {
+        f->arena = arena;
+    }
 
     f->control_node_count = 1;
     f->active_control_node = f->start_node = tb_alloc_node(f, TB_START, TB_TYPE_TUPLE, 0, extra_size);
@@ -315,7 +297,7 @@ TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p) {
     start->succ_count = 0;
     start->succ = NULL;
     start->proj_count = param_count;
-    start->projs = alloc_from_node_arena(f, param_count * sizeof(TB_Node*));
+    start->projs = TB_CALL(f->arena, alloc, param_count * sizeof(TB_Node*), _Alignof(TB_Node*));
 
     // create parameter projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);
@@ -488,6 +470,8 @@ void tb_free_thread_resources(void) {
         tb_platform_vfree(tb_thread_storage, TB_TEMPORARY_STORAGE_SIZE);
         tb_thread_storage = NULL;
     }
+
+    arena_free(&tb__arena);
 }
 
 TB_TemporaryStorage* tb_tls_allocate() {

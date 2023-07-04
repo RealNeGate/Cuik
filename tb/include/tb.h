@@ -405,7 +405,7 @@ typedef struct TB_Symbol {
     TB_Module* module;
 
     // helpful for sorting and getting consistent builds
-    int ordinal;
+    uint64_t ordinal;
 
     union {
         // if we're JITing then this maps to the address of the symbol
@@ -611,6 +611,32 @@ typedef struct {
 typedef void (*TB_PrintCallback)(void* user_data, const char* fmt, ...);
 
 ////////////////////////////////
+// Arena
+////////////////////////////////
+// the goal is to move more things to transparent arenas, for now it's just function
+// IR which is a big one if you're interested in freeing them in whatever organization
+// you please.
+
+// allocations can make no guarentees about being sequential
+// tho it would be greatly appreciated at least to some degree.
+typedef struct TB_Arena TB_Arena;
+struct TB_Arena {
+    // alignment never goes past max_align_t
+    void* (*alloc)(TB_Arena* arena, size_t size, size_t align);
+
+    // clearing but we're not done with it yet, cheap
+    void (*clear)(TB_Arena* arena);
+
+    // frees everything within the arena, potentially expensive
+    void (*free)(TB_Arena* arena);
+};
+
+#define TB_CALL(object, action, ...) ((object)->action((object), ##__VA_ARGS__))
+
+// allocates in 16MiB chunks and does linear allocation in 'em
+TB_Arena* tb_default_arena(void);
+
+////////////////////////////////
 // Module management
 ////////////////////////////////
 // Creates a module with the correct target and settings
@@ -644,26 +670,24 @@ TB_API void tb_module_layout_sections(TB_Module* m);
 ////////////////////////////////
 // Exporter
 ////////////////////////////////
-// some terminology, in this context virtual file means it's not necessarily tie to the
-// normal file system but refers to a buffer of memory that's potentially going to either
-// go into the normal file system or some other persistent space.
-
-// the maximum number of "virtual files" any single export call can produce
-// it's two because EXE export with debug info produces a PDB as well
-enum { TB_MAX_EXPORTS = 2 };
+// Export buffers are generated in chunks because it's easier, usually the
+// chunks are "massive" (representing some connected piece of the buffer)
+// but they don't have to be.
+typedef struct TB_ExportChunk TB_ExportChunk;
+struct TB_ExportChunk {
+    TB_ExportChunk* next;
+    size_t pos, size;
+    uint8_t data[];
+};
 
 typedef struct {
-    size_t count;
-    struct {
-        size_t length;
-        uint8_t* data;
-    } files[TB_MAX_EXPORTS];
-} TB_Exports;
+    size_t total;
+    TB_ExportChunk *head, *tail;
+} TB_ExportBuffer;
 
-TB_API TB_Exports tb_module_object_export(TB_Module* m, TB_DebugFormat debug_fmt);
-TB_API void tb_exporter_free(TB_Exports exports);
-
-TB_API TB_Exports tb_module_export_bytecode(TB_Module* m);
+TB_API TB_ExportBuffer tb_module_object_export(TB_Module* m, TB_DebugFormat debug_fmt);
+TB_API bool tb_export_buffer_to_file(TB_ExportBuffer buffer, const char* path);
+TB_API void tb_export_buffer_free(TB_ExportBuffer buffer);
 
 ////////////////////////////////
 // Linker exporter
@@ -689,7 +713,7 @@ typedef struct {
 TB_API TB_ExecutableType tb_system_executable_format(TB_System s);
 
 TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch);
-TB_API TB_Exports tb_linker_export(TB_Linker* l);
+TB_API TB_ExportBuffer tb_linker_export(TB_Linker* l);
 TB_API void tb_linker_destroy(TB_Linker* l);
 
 TB_API bool tb_linker_get_msg(TB_Linker* l, TB_LinkerMsg* msg);
@@ -836,9 +860,6 @@ TB_API TB_Function* tb_symbol_as_function(TB_Symbol* s);
 TB_API TB_External* tb_symbol_as_external(TB_Symbol* s);
 TB_API TB_Global* tb_symbol_as_global(TB_Symbol* s);
 
-// used when sorting things within sections, helps make consistent builds
-TB_API void tb_symbol_set_ordinal(TB_Symbol* s, int ordinal);
-
 ////////////////////////////////
 // Function IR Generation
 ////////////////////////////////
@@ -859,14 +880,11 @@ TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr);
 TB_API void tb_symbol_set_name(TB_Symbol* s, const char* name);
 TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 
-TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p);
+// if arena is NULL, defaults to module arena which is freed on tb_free_thread_resources
+TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena);
 TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
-
-// this is a memory optimization for when you're done with IR but still need the
-// function.
-TB_API void tb_function_drop_ir(TB_Function* f);
 
 TB_API void tb_inst_set_control(TB_Function* f, TB_Node* control);
 TB_API TB_Node* tb_inst_get_control(TB_Function* f);

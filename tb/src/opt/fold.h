@@ -123,7 +123,32 @@ static bool is_commutative(TB_NodeTypeEnum type) {
     }
 }
 
-static TB_Node* do_int_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_Node* n) {
+static TB_Node* try_unary_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_Node* n) {
+    assert(n->type == TB_NOT || n->type == TB_NEG);
+    TB_Node* src = n->inputs[0];
+
+    if (src->type != TB_INTEGER_CONST) {
+        return NULL;
+    }
+
+    assert(src->dt.type == TB_INT && src->dt.data > 0);
+    TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
+
+    TB_Node* new_n = tb_transmute_to_int(f, queue, n->dt, src_i->num_words);
+    BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
+
+    BigInt_copy(src_i->num_words, words, src_i->words);
+    BigInt_not(src_i->num_words, words);
+
+    if (n->type == TB_NEG) {
+        // -x => ~x + 1
+        BigInt_inc(src_i->num_words, words);
+    }
+
+    return new_n;
+}
+
+static TB_Node* try_int_binop_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_Node* n) {
     // if it's commutative: move constants to the right
     if (is_commutative(n->type) && n->inputs[0]->type == TB_INTEGER_CONST && n->inputs[1]->type != TB_INTEGER_CONST) {
         TB_Node* tmp = n->inputs[0];
@@ -253,30 +278,6 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
     TB_DataType dt = n->dt;
 
     switch (n->type) {
-        ////////////////////////////////
-        // Unary operator folding
-        ////////////////////////////////
-        // This is merely true
-        //   -x => ~x + 1
-        case TB_NEG: {
-            #if 0
-            TB_Node* src = n->inputs[0];
-
-            if (src->type == TB_INTEGER_CONST) {
-                assert(src->dt.type == TB_INT && src->dt.data > 0);
-                TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
-
-                uint64_t* words = tb_transmute_to_int(n, queue, src_i->num_words);
-                BigInt_copy(src->num_words, words, src_i->words);
-                BigInt_not(src->num_words, words);
-                BigInt_inc(src->num_words, words);
-                return true;
-            }
-            #endif
-
-            break;
-        }
-
         case TB_NOT: {
             TB_Node* src = n->inputs[0];
 

@@ -42,6 +42,8 @@ struct Cuik_BuildStep {
     bool error_root; // created an error rather than just propagating
     bool visited;
 
+    size_t local_ordinal;
+
     _Atomic int errors;
     Futex remaining;
 
@@ -132,79 +134,7 @@ static void sys_invoke(BuildStepInfo* info) {
 }
 
 #ifdef CUIK_USE_TB
-enum { GC_WORKLIST_EXP = 12 };
-
-static _Atomic uint32_t gc_worklist_queue;
-static void* gc_worklist[1u << GC_WORKLIST_EXP];
-
-static void queue_push(uint32_t exp, _Atomic uint32_t* queue, void** elems, void* val) {
-    uint32_t mask = (1u << exp) - 1;
-
-    for (;;) {
-        // might wanna change the memory order on this atomic op
-        uint32_t r = *queue;
-
-        uint32_t head = r & mask;
-        uint32_t tail = (r >> 16) & mask;
-        uint32_t next = (head + 1u) & mask;
-        if (r & 0x8000) { // avoid overflow on commit
-            *queue &= ~0x8000;
-        }
-
-        // it don't fit...
-        if (next != tail) {
-            elems[head] = val;
-
-            // commit
-            *queue += 1;
-            return;
-        }
-
-        log_warn("the queue is choked up!");
-    }
-}
-
-static void* queue_pop(uint32_t exp, _Atomic uint32_t* queue, void** elems) {
-    uint32_t mask = (1u << exp) - 1;
-
-    uint32_t r;
-    ptrdiff_t elem = -1;
-    void* tmp;
-
-    do {
-        r = *queue;
-        uint32_t head = r & mask;
-        uint32_t tail = (r >> 16) & mask;
-
-        if (head == tail) {
-            // take a nap if we ain't find shit
-            return NULL;
-        }
-
-        // copy out before we commit
-        tmp = elems[tail];
-    } while (!atomic_compare_exchange_strong(queue, &r, r + 0x10000));
-
-    return tmp;
-}
-
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
-
-static bool write_file(TB_Exports* exports, int i, const char* path) {
-    FILE* file = fopen(path, "wb");
-    if (file == NULL) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: could not open file for writing! %s\n", path);
-        return false;
-    }
-
-    if (fwrite(exports->files[i].data, 1, exports->files[i].length, file) == 1) {
-        fprintf(stderr, "\x1b[31merror\x1b[0m: could not write to file! %s (not enough storage?)\n", path);
-        return false;
-    }
-
-    fclose(file);
-    return true;
-}
 
 static void compile_func(TB_Module* m, TB_Function* f, void* ctx) {
     tb_module_compile_function(m, f, TB_ISEL_FAST);
@@ -259,6 +189,8 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     CompilationUnit* cu = (s->anti_dep != NULL && s->anti_dep->tag == BUILD_STEP_LD) ? s->anti_dep->ld.cu : NULL;
     TranslationUnit* tu = result.tu;
 
+    cuik_set_tu_ordinal(tu, s->local_ordinal);
+
     // #pragma comment(lib, "foo.lib")
     Cuik_ImportRequest* imports = result.imports;
     if (cu != NULL) {
@@ -302,7 +234,11 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     #ifdef CUIK_USE_TB
     TB_Module* mod = cu->ir_mod;
     CUIK_TIMED_BLOCK("Allocate IR") {
-        cuikcg_allocate_ir2(tu, mod);
+        if (s->tp) {
+            cuikcg_allocate_ir(tu, s->tp, mod);
+        } else {
+            cuikcg_allocate_ir2(tu, mod);
+        }
     }
 
     irgen(s->tp, args, cu, mod);
@@ -466,17 +402,19 @@ static void ld_invoke(BuildStepInfo* info) {
             tb_linker_set_subsystem(l, args->subsystem);
         }
 
-        TB_Exports exports = tb_linker_export(l);
-        if (exports.count == 0) {
-            fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
-            tb_exporter_free(exports);
+        TB_LinkerMsg m;
+        while (tb_linker_get_msg(l, &m)) {
+            if (m.tag == TB_LINKER_MSG_IMPORT) {
+                // TODO(NeGate): implement this
+            }
+        }
+
+        TB_ExportBuffer buffer = tb_linker_export(l);
+        if (!tb_export_buffer_to_file(buffer, output_path.data)) {
             goto error;
         }
 
-        if (!write_file(&exports, 0, output_path.data)) {
-            tb_exporter_free(exports);
-            goto error;
-        }
+        tb_export_buffer_free(buffer);
 
         error:
         step_error(s);
@@ -485,29 +423,22 @@ static void ld_invoke(BuildStepInfo* info) {
     } else {
         Cuik_Path obj_path;
         if (args->output_name == NULL) {
-            cuik_path_append(&obj_path, args->sources[0], 2, ".o");
+            cuik_path_set_ext(&obj_path, args->sources[0], 2, ".o");
         } else {
-            cuik_path_append(&obj_path, &output_path, 2, ".o");
+            cuik_path_set_ext(&obj_path, &output_path, 2, ".o");
         }
 
-        TB_Exports exports = tb_module_object_export(mod, debug_fmt);
+        TB_ExportBuffer buffer = tb_module_object_export(mod, debug_fmt);
         tb_module_destroy(mod);
 
-        if (exports.count == 0) {
-            fprintf(stderr, "\x1b[31merror\x1b[0m: could not link executable\n");
+        // copy into file
+        if (!tb_export_buffer_to_file(buffer, obj_path.data)) {
             step_error(s);
-            tb_exporter_free(exports);
             goto done;
         }
-
-        if (!write_file(&exports, 0, obj_path.data)) {
-            step_error(s);
-            tb_exporter_free(exports);
-            goto done;
-        }
+        tb_export_buffer_free(buffer);
 
         if (args->flavor == TB_FLAVOR_OBJECT) {
-            tb_exporter_free(exports);
             goto done;
         }
 
@@ -585,6 +516,7 @@ static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, mtx_t* mutex, b
     size_t dep_count = s->dep_count;
     if (dep_count > 0) {
         for (size_t i = 0; i < s->dep_count; i++) {
+            s->deps[i]->local_ordinal = i;
             step_submit(s->deps[i], tp, mutex, dep_count > 1);
         }
 
@@ -803,6 +735,17 @@ static void irgen_job(void* arg) {
     TB_Module* mod = task.mod;
 
     bool no_opt = task.opt_level == 0;
+
+    static _Thread_local TB_Arena* ir_arena;
+    TB_Arena* allocator = NULL;
+    if (no_opt) {
+        if (ir_arena == NULL) {
+            ir_arena = tb_default_arena();
+        }
+
+        allocator = ir_arena;
+    }
+
     for (size_t i = 0; i < task.count; i++) {
         // skip all the typedefs
         if (task.stmts[i]->decl.attrs.is_typedef || !task.stmts[i]->decl.attrs.is_used) {
@@ -812,21 +755,23 @@ static void irgen_job(void* arg) {
         const char* name = task.stmts[i]->decl.name;
         TB_Symbol* s;
         CUIK_TIMED_BLOCK("IRGen") {
-            s = cuikcg_top_level(task.tu, mod, task.stmts[i]);
+            s = cuikcg_top_level(task.tu, mod, allocator, task.stmts[i]);
         }
 
         // unoptimized builds can just compile functions without
         // the rest of the functions being ready.
         if (no_opt && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
             tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST);
-
-            // push to GC thread
-            queue_push(GC_WORKLIST_EXP, &gc_worklist_queue, (void**) &gc_worklist[0], s);
+            TB_CALL(allocator, clear);
         }
     }
 
     #if CUIK_ALLOW_THREADS
-    if (task.remaining != NULL) *task.remaining -= 1;
+    if (task.remaining != NULL && atomic_fetch_sub(task.remaining, 1) == 1) {
+        if (no_opt) TB_CALL(allocator, free);
+    }
+    #else
+    if (no_opt) TB_CALL(allocator, free);
     #endif
 }
 
@@ -870,14 +815,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
 
         // while the other threads work we chunk at collecting garbage
         while (atomic_load(&tasks_remaining) != 0) {
-            thrd_yield();
-
-            TB_Function* f;
-            while ((f = queue_pop(GC_WORKLIST_EXP, &gc_worklist_queue, (void**) &gc_worklist[0])) != NULL) {
-                CUIK_TIMED_BLOCK("GC phase") {
-                    tb_function_drop_ir(f);
-                }
-            }
+            CUIK_CALL(thread_pool, work_one_job);
         }
         #else
         fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");

@@ -543,7 +543,7 @@ static void compile_word(Word* w) {
 
     get_trampoline(true);
     TB_Function* f = tb_function_create(ir_module, NULL, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
-    tb_function_set_prototype(f, internal_protos[w->arity]);
+    tb_function_set_prototype(f, internal_protos[w->arity], NULL);
 
     ControlStack cs;
     cs.head = 0;

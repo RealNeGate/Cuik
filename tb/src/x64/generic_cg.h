@@ -396,7 +396,7 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
 
     // generate local live sets
     if (ctx->first) {
-        Set copy_init = set_create(def_count);
+        Set copy_init = set_create_in_arena(arena, def_count);
 
         Inst* restrict inst = ctx->first;
         assert(inst->type == INST_LABEL);
@@ -454,7 +454,6 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
         }
 
         mbb->end = timeline;
-        set_free(&copy_init);
     }
 
     // generate global live sets
@@ -630,8 +629,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/
 
-    ctx.used_regs[0] = set_create(16);
-    ctx.used_regs[1] = set_create(16);
+    ctx.used_regs[0] = set_create_in_arena(&tb__arena, 16);
+    ctx.used_regs[1] = set_create_in_arena(&tb__arena, 16);
 
     set_put(&ctx.used_regs[0], RBP), set_put(&ctx.used_regs[0], RSP);
     // FOREACH_N(i, 8, 16) set_put(&ctx.used_regs[0], i);
@@ -707,6 +706,8 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     //  Label patching: we make sure any local labels
     patch_local_labels(&ctx);
     nl_map_free(ctx.emit.labels);
+    nl_map_free(ctx.values);
+    nl_map_free(ctx.machine_bbs);
 
     if (dyn_array_length(f->lines)) {
         f->lines[0].pos = 0;

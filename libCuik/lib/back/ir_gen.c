@@ -2416,7 +2416,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
     }
 }
 
-TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s) {
+TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena* arena, Stmt* restrict s) {
     if (s->op == STMT_FUNC_DECL) {
         if ((s->decl.attrs.is_static || s->decl.attrs.is_inline) && !s->decl.attrs.is_used) {
             return NULL;
@@ -2437,7 +2437,8 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         TB_Node** params = parameter_map = tls_push(param_count * sizeof(TB_Node*));
         Cuik_Type* return_type = cuik_canonical_type(type->func.return_type);
 
-        TB_FunctionPrototype* proto = tb_function_get_prototype(func);
+        TB_FunctionPrototype* proto = tu->target->create_prototype(tu, cuik_canonical_type(s->decl.type));
+        tb_function_set_prototype(func, proto, arena);
 
         bool is_aggregate_return = !tu->target->pass_return_via_reg(tu, return_type);
         size_t param_bias = 0;
@@ -2516,9 +2517,12 @@ typedef struct {
     Stmt** stmts;
     size_t count;
 
-    size_t ordinal_base;
     Futex* remaining;
 } IRAllocTask;
+
+static uint64_t get_ir_ordinal(TranslationUnit* tu, Stmt* stmt) {
+    return ((uint64_t) tu->local_ordinal << 32ull) | stmt->decl.local_ordinal;
+}
 
 static void ir_alloc_task(void* task) {
     CUIK_TIMED_BLOCK("ir_alloc_task") {
@@ -2529,15 +2533,12 @@ static void ir_alloc_task(void* task) {
             if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) == 0) continue;
 
             if (s->op == STMT_FUNC_DECL) {
-                TB_FunctionPrototype* proto = t.tu->target->create_prototype(t.tu, cuik_canonical_type(s->decl.type));
                 TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-
                 TB_ComdatType comdat = s->decl.attrs.is_inline ? TB_COMDAT_MATCH_ANY : TB_COMDAT_NONE;
                 TB_Function* func = tb_function_create(t.tu->ir_mod, s->decl.name, linkage, comdat);
 
-                tb_symbol_set_ordinal((TB_Symbol*) func, t.ordinal_base + i);
-                tb_function_set_prototype(func, proto);
                 s->backing.f = func;
+                s->backing.s->ordinal = get_ir_ordinal(t.tu, s);
             } else if (s->decl.attrs.is_used && !s->decl.attrs.is_typedef) {
                 Cuik_Type* type = cuik_canonical_type(s->decl.type);
                 bool is_external_sym = (type->kind == KIND_FUNC && s->decl.initial_as_stmt == NULL);
@@ -2557,7 +2558,7 @@ static void ir_alloc_task(void* task) {
                     }
 
                     s->backing.g = place_external(t.tu->parent, s, dbg_type, linkage);
-                    tb_symbol_set_ordinal((TB_Symbol*) s->backing.g, t.ordinal_base + i);
+                    s->backing.s->ordinal = get_ir_ordinal(t.tu, s);
                 }
             }
         }
@@ -2568,39 +2569,33 @@ static void ir_alloc_task(void* task) {
     }
 }
 
-void cuikcg_allocate_ir(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict thread_pool, TB_Module* m) {
+void cuikcg_allocate_ir(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool, TB_Module* m) {
     // we actually fill the remaining count while we dispatch tasks, it's ok for it to hit 0
     // occasionally (very rare realistically).
     enum { BATCH_SIZE = 65536 };
 
-    Futex remaining = 0;
-    size_t ordinal = 0;
-    CUIK_FOR_EACH_TU(tu, cu) {
-        size_t count = dyn_array_length(tu->top_level_stmts);
-        remaining += (count + (BATCH_SIZE - 1)) / BATCH_SIZE;
+    size_t count = dyn_array_length(tu->top_level_stmts);
+    Futex remaining = (count + (BATCH_SIZE - 1)) / BATCH_SIZE;
 
-        Stmt** top_level = tu->top_level_stmts;
-        tu->ir_mod = m;
+    Stmt** top_level = tu->top_level_stmts;
+    tu->ir_mod = m;
 
-        for (size_t i = 0; i < count; i += BATCH_SIZE) {
-            size_t end = i + BATCH_SIZE;
-            if (end >= count) end = count;
+    for (size_t i = 0; i < count; i += BATCH_SIZE) {
+        size_t end = i + BATCH_SIZE;
+        if (end >= count) end = count;
 
-            IRAllocTask t = {
-                .mod = m,
-                .tu = tu,
-                .stmts = &top_level[i],
-                .count = end - i,
-                .remaining = &remaining,
-                .ordinal_base = ordinal,
-            };
+        IRAllocTask t = {
+            .mod = m,
+            .tu = tu,
+            .stmts = &top_level[i],
+            .count = end - i,
+            .remaining = &remaining,
+        };
 
-            ordinal += t.count;
-            if (thread_pool) {
-                CUIK_CALL(thread_pool, submit, ir_alloc_task, sizeof(t), &t);
-            } else {
-                ir_alloc_task(&t);
-            }
+        if (thread_pool) {
+            CUIK_CALL(thread_pool, submit, ir_alloc_task, sizeof(t), &t);
+        } else {
+            ir_alloc_task(&t);
         }
     }
 
@@ -2610,24 +2605,6 @@ void cuikcg_allocate_ir(CompilationUnit* restrict cu, Cuik_IThreadpool* restrict
 void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m) {
     size_t count = dyn_array_length(tu->top_level_stmts);
     tu->ir_mod = m;
-
-    for (size_t i = 0; i < count; i++) {
-        Stmt* s = tu->top_level_stmts[i];
-        const char* name = s->decl.name;
-
-        if (s->op == STMT_FUNC_DECL) {
-            if (s->decl.attrs.is_static || s->decl.attrs.is_inline) {
-                if (!s->decl.attrs.is_used) continue;
-            }
-
-            s->flags |= STMT_FLAGS_HAS_IR_BACKING;
-        } else if (s->op == STMT_GLOBAL_DECL || s->op == STMT_DECL) {
-            if (!s->decl.attrs.is_extern && !s->decl.attrs.is_typedef &&
-                s->decl.name && cuik_canonical_type(s->decl.type)->kind != KIND_FUNC) {
-                s->flags |= STMT_FLAGS_HAS_IR_BACKING;
-            }
-        }
-    }
 
     IRAllocTask t = {
         .mod = m,

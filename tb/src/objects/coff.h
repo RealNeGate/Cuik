@@ -123,14 +123,6 @@ typedef union COFF_SymbolUnion {
     COFF_Symbol s;
     COFF_AuxSectionSymbol a;
 } COFF_SymbolUnion;
-
-typedef struct {
-    union {
-        unsigned long l_symndx; /* function name symbol index */
-        unsigned long l_paddr;  /* address of line number     */
-    } l_addr;
-    unsigned short l_lnno; /* line number                */
-} LINENO;
 #pragma pack(pop)
 
 #pragma pack(push, 1)

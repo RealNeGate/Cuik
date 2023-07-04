@@ -87,9 +87,6 @@ size_t tb_atomic_size_add(size_t* dst, size_t src);
 size_t tb_atomic_size_sub(size_t* dst, size_t src);
 size_t tb_atomic_size_store(size_t* dst, size_t src);
 
-void* tb_atomic_ptr_exchange(void** address, void* new_value);
-bool tb_atomic_ptr_cmpxchg(void** address, void* old_value, void* new_value);
-
 #define CODE_REGION_BUFFER_SIZE (256 * 1024 * 1024)
 
 typedef struct TB_Emitter {
@@ -298,6 +295,10 @@ typedef struct TB_FunctionOutput {
 
     // export-specific
     uint32_t unwind_info;
+    uint32_t unwind_size;
+
+    // windows COMDAT specific
+    uint32_t comdat_id;
 
     DynArray(TB_StackSlot) stack_slots;
 
@@ -306,33 +307,22 @@ typedef struct TB_FunctionOutput {
     TB_SafepointKey* safepoints;
 } TB_FunctionOutput;
 
-typedef struct TB_NodePage TB_NodePage;
-struct TB_NodePage {
-    TB_NodePage* next;
-    size_t used, cap;
-    char data[];
-};
-
-enum {
-    TB_NODE_PAGE_GENERAL_CAP = 4096 - sizeof(TB_NodePage),
-};
-
 struct TB_Function {
     TB_Symbol super;
     TB_Linkage linkage;
 
-    TB_FunctionPrototype* prototype;
+    _Atomic(TB_FunctionPrototype*) prototype;
     TB_Comdat comdat;
 
     TB_Node* start_node;
     TB_Node* active_control_node;
 
     size_t safepoint_count;
-
-    // Nodes allocator (micro block alloc)
     size_t control_node_count;
     size_t node_count;
-    TB_NodePage *head, *tail;
+
+    // IR allocation
+    TB_Arena* arena;
 
     // IR building: current line
     TB_Attrib* line_attrib;
@@ -420,9 +410,8 @@ struct TB_Module {
     tb_atomic_size_t compiled_function_count;
 
     // symbol table
-    tb_atomic_size_t symbol_count[TB_SYMBOL_MAX];
-    TB_Symbol* first_symbol_of_tag[TB_SYMBOL_MAX];
-    TB_Symbol* last_symbol_of_tag[TB_SYMBOL_MAX];
+    _Atomic(size_t) symbol_count[TB_SYMBOL_MAX];
+    _Atomic(TB_Symbol*) first_symbol_of_tag[TB_SYMBOL_MAX];
 
     alignas(64) struct {
         Pool(TB_DebugType) debug_types;
@@ -695,6 +684,9 @@ size_t tb_helper_get_text_section_layout(TB_Module* m, size_t symbol_id_start);
 
 size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections, const ICodeGen* restrict code_gen, size_t output_size, size_t reloc_size, bool sizing);
 
+TB_ExportChunk* tb_export_make_chunk(size_t size);
+void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
+
 ////////////////////////////////
 // ANALYSIS
 ////////////////////////////////
@@ -703,8 +695,6 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, const char* name
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
 void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos);
-
-TB_Reg* tb_vla_reserve(TB_Function* f, size_t count);
 
 // trusty lil hash functions
 uint32_t tb__crc32(uint32_t crc, size_t length, const void* data);

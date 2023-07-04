@@ -20,6 +20,7 @@ bool cse_compare(void* a, void* b) {
     }
 }
 
+// TODO(NeGate): get the new CSE to be as good as the old one lol
 #if 0
 // this is a conservative algorithm, if we don't handle a node in here
 // it'll just fail to compare

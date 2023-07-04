@@ -22,7 +22,7 @@ TB_API TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch) {
     l->target_arch = arch;
     l->messages = tb_platform_heap_alloc((1u << QEXP) * sizeof(TB_LinkerMsg));
 
-    l->symtab.exp = 14;
+    l->symtab.exp = 24;
     CUIK_TIMED_BLOCK("tb_platform_valloc") {
         l->symtab.ht = tb_platform_valloc((1u << l->symtab.exp) * sizeof(TB_LinkerSymbol));
     }
@@ -110,7 +110,7 @@ TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar
     l->vtbl.append_library(l, ar_name, ar_file);
 }
 
-TB_API TB_Exports tb_linker_export(TB_Linker* l) {
+TB_API TB_ExportBuffer tb_linker_export(TB_Linker* l) {
     return l->vtbl.export(l);
 }
 

@@ -568,6 +568,7 @@ struct Stmt {
             };
 
             Attribs attrs;
+            uint32_t local_ordinal;
         } decl;
         struct StmtFor {
             Stmt* first;

@@ -1,8 +1,6 @@
 #include "tb_internal.h"
+#include <stdatomic.h>
 
-// something to note in this setup, we're not iterating the lists while the atomics are happening.
-// they just need to not corrupt each other's values and first_symbol_of_tag isn't really used in
-// the construction phase so it is technically built async from last_symbol_of_tag which is necessary.
 TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, const char* name, size_t size) {
     // TODO(NeGate): probably wanna have a custom heap for the symbol table
     assert(tag != TB_SYMBOL_NONE);
@@ -14,47 +12,48 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, const char* name
     s->module = m;
     s->next = NULL;
 
-    tb_atomic_size_add(&m->symbol_count[tag], 1);
-    tb_atomic_ptr_cmpxchg((void**) &m->first_symbol_of_tag[tag], NULL, s);
-
-    TB_Symbol* last = tb_atomic_ptr_exchange((void**) &m->last_symbol_of_tag[tag], s);
-    if (last) {
-        // doesn't need to be atomic because every 'last' on any thread is going to be unique
-        s->prev = last;
-        last->next = s;
-    }
-
+    tb_symbol_append(m, s);
     return s;
 }
 
 void tb_symbol_append(TB_Module* m, TB_Symbol* s) {
     enum TB_SymbolTag tag = s->tag;
-    tb_atomic_size_add(&m->symbol_count[tag], 1);
-    tb_atomic_ptr_cmpxchg((void**) &m->first_symbol_of_tag[tag], NULL, s);
+    atomic_fetch_add(&m->symbol_count[tag], 1);
 
-    // atomic append (linked lists are kinda based ngl)
-    TB_Symbol* last = tb_atomic_ptr_exchange((void**) &m->last_symbol_of_tag[tag], s);
-    if (last) {
-        s->prev = last;
-        last->next = s;
+    TB_Symbol* old_top;
+    do {
+        old_top = atomic_load(&m->first_symbol_of_tag[tag]);
+        s->next = old_top;
+    } while (!atomic_compare_exchange_strong(&m->first_symbol_of_tag[tag], &old_top, s));
+
+    if (old_top != NULL) {
+        atomic_store((_Atomic(TB_Symbol*)*) &old_top->prev, s);
     }
 }
 
+// NOTE(NeGate): the external symbols must be externally
+// synchronized because threading is hard
+//
 // converts external into global
 TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkage linkage) {
     TB_Module* m = e->super.module;
 
-    // remove from external list
-    TB_Symbol* next = e->super.next;
-    tb_atomic_ptr_cmpxchg((void**) &m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL], &e->super, next);
-
     TB_Symbol* prev = e->super.prev;
-    tb_atomic_ptr_cmpxchg((void**) &m->last_symbol_of_tag[TB_SYMBOL_EXTERNAL], &e->super, prev);
-    tb_atomic_size_sub(&m->symbol_count[TB_SYMBOL_EXTERNAL], 1);
+    TB_Symbol* next = e->super.next;
+
+    if (m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL] == (TB_Symbol*) e) {
+        m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL] = next;
+        next->prev = NULL;
+    } else {
+        next->prev = prev;
+        prev->next = next;
+    }
+    m->symbol_count[TB_SYMBOL_EXTERNAL] -= 1;
 
     // convert into global
     TB_Global* g = (TB_Global*) e;
     g->super.tag = TB_SYMBOL_GLOBAL;
+    g->super.next = NULL;
     g->dbg_type = dbg_type;
     g->linkage = linkage;
 

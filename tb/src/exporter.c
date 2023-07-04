@@ -1,9 +1,9 @@
 #include "tb_internal.h"
 
-TB_Exports tb_coff_write_output(TB_Module* restrict m, const IDebugFormat* dbg);
-TB_Exports tb_macho_write_output(TB_Module* restrict m, const IDebugFormat* dbg);
-TB_Exports tb_elf64obj_write_output(TB_Module* restrict m, const IDebugFormat* dbg);
-TB_Exports tb_wasm_write_output(TB_Module* restrict m, const IDebugFormat* dbg);
+TB_ExportBuffer tb_coff_write_output(TB_Module* restrict m, const IDebugFormat* dbg);
+TB_ExportBuffer tb_macho_write_output(TB_Module* restrict m, const IDebugFormat* dbg);
+TB_ExportBuffer tb_elf64obj_write_output(TB_Module* restrict m, const IDebugFormat* dbg);
+TB_ExportBuffer tb_wasm_write_output(TB_Module* restrict m, const IDebugFormat* dbg);
 
 static const IDebugFormat* find_debug_format(TB_DebugFormat debug_fmt) {
     switch (debug_fmt) {
@@ -13,8 +13,8 @@ static const IDebugFormat* find_debug_format(TB_DebugFormat debug_fmt) {
     }
 }
 
-TB_API TB_Exports tb_module_object_export(TB_Module* m, TB_DebugFormat debug_fmt){
-    typedef TB_Exports ExporterFn(TB_Module* restrict m, const IDebugFormat* dbg);
+TB_API TB_ExportBuffer tb_module_object_export(TB_Module* m, TB_DebugFormat debug_fmt){
+    typedef TB_ExportBuffer ExporterFn(TB_Module* restrict m, const IDebugFormat* dbg);
 
     // map target systems to exporters (maybe we wanna decouple this later)
     static ExporterFn* const fn[TB_SYSTEM_MAX] = {
@@ -25,16 +25,42 @@ TB_API TB_Exports tb_module_object_export(TB_Module* m, TB_DebugFormat debug_fmt
     };
 
     assert(fn[m->target_system] != NULL && "TODO");
-    TB_Exports e;
+    TB_ExportBuffer e;
     CUIK_TIMED_BLOCK("export") {
         e = fn[m->target_system](m, find_debug_format(debug_fmt));
     }
     return e;
 }
 
-TB_API void tb_exporter_free(TB_Exports exports) {
-    FOREACH_N(i, 0, exports.count) {
-        tb_platform_heap_free(exports.files[i].data);
+TB_API bool tb_export_buffer_to_file(TB_ExportBuffer buffer, const char* path) {
+    if (buffer.total == 0) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: could not export '%s' (no contents)\n", path);
+        return false;
+    }
+
+    FILE* file = fopen(path, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "\x1b[31merror\x1b[0m: could not open file for writing! %s\n", path);
+        return false;
+    }
+
+    for (TB_ExportChunk* c = buffer.head; c != NULL; c = c->next) {
+        if (fwrite(c->data, 1, c->size, file) == 1) {
+            fprintf(stderr, "\x1b[31merror\x1b[0m: could not write to file! %s (not enough storage?)\n", path);
+            return false;
+        }
+    }
+
+    fclose(file);
+    return true;
+}
+
+TB_API void tb_export_buffer_free(TB_ExportBuffer buffer) {
+    TB_ExportChunk* c = buffer.head;
+    while (c != NULL) {
+        TB_ExportChunk* next = c->next;
+        tb_platform_heap_free(c);
+        c = next;
     }
 }
 
@@ -60,7 +86,7 @@ static int compare_symbols(const void* a, const void* b) {
     const TB_Symbol* sym_a = *(const TB_Symbol**) a;
     const TB_Symbol* sym_b = *(const TB_Symbol**) b;
 
-    return sym_a->ordinal - sym_b->ordinal;
+    return (sym_a->ordinal > sym_b->ordinal) - (sym_a->ordinal < sym_b->ordinal);
 }
 
 static int compare_functions(const void* a, const void* b) {
@@ -71,7 +97,7 @@ static int compare_functions(const void* a, const void* b) {
     int diff = sym_a->comdat.type - sym_b->comdat.type;
     if (diff) return diff;
 
-    return sym_a->super.ordinal - sym_b->super.ordinal;
+    return (sym_a->super.ordinal > sym_b->super.ordinal) - (sym_a->super.ordinal < sym_b->super.ordinal);
 }
 
 TB_API void tb_module_layout_sections(TB_Module* m) {
@@ -84,23 +110,26 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
             size_t count = m->symbol_count[tag];
             array_form = tb_platform_heap_realloc(array_form, count * sizeof(TB_Symbol*));
 
-            size_t i = 0;
+            // because the nodes are pushed in reverse order we're better off if we do
+            // the same such that we optimize around ordinal which match time placed into
+            // the symbol list.
             CUIK_TIMED_BLOCK("convert to array") {
+                size_t i = count;
                 for (TB_Symbol* s = m->first_symbol_of_tag[tag]; s != NULL; s = s->next) {
-                    array_form[i++] = s;
+                    array_form[--i] = s;
                 }
-                assert(i == m->symbol_count[tag]);
+                assert(i == 0);
             }
 
             // functions have special rules on ordering but other than that, ordinals go brr
             CUIK_TIMED_BLOCK("sort by ordinal") qsort(
-                array_form, i, sizeof(TB_Symbol*),
+                array_form, count, sizeof(TB_Symbol*),
                 tag == TB_SYMBOL_FUNCTION ? compare_functions : compare_symbols
             );
 
             CUIK_TIMED_BLOCK("convert back to list") {
+                size_t i = count;
                 m->first_symbol_of_tag[tag] = array_form[0];
-                m->last_symbol_of_tag[tag] = array_form[i - 1];
 
                 FOREACH_N(j, 1, i) {
                     array_form[j-1]->next = array_form[j];
@@ -215,11 +244,11 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections
             output_size += reloc_count * reloc_size;
 
             if (sections[i]->total_comdat_relocs) {
-                TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
+                TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output && f->comdat.type != TB_COMDAT_NONE) {
                     f->patch_pos = output_size;
 
                     for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
-                        if (!p->internal && f->comdat.type != TB_COMDAT_NONE) output_size += reloc_size;
+                        if (!p->internal) output_size += reloc_size;
                     }
                 }
             }
@@ -227,4 +256,25 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections
     }
 
     return output_size;
+}
+
+TB_ExportChunk* tb_export_make_chunk(size_t size) {
+    TB_ExportChunk* c = tb_platform_heap_alloc(sizeof(TB_ExportChunk) + size);
+    c->next = NULL;
+    c->pos  = 0;
+    c->size = size;
+    log_debug("make chunk: %p %zu", c, size);
+    return c;
+}
+
+void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c) {
+    if (buffer->head == NULL) {
+        buffer->head = buffer->tail = c;
+    } else {
+        buffer->tail->next = c;
+        buffer->tail = c;
+    }
+
+    c->pos = buffer->total;
+    buffer->total += c->size;
 }

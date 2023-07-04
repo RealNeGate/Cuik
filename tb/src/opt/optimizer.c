@@ -1,3 +1,15 @@
+// Let's just explain the architecture of the optimizer here.
+//
+// # Peephole optimizations
+//   These are the kind which work locally like 2+2=4 and in TB's design they're
+//   performed incrementally which means that certain mutations must go through
+//   functions to guarentee they update correctly. Let's go over those:
+//
+//   set_input(queue, n, in, slot)
+//     basically `n->inputs[slot] = in` except it correctly updates the user set
+//
+// # Implement peepholes
+//     TODO
 #include "../tb_internal.h"
 #include <log.h>
 
@@ -259,6 +271,10 @@ static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_No
     }
 
     switch (n->type) {
+        case TB_NOT:
+        case TB_NEG:
+        return try_unary_fold(f, queue, n);
+
         // integer ops
         case TB_AND:
         case TB_OR:
@@ -275,7 +291,7 @@ static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_No
         case TB_CMP_SLE:
         case TB_CMP_ULT:
         case TB_CMP_ULE:
-        return do_int_fold(f, queue, n);
+        return try_int_binop_fold(f, queue, n);
 
         // division
         case TB_SDIV:
@@ -329,7 +345,7 @@ static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
 
         #ifndef NDEBUG
         if (m+n > m*2) {
-            log_debug("peephole %s: O(%d + %d) <= O(%d*2)", f->super.name, m, n, m);
+            log_warn("peephole %s: O(%d + %d) <= O(%d*2)", f->super.name, m, n, m);
         }
         #endif
     }

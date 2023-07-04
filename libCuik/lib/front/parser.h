@@ -90,6 +90,8 @@ struct TranslationUnit {
     void* user_data;
     bool is_free;
 
+    int local_ordinal;
+
     #ifdef CUIK_USE_TB
     TB_Module* ir_mod;
     #endif

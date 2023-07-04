@@ -7,6 +7,13 @@ static int compare_relocs(const void* a, const void* b) {
     return aa->VirtualAddress - bb->VirtualAddress;
 }
 
+static int compare_pdata(const void* a, const void* b) {
+    const uint32_t* sym_a = (const uint32_t*) a;
+    const uint32_t* sym_b = (const uint32_t*) b;
+
+    return (sym_a[0] > sym_b[0]) - (sym_a[0] < sym_b[0]);
+}
+
 static COFF_Symbol section_sym(const char* name, int num, int sc) {
     COFF_Symbol s = { .section_number = num, .storage_class = sc, .aux_symbols_count = 1 };
     strncpy((char*) s.short_name, name, 8);
@@ -21,9 +28,125 @@ static COFF_AuxSectionSymbol section_aux_sym(COFF_SectionHeader* s, int num) {
     };
 }
 
+typedef struct { size_t pos, size; } StringTable;
+static StringTable layout_string_table(TB_Module* m, size_t output_size) {
+    // first 4 bytes of the table are the size of the table
+    StringTable strtbl = { .pos = output_size, .size = 4 };
+
+    TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
+        size_t name_len = strlen(f->super.name);
+        if (name_len >= 8) strtbl.size += name_len + 1;
+    }
+
+    TB_FOR_EXTERNALS(ext, m) if (ext->super.name) {
+        size_t name_len = strlen(ext->super.name);
+        if (name_len >= 8) strtbl.size += name_len + 1;
+    }
+
+    TB_FOR_GLOBALS(g, m) if (g->super.name) {
+        size_t name_len = strlen(g->super.name);
+        if (name_len >= 8) strtbl.size += name_len + 1;
+    }
+
+    return strtbl;
+}
+
+// COFF unwind info is two sections, .pdata and .xdata
+typedef struct {
+    size_t count;
+    TB_Function* first;
+
+    size_t section_num, patch_count;
+
+    TB_ExportChunk* xdata_chunk;
+    TB_ExportChunk* pdata_chunk;
+    TB_ExportChunk* pdata_relocs;
+
+    COFF_SectionHeader xdata_header;
+    COFF_SectionHeader pdata_header;
+} Unwind;
+
+static Unwind generate_unwind_info(const ICodeGen* restrict code_gen, size_t section_num, TB_Function* first, size_t count) {
+    Unwind u = { .count = count, .patch_count = count * 3, .first = first, .section_num = section_num*2 + 2 };
+
+    // generate pdata
+    u.pdata_chunk = tb_export_make_chunk(count * 3 * sizeof(uint32_t));
+    uint32_t* pdata = (uint32_t*) u.pdata_chunk->data;
+
+    bool overflow = count * 3 >= 0xFFFF;
+    u.pdata_relocs = tb_export_make_chunk(overflow + (count * 3 * sizeof(COFF_ImageReloc)));
+    COFF_ImageReloc* relocs = (COFF_ImageReloc*) u.pdata_relocs->data;
+
+    if (overflow) {
+        *relocs++ = (COFF_ImageReloc){ .VirtualAddress = count * 3 };
+    }
+
+    // generate xdata
+    TB_Function* f = first;
+    TB_Emitter xdata = { 0 };
+    FOREACH_N(i, 0, count) {
+        TB_FunctionOutput* out_f = f->output;
+        if (out_f != NULL) {
+            out_f->unwind_info = xdata.count;
+            code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->prologue_epilogue_metadata, out_f->stack_usage);
+            out_f->unwind_size = xdata.count - out_f->unwind_info;
+
+            // write pdata
+            uint32_t pos = f->comdat.type != TB_COMDAT_NONE ? 0 : out_f->code_pos;
+
+            size_t j = i*3;
+            pdata[j+0] = pos;
+            pdata[j+1] = pos + out_f->code_size;
+            pdata[j+2] = out_f->unwind_info;
+
+            // pdata has relocations
+            uint32_t sym = f->comdat.type != TB_COMDAT_NONE ? f->super.symbol_id : 0;
+            relocs[j + 0] = (COFF_ImageReloc){
+                .Type = IMAGE_REL_AMD64_ADDR32NB,
+                .SymbolTableIndex = sym,
+                .VirtualAddress = j * 4
+            };
+
+            relocs[j + 1] = (COFF_ImageReloc){
+                .Type = IMAGE_REL_AMD64_ADDR32NB,
+                .SymbolTableIndex = sym,
+                .VirtualAddress = (j * 4) + 4
+            };
+
+            relocs[j + 2] = (COFF_ImageReloc){
+                .Type = IMAGE_REL_AMD64_ADDR32NB,
+                .SymbolTableIndex = u.section_num, // xdata section
+                .VirtualAddress = (j * 4) + 8
+            };
+        }
+
+        f = (TB_Function*) f->super.next;
+    }
+
+    u.xdata_chunk = tb_export_make_chunk(xdata.count);
+    memcpy(u.xdata_chunk->data, xdata.data, xdata.count);
+    tb_platform_heap_free(xdata.data);
+
+    // generate COFF headers
+    u.pdata_header = (COFF_SectionHeader){
+        .name = ".pdata",
+        .characteristics = COFF_CHARACTERISTICS_RODATA | (u.patch_count >= 0xFFFF ? IMAGE_SCN_LNK_NRELOC_OVFL : 0),
+        .raw_data_size = u.pdata_chunk->size,
+        .num_reloc = u.patch_count,
+    };
+
+    u.xdata_header = (COFF_SectionHeader){
+        .name = ".xdata",
+        .characteristics = COFF_CHARACTERISTICS_RODATA,
+        .raw_data_size = u.xdata_chunk->size,
+    };
+
+    return u;
+}
+
 #define APPEND_SECTION(sec) if (sec.total_size) { dyn_array_put(sections, &sec); }
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
-TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
+TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     TB_TemporaryStorage* tls = tb_tls_allocate();
 
     CUIK_TIMED_BLOCK("layout section") {
@@ -47,44 +170,47 @@ TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     int section_count = dyn_array_length(sections) + dbg_section_count;
     size_t normal_function_count = m->compiled_function_count - m->comdat_function_count;
 
-    // .pdata and .xdata
-    size_t xdata_section_num = section_count*2 + 2;
-    section_count += 2;
-
-    TB_Emitter xdata = { 0 };
     const ICodeGen* restrict code_gen = tb__find_code_generator(m);
-    if (code_gen->emit_win64eh_unwind_info) {
-        TB_FOR_FUNCTIONS(f, m) {
-            TB_FunctionOutput* out_f = f->output;
-
-            if (out_f != NULL) {
-                out_f->unwind_info = xdata.count;
-                code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->prologue_epilogue_metadata, out_f->stack_usage);
-            }
-        }
-    } else {
+    if (code_gen->emit_win64eh_unwind_info == NULL) {
         tb_panic("write_xdata_section: emit_win64eh_unwind_info is required.");
+    }
+
+    // there's one shared for all normal functions, and one
+    // table per COMDAT function.
+    size_t unwind_count = 1 + m->comdat_function_count;
+    Unwind* unwinds = ARENA_ARR_ALLOC(&tb__arena, unwind_count, Unwind);
+    {
+        unwinds[0] = generate_unwind_info(code_gen, section_count, (TB_Function*) m->first_symbol_of_tag[TB_SYMBOL_FUNCTION], normal_function_count);
+        section_count += 2;
+
+        size_t i = 1;
+        TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type != TB_COMDAT_NONE) {
+            f->output->comdat_id = i;
+
+            unwinds[i++] = generate_unwind_info(code_gen, section_count, f, 1);
+            section_count += 2;
+        }
     }
 
     // mark each with a unique id
     size_t unique_id_counter = section_count * 2;
-    {
-        section_count += m->comdat_function_count;
-
-        CUIK_TIMED_BLOCK("AllocSymbolIDs") {
-            TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type != TB_COMDAT_NONE) {
-                f->super.symbol_id = unique_id_counter + 2;
-                unique_id_counter += 3;
-            }
-
-            TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type == TB_COMDAT_NONE) {
-                f->super.symbol_id = unique_id_counter++;
-            }
-
-            TB_FOR_EXTERNALS(ext, m) ext->super.symbol_id = unique_id_counter++;
-            TB_FOR_GLOBALS(g, m) g->super.symbol_id = unique_id_counter++;
+    CUIK_TIMED_BLOCK("alloc symbol IDs") {
+        TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type != TB_COMDAT_NONE) {
+            // COMDAT .text section takes 2 symbols and then there's the function symbol
+            f->super.symbol_id = unique_id_counter + 2;
+            unique_id_counter += 3;
         }
+
+        TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type == TB_COMDAT_NONE) {
+            f->super.symbol_id = unique_id_counter++;
+        }
+
+        TB_FOR_EXTERNALS(ext, m) ext->super.symbol_id = unique_id_counter++;
+        TB_FOR_GLOBALS(g, m) g->super.symbol_id = unique_id_counter++;
     }
+
+    // added after unique_id_counter
+    section_count += m->comdat_function_count;
 
     size_t string_table_cap = unique_id_counter;
     const char** string_table = tb_platform_heap_alloc(string_table_cap * sizeof(char*));
@@ -123,13 +249,17 @@ TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         output_size += debug_sections.data[i].raw_data.length;
     }
 
-    // pdata + xdata
-    size_t pdata_patch_count = m->compiled_function_count * 3;
-    size_t pdata_pos = output_size, pdata_size = pdata_patch_count * sizeof(uint32_t);
-    output_size += pdata_size;
+    // layout unwind data
+    FOREACH_N(i, 0, unwind_count) {
+        unwinds[i].pdata_header.raw_data_pos = output_size;
+        output_size += unwinds[i].pdata_header.raw_data_size;
 
-    size_t xdata_pos = output_size;
-    output_size += xdata.count;
+        unwinds[i].xdata_header.raw_data_pos = output_size;
+        output_size += unwinds[i].xdata_header.raw_data_size;
+
+        unwinds[i].pdata_header.pointer_to_reloc = output_size;
+        output_size += unwinds[i].pdata_header.num_reloc * sizeof(COFF_ImageReloc);
+    }
 
     // calculate relocation layout
     output_size = tb__layout_relocations(m, sections, code_gen, output_size, sizeof(COFF_ImageReloc), false);
@@ -142,169 +272,128 @@ TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         output_size += reloc_count * sizeof(COFF_ImageReloc);
     }
 
-    size_t pdata_patch_pos = output_size;
-    output_size += pdata_patch_count * sizeof(COFF_ImageReloc);
-
     header.symbol_table = output_size;
     output_size += header.symbol_count * sizeof(COFF_Symbol);
 
     // compute string table size
-    size_t string_table_size = 4;
-    size_t string_table_pos = output_size;
-    CUIK_TIMED_BLOCK("StringTblLayout") {
-        TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
-            size_t name_len = strlen(f->super.name);
-            if (name_len >= 8) string_table_size += name_len + 1;
-        }
-
-        TB_FOR_EXTERNALS(ext, m) if (ext->super.name) {
-            size_t name_len = strlen(ext->super.name);
-            if (name_len >= 8) string_table_size += name_len + 1;
-        }
-
-        TB_FOR_GLOBALS(g, m) if (g->super.name) {
-            size_t name_len = strlen(g->super.name);
-            if (name_len >= 8) string_table_size += name_len + 1;
-        }
-    }
-
-    output_size += string_table_size;
+    StringTable strtbl = layout_string_table(m, output_size);
+    output_size += strtbl.size;
 
     ////////////////////////////////
     // write output
     ////////////////////////////////
-    size_t write_pos = 0;
-    uint8_t* restrict output = tb_platform_heap_alloc(output_size);
+    TB_ExportBuffer buffer = { 0 };
 
     CUIK_TIMED_BLOCK("write output") {
-        // write COFF header
-        WRITE(&header, sizeof(header));
+        CUIK_TIMED_BLOCK("write headers") {
+            TB_ExportChunk* headers = tb_export_make_chunk(sizeof(COFF_FileHeader) + (sizeof(COFF_SectionHeader) * section_count));
 
-        // write sections headers
-        dyn_array_for(i, sections) {
-            COFF_SectionHeader header = {
-                .characteristics = sections[i]->flags,
-                .raw_data_size = sections[i]->total_size - sections[i]->total_comdat,
-                .raw_data_pos = sections[i]->raw_data_pos,
-                .pointer_to_reloc = sections[i]->reloc_pos
-            };
+            // write COFF header
+            COFF_FileHeader* file = (COFF_FileHeader*) headers->data;
+            *file = header;
 
-            size_t len = strlen(sections[i]->name);
-            memcpy(header.name, sections[i]->name, len > 8 ? 8 : len);
+            // write sections headers
+            COFF_SectionHeader* sec_headers = (COFF_SectionHeader*) (file + 1);
+            dyn_array_for(i, sections) {
+                COFF_SectionHeader header = {
+                    .characteristics = sections[i]->flags,
+                    .raw_data_size = sections[i]->total_size - sections[i]->total_comdat,
+                    .raw_data_pos = sections[i]->raw_data_pos,
+                    .pointer_to_reloc = sections[i]->reloc_pos
+                };
 
-            if (sections[i]->reloc_count >= 0xFFFF) {
-                header.num_reloc = 0xFFFF;
-                header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
-            } else {
-                header.num_reloc = sections[i]->reloc_count;
+                size_t len = strlen(sections[i]->name);
+                memcpy(header.name, sections[i]->name, len > 8 ? 8 : len);
+
+                if (sections[i]->reloc_count >= 0xFFFF) {
+                    header.num_reloc = 0xFFFF;
+                    header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
+                } else {
+                    header.num_reloc = sections[i]->reloc_count;
+                }
+
+                *sec_headers++ = header;
             }
 
-            WRITE(&header, sizeof(header));
-        }
+            FOREACH_N(i, 0, debug_sections.length) {
+                COFF_SectionHeader header = {
+                    .characteristics = COFF_CHARACTERISTICS_DEBUG,
+                    .raw_data_size = debug_sections.data[i].raw_data.length,
+                    .raw_data_pos = debug_sections.data[i].virtual_address,
+                    .pointer_to_reloc = (uintptr_t) debug_sections.data[i].user_data
+                };
 
-        FOREACH_N(i, 0, debug_sections.length) {
-            COFF_SectionHeader header = {
-                .characteristics = COFF_CHARACTERISTICS_DEBUG,
-                .raw_data_size = debug_sections.data[i].raw_data.length,
-                .raw_data_pos = debug_sections.data[i].virtual_address,
-                .pointer_to_reloc = (uintptr_t) debug_sections.data[i].user_data
-            };
+                /*if (dbg == &tb__codeview_debug_format) {
+                    header.characteristics |= IMAGE_SCN_MEM_DISCARDABLE;
+                }*/
 
-            /*if (dbg == &tb__codeview_debug_format) {
-                header.characteristics |= IMAGE_SCN_MEM_DISCARDABLE;
-            }*/
+                TB_Slice name = debug_sections.data[i].name;
+                assert(name.length <= 8);
+                memcpy(header.name, name.data, name.length);
 
-            TB_Slice name = debug_sections.data[i].name;
-            assert(name.length <= 8);
-            memcpy(header.name, name.data, name.length);
+                size_t reloc_count = debug_sections.data[i].relocation_count;
+                if (reloc_count >= 0xFFFF) {
+                    header.num_reloc = 0xFFFF;
+                    header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
+                } else {
+                    header.num_reloc = reloc_count;
+                }
 
-            size_t reloc_count = debug_sections.data[i].relocation_count;
-            if (reloc_count >= 0xFFFF) {
-                header.num_reloc = 0xFFFF;
-                header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
-            } else {
-                header.num_reloc = reloc_count;
+                *sec_headers++ = header;
             }
 
-            WRITE(&header, sizeof(header));
-        }
-
-        // pdata then xdata
-        FOREACH_N(i, 0, 2) {
-            COFF_SectionHeader header = {
-                .characteristics = COFF_CHARACTERISTICS_RODATA,
-                .raw_data_size = i ? xdata.count : pdata_size,
-                .raw_data_pos = i ? xdata_pos : pdata_pos,
-                .pointer_to_reloc = i ? 0 : pdata_patch_pos,
-                .num_reloc = i ? 0 : pdata_patch_count,
-            };
-            strncpy(header.name, i ? ".xdata" : ".pdata", 8);
-
-            if (i == 0 && pdata_patch_count >= 0xFFFF) {
-                header.num_reloc = 0xFFFF;
-                header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
+            // pdata then xdata
+            FOREACH_N(i, 0, unwind_count) {
+                *sec_headers++ = unwinds[i].pdata_header;
+                *sec_headers++ = unwinds[i].xdata_header;
             }
 
-            WRITE(&header, sizeof(header));
-        }
+            size_t i = 1;
+            TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type != TB_COMDAT_NONE) {
+                assert(f->patch_count < 65535 && "COMDAT function has more than 0xFFFF relocations");
+                TB_FunctionOutput* out_f = f->output;
 
-        TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type != TB_COMDAT_NONE) {
-            COFF_SectionHeader header = {
-                .characteristics = m->text.flags | IMAGE_SCN_LNK_COMDAT,
-                .raw_data_size = f->output->code_size,
-                .raw_data_pos = m->text.raw_data_pos + f->output->code_pos,
-                .pointer_to_reloc = f->patch_pos,
-                .num_reloc = f->patch_count,
-            };
-            strncpy(header.name, ".text", 8);
+                *sec_headers++ = (COFF_SectionHeader){
+                    .name = ".text",
+                    .characteristics = m->text.flags | IMAGE_SCN_LNK_COMDAT,
+                    .raw_data_size = out_f->code_size,
+                    .raw_data_pos = m->text.raw_data_pos + out_f->code_pos,
+                    .pointer_to_reloc = f->patch_pos,
+                    .num_reloc = f->patch_count,
+                };
 
-            /*if (sections[i]->reloc_count >= 0xFFFF) {
-                header.num_reloc = 0xFFFF;
-                header.characteristics |= IMAGE_SCN_LNK_NRELOC_OVFL;
-            } else {
-                header.num_reloc = sections[i]->reloc_count;
-            }*/
+                out_f->comdat_id = i++;
+            }
 
-            WRITE(&header, sizeof(header));
+            tb_export_append_chunk(&buffer, headers);
         }
 
         // write raw data
         dyn_array_for(i, sections) {
-            write_pos = tb_helper_write_section(
-                m, write_pos, sections[i], output, sections[i]->raw_data_pos
-            );
+            TB_ExportChunk* sec = tb_export_make_chunk(sections[i]->total_size);
+            tb_helper_write_section(m, 0, sections[i], sec->data, 0);
+            tb_export_append_chunk(&buffer, sec);
         }
 
         FOREACH_N(i, 0, debug_sections.length) {
-            assert(write_pos == debug_sections.data[i].virtual_address);
-
-            memcpy(&output[write_pos], debug_sections.data[i].raw_data.data, debug_sections.data[i].raw_data.length);
-            write_pos += debug_sections.data[i].raw_data.length;
+            TB_ExportChunk* sec = tb_export_make_chunk(sections[i]->total_size);
+            memcpy(sec->data, debug_sections.data[i].raw_data.data, debug_sections.data[i].raw_data.length);
+            tb_export_append_chunk(&buffer, sec);
         }
 
         // write pdata & xdata
-        {
-            uint32_t* pdata = (uint32_t*) &output[write_pos];
-            write_pos += pdata_patch_count * sizeof(uint32_t);
-
-            size_t j = 0;
-            TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
-                TB_FunctionOutput* out_f = f->output;
-                uint32_t pos = f->comdat.type != TB_COMDAT_NONE ? 0 : out_f->code_pos;
-
-                pdata[j+0] = pos;
-                pdata[j+1] = pos + out_f->code_size;
-                pdata[j+2] = out_f->unwind_info;
-                j += 3;
-            }
-
-            memcpy(&output[write_pos], xdata.data, xdata.count);
-            write_pos += xdata.count;
+        FOREACH_N(i, 0, unwind_count) {
+            tb_export_append_chunk(&buffer, unwinds[i].pdata_chunk);
+            tb_export_append_chunk(&buffer, unwinds[i].xdata_chunk);
+            tb_export_append_chunk(&buffer, unwinds[i].pdata_relocs);
         }
 
         // write relocations
         dyn_array_for(i, sections) {
-            assert(write_pos == sections[i]->reloc_pos);
+            size_t reloc_count = sections[i]->reloc_count + sections[i]->total_comdat_relocs;
+
+            TB_ExportChunk* relocations = tb_export_make_chunk(reloc_count * sizeof(COFF_ImageReloc));
+            COFF_ImageReloc* relocs = (COFF_ImageReloc*) relocations->data;
 
             if (sections[i]->kind == TB_MODULE_SECTION_TEXT) {
                 TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
@@ -318,22 +407,20 @@ TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                         }
 
                         size_t symbol_id = p->target->symbol_id;
+                        assert(symbol_id != 0);
+
                         if (p->target->tag == TB_SYMBOL_FUNCTION || p->target->tag == TB_SYMBOL_EXTERNAL) {
-                            assert(symbol_id != 0);
-                            COFF_ImageReloc r = {
+                            *relocs++ = (COFF_ImageReloc){
                                 .Type = IMAGE_REL_AMD64_REL32,
                                 .SymbolTableIndex = symbol_id,
                                 .VirtualAddress = actual_pos
                             };
-                            WRITE(&r, sizeof(r));
                         } else if (p->target->tag == TB_SYMBOL_GLOBAL) {
-                            assert(symbol_id != 0);
-                            COFF_ImageReloc r = {
+                            *relocs++ = (COFF_ImageReloc){
                                 .Type = ((TB_Global*) p->target)->parent->kind == TB_MODULE_SECTION_TLS ? IMAGE_REL_AMD64_SECREL : IMAGE_REL_AMD64_REL32,
                                 .SymbolTableIndex = symbol_id,
                                 .VirtualAddress = actual_pos
                             };
-                            WRITE(&r, sizeof(r));
                         } else {
                             tb_todo();
                         }
@@ -349,278 +436,284 @@ TB_Exports tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                         if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
                             const TB_Symbol* s = g->objects[k].reloc;
 
-                            COFF_ImageReloc r = {
+                            *relocs++ = (COFF_ImageReloc){
                                 .Type = IMAGE_REL_AMD64_ADDR64,
                                 .SymbolTableIndex = s->symbol_id,
                                 .VirtualAddress = actual_pos
                             };
-                            WRITE(&r, sizeof(r));
                         }
                     }
                 }
             }
+
+            assert((relocs - (COFF_ImageReloc*) relocations->data) == reloc_count);
+            tb_export_append_chunk(&buffer, relocations);
+
+            assert(relocations->pos == sections[i]->reloc_pos);
         }
 
         FOREACH_N(i, 0, debug_sections.length) {
-            assert(write_pos == (uintptr_t) debug_sections.data[i].user_data);
+            TB_ExportChunk* relocations = tb_export_make_chunk(debug_sections.data[i].relocation_count * sizeof(COFF_ImageReloc));
+            COFF_ImageReloc* relocs = (COFF_ImageReloc*) relocations->data;
+
             FOREACH_N(j, 0, debug_sections.data[i].relocation_count) {
                 TB_ObjectReloc* in_reloc = &debug_sections.data[i].relocations[j];
 
-                COFF_ImageReloc r = {
+                int type = 0;
+                switch (in_reloc->type) {
+                    case TB_OBJECT_RELOC_SECREL:  type = IMAGE_REL_AMD64_SECREL; break;
+                    case TB_OBJECT_RELOC_SECTION: type = IMAGE_REL_AMD64_SECTION; break;
+                    default: tb_todo();
+                }
+
+                *relocs++ = (COFF_ImageReloc){
+                    .Type = type,
                     .SymbolTableIndex = in_reloc->symbol_index,
                     .VirtualAddress = in_reloc->virtual_address
                 };
-
-                switch (in_reloc->type) {
-                    case TB_OBJECT_RELOC_SECREL:  r.Type = IMAGE_REL_AMD64_SECREL; break;
-                    case TB_OBJECT_RELOC_SECTION: r.Type = IMAGE_REL_AMD64_SECTION; break;
-                    default: tb_todo();
-                }
-                WRITE(&r, sizeof(r));
-            }
-        }
-
-        // write pdata & xdata
-        {
-            assert(write_pos == pdata_patch_pos);
-            COFF_ImageReloc* relocs = (COFF_ImageReloc*) &output[write_pos];
-            write_pos += pdata_patch_count * sizeof(COFF_ImageReloc);
-
-            size_t j = 0;
-            if (pdata_patch_count >= 0xFFFF) {
-                relocs[j++] = (COFF_ImageReloc){
-                    .VirtualAddress = pdata_patch_count
-                };
             }
 
-            TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
-                TB_FunctionOutput* out_f = f->output;
-                uint32_t sym = f->comdat.type != TB_COMDAT_NONE ? f->super.symbol_id : 0;
-
-                relocs[j + 0] = (COFF_ImageReloc){
-                    .Type = IMAGE_REL_AMD64_ADDR32NB,
-                    .SymbolTableIndex = sym,
-                    .VirtualAddress = j * 4
-                };
-
-                relocs[j + 1] = (COFF_ImageReloc){
-                    .Type = IMAGE_REL_AMD64_ADDR32NB,
-                    .SymbolTableIndex = sym,
-                    .VirtualAddress = (j * 4) + 4
-                };
-
-                relocs[j + 2] = (COFF_ImageReloc){
-                    .Type = IMAGE_REL_AMD64_ADDR32NB,
-                    .SymbolTableIndex = xdata_section_num, // xdata section
-                    .VirtualAddress = (j * 4) + 8
-                };
-                j += 3;
-            }
+            tb_export_append_chunk(&buffer, relocations);
+            assert(relocations->pos == (uintptr_t) debug_sections.data[i].user_data);
         }
 
         // write symbols
-        assert(write_pos == header.symbol_table);
-        size_t symbol_count = 1;
-        dyn_array_for(i, sections) {
-            COFF_Symbol s = {
-                .section_number = symbol_count,
-                .storage_class = IMAGE_SYM_CLASS_STATIC,
-                .aux_symbols_count = 1
-            };
-            strncpy((char*) s.short_name, sections[i]->name, 8);
-            WRITE(&s, sizeof(s));
-
-            COFF_AuxSectionSymbol aux = {
-                .length = sections[i]->total_size,
-                .reloc_count = sections[i]->reloc_count,
-                .number = symbol_count,
-            };
-            WRITE(&aux, sizeof(aux));
-            symbol_count++;
-        }
-
-        FOREACH_N(i, 0, debug_sections.length) {
-            COFF_Symbol s = {
-                .section_number = symbol_count,
-                .storage_class = IMAGE_SYM_CLASS_STATIC,
-                .aux_symbols_count = 1
-            };
-
-            int l = debug_sections.data[i].name.length;
-            if (l > 8) l = 8;
-            strncpy((char*) s.short_name, (const char*) debug_sections.data[i].name.data, l);
-
-            WRITE(&s, sizeof(s));
-
-            COFF_AuxSectionSymbol aux = {
-                .length = debug_sections.data[i].raw_data.length,
-                .reloc_count = debug_sections.data[i].relocation_count,
-                .number = symbol_count,
-            };
-            WRITE(&aux, sizeof(aux));
-            symbol_count++;
-        }
-
-        FOREACH_N(i, 0, 2) {
-            COFF_Symbol s = {
-                .section_number = symbol_count,
-                .storage_class = IMAGE_SYM_CLASS_STATIC,
-                .aux_symbols_count = 1
-            };
-            strncpy((char*) s.short_name, i ? ".xdata" : ".pdata", 8);
-            WRITE(&s, sizeof(s));
-
-            COFF_AuxSectionSymbol aux = {
-                .length = i ? xdata.count : pdata_size,
-                .reloc_count = i ? 0 : pdata_patch_count,
-                .number = symbol_count,
-            };
-            WRITE(&aux, sizeof(aux));
-            symbol_count++;
-        }
-
-        // each COMDAT function needs a section symbol and function symbol
         uint32_t string_table_mark = 4;
         size_t string_table_length = 0;
-        TB_FOR_FUNCTIONS(f, m) {
-            TB_FunctionOutput* out_f = f->output;
-            if (out_f == NULL || f->comdat.type == TB_COMDAT_NONE) continue;
+        CUIK_TIMED_BLOCK("write symbols") {
+            TB_ExportChunk* symtab = tb_export_make_chunk(header.symbol_count * sizeof(COFF_Symbol));
 
-            // write section symbol
-            {
+            size_t write_pos = 0;
+            uint8_t* output = symtab->data;
+
+            size_t symbol_count = 1;
+            dyn_array_for(i, sections) {
                 COFF_Symbol s = {
-                    .short_name = { ".text" },
                     .section_number = symbol_count,
                     .storage_class = IMAGE_SYM_CLASS_STATIC,
                     .aux_symbols_count = 1
                 };
+                strncpy((char*) s.short_name, sections[i]->name, 8);
                 WRITE(&s, sizeof(s));
 
                 COFF_AuxSectionSymbol aux = {
-                    .length = out_f->code_size,
-                    .reloc_count = f->patch_count,
-                    .selection = 2, // pick any
+                    .length = sections[i]->total_size,
+                    .reloc_count = sections[i]->reloc_count,
+                    .number = symbol_count,
                 };
                 WRITE(&aux, sizeof(aux));
+                symbol_count++;
             }
 
-            bool is_extern = out_f->linkage == TB_LINKAGE_PUBLIC;
-            COFF_Symbol sym = {
-                .value = 0,
-                .section_number = symbol_count,
-                .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
-            };
+            FOREACH_N(i, 0, debug_sections.length) {
+                COFF_Symbol s = {
+                    .section_number = symbol_count,
+                    .storage_class = IMAGE_SYM_CLASS_STATIC,
+                    .aux_symbols_count = 1
+                };
 
-            const char* name = f->super.name;
-            size_t name_len = strlen(name);
-            assert(name_len < UINT16_MAX);
-            if (name_len >= 8) {
-                sym.long_name[0] = 0; // this value is 0 for long names
-                sym.long_name[1] = string_table_mark;
+                int l = debug_sections.data[i].name.length;
+                if (l > 8) l = 8;
+                strncpy((char*) s.short_name, (const char*) debug_sections.data[i].name.data, l);
 
-                string_table[string_table_length++] = (char*)name;
-                string_table_mark += name_len + 1;
-            } else {
-                memcpy(sym.short_name, name, name_len + 1);
+                WRITE(&s, sizeof(s));
+
+                COFF_AuxSectionSymbol aux = {
+                    .length = debug_sections.data[i].raw_data.length,
+                    .reloc_count = debug_sections.data[i].relocation_count,
+                    .number = symbol_count,
+                };
+                WRITE(&aux, sizeof(aux));
+                symbol_count++;
             }
 
-            WRITE(&sym, sizeof(sym));
-            symbol_count++;
-        }
+            size_t comdat_section_start = symbol_count + (unwind_count * 2);
+            FOREACH_N(i, 0, unwind_count) {
+                Unwind* u = &unwinds[i];
 
-        TB_FOR_FUNCTIONS(f, m) {
-            TB_FunctionOutput* out_f = f->output;
-            if (out_f == NULL || f->comdat.type != TB_COMDAT_NONE) continue;
+                COFF_Symbol s[2] = {
+                    { // pdata
+                        .short_name = ".pdata", .section_number = symbol_count,
+                        .storage_class = IMAGE_SYM_CLASS_STATIC, .aux_symbols_count = 1
+                    },
+                    { // xdata
+                        .short_name = ".xdata", .section_number = symbol_count + 1,
+                        .storage_class = IMAGE_SYM_CLASS_STATIC, .aux_symbols_count = 1
+                    },
+                };
 
-            bool is_extern = out_f->linkage == TB_LINKAGE_PUBLIC;
-            COFF_Symbol sym = {
-                .value = out_f->code_pos,
-                .section_number = 1,
-                .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
-            };
+                COFF_AuxSectionSymbol aux[2] = {
+                    { // pdata
+                        .length = u->pdata_chunk->size, .reloc_count = u->patch_count,
+                        .number = symbol_count,
+                    },
+                    { // xdata
+                        .length = u->xdata_chunk->size, .number = symbol_count + 1,
+                    },
+                };
 
-            const char* name = f->super.name;
-            size_t name_len = strlen(name);
-            assert(name_len < UINT16_MAX);
-            if (name_len >= 8) {
-                sym.long_name[0] = 0; // this value is 0 for long names
-                sym.long_name[1] = string_table_mark;
+                if (i > 0) {
+                    // COMDAT functions go here
+                    assert(u->count == 1 && u->first->comdat.type != TB_COMDAT_NONE);
+                    aux[0].selection = aux[1].selection = 5; // associative with their matching text section
+                    aux[0].number = comdat_section_start + (i - 1);
+                }
 
-                string_table[string_table_length++] = (char*)name;
-                string_table_mark += name_len + 1;
-            } else {
-                memcpy(sym.short_name, name, name_len + 1);
+                WRITE(&s[0],   sizeof(COFF_Symbol));
+                WRITE(&aux[0], sizeof(COFF_AuxSectionSymbol));
+                WRITE(&s[1],   sizeof(COFF_Symbol));
+                WRITE(&aux[1], sizeof(COFF_AuxSectionSymbol));
+
+                symbol_count += 2;
             }
 
-            WRITE(&sym, sizeof(sym));
-        }
+            // each COMDAT function needs a section symbol and function symbol
+            TB_FOR_FUNCTIONS(f, m) {
+                TB_FunctionOutput* out_f = f->output;
+                if (out_f == NULL || f->comdat.type == TB_COMDAT_NONE) continue;
 
-        TB_FOR_EXTERNALS(ext, m) {
-            COFF_Symbol sym = {
-                .value = 0,
-                .section_number = 0,
-                .storage_class = IMAGE_SYM_CLASS_EXTERNAL
-            };
+                // write section symbol
+                {
+                    COFF_Symbol s = {
+                        .short_name = ".text",
+                        .section_number = symbol_count,
+                        .storage_class = IMAGE_SYM_CLASS_STATIC,
+                        .aux_symbols_count = 1
+                    };
+                    WRITE(&s, sizeof(s));
 
-            size_t name_len = strlen(ext->super.name);
-            assert(name_len < UINT16_MAX);
+                    COFF_AuxSectionSymbol aux = {
+                        .length = out_f->code_size,
+                        .reloc_count = f->patch_count,
+                        .selection = 2, // pick any
+                    };
+                    WRITE(&aux, sizeof(aux));
+                }
 
-            if (name_len >= 8) {
-                sym.long_name[0] = 0; // this value is 0 for long names
-                sym.long_name[1] = string_table_mark;
+                bool is_extern = out_f->linkage == TB_LINKAGE_PUBLIC;
+                COFF_Symbol sym = {
+                    .value = 0,
+                    .section_number = symbol_count,
+                    .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
+                };
 
-                string_table[string_table_length++] = ext->super.name;
-                string_table_mark += name_len + 1;
-            } else {
-                memcpy(sym.short_name, ext->super.name, name_len + 1);
+                const char* name = f->super.name;
+                size_t name_len = strlen(name);
+                assert(name_len < UINT16_MAX);
+                if (name_len >= 8) {
+                    sym.long_name[0] = 0; // this value is 0 for long names
+                    sym.long_name[1] = string_table_mark;
+
+                    string_table[string_table_length++] = (char*)name;
+                    string_table_mark += name_len + 1;
+                } else {
+                    memcpy(sym.short_name, name, name_len + 1);
+                }
+
+                WRITE(&sym, sizeof(sym));
+                symbol_count++;
             }
 
-            WRITE(&sym, sizeof(sym));
-        }
+            TB_FOR_FUNCTIONS(f, m) {
+                TB_FunctionOutput* out_f = f->output;
+                if (out_f == NULL || f->comdat.type != TB_COMDAT_NONE) continue;
 
-        TB_FOR_GLOBALS(g, m) {
-            bool is_extern = g->linkage == TB_LINKAGE_PUBLIC;
-            COFF_Symbol sym = {
-                .value = g->pos,
-                .section_number = g->parent->section_num,
-                .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
-            };
+                bool is_extern = out_f->linkage == TB_LINKAGE_PUBLIC;
+                COFF_Symbol sym = {
+                    .value = out_f->code_pos,
+                    .section_number = 1,
+                    .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
+                };
 
-            if (g->super.name) {
-                size_t name_len = strlen(g->super.name);
+                const char* name = f->super.name;
+                size_t name_len = strlen(name);
+                assert(name_len < UINT16_MAX);
+                if (name_len >= 8) {
+                    sym.long_name[0] = 0; // this value is 0 for long names
+                    sym.long_name[1] = string_table_mark;
+
+                    string_table[string_table_length++] = (char*)name;
+                    string_table_mark += name_len + 1;
+                } else {
+                    memcpy(sym.short_name, name, name_len + 1);
+                }
+
+                WRITE(&sym, sizeof(sym));
+            }
+
+            TB_FOR_EXTERNALS(ext, m) {
+                COFF_Symbol sym = {
+                    .value = 0,
+                    .section_number = 0,
+                    .storage_class = IMAGE_SYM_CLASS_EXTERNAL
+                };
+
+                size_t name_len = strlen(ext->super.name);
                 assert(name_len < UINT16_MAX);
 
                 if (name_len >= 8) {
                     sym.long_name[0] = 0; // this value is 0 for long names
                     sym.long_name[1] = string_table_mark;
 
-                    string_table[string_table_length++] = g->super.name;
+                    string_table[string_table_length++] = ext->super.name;
                     string_table_mark += name_len + 1;
                 } else {
-                    memcpy(sym.short_name, g->super.name, name_len + 1);
+                    memcpy(sym.short_name, ext->super.name, name_len + 1);
                 }
-            } else {
-                snprintf((char*) sym.short_name, 8, "$%06zu", g->super.symbol_id);
+
+                WRITE(&sym, sizeof(sym));
             }
 
-            WRITE(&sym, sizeof(sym));
+            TB_FOR_GLOBALS(g, m) {
+                bool is_extern = g->linkage == TB_LINKAGE_PUBLIC;
+                COFF_Symbol sym = {
+                    .value = g->pos,
+                    .section_number = g->parent->section_num,
+                    .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
+                };
+
+                if (g->super.name) {
+                    size_t name_len = strlen(g->super.name);
+                    assert(name_len < UINT16_MAX);
+
+                    if (name_len >= 8) {
+                        sym.long_name[0] = 0; // this value is 0 for long names
+                        sym.long_name[1] = string_table_mark;
+
+                        string_table[string_table_length++] = g->super.name;
+                        string_table_mark += name_len + 1;
+                    } else {
+                        memcpy(sym.short_name, g->super.name, name_len + 1);
+                    }
+                } else {
+                    snprintf((char*) sym.short_name, 8, "$%06zu", g->super.symbol_id);
+                }
+
+                WRITE(&sym, sizeof(sym));
+            }
+
+            assert(write_pos == symtab->size);
+            tb_export_append_chunk(&buffer, symtab);
         }
 
         // write string table
         {
-            (void) string_table_pos;
-            assert(write_pos == string_table_pos);
+            // assert(write_pos == strtbl.pos);
+            TB_ExportChunk* chunk = tb_export_make_chunk(strtbl.size);
 
-            WRITE(&string_table_mark, sizeof(string_table_mark));
+            memcpy(chunk->data, &string_table_mark, sizeof(uint32_t));
+
+            size_t j = 4;
             FOREACH_N(i, 0, string_table_length) {
                 const char* s = string_table[i];
                 size_t l = strlen(s) + 1;
 
-                WRITE(s, l);
+                memcpy(&chunk->data[j], s, l), j += l;
             }
+
+            tb_export_append_chunk(&buffer, chunk);
         }
     }
 
-    assert(write_pos == output_size);
-    return (TB_Exports){ .count = 1, .files = { { output_size, output } } };
+    return buffer;
 }

@@ -71,32 +71,8 @@ TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, const char* 
 }
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
-    size_t align_mask = _Alignof(TB_Node) - 1;
-    necessary_size = (necessary_size + align_mask) & ~align_mask;
-
-    // no pages or no fitting? make a page
-    if (f->tail == NULL || f->tail->used + necessary_size >= f->tail->cap) {
-        size_t cap = necessary_size < TB_NODE_PAGE_GENERAL_CAP ? TB_NODE_PAGE_GENERAL_CAP : tb_next_pow2(necessary_size);
-
-        TB_NodePage* page = tb_platform_valloc(sizeof(TB_NodePage) + cap);
-        page->next = NULL;
-        page->used = necessary_size;
-        page->cap  = cap;
-
-        // attach to list
-        if (f->tail) f->tail->next = page, f->tail = page;
-        else f->head = f->tail = page;
-
-        f->node_count += 1;
-        return page->data;
-    } else {
-        // we have a node and we can fit our allocation there
-        char* dst = &f->tail->data[f->tail->used];
-        f->tail->used += necessary_size;
-        return dst;
-    }
-
-    // return tb_platform_heap_alloc(necessary_size);
+    assert(f->arena);
+    return f->arena->alloc(f->arena, necessary_size, _Alignof(TB_Node));
 }
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra) {

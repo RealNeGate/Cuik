@@ -161,6 +161,7 @@ typedef struct Cuik_FileLoc {
 } Cuik_FileLoc;
 
 bool cuik_path_set_no_ext(Cuik_Path* restrict dst, const char* src);
+bool cuik_path_set_ext(Cuik_Path* restrict dst, Cuik_Path* restrict src, size_t ext_len, const char* ext);
 bool cuik_path_set_dir(Cuik_Path* restrict dst, const char* src);
 bool cuik_path_set(Cuik_Path* restrict dst, const char* src);
 bool cuik_path_append(Cuik_Path* restrict dst, const Cuik_Path* restrict a, size_t b_len, const char b[]);

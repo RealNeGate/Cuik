@@ -403,6 +403,14 @@ void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
     return tu->user_data;
 }
 
+void cuik_set_tu_ordinal(TranslationUnit* restrict tu, int ordinal) {
+    tu->local_ordinal = ordinal;
+}
+
+int cuik_get_tu_ordinal(TranslationUnit* restrict tu) {
+    return tu->local_ordinal;
+}
+
 void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
     if (!tu->is_free) {
         tu->is_free = true;

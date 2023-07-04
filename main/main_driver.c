@@ -196,7 +196,7 @@ int main(int argc, const char** argv) {
     if (args.threads > 1) {
         if (args.verbose) printf("Starting with %d threads...\n", args.threads);
 
-        tp = cuik_threadpool_create(args.threads);
+        tp = cuik_threadpool_create(args.threads - 1);
     }
     #endif
 

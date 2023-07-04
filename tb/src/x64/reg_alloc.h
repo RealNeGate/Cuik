@@ -1,7 +1,6 @@
-////////////////////////////////
-// Efficient global regsiter allocation, 2011
-//   https://arxiv.org/pdf/2011.05608.pdf
-////////////////////////////////
+// TODO(NeGate): We should switch to Efficient global regsiter allocation, 2011
+// https://arxiv.org/pdf/2011.05608.pdf
+
 // returns true if used in the next n instructions
 static bool check_if_used(Ctx* restrict ctx, Inst* inst, int def_i, int n) {
     // check if it's unused for the next instruction

@@ -1,5 +1,6 @@
 // This is the TB unity build
 #include "tb.c"
+#include "arena.c"
 #include "hash.c"
 #include "analysis.c"
 #include "tb_atomic.c"

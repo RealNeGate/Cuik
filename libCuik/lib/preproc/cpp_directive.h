@@ -147,7 +147,7 @@ static char* parse_directive_path(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
             len += t.content.length;
         }
 
-        // slap that null terminator on it like a boss bitch
+        // slap that null terminator on it like a boss bitch (i hate C strings)
         filename[len] = '\0';
 
         t = consume(in);

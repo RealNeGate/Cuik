@@ -74,13 +74,13 @@ static void elf_init(TB_Linker* l) {
 }
 
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
-static TB_Exports elf_export(TB_Linker* l) {
+static TB_ExportBuffer elf_export(TB_Linker* l) {
     CUIK_TIMED_BLOCK("GC sections") {
         gc_mark_root(l, l->entrypoint);
     }
 
     if (!tb__finalize_sections(l)) {
-        return (TB_Exports){ 0 };
+        return (TB_ExportBuffer){ 0 };
     }
 
     TB_Emitter strtbl = { 0 };
@@ -140,7 +140,10 @@ static TB_Exports elf_export(TB_Linker* l) {
 
     size_t output_size = size_of_headers + section_content_size;
     size_t write_pos = 0;
-    uint8_t* restrict output = tb_platform_heap_alloc(output_size);
+
+    TB_ExportChunk* chunk = tb_export_make_chunk(output_size);
+    uint8_t* restrict output = chunk->data;
+
     TB_Elf64_Ehdr header = {
         .ident = {
             [TB_EI_MAG0]       = 0x7F, // magic number
@@ -238,7 +241,7 @@ static TB_Exports elf_export(TB_Linker* l) {
     }
 
     // write section contents
-    return (TB_Exports){ .count = 1, .files = { { output_size, output } } };
+    return (TB_ExportBuffer){ .total = output_size, .head = chunk, .tail = chunk };
 }
 
 TB_LinkerVtbl tb__linker_elf = {

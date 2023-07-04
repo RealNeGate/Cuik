@@ -920,7 +920,7 @@ static void pe_init(TB_Linker* l) {
 }
 
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
-static TB_Exports pe_export(TB_Linker* l) {
+static TB_ExportBuffer pe_export(TB_Linker* l) {
     PE_ImageDataDirectory imp_dir, iat_dir;
     COFF_ImportDirectory* import_dirs;
 
@@ -962,7 +962,7 @@ static TB_Exports pe_export(TB_Linker* l) {
     }
 
     if (!tb__finalize_sections(l)) {
-        return (TB_Exports){ 0 };
+        return (TB_ExportBuffer){ 0 };
     }
 
     CUIK_TIMED_BLOCK("generate imports") {
@@ -1141,7 +1141,8 @@ static TB_Exports pe_export(TB_Linker* l) {
     }
 
     size_t write_pos = 0;
-    uint8_t* restrict output = tb_platform_heap_alloc(output_size);
+    TB_ExportChunk* chunk = tb_export_make_chunk(output_size);
+    uint8_t* restrict output = chunk->data;
 
     uint32_t pe_magic = 0x00004550;
     WRITE(dos_stub,    sizeof(dos_stub));
@@ -1180,7 +1181,7 @@ static TB_Exports pe_export(TB_Linker* l) {
         apply_external_relocs(l, output, opt_header.image_base);
     }
 
-    return (TB_Exports){ .count = 1, .files = { { output_size, output } } };
+    return (TB_ExportBuffer){ .total = output_size, .head = chunk, .tail = chunk };
 }
 
 TB_LinkerVtbl tb__linker_pe = {
