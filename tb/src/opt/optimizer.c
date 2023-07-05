@@ -326,10 +326,10 @@ static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
             }
 
             // try CSE
-            /*TB_Node* potential_reuse = nl_hashset_put2(&queue->cse_nodes, progress, cse_hash, cse_compare);
+            TB_Node* potential_reuse = nl_hashset_put2(&queue->cse_nodes, progress, cse_hash, cse_compare);
             if (potential_reuse != NULL) {
                 progress = potential_reuse;
-            }*/
+            }
 
             if (progress != n) {
                 // transmute the node into pass automatically
@@ -373,6 +373,7 @@ bool tb_passes_iter(TB_PassManager* manager, TB_Module* m, TB_Passes* passes) {
 static void generate_use_lists(TB_OptQueue* restrict queue, TB_Function* f) {
     dyn_array_for(i, queue->queue) {
         TB_Node* n = queue->queue[i];
+        nl_hashset_put2(&queue->cse_nodes, n, cse_hash, cse_compare);
 
         if (n->type == TB_LOCAL) {
             // we don't need to check for duplicates here, the queue is uniques

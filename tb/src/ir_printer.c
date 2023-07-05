@@ -122,7 +122,6 @@ static int get_name(TB_PrinterCtx* ctx, TB_Node* n) {
     return ctx->ordinals[search].v;
 }
 
-#if 0
 static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_data) {
     assert(dt.width < 8 && "Vector width too big!");
 
@@ -142,10 +141,19 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
             if (dt.data == TB_FLT_64) P("f64");
             break;
         }
+        case TB_TUPLE: {
+            P("tuple");
+            break;
+        }
+        case TB_CONTROL: {
+            P("control");
+            break;
+        }
         default: tb_todo();
     }
 }
 
+#if 0
 static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
     TB_NodeTypeEnum type = n->type;
     TB_DataType dt = n->dt;
@@ -253,19 +261,21 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
             TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
             if (num->num_words == 1) {
-                P("%"PRIu64, num->words[0]);
+                P("%"PRIu64" ", num->words[0]);
             } else {
                 P("0x");
                 FOREACH_N(i, 0, num->num_words) {
                     if (num) P("'");
                     P("%016"PRIx64, num->words[i]);
                 }
+                P(" ");
             }
             break;
         }
 
         default: break;
     }
+    tb_print_type(n->dt, callback, user_data);
     P("\"];\n");
 
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
