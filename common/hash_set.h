@@ -3,7 +3,7 @@
 #define NL_HASH_SET_H
 
 typedef struct NL_HashSet {
-    size_t exp;
+    size_t exp, count;
     void** data;
 } NL_HashSet;
 
@@ -50,20 +50,22 @@ void nl_hashset_free(NL_HashSet hs) {
 }
 
 bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
-    uint32_t hash = NL_HASHSET_HASH(ptr);
-    size_t i = hash & (1 << hs->exp) - 1;
-    i &= ~0x7; // chop off the bucket bits
+    uint32_t h = NL_HASHSET_HASH(ptr);
 
-    for (size_t j = 0; j < 8; j++) {
-        size_t k = i+j;
+    size_t mask = (1 << hs->exp) - 1;
+    size_t first = h & mask, i = first;
 
-        if (hs->data[k] == NULL) {
-            hs->data[k] = ptr;
+    do {
+        if (hs->data[i] == NULL) {
+            hs->count++;
+            hs->data[i] = ptr;
             return true;
-        } else if (hs->data[k] == ptr) {
+        } else if (hs->data[i] == ptr) {
             return false;
         }
-    }
+
+        i = (i + 1) & mask;
+    } while (i != first);
 
     assert(0 && "Rehash...");
     return false;
@@ -72,19 +74,21 @@ bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
 // returns old value
 void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_CompareFunc cmp) {
     uint32_t h = hash(ptr);
-    size_t i = h & (1 << hs->exp) - 1;
-    i &= ~0x7; // chop off the bucket bits
 
-    for (size_t j = 0; j < 8; j++) {
-        size_t k = i+j;
+    size_t mask = (1 << hs->exp) - 1;
+    size_t first = h & mask, i = first;
 
-        if (hs->data[k] == NULL) {
-            hs->data[k] = ptr;
+    do {
+        if (hs->data[i] == NULL) {
+            hs->count++;
+            hs->data[i] = ptr;
             return NULL;
-        } else if (cmp(hs->data[k], ptr)) {
-            return hs->data[k];
+        } else if (cmp(hs->data[i], ptr)) {
+            return hs->data[i];
         }
-    }
+
+        i = (i + 1) & mask;
+    } while (i != first);
 
     assert(0 && "Rehash...");
     return NULL;

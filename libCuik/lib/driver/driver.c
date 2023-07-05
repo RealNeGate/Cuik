@@ -831,6 +831,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
             IRGenTask task = {
                 .mod = mod,
                 .tu = tu,
+                .opt_level = args->opt_level,
                 .stmts = cuik_get_top_level_stmts(tu),
                 .count = c
             };
