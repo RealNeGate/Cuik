@@ -123,6 +123,40 @@ static bool is_commutative(TB_NodeTypeEnum type) {
     }
 }
 
+static TB_Node* try_extension_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_Node* n) {
+    TB_Node* src = n->inputs[0];
+    if (src->type != TB_INTEGER_CONST) {
+        return NULL;
+    }
+
+    TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
+
+    size_t src_num_words = src_i->num_words;
+    size_t dst_num_words = (n->dt.data + (BigIntWordSize*8) - 1) / (BigIntWordSize*8);
+    bool is_signed = false;
+    if (n->type == TB_SIGN_EXT) {
+        is_signed = BigInt_bextr(src_i->num_words, src_i->words, src->dt.data-1);
+    }
+
+    TB_Node* new_n = tb_transmute_to_int(f, queue, n->dt, dst_num_words);
+    BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
+
+    BigInt_copy(src_i->num_words, words, src_i->words);
+
+    FOREACH_N(i, src_i->num_words, dst_num_words) {
+        words[i] = is_signed ? ~UINT64_C(0) : 0;
+    }
+
+    // fixup the bits here
+    uint64_t shift = (64 - (src->dt.data % 64));
+    uint64_t mask = (~UINT64_C(0) >> shift) << shift;
+
+    if (is_signed) words[src_num_words - 1] |= mask;
+    else words[src_num_words - 1] &= ~mask;
+
+    return new_n;
+}
+
 static TB_Node* try_unary_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_Node* n) {
     assert(n->type == TB_NOT || n->type == TB_NEG);
     TB_Node* src = n->inputs[0];
@@ -159,9 +193,10 @@ static TB_Node* try_int_binop_fold(TB_Function* f, TB_OptQueue* restrict queue, 
 
     TB_Node* a = n->inputs[0];
     TB_Node* b = n->inputs[1];
+    bool fully_fold = a->type == TB_INTEGER_CONST && b->type == TB_INTEGER_CONST;
 
     TB_NodeTypeEnum type = n->type;
-    if (a->type == TB_INTEGER_CONST && type >= TB_CMP_EQ && type <= TB_CMP_ULE) {
+    if (fully_fold && type >= TB_CMP_EQ && type <= TB_CMP_ULE) {
         // fully fold
         TB_NodeInt* ai = TB_NODE_GET_EXTRA(a);
         TB_NodeInt* bi = TB_NODE_GET_EXTRA(b);
@@ -183,7 +218,7 @@ static TB_Node* try_int_binop_fold(TB_Function* f, TB_OptQueue* restrict queue, 
 
         words[0] = result;
         return new_n;
-    } else if (a->type == TB_INTEGER_CONST && type >= TB_AND && type <= TB_MUL) {
+    } else if (fully_fold && type >= TB_AND && type <= TB_MUL) {
         // fully fold
         TB_NodeInt* ai = TB_NODE_GET_EXTRA(a);
         TB_NodeInt* bi = TB_NODE_GET_EXTRA(b);
@@ -298,29 +333,6 @@ static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
         case TB_SIGN_EXT: {
             TB_Node* src = n->inputs[0];
             if (src->type == TB_INTEGER_CONST) {
-                TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
-
-                size_t src_num_words = src_i->num_words;
-                size_t dst_num_words = (n->dt.data + (BigIntWordSize*8) - 1) / (BigIntWordSize*8);
-                bool is_signed = false;
-                if (n->type == TB_SIGN_EXT) {
-                    is_signed = BigInt_bextr(src_i->num_words, src_i->words, src->dt.data-1);
-                }
-
-                uint64_t* words = tb_transmute_to_int(f, queue, n, dst_num_words);
-                BigInt_copy(src_i->num_words, words, src_i->words);
-
-                FOREACH_N(i, src_i->num_words, dst_num_words) {
-                    words[i] = is_signed ? ~UINT64_C(0) : 0;
-                }
-
-                // fixup the bits here
-                uint64_t shift = (64 - (src->dt.data % 64));
-                uint64_t mask = (~UINT64_C(0) >> shift) << shift;
-
-                if (is_signed) words[src_num_words - 1] |= mask;
-                else words[src_num_words - 1] &= ~mask;
-                return true;
             }
 
             break;

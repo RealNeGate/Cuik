@@ -50,6 +50,7 @@ void nl_hashset_free(NL_HashSet hs) {
 }
 
 bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
+    assert(ptr);
     uint32_t h = NL_HASHSET_HASH(ptr);
 
     size_t mask = (1 << hs->exp) - 1;
@@ -95,7 +96,8 @@ void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_C
 }
 
 void nl_hashset_clear(NL_HashSet* restrict hs) {
-    memset(hs->data, 0, nl_hashset_capacity(hs));
+    memset(hs->data, 0, nl_hashset_capacity(hs) * sizeof(void*));
+    hs->count = 0;
 }
 
 #endif /* NL_HASH_SET_IMPL */

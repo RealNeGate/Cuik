@@ -28,10 +28,8 @@ struct TB_OptQueue {
     // we wanna track locals because it's nice and easy
     DynArray(TB_Node*) locals;
 
-    #ifdef DO_CSE
     // this is used to do CSE
     NL_HashSet cse_nodes;
-    #endif
 
     // outgoing edges are incrementally updated every time we
     // run a rewrite rule
@@ -54,10 +52,7 @@ TB_Node* make_int_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType 
 TB_Node* make_proj_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, TB_Node* src, int i);
 
 // unity build with all the passes
-#ifdef DO_CSE
 #include "cse.h"
-#endif
-
 #include "dce.h"
 #include "fold.h"
 #include "canonical.h"
@@ -298,6 +293,10 @@ static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_No
         case TB_UDIV:
         return try_idiv_fold(f, queue, n);
 
+        case TB_SIGN_EXT:
+        case TB_ZERO_EXT:
+        return try_extension_fold(f, queue, n);
+
         // no changes
         default: return NULL;
     }
@@ -324,17 +323,15 @@ static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
             if (progress == NULL) {
                 // no changes
                 continue;
-            } else if (progress != n) {
-                #ifdef DO_CSE
-                if (progress->input_count == 0) {
-                    // try CSE, reuse if it dominates the progress node
-                    TB_Node* potential_reuse = nl_hashset_put2(&queue->cse_nodes, progress, cse_hash, cse_compare);
-                    if (potential_reuse != NULL) {
-                        progress = potential_reuse;
-                    }
-                }
-                #endif
+            }
 
+            // try CSE
+            /*TB_Node* potential_reuse = nl_hashset_put2(&queue->cse_nodes, progress, cse_hash, cse_compare);
+            if (potential_reuse != NULL) {
+                progress = potential_reuse;
+            }*/
+
+            if (progress != n) {
                 // transmute the node into pass automatically
                 tb_transmute_to_pass(queue, n, progress);
             }
@@ -403,10 +400,7 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
 
         // generate work list (put everything)
         TB_OptQueue queue = { 0 };
-
-        #ifdef DO_CSE
         queue.cse_nodes = nl_hashset_alloc(f->node_count);
-        #endif
 
         CUIK_TIMED_BLOCK("nl_map_create") {
             nl_map_create(queue.lookup, f->node_count);
@@ -442,10 +436,7 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
         }
 
         peephole(&queue, f);
-
-        #ifdef DO_CSE
         nl_hashset_free(queue.cse_nodes);
-        #endif
 
         arena_clear(&tb__arena);
         nl_map_free(queue.users);

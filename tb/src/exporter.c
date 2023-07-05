@@ -263,7 +263,6 @@ TB_ExportChunk* tb_export_make_chunk(size_t size) {
     c->next = NULL;
     c->pos  = 0;
     c->size = size;
-    log_debug("make chunk: %p %zu", c, size);
     return c;
 }
 
