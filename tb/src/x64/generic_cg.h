@@ -612,7 +612,7 @@ static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
 }
 
 // Codegen through here is done in phases
-static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity) {
+static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity) {
     Ctx ctx = {
         .module = f->super.module,
         .f = f,
@@ -620,6 +620,7 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
         .safepoints = f->safepoint_count ? tb_platform_heap_alloc(f->safepoint_count * sizeof(TB_SafepointKey)) : NULL,
         .emit = {
             .f = f,
+            .output = func_out,
             .data = out,
             .capacity = out_capacity,
         }
@@ -715,20 +716,14 @@ static TB_FunctionOutput compile_function(TB_Function* restrict f, const TB_Feat
     }
 
     // we're done, clean up
-    TB_FunctionOutput func_out = {
-        .linkage = f->linkage,
-        .code = ctx.emit.data,
-        .code_size = ctx.emit.count,
-        .stack_usage = ctx.stack_usage,
-        .prologue_epilogue_metadata = ctx.regs_to_save,
-        .safepoints = ctx.safepoints,
-        .stack_slots = ctx.debug_stack_slots
-    };
+    func_out->code = ctx.emit.data;
+    func_out->code_size = ctx.emit.count;
+    func_out->stack_usage = ctx.stack_usage;
+    func_out->prologue_epilogue_metadata = ctx.regs_to_save;
+    func_out->safepoints = ctx.safepoints;
+    func_out->stack_slots = ctx.debug_stack_slots;
 
     tb_function_free_postorder(&ctx.order);
     arena_clear(&tb__arena);
     nl_map_free(ctx.stack_slots);
-
-    // __debugbreak();
-    return func_out;
 }

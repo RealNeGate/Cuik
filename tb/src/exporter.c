@@ -143,14 +143,15 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
     CUIK_TIMED_BLOCK("layout code") {
         size_t offset = 0, comdat = 0, comdat_count = 0, comdat_relocs = 0;
         TB_FOR_FUNCTIONS(f, m) {
-            TB_FunctionOutput* out_f = f->output;
-            if (out_f != NULL) {
-                out_f->code_pos = offset;
-                offset += out_f->code_size;
+            TB_FunctionOutput* func_out = f->output;
+
+            if (func_out != NULL) {
+                func_out->code_pos = offset;
+                offset += func_out->code_size;
 
                 if (f->comdat.type != TB_COMDAT_NONE) {
-                    comdat += out_f->code_size;
-                    comdat_relocs += f->patch_count;
+                    comdat += func_out->code_size;
+                    comdat_relocs += func_out->patch_count;
                     comdat_count++;
                 }
             }
@@ -245,9 +246,10 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections
 
             if (sections[i]->total_comdat_relocs) {
                 TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output && f->comdat.type != TB_COMDAT_NONE) {
-                    f->patch_pos = output_size;
+                    TB_FunctionOutput* func_out = f->output;
+                    func_out->patch_pos = output_size;
 
-                    for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
+                    for (TB_SymbolPatch* p = func_out->last_patch; p; p = p->prev) {
                         if (!p->internal) output_size += reloc_size;
                     }
                 }

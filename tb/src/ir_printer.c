@@ -255,7 +255,7 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
         return id;
     }
 
-    P("  r%d [label=\"%s ", id, tb_node_get_name(n));
+    P("  r%p [label=\"%s ", n, tb_node_get_name(n));
     switch (n->type) {
         case TB_INTEGER_CONST: {
             TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
@@ -279,8 +279,8 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
     P("\"];\n");
 
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-        int kid = tb_print_node(f, ctx, callback, user_data, n->inputs[i]);
-        P("  r%d -> r%d", kid, id);
+        tb_print_node(f, ctx, callback, user_data, n->inputs[i]);
+        P("  r%p -> r%p", n->inputs[i], n);
 
         if ((n->type == TB_PROJ && n->dt.type == TB_CONTROL) || (i == 0 && tb_has_effects(n))) {
             P(" [color=\"red\"]");

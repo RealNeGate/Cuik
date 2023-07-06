@@ -561,7 +561,10 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
     uint64_t text_piece_file = text->offset + m->text.piece->offset;
 
     TB_FOR_FUNCTIONS(f, m) {
-        for (TB_SymbolPatch* patch = f->last_patch; patch; patch = patch->prev) {
+        TB_FunctionOutput* func_out = f->output;
+        if (func_out == NULL) continue;
+
+        for (TB_SymbolPatch* patch = func_out->last_patch; patch; patch = patch->prev) {
             if (patch->target->tag == TB_SYMBOL_EXTERNAL) {
                 TB_FunctionOutput* out_f = patch->source->output;
                 size_t actual_pos = text_piece_rva + out_f->code_pos + out_f->prologue_length + patch->pos + 4;

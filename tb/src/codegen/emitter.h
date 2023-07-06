@@ -17,6 +17,7 @@ typedef struct LabelPatch {
 typedef struct {
     // technically NULLable, just can't use patches if NULL
     TB_Function* f;
+    TB_FunctionOutput* output;
 
     bool emit_asm;
 

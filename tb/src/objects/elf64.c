@@ -205,21 +205,24 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) 
 
         if (sections[i]->kind == TB_MODULE_SECTION_TEXT) {
             TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
-                for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
+                TB_FunctionOutput* func_out = f->output;
+
+                size_t source_offset = func_out->prologue_length;
+                if (f->comdat.type == TB_COMDAT_NONE) {
+                    source_offset += func_out->code_pos;
+                }
+
+                for (TB_SymbolPatch* p = func_out->last_patch; p; p = p->prev) {
                     if (p->internal) continue;
 
                     TB_FunctionOutput* out_f = p->source->output;
-                    size_t actual_pos = out_f->prologue_length + p->pos;
-                    if (f->comdat.type == TB_COMDAT_NONE) {
-                        actual_pos += out_f->code_pos;
-                    }
 
+                    size_t actual_pos = source_offset + p->pos;
                     size_t symbol_id = p->target->symbol_id;
                     if (is_nonlocal(p->target)) {
                         symbol_id += local_sym_count;
                     }
                     assert(symbol_id != 0);
-                    log_debug("%d", symbol_id);
 
                     TB_ELF_RelocType type = p->target->tag == TB_SYMBOL_GLOBAL ? TB_ELF_X86_64_PC32 : TB_ELF_X86_64_PLT32;
                     *rels++ = (TB_Elf64_Rela){

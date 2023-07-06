@@ -350,19 +350,19 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
             size_t i = 1;
             TB_FOR_FUNCTIONS(f, m) if (f->output && f->comdat.type != TB_COMDAT_NONE) {
-                assert(f->patch_count < 65535 && "COMDAT function has more than 0xFFFF relocations");
-                TB_FunctionOutput* out_f = f->output;
+                TB_FunctionOutput* func_out = f->output;
+                assert(func_out->patch_count < 65535 && "COMDAT function has more than 0xFFFF relocations");
 
                 *sec_headers++ = (COFF_SectionHeader){
                     .name = ".text",
                     .characteristics = m->text.flags | IMAGE_SCN_LNK_COMDAT,
-                    .raw_data_size = out_f->code_size,
-                    .raw_data_pos = m->text.raw_data_pos + out_f->code_pos,
-                    .pointer_to_reloc = f->patch_pos,
-                    .num_reloc = f->patch_count,
+                    .raw_data_size = func_out->code_size,
+                    .raw_data_pos = m->text.raw_data_pos + func_out->code_pos,
+                    .pointer_to_reloc = func_out->patch_pos,
+                    .num_reloc = func_out->patch_count,
                 };
 
-                out_f->comdat_id = i++;
+                func_out->comdat_id = i++;
             }
 
             tb_export_append_chunk(&buffer, headers);
@@ -399,15 +399,17 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
             if (sections[i]->kind == TB_MODULE_SECTION_TEXT) {
                 TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
-                    for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
+                    TB_FunctionOutput* func_out = f->output;
+
+                    size_t source_offset = func_out->prologue_length;
+                    if (f->comdat.type == TB_COMDAT_NONE) {
+                        source_offset += func_out->code_pos;
+                    }
+
+                    for (TB_SymbolPatch* p = func_out->last_patch; p; p = p->prev) {
                         if (p->internal) continue;
 
-                        TB_FunctionOutput* out_f = p->source->output;
-                        size_t actual_pos = out_f->prologue_length + p->pos;
-                        if (f->comdat.type == TB_COMDAT_NONE) {
-                            actual_pos += out_f->code_pos;
-                        }
-
+                        size_t actual_pos = source_offset + p->pos;
                         size_t symbol_id = p->target->symbol_id;
                         assert(symbol_id != 0);
 
@@ -571,8 +573,8 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
             // each COMDAT function needs a section symbol and function symbol
             TB_FOR_FUNCTIONS(f, m) {
-                TB_FunctionOutput* out_f = f->output;
-                if (out_f == NULL || f->comdat.type == TB_COMDAT_NONE) continue;
+                TB_FunctionOutput* func_out = f->output;
+                if (func_out == NULL || f->comdat.type == TB_COMDAT_NONE) continue;
 
                 // write section symbol
                 {
@@ -585,14 +587,14 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                     WRITE(&s, sizeof(s));
 
                     COFF_AuxSectionSymbol aux = {
-                        .length = out_f->code_size,
-                        .reloc_count = f->patch_count,
+                        .length = func_out->code_size,
+                        .reloc_count = func_out->patch_count,
                         .selection = 2, // pick any
                     };
                     WRITE(&aux, sizeof(aux));
                 }
 
-                bool is_extern = out_f->linkage == TB_LINKAGE_PUBLIC;
+                bool is_extern = func_out->linkage == TB_LINKAGE_PUBLIC;
                 COFF_Symbol sym = {
                     .value = 0,
                     .section_number = symbol_count,

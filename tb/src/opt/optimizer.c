@@ -260,8 +260,13 @@ void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n) {
 }
 
 static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_Node* n) {
+    bool passes = false;
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]->type == TB_PASS) {
         set_input(queue, n, n->inputs[i]->inputs[0], i);
+        passes = true;
+    }
+
+    if (passes) {
         return n;
     }
 
@@ -296,6 +301,13 @@ static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_No
         case TB_SIGN_EXT:
         case TB_ZERO_EXT:
         return try_extension_fold(f, queue, n);
+
+        // special functions
+        case TB_CALL:
+        if (n->inputs[1]->type == TB_GET_SYMBOL_ADDRESS) {
+            return try_libcalls_fold(f, queue, n);
+        }
+        return NULL;
 
         // no changes
         default: return NULL;
@@ -333,11 +345,21 @@ static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
 
             if (progress != n) {
                 // transmute the node into pass automatically
-                tb_transmute_to_pass(queue, n, progress);
-            }
+                User* use = find_users(queue, n);
+                while (use != NULL) {
+                    assert(use->n->inputs[use->slot] == n);
 
-            // push new value
-            tb_optqueue_mark(queue, progress, true);
+                    // set_input will delete 'use' so we can't use it afterwards
+                    TB_Node* use_n = use->n;
+                    User* next = use->next;
+
+                    set_input(queue, use->n, progress, use->slot);
+                    tb_optqueue_mark(queue, use_n, true);
+                    use = next;
+                }
+            } else {
+                tb_optqueue_mark(queue, n, true);
+            }
         }
 
         #ifndef NDEBUG
@@ -377,15 +399,11 @@ static void generate_use_lists(TB_OptQueue* restrict queue, TB_Function* f) {
 
         if (n->type == TB_LOCAL) {
             // we don't need to check for duplicates here, the queue is uniques
-            log_debug("Local: %p", n);
             dyn_array_put(queue->locals, n);
         }
 
-        log_debug("Outs: %s", tb_node_get_name(n));
         FOREACH_N(i, 0, n->input_count) {
             add_user(queue, n, n->inputs[i], i, NULL);
-
-            log_debug("- %s", tb_node_get_name(n->inputs[i]));
             tb_optqueue_mark(queue, n->inputs[i], false);
         }
     }

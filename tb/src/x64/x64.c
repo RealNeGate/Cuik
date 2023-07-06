@@ -1804,7 +1804,9 @@ static size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) 
 static size_t emit_call_patches(TB_Module* restrict m) {
     size_t r = 0;
     TB_FOR_FUNCTIONS(f, m) {
-        for (TB_SymbolPatch* patch = f->last_patch; patch; patch = patch->prev) {
+        TB_FunctionOutput* func_out = f->output;
+
+        for (TB_SymbolPatch* patch = func_out->last_patch; patch; patch = patch->prev) {
             if (patch->target->tag == TB_SYMBOL_FUNCTION) {
                 // you can't do relocations across COMDAT sections
                 if (&patch->source->super == patch->target || (!tb_symbol_is_comdat(&patch->source->super) && !tb_symbol_is_comdat(patch->target))) {
@@ -1825,7 +1827,7 @@ static size_t emit_call_patches(TB_Module* restrict m) {
             }
         }
 
-        m->text.reloc_count += f->patch_count;
+        m->text.reloc_count += func_out->patch_count;
     }
 
     return r;
@@ -1841,5 +1843,4 @@ ICodeGen tb__x64_codegen = {
     .emit_prologue      = emit_prologue,
     .emit_epilogue      = emit_epilogue,
     .fast_path          = compile_function,
-    //.complex_path     = x64_complex_compile_function
 };

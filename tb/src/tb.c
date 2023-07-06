@@ -118,8 +118,7 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
     return m;
 }
 
-TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode) {
-    assert(f->output == NULL);
+TB_API TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode) {
     ICodeGen* restrict code_gen = tb__find_code_generator(m);
 
     // Machine code gen
@@ -137,19 +136,20 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
     region->size += sizeof(TB_FunctionOutput);
 
     if (isel_mode == TB_ISEL_COMPLEX && code_gen->complex_path == NULL) {
-        // TODO(NeGate): we need better logging...
-        fprintf(stderr, "TB warning: complex path is missing, defaulting to fast path.\n");
+        log_warn("tb warning: complex path is missing, defaulting to fast path");
         isel_mode = TB_ISEL_FAST;
     }
 
     CUIK_TIMED_BLOCK_ARGS("compile func", f->super.name) {
+        *func_out = (TB_FunctionOutput){ .parent = f, .linkage = f->linkage };
+
         uint8_t* local_buffer = &region->data[region->size];
         size_t local_capacity = region->capacity - region->size;
 
         if (isel_mode == TB_ISEL_COMPLEX) {
-            *func_out = code_gen->complex_path(f, &m->features, local_buffer, local_capacity);
+            code_gen->complex_path(f, func_out, &m->features, local_buffer, local_capacity);
         } else {
-            *func_out = code_gen->fast_path(f, &m->features, local_buffer, local_capacity);
+            code_gen->fast_path(f, func_out, &m->features, local_buffer, local_capacity);
             assert(func_out->code);
         }
     }
@@ -181,7 +181,7 @@ TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode
     region->size += func_out->code_size;
 
     f->output = func_out;
-    return true;
+    return func_out;
 }
 
 TB_API size_t tb_module_get_function_count(TB_Module* m) {
@@ -297,7 +297,7 @@ TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, T
     start->succ_count = 0;
     start->succ = NULL;
     start->proj_count = param_count;
-    start->projs = TB_CALL(f->arena, alloc, param_count * sizeof(TB_Node*), _Alignof(TB_Node*));
+    start->projs = f->arena->alloc(f->arena, param_count * sizeof(TB_Node*), _Alignof(TB_Node*));
 
     // create parameter projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);
@@ -540,18 +540,13 @@ void tb_tls_restore(TB_TemporaryStorage* store, void* ptr) {
     store->used = i;
 }
 
-void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos) {
-    int id = tb__get_local_tid();
-    assert(id < TB_MAX_THREADS);
-    assert(pos == (uint32_t)pos);
+void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos) {
+    TB_SymbolPatch* p = ARENA_ALLOC(&tb__arena, TB_SymbolPatch);
 
-    mtx_lock(&m->lock);
-    TB_SymbolPatch* p = ARENA_ALLOC(&m->arena, TB_SymbolPatch);
-    mtx_unlock(&m->lock);
-
-    *p = (TB_SymbolPatch){ .prev = source->last_patch, .source = source, .target = target, .pos = pos };
-    source->last_patch = p;
-    source->patch_count += 1;
+    // doesn't need to be atomic
+    *p = (TB_SymbolPatch){ .prev = func_out->last_patch, .source = func_out->parent, .target = target, .pos = pos };
+    func_out->last_patch = p;
+    func_out->patch_count += 1;
 }
 
 // EMITTER CODE:

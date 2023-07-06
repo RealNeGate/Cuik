@@ -160,7 +160,14 @@ int main(int argc, const char** argv) {
         printf("Waiting around...\n\n");
         printf(
             "So people have told me that 2 minute compiles aren't really that bad\n"
-            "so i figured that we should give them the freedom to waste their time\n"
+            "so i figured that we should give them the freedom to waste their time\n\n"
+            "  o__    __0     \n"
+            " <|        |\\   \n"
+            "  |        |/    \n"
+            "  ^        ^     \n"
+            "|/ \\      / \\|  \n"
+            "|---|    |---|   \n\n"
+            "https://xkcd.com/303/\n\n"
         );
 
         int old_chars = -1;

@@ -762,13 +762,13 @@ static void irgen_job(void* arg) {
         // the rest of the functions being ready.
         if (no_opt && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
             tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST);
-            TB_CALL(allocator, clear);
+            CUIK_CALL(allocator, clear);
         }
     }
 
     #if CUIK_ALLOW_THREADS
     if (task.remaining != NULL && atomic_fetch_sub(task.remaining, 1) == 1) {
-        if (no_opt) TB_CALL(allocator, free);
+        if (no_opt) CUIK_CALL(allocator, free);
     }
     #else
     if (no_opt) TB_CALL(allocator, free);

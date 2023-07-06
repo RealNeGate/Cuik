@@ -237,17 +237,17 @@ static void* get_symbol_address(const TB_Symbol* s) {
 }
 
 TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
-    TB_FunctionOutput* out_f = f->output;
+    TB_FunctionOutput* func_out = f->output;
 
     // copy machine code
-    char* dst = tb_jitheap_alloc_region(&jit->heap, out_f->code_size, TB_PAGE_READEXECUTE);
-    memcpy(dst, out_f->code, out_f->code_size);
+    char* dst = tb_jitheap_alloc_region(&jit->heap, func_out->code_size, TB_PAGE_READEXECUTE);
+    memcpy(dst, func_out->code, func_out->code_size);
 
     // printf("JIT: apply function %s (%p)\n", f->super.name, dst);
 
     // apply relocations, any leftovers are mapped to thunks
-    for (TB_SymbolPatch* p = f->last_patch; p; p = p->prev) {
-        size_t actual_pos = out_f->prologue_length + p->pos;
+    for (TB_SymbolPatch* p = func_out->last_patch; p; p = p->prev) {
+        size_t actual_pos = func_out->prologue_length + p->pos;
         enum TB_SymbolTag tag = p->target->tag;
 
         int32_t* patch = (int32_t*) &dst[actual_pos];

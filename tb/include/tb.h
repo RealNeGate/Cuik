@@ -631,8 +631,6 @@ struct TB_Arena {
     void (*free)(TB_Arena* arena);
 };
 
-#define TB_CALL(object, action, ...) ((object)->action((object), ##__VA_ARGS__))
-
 // allocates in 16MiB chunks and does linear allocation in 'em
 TB_Arena* tb_default_arena(void);
 
@@ -644,13 +642,6 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
 
 // Creates a module but defaults on the architecture and system based on the host machine
 TB_API TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool is_jit);
-
-// compiles the function into machine code. For isel_mode, TB_ISEL_FAST
-// will compile faster but worse codegen
-// TB_ISEL_COMPLEX will compile slower but better codegen
-//
-// returns false if it fails.
-TB_API bool tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode);
 
 TB_API size_t tb_module_get_function_count(TB_Module* m);
 
@@ -666,6 +657,16 @@ TB_API void tb_module_set_tls_index(TB_Module* m, const char* name);
 // You don't need to manually call this unless you want to resolve locations before
 // exporting.
 TB_API void tb_module_layout_sections(TB_Module* m);
+
+////////////////////////////////
+// Exporter
+////////////////////////////////
+
+// this is where the machine code and other relevant pieces go.
+typedef struct TB_FunctionOutput TB_FunctionOutput;
+
+// returns NULL if it fails
+TB_API TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode);
 
 ////////////////////////////////
 // Exporter
@@ -1084,7 +1085,6 @@ TB_API void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, 
 TB_API void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m);
 
 TB_API TB_Pass tb_opt_mem2reg(void);
-TB_API TB_Pass tb_opt_libcalls(void);
 TB_API TB_Pass tb_opt_identity(void);
 
 ////////////////////////////////

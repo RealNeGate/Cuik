@@ -276,8 +276,8 @@ typedef struct {
 } TB_SafepointKey;
 
 typedef struct TB_FunctionOutput {
+    TB_Function* parent;
     TB_Linkage linkage;
-    int result;
 
     uint8_t prologue_length;
     uint8_t epilogue_length;
@@ -305,6 +305,11 @@ typedef struct TB_FunctionOutput {
     // safepoints are stored into a binary tree to allow
     // for scanning neighbors really quickly
     TB_SafepointKey* safepoints;
+
+    // Relocations
+    uint32_t patch_pos;
+    uint32_t patch_count;
+    TB_SymbolPatch* last_patch;
 } TB_FunctionOutput;
 
 struct TB_Function {
@@ -337,11 +342,6 @@ struct TB_Function {
     };
 
     TB_FunctionOutput* output;
-
-    // Relocations
-    uint32_t patch_pos;
-    uint32_t patch_count;
-    TB_SymbolPatch* last_patch;
 };
 
 typedef struct {
@@ -464,8 +464,8 @@ typedef struct {
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage);
 
-    TB_FunctionOutput (*fast_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
-    TB_FunctionOutput (*complex_path)(TB_Function* restrict f, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
+    void (*fast_path)(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
+    void (*complex_path)(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
 } ICodeGen;
 
 // All debug formats i know of boil down to adding some extra sections to the object file
@@ -694,7 +694,7 @@ int tb__get_local_tid(void);
 TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
-void tb_emit_symbol_patch(TB_Module* m, TB_Function* source, const TB_Symbol* target, size_t pos);
+void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos);
 
 // trusty lil hash functions
 uint32_t tb__crc32(uint32_t crc, size_t length, const void* data);

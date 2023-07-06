@@ -100,7 +100,6 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
 }
 
 static void write_variable(Mem2Reg_Ctx* c, int var, TB_Node* block, TB_Node* value) {
-    log_debug("write_variable(ctx=%p, var=%d, block=%p, value=%p)", c, var, block, value);
     if (c->defs[var] == NULL) {
         nl_map_create(c->defs[var], 16);
     }
