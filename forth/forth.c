@@ -7,7 +7,7 @@
 
 #include <tb.h>
 
-#define JIT_THRESHOLD 1
+#define JIT_THRESHOLD 10
 
 typedef struct Env Env;
 typedef struct Word Word;
@@ -26,17 +26,17 @@ enum {
     // control flow
     OP_IF    = -7,  // if{
     OP_ELSE  = -8,  // }else{
-    OP_LOOP  = -9,  // loop{
-    OP_CLOSE = -10, // }
+    OP_CLOSE = -9, // }
 
-    OP_TAIL  = -11, // no name, generated automatically
+    OP_TAIL  = -10, // no name, generated automatically
 
     // debug
-    OP_DUMP  = -12,
+    OP_DUMP  = -11,
 
     // console
-    OP_EMIT  = -13,
-    OP_PRINT = -14,
+    OP_EMIT  = -12,
+    OP_PRINT = -13,
+    OP_KEY   = -14,
 };
 
 typedef int (*Trampoline)(Env* env, uint64_t* args, void* fn);
@@ -125,6 +125,10 @@ static void parse(Parser* p, Word* w) {
             infer(&words[id]);
         } else if (token.length == 1 && token.data[0] == ';') {
             return;
+        } else if (token.data[0] == '\'') {
+            // char literals
+            dyn_array_put(w->ops, token.data[1]);
+            assert(token.data[2] == '\'');
         } else if (token.data[0] >= '0' && token.data[0] <= '9') {
             uint64_t num = 0;
             for (size_t i = 0; i < token.length; i++) {
@@ -205,14 +209,15 @@ static int prim_arity(int64_t x) {
 
         case OP_DUP:
         case OP_DROP:
-        case OP_EMIT:
         case OP_IF:
         case OP_PRINT:
+        case OP_EMIT:
         return 1;
 
         case OP_DUMP:
         case OP_CLOSE:
         case OP_ELSE:
+        case OP_KEY:
         return 0;
 
         default:
@@ -270,6 +275,12 @@ static void infer(Word* w) {
             }
 
             head += new_w->outputs;
+        } else if (x == OP_TAIL) {
+            // tails can't pluck parameter from outside the word
+            assert(w->arity <= head);
+            head -= w->arity;
+
+            w->tails++;
         } else {
             int arity = prim_arity(x);
 
@@ -290,6 +301,7 @@ static void infer(Word* w) {
                 case OP_DROP: break;
 
                 // console
+                case OP_KEY: head += 1; break;
                 case OP_EMIT: break;
                 case OP_PRINT: break;
 
@@ -460,6 +472,7 @@ static int interp(Env* env, Word* w) {
                     case OP_DIV:  tmp = pop(env), push(env, pop(env) / tmp); break;
                     case OP_DUP:  tmp = peek(env), push(env, tmp); break;
                     case OP_DROP: env->head -= 1; break;
+                    case OP_KEY:  push(env, getchar()); break;
                     case OP_EMIT: printf("%c", (char) pop(env)); break;
                     case OP_PRINT:printf("%lld", pop(env)); break;
                     case OP_DUMP: dump(env); break;
@@ -534,8 +547,8 @@ static TB_FunctionPrototype* proto;
 static TB_FunctionPrototype* internal_protos[16];
 
 // imported functions
-static TB_FunctionPrototype *putnum_proto, *putchar_proto, *interp_proto;
-static TB_Symbol *putnum_sym, *putchar_sym, *interp_sym;
+static TB_FunctionPrototype *putnum_proto, *putchar_proto, *getchar_proto, *interp_proto;
+static TB_Symbol *putnum_sym, *putchar_sym, *getchar_sym, *interp_sym;
 
 // we don't need to waste cycles JITting this lmao
 static int jit_caller_0ary(Env* env, uint64_t* stack, void* jitted) {
@@ -592,7 +605,7 @@ static void get_trampoline(int arity, bool needs_trampoline) {
     }
 }
 
-static TB_Node* spill_stack(TB_Function* f, TB_Node* env, TB_Node** stack, int count, int delta) {
+static TB_Node* shift_head(TB_Function* f, TB_Node* env, int delta) {
     TB_Node* head_ptr = tb_inst_member_access(f, env, offsetof(Env, head));
     TB_Node* ld_head = tb_inst_load(f, TB_TYPE_I64, head_ptr, _Alignof(size_t), false);
 
@@ -608,6 +621,10 @@ static TB_Node* spill_stack(TB_Function* f, TB_Node* env, TB_Node** stack, int c
         tb_inst_store(f, TB_TYPE_I64, head_ptr, add_head, _Alignof(size_t), false);
     }
 
+    return ld_head;
+}
+
+static TB_Node* spill_stack(TB_Function* f, TB_Node* env, TB_Node** stack, TB_Node* ld_head, int count) {
     // dump stack (args is the top of the stack)
     TB_Node* tos = tb_inst_member_access(f, env, offsetof(Env, stack));
     tos = tb_inst_array_access(f, tos, ld_head, sizeof(size_t));
@@ -665,6 +682,7 @@ static void compile_word(Word* w) {
     }
 
     // functions we might import
+    TB_Node* getchar_n = NULL;
     TB_Node* putchar_n = NULL;
     TB_Node* putnum_n = NULL;
 
@@ -698,12 +716,15 @@ static void compile_word(Word* w) {
             head -= new_w->arity;
             TB_Node** src_args = &stack[head];
 
+            TB_Node* ld_head = shift_head(f, env, new_w->arity);
             if (new_w->jitted == NULL) {
                 // we have to spill to the stack
-                TB_Node* tos = spill_stack(f, env, src_args, new_w->arity, -new_w->arity);
+                /* TB_Node* ld_head = shift_head(f, env, new_w->arity);
+                TB_Node* tos = spill_stack(f, env, src_args, ld_head, new_w->arity);
 
                 TB_Node* args[2] = { env, tos };
-                tb_inst_call(f, putchar_proto, putchar_n, 1 + new_w->arity, args);
+                tb_inst_call(f, interp_proto, interp_n, 1 + new_w->arity, args);*/
+                __debugbreak();
             } else {
                 // generate argument list
                 TB_Node* args[32];
@@ -719,12 +740,7 @@ static void compile_word(Word* w) {
             // pop returns off the stack
             int outputs = new_w->outputs;
             if (outputs > 0) {
-                TB_Node* head_ptr = tb_inst_member_access(f, env, offsetof(Env, head));
-                TB_Node* ld_head = tb_inst_load(f, TB_TYPE_I64, head_ptr, _Alignof(size_t), false);
-
-                // writeback new head
-                TB_Node* sub_head = tb_inst_sub(f, ld_head, tb_inst_sint(f, TB_TYPE_I64, outputs), 0);
-                tb_inst_store(f, TB_TYPE_I64, head_ptr, sub_head, _Alignof(size_t), false);
+                TB_Node* ld_head = shift_head(f, env, -outputs);
 
                 // dump stack (args is the top of the stack)
                 TB_Node* tos = tb_inst_member_access(f, env, offsetof(Env, stack));
@@ -754,6 +770,14 @@ static void compile_word(Word* w) {
                 case OP_DROP: /* no op, just throws away argument */ break;
 
                 // console
+                case OP_KEY: {
+                    if (getchar_n == NULL) {
+                        getchar_n = tb_inst_get_symbol_address(f, getchar_sym);
+                    }
+
+                    stack[head++] = tb_inst_sxt(f, tb_inst_call(f, getchar_proto, getchar_n, 0, NULL).single, TB_TYPE_I64);
+                    break;
+                }
                 case OP_EMIT: {
                     if (putchar_n == NULL) {
                         putchar_n = tb_inst_get_symbol_address(f, putchar_sym);
@@ -828,8 +852,12 @@ static void compile_word(Word* w) {
     assert(cs.head == 0 && "you're missing closing braces?");
     assert(head == w->outputs);
 
-    if (head > 0) {
-        spill_stack(f, env, stack, head, head - w->arity);
+    if (head != w->arity) {
+        TB_Node* ld_head = shift_head(f, env, head - w->arity);
+
+        if (head > 0) {
+            spill_stack(f, env, stack, ld_head, head);
+        }
     }
 
     TB_Node* ret = tb_inst_uint(f, TB_TYPE_I32, INTERP_OK);
@@ -888,6 +916,14 @@ int main(int argc, const char** argv) {
         tb_symbol_bind_ptr(putnum_sym, &putnum);
     }
 
+    {
+        TB_PrototypeParam ret = { TB_TYPE_I32 };
+        getchar_proto = tb_prototype_create(ir_module, TB_STDCALL, 0, NULL, 1, &ret, false);
+
+        getchar_sym = (TB_Symbol*) tb_extern_create(ir_module, "getchar", TB_EXTERNAL_SO_EXPORT);
+        tb_symbol_bind_ptr(getchar_sym, &getchar);
+    }
+
     nl_map_create(dict, 256);
     nl_map_put_cstr(dict, "+",      OP_ADD);
     nl_map_put_cstr(dict, "-",      OP_SUB);
@@ -898,10 +934,11 @@ int main(int argc, const char** argv) {
     nl_map_put_cstr(dict, "drop",   OP_DROP);
     nl_map_put_cstr(dict, "emit",   OP_EMIT);
     nl_map_put_cstr(dict, "dump",   OP_DUMP);
+    nl_map_put_cstr(dict, "key",    OP_KEY);
     nl_map_put_cstr(dict, "if{",    OP_IF);
     nl_map_put_cstr(dict, "}else{", OP_ELSE);
-    nl_map_put_cstr(dict, "loop{",  OP_LOOP);
     nl_map_put_cstr(dict, "}",      OP_CLOSE);
+    nl_map_put_cstr(dict, "tail",   OP_TAIL);
 
     Env env;
     env.head = 0;
