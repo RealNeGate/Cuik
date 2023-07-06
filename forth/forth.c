@@ -424,6 +424,13 @@ static bool jit_trippin(Env* env, Word* w) {
 static int interp(Env* env, Word* w) {
     // this is used to initialize the control flow easily
     if (w != NULL) {
+        // if the JIT is ready, we'll just use this, ideally
+        // we switch to directly calling the JIT soon
+        if (w->jitted != NULL) {
+            assert(env->head >= w->arity);
+            return jit_callers[w->arity](env, &env->stack[env->head - w->arity], w->jitted);
+        }
+
         env->control_head = 1;
         env->control[0] = 0;
     }
@@ -685,6 +692,7 @@ static void compile_word(Word* w) {
     TB_Node* getchar_n = NULL;
     TB_Node* putchar_n = NULL;
     TB_Node* putnum_n = NULL;
+    TB_Node* interp_n = NULL;
 
     size_t len = dyn_array_length(w->ops);
     for (size_t i = 0; i < len; i++) {
@@ -718,13 +726,20 @@ static void compile_word(Word* w) {
 
             TB_Node* ld_head = shift_head(f, env, new_w->arity);
             if (new_w->jitted == NULL) {
-                // we have to spill to the stack
-                /* TB_Node* ld_head = shift_head(f, env, new_w->arity);
-                TB_Node* tos = spill_stack(f, env, src_args, ld_head, new_w->arity);
+                if (interp_n == NULL) {
+                    interp_n = tb_inst_get_symbol_address(f, interp_sym);
+                }
 
-                TB_Node* args[2] = { env, tos };
-                tb_inst_call(f, interp_proto, interp_n, 1 + new_w->arity, args);*/
-                __debugbreak();
+                // we have to spill to the stack
+                if (new_w->arity > 0) {
+                    spill_stack(f, env, stack, ld_head, new_w->arity);
+                }
+
+                // this is kinda hacky but we're JITting it's fine
+                TB_Node* new_w_node = tb_inst_uint(f, TB_TYPE_PTR, (uintptr_t) new_w);
+
+                TB_Node* args[2] = { env, new_w_node };
+                tb_inst_call(f, interp_proto, interp_n, 2, args);
             } else {
                 // generate argument list
                 TB_Node* args[32];
@@ -850,18 +865,20 @@ static void compile_word(Word* w) {
     }
 
     assert(cs.head == 0 && "you're missing closing braces?");
-    assert(head == w->outputs);
 
-    if (head != w->arity) {
-        TB_Node* ld_head = shift_head(f, env, head - w->arity);
+    if (tb_inst_get_control(f) != NULL) {
+        assert(head == w->outputs);
+        if (head != w->arity) {
+            TB_Node* ld_head = shift_head(f, env, head - w->arity);
 
-        if (head > 0) {
-            spill_stack(f, env, stack, ld_head, head);
+            if (head > 0) {
+                spill_stack(f, env, stack, ld_head, head);
+            }
         }
-    }
 
-    TB_Node* ret = tb_inst_uint(f, TB_TYPE_I32, INTERP_OK);
-    tb_inst_ret(f, 1, &ret);
+        TB_Node* ret = tb_inst_uint(f, TB_TYPE_I32, INTERP_OK);
+        tb_inst_ret(f, 1, &ret);
+    }
 
     // tb_function_print(f, tb_default_print_callback, stdout);
 
