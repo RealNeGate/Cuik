@@ -95,7 +95,7 @@ static NL_Slice lex(Parser* p) {
     while (*end && *end != '\n' && *end != '\t' && *end != ' ') end++;
 
     // advance
-    p->source = end + 1;
+    p->source = *end ? end + 1 : end;
 
     return (NL_Slice){ end - line, (const uint8_t*) line };
 }
@@ -145,7 +145,7 @@ static void parse(Parser* p, Word* w) {
             ptrdiff_t search = nl_map_get(dict, token);
             if (search < 0) {
                 printf("error: undefined word %.*s\n", (int) token.length, token.data);
-                break;
+                abort();
             }
 
             dyn_array_put(w->ops, dict[search].v);
