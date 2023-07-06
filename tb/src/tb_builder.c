@@ -431,7 +431,15 @@ TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall
 
 TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
     size_t proj_count = proto->return_count > 1 ? proto->return_count : 0;
-    TB_DataType dt = proj_count ? TB_TYPE_TUPLE : TB_PROTOTYPE_RETURNS(proto)->dt;
+
+    TB_DataType dt;
+    if (proto->return_count > 1) {
+        dt = TB_TYPE_TUPLE;
+    } else if (proto->return_count == 1) {
+        dt = TB_PROTOTYPE_RETURNS(proto)->dt;
+    } else {
+        dt = TB_TYPE_VOID;
+    }
 
     TB_Node* n = tb_alloc_node(f, TB_CALL, dt, 2 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
     n->inputs[0] = f->active_control_node;
@@ -826,6 +834,30 @@ TB_API TB_Node* tb_inst_cmp_fge(TB_Function* f, TB_Node* a, TB_Node* b) {
     return tb_inst_cmp(f, TB_CMP_FLE, b, a);
 }
 
+TB_API TB_Node* tb_inst_incomplete_phi(TB_Function* f, TB_DataType dt, TB_Node* region, size_t preds) {
+    TB_Node* n = tb_alloc_node(f, TB_PHI, dt, 1 + preds, 0);
+    n->inputs[0] = region;
+    memset(n->inputs + 1, 0, preds * sizeof(TB_Node*));
+    return n;
+}
+
+TB_API bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* region, TB_Node* val) {
+    TB_Node* phi_region = phi->inputs[0];
+
+    // the slot to fill is based on the predecessor list of the region
+    FOREACH_N(i, 0, phi_region->input_count) {
+        TB_Node* pred = phi_region->inputs[i];
+        while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
+
+        if (pred == region) {
+            phi->inputs[i+1] = val;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b) {
     tb_assume(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
@@ -848,8 +880,21 @@ TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Nod
     return n;
 }
 
+void tb_inst_set_phis_to_region(TB_Function* f, TB_Node* region, size_t phi_count, TB_Node** phis) {
+    // add new phi to region (NOT EFFICIENT)
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(region);
+
+    TB_Node** new_phis = alloc_from_node_arena(f, phi_count * sizeof(TB_Node*));
+    if (phi_count != 0) {
+        memcpy(new_phis, phis, phi_count * sizeof(TB_Node*));
+    }
+
+    r->projs = new_phis;
+    r->proj_count = phi_count;
+}
+
 TB_API TB_Node* tb_inst_region(TB_Function* f) {
-    TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_VOID, 0, sizeof(TB_NodeRegion));
+    TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_TUPLE, 0, sizeof(TB_NodeRegion));
     return n;
 }
 
@@ -875,7 +920,7 @@ static TB_Node** add_successors(TB_Function* f, TB_Node* terminator, size_t coun
 }
 
 TB_API void tb_inst_goto(TB_Function* f, TB_Node* target) {
-    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_VOID, 1, sizeof(TB_NodeBranch));
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 1, sizeof(TB_NodeBranch));
     n->inputs[0] = f->active_control_node; // control edge
 
     TB_Node** succ = add_successors(f, n, 1);

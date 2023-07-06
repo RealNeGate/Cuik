@@ -248,7 +248,7 @@ static void remove_active(Ctx* restrict ctx, size_t i) {
     ctx->active_count -= 1;
 }
 
-static void insert_sorted_def(Ctx* restrict ctx, DefIndex* sorted, size_t count, int start, DefIndex di) {
+static size_t insert_sorted_def(Ctx* restrict ctx, DefIndex* sorted, size_t count, int start, DefIndex di) {
     size_t i = 0;
     for (; i < count; i++) {
         if (ctx->defs[sorted[i]].start >= start) break;
@@ -257,6 +257,7 @@ static void insert_sorted_def(Ctx* restrict ctx, DefIndex* sorted, size_t count,
     // we know where to insert
     memmove(&sorted[i + 1], &sorted[i], (count - i) * sizeof(DefIndex));
     sorted[i] = di;
+    return i;
 }
 
 static size_t estimate_hash_map_size(size_t s) {

@@ -1030,6 +1030,10 @@ TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, 
 // Managed
 TB_API TB_Node* tb_inst_safepoint(TB_Function* f, size_t param_count, TB_Node** params);
 
+TB_API TB_Node* tb_inst_incomplete_phi(TB_Function* f, TB_DataType dt, TB_Node* region, size_t preds);
+TB_API bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* region, TB_Node* val);
+TB_API void tb_inst_set_phis_to_region(TB_Function* f, TB_Node* region, size_t phi_count, TB_Node** phis);
+
 TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b);
 TB_API void tb_inst_goto(TB_Function* f, TB_Node* target);
 TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* true_case, TB_Node* false_case);

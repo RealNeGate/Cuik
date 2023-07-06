@@ -1388,7 +1388,7 @@ static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
         r->stack_pos = STACK_ALLOC(8, 8);
     }
 
-    ASM printf("  \x1b[32m#   spill D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
+    REG_ALLOC_LOG printf("  \x1b[32m#   spill D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
 
     // write out
     InstType i = r->dt.type == TB_FLOAT ? FP_MOV : MOV;

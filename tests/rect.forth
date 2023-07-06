@@ -23,20 +23,15 @@ baz baz baz baz baz baz
 0  bar
 
 
-
 \ simple loop
-: loop dup if{ 65 emit 1 - loop }else{ drop } ;
+: loop  dup if{ dup 64 + emit 1 - loop }else{ drop } ;
+: loop2 dup if{ dup . 10 loop 10 emit 1 - loop2 }else{ drop } ;
 
 
+: test . ;
 
+10 test 5 test 3 test
 
-\ 16 foo . 32 emit
-\ 4  foo . 32 emit
-\ 7  foo . 32 emit
-\ 16 foo . 32 emit
-\ 4  foo . 32 emit
+10 emit 10 emit
 
-
-10 emit
-10 loop
-
+1 loop2
