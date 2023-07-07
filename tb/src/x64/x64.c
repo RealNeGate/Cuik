@@ -127,7 +127,7 @@ static TB_X86_DataType legalize(TB_DataType dt) {
     }
 }
 
-static bool wont_spill_around(InstType t) {
+static bool wont_spill_around(int t) {
     return t == TEST || t == CMP || t == JMP || (t >= JO && t <= JG);
 }
 
@@ -318,15 +318,24 @@ static void print_operand(Val* v) {
         case VAL_ABS: printf("%#"PRIx64, v->abs); break;
         case VAL_MEM: {
             if (v->index == -1) {
-                printf("[%s + %d]", GPR_NAMES[v->reg], v->imm);
+                printf("[%s", GPR_NAMES[v->reg]);
             } else {
-                printf("[%s + %s*%d + %d]", GPR_NAMES[v->reg], GPR_NAMES[v->index], 1u << v->scale, v->imm);
+                printf("[%s + %s*%d", GPR_NAMES[v->reg], GPR_NAMES[v->index], 1u << v->scale);
             }
+
+            if (v->imm != 0) {
+                printf(" + %d", v->imm);
+            }
+            printf("]");
             break;
         }
         case VAL_GLOBAL: {
             const TB_Symbol* target = v->symbol;
-            printf("[%s + %d]", target->name, v->imm);
+            if (v->imm == 0) {
+                printf("%s", target->name);
+            } else {
+                printf("[%s + %d]", target->name, v->imm);
+            }
             break;
         }
         case VAL_LABEL: {
@@ -401,7 +410,9 @@ static Inst isel_array(Ctx* restrict ctx, TB_Node* n, int dst) {
 
     uint8_t stride_as_shift = 0;
     bool scaled_already = false;
-    if (tb_is_power_of_two(stride)) {
+    if (stride == 1) {
+        scaled_index = ISEL(index_n);
+    } else if (tb_is_power_of_two(stride)) {
         stride_as_shift = tb_ffs(stride) - 1;
 
         if (stride_as_shift > 3) {
@@ -413,7 +424,14 @@ static Inst isel_array(Ctx* restrict ctx, TB_Node* n, int dst) {
             scaled_index = ISEL(index_n);
         }
     } else {
-        tb_todo();
+        int imm = DEF(n, REG_CLASS_GPR);
+        SUBMIT(inst_i(MOV, n->dt, imm, stride));
+
+        int index = ISEL(index_n);
+        int mul_index = DEF(n, REG_CLASS_GPR);
+        SUBMIT(inst_rr(IMUL, n->dt, mul_index, index, USE(imm)));
+
+        scaled_index = USE(mul_index);
     }
 
     int base = ISEL(base_n);
@@ -530,7 +548,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
-static void gonna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num) {
+static void finna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num) {
     // mark register as to be saved
     if (reg_class == REG_CLASS_GPR) {
         bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
@@ -904,6 +922,21 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int lhs = ISEL(n->inputs[0]);
             int rhs = ISEL(n->inputs[1]);
             SUBMIT(inst_rr(ops[type - TB_FADD], n->dt, dst, lhs, rhs));
+            break;
+        }
+
+        case TB_UINT2FLOAT:
+        case TB_INT2FLOAT: {
+            TB_DataType src_dt = n->inputs[0]->dt;
+            assert(src_dt.type == TB_INT);
+
+            // it's either 32bit or 64bit conversion
+            //   CVTSI2SS r/m32, xmm1
+            //   CVTSI2SD r/m64, xmm1
+            dst = DEF(n, REG_CLASS_XMM);
+
+            int src = ISEL(n->inputs[0]);
+            SUBMIT(inst_r(FP_CVT, n->inputs[0]->dt, dst, src));
             break;
         }
 

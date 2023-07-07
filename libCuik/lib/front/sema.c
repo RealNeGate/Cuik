@@ -1541,6 +1541,9 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
         }
 
         case EXPR_COMMA: {
+            SET_CAST(0, GET_TYPE(0));
+            SET_CAST(1, GET_TYPE(1));
+
             return GET_TYPE(1);
         }
 

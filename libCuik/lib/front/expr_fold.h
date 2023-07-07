@@ -172,6 +172,15 @@ static bool const_eval(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstVal
             }
         }
 
+        switch (s->op) {
+            case EXPR_FLOAT32: {
+                args[0].tag = CUIK_CONST_FLOAT;
+                args[0].f = s->float_lit;
+                goto skip;
+            }
+            default: break;
+        }
+
         // normie integers, these get all integer args
         // if any aren't we do some of the special cases.
         uint64_t result;

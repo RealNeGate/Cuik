@@ -39,6 +39,7 @@ static void spall_die(void) {
 }
 #endif
 
+#if 0
 static void test_diag(void) {
     // printf("\x1b[31merror\x1b[0m");
 
@@ -105,6 +106,7 @@ static void test_diag(void) {
 
     __debugbreak();
 }
+#endif
 
 int main(int argc, const char** argv) {
     #ifdef CUIK_USE_SPALL_AUTO

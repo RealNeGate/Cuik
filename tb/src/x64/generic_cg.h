@@ -95,7 +95,7 @@ typedef struct Def {
     int start, end;
 
     // regalloc
-    int16_t complete, hint;
+    int16_t hint;
     int16_t reg_class, reg;
 
     // when we preallocate a definition we
@@ -108,6 +108,7 @@ typedef struct Def {
 } Def;
 
 typedef NL_Map(TB_Node*, MachineBB) MachineBBs;
+typedef DynArray(DefIndex) RegAllocWorklist;
 
 typedef struct {
     TB_CGEmitter emit;
@@ -192,7 +193,7 @@ static bool fits_into_int32(uint64_t x) {
 static bool wont_spill_around(int type);
 static int classify_reg_class(TB_DataType dt);
 static int isel(Ctx* restrict ctx, TB_Node* n);
-static void gonna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num);
+static void finna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num);
 static void emit_code(Ctx* restrict ctx);
 static void patch_local_labels(Ctx* restrict ctx);
 static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage);
@@ -246,18 +247,6 @@ static void remove_active(Ctx* restrict ctx, size_t i) {
         memmove(&ctx->active[i], &ctx->active[i + 1], (ctx->active_count - i) * sizeof(Def*));
     }
     ctx->active_count -= 1;
-}
-
-static size_t insert_sorted_def(Ctx* restrict ctx, DefIndex* sorted, size_t count, int start, DefIndex di) {
-    size_t i = 0;
-    for (; i < count; i++) {
-        if (ctx->defs[sorted[i]].start >= start) break;
-    }
-
-    // we know where to insert
-    memmove(&sorted[i + 1], &sorted[i], (count - i) * sizeof(DefIndex));
-    sorted[i] = di;
-    return i;
 }
 
 static size_t estimate_hash_map_size(size_t s) {
@@ -352,11 +341,11 @@ static size_t partition(Def* defs, ptrdiff_t lo, ptrdiff_t hi, DefIndex* arr) {
     for (;;) {
         // Move the left index to the right at least once and while the element at
         // the left index is less than the pivot
-        do { i += 1; } while (defs[arr[i]].start < pivot);
+        do { i += 1; } while (defs[arr[i]].start > pivot);
 
         // Move the right index to the left at least once and while the element at
         // the right index is greater than the pivot
-        do { j -= 1; } while (defs[arr[j]].start > pivot);
+        do { j -= 1; } while (defs[arr[j]].start < pivot);
 
         // If the indices crossed, return
         if (i >= j) return j;
@@ -378,7 +367,7 @@ static void cuiksort_defs(Def* defs, ptrdiff_t lo, ptrdiff_t hi, DefIndex* arr) 
 }
 
 // generate live intervals for virtual registers
-static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
+static RegAllocWorklist liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t def_count = dyn_array_length(ctx->defs);
     Arena* arena = &tb__arena;
 
@@ -517,7 +506,7 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
         }
     }
 
-    DefIndex* sorted = ARENA_ARR_ALLOC(&tb__arena, def_count * 2, DefIndex);
+    RegAllocWorklist sorted = dyn_array_create(DefIndex, (def_count * 4) / 3);
     FOREACH_N(i, 0, def_count) {
         Def* d = &ctx->defs[i];
         if (d->reg >= 0 && d->live_until >= 0) {
@@ -525,7 +514,7 @@ static DefIndex* liveness(Ctx* restrict ctx, TB_Function* f) {
             add_range(ctx, d, until->start, until->start);
         }
 
-        sorted[i] = i;
+        dyn_array_put(sorted, i);
     }
 
     // sort by starting point
@@ -626,7 +615,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     };
 
-    ctx.emit.emit_asm = true;
+    // ctx.emit.emit_asm = true;
     /* if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/
@@ -682,8 +671,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         schedule_effect(&ctx, bb, end);
     }
 
-    DefIndex* sorted = NULL;
-    // CUIK_TIMED_BLOCK("build intervals")
+    RegAllocWorklist sorted = NULL;
+    CUIK_TIMED_BLOCK("build intervals")
     {
         sorted = liveness(&ctx, f);
     }

@@ -1,6 +1,10 @@
 #include <log.h>
 #include "../front/atoms.h"
 
+#if defined(USE_INTRIN) && defined(CUIK__IS_X64)
+#include <x86intrin.h>
+#endif
+
 typedef struct InternalFile InternalFile;
 struct InternalFile {
     InternalFile* next;

@@ -892,6 +892,8 @@ static void parse_cast(Cuik_Parser* restrict parser, TokenStream* restrict s, bo
 }
 
 static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, int min_prec) {
+    Subexpr* start_of_expr = (Subexpr*) tls_push(0);
+
     // This precendence climber is always left associative
     SourceLoc start_loc = tokens_get_location(s);
     parse_cast(parser, s, false);
@@ -901,10 +903,51 @@ static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, i
         tokens_next(s);
 
         if (binop.op == EXPR_LOGICAL_AND || binop.op == EXPR_LOGICAL_OR) {
-            Cuik_Expr* left = complete_expr(parser);
+            // a = b || c
+            //     ^
+            //     we need to split from here to the logical or instead of just everything
+            //     to the left of it.
+            Cuik_Expr* hide = parser->expr;
+            parser->expr = NULL;
+
+            // complete expr between start_of_expr and now
+            Cuik_Expr* left = NULL;
+            {
+                ptrdiff_t first_sym = -1;
+
+                // relocate symbols
+                ptrdiff_t start_i = start_of_expr - hide->exprs;
+                ptrdiff_t sym = hide->first_symbol;
+                if (sym >= start_i) {
+                    first_sym = sym - start_i;
+                    hide->first_symbol = -1;
+                }
+
+                while (sym >= 0) {
+                    ptrdiff_t next = hide->exprs[sym].sym.next_symbol;
+                    if (next >= start_i) {
+                        if (first_sym < 0) first_sym = next - start_i;
+
+                        hide->exprs[sym].sym.next_symbol = next - start_i;
+                    }
+                    sym = next;
+                }
+
+                // copy
+                size_t count = (Subexpr*) tls_push(0) - start_of_expr;
+                Subexpr* exprs = ARENA_ARR_ALLOC(parser->arena, count, Subexpr);
+                memcpy(exprs, start_of_expr, count * sizeof(Subexpr));
+                tls_restore(start_of_expr);
+
+                left = ARENA_ALLOC(parser->arena, Cuik_Expr);
+                *left = (Cuik_Expr){ .exprs = exprs, .count = count, .first_symbol = first_sym };
+            }
 
             parse_binop(parser, s, binop.prec + 1);
             Cuik_Expr* right = complete_expr(parser);
+
+            // restore original expr stream
+            parser->expr = hide;
 
             SourceLoc end_loc = tokens_get_last_location(s);
             *push_expr(parser) = (Subexpr){

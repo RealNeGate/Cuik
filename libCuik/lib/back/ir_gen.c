@@ -392,8 +392,6 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
     // try to emit constant integer + constant addresses
     Cuik_ConstVal value;
     if (const_eval(NULL, e, &value)) {
-        assert(value.tag != CUIK_CONST_FLOAT);
-
         uint64_t int_form = 0;
         if (value.tag == CUIK_CONST_ADDR) {
             Stmt* stmt = e->exprs[value.s.base].sym.stmt;
@@ -403,6 +401,17 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
             int_form = value.s.offset;
         } else if (value.tag == CUIK_CONST_INT) {
             int_form = value.i;
+        } else if (value.tag == CUIK_CONST_FLOAT) {
+            Cuik_TypeKind kind = cuik_canonical_type(e->cast_types[e->count - 1])->kind;
+            if (kind == KIND_DOUBLE) {
+                typedef union { double f; uint64_t u; } F64U64;
+                int_form = (F64U64){ value.f }.u;
+            } else if (kind == KIND_FLOAT) {
+                typedef union { float f; uint32_t u; } F32U32;
+                int_form = (F32U32){ value.f }.u;
+            } else {
+                assert(0 && "TODO");
+            }
         } else {
             assert(0 && "TODO");
         }
@@ -1600,6 +1609,13 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             return (IRVal){
                 .value_type = RVALUE,
                 .reg = diff_in_elems,
+            };
+        }
+        case EXPR_COMMA: {
+            TB_Node* r = RVAL(1);
+            return (IRVal){
+                .value_type = RVALUE,
+                .reg = r,
             };
         }
         case EXPR_PLUS:

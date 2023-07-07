@@ -533,23 +533,23 @@ struct Stmt {
             bool placed;
         } label;
         struct StmtCase {
+            Stmt* next;
             int64_t key;
             int64_t key_max;
             Stmt* body;
-            Stmt* next;
         } case_;
         struct StmtDefault {
-            Stmt* body;
             Stmt* next;
+            Stmt* body;
         } default_;
         struct StmtSwitch {
-            Cuik_Expr* condition;
-            Stmt* body;
-
             // points to the first case or default,
             // and those point to next and so on,
             // linked lists
             Stmt* next;
+
+            Cuik_Expr* condition;
+            Stmt* body;
         } switch_;
         struct StmtDecl {
             Cuik_QualType type;

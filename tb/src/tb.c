@@ -541,7 +541,11 @@ void tb_tls_restore(TB_TemporaryStorage* store, void* ptr) {
 }
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos) {
-    TB_SymbolPatch* p = ARENA_ALLOC(&tb__arena, TB_SymbolPatch);
+    TB_Module* m = func_out->parent->super.module;
+
+    mtx_lock(&m->lock);
+    TB_SymbolPatch* p = ARENA_ALLOC(&m->arena, TB_SymbolPatch);
+    mtx_unlock(&m->lock);
 
     // doesn't need to be atomic
     *p = (TB_SymbolPatch){ .prev = func_out->last_patch, .source = func_out->parent, .target = target, .pos = pos };

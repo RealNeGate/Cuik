@@ -85,13 +85,13 @@ static void* dyn_array_internal_trim(void* ptr, size_t type_size) {
 do {                                                        \
     arr = dyn_array_internal_reserve(arr, sizeof(*arr), 1); \
     DynArrayHeader* header = ((DynArrayHeader*)arr) - 1;    \
-    arr[header->size++] = __VA_ARGS__;                      \
+    (arr)[header->size++] = __VA_ARGS__;                    \
 } while (0)
 
 #define dyn_array_insert(arr, at, ...)                        \
 do {                                                          \
     arr = dyn_array_internal_reserve2(arr, sizeof(*arr), at); \
-    arr[at] = __VA_ARGS__;                                    \
+    (arr)[at] = __VA_ARGS__;                                  \
 } while (0)
 
 #define dyn_array_put_uninit(arr, extra)                         \

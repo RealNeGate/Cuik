@@ -376,7 +376,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         }
 
         FOREACH_N(i, 0, debug_sections.length) {
-            TB_ExportChunk* sec = tb_export_make_chunk(sections[i]->total_size);
+            TB_ExportChunk* sec = tb_export_make_chunk(debug_sections.data[i].raw_data.length);
             memcpy(sec->data, debug_sections.data[i].raw_data.data, debug_sections.data[i].raw_data.length);
             tb_export_append_chunk(&buffer, sec);
         }
