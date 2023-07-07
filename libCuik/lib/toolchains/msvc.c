@@ -514,9 +514,11 @@ static bool find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_Wind
 static void add_libraries(void* ctx, bool nocrt, Cuik_Linker* l) {
     Cuik_WindowsToolchain* t = ctx;
 
-    cuiklink_add_libpathf(l, STR_FMT, t->vs_library_path);
-    cuiklink_add_libpathf(l, STR_FMT SLASH"um"SLASH"x64", t->windows_sdk_root);
-    cuiklink_add_libpathf(l, STR_FMT SLASH"ucrt"SLASH"x64", t->windows_sdk_root);
+    if (t->vs_library_path) {
+        cuiklink_add_libpathf(l, STR_FMT, t->vs_library_path);
+        cuiklink_add_libpathf(l, STR_FMT SLASH"um"SLASH"x64", t->windows_sdk_root);
+        cuiklink_add_libpathf(l, STR_FMT SLASH"ucrt"SLASH"x64", t->windows_sdk_root);
+    }
 }
 
 static void print_verbose(void* ctx, bool nocrt) {
@@ -535,11 +537,13 @@ static void print_verbose(void* ctx, bool nocrt) {
 static void set_preprocessor(void* ctx, bool nocrt, Cuik_CPP* cpp) {
     Cuik_WindowsToolchain* t = ctx;
 
-    cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"um",     t->windows_sdk_include);
-    cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"shared", t->windows_sdk_include);
-    cuikpp_add_include_directoryf(cpp, true, STR_FMT,               t->vs_include_path);
-    if (!nocrt) {
-        cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"ucrt", t->windows_sdk_include);
+    if (t->vs_include_path) {
+        cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"um",     t->windows_sdk_include);
+        cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"shared", t->windows_sdk_include);
+        cuikpp_add_include_directoryf(cpp, true, STR_FMT,               t->vs_include_path);
+        if (!nocrt) {
+            cuikpp_add_include_directoryf(cpp, true, STR_FMT SLASH"ucrt", t->windows_sdk_include);
+        }
     }
 
     cuikpp_define_empty_cstr(cpp, "_MT");
