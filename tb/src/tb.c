@@ -253,13 +253,7 @@ TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
 
 TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_t param_count, const TB_PrototypeParam* params, size_t return_count, const TB_PrototypeParam* returns, bool has_varargs) {
     size_t size = sizeof(TB_FunctionPrototype) + ((param_count + return_count) * sizeof(TB_PrototypeParam));
-
-    TB_FunctionPrototype* p;
-    CUIK_TIMED_BLOCK("lock") {
-        mtx_lock(&m->lock);
-        p = arena_alloc(&m->arena, size, _Alignof(TB_FunctionPrototype));
-        mtx_unlock(&m->lock);
-    }
+    TB_FunctionPrototype* p = arena_alloc(&tb__arena2, size, _Alignof(TB_FunctionPrototype));
 
     p->call_conv = cc;
     p->return_count = return_count;
