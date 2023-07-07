@@ -2,6 +2,7 @@
 
 #ifndef _WIN32
 #include <unistd.h>
+#include <pthread.h>
 #endif
 
 #ifdef CUIK_USE_SPALL_AUTO
