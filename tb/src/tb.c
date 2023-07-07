@@ -38,17 +38,9 @@ bool tb_symbol_is_comdat(const TB_Symbol* s) {
 char* tb__arena_strdup(TB_Module* m, const char* src) {
     if (src == NULL) return NULL;
 
-    char* newstr;
-    CUIK_TIMED_BLOCK("lock") {
-        mtx_lock(&m->lock);
-
-        size_t length = strlen(src);
-        newstr = arena_alloc(&m->arena, length + 1, 1);
-        memcpy(newstr, src, length + 1);
-
-        mtx_unlock(&m->lock);
-    }
-
+    size_t length = strlen(src);
+    char* newstr = arena_alloc(&tb__arena2, length + 1, 1);
+    memcpy(newstr, src, length + 1);
     return newstr;
 }
 

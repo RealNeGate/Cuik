@@ -706,10 +706,6 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
 char* tb__arena_strdup(TB_Module* m, const char* src);
 
-inline static bool tb_data_type_match(const TB_DataType* a, const TB_DataType* b) {
-    return a->type == b->type && a->width == b->width;
-}
-
 // temporary arena
 extern thread_local Arena tb__arena;
 
