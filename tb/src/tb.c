@@ -37,13 +37,17 @@ bool tb_symbol_is_comdat(const TB_Symbol* s) {
 char* tb__arena_strdup(TB_Module* m, const char* src) {
     if (src == NULL) return NULL;
 
-    mtx_lock(&m->lock);
+    char* newstr;
+    CUIK_TIMED_BLOCK("lock") {
+        mtx_lock(&m->lock);
 
-    size_t length = strlen(src);
-    char* newstr = arena_alloc(&m->arena, length + 1, 1);
-    memcpy(newstr, src, length + 1);
+        size_t length = strlen(src);
+        newstr = arena_alloc(&m->arena, length + 1, 1);
+        memcpy(newstr, src, length + 1);
 
-    mtx_unlock(&m->lock);
+        mtx_unlock(&m->lock);
+    }
+
     return newstr;
 }
 
@@ -249,9 +253,12 @@ TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
 TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_t param_count, const TB_PrototypeParam* params, size_t return_count, const TB_PrototypeParam* returns, bool has_varargs) {
     size_t size = sizeof(TB_FunctionPrototype) + ((param_count + return_count) * sizeof(TB_PrototypeParam));
 
-    mtx_lock(&m->lock);
-    TB_FunctionPrototype* p = arena_alloc(&m->arena, size, _Alignof(TB_FunctionPrototype));
-    mtx_unlock(&m->lock);
+    TB_FunctionPrototype* p;
+    CUIK_TIMED_BLOCK("lock") {
+        mtx_lock(&m->lock);
+        p = arena_alloc(&m->arena, size, _Alignof(TB_FunctionPrototype));
+        mtx_unlock(&m->lock);
+    }
 
     p->call_conv = cc;
     p->return_count = return_count;
@@ -367,10 +374,12 @@ TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Gl
     global->obj_count = 0;
     global->obj_capacity = max_objects;
 
-    mtx_lock(&m->lock);
-    global->objects = ARENA_ARR_ALLOC(&m->arena, max_objects, TB_InitObj);
-    dyn_array_put(section->globals, global);
-    mtx_unlock(&m->lock);
+    CUIK_TIMED_BLOCK("lock") {
+        mtx_lock(&m->lock);
+        global->objects = ARENA_ARR_ALLOC(&m->arena, max_objects, TB_InitObj);
+        dyn_array_put(section->globals, global);
+        mtx_unlock(&m->lock);
+    }
 }
 
 TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
@@ -543,9 +552,12 @@ void tb_tls_restore(TB_TemporaryStorage* store, void* ptr) {
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos) {
     TB_Module* m = func_out->parent->super.module;
 
-    mtx_lock(&m->lock);
-    TB_SymbolPatch* p = ARENA_ALLOC(&m->arena, TB_SymbolPatch);
-    mtx_unlock(&m->lock);
+    TB_SymbolPatch* p;
+    CUIK_TIMED_BLOCK("lock") {
+        mtx_lock(&m->lock);
+        p = ARENA_ALLOC(&m->arena, TB_SymbolPatch);
+        mtx_unlock(&m->lock);
+    }
 
     // doesn't need to be atomic
     *p = (TB_SymbolPatch){ .prev = func_out->last_patch, .source = func_out->parent, .target = target, .pos = pos };

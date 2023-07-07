@@ -86,15 +86,13 @@ static int thread_func(void* arg) {
     threadpool_t* threadpool = arg;
     spallperf__start_thread();
 
-    CUIK_TIMED_BLOCK("thread") {
-        while (threadpool->running) {
-            if (do_work(threadpool)) {
-                #ifdef _WIN32
-                WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
-                #else
-                sem_wait(&threadpool->sem);
-                #endif
-            }
+    while (threadpool->running) {
+        if (do_work(threadpool)) {
+            #ifdef _WIN32
+            WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
+            #else
+            sem_wait(&threadpool->sem);
+            #endif
         }
     }
 
