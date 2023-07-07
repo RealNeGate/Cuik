@@ -222,14 +222,15 @@ void cuik_threadpool_destroy(Cuik_IThreadpool* thread_pool) {
     }
     CloseHandle(tp->sem);
     #else
-    for (int i = 0; i < tp->thread_count; i++) {
-        thrd_join(tp->threads[i], NULL);
-    }
-
     // wake everyone
     for (size_t i = 0; i < tp->thread_count; i++) {
         sem_post(&tp->sem);
     }
+
+    for (int i = 0; i < tp->thread_count; i++) {
+        thrd_join(tp->threads[i], NULL);
+    }
+
     sem_destroy(&tp->sem);
     #endif
 
