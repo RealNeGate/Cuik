@@ -274,7 +274,27 @@ static TB_Node* try_idiv_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_No
         if (bi->num_words != 1 || bi->words[0] >= (1ull << 63ull)) return NULL;
 
         uint64_t y = bi->words[0];
-        uint64_t sh = (64 - tb_clz64(y)) - 1;     // sh = ceil(log2(y)) + w - 64
+
+        // handle simpler cases
+        if (y == 0) {
+            return tb_alloc_node(f, TB_POISON, dt, 0, 0);
+        } else if (y == 1) {
+            return x;
+        } else {
+            // (udiv a N) => a >> log2(N) where N is a power of two
+            uint64_t log2 = tb_ffs(y) - 1;
+            if (!is_signed && y == (UINT64_C(1) << log2)) {
+                TB_Node* shr_node = tb_alloc_node(f, TB_SHR, dt, 2, sizeof(TB_NodeMulPair));
+                set_input(queue, shr_node, x, 0);
+                set_input(queue, shr_node, make_int_node(f, queue, dt, log2), 1);
+                return shr_node;
+            }
+        }
+
+        // idk how to handle this yet
+        if (is_signed) return NULL;
+
+        uint64_t sh = (64 - tb_clz64(y)) - 1; // sh = ceil(log2(y)) + w - 64
 
         #ifndef NDEBUG
         uint64_t sh2 = 0;
@@ -289,20 +309,42 @@ static TB_Node* try_idiv_fold(TB_Function* f, TB_OptQueue* restrict queue, TB_No
 
         // now we can take a and sh and do:
         //   x / y  => mulhi(x, a) >> sh
-        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, dt, 2, sizeof(TB_NodeMulPair));
-        set_input(queue, mul_node, x, 0);
-        set_input(queue, mul_node, make_int_node(f, queue, dt, a), 1);
+        int bits = dt.data;
+        if (bits > 32) {
+            TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, dt, 2, sizeof(TB_NodeMulPair));
+            set_input(queue, mul_node, x, 0);
+            set_input(queue, mul_node, make_int_node(f, queue, dt, a), 1);
 
-        TB_Node* lo = make_proj_node(f, queue, dt, mul_node, 0);
-        TB_Node* hi = make_proj_node(f, queue, dt, mul_node, 1);
-        TB_NODE_SET_EXTRA(mul_node, TB_NodeMulPair, .lo = lo, .hi = hi);
+            TB_Node* lo = make_proj_node(f, queue, dt, mul_node, 0);
+            TB_Node* hi = make_proj_node(f, queue, dt, mul_node, 1);
+            TB_NODE_SET_EXTRA(mul_node, TB_NodeMulPair, .lo = lo, .hi = hi);
 
-        TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 2, sizeof(TB_NodeBinopInt));
-        set_input(queue, sh_node, hi, 0);
-        set_input(queue, sh_node, make_int_node(f, queue, dt, sh), 1);
-        TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
+            TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 2, sizeof(TB_NodeBinopInt));
+            set_input(queue, sh_node, hi, 0);
+            set_input(queue, sh_node, make_int_node(f, queue, dt, sh), 1);
+            TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
 
-        return sh_node;
+            return sh_node;
+        } else {
+            TB_DataType big_dt = TB_TYPE_INTN(bits * 2);
+            sh += bits; // chopping the low half
+
+            a &= (1ull << bits) - 1;
+
+            TB_Node* mul_node = tb_alloc_node(f, TB_MUL, big_dt, 2, sizeof(TB_NodeBinopInt));
+            set_input(queue, mul_node, x, 0);
+            set_input(queue, mul_node, make_int_node(f, queue, big_dt, a), 1);
+            TB_NODE_SET_EXTRA(mul_node, TB_NodeBinopInt, .ab = 0);
+
+            TB_Node* sh_node = tb_alloc_node(f, TB_SHR, big_dt, 2, sizeof(TB_NodeBinopInt));
+            set_input(queue, sh_node, mul_node, 0);
+            set_input(queue, sh_node, make_int_node(f, queue, big_dt, sh), 1);
+            TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
+
+            TB_Node* trunc_node = tb_alloc_node(f, TB_TRUNCATE, dt, 1, 0);
+            set_input(queue, trunc_node, sh_node, 0);
+            return trunc_node;
+        }
     }
 
     return NULL;

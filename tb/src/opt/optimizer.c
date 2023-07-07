@@ -333,14 +333,19 @@ static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
             // try peephole
             TB_Node* progress = peephole_node(queue, f, n);
             if (progress == NULL) {
-                // no changes
-                continue;
-            }
+                // try CSE
+                progress = nl_hashset_put2(&queue->cse_nodes, n, cse_hash, cse_compare);
 
-            // try CSE
-            TB_Node* potential_reuse = nl_hashset_put2(&queue->cse_nodes, progress, cse_hash, cse_compare);
-            if (potential_reuse != NULL) {
-                progress = potential_reuse;
+                if (progress == NULL || progress == n) {
+                    // no changes
+                    continue;
+                }
+            } else {
+                // try CSE
+                TB_Node* potential_reuse = nl_hashset_put2(&queue->cse_nodes, progress, cse_hash, cse_compare);
+                if (potential_reuse != NULL) {
+                    progress = potential_reuse;
+                }
             }
 
             if (progress != n) {

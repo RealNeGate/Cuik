@@ -68,8 +68,15 @@ bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
         i = (i + 1) & mask;
     } while (i != first);
 
-    assert(0 && "Rehash...");
-    return false;
+    NL_HashSet new_hs = nl_hashset_alloc(nl_hashset_capacity(hs));
+    nl_hashset_for(p, hs) {
+        nl_hashset_put(&new_hs, *p);
+    }
+    nl_hashset_free(*hs);
+    *hs = new_hs;
+
+    // "tail" calls amirite
+    return nl_hashset_put(hs, ptr);
 }
 
 // returns old value
@@ -91,8 +98,15 @@ void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_C
         i = (i + 1) & mask;
     } while (i != first);
 
-    assert(0 && "Rehash...");
-    return NULL;
+    NL_HashSet new_hs = nl_hashset_alloc(nl_hashset_capacity(hs));
+    nl_hashset_for(p, hs) {
+        nl_hashset_put2(&new_hs, *p, hash, cmp);
+    }
+    nl_hashset_free(*hs);
+    *hs = new_hs;
+
+    // "tail" calls amirite
+    return nl_hashset_put2(hs, ptr, hash, cmp);
 }
 
 void nl_hashset_clear(NL_HashSet* restrict hs) {
