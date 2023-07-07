@@ -610,6 +610,7 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
         nl_hashset_free(df[i].v);
     }
     nl_map_free(df);
+    tb_tls_restore(tls, to_promote);
 
     return true;
 }
