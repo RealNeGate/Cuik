@@ -709,9 +709,6 @@ char* tb__arena_strdup(TB_Module* m, const char* src);
 // temporary arena
 extern thread_local Arena tb__arena;
 
-// temporary arena but we don't randomly clear it
-extern thread_local Arena tb__arena2;
-
 // NOTE(NeGate): Place all the codegen interfaces down here
 extern ICodeGen tb__x64_codegen;
 extern ICodeGen tb__aarch64_codegen;

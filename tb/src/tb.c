@@ -1,8 +1,10 @@
 #include "tb_internal.h"
 #include "host.h"
 
-thread_local Arena tb__arena;
+// some module tasks like per-thread
 thread_local Arena tb__arena2;
+
+thread_local Arena tb__arena;
 
 static thread_local uint8_t* tb_thread_storage;
 static thread_local int tid;

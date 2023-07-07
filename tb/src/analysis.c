@@ -63,7 +63,7 @@ TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Domin
             FOREACH_N(k, 0, bb->input_count) {
                 TB_Node* runner = find_region(bb->inputs[k]);
 
-                while (runner != 0 && runner != nl_map_get_checked(doms, bb)) {
+                while (runner != f->start_node && runner != nl_map_get_checked(doms, bb)) {
                     // add to frontier set
                     ptrdiff_t search = nl_map_get(df, runner);
                     TB_FrontierSet* set = NULL;
