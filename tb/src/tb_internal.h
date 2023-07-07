@@ -87,7 +87,7 @@ size_t tb_atomic_size_add(size_t* dst, size_t src);
 size_t tb_atomic_size_sub(size_t* dst, size_t src);
 size_t tb_atomic_size_store(size_t* dst, size_t src);
 
-#define CODE_REGION_BUFFER_SIZE (256 * 1024 * 1024)
+#define CODE_REGION_BUFFER_SIZE (96 * 1024 * 1024)
 
 typedef struct TB_Emitter {
     size_t capacity, count;
@@ -346,7 +346,7 @@ struct TB_Function {
 
 typedef struct {
     size_t capacity, size;
-    uint8_t data[CODE_REGION_BUFFER_SIZE - sizeof(size_t)];
+    uint8_t data[];
 } TB_CodeRegion;
 
 typedef enum {

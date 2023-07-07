@@ -48,10 +48,10 @@ char* tb__arena_strdup(TB_Module* m, const char* src) {
 
 static TB_CodeRegion* get_or_allocate_code_region(TB_Module* m, int tid) {
     if (m->code_regions[tid] == NULL) {
-        m->code_regions[tid] = tb_platform_valloc(CODE_REGION_BUFFER_SIZE / total_tid);
+        m->code_regions[tid] = tb_platform_valloc(CODE_REGION_BUFFER_SIZE);
         if (m->code_regions[tid] == NULL) tb_panic("could not allocate code region!");
 
-        m->code_regions[tid]->capacity = CODE_REGION_BUFFER_SIZE / total_tid;
+        m->code_regions[tid]->capacity = CODE_REGION_BUFFER_SIZE - sizeof(TB_CodeRegion);
     }
 
     return m->code_regions[tid];
