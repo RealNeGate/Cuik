@@ -2,6 +2,7 @@
 #include "host.h"
 
 thread_local Arena tb__arena;
+thread_local Arena tb__arena2;
 
 static thread_local uint8_t* tb_thread_storage;
 static thread_local int tid;
@@ -551,13 +552,7 @@ void tb_tls_restore(TB_TemporaryStorage* store, void* ptr) {
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos) {
     TB_Module* m = func_out->parent->super.module;
-
-    TB_SymbolPatch* p;
-    CUIK_TIMED_BLOCK("lock") {
-        mtx_lock(&m->lock);
-        p = ARENA_ALLOC(&m->arena, TB_SymbolPatch);
-        mtx_unlock(&m->lock);
-    }
+    TB_SymbolPatch* p = ARENA_ALLOC(&tb__arena2, TB_SymbolPatch);
 
     // doesn't need to be atomic
     *p = (TB_SymbolPatch){ .prev = func_out->last_patch, .source = func_out->parent, .target = target, .pos = pos };
