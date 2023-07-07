@@ -63,7 +63,7 @@ static void spallperf__begin_plot(void* user_data, uint64_t nanos, const char* l
     #if _WIN32
     uint32_t tid = GetCurrentThreadId();
     #else
-    uint32_t tid = getpid();
+    uint32_t tid = pthread_self();
     #endif
 
     spall_buffer_begin_args(&ctx, &muh_buffer, label, strlen(label), extra, strlen(extra), nanos, tid, 0);
@@ -75,7 +75,7 @@ static void spallperf__end_plot(void* user_data, uint64_t nanos) {
     #if _WIN32
     uint32_t tid = GetCurrentThreadId();
     #else
-    uint32_t tid = getpid();
+    uint32_t tid = pthread_self();
     #endif
 
     spall_buffer_end_ex(&ctx, &muh_buffer, nanos, tid, 0);
