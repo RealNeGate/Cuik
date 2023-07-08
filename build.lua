@@ -15,6 +15,7 @@
 local is_windows = package.config:sub(1,1) == "\\"
 
 local options = {
+	log    = false,
 	debug  = false,
 	cuik   = false,
 	tb     = false,
@@ -62,6 +63,10 @@ local ar = options.gcc and "ar"  or "llvm-ar"
 
 if not options.debug then
 	cflags = cflags.." -O2 -DNDEBUG"
+end
+
+if not options.log then
+	cflags = cflags.." -DLOG_SUPPRESS"
 end
 
 if options.spall_auto then

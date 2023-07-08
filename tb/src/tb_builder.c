@@ -380,7 +380,7 @@ TB_API TB_Node* tb_inst_string(TB_Function* f, size_t len, const char* str) {
 }
 
 TB_API TB_Node* tb_inst_cstring(TB_Function* f, const char* str) {
-    return tb_inst_string(f, strlen(str), str);
+    return tb_inst_string(f, strlen(str) + 1, str);
 }
 
 TB_API TB_Node* tb_inst_array_access(TB_Function* f, TB_Node* base, TB_Node* index, int64_t stride) {
