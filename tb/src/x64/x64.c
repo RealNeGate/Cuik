@@ -13,12 +13,7 @@ enum {
     REG_CLASS_XMM
 };
 
-typedef enum X86_InstType {
-    //   dst = COPY src
-    X86_INST_COPY = 1022,
-    X86_INST_MOVE = 1021,
-    X86_INST_USE  = 1020,
-} X86_InstType;
+typedef int X86_InstType;
 
 // for memory operands imm[0] is two fields:
 //   top 32bits is scale, bottom 32bits is displacement
@@ -167,18 +162,9 @@ static Inst inst_u(int op, TB_DataType dt) {
     };
 }
 
-static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
-    return (Inst){
-        .type = (int)X86_INST_MOVE,
-        .layout = X86_OP_RR,
-        .data_type = legalize(dt),
-        .regs = { -1, lhs, rhs }
-    };
-}
-
 static Inst inst_use(int src) {
     return (Inst){
-        .type = (int)X86_INST_USE,
+        .type = INST_USE,
         .layout = X86_OP_NONE,
         .data_type = TB_X86_TYPE_NONE,
         .regs = { src },
@@ -214,9 +200,18 @@ static Inst inst_g(int op, TB_DataType dt, int dst, const TB_Symbol* sym) {
     };
 }
 
+static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
+    return (Inst){
+        .type = (int)INST_MOVE,
+        .layout = X86_OP_RR,
+        .data_type = legalize(dt),
+        .regs = { -1, lhs, rhs }
+    };
+}
+
 static Inst inst_copy(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
-        .type = (int) X86_INST_COPY,
+        .type = INST_COPY,
         .layout = X86_OP_RR,
         .data_type = legalize(dt),
         .regs = { lhs, rhs }
@@ -1516,7 +1511,7 @@ static void emit_code(Ctx* restrict ctx) {
             };
             dyn_array_put(f->lines, l);
             continue;
-        } else if (inst->type == X86_INST_USE) {
+        } else if (inst->type == INST_USE) {
             continue;
         }
 
@@ -1615,11 +1610,11 @@ static void emit_code(Ctx* restrict ctx) {
         // TODO(NeGate): this can potentially place the prefix too early
         if (inst->prefix & INST_REP) EMIT1(&ctx->emit, 0xF3);
 
-        if (inst->type == X86_INST_MOVE) {
+        if (inst->type == INST_MOVE) {
             if (!is_value_match(&ops[1], &ops[2])) {
                 inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[1], &ops[2], inst->data_type);
             }
-        } else if (inst->type == X86_INST_COPY) {
+        } else if (inst->type == INST_COPY) {
             if (!is_value_match(&ops[0], &ops[1])) {
                 inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
             }

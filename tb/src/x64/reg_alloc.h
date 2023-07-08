@@ -1,6 +1,6 @@
 // TODO(NeGate): We should switch to Efficient global regsiter allocation, 2011
 // https://arxiv.org/pdf/2011.05608.pdf
-#define REG_ALLOC_LOG if (0)
+#define REG_ALLOC_LOG if (1)
 
 // returns true if used in the next n instructions
 static bool check_if_used(Ctx* restrict ctx, Inst* inst, int def_i, int n) {
@@ -81,7 +81,7 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
         // if it's used, refer to reload
         bool skip_next = false;
         FOREACH_REVERSE_N(j, 1, 4) if (inst->regs[j] == USE(split_def)) {
-            if (inst->type == X86_INST_MOVE && j == 1) {
+            if (inst->type == INST_MOVE && j == 1) {
                 skip_next = true;
                 r.old = split_def;
                 spill(ctx, inst, &r);
@@ -197,7 +197,7 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
         int time = d->start;
         REG_ALLOC_LOG {
             printf("  \x1b[32m# D%zu t=[%d,%d) ", di, time, d->end);
-            if (d->node) printf("%p", d->node);
+            if (d->node) printf("%p %s", d->node, tb_node_get_name(d->node));
             printf("\x1b[0m\n");
         }
 

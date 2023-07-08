@@ -107,6 +107,11 @@ typedef struct Def {
     Clobbers* clobbers;
 } Def;
 
+typedef struct {
+    // if is usually -1 unless there's weird parallel copies
+    int val, tmp;
+} PhiVal;
+
 typedef NL_Map(TB_Node*, MachineBB) MachineBBs;
 typedef DynArray(DefIndex) RegAllocWorklist;
 
@@ -121,6 +126,9 @@ typedef struct {
     int caller_usage;
     TB_Node* fallthrough;
     TB_PostorderWalk order;
+
+    // temporary but still precious
+    DynArray(PhiVal) phi_vals;
 
     // machine output sequences
     Inst *first, *last;
@@ -150,6 +158,13 @@ typedef struct {
 
     TB_SafepointKey* safepoints;
 } Ctx;
+
+enum {
+    //   dst = COPY src
+    INST_COPY = 1022,
+    INST_MOVE = 1021,
+    INST_USE  = 1020,
+};
 
 #if 1
 #define ASM if (ctx->emit.emit_asm)
@@ -191,6 +206,7 @@ static bool fits_into_int32(uint64_t x) {
 }
 
 static bool wont_spill_around(int type);
+static Inst inst_move(TB_DataType dt, int lhs, int rhs);
 static int classify_reg_class(TB_DataType dt);
 static int isel(Ctx* restrict ctx, TB_Node* n);
 static void finna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num);
@@ -417,14 +433,14 @@ static RegAllocWorklist liveness(Ctx* restrict ctx, TB_Function* f) {
             timeline += 2;
 
             // convert initial move into copy
-            if (inst->type == X86_INST_MOVE) {
+            if (inst->type == INST_MOVE) {
                 assert(inst->regs[1] < -1);
                 int di = -inst->regs[1] - 2;
 
                 if (!set_get(&copy_init, di)) {
                     set_put(&copy_init, di);
 
-                    inst->type = (int) X86_INST_COPY;
+                    inst->type = INST_COPY;
                     inst->regs[0] = USE(inst->regs[1]);
                     inst->regs[1] = inst->regs[2];
                     inst->regs[2] = 0;
@@ -536,9 +552,11 @@ static void hint(Ctx* restrict ctx, DefIndex di, int reg) {
 
 static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     TB_NodeRegion* region = TB_NODE_GET_EXTRA(dst);
+    DynArray(PhiVal) phi_vals = ctx->phi_vals;
+    dyn_array_clear(phi_vals);
+
     FOREACH_N(i, 0, region->proj_count) {
         TB_Node* n = region->projs[i];
-        assert(n->type == TB_PHI);
 
         // allocate virtual register
         ptrdiff_t search = nl_map_get(ctx->values, n);
@@ -546,17 +564,40 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
         if (search < 0) {
             dst_vreg = DEF(n, classify_reg_class(n->dt));
             nl_map_put(ctx->values, n, dst_vreg);
-
-            // log_debug("values[%p] = %d", n, dst_vreg);
         } else {
             dst_vreg = ctx->values[search].v;
-            // log_debug("reuse values[%p] (%d)", n, dst_vreg);
         }
 
-        // handle phis
-        // log_debug("phi %p: %d", n, dst_vreg);
-        copy_value(ctx, n, USE(dst_vreg), n->inputs[1 + index], n->dt);
+        PhiVal p = { dst_vreg, -1 };
+        dyn_array_put(phi_vals, p);
     }
+
+    // do copies which on parallel phis (swaps usually but we don't do those yet)
+    FOREACH_N(i, 0, region->proj_count) {
+        TB_Node* n = region->projs[i];
+        assert(n->type == TB_PHI);
+
+        if (n->inputs[1 + index]->type == TB_PHI && n->inputs[1 + index]->inputs[0] == dst) {
+            int tmp = DEF(n, classify_reg_class(n->dt));
+            copy_value(ctx, n, USE(tmp), n->inputs[1 + index], n->dt);
+            phi_vals[i].tmp = tmp;
+        }
+    }
+
+    // do normal copies
+    FOREACH_N(i, 0, region->proj_count) {
+        TB_Node* n = region->projs[i];
+
+        int dst = USE(phi_vals[i].val);
+        if (phi_vals[i].tmp >= 0) {
+            int src = USE(phi_vals[i].tmp);
+            SUBMIT(inst_move(n->dt, dst, src));
+        } else {
+            copy_value(ctx, n, dst, n->inputs[1 + index], n->dt);
+        }
+    }
+
+    ctx->phi_vals = phi_vals;
 }
 
 static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
@@ -615,7 +656,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     };
 
-    // ctx.emit.emit_asm = true;
+    ctx.emit.emit_asm = true;
     /* if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/
@@ -698,6 +739,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     nl_map_free(ctx.emit.labels);
     nl_map_free(ctx.values);
     nl_map_free(ctx.machine_bbs);
+    dyn_array_destroy(ctx.phi_vals);
 
     if (dyn_array_length(f->lines)) {
         f->lines[0].pos = 0;
