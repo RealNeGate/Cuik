@@ -157,7 +157,7 @@ static int codeview_number_of_debug_sections(TB_Module* m) {
 
 // Based on this, it's the only nice CodeView source out there:
 // https://github.com/netwide-assembler/nasm/blob/master/output/codeview.c
-static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporaryStorage* tls, const ICodeGen* code_gen, const char* path) {
+static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporaryStorage* tls) {
     TB_ObjectSection* sections = tb_platform_heap_alloc(2 * sizeof(TB_ObjectSection));
     sections[0] = (TB_ObjectSection){ gimme_cstr_as_slice(".debug$S") };
     sections[1] = (TB_ObjectSection){ gimme_cstr_as_slice(".debug$T") };
@@ -194,8 +194,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                 + (cv8_state.num_syms[SYMTYPE_GDATA] * 10)
                 + (cv8_state.symbol_lengths);*/
 
-        size_t path_len = strlen(path) + 1;
-
+        static const char dummy_path[] = "fallback.o";
         tb_out4b(&debugs_out, 0x00000004);
 
         // File nametable
@@ -337,13 +336,13 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
 
         // Symbol info object
         {
-            uint32_t obj_length = 2 + 4 + path_len;
+            uint32_t obj_length = 2 + 4 + sizeof(dummy_path);
             tb_out2b(&debugs_out, obj_length);
             tb_out2b(&debugs_out, 0x1101);
             tb_out4b(&debugs_out, 0);
 
-            tb_out_reserve(&debugs_out, path_len);
-            tb_outs_UNSAFE(&debugs_out, path_len, (const uint8_t*)path);
+            tb_out_reserve(&debugs_out, sizeof(dummy_path));
+            tb_outs_UNSAFE(&debugs_out, sizeof(dummy_path), (const uint8_t*) dummy_path);
         }
 
         // Symbol info properties

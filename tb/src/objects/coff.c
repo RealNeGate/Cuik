@@ -241,7 +241,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
     TB_SectionGroup debug_sections = { 0 };
     if (dbg) {
-        debug_sections = dbg->generate_debug_info(m, tls, code_gen, "fallback.obj");
+        debug_sections = dbg->generate_debug_info(m, tls);
     }
 
     FOREACH_N(i, 0, debug_sections.length) {

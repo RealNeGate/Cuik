@@ -199,24 +199,6 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_QualType qsrc, Cuik_Qu
     return true;
 }
 
-bool cuik__type_check_args(TranslationUnit* tu, Cuik_Expr* e, int arg_count, Subexpr** args) {
-    /*
-    bool failed = false;
-
-    for (size_t i = 0; i < arg_count; i++) {
-        Cuik_QualType arg_type = cuik__sema_expr(tu, args[i]);
-        Cuik_QualType cast_type = e->cast_types[args[i] - e->exprs];
-
-        if (!implicit_conversion(tu, arg_type, cast_type, args[i])) {
-            failed = true;
-        }
-    }
-
-    return !failed;*/
-    assert(0 && "TODO");
-    return true;
-}
-
 typedef struct {
     Member* member;
     int index;

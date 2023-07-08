@@ -738,14 +738,11 @@ static void irgen_job(void* arg) {
 
     static _Thread_local TB_Arena* ir_arena;
     TB_Arena* allocator = NULL;
-    if (no_opt) {
-        if (ir_arena == NULL) {
-            ir_arena = tb_default_arena();
-        }
-
-        allocator = ir_arena;
+    if (ir_arena == NULL) {
+        ir_arena = tb_default_arena();
     }
 
+    allocator = ir_arena;
     for (size_t i = 0; i < task.count; i++) {
         // skip all the typedefs
         if (task.stmts[i]->decl.attrs.is_typedef || !task.stmts[i]->decl.attrs.is_used) {
@@ -795,8 +792,8 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
         CUIK_FOR_EACH_TU(tu, cu) {
             size_t top_level_count = cuik_num_of_top_level_stmts(tu);
             Stmt** top_level = cuik_get_top_level_stmts(tu);
-            for (size_t i = 0; i < top_level_count; i += 8192) {
-                size_t end = i + 8192;
+            for (size_t i = 0; i < top_level_count; i += IRGEN_TASK_BATCH_SIZE) {
+                size_t end = i + IRGEN_TASK_BATCH_SIZE;
                 if (end >= top_level_count) end = top_level_count;
 
                 assert(task_count < task_capacity);

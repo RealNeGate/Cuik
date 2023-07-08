@@ -464,7 +464,7 @@ typedef struct {
 
     // functions are laid out linearly based on their function IDs and
     // thus function_sym_start tells you what the starting point is in the symbol table
-    TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_TemporaryStorage* tls, const ICodeGen* code_gen, const char* path);
+    TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_TemporaryStorage* tls);
 } IDebugFormat;
 
 #ifndef NDEBUG

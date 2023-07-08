@@ -2026,8 +2026,6 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
     size_t top = 0;
     Subexpr* exprs = e->exprs;
 
-    static int counter = 0;
-
     size_t i = 0;
     for (; i < e->count; i++) {
         Subexpr* s = &exprs[i];
@@ -2036,8 +2034,6 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
         int arity = cuik_get_expr_arity(s);
         top -= arity;
         IRVal* args = &stack[top];
-
-        int id = counter++;
 
         assert(top < 1024 && "Too complex of a constant expression");
         stack[top] = irgen_subexpr(tu, func, e, s, arity, args);
