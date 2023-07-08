@@ -52,6 +52,7 @@ for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 #include "set.h"
 
 #include <threads.h>
+#include <stdatomic.h>
 
 // ***********************************
 // Constraints
@@ -69,14 +70,7 @@ for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 // ***********************************
 // Atomics
 // ***********************************
-// since some modern C11 compilers (MSVC...) don't support
-// C11 atomics we'll just write a stripped down layer that
-// handles all we really want from atomics.
-//
-// These return the old values.
-typedef int    tb_atomic_int;
-typedef size_t tb_atomic_size_t;
-
+// We use C11 atomics, fuck you if you can't. we don't serve Microsofts.
 int tb_atomic_int_load(int* dst);
 int tb_atomic_int_add(int* dst, int src);
 int tb_atomic_int_store(int* dst, int src);
@@ -87,21 +81,14 @@ size_t tb_atomic_size_add(size_t* dst, size_t src);
 size_t tb_atomic_size_sub(size_t* dst, size_t src);
 size_t tb_atomic_size_store(size_t* dst, size_t src);
 
-#define CODE_REGION_BUFFER_SIZE (96 * 1024 * 1024)
+#define CODE_REGION_BUFFER_SIZE (128 * 1024 * 1024)
 
 typedef struct TB_Emitter {
     size_t capacity, count;
     uint8_t* data;
 } TB_Emitter;
 
-#define TB_FIXED_ARRAY(T) \
-struct { size_t cap, count; T* elems; }
-
-#define TB_FIXED_ARRAY_APPEND(arr, elem) \
-(((arr).count + 1 <= (arr).cap) ? (void) ((arr).elems[(arr).count++] = (elem)) : (void) assert(!"out of bounds"))
-
 #define TB_DATA_TYPE_EQUALS(a, b) ((a).raw == (b).raw)
-#define TB_DT_EQUALS(a, b) ((a).raw == (b).raw)
 
 #undef TB_FOR_BASIC_BLOCK
 #define TB_FOR_BASIC_BLOCK(it, f) for (TB_Label it = 0; it < f->bb_count; it++)
@@ -275,6 +262,14 @@ typedef struct {
     TB_Safepoint* sp;
 } TB_SafepointKey;
 
+typedef struct TB_CodeRegion TB_CodeRegion;
+struct TB_CodeRegion {
+    size_t capacity, size;
+    TB_CodeRegion* prev;
+
+    uint8_t data[];
+};
+
 typedef struct TB_FunctionOutput {
     TB_Function* parent;
     TB_Linkage linkage;
@@ -288,6 +283,7 @@ typedef struct TB_FunctionOutput {
     uint64_t prologue_epilogue_metadata;
     uint64_t stack_usage;
 
+    TB_CodeRegion* code_region;
     uint8_t* code;
 
     size_t code_pos; // relative to the export-specific text section
@@ -344,11 +340,6 @@ struct TB_Function {
     TB_FunctionOutput* output;
 };
 
-typedef struct {
-    size_t capacity, size;
-    uint8_t data[];
-} TB_CodeRegion;
-
 typedef enum {
     // stores globals
     TB_MODULE_SECTION_DATA,
@@ -390,7 +381,7 @@ struct TB_Module {
     int max_threads;
     bool is_jit;
 
-    tb_atomic_int is_tls_defined;
+    atomic_flag is_tls_defined;
 
     // we have a global lock since the arena can be accessed
     // from any thread.
@@ -407,10 +398,10 @@ struct TB_Module {
     TB_Symbol* tls_index_extern;
 
     size_t comdat_function_count; // compiled function count
-    tb_atomic_size_t compiled_function_count;
+    _Atomic size_t compiled_function_count;
 
     // symbol table
-    _Atomic(size_t) symbol_count[TB_SYMBOL_MAX];
+    _Atomic size_t symbol_count[TB_SYMBOL_MAX];
     _Atomic(TB_Symbol*) first_symbol_of_tag[TB_SYMBOL_MAX];
 
     alignas(64) struct {
@@ -673,7 +664,6 @@ do {                                         \
 #endif
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
-void tb_insert_node(TB_Function* f, TB_Label bb, TB_Node* a, TB_Node* b);
 
 ////////////////////////////////
 // EXPORTER HELPER

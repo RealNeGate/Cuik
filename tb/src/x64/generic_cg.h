@@ -656,7 +656,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
-    // CUIK_TIMED_BLOCK("isel")
     FOREACH_REVERSE_N(i, 0, ctx.order.count) {
         TB_Node* bb = ctx.order.traversal[i];
         nl_map_put(ctx.emit.labels, bb, 0);

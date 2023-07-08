@@ -8,7 +8,7 @@ thread_local Arena tb__arena;
 
 static thread_local uint8_t* tb_thread_storage;
 static thread_local int tid;
-static tb_atomic_int total_tid;
+static _Atomic int total_tid;
 
 TB_Arena* tb_node_arena(void);
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size);
@@ -26,7 +26,7 @@ int tb__get_local_tid(void) {
     // the value it spits out is zero-based, but
     // the TIDs consider zero as a NULL space.
     if (tid == 0) {
-        int new_id = tb_atomic_int_add(&total_tid, 1);
+        int new_id = atomic_fetch_add(&total_tid, 1);
         tid = new_id + 1;
     }
 
@@ -127,8 +127,18 @@ TB_API TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* 
     TB_CodeRegion* region = get_or_allocate_code_region(m, id);
 
     size_t align_mask = _Alignof(TB_FunctionOutput) - 1;
-    region->size = (region->size + align_mask) & ~align_mask;
-    assert(region->size + sizeof(TB_FunctionOutput) < region->capacity);
+    size_t next_size = (region->size + align_mask) & ~align_mask;
+    if (next_size + sizeof(TB_FunctionOutput) >= region->capacity) {
+        // append new region
+        TB_CodeRegion* new_region = tb_platform_valloc(CODE_REGION_BUFFER_SIZE);
+        if (new_region == NULL) tb_panic("could not allocate code region!");
+
+        new_region->capacity = CODE_REGION_BUFFER_SIZE - sizeof(TB_CodeRegion);
+        new_region->prev = region;
+        m->code_regions[id] = new_region;
+    } else {
+        region->size = next_size;
+    }
 
     // allocate the TB_FunctionOutput in the code region
     TB_FunctionOutput* func_out = (TB_FunctionOutput*) &region->data[region->size];
@@ -140,7 +150,7 @@ TB_API TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* 
     }
 
     CUIK_TIMED_BLOCK_ARGS("compile func", f->super.name) {
-        *func_out = (TB_FunctionOutput){ .parent = f, .linkage = f->linkage };
+        *func_out = (TB_FunctionOutput){ .parent = f, .linkage = f->linkage, .code_region = region };
 
         uint8_t* local_buffer = &region->data[region->size];
         size_t local_capacity = region->capacity - region->size;
@@ -150,6 +160,15 @@ TB_API TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* 
         } else {
             code_gen->fast_path(f, func_out, &m->features, local_buffer, local_capacity);
             assert(func_out->code);
+        }
+
+        // if the func_out is placed into a different region, let's abide by that
+        if (func_out->code_region != region) {
+            func_out->code_region->prev = region;
+            m->code_regions[id] = func_out->code_region;
+
+            // finna use the new buffer for the prologue & epilogue
+            region = func_out->code_region;
         }
     }
 
@@ -176,7 +195,7 @@ TB_API TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* 
         func_out->code_size += (prologue_len + epilogue_len);
     }
 
-    tb_atomic_size_add(&m->compiled_function_count, 1);
+    atomic_fetch_add(&m->compiled_function_count, 1);
     region->size += func_out->code_size;
 
     f->output = func_out;
@@ -202,9 +221,11 @@ TB_API void tb_module_destroy(TB_Module* m) {
     }
 
     FOREACH_N(i, 0, m->max_threads) {
-        if (m->code_regions[i] != NULL) {
-            tb_platform_vfree(m->code_regions[i], m->code_regions[i]->capacity);
-            m->code_regions[i] = NULL;
+        TB_CodeRegion* r = m->code_regions[i];
+        while (r != NULL) {
+            TB_CodeRegion* prev = r->prev;
+            tb_platform_vfree(r, sizeof(TB_CodeRegion) + r->capacity);
+            r = prev;
         }
     }
 
@@ -406,7 +427,7 @@ TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m) {
 }
 
 TB_API void tb_module_set_tls_index(TB_Module* m, const char* name) {
-    if (tb_atomic_int_cmpxchg(&m->is_tls_defined, 0, 1)) {
+    if (atomic_flag_test_and_set(&m->is_tls_defined)) {
         m->tls_index_extern = (TB_Symbol*) tb_extern_create(m, "_tls_index", TB_EXTERNAL_SO_LOCAL);
     }
 }

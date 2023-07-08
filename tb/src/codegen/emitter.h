@@ -28,9 +28,6 @@ typedef struct {
 
     NL_Map(TB_Node*, uint32_t) labels;
     uint32_t return_label;
-
-    // LabelPatch* label_patches;
-    // ReturnPatch* ret_patches;
 } TB_CGEmitter;
 
 // Helper macros
@@ -69,7 +66,16 @@ static void tb_resolve_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t 
 
 static void* tb_cgemit_reserve(TB_CGEmitter* restrict e, size_t count) {
     if (e->count + count >= e->capacity) {
-        tb_panic("tb_cgemit_reserve: Out of memory!");
+        // make new region
+        TB_CodeRegion* new_region = tb_platform_valloc(CODE_REGION_BUFFER_SIZE);
+        if (new_region == NULL) tb_panic("could not allocate code region!");
+
+        new_region->capacity = CODE_REGION_BUFFER_SIZE - sizeof(TB_CodeRegion);
+        e->output->code_region = new_region;
+
+        // copy code into new region
+        memcpy(new_region->data, e->data, e->count);
+        e->data = new_region->data;
     }
 
     return &e->data[e->count];
