@@ -331,10 +331,18 @@ static void print_operand(Val* v) {
         }
         case VAL_GLOBAL: {
             const TB_Symbol* target = v->symbol;
-            if (v->imm == 0) {
-                printf("%s", target->name);
+            if (target->name == NULL) {
+                if (v->imm == 0) {
+                    printf("sym%p", target);
+                } else {
+                    printf("[sym%p + %d]", target, v->imm);
+                }
             } else {
-                printf("[%s + %d]", target->name, v->imm);
+                if (v->imm == 0) {
+                    printf("%s", target->name);
+                } else {
+                    printf("[%s + %d]", target->name, v->imm);
+                }
             }
             break;
         }
@@ -1621,16 +1629,22 @@ static void emit_code(Ctx* restrict ctx) {
         } else if (op_count == 1) {
             if (!has_def) {
                 inst1_print(ctx, inst->type, &ops[1], inst->data_type);
-            } else if (!is_value_match(&ops[0], &ops[1])) {
-                inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
             } else {
-                inst1_print(ctx, inst->type, &ops[0], inst->data_type);
+                tb_todo();
             }
         } else if (op_count == 2) {
             if (inst->type == JMP || inst->type == CALL) {
                 inst1_print(ctx, inst->type, &ops[1], inst->data_type);
-            } else if (inst->type != MOV || (inst->type == MOV && !is_value_match(&ops[0], &ops[1]))) {
-                inst2_print(ctx, (InstType) inst->type, &ops[0], &ops[1], inst->data_type);
+            } else {
+                // sometimes 2ary is a unary with a separated dst and src, or a binop
+                if (inst_table[inst->type].cat <= INST_UNARY_EXT) {
+                    if (!is_value_match(&ops[0], &ops[1])) {
+                        inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
+                    }
+                    inst1_print(ctx, inst->type, &ops[0], inst->data_type);
+                } else {
+                    inst2_print(ctx, inst->type, &ops[0], &ops[1], inst->data_type);
+                }
             }
         } else if (op_count == 3) {
             if (!has_def) {

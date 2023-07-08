@@ -93,10 +93,6 @@ typedef struct TB_Emitter {
 #undef TB_FOR_BASIC_BLOCK
 #define TB_FOR_BASIC_BLOCK(it, f) for (TB_Label it = 0; it < f->bb_count; it++)
 
-#define TB_FOR_NODE(it, f, bb) for (TB_Node* it = f->bbs[bb].start; it != 0; it = it->next)
-
-#define TB_FOR_SYMBOL_WITH_TAG(it, m, tag) for (TB_Symbol* it = m->first_symbol_of_tag[tag]; it != NULL; it = it->next)
-
 #undef TB_FOR_FUNCTIONS
 #define TB_FOR_FUNCTIONS(it, m) for (TB_Function* it = (TB_Function*) m->first_symbol_of_tag[TB_SYMBOL_FUNCTION]; it != NULL; it = (TB_Function*) it->super.next)
 
