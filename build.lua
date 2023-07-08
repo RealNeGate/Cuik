@@ -30,8 +30,8 @@ local options = {
 -- Cuik/TB are broken down into several pieces
 local modules = {
 	common = { srcs={"common/common.c", "common/perf.c"} },
-	cuik   = { srcs={"libCuik/lib/libcuik.c", "libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c"}, flags="-I libCuik/include" },
-	tb     = { srcs={"tb/src/libtb.c", "tb/src/x64/x64.c"}, flags="-I tb/include -DCUIK_USE_TB" },
+	cuik   = { srcs={"libCuik/lib/libcuik.c", "libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c"}, flags="-I libCuik/include", deps={"common"} },
+	tb     = { srcs={"tb/src/libtb.c", "tb/src/x64/x64.c"}, flags="-I tb/include -DCUIK_USE_TB", deps={"common"} },
 
 	-- executables:
 	--   Cuik command line
@@ -112,9 +112,15 @@ else
 end
 
 local is_exe = false
+local added = {}
 
 -- resolve dependencies
 function walk(name)
+	if added[name] ~= nil then
+		return
+	end
+	added[name] = true
+
 	if options.shared and modules[name].is_exe then
 		print("error: "..name.." is an executable, it cannot be compiled with -shared")
 		exit(1)
