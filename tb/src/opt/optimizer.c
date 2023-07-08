@@ -414,10 +414,11 @@ static void generate_use_lists(TB_OptQueue* restrict queue, TB_Function* f) {
     }
 }
 
-void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f) {
+void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f, TB_Arena* arena) {
     CUIK_TIMED_BLOCK("optimize function") {
         assert(!passes.module_level);
         f->line_attrib = NULL; // don't add line info automatically to optimizer-generated nodes
+        f->arena = arena;
 
         const TB_Pass* restrict arr = manager->passes;
         log_debug("run %d passes for %s", passes.end - passes.start, f->super.name);
@@ -469,7 +470,7 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
     }
 }
 
-void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m) {
+void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m, TB_Arena* arena) {
     log_debug("run %d passes for entire module %p", passes.end - passes.start, m);
 
     const TB_Pass* restrict arr = manager->passes;

@@ -70,6 +70,8 @@ struct Cuik_BuildStep {
     };
 };
 
+static _Thread_local TB_Arena* ir_arena;
+
 static void step_error(Cuik_BuildStep* s) {
     if (s->anti_dep != NULL) {
         s->anti_dep->errors += 1;
@@ -142,8 +144,12 @@ static void compile_func(TB_Module* m, TB_Function* f, void* ctx) {
 
 typedef struct { TB_PassManager* pm; TB_Passes passes; } ApplyFunc;
 static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
+    if (ir_arena == NULL) {
+        ir_arena = tb_default_arena();
+    }
+
     ApplyFunc* a = (ApplyFunc*) arg;
-    tb_function_apply_passes(a->pm, a->passes, f);
+    tb_function_apply_passes(a->pm, a->passes, f, ir_arena);
 }
 #endif
 
@@ -258,7 +264,11 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         TB_PassManager pm = { dyn_array_length(passes), &passes[0] };
         TB_DO_PASSES(passes, &pm, mod) {
             if (passes.module_level) {
-                tb_module_apply_passes(&pm, passes, mod);
+                if (ir_arena == NULL) {
+                    ir_arena = tb_default_arena();
+                }
+
+                tb_module_apply_passes(&pm, passes, mod, ir_arena);
             } else {
                 // do parallel function passes
                 ApplyFunc a = { &pm, passes };
@@ -736,7 +746,6 @@ static void irgen_job(void* arg) {
 
     bool no_opt = task.opt_level == 0;
 
-    static _Thread_local TB_Arena* ir_arena;
     TB_Arena* allocator = NULL;
     if (ir_arena == NULL) {
         ir_arena = tb_default_arena();

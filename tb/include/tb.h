@@ -1081,8 +1081,8 @@ TB_API bool tb_passes_iter(TB_PassManager* manager, TB_Module* m, TB_Passes* pas
 TB_API void tb_module_optimize(TB_Module* m, size_t pass_count, const TB_Pass* passes[]);
 
 // Applies a set of function level passes onto a function
-TB_API void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f);
-TB_API void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m);
+TB_API void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Function* f, TB_Arena* arena);
+TB_API void tb_module_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Module* m, TB_Arena* arena);
 
 TB_API TB_Pass tb_opt_mem2reg(void);
 TB_API TB_Pass tb_opt_identity(void);
