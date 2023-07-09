@@ -1,8 +1,5 @@
 #pragma once
-#include <stdbool.h>
-#include <stdlib.h>
-#include <stddef.h>
-#include <stdio.h>
+#include "common.h"
 #include "builtins.h"
 
 #define SET_INITIAL_CAP 32

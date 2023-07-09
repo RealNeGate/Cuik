@@ -1436,8 +1436,24 @@ static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
     basepoint->next = new_inst;
 }
 
-static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
+static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index) {
     InstType i = r->dt.type == TB_FLOAT ? FP_MOV : MOV;
+
+    Inst* next = basepoint->next;
+    if (next->type == INST_COPY && op_index == 1) {
+        REG_ALLOC_LOG printf("  \x1b[32m#   folded reload D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
+
+        int old_time = next->time;
+        Inst* old_next = next->next;
+
+        *next = inst_m(i, r->dt, next->regs[0], RBP, GPR_NONE, SCALE_X1, r->stack_pos);
+        next->time = old_time;
+        next->next = old_next;
+        return;
+    }
+
+    REG_ALLOC_LOG printf("  \x1b[32m#   reload D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
+
     Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
 
     *new_inst = inst_m(i, r->dt, r->old, RBP, GPR_NONE, SCALE_X1, r->stack_pos);

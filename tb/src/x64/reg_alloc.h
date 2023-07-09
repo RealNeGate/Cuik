@@ -26,21 +26,15 @@ static size_t choose_best_split(Ctx* restrict ctx, Inst* inst, int reg_class, in
     return 0;
 }
 
-static Inst* insert_reload_site(Ctx* restrict ctx, TB_Function* f, Inst* inst, size_t def_i) {
-    // skip first sequence
-    inst = inst->next;
-
-    for (; inst; inst = inst->next) {
-        if (inst->type == INST_LABEL) {
-            return NULL;
-        }
-
-        FOREACH_N(j, 1, 4) if (inst->regs[j] == USE(def_i)) {
-            return inst;
-        }
+static void insert_sorted_def(Ctx* restrict ctx, DefIndex* sorted, size_t count, int start, DefIndex di) {
+    size_t i = count;
+    while (i--) {
+        if (ctx->defs[sorted[i]].start >= start) break;
     }
 
-    return NULL;
+    // we know where to insert
+    memmove(&sorted[i + 1], &sorted[i], (count - i) * sizeof(DefIndex));
+    sorted[i + 1] = di;
 }
 
 static Inst* find_inst_at_time(Ctx* restrict ctx, int time) {
@@ -92,19 +86,20 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
                 dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1, .hint = reg_num });
                 reload_def = dyn_array_length(ctx->defs) - 1;
 
-                // place new definition into worklist
-                dyn_array_put(*worklist, reload_def);
+                // place new definition into worklist sorted
+                dyn_array_put_uninit(*worklist, 1);
+                insert_sorted_def(ctx, *worklist, dyn_array_length(*worklist) - 1, t, reload_def);
 
                 // generate reload before this instruction
                 r.old = reload_def;
-                reload(ctx, prev_inst, &r);
+                reload(ctx, prev_inst, &r, j);
             }
 
             inst->regs[j] = USE(reload_def);
             ctx->defs[reload_def].end = inst->time + (j == 1 ? 0 : 1);
         }
 
-        if (inst->regs[0] == split_def && reload_def != split_def) {
+        if (inst->regs[0] == split_def && reload_def >= 0 && reload_def != split_def) {
             // spill and discard our reload spot (if applies)
             r.old = inst->regs[0];
             spill(ctx, inst, &r);
@@ -233,16 +228,20 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
 
         // clobbering will evict registers it needs
         if (d->clobbers) {
-            assert(next_clobber == d);
-            dyn_array_pop(ctx->clobbers);
-
             FOREACH_N(j, 0, d->clobbers->count) {
                 evict(ctx, &worklist, di, d->clobbers->_[j].class, d->clobbers->_[j].num, time);
                 d = &ctx->defs[di];
             }
 
             d = &ctx->defs[di];
+
             next_clobber = NULL;
+
+            // find the clobber, delete it
+            size_t top = dyn_array_length(ctx->clobbers) - 1;
+            if (d == &ctx->defs[ctx->clobbers[top]]) {
+                dyn_array_pop(ctx->clobbers);
+            }
         }
 
         // find register for current

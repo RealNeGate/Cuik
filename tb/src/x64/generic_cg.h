@@ -230,7 +230,7 @@ static void patch_local_labels(Ctx* restrict ctx);
 static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage);
 static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt);
 static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r);
-static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r);
+static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index);
 
 #define ISEL(n) USE(isel(ctx, n))
 
@@ -567,9 +567,8 @@ static RegAllocWorklist liveness(Ctx* restrict ctx, TB_Function* f) {
     return sorted;
 }
 
-// we get the reg_alloc function from here, in other we
-// can make this support more register allocation schemes
 #include "reg_alloc.h"
+#include "fancy_reg_alloc.h"
 
 static void hint(Ctx* restrict ctx, DefIndex di, int reg) {
     if (ctx->defs[di].hint < 0) {
@@ -608,6 +607,7 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     assert(phi_count == parent->phi_count);
 
     // do copies which on parallel phis (swaps usually but we don't do those yet)
+    bool has_tmps = false;
     dyn_array_for(i, phi_vals) {
         TB_Node* n = phi_vals[i].n;
         assert(n->type == TB_PHI);
@@ -616,6 +616,7 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
             int tmp = DEF(n, classify_reg_class(n->dt));
             copy_value(ctx, n, USE(tmp), n->inputs[1 + index], n->dt);
             phi_vals[i].tmp = tmp;
+            has_tmps = true;
         }
     }
 
@@ -623,12 +624,22 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     dyn_array_for(i, phi_vals) {
         TB_Node* n = phi_vals[i].n;
 
-        int dst = USE(phi_vals[i].val);
-        if (phi_vals[i].tmp >= 0) {
-            int src = USE(phi_vals[i].tmp);
-            SUBMIT(inst_move(n->dt, dst, src));
-        } else {
+        if (phi_vals[i].tmp < 0) {
+            int dst = USE(phi_vals[i].val);
             copy_value(ctx, n, dst, n->inputs[1 + index], n->dt);
+        }
+    }
+
+    // do temp copies
+    if (has_tmps) {
+        dyn_array_for(i, phi_vals) {
+            TB_Node* n = phi_vals[i].n;
+
+            if (phi_vals[i].tmp >= 0) {
+                int dst = USE(phi_vals[i].val);
+                int src = USE(phi_vals[i].tmp);
+                SUBMIT(inst_move(n->dt, dst, src));
+            }
         }
     }
 
@@ -849,21 +860,25 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     }
 
-    RegAllocWorklist sorted = NULL;
-    CUIK_TIMED_BLOCK("build intervals")
-    {
-        sorted = liveness(&ctx, f);
-    }
+    // maybe it's completely empty
+    if (ctx.defs != NULL) {
+        RegAllocWorklist worklist = NULL;
+        CUIK_TIMED_BLOCK("build intervals") {
+            worklist = liveness(&ctx, f);
+        }
 
-    // CUIK_TIMED_BLOCK("linear scan")
-    {
-        reg_alloc(&ctx, f, sorted);
-    }
+        CUIK_TIMED_BLOCK("reg alloc") {
+            if (1) {
+                reg_alloc(&ctx, f, worklist);
+            } else {
+                fancy_reg_alloc(&ctx, f, worklist);
+            }
+        }
 
-    // CUIK_TIMED_BLOCK("emit sequences")
-    {
         // Arch-specific: convert instruction buffer into actual instructions
-        emit_code(&ctx);
+        CUIK_TIMED_BLOCK("emit sequences") {
+            emit_code(&ctx);
+        }
     }
 
     if (ctx.emit.emit_asm) {
