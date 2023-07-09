@@ -632,7 +632,7 @@ struct TB_Arena {
 };
 
 // allocates in 16MiB chunks and does linear allocation in 'em
-TB_Arena* tb_default_arena(void);
+TB_API TB_Arena* tb_default_arena(void);
 
 ////////////////////////////////
 // Module management
@@ -975,8 +975,6 @@ TB_API TB_Node* tb_inst_shr(TB_Function* f, TB_Node* a, TB_Node* b);
 // By default you can use TB_MEM_ORDER_SEQ_CST for the memory order to get
 // correct but possibly slower results on certain platforms (those with relaxed
 // memory models).
-TB_API TB_Node* tb_inst_atomic_test_and_set(TB_Function* f, TB_Node* addr, TB_MemoryOrder order);
-TB_API TB_Node* tb_inst_atomic_clear(TB_Function* f, TB_Node* addr, TB_MemoryOrder order);
 
 // Must be aligned to the natural alignment of dt
 TB_API TB_Node* tb_inst_atomic_load(TB_Function* f, TB_Node* addr, TB_DataType dt, TB_MemoryOrder order);
@@ -1033,7 +1031,6 @@ TB_API TB_Node* tb_inst_safepoint(TB_Function* f, size_t param_count, TB_Node** 
 
 TB_API TB_Node* tb_inst_incomplete_phi(TB_Function* f, TB_DataType dt, TB_Node* region, size_t preds);
 TB_API bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* region, TB_Node* val);
-TB_API void tb_inst_set_phis_to_region(TB_Function* f, TB_Node* region, size_t phi_count, TB_Node** phis);
 
 TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b);
 TB_API void tb_inst_goto(TB_Function* f, TB_Node* target);

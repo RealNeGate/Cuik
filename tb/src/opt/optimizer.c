@@ -441,8 +441,8 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
         }
 
         #ifndef NDEBUG
-        printf("\n\nORIGINAL:\n");
-        tb_function_print(f, tb_default_print_callback, stdout);
+        // printf("\n\nORIGINAL:\n");
+        // tb_function_print(f, tb_default_print_callback, stdout);
         #endif
 
         // run passes
@@ -450,8 +450,8 @@ void tb_function_apply_passes(TB_PassManager* manager, TB_Passes passes, TB_Func
             peephole(&queue, f);
 
             #ifndef NDEBUG
-            printf("\n\nAFTER PEEP:\n");
-            tb_function_print(f, tb_default_print_callback, stdout);
+            // printf("\n\nAFTER PEEP:\n");
+            // tb_function_print(f, tb_default_print_callback, stdout);
             #endif
 
             CUIK_TIMED_BLOCK_ARGS(arr[i].name, f->super.name) {

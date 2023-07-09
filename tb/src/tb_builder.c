@@ -609,26 +609,6 @@ TB_API TB_Node* tb_inst_shl(TB_Function* f, TB_Node* a, TB_Node* b, TB_Arithmeti
 ////////////////////////////////
 // Atomics
 ////////////////////////////////
-TB_API TB_Node* tb_inst_atomic_test_and_set(TB_Function* f, TB_Node* addr, TB_MemoryOrder order) {
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_TEST_AND_SET, TB_TYPE_BOOL, 2, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
-
-    f->active_control_node = n;
-    return n;
-}
-
-TB_API TB_Node* tb_inst_atomic_clear(TB_Function* f, TB_Node* addr, TB_MemoryOrder order) {
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_CLEAR, TB_TYPE_BOOL, 2, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
-
-    f->active_control_node = n;
-    return n;
-}
-
 TB_API TB_Node* tb_inst_atomic_load(TB_Function* f, TB_Node* addr, TB_DataType dt, TB_MemoryOrder order) {
     TB_Node* n = tb_alloc_node(f, TB_ATOMIC_LOAD, dt, 2, sizeof(TB_NodeAtomic));
     n->inputs[0] = f->active_control_node; // control edge
@@ -865,32 +845,7 @@ TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Nod
     n->inputs[0] = region;
     n->inputs[1] = a;
     n->inputs[2] = b;
-
-    // add new phi to region (NOT EFFICIENT)
-    TB_NodeRegion* r = TB_NODE_GET_EXTRA(region);
-
-    size_t old_count = r->proj_count++;
-    TB_Node** new_projs = alloc_from_node_arena(f, r->proj_count * sizeof(TB_Node*));
-    if (old_count != 0) {
-        memcpy(new_projs, r->projs, old_count * sizeof(TB_Node*));
-    }
-
-    new_projs[old_count] = n;
-    r->projs = new_projs;
     return n;
-}
-
-void tb_inst_set_phis_to_region(TB_Function* f, TB_Node* region, size_t phi_count, TB_Node** phis) {
-    // add new phi to region (NOT EFFICIENT)
-    TB_NodeRegion* r = TB_NODE_GET_EXTRA(region);
-
-    TB_Node** new_phis = alloc_from_node_arena(f, phi_count * sizeof(TB_Node*));
-    if (phi_count != 0) {
-        memcpy(new_phis, phis, phi_count * sizeof(TB_Node*));
-    }
-
-    r->projs = new_phis;
-    r->proj_count = phi_count;
 }
 
 TB_API TB_Node* tb_inst_region(TB_Function* f) {

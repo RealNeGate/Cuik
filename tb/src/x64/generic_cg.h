@@ -108,9 +108,18 @@ typedef struct Def {
 } Def;
 
 typedef struct {
+    TB_Node* n;
+
     // if is usually -1 unless there's weird parallel copies
     int val, tmp;
 } PhiVal;
+
+typedef struct Effect Effect;
+struct Effect {
+    Effect* next;
+    TB_Node* node;
+    int phi_count;
+};
 
 typedef NL_Map(TB_Node*, MachineBB) MachineBBs;
 typedef DynArray(DefIndex) RegAllocWorklist;
@@ -127,6 +136,10 @@ typedef struct {
     TB_Node* fallthrough;
     TB_PostorderWalk order;
 
+    // Scheduling
+    NL_HashSet visited;
+    NL_Map(TB_Node*, Effect*) effects;
+
     // temporary but still precious
     DynArray(PhiVal) phi_vals;
 
@@ -134,6 +147,8 @@ typedef struct {
     Inst *first, *last;
     DynArray(Def) defs;
     DynArray(Reload) reloads;
+
+    DynArray(DefIndex) clobbers;
 
     MachineBBs machine_bbs;
 
@@ -307,14 +322,6 @@ static void append_inst(Ctx* restrict ctx, Inst i) {
 ////////////////////////////////
 // Liveness analysis
 ////////////////////////////////
-static int compare_defs(void* ctx, const void* a, const void* b) {
-    Def* defs = ctx;
-    int as = defs[*(DefIndex*) a].start;
-    int bs = defs[*(DefIndex*) b].start;
-
-    return (as > bs) - (as < bs);
-}
-
 static void add_range(Ctx* restrict ctx, Def* restrict d, int start, int end) {
     assert(start <= end);
 
@@ -382,6 +389,12 @@ static void cuiksort_defs(Def* defs, ptrdiff_t lo, ptrdiff_t hi, DefIndex* arr) 
     }
 }
 
+static int compare_defs(const void* a, const void* b) {
+    const DefIndex* aa = a;
+    const DefIndex* bb = b;
+    return (*bb > *aa) - (*bb < *aa);
+}
+
 // generate live intervals for virtual registers
 static RegAllocWorklist liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t def_count = dyn_array_length(ctx->defs);
@@ -437,11 +450,17 @@ static RegAllocWorklist liveness(Ctx* restrict ctx, TB_Function* f) {
                 assert(inst->regs[1] < -1);
                 int di = -inst->regs[1] - 2;
 
+                // propagate hints
+                int si = USE(inst->regs[2]);
+                if (ctx->defs[si].hint >= 0) {
+                    ctx->defs[si].hint = ctx->defs[di].hint;
+                }
+
                 if (!set_get(&copy_init, di)) {
                     set_put(&copy_init, di);
 
                     inst->type = INST_COPY;
-                    inst->regs[0] = USE(inst->regs[1]);
+                    inst->regs[0] = di;
                     inst->regs[1] = inst->regs[2];
                     inst->regs[2] = 0;
                 }
@@ -456,6 +475,11 @@ static RegAllocWorklist liveness(Ctx* restrict ctx, TB_Function* f) {
 
             if (inst->regs[0] >= 0) {
                 set_put(kill, inst->regs[0]);
+
+                // mark clobbers for later, we might wanna improve
+                if (ctx->defs[inst->regs[0]].clobbers) {
+                    dyn_array_put(ctx->clobbers, inst->regs[0]);
+                }
             }
         }
 
@@ -533,8 +557,11 @@ static RegAllocWorklist liveness(Ctx* restrict ctx, TB_Function* f) {
         dyn_array_put(sorted, i);
     }
 
-    // sort by starting point
+    // sort by starting point (lowest at the end)
     cuiksort_defs(ctx->defs, 0, def_count - 1, sorted);
+
+    // sort by starting point (lowest at the end)
+    qsort(ctx->clobbers, dyn_array_length(ctx->clobbers), sizeof(DefIndex), compare_defs);
 
     ctx->machine_bbs = seq_bb;
     return sorted;
@@ -555,26 +582,34 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     DynArray(PhiVal) phi_vals = ctx->phi_vals;
     dyn_array_clear(phi_vals);
 
-    FOREACH_N(i, 0, region->proj_count) {
-        TB_Node* n = region->projs[i];
+    Effect* parent = nl_map_get_checked(ctx->effects, dst);
+
+    size_t phi_count = 0;
+    for (Effect* e = parent->next; phi_count < parent->phi_count; e = e->next) {
+        TB_Node* n = e->node;
+
+        // only two things we should expect here
+        if (n->type == TB_LOAD) continue;
+        if (n->type != TB_PHI) break;
 
         // allocate virtual register
         ptrdiff_t search = nl_map_get(ctx->values, n);
-        int dst_vreg = -1;
+        PhiVal p = { n, -1, -1 };
         if (search < 0) {
-            dst_vreg = DEF(n, classify_reg_class(n->dt));
-            nl_map_put(ctx->values, n, dst_vreg);
+            p.val = DEF(n, classify_reg_class(n->dt));
+            nl_map_put(ctx->values, n, p.val);
         } else {
-            dst_vreg = ctx->values[search].v;
+            p.val = ctx->values[search].v;
         }
 
-        PhiVal p = { dst_vreg, -1 };
         dyn_array_put(phi_vals, p);
+        phi_count++;
     }
+    assert(phi_count == parent->phi_count);
 
     // do copies which on parallel phis (swaps usually but we don't do those yet)
-    FOREACH_N(i, 0, region->proj_count) {
-        TB_Node* n = region->projs[i];
+    dyn_array_for(i, phi_vals) {
+        TB_Node* n = phi_vals[i].n;
         assert(n->type == TB_PHI);
 
         if (n->inputs[1 + index]->type == TB_PHI && n->inputs[1 + index]->inputs[0] == dst) {
@@ -585,8 +620,8 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     }
 
     // do normal copies
-    FOREACH_N(i, 0, region->proj_count) {
-        TB_Node* n = region->projs[i];
+    dyn_array_for(i, phi_vals) {
+        TB_Node* n = phi_vals[i].n;
 
         int dst = USE(phi_vals[i].val);
         if (phi_vals[i].tmp >= 0) {
@@ -600,44 +635,58 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     ctx->phi_vals = phi_vals;
 }
 
-static void schedule_effect(Ctx* restrict ctx, TB_Node* parent, TB_Node* n) {
-    if (n->type != TB_REGION && n->type != TB_START) {
-        schedule_effect(ctx, parent, n->inputs[0]);
-    }
+static Effect* insert_effect(Ctx* restrict ctx, Effect* prev, TB_Node* n) {
+    Effect* new_e = ARENA_ALLOC(&tb__arena, Effect);
+    new_e->next = prev->next;
+    new_e->node = n;
+    new_e->phi_count = 0;
+    prev->next = new_e;
+    return new_e;
+}
 
-    // set line info
-    for (TB_Attrib* a = n->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_LOCATION) {
-        // check if it's changed
-        if (ctx->last_file != a->loc.file || ctx->last_line != a->loc.line) {
-            ctx->last_file = a->loc.file;
-            ctx->last_line = a->loc.line;
+#if 0
+// Handle branch edges
+if (n->type == TB_BRANCH) {
+    // copy out from active phi-edges
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(parent);
+    FOREACH_N(i, 0, r->succ_count) {
+        TB_Node* dst = r->succ[i];
 
-            append_inst(ctx, inst_line(ctx->last_file, ctx->last_line));
-        }
-    }
+        // find predecessor index and do that edge
+        FOREACH_N(j, 0, dst->input_count) {
+            TB_Node* pred = dst->inputs[j];
+            while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
 
-    // Handle branch edges
-    if (n->type == TB_BRANCH) {
-        // copy out from active phi-edges
-        TB_NodeRegion* r = TB_NODE_GET_EXTRA(parent);
-        FOREACH_N(i, 0, r->succ_count) {
-            TB_Node* dst = r->succ[i];
-
-            // find predecessor index and do that edge
-            FOREACH_N(j, 0, dst->input_count) {
-                TB_Node* pred = dst->inputs[j];
-                while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
-
-                if (pred == parent) {
-                    phi_edge(ctx, dst, j);
-                    break;
-                }
+            if (pred == parent) {
+                phi_edge(ctx, dst, j);
+                break;
             }
         }
     }
+}
 
-    if (n->type != TB_PROJ && (n->type != TB_LOCAL || nl_map_get(ctx->stack_slots, n) < 0)) {
-        isel(ctx, n);
+if (n->type != TB_PROJ && (n->type != TB_LOCAL || nl_map_get(ctx->stack_slots, n) < 0)) {
+    isel(ctx, n);
+}
+#endif
+
+static void scan_for_effects(Ctx* restrict ctx, TB_Node* n) {
+    if (!nl_hashset_put(&ctx->visited, n)) {
+        return;
+    }
+
+    if (n->type == TB_LOAD) {
+        insert_effect(ctx, nl_map_get_checked(ctx->effects, n->inputs[0]), n);
+    } else if (n->type == TB_PHI) {
+        Effect* parent = nl_map_get_checked(ctx->effects, n->inputs[0]);
+        insert_effect(ctx, parent, n);
+        parent->phi_count++;
+    } else if (n->type == TB_REGION || n->type == TB_START) {
+        return;
+    }
+
+    FOREACH_N(i, 0, n->input_count) {
+        scan_for_effects(ctx, n->inputs[i]);
     }
 }
 
@@ -663,6 +712,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     ctx.used_regs[0] = set_create_in_arena(&tb__arena, 16);
     ctx.used_regs[1] = set_create_in_arena(&tb__arena, 16);
+    ctx.visited = nl_hashset_alloc(f->node_count);
 
     set_put(&ctx.used_regs[0], RBP), set_put(&ctx.used_regs[0], RSP);
     // FOREACH_N(i, 8, 16) set_put(&ctx.used_regs[0], i);
@@ -692,6 +742,54 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     nl_map_create(ctx.stack_slots, 8);
     dyn_array_create(ctx.debug_stack_slots, 8);
 
+    // Scheduling:
+    //   for now things are simple, we just need to walk all the nodes and
+    //   make sure the correct nodes are marked to happen after their control
+    //   dependencies
+    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+        TB_Node* bb = ctx.order.traversal[i];
+
+        // append region as the first effect
+        Effect* bb_effect = ARENA_ALLOC(&tb__arena, Effect);
+        bb_effect->next = NULL;
+        bb_effect->node = bb;
+        bb_effect->phi_count = 0;
+        nl_map_put(ctx.effects, bb, bb_effect);
+
+        // do standard walk (this only fills things in the direct line of execution
+        // the PHI and LOAD operations will need a separate pass)
+        Effect* last = NULL;
+        TB_Node* n = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
+        while (n != NULL && n->type != TB_START && n->type != TB_REGION) {
+            Effect* e = ARENA_ALLOC(&tb__arena, Effect);
+            e->next = last;
+            e->node = n;
+            e->phi_count = 0;
+            last = e;
+
+            nl_map_put(ctx.effects, n, e);
+
+            // previous control
+            n = n->inputs[0];
+        }
+
+        // add onto region
+        bb_effect->next = last;
+    }
+
+    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+        // walk all the nodes to see if we have any PHI or LOAD
+        // we don't have conclusive results until all BBs are walked
+        // but that's fine.
+        TB_Node* n = TB_NODE_GET_EXTRA_T(ctx.order.traversal[i], TB_NodeRegion)->end;
+        while (n != NULL && n->type != TB_START && n->type != TB_REGION) {
+            FOREACH_N(i, 1, n->input_count) {
+                scan_for_effects(&ctx, n->inputs[i]);
+            }
+            n = n->inputs[0];
+        }
+    }
+
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are
     //   fixed and which need allocation. For now regalloc is handled
@@ -707,8 +805,48 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             append_inst(&ctx, inst_label(bb));
         }
 
-        TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
-        schedule_effect(&ctx, bb, end);
+        Effect* e = nl_map_get_checked(ctx.effects, bb)->next;
+        while (e != NULL) {
+            TB_Node* n = e->node;
+
+            // set line info
+            for (TB_Attrib* a = n->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_LOCATION) {
+                // check if it's changed
+                if (ctx.last_file != a->loc.file || ctx.last_line != a->loc.line) {
+                    ctx.last_file = a->loc.file;
+                    ctx.last_line = a->loc.line;
+
+                    append_inst(&ctx, inst_line(ctx.last_file, ctx.last_line));
+                }
+            }
+
+            // Handle branch edges
+            if (n->type == TB_BRANCH) {
+                // copy out from active phi-edges
+                TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
+                FOREACH_N(i, 0, r->succ_count) {
+                    TB_Node* dst = r->succ[i];
+
+                    // find predecessor index and do that edge
+                    FOREACH_N(j, 0, dst->input_count) {
+                        TB_Node* pred = dst->inputs[j];
+                        while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
+
+                        if (pred == bb) {
+                            phi_edge(&ctx, dst, j);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // schedule effect
+            if (n->type != TB_PROJ && (n->type != TB_LOCAL || nl_map_get(ctx.stack_slots, n) < 0)) {
+                isel(&ctx, e->node);
+            }
+
+            e = e->next;
+        }
     }
 
     RegAllocWorklist sorted = NULL;
@@ -739,6 +877,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     nl_map_free(ctx.emit.labels);
     nl_map_free(ctx.values);
     nl_map_free(ctx.machine_bbs);
+    nl_hashset_free(ctx.visited);
     dyn_array_destroy(ctx.phi_vals);
 
     if (dyn_array_length(f->lines)) {

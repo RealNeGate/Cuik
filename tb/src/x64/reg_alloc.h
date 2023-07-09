@@ -96,7 +96,6 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
                 dyn_array_put(*worklist, reload_def);
 
                 // generate reload before this instruction
-                assert(prev_inst);
                 r.old = reload_def;
                 reload(ctx, prev_inst, &r);
             }
@@ -186,6 +185,11 @@ static size_t evict(Ctx* restrict ctx, RegAllocWorklist* worklist, DefIndex di, 
 }
 
 static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist worklist) {
+    Set reg_masks[CG_REGISTER_CLASSES];
+    FOREACH_N(i, 0, CG_REGISTER_CLASSES){
+        reg_masks[i] = set_create_in_arena(&tb__arena, ctx->used_regs[i].capacity);
+    }
+
     // linear scan main loop
     //
     // the worklist is sorted such that we pop the lowest start time.
@@ -193,6 +197,16 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
     while (dyn_array_length(worklist) > 0) {
         DefIndex di = dyn_array_pop(worklist);
         Def* d = &ctx->defs[di];
+
+        Def* next_clobber = NULL;
+        if (dyn_array_length(ctx->clobbers) > 0) {
+            next_clobber = &ctx->defs[ctx->clobbers[dyn_array_length(ctx->clobbers) - 1]];
+
+            // if they don't intersect, stop caring about it
+            if (!(d->start <= next_clobber->end && next_clobber->start <= d->end)) {
+                next_clobber = NULL;
+            }
+        }
 
         int time = d->start;
         REG_ALLOC_LOG {
@@ -219,47 +233,70 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
 
         // clobbering will evict registers it needs
         if (d->clobbers) {
+            assert(next_clobber == d);
+            dyn_array_pop(ctx->clobbers);
+
             FOREACH_N(j, 0, d->clobbers->count) {
                 evict(ctx, &worklist, di, d->clobbers->_[j].class, d->clobbers->_[j].num, time);
                 d = &ctx->defs[di];
             }
 
             d = &ctx->defs[di];
+            next_clobber = NULL;
         }
 
         // find register for current
+        int rc = d->reg_class;
         ptrdiff_t reg_num = -1;
         if (d->reg >= 0) {
             // pre-colored, we make room for it
-            if (evict(ctx, &worklist, di, d->reg_class, d->reg, time)) {
+            if (evict(ctx, &worklist, di, rc, d->reg, time)) {
                 d = &ctx->defs[di];
             }
 
             reg_num = d->reg;
-            REG_ALLOC_LOG printf("  \x1b[32m#   forced assign %s\x1b[0m\n", reg_name(d->reg_class, reg_num));
-        } else if (d->hint >= 0 && !set_get(&ctx->used_regs[d->reg_class], d->hint)) {
+            REG_ALLOC_LOG printf("  \x1b[32m#   forced assign %s\x1b[0m\n", reg_name(rc, reg_num));
+        } else if (d->hint >= 0 && !set_get(&ctx->used_regs[rc], d->hint)) {
             reg_num = d->hint;
-            REG_ALLOC_LOG printf("  \x1b[32m#   hinted assign %s\x1b[0m\n", reg_name(d->reg_class, reg_num));
+            REG_ALLOC_LOG printf("  \x1b[32m#   hinted assign %s\x1b[0m\n", reg_name(rc, reg_num));
         } else {
-            reg_num = set_pop_any(&ctx->used_regs[d->reg_class]);
+            if (next_clobber != NULL) {
+                set_copy(&reg_masks[rc], &ctx->used_regs[rc]);
+
+                // avoid the registers which finna get clobbered
+                Clobbers* c = next_clobber->clobbers;
+                FOREACH_N(j, 0, c->count) {
+                    if (c->_[j].class == rc) {
+                        set_put(&reg_masks[rc], c->_[j].num);
+                    }
+                }
+
+                // try clobberless path
+                reg_num = set_pop_any(&reg_masks[rc]);
+            }
+
+            // try normal path
+            if (reg_num < 0) {
+                reg_num = set_pop_any(&ctx->used_regs[rc]);
+            }
 
             if (reg_num < 0) {
                 // choose who to spill
                 Inst* spill_inst = find_inst_at_time(ctx, time);
-                size_t split_i = choose_best_split(ctx, spill_inst, d->reg_class, time);
+                size_t split_i = choose_best_split(ctx, spill_inst, rc, time);
 
                 DefIndex spill_def = ctx->active[split_i];
 
-                reg_num = spill_register(ctx, &worklist, spill_inst, spill_def, split_i, d->reg_class, ctx->defs[spill_def].reg);
+                reg_num = spill_register(ctx, &worklist, spill_inst, spill_def, split_i, rc, ctx->defs[spill_def].reg);
                 d = &ctx->defs[di];
             }
 
-            REG_ALLOC_LOG printf("  \x1b[32m#   assign %s\x1b[0m\n", reg_name(d->reg_class, reg_num));
+            REG_ALLOC_LOG printf("  \x1b[32m#   assign %s\x1b[0m\n", reg_name(rc, reg_num));
         }
 
-        finna_use_reg(ctx, d->reg_class, reg_num);
+        finna_use_reg(ctx, rc, reg_num);
 
-        set_put(&ctx->used_regs[d->reg_class], reg_num);
+        set_put(&ctx->used_regs[rc], reg_num);
         add_active(ctx, di);
         d->reg = reg_num;
     }
