@@ -453,6 +453,7 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
         Inst inst = isel_array(ctx, addr, dst);
         if (inst.type == LEA) {
             inst.type = i;
+            inst.data_type = legalize(n->dt);
             return inst;
         } else {
             return inst_m(i, n->dt, dst, dst, GPR_NONE, SCALE_X1, 0);
@@ -1439,7 +1440,7 @@ static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
 static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index) {
     InstType i = r->dt.type == TB_FLOAT ? FP_MOV : MOV;
 
-    Inst* next = basepoint->next;
+    /*Inst* next = basepoint->next;
     if (next->type == INST_COPY && op_index == 1) {
         REG_ALLOC_LOG printf("  \x1b[32m#   folded reload D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
 
@@ -1450,7 +1451,7 @@ static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_inde
         next->time = old_time;
         next->next = old_next;
         return;
-    }
+    }*/
 
     REG_ALLOC_LOG printf("  \x1b[32m#   reload D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
 
@@ -1650,7 +1651,7 @@ static void emit_code(Ctx* restrict ctx) {
                 // sometimes 2ary is a unary with a separated dst and src, or a binop
                 if (inst_table[inst->type].cat <= INST_UNARY_EXT) {
                     if (!is_value_match(&ops[0], &ops[1])) {
-                        inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
+                        inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
                     }
                     inst1_print(ctx, inst->type, &ops[0], inst->data_type);
                 } else {
@@ -1662,7 +1663,7 @@ static void emit_code(Ctx* restrict ctx) {
                 inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
             } else {
                 if (!is_value_match(&ops[0], &ops[1])) {
-                    inst2_print(ctx, MOV, &ops[0], &ops[1], inst->data_type);
+                    inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
                 }
                 inst2_print(ctx, (InstType) inst->type, &ops[0], &ops[2], inst->data_type);
             }

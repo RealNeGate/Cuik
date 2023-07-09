@@ -99,7 +99,7 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
             ctx->defs[reload_def].end = inst->time + (j == 1 ? 0 : 1);
         }
 
-        if (inst->regs[0] == split_def && reload_def >= 0 && reload_def != split_def) {
+        if (inst->regs[0] == split_def && reload_def != split_def) {
             // spill and discard our reload spot (if applies)
             r.old = inst->regs[0];
             spill(ctx, inst, &r);
