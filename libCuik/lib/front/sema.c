@@ -192,7 +192,11 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_QualType qsrc, Cuik_Qu
     }
 
     if (!type_compatible(tu, src, dst, src_e)) {
-        diag_err(&tu->tokens, src_e->loc, "can't implicitly convert type %!T into %!T", src, dst);
+        char str[1024];
+        type_as_string(sizeof(str), str, src);
+
+        DiagFixit fixit = { src_e->loc, 0, str };
+        diag_err(&tu->tokens, src_e->loc, "#can't implicitly convert type to %!T", fixit, dst);
         return false;
     }
 
@@ -1127,7 +1131,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                 diag_err(&tu->tokens, e->loc, "cannot get the sizeof an incomplete type");
             }
 
-            return cuik_uncanonical_type(tu->target->size_type);
+            return cuik_uncanonical_type(&tu->target->size_type);
         }
 
         case EXPR_SIZEOF_T: {
@@ -1136,7 +1140,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                 diag_err(&tu->tokens, e->loc, "cannot get the sizeof an incomplete type");
             }
 
-            return cuik_uncanonical_type(tu->target->size_type);
+            return cuik_uncanonical_type(&tu->target->size_type);
         }
 
         case EXPR_ADDR: {
@@ -1567,7 +1571,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             }
 
             SET_CAST(0, GET_TYPE(0));
-            SET_CAST(1, cuik_uncanonical_type(tu->target->ptrdiff_type));
+            SET_CAST(1, cuik_uncanonical_type(&tu->target->ptrdiff_type));
             return base->ptr_to;
         }
 
@@ -1585,7 +1589,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             Cuik_Type* rhs = cuik_canonical_type(GET_TYPE(1));
 
             if ((e->op == EXPR_PLUS || e->op == EXPR_MINUS) && (cuik_type_can_deref(lhs) || cuik_type_can_deref(rhs))) {
-                Cuik_QualType ptrdiff_ty = cuik_uncanonical_type(tu->target->ptrdiff_type);
+                Cuik_QualType ptrdiff_ty = cuik_uncanonical_type(&tu->target->ptrdiff_type);
 
                 bool lhs_is_ptr = lhs->kind == KIND_PTR || lhs->kind == KIND_ARRAY;
                 bool rhs_is_ptr = rhs->kind == KIND_PTR || rhs->kind == KIND_ARRAY;

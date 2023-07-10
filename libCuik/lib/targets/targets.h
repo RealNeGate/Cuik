@@ -38,7 +38,7 @@ struct Cuik_Target {
     Cuik_Type signed_ints[5], unsigned_ints[5];
 
     // this is size_t and ptrdiff_t
-    Cuik_Type *size_type, *ptrdiff_type;
+    Cuik_Type size_type, ptrdiff_type;
 
     // this is used for uintptr_t, intptr_t and pointer types
     size_t pointer_byte_size;

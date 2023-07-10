@@ -120,9 +120,14 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
         t->int_bits[CUIK_BUILTIN_LONG] = 32;
     }
 
-    t->size_type = &t->unsigned_ints[CUIK_BUILTIN_LLONG];
-    t->ptrdiff_type = &t->signed_ints[CUIK_BUILTIN_LLONG];
-
     cuik_target_build(t);
+
+    // bake out size_t and ptrdiff_t after long long is ready
+    t->size_type = t->unsigned_ints[CUIK_BUILTIN_LLONG];
+    t->size_type.also_known_as = "size_t";
+
+    t->ptrdiff_type = t->signed_ints[CUIK_BUILTIN_LLONG];
+    t->ptrdiff_type.also_known_as = "ptrdiff_t";
+
     return t;
 }
