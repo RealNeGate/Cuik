@@ -879,10 +879,14 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         CUIK_TIMED_BLOCK("emit sequences") {
             emit_code(&ctx);
         }
-    }
 
-    if (ctx.emit.emit_asm) {
-        printf(".ret:\n");
+        if (ctx.emit.emit_asm) {
+            printf(".ret:\n");
+        }
+    } else {
+        if (ctx.emit.emit_asm) {
+            printf("%s:\n.ret:\n", f->super.name);
+        }
     }
 
     resolve_stack_usage(&ctx, ctx.caller_usage);

@@ -518,6 +518,7 @@ typedef struct {
 
 typedef struct {
     TB_Node* end;
+    const char* tag;
 
     size_t succ_count;
     TB_Node** succ;
@@ -891,6 +892,9 @@ TB_API void tb_inst_set_control(TB_Function* f, TB_Node* control);
 TB_API TB_Node* tb_inst_get_control(TB_Function* f);
 
 TB_API TB_Node* tb_inst_region(TB_Function* f);
+
+// if len is -1, it's null terminated
+TB_API void tb_inst_set_region_name(TB_Node* n, ptrdiff_t len, const char* name);
 
 TB_API void tb_inst_unreachable(TB_Function* f);
 TB_API void tb_inst_debugbreak(TB_Function* f);

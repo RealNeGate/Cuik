@@ -301,10 +301,19 @@ static int classify_reg_class(TB_DataType dt) {
     return dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR;
 }
 
-static void print_operand(Val* v) {
+static void print_operand(Val* v, TB_X86_DataType dt) {
+    static const char* type_names[] = {
+        "ptr",
+        "byte",    "word",    "dword",   "qword",
+        "pbyte",   "pword",   "pdword",  "pqword",
+        "xmmword", "xmmword", "xmmword", "xmmword",
+        "xmmword"
+    };
+
     switch (v->type) {
         case VAL_GPR: {
             assert(v->reg >= 0 && v->reg < 16);
+            // printf("\x1b[%dm%s\x1b[0m", (v->reg % 8) + 31, GPR_NAMES[v->reg]);
             printf("%s", GPR_NAMES[v->reg]);
             break;
         }
@@ -312,6 +321,8 @@ static void print_operand(Val* v) {
         case VAL_IMM: printf("%d", v->imm); break;
         case VAL_ABS: printf("%#"PRIx64, v->abs); break;
         case VAL_MEM: {
+            printf("%s ", type_names[dt]);
+
             if (v->index == -1) {
                 printf("[%s", GPR_NAMES[v->reg]);
             } else {
@@ -1087,7 +1098,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             else if (bits_in_type <= 64) op = MOV;
             else tb_todo();
 
-            if (src->type == TB_LOAD) {
+            if (src->type == TB_LOAD && nl_map_get(ctx->values, src) < 0) {
                 Inst inst = isel_load(ctx, src, dst);
                 inst.type = op;
                 inst.data_type = legalize(n->dt);
@@ -1217,6 +1228,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             FOREACH_N(i, 2, n->input_count) {
                 TB_Node* param = n->inputs[i];
                 TB_DataType param_dt = param->dt;
+
+                // force rematerialization
+                if (param->type == TB_INTEGER_CONST) {
+                    nl_map_remove(ctx->values, param);
+                }
 
                 int src = isel(ctx, param);
 
@@ -1440,7 +1456,7 @@ static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
 static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index) {
     InstType i = r->dt.type == TB_FLOAT ? FP_MOV : MOV;
 
-    /*Inst* next = basepoint->next;
+    Inst* next = basepoint->next;
     if (next->type == INST_COPY && op_index == 1) {
         REG_ALLOC_LOG printf("  \x1b[32m#   folded reload D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
 
@@ -1451,7 +1467,7 @@ static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_inde
         next->time = old_time;
         next->next = old_next;
         return;
-    }*/
+    }
 
     REG_ALLOC_LOG printf("  \x1b[32m#   reload D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
 
@@ -1481,9 +1497,9 @@ static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, TB
         } else {
             printf(" ");
         }
-        print_operand(dst);
+        print_operand(dst, dt);
         printf(", ");
-        print_operand(src);
+        print_operand(src, dt);
         printf("\n");
     }
 
@@ -1497,7 +1513,7 @@ static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, TB
 static void inst1_print(Ctx* restrict ctx, int type, Val* src, TB_X86_DataType dt) {
     ASM {
         printf("  %s ", inst_table[type].mnemonic);
-        print_operand(src);
+        print_operand(src, dt);
         printf("\n");
     }
     INST1(type, src, dt);
@@ -1521,6 +1537,8 @@ static void emit_code(Ctx* restrict ctx) {
             continue;
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
+            ASM printf("  #loc %s %llu\n", f->super.module->files[inst->imm[0]].path, inst->imm[1]);
+
             TB_Line l = {
                 .file = inst->imm[0],
                 .line = inst->imm[1],
@@ -1532,16 +1550,21 @@ static void emit_code(Ctx* restrict ctx) {
             continue;
         }
 
+        // ASM printf("  \x1b[32m# t=%d\x1b[0m\n", inst->time);
+
         bool has_def = false;
         if (inst->regs[0] >= 0) {
             ops[0] = val_gpr(resolve_def(ctx, inst->regs[0]));
             has_def = true;
+
+            // ASM printf("  \x1b[32m# %s(v%d)\x1b[0m\n", GPR_NAMES[ops[0].reg], inst->regs[0]);
         }
 
         int8_t regs[4];
         regs[0] = 0;
         FOREACH_N(i, 1, 4) {
             regs[i] = resolve_use(ctx, inst->regs[i]);
+            // ASM printf("  \x1b[32m#   %s(r%d)\x1b[0m\n", GPR_NAMES[regs[i]], inst->regs[i]);
         }
 
         // convert into normie operands

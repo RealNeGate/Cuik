@@ -67,6 +67,27 @@ bool cse_compare(void* a, void* b) {
             return ai->ab == bi->ab;
         }
 
+        // in practice, two volatiles accesses can't refer to the same
+        // effect without there being malformed so we won't match against
+        // that.
+        case TB_LOAD: {
+            TB_NodeMemAccess* am = TB_NODE_GET_EXTRA(x);
+            TB_NodeMemAccess* bm = TB_NODE_GET_EXTRA(y);
+            return am->align == bm->align;
+        }
+
+        case TB_MEMBER_ACCESS: {
+            TB_NodeMember* aa = TB_NODE_GET_EXTRA(x);
+            TB_NodeMember* bb = TB_NODE_GET_EXTRA(y);
+            return aa->offset == bb->offset;
+        }
+
+        case TB_ARRAY_ACCESS: {
+            TB_NodeArray* aa = TB_NODE_GET_EXTRA(x);
+            TB_NodeArray* bb = TB_NODE_GET_EXTRA(y);
+            return aa->stride == bb->stride;
+        }
+
         default: return false;
     }
 }

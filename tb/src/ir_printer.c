@@ -270,12 +270,21 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
                 }
                 P(" ");
             }
+
+            tb_print_type(n->dt, callback, user_data);
             break;
         }
 
-        default: break;
+        case TB_MEMBER_ACCESS: {
+            TB_NodeMember* m = TB_NODE_GET_EXTRA(n);
+            P("%"PRId64" ", m->offset);
+            break;
+        }
+
+        default:
+        tb_print_type(n->dt, callback, user_data);
+        break;
     }
-    tb_print_type(n->dt, callback, user_data);
     P("\"];\n");
 
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {

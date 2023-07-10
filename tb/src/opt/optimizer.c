@@ -51,11 +51,23 @@ TB_Node* tb_transmute_to_int(TB_Function* f, TB_OptQueue* restrict queue, TB_Dat
 TB_Node* make_int_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_OptQueue* restrict queue, TB_DataType dt, TB_Node* src, int i);
 
+static int bits_in_data_type(int pointer_size, TB_DataType dt) {
+    switch (dt.type) {
+        case TB_INT: return dt.data;
+        case TB_PTR: return pointer_size;
+        case TB_FLOAT:
+        if (dt.data == TB_FLT_32) return 32;
+        if (dt.data == TB_FLT_64) return 64;
+        return 0;
+        default: return 0;
+    }
+}
+
 // unity build with all the passes
 #include "cse.h"
 #include "dce.h"
 #include "fold.h"
-#include "canonical.h"
+#include "load_opt.h"
 #include "mem2reg.h"
 #include "libcalls.h"
 #include "identity.h"
@@ -240,11 +252,11 @@ void tb_optqueue_fill_all(TB_OptQueue* restrict queue, TB_Node* n) {
         return;
     }
 
-    size_t i = dyn_array_length(queue->queue);
+    size_t index = dyn_array_length(queue->queue);
     dyn_array_put(queue->queue, n);
-    nl_map_put(queue->lookup, n, i);
+    nl_map_put(queue->lookup, n, index);
 
-    FOREACH_N(i, 0, n->input_count) {
+    FOREACH_REVERSE_N(i, 0, n->input_count) {
         tb_optqueue_fill_all(queue, n->inputs[i]);
     }
 
@@ -302,6 +314,36 @@ static TB_Node* peephole_node(TB_OptQueue* restrict queue, TB_Function* f, TB_No
         case TB_ZERO_EXT:
         return try_extension_fold(f, queue, n);
 
+        // array access
+        case TB_ARRAY_ACCESS: {
+            if (n->inputs[1]->type == TB_INTEGER_CONST) {
+                TB_NodeInt* src_i = TB_NODE_GET_EXTRA(n->inputs[1]);
+                if (src_i->num_words == 1) {
+                    int64_t offset = src_i->words[0] * TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
+
+                    TB_Node* new_n = tb_alloc_node(f, TB_MEMBER_ACCESS, n->dt, 1, sizeof(TB_NodeMember));
+                    set_input(queue, new_n, n->inputs[0], 0);
+                    TB_NODE_SET_EXTRA(new_n, TB_NodeMember, .offset = offset);
+                    return new_n;
+                }
+            }
+            return NULL;
+        }
+
+        // memory
+        case TB_LOAD:
+        return try_load_opts(f, queue, n);
+
+        // dumb phis
+        case TB_PHI: {
+            TB_Node* same = n->inputs[1];
+            FOREACH_N(i, 2, n->input_count) {
+                if (same != n->inputs[i]) return NULL;
+            }
+
+            return same;
+        }
+
         // special functions
         case TB_CALL:
         if (n->inputs[1]->type == TB_GET_SYMBOL_ADDRESS) {
@@ -325,6 +367,8 @@ static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
             // pull from worklist
             TB_Node* n = dyn_array_pop(queue->queue);
             nl_map_remove(queue->lookup, n);
+
+            log_debug("  %p: pop %s", n, tb_node_get_name(n));
 
             #ifndef NDEBUG
             m += 1;
@@ -359,7 +403,7 @@ static void peephole(TB_OptQueue* restrict queue, TB_Function* f) {
                     User* next = use->next;
 
                     set_input(queue, use->n, progress, use->slot);
-                    tb_optqueue_mark(queue, use_n, true);
+                    tb_optqueue_mark(queue, use_n, false);
                     use = next;
                 }
             } else {

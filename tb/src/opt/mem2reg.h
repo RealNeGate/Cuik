@@ -65,7 +65,19 @@ static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Nod
     n->inputs[0] = block;
     FOREACH_N(i, 0, block->input_count) n->inputs[1 + i] = NULL;
 
-    log_debug("%p: insert new PHI node (in %p)", n, block);
+    // append variable attrib
+    const char* name = NULL;
+    for (TB_Attrib* a = c->to_promote[var]->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_VARIABLE) {
+        append_attrib(f, n, a);
+        name = a->var.name;
+        break;
+    }
+
+    if (name) {
+        log_debug("%s: %p: insert new PHI node (in %p)", name, n, block);
+    } else {
+        log_debug("%p: insert new PHI node (in %p)", n, block);
+    }
     return n;
 }
 
@@ -582,18 +594,6 @@ bool mem2reg(TB_Function* f, TB_OptQueue* queue) {
     tb_tls_restore(tls, to_promote);
 
     return true;
-}
-
-static int bits_in_data_type(int pointer_size, TB_DataType dt) {
-    switch (dt.type) {
-        case TB_INT: return dt.data;
-        case TB_PTR: return pointer_size;
-        case TB_FLOAT:
-        if (dt.data == TB_FLT_32) return 32;
-        if (dt.data == TB_FLT_64) return 64;
-        return 0;
-        default: return 0;
-    }
 }
 
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share

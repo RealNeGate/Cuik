@@ -2277,6 +2277,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             s->backing.loop[1] = exit;
             fallthrough_label(func, header);
 
+            emit_location(tu, func, get_root_subexpr(s->while_.cond)->loc.start);
             TB_Node* cond = irgen_as_rvalue(tu, func, s->while_.cond);
             tb_inst_if(func, cond, body, exit);
 

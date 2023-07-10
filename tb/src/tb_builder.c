@@ -853,6 +853,16 @@ TB_API TB_Node* tb_inst_region(TB_Function* f) {
     return n;
 }
 
+TB_API void tb_inst_set_region_name(TB_Node* n, ptrdiff_t len, const char* name) {
+    if (len < 0) len = strlen(name);
+
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+
+    char* newstr = arena_alloc(&tb__arena2, len + 1, 1);
+    memcpy(newstr, name, len + 1);
+    r->tag = newstr;
+}
+
 static void add_region_pred(TB_Function* f, TB_Node* n, TB_Node* pred) {
     // detach old predecessor list, make bigger one
     assert(n->type == TB_REGION);

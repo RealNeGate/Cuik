@@ -69,7 +69,14 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
 
     Inst *inst = spill_inst->next, *prev_inst = spill_inst;
     for (; inst; prev_inst = inst, inst = inst->next) {
-        if (inst->type == INST_LABEL) reload_def = -1;
+        if (inst->type == INST_LABEL) {
+            if (reload_def >= 0) {
+                r.old = reload_def;
+                spill(ctx, prev_inst, &r);
+            }
+            reload_def = -1;
+        }
+
         if (inst->time > endpoint) break;
 
         // if it's used, refer to reload
@@ -79,6 +86,7 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
                 skip_next = true;
                 r.old = split_def;
                 spill(ctx, inst, &r);
+                reload_def = -1;
                 continue;
             } else if (reload_def < 0) {
                 // spin up new def
@@ -99,7 +107,7 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
             ctx->defs[reload_def].end = inst->time + (j == 1 ? 0 : 1);
         }
 
-        if (inst->regs[0] == split_def && reload_def != split_def) {
+        if (inst->regs[0] == split_def && reload_def >= 0 && reload_def != split_def) {
             // spill and discard our reload spot (if applies)
             r.old = inst->regs[0];
             spill(ctx, inst, &r);
