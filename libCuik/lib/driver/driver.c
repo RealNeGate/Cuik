@@ -142,14 +142,24 @@ static void compile_func(TB_Module* m, TB_Function* f, void* ctx) {
     tb_module_compile_function(m, f, TB_ISEL_FAST);
 }
 
-typedef struct { TB_PassManager* pm; TB_Passes passes; } ApplyFunc;
 static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
     if (ir_arena == NULL) {
         ir_arena = tb_default_arena();
     }
 
-    ApplyFunc* a = (ApplyFunc*) arg;
-    tb_function_apply_passes(a->pm, a->passes, f, ir_arena);
+    CUIK_TIMED_BLOCK("func opt") {
+        TB_FuncOpt* opt = tb_funcopt_enter(f, ir_arena);
+
+        // initial run of peepholes
+        tb_funcopt_peephole(opt);
+        // Converting locals into phi nodes
+        tb_funcopt_mem2reg(opt), tb_funcopt_peephole(opt);
+        // This is where our loops are analyzed as affine
+        // and thus we do unrolling and more.
+        // tb_funcopt_loop(opt), tb_funcopt_peephole(opt);
+
+        tb_funcopt_exit(opt);
+    }
 }
 #endif
 
@@ -256,25 +266,8 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     }
 
     if (args->opt_level > 0) {
-        // TODO(NeGate): generate pass list
-        DynArray(TB_Pass) passes = NULL;
-        dyn_array_put(passes, tb_opt_mem2reg());
-
-        // apply
-        TB_PassManager pm = { dyn_array_length(passes), &passes[0] };
-        TB_DO_PASSES(passes, &pm, mod) {
-            if (passes.module_level) {
-                if (ir_arena == NULL) {
-                    ir_arena = tb_default_arena();
-                }
-
-                tb_module_apply_passes(&pm, passes, mod, ir_arena);
-            } else {
-                // do parallel function passes
-                ApplyFunc a = { &pm, passes };
-                cuiksched_per_function(s->tp, mod, &a, apply_func);
-            }
-        }
+        // do parallel function passes
+        cuiksched_per_function(s->tp, mod, NULL, apply_func);
 
         // debug builds will compile functions right after IRgen
         // to save on total memory usage, this code path is for

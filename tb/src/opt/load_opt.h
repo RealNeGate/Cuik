@@ -8,13 +8,13 @@ typedef struct {
 
 static KnownPointer known_pointer(TB_Node* n) {
     if (n->type == TB_MEMBER_ACCESS) {
-        return (KnownPointer){ n, TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset };
+        return (KnownPointer){ n->inputs[0], TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset };
     } else {
         return (KnownPointer){ n, 0 };
     }
 }
 
-static TB_Node* try_load_opts(TB_Function* f, TB_OptQueue* restrict queue, TB_Node* n) {
+static TB_Node* ideal_load(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
     // if a load is control dependent on a store and it doesn't alias we can move the
     // dependency up a bit.
     if (n->inputs[0]->type != TB_STORE) return NULL;
@@ -34,6 +34,6 @@ static TB_Node* try_load_opts(TB_Function* f, TB_OptQueue* restrict queue, TB_No
     // both bases match so if the effective ranges don't intersect, they don't alias.
     if (ld_ptr.offset <= stored_end && st_ptr.offset <= loaded_end) return NULL;
 
-    set_input(queue, n, n->inputs[0]->inputs[0], 0);
+    set_input(opt, n, n->inputs[0]->inputs[0], 0);
     return n;
 }

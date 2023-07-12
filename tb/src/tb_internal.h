@@ -469,8 +469,10 @@ typedef struct {
 
 #ifndef NDEBUG
 #define TB_DEBUG_BUILD 1
+#define TB_DEBUG_CODE(...) __VA_ARGS__;
 #else
 #define TB_DEBUG_BUILD 0
+#define TB_DEBUG_CODE(...)
 #endif
 
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
@@ -502,14 +504,7 @@ typedef struct {
 #endif
 #endif
 
-#define tb_assert(condition, ...)    \
-do {                                 \
-    if (!(condition)) {              \
-        fprintf(stderr, __VA_ARGS__);\
-        abort();                     \
-    }                                \
-} while (0)
-
+#define tb_assert(condition, ...) ((condition) ? (void)0 : (fprintf(stderr, __VA_ARGS__), abort()))
 
 #if defined(_WIN32) && !defined(__GNUC__)
 #define tb_panic(...)                     \
@@ -533,14 +528,6 @@ do {                                      \
 #define CONCAT_(x, y) x ## y
 #define CONCAT(x, y) CONCAT_(x, y)
 #endif
-
-// sometimes you just gotta do it to em'
-// imagine i++ but like i++y (more like ((i += y) - y)) or something idk
-inline static size_t tb_post_inc(size_t* a, size_t b) {
-    size_t old = *a;
-    *a = old + b;
-    return old;
-}
 
 // NOTE(NeGate): if you steal it you should restore the used amount back to what it was before
 TB_TemporaryStorage* tb_tls_steal(void);
@@ -606,7 +593,7 @@ typedef struct {
 ////////////////////////////////
 // IR ANALYSIS
 ////////////////////////////////
-TB_API TB_Dominators tb_get_dominators(TB_Function* f);
+TB_API TB_Dominators tb_get_dominators(TB_Function* f, TB_PostorderWalk order);
 
 // Allocates from the heap and requires freeing with tb_function_free_postorder
 TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);

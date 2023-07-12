@@ -1,6 +1,87 @@
 #include <stddef.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdio.h>
+
+extern void abc(size_t i, size_t limit);
+
+void zero_array(int n, char* arr) {
+    // affine: 1x+0 {0,n}
+    for (size_t i = 0; i < n; i++) {
+        arr[i] = 0;
+    }
+}
+
+#if 0
+int sigma(void* p) {
+    return p;
+}
+
+uint64_t sfc64(uint64_t s[4]) {
+    uint64_t r = s[0] + s[1] + s[3]++;
+    s[0] = (s[1] >> 11) ^ s[1];
+    s[1] = (s[2] << 3) + s[2];
+    s[2] = r + (s[2] << 24 | s[2] >> 40);
+    return r;
+}
+
+int bar(int x) {
+    return 0 * ((5 + x) * 4);
+}
+
+unsigned int foo(unsigned int x) {
+    return x / 3;
+}
+
+char* copy_until(char *dst, char *src, char *chars) {
+    while (*src && !strchr(chars, *src)) {
+        if (*src == '\\') { *dst++ = *src++; }
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+    return src;
+}
+
+int main() {
+    char tmp[50];
+
+    const char* p = "[hello world]";
+    p = copy_until(tmp, p, "]");
+
+    printf("%s %s", p, tmp);
+}
+#endif
+
+#if 0
+void print(int n){}
+int fibonacci1() {
+    int hi = 1;
+    int lo = 0;
+    while (hi < 10000) {
+        int tmp = hi;
+        hi = hi + lo;
+        lo = tmp;
+        print(lo);
+    }
+    return hi;
+}
+
+extern int* ra1();
+extern int ra2(int* a, int b, int c, int d, int e);
+
+static int ra3(int a, int b, int c, int d) {
+    ra2(ra1(), a, b, c, d);
+}
+
+int foo(int x, int y) {
+    x + y == (x || y);
+
+    (void) (foo(1, 2), foo(2, 4), 0);
+}
+
+int main() {
+    printf("%d\n", fibonacci1());
+}
 
 int cse_test(int x, int y) {
     return (x*y) + (x*y);
@@ -21,15 +102,10 @@ int baz(int* arr, int n) {
     return sum;
 }
 
-unsigned int foo(unsigned int x) {
-    return x / 3;
-}
-
 int bar(int x) {
     return ((x + 1) * 4) * 0;
 }
 
-#if 0
 int arr[] = { 1, 2, 3, 4 };
 
 int main() {

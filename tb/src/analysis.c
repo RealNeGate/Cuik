@@ -90,16 +90,15 @@ TB_API void tb_free_dominance_frontiers(TB_Function* f, TB_DominanceFrontiers fr
 }
 
 // https://www.cs.rice.edu/~keith/EMBED/dom.pdf
-TB_API TB_Dominators tb_get_dominators(TB_Function* f) {
+TB_API TB_Dominators tb_get_dominators(TB_Function* f, TB_PostorderWalk order) {
     // entrypoint dominates itself
-    DomContext ctx = { .f = f };
+    DomContext ctx = { .f = f, .order = order };
 
     TB_Dominators doms = NULL;
     nl_map_create(doms, f->control_node_count);
     nl_map_put(doms, f->start_node, f->start_node);
 
     // identify post order traversal order
-    ctx.order = tb_function_get_postorder(f);
     int entry_dom = ctx.order.count - 1;
 
     bool changed = true;

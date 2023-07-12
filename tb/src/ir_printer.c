@@ -27,7 +27,6 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_FLOAT32_CONST: return "float32";
         case TB_FLOAT64_CONST: return "float64";
 
-        case TB_PASS: return "pass";
         case TB_PHI: return "phi";
 
         case TB_ARRAY_ACCESS: return "array";
