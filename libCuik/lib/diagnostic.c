@@ -22,11 +22,8 @@ static const char* custom_diagnostic_format(uint32_t* out_length, char ch, VaLis
 #include <windows.h>
 #endif
 
-static const char* report_names[] = {
-    "\x1b[32mnote\x1b[0m",
-    "\x1b[33mwarn\x1b[0m",
-    "\x1b[31merror\x1b[0m",
-};
+static const char* report_colors[] = { NULL, "\x1b[32m", "\x1b[33m", "\x1b[31m" };
+static const char* report_names[]  = { NULL, "NOTE",     "WARN",     "ERROR"    };
 
 // From types.c, we should factor this out into a public cuik function
 size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
@@ -82,12 +79,10 @@ Cuik_Diagnostics* cuikdg_make(Cuik_DiagCallback callback, void* userdata) {
     Cuik_Diagnostics* d = cuik_calloc(1, sizeof(Cuik_Diagnostics));
     d->callback = callback;
     d->userdata = userdata;
-    mtx_init(&d->lock, mtx_plain);
     return d;
 }
 
 void cuikdg_free(Cuik_Diagnostics* diag) {
-    mtx_destroy(&diag->lock);
     arena_free(&diag->buffer);
     cuik_free(diag);
 }
@@ -104,7 +99,6 @@ CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
     Arena* arena = &tokens->diag->buffer;
     for (ArenaSegment* s = arena->base; s != NULL; s = s->next) {
         fwrite(s->data, s->used, 1, stderr);
-        // printf("Total: %zu\n", s->used);
     }
 }
 
@@ -119,30 +113,6 @@ void print_include(TokenStream* tokens, SourceLoc loc) {
     sprintfcb(tokens->diag, "Included from %s:%d\n", r.file->filename, r.line);
 }
 
-static void print_line(TokenStream* tokens, ResolvedSourceLoc start, size_t tkn_len) {
-    const char* line_start = start.line_str;
-    while (*line_start && isspace(*line_start)) line_start++;
-    size_t dist_from_line_start = line_start - start.line_str;
-
-    // line preview
-    if (*line_start != '\r' && *line_start != '\n') {
-        const char* line_end = line_start;
-        do { line_end++; } while (*line_end && *line_end != '\n');
-
-        sprintfcb(tokens->diag, "%6d| %.*s\x1b[37m\n", start.line, (int)(line_end - line_start), line_start);
-    }
-
-    // underline
-    size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
-    sprintfcb(tokens->diag, "        ");
-    for (size_t i = 0; i < start_pos; i++) sprintfcb(tokens->diag, " ");
-    sprintfcb(tokens->diag, "\x1b[32m");
-    sprintfcb(tokens->diag, "^");
-    for (size_t i = 1; i < tkn_len; i++) sprintfcb(tokens->diag, "~");
-
-    sprintfcb(tokens->diag, "\x1b[0m\n");
-}
-
 // end goes after start
 static ptrdiff_t source_range_difference(TokenStream* tokens, Cuik_FileLoc s, Cuik_FileLoc e) {
     ResolvedSourceLoc l = cuikpp_find_location2(tokens, s);
@@ -154,6 +124,31 @@ static ptrdiff_t source_range_difference(TokenStream* tokens, Cuik_FileLoc s, Cu
     } else {
         return 1;
     }
+}
+
+static void print_line(TokenStream* tokens, ResolvedSourceLoc start, size_t tkn_len) {
+    const char* line_start = start.line_str;
+    while (*line_start && isspace(*line_start)) line_start++;
+    size_t dist_from_line_start = line_start - start.line_str;
+
+    // line preview
+    if (*line_start != '\r' && *line_start != '\n') {
+        const char* line_end = line_start;
+        do { line_end++; } while (*line_end && *line_end != '\n');
+
+        sprintfcb(tokens->diag, "     |\n");
+        sprintfcb(tokens->diag, "%5d| %.*s\x1b[37m\n", start.line, (int)(line_end - line_start), line_start);
+    }
+
+    // underline
+    size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
+    sprintfcb(tokens->diag, "     | ");
+    for (size_t i = 0; i < start_pos; i++) sprintfcb(tokens->diag, " ");
+    sprintfcb(tokens->diag, "\x1b[32m");
+    sprintfcb(tokens->diag, "^");
+    for (size_t i = 1; i < tkn_len; i++) sprintfcb(tokens->diag, "~");
+
+    sprintfcb(tokens->diag, "\x1b[0m\n");
 }
 
 static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, SourceLoc end) {
@@ -186,6 +181,7 @@ static void print_line_with_backtrace(TokenStream* tokens, SourceLoc loc, Source
     if (m != NULL) {
         Cuik_FileEntry* next_file = cuikpp_find_file(tokens, m->call_site);
         print_line_with_backtrace(tokens, m->call_site, offset_source_loc(m->call_site, m->name.length));
+        sprintfcb(tokens->diag, "     |\n");
         if (next_file->filename != l.file->filename) {
             sprintfcb(tokens->diag, "  expanded from %s:\n", l.file->filename);
         } else {
@@ -215,27 +211,46 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     }
 
     // print include stack
-    mtx_lock(&d->lock);
     ResolvedSourceLoc start = cuikpp_find_location(tokens, loc_start);
     if (start.file->include_site.raw != 0) {
         print_include(tokens, start.file->include_site);
     }
 
+    // retrofitting the rust style into C
+    //
+    // level[CODE]: message
+    //   --> file.c:LL:CC
+    //     |
+    // 000 | code
+    //     | ^~~~
+    //     |
+    //    got:  int
+    //    need: char*
     char tmp[STB_SPRINTF_MIN];
-    sprintfcb(d, "\x1b[37m%s:%d:%d: %s: ", start.file->filename, start.line, start.column, report_names[type]);
+    if (type == DIAG_ERR) {
+        sprintfcb(d, "%s%s\x1b[0m[0000]: ", report_colors[type], report_names[type]);
+    } else if (type == DIAG_NULL) {
+        sprintfcb(d, "     ");
+    } else {
+        sprintfcb(d, "%s%s\x1b[0m: ", report_colors[type], report_names[type]);
+    }
     stbsp_vsprintfcb(sprintf_callback, &d->buffer, tmp, fmt, ap);
-    *(char*)arena_alloc(&d->buffer, 1, 1) = '\n';
 
-    SourceLoc loc_end = loc.end;
-    // we wanna find the physical character
-    for (MacroInvoke* m; (m = cuikpp_find_macro(tokens, loc_end)) != NULL;) {
-        loc_end = m->call_site;
+    // location summary
+    if (loc_start.raw != 0) {
+        sprintfcb(d, "\n   --> %s:%d:%d\n", start.file->filename, start.line, start.column + 1);
+
+        SourceLoc loc_end = loc.end;
+        // we wanna find the physical character
+        for (MacroInvoke* m; (m = cuikpp_find_macro(tokens, loc_end)) != NULL;) {
+            loc_end = m->call_site;
+        }
+
+        print_line_with_backtrace(tokens, loc.start, loc.end);
     }
 
-    // print_line(tokens, start, tkn_len);
-    print_line_with_backtrace(tokens, loc.start, loc.end);
-
-    {
+    // fixits
+    if (fixit_count > 0) {
         const char* line_start = start.line_str;
         while (*line_start && isspace(*line_start)) line_start++;
         size_t dist_from_line_start = line_start - start.line_str;
@@ -244,28 +259,23 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
             size_t start_pos = start.column > dist_from_line_start ? start.column - dist_from_line_start : 0;
             start_pos += fixits[i].offset;
 
-            sprintfcb(tokens->diag, "        \x1b[32m");
+            sprintfcb(tokens->diag, "     | \x1b[32m");
             for (size_t j = 0; j < start_pos; j++) sprintfcb(tokens->diag, " ");
             sprintfcb(tokens->diag, "%s\x1b[0m\n", fixits[i].hint);
         }
     }
 
+    if (loc_start.raw != 0) {
+        sprintfcb(tokens->diag, "     |\n");
+    } else {
+        *(char*)arena_alloc(&tokens->diag->buffer, 1, 1) = '\n';
+    }
+
     if (d->callback) d->callback(d, d->userdata, type);
-    mtx_unlock(&d->lock);
 
     if (type == DIAG_ERR) {
         atomic_fetch_add(&tokens->diag->error_tally, 1);
     }
-}
-
-void diag_header(TokenStream* tokens, DiagType type, const char* fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    char tmp[STB_SPRINTF_MIN];
-    sprintfcb(tokens->diag, "\x1b[37m%s: ", report_names[type]);
-    stbsp_vsprintfcb(sprintf_callback, &tokens->diag->buffer, tmp, fmt, ap);
-    *(char*)arena_alloc(&tokens->diag->buffer, 1, 1) = '\n';
-    va_end(ap);
 }
 
 void cuikdg_tally_error(TokenStream* s) {
@@ -274,6 +284,13 @@ void cuikdg_tally_error(TokenStream* s) {
 
 int cuikdg_error_count(TokenStream* s) {
     return atomic_load(&s->diag->error_tally);
+}
+
+void diag_extra(TokenStream* tokens, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    diag(DIAG_NULL, tokens, (SourceRange){ 0 }, fmt, ap);
+    va_end(ap);
 }
 
 #define DIAG_FN(type, name) \
@@ -292,10 +309,24 @@ DiagWriter diag_writer(TokenStream* tokens) {
     return (DiagWriter){ .tokens = tokens };
 }
 
+void diag_header(TokenStream* tokens, DiagType type, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    char tmp[STB_SPRINTF_MIN];
+    if (type == DIAG_ERR) {
+        sprintfcb(tokens->diag, "%s%s\x1b[0m[0000]: ", report_colors[type], report_names[type]);
+    } else {
+        sprintfcb(tokens->diag, "%s%s\x1b[0m: ", report_colors[type], report_names[type]);
+    }
+    stbsp_vsprintfcb(sprintf_callback, &tokens->diag->buffer, tmp, fmt, ap);
+    *(char*)arena_alloc(&tokens->diag->buffer, 1, 1) = '\n';
+    va_end(ap);
+}
+
 static void diag_writer_write_upto(DiagWriter* writer, size_t pos) {
     if (writer->cursor < pos) {
         int l = pos - writer->cursor;
-        for (size_t i = 0; i < l; i++) printf(" ");
+        memset(arena_alloc(&writer->tokens->diag->buffer, l, 1), ' ', l);
 
         //printf("%.*s", (int)(pos - writer->cursor), writer->line_start + writer->cursor);
         writer->cursor = pos;
@@ -320,14 +351,15 @@ void diag_writer_highlight(DiagWriter* writer, SourceRange loc) {
         do { line_end++; } while (*line_end && *line_end != '\n');
 
         writer->base = a;
+        writer->cursor = dist_from_line_start;
         writer->line_start = line_start;
         writer->line_end = line_end;
-        writer->dist_from_line_start = line_start - a.line_str;
+        writer->dist_from_line_start = dist_from_line_start;
 
-        sprintfcb(tokens->diag, "  %s:%d\n", a.file->filename, a.line);
-        sprintfcb(tokens->diag, "    ");
+        sprintfcb(tokens->diag, "  --> %s:%d\n", a.file->filename, a.line);
+        sprintfcb(tokens->diag, "     |\n     | ");
         sprintfcb(tokens->diag, "%.*s\n", (int) (line_end - line_start), line_start);
-        sprintfcb(tokens->diag, "    ");
+        sprintfcb(tokens->diag, "     | ");
     }
 
     assert(b.column >= a.column);

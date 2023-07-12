@@ -134,6 +134,12 @@ static bool const_eval(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstVal
         Cuik_ConstVal* args = &stack[top];
         top += 1;
 
+        // &((T*)0)->field
+        if (s->op == EXPR_CAST && exprs[i+1].op == EXPR_ARROW && exprs[i+2].op == EXPR_ADDR && i + 2 < e->count) {
+            i += 2;
+            continue;
+        }
+
         // symbols + address is allowed to push (the backend uses this)
         if (s->op == EXPR_SYMBOL && (s->sym.stmt->op == STMT_GLOBAL_DECL || s->sym.stmt->op == STMT_FUNC_DECL)) {
             if (cuik_type_implicit_ptr(cuik_canonical_type(s->sym.stmt->decl.type))) {

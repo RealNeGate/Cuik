@@ -628,6 +628,7 @@ static void parse_postfix(Cuik_Parser* restrict parser, TokenStream* restrict s,
         }
 
         parse_initializer2(parser, s, type);
+        has_expr = true;
     }
 
     normal_path:

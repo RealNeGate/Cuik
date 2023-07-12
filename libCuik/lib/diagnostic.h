@@ -25,7 +25,6 @@ struct Cuik_Diagnostics {
     Cuik_DiagCallback callback;
     void* userdata;
 
-    mtx_t lock;
     Arena buffer;
 
     // We write the text output to a buffer such that we

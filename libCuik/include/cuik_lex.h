@@ -28,6 +28,7 @@ typedef struct Cuik_Diagnostics Cuik_Diagnostics;
 
 // These are your options for arguments in diagnostics
 typedef enum {
+    DIAG_NULL,
     DIAG_NOTE,
     DIAG_WARN,
     DIAG_ERR,
@@ -335,11 +336,12 @@ CUIK_API void cuikpp_dump_tokens(TokenStream* s);
 // We extended onto the standard printf format when it starts with `%!`, here's the
 // full table of additions:
 //
-//     %!T       Cuik_Type
+//     %!T       Cuik_Type*
 //     %!S       String
 //
 // fixit diagnostics are added by placing a # at the start of the format string and
 // writing out a DiagFixit at the start of the var args
+CUIK_API void diag_extra(TokenStream* tokens, const char* fmt, ...);
 CUIK_API void diag_note(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 CUIK_API void diag_warn(TokenStream* tokens, SourceRange loc, const char* fmt, ...);
 CUIK_API void diag_err(TokenStream* tokens, SourceRange loc, const char* fmt, ...);

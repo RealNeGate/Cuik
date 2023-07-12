@@ -610,15 +610,18 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     cuik_symtab_destroy(parser.tags);
     THROW_IF_ERROR();
 
-    // output accumulated diagnostics:
-    //   unlike basically any other C compiler i know of we can accumulate
-    //   one of the most common error messages to make it easier to read as
-    //   one of these "so called" sane humans.
+    // output accumulated diagnostics, we used to pool them up in a nice
+    // way... we'll get back to that eventually
     nl_map_for_str(i, parser.unresolved_symbols) {
         Diag_UnresolvedSymbol* loc = parser.unresolved_symbols[i].v;
+
+        for (; loc != NULL; loc = loc->next) {
+            diag_err(s, loc->loc, "unknown symbol: %s", loc->name);
+        }
+
+        /*
         cuikdg_tally_error(s);
         diag_header(s, DIAG_ERR, "could not resolve symbol: %s", loc->name);
-
         DiagWriter d = diag_writer(s);
         for (; loc != NULL; loc = loc->next) {
             if (!diag_writer_is_compatible(&d, loc->loc)) {
@@ -629,7 +632,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
 
             diag_writer_highlight(&d, loc->loc);
         }
-        diag_writer_done(&d);
+        diag_writer_done(&d);*/
     }
     nl_map_free(parser.unresolved_symbols);
     THROW_IF_ERROR();

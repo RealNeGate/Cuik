@@ -192,11 +192,9 @@ static bool implicit_conversion(TranslationUnit* tu, Cuik_QualType qsrc, Cuik_Qu
     }
 
     if (!type_compatible(tu, src, dst, src_e)) {
-        char str[1024];
-        type_as_string(sizeof(str), str, src);
-
-        DiagFixit fixit = { src_e->loc, 0, str };
-        diag_err(&tu->tokens, src_e->loc, "#can't implicitly convert type to %!T", fixit, dst);
+        diag_err(&tu->tokens, src_e->loc, "can't implicitly convert expression");
+        diag_extra(&tu->tokens, "got:  %!T", src);
+        diag_extra(&tu->tokens, "need: %!T", dst);
         return false;
     }
 
