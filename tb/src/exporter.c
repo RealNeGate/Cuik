@@ -45,7 +45,7 @@ TB_API bool tb_export_buffer_to_file(TB_ExportBuffer buffer, const char* path) {
     }
 
     for (TB_ExportChunk* c = buffer.head; c != NULL; c = c->next) {
-        if (fwrite(c->data, 1, c->size, file) == 1) {
+        if (c->size > 0 && fwrite(c->data, c->size, 1, file) != 1) {
             fprintf(stderr, "\x1b[31merror\x1b[0m: could not write to file! %s (not enough storage?)\n", path);
             return false;
         }

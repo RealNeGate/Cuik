@@ -684,8 +684,6 @@ static void compile_word(Word* w) {
 
             stack[i] = phis[i];
         }
-
-        tb_inst_set_phis_to_region(f, loop_body, w->arity, phis);
     }
 
     // functions we might import

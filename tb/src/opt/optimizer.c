@@ -460,7 +460,7 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         return NULL;
     }
 
-    #ifdef TB_OPTDEBUG_LOG_PEEP
+    #if TB_OPTDEBUG_LOG_PEEP
     printf("peep? ");
     print_node_sexpr(f, n, 0);
     #endif
@@ -472,7 +472,7 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* k = idealize(opt, f, n);
     TB_DEBUG_CODE(int loop_count=0);
     while (k != NULL) {
-        #ifdef TB_OPTDEBUG_LOG_PEEP
+        #if TB_OPTDEBUG_LOG_PEEP
         TB_DEBUG_CODE(printf(" => \x1b[%dm", 36+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
         #endif
 
@@ -530,6 +530,10 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
     // convert into matching identity
     k = identity(opt, f, n);
     if (n != k) {
+        #if TB_OPTDEBUG_LOG_PEEP
+        TB_DEBUG_CODE(printf(" => \x1b[%dm", 37+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
+        #endif
+
         subsume_node(opt, f, n, k);
         return k;
     }
@@ -537,7 +541,7 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
     // common subexpression elim
     k = nl_hashset_put2(&opt->cse_nodes, n, cse_hash, cse_compare);
     if (k && (k != n)) {
-        #ifdef TB_OPTDEBUG_LOG_PEEP
+        #if TB_OPTDEBUG_LOG_PEEP
         TB_DEBUG_CODE(printf(" => \x1b[31mCSE\x1b[0m"));
         #endif
 
@@ -606,7 +610,6 @@ TB_FuncOpt* tb_funcopt_enter(TB_Function* f, TB_Arena* arena) {
     return opt;
 }
 
-// based on PhaseIterGVN in the Hotspot C2
 bool tb_funcopt_peephole(TB_FuncOpt* opt) {
     bool changes = false;
     CUIK_TIMED_BLOCK("peephole") {
@@ -620,7 +623,7 @@ bool tb_funcopt_peephole(TB_FuncOpt* opt) {
             if (peephole(opt, f, n)) {
                 changes = true;
 
-                #ifdef TB_OPTDEBUG_LOG_PEEP
+                #if TB_OPTDEBUG_LOG_PEEP
                 TB_DEBUG_CODE(printf("\n"));
                 #endif
             }

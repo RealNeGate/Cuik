@@ -78,6 +78,8 @@ static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Nod
     } else {
         log_debug("%p: insert new PHI node (in %p)", n, block);
     }
+
+    tb_funcopt_mark(c->opt, n);
     return n;
 }
 
@@ -107,7 +109,6 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
         }
     }
 
-    tb_funcopt_mark(c->opt, phi_node);
     tb_funcopt_mark_users(c->opt, phi_node);
     // tb_unreachable();
 }

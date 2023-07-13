@@ -156,7 +156,7 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
         tb_funcopt_mem2reg(opt), tb_funcopt_peephole(opt);
         // This is where our loops are analyzed as affine
         // and thus we do unrolling and more.
-        // tb_funcopt_loop(opt), tb_funcopt_peephole(opt);
+        tb_funcopt_loop(opt), tb_funcopt_peephole(opt);
 
         tb_funcopt_exit(opt);
     }
@@ -284,7 +284,6 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         CUIK_TIMED_BLOCK("Print") {
             TB_FOR_FUNCTIONS(f, mod) {
                 tb_function_print(f, tb_default_print_callback, stdout);
-                printf("\n\n");
             }
         }
     }
@@ -723,7 +722,7 @@ CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_Dr
 typedef struct {
     TB_Module* mod;
     TranslationUnit* tu;
-    int opt_level;
+    const Cuik_DriverArgs* args;
 
     Stmt** stmts;
     size_t count;
@@ -737,7 +736,9 @@ static void irgen_job(void* arg) {
     IRGenTask task = *((IRGenTask*) arg);
     TB_Module* mod = task.mod;
 
-    bool no_opt = task.opt_level == 0;
+    // unoptimized builds can just compile functions without
+    // the rest of the functions being ready.
+    bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->ir && !task.args->emit_ir;
 
     TB_Arena* allocator = NULL;
     if (ir_arena == NULL) {
@@ -757,9 +758,7 @@ static void irgen_job(void* arg) {
             s = cuikcg_top_level(task.tu, mod, allocator, task.stmts[i]);
         }
 
-        // unoptimized builds can just compile functions without
-        // the rest of the functions being ready.
-        if (no_opt && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
+        if (do_compiles_immediately && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
             tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST);
             CUIK_CALL(allocator, clear);
         }
@@ -767,10 +766,10 @@ static void irgen_job(void* arg) {
 
     #if CUIK_ALLOW_THREADS
     if (task.remaining != NULL && atomic_fetch_sub(task.remaining, 1) == 1) {
-        if (no_opt) CUIK_CALL(allocator, free);
+        if (do_compiles_immediately) CUIK_CALL(allocator, free);
     }
     #else
-    if (no_opt) TB_CALL(allocator, free);
+    if (do_compiles_immediately) TB_CALL(allocator, free);
     #endif
 }
 
@@ -802,7 +801,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
                 IRGenTask task = {
                     .mod = mod,
                     .tu = tu,
-                    .opt_level = args->opt_level,
+                    .args = args,
                     .stmts = &top_level[i],
                     .count = end - i,
                     .remaining = &tasks_remaining
@@ -830,7 +829,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
             IRGenTask task = {
                 .mod = mod,
                 .tu = tu,
-                .opt_level = args->opt_level,
+                .args = args,
                 .stmts = cuik_get_top_level_stmts(tu),
                 .count = c
             };

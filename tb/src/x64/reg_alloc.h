@@ -69,7 +69,7 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
 
     Inst *inst = spill_inst->next, *prev_inst = spill_inst;
     for (; inst; prev_inst = inst, inst = inst->next) {
-        if (inst->type == INST_LABEL) {
+        if (wont_spill_around(inst->type)) {
             if (reload_def >= 0) {
                 r.old = reload_def;
                 spill(ctx, prev_inst, &r);
@@ -107,7 +107,9 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
             ctx->defs[reload_def].end = inst->time + (j == 1 ? 0 : 1);
         }
 
-        if (inst->regs[0] == split_def && reload_def >= 0 && reload_def != split_def) {
+        if (inst->regs[0] == split_def && reload_def != split_def) {
+            // if (reload_def < 0) __debugbreak();
+
             // spill and discard our reload spot (if applies)
             r.old = inst->regs[0];
             spill(ctx, inst, &r);
@@ -116,16 +118,18 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
         }
 
         // if we're in the clobber list, invalidate the reload_def
-        if (inst->regs[0] >= 0 && ctx->defs[inst->regs[0]].clobbers) {
+        /*if (inst->regs[0] >= 0 && ctx->defs[inst->regs[0]].clobbers) {
             Clobbers* clobbers = ctx->defs[inst->regs[0]].clobbers;
 
             FOREACH_N(i, 0, clobbers->count) {
                 if (clobbers->_[i].class == reg_class && clobbers->_[i].num == reg_num) {
+                    r.old = reload_def;
+                    spill(ctx, inst, &r);
                     reload_def = -1;
                     break;
                 }
             }
-        }
+        }*/
 
         if (skip_next) {
             // skip this instruction to avoid infinite spills

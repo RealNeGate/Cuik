@@ -716,8 +716,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     };
 
-    /* ctx.emit.emit_asm = true;
-    if (ctx.emit.emit_asm) {
+    ctx.emit.emit_asm = true;
+    /* if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/
 
@@ -816,7 +816,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             append_inst(&ctx, inst_label(bb));
         }
 
-        Effect* e = nl_map_get_checked(ctx.effects, bb)->next;
+        Effect* e = nl_map_get_checked(ctx.effects, bb);
         while (e != NULL) {
             TB_Node* n = e->node;
 

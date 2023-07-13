@@ -168,14 +168,17 @@ TB_API TB_Node* tb_get_parent_region(TB_Node* n) {
 }
 
 TB_API bool tb_is_dominated_by(TB_Dominators doms, TB_Node* expected_dom, TB_Node* bb) {
-    while (bb != 0 && expected_dom != bb) {
+    while (expected_dom != bb) {
         ptrdiff_t search = nl_map_get(doms, bb);
-        if (search < 0) break;
+        assert(search >= 0);
 
+        if (bb == doms[search].v) {
+            return false;
+        }
         bb = doms[search].v;
     }
 
-    return (expected_dom == bb);
+    return true;
 }
 
 TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_PostorderWalk order, TB_Dominators doms) {
@@ -186,7 +189,7 @@ TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_PostorderWalk order, TB_D
 
         TB_Node* backedge = NULL;
         FOREACH_N(j, 0, bb->input_count) {
-            if (tb_is_dominated_by(doms, bb, bb->inputs[j])) {
+            if (tb_is_dominated_by(doms, bb, tb_get_parent_region(bb->inputs[j]))) {
                 backedge = bb->inputs[j];
                 break;
             }
