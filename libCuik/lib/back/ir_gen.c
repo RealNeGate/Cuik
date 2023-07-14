@@ -22,7 +22,7 @@ static TB_Symbol* get_external(CompilationUnit* restrict cu, const char* name) {
         result = cu->export_table[search].v;
     } else {
         // Always creates a real external... for now
-        result = (TB_Symbol*) tb_extern_create(cu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
+        result = (TB_Symbol*) tb_extern_create(cu->ir_mod, -1, name, TB_EXTERNAL_SO_LOCAL);
     }
 
     cuik_unlock_compilation_unit(cu);
@@ -46,14 +46,14 @@ static TB_Global* place_external(CompilationUnit* restrict cu, Stmt* s, TB_Debug
                 result = (TB_Global*) s;
             }
         } else {
-            result = tb_global_create(cu->ir_mod, name, dbg_type, linkage);
+            result = tb_global_create(cu->ir_mod, -1, name, dbg_type, linkage);
             nl_map_put_cstr(cu->export_table, name, (TB_Symbol*) result);
         }
 
         cuik_unlock_compilation_unit(cu);
         return result;
     } else {
-        return tb_global_create(cu->ir_mod, s->decl.name, dbg_type, linkage);
+        return tb_global_create(cu->ir_mod, -1, s->decl.name, dbg_type, linkage);
     }
 }
 
@@ -107,7 +107,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
             const char* tag = t->record.name;
 
             TB_DebugType** list = cuik_malloc(count * sizeof(TB_DebugType*));
-            TB_DebugType* rec = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod, tag) : tb_debug_create_union(mod, tag);
+            TB_DebugType* rec = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod, -1, tag) : tb_debug_create_union(mod, -1, tag);
             t->debug_type = rec;
 
             int unnamed_count = 0;
@@ -121,9 +121,9 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
                     char buf[8];
                     snprintf(buf, 8, "_%d", unnamed_count++);
 
-                    field = tb_debug_create_field(mod, base, buf, member->offset);
+                    field = tb_debug_create_field(mod, base, -1, buf, member->offset);
                 } else {
-                    field = tb_debug_create_field(mod, base, member->name, member->offset);
+                    field = tb_debug_create_field(mod, base, -1, member->name, member->offset);
                 }
 
                 list[i] = field;
@@ -368,7 +368,7 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
         size_t len = s->str.end - s->str.start;
 
         if (type->kind == KIND_PTR) {
-            TB_Global* dummy = tb_global_create(tu->ir_mod, NULL, NULL, TB_LINKAGE_PRIVATE);
+            TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
             tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
 
             char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
@@ -1277,7 +1277,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                     if (tu->parent != NULL) {
                         stmt->backing.s = get_external(tu->parent, name);
                     } else {
-                        stmt->backing.e = tb_extern_create(tu->ir_mod, name, TB_EXTERNAL_SO_LOCAL);
+                        stmt->backing.e = tb_extern_create(tu->ir_mod, -1, name, TB_EXTERNAL_SO_LOCAL);
                     }
                 }
 
@@ -2150,7 +2150,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 gen_global_initializer(tu, g, type, s->decl.initial, 0);
 
                 if (attrs.is_tls) {
-                    tb_module_set_tls_index(tu->ir_mod, "_tls_index");
+                    tb_module_set_tls_index(tu->ir_mod, -1, "_tls_index");
                 }
 
                 s->backing.g = g;
@@ -2163,7 +2163,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
             TB_Node* addr = tb_inst_local(func, size, align);
             if (tu->has_tb_debug_info && s->decl.name != NULL) {
-                tb_function_attrib_variable(func, addr, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
+                tb_function_attrib_variable(func, addr, -1, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
             }
 
             if (s->decl.initial) {
@@ -2467,7 +2467,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             params[i] = tb_inst_param_addr(func, i + param_bias);
 
             if (proto->params[i].name) {
-                tb_function_attrib_variable(func, params[i], proto->params[i].name, proto->params[i].debug_type);
+                tb_function_attrib_variable(func, params[i], -1, proto->params[i].name, proto->params[i].debug_type);
             }
         }
 
@@ -2548,7 +2548,7 @@ static void ir_alloc_task(void* task) {
             if (s->op == STMT_FUNC_DECL) {
                 TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
                 TB_ComdatType comdat = s->decl.attrs.is_inline ? TB_COMDAT_MATCH_ANY : TB_COMDAT_NONE;
-                TB_Function* func = tb_function_create(t.tu->ir_mod, s->decl.name, linkage, comdat);
+                TB_Function* func = tb_function_create(t.tu->ir_mod, -1, s->decl.name, linkage, comdat);
 
                 s->backing.f = func;
                 s->backing.s->ordinal = get_ir_ordinal(t.tu, s);
@@ -2561,7 +2561,7 @@ static void ir_alloc_task(void* task) {
                 if (!is_external_sym) {
                     // if we have a TB module, fill it up with declarations
                     if (s->decl.attrs.is_tls) {
-                        tb_module_set_tls_index(t.tu->ir_mod, "_tls_index");
+                        tb_module_set_tls_index(t.tu->ir_mod, -1, "_tls_index");
                     }
 
                     TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;

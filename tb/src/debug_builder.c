@@ -58,21 +58,21 @@ TB_API TB_DebugType* tb_debug_create_array(TB_Module* m, TB_DebugType* base, siz
     return NEW(TB_DEBUG_TYPE_ARRAY, .array = { base, count });
 }
 
-TB_API TB_DebugType* tb_debug_create_struct(TB_Module* m, const char* tag) {
+TB_API TB_DebugType* tb_debug_create_struct(TB_Module* m, ptrdiff_t len, const char* tag) {
     TB_DebugType* t = NEW(TB_DEBUG_TYPE_STRUCT);
-    t->record.tag = tag ? tag : "unknown_struct";
+    t->record.tag = tb__arena_strdup(m, len, tag);
     return t;
 }
 
-TB_API TB_DebugType* tb_debug_create_union(TB_Module* m, const char* tag) {
+TB_API TB_DebugType* tb_debug_create_union(TB_Module* m, ptrdiff_t len, const char* tag) {
     TB_DebugType* t = NEW(TB_DEBUG_TYPE_UNION);
-    t->record.tag = tag ? tag : "unknown_union";
+    t->record.tag = tb__arena_strdup(m, len, tag);
     return t;
 }
 
-TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, const char* name, TB_CharUnits offset) {
+TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, ptrdiff_t len, const char* name, TB_CharUnits offset) {
     assert(name);
-    return NEW(TB_DEBUG_TYPE_FIELD, .field = { tb__arena_strdup(m, name), offset, type });
+    return NEW(TB_DEBUG_TYPE_FIELD, .field = { tb__arena_strdup(m, len, name), offset, type });
 }
 
 TB_API void tb_debug_complete_record(TB_DebugType* type, TB_DebugType** members, size_t count, TB_CharUnits size, TB_CharUnits align) {

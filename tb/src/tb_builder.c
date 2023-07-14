@@ -61,12 +61,12 @@ static void append_attrib(TB_Function* f, TB_Node* n, TB_Attrib* a) {
     }
 }
 
-TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, const char* name, TB_DebugType* type) {
+TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, ptrdiff_t len, const char* name, TB_DebugType* type) {
     assert(name != NULL);
     assert(type != NULL);
 
     TB_Attrib* a = tb_platform_heap_alloc(sizeof(TB_Attrib));
-    *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .var = { tb__arena_strdup(f->super.module, name), type } };
+    *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .var = { tb__arena_strdup(f->super.module, len, name), type } };
     append_attrib(f, n, a);
 }
 
@@ -370,7 +370,7 @@ TB_API TB_Node* tb_inst_float64(TB_Function* f, double imm) {
 }
 
 TB_API TB_Node* tb_inst_string(TB_Function* f, size_t len, const char* str) {
-    TB_Global* dummy = tb_global_create(f->super.module, NULL, NULL, TB_LINKAGE_PRIVATE);
+    TB_Global* dummy = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
     tb_global_set_storage(f->super.module, &f->super.module->rdata, dummy, len, 1, 1);
 
     char* dst = tb_global_add_region(f->super.module, dummy, 0, len);

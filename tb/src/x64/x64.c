@@ -735,7 +735,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst);
             } else {
                 TB_Module* mod = ctx->module;
-                TB_Global* g = tb_global_create(mod, NULL, NULL, TB_LINKAGE_PRIVATE);
+                TB_Global* g = tb_global_create(mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
                 tb_global_set_storage(mod, &mod->rdata, g, sizeof(float), sizeof(float), 1);
 
                 char* buffer = tb_global_add_region(mod, g, 0, sizeof(float));
@@ -761,7 +761,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst);
             } else {
                 TB_Module* mod = ctx->module;
-                TB_Global* g = tb_global_create(mod, NULL, NULL, TB_LINKAGE_PRIVATE);
+                TB_Global* g = tb_global_create(mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
                 tb_global_set_storage(mod, &mod->rdata, g, sizeof(double), sizeof(double), 1);
 
                 char* buffer = tb_global_add_region(mod, g, 0, sizeof(double));
@@ -1427,6 +1427,8 @@ static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, T
                 int other = ISEL(src->inputs[1]);
                 SUBMIT(inst_rr(ADD, dt, USE(dst), dst, other));
             }
+
+            nl_map_put(ctx->values, src, USE(dst));
             return;
         }
     }

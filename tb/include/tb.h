@@ -538,19 +538,6 @@ typedef struct {
     TB_Node* value;
 } TB_SwitchEntry;
 
-typedef struct TB_Loop {
-    // refers to another entry in TB_LoopInfo... unless it's -1
-    ptrdiff_t parent_loop;
-
-    TB_Node* header;
-    TB_Node* backedge;
-} TB_Loop;
-
-typedef struct TB_LoopInfo {
-    size_t count;
-    TB_Loop* loops;
-} TB_LoopInfo;
-
 typedef enum {
     TB_EXECUTABLE_UNKNOWN,
     TB_EXECUTABLE_PE,
@@ -648,7 +635,7 @@ TB_API void tb_module_destroy(TB_Module* m);
 // When targetting windows & thread local storage, you'll need to bind a tls index
 // which is usually just a global that the runtime support has initialized, if you
 // dont and the tls_index is used, it'll crash
-TB_API void tb_module_set_tls_index(TB_Module* m, const char* name);
+TB_API void tb_module_set_tls_index(TB_Module* m, ptrdiff_t len, const char* name);
 
 // You don't need to manually call this unless you want to resolve locations before
 // exporting.
@@ -756,7 +743,7 @@ TB_API TB_External* tb_next_external(TB_External* e);
 TB_API TB_ExternalType tb_extern_get_type(TB_External* e);
 TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkage linkage);
 
-TB_API TB_External* tb_extern_create(TB_Module* m, const char* name, TB_ExternalType type);
+TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type);
 TB_API TB_FileID tb_file_create(TB_Module* m, const char* path);
 
 // Called once you're done with TB operations on a thread (or i guess when it's
@@ -798,7 +785,7 @@ TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc
 ////////////////////////////////
 // Globals
 ////////////////////////////////
-TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage);
+TB_API TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage);
 
 // allocate space for the global
 TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* global, size_t size, size_t align, size_t max_objects);
@@ -819,7 +806,7 @@ TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m);
 // Function Attributes
 ////////////////////////////////
 // These are parts of a function that describe metadata for instructions
-TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, const char* name, TB_DebugType* type);
+TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, ptrdiff_t len, const char* name, TB_DebugType* type);
 
 ////////////////////////////////
 // Debug info Generation
@@ -830,9 +817,9 @@ TB_API TB_DebugType* tb_debug_get_integer(TB_Module* m, bool is_signed, int bits
 TB_API TB_DebugType* tb_debug_get_float(TB_Module* m, TB_FloatFormat fmt);
 TB_API TB_DebugType* tb_debug_create_ptr(TB_Module* m, TB_DebugType* base);
 TB_API TB_DebugType* tb_debug_create_array(TB_Module* m, TB_DebugType* base, size_t count);
-TB_API TB_DebugType* tb_debug_create_struct(TB_Module* m, const char* tag);
-TB_API TB_DebugType* tb_debug_create_union(TB_Module* m, const char* tag);
-TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, const char* name, TB_CharUnits offset);
+TB_API TB_DebugType* tb_debug_create_struct(TB_Module* m, ptrdiff_t len, const char* tag);
+TB_API TB_DebugType* tb_debug_create_union(TB_Module* m, ptrdiff_t len, const char* tag);
+TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, ptrdiff_t len, const char* name, TB_CharUnits offset);
 TB_API void tb_debug_complete_record(TB_DebugType* type, TB_DebugType** members, size_t count, TB_CharUnits size, TB_CharUnits align);
 
 ////////////////////////////////
@@ -869,12 +856,14 @@ TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line);
 TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
 
 // if section is NULL, default to .text
-TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage, TB_ComdatType comdat);
+TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat);
 
 TB_API void* tb_function_get_jit_pos(TB_Function* f);
 
+// if len is -1, it's null terminated
+TB_API void tb_symbol_set_name(TB_Symbol* s, ptrdiff_t len, const char* name);
+
 TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr);
-TB_API void tb_symbol_set_name(TB_Symbol* s, const char* name);
 TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 
 // if arena is NULL, defaults to module arena which is freed on tb_free_thread_resources
@@ -915,7 +904,6 @@ TB_API TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_C
 TB_API void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile);
 
 TB_API TB_Node* tb_inst_bool(TB_Function* f, bool imm);
-TB_API TB_Node* tb_inst_ptr(TB_Function* f, uint64_t imm);
 TB_API TB_Node* tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm);
 TB_API TB_Node* tb_inst_uint(TB_Function* f, TB_DataType dt, uint64_t imm);
 TB_API TB_Node* tb_inst_float32(TB_Function* f, float imm);

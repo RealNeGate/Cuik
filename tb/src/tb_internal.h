@@ -664,7 +664,7 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 // ANALYSIS
 ////////////////////////////////
 int tb__get_local_tid(void);
-TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, const char* name, size_t size);
+TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos);
@@ -677,7 +677,7 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);
 
 uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
-char* tb__arena_strdup(TB_Module* m, const char* src);
+char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
 
 // temporary arena
 extern thread_local Arena tb__arena;

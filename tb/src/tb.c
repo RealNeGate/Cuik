@@ -37,12 +37,12 @@ bool tb_symbol_is_comdat(const TB_Symbol* s) {
     return s->tag == TB_SYMBOL_FUNCTION && ((const TB_Function*) s)->comdat.type != TB_COMDAT_NONE;
 }
 
-char* tb__arena_strdup(TB_Module* m, const char* src) {
-    if (src == NULL) return NULL;
+char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
+    if (len < 0) len = strlen(src);
+    if (len == 0) return NULL;
 
-    size_t length = strlen(src);
-    char* newstr = arena_alloc(&tb__arena2, length + 1, 1);
-    memcpy(newstr, src, length + 1);
+    char* newstr = arena_alloc(&tb__arena2, len + 1, 1);
+    memcpy(newstr, src, len + 1);
     return newstr;
 }
 
@@ -108,11 +108,11 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
     // we start a little off the start just because
     mtx_init(&m->lock, mtx_plain);
 
-    m->text.name  = tb__arena_strdup(m, ".text");
+    m->text.name  = tb__arena_strdup(m, -1, ".text");
     m->text.kind  = TB_MODULE_SECTION_TEXT;
-    m->data.name  = tb__arena_strdup(m, ".data");
-    m->rdata.name = tb__arena_strdup(m, sys == TB_SYSTEM_WINDOWS ? ".rdata" : ".rodata");
-    m->tls.name   = tb__arena_strdup(m, sys == TB_SYSTEM_WINDOWS ? ".tls$"  : ".tls");
+    m->data.name  = tb__arena_strdup(m, -1, ".data");
+    m->rdata.name = tb__arena_strdup(m, -1, sys == TB_SYSTEM_WINDOWS ? ".rdata" : ".rodata");
+    m->tls.name   = tb__arena_strdup(m, -1, sys == TB_SYSTEM_WINDOWS ? ".tls$"  : ".tls");
     m->tls.kind   = TB_MODULE_SECTION_TLS;
     return m;
 }
@@ -279,15 +279,15 @@ TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc
     return p;
 }
 
-TB_API TB_Function* tb_function_create(TB_Module* m, const char* name, TB_Linkage linkage, TB_ComdatType comdat) {
-    TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, name, sizeof(TB_Function));
+TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat) {
+    TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, len, name, sizeof(TB_Function));
     f->linkage = linkage;
     f->comdat.type = comdat;
     return f;
 }
 
-TB_API void tb_symbol_set_name(TB_Symbol* s, const char* name) {
-    s->name = tb__arena_strdup(s->module, name);
+TB_API void tb_symbol_set_name(TB_Symbol* s, ptrdiff_t len, const char* name) {
+    s->name = tb__arena_strdup(s->module, len, name);
 }
 
 TB_API const char* tb_symbol_get_name(TB_Symbol* s) {
@@ -357,14 +357,14 @@ TB_API void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset
     g->objects[g->obj_count++] = (TB_InitObj) { .type = TB_INIT_OBJ_RELOC, .offset = offset, .reloc = symbol };
 }
 
-TB_API TB_Global* tb_global_create(TB_Module* m, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
+TB_API TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
     int tid = tb__get_local_tid();
 
     TB_Global* g = pool_put(m->thread_info[tid].globals);
     *g = (TB_Global){
         .super = {
             .tag = TB_SYMBOL_GLOBAL,
-            .name = tb__arena_strdup(m, name),
+            .name = tb__arena_strdup(m, len, name),
             .module = m,
         },
         .dbg_type = dbg_type,
@@ -426,9 +426,9 @@ TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m) {
     return &m->tls;
 }
 
-TB_API void tb_module_set_tls_index(TB_Module* m, const char* name) {
+TB_API void tb_module_set_tls_index(TB_Module* m, ptrdiff_t len, const char* name) {
     if (atomic_flag_test_and_set(&m->is_tls_defined)) {
-        m->tls_index_extern = (TB_Symbol*) tb_extern_create(m, "_tls_index", TB_EXTERNAL_SO_LOCAL);
+        m->tls_index_extern = (TB_Symbol*) tb_extern_create(m, len, name, TB_EXTERNAL_SO_LOCAL);
     }
 }
 
@@ -444,7 +444,7 @@ TB_API void* tb_function_get_jit_pos(TB_Function* f) {
     return f->compiled_pos;
 }
 
-TB_API TB_External* tb_extern_create(TB_Module* m, const char* name, TB_ExternalType type) {
+TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
     assert(name != NULL);
     int tid = tb__get_local_tid();
 
@@ -452,7 +452,7 @@ TB_API TB_External* tb_extern_create(TB_Module* m, const char* name, TB_External
     *e = (TB_External){
         .super = {
             .tag = TB_SYMBOL_EXTERNAL,
-            .name = tb__arena_strdup(m, name),
+            .name = tb__arena_strdup(m, len, name),
             .module = m,
         },
         .type = type,

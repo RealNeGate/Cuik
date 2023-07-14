@@ -180,39 +180,3 @@ TB_API bool tb_is_dominated_by(TB_Dominators doms, TB_Node* expected_dom, TB_Nod
 
     return true;
 }
-
-TB_API TB_LoopInfo tb_get_loop_info(TB_Function* f, TB_PostorderWalk order, TB_Dominators doms) {
-    // Find loops
-    DynArray(TB_Loop) loops = dyn_array_create(TB_Loop, 64);
-    FOREACH_N(i, 0, order.count) {
-        TB_Node* bb = order.traversal[i];
-
-        TB_Node* backedge = NULL;
-        FOREACH_N(j, 0, bb->input_count) {
-            if (tb_is_dominated_by(doms, bb, tb_get_parent_region(bb->inputs[j]))) {
-                backedge = bb->inputs[j];
-                break;
-            }
-        }
-
-        if (backedge) {
-            TB_Loop l = { .parent_loop = -1, .header = bb, .backedge = backedge };
-
-            // check if we have a parent...
-            FOREACH_REVERSE_N(o, 0, dyn_array_length(loops)) {
-                if (tb_is_dominated_by(doms, loops[o].header, bb)) {
-                    l.parent_loop = o;
-                    break;
-                }
-            }
-
-            dyn_array_put(loops, l);
-        }
-    }
-
-    return (TB_LoopInfo){ .count = dyn_array_length(loops), .loops = &loops[0] };
-}
-
-TB_API void tb_free_loop_info(TB_LoopInfo l) {
-    dyn_array_destroy(l.loops);
-}

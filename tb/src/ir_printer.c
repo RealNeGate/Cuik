@@ -317,14 +317,14 @@ TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* u
         TB_Node* region = order.traversal[i];
         TB_Node* n = TB_NODE_GET_EXTRA_T(region, TB_NodeRegion)->end;
 
-        P("subgraph cluster_%p {\nstyle=filled;color=lightgrey;\n", n);
+        // P("subgraph cluster_%p {\nstyle=filled;color=lightgrey;\n", n);
         do {
             tb_print_node(f, &ctx, callback, user_data, n);
             n = n->inputs[0];
         } while (n->type != TB_START && n->type != TB_REGION);
 
         tb_print_node(f, &ctx, callback, user_data, n);
-        P("}\n");
+        // P("}\n");
     }
 
     tb_function_free_postorder(&order);
