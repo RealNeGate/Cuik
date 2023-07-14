@@ -42,7 +42,8 @@ char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
     if (len == 0) return NULL;
 
     char* newstr = arena_alloc(&tb__arena2, len + 1, 1);
-    memcpy(newstr, src, len + 1);
+    memcpy(newstr, src, len);
+    newstr[len] = 0;
     return newstr;
 }
 
