@@ -62,7 +62,7 @@ static int find_traversal_index2(Mem2Reg_Ctx* restrict ctx, TB_Node* bb) {
 // be mutated into a PHI node by the rest of the code.
 static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Node* block, TB_DataType dt) {
     TB_Node* n = tb_alloc_node(f, TB_PHI, dt, 1 + block->input_count, 0);
-    n->inputs[0] = block;
+    set_input(c->opt, n, block, 0);
     FOREACH_N(i, 0, block->input_count) n->inputs[1 + i] = NULL;
 
     // append variable attrib

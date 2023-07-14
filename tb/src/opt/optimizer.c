@@ -14,7 +14,12 @@
 #include "../tb_internal.h"
 #include <log.h>
 
-#define TB_OPTDEBUG_LOG_PEEP 0
+#define TB_OPTDEBUG_PEEP 0
+#define TB_OPTDEBUG_LOOP 1
+
+#define DO_IF(cond) CONCAT(DO_IF_, cond)
+#define DO_IF_0(...)
+#define DO_IF_1(...) __VA_ARGS__
 
 typedef struct User User;
 struct User {
@@ -57,6 +62,9 @@ TB_Node* tb_transmute_to_int(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataTy
 
 static void subsume_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n, TB_Node* new_n);
 
+// *new_node is set to true if we make a new node, it won't set it false for you
+static TB_Node* clone_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node);
+
 // node creation helpers
 TB_Node* make_int_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, TB_Node* src, int i);
@@ -71,6 +79,16 @@ static int bits_in_data_type(int pointer_size, TB_DataType dt) {
         return 0;
         default: return 0;
     }
+}
+
+static char* lil_name(TB_Function* f, const char* fmt, ...) {
+    char* buf = alloc_from_node_arena(f, 30);
+
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, 30, fmt, ap);
+    va_end(ap);
+    return buf;
 }
 
 // unity build with all the passes
@@ -102,6 +120,11 @@ TB_Node* make_proj_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt
     set_input(opt, n, src, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = i);
     return n;
+}
+
+static TB_Node* clone_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node) {
+    assert(0 && "TODO");
+    return NULL;
 }
 
 void tb_transmute_to_poison(TB_FuncOpt* restrict opt, TB_Node* n) {
@@ -401,6 +424,9 @@ static TB_Node* idealize(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
 
         // control flow
         case TB_BRANCH:
+        // "this is what graph rewriting looks like, you may not like it but this is peak optimizer"
+        // "CPU caches hate this trick"
+        // "billions must stall"
         if (n->input_count == 1 &&
             n->inputs[0]->type == TB_REGION &&
             n->inputs[0]->input_count == 1 &&
@@ -460,7 +486,7 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         return NULL;
     }
 
-    #if TB_OPTDEBUG_LOG_PEEP
+    #if TB_OPTDEBUG_PEEP
     printf("peep? ");
     print_node_sexpr(f, n, 0);
     #endif
@@ -470,11 +496,9 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
 
     // idealize node (in a loop of course)
     TB_Node* k = idealize(opt, f, n);
-    TB_DEBUG_CODE(int loop_count=0);
+    DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
     while (k != NULL) {
-        #if TB_OPTDEBUG_LOG_PEEP
-        TB_DEBUG_CODE(printf(" => \x1b[%dm", 36+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
-        #endif
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[%dm", 36+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
 
         tb_funcopt_mark_users(opt, k);
 
@@ -523,17 +547,14 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         // try again, maybe we get another transformation
         k = idealize(opt, f, n);
 
-        TB_DEBUG_CODE(if (++loop_count > 10) { log_warn("%p: we looping a lil too much dawg...", n); });
+        DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 10) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
     // TB_DEBUG_CODE(printf(loop_count ? "\n" : "\x1b[2K\x1b[0G"));
 
     // convert into matching identity
     k = identity(opt, f, n);
     if (n != k) {
-        #if TB_OPTDEBUG_LOG_PEEP
-        TB_DEBUG_CODE(printf(" => \x1b[%dm", 37+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
-        #endif
-
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[%dm", 37+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
         subsume_node(opt, f, n, k);
         return k;
     }
@@ -541,10 +562,7 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
     // common subexpression elim
     k = nl_hashset_put2(&opt->cse_nodes, n, cse_hash, cse_compare);
     if (k && (k != n)) {
-        #if TB_OPTDEBUG_LOG_PEEP
-        TB_DEBUG_CODE(printf(" => \x1b[31mCSE\x1b[0m"));
-        #endif
-
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[31mCSE\x1b[0m"));
         subsume_node(opt, f, n, k);
         return k;
     }
@@ -566,6 +584,7 @@ static void subsume_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n, T
     }
 
     tb_funcopt_mark_users(opt, new_n);
+    tb_funcopt_kill(opt, n);
 }
 
 static void generate_use_lists(TB_FuncOpt* restrict queue, TB_Function* f) {
@@ -623,9 +642,7 @@ bool tb_funcopt_peephole(TB_FuncOpt* opt) {
             if (peephole(opt, f, n)) {
                 changes = true;
 
-                #if TB_OPTDEBUG_LOG_PEEP
-                TB_DEBUG_CODE(printf("\n"));
-                #endif
+                DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
             }
         }
     }
