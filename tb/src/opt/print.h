@@ -48,7 +48,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
         }
     } else if (n->type == TB_PHI || n->type == TB_LOAD) {
         ptrdiff_t search = nl_map_get(ctx->ordinals, n);
-        if (search >= 0) {
+        if (search < 0) {
             // alloc new ID
             int id = ctx->count++;
             nl_map_put(ctx->ordinals, n, id);
