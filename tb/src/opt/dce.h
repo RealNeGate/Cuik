@@ -22,6 +22,7 @@ TB_API bool tb_uses_effects(TB_Node* n) {
         return n->dt.type == TB_CONTROL;
 
         // control flow
+        case TB_PHI:
         case TB_START:
         case TB_REGION:
         case TB_BRANCH:

@@ -439,7 +439,7 @@ struct TB_Node {
 typedef struct { // TB_BRANCH
     // avoid empty structs with flexible members
     int64_t _;
-    int64_t keys[/* input_count - 1 */];
+    int64_t keys[];
 } TB_NodeBranch;
 
 typedef struct { // TB_PROJ
@@ -911,8 +911,11 @@ TB_API TB_Node* tb_inst_float64(TB_Function* f, double imm);
 TB_API TB_Node* tb_inst_cstring(TB_Function* f, const char* str);
 TB_API TB_Node* tb_inst_string(TB_Function* f, size_t len, const char* str);
 
-// Broadcasts 'val' across 'count' elements starting 'dst'
+// write 'val' over 'count' bytes on 'dst'
 TB_API void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* count, TB_CharUnits align, bool is_volatile);
+
+// zero 'count' bytes on 'dst'
+TB_API void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* count, TB_CharUnits align, bool is_volatile);
 
 // performs a copy of 'count' elements from one memory location to another
 // both locations cannot overlap.
@@ -1040,13 +1043,15 @@ TB_API TB_FuncOpt* tb_funcopt_enter(TB_Function* f, TB_Arena* arena);
 TB_API void tb_funcopt_exit(TB_FuncOpt* opt);
 
 TB_API bool tb_funcopt_peephole(TB_FuncOpt* opt);
-TB_API bool tb_funcopt_mem2reg(TB_FuncOpt* f);
-TB_API bool tb_funcopt_loop(TB_FuncOpt* f);
+TB_API bool tb_funcopt_mem2reg(TB_FuncOpt* opt);
+TB_API bool tb_funcopt_loop(TB_FuncOpt* opt);
 
-TB_API void tb_funcopt_kill(TB_FuncOpt* restrict queue, TB_Node* n);
+// isn't an optimization, just does the name flat form of IR printing
+TB_API bool tb_funcopt_print(TB_FuncOpt* opt);
 
-TB_API bool tb_funcopt_mark(TB_FuncOpt* restrict queue, TB_Node* n);
-TB_API void tb_funcopt_mark_users(TB_FuncOpt* restrict queue, TB_Node* n);
+TB_API void tb_funcopt_kill(TB_FuncOpt* opt, TB_Node* n);
+TB_API bool tb_funcopt_mark(TB_FuncOpt* opt, TB_Node* n);
+TB_API void tb_funcopt_mark_users(TB_FuncOpt* opt, TB_Node* n);
 
 ////////////////////////////////
 // IR access

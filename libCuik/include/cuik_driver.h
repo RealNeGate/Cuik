@@ -44,7 +44,6 @@ struct Cuik_DriverArgs {
 
     TB_WindowsSubsystem subsystem;
 
-    bool ir              : 1;
     bool emit_ir         : 1;
     bool ast             : 1;
     bool run             : 1;

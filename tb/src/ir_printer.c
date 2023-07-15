@@ -263,7 +263,7 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
                 P("%"PRIu64" ", num->words[0]);
             } else {
                 P("0x");
-                FOREACH_N(i, 0, num->num_words) {
+                FOREACH_REVERSE_N(i, 0, num->num_words) {
                     if (num) P("'");
                     P("%016"PRIx64, num->words[i]);
                 }

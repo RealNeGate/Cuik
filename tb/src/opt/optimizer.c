@@ -97,6 +97,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 #include "fold.h"
 #include "load_opt.h"
 #include "loop.h"
+#include "print.h"
 #include "mem2reg.h"
 #include "libcalls.h"
 

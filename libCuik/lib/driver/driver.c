@@ -273,7 +273,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         // to save on total memory usage, this code path is for
         // optimized code since it needs to know what neighbors it's
         // got for IPO.
-        if (!args->ir && !args->emit_ir) {
+        if (!args->emit_ir) {
             CUIK_TIMED_BLOCK("CodeGen") {
                 cuiksched_per_function(s->tp, mod, NULL, compile_func);
             }
@@ -567,7 +567,7 @@ void cuik_step_free(Cuik_BuildStep* s) {
 }
 
 bool cuik_driver_does_codegen(const Cuik_DriverArgs* args) {
-    return !args->ir && !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
+    return !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
 }
 
 void cuikpp_dump_tokens(TokenStream* s) {
@@ -738,7 +738,7 @@ static void irgen_job(void* arg) {
 
     // unoptimized builds can just compile functions without
     // the rest of the functions being ready.
-    bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->ir && !task.args->emit_ir;
+    bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->emit_ir;
 
     TB_Arena* allocator = NULL;
     if (ir_arena == NULL) {
