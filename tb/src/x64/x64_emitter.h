@@ -201,7 +201,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
 
     // if the REX stays as 0x40 then it's default and doesn't need
     // to be here.
-    if (rex_prefix != 0x40) EMIT1(e, rex_prefix);
+    if (rex_prefix != 0x40 || dt == TB_X86_TYPE_BYTE) EMIT1(e, rex_prefix);
 
     // Opcode
     if (inst->cat == INST_BINOP_EXT || inst->cat == INST_BINOP_EXT2) {

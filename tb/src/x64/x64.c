@@ -775,7 +775,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             dst = DEF(n, REG_CLASS_XMM);
 
             int src = ISEL(n->inputs[0]);
-            SUBMIT(inst_r(FP_CVT, n->inputs[0]->dt, dst, src));
+            SUBMIT(inst_r(FP_CVT, n->dt, dst, src));
             break;
         }
 
