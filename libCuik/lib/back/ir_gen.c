@@ -10,6 +10,7 @@ static thread_local const char* function_name;
 
 // For aggregate returns
 static _Thread_local TB_Node* return_value_address;
+static _Thread_local TB_Attrib* scope_attrib;
 
 static TB_Symbol* get_external(CompilationUnit* restrict cu, const char* name) {
     // if this is the first time we've seen this name, add it to the table
@@ -2163,7 +2164,8 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
             TB_Node* addr = tb_inst_local(func, size, align);
             if (tu->has_tb_debug_info && s->decl.name != NULL) {
-                tb_function_attrib_variable(func, addr, -1, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
+                TB_Attrib* a = tb_function_attrib_variable(func, -1, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
+                tb_node_append_attrib(addr, a);
             }
 
             if (s->decl.initial) {
@@ -2467,7 +2469,8 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             params[i] = tb_inst_param_addr(func, i + param_bias);
 
             if (proto->params[i].name) {
-                tb_function_attrib_variable(func, params[i], -1, proto->params[i].name, proto->params[i].debug_type);
+                TB_Attrib* a = tb_function_attrib_variable(func, -1, proto->params[i].name, proto->params[i].debug_type);
+                tb_node_append_attrib(params[i], a);
             }
         }
 

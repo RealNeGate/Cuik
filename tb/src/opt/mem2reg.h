@@ -66,19 +66,12 @@ static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Nod
     FOREACH_N(i, 0, block->input_count) n->inputs[1 + i] = NULL;
 
     // append variable attrib
-    const char* name = NULL;
     for (TB_Attrib* a = c->to_promote[var]->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_VARIABLE) {
-        append_attrib(f, n, a);
-        name = a->var.name;
+        tb_node_append_attrib(n, a);
         break;
     }
 
-    if (name) {
-        log_debug("%s: %p: insert new PHI node (in %p)", name, n, block);
-    } else {
-        log_debug("%p: insert new PHI node (in %p)", n, block);
-    }
-
+    log_debug("%p: insert new PHI node (in %p)", n, block);
     tb_funcopt_mark(c->opt, n);
     return n;
 }

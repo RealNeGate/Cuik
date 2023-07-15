@@ -230,6 +230,9 @@ struct TB_Attrib {
 
     union {
         struct {
+            TB_Attrib* parent;
+        } scope;
+        struct {
             char* name;
             TB_DebugType* storage;
         } var;

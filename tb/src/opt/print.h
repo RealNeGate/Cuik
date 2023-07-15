@@ -40,6 +40,17 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
                 printf("%016"PRIx64, num->words[i]);
             }
         }
+    } else if (n->type == TB_PHI || n->type == TB_LOAD) {
+        ptrdiff_t search = nl_map_get(ctx->ordinals, n);
+        if (search >= 0) {
+            // alloc new ID
+            int id = ctx->count++;
+            nl_map_put(ctx->ordinals, n, id);
+
+            printf("v%d", id);
+        } else {
+            printf("v%d", ctx->ordinals[search].v);
+        }
     } else {
         ptrdiff_t search = nl_map_get(ctx->ordinals, n);
         assert(search >= 0);
@@ -96,14 +107,16 @@ static void print_node(PrinterCtx* ctx, TB_Node* n) {
     // print operands
     size_t first = tb_uses_effects(n);
     FOREACH_N(i, first, n->input_count) {
-        print_node(ctx, n->inputs[i]);
+        if (n->inputs[i]->type != TB_LOAD && n->inputs[i]->type != TB_PHI) {
+            print_node(ctx, n->inputs[i]);
+        }
     }
 
     // print as instruction
     printf("  v%d = %s.", id, tb_node_get_name(n));
 
     TB_DataType dt = n->dt;
-    if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_SLE) {
+    if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
         dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
     }
     print_type(dt);
@@ -165,6 +178,36 @@ static void print_node(PrinterCtx* ctx, TB_Node* n) {
         case TB_STORE: {
             TB_NodeMemAccess* mem = TB_NODE_GET_EXTRA(n);
             if (mem->is_volatile) printf(" !volatile");
+            break;
+        }
+
+        case TB_GET_SYMBOL_ADDRESS: {
+            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+            if (sym->name) {
+                printf("%s", sym->name);
+            } else {
+                printf("%p", sym);
+            }
+            break;
+        }
+
+        case TB_CALL: break;
+
+        case TB_LOCAL: {
+            TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
+            printf(" !size %u !align %u", l->size, l->align);
+            break;
+        }
+
+        case TB_FLOAT32_CONST: {
+            TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
+            printf(" %f", f->value);
+            break;
+        }
+
+        case TB_FLOAT64_CONST: {
+            TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
+            printf(" %f", f->value);
             break;
         }
 
@@ -235,6 +278,11 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                 }
             }
             printf("}\n");
+            break;
+        }
+
+        case TB_CALL: {
+            print_node(ctx, n);
             break;
         }
 

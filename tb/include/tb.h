@@ -805,8 +805,11 @@ TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m);
 ////////////////////////////////
 // Function Attributes
 ////////////////////////////////
+TB_API void tb_node_append_attrib(TB_Node* n, TB_Attrib* a);
+
 // These are parts of a function that describe metadata for instructions
-TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, ptrdiff_t len, const char* name, TB_DebugType* type);
+TB_API TB_Attrib* tb_function_attrib_variable(TB_Function* f, ptrdiff_t len, const char* name, TB_DebugType* type);
+TB_API TB_Attrib* tb_function_attrib_scope(TB_Function* f, TB_Attrib* parent_scope);
 
 ////////////////////////////////
 // Debug info Generation

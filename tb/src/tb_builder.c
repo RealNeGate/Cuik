@@ -49,25 +49,21 @@ TB_API bool tb_node_is_constant_zero(TB_Node* n) {
     return false;
 }
 
-static void append_attrib(TB_Function* f, TB_Node* n, TB_Attrib* a) {
-    TB_Attrib* chain = n->first_attrib;
-    if (chain == NULL) {
-        n->first_attrib = a;
-    } else {
-        // skip till the end
-        while (chain->next != NULL) chain = chain->next;
-
-        chain->next = a;
-    }
+TB_API void tb_node_append_attrib(TB_Node* n, TB_Attrib* a) {
+    a->next = n->first_attrib;
+    n->first_attrib = a;
 }
 
-TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, ptrdiff_t len, const char* name, TB_DebugType* type) {
-    assert(name != NULL);
-    assert(type != NULL);
-
+TB_API TB_Attrib* tb_function_attrib_variable(TB_Function* f, ptrdiff_t len, const char* name, TB_DebugType* type) {
     TB_Attrib* a = tb_platform_heap_alloc(sizeof(TB_Attrib));
     *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .var = { tb__arena_strdup(f->super.module, len, name), type } };
-    append_attrib(f, n, a);
+    return a;
+}
+
+TB_API TB_Attrib* tb_function_attrib_scope(TB_Function* f, TB_Attrib* parent_scope) {
+    TB_Attrib* a = tb_platform_heap_alloc(sizeof(TB_Attrib));
+    *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .scope = { parent_scope } };
+    return a;
 }
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
@@ -100,7 +96,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     }
 
     if (f->line_attrib != NULL) {
-        append_attrib(f, n, f->line_attrib);
+        tb_node_append_attrib(n, f->line_attrib);
     }
 
     return n;
