@@ -175,7 +175,9 @@ static void print_node(PrinterCtx* ctx, TB_Node* n) {
         }
 
         case TB_LOAD:
-        case TB_STORE: {
+        case TB_STORE:
+        case TB_MEMSET:
+        case TB_MEMCPY: {
             TB_NodeMemAccess* mem = TB_NODE_GET_EXTRA(n);
             if (mem->is_volatile) printf(" !volatile");
             break;
@@ -195,19 +197,19 @@ static void print_node(PrinterCtx* ctx, TB_Node* n) {
 
         case TB_LOCAL: {
             TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-            printf(" !size %u !align %u", l->size, l->align);
+            printf("!size %u !align %u", l->size, l->align);
             break;
         }
 
         case TB_FLOAT32_CONST: {
             TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
-            printf(" %f", f->value);
+            printf("%f", f->value);
             break;
         }
 
         case TB_FLOAT64_CONST: {
             TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
-            printf(" %f", f->value);
+            printf("%f", f->value);
             break;
         }
 
@@ -232,7 +234,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
 
     // has control dependencies on this node, we put these first
     for (User* use = find_users(ctx->opt, n); use; use = use->next) {
-        if (use->slot != 0 || (use->slot == 0 && !tb_uses_effects(use->n))) {
+        if (use->n->type == TB_PHI || use->n->type == TB_LOAD) {
             print_node(ctx, use->n);
         }
     }
@@ -281,6 +283,8 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
             break;
         }
 
+        case TB_MEMSET:
+        case TB_MEMCPY:
         case TB_CALL: {
             print_node(ctx, n);
             break;

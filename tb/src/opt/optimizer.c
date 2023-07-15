@@ -423,6 +423,9 @@ static TB_Node* idealize(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         case TB_TRUNCATE:
         return ideal_truncate(opt, f, n);
 
+        case TB_CALL:
+        return ideal_libcall(opt, f, n);
+
         // control flow
         case TB_BRANCH:
         // "this is what graph rewriting looks like, you may not like it but this is peak optimizer"

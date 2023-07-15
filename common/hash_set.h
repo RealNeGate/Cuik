@@ -91,7 +91,7 @@ void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_C
             hs->count++;
             hs->data[i] = ptr;
             return NULL;
-        } else if (cmp(hs->data[i], ptr)) {
+        } else if (hs->data[i] == ptr || cmp(hs->data[i], ptr)) {
             return hs->data[i];
         }
 
