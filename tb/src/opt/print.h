@@ -320,5 +320,7 @@ bool tb_funcopt_print(TB_FuncOpt* opt) {
         print_effect(&ctx, end);
     }
 
+    nl_map_free(ctx.ordinals);
+    tb_function_free_postorder(&ctx.order);
     return false;
 }
