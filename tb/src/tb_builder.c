@@ -489,7 +489,7 @@ TB_API void tb_inst_memcpy(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* 
     f->active_control_node = n;
 }
 
-TB_API void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* count, TB_CharUnits align, bool is_volatile) {
+TB_API void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* count, TB_CharUnits align, bool is_volatile) {
     tb_inst_memset(f, dst, tb_inst_uint(f, TB_TYPE_I8, 0), count, align, is_volatile);
 }
 
