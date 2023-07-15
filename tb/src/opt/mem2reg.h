@@ -62,8 +62,9 @@ static int find_traversal_index2(Mem2Reg_Ctx* restrict ctx, TB_Node* bb) {
 // be mutated into a PHI node by the rest of the code.
 static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Node* block, TB_DataType dt) {
     TB_Node* n = tb_alloc_node(f, TB_PHI, dt, 1 + block->input_count, 0);
+    FOREACH_N(i, 0, 1 + block->input_count) n->inputs[i] = NULL;
+
     set_input(c->opt, n, block, 0);
-    FOREACH_N(i, 0, block->input_count) n->inputs[1 + i] = NULL;
 
     // append variable attrib
     for (TB_Attrib* a = c->to_promote[var]->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_VARIABLE) {
@@ -192,8 +193,6 @@ static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* n, DynArray(TB_Node*)* stac
 
     if (kill) {
         log_info("%p: pass to %p", n, n->inputs[0]);
-        log_info("  user %p", find_users(c->opt, n->inputs[0])->n);
-
         subsume_node(c->opt, c->f, n, n->inputs[0]);
     }
 }

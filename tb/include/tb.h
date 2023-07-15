@@ -195,8 +195,6 @@ typedef union TB_DataType {
 typedef enum TB_NodeTypeEnum {
     TB_NULL = 0,
 
-    TB_RETURN, // fn(r: region, x: data)
-
     // only one per function
     TB_START, // fn()
 
@@ -918,7 +916,7 @@ TB_API TB_Node* tb_inst_string(TB_Function* f, size_t len, const char* str);
 TB_API void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* count, TB_CharUnits align, bool is_volatile);
 
 // zero 'count' bytes on 'dst'
-TB_API void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* count, TB_CharUnits align, bool is_volatile);
+TB_API void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* count, TB_CharUnits align, bool is_volatile);
 
 // performs a copy of 'count' elements from one memory location to another
 // both locations cannot overlap.

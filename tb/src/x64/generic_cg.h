@@ -716,8 +716,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     };
 
-    ctx.emit.emit_asm = true;
-    /* if (ctx.emit.emit_asm) {
+    /* ctx.emit.emit_asm = true;
+    if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/
 
