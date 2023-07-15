@@ -171,6 +171,12 @@ static void print_node(PrinterCtx* ctx, TB_Node* n) {
         default: tb_assert(n->extra_count == 0, "TODO");
     }
 
+    for (TB_Attrib* attrib = n->first_attrib; attrib != NULL; attrib = attrib->next) {
+        if (attrib->type == TB_ATTRIB_VARIABLE) {
+            printf(" !var(%s)", attrib->var.name);
+        }
+    }
+
     printf("\n");
 }
 
@@ -217,9 +223,16 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
             TB_NodeRegion* region = TB_NODE_GET_EXTRA(tb_get_parent_region(n));
 
-            printf("default: %zu", find_print_label(ctx, region->succ[0]));
-            FOREACH_N(i, 1, region->succ_count) {
-                printf(", %"PRId64": %zu", br->keys[i - 1], find_print_label(ctx, region->succ[i]));
+            FOREACH_N(i, 0, region->succ_count) {
+                if (i != 0) printf(", %"PRId64": ", br->keys[i - 1]);
+                else printf("default: ");
+
+                TB_Node* target = region->succ[i];
+                if (TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag) {
+                    printf("%s", TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag);
+                } else {
+                    printf(".bb%zu", find_print_label(ctx, target));
+                }
             }
             printf("}\n");
             break;
