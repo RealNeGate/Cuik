@@ -28,6 +28,12 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
         } else {
             printf(".bb%zu", find_print_label(ctx, n));
         }
+    } else if (n->type == TB_FLOAT32_CONST) {
+        TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
+        printf("%f", f->value);
+    } else if (n->type == TB_FLOAT64_CONST) {
+        TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
+        printf("%f", f->value);
     } else if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
@@ -91,7 +97,7 @@ static void print_type(TB_DataType dt) {
 
 // returns true if it's the first time
 static void print_node(PrinterCtx* ctx, TB_Node* n) {
-    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_INTEGER_CONST) {
+    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
         return;
     }
 
@@ -198,18 +204,6 @@ static void print_node(PrinterCtx* ctx, TB_Node* n) {
         case TB_LOCAL: {
             TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
             printf("!size %u !align %u", l->size, l->align);
-            break;
-        }
-
-        case TB_FLOAT32_CONST: {
-            TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
-            printf("%f", f->value);
-            break;
-        }
-
-        case TB_FLOAT64_CONST: {
-            TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
-            printf("%f", f->value);
             break;
         }
 
