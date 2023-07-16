@@ -70,12 +70,12 @@ static void fancy_reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist 
             FOREACH_N(j, 0, 64) if (m & (1ull << j)) {
                 size_t k = i*64 + j;
 
-                __debugbreak();
+                tb_todo();
             }
         }
 
         for (; inst; inst = inst->next) {
-            __debugbreak();
+            tb_todo();
         }
 
         current_bb++;

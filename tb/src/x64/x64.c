@@ -601,26 +601,39 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             const TB_FunctionPrototype* restrict proto = ctx->f->prototype;
             bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
 
+            const GPR* gpr_params  = is_sysv ? SYSV_GPR_PARAMETERS : WIN64_GPR_PARAMETERS;
+            size_t gpr_param_count = is_sysv ? COUNTOF(SYSV_GPR_PARAMETERS) : COUNTOF(WIN64_GPR_PARAMETERS);
+            int xmm_param_count    = is_sysv ? 8 : 4;
+
             // Handle known parameters
+            int used_gpr = 0, used_xmm = 0;
             FOREACH_N(i, 0, proto->param_count) {
                 TB_Node* proj = start->projs[i];
+                bool is_float = proj->dt.type == TB_FLOAT;
 
                 // copy from parameter
-                int reg_class = (proj->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR);
+                int reg_class = (is_float ? REG_CLASS_XMM : REG_CLASS_GPR);
                 int v = -1;
 
+                int id = is_float ? used_gpr : used_xmm;
                 if (is_sysv) {
-                    tb_todo();
+                    if (is_float) used_xmm += 1;
+                    else used_gpr += 1;
                 } else {
-                    if (i < 4) {
-                        int reg_num = (proj->dt.type == TB_FLOAT ? i : WIN64_GPR_PARAMETERS[i]);
+                    // win64 will expend the slot regardless of if it's used
+                    used_gpr += 1;
+                    used_xmm += 1;
+                }
 
-                        v = DEF_HINTED(proj, reg_class, reg_num);
-                        ctx->defs[v].start = -100 + i;
-                        SUBMIT(inst_copy(proj->dt, v, reg_num));
+                int reg_limit = is_float ? xmm_param_count : gpr_param_count;
+                if (id < reg_limit) {
+                    int reg_num = (proj->dt.type == TB_FLOAT ? id : gpr_params[id]);
 
-                        nl_map_put(ctx->values, proj, v);
-                    }
+                    v = DEF_HINTED(proj, reg_class, reg_num);
+                    ctx->defs[v].start = -100 + i;
+                    SUBMIT(inst_copy(proj->dt, v, reg_num));
+
+                    nl_map_put(ctx->values, proj, v);
                 }
             }
 
@@ -1539,7 +1552,7 @@ static void emit_code(Ctx* restrict ctx) {
             continue;
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
-            ASM printf("  #loc %s %llu\n", f->super.module->files[inst->imm[0]].path, inst->imm[1]);
+            ASM printf("  #loc %s %"PRIu64"\n", f->super.module->files[inst->imm[0]].path, inst->imm[1]);
 
             TB_Line l = {
                 .file = inst->imm[0],

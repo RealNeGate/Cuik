@@ -352,7 +352,7 @@ static void fill_all(TB_FuncOpt* restrict opt, TB_Node* n) {
 static void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
-        printf("%lld", num->words[0]);
+        printf("%"PRId64, num->words[0]);
     } else if (depth > 0) {
         printf("(%s ...)", tb_node_get_name(n));
     } else {

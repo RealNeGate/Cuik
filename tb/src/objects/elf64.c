@@ -278,9 +278,6 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) 
         WRITE(&sec, sizeof(sec));
     }
 
-    log_debug("TODO");
-    // tb_todo();
-
     assert(write_pos == output_size);
     return (TB_ExportBuffer){ .total = output_size, .head = chunk, .tail = chunk };
 }
