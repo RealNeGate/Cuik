@@ -38,7 +38,7 @@ bool tb_symbol_is_comdat(const TB_Symbol* s) {
 }
 
 char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
-    if (len < 0) len = strlen(src);
+    if (len < 0) len = src ? strlen(src) : 0;
     if (len == 0) return NULL;
 
     char* newstr = arena_alloc(&tb__arena2, len + 1, 1);
@@ -58,12 +58,12 @@ static TB_CodeRegion* get_or_allocate_code_region(TB_Module* m, int tid) {
     return m->code_regions[tid];
 }
 
-TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width) {
+TB_DataType tb_vector_type(TB_DataTypeEnum type, int width) {
     assert(tb_is_power_of_two(width));
     return (TB_DataType) { .type = type, .width = tb_ffs(width) - 1 };
 }
 
-TB_API TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool is_jit) {
+TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool is_jit) {
     #if defined(TB_HOST_X86_64)
     TB_Arch arch = TB_ARCH_X86_64;
     #else
@@ -84,7 +84,7 @@ TB_API TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool 
     return tb_module_create(arch, sys, features, is_jit);
 }
 
-TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* features, bool is_jit) {
+TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* features, bool is_jit) {
     TB_Module* m = tb_platform_heap_alloc(sizeof(TB_Module));
     if (m == NULL) {
         fprintf(stderr, "tb_module_create: Out of memory!\n");
@@ -118,7 +118,7 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
     return m;
 }
 
-TB_API TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode) {
+TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode) {
     ICodeGen* restrict code_gen = tb__find_code_generator(m);
 
     // Machine code gen
@@ -203,17 +203,15 @@ TB_API TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* 
     return func_out;
 }
 
-TB_API size_t tb_module_get_function_count(TB_Module* m) {
+size_t tb_module_get_function_count(TB_Module* m) {
     return m->symbol_count[TB_SYMBOL_FUNCTION];
 }
 
-TB_API void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
+void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
     sym->tag = TB_SYMBOL_TOMBSTONE;
 }
 
-TB_API void tb_module_destroy(TB_Module* m) {
-    arena_free(&m->arena);
-
+void tb_module_destroy(TB_Module* m) {
     TB_Symbol* s = m->first_symbol_of_tag[TB_SYMBOL_FUNCTION];
     while (s) {
         TB_Symbol* next = s->next;
@@ -233,14 +231,13 @@ TB_API void tb_module_destroy(TB_Module* m) {
     FOREACH_N(i, 0, m->max_threads) {
         pool_destroy(m->thread_info[i].globals);
         pool_destroy(m->thread_info[i].externals);
-        pool_destroy(m->thread_info[i].debug_types);
     }
 
     dyn_array_destroy(m->files);
     tb_platform_heap_free(m);
 }
 
-TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
+TB_FileID tb_file_create(TB_Module* m, const char* path) {
     mtx_lock(&m->lock);
 
     // skip the NULL file entry
@@ -256,7 +253,7 @@ TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
     // allow for changing this later, doesn't matter for AOT... which is the usecase
     // of this?)
     size_t len = strlen(path);
-    char* newstr = arena_alloc(&m->arena, len + 1, 1);
+    char* newstr = arena_alloc(&tb__arena2, len + 1, 1);
     memcpy(newstr, path, len);
 
     TB_File f = { .path = newstr };
@@ -267,7 +264,7 @@ TB_API TB_FileID tb_file_create(TB_Module* m, const char* path) {
     return id;
 }
 
-TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_t param_count, const TB_PrototypeParam* params, size_t return_count, const TB_PrototypeParam* returns, bool has_varargs) {
+TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_t param_count, const TB_PrototypeParam* params, size_t return_count, const TB_PrototypeParam* returns, bool has_varargs) {
     size_t size = sizeof(TB_FunctionPrototype) + ((param_count + return_count) * sizeof(TB_PrototypeParam));
     TB_FunctionPrototype* p = arena_alloc(&tb__arena2, size, _Alignof(TB_FunctionPrototype));
 
@@ -280,22 +277,22 @@ TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc
     return p;
 }
 
-TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat) {
+TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat) {
     TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, len, name, sizeof(TB_Function));
     f->linkage = linkage;
     f->comdat.type = comdat;
     return f;
 }
 
-TB_API void tb_symbol_set_name(TB_Symbol* s, ptrdiff_t len, const char* name) {
+void tb_symbol_set_name(TB_Symbol* s, ptrdiff_t len, const char* name) {
     s->name = tb__arena_strdup(s->module, len, name);
 }
 
-TB_API const char* tb_symbol_get_name(TB_Symbol* s) {
+const char* tb_symbol_get_name(TB_Symbol* s) {
     return s->name;
 }
 
-TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena) {
+void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena) {
     assert(f->prototype == NULL);
     const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
@@ -333,11 +330,11 @@ TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, T
     f->prototype = p;
 }
 
-TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f) {
+TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f) {
     return f->prototype;
 }
 
-TB_API void* tb_global_add_region(TB_Module* m, TB_Global* g, size_t offset, size_t size) {
+void* tb_global_add_region(TB_Module* m, TB_Global* g, size_t offset, size_t size) {
     assert(offset == (uint32_t)offset);
     assert(size == (uint32_t)size);
     assert(g->obj_count + 1 <= g->obj_capacity);
@@ -350,7 +347,7 @@ TB_API void* tb_global_add_region(TB_Module* m, TB_Global* g, size_t offset, siz
     return ptr;
 }
 
-TB_API void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, const TB_Symbol* symbol) {
+void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, const TB_Symbol* symbol) {
     assert(offset == (uint32_t) offset);
     assert(g->obj_count + 1 <= g->obj_capacity);
     assert(symbol != NULL);
@@ -358,7 +355,7 @@ TB_API void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset
     g->objects[g->obj_count++] = (TB_InitObj) { .type = TB_INIT_OBJ_RELOC, .offset = offset, .reloc = symbol };
 }
 
-TB_API TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
+TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
     int tid = tb__get_local_tid();
 
     TB_Global* g = pool_put(m->thread_info[tid].globals);
@@ -376,7 +373,7 @@ TB_API TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name
     return g;
 }
 
-TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* global, size_t size, size_t align, size_t max_objects) {
+void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* global, size_t size, size_t align, size_t max_objects) {
     assert(size > 0 && align > 0 && tb_is_power_of_two(align));
     global->parent = section;
     global->pos = 0;
@@ -384,16 +381,11 @@ TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Gl
     global->align = align;
     global->obj_count = 0;
     global->obj_capacity = max_objects;
-
-    CUIK_TIMED_BLOCK("lock") {
-        mtx_lock(&m->lock);
-        global->objects = ARENA_ARR_ALLOC(&m->arena, max_objects, TB_InitObj);
-        dyn_array_put(section->globals, global);
-        mtx_unlock(&m->lock);
-    }
+    global->objects = ARENA_ARR_ALLOC(&tb__arena2, max_objects, TB_InitObj);
+    dyn_array_put(section->globals, global);
 }
 
-TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
+TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
     size_t left = 0;
     size_t right = f->safepoint_count;
 
@@ -411,41 +403,41 @@ TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
     return NULL;
 }
 
-TB_API TB_ModuleSection* tb_module_get_text(TB_Module* m) {
+TB_ModuleSection* tb_module_get_text(TB_Module* m) {
     return &m->text;
 }
 
-TB_API TB_ModuleSection* tb_module_get_rdata(TB_Module* m) {
+TB_ModuleSection* tb_module_get_rdata(TB_Module* m) {
     return &m->rdata;
 }
 
-TB_API TB_ModuleSection* tb_module_get_data(TB_Module* m) {
+TB_ModuleSection* tb_module_get_data(TB_Module* m) {
     return &m->data;
 }
 
-TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m) {
+TB_ModuleSection* tb_module_get_tls(TB_Module* m) {
     return &m->tls;
 }
 
-TB_API void tb_module_set_tls_index(TB_Module* m, ptrdiff_t len, const char* name) {
+void tb_module_set_tls_index(TB_Module* m, ptrdiff_t len, const char* name) {
     if (atomic_flag_test_and_set(&m->is_tls_defined)) {
         m->tls_index_extern = (TB_Symbol*) tb_extern_create(m, len, name, TB_EXTERNAL_SO_LOCAL);
     }
 }
 
-TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr) {
+void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr) {
     s->address = ptr;
 }
 
-TB_API TB_ExternalType tb_extern_get_type(TB_External* e) {
+TB_ExternalType tb_extern_get_type(TB_External* e) {
     return e->type;
 }
 
-TB_API void* tb_function_get_jit_pos(TB_Function* f) {
+void* tb_function_get_jit_pos(TB_Function* f) {
     return f->compiled_pos;
 }
 
-TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
+TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
     assert(name != NULL);
     int tid = tb__get_local_tid();
 
@@ -462,19 +454,19 @@ TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* na
     return e;
 }
 
-TB_API TB_Function* tb_first_function(TB_Module* m) {
+TB_Function* tb_first_function(TB_Module* m) {
     return (TB_Function*) m->first_symbol_of_tag[TB_SYMBOL_FUNCTION];
 }
 
-TB_API TB_Function* tb_next_function(TB_Function* f) {
+TB_Function* tb_next_function(TB_Function* f) {
     return (TB_Function*) f->super.next;
 }
 
-TB_API TB_External* tb_first_external(TB_Module* m) {
+TB_External* tb_first_external(TB_Module* m) {
     return (TB_External*) m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL];
 }
 
-TB_API TB_External* tb_next_external(TB_External* e) {
+TB_External* tb_next_external(TB_External* e) {
     return (TB_External*) e->super.next;
 }
 
