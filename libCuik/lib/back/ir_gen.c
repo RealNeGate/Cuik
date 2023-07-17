@@ -116,6 +116,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
             const char* tag = t->record.name;
 
             result = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod, -1, tag) : tb_debug_create_union(mod, -1, tag);
+            atomic_exchange(&t->debug_type, result);
 
             TB_DebugType** list = tb_debug_record_begin(result, count);
             for (size_t i = 0; i < count; i++) {
@@ -137,7 +138,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
             }
 
             tb_debug_record_end(result, t->size, t->align);
-            break;
+            return result;
         }
 
         case KIND_FUNC: {
@@ -361,7 +362,7 @@ static void eval_local_initializer(TranslationUnit* tu, TB_Function* func, TB_No
                 TB_Node* addr_offset = tb_inst_member_access(func, addr, n->offset + (i * size));
                 tb_inst_store(func, dt, addr_offset, val, type->align, false);
             }
-        } else if (type->kind == KIND_ARRAY) {
+        } else if (type->kind == KIND_ARRAY && child_type->kind == KIND_ARRAY) {
             TB_Node* addr_offset = tb_inst_member_access(func, addr, n->offset);
             tb_inst_memcpy(func, addr_offset, val, tb_inst_uint(func, TB_TYPE_I64, type->size), type->align, false);
         } else {

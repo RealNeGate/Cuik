@@ -470,9 +470,9 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
             return inst_m(i, n->dt, dst, dst, GPR_NONE, SCALE_X1, 0);
         }
     } else if (addr->type == TB_MEMBER_ACCESS) {
-        Inst inst = isel_load(ctx, addr->inputs[0], dst);
-        inst.imm[0] += TB_NODE_GET_EXTRA_T(addr, TB_NodeMember)->offset;
-        return inst;
+        int src = ISEL(addr->inputs[0]);
+        int64_t offset = TB_NODE_GET_EXTRA_T(addr, TB_NodeMember)->offset;
+        return inst_m(i, n->dt, dst, src, GPR_NONE, SCALE_X1, offset);
     } else if (addr->type == TB_LOCAL) {
         int pos = get_stack_slot(ctx, addr);
         return inst_m(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, pos);
@@ -798,11 +798,34 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
         case TB_NEG:
         case TB_NOT: {
-            assert(n->dt.type != TB_FLOAT);
-            dst = DEF(n, REG_CLASS_GPR);
-            int src = ISEL(n->inputs[0]);
+            if (n->dt.type != TB_FLOAT) {
+                dst = DEF(n, REG_CLASS_GPR);
+                int src = ISEL(n->inputs[0]);
 
-            SUBMIT(inst_r(type == TB_NOT ? NOT : NEG, n->dt, dst, src));
+                SUBMIT(inst_r(type == TB_NOT ? NOT : NEG, n->dt, dst, src));
+            } else {
+                if (type == TB_NEG) {
+                    TB_Module* mod = ctx->module;
+                    TB_Global* g = tb_global_create(mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+
+                    if (n->dt.data == TB_FLT_32) {
+                        tb_global_set_storage(mod, &mod->rdata, g, sizeof(uint32_t), sizeof(uint32_t), 1);
+                        uint32_t* buffer = tb_global_add_region(mod, g, 0, sizeof(uint32_t));
+                        buffer[0] = 1ull << 31ull;
+                    } else if (n->dt.data == TB_FLT_64) {
+                        tb_global_set_storage(mod, &mod->rdata, g, sizeof(uint64_t), sizeof(uint64_t), 1);
+                        uint64_t* buffer = tb_global_add_region(mod, g, 0, sizeof(uint64_t));
+                        buffer[0] = 1ull << 63ull;
+                    } else {
+                        tb_todo();
+                    }
+
+                    dst = DEF(n, REG_CLASS_XMM);
+                    SUBMIT(inst_g(FP_XOR, n->dt, dst, (TB_Symbol*) g));
+                } else {
+                    tb_todo();
+                }
+            }
             break;
         }
 

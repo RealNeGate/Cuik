@@ -994,6 +994,8 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
             format -= 1;
             SET_CAST(i + 1, GET_TYPE(i + 1));
             continue;
+        } else if (ch == 'v' && *format == ' ') {
+            break;
         }
 
         Subexpr* arg = &GET_EXPR(i + 1);
