@@ -1343,7 +1343,8 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             };
         }
         case EXPR_DOT_R: {
-            TB_Node* src = RVAL(0);
+            IRVal lhs = GET_ARG(0);
+            assert(lhs.value_type == LVALUE);
 
             Member* member = e->dot_arrow.member;
             assert(member != NULL);
@@ -1352,7 +1353,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                 return (IRVal){
                     .value_type = LVALUE_BITS,
                     .bits = {
-                        .reg = tb_inst_member_access(func, src, e->dot_arrow.offset),
+                        .reg = tb_inst_member_access(func, lhs.reg, e->dot_arrow.offset),
                         .offset = member->bit_offset,
                         .width = member->bit_width,
                     },
@@ -1360,7 +1361,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             } else {
                 return (IRVal){
                     .value_type = LVALUE,
-                    .reg = tb_inst_member_access(func, src, e->dot_arrow.offset),
+                    .reg = tb_inst_member_access(func, lhs.reg, e->dot_arrow.offset),
                 };
             }
         }

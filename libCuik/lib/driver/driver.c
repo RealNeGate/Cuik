@@ -147,16 +147,23 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
         ir_arena = tb_default_arena();
     }
 
+    Cuik_DriverArgs* args = arg;
     CUIK_TIMED_BLOCK("func opt") {
         TB_FuncOpt* opt = tb_funcopt_enter(f, ir_arena);
 
-        // initial run of peepholes
-        tb_funcopt_peephole(opt);
-        // Converting locals into phi nodes
-        tb_funcopt_mem2reg(opt), tb_funcopt_peephole(opt);
-        // This is where our loops are analyzed as affine
-        // and thus we do unrolling and more.
-        // tb_funcopt_loop(opt), tb_funcopt_peephole(opt);
+        if (args->opt_level >= 1) {
+            // initial run of peepholes
+            tb_funcopt_peephole(opt);
+            // Converting locals into phi nodes
+            tb_funcopt_mem2reg(opt), tb_funcopt_peephole(opt);
+            // This is where our loops are analyzed as affine
+            // and thus we do unrolling and more.
+            // tb_funcopt_loop(opt), tb_funcopt_peephole(opt);
+        }
+
+        if (args->emit_ir) {
+            tb_funcopt_print(opt);
+        }
 
         tb_funcopt_exit(opt);
     }
@@ -265,26 +272,18 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         cuikpp_free(cpp);
     }
 
-    if (args->opt_level > 0) {
+    if (args->opt_level > 0 || args->emit_ir) {
         // do parallel function passes
-        cuiksched_per_function(s->tp, mod, NULL, apply_func);
-
-        // debug builds will compile functions right after IRgen
-        // to save on total memory usage, this code path is for
-        // optimized code since it needs to know what neighbors it's
-        // got for IPO.
-        if (!args->emit_ir) {
-            CUIK_TIMED_BLOCK("CodeGen") {
-                cuiksched_per_function(s->tp, mod, NULL, compile_func);
-            }
-        }
+        cuiksched_per_function(s->tp, mod, args, apply_func);
     }
 
-    if (args->emit_ir) {
-        CUIK_TIMED_BLOCK("Print") {
-            TB_FOR_FUNCTIONS(f, mod) {
-                tb_function_print(f, tb_default_print_callback, stdout);
-            }
+    // debug builds will compile functions right after IRgen
+    // to save on total memory usage, this code path is for
+    // optimized code since it needs to know what neighbors it's
+    // got for IPO.
+    if (args->opt_level > 0 && !args->emit_ir) {
+        CUIK_TIMED_BLOCK("CodeGen") {
+            cuiksched_per_function(s->tp, mod, NULL, compile_func);
         }
     }
     #endif

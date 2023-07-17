@@ -135,9 +135,53 @@ static bool const_eval(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstVal
         top += 1;
 
         // &((T*)0)->field
-        if (s->op == EXPR_CAST && exprs[i+1].op == EXPR_ARROW && exprs[i+2].op == EXPR_ADDR && i + 2 < e->count) {
-            i += 2;
-            continue;
+        if (s->op == EXPR_CAST) {
+            Cuik_Type* t = cuik_canonical_type(s->cast.type);
+
+            if (cuik_type_is_integer(t) && args[0].tag == CUIK_CONST_ADDR) {
+                // cast constant pointer to int
+                assert(args[0].s.base == UINT32_MAX);
+                args[0].tag = CUIK_CONST_INT;
+                args[0].i = args[0].s.offset;
+                continue;
+            } else if (t->kind == KIND_PTR || t->kind == KIND_ARRAY) {
+                if (args[0].tag != CUIK_CONST_INT) {
+                    diag_err(&parser->tokens, s->loc, "Constant cast can only accept integers here");
+                    return false;
+                }
+
+                // walk an arrow+member chain until we resolve an address
+                int64_t offset = args[0].i;
+                i += 1;
+
+                if (i < e->count && exprs[i].op == EXPR_ARROW) {
+                    if (t->kind != KIND_PTR) {
+                        diag_err(&parser->tokens, s->loc, "Expected pointer (or array) for arrow");
+                    } else {
+                        t = cuik_canonical_type(t->ptr_to);
+                    }
+
+                    uint32_t member_offset = 0;
+                    Member* member = sema_traverse_members(t, exprs[i].dot_arrow.name, &member_offset);
+                    if (member == NULL) {
+                        diag_err(&parser->tokens, s->loc, "Unknown member: %s", exprs[i].dot_arrow.name);
+                        return false;
+                    }
+
+                    offset += member_offset;
+                    i += 1;
+                }
+
+                if (i >= e->count || exprs[i].op != EXPR_ADDR) {
+                    diag_err(&parser->tokens, exprs[i - 1].loc, "Cannot access members in constant expression");
+                    return false;
+                }
+
+                args[0].tag = CUIK_CONST_ADDR;
+                args[0].s.base = UINT32_MAX;
+                args[0].s.offset = offset;
+                continue;
+            }
         }
 
         // symbols + address is allowed to push (the backend uses this)

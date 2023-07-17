@@ -152,6 +152,10 @@ Cuik_Type* new_aligned_type(Cuik_TypeTable* types, Cuik_Type* base);
 Cuik_Type* get_common_type(Cuik_TypeTable* types, Cuik_Type* ty1, Cuik_Type* ty2);
 bool type_equal(Cuik_Type* a, Cuik_Type* b);
 
+// Semantics pass
+// out_offset is added onto so it needs to be initialized
+Member* sema_traverse_members(Cuik_Type* record_type, Atom name, uint32_t* out_offset);
+
 #define new_pointer(tu, base) cuik__new_pointer(&tu->types, base)
 
 // TODO(NeGate): merge these soon
