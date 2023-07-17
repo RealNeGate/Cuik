@@ -25,6 +25,7 @@ local options = {
 	forth  = false,
 	lld    = false,
 	gcc    = false,
+	asan   = false,
 	spall_auto = false
 }
 
@@ -52,7 +53,13 @@ for i = 1, #arg do
 end
 
 local ldflags = ""
-local cflags = " -g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DTB_USE_MIMALLOC -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_USE_MIMALLOC -I mimalloc/include -DCUIK_ALLOW_THREADS"
+local cflags = " -g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
+
+if options.asan then
+	cflags = cflags.." -fsanitize=address"
+else
+	cflags = cflags.." -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC"
+end
 
 if options.gcc then
 	cflags = cflags.." -Wno-enum-compare -Wno-array-bounds"
@@ -77,22 +84,28 @@ local src = {}
 
 if is_windows then
 	src[#src + 1] = "c11threads/threads_msvc.c"
-
-	if options.lld then
-		ld = "lld-link"
-	else
-		ld = "link"
-	end
-
 	cflags = cflags.." -I c11threads -D_CRT_SECURE_NO_WARNINGS"
-	ldflags = ldflags.." /nologo /debug onecore.lib msvcrt.lib libcmt.lib"
 
-	if options.shared then
-		cflags = cflags.." -DCUIK_DLL -DTB_DLL"
-		ldflags = ldflags.." /dll"
+	if options.asan then
+		ld = "clang"
+		ldflags = ldflags.." -fsanitize=address -g -o "
+	else
+		if options.lld then
+			ld = "lld-link"
+		else
+			ld = "link"
+		end
+
+		ldflags = ldflags.." /nologo /debug onecore.lib msvcrt.lib libcmt.lib"
+
+		if options.shared then
+			cflags = cflags.." -DCUIK_DLL -DTB_DLL"
+			ldflags = ldflags.." /dll"
+		end
+
+		ldflags = ldflags.." /defaultlib:libcmt /out:"
 	end
 
-	ldflags = ldflags.." /defaultlib:libcmt /out:"
 	exe_ext = ".exe"
 	dll_ext = ".dll"
 	lib_ext = ".lib"
