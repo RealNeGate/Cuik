@@ -56,14 +56,6 @@ typedef struct {
     int val;
 } ValueDesc;
 
-typedef struct Sequence {
-    struct Sequence* next;
-    TB_Node* node;
-
-    int inst_count, label, time;
-    Inst insts[16];
-} Sequence;
-
 typedef struct MachineBB {
     Inst* first;
 
@@ -118,6 +110,7 @@ typedef struct Effect Effect;
 struct Effect {
     Effect* next;
     TB_Node* node;
+    bool root;
     int phi_count;
 };
 
@@ -138,6 +131,7 @@ typedef struct {
 
     // Scheduling
     NL_HashSet visited;
+    Effect* prev_effect;
     NL_Map(TB_Node*, Effect*) effects;
 
     // temporary but still precious
@@ -651,36 +645,22 @@ static Effect* insert_effect(Ctx* restrict ctx, Effect* prev, TB_Node* n) {
     Effect* new_e = ARENA_ALLOC(&tb__arena, Effect);
     new_e->next = prev->next;
     new_e->node = n;
+    new_e->root = false;
     new_e->phi_count = 0;
     prev->next = new_e;
     return new_e;
 }
 
-#if 0
-// Handle branch edges
-if (n->type == TB_BRANCH) {
-    // copy out from active phi-edges
-    TB_NodeRegion* r = TB_NODE_GET_EXTRA(parent);
-    FOREACH_N(i, 0, r->succ_count) {
-        TB_Node* dst = r->succ[i];
-
-        // find predecessor index and do that edge
-        FOREACH_N(j, 0, dst->input_count) {
-            TB_Node* pred = dst->inputs[j];
-            while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
-
-            if (pred == parent) {
-                phi_edge(ctx, dst, j);
-                break;
-            }
+// will guarentee all the dependents of the current effect are processed
+static void fence(Ctx* restrict ctx) {
+    if (ctx->prev_effect != NULL) {
+        Effect* e = ctx->prev_effect->next;
+        while (e != NULL && !e->root) {
+            isel(ctx, e->node);
+            e = e->next;
         }
     }
 }
-
-if (n->type != TB_PROJ && (n->type != TB_LOCAL || nl_map_get(ctx->stack_slots, n) < 0)) {
-    isel(ctx, n);
-}
-#endif
 
 static void scan_for_effects(Ctx* restrict ctx, TB_Node* n) {
     if (!nl_hashset_put(&ctx->visited, n)) {
@@ -760,6 +740,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         Effect* bb_effect = ARENA_ALLOC(&tb__arena, Effect);
         bb_effect->next = NULL;
         bb_effect->node = bb;
+        bb_effect->root = true;
         bb_effect->phi_count = 0;
         nl_map_put(ctx.effects, bb, bb_effect);
 
@@ -771,6 +752,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             Effect* e = ARENA_ALLOC(&tb__arena, Effect);
             e->next = last;
             e->node = n;
+            e->root = true;
             e->phi_count = 0;
             last = e;
 
@@ -812,6 +794,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             append_inst(&ctx, inst_label(bb));
         }
 
+        ctx.prev_effect = NULL;
+
         Effect* e = nl_map_get_checked(ctx.effects, bb);
         while (e != NULL) {
             TB_Node* n = e->node;
@@ -852,7 +836,11 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 isel(&ctx, e->node);
             }
 
+            ctx.prev_effect = e;
             e = e->next;
+
+            // skip non root effects
+            while (e != NULL && !e->root) e = e->next;
         }
     }
 

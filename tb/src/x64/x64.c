@@ -1035,6 +1035,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst_copy(n->inputs[1]->dt, rax, USE(src_vreg)));
             }
 
+            // does this really need to be here?
+            fence(ctx);
+
             if (ctx->fallthrough != NULL) {
                 SUBMIT(inst_jmp(NULL));
             }
@@ -1072,6 +1075,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }*/
 
             int src = ISEL(n->inputs[2]);
+            fence(ctx);
+
             Inst st = isel_store(ctx, n->dt, n->inputs[1], src);
             SUBMIT(st);
             break;
@@ -1148,6 +1153,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
             TB_Node** succ = r->succ;
 
+            fence(ctx);
             if (r->succ_count == 1) {
                 if (ctx->fallthrough != succ[0]) {
                     SUBMIT(inst_jmp(succ[0]));
@@ -1278,6 +1284,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     }
                 }
             }
+
+            fence(ctx);
 
             size_t clobber_cap = tb_popcount(caller_saved_gprs);
             Clobbers* clobbers = arena_alloc(&tb__arena, sizeof(Clobbers) + (clobber_cap * sizeof(MachineReg)), _Alignof(Clobbers));
