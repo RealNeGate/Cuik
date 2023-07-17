@@ -5,6 +5,7 @@ typedef struct {
     TB_PostorderWalk order;
 
     int count;
+    NL_Map(TB_Node*, char) visited;
     NL_Map(TB_Node*, int) ordinals;
 } PrinterCtx;
 
@@ -15,7 +16,7 @@ static size_t find_print_label(PrinterCtx* ctx, TB_Node* n) {
         }
     }
 
-    tb_assert(0, "printer refers to unknown region");
+    return tb_assert(0, "printer refers to unknown region");
 }
 
 static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
@@ -96,25 +97,36 @@ static void print_type(TB_DataType dt) {
 }
 
 // returns true if it's the first time
-static void print_node(PrinterCtx* ctx, TB_Node* n) {
-    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
+static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
+    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_STORE || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
         return;
     }
 
+    if (nl_map_get(ctx->visited, n) >= 0) return;
+    nl_map_put(ctx->visited, n, 0);
+
+    int id;
     ptrdiff_t search = nl_map_get(ctx->ordinals, n);
     if (search >= 0) {
-        return;
+        id = ctx->ordinals[search].v;
+    } else {
+        // alloc new ID
+        id = ctx->count++;
+        nl_map_put(ctx->ordinals, n, id);
     }
-
-    // alloc new ID
-    int id = ctx->count++;
-    nl_map_put(ctx->ordinals, n, id);
 
     // print operands
     size_t first = tb_uses_effects(n);
     FOREACH_N(i, first, n->input_count) {
-        if (n->inputs[i]->type != TB_LOAD && n->inputs[i]->type != TB_PHI) {
-            print_node(ctx, n->inputs[i]);
+        switch (n->inputs[i]->type) {
+            case TB_LOAD: case TB_PHI:
+            if (n->inputs[i]->inputs[0] != parent) {
+                break;
+            }
+
+            default:
+            print_node(ctx, n->inputs[i], parent);
+            break;
         }
     }
 
@@ -226,10 +238,10 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
         printf("  # fence\n");
     }
 
-    // has control dependencies on this node, we put these first
+    // has control dependencies on this node, we put these after
     for (User* use = find_users(ctx->opt, n); use; use = use->next) {
-        if (use->n->type == TB_PHI || use->n->type == TB_LOAD) {
-            print_node(ctx, use->n);
+        if (use->slot == 0 && (use->n->type == TB_PHI || use->n->type == TB_PROJ)) {
+            print_node(ctx, use->n, n);
         }
     }
 
@@ -238,7 +250,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
     }
 
     FOREACH_N(i, 0, n->input_count) {
-        print_node(ctx, n->inputs[i]);
+        print_node(ctx, n->inputs[i], n);
     }
 
     switch (n->type) {
@@ -280,7 +292,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
         case TB_MEMSET:
         case TB_MEMCPY:
         case TB_CALL: {
-            print_node(ctx, n);
+            print_node(ctx, n, n);
             break;
         }
 
@@ -295,6 +307,12 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
         }
 
         default: tb_todo();
+    }
+
+    for (User* use = find_users(ctx->opt, n); use; use = use->next) {
+        if (use->slot == 0 && use->n->type == TB_LOAD) {
+            print_node(ctx, use->n, n);
+        }
     }
 }
 
@@ -321,6 +339,7 @@ bool tb_funcopt_print(TB_FuncOpt* opt) {
     }
 
     nl_map_free(ctx.ordinals);
+    nl_map_free(ctx.visited);
     tb_function_free_postorder(&ctx.order);
     return false;
 }
