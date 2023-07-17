@@ -15,7 +15,7 @@
 local is_windows = package.config:sub(1,1) == "\\"
 
 local options = {
-	log    = true,
+	log    = false,
 	debug  = false,
 	cuik   = false,
 	tb     = false,
@@ -23,7 +23,7 @@ local options = {
 	shared = false,
 	test   = false,
 	forth  = false,
-	lld    = true,
+	lld    = false,
 	gcc    = false,
 	asan   = false,
 	spall_auto = false
