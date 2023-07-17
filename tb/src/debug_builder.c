@@ -4,7 +4,7 @@
 
 static TB_DebugType* make_type(TB_Module* m) {
     int tid = tb__get_local_tid();
-    return pool_put(m->thread_info[tid].debug_types);
+    return arena_alloc(&tb__arena2, sizeof(TB_DebugType), _Alignof(TB_DebugType));
 }
 
 TB_API TB_DebugType* tb_debug_get_void(TB_Module* m) {
@@ -51,6 +51,7 @@ TB_API TB_DebugType* tb_debug_get_float(TB_Module* m, TB_FloatFormat fmt) {
 }
 
 TB_API TB_DebugType* tb_debug_create_ptr(TB_Module* m, TB_DebugType* base) {
+    assert(base != NULL);
     return NEW(TB_DEBUG_TYPE_POINTER, .ptr_to = base);
 }
 
@@ -75,9 +76,31 @@ TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, ptr
     return NEW(TB_DEBUG_TYPE_FIELD, .field = { tb__arena_strdup(m, len, name), offset, type });
 }
 
-TB_API void tb_debug_complete_record(TB_DebugType* type, TB_DebugType** members, size_t count, TB_CharUnits size, TB_CharUnits align) {
+TB_API TB_DebugType** tb_debug_record_begin(TB_DebugType* type, size_t count) {
+    type->record.count = count;
+    return (type->record.members = arena_alloc(&tb__arena2, count * sizeof(TB_DebugType*), _Alignof(TB_DebugType*)));
+}
+
+TB_API void tb_debug_record_end(TB_DebugType* type, TB_CharUnits size, TB_CharUnits align) {
     type->record.size = size;
     type->record.align = align;
-    type->record.count = count;
-    type->record.members = members;
+}
+
+TB_API TB_DebugType* tb_debug_create_func(TB_Module* m, TB_CallingConv cc, size_t param_count, size_t return_count, bool has_varargs) {
+    TB_DebugType* t = NEW(TB_DEBUG_TYPE_FUNCTION);
+    t->func.cc = cc;
+    t->func.has_varargs = has_varargs;
+    t->func.param_count = param_count;
+    t->func.params = ARENA_ARR_ALLOC(&tb__arena2, param_count, TB_DebugType*);
+    t->func.return_count = return_count;
+    t->func.returns = ARENA_ARR_ALLOC(&tb__arena2, return_count, TB_DebugType*);
+    return t;
+}
+
+TB_API TB_DebugType** tb_debug_func_params(TB_DebugType* type) {
+    return type->func.params;
+}
+
+TB_API TB_DebugType** tb_debug_func_returns(TB_DebugType* type) {
+    return type->func.returns;
 }

@@ -2,6 +2,7 @@
 #include "tb.c"
 #include "arena.c"
 #include "hash.c"
+#include "abi.c"
 #include "analysis.c"
 #include "tb_atomic.c"
 #include "tb_builder.c"

@@ -178,6 +178,8 @@ struct TB_DebugType {
         // TODO(NeGate): apparently codeview has cool vector and matrix types... yea
         TB_DEBUG_TYPE_STRUCT,
         TB_DEBUG_TYPE_UNION,
+
+        TB_DEBUG_TYPE_FUNCTION,
     } tag;
 
     // debug-info target specific data
@@ -203,12 +205,20 @@ struct TB_DebugType {
             TB_DebugType* type;
         } field;
         struct TB_DebugTypeRecord {
-            const char* tag;
+            char* tag;
             TB_CharUnits size, align;
 
             size_t count;
             TB_DebugType** members;
         } record;
+        struct TB_DebugTypeFunc {
+            TB_CallingConv cc;
+            bool has_varargs;
+
+            size_t param_count, return_count;
+            TB_DebugType** params;
+            TB_DebugType** returns;
+        } func;
     };
 };
 
@@ -297,6 +307,9 @@ typedef struct TB_FunctionOutput {
 
     DynArray(TB_StackSlot) stack_slots;
 
+    // Part of the debug info
+    DynArray(TB_Line) lines;
+
     // safepoints are stored into a binary tree to allow
     // for scanning neighbors really quickly
     TB_SafepointKey* safepoints;
@@ -311,7 +324,8 @@ struct TB_Function {
     TB_Symbol super;
     TB_Linkage linkage;
 
-    _Atomic(TB_FunctionPrototype*) prototype;
+    TB_DebugType* dbg_type;
+    TB_FunctionPrototype* prototype;
     TB_Comdat comdat;
 
     TB_Node* start_node;
@@ -324,11 +338,8 @@ struct TB_Function {
     // IR allocation
     TB_Arena* arena;
 
-    // IR building: current line
+    // IR building
     TB_Attrib* line_attrib;
-
-    // Part of the debug info
-    DynArray(TB_Line) lines;
 
     // Compilation output
     union {
@@ -385,7 +396,6 @@ struct TB_Module {
     // we have a global lock since the arena can be accessed
     // from any thread.
     mtx_t lock;
-    Arena arena;
 
     TB_ABI target_abi;
     TB_Arch target_arch;
@@ -404,7 +414,6 @@ struct TB_Module {
     _Atomic(TB_Symbol*) first_symbol_of_tag[TB_SYMBOL_MAX];
 
     alignas(64) struct {
-        Pool(TB_DebugType) debug_types;
         Pool(TB_Global) globals;
         Pool(TB_External) externals;
     } thread_info[TB_MAX_THREADS];
@@ -437,13 +446,12 @@ typedef struct {
 } TB_TemporaryStorage;
 
 // the maximum size the prologue and epilogue can be for any machine code impl
-#define PROEPI_BUFFER 256
-
+enum { PROEPI_BUFFER = 256 };
 typedef struct {
     // what does CHAR_BIT mean on said platform
     int minimum_addressable_size, pointer_size;
 
-    void (*get_data_type_size)(TB_DataType dt, TB_CharUnits* out_size, TB_CharUnits* out_align);
+    void (*get_data_type_size)(TB_DataType dt, size_t* out_size, size_t* out_align);
 
     // return the number of patches resolved
     size_t (*emit_call_patches)(TB_Module* restrict m);
@@ -469,14 +477,6 @@ typedef struct {
     // thus function_sym_start tells you what the starting point is in the symbol table
     TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_TemporaryStorage* tls);
 } IDebugFormat;
-
-#ifndef NDEBUG
-#define TB_DEBUG_BUILD 1
-#define TB_DEBUG_CODE(...) __VA_ARGS__;
-#else
-#define TB_DEBUG_BUILD 0
-#define TB_DEBUG_CODE(...)
-#endif
 
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
 
@@ -507,7 +507,11 @@ typedef struct {
 #endif
 #endif
 
-#define tb_assert(condition, ...) ((condition) ? (void)0 : (fprintf(stderr, __VA_ARGS__), abort()))
+#if TB_DEBUG_BUILD
+#define tb_assert(condition, ...) ((condition) ? 0 : (fprintf(stderr, __VA_ARGS__), abort(), 0))
+#else
+#define tb_assert(condition, ...) (0)
+#endif
 
 #if defined(_WIN32) && !defined(__GNUC__)
 #define tb_panic(...)                     \
@@ -611,21 +615,6 @@ inline static bool tb_is_power_of_two(uint64_t x) {
     return (x & (x - 1)) == 0;
 }
 
-// gets the next biggest number to 'v' in the sorted array
-// if 'v' is too big, then it'll return false, if not it's
-// true and 'result' will store the number we got
-#define TB_NEXT_BIGGEST(result, v, ...) \
-tb_next_biggest(result, v, COUNTOF((int[]) { __VA_ARGS__ }), (int[]) { __VA_ARGS__ })
-
-inline static bool tb_next_biggest(int* result, int v, size_t n, const int* arr) {
-    FOREACH_N(i, 0, n) if (v <= arr[i]) {
-        *result = arr[i];
-        return true;
-    }
-
-    return false;
-}
-
 ////////////////////////////////
 // HELPER FUNCTIONS
 ////////////////////////////////
@@ -635,18 +624,6 @@ inline static bool tb_next_biggest(int* result, int v, size_t n, const int* arr)
 #else
 #define TB_LIKELY(x)   __builtin_expect(!!(x), 1)
 #define TB_UNLIKELY(x) __builtin_expect(!!(x), 0)
-#endif
-
-// NOTE(NeGate): clean this up
-#if 1
-#define OPTIMIZER_LOG(at, ...) ((void) (at))
-#else
-#define OPTIMIZER_LOG(at, ...)               \
-do {                                         \
-    printf("%s:%p: ", f->super.name, (at));  \
-    printf(__VA_ARGS__);                     \
-    printf(" (part of %s)\n", __FUNCTION__); \
-} while (0)
 #endif
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);

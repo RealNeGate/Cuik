@@ -245,68 +245,66 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
         }
     }
 
-    if (!aint_region) {
-        return;
-    }
-
-    FOREACH_N(i, 0, n->input_count) {
-        print_node(ctx, n->inputs[i], n);
-    }
-
-    switch (n->type) {
-        case TB_STORE: {
-            printf("  store ");
-            print_ref_to_node(ctx, n->inputs[1]);
-            printf(", ");
-            print_ref_to_node(ctx, n->inputs[2]);
-            printf("\n");
-            break;
+    if (aint_region) {
+        FOREACH_N(i, 0, n->input_count) {
+            print_node(ctx, n->inputs[i], n);
         }
 
-        case TB_BRANCH: {
-            printf("  br ");
-            FOREACH_N(i, 1, n->input_count) {
-                if (i != 1) printf(", ");
-                print_ref_to_node(ctx, n->inputs[i]);
+        switch (n->type) {
+            case TB_STORE: {
+                printf("  store ");
+                print_ref_to_node(ctx, n->inputs[1]);
+                printf(", ");
+                print_ref_to_node(ctx, n->inputs[2]);
+                printf("\n");
+                break;
             }
-            printf("%s=> {", n->input_count > 1 ? " " : "");
 
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-            TB_NodeRegion* region = TB_NODE_GET_EXTRA(tb_get_parent_region(n));
-
-            FOREACH_N(i, 0, region->succ_count) {
-                if (i != 0) printf(", %"PRId64": ", br->keys[i - 1]);
-                else printf("default: ");
-
-                TB_Node* target = region->succ[i];
-                if (TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag) {
-                    printf("%s", TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag);
-                } else {
-                    printf(".bb%zu", find_print_label(ctx, target));
+            case TB_BRANCH: {
+                printf("  br ");
+                FOREACH_N(i, 1, n->input_count) {
+                    if (i != 1) printf(", ");
+                    print_ref_to_node(ctx, n->inputs[i]);
                 }
+                printf("%s=> {", n->input_count > 1 ? " " : "");
+
+                TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+                TB_NodeRegion* region = TB_NODE_GET_EXTRA(tb_get_parent_region(n));
+
+                FOREACH_N(i, 0, region->succ_count) {
+                    if (i != 0) printf(", %"PRId64": ", br->keys[i - 1]);
+                    else printf("default: ");
+
+                    TB_Node* target = region->succ[i];
+                    if (TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag) {
+                        printf("%s", TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag);
+                    } else {
+                        printf(".bb%zu", find_print_label(ctx, target));
+                    }
+                }
+                printf("}\n");
+                break;
             }
-            printf("}\n");
-            break;
-        }
 
-        case TB_MEMSET:
-        case TB_MEMCPY:
-        case TB_CALL: {
-            print_node(ctx, n, n);
-            break;
-        }
-
-        case TB_RET: {
-            printf("  ret ");
-            FOREACH_N(i, 1, n->input_count) {
-                if (i != 1) printf(", ");
-                print_ref_to_node(ctx, n->inputs[i]);
+            case TB_MEMSET:
+            case TB_MEMCPY:
+            case TB_CALL: {
+                print_node(ctx, n, n);
+                break;
             }
-            printf("\n");
-            break;
-        }
 
-        default: tb_todo();
+            case TB_RET: {
+                printf("  ret ");
+                FOREACH_N(i, 1, n->input_count) {
+                    if (i != 1) printf(", ");
+                    print_ref_to_node(ctx, n->inputs[i]);
+                }
+                printf("\n");
+                break;
+            }
+
+            default: tb_todo();
+        }
     }
 
     for (User* use = find_users(ctx->opt, n); use; use = use->next) {

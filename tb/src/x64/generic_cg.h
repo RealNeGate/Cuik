@@ -14,7 +14,7 @@ enum {
     INST_LINE  = 1023,
 };
 
-static void get_data_type_size(TB_DataType dt, TB_CharUnits* out_size, TB_CharUnits* out_align) {
+static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_align) {
     switch (dt.type) {
         case TB_INT: {
             // above 64bits we really dont care that much about natural alignment
@@ -153,6 +153,7 @@ typedef struct {
     MachineBBs machine_bbs;
 
     // Line info
+    DynArray(TB_Line) lines;
     TB_FileID last_file;
     int last_line;
 
@@ -740,11 +741,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     //   with the "ordinals" which act as our timeline.
     nl_map_create(ctx.values, f->node_count);
 
-    /*mtx_lock(&f->super.module->lock);
-    f->line_count = 0;
-    f->lines = ARENA_ARR_ALLOC(&f->super.module->arena, line_count, TB_Line);
-    mtx_unlock(&f->super.module->lock);*/
-
     ctx.active = arena_alloc(&tb__arena, f->node_count * sizeof(DefIndex), _Alignof(DefIndex));
 
     // allocate more stuff now that we've run stats on the IR
@@ -899,8 +895,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     nl_hashset_free(ctx.visited);
     dyn_array_destroy(ctx.phi_vals);
 
-    if (dyn_array_length(f->lines)) {
-        f->lines[0].pos = 0;
+    if (dyn_array_length(ctx.lines)) {
+        ctx.lines[0].pos = 0;
     }
 
     // we're done, clean up
@@ -908,6 +904,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     func_out->code_size = ctx.emit.count;
     func_out->stack_usage = ctx.stack_usage;
     func_out->prologue_epilogue_metadata = ctx.regs_to_save;
+    func_out->lines = ctx.lines;
     func_out->safepoints = ctx.safepoints;
     func_out->stack_slots = ctx.debug_stack_slots;
 

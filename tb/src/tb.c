@@ -37,9 +37,10 @@ bool tb_symbol_is_comdat(const TB_Symbol* s) {
     return s->tag == TB_SYMBOL_FUNCTION && ((const TB_Function*) s)->comdat.type != TB_COMDAT_NONE;
 }
 
+// we don't modify these strings
 char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
     if (len < 0) len = src ? strlen(src) : 0;
-    if (len == 0) return NULL;
+    if (len == 0) return (char*) "";
 
     char* newstr = arena_alloc(&tb__arena2, len + 1, 1);
     memcpy(newstr, src, len);
@@ -653,6 +654,7 @@ void tb_patch2b(TB_Emitter* o, uint32_t pos, uint16_t i) {
 }
 
 void tb_patch4b(TB_Emitter* o, uint32_t pos, uint32_t i) {
+    assert(pos + 4 <= o->count);
     *((uint32_t*)&o->data[pos]) = i;
 }
 

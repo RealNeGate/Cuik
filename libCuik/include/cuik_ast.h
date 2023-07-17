@@ -171,7 +171,7 @@ struct Cuik_Type {
     Atom also_known_as;
 
     #ifdef CUIK_USE_TB
-    TB_DebugType* debug_type;
+    _Atomic(TB_DebugType*) debug_type;
     #else
     void* user_data;
     #endif

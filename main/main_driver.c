@@ -19,19 +19,6 @@
 #include <threads.h>
 #endif
 
-static bool leak_visit(const mi_heap_t* heap, const mi_heap_area_t* area, void* block, size_t block_size, void* arg) {
-    if (area->used && block != NULL) {
-        printf("| %p (%zu bytes)\n", block, block_size);
-    }
-    return true;
-}
-
-static void leak_detect(void) {
-    printf("Leak:\n");
-    mi_collect(true);
-    mi_heap_visit_blocks(mi_heap_get_default(), true, leak_visit, NULL);
-}
-
 #ifdef CUIK_USE_SPALL_AUTO
 static void spall_die(void) {
     spall_auto_thread_quit();

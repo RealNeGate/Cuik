@@ -222,29 +222,9 @@ TB_API TB_Node* tb_inst_param(TB_Function* f, int param_id) {
     return TB_NODE_GET_EXTRA_T(f->start_node, TB_NodeRegion)->projs[param_id];
 }
 
-TB_API TB_Node* tb_inst_param_addr(TB_Function* f, int param_id) {
-    tb_assume(param_id < f->prototype->param_count);
-    const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
-
-    TB_Node* param = tb_inst_param(f, param_id);
-    TB_CharUnits size, align;
-    if (code_gen) {
-        code_gen->get_data_type_size(param->dt, &size, &align);
-    } else {
-        size = align = 8;
-    }
-
-    TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 0, sizeof(TB_NodeLocal));
-    TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = align);
-
-    TB_Node* n2 = tb_alloc_node(f, TB_STORE, param->dt, 3, sizeof(TB_NodeMemAccess));
-    n2->inputs[0] = f->active_control_node; // control edge
-    n2->inputs[1] = n;
-    n2->inputs[2] = param;
-    TB_NODE_SET_EXTRA(n2, TB_NodeMemAccess, .align = align);
-
-    f->active_control_node = n2;
-    return n;
+TB_API void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t* align) {
+    const ICodeGen* restrict code_gen = tb__find_code_generator(mod);
+    code_gen->get_data_type_size(dt, size, align);
 }
 
 TB_API void tb_inst_set_control(TB_Function* f, TB_Node* control) {
@@ -288,7 +268,7 @@ TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line) {
     f->line_attrib = a;
 }
 
-TB_API TB_Node* tb_inst_local(TB_Function* f, uint32_t size, TB_CharUnits alignment) {
+TB_API TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment) {
     tb_assume(size > 0);
     tb_assume(alignment > 0 && tb_is_power_of_two(alignment));
 

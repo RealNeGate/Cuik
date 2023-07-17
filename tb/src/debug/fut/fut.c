@@ -97,7 +97,7 @@ static FUT_TypeIndex fut_get_type_from_dt(TB_DataType dt) {
         case TB_PTR: {
             return FUT_TYPE_POINTER | FUT_TYPE_INT8;
         }
-        default: assert(0 && "TODO: missing type in CodeView output");
+        default: return tb_assert(0, "todo: missing type in CodeView output");
     }
 }
 
@@ -111,7 +111,7 @@ static int fut_number_of_debug_sections(TB_Module* m) {
 
 // there's quite a few places that mark the next field for symbols
 #define MARK_NEXT(patch_pos) (((FUT_SymbolHeader*) tb_out_get(&symtab, mod_length_patch))->next = symtab.count)
-static void fut_generate_debug_info(TB_Module* m, TB_TemporaryStorage* tls, const ICodeGen* code_gen, const char* path) {
+static TB_SectionGroup fut_generate_debug_info(TB_Module* m, TB_TemporaryStorage* tls) {
     TB_ObjectSection* sections = tb_platform_heap_alloc(1 * sizeof(TB_ObjectSection));
     sections[0] = (TB_ObjectSection){ gimme_cstr_as_slice(".debug") };
 
@@ -119,16 +119,17 @@ static void fut_generate_debug_info(TB_Module* m, TB_TemporaryStorage* tls, cons
 
     // we only store one module so we never fill the next
     FUT_Module mod = { FUT_SYMBOL_MODULE };
-    size_t mod_length_patch = tb_outs(&symtab, &mod, sizeof(mod));
-    tb_outstr_nul(&symtab, len + 1, "tb.obj");
+    size_t mod_length_patch = tb_outs(&symtab, sizeof(mod), &mod);
+    tb_outstr_nul(&symtab, "fallback.o");
 
     // emit file table into symbol table.
     // skip the NULL file entry
+    size_t file_count = dyn_array_length(m->files);
     FOREACH_N(i, 1, file_count) {
         size_t len = strlen(m->files[i].path);
 
         FUT_File file = { FUT_SYMBOL_FILE };
-        size_t field_length_patch = tb_outs(&symtab, &file, sizeof(file));
+        size_t field_length_patch = tb_outs(&symtab, sizeof(file), &file);
 
         tb_outstr_nul(&symtab, m->files[i].path);
         MARK_NEXT(file_length_patch);
@@ -142,7 +143,7 @@ static void fut_generate_debug_info(TB_Module* m, TB_TemporaryStorage* tls, cons
         if (!out_f) continue;
 
         FUT_NormalSymbol sym = { FUT_SYMBOL_PROC };
-        size_t sym_next_patch = tb_outs(&symtab, &sym, sizeof(sym));
+        size_t sym_next_patch = tb_outs(&symtab, sizeof(sym), &sym);
         tb_outstr_nul(&symtab, f->super.name);
 
         // fill RVA

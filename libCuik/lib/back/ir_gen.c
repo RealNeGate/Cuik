@@ -67,39 +67,47 @@ static void fallthrough_label(TB_Function* func, TB_Node* target) {
     tb_inst_set_control(func, target);
 }
 
+// in theory, multiple threads can race here but the meme is that they
+// all produce the same values so we can just let them race lmao.
 TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
-    if (t->debug_type != NULL) {
-        return t->debug_type;
+    TB_DebugType* old_val = atomic_load(&t->debug_type);
+    if (old_val != NULL) {
+        return old_val;
     }
 
     TB_DebugType* result = NULL;
     switch (t->kind) {
         case KIND_VOID:
-        return (t->debug_type = tb_debug_get_void(mod));
+        result = tb_debug_get_void(mod);
+        break;
 
         case KIND_BOOL:
-        return (t->debug_type = tb_debug_get_bool(mod));
+        result = tb_debug_get_bool(mod);
+        break;
 
         case KIND_CHAR: case KIND_SHORT: case KIND_INT: case KIND_LONG: case KIND_LLONG:
-        return (t->debug_type = tb_debug_get_integer(mod, !t->is_unsigned, t->size * 8));
+        result = tb_debug_get_integer(mod, !t->is_unsigned, t->size * 8);
+        break;
 
         case KIND_FLOAT:
-        return (t->debug_type = tb_debug_get_float(mod, TB_FLT_32));
+        result = tb_debug_get_float(mod, TB_FLT_32);
+        break;
 
         case KIND_DOUBLE:
-        return (t->debug_type = tb_debug_get_float(mod, TB_FLT_64));
+        result = tb_debug_get_float(mod, TB_FLT_64);
+        break;
 
         case KIND_ENUM:
-        return (t->debug_type = tb_debug_get_integer(mod, true, 32));
+        result = tb_debug_get_integer(mod, true, 32);
+        break;
 
         case KIND_PTR:
-        return (t->debug_type = tb_debug_create_ptr(mod, cuik__as_tb_debug_type(mod, cuik_canonical_type(t->ptr_to))));
-
-        case KIND_FUNC:
-        return (t->debug_type = tb_debug_create_ptr(mod, tb_debug_get_void(mod)));
+        result = tb_debug_create_ptr(mod, cuik__as_tb_debug_type(mod, cuik_canonical_type(t->ptr_to)));
+        break;
 
         case KIND_ARRAY:
-        return (t->debug_type = tb_debug_create_array(mod, cuik__as_tb_debug_type(mod, cuik_canonical_type(t->array.of)), t->array.count));
+        result = tb_debug_create_array(mod, cuik__as_tb_debug_type(mod, cuik_canonical_type(t->array.of)), t->array.count);
+        break;
 
         case KIND_STRUCT:
         case KIND_UNION: {
@@ -107,11 +115,9 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
             size_t count = t->record.kid_count;
             const char* tag = t->record.name;
 
-            TB_DebugType** list = cuik_malloc(count * sizeof(TB_DebugType*));
-            TB_DebugType* rec = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod, -1, tag) : tb_debug_create_union(mod, -1, tag);
-            t->debug_type = rec;
+            result = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod, -1, tag) : tb_debug_create_union(mod, -1, tag);
 
-            int unnamed_count = 0;
+            TB_DebugType** list = tb_debug_record_begin(result, count);
             for (size_t i = 0; i < count; i++) {
                 Member* member = &kids[i];
 
@@ -120,7 +126,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
                 if (member->name == NULL) {
                     // if we have unnamed members we just do _N where N is just ticked by the counter
                     char buf[8];
-                    snprintf(buf, 8, "_%d", unnamed_count++);
+                    snprintf(buf, 8, "_%zu", i);
 
                     field = tb_debug_create_field(mod, base, -1, buf, member->offset);
                 } else {
@@ -130,13 +136,43 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
                 list[i] = field;
             }
 
-            tb_debug_complete_record(rec, list, count, t->size, t->align);
-            return rec;
+            tb_debug_record_end(result, t->size, t->align);
+            break;
+        }
+
+        case KIND_FUNC: {
+            bool has_return = cuik_canonical_type(t->func.return_type)->kind != KIND_VOID;
+            result = tb_debug_create_func(mod, TB_STDCALL, t->func.param_count, has_return, t->func.has_varargs);
+
+            if (has_return) {
+                *tb_debug_func_returns(result) = cuik__as_tb_debug_type(mod, cuik_canonical_type(t->func.return_type));
+            }
+
+            TB_DebugType** params = tb_debug_func_params(result);
+            Param* param_list = t->func.param_list;
+            for (size_t i = 0; i < t->func.param_count; i++) {
+                TB_DebugType* type = cuik__as_tb_debug_type(mod, cuik_canonical_type(param_list[i].type));
+
+                if (param_list[i].name == NULL) {
+                    // if we have unnamed members we just do _N where N is just ticked by the counter
+                    char buf[8];
+                    snprintf(buf, 8, "arg%zu", i);
+
+                    params[i] = tb_debug_create_field(mod, type, -1, buf, 0);
+                } else {
+                    params[i] = tb_debug_create_field(mod, type, -1, param_list[i].name, 0);
+                }
+            }
+            break;
         }
 
         default:
         abort(); // TODO
     }
+
+    assert(result);
+    atomic_exchange(&t->debug_type, result);
+    return result;
 }
 
 static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, const Cuik_Type* dst) {
@@ -1301,7 +1337,6 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             Cuik_Type* arg_type = cuik_canonical_type(function_type->func.param_list[param_num].type);
             assert(arg_type != NULL);
 
-            reg = tu->target->get_parameter(tu, func, arg_type, reg);
             return (IRVal){
                 .value_type = LVALUE,
                 .reg = reg
@@ -2446,33 +2481,12 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
 
         TB_Function* func = s->backing.f;
 
-        // Parameters
-        size_t param_count = type->func.param_count;
+        // we'll be using the debug info to construct our ABI compliant prototype
+        TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, type);
+        TB_DebugType** dbg_params = tb_debug_func_params(dbg_type);
 
-        TB_Node** params = parameter_map = tls_push(param_count * sizeof(TB_Node*));
-        Cuik_Type* return_type = cuik_canonical_type(type->func.return_type);
-
-        TB_FunctionPrototype* proto = tu->target->create_prototype(tu, cuik_canonical_type(s->decl.type));
-        tb_function_set_prototype(func, proto, arena);
-
-        bool is_aggregate_return = !tu->target->pass_return_via_reg(tu, return_type);
-        size_t param_bias = 0;
-        if (is_aggregate_return) {
-            return_value_address = tb_inst_param_addr(func, 0);
-            param_bias = 1;
-        } else {
-            return_value_address = TB_NULL_REG;
-        }
-
-        // gimme stack slots
-        for (size_t i = 0; i < param_count; i++) {
-            params[i] = tb_inst_param_addr(func, i + param_bias);
-
-            if (proto->params[i].name) {
-                TB_Attrib* a = tb_function_attrib_variable(func, -1, proto->params[i].name, proto->params[i].debug_type);
-                tb_node_append_attrib(params[i], a);
-            }
-        }
+        size_t param_count;
+        parameter_map = tb_function_set_prototype_from_dbg(func, dbg_type, arena, &param_count);
 
         // compile body
         {

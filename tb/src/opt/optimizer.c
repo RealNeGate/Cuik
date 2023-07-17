@@ -553,7 +553,7 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
 
         DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 10) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
-    // TB_DEBUG_CODE(printf(loop_count ? "\n" : "\x1b[2K\x1b[0G"));
+    // DO_IF(TB_OPTDEBUG_PEEP)(printf(loop_count ? "\n" : "\x1b[2K\x1b[0G"));
 
     // convert into matching identity
     k = identity(opt, f, n);

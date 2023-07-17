@@ -143,7 +143,8 @@ static TB_Slice gimme_cstr_as_slice(const char* str) {
     return s;
 }
 
-static void add_reloc(TB_ObjectSection* section, const TB_ObjectReloc* reloc) {
+static void add_reloc(TB_ObjectSection* section, const TB_ObjectReloc* reloc, size_t cap) {
+    assert(section->relocation_count < cap);
     section->relocations[section->relocation_count++] = *reloc;
 }
 
@@ -162,16 +163,12 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
     sections[0] = (TB_ObjectSection){ gimme_cstr_as_slice(".debug$S") };
     sections[1] = (TB_ObjectSection){ gimme_cstr_as_slice(".debug$T") };
 
-    size_t global_count = 0;
-    FOREACH_N(i, 0, m->max_threads) {
-        global_count += pool_popcount(m->thread_info[i].globals);
-    }
+    size_t global_count = m->symbol_count[TB_SYMBOL_GLOBAL];
 
     // debug$S does quite a few relocations :P, namely saying that
     // certain things point to specific areas of .text section
-    sections[0].relocations = tb_platform_heap_alloc(
-        ((2 * global_count) + (4 * m->compiled_function_count)) * sizeof(TB_ObjectReloc)
-    );
+    size_t reloc_cap = (2 * global_count) + (4 * m->compiled_function_count);
+    sections[0].relocations = tb_platform_heap_alloc(reloc_cap * sizeof(TB_ObjectReloc));
 
     // Write type table
     size_t file_count = dyn_array_length(m->files);
@@ -258,7 +255,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
 
                 // Layout crap
                 uint32_t body_start = out_f->prologue_length;
-                DynArray(TB_Line) lines = f->lines;
+                DynArray(TB_Line) lines = out_f->lines;
 
                 tb_out4b(&debugs_out, 0x000000F2);
                 size_t field_length_patch = debugs_out.count;
@@ -268,8 +265,8 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                 size_t func_id = f->super.symbol_id;
                 {
                     size_t patch_pos = debugs_out.count;
-                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, func_id, patch_pos });
-                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, func_id, patch_pos + 4 });
+                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, func_id, patch_pos }, reloc_cap);
+                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, func_id, patch_pos + 4 }, reloc_cap);
                 }
 
                 tb_out4b(&debugs_out, 0); // SECREL  | .text
@@ -382,8 +379,8 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                 {
                     size_t id = g->super.symbol_id;
                     size_t patch_pos = debugs_out.count;
-                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, id, patch_pos });
-                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, id, patch_pos + 4 });
+                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, id, patch_pos }, reloc_cap);
+                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, id, patch_pos + 4 }, reloc_cap);
                 }
                 tb_out4b(&debugs_out, 0); // offset
                 tb_out2b(&debugs_out, 0); // section
@@ -454,8 +451,8 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
             {
                 size_t func_id = f->super.symbol_id;
                 size_t patch_pos = debugs_out.count;
-                add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, func_id, patch_pos });
-                add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, func_id, patch_pos + 4 });
+                add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, func_id, patch_pos }, reloc_cap);
+                add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, func_id, patch_pos + 4 }, reloc_cap);
             }
             tb_out4b(&debugs_out, 0); // offset
             tb_out2b(&debugs_out, 0); // segment

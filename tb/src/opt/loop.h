@@ -49,7 +49,7 @@ bool tb_funcopt_loop(TB_FuncOpt* opt) {
             continue;
         }
 
-        TB_DEBUG_CODE(printf("Loop %p:\n", header));
+        DO_IF(TB_OPTDEBUG_LOOP)(printf("Loop %p:\n", header));
         tb_assert(backedge_count == 1, "TODO: we only support one backedge rn");
 
         // the header in uncanonical form has a branch at the top to exit,
@@ -67,7 +67,7 @@ bool tb_funcopt_loop(TB_FuncOpt* opt) {
         TB_Node* backedge_bb = tb_get_parent_region(backedge_proj);
         FOREACH_N(j, 0, r->succ_count) {
             if (!tb_is_dominated_by(doms, r->succ[j], backedge_bb)) {
-                TB_DEBUG_CODE(printf("  exit %p\n", r->succ[j]));
+                DO_IF(TB_OPTDEBUG_LOOP)(printf("  exit %p\n", r->succ[j]));
                 exit_i = j;
                 break;
             }
@@ -103,7 +103,7 @@ bool tb_funcopt_loop(TB_FuncOpt* opt) {
             use = next;
         }
 
-        TB_DEBUG_CODE(r->tag = lil_name(f, "loop.header.%d", i));
+        DO_IF(TB_OPTDEBUG_LOOP)(r->tag = lil_name(f, "loop.header.%d", i));
         r->succ_count = 1;
         r->succ[0] = body;
 
@@ -114,7 +114,7 @@ bool tb_funcopt_loop(TB_FuncOpt* opt) {
 
         // backedge needs to refer to the body not the header
         TB_NodeRegion* backedge = TB_NODE_GET_EXTRA(backedge_bb);
-        TB_DEBUG_CODE(backedge->tag = lil_name(f, "loop.back.%d", i));
+        DO_IF(TB_OPTDEBUG_LOOP)(backedge->tag = lil_name(f, "loop.back.%d", i));
 
         backedge->succ_count = 2;
         backedge->succ = alloc_from_node_arena(f, 2 * sizeof(TB_Node*));

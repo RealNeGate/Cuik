@@ -469,6 +469,10 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
         } else {
             return inst_m(i, n->dt, dst, dst, GPR_NONE, SCALE_X1, 0);
         }
+    } else if (addr->type == TB_MEMBER_ACCESS) {
+        Inst inst = isel_load(ctx, addr->inputs[0], dst);
+        inst.imm[0] += TB_NODE_GET_EXTRA_T(addr, TB_NodeMember)->offset;
+        return inst;
     } else if (addr->type == TB_LOCAL) {
         int pos = get_stack_slot(ctx, addr);
         return inst_m(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, pos);
@@ -788,7 +792,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             dst = DEF(n, REG_CLASS_XMM);
 
             int src = ISEL(n->inputs[0]);
-            SUBMIT(inst_r(FP_CVT, n->dt, dst, src));
+            SUBMIT(inst_r(FP_CVT, n->inputs[0]->dt, dst, src));
             break;
         }
 
@@ -1559,7 +1563,7 @@ static void emit_code(Ctx* restrict ctx) {
                 .line = inst->imm[1],
                 .pos = GET_CODE_POS(&ctx->emit)
             };
-            dyn_array_put(f->lines, l);
+            dyn_array_put(ctx->lines, l);
             continue;
         } else if (inst->type == INST_USE) {
             continue;
