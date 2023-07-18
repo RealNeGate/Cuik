@@ -24,20 +24,23 @@ TB_API TB_DebugType* tb_debug_get_integer(TB_Module* m, bool is_signed, int bits
         { .tag = TB_DEBUG_TYPE_UINT, .int_bits = 16 },
         { .tag = TB_DEBUG_TYPE_UINT, .int_bits = 32 },
         { .tag = TB_DEBUG_TYPE_UINT, .int_bits = 64 },
+        { .tag = TB_DEBUG_TYPE_UINT, .int_bits = 128 },
 
         { .tag = TB_DEBUG_TYPE_INT, .int_bits = 1 },
         { .tag = TB_DEBUG_TYPE_INT, .int_bits = 8 },
         { .tag = TB_DEBUG_TYPE_INT, .int_bits = 16 },
         { .tag = TB_DEBUG_TYPE_INT, .int_bits = 32 },
         { .tag = TB_DEBUG_TYPE_INT, .int_bits = 64 },
+        { .tag = TB_DEBUG_TYPE_INT, .int_bits = 128 },
     };
 
-    int b = (is_signed ? 5 : 0);
-    if (bits <= 1)  return &types[b + 0];
-    if (bits <= 8)  return &types[b + 1];
-    if (bits <= 16) return &types[b + 2];
-    if (bits <= 32) return &types[b + 3];
-    if (bits <= 64) return &types[b + 4];
+    int b = (is_signed ? 6 : 0);
+    if (bits <= 1)   return &types[b + 0];
+    if (bits <= 8)   return &types[b + 1];
+    if (bits <= 16)  return &types[b + 2];
+    if (bits <= 32)  return &types[b + 3];
+    if (bits <= 64)  return &types[b + 4];
+    if (bits <= 128) return &types[b + 5];
     tb_todo();
 }
 
