@@ -21,6 +21,10 @@ typedef enum {
 } RegClass;
 
 static int debug_type_size(TB_ABI abi, TB_DebugType* t) {
+    while (t->tag == TB_DEBUG_TYPE_ALIAS) {
+        t = t->alias.type;
+    }
+
     switch (t->tag) {
         case TB_DEBUG_TYPE_VOID: return 0;
         case TB_DEBUG_TYPE_BOOL: return 1;
@@ -48,6 +52,10 @@ static int debug_type_size(TB_ABI abi, TB_DebugType* t) {
 }
 
 static int debug_type_align(TB_ABI abi, TB_DebugType* t) {
+    while (t->tag == TB_DEBUG_TYPE_ALIAS) {
+        t = t->alias.type;
+    }
+
     if (t->tag == TB_DEBUG_TYPE_STRUCT || t->tag == TB_DEBUG_TYPE_UNION) {
         return t->record.align;
     }
@@ -90,6 +98,23 @@ static TB_DataType debug_type_to_tb(TB_DebugType* t) {
     }
 }
 
+static TB_DataType reg_class_to_tb(TB_ABI abi, RegClass rg, TB_DebugType* type) {
+    switch (rg) {
+        case RG_MEMORY:  return TB_TYPE_PTR;
+        case RG_INTEGER: {
+            if (type->tag == TB_DEBUG_TYPE_POINTER) return TB_TYPE_PTR;
+            return TB_TYPE_INTN(debug_type_size(abi, type) * 8);
+        }
+
+        case RG_SSE: {
+            assert(type->tag == TB_DEBUG_TYPE_FLOAT);
+            return (TB_DataType){ { TB_FLOAT, 0, type->float_fmt } };
+        }
+
+        default: tb_assert(0, "todo"); return TB_TYPE_VOID;
+    }
+}
+
 TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count) {
     tb_assert(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
     tb_assert(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
@@ -108,6 +133,7 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, 
     if (dbg->func.param_count > 0) {
         params = f->arena->alloc(f->arena, sizeof(TB_Node*) * param_count, _Alignof(TB_Node*));
 
+        bool has_aggregate_return = dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
         FOREACH_N(i, 0, param_count) {
             TB_DebugType* type = param_list[i]->field.type;
             const char* name = param_list[i]->field.name;
@@ -116,9 +142,9 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, 
             int align = debug_type_align(abi, type);
 
             // place values into memory
-            TB_Node* v = tb_inst_param(f, i);
+            TB_Node* v = tb_inst_param(f, i + has_aggregate_return);
 
-            RegClass rg = classify_reg(abi, param_list[i]->field.type);
+            RegClass rg = classify_reg(abi, type);
             if (rg == RG_MEMORY) {
                 params[i] = v;
             } else {
@@ -144,14 +170,17 @@ TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* d
     //
     // TODO(NeGate): it's uninitialized by default but we don't communicate
     // this to the IR yet.
-    RegClass is_aggregate_return = RG_NONE;
-    TB_PrototypeParam ret = { TB_TYPE_PTR };
+    RegClass return_rg = RG_NONE;
+    TB_PrototypeParam ret = { TB_TYPE_VOID };
     if (dbg->func.return_count == 1) {
-        is_aggregate_return = classify_reg(abi, dbg->func.returns[0]);
+        return_rg = classify_reg(abi, dbg->func.returns[0]);
 
-        ret.dt = debug_type_to_tb(dbg->func.returns[0]);
         ret.debug_type = dbg->func.returns[0];
+        ret.dt = reg_class_to_tb(abi, return_rg, dbg->func.returns[0]);
+        ret.name = "$ret";
     }
+
+    bool has_aggregate_return = return_rg == RG_MEMORY;
 
     // estimate the number of parameters:
     // * in win64 this is easy, parameters don't split.
@@ -165,14 +194,14 @@ TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* d
 
     // build up prototype param types
     size_t return_count = dbg->func.return_count;
-    size_t size = sizeof(TB_FunctionPrototype) + ((param_count + return_count) * sizeof(TB_PrototypeParam));
+    size_t size = sizeof(TB_FunctionPrototype) + ((param_count + has_aggregate_return + return_count) * sizeof(TB_PrototypeParam));
     TB_FunctionPrototype* p = arena_alloc(&tb__arena2, size, _Alignof(TB_FunctionPrototype));
-    if (dbg->func.param_count > 0) {
-        p->call_conv = dbg->func.cc;
-        p->has_varargs = dbg->func.has_varargs;
-        p->return_count = return_count;
-        p->param_count = param_count;
+    p->call_conv = dbg->func.cc;
+    p->has_varargs = dbg->func.has_varargs;
+    p->return_count = return_count;
+    p->param_count = has_aggregate_return + param_count;
 
+    if (dbg->func.param_count > 0) {
         FOREACH_N(i, 0, dbg->func.param_count) {
             TB_DebugType* type = param_list[i]->field.type;
             RegClass rg = classify_reg(abi, type);
@@ -180,15 +209,19 @@ TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* d
             TB_PrototypeParam param = {
                 .name = param_list[i]->field.name,
                 .debug_type = type,
-                .dt = rg == RG_MEMORY ? TB_TYPE_PTR : debug_type_to_tb(type),
+                .dt = reg_class_to_tb(abi, rg, type),
             };
 
-            p->params[i] = param;
+            p->params[has_aggregate_return + i] = param;
+        }
+    }
+
+    if (p->return_count == 1) {
+        if (has_aggregate_return) {
+            p->params[0] = ret;
         }
 
-        if (p->return_count == 1) {
-            p->params[p->param_count] = ret;
-        }
+        p->params[p->param_count] = ret;
     }
 
     return p;

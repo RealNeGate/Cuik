@@ -172,6 +172,7 @@ struct TB_DebugType {
         TB_DEBUG_TYPE_POINTER,
 
         // special types
+        TB_DEBUG_TYPE_ALIAS,
         TB_DEBUG_TYPE_FIELD,
 
         // aggregates
@@ -199,6 +200,10 @@ struct TB_DebugType {
             TB_DebugType* base;
             size_t count;
         } array;
+        struct {
+            char* name;
+            TB_DebugType* type;
+        } alias;
         struct {
             char* name;
             TB_CharUnits offset;
@@ -489,26 +494,22 @@ typedef struct {
 #if TB_DEBUG_BUILD
 #define tb_todo()            (assert(0 && "TODO"), __assume(0))
 #define tb_unreachable()     (assert(0), __assume(0), 0)
-#define tb_assume(condition) assert(condition)
 #else
 #define tb_todo()            abort()
 #define tb_unreachable()     (__assume(0), 0)
-#define tb_assume(condition) __assume(condition)
 #endif
 #else
 #if TB_DEBUG_BUILD
 #define tb_todo()            __builtin_trap()
 #define tb_unreachable()     (assert(0), 0)
-#define tb_assume(condition) assert(condition)
 #else
 #define tb_todo()            __builtin_trap()
 #define tb_unreachable()     (__builtin_unreachable(), 0)
-#define tb_assume(condition) ((condition) ? 0 : (void) __builtin_unreachable())
 #endif
 #endif
 
 #ifndef NDEBUG
-#define tb_assert(condition, ...) ((condition) ? 0 : (fprintf(stderr, "assertion failed: " #condition "\n  "), fprintf(stderr, __VA_ARGS__), abort(), 0))
+#define tb_assert(condition, ...) ((condition) ? 0 : (fprintf(stderr, __FILE__ ": " STR(__LINE__) ": assertion failed: " #condition "\n  "), fprintf(stderr, __VA_ARGS__), abort(), 0))
 #else
 #define tb_assert(condition, ...) (0)
 #endif

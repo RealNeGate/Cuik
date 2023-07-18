@@ -101,6 +101,9 @@ static uint16_t convert_to_codeview_type(CV_Builder* builder, TB_DebugType* type
         case TB_DEBUG_TYPE_FUNCTION:
         return (type->cv_type_id = tb_codeview_builder_add_pointer(builder, 0x0003));
 
+        case TB_DEBUG_TYPE_ALIAS:
+        return (type->cv_type_id = tb_codeview_builder_add_alias(builder, convert_to_codeview_type(builder, type->alias.type), type->alias.name));
+
         case TB_DEBUG_TYPE_STRUCT:
         case TB_DEBUG_TYPE_UNION: {
             if (type->cv_type_id_fwd) {

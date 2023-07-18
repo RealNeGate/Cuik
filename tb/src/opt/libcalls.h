@@ -1,6 +1,10 @@
 
 // this is a peephole lmao
 static TB_Node* ideal_libcall(TB_FuncOpt* restrict queue, TB_Function* f, TB_Node* n) {
+    if (n->inputs[1]->type != TB_GET_SYMBOL_ADDRESS) {
+        return NULL;
+    }
+
     const TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeSymbol)->sym;
 
     // wacky? our memcpy shouldn't be allowed to lower into the builtin since

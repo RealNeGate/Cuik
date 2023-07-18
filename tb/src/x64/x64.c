@@ -162,12 +162,21 @@ static Inst inst_u(int op, TB_DataType dt) {
     };
 }
 
-static Inst inst_use(int src) {
+static Inst inst_def(int src) {
     return (Inst){
         .type = INST_USE,
         .layout = X86_OP_NONE,
         .data_type = TB_X86_TYPE_NONE,
         .regs = { src },
+    };
+}
+
+static Inst inst_use(int src) {
+    return (Inst){
+        .type = INST_USE,
+        .layout = X86_OP_NONE,
+        .data_type = TB_X86_TYPE_NONE,
+        .regs = { -1, USE(src) },
     };
 }
 
@@ -884,7 +893,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             int rhs = ISEL(n->inputs[1]);
             int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, fake_dst);
-            SUBMIT(inst_use(rdx));
+            SUBMIT(inst_def(rdx));
 
             SUBMIT(inst_r(MUL, n->dt, -1, rhs));
             SUBMIT(inst_copy(n->dt, fake_dst, USE(rax))); // use fake_dst
@@ -908,15 +917,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             bool is_signed = (type == TB_SDIV || type == TB_SMOD);
             bool is_div    = (type == TB_UDIV || type == TB_SDIV);
 
-            int fake_dst = DEF(n, REG_CLASS_GPR);
-            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, fake_dst);
-
-            // TODO(NeGate): hint into RAX
-            SUBMIT(inst_use(rdx));
+            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
+            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, -1);
 
             // mov rax, lhs
             int lhs = ISEL(n->inputs[0]);
-            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
             SUBMIT(inst_copy(n->dt, rax, lhs));
 
             int rhs = ISEL(n->inputs[1]);
@@ -926,15 +931,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // else:
             //   xor rdx, rdx
             if (is_signed) {
+                SUBMIT(inst_def(rdx));
                 SUBMIT(inst_u(CAST, n->dt));
             } else {
                 SUBMIT(inst_i(MOV, n->dt, rdx, 0));
             }
             SUBMIT(inst_r(is_signed ? IDIV : DIV, n->dt, -1, rhs));
-            SUBMIT(inst_copy(n->dt, fake_dst, USE(is_div ? rax : rdx)));
+            SUBMIT(inst_use(rdx));
 
             dst = DEF(n, REG_CLASS_GPR);
-            SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
+            SUBMIT(inst_copy(n->dt, dst, USE(is_div ? rax : rdx)));
             break;
         }
         case TB_SHL:
@@ -950,16 +956,13 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 int lhs = ISEL(n->inputs[0]);
                 SUBMIT(inst_ri(op, n->dt, dst, lhs, x));
             } else {
-                int fake_dst = DEF(n, REG_CLASS_GPR);
-
                 // the shift operations need their right hand side in CL (RCX's low 8bit)
                 int lhs = ISEL(n->inputs[0]);
                 int rhs = ISEL(n->inputs[1]); // TODO(NeGate): hint into RCX
 
-                int cl = DEF_FORCED(n, REG_CLASS_GPR, RCX, fake_dst);
+                int cl = DEF_FORCED(n, REG_CLASS_GPR, RCX, -1);
                 SUBMIT(inst_copy(n->dt, cl, rhs));
-                SUBMIT(inst_rr(op, n->dt, fake_dst, lhs, RCX));
-                SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
+                SUBMIT(inst_rr(op, n->dt, dst, lhs, USE(cl)));
             }
             break;
         }
@@ -1152,21 +1155,25 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 #undef MASK_UPTO
             }
 
+            TB_DataType dt = n->dt;
+
             int op = MOV;
             if (bits_in_type <= 8) op = sign_ext ? MOVSXB : MOVZXB;
             else if (bits_in_type <= 16) op = sign_ext ? MOVSXW : MOVZXW;
-            else if (bits_in_type <= 32) op = sign_ext ? MOVSXD : MOV;
-            else if (bits_in_type <= 64) op = MOV;
+            else if (bits_in_type <= 32) {
+                if (sign_ext) op = MOVSXD;
+                else dt = src_dt;
+            } else if (bits_in_type <= 64) op = MOV;
             else tb_todo();
 
             if (src->type == TB_LOAD && nl_map_get(ctx->values, src) < 0) {
                 Inst inst = isel_load(ctx, src, dst);
                 inst.type = op;
-                inst.data_type = legalize(n->dt);
+                inst.data_type = legalize(dt);
                 SUBMIT(inst);
             } else {
                 int src = ISEL(n->inputs[0]);
-                SUBMIT(inst_r(op, n->dt, dst, src));
+                SUBMIT(inst_r(op, dt, dst, src));
             }
             break;
         }

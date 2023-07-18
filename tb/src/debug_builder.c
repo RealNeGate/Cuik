@@ -71,6 +71,10 @@ TB_API TB_DebugType* tb_debug_create_union(TB_Module* m, ptrdiff_t len, const ch
     return t;
 }
 
+TB_API TB_DebugType* tb_debug_create_alias(TB_Module* m, TB_DebugType* base, ptrdiff_t len, const char* name) {
+    return NEW(TB_DEBUG_TYPE_ALIAS, .alias = { tb__arena_strdup(m, len, name), base });
+}
+
 TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, ptrdiff_t len, const char* name, TB_CharUnits offset) {
     assert(name);
     return NEW(TB_DEBUG_TYPE_FIELD, .field = { tb__arena_strdup(m, len, name), offset, type });

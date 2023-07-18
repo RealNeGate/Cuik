@@ -195,6 +195,13 @@ typedef struct {
 } CV_LFFieldList;
 
 typedef struct {
+    uint16_t len;
+    uint16_t leaf;  // LF_ALIAS
+    uint32_t utype;
+    char name[];
+} CV_LFAlias;
+
+typedef struct {
     uint16_t leaf; // LF_LONG
     int32_t val;   // signed 32-bit value
 } CV_LFLong;
@@ -365,6 +372,7 @@ enum {
     LF_STRUCTURE        = 0x1505,
     LF_UNION            = 0x1506,
     LF_ENUM             = 0x1507,
+    LF_ALIAS            = 0x150a,
     LF_MEMBER           = 0x150d,
     LF_FUNC_ID          = 0x1601,
 

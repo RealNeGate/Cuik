@@ -35,6 +35,7 @@ typedef struct IRVal {
         struct {
             TB_Node* if_true;
             TB_Node* if_false;
+            TB_Node* merger;
         } phi;
     };
 } IRVal;

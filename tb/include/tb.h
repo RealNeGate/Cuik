@@ -818,6 +818,7 @@ TB_API TB_DebugType* tb_debug_get_integer(TB_Module* m, bool is_signed, int bits
 TB_API TB_DebugType* tb_debug_get_float(TB_Module* m, TB_FloatFormat fmt);
 TB_API TB_DebugType* tb_debug_create_ptr(TB_Module* m, TB_DebugType* base);
 TB_API TB_DebugType* tb_debug_create_array(TB_Module* m, TB_DebugType* base, size_t count);
+TB_API TB_DebugType* tb_debug_create_alias(TB_Module* m, TB_DebugType* base, ptrdiff_t len, const char* tag);
 TB_API TB_DebugType* tb_debug_create_struct(TB_Module* m, ptrdiff_t len, const char* tag);
 TB_API TB_DebugType* tb_debug_create_union(TB_Module* m, ptrdiff_t len, const char* tag);
 TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, ptrdiff_t len, const char* name, TB_CharUnits offset);

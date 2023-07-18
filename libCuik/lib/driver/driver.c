@@ -156,9 +156,6 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
             tb_funcopt_peephole(opt);
             // Converting locals into phi nodes
             tb_funcopt_mem2reg(opt), tb_funcopt_peephole(opt);
-            // This is where our loops are analyzed as affine
-            // and thus we do unrolling and more.
-            // tb_funcopt_loop(opt), tb_funcopt_peephole(opt);
         }
 
         if (args->emit_ir) {

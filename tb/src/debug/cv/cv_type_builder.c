@@ -227,6 +227,20 @@ CV_TypeIndex tb_codeview_builder_add_function_id(CV_Builder* builder, CV_TypeInd
     return id;
 }
 
+CV_TypeIndex tb_codeview_builder_add_alias(CV_Builder* builder, CV_RecordType base, const char* name) {
+    CV_TypeIndex id = builder->type_entry_count++;
+    size_t name_size = strlen(name) + 1;
+
+    CV_LFAlias a = {
+        .len = sizeof(CV_LFAlias) + name_size - 2,
+        .leaf = LF_ALIAS,
+        .utype = base,
+    };
+    tb_outs(&builder->type_section, sizeof(a), &a);
+    tb_outs(&builder->type_section, name_size, name);
+    return id;
+}
+
 CV_TypeIndex tb_codeview_builder_add_incomplete_record(CV_Builder* builder, CV_RecordType rec_type, const char* name) {
     CV_TypeIndex id = builder->type_entry_count++;
     size_t name_size = strlen(name) + 1;
@@ -267,7 +281,7 @@ CV_TypeIndex tb_codeview_builder_add_field_list(CV_Builder* builder, size_t coun
         tb_outs(&builder->type_section, sizeof(CV_LFMember), &m);
 
         // write offset
-        if (fields[i].offset == (uint8_t) fields[i].offset) {
+        if (fields[i].offset == (int8_t) fields[i].offset) {
             // write it as 3 bytes instead of 6 since it's a common case
             tb_out2b(&builder->type_section, LF_CHAR);
             tb_out1b(&builder->type_section, fields[i].offset);
@@ -297,7 +311,7 @@ CV_TypeIndex tb_codeview_builder_add_record(CV_Builder* builder, CV_RecordType r
     };
     tb_outs(&builder->type_section, sizeof(s), &s);
 
-    if (size == (uint8_t) size) {
+    if (size == (int8_t) size) {
         // write it as 3 bytes instead of 6 since it's a common case
         tb_out2b(&builder->type_section, LF_CHAR);
         tb_out1b(&builder->type_section, size);
