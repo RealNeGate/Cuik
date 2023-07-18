@@ -149,7 +149,7 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, 
                 params[i] = v;
             } else {
                 TB_Node* slot = tb_inst_local(f, size, align);
-                tb_inst_store(f, p->params[i].dt, slot, v, align, false);
+                tb_inst_store(f, p->params[i + has_aggregate_return].dt, slot, v, align, false);
                 params[i] = slot;
             }
 
