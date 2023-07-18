@@ -125,7 +125,7 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, 
     // apply prototype
     tb_function_set_prototype(f, p, arena);
 
-    size_t param_count = p->param_count;
+    size_t param_count = dbg->func.param_count;
     TB_DebugType** param_list = dbg->func.params;
 
     // reassemble values
