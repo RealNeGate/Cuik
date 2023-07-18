@@ -12,6 +12,8 @@ static thread_local const char* function_name;
 static _Thread_local TB_Node* return_value_address;
 static _Thread_local TB_Attrib* scope_attrib;
 
+static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc);
+
 static TB_Symbol* get_external(CompilationUnit* restrict cu, const char* name) {
     // if this is the first time we've seen this name, add it to the table
     cuik_lock_compilation_unit(cu);

@@ -337,7 +337,7 @@ static void print_operand(Val* v, TB_X86_DataType dt) {
         }
         case VAL_GLOBAL: {
             const TB_Symbol* target = v->symbol;
-            if (target->name == NULL) {
+            if (*target->name == 0) {
                 if (v->imm == 0) {
                     printf("sym%p", target);
                 } else {
@@ -1257,13 +1257,13 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             static const struct ParamDescriptor {
                 int gpr_count;
                 int xmm_count;
-                uint16_t callee_saved_xmm_count; // XMM0 - XMMwhatever
-                uint16_t caller_saved_gprs;      // bitfield
+                uint16_t caller_saved_xmms; // XMM0 - XMMwhatever
+                uint16_t caller_saved_gprs; // bitfield
 
                 GPR gprs[6];
             } param_descs[] = {
                 // win64
-                { 4, 4, 16, WIN64_ABI_CALLER_SAVED,  { RCX, RDX, R8,  R9,  0,  0 } },
+                { 4, 4, 6, WIN64_ABI_CALLER_SAVED,  { RCX, RDX, R8,  R9,  0,  0 } },
                 // system v
                 { 6, 4, 5, SYSV_ABI_CALLER_SAVED,    { RDI, RSI, RDX, RCX, R8, R9 } },
                 // syscall
@@ -1283,7 +1283,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }
 
             // generate clones of each parameter which live until the CALL instruction executes
-            int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
+            int fake_dst;
+            if (n->dt.type == TB_FLOAT) {
+                fake_dst = DEF_FORCED(n, REG_CLASS_XMM, XMM0, -1);
+            } else {
+                fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
+            }
             uint32_t caller_saved_gprs = desc->caller_saved_gprs;
 
             // parameter passing is separate from eval from regalloc reasons
@@ -1307,7 +1312,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 int src = isel(ctx, n->inputs[i]);
                 if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
                     int xmm_id = is_sysv ? xmms_used++ : i - 2;
-                    if (xmm_id < desc->gpr_count) {
+                    if (xmm_id == 0 && n->dt.type == TB_FLOAT) {
+                        // xmm0 is in use, let's not make another forced GPR
+                        SUBMIT(inst_copy(param->dt, fake_dst, USE(src)));
+                    } else if (xmm_id < desc->gpr_count) {
                         // hint src into XMM
                         XMM target_xmm = xmm_id;
                         hint(ctx, src, target_xmm);
@@ -1333,13 +1341,17 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             fence(ctx);
 
-            size_t clobber_cap = tb_popcount(caller_saved_gprs);
+            size_t clobber_cap = tb_popcount(caller_saved_gprs) + desc->caller_saved_xmms;
             Clobbers* clobbers = arena_alloc(&tb__arena, sizeof(Clobbers) + (clobber_cap * sizeof(MachineReg)), _Alignof(Clobbers));
 
             // mark all the clobbers
             size_t clobber_count = 0;
             FOREACH_N(i, 0, 16) if (caller_saved_gprs & (1u << i)) {
                 clobbers->_[clobber_count++] = (MachineReg){ REG_CLASS_GPR, i };
+            }
+
+            FOREACH_N(i, 0, desc->caller_saved_xmms) {
+                clobbers->_[clobber_count++] = (MachineReg){ REG_CLASS_XMM, i };
             }
 
             assert(clobber_count == clobber_cap);
@@ -1354,8 +1366,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             } else {
                 // the number of float parameters is written into AL
                 if (is_sysv) {
-                    int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
-                    SUBMIT(inst_i(MOV, TB_TYPE_I64, rax, xmms_used));
+                    SUBMIT(inst_i(MOV, TB_TYPE_I64, RAX, xmms_used));
                 }
 
                 if (target->type == TB_GET_SYMBOL_ADDRESS) {
@@ -1373,8 +1384,13 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 // multiple returns must fill up the projections
                 tb_todo();
             } else {
-                dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
-                SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
+                if (n->dt.type == TB_FLOAT) {
+                    dst = DEF_HINTED(n, REG_CLASS_XMM, XMM0);
+                    SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
+                } else {
+                    dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
+                    SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
+                }
             }
             break;
         }
