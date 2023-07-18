@@ -94,8 +94,50 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, 
     tb_assert(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
     tb_assert(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
 
-    f->arena = arena;
-    TB_ABI abi = TB_ABI_WIN64;
+    TB_ABI abi = f->super.module->target_abi;
+    TB_FunctionPrototype* p = tb_prototype_from_dbg(f->super.module, dbg);
+
+    // apply prototype
+    tb_function_set_prototype(f, p, arena);
+
+    size_t param_count = p->param_count;
+    TB_DebugType** param_list = dbg->func.params;
+
+    // reassemble values
+    TB_Node** params = NULL;
+    if (dbg->func.param_count > 0) {
+        params = f->arena->alloc(f->arena, sizeof(TB_Node*) * param_count, _Alignof(TB_Node*));
+
+        FOREACH_N(i, 0, param_count) {
+            TB_DebugType* type = param_list[i]->field.type;
+            const char* name = param_list[i]->field.name;
+
+            int size = debug_type_size(abi, type);
+            int align = debug_type_align(abi, type);
+
+            // place values into memory
+            TB_Node* v = tb_inst_param(f, i);
+
+            RegClass rg = classify_reg(abi, param_list[i]->field.type);
+            if (rg == RG_MEMORY) {
+                params[i] = v;
+            } else {
+                TB_Node* slot = tb_inst_local(f, size, align);
+                tb_inst_store(f, p->params[i].dt, slot, v, align, false);
+                params[i] = slot;
+            }
+
+            // mark debug info
+            tb_node_append_attrib(params[i], tb_function_attrib_variable(f, -1, name, type));
+        }
+    }
+
+    *out_param_count = param_count;
+    return params;
+}
+
+TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* dbg) {
+    TB_ABI abi = m->target_abi;
 
     // aggregate return means the first parameter will be used for
     // a pointer to where the output should be written.
@@ -148,37 +190,6 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, 
             p->params[p->param_count] = ret;
         }
     }
-    tb_function_set_prototype(f, p, arena);
 
-    // reassemble values
-    TB_Node** params = NULL;
-    if (dbg->func.param_count > 0) {
-        params = f->arena->alloc(f->arena, sizeof(TB_Node*) * param_count, _Alignof(TB_Node*));
-
-        FOREACH_N(i, 0, param_count) {
-            TB_DebugType* type = param_list[i]->field.type;
-            const char* name = param_list[i]->field.name;
-
-            int size = debug_type_size(abi, type);
-            int align = debug_type_align(abi, type);
-
-            // place values into memory
-            TB_Node* v = tb_inst_param(f, i);
-
-            RegClass rg = classify_reg(abi, param_list[i]->field.type);
-            if (rg == RG_MEMORY) {
-                params[i] = v;
-            } else {
-                TB_Node* slot = tb_inst_local(f, size, align);
-                tb_inst_store(f, p->params[i].dt, slot, v, align, false);
-                params[i] = slot;
-            }
-
-            // mark debug info
-            tb_node_append_attrib(params[i], tb_function_attrib_variable(f, -1, name, type));
-        }
-    }
-
-    *out_param_count = param_count;
-    return params;
+    return p;
 }

@@ -97,7 +97,7 @@ void tb_codeview_builder_done(CV_Builder* builder) {
     // align_up_type_record(&builder->type_section);
 }
 
-CV_TypeIndex tb_codeview_builder_add_array(CV_Builder* builder, CV_TypeIndex base, size_t count) {
+CV_TypeIndex tb_codeview_builder_add_array(CV_Builder* builder, CV_TypeIndex base, size_t byte_count) {
     #pragma pack(push,1)
     typedef struct {
         uint16_t len;
@@ -118,13 +118,13 @@ CV_TypeIndex tb_codeview_builder_add_array(CV_Builder* builder, CV_TypeIndex bas
     } Array;
     #pragma pack(pop)
 
-    assert(count == (uint32_t)count);
+    assert(byte_count == (uint32_t) byte_count);
     Array arr = {
         .len = sizeof(Array) - 2,
         .leaf = LF_ARRAY,
         .elemtype = base,
         .idxtype = T_INT8,
-        .count = { LF_LONG, count },
+        .count = { LF_LONG, byte_count },
     };
 
     return find_or_make_cv_type(builder, sizeof(arr), &arr);

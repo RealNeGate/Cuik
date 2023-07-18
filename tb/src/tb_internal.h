@@ -507,8 +507,8 @@ typedef struct {
 #endif
 #endif
 
-#if TB_DEBUG_BUILD
-#define tb_assert(condition, ...) ((condition) ? 0 : (fprintf(stderr, __VA_ARGS__), abort(), 0))
+#ifndef NDEBUG
+#define tb_assert(condition, ...) ((condition) ? 0 : (fprintf(stderr, "assertion failed: " #condition "\n  "), fprintf(stderr, __VA_ARGS__), abort(), 0))
 #else
 #define tb_assert(condition, ...) (0)
 #endif

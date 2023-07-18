@@ -374,10 +374,20 @@ static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
 }
 
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
+    uint64_t mask = UINT64_MAX;
+    if (n->type == TB_SIGN_EXT) {
+        n = n->inputs[0];
+    } else if (n->type == TB_TRUNCATE) {
+        assert(n->dt.type == TB_INT);
+
+        n = n->inputs[0];
+        mask = n->dt.data == 64 ? UINT64_MAX : (1ull << n->dt.data) - 1;
+    }
+
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-        if (i->num_words == 1 && fits_into_int32(i->words[0])) {
-            *out_x = i->words[0];
+        if (i->num_words == 1 && fits_into_int32(i->words[0] & mask)) {
+            *out_x = i->words[0] & mask;
             return true;
         }
     }
@@ -808,14 +818,18 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     TB_Module* mod = ctx->module;
                     TB_Global* g = tb_global_create(mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
 
+                    enum { XMM_SIZE = 16 };
+                    tb_global_set_storage(mod, &mod->rdata, g, XMM_SIZE, XMM_SIZE, 1);
                     if (n->dt.data == TB_FLT_32) {
-                        tb_global_set_storage(mod, &mod->rdata, g, sizeof(uint32_t), sizeof(uint32_t), 1);
-                        uint32_t* buffer = tb_global_add_region(mod, g, 0, sizeof(uint32_t));
+                        uint32_t* buffer = tb_global_add_region(mod, g, 0, XMM_SIZE);
                         buffer[0] = 1ull << 31ull;
+                        buffer[1] = 1ull << 31ull;
+                        buffer[2] = 1ull << 31ull;
+                        buffer[3] = 1ull << 31ull;
                     } else if (n->dt.data == TB_FLT_64) {
-                        tb_global_set_storage(mod, &mod->rdata, g, sizeof(uint64_t), sizeof(uint64_t), 1);
-                        uint64_t* buffer = tb_global_add_region(mod, g, 0, sizeof(uint64_t));
+                        uint64_t* buffer = tb_global_add_region(mod, g, 0, XMM_SIZE);
                         buffer[0] = 1ull << 63ull;
+                        buffer[1] = 1ull << 63ull;
                     } else {
                         tb_todo();
                     }
@@ -990,8 +1004,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             //   CVTSI2SD r/m64, xmm1
             dst = DEF(n, REG_CLASS_XMM);
 
+            bool is_64bit = src_dt.data > 32;
+
             int src = ISEL(n->inputs[0]);
-            SUBMIT(inst_r(FP_CVT, n->inputs[0]->dt, dst, src));
+            SUBMIT(inst_r(is_64bit ? FP_CVT64 : FP_CVT32, n->dt, dst, src));
             break;
         }
 
@@ -1270,18 +1286,25 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
             uint32_t caller_saved_gprs = desc->caller_saved_gprs;
 
+            // parameter passing is separate from eval from regalloc reasons
             size_t xmms_used = 0;
-            FOREACH_N(i, 2, n->input_count) {
+            FOREACH_REVERSE_N(i, 2, n->input_count) {
                 TB_Node* param = n->inputs[i];
                 TB_DataType param_dt = param->dt;
 
-                // force rematerialization
-                if (param->type == TB_INTEGER_CONST) {
-                    nl_map_remove(ctx->values, param);
+                // signed 32bit immediates get love
+                int32_t imm;
+                if (try_for_imm32(ctx, n->inputs[i], &imm)) {
+                    if (i - 2 < desc->gpr_count) {
+                        int param_def = DEF_FORCED(param, REG_CLASS_GPR, desc->gprs[i - 2], fake_dst);
+                        SUBMIT(inst_i(MOV, param->dt, param_def, imm));
+                    } else {
+                        SUBMIT(inst_mi(MOV, param->dt, RSP, GPR_NONE, SCALE_X1, (i - 2) * 8, imm));
+                    }
+                    continue;
                 }
 
-                int src = isel(ctx, param);
-
+                int src = isel(ctx, n->inputs[i]);
                 if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
                     int xmm_id = is_sysv ? xmms_used++ : i - 2;
                     if (xmm_id < desc->gpr_count) {

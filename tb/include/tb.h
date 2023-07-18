@@ -883,6 +883,7 @@ TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 //
 // returns the parameters
 TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count);
+TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* dbg);
 
 // if arena is NULL, defaults to module arena which is freed on tb_free_thread_resources
 TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena);

@@ -2331,6 +2331,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             break;
         }
         case STMT_DO_WHILE: {
+            TB_Node* latch = tb_inst_region(func);
             TB_Node* body = tb_inst_region(func);
             TB_Node* exit = tb_inst_region(func);
 
@@ -2343,8 +2344,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 irgen_stmt(tu, func, s->do_while.body);
             }
 
-            insert_label(func);
-
+            fallthrough_label(func, latch);
             TB_Node* cond = irgen_as_rvalue(tu, func, s->do_while.cond);
             tb_inst_if(func, cond, body, exit);
             tb_inst_set_control(func, exit);
@@ -2380,11 +2380,12 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 fallthrough_label(func, next);
                 emit_location(tu, func, get_root_subexpr(s->for_.next)->loc.start);
                 irgen_expr(tu, func, s->for_.next);
+            } else {
+                emit_location(tu, func, s->loc.start);
+                fallthrough_label(func, next);
             }
 
-            if (tb_inst_get_control(func) != NULL) {
-                tb_inst_goto(func, header);
-            }
+            fallthrough_label(func, header);
             tb_inst_set_control(func, exit);
             break;
         }

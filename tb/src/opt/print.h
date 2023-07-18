@@ -35,6 +35,13 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
     } else if (n->type == TB_FLOAT64_CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
         printf("%f", f->value);
+    } else if (n->type == TB_GET_SYMBOL_ADDRESS) {
+        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+        if (sym->name) {
+            printf("%s", sym->name);
+        } else {
+            printf("%p", sym);
+        }
     } else if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
@@ -98,7 +105,7 @@ static void print_type(TB_DataType dt) {
 
 // returns true if it's the first time
 static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
-    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_STORE || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
+    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_STORE || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST || n->type == TB_GET_SYMBOL_ADDRESS) {
         return;
     }
 
@@ -201,16 +208,6 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
             break;
         }
 
-        case TB_GET_SYMBOL_ADDRESS: {
-            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
-            if (sym->name) {
-                printf("%s", sym->name);
-            } else {
-                printf("%p", sym);
-            }
-            break;
-        }
-
         case TB_CALL: break;
 
         case TB_LOCAL: {
@@ -251,6 +248,9 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
         }
 
         switch (n->type) {
+            case TB_DEBUGBREAK: printf("  debugbreak\n"); break;
+            case TB_UNREACHABLE: printf("  unreachable\n"); break;
+
             case TB_STORE: {
                 printf("  store ");
                 print_ref_to_node(ctx, n->inputs[1]);

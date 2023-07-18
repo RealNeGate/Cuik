@@ -271,6 +271,7 @@ static void fill_all(TB_FuncOpt* restrict opt, TB_Node* n) {
     nl_map_put(opt->lookup, n, index);
 
     FOREACH_REVERSE_N(i, 0, n->input_count) {
+        tb_assert(n->inputs[i], "empty input... in this economy?");
         fill_all(opt, n->inputs[i]);
     }
 
@@ -281,6 +282,7 @@ static void fill_all(TB_FuncOpt* restrict opt, TB_Node* n) {
             fill_all(opt, r->succ[i]);
         }
 
+        tb_assert(r->end, "missing terminator");
         fill_all(opt, r->end);
     }
 }

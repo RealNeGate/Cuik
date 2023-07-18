@@ -278,14 +278,16 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
         tb_todo();
     }
 
-    if (!packed && type != FP_UCOMI) {
-        EMIT1(e, is_double ? 0xF2 : 0xF3);
-    } else if (is_double) {
-        // packed double
-        EMIT1(e, 0x66);
+    if (type != FP_XOR && type != FP_AND && type != FP_OR) {
+        if (!packed && type != FP_UCOMI) {
+            EMIT1(e, is_double ? 0xF2 : 0xF3);
+        } else if (is_double) {
+            // packed double
+            EMIT1(e, 0x66);
+        }
     }
 
-    if (rx >= 8 || base >= 8 || index >= 8) {
+    if (type == FP_CVT64 || rx >= 8 || base >= 8 || index >= 8) {
         EMIT1(e, rex(false, rx, base, index));
     }
 

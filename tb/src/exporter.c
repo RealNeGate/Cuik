@@ -74,8 +74,9 @@ static void layout_section(TB_ModuleSection* restrict section) {
         dyn_array_for(i, section->globals) {
             TB_Global* g = section->globals[i];
 
+            offset = align_up(offset, g->align);
             g->pos = offset;
-            offset = align_up(offset + g->size, g->align);
+            offset += g->size;
         }
         section->total_size = offset;
         section->laid_out = true;

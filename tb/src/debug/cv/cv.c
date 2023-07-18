@@ -93,7 +93,7 @@ static uint16_t convert_to_codeview_type(CV_Builder* builder, TB_DebugType* type
         }
 
         case TB_DEBUG_TYPE_ARRAY:
-        return (type->cv_type_id = tb_codeview_builder_add_array(builder, convert_to_codeview_type(builder, type->array.base), type->array.count));
+        return (type->cv_type_id = tb_codeview_builder_add_array(builder, convert_to_codeview_type(builder, type->array.base), debug_type_size(TB_ABI_WIN64, type->array.base) * type->array.count));
 
         case TB_DEBUG_TYPE_POINTER:
         return (type->cv_type_id = tb_codeview_builder_add_pointer(builder, convert_to_codeview_type(builder, type->ptr_to)));
