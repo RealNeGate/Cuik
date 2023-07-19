@@ -1053,16 +1053,20 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
             // copy it
             goto scopy;
 
-            case '!': // weird write-bytes specifier
-            ++f;
-            s = (char*) custom_diagnostic_format(&l, f[0], &va);
-            lead[0] = 0;
-            tail[0] = 0;
-            pr = 0;
-            dp = 0;
-            cs = 0;
-            // copy the string in
-            goto scopy;
+            case '!': { // weird write-bytes specifier
+                ++f;
+                VaList wrapper;
+                va_copy(wrapper.va, va);
+                s = (char*) custom_diagnostic_format(&l, f[0], &wrapper);
+                va_copy(va, wrapper.va);
+                lead[0] = 0;
+                tail[0] = 0;
+                pr = 0;
+                dp = 0;
+                cs = 0;
+                // copy the string in
+                goto scopy;
+            }
 
             case 'u': // unsigned
             case 'i':

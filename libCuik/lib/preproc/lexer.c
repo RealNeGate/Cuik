@@ -1,4 +1,5 @@
 #include "lexer.h"
+#include <arena.h>
 
 #if USE_INTRIN && CUIK__IS_X64
 #include <x86intrin.h>
@@ -14,95 +15,27 @@
 // https://gist.github.com/RealNeGate/9fd2886c56fa01049c5e85fc8f0fd9b7
 #include "dfa.h"
 
-static const char keywords[][16] = {
-    "auto",
-    "break",
-    "case",
-    "char",
-    "const",
-    "continue",
-    "default",
-    "do",
-    "double",
-    "else",
-    "enum",
-    "extern",
-    "float",
-    "for",
-    "goto",
-    "if",
-    "inline",
-    "int",
-    "long",
-    "register",
-    "restrict",
-    "return",
-    "short",
-    "signed",
-    "sizeof",
-    "static",
-    "struct",
-    "switch",
-    "typedef",
-    "union",
-    "unsigned",
-    "void",
-    "volatile",
-    "while",
-    "_Alignas",
-    "_Alignof",
-    "_Atomic",
-    "_Bool",
-    "_Complex",
-    "_Generic",
-    "_Imaginary",
-    "_Pragma",
-    "_Noreturn",
-    "_Static_assert",
-    "_Thread_local",
-    "_Typeof",
-    "_Vector",
-    "__asm__",
-    "__attribute__",
-    "__cdecl",
-    "__stdcall",
-    "__declspec"
-};
-
-#define PERFECT_HASH_SEED 13751172963623158798ULL
 static uint64_t hash_with_len(const void* data, size_t len) {
     const uint8_t* p = data;
+
     uint64_t h = 0;
-    for (size_t j = 0; j < len && j < 7; j++) {
-        h = p[j] + h*256;
+    for (size_t i = 0; i < len; i++) {
+        h = (h << 5) + p[i];
+        uint64_t g = h & 0xf0000000;
+
+        if (g != 0) h = (h ^ (g >> 24)) ^ g;
     }
-    // The low byte of the signature is the length.
-    h = len + h*256;
     return h;
 }
 
-TknType classify_ident(const unsigned char* restrict str, size_t len) {
-    // Auto-generated with this small C program (MAKE SURE TO UPDATE THE
-    // KEYWORDS ARRAY AND TOKEN TYPES)
-    //
-    // https://gist.github.com/RealNeGate/397db4aaace43e0499dc8f7b429ccc17
-    static const uint8_t values[256] = {
-        [77] = 0 /* auto */, [194] = 1 /* break */, [31] = 2 /* case */, [5] = 3 /* char */,
-        [224] = 4 /* const */, [34] = 5 /* continue */, [132] = 6 /* default */, [76] = 7 /* do */,
-        [160] = 8 /* double */, [216] = 9 /* else */, [102] = 10 /* enum */, [247] = 11 /* extern */,
-        [250] = 12 /* float */, [153] = 13 /* for */, [71] = 14 /* goto */, [173] = 15 /* if */,
-        [85] = 16 /* inline */, [39] = 17 /* int */, [74] = 18 /* long */, [17] = 19 /* register */,
-        [128] = 20 /* restrict */, [157] = 21 /* return */, [117] = 22 /* short */, [243] = 23 /* signed */,
-        [12] = 24 /* sizeof */, [234] = 25 /* static */, [43] = 26 /* struct */, [72] = 27 /* switch */,
-        [137] = 28 /* typedef */, [232] = 29 /* union */, [93] = 30 /* unsigned */, [10] = 31 /* void */,
-        [155] = 32 /* volatile */, [44] = 33 /* while */, [91] = 34 /* _Alignas */, [15] = 35 /* _Alignof */,
-        [131] = 36 /* _Atomic */, [36] = 37 /* _Bool */, [118] = 38 /* _Complex */, [60] = 39 /* _Generic */,
-        [185] = 40 /* _Imaginary */, [121] = 41 /* _Pragma */, [240] = 42 /* _Noreturn */, [144] = 43 /* _Static_assert */,
-        [174] = 44 /* _Thread_local */, [130] = 45 /* _Typeof */, [150] = 46 /* _Vector */, [61] = 47 /* __asm__ */,
-        [125] = 48 /* __attribute__ */, [22] = 49 /* __cdecl */, [181] = 50 /* __stdcall */, [235] = 51 /* __declspec */,
-    };
+TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl) {
+    // Auto-generated with lexgen.c
     size_t v = (hash_with_len(str, len) * PERFECT_HASH_SEED) >> 56;
-    v = values[v];
+    v = keywords_table[v];
+
+    if (!is_glsl && v >= FIRST_GLSL_KEYWORD - 0x10000000) {
+        return TOKEN_IDENTIFIER;
+    }
 
     // VERIFY
     #if USE_INTRIN && CUIK__IS_X64
@@ -112,12 +45,12 @@ TknType classify_ident(const unsigned char* restrict str, size_t len) {
     int kw_len = __builtin_ffs(_mm_movemask_epi8(_mm_cmpeq_epi8(kw128, _mm_set1_epi8('\0')))) - 1;
 
     // NOTE(NeGate): Fancy x86 strcmp crap :)
-    int result = _mm_cmpestri(kw128, kw_len,
-        str128, len,
+    int result = _mm_cmpestri(kw128, kw_len, str128, len,
         _SIDD_UBYTE_OPS |
         _SIDD_CMP_EQUAL_EACH |
         _SIDD_NEGATIVE_POLARITY |
-        _SIDD_UNIT_MASK);
+        _SIDD_UNIT_MASK
+    );
 
     return result == 16 ? (0x10000000 + v) : TOKEN_IDENTIFIER;
     #else
@@ -221,7 +154,7 @@ Token lexer_read(Lexer* restrict l) {
             current += 1;
             #else
             // SIMD space skip
-            __m128i chars = _mm_loadu_si128((__m128i*)current);
+            __m128i chars = _mm_loadu_si128((__m128i*) current);
             int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
             current += len - 1;
             #endif
@@ -272,8 +205,9 @@ Token lexer_read(Lexer* restrict l) {
     // generate valid token types
     switch (state) {
         case 0: {
-            fprintf(stderr, "illegal lexer char: %c\n", *start);
-            abort();
+            fprintf(stderr, "illegal lexer char: %c (%d)\n", *start, *start);
+            current++;
+            goto redo_lex;
         }
         case DFA_IDENTIFIER_L:
         case DFA_IDENTIFIER: {
@@ -335,7 +269,6 @@ Token lexer_read(Lexer* restrict l) {
         case DFA_STRING: {
             char quote_type = current[-1];
 
-            #if !USE_INTRIN
             for (; *current && *current != quote_type; current++) {
                 // skip escape codes
                 if (*current == '\\') {
@@ -348,35 +281,6 @@ Token lexer_read(Lexer* restrict l) {
             }
 
             current += 1;
-            #else
-            __m128i pattern = _mm_set1_epi8(quote_type);
-
-            do {
-                __m128i bytes = _mm_loadu_si128((__m128i*)current);
-
-                // strings either end at the quote or are cut off early via a
-                // newline unless you put a backslash-newline joiner.
-                __m128i test_quote = _mm_cmpeq_epi8(bytes, pattern);
-                __m128i test_newline = _mm_cmpeq_epi8(bytes, _mm_set1_epi8('\n'));
-                __m128i test = _mm_or_si128(test_quote, test_newline);
-                int len = __builtin_ffs(_mm_movemask_epi8(test));
-
-                if (len) {
-                    current += len;
-
-                    // backslash join
-                    if (current[-1] == '\n' && current[-2] == '\\') continue;
-
-                    // escape + quote like \"
-                    if (current[-1] == quote_type && current[-2] == '\\' && current[-3] != '\\') continue;
-
-                    break;
-                } else {
-                    current += 16;
-                }
-            } while (*current);
-            #endif
-
             t.type = quote_type;
 
             if (start[0] == 'L') {

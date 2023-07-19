@@ -1,3 +1,4 @@
+#if 0
 // It's only *sorta* part of the semantics pass
 #include "sema.h"
 
@@ -13,7 +14,7 @@ void cuik_dump_expr(FILE* stream, Expr* e, int depth) {
         // qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
         qual_type_as_string(sizeof(temp_string1), temp_string1, e->cast_type);
 
-        if (e->op != EXPR_CAST && cuik_canonical_type(e->cast_type)->kind != TYPE_VOID) {
+        if (e->op != EXPR_CAST && e->cast_type.raw && cuik_canonical_type(e->cast_type)->kind != KIND_VOID) {
             // we don't wanna place implicit casts to void, it's weird
             printf("implicit-cast %s\n", temp_string1);
             depth++;
@@ -143,7 +144,7 @@ static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node)
         qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
         qual_type_as_string(sizeof(temp_string1), temp_string1, e->cast_type);
 
-        if (e->op != EXPR_CAST && cuik_canonical_type(e->cast_type)->kind != TYPE_VOID) {
+        if (e->op != EXPR_CAST && e->cast_type.raw && cuik_canonical_type(e->cast_type)->kind != KIND_VOID) {
             // we don't wanna place implicit casts to void, it's weird
             fprintf(stream, "ImplicitCast '%s' -> '%s'\n", temp_string0, temp_string1);
 
@@ -495,6 +496,24 @@ static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node)
             dump_expr(stream, e->bin_op.right, depth + 1, true);
             break;
         }
+        case EXPR_CONSTRUCTOR: {
+            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
+
+            fprintf(stream, "Constructor '%s'\n", temp_string0);
+            break;
+        }
+        case EXPR_SWIZZLE: {
+            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
+
+            fprintf(stream, "Swizzle '%s' [ ", temp_string0);
+            for (int i = 0; i < e->swizzle.len; i++) {
+                fprintf(stream, "%d ", e->swizzle.indices[i]);
+            }
+            fprintf(stream, "]\n");
+
+            dump_expr(stream, e->swizzle.base, depth + 1, true);
+            break;
+        }
         default:
         abort();
     }
@@ -515,7 +534,34 @@ static void dump_stmt(FILE* stream, Stmt* restrict s, int depth, bool last_node)
                 fprintf(stream, "TypedefDecl %s '%s'\n", s->decl.name, temp_string0);
             } else {
                 if (s->decl.name != NULL) {
-                    fprintf(stream, "VarDecl %s '%s'\n", s->decl.name, temp_string0);
+                    fprintf(stream, "VarDecl %s '%s'", s->decl.name, temp_string0);
+
+                    if (s->decl.glsl_quals != NULL) {
+                        Cuik_GlslQuals* g = s->decl.glsl_quals;
+
+                        fprintf(stream, " [ ");
+
+                        switch (g->storage) {
+                            case CUIK_GLSL_STORAGE_IN: fprintf(stream, "in "); break;
+                            case CUIK_GLSL_STORAGE_OUT: fprintf(stream, "out "); break;
+                            case CUIK_GLSL_STORAGE_INOUT: fprintf(stream, "inout "); break;
+                            case CUIK_GLSL_STORAGE_BUFFER: fprintf(stream, "buffer "); break;
+                            case CUIK_GLSL_STORAGE_UNIFORM: fprintf(stream, "uniform "); break;
+                            default: break;
+                        }
+
+                        if (g->layout != CUIK_GLSL_LAYOUT_UNKNOWN) {
+                            fprintf(stream, "%s ", g->layout == CUIK_GLSL_LAYOUT_140 ? "std140" : "std430");
+
+                            if (g->binding >= 0)  fprintf(stream, "binding=%d ", g->binding);
+                            if (g->location >= 0) fprintf(stream, "location=%d ", g->location);
+                            if (g->offset >= 0) fprintf(stream, "offset=%d ", g->offset);
+                        }
+
+                        fprintf(stream, "]\n");
+                    } else {
+                        fprintf(stream, "\n");
+                    }
                 } else {
                     fprintf(stream, "UnnamedVarDecl '%s'\n", temp_string0);
                 }
@@ -584,7 +630,11 @@ static void dump_stmt(FILE* stream, Stmt* restrict s, int depth, bool last_node)
             break;
         }
         case STMT_CASE: {
-            fprintf(stream, "Case %"PRId64"\n", s->case_.key);
+            if (s->case_.key != s->case_.key_max) {
+                fprintf(stream, "Case %"PRId64" ... %"PRId64"\n", s->case_.key, s->case_.key_max);
+            } else {
+                fprintf(stream, "Case %"PRId64"\n", s->case_.key);
+            }
             dump_stmt(stream, s->case_.body, depth + 1, true);
             break;
         }
@@ -713,8 +763,7 @@ void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimali
 void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
     printf("\n~~~ AST STATS ~~~\n");
     printf("# Top level stmts: %zu\n", dyn_array_length(tu->top_level_stmts));
-    // printf("# Type Arena: %zu kB\n", arena_get_memory_usage(&tu->type_arena) / 1024);
-    printf("# AST Arena:  %zu kB\n", arena_get_memory_usage(&tu->ast_arena) / 1024);
+    // printf("# Arena:  %zu kB\n", arena_get_memory_usage(&tu->arena) / 1024);
 }
 
 void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
@@ -763,3 +812,4 @@ void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
         printf("STATS:\n  sizeof = %d\n  alignof = %d\n", ty->size, ty->align);
     }
 }
+#endif

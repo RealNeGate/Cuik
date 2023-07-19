@@ -32,6 +32,8 @@ Code overview:
 
   IRGen   - handles converting type checked AST into TB IR. depends on AST.
 
+  Driver  - handles calling libCuik as an end-to-end program, depends on... everything?
+
 Key features:
 
   * Compiler-as-library design.
@@ -39,6 +41,7 @@ Key features:
   * Powerful diagnostics engine.
 
 Active TODO:
+
   * Redo constant evaluator
   * Fix up API (i wanna make it stable eventually :P)
   * Write C type pretty printers (for diagnostics and for user code)

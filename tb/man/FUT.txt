@@ -1,0 +1,18 @@
+# FUT
+
+  FUT (pronounced foot) is a new debug format i've started prototyping with a
+  few other peple. for now it's just gonna be random thoughts that i'll organize
+  later.
+
+  # Languages we care about
+
+    C, C++, D, Go, Rust, Odin, Zig, Nim
+
+  # Symbol table
+
+    Wanna have a few acceleration structures when it comes to the symbol table, one of them being RVA -> Symbol (just gonna sort the RVA Symbol pairs and then one could do a binary search)
+
+# Type system
+
+Type table is a graph and nodes refer to each other via offsets in the type table, they don't have fixed sizes. There's a hash map that goes from name -> type.
+

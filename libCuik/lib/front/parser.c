@@ -5,12 +5,8 @@
 //   statement, basically just find the semicolon and head out :p
 //
 //   - ugly ass code
-//
-//   - make the expect(...) code be a little smarter, if it knows that it's expecting
-//   a token for a specific operation... tell the user
 #include "parser.h"
-#include "../pp_map.h"
-#include <targets/targets.h>
+#include "../targets/targets.h"
 
 // winnt.h loves including garbage
 #undef VOID
@@ -25,11 +21,6 @@ static const Cuik_Warnings DEFAULT_WARNINGS = { 0 };
 #define PARSE_MUNCH_SIZE (131072)
 
 typedef struct {
-    Atom key;
-    Cuik_Type* value;
-} TagEntry;
-
-typedef struct {
     enum {
         PENDING_ALIGNAS,
         PENDING_BITWIDTH,
@@ -40,15 +31,6 @@ typedef struct {
     size_t start, end;
 } PendingExpr;
 
-// starting point is used to disable the function literals
-// from reading from their parent function
-thread_local static int local_symbol_start = 0;
-thread_local static int local_symbol_count = 0;
-thread_local static Symbol* local_symbols;
-
-thread_local static int local_tag_count = 0;
-thread_local static TagEntry* local_tags;
-
 // Global symbol stuff
 thread_local static DynArray(PendingExpr) pending_exprs;
 thread_local static NL_Strmap(Stmt*) labels;
@@ -58,19 +40,13 @@ thread_local static Stmt* current_breakable;
 thread_local static Stmt* current_continuable;
 
 // we build a chain in that lets us know what symbols are used by a function
-thread_local static Expr* symbol_chain_start;
-thread_local static Expr* symbol_chain_current;
+thread_local static Cuik_Expr* symbol_chain_start;
 
-// we allocate nodes from here but once the threaded parsing stuff is complete we'll stitch this
-// to the original AST arena so that it may be freed later
-thread_local static Arena local_ast_arena;
-thread_local static bool out_of_order_mode;
-
-static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch);
 static bool expect_char(TokenStream* restrict s, char ch);
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening);
 static bool expect_with_reason(TokenStream* restrict s, char ch, const char* reason);
-static Symbol* find_local_symbol(TokenStream* restrict s);
+static Symbol* find_symbol(Cuik_Parser* parser, TokenStream* restrict s);
+static Cuik_Type* find_tag(Cuik_Parser* parser, Cuik_Atom name);
 
 static Stmt* parse_stmt(TranslationUnit* tu, TokenStream* restrict s);
 static Stmt* parse_stmt_or_expr(TranslationUnit* tu, TokenStream* restrict s);
@@ -85,61 +61,20 @@ static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
 static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type);
-
-static bool is_typename(Cuik_GlobalSymbols* syms, TokenStream* restrict s);
-
+static bool is_typename(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
 
-static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type);
-
-// saves the local_symbol_count and local_tag_count before entering
-// and restores them when exiting since that'll allow us to open and
-// close local scopes in the perspective of variable lookup...
-//
-// TODO(NeGate): add a field to keep track of "last local symbol count"
-// such that we can give proper errors on shadowing
-//
 // Usage:
 //  LOCAL_SCOPE {
 //      /* do parse work */
 //  }
 #define LOCAL_SCOPE \
-for (int saved = local_symbol_count, saved2 = local_tag_count, _i_ = 0; _i_ == 0; \
-    _i_ += 1, local_symbol_count = saved, local_tag_count = saved2)
+for (int i = (cuik_scope_open(parser->symbols), cuik_scope_open(parser->tags), 0); i != 1; i = 1, cuik_scope_close(parser->tags), cuik_scope_close(parser->symbols))
 
 static int align_up(int a, int b) {
     if (b == 0) return 0;
 
     return a + (b - (a % b)) % b;
-}
-
-static Stmt* make_stmt(TranslationUnit* tu, TokenStream* restrict s) {
-    Stmt* stmt = arena_alloc(&local_ast_arena, sizeof(Stmt), _Alignof(Stmt));
-    memset(stmt, 0, sizeof(Stmt));
-    return stmt;
-}
-
-static Expr* make_expr(TranslationUnit* tu) {
-    return ARENA_ALLOC(&local_ast_arena, Expr);
-}
-
-static Symbol* find_global_symbol(Cuik_GlobalSymbols* restrict syms, const char* name) {
-    ptrdiff_t search = nl_strmap_get_cstr(syms->symbols, name);
-    return (search >= 0) ? &syms->symbols[search] : NULL;
-}
-
-static Cuik_Type* find_tag(Cuik_GlobalSymbols* restrict syms, const char* name) {
-    // try locals
-    size_t i = local_tag_count;
-    while (i--) {
-        if (strcmp((const char*) local_tags[i].key, name) == 0) {
-            return local_tags[i].value;
-        }
-    }
-
-    // try globals
-    ptrdiff_t search = nl_strmap_get_cstr(syms->tags, name);
-    return (search >= 0) ? syms->tags[search] : NULL;
 }
 
 // ( SOMETHING )
@@ -179,7 +114,8 @@ static size_t skip_expression_in_parens(TokenStream* restrict s, TknType* out_te
 static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_terminator) {
     size_t saved = s->list.current;
 
-    // our basic bitch expectations
+    // our basic bitch expectations of how this function will turn out.
+    // it might flip on us but that's alright
     *out_terminator = ',';
 
     int depth = 1;
@@ -204,29 +140,51 @@ static size_t skip_expression_in_enum(TokenStream* restrict s, TknType* out_term
     return saved;
 }
 
+// potential typedef conflicts
+typedef struct TypeConflict {
+    struct TypeConflict* next;
+    Symbol *old_def, *new_def;
+} TypeConflict;
+
 struct Cuik_Parser {
-    Cuik_ParseVersion version;
+    Cuik_Version version;
     TokenStream tokens;
 
     const Cuik_Target* target;
     // this refers to the `int` type, it comes from the target
     // but it's more convenient to access it from here.
     Cuik_Type* default_int;
+    int pointer_byte_size;
 
     //  generated from #pragma comment(lib, "somelib.lib")
     // it's a linked list
     Cuik_ImportRequest* import_libs;
     DynArray(int) static_assertions;
 
-    // this is all the globals including the static locals
-    DynArray(Stmt*) local_static_storage_decls;
-
     // out-of-order parsing is only done while in global scope
     bool is_in_global_scope;
 
+    // there's 2 namespaces in C
+    Cuik_SymbolTable* symbols;
+    Cuik_SymbolTable* tags;
+
+    Arena* arena;
     DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
-    Cuik_GlobalSymbols globals;
+
+    Cuik_Type* va_list;
+    Cuik_Type* first_placeholder;
+    TypeConflict* first_conflict;
+
+    // used when expression building
+    Cuik_Expr* expr;
+
+    struct {
+        // these are unique entries in the string interner so
+        // we can cache it here
+        #define X(name) Atom name;
+        #include "glsl_keywords.h"
+    } glsl;
 
     NL_Strmap(Diag_UnresolvedSymbol*) unresolved_symbols;
 
@@ -243,18 +201,18 @@ typedef enum ParseResult {
 } ParseResult;
 
 static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc) {
-    Diag_UnresolvedSymbol* d = ARENA_ALLOC(&local_ast_arena, Diag_UnresolvedSymbol);
+    Diag_UnresolvedSymbol* d = ARENA_ALLOC(parser->arena, Diag_UnresolvedSymbol);
     d->next = NULL;
     d->name = name;
     d->loc = (SourceRange){ loc, { loc.raw + strlen(name) } };
 
     // mtx_lock(&parser->diag_mutex);
-    ptrdiff_t search = nl_strmap_get_cstr(parser->unresolved_symbols, name);
+    ptrdiff_t search = nl_map_get_cstr(parser->unresolved_symbols, name);
     if (search < 0) {
-        search = nl_strmap_puti_cstr(parser->unresolved_symbols, name);
-        parser->unresolved_symbols[search] = d;
+        nl_map_puti_cstr(parser->unresolved_symbols, name, search);
+        parser->unresolved_symbols[search].v = d;
     } else {
-        Diag_UnresolvedSymbol* old = parser->unresolved_symbols[search];
+        Diag_UnresolvedSymbol* old = parser->unresolved_symbols[search].v;
         while (old->next != NULL) old = old->next;
 
         old->next = d;
@@ -262,209 +220,82 @@ static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc
     // mtx_unlock(&parser->diag_mutex);
 }
 
+static bool expect_char(TokenStream* restrict s, char ch) {
+    if (tokens_eof(s)) {
+        tokens_prev(s);
+
+        diag_err(s, tokens_get_range(s), "expected '%c', got end-of-file", ch);
+        return false;
+    } else if (tokens_get(s)->type != ch) {
+        diag_err(s, tokens_get_range(s), "expected '%c', got '%!S'", ch, tokens_get(s)->content);
+        return false;
+    } else {
+        tokens_next(s);
+        return true;
+    }
+}
+
+// in glsl_parser.h
+static Cuik_Type* parse_glsl_type(Cuik_Parser* restrict parser, TokenStream* restrict s);
+static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_Qualifiers* quals);
+
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
+#define TYPE_INSERT(...) type_insert(&parser->types, __VA_ARGS__)
+
+#include "expr_fold.h"
 #include "expr_parser.h"
 #include "decl_parser.h"
-#include "glsl_parser.h"
 #include "stmt_parser.h"
+#include "glsl_parser.h"
 #include "top_level_parser.h"
-#include "ast_optimizer.h"
 
-// 0 no cycles
-// 1 cycles
-// 2 cycles and we gave an error msg
-static int type_cycles_dfs(TokenStream* restrict s, Cuik_Type* type) {
-    // non-record types are always finished :P
-    if (type->kind != KIND_STRUCT && type->kind != KIND_UNION) {
-        return 0;
-    }
-
-    if (type->is_complete) {
-        return 0;
-    }
-
-    // if (visited[o]) return true
-    if (type->is_visited) {
-        return 1;
-    }
-
-    type->is_visited = true;
-
-    // for each m in members
-    //   if (dfs(m)) return true
-    for (size_t i = 0; i < type->record.kid_count; i++) {
-        int c = type_cycles_dfs(s, cuik_canonical_type(type->record.kids[i].type));
-        if (c) {
-            // we already gave an error message, don't be redundant
-            if (c != 2) {
-                const char* name = type->record.name ? (const char*)type->record.name : "<unnamed>";
-
-                diag_err(s, type->loc, "type %s has cycles", name);
-                diag_note(s, type->record.kids[i].loc, "see here");
-            }
-
-            return 2;
-        }
-    }
-
-    type->is_complete = true;
-    return 0;
-}
-
-void type_layout(TranslationUnit* restrict tu, Cuik_Type* type, bool needs_complete) {
-    if (type->kind == KIND_VOID || type->size != 0) return;
-    if (type->is_progress) {
-        diag_err(&tu->tokens, type->loc, "Type has a circular dependency");
+void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cuik_Type* type) {
+    if (CUIK_TYPE_IS_COMPLETE(type)) return;
+    if (CUIK_TYPE_IS_PROGRESS(type)) {
+        diag_err(tokens, type->loc, "Type has a circular dependency");
         return;
     }
 
-    type->is_progress = true;
+    type->flags |= CUIK_TYPE_FLAG_PROGRESS;
 
-    if (type->kind == KIND_ARRAY) {
-        if (type->array_count_lexer_pos) {
-            assert(0 && "Parserless type checker!!!");
-        }
+    if (type->kind == KIND_CLONE) {
+        type_layout2(parser, tokens, type->clone.of);
 
-        // layout crap
-        if (type->array_count != 0) {
-            if (cuik_canonical_type(type->array_of)->size == 0) {
-                type_layout(tu, cuik_canonical_type(type->array_of), true);
-            }
+        Atom name = type->also_known_as;
+        *type = *type->clone.of;
+        type->also_known_as = name;
+    } else if (type->kind == KIND_ARRAY) {
+        if (type->array.count_lexer_pos) {
+            assert(parser != NULL && "Parserless type checker!!!");
 
-            if (cuik_canonical_type(type->array_of)->size == 0) {
-                diag_err(&tu->tokens, type->loc, "could not resolve type (ICE)");
-                return;
-            }
-        }
-
-        uint64_t result = cuik_canonical_type(type->array_of)->size * type->array_count;
-
-        // size checks
-        if (result >= INT32_MAX) {
-            diag_err(&tu->tokens, type->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
-        }
-
-        type->size = result;
-        type->align = cuik_canonical_type(type->array_of)->align;
-    } else if (type->kind == KIND_ENUM) {
-        assert(0 && "Parserless type checker!!!");
-    } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-        bool is_union = (type->kind == KIND_UNION);
-
-        size_t member_count = type->record.kid_count;
-        Member* members = type->record.kids;
-
-        // for unions this just represents the max size
-        int offset = 0;
-        int last_member_size = 0;
-        int current_bit_offset = 0;
-        // struct/union are aligned to the biggest member alignment
-        int align = 0;
-
-        for (size_t i = 0; i < member_count; i++) {
-            Member* member = &members[i];
-
-            if (cuik_canonical_type(member->type)->kind == KIND_FUNC) {
-                diag_err(&tu->tokens, type->loc, "cannot put function types into a struct, try a function pointer");
-            } else {
-                type_layout(tu, cuik_canonical_type(member->type), true);
-            }
-
-            Cuik_Type* member_type = cuik_canonical_type(member->type);
-            int member_align = member_type->align;
-            int member_size = member_type->size;
-            if (!is_union) {
-                int new_offset = align_up(offset, member_align);
-
-                // If we realign, reset the bit offset
-                if (offset != new_offset) {
-                    current_bit_offset = last_member_size = 0;
-                }
-                offset = new_offset;
-            }
-
-            member->offset = is_union ? 0 : offset;
-            member->align = member_align;
-
-            // bitfields
-            if (member->is_bitfield) {
-                int bit_width = member->bit_width;
-                int bits_in_region = member_type->kind == KIND_BOOL ? 1 : (member_size * 8);
-                if (bit_width > bits_in_region) {
-                    diag_err(&tu->tokens, type->loc, "bitfield cannot fit in this type.");
-                }
-
-                if (current_bit_offset + bit_width > bits_in_region) {
-                    current_bit_offset = 0;
-
-                    offset = align_up(offset + member_size, member_align);
-                    member->bit_offset = offset;
-                }
-
-                current_bit_offset += bit_width;
-            } else {
-                if (is_union) {
-                    if (member_size > offset) offset = member_size;
-                } else {
-                    offset += member_size;
-                }
-            }
-
-            // the total alignment of a struct/union is based on the biggest member
-            last_member_size = member_size;
-            if (member_align > align) align = member_align;
-        }
-
-        offset = align_up(offset, align);
-        type->align = align;
-        type->size = offset;
-        type->is_complete = true;
-    }
-
-    type->is_progress = false;
-}
-
-int aaaaaa = 0;
-void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
-    if (type->kind == KIND_VOID || type->size != 0) return;
-    if (type->is_progress) {
-        diag_err(&parser->tokens, type->loc, "Type has a circular dependency");
-        return;
-    }
-
-    type->is_progress = true;
-
-    if (type->kind == KIND_ARRAY) {
-        if (type->array_count_lexer_pos) {
-            aaaaaa++;
             // run mini parser for array count
-            TokenStream mini_lex = parser->tokens;
-            mini_lex.list.current = type->array_count_lexer_pos;
-            type->array_count = parse_const_expr2(parser, &mini_lex);
+            TokenStream mini_lex = *tokens;
+            mini_lex.list.current = type->array.count_lexer_pos;
+            type->array.count = parse_const_expr(parser, &mini_lex);
             expect_char(&mini_lex, ']');
         }
 
         // layout crap
-        if (type->array_count != 0) {
-            if (cuik_canonical_type(type->array_of)->size == 0) {
-                type_layout2(parser, cuik_canonical_type(type->array_of), true);
+        if (type->array.count != 0) {
+            if (cuik_canonical_type(type->array.of)->size == 0) {
+                type_layout2(parser, tokens, cuik_canonical_type(type->array.of));
             }
 
-            if (cuik_canonical_type(type->array_of)->size == 0) {
-                diag_err(&parser->tokens, type->loc, "could not resolve type (ICE)");
+            if (cuik_canonical_type(type->array.of)->size == 0) {
+                diag_err(tokens, type->loc, "could not resolve type (ICE)");
                 return;
             }
         }
 
-        uint64_t result = cuik_canonical_type(type->array_of)->size * type->array_count;
+        uint64_t result = cuik_canonical_type(type->array.of)->size * type->array.count;
 
         // size checks
         if (result >= INT32_MAX) {
-            diag_err(&parser->tokens, type->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
+            diag_err(tokens, type->loc, "cannot declare an array that exceeds 0x7FFFFFFE bytes (got 0x%zX or %zi)", result, result);
         }
 
         type->size = result;
-        type->align = cuik_canonical_type(type->array_of)->align;
+        type->align = cuik_canonical_type(type->array.of)->align;
     } else if (type->kind == KIND_ENUM) {
         int cursor = 0;
         // if (type->enumerator.name && strcmp(type->enumerator.name, "D3D_DRIVER_TYPE") == 0) __debugbreak();
@@ -473,10 +304,10 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
             // if the value is undecided, best time to figure it out is now
             if (type->enumerator.entries[i].lexer_pos != 0) {
                 // Spin up a mini expression parser here
-                TokenStream mini_lex = parser->tokens;
+                TokenStream mini_lex = *tokens;
                 mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
 
-                cursor = parse_const_expr2(parser, &mini_lex);
+                cursor = parse_const_expr(parser, &mini_lex);
                 type->enumerator.entries[i].lexer_pos = 0;
             }
 
@@ -503,9 +334,9 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
             Member* member = &members[i];
 
             if (cuik_canonical_type(member->type)->kind == KIND_FUNC) {
-                diag_err(&parser->tokens, type->loc, "cannot put function types into a struct, try a function pointer");
+                diag_err(tokens, type->loc, "cannot put function types into a struct, try a function pointer");
             } else {
-                type_layout2(parser, cuik_canonical_type(member->type), true);
+                type_layout2(parser, tokens, cuik_canonical_type(member->type));
             }
 
             Cuik_Type* member_type = cuik_canonical_type(member->type);
@@ -529,7 +360,7 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
                 int bit_width = member->bit_width;
                 int bits_in_region = member_type->kind == KIND_BOOL ? 1 : (member_size * 8);
                 if (bit_width > bits_in_region) {
-                    diag_err(&parser->tokens, type->loc, "bitfield cannot fit in this type.");
+                    diag_err(tokens, type->loc, "bitfield cannot fit in this type.");
                 }
 
                 if (current_bit_offset + bit_width > bits_in_region) {
@@ -558,8 +389,8 @@ void type_layout2(Cuik_Parser* parser, Cuik_Type* type, bool needs_complete) {
         type->size = offset;
     }
 
-    type->is_complete = true;
-    type->is_progress = false;
+    type->flags |= CUIK_TYPE_FLAG_COMPLETE;
+    type->flags &= ~CUIK_TYPE_FLAG_PROGRESS;
 }
 
 void* cuik_set_translation_unit_user_data(TranslationUnit* restrict tu, void* ud) {
@@ -572,13 +403,23 @@ void* cuik_get_translation_unit_user_data(TranslationUnit* restrict tu) {
     return tu->user_data;
 }
 
-void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
-    dyn_array_destroy(tu->top_level_stmts);
+void cuik_set_tu_ordinal(TranslationUnit* restrict tu, int ordinal) {
+    tu->local_ordinal = ordinal;
+}
 
-    arena_free(&tu->ast_arena);
-    free_type_table(&tu->types);
-    mtx_destroy(&tu->arena_mutex);
-    cuik_free(tu);
+int cuik_get_tu_ordinal(TranslationUnit* restrict tu) {
+    return tu->local_ordinal;
+}
+
+void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
+    if (!tu->is_free) {
+        tu->is_free = true;
+        dyn_array_destroy(tu->top_level_stmts);
+    }
+
+    if (tu->parent == NULL) {
+        cuik_free(tu);
+    }
 }
 
 Cuik_ImportRequest* cuik_translation_unit_import_requests(TranslationUnit* restrict tu) {
@@ -597,22 +438,9 @@ size_t cuik_num_of_top_level_stmts(TranslationUnit* restrict tu) {
     return dyn_array_length(tu->top_level_stmts);
 }
 
-static Symbol* find_local_symbol(TokenStream* restrict s) {
+static Symbol* find_symbol(Cuik_Parser* parser, TokenStream* restrict s) {
     Token* t = tokens_get(s);
-
-    // Try local variables
-    size_t i = local_symbol_count;
-    size_t start = local_symbol_start;
-    while (i-- > start) {
-        const char* sym = local_symbols[i].name;
-        size_t sym_length = strlen(sym);
-
-        if (memeq(t->content.data, t->content.length, sym, sym_length)) {
-            return &local_symbols[i];
-        }
-    }
-
-    return NULL;
+    return cuik_symtab_lookup(parser->symbols, atoms_put(t->content.length, t->content.data));
 }
 
 ////////////////////////////////
@@ -625,25 +453,12 @@ static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s
     abort();
 }
 
-static void expect(TranslationUnit* tu, TokenStream* restrict s, char ch) {
-    if (tokens_get(s)->type != ch) {
-        Token* t = tokens_get(s);
-        SourceLoc loc = tokens_get_location(s);
-
-        diag_err(s, (SourceRange){ loc, loc }, "expected '%c', got '%.*s'", ch, (int)t->content.length, t->content.data);
-    } else {
-        tokens_next(s);
-    }
-}
-
 static bool expect_closing_paren(TokenStream* restrict s, SourceLoc opening) {
     if (tokens_get(s)->type != ')') {
-        SourceLoc loc = tokens_get_location(s);
+        SourceRange loc = tokens_get_range(s);
 
-        report_two_spots(
-            REPORT_ERROR, s, opening, loc,
-            "expected closing parenthesis", "open", "close?", NULL
-        );
+        DiagFixit fixit = { loc, 0, ")" };
+        diag_err(s, fixit.loc, "#expected closing paren", fixit);
         return false;
     } else {
         tokens_next(s);

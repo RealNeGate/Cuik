@@ -1,13 +1,32 @@
 #pragma once
 #include <assert.h>
-#include <limits.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <inttypes.h>
+
+// Cuik currently uses mimalloc so we wrap those calls here
+#ifdef CUIK_USE_MIMALLOC
+#include <mimalloc.h>
+
+#define cuik_malloc(size)        mi_malloc(size)
+#define cuik_calloc(count, size) mi_calloc(count, size)
+#define cuik_free(ptr)           mi_free(ptr)
+#define cuik_realloc(ptr, size)  mi_realloc(ptr, size)
+#define cuik_strdup(x)           mi_strdup(x)
+#else
+#define cuik_malloc(size)        malloc(size)
+#define cuik_calloc(count, size) calloc(count, size)
+#define cuik_free(size)          free(size)
+#define cuik_realloc(ptr, size)  realloc(ptr, size)
+
+#ifdef _WIN32
+#define cuik_strdup(x)           _strdup(x)
+#else
+#define cuik_strdup(x)           strdup(x)
+#endif
+#endif
 
 #if defined(__amd64__) || defined(_M_AMD64)
 #define CUIK__IS_X64 1
@@ -28,6 +47,9 @@
 #define COUNTOF(...) (sizeof(__VA_ARGS__) / sizeof(__VA_ARGS__[0]))
 #endif
 
+#define LIKELY(x)      __builtin_expect(!!(x), 1)
+#define UNLIKELY(x)    __builtin_expect(!!(x), 0)
+
 #ifdef NDEBUG
 #define TODO() __builtin_unreachable()
 #else
@@ -47,57 +69,14 @@ do {                  \
     b = temp;         \
 } while (0)
 
-// Cuik currently uses mimalloc so we wrap those calls here
-#ifdef CUIK_USE_MIMALLOC
-#include <mimalloc.h>
+void  cuik_init_terminal(void);
 
-#define cuik_malloc(size)        mi_malloc(size)
-#define cuik_calloc(count, size) mi_calloc(count, size)
-#define cuik_free(ptr)           mi_free(ptr)
-#define cuik_realloc(ptr, size)  mi_realloc(ptr, size)
-#define cuik_strdup(x)           mi_strdup(x)
-#else
-#define cuik_malloc(size)        malloc(size)
-#define cuik_calloc(count, size) calloc(count, size)
-#define cuik_free(size)          free(size)
-#define cuik_realloc(ptr, size)  realloc(ptr, size)
-#ifdef _WIN32
-#define cuik_strdup(x)           _strdup(x)
-#else
-#define cuik_strdup(x)           strdup(x)
-#endif
-#endif
-
-#ifndef MAX_PATH
-#define MAX_PATH 260
-#endif
-
-void tls_init(void);
-void tls_reset(void);
+void  tls_init(void);
+void  tls_reset(void);
 void* tls_push(size_t size);
 void* tls_pop(size_t size);
-void* tls_save();
-void tls_restore(void* p);
+void* tls_save(void);
+void  tls_restore(void* p);
 
 void* cuik__valloc(size_t sz);
-void cuik__vfree(void* p, size_t sz);
-
-static bool memeq(const void* a, size_t al, const void* b, size_t bl) {
-    return al == bl && memcmp(a, b, al) == 0;
-}
-
-static bool cstr_equals(const char* str1, const char* str2) {
-    return strcmp(str1, str2) == 0;
-}
-
-// returns the number of bytes written
-static size_t cstr_copy(size_t len, char* dst, const char* src) {
-    size_t i = 0;
-    while (src[i]) {
-        assert(i < len);
-
-        dst[i] = src[i];
-        i += 1;
-    }
-    return i;
-}
+void  cuik__vfree(void* p, size_t sz);

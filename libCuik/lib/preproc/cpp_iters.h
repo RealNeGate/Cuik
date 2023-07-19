@@ -1,27 +1,37 @@
-#ifdef _WIN32
-#define strdup(s) _strdup(s)
-#endif
 
 CUIK_API void cuikpp_add_include_directory(Cuik_CPP* ctx, bool is_system, const char dir[]) {
-    Cuik_IncludeDir idir = { is_system, strdup(dir) };
-    dyn_array_put(ctx->system_include_dirs, idir);
+    Cuik_IncludeDir d = { is_system, gimme_the_shtuffs(ctx, sizeof(Cuik_Path)) };
+    cuik_path_set(d.path, dir);
+
+    char last = d.path->data[d.path->length - 1];
+    if (last != '/' && last != '\\') {
+        d.path->data[d.path->length++] = CUIK_PATH_SLASH_SEP;
+        d.path->data[d.path->length] = 0;
+    }
+
+    dyn_array_put(ctx->system_include_dirs, d);
 }
 
 CUIK_API void cuikpp_add_include_directoryf(Cuik_CPP* ctx, bool is_system, const char* fmt, ...) {
-    char* out = cuik_malloc(FILENAME_MAX);
+    Cuik_IncludeDir d = { is_system, gimme_the_shtuffs(ctx, sizeof(Cuik_Path)) };
 
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(out, FILENAME_MAX, fmt, ap);
+    d.path->length = vsnprintf(d.path->data, FILENAME_MAX, fmt, ap);
     va_end(ap);
 
-    Cuik_IncludeDir idir = { is_system, out };
-    dyn_array_put(ctx->system_include_dirs, idir);
+    char last = d.path->data[d.path->length - 1];
+    if (last != '/' && last != '\\') {
+        d.path->data[d.path->length++] = CUIK_PATH_SLASH_SEP;
+        d.path->data[d.path->length] = 0;
+    }
+
+    dyn_array_put(ctx->system_include_dirs, d);
 }
 
 CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MAX], const char* path) {
     dyn_array_for(i, ctx->system_include_dirs) {
-        sprintf_s(output, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i].name, path);
+        sprintf_s(output, FILENAME_MAX, "%s%s", ctx->system_include_dirs[i].path->data, path);
         FILE* f = fopen(output, "r");
         if (f != NULL) {
             fclose(f);
@@ -32,7 +42,7 @@ CUIK_API bool cuikpp_find_include_include(Cuik_CPP* ctx, char output[FILENAME_MA
     return false;
 }
 
-Cuik_File* cuikpp_next_file(Cuik_CPP* ctx, Cuik_File* f) {
+Cuik_FileEntry* cuikpp_next_file(Cuik_CPP* ctx, Cuik_FileEntry* f) {
     // first element
     if (f == NULL) return &ctx->tokens.files[0];
 
@@ -57,41 +67,32 @@ CUIK_API size_t cuikpp_get_include_dir_count(Cuik_CPP* ctx) {
 }
 
 Cuik_DefineIter cuikpp_first_define(Cuik_CPP* ctx) {
-    for (int i = 0; i < MACRO_BUCKET_COUNT; i++) {
-        if (ctx->macro_bucket_count[i] != 0) {
-            // first slot in that non-empty bucket
-            return (Cuik_DefineIter){ .bucket = i, .id = 0 };
+    size_t cap = 1u << ctx->macros.exp;
+    for (size_t i = 0; i < cap; i++) {
+        if (ctx->macros.keys[i].length != 0 && ctx->macros.keys[i].length != MACRO_DEF_TOMBSTONE) {
+            return (Cuik_DefineIter){ .index = i };
         }
     }
 
-    return (Cuik_DefineIter){ .bucket = MACRO_BUCKET_COUNT, .id = 0 };
+    return (Cuik_DefineIter){ .index = 0 };
 }
 
 bool cuikpp_next_define(Cuik_CPP* ctx, Cuik_DefineIter* it) {
-    // we outta bounds
-    if (it->bucket >= MACRO_BUCKET_COUNT) return false;
+    size_t cap = 1u << ctx->macros.exp;
+    size_t e = it->index;
+    if (e >= cap) return false;
 
-    // find next bucket
-    it->id += 1;
-    while (it->id >= ctx->macro_bucket_count[it->bucket]) {
-        it->id = 0;
-        it->bucket += 1;
+    it->loc = ctx->macros.vals[e].loc;
+    it->key = ctx->macros.keys[e];
+    it->value = ctx->macros.vals[e].value;
 
-        if (it->bucket >= MACRO_BUCKET_COUNT) {
-            return false;
+    for (size_t i = it->index + 1; i < cap; i++) {
+        if (ctx->macros.keys[i].length != 0 && ctx->macros.keys[i].length != MACRO_DEF_TOMBSTONE) {
+            it->index = i;
+            break;
         }
     }
 
-    size_t e = (it->bucket * SLOTS_PER_MACRO_BUCKET) + it->id;
-
-    size_t keylen = ctx->macro_bucket_keys_length[e];
-    const unsigned char* key = ctx->macro_bucket_keys[e];
-
-    size_t vallen = ctx->macro_bucket_values_end[e] - ctx->macro_bucket_values_start[e];
-    const unsigned char* val = ctx->macro_bucket_values_start[e];
-
-    it->loc = ctx->macro_bucket_source_locs[e];
-    it->key = (String){ keylen, key };
-    it->value = (String){ vallen, val };
+    it->index = cap;
     return true;
 }

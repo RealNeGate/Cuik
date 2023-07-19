@@ -13,10 +13,6 @@
 //   Stmt          - statements (declarations count here) generally introduce sequence
 //                   points.
 //
-//   Expr          - all expressions have some type and during type checking a new
-//                   "cast type" is produced which represents the potential type
-//                   promotion and is the type actually used by the parent node.
-//
 // TODO:
 //
 //  * rename all the bare types to use Cuik_
@@ -25,13 +21,35 @@
 //
 //  * add qualifiers to type pretty printer
 //
-#pragma once
+#ifndef CUIK_AST_H
+#define CUIK_AST_H
+
 #include "cuik_prelude.h"
 
 typedef char* Atom;
-typedef struct Expr Expr;
+typedef struct Cuik_Expr Cuik_Expr;
+typedef struct Subexpr Subexpr;
 typedef struct Stmt Stmt;
 typedef struct Cuik_Type Cuik_Type;
+
+typedef uint64_t Cuik_ConstInt;
+
+typedef struct {
+    enum { CUIK_CONST_NONE, CUIK_CONST_INT, CUIK_CONST_FLOAT, CUIK_CONST_ADDR } tag;
+    union {
+        uint64_t i;
+        double f;
+
+        // symbols refer to their creator + an offset
+        struct {
+            uint32_t base;
+            int32_t offset;
+        } s;
+    };
+} Cuik_ConstVal;
+
+// LEGACY, WE'RE REMOVING IT SOON
+typedef struct Expr Expr;
 
 typedef enum Cuik_Qualifiers {
     CUIK_QUAL_CONST    = (1u << 0u),
@@ -69,8 +87,8 @@ typedef enum Cuik_TypeKind {
     KIND_UNION,
     KIND_VECTOR,
 
-    // __declspec(align(N)) or _Alignas(N)
-    KIND_ALIGNED,
+    // used when the type isn't resolved so we shouldn't clone it just yet
+    KIND_CLONE,
 
     // these are inferred as typedefs but don't map to anything yet
     KIND_PLACEHOLDER,
@@ -134,46 +152,49 @@ typedef struct {
 
 typedef struct {
     Cuik_QualType key;
-    Expr* value;
+    Cuik_Expr* value;
 } C11GenericEntry;
+
+typedef enum {
+    // used by cycle checking
+    CUIK_TYPE_FLAG_COMPLETE = 1,
+    CUIK_TYPE_FLAG_PROGRESS = 2,
+} Cuik_TypeFlags;
 
 struct Cuik_Type {
     Cuik_TypeKind kind;
     int size;  // sizeof
     int align; // _Alignof
+    Cuik_TypeFlags flags;
     SourceRange loc;
 
-    Cuik_Type* based;
     Atom also_known_as;
 
     #ifdef CUIK_USE_TB
-    TB_DebugType* debug_type;
+    _Atomic(TB_DebugType*) debug_type;
     #else
     void* user_data;
     #endif
 
-    // used by cycle checking
-    bool is_complete : 1;
-    bool is_visited  : 1;
-    bool is_progress : 1;
-
     union {
+        char _;
+
         // Integers
         bool is_unsigned;
 
         // Arrays
         struct {
-            Cuik_QualType array_of;
-            int array_count;
+            Cuik_QualType of;
+            int count;
 
             // if non-zero, then we must execute an expression
             // parser to resolve it
-            int array_count_lexer_pos;
-        };
+            int count_lexer_pos;
+        } array;
 
         struct {
-            Cuik_Type* base;
-        } aligned_on;
+            Cuik_Type* of;
+        } clone;
 
         // Pointers
         struct {
@@ -192,36 +213,107 @@ struct Cuik_Type {
         } func;
 
         // Structs/Unions
-        struct {
+        struct Cuik_TypeRecord {
             Atom name;
 
-            int kid_count;
+            int kid_count, pad;
             Member* kids;
+
+            // this is the one used in type comparisons
+            Cuik_Type* nominal;
         } record;
 
         // Enumerators
         struct {
             Atom name;
-            int count;
+            int count, pad;
 
             EnumEntry* entries;
         } enumerator;
 
         struct {
-            int count;
             Cuik_Type* base;
-        } vector_;
+            int count, pad;
+        } vector;
 
-        // Cuik_Typeof
+        // Typeof
         struct {
-            Expr* src;
+            Cuik_Expr* src;
         } typeof_;
 
         struct {
             Atom name;
+
+            // if non-NULL we've got a linked list to walk :)
+            Cuik_Type* next;
         } placeholder;
     };
-};
+} __attribute__((aligned(16)));
+_Static_assert(_Alignof(Cuik_Type) == 16, "we need 16byte alignment for Cuik_QualType");
+
+#define CUIK_TYPE_IS_COMPLETE(t) (((t)->flags & CUIK_TYPE_FLAG_COMPLETE) != 0)
+#define CUIK_TYPE_IS_PROGRESS(t) (((t)->flags & CUIK_TYPE_FLAG_PROGRESS) != 0)
+
+typedef enum {
+    CUIK_GLSL_STORAGE_UNKNOWN,
+    CUIK_GLSL_STORAGE_IN,
+    CUIK_GLSL_STORAGE_INOUT,
+    CUIK_GLSL_STORAGE_OUT,
+
+    // constant buffers
+    CUIK_GLSL_STORAGE_UNIFORM,
+
+    // storage buffers
+    CUIK_GLSL_STORAGE_BUFFER,
+} Cuik_GlslStorageQuals;
+
+typedef enum {
+    CUIK_GLSL_QUALS_COHERENT  = 1,
+    CUIK_GLSL_QUALS_VOLATILE  = 2,
+    CUIK_GLSL_QUALS_RESTRICT  = 4,
+    CUIK_GLSL_QUALS_READONLY  = 8,
+    CUIK_GLSL_QUALS_WRITEONLY = 16,
+} Cuik_GlslMemQuals;
+
+typedef enum {
+    CUIK_GLSL_PRECISION_LOWP,
+    CUIK_GLSL_PRECISION_MEDIUMP,
+    CUIK_GLSL_PRECISION_HIGHP,
+} Cuik_GlslPrecision;
+
+typedef enum {
+    CUIK_GLSL_FLAT,
+    CUIK_GLSL_SMOOTH,
+    CUIK_GLSL_NOPERSPECTIVE,
+} Cuik_GlslInterpolation;
+
+typedef enum {
+    CUIK_GLSL_LAYOUT_UNKNOWN,
+    CUIK_GLSL_LAYOUT_140,
+    CUIK_GLSL_LAYOUT_430,
+} Cuik_GlslLayout;
+
+typedef enum {
+    CUIK_GLSL_SWIZZLE_UNKNOWN,
+
+    CUIK_GLSL_SWIZZLE_XYZW,
+    CUIK_GLSL_SWIZZLE_STUV,
+    CUIK_GLSL_SWIZZLE_RGBA,
+} Cuik_GlslSwizzle;
+
+typedef struct {
+    Cuik_GlslMemQuals mem;
+    Cuik_GlslStorageQuals storage;
+    Cuik_GlslInterpolation interp;
+
+    bool flat;
+
+    // layout qualifier
+    Cuik_GlslLayout layout;
+    int binding;
+    int location;
+    int offset;
+} Cuik_GlslQuals;
 
 // designated initializer member
 // .x = 5
@@ -245,7 +337,7 @@ typedef struct InitNode {
     uint32_t offset;
     Cuik_QualType type;
 
-    Expr* expr;
+    Cuik_Expr* expr;
     InitNodeDesignator mode;
 
     // we're lisp-pilled:
@@ -291,6 +383,7 @@ typedef enum StmtOp {
 
     STMT_BREAK,
     STMT_CONTINUE,
+    STMT_DISCARD,
 
     STMT_RETURN
 } StmtOp;
@@ -311,10 +404,10 @@ typedef enum ExprOp {
     EXPR_BUILTIN_SYMBOL,
     EXPR_UNKNOWN_SYMBOL,
     EXPR_SYMBOL,
+    EXPR_CONSTRUCTOR,
     EXPR_GENERIC, // C11's _Generic
     EXPR_VA_ARG,
 
-    EXPR_FUNCTION, // function literal
     EXPR_INITIALIZER,
 
     EXPR_CAST,
@@ -372,11 +465,11 @@ typedef enum ExprOp {
     EXPR_ARROW_R,
     EXPR_CALL,
 
+    EXPR_SWIZZLE, // GLSL stuff, .xyxy
+
     EXPR_SIZEOF_T, // on type
     EXPR_SIZEOF,   // on expr
-
-    EXPR_ALIGNOF_T, // on type
-    EXPR_ALIGNOF,   // on expr
+    EXPR_ALIGNOF_T,// on type
 
     EXPR_PRE_INC,
     EXPR_PRE_DEC,
@@ -386,17 +479,24 @@ typedef enum ExprOp {
     EXPR_MAX
 } ExprOp;
 
+typedef enum {
+    STMT_FLAGS_HAS_IR_BACKING = 1,
+    STMT_FLAGS_IS_EXPORTED    = 2,
+    STMT_FLAGS_IS_RESOLVING   = 4,
+} StmtFlags;
+
 struct Stmt {
     struct {
         StmtOp op;
+        StmtFlags flags;
         SourceRange loc;
         Cuik_Attribute* attr_list;
 
         // Used by the backend for backend-y things
         union {
             #ifdef CUIK_USE_TB
-            TB_Reg r;
-            TB_Label l;
+            TB_Node* r;
+            TB_Node* loop[2];
             TB_Function* f;
             TB_Symbol* s;
             TB_Global* g;
@@ -414,10 +514,10 @@ struct Stmt {
             int kids_count;
         } compound;
         struct StmtExpr {
-            Expr* expr;
+            Cuik_Expr* expr;
         } expr;
         struct StmtReturn {
-            Expr* expr;
+            Cuik_Expr* expr;
         } return_;
         struct StmtContinue {
             Stmt* target; // loop
@@ -426,63 +526,66 @@ struct Stmt {
             Stmt* target; // either a loop or switch
         } break_;
         struct StmtGoto {
-            Expr* target;
+            Cuik_Expr* target;
         } goto_;
         struct StmtLabel {
             Atom name;
             bool placed;
         } label;
         struct StmtCase {
-            int64_t key;
-            Stmt* body;
             Stmt* next;
+            int64_t key;
+            int64_t key_max;
+            Stmt* body;
         } case_;
         struct StmtDefault {
-            Stmt* body;
             Stmt* next;
+            Stmt* body;
         } default_;
         struct StmtSwitch {
-            Expr* condition;
-            Stmt* body;
-
             // points to the first case or default,
             // and those point to next and so on,
             // linked lists
             Stmt* next;
+
+            Cuik_Expr* condition;
+            Stmt* body;
         } switch_;
         struct StmtDecl {
             Cuik_QualType type;
             Atom name;
+            Cuik_GlslQuals* glsl_quals;
 
             // acceleration structure for scrubbing for symbols
             // it's a linked list
-            Expr* first_symbol;
+            Cuik_Expr* first_symbol;
 
             // NOTE(NeGate): This represents a stmtindex if it's a
             // FUNC_DECL
             union {
                 Stmt* initial_as_stmt;
-                Expr* initial;
+                Cuik_Expr* initial;
             };
 
             Attribs attrs;
+            uint32_t local_ordinal;
         } decl;
         struct StmtFor {
             Stmt* first;
-            Expr* cond;
+            Cuik_Expr* cond;
             Stmt* body;
-            Expr* next;
+            Cuik_Expr* next;
         } for_;
         struct StmtWhile {
-            Expr* cond;
+            Cuik_Expr* cond;
             Stmt* body;
         } while_;
         struct StmtDoWhile {
-            Expr* cond;
+            Cuik_Expr* cond;
             Stmt* body;
         } do_while;
         struct StmtIf {
-            Expr* cond;
+            Cuik_Expr* cond;
             Stmt* body;
             Stmt* next;
         } if_;
@@ -511,9 +614,6 @@ struct Expr {
     union {
         struct {
             Atom name;
-
-            // aliases with next_symbol_in_chain
-            Expr* next_symbol_in_chain;
         } builtin_sym;
 
         struct {
@@ -565,6 +665,9 @@ struct Expr {
             Expr* src;
         } unary_op;
         struct {
+            Cuik_Type* type;
+        } constructor;
+        struct {
             Expr* controlling_expr;
 
             // if case_count == 0, then controlling_expr is the matched expression
@@ -597,7 +700,7 @@ struct Expr {
         struct {
             Cuik_QualType type;
         } x_of_type;
-        // either sizeof(expr) or _Alignof(expr)
+        // either sizeof(expr)
         struct {
             Expr* expr;
         } x_of_expr;
@@ -608,6 +711,12 @@ struct Expr {
         struct {
             Stmt* src;
         } func;
+        struct {
+            Expr* base;
+
+            uint8_t len;
+            uint8_t indices[4];
+        } swizzle;
 
         int char_lit;
         double float_num;
@@ -617,8 +726,154 @@ struct Expr {
         } int_num;
     };
 };
-_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, next_symbol_in_chain2), "these should be aliasing");
-_Static_assert(offsetof(Expr, next_symbol_in_chain) == offsetof(Expr, builtin_sym.next_symbol_in_chain), "these should be aliasing");
+
+struct Subexpr {
+    SourceRange loc;
+    ExprOp op : 8;
+
+    // some flags:
+    int has_parens : 1;
+    int has_visited : 1;
+
+    union {
+        uint32_t char_lit;
+        double float_lit;
+
+        struct {
+            uint64_t lit;
+            Cuik_IntSuffix suffix;
+        } int_lit;
+
+        struct {
+            uint8_t len;
+            uint8_t indices[4];
+        } swizzle;
+
+        struct {
+            Cuik_Type* type;
+        } constructor;
+
+        struct {
+            Atom name;
+            ptrdiff_t next_symbol;
+        } unknown_sym;
+
+        struct {
+            Atom name;
+        } builtin_sym;
+
+        struct {
+            Stmt* stmt;
+            ptrdiff_t next_symbol;
+        } sym;
+
+        // EXPR_PARAM
+        int param_num;
+
+        struct {
+            Cuik_QualType type;
+            EnumEntry* num;
+        } enum_val;
+
+        struct {
+            Cuik_QualType type;
+        } va_arg_;
+
+        struct {
+            Cuik_QualType type;
+        } cast;
+
+        // represent both quoted literals
+        struct {
+            const unsigned char* start;
+            const unsigned char* end;
+        } str;
+
+        // either sizeof(T) or _Alignof(T)
+        struct {
+            Cuik_QualType type;
+        } x_of_type;
+
+        struct {
+            Cuik_QualType type;
+            InitNode* root;
+        } init;
+
+        struct {
+            // tells us the base is on the right side
+            bool flipped;
+        } ptrop;
+
+        struct {
+            // if case_count == 0, then controlling_expr is the matched expression
+            int case_count;
+            C11GenericEntry* cases;
+        } generic_;
+
+        struct {
+            uint32_t offset;
+
+            // during semantics we'll switch between DOT or ARROW to DOT_R or ARROW_R
+            // which means we use the member field
+            union {
+                Member* member;
+                Atom name;
+            };
+        } dot_arrow;
+
+        struct {
+            // the sides aren't in the same Cuik_Expr because they're conditionally run
+            Cuik_Expr *left, *right;
+        } ternary;
+
+        struct {
+            // the sides aren't in the same Cuik_Expr because they're conditionally run
+            Cuik_Expr *left, *right;
+        } logical_binop;
+
+        struct {
+            int param_count;
+        } call;
+    };
+};
+
+// # COMPRESSED EXPRESSIONS
+//   To represent a metric shitload of expressions in Cuik we compact them
+//   using a postfix notation. Instead of using pointers to refer to inputs
+//   it's implicit to this position in the expression stream.
+//
+//     1 x y * +                     +
+//                                  / \
+//                    versus       1   *
+//                                    / \
+//                                   x   y
+//
+// # CAST TYPE
+//   an Expr's cast_type is the type it'll be desugared into.
+//
+//     a + b where a and b are 16bit
+//
+//   their cast_type might be int because of C's
+//   promotion rules.
+//
+// # SYMBOL CHAIN
+//   an EXPR_SYMBOL or EXPR_UNKNOWN_SYMBOL will be part of a linked list which
+//   is used for knowing when symbols are in use.
+//
+struct Cuik_Expr {
+    size_t count;
+    bool visited;
+
+    ptrdiff_t first_symbol;
+    Cuik_Expr* next_in_chain;
+
+    // constructed during type checking
+    Cuik_QualType* types;
+    Cuik_QualType* cast_types;
+
+    // constructed during parse time
+    Subexpr* exprs;
+};
 
 static bool cuik_type_is_signed(const Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && !t->is_unsigned; }
 static bool cuik_type_is_unsigned(const Cuik_Type* t) { return (t->kind >= KIND_CHAR && t->kind <= KIND_LLONG) && t->is_unsigned; }
@@ -641,6 +896,16 @@ static bool cuik_type_is_aggregate(const Cuik_Type* t) { return t->kind >= KIND_
 static bool cuik_type_is_arithmatic(const Cuik_Type* t) { return t->kind >= KIND_BOOL && t->kind <= KIND_FUNC; }
 
 static bool cuik_type_can_deref(const Cuik_Type* t) { return t->kind == KIND_PTR || t->kind == KIND_ARRAY; }
+
+static bool cuik_type_implicit_ptr(const Cuik_Type* t) { return t->kind == KIND_FUNC || t->kind == KIND_ARRAY; }
+
+static bool cuik_type_can_swizzle(const Cuik_Type* t) {
+    if (t->kind == KIND_VECTOR && t->vector.base->kind != KIND_VECTOR && cuik_type_can_swizzle(t->vector.base)) {
+        return true;
+    }
+
+    return t->kind == KIND_INT || t->kind == KIND_FLOAT || t->kind == KIND_DOUBLE;
+}
 
 // takes in Cuik_QualType
 #define CUIK_QUAL_TYPE_NULL        (Cuik_QualType){ 0 }
@@ -682,16 +947,10 @@ static Cuik_Type* cuik_canonical_type(const Cuik_QualType t) {
 //   cuik_get_direct_type(T*)
 //     return T, *level is 1
 //
-static Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
-    int l = 0;
-    while (cuik_canonical_type(type)->kind == KIND_PTR) {
-        type = cuik_canonical_type(type)->ptr_to;
-        l += 1;
-    }
+CUIK_API Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level);
 
-    if (level != NULL) *level = l;
-    return type;
-}
+CUIK_API const char* cuik_stmt_decl_name(Stmt* stmt);
+CUIK_API Cuik_QualType cuik_stmt_decl_type(Stmt* stmt);
 
 ////////////////////////////////////////////
 // Type checker
@@ -711,32 +970,23 @@ CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool
 CUIK_API void cuik_dump(FILE* stream, size_t count, Stmt** top_level, bool minimalist);
 CUIK_API void cuik_dump_expr(FILE* stream, Expr* e, int depth);
 
-////////////////////////////////////////////
-// Iterators
-////////////////////////////////////////////
-typedef struct {
-    // public
-    Expr* expr;
+CUIK_API int cuik_get_expr_arity(Subexpr* e);
+CUIK_API const char* cuik_get_expr_name(Subexpr* e);
 
-    // internal
-    size_t index_;
-    Expr* parent_;
-} Cuik_ExprIter;
+#endif // CUIK_AST_H
 
-typedef struct {
-    // public
-    Stmt* stmt;
+#ifdef CUIK_AST_IMPL
+#undef CUIK_AST_IMPL // dumb style of include guard
 
-    // internal
-    size_t index_;
-    Stmt* parent_;
-} Cuik_StmtIter;
+Cuik_QualType cuik_get_direct_type(Cuik_QualType type, int* level) {
+    int l = 0;
+    while (cuik_canonical_type(type)->kind == KIND_PTR) {
+        type = cuik_canonical_type(type)->ptr_to;
+        l += 1;
+    }
 
-#define CUIK_FOR_KID_IN_STMT(it, parent_) \
-for (Cuik_StmtIter it = { .parent = (parent_) }; cuik_next_stmt_kid(&it);)
+    if (level != NULL) *level = l;
+    return type;
+}
 
-#define CUIK_FOR_KID_IN_EXPR(it, parent_) \
-for (Cuik_ExprIter it = { .parent = (parent_) }; cuik_next_expr_kid(&it);)
-
-CUIK_API bool cuik_next_expr_kid(Cuik_ExprIter* it);
-CUIK_API bool cuik_next_stmt_kid(Cuik_StmtIter* it);
+#endif // CUIK_AST_IMPL

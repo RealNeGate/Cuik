@@ -1,7 +1,7 @@
 #pragma once
 #include <common.h>
+#include <arena.h>
 #include "../str.h"
-#include "../arena.h"
 #include <dyn_array.h>
 #include <cuik_lex.h>
 
@@ -54,6 +54,10 @@ typedef enum TknType {
     TOKEN_IDENTIFIER = 256,
     TOKEN_INTEGER,
     TOKEN_FLOAT,
+
+    // it's like a string literal but no quotes
+    TOKEN_MAGIC_EMBED_STRING,
+
     TOKEN_TRIPLE_DOT = TKN3('.', '.', '.'),
 
     TOKEN_INVALID,
@@ -84,66 +88,13 @@ typedef enum TknType {
     TOKEN_INCREMENT         = TKN2('+', '+'),
     TOKEN_DECREMENT         = TKN2('-', '-'),
 
-    // this is hacky because ! is a single char
-    // token (sometimes used in !=) but this way
-    // it can share more rules with the rest of the
-    // tokens (less cases in the lexer).
-    TOKEN_DOUBLE_EXCLAMATION = TKN2('!', '!'),
-
     // Keywords (they start far higher up to avoid problems)
-    TOKEN_KW_auto = 0x10000000,
-    TOKEN_KW_break,
-    TOKEN_KW_case,
-    TOKEN_KW_char,
-    TOKEN_KW_const,
-    TOKEN_KW_continue,
-    TOKEN_KW_default,
-    TOKEN_KW_do,
-    TOKEN_KW_double,
-    TOKEN_KW_else,
-    TOKEN_KW_enum,
-    TOKEN_KW_extern,
-    TOKEN_KW_float,
-    TOKEN_KW_for,
-    TOKEN_KW_goto,
-    TOKEN_KW_if,
-    TOKEN_KW_inline,
-    TOKEN_KW_int,
-    TOKEN_KW_long,
-    TOKEN_KW_register,
-    TOKEN_KW_restrict,
-    TOKEN_KW_return,
-    TOKEN_KW_short,
-    TOKEN_KW_signed,
-    TOKEN_KW_sizeof,
-    TOKEN_KW_static,
-    TOKEN_KW_struct,
-    TOKEN_KW_switch,
-    TOKEN_KW_typedef,
-    TOKEN_KW_union,
-    TOKEN_KW_unsigned,
-    TOKEN_KW_void,
-    TOKEN_KW_volatile,
-    TOKEN_KW_while,
-    TOKEN_KW_Alignas,
-    TOKEN_KW_Alignof,
-    TOKEN_KW_Atomic,
-    TOKEN_KW_Bool,
-    TOKEN_KW_Complex,
-    TOKEN_KW_Generic,
-    TOKEN_KW_Imaginary,
-    TOKEN_KW_Pragma,
-    TOKEN_KW_Noreturn,
-    TOKEN_KW_Static_assert,
-    TOKEN_KW_Thread_local,
-    TOKEN_KW_Typeof,
-    TOKEN_KW_Vector,
-    TOKEN_KW_asm,
-    TOKEN_KW_attribute,
-    TOKEN_KW_cdecl,
-    TOKEN_KW_stdcall,
-    TOKEN_KW_declspec,
+    #include "keywords.h"
 } TknType;
+
+enum {
+    FIRST_GLSL_KEYWORD = TOKEN_KW_discard
+};
 
 #undef TKN2
 #undef TKN3
@@ -154,12 +105,14 @@ typedef struct {
     unsigned char* current;
 } Lexer;
 
+extern thread_local Arena thread_arena;
+
 // this is used by the preprocessor to scan tokens in
 Token lexer_read(Lexer* restrict l);
 
 ptrdiff_t parse_char(size_t len, const char* str, int* output);
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix);
-TknType classify_ident(const unsigned char* restrict str, size_t len);
+TknType classify_ident(const unsigned char* restrict str, size_t len, bool is_glsl);
 
 static SourceLoc offset_source_loc(SourceLoc loc, uint32_t offset) {
     return (SourceLoc){ loc.raw + offset };

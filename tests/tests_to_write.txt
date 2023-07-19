@@ -1,0 +1,10 @@
+Should write regression tests for these:
+
+- [ ] ternaries face the correct direction
+- [ ] short circuit ops work
+- [ ] sign extension
+
+
+
+What works in here:
+  test5.c works fine if you have enough memory

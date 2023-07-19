@@ -1,184 +1,46 @@
-#include <front/sema.h>
+#include "../front/sema.h"
 
-#define SWITCH_ITER switch (it->index_++)
-#define CASE_YIELD(k, v) case k: return (it->stmt = (v), true);
-#define CASE_END(k) case k: return false;
-
-#define SWITCH1(a)    SWITCH_ITER { CASE_YIELD(0, a); CASE_END(1); }
-#define SWITCH2(a, b) SWITCH_ITER { CASE_YIELD(0, a); CASE_YIELD(1, b); CASE_END(2); }
-
-bool cuik_next_stmt_kid(Cuik_StmtIter* it) {
-    Stmt* restrict s = it->parent_;
-    switch (s->op) {
-        case STMT_NONE:
-        case STMT_LABEL:
-        case STMT_GOTO:
-        case STMT_EXPR:
-        case STMT_RETURN:
-        case STMT_CONTINUE:
-        case STMT_BREAK:
-        case STMT_DECL:
-        case STMT_FUNC_DECL:
-        case STMT_GLOBAL_DECL:
-        return false;
-
-        case STMT_COMPOUND: {
-            int i = it->index_++;
-
-            Stmt** kids = s->compound.kids;
-            if (i < s->compound.kids_count) {
-                it->stmt = kids[i];
-                return true;
-            } else {
-                return false;
-            }
-            break;
-        }
-
-        case STMT_IF:
-        it->index_ += (it->index_ == 1 && s->if_.next == NULL);
-
-        SWITCH2(s->if_.body, s->if_.next);
-        break;
-
-        case STMT_WHILE:
-        // skip empty slots
-        it->index_ += (it->index_ == 0 && s->while_.body == NULL);
-
-        SWITCH1(s->while_.body);
-        break;
-
-        case STMT_DO_WHILE:
-        // skip empty slots
-        it->index_ += (it->index_ == 0 && s->do_while.body == NULL);
-
-        SWITCH1(s->do_while.body);
-        break;
-
-        case STMT_FOR:
-        // skip empty slots
-        it->index_ += (it->index_ == 0 && s->for_.first == NULL);
-        it->index_ += (it->index_ == 1 && s->for_.body == NULL);
-
-        SWITCH2(s->for_.first, s->for_.body);
-        break;
-
-        case STMT_SWITCH: SWITCH1(s->switch_.body); break;
-        case STMT_CASE: SWITCH1(s->case_.body); break;
-        case STMT_DEFAULT: SWITCH1(s->default_.body); break;
-    }
-
-    #ifdef _DEBUG
-    assert(0 && "StmtIter found unknown node");
-    #else
-    __builtin_unreachable();
-    #endif
-}
-
-bool cuik_next_expr_kid(Cuik_ExprIter* it) {
-    Expr* restrict e = it->parent_;
+int cuik_get_expr_arity(Subexpr* e) {
     switch (e->op) {
-        case EXPR_UNKNOWN_SYMBOL:
-        case EXPR_VA_ARG:
         case EXPR_INT:
-        case EXPR_ENUM:
-        case EXPR_FLOAT32:
-        case EXPR_FLOAT64:
         case EXPR_CHAR:
         case EXPR_WCHAR:
         case EXPR_STR:
         case EXPR_WSTR:
-        case EXPR_SIZEOF:
-        case EXPR_ALIGNOF:
-        case EXPR_SIZEOF_T:
-        case EXPR_ALIGNOF_T:
-        case EXPR_FUNCTION:
+        case EXPR_ENUM:
         case EXPR_SYMBOL:
+        case EXPR_BUILTIN_SYMBOL:
+        case EXPR_UNKNOWN_SYMBOL:
         case EXPR_PARAM:
-        return false;
-
-        case EXPR_INITIALIZER:
-        assert(0);
-        return false;
-
-        case EXPR_NOT:
-        case EXPR_ADDR:
-        case EXPR_DEREF:
-        case EXPR_NEGATE:
-        case EXPR_PRE_INC:
-        case EXPR_PRE_DEC:
-        case EXPR_POST_INC:
-        case EXPR_POST_DEC:
-        case EXPR_LOGICAL_NOT:
-        case EXPR_CAST: {
-            _Static_assert(offsetof(Expr, cast.src) == offsetof(Expr, unary_op.src), "these should be aliasing");
-            _Static_assert(offsetof(Expr, va_arg_.src) == offsetof(Expr, unary_op.src), "these should be aliasing");
-
-            switch (it->index_++) {
-                case 0: it->expr = e->unary_op.src; return true;
-                case 1: return false;
-                default: __builtin_unreachable();
-            }
-            break;
-        }
-
-        case EXPR_GENERIC: {
-            assert(e->generic_.case_count == 0);
-            switch (it->index_++) {
-                case 0: it->expr = e->generic_.controlling_expr; return true;
-                case 1: return false;
-                default: __builtin_unreachable();
-            }
-            break;
-        }
-
-        case EXPR_SUBSCRIPT:
-        switch (it->index_++) {
-            case 0: it->expr = e->subscript.base; return true;
-            case 1: it->expr = e->subscript.index; return true;
-            case 2: return false;
-            default: __builtin_unreachable();
-        }
-
-        case EXPR_CALL: {
-            int i = it->index_++;
-
-            if (i == 0) {
-                it->expr = e->call.target;
-                return true;
-            } else if ((i - 1) < e->call.param_count) {
-                it->expr = e->call.param_start[i - 1];
-                return true;
-            } else {
-                return false;
-            }
-        }
-
-        case EXPR_TERNARY:
-        switch (it->index_++) {
-            case 0: it->expr = e->ternary_op.left; return true;
-            case 1: it->expr = e->ternary_op.middle; return true;
-            case 2: it->expr = e->ternary_op.middle; return true;
-            case 3: return false;
-            default: __builtin_unreachable();
-        }
-
-        case EXPR_DOT:
-        case EXPR_ARROW:
-        case EXPR_DOT_R:
-        case EXPR_ARROW_R:
-        switch (it->index_++) {
-            case 0: it->expr = e->dot_arrow.base; return true;
-            case 1: return false;
-            default: __builtin_unreachable();
-        }
-
-        case EXPR_COMMA:
-        case EXPR_PTRADD:
-        case EXPR_PTRSUB:
-        case EXPR_PTRDIFF:
+        case EXPR_FLOAT32:
+        case EXPR_FLOAT64:
+        case EXPR_INITIALIZER: // { }
+        case EXPR_SIZEOF_T:    // sizeof(T)
+        case EXPR_CONSTRUCTOR: // ty
         case EXPR_LOGICAL_AND:
         case EXPR_LOGICAL_OR:
+        return 0;
+
+        case EXPR_CALL:
+        return e->call.param_count + 1;
+
+        case EXPR_DEREF:       // *expr
+        case EXPR_ADDR:        // &expr
+        case EXPR_NEGATE:      // -expr
+        case EXPR_NOT:         // ~expr
+        case EXPR_LOGICAL_NOT: // !expr
+        case EXPR_CAST:        // (ty) expr
+        case EXPR_VA_ARG:      // va_arg(expr, ty)
+        case EXPR_SWIZZLE:     // expr.xyzw
+        case EXPR_SIZEOF:      // sizeof(expr)
+        case EXPR_ALIGNOF_T:   // _Alignof(T)
+        case EXPR_GENERIC:     // _Generic(expr, cases)
+        case EXPR_DOT: case EXPR_DOT_R:
+        case EXPR_ARROW: case EXPR_ARROW_R:
+        case EXPR_PRE_INC: case EXPR_PRE_DEC:
+        case EXPR_POST_INC: case EXPR_POST_DEC:
+        return 1;
+
         case EXPR_PLUS:
         case EXPR_MINUS:
         case EXPR_TIMES:
@@ -189,29 +51,130 @@ bool cuik_next_expr_kid(Cuik_ExprIter* it) {
         case EXPR_XOR:
         case EXPR_SHL:
         case EXPR_SHR:
-        case EXPR_CMPEQ:
-        case EXPR_CMPNE:
-        case EXPR_CMPGT:
-        case EXPR_CMPGE:
-        case EXPR_CMPLT:
-        case EXPR_CMPLE:
+        case EXPR_ASSIGN:
         case EXPR_PLUS_ASSIGN:
         case EXPR_MINUS_ASSIGN:
-        case EXPR_ASSIGN:
         case EXPR_TIMES_ASSIGN:
         case EXPR_SLASH_ASSIGN:
+        case EXPR_PERCENT_ASSIGN:
         case EXPR_AND_ASSIGN:
         case EXPR_OR_ASSIGN:
         case EXPR_XOR_ASSIGN:
         case EXPR_SHL_ASSIGN:
         case EXPR_SHR_ASSIGN:
-        switch (it->index_++) {
-            case 0: it->expr = e->bin_op.left; return true;
-            case 1: it->expr = e->bin_op.right; return true;
-            case 2: return false;
-            default: __builtin_unreachable();
-        }
+        case EXPR_SUBSCRIPT:
+        case EXPR_CMPEQ:
+        case EXPR_CMPNE:
+        case EXPR_CMPGE:
+        case EXPR_CMPLE:
+        case EXPR_CMPGT:
+        case EXPR_CMPLT:
+        case EXPR_PTRADD:
+        case EXPR_PTRSUB:
+        case EXPR_PTRDIFF:
+        case EXPR_COMMA:
+        return 2;
 
-        default: assert(0); __builtin_unreachable();
+        // ternary only keeps the condition here
+        case EXPR_TERNARY:
+        return 1;
+
+        default:
+        log_error("Missing case! %d", e->op);
+        abort();
+    }
+}
+
+CUIK_API const char* cuik_get_expr_name(Subexpr* e) {
+    switch (e->op) {
+        case EXPR_NONE:           return "None";
+
+        case EXPR_INT:            return "Integer";
+        case EXPR_ENUM:           return "Enum";
+        case EXPR_FLOAT32:        return "Float32";
+        case EXPR_FLOAT64:        return "Float64";
+
+        case EXPR_WCHAR:          return "WideChar";
+        case EXPR_CHAR:           return "Char";
+        case EXPR_WSTR:           return "WideString";
+        case EXPR_STR:            return "String";
+
+        case EXPR_BUILTIN_SYMBOL: return "BuiltinSymbol";
+        case EXPR_UNKNOWN_SYMBOL: return "UnknownSymbol";
+        case EXPR_SYMBOL:         return "Symbol";
+        case EXPR_CONSTRUCTOR:    return "Constructor";
+        case EXPR_GENERIC:        return "Generic"; // C11's _Generic
+        case EXPR_VA_ARG:         return "VaArg";
+
+        case EXPR_INITIALIZER:    return "Initializer";
+
+        case EXPR_CAST:           return "Cast";
+        case EXPR_PARAM:          return "Param"; // special case of case EXPR_VAR
+        case EXPR_ASSIGN:         return "Assign";
+        case EXPR_PLUS_ASSIGN:    return "PlusAssign";
+        case EXPR_MINUS_ASSIGN:   return "MinusAssign";
+        case EXPR_TIMES_ASSIGN:   return "TimesAssign";
+        case EXPR_SLASH_ASSIGN:   return "SlashAssign";
+        case EXPR_PERCENT_ASSIGN: return "PercentAssign";
+        case EXPR_AND_ASSIGN:     return "AndAssign";
+        case EXPR_OR_ASSIGN:      return "OrAssign";
+        case EXPR_XOR_ASSIGN:     return "XorAssign";
+        case EXPR_SHL_ASSIGN:     return "ShiftLeftAssign";
+        case EXPR_SHR_ASSIGN:     return "ShiftRightAssign";
+
+        case EXPR_PLUS:           return "Plus";
+        case EXPR_MINUS:          return "Minus";
+        case EXPR_TIMES:          return "Times";
+        case EXPR_SLASH:          return "Slash";
+        case EXPR_PERCENT:        return "Percent";
+        case EXPR_AND:            return "And";
+        case EXPR_OR:             return "Or";
+        case EXPR_XOR:            return "Xor";
+        case EXPR_SHL:            return "ShiftLeft";
+        case EXPR_SHR:            return "ShiftRight";
+
+        case EXPR_CMPEQ:          return "Equal";
+        case EXPR_CMPNE:          return "NotEqual";
+        case EXPR_CMPGE:          return "GreaterEqual";
+        case EXPR_CMPLE:          return "LesserEqual";
+        case EXPR_CMPGT:          return "GreaterThan";
+        case EXPR_CMPLT:          return "LesserThan";
+
+        // these are resolved by semantics pass
+        case EXPR_PTRADD:         return "PointerAdd";
+        case EXPR_PTRSUB:         return "PointerSub";
+        case EXPR_PTRDIFF:        return "PointerDiff";
+
+        case EXPR_TERNARY:        return "Ternary";
+        case EXPR_COMMA:          return "Comma";
+
+        case EXPR_LOGICAL_NOT:    return "LogicalNot";
+        case EXPR_LOGICAL_AND:    return "LogicalAnd";
+        case EXPR_LOGICAL_OR:     return "LogicalOr";
+
+        case EXPR_DEREF:          return "Deref";
+        case EXPR_ADDR:           return "Addr";
+        case EXPR_NEGATE:         return "Negate";
+        case EXPR_NOT:            return "Not";
+        case EXPR_SUBSCRIPT:      return "Subscript";
+        case EXPR_DOT:            return "Dot";
+        case EXPR_ARROW:          return "Arrow";
+        case EXPR_DOT_R:          return "DotR";
+        case EXPR_ARROW_R:        return "ArrowR";
+        case EXPR_CALL:           return "Call";
+
+        case EXPR_SWIZZLE:        return "Swizzle"; // GLSL stuff: return ""; .xyxy
+        case EXPR_SIZEOF_T:       return "SizeofT";  // on type
+        case EXPR_SIZEOF:         return "Sizeof";   // on expr
+        case EXPR_ALIGNOF_T:      return "AlignofT"; // on type
+
+        case EXPR_PRE_INC:        return "PreIncrement";
+        case EXPR_PRE_DEC:        return "PreDecrement";
+        case EXPR_POST_INC:       return "PostIncrement";
+        case EXPR_POST_DEC:       return "PostDecrement";
+
+        default:
+        log_error("Missing case! %d", e->op);
+        abort();
     }
 }
