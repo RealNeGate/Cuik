@@ -60,7 +60,6 @@ static Decl parse_declarator(TranslationUnit* restrict tu, TokenStream* restrict
 
 // It's like parse_expr but it doesn't do anything with comma operators to avoid
 // parsing issues.
-static Expr* parse_initializer(TranslationUnit* tu, TokenStream* restrict s, Cuik_QualType type);
 static bool is_typename(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg);
 
@@ -240,7 +239,6 @@ static Cuik_Type* parse_glsl_type(Cuik_Parser* restrict parser, TokenStream* res
 static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_Qualifiers* quals);
 
 #define THROW_IF_ERROR() if ((r = cuikdg_error_count(s)) > 0) return (Cuik_ParseResult){ r };
-#define TYPE_INSERT(...) type_insert(&parser->types, __VA_ARGS__)
 
 #include "expr_fold.h"
 #include "expr_parser.h"

@@ -48,9 +48,6 @@ typedef struct {
     };
 } Cuik_ConstVal;
 
-// LEGACY, WE'RE REMOVING IT SOON
-typedef struct Expr Expr;
-
 typedef enum Cuik_Qualifiers {
     CUIK_QUAL_CONST    = (1u << 0u),
     CUIK_QUAL_VOLATILE = (1u << 1u),
@@ -592,141 +589,6 @@ struct Stmt {
     };
 };
 
-struct Expr {
-    ExprOp op : 8;
-
-    // some flags:
-    int has_parens : 1;
-    int has_visited : 1;
-
-    SourceRange loc;
-    Cuik_QualType type;
-
-    // this is the type it'll be desugared into
-    // for example:
-    //
-    //   a + b where a and b are 16bit
-    //
-    //   their cast_type might be int because of C's
-    //   promotion rules.
-    Cuik_QualType cast_type;
-
-    union {
-        struct {
-            Atom name;
-        } builtin_sym;
-
-        struct {
-            Atom unknown_sym;
-
-            // aliases with next_symbol_in_chain
-            Expr* next_symbol_in_chain2;
-        };
-
-        // TODO(NeGate): rename this unnamed struct to 'symbol'
-        struct {
-            // linked list of symbols within a function used to
-            // analyze used symbols more easily
-            Stmt* symbol;
-            Expr* next_symbol_in_chain;
-
-            // are we currently iterating a symbol with is_resolving_symbol
-            bool is_resolving_symbol;
-        };
-
-        // EXPR_PARAM
-        int param_num;
-
-        struct ExprEnum {
-            EnumEntry* num;
-        } enum_val;
-        struct {
-            Expr* src;
-            Cuik_QualType type;
-        } va_arg_;
-        struct {
-            Expr* src;
-            Cuik_QualType type;
-        } cast;
-        struct {
-            Expr* left;
-            Expr* middle;
-            Expr* right;
-        } ternary_op;
-        struct {
-            Expr* left;
-            Expr* right;
-        } bin_op;
-        struct {
-            Expr* base;
-            Expr* index;
-        } subscript;
-        struct {
-            Expr* src;
-        } unary_op;
-        struct {
-            Cuik_Type* type;
-        } constructor;
-        struct {
-            Expr* controlling_expr;
-
-            // if case_count == 0, then controlling_expr is the matched expression
-            int case_count;
-            C11GenericEntry* cases;
-        } generic_;
-        struct {
-            Expr* base;
-            uint32_t offset;
-
-            // during semantics we'll switch between DOT or ARROW to DOT_R or ARROW_R
-            // which means we use the member field
-            union {
-                Member* member;
-                Atom name;
-            };
-        } dot_arrow;
-        struct {
-            Expr* target;
-            int param_count;
-
-            Expr** param_start;
-        } call;
-        // represent both quoted literals
-        struct {
-            const unsigned char* start;
-            const unsigned char* end;
-        } str;
-        // either sizeof(T) or _Alignof(T)
-        struct {
-            Cuik_QualType type;
-        } x_of_type;
-        // either sizeof(expr)
-        struct {
-            Expr* expr;
-        } x_of_expr;
-        struct {
-            Cuik_QualType type;
-            InitNode* root;
-        } init;
-        struct {
-            Stmt* src;
-        } func;
-        struct {
-            Expr* base;
-
-            uint8_t len;
-            uint8_t indices[4];
-        } swizzle;
-
-        int char_lit;
-        double float_num;
-        struct ExprInt {
-            unsigned long long num;
-            Cuik_IntSuffix suffix;
-        } int_num;
-    };
-};
-
 struct Subexpr {
     SourceRange loc;
     ExprOp op : 8;
@@ -968,7 +830,6 @@ CUIK_API int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restri
 CUIK_API void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist);
 
 CUIK_API void cuik_dump(FILE* stream, size_t count, Stmt** top_level, bool minimalist);
-CUIK_API void cuik_dump_expr(FILE* stream, Expr* e, int depth);
 
 CUIK_API int cuik_get_expr_arity(Subexpr* e);
 CUIK_API const char* cuik_get_expr_name(Subexpr* e);

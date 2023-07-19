@@ -806,6 +806,8 @@ TB_API TB_Node* tb_inst_incomplete_phi(TB_Function* f, TB_DataType dt, TB_Node* 
 }
 
 TB_API bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* region, TB_Node* val) {
+    region = tb_get_parent_region(region);
+
     TB_Node* phi_region = phi->inputs[0];
 
     // the slot to fill is based on the predecessor list of the region

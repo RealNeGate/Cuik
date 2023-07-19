@@ -287,70 +287,6 @@ static void fill_all(TB_FuncOpt* restrict opt, TB_Node* n) {
     }
 }
 
-/*static TB_Node* peephole_node(TB_FuncOpt* restrict queue, TB_Function* f, TB_Node* n) {
-    switch (n->type) {
-        case TB_NOT:
-        case TB_NEG:
-        return try_unary_fold(f, queue, n);
-
-        // integer ops
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
-        case TB_MUL:
-        case TB_SHL:
-        case TB_SHR:
-        case TB_SAR:
-        case TB_CMP_EQ:
-        case TB_CMP_NE:
-        case TB_CMP_SLT:
-        case TB_CMP_SLE:
-        case TB_CMP_ULT:
-        case TB_CMP_ULE:
-        return try_int_binop_fold(f, queue, n);
-
-        // division
-        case TB_SDIV:
-        case TB_UDIV:
-        return try_idiv_fold(f, queue, n);
-
-        case TB_SIGN_EXT:
-        case TB_ZERO_EXT:
-        return try_extension_fold(f, queue, n);
-
-        // array access
-        case TB_ARRAY_ACCESS: {
-            return NULL;
-        }
-
-        // memory
-        case TB_LOAD:
-        return try_load_opts(f, queue, n);
-
-        // dumb phis
-        case TB_PHI: {
-            TB_Node* same = n->inputs[1];
-            FOREACH_N(i, 2, n->input_count) {
-                if (same != n->inputs[i]) return NULL;
-            }
-
-            return same;
-        }
-
-        // special functions
-        case TB_CALL:
-        if (n->inputs[1]->type == TB_GET_SYMBOL_ADDRESS) {
-            return try_libcalls_fold(f, queue, n);
-        }
-        return NULL;
-
-        // no changes
-        default: return NULL;
-    }
-}*/
-
 static void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
@@ -421,6 +357,9 @@ static TB_Node* idealize(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         case TB_ZERO_EXT:
         return ideal_extension(opt, f, n);
 
+        case TB_INT2PTR:
+        return ideal_int2ptr(opt, f, n);
+
         // truncate
         case TB_TRUNCATE:
         return ideal_truncate(opt, f, n);
@@ -430,18 +369,7 @@ static TB_Node* idealize(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
 
         // control flow
         case TB_BRANCH:
-        // "this is what graph rewriting looks like, you may not like it but this is peak optimizer"
-        // "CPU caches hate this trick"
-        // "billions must stall"
-        if (n->input_count == 1 &&
-            n->inputs[0]->type == TB_REGION &&
-            n->inputs[0]->input_count == 1 &&
-            n->inputs[0]->inputs[0]->type == TB_PROJ &&
-            n->inputs[0]->inputs[0]->inputs[0]->type == TB_BRANCH &&
-            n->inputs[0]->inputs[0]->inputs[0]->input_count == 1) {
-            return n->inputs[0]->inputs[0]->inputs[0];
-        }
-        return NULL;
+        return ideal_branch(opt, f, n);
 
         default:
         return NULL;
@@ -468,6 +396,16 @@ static TB_Node* identity(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         case TB_CMP_ULT:
         case TB_CMP_ULE:
         return identity_int_binop(opt, f, n);
+
+        // dumb phis
+        case TB_PHI: {
+            TB_Node* same = n->inputs[1];
+            FOREACH_N(i, 2, n->input_count) {
+                if (same != n->inputs[i]) return NULL;
+            }
+
+            return same;
+        }
 
         default:
         return n;

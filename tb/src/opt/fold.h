@@ -56,6 +56,37 @@ static TB_Node* ideal_truncate(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node
     return new_n;
 }
 
+static TB_Node* ideal_branch(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+    // "this is what graph rewriting looks like, you may not like it but this is peak optimizer"
+    // "CPU caches hate this trick"
+    // "billions must stall"
+    if (n->input_count == 1 &&
+        n->inputs[0]->type == TB_REGION &&
+        n->inputs[0]->input_count == 1 &&
+        n->inputs[0]->inputs[0]->type == TB_PROJ &&
+        n->inputs[0]->inputs[0]->inputs[0]->type == TB_BRANCH &&
+        n->inputs[0]->inputs[0]->inputs[0]->input_count == 1) {
+        return n->inputs[0]->inputs[0]->inputs[0];
+    }
+
+    return NULL;
+}
+
+static TB_Node* ideal_int2ptr(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+    TB_Node* src = n->inputs[0];
+    if (src->type != TB_INTEGER_CONST) {
+        return NULL;
+    }
+
+    TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
+
+    TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, src_i->num_words);
+    BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
+
+    BigInt_copy(src_i->num_words, words, src_i->words);
+    return new_n;
+}
+
 static TB_Node* ideal_extension(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[0];
     if (src->type != TB_INTEGER_CONST) {

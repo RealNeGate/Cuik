@@ -68,7 +68,7 @@ static ExprInfo get_binop(TknType ty) {
 static Subexpr* push_expr(Cuik_Parser* parser) {
     if (parser->expr == NULL) {
         parser->expr = ARENA_ALLOC(parser->arena, Cuik_Expr);
-        *parser->expr = (Cuik_Expr){ .exprs = tls_push(0), .first_symbol = SIZE_MAX };
+        *parser->expr = (Cuik_Expr){ .exprs = tls_push(0), .first_symbol = -1 };
     }
 
     return tls_push(sizeof(Subexpr));
@@ -88,13 +88,14 @@ static Cuik_Expr* complete_expr(Cuik_Parser* parser) {
     memcpy(exprs, e->exprs, count * sizeof(Subexpr));
     tls_restore(e->exprs);
 
+    if (e->first_symbol >= 0) {
+        parser->expr->next_in_chain = symbol_chain_start;
+        symbol_chain_start = parser->expr;
+    }
+
     e->exprs = exprs;
     parser->expr = NULL;
     return e;
-}
-
-static Expr* alloc_expr(Cuik_Parser* parser) {
-    return ARENA_ALLOC(parser->arena, Expr);
 }
 
 static InitNode* make_init_node(Cuik_Parser* parser, TokenStream* restrict s, int mode) {
@@ -402,11 +403,6 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             // and if it's an EXPR_SYMBOL then sym != NULL so we don't check
             // that here
             if (e->op == EXPR_SYMBOL && sym->storage_class != STORAGE_PARAM && sym->storage_class != STORAGE_ENUM && sym->storage_class != STORAGE_TYPEDEF && sym->storage_class != STORAGE_LOCAL) {
-                if (symbol_chain_start != parser->expr) {
-                    parser->expr->next_in_chain = symbol_chain_start;
-                    symbol_chain_start = parser->expr;
-                }
-
                 // append to list inside of the expression
                 ptrdiff_t i = e - parser->expr->exprs;
                 e->sym.next_symbol = parser->expr->first_symbol;
@@ -918,20 +914,15 @@ static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, i
 
                 // relocate symbols
                 ptrdiff_t start_i = start_of_expr - hide->exprs;
+
+                // if it's part of the left expression, move it out
+                // of the hidden expression.
                 ptrdiff_t sym = hide->first_symbol;
-                if (sym >= start_i) {
-                    first_sym = sym - start_i;
-                    hide->first_symbol = -1;
-                }
-
-                while (sym >= 0) {
+                while (sym >= start_i) {
                     ptrdiff_t next = hide->exprs[sym].sym.next_symbol;
-                    if (next >= start_i) {
-                        if (first_sym < 0) first_sym = next - start_i;
 
-                        hide->exprs[sym].sym.next_symbol = next - start_i;
-                    }
-                    sym = next;
+                    hide->exprs[sym].sym.next_symbol = next - start_i;
+                    hide->first_symbol = next;
                 }
 
                 // copy
@@ -942,6 +933,11 @@ static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, i
 
                 left = ARENA_ALLOC(parser->arena, Cuik_Expr);
                 *left = (Cuik_Expr){ .exprs = exprs, .count = count, .first_symbol = first_sym };
+
+                if (left->first_symbol >= 0) {
+                    left->next_in_chain = symbol_chain_start;
+                    symbol_chain_start = left;
+                }
             }
 
             parse_binop(parser, s, binop.prec + 1);
