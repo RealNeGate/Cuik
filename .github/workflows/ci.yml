@@ -19,12 +19,12 @@ jobs:
       - name: Build Cuik
         shell: cmd
         timeout-minutes: 10
-        run: lua build.lua
+        run: lua build.lua -driver
 
       - name: Build Cuik DLL
         shell: cmd
         timeout-minutes: 10
-        run: lua build.lua -shared
+        run: lua build.lua -shared -cuik -tb
 
       - name: upload artifacts
         uses: actions/upload-artifact@v3
@@ -50,7 +50,7 @@ jobs:
         run: git submodule update --init --recursive
 
       - name: Build Cuik
-        run: lua build.lua
+        run: lua build.lua -driver
         timeout-minutes: 10
 
       - name: upload artifacts
