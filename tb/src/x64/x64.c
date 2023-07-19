@@ -1070,15 +1070,23 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                 // hint input to be RAX
                 int src_vreg = isel(ctx, n->inputs[1]);
-                hint(ctx, src_vreg, RAX);
+
+                // does this really need to be here?
+                fence(ctx);
 
                 // we ain't gotta worry about regalloc here, we dippin
-                int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
-                SUBMIT(inst_copy(n->inputs[1]->dt, rax, USE(src_vreg)));
-            }
+                if (n->inputs[1]->dt.type == TB_FLOAT) {
+                    hint(ctx, src_vreg, XMM0);
 
-            // does this really need to be here?
-            fence(ctx);
+                    int xmm0 = DEF_FORCED(n, REG_CLASS_XMM, XMM0, -1);
+                    SUBMIT(inst_r(FP_MOV, n->inputs[1]->dt, xmm0, USE(src_vreg)));
+                } else {
+                    hint(ctx, src_vreg, RAX);
+
+                    int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
+                    SUBMIT(inst_r(MOV, n->inputs[1]->dt, rax, USE(src_vreg)));
+                }
+            }
 
             if (ctx->fallthrough != NULL) {
                 SUBMIT(inst_jmp(NULL));

@@ -187,7 +187,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
         diag_err(&ctx->tokens, loc, "couldn't find file: %s", filename);
         dyn_array_for(i, ctx->system_include_dirs) {
             Cuik_Path* p = ctx->system_include_dirs[i].path;
-            diag_note(&ctx->tokens, loc, "also tried %s%s", p->data, filename);
+            diag_extra(&ctx->tokens, "also tried %s%s", p->data, filename);
         }
         return DIRECTIVE_ERROR;
     }
