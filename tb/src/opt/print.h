@@ -256,7 +256,9 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
             case TB_UNREACHABLE: printf("  unreachable\n"); break;
 
             case TB_STORE: {
-                printf("  store ");
+                printf("  store.");
+                print_type(n->inputs[2]->dt);
+                printf(" ");
                 print_ref_to_node(ctx, n->inputs[1]);
                 printf(", ");
                 print_ref_to_node(ctx, n->inputs[2]);
@@ -278,7 +280,11 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                         if (i != 1) printf(", ");
                         print_ref_to_node(ctx, n->inputs[i]);
                     }
-                    printf(" != %"PRId64" then ", br->keys[0]);
+                    if (br->keys[0] == 0) {
+                        printf(" then ");
+                    } else {
+                        printf(" != %"PRId64" then ", br->keys[0]);
+                    }
                     print_ref_to_node(ctx, region->succ[0]);
                     printf(" else ");
                     print_ref_to_node(ctx, region->succ[1]);
@@ -357,7 +363,8 @@ bool tb_funcopt_print(TB_FuncOpt* opt) {
         if (bb->input_count > 0) {
             printf(" # preds: ");
             FOREACH_N(j, 0, bb->input_count) {
-                printf(".bb%zu ", find_print_label(&ctx, tb_get_parent_region(bb->inputs[j])));
+                print_ref_to_node(&ctx, tb_get_parent_region(bb->inputs[j]));
+                printf(" ");
             }
         }
         printf("\n");

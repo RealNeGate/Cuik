@@ -98,6 +98,19 @@ bool cse_compare(void* a, void* b) {
             return aa->sym == bb->sym;
         }
 
+        case TB_CMP_EQ:
+        case TB_CMP_NE:
+        case TB_CMP_ULT:
+        case TB_CMP_ULE:
+        case TB_CMP_SLT:
+        case TB_CMP_SLE:
+        case TB_CMP_FLT:
+        case TB_CMP_FLE: {
+            TB_NodeCompare* aa = TB_NODE_GET_EXTRA(x);
+            TB_NodeCompare* bb = TB_NODE_GET_EXTRA(y);
+            return aa->cmp_dt.raw == bb->cmp_dt.raw;
+        }
+
         default: return false;
     }
 }
