@@ -1053,10 +1053,7 @@ TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 ////////////////////////////////
 // Optimizer
 ////////////////////////////////
-
-// Function-level optimizations are managed via TB_FuncOpt, it's tied
-// to a single TB_Function and it'll can be used to run peepholes incrementally
-// between whatever passes TB may have.
+// Function analysis, optimizations, and codegen are all part of this
 typedef struct TB_FuncOpt TB_FuncOpt;
 
 // the arena is used to allocate the nodes

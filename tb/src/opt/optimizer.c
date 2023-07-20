@@ -14,7 +14,7 @@
 #include "../tb_internal.h"
 #include <log.h>
 
-#define TB_OPTDEBUG_PEEP 1
+#define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
