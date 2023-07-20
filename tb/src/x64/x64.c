@@ -599,7 +599,7 @@ static void finna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num) {
 
 static ptrdiff_t alloc_free_reg(Ctx* restrict ctx, int reg_class) {
     if (reg_class == REG_CLASS_GPR) {
-        static const GPR queue[] = { RAX, RCX, RDX, R8, R9, RDI, RSI, R10, R12, R13, R14, R15 };
+        static const GPR queue[] = { RAX, RCX, RDX, R8, R9, RDI, RSI, RBX, R10, R11, R12, R13, R14, R15 };
         FOREACH_N(i, 0, COUNTOF(queue)) {
             if (set_first_time(&ctx->used_regs[reg_class], queue[i])) {
                 return queue[i];
@@ -963,10 +963,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
         case TB_SHL:
         case TB_SHR:
+        case TB_SAR:
         case TB_ROL:
-        case TB_ROR:
-        case TB_SAR: {
-            const static InstType ops[] = { SHL, SHR, ROL, ROR, SAR };
+        case TB_ROR: {
+            const static InstType ops[] = { SHL, SHR, SAR, ROL, ROR };
             InstType op = ops[type - TB_SHL];
 
             dst = DEF(n, REG_CLASS_GPR);
@@ -1195,7 +1195,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             } else if (bits_in_type <= 64) op = MOV;
             else tb_todo();
 
-            // src->type == TB_LOAD && nl_map_get(ctx->values, src) < 0
             if (use_load(ctx, src)) {
                 Inst inst = isel_load(ctx, src, dst);
                 inst.type = op;

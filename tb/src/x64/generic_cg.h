@@ -689,14 +689,15 @@ static void fence(Ctx* restrict ctx) {
 static void scan_for_effects(Ctx* restrict ctx, TB_Node* n) {
     if (!nl_hashset_put(&ctx->visited, n)) {
         if (n->type == TB_LOAD) {
-            nl_map_get_checked(ctx->effects, n->inputs[0])->uses++;
+            nl_map_get_checked(ctx->effects, n)->uses++;
         }
 
         return;
     }
 
     if (n->type == TB_LOAD) {
-        insert_effect(ctx, nl_map_get_checked(ctx->effects, n->inputs[0]), n);
+        Effect* ld = insert_effect(ctx, nl_map_get_checked(ctx->effects, n->inputs[0]), n);
+        nl_map_put(ctx->effects, n, ld);
     } else if (n->type == TB_PHI) {
         Effect* parent = nl_map_get_checked(ctx->effects, n->inputs[0]);
         insert_effect(ctx, parent, n);
@@ -725,7 +726,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     };
 
-    ctx.emit.emit_asm = true;
+    // ctx.emit.emit_asm = true;
     /* if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/

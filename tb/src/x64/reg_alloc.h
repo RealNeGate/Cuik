@@ -1,6 +1,6 @@
 // TODO(NeGate): We should switch to Efficient global regsiter allocation, 2011
 // https://arxiv.org/pdf/2011.05608.pdf
-#define REG_ALLOC_LOG if (1)
+#define REG_ALLOC_LOG if (0)
 
 // returns true if used in the next n instructions
 static bool check_if_used(Ctx* restrict ctx, Inst* inst, int def_i, int n) {
