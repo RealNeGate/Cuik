@@ -1,4 +1,27 @@
 #include <stddef.h>
+
+int nil_pilled(int* ptr) {
+    if (ptr) {
+        int x = ptr[0];
+
+        if (ptr != NULL) {
+            return x * ptr[1];
+        }
+    }
+
+    return 0;
+}
+
+#if 0
+int cmp_test(int x) {
+    if (x == 5) {
+        return 4;
+    }
+
+    return 0;
+}
+
+#include <stddef.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -12,7 +35,6 @@ void zero_array(int n, char* arr) {
     }
 }
 
-#if 0
 int sigma(void* p) {
     return p;
 }

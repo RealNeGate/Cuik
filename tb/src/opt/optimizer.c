@@ -15,7 +15,7 @@
 #include <log.h>
 
 #define TB_OPTDEBUG_PEEP 0
-#define TB_OPTDEBUG_LOOP 1
+#define TB_OPTDEBUG_LOOP 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
 #define DO_IF_0(...)
@@ -38,6 +38,8 @@ struct TB_FuncOpt {
 
     DynArray(TB_Node*) queue;
     NL_Map(TB_Node*, int) lookup;
+
+    TB_Dominators doms;
 
     // we wanna track locals because it's nice and easy
     DynArray(TB_Node*) locals;
@@ -68,6 +70,8 @@ static TB_Node* clone_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* re
 // node creation helpers
 TB_Node* make_int_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, TB_Node* src, int i);
+
+static void remove_pred(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* src, TB_Node* dst);
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt) {
     switch (dt.type) {
@@ -126,6 +130,31 @@ TB_Node* make_proj_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt
 static TB_Node* clone_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node) {
     assert(0 && "TODO");
     return NULL;
+}
+
+static void remove_input(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n, size_t i) {
+    // remove swap
+    n->input_count--;
+    if (n->input_count > 0) {
+        set_input(opt, n, NULL, n->input_count);
+        set_input(opt, n, n->inputs[n->input_count], i);
+    }
+}
+
+// src -//-> dst
+static void remove_pred(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* src, TB_Node* dst) {
+    FOREACH_N(i, 0, dst->input_count) {
+        if (tb_get_parent_region(dst->inputs[i]) == src) {
+            remove_input(opt, f, dst, i);
+
+            // update PHIs
+            for (User* use = find_users(opt, dst); use; use = use->next) {
+                assert(use->slot == 0);
+                remove_input(opt, f, use->n, i);
+            }
+            break;
+        }
+    }
 }
 
 void tb_transmute_to_poison(TB_FuncOpt* restrict opt, TB_Node* n) {
@@ -240,7 +269,7 @@ void tb_funcopt_mark_users(TB_FuncOpt* restrict opt, TB_Node* n) {
 
         // if the store is changed, the users (potential loads) should
         // be notified.
-        if (use->n->type == TB_STORE || use->n->type == TB_REGION || use->n->type == TB_PROJ) {
+        if (use->n->type == TB_STORE || use->n->type == TB_REGION || use->n->type == TB_PROJ || use->n->type == TB_CMP_NE || use->n->type == TB_CMP_EQ) {
             tb_funcopt_mark_users(opt, use->n);
         }
     }
@@ -397,11 +426,17 @@ static TB_Node* identity(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         case TB_CMP_ULE:
         return identity_int_binop(opt, f, n);
 
+        case TB_MEMBER_ACCESS:
+        if (TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset == 0) {
+            return n->inputs[0];
+        }
+        return n;
+
         // dumb phis
         case TB_PHI: {
             TB_Node* same = n->inputs[1];
             FOREACH_N(i, 2, n->input_count) {
-                if (same != n->inputs[i]) return NULL;
+                if (same != n->inputs[i]) return n;
             }
 
             return same;
@@ -430,6 +465,43 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         return NULL;
     }
 
+    // special case is peepholes on regions, we're basically just checking
+    // for jump threading here
+    //
+    // if there's one predecessor and it's to an unconditional branch, merge them.
+    if (n->type == TB_REGION) {
+        if (
+            n->input_count == 1 &&
+            n->inputs[0]->type == TB_PROJ &&
+            n->inputs[0]->inputs[0]->type == TB_BRANCH &&
+            n->inputs[0]->inputs[0]->input_count == 1
+        ) {
+            TB_Node* top_node = unsafe_get_region(n->inputs[0]);
+            TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
+            TB_NodeRegion* bot_region = TB_NODE_GET_EXTRA(n);
+
+            // update k's sucessors to what n says
+            size_t succ_count = bot_region->succ_count;
+            if (succ_count == 0) {
+                top_region->succ_count = 0;
+                top_region->succ = NULL;
+    	    } else {
+                if (top_region->succ_count < succ_count) {
+                    top_region->succ_count = succ_count;
+                    top_region->succ = alloc_from_node_arena(f, succ_count * sizeof(TB_Node*));
+                }
+                memcpy(top_region->succ, bot_region->succ, succ_count * sizeof(TB_Node*));
+            }
+
+            // stitch bot_region's top to the top_region's bottom
+            subsume_node(opt, f, n, n->inputs[0]->inputs[0]->inputs[0]);
+            top_region->end = bot_region->end;
+            return n;
+        } else {
+            return NULL;
+        }
+    }
+
     #if TB_OPTDEBUG_PEEP
     printf("peep? ");
     print_node_sexpr(f, n, 0);
@@ -448,42 +520,8 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
 
         // transfer users from n -> k
         if (n != k) {
-            // if we're modifying a branch, we'll need to update Region data
-            if (UNLIKELY(terminator)) {
-                tb_assert(is_terminator(k), "k must be either a terminator for this peephole to be legal");
-                TB_NodeRegion* new_region = TB_NODE_GET_EXTRA(unsafe_get_region(k));
-
-                // update k's sucessors to what n says
-                size_t succ_count = 0;
-                for (User* use = find_users(opt, n); use != NULL; use = use->next) succ_count++;
-
-                // resize new successors
-                if (new_region->succ_count != succ_count) {
-                    new_region->succ_count = succ_count;
-                    new_region->succ = alloc_from_node_arena(f, succ_count * sizeof(TB_Node*));
-                }
-
-                User* use = find_users(opt, n);
-                while (use != NULL) {
-                    tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
-
-                    // set_input will delete 'use' so we can't use it afterwards
-                    TB_Node* use_n = use->n;
-                    User* next = use->next;
-
-                    set_input(opt, use->n, k, use->slot);
-
-                    TB_Node* succ_region = find_users(opt, use->n)->n;
-                    assert(succ_region->type == TB_REGION);
-                    new_region->succ[use->slot] = succ_region;
-
-                    use = next;
-                }
-
-                tb_funcopt_mark_users(opt, k);
-            } else {
-                subsume_node(opt, f, n, k);
-            }
+            tb_assert(!terminator, "can't peephole a branch into a new branch");
+            subsume_node(opt, f, n, k);
 
             n = k;
         }
@@ -556,6 +594,11 @@ TB_FuncOpt* tb_funcopt_enter(TB_Function* f, TB_Arena* arena) {
 
     opt->cse_nodes = nl_hashset_alloc(f->node_count);
 
+    // generate dominators
+    TB_PostorderWalk order = tb_function_get_postorder(f);
+    opt->doms = tb_get_dominators(f, order);
+    tb_function_free_postorder(&order);
+
     CUIK_TIMED_BLOCK("nl_map_create") {
         nl_map_create(opt->lookup, f->node_count);
     }
@@ -602,6 +645,7 @@ void tb_funcopt_exit(TB_FuncOpt* opt) {
     nl_hashset_free(opt->cse_nodes);
 
     arena_clear(&tb__arena);
+    nl_map_free(opt->doms);
     nl_map_free(opt->users);
     nl_map_free(opt->lookup);
     dyn_array_destroy(opt->queue);

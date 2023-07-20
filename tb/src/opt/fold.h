@@ -57,16 +57,71 @@ static TB_Node* ideal_truncate(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node
 }
 
 static TB_Node* ideal_branch(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
-    // "this is what graph rewriting looks like, you may not like it but this is peak optimizer"
-    // "CPU caches hate this trick"
-    // "billions must stall"
-    if (n->input_count == 1 &&
-        n->inputs[0]->type == TB_REGION &&
-        n->inputs[0]->input_count == 1 &&
-        n->inputs[0]->inputs[0]->type == TB_PROJ &&
-        n->inputs[0]->inputs[0]->inputs[0]->type == TB_BRANCH &&
-        n->inputs[0]->inputs[0]->inputs[0]->input_count == 1) {
-        return n->inputs[0]->inputs[0]->inputs[0];
+    TB_Node* bb = tb_get_parent_region(n);
+    TB_NodeRegion* region = TB_NODE_GET_EXTRA(bb);
+    if (region->succ_count != 2) return NULL;
+
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    if (br->keys[0] == 0) {
+        // br ((x != y) != 0) => br (x != y)
+        TB_NodeTypeEnum cmp_type = n->inputs[1]->type;
+        if ((cmp_type == TB_CMP_NE || cmp_type == TB_CMP_EQ) && n->inputs[1]->inputs[1]->type == TB_INTEGER_CONST) {
+            TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[1]->inputs[1]);
+            if (i->num_words == 1) {
+                set_input(opt, n, n->inputs[1]->inputs[0], 1);
+                br->keys[0] = i->words[0];
+
+                // flip successors
+                if (cmp_type == TB_CMP_EQ) {
+                    SWAP(TB_Node*, region->succ[0], region->succ[1]);
+                }
+                return n;
+            }
+        }
+    }
+
+    // walk dominators to see if we've already checked this condition
+    TB_Node* other_bb = bb;
+    while (other_bb != f->start_node) retry: {
+        other_bb = nl_map_get_checked(opt->doms, other_bb);
+
+        TB_NodeRegion* other_region = TB_NODE_GET_EXTRA(other_bb);
+        TB_Node* latch = other_region->end;
+        if (latch->type != TB_BRANCH) break;
+        if (latch->input_count != 2) continue;
+
+        bool hit = false;
+        ptrdiff_t j = -1;
+        FOREACH_N(i, 0, other_region->succ_count) {
+            if (tb_is_dominated_by(opt->doms, other_region->succ[i], bb)) {
+                // duplicates means ambiguous which we can't know much about
+                if (j >= 0) goto retry;
+                j = i;
+            }
+        }
+
+        TB_NodeBranch* latch_br = TB_NODE_GET_EXTRA(latch);
+        if (j >= 0 && latch->inputs[1] == n->inputs[1] && latch_br->keys[0] == br->keys[0]) {
+            TB_Node* dead_block = region->succ[1 - j];
+
+            // convert conditional into goto
+            set_input(opt, n, NULL, 1);
+            n->input_count = 1;
+            region->succ_count = 1;
+            region->succ[0] = region->succ[j];
+
+            assert(dead_block->input_count == 1);
+            set_input(opt, dead_block, NULL, 0);
+            dead_block->input_count = 0;
+
+            // remove predecessor from dead_block's successors
+            TB_NodeRegion* dead_region = TB_NODE_GET_EXTRA(dead_block);
+            FOREACH_N(k, 0, dead_region->succ_count) {
+                remove_pred(opt, f, dead_block, dead_region->succ[k]);
+            }
+
+            return n;
+        }
     }
 
     return NULL;
