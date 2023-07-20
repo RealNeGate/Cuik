@@ -1079,12 +1079,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     hint(ctx, src_vreg, XMM0);
 
                     int xmm0 = DEF_FORCED(n, REG_CLASS_XMM, XMM0, -1);
-                    SUBMIT(inst_r(FP_MOV, n->inputs[1]->dt, xmm0, USE(src_vreg)));
+                    SUBMIT(inst_copy(n->inputs[1]->dt, xmm0, USE(src_vreg)));
                 } else {
                     hint(ctx, src_vreg, RAX);
 
                     int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
-                    SUBMIT(inst_r(MOV, n->inputs[1]->dt, rax, USE(src_vreg)));
+                    SUBMIT(inst_copy(n->inputs[1]->dt, rax, USE(src_vreg)));
                 }
             }
 
@@ -1860,6 +1860,10 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
 }
 
 static size_t emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
+    if (saved == 0 && stack_usage == 16) {
+        return 0;
+    }
+
     size_t used = 0;
 
     // push rbp
@@ -1928,6 +1932,11 @@ static size_t emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) 
 }
 
 static size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
+    if (saved == 0 && stack_usage == 16) {
+        out[0] = 0xC3; // just RET
+        return 1;
+    }
+
     size_t used = 0;
 
     // reload XMMs
