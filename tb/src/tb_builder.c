@@ -590,6 +590,14 @@ TB_API TB_Node* tb_inst_shl(TB_Function* f, TB_Node* a, TB_Node* b, TB_Arithmeti
     return tb_bin_arith(f, TB_SHL, arith_behavior, a, b);
 }
 
+TB_API TB_Node* tb_inst_rol(TB_Function* f, TB_Node* a, TB_Node* b) {
+    return tb_bin_arith(f, TB_ROL, 0, a, b);
+}
+
+TB_API TB_Node* tb_inst_ror(TB_Function* f, TB_Node* a, TB_Node* b) {
+    return tb_bin_arith(f, TB_ROR, 0, a, b);
+}
+
 ////////////////////////////////
 // Atomics
 ////////////////////////////////

@@ -288,7 +288,7 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
 
             // try normal path
             if (reg_num < 0) {
-                reg_num = set_pop_any(&ctx->used_regs[rc]);
+                reg_num = alloc_free_reg(ctx, rc);
             }
 
             if (reg_num < 0) {

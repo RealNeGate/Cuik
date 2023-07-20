@@ -14,7 +14,7 @@
 #include "../tb_internal.h"
 #include <log.h>
 
-#define TB_OPTDEBUG_PEEP 0
+#define TB_OPTDEBUG_PEEP 1
 #define TB_OPTDEBUG_LOOP 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
@@ -269,7 +269,10 @@ void tb_funcopt_mark_users(TB_FuncOpt* restrict opt, TB_Node* n) {
 
         // if the store is changed, the users (potential loads) should
         // be notified.
-        if (use->n->type == TB_STORE || use->n->type == TB_REGION || use->n->type == TB_PROJ || use->n->type == TB_CMP_NE || use->n->type == TB_CMP_EQ) {
+        if (use->n->type == TB_STORE || use->n->type == TB_REGION ||
+            use->n->type == TB_PROJ || use->n->type == TB_CMP_NE ||
+            use->n->type == TB_CMP_EQ || use->n->type == TB_SHR ||
+            use->n->type == TB_SHL) {
             tb_funcopt_mark_users(opt, use->n);
         }
     }

@@ -56,6 +56,8 @@ X(SETG,      "setg",        UNARY_EXT,  0x9F)
 // binary ops but they have an implicit CL on the righthand side
 X(SHL,       "shl",         BINOP_CL,   0xD2, 0xC0, 0x04)
 X(SHR,       "shr",         BINOP_CL,   0xD2, 0xC0, 0x05)
+X(ROL,       "rol",         BINOP_CL,   0xD2, 0xC0, 0x00)
+X(ROR,       "ror",         BINOP_CL,   0xD2, 0xC0, 0x01)
 X(SAR,       "sar",         BINOP_CL,   0xD2, 0xC0, 0x07)
 
 X(ADD,       "add",         BINOP,      0x00, 0x80, 0x00)

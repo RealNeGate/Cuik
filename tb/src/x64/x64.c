@@ -597,6 +597,21 @@ static void finna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num) {
     }
 }
 
+static ptrdiff_t alloc_free_reg(Ctx* restrict ctx, int reg_class) {
+    if (reg_class == REG_CLASS_GPR) {
+        static const GPR queue[] = { RAX, RCX, RDX, R8, R9, RDI, RSI, R10, R12, R13, R14, R15 };
+        FOREACH_N(i, 0, COUNTOF(queue)) {
+            if (set_first_time(&ctx->used_regs[reg_class], queue[i])) {
+                return queue[i];
+            }
+        }
+
+        return -1;
+    } else {
+        return set_pop_any(&ctx->used_regs[reg_class]);
+    }
+}
+
 static int isel(Ctx* restrict ctx, TB_Node* n) {
     ptrdiff_t search = nl_map_get(ctx->values, n);
     if (search >= 0) {
@@ -948,8 +963,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
         case TB_SHL:
         case TB_SHR:
+        case TB_ROL:
+        case TB_ROR:
         case TB_SAR: {
-            const static InstType ops[] = { SHL, SHR, SAR };
+            const static InstType ops[] = { SHL, SHR, ROL, ROR, SAR };
             InstType op = ops[type - TB_SHL];
 
             dst = DEF(n, REG_CLASS_GPR);
@@ -1091,7 +1108,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 }
             }
 
-            if (ctx->fallthrough != NULL) {
+            if (ctx->fallthrough != NULL && !empty_bb(ctx->fallthrough)) {
                 SUBMIT(inst_jmp(NULL));
             }
             break;

@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdint.h>
 
 int nil_pilled(int* ptr) {
     if (ptr) {
@@ -10,6 +11,25 @@ int nil_pilled(int* ptr) {
     }
 
     return 0;
+}
+
+int bounds_checks(size_t n, int* arr) {
+    int sum = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (i >= n) return -1; // bounds check
+        sum += arr[i];
+    }
+    return sum;
+}
+
+int foo(int x) { return 1 + x; }
+
+uint64_t sfc64(uint64_t s[4]) {
+    uint64_t r = s[0] + s[1] + s[3]++;
+    s[0] = (s[1] >> 11) ^ s[1];
+    s[1] = (s[2] << 3) + s[2];
+    s[2] = r + (s[2] << 24 | s[2] >> 40);
+    return r;
 }
 
 #if 0
@@ -37,14 +57,6 @@ void zero_array(int n, char* arr) {
 
 int sigma(void* p) {
     return p;
-}
-
-uint64_t sfc64(uint64_t s[4]) {
-    uint64_t r = s[0] + s[1] + s[3]++;
-    s[0] = (s[1] >> 11) ^ s[1];
-    s[1] = (s[2] << 3) + s[2];
-    s[2] = r + (s[2] << 24 | s[2] >> 40);
-    return r;
 }
 
 int bar(int x) {

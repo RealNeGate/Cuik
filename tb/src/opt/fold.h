@@ -32,6 +32,16 @@ static bool is_commutative(TB_NodeTypeEnum type) {
     }
 }
 
+static bool get_int_const(TB_Node* n, uint64_t* imm) {
+    if (n->type != TB_INTEGER_CONST) return false;
+
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    if (i->num_words != 1) return false;
+
+    *imm = i->words[0];
+    return true;
+}
+
 ////////////////////////////////
 // Integer idealizations
 ////////////////////////////////
@@ -63,12 +73,26 @@ static TB_Node* ideal_branch(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* 
 
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
     if (br->keys[0] == 0) {
+        TB_Node* cmp_node = n->inputs[1];
+        TB_NodeTypeEnum cmp_type = cmp_node->type;
+
+        // br ((y <= x)) => br (x < y) flipped conditions
+        if (cmp_type == TB_CMP_SLE || cmp_type == TB_CMP_ULE) {
+            TB_Node* new_cmp = tb_alloc_node(f, cmp_type == TB_CMP_SLE ? TB_CMP_SLT : TB_CMP_ULT, TB_TYPE_BOOL, 2, sizeof(TB_NodeCompare));
+            set_input(opt, new_cmp, cmp_node->inputs[1], 0);
+            set_input(opt, new_cmp, cmp_node->inputs[0], 1);
+            TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(cmp_node, TB_NodeCompare)->cmp_dt);
+
+            SWAP(TB_Node*, region->succ[0], region->succ[1]);
+            set_input(opt, n, new_cmp, 1);
+            return n;
+        }
+
         // br ((x != y) != 0) => br (x != y)
-        TB_NodeTypeEnum cmp_type = n->inputs[1]->type;
-        if ((cmp_type == TB_CMP_NE || cmp_type == TB_CMP_EQ) && n->inputs[1]->inputs[1]->type == TB_INTEGER_CONST) {
-            TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[1]->inputs[1]);
+        if ((cmp_type == TB_CMP_NE || cmp_type == TB_CMP_EQ) && cmp_node->inputs[1]->type == TB_INTEGER_CONST) {
+            TB_NodeInt* i = TB_NODE_GET_EXTRA(cmp_node->inputs[1]);
             if (i->num_words == 1) {
-                set_input(opt, n, n->inputs[1]->inputs[0], 1);
+                set_input(opt, n, cmp_node->inputs[0], 1);
                 br->keys[0] = i->words[0];
 
                 // flip successors
@@ -202,16 +226,38 @@ static TB_Node* ideal_int_unary(TB_FuncOpt* restrict opt, TB_Function* f, TB_Nod
 }
 
 static TB_Node* ideal_int_binop(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
-    // if it's commutative: move constants to the right
-    if (is_commutative(n->type) && n->inputs[0]->type == TB_INTEGER_CONST && n->inputs[1]->type != TB_INTEGER_CONST) {
-        TB_Node* tmp = n->inputs[0];
-        set_input(opt, n, n->inputs[1], 0);
-        set_input(opt, n, tmp, 1);
-        return n;
+    if (is_commutative(n->type)) {
+        // if it's commutative: we wanna have a canonical form.
+        // lower types to the right (constants are basically the lowest things)
+        if (n->inputs[0]->type < n->inputs[1]->type) {
+            TB_Node* tmp = n->inputs[0];
+            set_input(opt, n, n->inputs[1], 0);
+            set_input(opt, n, tmp, 1);
+            return n;
+        }
     }
 
     TB_Node* a = n->inputs[0];
     TB_Node* b = n->inputs[1];
+    if (n->type == TB_OR) {
+        assert(n->dt.type == TB_INT);
+        int bits = n->dt.data;
+
+        // (or (shr a 40) (shl a 24)) => (rol a 24)
+        if (a->type == TB_SHR && b->type == TB_SHL) {
+            uint64_t shl_amt, shr_amt;
+            if (get_int_const(a->inputs[1], &shl_amt) &&
+                get_int_const(b->inputs[1], &shr_amt) &&
+                shl_amt == bits - shr_amt) {
+                // convert to rotate left
+                n->type = TB_ROL;
+                set_input(opt, n, a->inputs[0], 0);
+                set_input(opt, n, a->inputs[1], 1);
+                return n;
+            }
+        }
+    }
+
     if (a->type != TB_INTEGER_CONST || b->type != TB_INTEGER_CONST) {
         return NULL;
     }

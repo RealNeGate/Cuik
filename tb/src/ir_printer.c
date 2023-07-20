@@ -52,7 +52,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_CMP_NE: return "cmp.ne";
         case TB_CMP_EQ: return "cmp.eq";
         case TB_CMP_ULT: return "cmp.ult";
-        case TB_CMP_ULE: return "cmp.sle";
+        case TB_CMP_ULE: return "cmp.ule";
         case TB_CMP_SLT: return "cmp.slt";
         case TB_CMP_SLE: return "cmp.sle";
         case TB_CMP_FLT: return "cmp.lt";
@@ -72,6 +72,8 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_SMOD: return "smod";
         case TB_SHL: return "shl";
         case TB_SHR: return "shr";
+        case TB_ROL: return "rol";
+        case TB_ROR: return "ror";
         case TB_SAR: return "sar";
 
         case TB_FADD: return "fadd";

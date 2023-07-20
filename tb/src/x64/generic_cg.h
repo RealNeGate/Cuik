@@ -206,6 +206,11 @@ static int put_def_forced(Ctx* restrict ctx, TB_Node* n, int reg_class, int reg,
 
 #define GET_VAL(n) nl_map_get_checked(ctx->values, n)
 
+static bool empty_bb(TB_Node* n) {
+    TB_Node* end = TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->end;
+    return end->type == TB_RET && end->input_count == 1 && end->inputs[0] == n;
+}
+
 static bool fits_into_int8(uint64_t x) {
     int8_t y = x & 0xFFFFFFFF;
     return (int64_t)y == x;
@@ -215,6 +220,8 @@ static bool fits_into_int32(uint64_t x) {
     int32_t y = x & 0xFFFFFFFF;
     return (int64_t)y == x;
 }
+
+static ptrdiff_t alloc_free_reg(Ctx* restrict ctx, int reg_class);
 
 static bool wont_spill_around(int type);
 static Inst inst_move(TB_DataType dt, int lhs, int rhs);
