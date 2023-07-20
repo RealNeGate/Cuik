@@ -918,11 +918,13 @@ static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, i
                 // if it's part of the left expression, move it out
                 // of the hidden expression.
                 ptrdiff_t sym = hide->first_symbol;
+                if (sym >= start_i) first_sym = sym - start_i;
+
                 while (sym >= start_i) {
                     ptrdiff_t next = hide->exprs[sym].sym.next_symbol;
 
                     hide->exprs[sym].sym.next_symbol = next - start_i;
-                    hide->first_symbol = next;
+                    sym = hide->first_symbol = next;
                 }
 
                 // copy

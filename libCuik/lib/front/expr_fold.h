@@ -55,6 +55,7 @@ static bool const_eval_int_single(Cuik_Parser* restrict parser, Cuik_Expr* e, Su
         case EXPR_SHR:   *result = args[0].i >> args[1].i; break;
         case EXPR_AND:   *result = args[0].i & args[1].i;  break;
         case EXPR_OR:    *result = args[0].i | args[1].i;  break;
+        case EXPR_NOT:   *result = ~args[0].i;             break;
 
         // comparisons
         case EXPR_CMPEQ: *result = args[0].i == args[1].i; break;

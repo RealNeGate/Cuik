@@ -495,6 +495,9 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
     } else if (addr->type == TB_LOCAL) {
         int pos = get_stack_slot(ctx, addr);
         return inst_m(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, pos);
+    } else if (addr->type == TB_GET_SYMBOL_ADDRESS) {
+        TB_NodeSymbol* s = TB_NODE_GET_EXTRA(addr);
+        return inst_g(i, n->dt, dst, s->sym);
     }
 
     int base = ISEL(addr);
@@ -1095,6 +1098,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
 
         case TB_LOAD: {
+            use_load(ctx, n);
             dst = DEF(n, n->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR);
 
             Inst ld = isel_load(ctx, n, dst);
@@ -1174,7 +1178,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             } else if (bits_in_type <= 64) op = MOV;
             else tb_todo();
 
-            if (src->type == TB_LOAD && nl_map_get(ctx->values, src) < 0) {
+            // src->type == TB_LOAD && nl_map_get(ctx->values, src) < 0
+            if (use_load(ctx, src)) {
                 Inst inst = isel_load(ctx, src, dst);
                 inst.type = op;
                 inst.data_type = legalize(dt);

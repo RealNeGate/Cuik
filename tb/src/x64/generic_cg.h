@@ -111,6 +111,7 @@ struct Effect {
     Effect* next;
     TB_Node* node;
     bool root;
+    int uses;
     int phi_count;
 };
 
@@ -646,9 +647,21 @@ static Effect* insert_effect(Ctx* restrict ctx, Effect* prev, TB_Node* n) {
     new_e->next = prev->next;
     new_e->node = n;
     new_e->root = false;
+    new_e->uses = 1;
     new_e->phi_count = 0;
     prev->next = new_e;
     return new_e;
+}
+
+// returns true for final use
+static bool use_load(Ctx* restrict ctx, TB_Node* n) {
+    if (n->type != TB_LOAD) {
+        return false;
+    }
+
+    Effect* e = nl_map_get_checked(ctx->effects, n);
+    e->uses -= 1;
+    return e->uses == 0;
 }
 
 // will guarentee all the dependents of the current effect are processed
@@ -656,7 +669,11 @@ static void fence(Ctx* restrict ctx) {
     if (ctx->prev_effect != NULL) {
         Effect* e = ctx->prev_effect->next;
         while (e != NULL && !e->root) {
-            isel(ctx, e->node);
+            if (e->uses > 0) {
+                isel(ctx, e->node);
+                e->uses -= 1;
+            }
+
             e = e->next;
         }
     }
@@ -664,6 +681,10 @@ static void fence(Ctx* restrict ctx) {
 
 static void scan_for_effects(Ctx* restrict ctx, TB_Node* n) {
     if (!nl_hashset_put(&ctx->visited, n)) {
+        if (n->type == TB_LOAD) {
+            nl_map_get_checked(ctx->effects, n->inputs[0])->uses++;
+        }
+
         return;
     }
 
@@ -697,7 +718,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     };
 
-    // ctx.emit.emit_asm = true;
+    ctx.emit.emit_asm = true;
     /* if (ctx.emit.emit_asm) {
         tb_function_print(f, tb_default_print_callback, stdout);
     }*/
