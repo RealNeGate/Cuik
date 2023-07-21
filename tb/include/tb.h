@@ -795,6 +795,27 @@ struct TB_FunctionPrototype {
 // matching signatures.
 TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_t param_count, const TB_PrototypeParam* params, size_t return_count, const TB_PrototypeParam* returns, bool has_varargs);
 
+// same as tb_function_set_prototype except it will handle lowering from types like the TB_DebugType
+// into the correct ABI and exposing sane looking nodes to the parameters.
+//
+// returns the parameters
+TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count);
+TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* dbg);
+
+// used for ABI parameter passing
+typedef enum {
+    // needs a direct value
+    TB_PASSING_DIRECT,
+
+    // needs an address to the value
+    TB_PASSING_INDIRECT,
+
+    // doesn't use this parameter
+    TB_PASSING_IGNORE,
+} TB_PassingRule;
+
+TB_PassingRule tb_get_passing_rule_from_dbg(TB_Module* mod, TB_DebugType* param_type, bool is_return);
+
 ////////////////////////////////
 // Globals
 ////////////////////////////////
@@ -844,6 +865,8 @@ TB_API void tb_debug_record_end(TB_DebugType* type, TB_CharUnits size, TB_CharUn
 
 TB_API TB_DebugType* tb_debug_create_func(TB_Module* m, TB_CallingConv cc, size_t param_count, size_t return_count, bool has_varargs);
 
+TB_API TB_DebugType* tb_debug_field_type(TB_DebugType* type);
+
 // you'll need to fill these if you make a function
 TB_API TB_DebugType** tb_debug_func_params(TB_DebugType* type);
 TB_API TB_DebugType** tb_debug_func_returns(TB_DebugType* type);
@@ -887,13 +910,6 @@ TB_API void tb_symbol_set_name(TB_Symbol* s, ptrdiff_t len, const char* name);
 
 TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr);
 TB_API const char* tb_symbol_get_name(TB_Symbol* s);
-
-// same as tb_function_set_prototype except it will handle lowering from types like the TB_DebugType
-// into the correct ABI and exposing sane looking nodes to the parameters.
-//
-// returns the parameters
-TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count);
-TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* dbg);
 
 // if arena is NULL, defaults to module arena which is freed on tb_free_thread_resources
 TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena);

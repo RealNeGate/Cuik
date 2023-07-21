@@ -115,6 +115,15 @@ static TB_DataType reg_class_to_tb(TB_ABI abi, RegClass rg, TB_DebugType* type) 
     }
 }
 
+TB_API TB_DebugType* tb_debug_field_type(TB_DebugType* type) {
+    assert(type->tag == TB_DEBUG_TYPE_FIELD);
+    return type->field.type;
+}
+
+TB_PassingRule tb_get_passing_rule_from_dbg(TB_Module* mod, TB_DebugType* param_type, bool is_return) {
+    return classify_reg(mod->target_abi, param_type) == RG_MEMORY ? TB_PASSING_INDIRECT : TB_PASSING_DIRECT;
+}
+
 TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count) {
     tb_assert(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
     tb_assert(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");

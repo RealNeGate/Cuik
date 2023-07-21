@@ -8,6 +8,8 @@ static thread_local TB_Node** parameter_map;
 static thread_local Cuik_Type* function_type;
 static thread_local const char* function_name;
 
+static thread_local TB_PassingRule func_return_rule;
+
 // For aggregate returns
 static _Thread_local TB_Attrib* scope_attrib;
 
@@ -327,6 +329,75 @@ TB_Node* cvt2lval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
         return temporary;
     } else {
         abort();
+    }
+}
+
+static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule rule, IRVal arg, bool is_vararg, TB_Node** out_param) {
+    Cuik_Type* arg_type = cuik_canonical_type(arg.type);
+    bool is_volatile = CUIK_QUAL_TYPE_HAS(arg.type, CUIK_QUAL_VOLATILE);
+
+    switch (rule) {
+        case TB_PASSING_INDIRECT: {
+            // const pass-by-value is considered as a const ref
+            // since it doesn't mutate
+            TB_Node* arg_addr = TB_NULL_REG;
+            switch (arg.value_type) {
+                case LVALUE:
+                arg_addr = arg.reg;
+                break;
+                case RVALUE: {
+                    // spawn a lil temporary
+                    TB_CharUnits size = arg_type->size;
+                    TB_CharUnits align = arg_type->align;
+                    TB_DataType dt = arg.reg->dt;
+
+                    arg_addr = tb_inst_local(func, size, align);
+                    tb_inst_store(func, dt, arg_addr, arg.reg, align, is_volatile);
+                    break;
+                }
+                default:
+                break;
+            }
+            assert(arg_addr);
+
+            // TODO(NeGate): we might wanna define some TB instruction
+            // for killing locals since some have really limited lifetimes
+            TB_CharUnits size = arg_type->size;
+            TB_CharUnits align = arg_type->align;
+
+            if (0 /* arg_type->is_const */) {
+                out_param[0] = arg_addr;
+            } else {
+                TB_Node* temp_slot = tb_inst_local(func, size, align);
+                TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
+
+                tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align, is_volatile);
+
+                out_param[0] = temp_slot;
+            }
+
+            return 1;
+        }
+        case TB_PASSING_DIRECT: {
+            if (arg_type->kind == KIND_STRUCT || arg_type->kind == KIND_UNION) {
+                return 1;
+            } else {
+                TB_Node* n = cvt2rval(tu, func, &arg);
+                TB_DataType dt = n->dt;
+
+                if (is_vararg && dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0) {
+                    // convert any float variadic arguments into integers
+                    n = tb_inst_bitcast(func, n, TB_TYPE_I64);
+                }
+
+                out_param[0] = n;
+                return 1;
+            }
+        }
+
+        default:
+        assert(0 && "TODO");
+        return 0;
     }
 }
 
@@ -748,19 +819,6 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
 
             Cuik_Type* return_type = cuik_canonical_type(GET_TYPE());
 
-            // Resolve ABI arg count
-            bool is_aggregate_return = !tu->target->pass_return_via_reg(tu, return_type);
-            size_t real_arg_count = is_aggregate_return ? 1 : 0;
-
-            for (size_t i = 0; i < arg_count; i++) {
-                real_arg_count += tu->target->deduce_parameter_usage(tu, args[i + 1].type);
-            }
-
-            TB_Node** ir_args = tls_push(real_arg_count * sizeof(TB_Node*));
-            if (is_aggregate_return) {
-                ir_args[0] = tb_inst_local(func, return_type->size, return_type->align);
-            }
-
             // point at which it stops being know which parameter types we're
             // mapping to, if it's arg_count then there's really none
             size_t varargs_cutoff = arg_count;
@@ -773,44 +831,53 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                 varargs_cutoff = func_type->func.param_count;
             }
 
-            size_t ir_arg_count = is_aggregate_return ? 1 : 0;
-            for (size_t i = 0; i < arg_count; i++) {
-                ir_arg_count += tu->target->pass_parameter(tu, func, args[i + 1], i >= varargs_cutoff, &ir_args[ir_arg_count]);
-            }
-            assert(ir_arg_count == real_arg_count);
-
             // Resolve call target
             //
             // NOTE(NeGate): Could have been resized in the parameter's irgen_expr
             // so we reload the pointer.
             TB_Node* target_node = RVAL(0);
 
-            TB_FunctionPrototype* call_prototype = NULL;
-            if (target_node->type == TB_GET_SYMBOL_ADDRESS) {
-                // either use the function call's prototype
-                TB_Function* target_func = tb_symbol_as_function(TB_NODE_GET_EXTRA_T(target_node, TB_NodeSymbol)->sym);
-                if (target_func) call_prototype = tb_function_get_prototype(target_func);
+            // generate custom prototype for function type
+            TB_DebugType* dbg = cuik__as_tb_debug_type(tu->ir_mod, func_type);
+            TB_FunctionPrototype* call_prototype = tb_prototype_from_dbg(tu->ir_mod, dbg);
+
+            // pass parameters
+            TB_PassingRule return_rule = TB_PASSING_DIRECT;
+            if (return_type->kind != KIND_VOID) {
+                TB_DebugType* ret_dbg = tb_debug_func_returns(dbg)[0];
+                return_rule = tb_get_passing_rule_from_dbg(tu->ir_mod, ret_dbg, true);
             }
 
-            if (call_prototype == NULL) {
-                // generate custom prototype for function type
-                TB_DebugType* dbg = cuik__as_tb_debug_type(tu->ir_mod, func_type);
-                call_prototype = tb_prototype_from_dbg(tu->ir_mod, dbg);
+            size_t real_arg_count = call_prototype->param_count;
+            size_t ir_arg_count = 0;
+            TB_Node** ir_args = tls_push(real_arg_count * sizeof(TB_Node*));
+            if (return_rule == TB_PASSING_INDIRECT) {
+                ir_args[ir_arg_count++] = tb_inst_local(func, return_type->size, return_type->align);
             }
+
+            TB_DebugType** params = tb_debug_func_params(dbg);
+            for (size_t i = 0; i < arg_count; i++) {
+                TB_PassingRule rule = tb_get_passing_rule_from_dbg(tu->ir_mod, tb_debug_field_type(params[i]), false);
+                ir_arg_count += pass_parameter(tu, func, rule, args[i + 1], i >= varargs_cutoff, &ir_args[ir_arg_count]);
+            }
+            assert(ir_arg_count == real_arg_count);
 
             TB_MultiOutput out = tb_inst_call(func, call_prototype, target_node, real_arg_count, ir_args);
-            if (is_aggregate_return) {
-                TB_Node* result = ir_args[0];
-                tls_restore(ir_args);
+            tls_restore(ir_args);
 
+            if (out.count == 0) {
+                return (IRVal){
+                    .value_type = RVALUE,
+                    .reg = NULL,
+                };
+            } else if (return_rule == TB_PASSING_INDIRECT) {
                 return (IRVal){
                     .value_type = LVALUE,
-                    .reg = result,
+                    .reg = out.single,
                 };
             } else if (out.count > 1) {
                 assert(0 && "TODO: multiple return ABI stuff");
             } else {
-                tls_restore(ir_args);
                 TB_Node* ret = out.single;
 
                 if (return_type->kind == KIND_STRUCT || return_type->kind == KIND_UNION) {
@@ -1566,9 +1633,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             IRVal v = irgen_expr(tu, func, s->return_.expr);
 
             Cuik_Type* type = cuik_canonical_type(get_root_cast(s->return_.expr));
-            bool is_aggregate_return = !tu->target->pass_return_via_reg(tu, type);
-
-            if (is_aggregate_return) {
+            if (func_return_rule == TB_PASSING_INDIRECT) {
                 // returning aggregates just copies into the first parameter
                 // which is agreed to be a caller owned buffer.
                 int size = type->size;
@@ -1810,6 +1875,13 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
 
         size_t param_count;
         parameter_map = tb_function_set_prototype_from_dbg(func, dbg_type, arena, &param_count);
+
+        if (cuik_canonical_type(type->func.return_type)->kind != KIND_VOID) {
+            TB_DebugType* dbg_ret = tb_debug_func_returns(dbg_type)[0];
+            func_return_rule = tb_get_passing_rule_from_dbg(tu->ir_mod, dbg_ret, true);
+        } else {
+            func_return_rule = TB_PASSING_DIRECT;
+        }
 
         // compile body
         {

@@ -47,17 +47,6 @@ struct Cuik_Target {
     void (*set_defines)(const Cuik_Target* self, Cuik_CPP* cpp);
 
     #ifdef CUIK_USE_TB
-    // Callee ABI handling:
-    TB_FunctionPrototype* (*create_prototype)(TranslationUnit* tu, Cuik_Type* type);
-    TB_Node* (*get_parameter)(TranslationUnit* tu, TB_Function* func, Cuik_Type* type, TB_Node* reg);
-
-    // Caller ABI handling:
-    // returns the aggregate size, if it's zero there's no aggregate
-    bool (*pass_return_via_reg)(TranslationUnit* tu, Cuik_Type* type);
-    // Number of IR parameters generated from the data type
-    int (*deduce_parameter_usage)(TranslationUnit* tu, Cuik_QualType type);
-    int (*pass_parameter)(TranslationUnit* tu, TB_Function* func, IRVal arg, bool is_vararg, TB_Node** out_param);
-
     // when one of the builtins are triggered we call this to generate it's code
     TB_Node* (*compile_builtin)(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, IRVal* args);
     #endif /* CUIK_USE_TB */
