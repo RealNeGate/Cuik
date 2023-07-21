@@ -21,12 +21,12 @@ static TB_Node* ideal_libcall(TB_FuncOpt* restrict queue, TB_Function* f, TB_Nod
         set_input(queue, n2, n->inputs[3], 2); // val
         set_input(queue, n2, n->inputs[4], 3); // size
 
-        // memcpy returns the destination pointer, convert any non-control users
-        // and pass them to dst
         TB_Node* dst_ptr = n->inputs[2];
 
+        // memcpy returns the destination pointer, convert any non-control users
+        // and pass them to dst
         for (User* use = find_users(queue, n); use; use = use->next) {
-            if (use->slot != 0 || (use->slot == 0 && !tb_uses_effects(use->n))) {
+            if (use->slot != 0) {
                 subsume_node(queue, f, use->n, dst_ptr);
             }
         }
@@ -39,12 +39,12 @@ static TB_Node* ideal_libcall(TB_FuncOpt* restrict queue, TB_Function* f, TB_Nod
         set_input(queue, n2, n->inputs[3], 2); // val
         set_input(queue, n2, n->inputs[4], 3); // size
 
-        // memcpy returns the destination pointer, convert any non-control users
-        // and pass them to dst
         TB_Node* dst_ptr = n->inputs[2];
 
+        // memset returns the destination pointer, convert any non-control users
+        // and pass them to dst
         for (User* use = find_users(queue, n); use; use = use->next) {
-            if (use->slot != 0 || (use->slot == 0 && !tb_uses_effects(use->n))) {
+            if (use->slot != 0) {
                 subsume_node(queue, f, use->n, dst_ptr);
             }
         }

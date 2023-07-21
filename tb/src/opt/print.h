@@ -127,8 +127,7 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
     }
 
     // print operands
-    size_t first = tb_uses_effects(n);
-    FOREACH_N(i, first, n->input_count) {
+    FOREACH_N(i, 1, n->input_count) {
         switch (n->inputs[i]->type) {
             case TB_LOAD: case TB_PHI:
             if (n->inputs[i]->inputs[0] != parent) {
@@ -151,6 +150,7 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
     print_type(dt);
     printf(" ");
 
+    size_t first = n->type == TB_PROJ ? 0 : 1;
     FOREACH_N(i, first, n->input_count) {
         if (i != first) printf(", ");
         print_ref_to_node(ctx, n->inputs[i]);
@@ -191,6 +191,8 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
         case TB_MUL:
         case TB_SHL:
         case TB_SHR:
+        case TB_ROL:
+        case TB_ROR:
         case TB_SAR:
         case TB_UDIV:
         case TB_SDIV:
@@ -247,7 +249,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
     }
 
     if (aint_region) {
-        FOREACH_N(i, 0, n->input_count) {
+        FOREACH_N(i, 1, n->input_count) {
             print_node(ctx, n->inputs[i], n);
         }
 
@@ -368,6 +370,12 @@ bool tb_funcopt_print(TB_FuncOpt* opt) {
             }
         }
         printf("\n");
+
+        if (bb->type == TB_START) {
+            dyn_array_for(i, opt->locals) {
+                print_node(&ctx, opt->locals[i], NULL);
+            }
+        }
 
         TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
         print_effect(&ctx, end);

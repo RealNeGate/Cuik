@@ -177,12 +177,6 @@ enum {
     INST_USE  = 1020,
 };
 
-#if 1
-#define ASM if (ctx->emit.emit_asm)
-#else
-#define ASM if (0)
-#endif
-
 #define DEF(n, rg) put_def(ctx, n, rg)
 static int put_def(Ctx* restrict ctx, TB_Node* n, int reg_class) {
     int i = dyn_array_length(ctx->defs);
@@ -212,15 +206,20 @@ static bool empty_bb(TB_Node* n) {
 }
 
 static bool fits_into_int8(uint64_t x) {
-    int8_t y = x & 0xFFFFFFFF;
+    int8_t y = x & 0xFF;
     return (int64_t)y == x;
 }
 
 static bool fits_into_int32(uint64_t x) {
+    /*int64_t y = ((int32_t) x);
+    uint32_t hi = y >> 32ull;
+    return hi == 0 || hi == 0xFFFFFFFF;*/
     int32_t y = x & 0xFFFFFFFF;
     return (int64_t)y == x;
 }
 
+static size_t emit_prologue(Ctx* restrict ctx);
+static size_t emit_epilogue(Ctx* restrict ctx);
 static ptrdiff_t alloc_free_reg(Ctx* restrict ctx, int reg_class);
 
 static bool wont_spill_around(int type);
@@ -228,9 +227,7 @@ static Inst inst_move(TB_DataType dt, int lhs, int rhs);
 static int classify_reg_class(TB_DataType dt);
 static int isel(Ctx* restrict ctx, TB_Node* n);
 static void finna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num);
-static void emit_code(Ctx* restrict ctx);
-static void patch_local_labels(Ctx* restrict ctx);
-static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage);
+static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out);
 static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt);
 static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r);
 static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index);
@@ -706,13 +703,13 @@ static void scan_for_effects(Ctx* restrict ctx, TB_Node* n) {
         return;
     }
 
-    FOREACH_N(i, 0, n->input_count) {
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
         scan_for_effects(ctx, n->inputs[i]);
     }
 }
 
 // Codegen through here is done in phases
-static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity) {
+static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm) {
     Ctx ctx = {
         .module = f->super.module,
         .f = f,
@@ -720,16 +717,12 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         .safepoints = f->safepoint_count ? tb_platform_heap_alloc(f->safepoint_count * sizeof(TB_SafepointKey)) : NULL,
         .emit = {
             .f = f,
+            .emit_asm = emit_asm,
             .output = func_out,
             .data = out,
             .capacity = out_capacity,
         }
     };
-
-    // ctx.emit.emit_asm = true;
-    /* if (ctx.emit.emit_asm) {
-        tb_function_print(f, tb_default_print_callback, stdout);
-    }*/
 
     ctx.used_regs[0] = set_create_in_arena(&tb__arena, 16);
     ctx.used_regs[1] = set_create_in_arena(&tb__arena, 16);
@@ -873,8 +866,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     }
 
-    // maybe it's completely empty
+    EMITA(&ctx.emit, "%s:\n", f->super.name);
     if (ctx.defs != NULL) {
+        // maybe it's completely empty
         RegAllocWorklist worklist = NULL;
         CUIK_TIMED_BLOCK("build intervals") {
             worklist = liveness(&ctx, f);
@@ -890,22 +884,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         // Arch-specific: convert instruction buffer into actual instructions
         CUIK_TIMED_BLOCK("emit sequences") {
-            emit_code(&ctx);
-        }
-
-        if (ctx.emit.emit_asm) {
-            printf(".ret:\n");
-        }
-    } else {
-        if (ctx.emit.emit_asm) {
-            printf("%s:\n.ret:\n", f->super.name);
+            emit_code(&ctx, func_out);
         }
     }
 
-    resolve_stack_usage(&ctx, ctx.caller_usage);
-
-    //  Label patching: we make sure any local labels
-    patch_local_labels(&ctx);
     nl_map_free(ctx.emit.labels);
     nl_map_free(ctx.values);
     nl_map_free(ctx.machine_bbs);
@@ -917,6 +899,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     // we're done, clean up
+    func_out->asm_out = ctx.emit.head_asm;
     func_out->code = ctx.emit.data;
     func_out->code_size = ctx.emit.count;
     func_out->stack_usage = ctx.stack_usage;

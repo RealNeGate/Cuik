@@ -20,6 +20,7 @@ typedef struct {
     TB_FunctionOutput* output;
 
     bool emit_asm;
+    TB_Assembly *head_asm, *tail_asm;
 
     // this is mapped to a giant buffer and is technically
     // allow to use the entire rest of said buffer
@@ -31,6 +32,7 @@ typedef struct {
 } TB_CGEmitter;
 
 // Helper macros
+#define EMITA(e, fmt, ...) tb_asm_print(e, fmt, __VA_ARGS__)
 #define EMIT1(e, b) (*((uint8_t*)  tb_cgemit_reserve(e, 1)) = (b), (e)->count += 1)
 #define EMIT2(e, b) (*((uint16_t*) tb_cgemit_reserve(e, 2)) = (b), (e)->count += 2)
 #define EMIT4(e, b) (*((uint32_t*) tb_cgemit_reserve(e, 4)) = (b), (e)->count += 4)
@@ -38,6 +40,31 @@ typedef struct {
 #define RELOC4(e, p, b) (*((uint32_t*) &(e)->data[p]) += (b))
 #define PATCH4(e, p, b) (*((uint32_t*) &(e)->data[p])  = (b))
 #define GET_CODE_POS(e) ((e)->count)
+
+static void tb_asm_print(TB_CGEmitter* restrict e, const char* fmt, ...) {
+    // let's hope the optimizer can hoist this early-out outside of the call
+    if (!e->emit_asm) { return; }
+
+    // make sure we have enough bytes for the operation
+    TB_Assembly* new_head = e->tail_asm;
+    if (new_head == NULL || new_head->length + 100 >= TB_ASSEMBLY_CHUNK_CAP) {
+        new_head = tb_platform_valloc(TB_ASSEMBLY_CHUNK_CAP);
+        // new_head->next = NULL;
+        // new_head->length = 0;
+
+        if (e->tail_asm == NULL) {
+            e->tail_asm = e->head_asm = new_head;
+        } else {
+            e->tail_asm->next = new_head;
+            e->tail_asm = new_head;
+        }
+    }
+
+    va_list ap;
+    va_start(ap, fmt);
+    new_head->length += vsnprintf(&new_head->data[new_head->length], 100, fmt, ap);
+    va_end(ap);
+}
 
 static void tb_emit_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t pos) {
     uint32_t curr = *head;

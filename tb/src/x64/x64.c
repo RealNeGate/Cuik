@@ -57,6 +57,12 @@ struct Inst {
     TB_X86_DataType data_type;
     int time;
 
+    // helps with printing spill comment.
+    //   <0 means reload
+    //   =0 means none
+    //   >0 means spill
+    int spill_metadata;
+
     // virtual registers (-1 means none, -2 and lower is VREGs, 0+ is normal registers)
     //
     //   regs[0] is a destination
@@ -310,7 +316,7 @@ static int classify_reg_class(TB_DataType dt) {
     return dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR;
 }
 
-static void print_operand(Val* v, TB_X86_DataType dt) {
+static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) {
     static const char* type_names[] = {
         "ptr",
         "byte",    "word",    "dword",   "qword",
@@ -322,48 +328,50 @@ static void print_operand(Val* v, TB_X86_DataType dt) {
     switch (v->type) {
         case VAL_GPR: {
             assert(v->reg >= 0 && v->reg < 16);
-            // printf("\x1b[%dm%s\x1b[0m", (v->reg % 8) + 31, GPR_NAMES[v->reg]);
-            printf("%s", GPR_NAMES[v->reg]);
+            EMITA(e, "%s", GPR_NAMES[v->reg]);
             break;
         }
-        case VAL_XMM: printf("XMM%d", v->reg); break;
-        case VAL_IMM: printf("%d", v->imm); break;
-        case VAL_ABS: printf("%#"PRIx64, v->abs); break;
+        case VAL_XMM: EMITA(e, "XMM%d", v->reg); break;
+        case VAL_IMM: EMITA(e, "%d", v->imm); break;
+        case VAL_ABS: EMITA(e, "%#"PRIx64, v->abs); break;
         case VAL_MEM: {
-            printf("%s ", type_names[dt]);
+            EMITA(e, "%s ", type_names[dt]);
 
             if (v->index == -1) {
-                printf("[%s", GPR_NAMES[v->reg]);
+                EMITA(e, "[%s", GPR_NAMES[v->reg]);
             } else {
-                printf("[%s + %s*%d", GPR_NAMES[v->reg], GPR_NAMES[v->index], 1u << v->scale);
+                EMITA(e, "[%s + %s*%d", GPR_NAMES[v->reg], GPR_NAMES[v->index], 1u << v->scale);
             }
 
             if (v->imm != 0) {
-                printf(" + %d", v->imm);
+                EMITA(e, " + %d", v->imm);
             }
-            printf("]");
+            EMITA(e, "]");
             break;
         }
         case VAL_GLOBAL: {
             const TB_Symbol* target = v->symbol;
             if (*target->name == 0) {
                 if (v->imm == 0) {
-                    printf("sym%p", target);
+                    EMITA(e, "sym%p", target);
                 } else {
-                    printf("[sym%p + %d]", target, v->imm);
+                    EMITA(e, "[sym%p + %d]", target, v->imm);
                 }
             } else {
                 if (v->imm == 0) {
-                    printf("%s", target->name);
+                    EMITA(e, "%s", target->name);
                 } else {
-                    printf("[%s + %d]", target->name, v->imm);
+                    EMITA(e, "[%s + %d]", target->name, v->imm);
                 }
             }
             break;
         }
         case VAL_LABEL: {
-            if (v->target == NULL) printf(".ret");
-            else printf("L%p", (TB_Node*) v->target);
+            if (v->target == NULL) {
+                EMITA(e, ".ret");
+            } else {
+                EMITA(e, "L%p", (TB_Node*) v->target);
+            }
             break;
         }
         default: tb_todo();
@@ -385,11 +393,11 @@ static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     uint64_t mask = UINT64_MAX;
     if (n->type == TB_SIGN_EXT) {
-        n = n->inputs[0];
+        n = n->inputs[1];
     } else if (n->type == TB_TRUNCATE) {
         assert(n->dt.type == TB_INT);
 
-        n = n->inputs[0];
+        n = n->inputs[1];
         mask = n->dt.data == 64 ? UINT64_MAX : (1ull << n->dt.data) - 1;
     }
 
@@ -421,8 +429,8 @@ static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
 
 static Inst isel_array(Ctx* restrict ctx, TB_Node* n, int dst) {
     int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
-    TB_Node* base_n = n->inputs[0];
-    TB_Node* index_n = n->inputs[1];
+    TB_Node* base_n = n->inputs[1];
+    TB_Node* index_n = n->inputs[2];
 
     if (index_n->type == TB_INTEGER_CONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(index_n);
@@ -489,7 +497,7 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
             return inst_m(i, n->dt, dst, dst, GPR_NONE, SCALE_X1, 0);
         }
     } else if (addr->type == TB_MEMBER_ACCESS) {
-        int src = ISEL(addr->inputs[0]);
+        int src = ISEL(addr->inputs[1]);
         int64_t offset = TB_NODE_GET_EXTRA_T(addr, TB_NodeMember)->offset;
         return inst_m(i, n->dt, dst, src, GPR_NONE, SCALE_X1, offset);
     } else if (addr->type == TB_LOCAL) {
@@ -511,7 +519,7 @@ static Inst isel_store(Ctx* restrict ctx, TB_DataType dt, TB_Node* addr, int src
         int pos = get_stack_slot(ctx, addr);
         return inst_mr(i, dt, RBP, GPR_NONE, SCALE_X1, pos, src);
     } else if (addr->type == TB_MEMBER_ACCESS) {
-        Inst inst = isel_store(ctx, dt, addr->inputs[0], src);
+        Inst inst = isel_store(ctx, dt, addr->inputs[1], src);
         inst.imm[0] += TB_NODE_GET_EXTRA_T(addr, TB_NodeMember)->offset;
 
         return inst;
@@ -529,8 +537,8 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
         Cond cc = -1;
 
         if (TB_IS_FLOAT_TYPE(cmp_dt)) {
-            int lhs = ISEL(n->inputs[0]);
-            int rhs = ISEL(n->inputs[1]);
+            int lhs = ISEL(n->inputs[1]);
+            int rhs = ISEL(n->inputs[2]);
             SUBMIT(inst_rr(FP_UCOMI, cmp_dt, -1, lhs, rhs));
 
             switch (n->type) {
@@ -544,15 +552,15 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
         } else {
             bool invert = false;
             int32_t x;
-            int lhs = ISEL(n->inputs[0]);
-            if (try_for_imm32(ctx, n->inputs[1], &x)) {
+            int lhs = ISEL(n->inputs[1]);
+            if (try_for_imm32(ctx, n->inputs[2], &x)) {
                 if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
                     SUBMIT(inst_rr(TEST, cmp_dt, -1, lhs, lhs));
                 } else {
                     SUBMIT(inst_ri(CMP, cmp_dt, -1, lhs, x));
                 }
             } else {
-                int rhs = ISEL(n->inputs[1]);
+                int rhs = ISEL(n->inputs[2]);
                 SUBMIT(inst_rr(CMP, cmp_dt, -1, lhs, rhs));
             }
 
@@ -828,8 +836,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_FLOAT_EXT: {
             dst = DEF(n, REG_CLASS_XMM);
 
-            int src = ISEL(n->inputs[0]);
-            SUBMIT(inst_r(FP_CVT, n->inputs[0]->dt, dst, src));
+            int src = ISEL(n->inputs[1]);
+            SUBMIT(inst_r(FP_CVT, n->inputs[1]->dt, dst, src));
             break;
         }
 
@@ -837,7 +845,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_NOT: {
             if (n->dt.type != TB_FLOAT) {
                 dst = DEF(n, REG_CLASS_GPR);
-                int src = ISEL(n->inputs[0]);
+                int src = ISEL(n->inputs[1]);
 
                 SUBMIT(inst_r(type == TB_NOT ? NOT : NEG, n->dt, dst, src));
             } else {
@@ -881,12 +889,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             dst = DEF(n, REG_CLASS_GPR);
 
             int32_t x;
-            if (try_for_imm32(ctx, n->inputs[1], &x)) {
-                int lhs = ISEL(n->inputs[0]);
+            if (try_for_imm32(ctx, n->inputs[2], &x)) {
+                int lhs = ISEL(n->inputs[1]);
                 SUBMIT(inst_ri(op, n->dt, dst, lhs, x));
             } else {
-                int lhs = ISEL(n->inputs[0]);
-                int rhs = ISEL(n->inputs[1]);
+                int lhs = ISEL(n->inputs[1]);
+                int rhs = ISEL(n->inputs[2]);
                 SUBMIT(inst_rr(op, n->dt, dst, lhs, rhs));
             }
             break;
@@ -894,8 +902,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_MUL: {
             dst = DEF(n, REG_CLASS_GPR);
 
-            int lhs = ISEL(n->inputs[0]);
-            int rhs = ISEL(n->inputs[1]);
+            int lhs = ISEL(n->inputs[1]);
+            int rhs = ISEL(n->inputs[2]);
             SUBMIT(inst_rr(IMUL, n->dt, dst, lhs, rhs));
             break;
         }
@@ -905,11 +913,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int fake_dst = DEF(n, REG_CLASS_GPR);
 
             // mov rax, lhs
-            int lhs = ISEL(n->inputs[0]);
+            int lhs = ISEL(n->inputs[1]);
             int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
             SUBMIT(inst_copy(n->dt, rax, lhs));
 
-            int rhs = ISEL(n->inputs[1]);
+            int rhs = ISEL(n->inputs[2]);
             int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, fake_dst);
             SUBMIT(inst_def(rdx));
 
@@ -939,10 +947,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, -1);
 
             // mov rax, lhs
-            int lhs = ISEL(n->inputs[0]);
+            int lhs = ISEL(n->inputs[1]);
             SUBMIT(inst_copy(n->dt, rax, lhs));
 
-            int rhs = ISEL(n->inputs[1]);
+            int rhs = ISEL(n->inputs[2]);
 
             // if signed:
             //   cqo/cdq (sign extend RAX into RDX)
@@ -972,13 +980,13 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             dst = DEF(n, REG_CLASS_GPR);
 
             int32_t x;
-            if (try_for_imm8(ctx, n->inputs[1], &x)) {
-                int lhs = ISEL(n->inputs[0]);
+            if (try_for_imm8(ctx, n->inputs[2], &x)) {
+                int lhs = ISEL(n->inputs[1]);
                 SUBMIT(inst_ri(op, n->dt, dst, lhs, x));
             } else {
                 // the shift operations need their right hand side in CL (RCX's low 8bit)
-                int lhs = ISEL(n->inputs[0]);
-                int rhs = ISEL(n->inputs[1]); // TODO(NeGate): hint into RCX
+                int lhs = ISEL(n->inputs[1]);
+                int rhs = ISEL(n->inputs[2]); // TODO(NeGate): hint into RCX
 
                 int cl = DEF_FORCED(n, REG_CLASS_GPR, RCX, -1);
                 SUBMIT(inst_copy(n->dt, cl, rhs));
@@ -1011,15 +1019,15 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV };
             dst = DEF(n, REG_CLASS_XMM);
 
-            int lhs = ISEL(n->inputs[0]);
-            int rhs = ISEL(n->inputs[1]);
+            int lhs = ISEL(n->inputs[1]);
+            int rhs = ISEL(n->inputs[2]);
             SUBMIT(inst_rr(ops[type - TB_FADD], n->dt, dst, lhs, rhs));
             break;
         }
 
         case TB_UINT2FLOAT:
         case TB_INT2FLOAT: {
-            TB_DataType src_dt = n->inputs[0]->dt;
+            TB_DataType src_dt = n->inputs[1]->dt;
             assert(src_dt.type == TB_INT);
 
             // it's either 32bit or 64bit conversion
@@ -1029,14 +1037,14 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             bool is_64bit = src_dt.data > 32;
 
-            int src = ISEL(n->inputs[0]);
+            int src = ISEL(n->inputs[1]);
             SUBMIT(inst_r(is_64bit ? FP_CVT64 : FP_CVT32, n->dt, dst, src));
             break;
         }
 
         case TB_FLOAT2INT:
         case TB_FLOAT2UINT: {
-            TB_DataType src_dt = n->inputs[0]->dt;
+            TB_DataType src_dt = n->inputs[1]->dt;
             assert(src_dt.type == TB_FLOAT);
 
             // it's either 32bit or 64bit conversion
@@ -1046,8 +1054,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // F2 REX.W 0F 2C /r      CVTTSD2SI xmm1, r/m64
             dst = DEF(n, REG_CLASS_GPR);
 
-            int src = ISEL(n->inputs[0]);
-            SUBMIT(inst_r(FP_CVTT, n->inputs[0]->dt, dst, src));
+            int src = ISEL(n->inputs[1]);
+            SUBMIT(inst_r(FP_CVTT, src_dt, dst, src));
             break;
         }
 
@@ -1063,14 +1071,14 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             //     ...
             // }
             dst = DEF(n, REG_CLASS_GPR);
-            int src = ISEL(n->inputs[0]);
+            int src = ISEL(n->inputs[1]);
 
             SUBMIT(inst_ri(ADD, n->dt, dst, src, 8));
             break;
         }
         case TB_MEMBER_ACCESS: {
             dst = DEF(n, REG_CLASS_GPR);
-            int src = ISEL(n->inputs[0]);
+            int src = ISEL(n->inputs[1]);
 
             int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
             SUBMIT(inst_ri(ADD, n->dt, dst, src, offset));
@@ -1156,7 +1164,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_INT2PTR:
         case TB_SIGN_EXT:
         case TB_ZERO_EXT: {
-            TB_Node* src = n->inputs[0];
+            TB_Node* src = n->inputs[1];
 
             TB_DataType src_dt = src->dt;
             bool sign_ext = (type == TB_SIGN_EXT);
@@ -1201,18 +1209,18 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 inst.data_type = legalize(dt);
                 SUBMIT(inst);
             } else {
-                int src = ISEL(n->inputs[0]);
+                int src = ISEL(n->inputs[1]);
                 SUBMIT(inst_r(op, dt, dst, src));
             }
             break;
         }
         case TB_PTR2INT:
         case TB_TRUNCATE: {
-            int src = ISEL(n->inputs[0]);
+            int src = ISEL(n->inputs[1]);
 
             if (n->dt.type == TB_FLOAT) {
                 dst = DEF(n, REG_CLASS_XMM);
-                SUBMIT(inst_r(FP_CVT, n->inputs[0]->dt, dst, src));
+                SUBMIT(inst_r(FP_CVT, n->inputs[1]->dt, dst, src));
             } else {
                 dst = USE(src);
 
@@ -1279,7 +1287,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_SafepointKey* key = &ctx->safepoints[TB_NODE_GET_EXTRA_T(n, TB_NodeSafepoint)->id];
             TB_Safepoint* restrict sp = malloc(sizeof(TB_Safepoint) + (n->input_count * sizeof(int32_t)));
 
-            FOREACH_N(i, 0, n->input_count) {
+            FOREACH_N(i, 1, n->input_count) {
                 int src = ISEL(n->inputs[i]);
                 SUBMIT(inst_use(src));
             }
@@ -1542,12 +1550,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
 static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt) {
     if (src->type == TB_ADD) {
-        if (src->inputs[0] == phi) {
+        if (src->inputs[1] == phi) {
             int32_t x;
-            if (try_for_imm32(ctx, src->inputs[1], &x)) {
+            if (try_for_imm32(ctx, src->inputs[2], &x)) {
                 SUBMIT(inst_ri(ADD, dt, USE(dst), dst, x));
             } else {
-                int other = ISEL(src->inputs[1]);
+                int other = ISEL(src->inputs[2]);
                 SUBMIT(inst_rr(ADD, dt, USE(dst), dst, other));
             }
 
@@ -1575,6 +1583,7 @@ static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
     *new_inst = inst_mr(i, r->dt, RBP, GPR_NONE, SCALE_X1, r->stack_pos, USE(r->old));
     new_inst->time = basepoint->time + 1;
     new_inst->next = basepoint->next;
+    new_inst->spill_metadata = r->old;
     basepoint->next = new_inst;
 }
 
@@ -1591,6 +1600,7 @@ static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_inde
         *next = inst_m(i, r->dt, next->regs[0], RBP, GPR_NONE, SCALE_X1, r->stack_pos);
         next->time = old_time;
         next->next = old_next;
+        next->spill_metadata = -r->old;
         return;
     }
 
@@ -1601,6 +1611,7 @@ static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_inde
     *new_inst = inst_m(i, r->dt, r->old, RBP, GPR_NONE, SCALE_X1, r->stack_pos);
     new_inst->time = basepoint->time + 1;
     new_inst->next = basepoint->next;
+    new_inst->spill_metadata = -r->old;
     basepoint->next = new_inst;
 }
 
@@ -1613,38 +1624,69 @@ static int8_t resolve_use(Ctx* restrict ctx, int x) {
     return x;
 }
 
-static void inst2_print(Ctx* restrict ctx, InstType type, Val* dst, Val* src, TB_X86_DataType dt) {
-    ASM {
-        printf("  %s", inst_table[type].mnemonic);
+static void inst2_print(TB_CGEmitter* restrict e, InstType type, Val* dst, Val* src, TB_X86_DataType dt) {
+    if (e->emit_asm) {
+        EMITA(e, "  %s", inst_table[type].mnemonic);
         if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
             static const char suffixes[4][3] = { "ss", "sd", "ps", "pd" };
-            printf("%s ", suffixes[dt - TB_X86_TYPE_SSE_SS]);
+            EMITA(e, "%s ", suffixes[dt - TB_X86_TYPE_SSE_SS]);
         } else {
-            printf(" ");
+            EMITA(e, " ");
         }
-        print_operand(dst, dt);
-        printf(", ");
-        print_operand(src, dt);
-        printf("\n");
+        print_operand(e, dst, dt);
+        EMITA(e, ", ");
+        print_operand(e, src, dt);
+        EMITA(e, "\n");
     }
 
     if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
-        INST2SSE(type, dst, src, dt);
+        inst2sse(e, type, dst, src, dt);
     } else {
-        INST2(type, dst, src, dt);
+        inst2(e, type, dst, src, dt);
     }
 }
 
-static void inst1_print(Ctx* restrict ctx, int type, Val* src, TB_X86_DataType dt) {
-    ASM {
-        printf("  %s ", inst_table[type].mnemonic);
-        print_operand(src, dt);
-        printf("\n");
+static void inst1_print(TB_CGEmitter* restrict e, int type, Val* src, TB_X86_DataType dt) {
+    if (e->emit_asm) {
+        EMITA(e, "  %s ", inst_table[type].mnemonic);
+        print_operand(e, src, dt);
+        EMITA(e, "\n");
     }
-    INST1(type, src, dt);
+    inst1(e, type, src, dt);
 }
 
-static void emit_code(Ctx* restrict ctx) {
+static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
+    TB_CGEmitter* e = &ctx->emit;
+
+    // resolve stack usage
+    {
+        size_t caller_usage = ctx->caller_usage;
+        if (ctx->target_abi == TB_ABI_WIN64 && caller_usage > 0 && caller_usage < 4) {
+            caller_usage = 4;
+        }
+
+        size_t usage = ctx->stack_usage + (caller_usage * 8);
+
+        // Align stack usage to 16bytes
+        ctx->stack_usage = align_up(usage, 16);
+
+        int callee_saves = tb_popcount(ctx->regs_to_save & 0xFFFF);
+        if (ctx->stack_usage > 0) {
+            callee_saves += 1; // RBP is pushed
+        }
+
+        if ((callee_saves % 2) == 0) {
+            if (ctx->stack_usage) {
+                ctx->stack_usage += 8;
+            } else {
+                ctx->regs_to_save |= (1ull << 63ull); // push dummy for alignment
+            }
+        }
+    }
+
+    // emit prologue
+    func_out->prologue_length = emit_prologue(ctx);
+
     Val ops[4];
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         if (inst->type == INST_LABEL) {
@@ -1652,17 +1694,13 @@ static void emit_code(Ctx* restrict ctx) {
             uint32_t pos = GET_CODE_POS(&ctx->emit);
             tb_resolve_rel32(&ctx->emit, &nl_map_get_checked(ctx->emit.labels, bb), pos);
 
-            ASM {
-                if (bb == ctx->f->start_node) {
-                    printf("%s:\n", ctx->f->super.name);
-                } else {
-                    printf("L%p:\n", bb);
-                }
+            if (bb != ctx->f->start_node) {
+                EMITA(e, "L%p:\n", bb);
             }
             continue;
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
-            ASM printf("  #loc %s %"PRIu64"\n", f->super.module->files[inst->imm[0]].path, inst->imm[1]);
+            EMITA(e, "  #loc %s %"PRIu64"\n", f->super.module->files[inst->imm[0]].path, inst->imm[1]);
 
             TB_Line l = {
                 .file = inst->imm[0],
@@ -1675,21 +1713,23 @@ static void emit_code(Ctx* restrict ctx) {
             continue;
         }
 
-        // ASM printf("  \x1b[32m# t=%d\x1b[0m\n", inst->time);
+        // spill notes
+        if (inst->spill_metadata < 0) {
+            EMITA(e, "  # reload D%d\n", -inst->spill_metadata);
+        } else if (inst->spill_metadata > 0) {
+            EMITA(e, "  # spill D%d\n", inst->spill_metadata);
+        }
 
         bool has_def = false;
         if (inst->regs[0] >= 0) {
             ops[0] = val_gpr(resolve_def(ctx, inst->regs[0]));
             has_def = true;
-
-            // ASM printf("  \x1b[32m# %s(v%d)\x1b[0m\n", GPR_NAMES[ops[0].reg], inst->regs[0]);
         }
 
         int8_t regs[4];
         regs[0] = 0;
         FOREACH_N(i, 1, 4) {
             regs[i] = resolve_use(ctx, inst->regs[i]);
-            // ASM printf("  \x1b[32m#   %s(r%d)\x1b[0m\n", GPR_NAMES[regs[i]], inst->regs[i]);
         }
 
         // convert into normie operands
@@ -1773,80 +1813,58 @@ static void emit_code(Ctx* restrict ctx) {
         }
 
         // TODO(NeGate): this can potentially place the prefix too early
-        if (inst->prefix & INST_REP) EMIT1(&ctx->emit, 0xF3);
+        if (inst->prefix & INST_REP) EMIT1(e, 0xF3);
 
         if (inst->type == INST_MOVE) {
             if (!is_value_match(&ops[1], &ops[2])) {
-                inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[1], &ops[2], inst->data_type);
+                inst2_print(e, is_fp ? FP_MOV : MOV, &ops[1], &ops[2], inst->data_type);
             }
         } else if (inst->type == INST_COPY) {
             if (!is_value_match(&ops[0], &ops[1])) {
-                inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
+                inst2_print(e, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
             }
         } else if (op_count == 0) {
-            INST0(inst->type, inst->data_type);
-            ASM printf("  %s\n", inst_table[inst->type].mnemonic);
+            inst0(e, inst->type, inst->data_type);
+            EMITA(e, "  %s\n", inst_table[inst->type].mnemonic);
         } else if (op_count == 1) {
             if (!has_def) {
-                inst1_print(ctx, inst->type, &ops[1], inst->data_type);
+                inst1_print(e, inst->type, &ops[1], inst->data_type);
             } else {
                 tb_todo();
             }
         } else if (op_count == 2) {
             if (inst->type == JMP || inst->type == CALL) {
-                inst1_print(ctx, inst->type, &ops[1], inst->data_type);
+                inst1_print(e, inst->type, &ops[1], inst->data_type);
             } else {
                 // sometimes 2ary is a unary with a separated dst and src, or a binop
                 if (inst_table[inst->type].cat <= INST_UNARY_EXT) {
                     if (!is_value_match(&ops[0], &ops[1])) {
-                        inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
+                        inst2_print(e, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
                     }
-                    inst1_print(ctx, inst->type, &ops[0], inst->data_type);
+                    inst1_print(e, inst->type, &ops[0], inst->data_type);
                 } else {
-                    inst2_print(ctx, inst->type, &ops[0], &ops[1], inst->data_type);
+                    inst2_print(e, inst->type, &ops[0], &ops[1], inst->data_type);
                 }
             }
         } else if (op_count == 3) {
             if (!has_def) {
-                inst2_print(ctx, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
+                inst2_print(e, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
             } else {
                 if (!is_value_match(&ops[0], &ops[1])) {
-                    inst2_print(ctx, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
+                    inst2_print(e, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
                 }
-                inst2_print(ctx, (InstType) inst->type, &ops[0], &ops[2], inst->data_type);
+                inst2_print(e, (InstType) inst->type, &ops[0], &ops[2], inst->data_type);
             }
         } else {
             tb_todo();
         }
     }
-}
 
-static void resolve_stack_usage(Ctx* restrict ctx, size_t caller_usage) {
-    if (ctx->target_abi == TB_ABI_WIN64 && caller_usage > 0 && caller_usage < 4) {
-        caller_usage = 4;
-    }
-
-    size_t usage = ctx->stack_usage + (caller_usage * 8);
-
-    // Align stack usage to 16bytes
-    ctx->stack_usage = align_up(usage, 16);
-
-    int callee_saves = tb_popcount(ctx->regs_to_save & 0xFFFF);
-    if (ctx->stack_usage > 0) {
-        callee_saves += 1; // RBP is pushed
-    }
-
-    if ((callee_saves % 2) == 0) {
-        if (ctx->stack_usage) {
-            ctx->stack_usage += 8;
-        } else {
-            ctx->regs_to_save |= (1ull << 63ull); // push dummy for alignment
-        }
-    }
-}
-
-static void patch_local_labels(Ctx* restrict ctx) {
+    // return label goes here
+    EMITA(&ctx->emit, ".ret:\n");
     tb_resolve_rel32(&ctx->emit, &ctx->emit.return_label, GET_CODE_POS(&ctx->emit));
+
+    func_out->epilogue_length = emit_epilogue(ctx);
 }
 
 static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage) {
@@ -1880,52 +1898,50 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
     tb_patch1b(e, patch_pos + offsetof(UnwindInfo, code_count), code_count);
 }
 
-static size_t emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
-    if (saved == 0 && stack_usage == 16) {
+static size_t emit_prologue(Ctx* restrict ctx) {
+    uint64_t saved = ctx->regs_to_save, stack_usage = ctx->stack_usage;
+    /*if (saved == 0 && stack_usage == 16) {
         return 0;
-    }
-
-    size_t used = 0;
+    }*/
 
     // push rbp
     if (stack_usage > 0) {
-        out[used++] = 0x50 + RBP;
+        EMIT1(&ctx->emit, 0x50 + RBP);
 
         // mov rbp, rsp
-        out[used++] = rex(true, RSP, RBP, 0);
-        out[used++] = 0x89;
-        out[used++] = mod_rx_rm(MOD_DIRECT, RSP, RBP);
+        EMIT1(&ctx->emit, rex(true, RSP, RBP, 0));
+        EMIT1(&ctx->emit, 0x89);
+        EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, RSP, RBP));
     }
 
     // push rXX
     FOREACH_N(i, 0, 16) if (saved & (1ull << i)) {
         if (i < 8) {
-            out[used++] = 0x50 + i;
+            EMIT1(&ctx->emit, 0x50 + i);
         } else {
-            out[used++] = 0x41;
-            out[used++] = 0x50 + (i & 0b111);
+            EMIT1(&ctx->emit, 0x41);
+            EMIT1(&ctx->emit, 0x50 + (i & 0b111));
         }
     }
 
     // push dummy reg
     if (saved & (1ull << 63ull)) {
-        out[used++] = 0x50 + RAX; // PUSH RAX
+        EMIT1(&ctx->emit, 0x50 + RAX); // PUSH RAX
     }
 
     if (stack_usage > 0) {
         if (stack_usage == (int8_t)stack_usage) {
             // sub rsp, stack_usage
-            out[used++] = rex(true, 0x00, RSP, 0);
-            out[used++] = 0x83;
-            out[used++] = mod_rx_rm(MOD_DIRECT, 0x05, RSP);
-            out[used++] = stack_usage;
+            EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
+            EMIT1(&ctx->emit, 0x83);
+            EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
+            EMIT1(&ctx->emit, stack_usage);
         } else {
             // sub rsp, stack_usage
-            out[used++] = rex(true, 0x00, RSP, 0);
-            out[used++] = 0x81;
-            out[used++] = mod_rx_rm(MOD_DIRECT, 0x05, RSP);
-            *((uint32_t*)&out[used]) = stack_usage;
-            used += 4;
+            EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
+            EMIT1(&ctx->emit, 0x81);
+            EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
+            EMIT4(&ctx->emit, stack_usage);
         }
     }
 
@@ -1934,46 +1950,43 @@ static size_t emit_prologue(uint8_t* out, uint64_t saved, uint64_t stack_usage) 
     for (size_t i = 0; i < 16; i++) {
         if (saved & (1ull << (i + 16))) {
             if (i >= 8) {
-                out[used++] = rex(false, i, 0, 0);
+                EMIT1(&ctx->emit, rex(false, i, 0, 0));
             }
 
             // movaps [rbp - (A * 16)], xmmI
-            out[used++] = 0x0F;
-            out[used++] = 0x29;
-            out[used++] = mod_rx_rm(MOD_INDIRECT_DISP32, i, RBP);
-
-            *((uint32_t*)&out[used]) = -tally;
-            used += 4;
-
+            EMIT1(&ctx->emit, 0x0F);
+            EMIT1(&ctx->emit, 0x29);
+            EMIT1(&ctx->emit, mod_rx_rm(MOD_INDIRECT_DISP32, i, RBP));
+            EMIT4(&ctx->emit, -tally);
             tally -= 16;
         }
     }
 
-    return used;
+    return ctx->emit.count;
 }
 
-static size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) {
-    if (saved == 0 && stack_usage == 16) {
-        out[0] = 0xC3; // just RET
+static size_t emit_epilogue(Ctx* restrict ctx) {
+    uint64_t saved = ctx->regs_to_save, stack_usage = ctx->stack_usage;
+    /*if (saved == 0 && stack_usage == 16) {
+        EMIT1(&ctx->emit, 0xC3);
         return 1;
-    }
+    }*/
 
-    size_t used = 0;
+    size_t start = ctx->emit.count;
 
     // reload XMMs
     int tally = stack_usage & ~15u;
     for (size_t i = 0; i < 16; i++) {
         if (saved & (1ull << (i + 16))) {
-            if (i >= 8) { out[used++] = rex(false, i, 0, 0); }
+            if (i >= 8) {
+                EMIT1(&ctx->emit, rex(false, i, 0, 0));
+            }
 
             // movaps xmmI, [rsp + (A * 16)]
-            out[used++] = 0x0F;
-            out[used++] = 0x28;
-            out[used++] = mod_rx_rm(MOD_INDIRECT_DISP32, i, RBP);
-
-            *((uint32_t*)&out[used]) = -tally;
-            used += 4;
-
+            EMIT1(&ctx->emit, 0x0F);
+            EMIT1(&ctx->emit, 0x28);
+            EMIT1(&ctx->emit, mod_rx_rm(MOD_INDIRECT_DISP32, i, RBP));
+            EMIT4(&ctx->emit, -tally);
             tally -= 16;
         }
     }
@@ -1981,40 +1994,39 @@ static size_t emit_epilogue(uint8_t* out, uint64_t saved, uint64_t stack_usage) 
     // add rsp, N
     if (stack_usage > 0) {
         if (stack_usage == (int8_t)stack_usage) {
-            out[used++] = rex(true, 0x00, RSP, 0);
-            out[used++] = 0x83;
-            out[used++] = mod_rx_rm(MOD_DIRECT, 0x00, RSP);
-            out[used++] = (int8_t)stack_usage;
+            EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
+            EMIT1(&ctx->emit, 0x83);
+            EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
+            EMIT1(&ctx->emit, (int8_t) stack_usage);
         } else {
-            out[used++] = rex(true, 0x00, RSP, 0);
-            out[used++] = 0x81;
-            out[used++] = mod_rx_rm(MOD_DIRECT, 0x00, RSP);
-            *((uint32_t*)&out[used]) = stack_usage;
-            used += 4;
+            EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
+            EMIT1(&ctx->emit, 0x81);
+            EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
+            EMIT4(&ctx->emit, stack_usage);
         }
     }
 
     // pop dummy register, it doesn't matter which it is as long as it's caller saved
     if (saved & (1ull << 63ull)) {
-        out[used++] = 0x58 + RCX; // POP RCX
+        EMIT1(&ctx->emit, 0x58 + RCX); // POP RCX
     }
 
     // pop gpr
     FOREACH_REVERSE_N(i, 0, 16) if (saved & (1ull << i)) {
         if (i < 8) {
-            out[used++] = 0x58 + i;
+            EMIT1(&ctx->emit, 0x58 + i); // POP
         } else {
-            out[used++] = 0x41;
-            out[used++] = 0x58 + (i & 0b111);
+            EMIT1(&ctx->emit, 0x41);
+            EMIT1(&ctx->emit, 0x58 + (i & 7));
         }
     }
 
     if (stack_usage > 0) {
-        out[used++] = 0x58 + RBP;
+        EMIT1(&ctx->emit, 0x58 + RBP);
     }
 
-    out[used++] = 0xC3;
-    return used;
+    EMIT1(&ctx->emit, 0xC3);
+    return ctx->emit.count - start;
 }
 
 static size_t emit_call_patches(TB_Module* restrict m) {
@@ -2032,10 +2044,10 @@ static size_t emit_call_patches(TB_Module* restrict m) {
                     // x64 thinks of relative addresses as being relative
                     // to the end of the instruction or in this case just
                     // 4 bytes ahead hence the +4.
-                    size_t actual_pos = out_f->code_pos + out_f->prologue_length + patch->pos + 4;
+                    size_t actual_pos = out_f->code_pos + patch->pos + 4;
 
                     uint32_t p = ((TB_Function*) patch->target)->output->code_pos - actual_pos;
-                    memcpy(&out_f->code[out_f->prologue_length + patch->pos], &p, sizeof(uint32_t));
+                    memcpy(&out_f->code[patch->pos], &p, sizeof(uint32_t));
 
                     r += 1;
                     patch->internal = true;
@@ -2056,7 +2068,5 @@ ICodeGen tb__x64_codegen = {
     .emit_win64eh_unwind_info = emit_win64eh_unwind_info,
     .emit_call_patches  = emit_call_patches,
     .get_data_type_size = get_data_type_size,
-    .emit_prologue      = emit_prologue,
-    .emit_epilogue      = emit_epilogue,
-    .fast_path          = compile_function,
+    .compile_function   = compile_function,
 };

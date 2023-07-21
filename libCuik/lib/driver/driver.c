@@ -138,8 +138,16 @@ static void sys_invoke(BuildStepInfo* info) {
 #ifdef CUIK_USE_TB
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
+// ctx is non-NULL when we print asm
 static void compile_func(TB_Module* m, TB_Function* f, void* ctx) {
-    tb_module_compile_function(m, f, TB_ISEL_FAST);
+    TB_FunctionOutput* out = tb_module_compile_function(m, f, TB_ISEL_FAST, ctx != NULL);
+
+    if (ctx) {
+        TB_Assembly* a = tb_output_get_asm(out);
+        for (; a; a = a->next) {
+            fwrite(a->data, a->length, 1, stdout);
+        }
+    }
 }
 
 static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
@@ -278,9 +286,10 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     // to save on total memory usage, this code path is for
     // optimized code since it needs to know what neighbors it's
     // got for IPO.
-    if (args->opt_level > 0 && !args->emit_ir) {
+    bool emit_asm = args->flavor == TB_FLAVOR_ASSEMBLY;
+    if (emit_asm || (args->opt_level > 0 && !args->emit_ir)) {
         CUIK_TIMED_BLOCK("CodeGen") {
-            cuiksched_per_function(s->tp, mod, NULL, compile_func);
+            cuiksched_per_function(s->tp, mod, emit_asm ? stdout : NULL, compile_func);
         }
     }
     #endif
@@ -734,7 +743,8 @@ static void irgen_job(void* arg) {
 
     // unoptimized builds can just compile functions without
     // the rest of the functions being ready.
-    bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->emit_ir;
+    bool emit_asm = task.args->flavor == TB_FLAVOR_ASSEMBLY;
+    bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->emit_ir && !emit_asm;
 
     TB_Arena* allocator = NULL;
     if (ir_arena == NULL) {
@@ -755,7 +765,11 @@ static void irgen_job(void* arg) {
         }
 
         if (do_compiles_immediately && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
-            tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST);
+            TB_FunctionOutput* out = tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST, true);
+            TB_Assembly* a = tb_output_get_asm(out);
+            for (; a; a = a->next) {
+                fwrite(a->data, a->length, 1, stdout);
+            }
             CUIK_CALL(allocator, clear);
         }
     }

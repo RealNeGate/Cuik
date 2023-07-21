@@ -119,7 +119,7 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* fe
     return m;
 }
 
-TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode) {
+TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode, bool emit_asm) {
     ICodeGen* restrict code_gen = tb__find_code_generator(m);
 
     // Machine code gen
@@ -146,55 +146,21 @@ TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* f, TB_I
     TB_FunctionOutput* func_out = (TB_FunctionOutput*) &region->data[region->size];
     region->size += sizeof(TB_FunctionOutput);
 
-    if (isel_mode == TB_ISEL_COMPLEX && code_gen->complex_path == NULL) {
-        log_warn("tb warning: complex path is missing, defaulting to fast path");
-        isel_mode = TB_ISEL_FAST;
-    }
-
-    CUIK_TIMED_BLOCK_ARGS("compile func", f->super.name) {
+    CUIK_TIMED_BLOCK_ARGS("compile", f->super.name) {
         *func_out = (TB_FunctionOutput){ .parent = f, .linkage = f->linkage, .code_region = region };
 
         uint8_t* local_buffer = &region->data[region->size];
         size_t local_capacity = region->capacity - region->size;
 
-        if (isel_mode == TB_ISEL_COMPLEX) {
-            code_gen->complex_path(f, func_out, &m->features, local_buffer, local_capacity);
-        } else {
-            code_gen->fast_path(f, func_out, &m->features, local_buffer, local_capacity);
-            assert(func_out->code);
-        }
+        code_gen->compile_function(f, func_out, &m->features, local_buffer, local_capacity, emit_asm);
 
         // if the func_out is placed into a different region, let's abide by that
         if (func_out->code_region != region) {
             func_out->code_region->prev = region;
             m->code_regions[id] = func_out->code_region;
 
-            // finna use the new buffer for the prologue & epilogue
             region = func_out->code_region;
         }
-    }
-
-    // prologue & epilogue insertion
-    CUIK_TIMED_BLOCK_ARGS("pro & epi insertion", f->super.name) {
-        uint8_t buffer[PROEPI_BUFFER];
-        uint8_t* base = &region->data[region->size];
-        size_t body_size = func_out->code_size;
-        assert(func_out->code == base);
-
-        uint64_t meta = func_out->prologue_epilogue_metadata;
-        size_t prologue_len = code_gen->emit_prologue(buffer, meta, func_out->stack_usage);
-
-        // shift body up & place prologue
-        memmove(base + prologue_len, base, body_size);
-        memcpy(base, buffer, prologue_len);
-
-        // place epilogue
-        size_t epilogue_len = code_gen->emit_epilogue(buffer, meta, func_out->stack_usage);
-        memcpy(base + prologue_len + body_size, buffer, epilogue_len);
-
-        func_out->prologue_length = prologue_len;
-        func_out->epilogue_length = epilogue_len;
-        func_out->code_size += (prologue_len + epilogue_len);
     }
 
     atomic_fetch_add(&m->compiled_function_count, 1);
@@ -202,6 +168,15 @@ TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* f, TB_I
 
     f->output = func_out;
     return func_out;
+}
+
+TB_API uint8_t* tb_output_get_code(TB_FunctionOutput* out, size_t* out_length) {
+    *out_length = out->code_size;
+    return out->code;
+}
+
+TB_Assembly* tb_output_get_asm(TB_FunctionOutput* out) {
+    return out->asm_out;
 }
 
 size_t tb_module_get_function_count(TB_Module* m) {

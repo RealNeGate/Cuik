@@ -291,6 +291,8 @@ typedef struct TB_FunctionOutput {
     uint8_t prologue_length;
     uint8_t epilogue_length;
 
+    TB_Assembly* asm_out;
+
     // NOTE(NeGate): This data is actually specific to the
     // architecture run but generically can be thought of as
     // 64bits which keep track of which registers to save.
@@ -450,8 +452,6 @@ typedef struct {
     uint8_t data[];
 } TB_TemporaryStorage;
 
-// the maximum size the prologue and epilogue can be for any machine code impl
-enum { PROEPI_BUFFER = 256 };
 typedef struct {
     // what does CHAR_BIT mean on said platform
     int minimum_addressable_size, pointer_size;
@@ -461,14 +461,10 @@ typedef struct {
     // return the number of patches resolved
     size_t (*emit_call_patches)(TB_Module* restrict m);
 
-    size_t (*emit_prologue)(uint8_t* out, uint64_t saved, uint64_t stack_usage);
-    size_t (*emit_epilogue)(uint8_t* out, uint64_t saved, uint64_t stack_usage);
-
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage);
 
-    void (*fast_path)(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
-    void (*complex_path)(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity);
+    void (*compile_function)(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm);
 } ICodeGen;
 
 // All debug formats i know of boil down to adding some extra sections to the object file
@@ -509,7 +505,7 @@ typedef struct {
 #endif
 
 #ifndef NDEBUG
-#define tb_assert(condition, ...) ((condition) ? 0 : (fprintf(stderr, __FILE__ ": " STR(__LINE__) ": assertion failed: " #condition "\n  "), fprintf(stderr, __VA_ARGS__), abort(), 0))
+#define tb_assert(condition, ...) ((condition) ? 0 : (fprintf(stderr, __FILE__ ":" STR(__LINE__) ": assertion failed: " #condition "\n  "), fprintf(stderr, __VA_ARGS__), abort(), 0))
 #else
 #define tb_assert(condition, ...) (0)
 #endif

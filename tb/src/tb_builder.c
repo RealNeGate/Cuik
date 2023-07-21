@@ -68,6 +68,7 @@ TB_API TB_Attrib* tb_function_attrib_scope(TB_Function* f, TB_Attrib* parent_sco
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
     assert(f->arena);
+    // return malloc(necessary_size);
     return f->arena->alloc(f->arena, necessary_size, _Alignof(TB_Node));
 }
 
@@ -85,8 +86,10 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     n->input_count = input_count;
     n->extra_count = extra;
     n->first_attrib = NULL;
+
     if (input_count > 0) {
         n->inputs = alloc_from_node_arena(f, input_count * sizeof(TB_Node*));
+        memset(n->inputs, 0, input_count * sizeof(TB_Node*));
     } else {
         n->inputs = NULL;
     }
@@ -105,9 +108,9 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
 static TB_Node* tb_bin_arith(TB_Function* f, int type, TB_ArithmeticBehavior arith_behavior, TB_Node* a, TB_Node* b) {
     assert(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
-    TB_Node* n = tb_alloc_node(f, type, a->dt, 2, sizeof(TB_NodeBinopInt));
-    n->inputs[0] = a;
-    n->inputs[1] = b;
+    TB_Node* n = tb_alloc_node(f, type, a->dt, 3, sizeof(TB_NodeBinopInt));
+    n->inputs[1] = a;
+    n->inputs[2] = b;
     TB_NODE_SET_EXTRA(n, TB_NodeBinopInt, .ab = arith_behavior);
     return n;
 }
@@ -115,35 +118,28 @@ static TB_Node* tb_bin_arith(TB_Function* f, int type, TB_ArithmeticBehavior ari
 static TB_Node* tb_bin_farith(TB_Function* f, int type, TB_Node* a, TB_Node* b) {
     assert(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
-    TB_Node* n = tb_alloc_node(f, type, a->dt, 2, 0);
-    n->inputs[0] = a;
-    n->inputs[1] = b;
+    TB_Node* n = tb_alloc_node(f, type, a->dt, 3, 0);
+    n->inputs[1] = a;
+    n->inputs[2] = b;
+    return n;
+}
+
+static TB_Node* tb_unary(TB_Function* f, int type, TB_DataType dt, TB_Node* src) {
+    TB_Node* n = tb_alloc_node(f, type, dt, 2, 0);
+    n->inputs[1] = src;
     return n;
 }
 
 TB_API TB_Node* tb_inst_trunc(TB_Function* f, TB_Node* src, TB_DataType dt) {
-    assert(src->dt.width == dt.width);
-
-    TB_Node* n = tb_alloc_node(f, TB_TRUNCATE, dt, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, TB_TRUNCATE, dt, src);
 }
 
 TB_API TB_Node* tb_inst_int2ptr(TB_Function* f, TB_Node* src) {
-    assert(src->dt.width == 0);
-
-    TB_Node* n = tb_alloc_node(f, TB_INT2PTR, TB_TYPE_PTR, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, TB_INT2PTR, TB_TYPE_PTR, src);
 }
 
 TB_API TB_Node* tb_inst_ptr2int(TB_Function* f, TB_Node* src, TB_DataType dt) {
-    assert(dt.width == 0);
-    assert(src->dt.width == 0);
-
-    TB_Node* n = tb_alloc_node(f, TB_PTR2INT, dt, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, TB_PTR2INT, dt, src);
 }
 
 TB_API TB_Node* tb_inst_int2float(TB_Function* f, TB_Node* src, TB_DataType dt, bool is_signed) {
@@ -173,48 +169,27 @@ TB_API TB_Node* tb_inst_int2float(TB_Function* f, TB_Node* src, TB_DataType dt, 
         }
     }
 
-    TB_Node* n = tb_alloc_node(f, is_signed ? TB_INT2FLOAT : TB_UINT2FLOAT, dt, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, is_signed ? TB_INT2FLOAT : TB_UINT2FLOAT, dt, src);
 }
 
 TB_API TB_Node* tb_inst_float2int(TB_Function* f, TB_Node* src, TB_DataType dt, bool is_signed) {
-    assert(src->dt.width == dt.width);
-
-    TB_Node* n = tb_alloc_node(f, is_signed ? TB_FLOAT2INT : TB_FLOAT2UINT, dt, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, is_signed ? TB_FLOAT2INT : TB_FLOAT2UINT, dt, src);
 }
 
 TB_API TB_Node* tb_inst_fpxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
-    assert(dt.width == src->dt.width);
-
-    TB_Node* n = tb_alloc_node(f, TB_FLOAT_EXT, dt, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, TB_FLOAT_EXT, dt, src);
 }
 
 TB_API TB_Node* tb_inst_sxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
-    assert(dt.width == src->dt.width);
-
-    TB_Node* n = tb_alloc_node(f, TB_SIGN_EXT, dt, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, TB_SIGN_EXT, dt, src);
 }
 
 TB_API TB_Node* tb_inst_zxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
-    assert(dt.width == src->dt.width);
-
-    TB_Node* n = tb_alloc_node(f, TB_ZERO_EXT, dt, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, TB_ZERO_EXT, dt, src);
 }
 
 TB_API TB_Node* tb_inst_bitcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
-    // TODO(NeGate): Do some size checks
-    TB_Node* n = tb_alloc_node(f, TB_BITCAST, dt, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, TB_BITCAST, dt, src);
 }
 
 TB_API TB_Node* tb_inst_param(TB_Function* f, int param_id) {
@@ -236,7 +211,7 @@ TB_API TB_Node* tb_inst_get_control(TB_Function* f) {
 }
 
 TB_API void tb_inst_unreachable(TB_Function* f) {
-    TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_VOID, 0, 0);
+    TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_VOID, 1, 0);
     n->inputs[0] = f->active_control_node;
     f->active_control_node = NULL;
 }
@@ -253,13 +228,9 @@ TB_API void tb_inst_trap(TB_Function* f) {
     f->active_control_node = NULL;
 }
 
-TB_API void tb_inst_keep_alive(TB_Function* f, TB_Node* src) {
-    TB_Node* n = tb_alloc_node(f, TB_KEEPALIVE, TB_TYPE_VOID, 1, 0);
-    n->inputs[0] = src;
-}
-
 TB_API TB_Node* tb_inst_poison(TB_Function* f) {
-    return tb_alloc_node(f, TB_POISON, TB_TYPE_VOID, 0, 0);
+    TB_Node* n = tb_alloc_node(f, TB_POISON, TB_TYPE_VOID, 1, 0);
+    return n;
 }
 
 TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line) {
@@ -273,7 +244,7 @@ TB_API TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits al
     assert(alignment > 0 && tb_is_power_of_two(alignment));
 
     // insert in the entry block
-    TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 0, sizeof(TB_NodeLocal));
+    TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
     TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = alignment);
     return n;
 }
@@ -307,7 +278,8 @@ TB_API void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node
 }
 
 TB_API TB_Node* tb_inst_bool(TB_Function* f, bool imm) {
-    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, TB_TYPE_BOOL, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, TB_TYPE_BOOL, 1, sizeof(TB_NodeInt) + sizeof(uint64_t));
+
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->num_words = 1;
     i->words[0] = imm;
@@ -320,7 +292,7 @@ TB_API TB_Node* tb_inst_uint(TB_Function* f, TB_DataType dt, uint64_t imm) {
     uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
     imm &= mask;
 
-    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt) + sizeof(uint64_t));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->num_words = 1;
     i->words[0] = imm;
@@ -330,7 +302,7 @@ TB_API TB_Node* tb_inst_uint(TB_Function* f, TB_DataType dt, uint64_t imm) {
 TB_API TB_Node* tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm) {
     assert(TB_IS_POINTER_TYPE(dt) || (TB_IS_INTEGER_TYPE(dt) && (dt.data <= 64)));
 
-    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt) + sizeof(uint64_t));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->num_words = 1;
     i->words[0] = imm;
@@ -338,13 +310,14 @@ TB_API TB_Node* tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm) {
 }
 
 TB_API TB_Node* tb_inst_float32(TB_Function* f, float imm) {
-    TB_Node* n = tb_alloc_node(f, TB_FLOAT32_CONST, TB_TYPE_F32, 0, sizeof(TB_NodeFloat32));
+    TB_Node* n = tb_alloc_node(f, TB_FLOAT32_CONST, TB_TYPE_F32, 1, sizeof(TB_NodeFloat32));
+
     TB_NODE_SET_EXTRA(n, TB_NodeFloat32, .value = imm);
     return n;
 }
 
 TB_API TB_Node* tb_inst_float64(TB_Function* f, double imm) {
-    TB_Node* n = tb_alloc_node(f, TB_FLOAT64_CONST, TB_TYPE_F64, 0, sizeof(TB_NodeFloat64));
+    TB_Node* n = tb_alloc_node(f, TB_FLOAT64_CONST, TB_TYPE_F64, 1, sizeof(TB_NodeFloat64));
     TB_NODE_SET_EXTRA(n, TB_NodeFloat64, .value = imm);
     return n;
 }
@@ -364,9 +337,9 @@ TB_API TB_Node* tb_inst_cstring(TB_Function* f, const char* str) {
 }
 
 TB_API TB_Node* tb_inst_array_access(TB_Function* f, TB_Node* base, TB_Node* index, int64_t stride) {
-    TB_Node* n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeArray));
-    n->inputs[0] = base;
-    n->inputs[1] = index;
+    TB_Node* n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 3, sizeof(TB_NodeArray));
+    n->inputs[1] = base;
+    n->inputs[2] = index;
     TB_NODE_SET_EXTRA(n, TB_NodeArray, .stride = stride);
     return n;
 }
@@ -376,8 +349,8 @@ TB_API TB_Node* tb_inst_member_access(TB_Function* f, TB_Node* base, int64_t off
         return base;
     }
 
-    TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 1, sizeof(TB_NodeMember));
-    n->inputs[0] = base;
+    TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
+    n->inputs[1] = base;
     TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
     return n;
 }
@@ -385,14 +358,15 @@ TB_API TB_Node* tb_inst_member_access(TB_Function* f, TB_Node* base, int64_t off
 TB_API TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
     assert(target != NULL);
 
-    TB_Node* n = tb_alloc_node(f, TB_GET_SYMBOL_ADDRESS, TB_TYPE_PTR, 0, sizeof(TB_NodeSymbol));
+    TB_Node* n = tb_alloc_node(f, TB_GET_SYMBOL_ADDRESS, TB_TYPE_PTR, 1, sizeof(TB_NodeSymbol));
     TB_NODE_SET_EXTRA(n, TB_NodeSymbol, .sym = target);
     return n;
 }
 
 TB_API TB_Node* tb_inst_safepoint(TB_Function* f, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_CONTROL, param_count, sizeof(TB_NodeSafepoint));
-    memcpy(n->inputs, params, param_count * sizeof(TB_Node*));
+    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_CONTROL, 1 + param_count, sizeof(TB_NodeSafepoint));
+    n->inputs[0] = f->active_control_node;
+    memcpy(n->inputs + 1, params, param_count * sizeof(TB_Node*));
     TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = f->safepoint_count++);
 
     f->active_control_node = n;
@@ -478,14 +452,14 @@ TB_API void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* count, TB_Cha
 }
 
 TB_API TB_Node* tb_inst_not(TB_Function* f, TB_Node* src) {
-    TB_Node* n = tb_alloc_node(f, TB_NOT, src->dt, 1, 0);
-    n->inputs[0] = src;
+    TB_Node* n = tb_alloc_node(f, TB_NOT, src->dt, 2, 0);
+    n->inputs[1] = src;
     return n;
 }
 
 TB_API TB_Node* tb_inst_bswap(TB_Function* f, TB_Node* src) {
-    TB_Node* n = tb_alloc_node(f, TB_BSWAP, src->dt, 1, 0);
-    n->inputs[0] = src;
+    TB_Node* n = tb_alloc_node(f, TB_BSWAP, src->dt, 2, 0);
+    n->inputs[1] = src;
     return n;
 }
 
@@ -493,8 +467,8 @@ TB_API TB_Node* tb_inst_clz(TB_Function* f, TB_Node* src) {
     assert(TB_IS_INTEGER_TYPE(src->dt));
     uint64_t bits = tb_ffs(src->dt.data) - 1;
 
-    TB_Node* n = tb_alloc_node(f, TB_CLZ, TB_TYPE_INTN(bits), 1, 0);
-    n->inputs[0] = src;
+    TB_Node* n = tb_alloc_node(f, TB_CLZ, TB_TYPE_INTN(bits), 2, 0);
+    n->inputs[1] = src;
     return n;
 }
 
@@ -502,8 +476,8 @@ TB_API TB_Node* tb_inst_ctz(TB_Function* f, TB_Node* src) {
     assert(TB_IS_INTEGER_TYPE(src->dt));
     uint64_t bits = tb_ffs(src->dt.data) - 1;
 
-    TB_Node* n = tb_alloc_node(f, TB_CTZ, TB_TYPE_INTN(bits), 1, 0);
-    n->inputs[0] = src;
+    TB_Node* n = tb_alloc_node(f, TB_CTZ, TB_TYPE_INTN(bits), 2, 0);
+    n->inputs[1] = src;
     return n;
 }
 
@@ -511,8 +485,8 @@ TB_API TB_Node* tb_inst_popcount(TB_Function* f, TB_Node* src) {
     assert(TB_IS_INTEGER_TYPE(src->dt));
     uint64_t bits = tb_ffs(src->dt.data) - 1;
 
-    TB_Node* n = tb_alloc_node(f, TB_POPCNT, TB_TYPE_INTN(bits), 1, 0);
-    n->inputs[0] = src;
+    TB_Node* n = tb_alloc_node(f, TB_POPCNT, TB_TYPE_INTN(bits), 2, 0);
+    n->inputs[1] = src;
     return n;
 }
 
@@ -534,18 +508,16 @@ TB_API TB_Node* tb_inst_neg(TB_Function* f, TB_Node* src) {
         return tb_inst_float64(f, -x);
     }
 
-    TB_Node* n = tb_alloc_node(f, TB_NEG, src->dt, 1, 0);
-    n->inputs[0] = src;
-    return n;
+    return tb_unary(f, TB_NEG, src->dt, src);
 }
 
 TB_API TB_Node* tb_inst_select(TB_Function* f, TB_Node* cond, TB_Node* a, TB_Node* b) {
     assert(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
-    TB_Node* n = tb_alloc_node(f, TB_SELECT, a->dt, 3, 0);
-    n->inputs[0] = cond;
-    n->inputs[1] = a;
-    n->inputs[2] = b;
+    TB_Node* n = tb_alloc_node(f, TB_SELECT, a->dt, 4, 0);
+    n->inputs[1] = cond;
+    n->inputs[2] = a;
+    n->inputs[3] = b;
     return n;
 }
 
@@ -723,45 +695,41 @@ TB_API TB_Node* tb_inst_fdiv(TB_Function* f, TB_Node* a, TB_Node* b) {
 TB_API TB_Node* tb_inst_va_start(TB_Function* f, TB_Node* a) {
     assert(a->type == TB_LOCAL);
 
-    TB_Node* n = tb_alloc_node(f, TB_VA_START, TB_TYPE_PTR, 1, 0);
-    n->inputs[0] = a;
+    TB_Node* n = tb_alloc_node(f, TB_VA_START, TB_TYPE_PTR, 2, 0);
+    n->inputs[1] = a;
     return n;
 }
 
 TB_API TB_Node* tb_inst_x86_ldmxcsr(TB_Function* f, TB_Node* a) {
     assert(a->dt.type == TB_INT && a->dt.data == 32);
 
-    TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_LDMXCSR, TB_TYPE_I32, 1, 0);
-    n->inputs[0] = a;
+    TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_LDMXCSR, TB_TYPE_I32, 2, 0);
+    n->inputs[1] = a;
     return n;
 }
 
 TB_API TB_Node* tb_inst_x86_rdtsc(TB_Function* f) {
-    return tb_alloc_node(f, TB_X86INTRIN_RDTSC, TB_TYPE_I64, 0, 0);
+    return tb_alloc_node(f, TB_X86INTRIN_RDTSC, TB_TYPE_I64, 1, 0);
 }
 
 TB_API TB_Node* tb_inst_x86_stmxcsr(TB_Function* f) {
-    return tb_alloc_node(f, TB_X86INTRIN_STMXCSR, TB_TYPE_I32, 0, 0);
+    return tb_alloc_node(f, TB_X86INTRIN_STMXCSR, TB_TYPE_I32, 1, 0);
 }
 
 TB_API TB_Node* tb_inst_x86_sqrt(TB_Function* f, TB_Node* a) {
-    TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_SQRT, a->dt, 1, 0);
-    n->inputs[0] = a;
-    return n;
+    return tb_unary(f, TB_X86INTRIN_SQRT, a->dt, a);
 }
 
 TB_API TB_Node* tb_inst_x86_rsqrt(TB_Function* f, TB_Node* a) {
-    TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_RSQRT, a->dt, 1, 0);
-    n->inputs[0] = a;
-    return n;
+    return tb_unary(f, TB_X86INTRIN_RSQRT, a->dt, a);
 }
 
 TB_API TB_Node* tb_inst_cmp(TB_Function* f, TB_NodeType type, TB_Node* a, TB_Node* b) {
     assert(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
-    TB_Node* n = tb_alloc_node(f, type, TB_TYPE_BOOL, 2, sizeof(TB_NodeCompare));
-    n->inputs[0] = a;
-    n->inputs[1] = b;
+    TB_Node* n = tb_alloc_node(f, type, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+    n->inputs[1] = a;
+    n->inputs[2] = b;
     TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = a->dt);
     return n;
 }

@@ -260,7 +260,6 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                 if (!out_f) continue;
 
                 // Layout crap
-                uint32_t body_start = out_f->prologue_length;
                 DynArray(TB_Line) lines = out_f->lines;
 
                 tb_out4b(&debugs_out, 0x000000F2);
@@ -310,9 +309,9 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
 
                     if (last_line != line.line) {
                         last_line = line.line;
-                        // printf("  * LINE %d : %x\n", line.line, body_start + line.pos);
+                        // printf("  * LINE %d : %x\n", line.line, line.pos);
 
-                        tb_out4b(&debugs_out, line.pos ? body_start + line.pos : line.pos);
+                        tb_out4b(&debugs_out, line.pos);
                         tb_out4b(&debugs_out, line.line);
                         current_line_count++;
                     }

@@ -14,7 +14,7 @@
 #include "../tb_internal.h"
 #include <log.h>
 
-#define TB_OPTDEBUG_PEEP 0
+#define TB_OPTDEBUG_PEEP 1
 #define TB_OPTDEBUG_LOOP 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
@@ -302,7 +302,7 @@ static void fill_all(TB_FuncOpt* restrict opt, TB_Node* n) {
     dyn_array_put(opt->queue, n);
     nl_map_put(opt->lookup, n, index);
 
-    FOREACH_REVERSE_N(i, 0, n->input_count) {
+    FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
         tb_assert(n->inputs[i], "empty input... in this economy?");
         fill_all(opt, n->inputs[i]);
     }
@@ -327,7 +327,7 @@ static void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
         printf("(%s ...)", tb_node_get_name(n));
     } else {
         printf("(%s", tb_node_get_name(n));
-        FOREACH_N(i, 0, n->input_count) {
+        FOREACH_N(i, 1, n->input_count) {
             printf(" ");
             print_node_sexpr(f, n->inputs[i], depth + 1);
         }
@@ -431,7 +431,7 @@ static TB_Node* identity(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
 
         case TB_MEMBER_ACCESS:
         if (TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset == 0) {
-            return n->inputs[0];
+            return n->inputs[1];
         }
         return n;
 
@@ -505,10 +505,8 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         }
     }
 
-    #if TB_OPTDEBUG_PEEP
-    printf("peep? ");
-    print_node_sexpr(f, n, 0);
-    #endif
+    DO_IF(TB_OPTDEBUG_PEEP)(printf("peep? "), print_node_sexpr(f, n, 0));
+
 
     // if we fold branches, we need to know who to update
     bool terminator = is_terminator(n);
@@ -582,7 +580,7 @@ static void generate_use_lists(TB_FuncOpt* restrict queue, TB_Function* f) {
             dyn_array_put(queue->locals, n);
         }
 
-        FOREACH_N(i, 0, n->input_count) {
+        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
             add_user(queue, n, n->inputs[i], i, NULL);
         }
     }

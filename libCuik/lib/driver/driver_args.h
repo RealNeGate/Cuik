@@ -17,7 +17,7 @@ X(OPTLVL,      "O",        true,  "no optimizations")
 X(EMITIR,      "emit-ir",  false, "print IR into stdout")
 X(OUTPUT,      "o",        true,  "set the output filepath")
 X(OBJECT,      "c",        false, "output object file")
-X(ASSEMBLY,    "S",        false, "output assembly to stdout (not ready)")
+X(ASSEMBLY,    "S",        false, "output assembly to stdout")
 X(DEBUG,       "g",        false, "compile with debug information")
 // linker
 X(NOLIBC,      "nostdlib", false, "don't include and link against the default CRT")

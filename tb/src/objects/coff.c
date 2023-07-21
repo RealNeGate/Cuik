@@ -401,7 +401,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                 TB_FOR_FUNCTIONS(f, m) if (f->super.name && f->output) {
                     TB_FunctionOutput* func_out = f->output;
 
-                    size_t source_offset = func_out->prologue_length;
+                    size_t source_offset = 0;
                     if (f->comdat.type == TB_COMDAT_NONE) {
                         source_offset += func_out->code_pos;
                     }
@@ -676,7 +676,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                     .storage_class = is_extern ? IMAGE_SYM_CLASS_EXTERNAL : IMAGE_SYM_CLASS_STATIC
                 };
 
-                if (g->super.name) {
+                if (g->super.name[0] != 0) {
                     size_t name_len = strlen(g->super.name);
                     assert(name_len < UINT16_MAX);
 
