@@ -766,10 +766,6 @@ static void irgen_job(void* arg) {
 
         if (do_compiles_immediately && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
             TB_FunctionOutput* out = tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST, true);
-            TB_Assembly* a = tb_output_get_asm(out);
-            for (; a; a = a->next) {
-                fwrite(a->data, a->length, 1, stdout);
-            }
             CUIK_CALL(allocator, clear);
         }
     }
