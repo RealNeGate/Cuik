@@ -128,23 +128,24 @@ static TB_Node* ideal_branch(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* 
         if (j >= 0 && latch->inputs[1] == n->inputs[1] && latch_br->keys[0] == br->keys[0]) {
             TB_Node* dead_block = region->succ[1 - j];
 
-            // convert conditional into goto
-            set_input(opt, n, NULL, 1);
-            n->input_count = 1;
-            region->succ_count = 1;
-            region->succ[0] = region->succ[j];
+            if (dead_block->input_count == 1) {
+                // convert conditional into goto
+                set_input(opt, n, NULL, 1);
+                n->input_count = 1;
+                region->succ_count = 1;
+                region->succ[0] = region->succ[j];
 
-            assert(dead_block->input_count == 1);
-            set_input(opt, dead_block, NULL, 0);
-            dead_block->input_count = 0;
+                set_input(opt, dead_block, NULL, 0);
+                dead_block->input_count = 0;
 
-            // remove predecessor from dead_block's successors
-            TB_NodeRegion* dead_region = TB_NODE_GET_EXTRA(dead_block);
-            FOREACH_N(k, 0, dead_region->succ_count) {
-                remove_pred(opt, f, dead_block, dead_region->succ[k]);
+                // remove predecessor from dead_block's successors
+                TB_NodeRegion* dead_region = TB_NODE_GET_EXTRA(dead_block);
+                FOREACH_N(k, 0, dead_region->succ_count) {
+                    remove_pred(opt, f, dead_block, dead_region->succ[k]);
+                }
+
+                return n;
             }
-
-            return n;
         }
     }
 
