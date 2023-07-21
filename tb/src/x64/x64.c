@@ -1019,6 +1019,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV };
             dst = DEF(n, REG_CLASS_XMM);
 
+            if (type == TB_FDIV && strcmp(ctx->f->super.name, "stbi__ldr_to_hdr") == 0) __debugbreak();
+
             int lhs = ISEL(n->inputs[1]);
             int rhs = ISEL(n->inputs[2]);
             SUBMIT(inst_rr(ops[type - TB_FADD], n->dt, dst, lhs, rhs));
@@ -1173,7 +1175,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             dst = DEF(n, REG_CLASS_GPR);
 
             TB_NodeInt* i = TB_NODE_GET_EXTRA(src);
-            if (i->num_words == 1 && fits_into_int32(i->words[0])) {
+            if (src->type == TB_INTEGER_CONST && i->num_words == 1 && fits_into_int32(i->words[0])) {
                 #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
 
                 uint64_t src = i->words[0];
@@ -1343,7 +1345,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                 // signed 32bit immediates get love
                 int32_t imm;
-                if (try_for_imm32(ctx, n->inputs[i], &imm)) {
+                if (try_for_imm32(ctx, param, &imm)) {
                     if (i - 2 < desc->gpr_count) {
                         int param_def = DEF_FORCED(param, REG_CLASS_GPR, desc->gprs[i - 2], fake_dst);
                         SUBMIT(inst_i(MOV, param->dt, param_def, imm));
@@ -1353,7 +1355,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     continue;
                 }
 
-                int src = isel(ctx, n->inputs[i]);
+                int src = isel(ctx, param);
                 if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
                     int xmm_id = is_sysv ? xmms_used++ : i - 2;
                     if (xmm_id == 0 && n->dt.type == TB_FLOAT) {

@@ -288,7 +288,7 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
     }
     P("\"];\n");
 
-    FOREACH_N(i, 0, n->input_count) {
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
         if (n->inputs[i]->type != TB_START && n->inputs[i]->type != TB_REGION) {
             tb_print_node(f, ctx, callback, user_data, n->inputs[i]);
         }
