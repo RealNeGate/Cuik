@@ -165,6 +165,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
             .name = decl.name,
             .type = decl.type,
             .attrs = attr,
+            .local_ordinal = dyn_array_length(parser->top_level_stmts),
         };
 
         dyn_array_put(parser->top_level_stmts, n);

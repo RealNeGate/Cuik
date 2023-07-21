@@ -1666,30 +1666,36 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             break;
         }
         case STMT_IF: {
-            TB_Node* cond = irgen_as_rvalue(tu, func, s->if_.cond);
+            IRVal cond = irgen_expr(tu, func, s->if_.cond);
 
-            TB_Node* if_true = tb_inst_region(func);
-            TB_Node* if_false = tb_inst_region(func);
+            TB_Node *if_true, *if_false, *exit;
+            if (cond.value_type == RVALUE_PHI) {
+                exit = cond.phi.merger;
+                if_true = cond.phi.if_true;
+                if_false = cond.phi.if_false;
+            } else {
+                exit = tb_inst_region(func);
+                if_true = tb_inst_region(func);
+                if_false = tb_inst_region(func);
 
-            // Cast to bool
-            tb_inst_if(func, cond, if_true, if_false);
+                // Cast to bool
+                tb_inst_if(func, cvt2rval(tu, func, &cond), if_true, if_false);
+            }
 
             tb_inst_set_control(func, if_true);
             irgen_stmt(tu, func, s->if_.body);
 
             if (s->if_.next) {
-                TB_Node* exit = tb_inst_region(func);
                 if (tb_inst_get_control(func) != NULL) {
                     tb_inst_goto(func, exit);
                 }
 
                 tb_inst_set_control(func, if_false);
                 irgen_stmt(tu, func, s->if_.next);
-
-                fallthrough_label(func, exit);
             } else {
                 fallthrough_label(func, if_false);
             }
+            fallthrough_label(func, exit);
             break;
         }
         case STMT_WHILE: {

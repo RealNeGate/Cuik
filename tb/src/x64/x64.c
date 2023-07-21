@@ -1019,8 +1019,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV };
             dst = DEF(n, REG_CLASS_XMM);
 
-            if (type == TB_FDIV && strcmp(ctx->f->super.name, "stbi__ldr_to_hdr") == 0) __debugbreak();
-
             int lhs = ISEL(n->inputs[1]);
             int rhs = ISEL(n->inputs[2]);
             SUBMIT(inst_rr(ops[type - TB_FADD], n->dt, dst, lhs, rhs));

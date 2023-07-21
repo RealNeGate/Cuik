@@ -105,7 +105,7 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
     // text section is special because it holds code
     TB_Symbol** array_form = NULL;
     FOREACH_N(tag, 0, TB_SYMBOL_MAX) {
-        if (m->symbol_count[tag] < 1) continue;
+        if (m->symbol_count[tag] <= 1) continue;
 
         CUIK_TIMED_BLOCK("sort") {
             size_t count = m->symbol_count[tag];
