@@ -225,6 +225,7 @@ TB_API void tb_inst_debugbreak(TB_Function* f) {
 TB_API void tb_inst_trap(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_VOID, 1, 0);
     n->inputs[0] = f->active_control_node;
+    TB_NODE_GET_EXTRA_T(tb_get_parent_region(f->active_control_node), TB_NodeRegion)->end = n;
     f->active_control_node = NULL;
 }
 
