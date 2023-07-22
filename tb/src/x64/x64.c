@@ -797,12 +797,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst);
             } else {
                 TB_Module* mod = ctx->module;
-                TB_Global* g = tb_global_create(mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-                tb_global_set_storage(mod, &mod->rdata, g, sizeof(float), sizeof(float), 1);
-
-                char* buffer = tb_global_add_region(mod, g, 0, sizeof(float));
-                memcpy(buffer, &imm, sizeof(float));
-
+                TB_Global* g = tb__small_data_intern(mod, sizeof(float), &imm);
                 SUBMIT(inst_g(FP_MOV, n->dt, dst, (TB_Symbol*) g));
             }
             break;
@@ -822,13 +817,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 };
                 SUBMIT(inst);
             } else {
-                TB_Module* mod = ctx->module;
-                TB_Global* g = tb_global_create(mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-                tb_global_set_storage(mod, &mod->rdata, g, sizeof(double), sizeof(double), 1);
-
-                char* buffer = tb_global_add_region(mod, g, 0, sizeof(double));
-                memcpy(buffer, &imm, sizeof(double));
-
+                TB_Global* g = tb__small_data_intern(ctx->module, sizeof(double), &imm);
                 SUBMIT(inst_g(FP_MOV, n->dt, dst, (TB_Symbol*) g));
             }
             break;
@@ -850,21 +839,13 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst_r(type == TB_NOT ? NOT : NEG, n->dt, dst, src));
             } else {
                 if (type == TB_NEG) {
-                    TB_Module* mod = ctx->module;
-                    TB_Global* g = tb_global_create(mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-
-                    enum { XMM_SIZE = 16 };
-                    tb_global_set_storage(mod, &mod->rdata, g, XMM_SIZE, XMM_SIZE, 1);
+                    TB_Global* g = NULL;
                     if (n->dt.data == TB_FLT_32) {
-                        uint32_t* buffer = tb_global_add_region(mod, g, 0, XMM_SIZE);
-                        buffer[0] = 1ull << 31ull;
-                        buffer[1] = 1ull << 31ull;
-                        buffer[2] = 1ull << 31ull;
-                        buffer[3] = 1ull << 31ull;
+                        uint32_t buffer[4] = { 1u << 31u, 1u << 31u, 1u << 31u, 1u << 31u };
+                        g = tb__small_data_intern(ctx->module, 16, buffer);
                     } else if (n->dt.data == TB_FLT_64) {
-                        uint64_t* buffer = tb_global_add_region(mod, g, 0, XMM_SIZE);
-                        buffer[0] = 1ull << 63ull;
-                        buffer[1] = 1ull << 63ull;
+                        uint64_t buffer[4] = { 1ull << 63ull, 1ull << 63ull };
+                        g = tb__small_data_intern(ctx->module, 16, buffer);
                     } else {
                         tb_todo();
                     }

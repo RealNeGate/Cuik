@@ -15,6 +15,10 @@ static _Thread_local TB_Attrib* scope_attrib;
 
 static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc);
 
+static uint64_t get_ir_ordinal(TranslationUnit* tu, Stmt* stmt) {
+    return ((uint64_t) tu->local_ordinal << 32ull) | stmt->decl.local_ordinal;
+}
+
 static TB_Symbol* get_external(CompilationUnit* restrict cu, const char* name) {
     // if this is the first time we've seen this name, add it to the table
     cuik_lock_compilation_unit(cu);
@@ -51,6 +55,7 @@ static TB_Global* place_external(CompilationUnit* restrict cu, Stmt* s, TB_Debug
             }
         } else {
             result = tb_global_create(cu->ir_mod, -1, name, dbg_type, linkage);
+            ((TB_Symbol*) result)->ordinal = s->decl.local_ordinal;
             nl_map_put_cstr(cu->export_table, name, (TB_Symbol*) result);
         }
 
@@ -476,7 +481,10 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
         size_t len = s->str.end - s->str.start;
 
         if (type->kind == KIND_PTR) {
+            uint32_t hash = murmur3_32(s->str.start, len);
+
             TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+            ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
             tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
 
             char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
@@ -639,9 +647,19 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
         case EXPR_STR:
         case EXPR_WSTR: {
             // The string is preprocessed to be a flat and nice byte buffer by the semantics pass
+            size_t len = e->str.end - e->str.start;
+            uint32_t hash = murmur3_32(e->str.start, len);
+
+            TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+            ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
+            tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, 1, 1);
+
+            char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
+            memcpy(dst, e->str.start, len);
+
             return (IRVal){
                 .value_type = RVALUE,
-                .reg = tb_inst_string(func, e->str.end - e->str.start, (char*)e->str.start),
+                .reg = tb_inst_get_symbol_address(func, (TB_Symbol*) dummy)
             };
         }
         case EXPR_INITIALIZER: {
@@ -778,7 +796,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             }
         }
         case EXPR_SUBSCRIPT: {
-            TB_Node* base = RVAL(0);
+            TB_Node* base  = RVAL(0);
             TB_Node* index = RVAL(1);
 
             int stride = cuik_canonical_type(GET_TYPE())->size;
@@ -1950,10 +1968,6 @@ typedef struct {
 
     Futex* remaining;
 } IRAllocTask;
-
-static uint64_t get_ir_ordinal(TranslationUnit* tu, Stmt* stmt) {
-    return ((uint64_t) tu->local_ordinal << 32ull) | stmt->decl.local_ordinal;
-}
 
 static void ir_alloc_task(void* task) {
     CUIK_TIMED_BLOCK("ir_alloc_task") {

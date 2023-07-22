@@ -83,7 +83,6 @@ typedef enum TB_ABI {
 
 typedef enum TB_OutputFlavor {
     TB_FLAVOR_OBJECT,     // .o  .obj
-    TB_FLAVOR_ASSEMBLY,   // .s  .asm
     TB_FLAVOR_SHARED,     // .so .dll
     TB_FLAVOR_STATIC,     // .a  .lib
     TB_FLAVOR_EXECUTABLE, //     .exe
@@ -814,7 +813,7 @@ typedef enum {
     TB_PASSING_IGNORE,
 } TB_PassingRule;
 
-TB_PassingRule tb_get_passing_rule_from_dbg(TB_Module* mod, TB_DebugType* param_type, bool is_return);
+TB_API TB_PassingRule tb_get_passing_rule_from_dbg(TB_Module* mod, TB_DebugType* param_type, bool is_return);
 
 ////////////////////////////////
 // Globals

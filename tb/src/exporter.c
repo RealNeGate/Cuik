@@ -64,25 +64,6 @@ TB_API void tb_export_buffer_free(TB_ExportBuffer buffer) {
     }
 }
 
-static void layout_section(TB_ModuleSection* restrict section) {
-    if (section->laid_out) {
-        return;
-    }
-
-    CUIK_TIMED_BLOCK_ARGS("layout section", section->name) {
-        uint64_t offset = 0;
-        dyn_array_for(i, section->globals) {
-            TB_Global* g = section->globals[i];
-
-            offset = align_up(offset, g->align);
-            g->pos = offset;
-            offset += g->size;
-        }
-        section->total_size = offset;
-        section->laid_out = true;
-    }
-}
-
 static int compare_symbols(const void* a, const void* b) {
     const TB_Symbol* sym_a = *(const TB_Symbol**) a;
     const TB_Symbol* sym_b = *(const TB_Symbol**) b;
@@ -99,6 +80,21 @@ static int compare_functions(const void* a, const void* b) {
     if (diff) return diff;
 
     return (sym_a->super.ordinal > sym_b->super.ordinal) - (sym_a->super.ordinal < sym_b->super.ordinal);
+}
+
+static void layout_section(TB_ModuleSection* restrict section) {
+    CUIK_TIMED_BLOCK_ARGS("layout section", section->name) {
+        size_t offset = 16;
+
+        dyn_array_for(i, section->globals) {
+            TB_Global* g = section->globals[i];
+
+            offset = align_up(offset, g->align);
+            g->pos = offset;
+            offset += g->size;
+        }
+        section->total_size = offset;
+    }
 }
 
 TB_API void tb_module_layout_sections(TB_Module* m) {
@@ -132,9 +128,20 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
                 size_t i = count;
                 m->first_symbol_of_tag[tag] = array_form[0];
 
-                FOREACH_N(j, 1, i) {
-                    array_form[j-1]->next = array_form[j];
+                if (tag == TB_SYMBOL_GLOBAL) {
+                    TB_Global** globals = (TB_Global**) array_form;
+                    // dyn_array_put(globals[0]->parent->globals, globals[0]);
+
+                    FOREACH_N(j, 1, i) {
+                        // dyn_array_put(globals[j]->parent->globals, globals[j]);
+                        array_form[j-1]->next = array_form[j];
+                    }
+                } else {
+                    FOREACH_N(j, 1, i) {
+                        array_form[j-1]->next = array_form[j];
+                    }
                 }
+
                 array_form[i-1]->next = NULL;
             }
         }
@@ -163,7 +170,6 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
         m->text.total_size = offset;
         m->text.total_comdat = comdat;
         m->text.total_comdat_relocs = comdat_relocs;
-        m->text.laid_out = true;
     }
 
     layout_section(&m->data);

@@ -66,15 +66,16 @@ static int debug_type_align(TB_ABI abi, TB_DebugType* t) {
 static RegClass classify_reg(TB_ABI abi, TB_DebugType* t) {
     switch (abi) {
         // [https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention]
-        // A scalar return value that can fit into 64
-        // bits, including the __m64 type, is returned
-        // through RAX.
+        // Any argument that doesn't fit in 8 bytes, or isn't 1, 2, 4, or 8 bytes,
+        // must be passed by reference. A single argument is never spread across
+        // multiple registers.
         case TB_ABI_WIN64: {
-            if (debug_type_size(abi, t) > 8) {
-                return RG_MEMORY;
+            int s = debug_type_size(abi, t);
+            if (s == 1 || s == 2 || s == 4 || s == 8) {
+                return t->tag == TB_DEBUG_TYPE_FLOAT ? RG_SSE : RG_INTEGER;
             }
 
-            return t->tag == TB_DEBUG_TYPE_FLOAT ? RG_SSE : RG_INTEGER;
+            return RG_MEMORY;
         }
 
         default: tb_todo();

@@ -204,11 +204,6 @@ void tb_module_destroy(TB_Module* m) {
         }
     }
 
-    FOREACH_N(i, 0, m->max_threads) {
-        pool_destroy(m->thread_info[i].globals);
-        pool_destroy(m->thread_info[i].externals);
-    }
-
     dyn_array_destroy(m->files);
     tb_platform_heap_free(m);
 }
@@ -334,7 +329,7 @@ void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, const
 TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
     int tid = tb__get_local_tid();
 
-    TB_Global* g = pool_put(m->thread_info[tid].globals);
+    TB_Global* g = arena_alloc(&tb__arena2, sizeof(TB_Global), _Alignof(TB_Global));
     *g = (TB_Global){
         .super = {
             .tag = TB_SYMBOL_GLOBAL,
@@ -361,12 +356,36 @@ void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* g
     dyn_array_put(section->globals, global);
 }
 
+TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data) {
+    assert(len <= 16);
+
+    // copy into SmallConst
+    SmallConst c = { .len = len };
+    memcpy(c.data, data, c.len);
+
+    mtx_lock(&m->lock);
+    ptrdiff_t search = nl_map_get(m->global_interns, c);
+    if (search >= 0) {
+        return m->global_interns[search].v;
+    }
+
+    TB_Global* g = tb_global_create(m, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+    g->super.ordinal = *((uint64_t*) &c.data);
+    tb_global_set_storage(m, &m->rdata, g, len, len, 1);
+
+    char* buffer = tb_global_add_region(m, g, 0, len);
+    memcpy(buffer, data, len);
+    nl_map_put(m->global_interns, c, g);
+
+    mtx_unlock(&m->lock);
+    return g;
+}
+
 TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
     size_t left = 0;
     size_t right = f->safepoint_count;
 
-    uint32_t ip = relative_ip - f->output->prologue_length;
-
+    uint32_t ip = relative_ip;
     const TB_SafepointKey* keys = f->output->safepoints;
     while (left < right) {
         size_t middle = (left + right) / 2;
@@ -417,7 +436,7 @@ TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_
     assert(name != NULL);
     int tid = tb__get_local_tid();
 
-    TB_External* e = pool_put(m->thread_info[tid].externals);
+    TB_External* e = arena_alloc(&tb__arena2, sizeof(TB_External), _Alignof(TB_External));
     *e = (TB_External){
         .super = {
             .tag = TB_SYMBOL_EXTERNAL,

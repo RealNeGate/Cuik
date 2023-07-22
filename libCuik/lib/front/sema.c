@@ -619,21 +619,6 @@ Cuik_QualType cuik__sema_expr_OLD(TranslationUnit* tu, Expr* restrict e) {
         case EXPR_UNKNOWN_SYMBOL: {
             return (e->type = cuik_uncanonical_type(&cuik__builtin_void));
         }
-        case EXPR_VA_ARG: {
-            Cuik_Type* va_list_type = cuik_canonical_type(cuik__sema_expr(tu, e->va_arg_.src));
-            if (!type_equal(va_list_type, tu->va_list)) {
-                diag_err(&tu->tokens, e->loc, "va_arg must take in a va_list in the first argument (got %!T)", va_list_type);
-            }
-
-            Cuik_QualType type = e->va_arg_.type;
-            int size = cuik_canonical_type(type)->size;
-            Cuik_Type* target_signed_ints = tu->target->signed_ints;
-            if (size < target_signed_ints[CUIK_BUILTIN_INT].size) {
-                diag_warn(&tu->tokens, e->loc, "va_arg used on a value smaller than int");
-            }
-
-            return (e->type = type);
-        }
         case EXPR_LOGICAL_NOT: {
             /* Cuik_Type* src = */ cuik__sema_expr(tu, e->unary_op.src);
             return (e->type = e->unary_op.src->cast_type = cuik_uncanonical_type(&cuik__builtin_bool));
@@ -1533,6 +1518,23 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             return GET_TYPE(1);
         }
 
+        case EXPR_VA_ARG: {
+            Cuik_Type* va_list_type = cuik_canonical_type(GET_TYPE(0));
+            SET_CAST(0, GET_TYPE(0));
+
+            if (!type_equal(va_list_type, tu->va_list)) {
+                diag_err(&tu->tokens, e->loc, "va_arg must take in a va_list in the first argument (got %!T)", va_list_type);
+            }
+
+            Cuik_QualType type = e->va_arg_.type;
+            int size = cuik_canonical_type(type)->size;
+            Cuik_Type* target_signed_ints = tu->target->signed_ints;
+            if (size < target_signed_ints[CUIK_BUILTIN_INT].size) {
+                diag_warn(&tu->tokens, e->loc, "va_arg used on a value smaller than int");
+            }
+
+            return type;
+        }
         case EXPR_LOGICAL_NOT: {
             Cuik_QualType boolean = cuik_uncanonical_type(&cuik__builtin_bool);
 

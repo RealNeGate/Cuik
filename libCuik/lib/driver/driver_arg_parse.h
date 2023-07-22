@@ -278,7 +278,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
 
     #ifdef CUIK_USE_TB
     if (args->_[ARG_OBJECT]) comp_args->flavor = TB_FLAVOR_OBJECT;
-    if (args->_[ARG_ASSEMBLY]) comp_args->flavor = TB_FLAVOR_ASSEMBLY;
+    if (args->_[ARG_ASSEMBLY]) comp_args->assembly = true;
     #endif
 
     if (args->_[ARG_OPTLVL]) {

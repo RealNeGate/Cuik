@@ -388,11 +388,14 @@ struct TB_ModuleSection {
     uint32_t total_comdat_relocs;
     uint32_t total_comdat;
 
-    bool laid_out;
-
     // this is all the globals within the section
     DynArray(TB_Global*) globals;
 };
+
+typedef struct {
+    int len;
+    char data[16];
+} SmallConst;
 
 struct TB_Module {
     int max_threads;
@@ -403,6 +406,10 @@ struct TB_Module {
     // we have a global lock since the arena can be accessed
     // from any thread.
     mtx_t lock;
+
+    // small constants are interned because they
+    // come up a lot.
+    NL_Map(SmallConst, TB_Global*) global_interns;
 
     TB_ABI target_abi;
     TB_Arch target_arch;
@@ -419,11 +426,6 @@ struct TB_Module {
     // symbol table
     _Atomic size_t symbol_count[TB_SYMBOL_MAX];
     _Atomic(TB_Symbol*) first_symbol_of_tag[TB_SYMBOL_MAX];
-
-    alignas(64) struct {
-        Pool(TB_Global) globals;
-        Pool(TB_External) externals;
-    } thread_info[TB_MAX_THREADS];
 
     DynArray(TB_File) files;
 
@@ -645,6 +647,7 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, ptrdiff_t len, c
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos);
+TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data);
 
 // trusty lil hash functions
 uint32_t tb__crc32(uint32_t crc, size_t length, const void* data);

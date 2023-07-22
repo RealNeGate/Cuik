@@ -286,10 +286,9 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     // to save on total memory usage, this code path is for
     // optimized code since it needs to know what neighbors it's
     // got for IPO.
-    bool emit_asm = args->flavor == TB_FLAVOR_ASSEMBLY;
-    if (emit_asm || (args->opt_level > 0 && !args->emit_ir)) {
+    if (args->assembly || (args->opt_level > 0 && !args->emit_ir)) {
         CUIK_TIMED_BLOCK("CodeGen") {
-            cuiksched_per_function(s->tp, mod, emit_asm ? stdout : NULL, compile_func);
+            cuiksched_per_function(s->tp, mod, args->assembly ? stdout : NULL, compile_func);
         }
     }
     #endif
@@ -743,15 +742,14 @@ static void irgen_job(void* arg) {
 
     // unoptimized builds can just compile functions without
     // the rest of the functions being ready.
-    bool emit_asm = task.args->flavor == TB_FLAVOR_ASSEMBLY;
-    bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->emit_ir && !emit_asm;
+    bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->emit_ir && !task.args->assembly;
 
     TB_Arena* allocator = NULL;
     if (ir_arena == NULL) {
         ir_arena = tb_default_arena();
     }
-
     allocator = ir_arena;
+
     for (size_t i = 0; i < task.count; i++) {
         // skip all the typedefs
         if (task.stmts[i]->decl.attrs.is_typedef || !task.stmts[i]->decl.attrs.is_used) {

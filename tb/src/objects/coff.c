@@ -205,8 +205,14 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
             f->super.symbol_id = unique_id_counter++;
         }
 
-        TB_FOR_EXTERNALS(ext, m) ext->super.symbol_id = unique_id_counter++;
-        TB_FOR_GLOBALS(g, m) g->super.symbol_id = unique_id_counter++;
+        TB_FOR_EXTERNALS(ext, m) {
+            ext->super.symbol_id = unique_id_counter++;
+        }
+
+        TB_FOR_GLOBALS(g, m) {
+            g->super.symbol_id = unique_id_counter++;
+        }
+
     }
 
     // added after unique_id_counter
@@ -690,7 +696,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                         memcpy(sym.short_name, g->super.name, name_len + 1);
                     }
                 } else {
-                    snprintf((char*) sym.short_name, 8, "$%06zu", g->super.symbol_id);
+                    snprintf((char*) sym.short_name, 8, "$%06zx", g->super.symbol_id);
                 }
 
                 WRITE(&sym, sizeof(sym));

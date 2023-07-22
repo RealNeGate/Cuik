@@ -501,19 +501,17 @@ static void pe_append_module(TB_Linker* l, TB_Module* m) {
 
     if (m->data.total_size > 0) CUIK_TIMED_BLOCK(".reloc") {
         uint32_t last_page = UINT32_MAX, reloc_size = 0;
-        FOREACH_N(i, 0, m->max_threads) {
-            pool_for(TB_Global, g, m->thread_info[i].globals) {
-                FOREACH_N(k, 0, g->obj_count) {
-                    size_t actual_page = g->pos + g->objects[k].offset;
+        TB_FOR_GLOBALS(g, m) {
+            FOREACH_N(k, 0, g->obj_count) {
+                size_t actual_page = g->pos + g->objects[k].offset;
 
-                    if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
-                        if (last_page != actual_page) {
-                            last_page = actual_page;
-                            reloc_size += 8;
-                        }
-
-                        reloc_size += 2;
+                if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
+                    if (last_page != actual_page) {
+                        last_page = actual_page;
+                        reloc_size += 8;
                     }
+
+                    reloc_size += 2;
                 }
             }
         }
@@ -703,21 +701,19 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
             TB_Module* m = l->ir_modules[j];
 
             // Find all the imports & place them into the right buckets
-            FOREACH_N(i, 0, m->max_threads) {
-                pool_for(TB_External, ext, m->thread_info[i].externals) {
-                    TB_Slice name = { strlen(ext->super.name), (uint8_t*) ext->super.name };
-                    TB_LinkerSymbol* sym = tb__find_symbol(&l->symtab, name);
-                    if (sym == NULL) {
-                        tb__unresolved_symbol(l, name)->reloc = j;
-                        continue;
-                    }
+            TB_FOR_EXTERNALS(ext, m) {
+                TB_Slice name = { strlen(ext->super.name), (uint8_t*) ext->super.name };
+                TB_LinkerSymbol* sym = tb__find_symbol(&l->symtab, name);
+                if (sym == NULL) {
+                    tb__unresolved_symbol(l, name)->reloc = j;
+                    continue;
+                }
 
-                    if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
-                        ext->super.address = tb__find_or_create_import(l, sym);
-                    } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
-                        TB_LinkerSymbol* isym = sym->thunk.import_sym;
-                        ext->super.address = tb__find_or_create_import(l, isym);
-                    }
+                if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
+                    ext->super.address = tb__find_or_create_import(l, sym);
+                } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
+                    TB_LinkerSymbol* isym = sym->thunk.import_sym;
+                    ext->super.address = tb__find_or_create_import(l, isym);
                 }
             }
         }
