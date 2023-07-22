@@ -135,8 +135,8 @@ static TB_Node* clone_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* re
 static void remove_input(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n, size_t i) {
     // remove swap
     n->input_count--;
-    if (n->input_count > 0) {
-        set_input(opt, n, NULL, n->input_count);
+    set_input(opt, n, NULL, n->input_count);
+    if (n->input_count != i) {
         set_input(opt, n, n->inputs[n->input_count], i);
     }
 }
@@ -149,8 +149,9 @@ static void remove_pred(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* src, 
 
             // update PHIs
             for (User* use = find_users(opt, dst); use; use = use->next) {
-                assert(use->slot == 0);
-                remove_input(opt, f, use->n, i);
+                if (use->n->type == TB_PHI) {
+                    remove_input(opt, f, use->n, i);
+                }
             }
             break;
         }
