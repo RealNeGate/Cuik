@@ -346,7 +346,7 @@ static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) 
             if (v->imm != 0) {
                 EMITA(e, " + %d", v->imm);
             }
-            EMITA(e, "]");
+            EMITA(e, "]", NULL);
             break;
         }
         case VAL_GLOBAL: {
@@ -368,7 +368,7 @@ static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) 
         }
         case VAL_LABEL: {
             if (v->target == NULL) {
-                EMITA(e, ".ret");
+                EMITA(e, ".ret", NULL);
             } else {
                 EMITA(e, "L%p", (TB_Node*) v->target);
             }
@@ -1627,12 +1627,12 @@ static void inst2_print(TB_CGEmitter* restrict e, InstType type, Val* dst, Val* 
             static const char suffixes[4][3] = { "ss", "sd", "ps", "pd" };
             EMITA(e, "%s ", suffixes[dt - TB_X86_TYPE_SSE_SS]);
         } else {
-            EMITA(e, " ");
+            EMITA(e, " ", NULL);
         }
         print_operand(e, dst, dt);
-        EMITA(e, ", ");
+        EMITA(e, ", ", NULL);
         print_operand(e, src, dt);
-        EMITA(e, "\n");
+        EMITA(e, "\n", NULL);
     }
 
     if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
@@ -1646,7 +1646,7 @@ static void inst1_print(TB_CGEmitter* restrict e, int type, Val* src, TB_X86_Dat
     if (e->emit_asm) {
         EMITA(e, "  %s ", inst_table[type].mnemonic);
         print_operand(e, src, dt);
-        EMITA(e, "\n");
+        EMITA(e, "\n", NULL);
     }
     inst1(e, type, src, dt);
 }
@@ -1857,7 +1857,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
     }
 
     // return label goes here
-    EMITA(&ctx->emit, ".ret:\n");
+    EMITA(&ctx->emit, ".ret:\n", NULL);
     tb_resolve_rel32(&ctx->emit, &ctx->emit.return_label, GET_CODE_POS(&ctx->emit));
 
     func_out->epilogue_length = emit_epilogue(ctx);
