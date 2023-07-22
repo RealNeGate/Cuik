@@ -1222,6 +1222,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
+        case TB_TRAP: {
+            SUBMIT(inst_nullary(UD2));
+            break;
+        }
+
         case TB_BRANCH: {
             TB_NodeRegion* r = TB_NODE_GET_EXTRA(tb_get_parent_region(n));
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);

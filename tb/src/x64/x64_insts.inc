@@ -8,6 +8,7 @@ X(MOVSB,     "rep movsb",   BYTE,       0xA4)
 X(CAST,      NULL,          BYTE,       0x99)
 X(SYSCALL,   "syscall",     BYTE_EXT,   0x05)
 X(RDTSC,     "rdtsc",       BYTE_EXT,   0x31)
+X(UD2,       "ud2",         BYTE_EXT,   0x0B)
 
 X(NOT,       "not",         UNARY,      .op_i = 0xF7, 0x02)
 X(NEG,       "neg",         UNARY,      .op_i = 0xF7, 0x03)
