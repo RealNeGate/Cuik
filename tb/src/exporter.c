@@ -84,7 +84,7 @@ static int compare_functions(const void* a, const void* b) {
 
 static void layout_section(TB_ModuleSection* restrict section) {
     CUIK_TIMED_BLOCK_ARGS("layout section", section->name) {
-        size_t offset = 16;
+        size_t offset = 0;
 
         dyn_array_for(i, section->globals) {
             TB_Global* g = section->globals[i];
@@ -101,7 +101,7 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
     // text section is special because it holds code
     TB_Symbol** array_form = NULL;
     FOREACH_N(tag, 0, TB_SYMBOL_MAX) {
-        if (m->symbol_count[tag] <= 1) continue;
+        if (m->symbol_count[tag] < 1) continue;
 
         CUIK_TIMED_BLOCK("sort") {
             size_t count = m->symbol_count[tag];
@@ -200,6 +200,7 @@ size_t tb_helper_write_section(TB_Module* m, size_t write_pos, TB_ModuleSection*
             memset(&data[g->pos], 0, g->size);
             FOREACH_N(k, 0, g->obj_count) {
                 if (g->objects[k].type == TB_INIT_OBJ_REGION) {
+                    assert(g->objects[k].offset + g->objects[k].region.size <= g->size);
                     memcpy(&data[g->pos + g->objects[k].offset], g->objects[k].region.ptr, g->objects[k].region.size);
                 }
             }
