@@ -859,6 +859,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
+        case TB_SELECT: {
+            dst = DEF(n, REG_CLASS_GPR);
+
+            Cond cc = isel_cmp(ctx, n->inputs[1]);
+            int lhs = ISEL(n->inputs[2]);
+            int rhs = ISEL(n->inputs[3]);
+            SUBMIT(inst_rr(CMOVO + cc, n->dt, dst, lhs, rhs));
+            break;
+        }
+
         case TB_AND:
         case TB_OR:
         case TB_XOR:

@@ -166,6 +166,7 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
         case TB_CMP_SLE:
         case TB_CMP_FLT:
         case TB_CMP_FLE:
+        case TB_SELECT:
         break;
 
         case TB_MEMBER_ACCESS: {

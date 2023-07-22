@@ -353,7 +353,7 @@ void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* g
     global->obj_count = 0;
     global->obj_capacity = max_objects;
     global->objects = ARENA_ARR_ALLOC(&tb__arena2, max_objects, TB_InitObj);
-    dyn_array_put(section->globals, global);
+    // dyn_array_put(section->globals, global);
 }
 
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data) {

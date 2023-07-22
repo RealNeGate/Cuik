@@ -28,6 +28,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_FLOAT64_CONST: return "float64";
 
         case TB_PHI: return "phi";
+        case TB_SELECT: return "select";
 
         case TB_ARRAY_ACCESS: return "array";
         case TB_MEMBER_ACCESS: return "member";
