@@ -141,7 +141,16 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
     }
 
     // print as instruction
-    printf("  v%d = %s.", id, tb_node_get_name(n));
+    bool actually_used = false;
+    for (User* use = find_users(ctx->opt, n); use; use = use->next) {
+        if (use->slot != 0) { actually_used = true; break; }
+    }
+
+    if (actually_used) {
+        printf("  v%d = %s.", id, tb_node_get_name(n));
+    } else {
+        printf("  ___ = %s.", tb_node_get_name(n));
+    }
 
     TB_DataType dt = n->dt;
     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
