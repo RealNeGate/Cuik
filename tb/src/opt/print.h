@@ -336,6 +336,11 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                 break;
             }
 
+            case TB_TRAP: {
+                printf("  trap\n");
+                break;
+    	    }
+
             case TB_RET: {
                 printf("  ret ");
                 FOREACH_N(i, 1, n->input_count) {
