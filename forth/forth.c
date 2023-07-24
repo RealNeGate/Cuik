@@ -585,7 +585,7 @@ static void get_trampoline(int arity, bool needs_trampoline) {
             snprintf(name, 32, "jit_caller_%dary", arity);
 
             // generate caller
-            TB_Function* f = tb_function_create(ir_module, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
+            TB_Function* f = tb_function_create(ir_module, -1, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
             tb_function_set_prototype(f, proto, ir_arena);
 
             // top of the stack is gonna be loaded into params
@@ -604,7 +604,7 @@ static void get_trampoline(int arity, bool needs_trampoline) {
             // tb_function_print(f, tb_default_print_callback, stdout);
 
             // JIT & export
-            tb_module_compile_function(ir_module, f, TB_ISEL_FAST);
+            tb_module_compile_function(ir_module, f, TB_ISEL_FAST, false);
 
             jit_callers[arity] = tb_module_apply_function(jit, f);
             tb_module_ready_jit(jit);
@@ -652,7 +652,7 @@ static void compile_word(Word* w) {
     snprintf(name, 32, "%.*s", (int) w->name.length, w->name.data);
 
     get_trampoline(w->arity, true);
-    TB_Function* f = tb_function_create(ir_module, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
+    TB_Function* f = tb_function_create(ir_module, -1, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
     tb_function_set_prototype(f, internal_protos[w->arity], ir_arena);
 
     ControlStack cs;
@@ -881,7 +881,7 @@ static void compile_word(Word* w) {
     // tb_function_print(f, tb_default_print_callback, stdout);
 
     // compile & apply
-    tb_module_compile_function(ir_module, f, TB_ISEL_FAST);
+    tb_module_compile_function(ir_module, f, TB_ISEL_FAST, true);
 
     w->jitted = tb_module_apply_function(jit, f);
     w->ir = f;
@@ -910,7 +910,7 @@ int main(int argc, const char** argv) {
         TB_PrototypeParam ret = { TB_TYPE_I32 };
         interp_proto = tb_prototype_create(ir_module, TB_STDCALL, 2, params, 1, &ret, false);
 
-        interp_sym = (TB_Symbol*) tb_extern_create(ir_module, "interp", TB_EXTERNAL_SO_EXPORT);
+        interp_sym = (TB_Symbol*) tb_extern_create(ir_module, -1, "interp", TB_EXTERNAL_SO_EXPORT);
         tb_symbol_bind_ptr(interp_sym, &interp);
     }
 
@@ -919,7 +919,7 @@ int main(int argc, const char** argv) {
         TB_PrototypeParam ret = { TB_TYPE_I32 };
         putchar_proto = tb_prototype_create(ir_module, TB_STDCALL, 1, params, 1, &ret, false);
 
-        putchar_sym = (TB_Symbol*) tb_extern_create(ir_module, "putchar", TB_EXTERNAL_SO_EXPORT);
+        putchar_sym = (TB_Symbol*) tb_extern_create(ir_module, -1, "putchar", TB_EXTERNAL_SO_EXPORT);
         tb_symbol_bind_ptr(putchar_sym, &putchar);
     }
 
@@ -927,7 +927,7 @@ int main(int argc, const char** argv) {
         TB_PrototypeParam params[] = { { TB_TYPE_I64 } };
         putnum_proto = tb_prototype_create(ir_module, TB_STDCALL, 1, params, 0, NULL, false);
 
-        putnum_sym = (TB_Symbol*) tb_extern_create(ir_module, "putnum", TB_EXTERNAL_SO_EXPORT);
+        putnum_sym = (TB_Symbol*) tb_extern_create(ir_module, -1, "putnum", TB_EXTERNAL_SO_EXPORT);
         tb_symbol_bind_ptr(putnum_sym, &putnum);
     }
 
@@ -935,7 +935,7 @@ int main(int argc, const char** argv) {
         TB_PrototypeParam ret = { TB_TYPE_I32 };
         getchar_proto = tb_prototype_create(ir_module, TB_STDCALL, 0, NULL, 1, &ret, false);
 
-        getchar_sym = (TB_Symbol*) tb_extern_create(ir_module, "getchar", TB_EXTERNAL_SO_EXPORT);
+        getchar_sym = (TB_Symbol*) tb_extern_create(ir_module, -1, "getchar", TB_EXTERNAL_SO_EXPORT);
         tb_symbol_bind_ptr(getchar_sym, &getchar);
     }
 
