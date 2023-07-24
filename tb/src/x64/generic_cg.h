@@ -302,6 +302,7 @@ static Inst inst_line(TB_FileID file, int line) {
     return (Inst){
         .type = INST_LINE,
         .layout = X86_OP_NONE,
+        .regs = { -1 },
         .imm = { file, line }
     };
 }

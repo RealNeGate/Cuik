@@ -64,17 +64,17 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
     size_t min = SIZE_MAX;
 
     // keep spilled and generate reloads on the first use in any BB
-    DefIndex reload_def = -1;
+    DefIndex last_known = -1;
     int endpoint = ctx->defs[split_def].end;
 
     Inst *inst = spill_inst->next, *prev_inst = spill_inst;
     for (; inst; prev_inst = inst, inst = inst->next) {
         if (wont_spill_around(inst->type)) {
-            if (reload_def >= 0) {
-                r.old = reload_def;
+            if (last_known >= 0) {
+                r.old = last_known;
                 spill(ctx, prev_inst, &r);
             }
-            reload_def = -1;
+            last_known = -1;
         }
 
         if (inst->time > endpoint) break;
@@ -86,50 +86,36 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
                 skip_next = true;
                 r.old = split_def;
                 spill(ctx, inst, &r);
-                reload_def = -1;
+                last_known = -1;
                 continue;
-            } else if (reload_def < 0) {
+            } else if (last_known < 0) {
                 // spin up new def
                 int t = prev_inst->time + 1;
                 dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1, .hint = reg_num });
-                reload_def = dyn_array_length(ctx->defs) - 1;
+                last_known = dyn_array_length(ctx->defs) - 1;
 
                 // place new definition into worklist sorted
                 dyn_array_put_uninit(*worklist, 1);
-                insert_sorted_def(ctx, *worklist, dyn_array_length(*worklist) - 1, t, reload_def);
+                insert_sorted_def(ctx, *worklist, dyn_array_length(*worklist) - 1, t, last_known);
 
                 // generate reload before this instruction
-                r.old = reload_def;
+                r.old = last_known;
                 reload(ctx, prev_inst, &r, j);
             }
 
-            inst->regs[j] = USE(reload_def);
-            ctx->defs[reload_def].end = inst->time + (j == 1 ? 0 : 1);
+            inst->regs[j] = USE(last_known);
+            ctx->defs[last_known].end = inst->time + (j == 1 ? 0 : 1);
         }
 
-        if (inst->regs[0] == split_def && reload_def != split_def) {
+        if (inst->regs[0] == split_def && last_known != split_def) {
             // if (reload_def < 0) __debugbreak();
 
             // spill and discard our reload spot (if applies)
             r.old = inst->regs[0];
             spill(ctx, inst, &r);
-            reload_def = -1;
+            last_known = -1;
             skip_next = true;
         }
-
-        // if we're in the clobber list, invalidate the reload_def
-        /*if (inst->regs[0] >= 0 && ctx->defs[inst->regs[0]].clobbers) {
-            Clobbers* clobbers = ctx->defs[inst->regs[0]].clobbers;
-
-            FOREACH_N(i, 0, clobbers->count) {
-                if (clobbers->_[i].class == reg_class && clobbers->_[i].num == reg_num) {
-                    r.old = reload_def;
-                    spill(ctx, inst, &r);
-                    reload_def = -1;
-                    break;
-                }
-            }
-        }*/
 
         if (skip_next) {
             // skip this instruction to avoid infinite spills
@@ -311,4 +297,6 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
         add_active(ctx, di);
         d->reg = reg_num;
     }
+
+    REG_ALLOC_LOG printf("\n\n\n");
 }

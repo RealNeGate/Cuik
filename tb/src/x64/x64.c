@@ -1213,11 +1213,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 dst = DEF(n, REG_CLASS_XMM);
                 SUBMIT(inst_r(FP_CVT, n->inputs[1]->dt, dst, src));
             } else {
-                dst = USE(src);
-
-                // TODO(NeGate): verify this is a valid optimization
-                // dst = DEF(n, REG_CLASS_GPR);
-                // SUBMIT(inst_copy(n->dt, dst, src));
+                dst = DEF(n, REG_CLASS_GPR);
+                SUBMIT(inst_copy(n->dt, dst, src));
             }
             break;
         }
