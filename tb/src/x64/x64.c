@@ -866,7 +866,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int rhs = ISEL(n->inputs[3]);
 
             Cond cc = isel_cmp(ctx, n->inputs[1]);
-            SUBMIT(inst_rr(CMOVO + cc, n->dt, dst, lhs, rhs));
+            SUBMIT(inst_rr(CMOVO + cc, n->dt, dst, rhs, lhs));
             break;
         }
 
