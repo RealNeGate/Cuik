@@ -1306,7 +1306,15 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 }
 
                 FOREACH_N(i, 1, r->succ_count) {
-                    SUBMIT(inst_i(CMP, dt, key, br->keys[i-1]));
+                    uint64_t curr_key = br->keys[i-1];
+
+                    if (fits_into_int32(curr_key)) {
+                        SUBMIT(inst_i(CMP, dt, key, curr_key));
+                    } else {
+                        int tmp = DEF(n, REG_CLASS_GPR);
+                        SUBMIT(inst_i64(MOVABS, dt, tmp, curr_key));
+                        SUBMIT(inst_i(CMP, dt, key, USE(tmp)));
+                    }
                     SUBMIT(inst_jcc(succ[i], E));
                 }
                 SUBMIT(inst_jmp(succ[0]));
