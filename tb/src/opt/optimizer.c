@@ -380,6 +380,9 @@ static TB_Node* idealize(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         case TB_LOAD:
         return ideal_load(opt, f, n);
 
+        case TB_MEMSET:
+        return ideal_memset(opt, f, n);
+
         // division
         case TB_SDIV:
         case TB_UDIV:

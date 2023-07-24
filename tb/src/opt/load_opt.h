@@ -37,3 +37,18 @@ static TB_Node* ideal_load(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n)
     set_input(opt, n, n->inputs[0]->inputs[0], 0);
     return n;
 }
+
+static TB_Node* ideal_memset(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+    // small memsets will get replaced with stores
+    if (n->inputs[2]->type != TB_INTEGER_CONST) return NULL;
+
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
+    if (i->num_words > 1 || i->words[0] > 8) return NULL;
+
+    set_input(opt, n, NULL, 3);
+    n->type = TB_STORE;
+    n->dt = TB_TYPE_INTN(i->words[0] * 8);
+    n->input_count = 3;
+
+    return n;
+}
