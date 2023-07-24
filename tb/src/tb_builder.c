@@ -898,7 +898,7 @@ TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node
     n->inputs[1] = key;
 
     FOREACH_N(i, 0, 1 + entry_count) {
-        TB_Node* target = i ? entries[i].value : default_label;
+        TB_Node* target = i ? entries[i - 1].value : default_label;
 
         TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
         proj->inputs[0] = n;
