@@ -269,26 +269,28 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         }
     }
 
-    irgen(s->tp, args, cu, mod);
+    CUIK_TIMED_BLOCK("Backend") {
+        irgen(s->tp, args, cu, mod);
 
-    // once we've complete debug info and diagnostics we don't need line info
-    CUIK_TIMED_BLOCK("Free CPP") {
-        cuiklex_free_tokens(tokens);
-        cuikpp_free(cpp);
-    }
+        // once we've complete debug info and diagnostics we don't need line info
+        CUIK_TIMED_BLOCK("Free CPP") {
+            cuiklex_free_tokens(tokens);
+            cuikpp_free(cpp);
+        }
 
-    if (args->opt_level > 0 || args->emit_ir) {
-        // do parallel function passes
-        cuiksched_per_function(s->tp, mod, args, apply_func);
-    }
+        if (args->opt_level > 0 || args->emit_ir) {
+            // do parallel function passes
+            cuiksched_per_function(s->tp, mod, args, apply_func);
+        }
 
-    // debug builds will compile functions right after IRgen
-    // to save on total memory usage, this code path is for
-    // optimized code since it needs to know what neighbors it's
-    // got for IPO.
-    if (args->assembly || (args->opt_level > 0 && !args->emit_ir)) {
-        CUIK_TIMED_BLOCK("CodeGen") {
-            cuiksched_per_function(s->tp, mod, args->assembly ? stdout : NULL, compile_func);
+        // debug builds will compile functions right after IRgen
+        // to save on total memory usage, this code path is for
+        // optimized code since it needs to know what neighbors it's
+        // got for IPO.
+        if (args->assembly || (args->opt_level > 0 && !args->emit_ir)) {
+            CUIK_TIMED_BLOCK("CodeGen") {
+                cuiksched_per_function(s->tp, mod, args->assembly ? stdout : NULL, compile_func);
+            }
         }
     }
     #endif
@@ -763,7 +765,7 @@ static void irgen_job(void* arg) {
         }
 
         if (do_compiles_immediately && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
-            TB_FunctionOutput* out = tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST, true);
+            TB_FunctionOutput* out = tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST, false);
             CUIK_CALL(allocator, clear);
         }
     }
