@@ -147,7 +147,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 
     bool dir = b->type == VAL_MEM || b->type == VAL_GLOBAL;
-    if (dir || inst->op == 0x63 || inst->op == 0xAF || inst->cat == INST_BINOP_EXT2) {
+    if (dir || inst->op == 0x63 || (type >= CMOVO && type <= CMOVG) || inst->op == 0xAF || inst->cat == INST_BINOP_EXT2) {
         SWAP(const Val*, a, b);
     }
 
