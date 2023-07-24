@@ -69,7 +69,7 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
 
     Inst *inst = spill_inst->next, *prev_inst = spill_inst;
     for (; inst; prev_inst = inst, inst = inst->next) {
-        if (inst->time > endpoint) break;
+        // if (inst->time > endpoint) break;
 
         // if it's used, refer to reload
         bool skip_next = false;
@@ -100,8 +100,6 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
         }
 
         if (inst->regs[0] == split_def && last_known != split_def) {
-            // if (reload_def < 0) __debugbreak();
-
             // spill and discard our reload spot (if applies)
             r.old = inst->regs[0];
             spill(ctx, inst, &r);
