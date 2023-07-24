@@ -878,7 +878,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             if (1) {
                 reg_alloc(&ctx, f, worklist);
             } else {
-                fancy_reg_alloc(&ctx, f, worklist);
+                fancy_lsra(&ctx, f, worklist);
             }
         }
 

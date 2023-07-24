@@ -32,7 +32,7 @@ typedef struct {
 } TB_CGEmitter;
 
 // Helper macros
-#define EMITA(e, fmt, ...) tb_asm_print(e, fmt, __VA_ARGS__)
+#define EMITA(e, fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
 #define EMIT1(e, b) (*((uint8_t*)  tb_cgemit_reserve(e, 1)) = (b), (e)->count += 1)
 #define EMIT2(e, b) (*((uint16_t*) tb_cgemit_reserve(e, 2)) = (b), (e)->count += 2)
 #define EMIT4(e, b) (*((uint32_t*) tb_cgemit_reserve(e, 4)) = (b), (e)->count += 4)

@@ -111,38 +111,39 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
             // the same such that we optimize around ordinal which match time placed into
             // the symbol list.
             CUIK_TIMED_BLOCK("convert to array") {
-                size_t i = count;
+                size_t i = 0;
                 for (TB_Symbol* s = m->first_symbol_of_tag[tag]; s != NULL; s = s->next) {
-                    array_form[--i] = s;
+                    array_form[i++] = s;
                 }
-                assert(i == 0);
+                assert(i == count);
             }
 
             // functions have special rules on ordering but other than that, ordinals go brr
-            CUIK_TIMED_BLOCK("sort by ordinal") qsort(
+            /*CUIK_TIMED_BLOCK("sort by ordinal") qsort(
                 array_form, count, sizeof(TB_Symbol*),
                 tag == TB_SYMBOL_FUNCTION ? compare_functions : compare_symbols
-            );
+            );*/
 
             CUIK_TIMED_BLOCK("convert back to list") {
-                size_t i = count;
-                m->first_symbol_of_tag[tag] = array_form[0];
+                m->first_symbol_of_tag[tag] = array_form[count - 1];
 
                 if (tag == TB_SYMBOL_GLOBAL) {
                     TB_Global** globals = (TB_Global**) array_form;
-                    // dyn_array_put(globals[0]->parent->globals, globals[0]);
 
-                    FOREACH_N(j, 1, i) {
-                        // dyn_array_put(globals[j]->parent->globals, globals[j]);
-                        array_form[j-1]->next = array_form[j];
+                    FOREACH_REVERSE_N(j, 1, count) {
+                        dyn_array_put(globals[j]->parent->globals, globals[j]);
+                        array_form[j]->next = array_form[j-1];
                     }
+
+                    dyn_array_put(globals[0]->parent->globals, globals[0]);
+                    array_form[0]->next = NULL;
                 } else {
-                    FOREACH_N(j, 1, i) {
-                        array_form[j-1]->next = array_form[j];
+                    FOREACH_REVERSE_N(j, 1, count) {
+                        array_form[j]->next = array_form[j-1];
                     }
-                }
 
-                array_form[i-1]->next = NULL;
+                    array_form[0]->next = NULL;
+                }
             }
         }
     }

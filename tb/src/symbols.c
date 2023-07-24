@@ -25,10 +25,6 @@ void tb_symbol_append(TB_Module* m, TB_Symbol* s) {
         old_top = atomic_load(&m->first_symbol_of_tag[tag]);
         s->next = old_top;
     } while (!atomic_compare_exchange_strong(&m->first_symbol_of_tag[tag], &old_top, s));
-
-    if (old_top != NULL) {
-        atomic_store((_Atomic(TB_Symbol*)*) &old_top->prev, s);
-    }
 }
 
 // NOTE(NeGate): the external symbols must be externally
@@ -38,16 +34,17 @@ void tb_symbol_append(TB_Module* m, TB_Symbol* s) {
 TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkage linkage) {
     TB_Module* m = e->super.module;
 
-    TB_Symbol* prev = e->super.prev;
-    TB_Symbol* next = e->super.next;
-
-    if (m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL] == (TB_Symbol*) e) {
-        m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL] = next;
-        next->prev = NULL;
-    } else {
-        next->prev = prev;
-        prev->next = next;
+    TB_Symbol* prev = m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL];
+    while (prev != NULL) {
+        if (prev->next == &e->super) {
+            prev->next = e->super.next;
+            goto good;
+        }
+        prev = prev->next;
     }
+    abort();
+
+    good:
     m->symbol_count[TB_SYMBOL_EXTERNAL] -= 1;
 
     // convert into global
