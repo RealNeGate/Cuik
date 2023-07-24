@@ -1313,7 +1313,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     } else {
                         int tmp = DEF(n, REG_CLASS_GPR);
                         SUBMIT(inst_i64(MOVABS, dt, tmp, curr_key));
-                        SUBMIT(inst_r(CMP, dt, key, USE(tmp)));
+                        SUBMIT(inst_rr(CMP, dt, -1, key, USE(tmp)));
                     }
                     SUBMIT(inst_jcc(succ[i], E));
                 }
