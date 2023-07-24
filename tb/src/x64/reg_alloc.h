@@ -69,7 +69,8 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
 
     Inst *inst = spill_inst->next, *prev_inst = spill_inst;
     for (; inst; prev_inst = inst, inst = inst->next) {
-        // if (inst->time > endpoint) break;
+        if (wont_spill_around(inst->type)) last_known = -1;
+        if (inst->time > endpoint) break;
 
         // if it's used, refer to reload
         bool skip_next = false;

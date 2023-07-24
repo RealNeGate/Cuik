@@ -15,6 +15,12 @@ static _Thread_local TB_Attrib* scope_attrib;
 
 static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc);
 
+static int switch_cmp(const void* a, const void* b) {
+    const TB_SwitchEntry* aa = a;
+    const TB_SwitchEntry* bb = b;
+    return (aa->key > bb->key) - (aa->key < bb->key);
+}
+
 static uint64_t get_ir_ordinal(TranslationUnit* tu, Stmt* stmt) {
     return ((uint64_t) tu->local_ordinal << 32ull) | stmt->decl.local_ordinal;
 }
@@ -1865,6 +1871,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
             TB_Node* key = irgen_as_rvalue(tu, func, s->switch_.condition);
 
+            qsort(entries, entry_count, sizeof(TB_SwitchEntry), switch_cmp);
             tb_inst_branch(func, key->dt, key, default_label, entry_count, entries);
 
             tb_inst_set_control(func, tb_inst_region(func));

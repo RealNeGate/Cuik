@@ -227,7 +227,7 @@ static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
 static Inst inst_copy(TB_DataType dt, int lhs, int rhs) {
     return (Inst){
         .type = INST_COPY,
-        .layout = X86_OP_RR,
+        .layout = X86_OP_R,
         .data_type = legalize(dt),
         .regs = { lhs, rhs }
     };
@@ -938,11 +938,27 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
             int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, -1);
 
+            TB_DataType dt = n->dt;
+            assert(dt.type == TB_INT);
+
+            int op = INST_COPY;
+            if (dt.data <= 8)       op = is_signed ? MOVSXB : MOVZXB;
+            else if (dt.data <= 16) op = is_signed ? MOVSXW : MOVZXW;
+
+            // division is scaled up to 32bit
+            if (dt.data < 32) dt.data = 32;
+
             // mov rax, lhs
             int lhs = ISEL(n->inputs[1]);
-            SUBMIT(inst_copy(n->dt, rax, lhs));
+            SUBMIT(inst_r(op, dt, rax, lhs));
 
             int rhs = ISEL(n->inputs[2]);
+            if (n->dt.data < 32) {
+                // add cast
+                int new_rhs = DEF(n->inputs[2], REG_CLASS_GPR);
+                SUBMIT(inst_r(op, TB_TYPE_I32, new_rhs, rhs));
+                rhs = USE(new_rhs);
+            }
 
             // if signed:
             //   cqo/cdq (sign extend RAX into RDX)
@@ -950,15 +966,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             //   xor rdx, rdx
             if (is_signed) {
                 SUBMIT(inst_def(rdx));
-                SUBMIT(inst_u(CAST, n->dt));
+                SUBMIT(inst_u(CAST, dt));
             } else {
-                SUBMIT(inst_i(MOV, n->dt, rdx, 0));
+                SUBMIT(inst_i(MOV, dt, rdx, 0));
             }
-            SUBMIT(inst_r(is_signed ? IDIV : DIV, n->dt, -1, rhs));
+            SUBMIT(inst_r(is_signed ? IDIV : DIV, dt, -1, rhs));
+            SUBMIT(inst_use(rax));
             SUBMIT(inst_use(rdx));
 
             dst = DEF(n, REG_CLASS_GPR);
-            SUBMIT(inst_copy(n->dt, dst, USE(is_div ? rax : rdx)));
+            SUBMIT(inst_copy(dt, dst, USE(is_div ? rax : rdx)));
             break;
         }
         case TB_SHL:
@@ -1264,14 +1281,35 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 TB_DataType dt = n->inputs[1]->dt;
                 int key = USE(ISEL(n->inputs[1]));
 
+
+                // check if there's at most only one space between entries
+                uint64_t last = br->keys[1];
+                uint64_t min = last, max = last;
+
+                bool use_jump_table = true;
+                FOREACH_N(i, 2, r->succ_count) {
+                    uint64_t key = br->keys[i - 1];
+                    min = (min > key) ? key : min;
+                    max = (max > key) ? max : key;
+
+                    int64_t dist = key - last;
+                    if (dist > 2) {
+                        use_jump_table = false;
+                        break;
+                    }
+                    last = key;
+                }
+
+                if (use_jump_table) {
+                    // Simple range check
+                    log_debug("Should do range check (%llu .. %llu)", min, max);
+                }
+
                 FOREACH_N(i, 1, r->succ_count) {
                     SUBMIT(inst_i(CMP, dt, key, br->keys[i-1]));
                     SUBMIT(inst_jcc(succ[i], E));
                 }
                 SUBMIT(inst_jmp(succ[0]));
-
-                // switch-like branch
-                // tb_todo();
             }
             break;
         }
