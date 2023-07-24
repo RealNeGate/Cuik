@@ -1,37 +1,25 @@
 
-
 \ simple stack effects
 : foo 3 4 + + ;
-
-
-
-
 
 \ simple condition
 : bar if{ 65 emit }else{ 66 emit } ;
 : baz 65 emit ;
 
-baz baz baz baz baz baz
+\ run game loop
+: update
+	key . 10 emit
+;
 
+\ rendering
+: draw_line   dup if{ '#' emit 1 - tail }else{ drop } ;
+: draw_screen dup if{ 80 draw_line 10 emit 1 - tail }else{ drop } ;
+: draw
+	\ clear screen (i love escape codes)
+	27 emit '[' emit '2' emit '6' emit 'F' emit 27 emit '[' emit '0' emit 'J' emit
+	\ draw now
+	25 draw_screen
+;
 
-
-16 bar
-0  bar
-16 bar
-0  bar
-16 bar
-0  bar
-
-
-\ simple loop
-: loop  dup if{ dup 64 + emit 1 - loop }else{ drop } ;
-: loop2 dup if{ dup . 10 loop 10 emit 1 - loop2 }else{ drop } ;
-
-
-: test . ;
-
-10 test 5 test 3 test
-
-10 emit 10 emit
-
-1 loop2
+: game-loop update draw tail ;
+game-loop
