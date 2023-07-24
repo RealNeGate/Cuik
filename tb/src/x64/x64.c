@@ -129,7 +129,7 @@ static TB_X86_DataType legalize(TB_DataType dt) {
 }
 
 static bool wont_spill_around(int t) {
-    return t == TEST || t == CMP || t == JMP || (t >= JO && t <= JG);
+    return t == INST_LABEL || t == TEST || t == CMP || t == JMP || (t >= JO && t <= JG);
 }
 
 static Inst inst_jcc(TB_Node* target, Cond cc) {
