@@ -628,6 +628,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
     TB_NodeTypeEnum type = n->type;
     int dst = -1;
+    bool forget = false;
 
     switch (type) {
         case TB_REGION: {
@@ -749,6 +750,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             dst = DEF(n, REG_CLASS_GPR);
             SUBMIT(inst_m(LEA, n->dt, dst, RBP, GPR_NONE, SCALE_X1, pos));
+            forget = true;
             break;
         }
         case TB_GET_SYMBOL_ADDRESS: {
@@ -1567,6 +1569,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                     InstType i = n->dt.type == TB_FLOAT ? FP_MOV : MOV;
                     SUBMIT(inst_m(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, 16 + (index * 8)));
+                    forget = true;
                     break;
                 }
             }
@@ -1578,11 +1581,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
+        case TB_POISON: {
+            dst = DEF(n, REG_CLASS_GPR);
+            break;
+        }
+
         case TB_NULL: break;
         default: tb_todo();
     }
 
-    if (n->type != TB_LOCAL) {
+    if (!forget) {
         nl_map_put(ctx->values, n, dst);
     }
     return dst;
