@@ -1,6 +1,6 @@
 
 typedef struct {
-    TB_FuncOpt* opt;
+    TB_Passes* opt;
     TB_Function* f;
     TB_PostorderWalk order;
 
@@ -363,7 +363,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
     }
 }
 
-bool tb_funcopt_print(TB_FuncOpt* opt) {
+bool tb_pass_print(TB_Passes* opt) {
     TB_Function* f = opt->f;
 
     PrinterCtx ctx = { opt, f };

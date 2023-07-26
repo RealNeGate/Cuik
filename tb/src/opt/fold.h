@@ -45,7 +45,7 @@ static bool get_int_const(TB_Node* n, uint64_t* imm) {
 ////////////////////////////////
 // Integer idealizations
 ////////////////////////////////
-static TB_Node* ideal_truncate(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
     if (src->type != TB_INTEGER_CONST || n->dt.type != TB_INT) {
         return NULL;
@@ -66,7 +66,7 @@ static TB_Node* ideal_truncate(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node
     return new_n;
 }
 
-static TB_Node* ideal_branch(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* bb = tb_get_parent_region(n);
     TB_NodeRegion* region = TB_NODE_GET_EXTRA(bb);
     if (region->succ_count != 2) return NULL;
@@ -106,8 +106,8 @@ static TB_Node* ideal_branch(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* 
 
     // walk dominators to see if we've already checked this condition
     TB_Node* other_bb = bb;
-    while (other_bb != f->start_node) retry: {
-        other_bb = nl_map_get_checked(opt->doms, other_bb);
+    while (0 && other_bb != f->start_node) retry: {
+        other_bb = idom(opt->doms, other_bb);
 
         TB_NodeRegion* other_region = TB_NODE_GET_EXTRA(other_bb);
         TB_Node* latch = other_region->end;
@@ -152,7 +152,7 @@ static TB_Node* ideal_branch(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* 
     return NULL;
 }
 
-static TB_Node* ideal_int2ptr(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_int2ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
     if (src->type != TB_INTEGER_CONST) {
         return NULL;
@@ -167,7 +167,7 @@ static TB_Node* ideal_int2ptr(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node*
     return new_n;
 }
 
-static TB_Node* ideal_extension(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
     if (src->type != TB_INTEGER_CONST) {
         return NULL;
@@ -201,7 +201,7 @@ static TB_Node* ideal_extension(TB_FuncOpt* restrict opt, TB_Function* f, TB_Nod
     return new_n;
 }
 
-static TB_Node* ideal_int_unary(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_int_unary(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     assert(n->type == TB_NOT || n->type == TB_NEG);
     TB_Node* src = n->inputs[1];
 
@@ -226,7 +226,7 @@ static TB_Node* ideal_int_unary(TB_FuncOpt* restrict opt, TB_Function* f, TB_Nod
     return new_n;
 }
 
-static TB_Node* ideal_int_binop(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     if (is_commutative(n->type)) {
         // if it's commutative: we wanna have a canonical form.
         // lower types to the right (constants are basically the lowest things)
@@ -310,7 +310,7 @@ static TB_Node* ideal_int_binop(TB_FuncOpt* restrict opt, TB_Function* f, TB_Nod
     }
 }
 
-static TB_Node* ideal_int_div(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     bool is_signed = n->type == TB_SDIV;
 
     // if we have a constant denominator we may be able to reduce the division into a
@@ -406,7 +406,7 @@ static TB_Node* ideal_int_div(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node*
 // a - 0 => a
 // a * 0 => 0
 // a / 0 => poison
-static TB_Node* identity_int_binop(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     if (!tb_node_is_constant_zero(n->inputs[2])) return n;
 
     switch (n->type) {
@@ -423,7 +423,7 @@ static TB_Node* identity_int_binop(TB_FuncOpt* restrict opt, TB_Function* f, TB_
 ////////////////////////////////
 // Pointer idealizations
 ////////////////////////////////
-static TB_Node* ideal_array_ptr(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     if (n->inputs[2]->type != TB_INTEGER_CONST) return NULL;
 
     TB_NodeInt* src_i = TB_NODE_GET_EXTRA(n->inputs[2]);

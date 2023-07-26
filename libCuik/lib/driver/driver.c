@@ -157,20 +157,20 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
 
     Cuik_DriverArgs* args = arg;
     CUIK_TIMED_BLOCK("func opt") {
-        TB_FuncOpt* opt = tb_funcopt_enter(f, ir_arena);
+        TB_Passes* p = tb_pass_enter(f, ir_arena);
 
         if (args->opt_level >= 1) {
             // initial run of peepholes
-            tb_funcopt_peephole(opt);
+            tb_pass_peephole(p);
             // Converting locals into phi nodes
-            tb_funcopt_mem2reg(opt), tb_funcopt_peephole(opt);
+            // tb_pass_mem2reg(p), tb_pass_peephole(p);
         }
 
         if (args->emit_ir) {
-            tb_funcopt_print(opt);
+            tb_pass_print(p);
         }
 
-        tb_funcopt_exit(opt);
+        tb_pass_exit(p);
     }
 }
 #endif

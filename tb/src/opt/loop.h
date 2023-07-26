@@ -7,7 +7,7 @@ TB_Attrib* get_debug_var(TB_Node* n) {
     return NULL;
 }
 
-static void add_region_pred_tracked(TB_FuncOpt* opt, TB_Function* f, TB_Node* n, TB_Node* pred) {
+static void add_region_pred_tracked(TB_Passes* opt, TB_Function* f, TB_Node* n, TB_Node* pred) {
     // detach old predecessor list, make bigger one
     assert(n->type == TB_REGION);
 
@@ -22,7 +22,7 @@ static void add_region_pred_tracked(TB_FuncOpt* opt, TB_Function* f, TB_Node* n,
     add_user(opt, n, pred, old_count, NULL);
 }
 
-bool tb_funcopt_loop(TB_FuncOpt* opt) {
+bool tb_passes_loop(TB_Passes* opt) {
     TB_Function* f = opt->f;
 
     TB_PostorderWalk order = tb_function_get_postorder(f);

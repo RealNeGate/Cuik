@@ -28,7 +28,7 @@ struct User {
     int slot;
 };
 
-struct TB_FuncOpt {
+struct TB_Passes {
     TB_Function* f;
 
     // some function state is changed for the duration of the
@@ -52,26 +52,26 @@ struct TB_FuncOpt {
     NL_Map(TB_Node*, User*) users;
 };
 
-static User* find_users(TB_FuncOpt* restrict opt, TB_Node* n);
-static void add_user(TB_FuncOpt* restrict opt, TB_Node* n, TB_Node* in, int slot, User* recycled);
-static User* remove_user(TB_FuncOpt* restrict opt, TB_Node* n, int slot);
+static User* find_users(TB_Passes* restrict p, TB_Node* n);
+static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled);
+static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot);
 
-static void set_input(TB_FuncOpt* restrict opt, TB_Node* n, TB_Node* in, int slot);
+static void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot);
 
 // transmutations let us generate new nodes from old ones
-void tb_transmute_to_poison(TB_FuncOpt* restrict opt, TB_Node* n);
-TB_Node* tb_transmute_to_int(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, int num_words);
+void tb_transmute_to_poison(TB_Passes* restrict p, TB_Node* n);
+TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, int num_words);
 
-static void subsume_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n, TB_Node* new_n);
+static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* new_n);
 
 // *new_node is set to true if we make a new node, it won't set it false for you
-static TB_Node* clone_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node);
+static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node);
 
 // node creation helpers
-TB_Node* make_int_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, uint64_t x);
-TB_Node* make_proj_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, TB_Node* src, int i);
+TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x);
+TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
-static void remove_pred(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* src, TB_Node* dst);
+static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt) {
     switch (dt.type) {
@@ -105,7 +105,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 #include "mem2reg.h"
 #include "libcalls.h"
 
-TB_Node* make_int_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, uint64_t x) {
+TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->num_words = 1;
@@ -113,44 +113,44 @@ TB_Node* make_int_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt,
     return n;
 }
 
-TB_Node* tb_transmute_to_int(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, int num_words) {
+TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, int num_words) {
     TB_Node* new_n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + (num_words * sizeof(uint64_t)));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(new_n);
     i->num_words = num_words;
     return new_n;
 }
 
-TB_Node* make_proj_node(TB_Function* f, TB_FuncOpt* restrict opt, TB_DataType dt, TB_Node* src, int i) {
+TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i) {
     TB_Node* n = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
-    set_input(opt, n, src, 0);
+    set_input(p, n, src, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = i);
     return n;
 }
 
-static TB_Node* clone_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node) {
+static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node) {
     assert(0 && "TODO");
     return NULL;
 }
 
-static void remove_input(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n, size_t i) {
+static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size_t i) {
     // remove swap
     n->input_count--;
-    set_input(opt, n, NULL, n->input_count);
+    set_input(p, n, NULL, n->input_count);
     if (n->input_count != i) {
-        set_input(opt, n, n->inputs[n->input_count], i);
+        set_input(p, n, n->inputs[n->input_count], i);
     }
 }
 
 // src -//-> dst
-static void remove_pred(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* src, TB_Node* dst) {
+static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst) {
     FOREACH_N(i, 0, dst->input_count) {
         if (tb_get_parent_region(dst->inputs[i]) == src) {
-            remove_input(opt, f, dst, i);
+            remove_input(p, f, dst, i);
 
             // update PHIs
-            for (User* use = find_users(opt, dst); use; use = use->next) {
+            for (User* use = find_users(p, dst); use; use = use->next) {
                 if (use->n->type == TB_PHI) {
-                    remove_input(opt, f, use->n, i);
+                    remove_input(p, f, use->n, i);
                 }
             }
             break;
@@ -158,10 +158,10 @@ static void remove_pred(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* src, 
     }
 }
 
-void tb_transmute_to_poison(TB_FuncOpt* restrict opt, TB_Node* n) {
+void tb_transmute_to_poison(TB_Passes* restrict p, TB_Node* n) {
     // remove old users
     FOREACH_N(i, 0, n->input_count) {
-        remove_user(opt, n, i);
+        remove_user(p, n, i);
     }
 
     n->type = TB_POISON;
@@ -169,29 +169,29 @@ void tb_transmute_to_poison(TB_FuncOpt* restrict opt, TB_Node* n) {
     n->extra_count = 0;
 }
 
-void tb_funcopt_kill(TB_FuncOpt* restrict opt, TB_Node* n) {
+void tb_pass_kill(TB_Passes* restrict p, TB_Node* n) {
     if (n->type == TB_LOCAL) {
         // remove from local list
-        dyn_array_for(i, opt->locals) if (opt->locals[i] == n) {
-            dyn_array_remove(opt->locals, i);
+        dyn_array_for(i, p->locals) if (p->locals[i] == n) {
+            dyn_array_remove(p->locals, i);
             break;
         }
     }
 
     FOREACH_N(i, 0, n->input_count) {
-        remove_user(opt, n, i);
+        remove_user(p, n, i);
     }
 
-    nl_map_remove(opt->users, n);
+    nl_map_remove(p->users, n);
     TB_KILL_NODE(n);
 }
 
-static User* remove_user(TB_FuncOpt* restrict opt, TB_Node* n, int slot) {
+static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot) {
     // early out: there was no previous input
     if (n->inputs[slot] == NULL) return NULL;
 
     TB_Node* old = n->inputs[slot];
-    User* old_use = find_users(opt, old);
+    User* old_use = find_users(p, old);
     if (old_use == NULL) return NULL;
 
     // remove old user (this must pass unless our users go desync'd)
@@ -200,9 +200,9 @@ static User* remove_user(TB_FuncOpt* restrict opt, TB_Node* n, int slot) {
             // remove
             if (prev) prev->next = old_use->next;
             else if (old_use->next == NULL) {
-                nl_map_remove(opt->users, old);
+                nl_map_remove(p->users, old);
             } else {
-                nl_map_put(opt->users, old, old_use->next);
+                nl_map_put(p->users, old, old_use->next);
             }
 
             return old_use;
@@ -211,9 +211,9 @@ static User* remove_user(TB_FuncOpt* restrict opt, TB_Node* n, int slot) {
 
     log_error("Failed to remove non-existent user %p from %p (slot %d)", old, n, slot);
     log_error("Users:");
-    nl_map_for(i, opt->users) {
-        log_error("  %p %s", opt->users[i].k, tb_node_get_name(opt->users[i].k));
-        for (User* u = opt->users[i].v; u; u = u->next) {
+    nl_map_for(i, p->users) {
+        log_error("  %p %s", p->users[i].k, tb_node_get_name(p->users[i].k));
+        for (User* u = p->users[i].v; u; u = u->next) {
             log_error("    %p %d", u->n, u->slot);
         }
     }
@@ -222,26 +222,26 @@ static User* remove_user(TB_FuncOpt* restrict opt, TB_Node* n, int slot) {
     return NULL;
 }
 
-static void set_input(TB_FuncOpt* restrict opt, TB_Node* n, TB_Node* in, int slot) {
+static void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot) {
     // recycle the user
-    User* old_use = remove_user(opt, n, slot);
+    User* old_use = remove_user(p, n, slot);
 
     n->inputs[slot] = in;
     if (in != NULL) {
-        add_user(opt, n, in, slot, old_use);
+        add_user(p, n, in, slot, old_use);
     }
 }
 
-static void add_user(TB_FuncOpt* restrict opt, TB_Node* n, TB_Node* in, int slot, User* recycled) {
+static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled) {
     // just generate a new user list (if the slots don't match)
-    User* use = find_users(opt, in);
+    User* use = find_users(p, in);
     if (use == NULL) {
         use = recycled ? recycled : ARENA_ALLOC(&tb__arena, User);
         use->next = NULL;
         use->n = n;
         use->slot = slot;
 
-        nl_map_put(opt->users, in, use);
+        nl_map_put(p->users, in, use);
     } else {
         // the slot might've already existed, let's check
         User* prev = NULL;
@@ -259,14 +259,14 @@ static void add_user(TB_FuncOpt* restrict opt, TB_Node* n, TB_Node* in, int slot
     }
 }
 
-static User* find_users(TB_FuncOpt* restrict opt, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(opt->users, n);
-    return search >= 0 ? opt->users[search].v : NULL;
+static User* find_users(TB_Passes* restrict p, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(p->users, n);
+    return search >= 0 ? p->users[search].v : NULL;
 }
 
-void tb_funcopt_mark_users(TB_FuncOpt* restrict opt, TB_Node* n) {
-    for (User* use = find_users(opt, n); use; use = use->next) {
-        tb_funcopt_mark(opt, use->n);
+void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
+    for (User* use = find_users(p, n); use; use = use->next) {
+        tb_pass_mark(p, use->n);
 
         // if the store is changed, the users (potential loads) should
         // be notified.
@@ -274,49 +274,49 @@ void tb_funcopt_mark_users(TB_FuncOpt* restrict opt, TB_Node* n) {
             use->n->type == TB_PROJ || use->n->type == TB_CMP_NE ||
             use->n->type == TB_CMP_EQ || use->n->type == TB_SHR ||
             use->n->type == TB_SHL) {
-            tb_funcopt_mark_users(opt, use->n);
+            tb_pass_mark_users(p, use->n);
         }
     }
 }
 
-bool tb_funcopt_mark(TB_FuncOpt* restrict opt, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(opt->lookup, n);
+bool tb_pass_mark(TB_Passes* restrict p, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(p->lookup, n);
     if (search >= 0) {
         return false;
     }
 
     // log_debug("  %p: push %s", n, tb_node_get_name(n));
 
-    size_t i = dyn_array_length(opt->queue);
-    dyn_array_put(opt->queue, n);
-    nl_map_put(opt->lookup, n, i);
+    size_t i = dyn_array_length(p->queue);
+    dyn_array_put(p->queue, n);
+    nl_map_put(p->lookup, n, i);
     return true;
 }
 
-static void fill_all(TB_FuncOpt* restrict opt, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(opt->lookup, n);
+static void fill_all(TB_Passes* restrict p, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(p->lookup, n);
     if (search >= 0) {
         return;
     }
 
-    size_t index = dyn_array_length(opt->queue);
-    dyn_array_put(opt->queue, n);
-    nl_map_put(opt->lookup, n, index);
+    size_t index = dyn_array_length(p->queue);
+    dyn_array_put(p->queue, n);
+    nl_map_put(p->lookup, n, index);
 
     FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
         tb_assert(n->inputs[i], "empty input... in this economy?");
-        fill_all(opt, n->inputs[i]);
+        fill_all(p, n->inputs[i]);
     }
 
     // walk successors for regions
     if (n->type == TB_START || n->type == TB_REGION) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
         FOREACH_N(i, 0, r->succ_count) {
-            fill_all(opt, r->succ[i]);
+            fill_all(p, r->succ[i]);
         }
 
         tb_assert(r->end, "missing terminator");
-        fill_all(opt, r->end);
+        fill_all(p, r->end);
     }
 }
 
@@ -328,7 +328,7 @@ static void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
         printf("(%s ...)", tb_node_get_name(n));
     } else {
         printf("(%s", tb_node_get_name(n));
-        FOREACH_N(i, 1, n->input_count) {
+        FOREACH_N(i, 1, n->input_count) if (n->inputs[i]) {
             printf(" ");
             print_node_sexpr(f, n->inputs[i], depth + 1);
         }
@@ -348,11 +348,11 @@ static void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
 
 // Returns NULL or a modified node (could be the same node, we can stitch it back into
 // place)
-static TB_Node* idealize(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     switch (n->type) {
         case TB_NOT:
         case TB_NEG:
-        return ideal_int_unary(opt, f, n);
+        return ideal_int_unary(p, f, n);
 
         // integer ops
         case TB_AND:
@@ -370,42 +370,42 @@ static TB_Node* idealize(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         case TB_CMP_SLE:
         case TB_CMP_ULT:
         case TB_CMP_ULE:
-        return ideal_int_binop(opt, f, n);
+        return ideal_int_binop(p, f, n);
 
         // pointer
         case TB_ARRAY_ACCESS:
-        return ideal_array_ptr(opt, f, n);
+        return ideal_array_ptr(p, f, n);
 
         // memory
         case TB_LOAD:
-        return ideal_load(opt, f, n);
+        return ideal_load(p, f, n);
 
         case TB_MEMSET:
-        return ideal_memset(opt, f, n);
+        return ideal_memset(p, f, n);
 
         // division
         case TB_SDIV:
         case TB_UDIV:
-        return ideal_int_div(opt, f, n);
+        return ideal_int_div(p, f, n);
 
         // casting
         case TB_SIGN_EXT:
         case TB_ZERO_EXT:
-        return ideal_extension(opt, f, n);
+        return ideal_extension(p, f, n);
 
         case TB_INT2PTR:
-        return ideal_int2ptr(opt, f, n);
+        return ideal_int2ptr(p, f, n);
 
         // truncate
         case TB_TRUNCATE:
-        return ideal_truncate(opt, f, n);
+        return ideal_truncate(p, f, n);
 
         case TB_CALL:
-        return ideal_libcall(opt, f, n);
+        return ideal_libcall(p, f, n);
 
         // control flow
         case TB_BRANCH:
-        return ideal_branch(opt, f, n);
+        return ideal_branch(p, f, n);
 
         default:
         return NULL;
@@ -413,7 +413,7 @@ static TB_Node* idealize(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
 }
 
 // May return one of the inputs, this is used
-static TB_Node* identity(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     switch (n->type) {
         // integer ops
         case TB_AND:
@@ -431,7 +431,7 @@ static TB_Node* identity(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
         case TB_CMP_SLE:
         case TB_CMP_ULT:
         case TB_CMP_ULE:
-        return identity_int_binop(opt, f, n);
+        return identity_int_binop(p, f, n);
 
         case TB_MEMBER_ACCESS:
         if (TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset == 0) {
@@ -465,10 +465,10 @@ static TB_Node* unsafe_get_region(TB_Node* n) {
     return n;
 }
 
-static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // must've dead sometime between getting scheduled and getting
     // here.
-    if (find_users(opt, n) == NULL) {
+    if (find_users(p, n) == NULL) {
         return NULL;
     }
 
@@ -501,7 +501,7 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
             }
 
             // stitch bot_region's top to the top_region's bottom
-            subsume_node(opt, f, n, n->inputs[0]->inputs[0]->inputs[0]);
+            subsume_node(p, f, n, n->inputs[0]->inputs[0]->inputs[0]);
             top_region->end = bot_region->end;
             return n;
         } else {
@@ -516,49 +516,49 @@ static TB_Node* peephole(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n) {
     bool terminator = is_terminator(n);
 
     // idealize node (in a loop of course)
-    TB_Node* k = idealize(opt, f, n);
+    TB_Node* k = idealize(p, f, n);
     DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
     while (k != NULL) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[%dm", 36+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
 
-        tb_funcopt_mark_users(opt, k);
+        tb_pass_mark_users(p, k);
 
         // transfer users from n -> k
         if (n != k) {
             tb_assert(!terminator, "can't peephole a branch into a new branch");
-            subsume_node(opt, f, n, k);
+            subsume_node(p, f, n, k);
 
             n = k;
         }
 
         // try again, maybe we get another transformation
-        k = idealize(opt, f, n);
+        k = idealize(p, f, n);
 
         DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 10) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
     // DO_IF(TB_OPTDEBUG_PEEP)(printf(loop_count ? "\n" : "\x1b[2K\x1b[0G"));
 
     // convert into matching identity
-    k = identity(opt, f, n);
+    k = identity(p, f, n);
     if (n != k) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[%dm", 37+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
-        subsume_node(opt, f, n, k);
+        subsume_node(p, f, n, k);
         return k;
     }
 
     // common subexpression elim
-    k = nl_hashset_put2(&opt->cse_nodes, n, cse_hash, cse_compare);
+    k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
     if (k && (k != n)) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[31mCSE\x1b[0m"));
-        subsume_node(opt, f, n, k);
+        subsume_node(p, f, n, k);
         return k;
     }
 
     return n;
 }
 
-static void subsume_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n, TB_Node* new_n) {
-    User* use = find_users(opt, n);
+static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* new_n) {
+    User* use = find_users(p, n);
     while (use != NULL) {
         tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
 
@@ -566,15 +566,15 @@ static void subsume_node(TB_FuncOpt* restrict opt, TB_Function* f, TB_Node* n, T
         TB_Node* use_n = use->n;
         User* next = use->next;
 
-        set_input(opt, use->n, new_n, use->slot);
+        set_input(p, use->n, new_n, use->slot);
         use = next;
     }
 
-    tb_funcopt_mark_users(opt, new_n);
-    tb_funcopt_kill(opt, n);
+    tb_pass_mark_users(p, new_n);
+    tb_pass_kill(p, n);
 }
 
-static void generate_use_lists(TB_FuncOpt* restrict queue, TB_Function* f) {
+static void generate_use_lists(TB_Passes* restrict queue, TB_Function* f) {
     dyn_array_for(i, queue->queue) {
         TB_Node* n = queue->queue[i];
         nl_hashset_put2(&queue->cse_nodes, n, cse_hash, cse_compare);
@@ -590,48 +590,48 @@ static void generate_use_lists(TB_FuncOpt* restrict queue, TB_Function* f) {
     }
 }
 
-TB_FuncOpt* tb_funcopt_enter(TB_Function* f, TB_Arena* arena) {
-    TB_FuncOpt* opt = tb_platform_heap_alloc(sizeof(TB_FuncOpt));
-    *opt = (TB_FuncOpt){ .f = f, .old_line_attrib = f->line_attrib, .old_arena = f->arena };
+TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
+    TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
+    *p = (TB_Passes){ .f = f, .old_line_attrib = f->line_attrib, .old_arena = f->arena };
 
-    f->line_attrib = NULL; // don't add line info automatically to optimizer-generated nodes
+    f->line_attrib = NULL; // don't add line info automatically to pimizer-generated nodes
     f->arena = arena;
 
-    opt->cse_nodes = nl_hashset_alloc(f->node_count);
+    p->cse_nodes = nl_hashset_alloc(f->node_count);
 
     // generate dominators
     TB_PostorderWalk order = tb_function_get_postorder(f);
-    opt->doms = tb_get_dominators(f, order);
+    p->doms = tb_get_dominators(f, order);
     tb_function_free_postorder(&order);
 
     CUIK_TIMED_BLOCK("nl_map_create") {
-        nl_map_create(opt->lookup, f->node_count);
+        nl_map_create(p->lookup, f->node_count);
     }
 
     // generate work list (put everything)
-    CUIK_TIMED_BLOCK("tb_optqueue_fill_all") {
-        fill_all(opt, f->start_node);
+    CUIK_TIMED_BLOCK("tb_pqueue_fill_all") {
+        fill_all(p, f->start_node);
     }
 
     // find all outgoing edges
     CUIK_TIMED_BLOCK("generate_use_lists") {
-        generate_use_lists(opt, f);
+        generate_use_lists(p, f);
     }
 
-    return opt;
+    return p;
 }
 
-bool tb_funcopt_peephole(TB_FuncOpt* opt) {
+bool tb_pass_peephole(TB_Passes* p) {
     bool changes = false;
     CUIK_TIMED_BLOCK("peephole") {
-        TB_Function* f = opt->f;
+        TB_Function* f = p->f;
 
-        while (dyn_array_length(opt->queue) > 0) {
+        while (dyn_array_length(p->queue) > 0) CUIK_TIMED_BLOCK("iter") {
             // pull from worklist
-            TB_Node* n = dyn_array_pop(opt->queue);
-            nl_map_remove(opt->lookup, n);
+            TB_Node* n = dyn_array_pop(p->queue);
+            nl_map_remove(p->lookup, n);
 
-            if (peephole(opt, f, n)) {
+            if (peephole(p, f, n)) {
                 changes = true;
 
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
@@ -642,16 +642,16 @@ bool tb_funcopt_peephole(TB_FuncOpt* opt) {
     return changes;
 }
 
-void tb_funcopt_exit(TB_FuncOpt* opt) {
-    TB_Function* f = opt->f;
-    f->line_attrib = opt->old_line_attrib;
-    f->arena = opt->old_arena;
+void tb_pass_exit(TB_Passes* p) {
+    TB_Function* f = p->f;
+    f->line_attrib = p->old_line_attrib;
+    f->arena = p->old_arena;
 
-    nl_hashset_free(opt->cse_nodes);
+    nl_hashset_free(p->cse_nodes);
 
     arena_clear(&tb__arena);
-    nl_map_free(opt->doms);
-    nl_map_free(opt->users);
-    nl_map_free(opt->lookup);
-    dyn_array_destroy(opt->queue);
+    nl_map_free(p->doms._);
+    nl_map_free(p->users);
+    nl_map_free(p->lookup);
+    dyn_array_destroy(p->queue);
 }

@@ -295,7 +295,7 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
         }
 
         P("  r%p -> r%p", n->inputs[i], n);
-        if ((n->type == TB_PROJ && n->dt.type == TB_CONTROL) || (i == 0 && tb_has_effects(n))) {
+        if (i == 0 || n->type == TB_REGION) {
             P(" [color=\"red\"]");
         }
 

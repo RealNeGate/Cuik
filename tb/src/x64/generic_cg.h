@@ -613,7 +613,7 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
         TB_Node* n = phi_vals[i].n;
         assert(n->type == TB_PHI);
 
-        if (n->inputs[1 + index]->type == TB_PHI && n->inputs[1 + index]->inputs[0] == dst) {
+        if (n->inputs[1 + index] != 0 && n->inputs[1 + index]->type == TB_PHI && n->inputs[1 + index]->inputs[0] == dst) {
             int tmp = DEF(n, classify_reg_class(n->dt));
             copy_value(ctx, n, USE(tmp), n->inputs[1 + index], n->dt);
             phi_vals[i].tmp = tmp;
@@ -625,7 +625,7 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     dyn_array_for(i, phi_vals) {
         TB_Node* n = phi_vals[i].n;
 
-        if (phi_vals[i].tmp < 0) {
+        if (n->inputs[1 + index] && phi_vals[i].tmp < 0) {
             int dst = USE(phi_vals[i].val);
             copy_value(ctx, n, dst, n->inputs[1 + index], n->dt);
         }

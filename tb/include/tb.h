@@ -1073,25 +1073,37 @@ TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node
 TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 
 ////////////////////////////////
-// Optimizer
+// Passes
 ////////////////////////////////
 // Function analysis, optimizations, and codegen are all part of this
-typedef struct TB_FuncOpt TB_FuncOpt;
+typedef struct TB_Passes TB_Passes;
 
-// the arena is used to allocate the nodes
-TB_API TB_FuncOpt* tb_funcopt_enter(TB_Function* f, TB_Arena* arena);
-TB_API void tb_funcopt_exit(TB_FuncOpt* opt);
+// the arena is used to allocate the nodes while passes are being done.
+TB_API TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena);
+TB_API void tb_pass_exit(TB_Passes* opt);
 
-TB_API bool tb_funcopt_peephole(TB_FuncOpt* opt);
-TB_API bool tb_funcopt_mem2reg(TB_FuncOpt* opt);
-TB_API bool tb_funcopt_loop(TB_FuncOpt* opt);
+// transformation passes:
+//   peephole: runs most simple reductions on the code,
+//     should be run after any bigger passes (it's incremental
+//     so it's not that bad)
+//
+//   mem2reg: lowers TB_LOCALs into SSA values, this makes more
+//     data flow analysis possible on the code and allows to codegen
+//     to place variables into registers.
+//
+//   loop: NOT READY
+//
+TB_API bool tb_pass_peephole(TB_Passes* opt);
+TB_API bool tb_pass_mem2reg(TB_Passes* opt);
+TB_API bool tb_pass_loop(TB_Passes* opt);
 
-// isn't an optimization, just does the name flat form of IR printing
-TB_API bool tb_funcopt_print(TB_FuncOpt* opt);
+// analysis
+//   print: prints IR in a flattened text form.
+TB_API bool tb_pass_print(TB_Passes* opt);
 
-TB_API void tb_funcopt_kill(TB_FuncOpt* opt, TB_Node* n);
-TB_API bool tb_funcopt_mark(TB_FuncOpt* opt, TB_Node* n);
-TB_API void tb_funcopt_mark_users(TB_FuncOpt* opt, TB_Node* n);
+TB_API void tb_pass_kill(TB_Passes* opt, TB_Node* n);
+TB_API bool tb_pass_mark(TB_Passes* opt, TB_Node* n);
+TB_API void tb_pass_mark_users(TB_Passes* opt, TB_Node* n);
 
 ////////////////////////////////
 // IR access
@@ -1099,8 +1111,6 @@ TB_API void tb_funcopt_mark_users(TB_FuncOpt* opt, TB_Node* n);
 TB_API const char* tb_node_get_name(TB_Node* n);
 
 TB_API TB_Node* tb_get_parent_region(TB_Node* n);
-TB_API bool tb_has_effects(TB_Node* n);
-
 TB_API bool tb_node_is_constant_non_zero(TB_Node* n);
 TB_API bool tb_node_is_constant_zero(TB_Node* n);
 

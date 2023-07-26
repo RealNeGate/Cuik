@@ -1,6 +1,6 @@
 
 // this is a peephole lmao
-static TB_Node* ideal_libcall(TB_FuncOpt* restrict queue, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_libcall(TB_Passes* restrict queue, TB_Function* f, TB_Node* n) {
     if (n->inputs[1]->type != TB_GET_SYMBOL_ADDRESS) {
         return NULL;
     }
