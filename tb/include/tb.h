@@ -171,7 +171,6 @@ typedef enum TB_FloatFormat {
 typedef union TB_DataType {
     struct {
         uint8_t type;
-        // 2^N where N is the width value.
         // Only integers and floats can be wide.
         uint8_t width;
         // for integers it's the bitwidth
@@ -406,8 +405,6 @@ typedef struct TB_Symbol {
 
 typedef int TB_Reg;
 
-#define TB_NULL_REG NULL
-
 typedef struct TB_Node TB_Node;
 struct TB_Node {
     TB_NodeType type;
@@ -586,29 +583,8 @@ typedef struct {
 
 typedef void (*TB_PrintCallback)(void* user_data, const char* fmt, ...);
 
-////////////////////////////////
-// Arena
-////////////////////////////////
-// the goal is to move more things to transparent arenas, for now it's just function
-// IR which is a big one if you're interested in freeing them in whatever organization
-// you please.
-
-// allocations can make no guarentees about being sequential
-// tho it would be greatly appreciated at least to some degree.
-typedef struct TB_Arena TB_Arena;
-struct TB_Arena {
-    // alignment never goes past max_align_t
-    void* (*alloc)(TB_Arena* arena, size_t size, size_t align);
-
-    // clearing but we're not done with it yet, cheap
-    void (*clear)(TB_Arena* arena);
-
-    // frees everything within the arena, potentially expensive
-    void (*free)(TB_Arena* arena);
-};
-
-// allocates in 16MiB chunks and does linear allocation in 'em
-TB_API TB_Arena* tb_default_arena(void);
+// defined in common/arena.h
+typedef struct Arena Arena;
 
 ////////////////////////////////
 // Module management
@@ -651,8 +627,7 @@ struct TB_Assembly {
 // this is where the machine code and other relevant pieces go.
 typedef struct TB_FunctionOutput TB_FunctionOutput;
 
-// returns NULL if it fails
-TB_API TB_FunctionOutput* tb_module_compile_function(TB_Module* m, TB_Function* f, TB_ISelMode isel_mode, bool emit_asm);
+TB_API void tb_output_print_asm(TB_FunctionOutput* out, FILE* fp);
 
 TB_API uint8_t* tb_output_get_code(TB_FunctionOutput* out, size_t* out_length);
 
@@ -797,7 +772,7 @@ TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc
 // into the correct ABI and exposing sane looking nodes to the parameters.
 //
 // returns the parameters
-TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count);
+TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, Arena* arena, size_t* out_param_count);
 TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* dbg);
 
 // used for ABI parameter passing
@@ -865,6 +840,9 @@ TB_API TB_DebugType* tb_debug_create_func(TB_Module* m, TB_CallingConv cc, size_
 
 TB_API TB_DebugType* tb_debug_field_type(TB_DebugType* type);
 
+TB_API size_t tb_debug_func_return_count(TB_DebugType* type);
+TB_API size_t tb_debug_func_param_count(TB_DebugType* type);
+
 // you'll need to fill these if you make a function
 TB_API TB_DebugType** tb_debug_func_params(TB_DebugType* type);
 TB_API TB_DebugType** tb_debug_func_returns(TB_DebugType* type);
@@ -895,9 +873,6 @@ TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...);
 
 TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line);
 
-// this only allows for power of two vector types
-TB_API TB_DataType tb_vector_type(TB_DataTypeEnum type, int width);
-
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat);
 
@@ -910,7 +885,7 @@ TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr);
 TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 
 // if arena is NULL, defaults to module arena which is freed on tb_free_thread_resources
-TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena);
+TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, Arena* arena);
 TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
@@ -1079,7 +1054,7 @@ TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 typedef struct TB_Passes TB_Passes;
 
 // the arena is used to allocate the nodes while passes are being done.
-TB_API TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena);
+TB_API TB_Passes* tb_pass_enter(TB_Function* f, Arena* arena);
 TB_API void tb_pass_exit(TB_Passes* opt);
 
 // transformation passes:
@@ -1101,7 +1076,10 @@ TB_API bool tb_pass_loop(TB_Passes* opt);
 //   print: prints IR in a flattened text form.
 TB_API bool tb_pass_print(TB_Passes* opt);
 
-TB_API void tb_pass_kill(TB_Passes* opt, TB_Node* n);
+// codegen
+TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, bool emit_asm);
+
+TB_API void tb_pass_kill_node(TB_Passes* opt, TB_Node* n);
 TB_API bool tb_pass_mark(TB_Passes* opt, TB_Node* n);
 TB_API void tb_pass_mark_users(TB_Passes* opt, TB_Node* n);
 

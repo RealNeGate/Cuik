@@ -125,7 +125,7 @@ TB_PassingRule tb_get_passing_rule_from_dbg(TB_Module* mod, TB_DebugType* param_
     return classify_reg(mod->target_abi, param_type) == RG_MEMORY ? TB_PASSING_INDIRECT : TB_PASSING_DIRECT;
 }
 
-TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count) {
+TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, Arena* arena, size_t* out_param_count) {
     tb_assert(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
     tb_assert(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
 
@@ -141,7 +141,7 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, 
     // reassemble values
     TB_Node** params = NULL;
     if (dbg->func.param_count > 0) {
-        params = f->arena->alloc(f->arena, sizeof(TB_Node*) * param_count, _Alignof(TB_Node*));
+        params = arena_alloc(f->arena, sizeof(TB_Node*) * param_count);
 
         bool has_aggregate_return = dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
         FOREACH_N(i, 0, param_count) {
@@ -205,7 +205,7 @@ TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* d
     // build up prototype param types
     size_t return_count = dbg->func.return_count;
     size_t size = sizeof(TB_FunctionPrototype) + ((param_count + has_aggregate_return + return_count) * sizeof(TB_PrototypeParam));
-    TB_FunctionPrototype* p = arena_alloc(&tb__arena2, size, _Alignof(TB_FunctionPrototype));
+    TB_FunctionPrototype* p = arena_alloc(get_permanent_arena(), size);
     p->call_conv = dbg->func.cc;
     p->has_varargs = dbg->func.has_varargs;
     p->return_count = return_count;

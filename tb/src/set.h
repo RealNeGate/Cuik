@@ -9,8 +9,8 @@ typedef struct Set {
     uint64_t* data;
 } Set;
 
-inline static Set set_create_in_arena(Arena* arena, size_t cap) {
-    void* ptr = arena_alloc(arena, ((cap + 63) / 64) * sizeof(uint64_t), _Alignof(uint64_t));
+static Set set_create_in_arena(Arena* arena, size_t cap) {
+    void* ptr = arena_alloc(arena, ((cap + 63) / 64) * sizeof(uint64_t));
     memset(ptr, 0, ((cap + 63) / 64) * sizeof(uint64_t));
 
     return (Set){
@@ -19,7 +19,7 @@ inline static Set set_create_in_arena(Arena* arena, size_t cap) {
     };
 }
 
-inline static Set set_create(size_t cap) {
+static Set set_create(size_t cap) {
     void* ptr = tb_platform_heap_alloc(((cap + 63) / 64) * sizeof(uint64_t));
     memset(ptr, 0, ((cap + 63) / 64) * sizeof(uint64_t));
 
@@ -29,16 +29,16 @@ inline static Set set_create(size_t cap) {
     };
 }
 
-inline static void set_free(Set* s) {
+static void set_free(Set* s) {
     tb_platform_heap_free(s->data);
 }
 
-inline static void set_clear(Set* s) {
+static void set_clear(Set* s) {
     memset(s->data, 0, ((s->capacity + 63) / 64) * sizeof(uint64_t));
 }
 
 // return true if changes
-inline static bool set_union(Set* dst, Set* src) {
+static bool set_union(Set* dst, Set* src) {
     assert(dst->capacity >= src->capacity);
     size_t n = (src->capacity + 63) / 64;
 
@@ -53,7 +53,7 @@ inline static bool set_union(Set* dst, Set* src) {
     return changes;
 }
 
-inline static bool set_equals(Set* dst, Set* src) {
+static bool set_equals(Set* dst, Set* src) {
     assert(dst->capacity == src->capacity);
     size_t n = (dst->capacity + 63) / 64;
 
@@ -64,12 +64,12 @@ inline static bool set_equals(Set* dst, Set* src) {
     return true;
 }
 
-inline static void set_copy(Set* dst, Set* src) {
+static void set_copy(Set* dst, Set* src) {
     assert(dst->capacity >= src->capacity);
     memcpy(dst->data, src->data, ((src->capacity + 63) / 64) * sizeof(uint64_t));
 }
 
-inline static size_t set_popcount(Set* s) {
+static size_t set_popcount(Set* s) {
     size_t n = (s->capacity + 63) / 64;
 
     size_t sum = 0;
@@ -81,7 +81,7 @@ inline static size_t set_popcount(Set* s) {
 }
 
 // Grabs a free slot
-inline static ptrdiff_t set_pop_any(Set* s) {
+static ptrdiff_t set_pop_any(Set* s) {
     size_t slots = (s->capacity + 63) / 64;
 
     for (size_t i = 0; i < slots; i++) {
@@ -97,7 +97,7 @@ inline static ptrdiff_t set_pop_any(Set* s) {
     return -1;
 }
 
-inline static bool set_first_time(Set* s, size_t index) {
+static bool set_first_time(Set* s, size_t index) {
     size_t slots = (s->capacity + 63) / 64;
     lldiv_t d = lldiv(index, 64);
 
@@ -122,7 +122,7 @@ inline static bool set_first_time(Set* s, size_t index) {
     return false;
 }
 
-inline static void set_put(Set* s, size_t index) {
+static void set_put(Set* s, size_t index) {
     lldiv_t d = lldiv(index, 64);
     if (d.quot >= s->capacity) {
         size_t old = s->capacity;
@@ -140,14 +140,14 @@ inline static void set_put(Set* s, size_t index) {
     s->data[d.quot] |= (1ull << d.rem);
 }
 
-inline static void set_remove(Set* s, size_t index) {
+static void set_remove(Set* s, size_t index) {
     lldiv_t d = lldiv(index, 64);
     if (d.quot < s->capacity) {
         s->data[d.quot] &= ~(1ull << d.rem);
     }
 }
 
-inline static bool set_get(Set* s, size_t index) {
+static bool set_get(Set* s, size_t index) {
     lldiv_t d = lldiv(index, 64);
     if (d.quot >= s->capacity) {
         return false;

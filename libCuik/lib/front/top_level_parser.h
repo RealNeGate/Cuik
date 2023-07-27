@@ -516,12 +516,10 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
 
         // parse all global declarations (we're walking the arena because it's
         // faster than walking the hash map, cache locality amirite)
-        for (ArenaSegment* segment = parser.symbols->globals_arena.base; segment; segment = segment->next) {
-            size_t count = segment->used / sizeof(Symbol);
-            Symbol* syms = (Symbol*) segment->data;
-
-            // CUIK_SYMTAB_FOR_GLOBALS(i, parser.symbols) {
-            // Symbol* sym = cuik_symtab_global_at(parser.symbols, i);
+        _Static_assert(sizeof(Symbol) == ((sizeof(Symbol) + 15ull) & ~15ull), "needs to be 16byte aligned to be walked in the arena easily");
+        ARENA_FOR(chunk, &parser.symbols->globals_arena) {
+            size_t count = parser.symbols->globals_arena.chunk_size / sizeof(Symbol);
+            Symbol* syms = (Symbol*) chunk->data;
 
             for (size_t i = 0; i < count; i++) {
                 Symbol* restrict sym = &syms[i];

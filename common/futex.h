@@ -1,5 +1,6 @@
-#ifndef FUTEX_H
-#define FUTEX_H
+#pragma once
+
+#include <stdint.h>
 
 #ifdef __APPLE__
 typedef _Atomic int32_t Futex;
@@ -12,5 +13,3 @@ void futex_signal(Futex* f);
 void futex_broadcast(Futex* f);
 void futex_wait(Futex* f, Futex val); // leaves if *f != val
 void futex_wait_eq(Futex* f, Futex val); // leaves if *f == val
-
-#endif /* FUTEX_H */

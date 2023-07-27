@@ -103,7 +103,7 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
     FOREACH_N(tag, 0, TB_SYMBOL_MAX) {
         if (m->symbol_count[tag] < 1) continue;
 
-        CUIK_TIMED_BLOCK("sort") {
+        if (0) CUIK_TIMED_BLOCK("sort") {
             size_t count = m->symbol_count[tag];
             array_form = tb_platform_heap_realloc(array_form, count * sizeof(TB_Symbol*));
 
@@ -119,31 +119,28 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
             }
 
             // functions have special rules on ordering but other than that, ordinals go brr
-            /*CUIK_TIMED_BLOCK("sort by ordinal") qsort(
+            CUIK_TIMED_BLOCK("sort by ordinal") qsort(
                 array_form, count, sizeof(TB_Symbol*),
                 tag == TB_SYMBOL_FUNCTION ? compare_functions : compare_symbols
-            );*/
+            );
 
             CUIK_TIMED_BLOCK("convert back to list") {
-                m->first_symbol_of_tag[tag] = array_form[count - 1];
+                m->first_symbol_of_tag[tag] = array_form[0];
 
                 if (tag == TB_SYMBOL_GLOBAL) {
                     TB_Global** globals = (TB_Global**) array_form;
-
-                    FOREACH_REVERSE_N(j, 1, count) {
+                    FOREACH_N(j, 0, count - 1) {
                         dyn_array_put(globals[j]->parent->globals, globals[j]);
-                        array_form[j]->next = array_form[j-1];
+                        array_form[j]->next = array_form[j + 1];
                     }
 
-                    dyn_array_put(globals[0]->parent->globals, globals[0]);
-                    array_form[0]->next = NULL;
+                    dyn_array_put(globals[count - 1]->parent->globals, globals[count - 1]);
                 } else {
-                    FOREACH_REVERSE_N(j, 1, count) {
-                        array_form[j]->next = array_form[j-1];
+                    FOREACH_N(j, 0, count - 1) {
+                        array_form[j]->next = array_form[j + 1];
                     }
-
-                    array_form[0]->next = NULL;
                 }
+                array_form[count - 1]->next = NULL;
             }
         }
     }
@@ -151,6 +148,10 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
 
     CUIK_TIMED_BLOCK("layout code") {
         size_t offset = 0, comdat = 0, comdat_count = 0, comdat_relocs = 0;
+        TB_FOR_GLOBALS(g, m) {
+            dyn_array_put(g->parent->globals, g);
+        }
+
         TB_FOR_FUNCTIONS(f, m) {
             TB_FunctionOutput* func_out = f->output;
 

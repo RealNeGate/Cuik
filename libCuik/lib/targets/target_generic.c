@@ -226,14 +226,14 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
     } else if (strcmp(name, "__builtin_unreachable") == 0) {
         tb_inst_unreachable(func);
         tb_inst_set_control(func, tb_inst_region(func));
-        return ZZZ(TB_NULL_REG);
+        return ZZZ(NULL);
     } else if (strcmp(name, "__builtin_expect") == 0) {
         TB_Node* dst = RVAL(1);
         return ZZZ(dst);
     } else if (strcmp(name, "__builtin_trap") == 0) {
         tb_inst_trap(func);
         tb_inst_set_control(func, tb_inst_region(func));
-        return ZZZ(TB_NULL_REG);
+        return ZZZ(NULL);
     } else if (strcmp(name, "__builtin_syscall") == 0) {
         TB_Node* num = RVAL(1);
         TB_Node** arg_regs = tls_push((arg_count - 1) * sizeof(TB_Node*));
@@ -255,17 +255,17 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         tb_inst_unreachable(func);
         tb_inst_set_control(func, skip);
 
-        return ZZZ(TB_NULL_REG);
+        return ZZZ(NULL);
     } else if (strcmp(name, "__debugbreak") == 0) {
         tb_inst_debugbreak(func);
-        return ZZZ(TB_NULL_REG);
+        return ZZZ(NULL);
     } else if (strcmp(name, "__va_start") == 0) {
         TB_Node* dst = RVAL(1);
         IRVal src = args[2];
         assert(src.value_type == LVALUE);
 
         tb_inst_store(func, TB_TYPE_PTR, dst, tb_inst_va_start(func, src.reg), 8, false);
-        return ZZZ(TB_NULL_REG);
+        return ZZZ(NULL);
     } else if (strcmp(name, "__va_arg") == 0) {
         // classify value
         TB_Node* src = RVAL(1);

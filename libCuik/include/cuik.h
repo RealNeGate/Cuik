@@ -1,5 +1,6 @@
 #pragma once
 #include "cuik_prelude.h"
+#include <arena.h>
 #include <dyn_array.h>
 
 #ifndef _WIN32

@@ -1,36 +1,47 @@
 #pragma once
-#include "common.h"
+#include <stddef.h>
+#include <stdbool.h>
 
-#define ARENA_SEGMENT_SIZE (16 * 1024 * 1024)
+enum {
+    ARENA_SMALL_CHUNK_SIZE  =        4 * 1024,
+    ARENA_MEDIUM_CHUNK_SIZE =      512 * 1024,
+    ARENA_LARGE_CHUNK_SIZE  = 2 * 1024 * 1024,
 
-// nightmare dependency issues lmao
-#ifndef ARENA_H
-#define ARENA_H
-
-typedef struct ArenaSegment ArenaSegment;
-typedef struct {
-    struct ArenaSegment* base;
-    struct ArenaSegment* top;
-} Arena;
-
-#endif
-
-// It's a linked list :)
-struct ArenaSegment {
-    struct ArenaSegment* next;
-    size_t used;
-    size_t capacity;
-    size_t _pad;
-
-    unsigned char data[];
+    ARENA_ALIGNMENT = 16,
 };
 
-#define ARENA_ALLOC(arena, T) arena_alloc(arena, sizeof(T), _Alignof(T))
-#define ARENA_ARR_ALLOC(arena, count, T) arena_alloc(arena, (count) * sizeof(T), _Alignof(T))
+typedef struct ArenaChunk ArenaChunk;
+struct ArenaChunk {
+    ArenaChunk* next;
+    size_t pad;
+    char data[];
+};
 
-void* arena_alloc(Arena* arena, size_t size, size_t align);
+typedef struct Arena {
+    size_t chunk_size;
+    ArenaChunk* base;
+    ArenaChunk* top;
+
+    // top of the allocation space
+    char* watermark;
+    char* high_point; // &top->data[chunk_size]
+} Arena;
+
+#define ARENA_FOR(it, arena) for (ArenaChunk* it = (arena)->base; it != NULL; it = it->next)
+
+#define ARENA_ALLOC(arena, T) arena_alloc(arena, sizeof(T))
+#define ARENA_ARR_ALLOC(arena, count, T) arena_alloc(arena, (count) * sizeof(T))
+
+void arena_create(Arena* restrict arena, size_t chunk_size);
+void arena_destroy(Arena* restrict arena);
+
+void* arena_unaligned_alloc(Arena* restrict arena, size_t size);
+void* arena_alloc(Arena* restrict arena, size_t size);
+
+// in case you wanna mix unaligned and aligned arenas
+void arena_realign(Arena* restrict arena);
+
+bool arena_is_empty(Arena* arena);
+
+// resets to only having one chunk
 void arena_clear(Arena* arena);
-void arena_free(Arena* arena);
-void arena_trim(Arena* arena);
-void arena_append(Arena* arena, Arena* other);
-size_t arena_get_memory_usage(Arena* arena);

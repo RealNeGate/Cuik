@@ -351,7 +351,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule
         case TB_PASSING_INDIRECT: {
             // const pass-by-value is considered as a const ref
             // since it doesn't mutate
-            TB_Node* arg_addr = TB_NULL_REG;
+            TB_Node* arg_addr = NULL;
             switch (arg.value_type) {
                 case LVALUE:
                 arg_addr = arg.reg;
@@ -397,7 +397,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule
                 TB_DataType dt = n->dt;
 
                 if (is_vararg && dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0) {
-                    // convert any float variadic arguments into integers
+                    // win64: convert any float variadic arguments into integers
                     n = tb_inst_bitcast(func, n, TB_TYPE_I64);
                 }
 
@@ -872,16 +872,24 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                 return_rule = tb_get_passing_rule_from_dbg(tu->ir_mod, ret_dbg, true);
             }
 
-            size_t real_arg_count = call_prototype->param_count;
+            size_t real_arg_count = call_prototype->param_count + (arg_count - varargs_cutoff);
             size_t ir_arg_count = 0;
             TB_Node** ir_args = tls_push(real_arg_count * sizeof(TB_Node*));
             if (return_rule == TB_PASSING_INDIRECT) {
                 ir_args[ir_arg_count++] = tb_inst_local(func, return_type->size, return_type->align);
             }
 
+            size_t dbg_param_count = tb_debug_func_param_count(dbg);
             TB_DebugType** params = tb_debug_func_params(dbg);
             for (size_t i = 0; i < arg_count; i++) {
-                TB_PassingRule rule = tb_get_passing_rule_from_dbg(tu->ir_mod, tb_debug_field_type(params[i]), false);
+                TB_DebugType* t;
+                if (i >= varargs_cutoff) {
+                    t = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(args[i + 1].cast_type));
+                } else {
+                    t = tb_debug_field_type(params[i]);
+                }
+
+                TB_PassingRule rule = tb_get_passing_rule_from_dbg(tu->ir_mod, t, false);
                 ir_arg_count += pass_parameter(tu, func, rule, args[i + 1], i >= varargs_cutoff, &ir_args[ir_arg_count]);
             }
             assert(ir_arg_count == real_arg_count);
@@ -1182,7 +1190,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
 
             TB_DataType dt = ctype_to_tbtype(type);
 
-            TB_Node* loaded = TB_NULL_REG;
+            TB_Node* loaded = NULL;
             if (CUIK_QUAL_TYPE_HAS(GET_TYPE(), CUIK_QUAL_ATOMIC)) {
                 TB_Node* stride;
                 if (type->kind == KIND_PTR) {
@@ -1348,7 +1356,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
 
                 TB_DataType dt = ctype_to_tbtype(type);
 
-                TB_Node* data = TB_NULL_REG;
+                TB_Node* data = NULL;
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     if (e->op != EXPR_ASSIGN) abort();
 
@@ -1522,7 +1530,10 @@ static TB_Node* irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Cuik_Exp
 static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     if (s == NULL) return;
 
-    insert_label(func);
+    if (s->op != STMT_COMPOUND && s->op != STMT_CASE && s->op != STMT_DEFAULT && s->op != STMT_LABEL) {
+        insert_label(func);
+    }
+
     emit_location(tu, func, s->loc.start);
 
     switch (s->op) {
@@ -1567,7 +1578,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             if (attrs.is_static) {
                 // Static initialization
                 char* name = tls_push(1024);
-                int name_len = snprintf(name, 1024, "%s$%s", function_name, s->decl.name);
+                int name_len = snprintf(name, 1024, "%s.%s", function_name, s->decl.name);
                 if (name_len < 0 || name_len >= 1024) {
                     assert(0 && "temporary global name too long!");
                 }
@@ -1669,7 +1680,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 tb_inst_memcpy(func, dst_address, v.reg, size_reg, align, false);
                 tb_inst_ret(func, 1, &dst_address);
             } else {
-                TB_Node* r = TB_NULL_REG;
+                TB_Node* r = NULL;
                 if (v.value_type == LVALUE) {
                     // Implicit array to pointer
                     if (type->kind == KIND_ARRAY) {
@@ -1683,7 +1694,9 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 }
 
                 // if it wasn't set before, resolve it now
-                if (r == TB_NULL_REG) r = cvt2rval(tu, func, &v);
+                if (r == NULL) {
+                    r = cvt2rval(tu, func, &v);
+                }
 
                 tb_inst_ret(func, 1, &r);
             }
@@ -1873,8 +1886,8 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
             qsort(entries, entry_count, sizeof(TB_SwitchEntry), switch_cmp);
             tb_inst_branch(func, key->dt, key, default_label, entry_count, entries);
+            tls_restore(entries);
 
-            tb_inst_set_control(func, tb_inst_region(func));
             irgen_stmt(tu, func, s->switch_.body);
 
             fallthrough_label(func, break_label);
@@ -1885,7 +1898,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
     }
 }
 
-TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena* arena, Stmt* restrict s) {
+TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Arena* arena, Stmt* restrict s) {
     if (s->op == STMT_FUNC_DECL) {
         if ((s->decl.attrs.is_static || s->decl.attrs.is_inline) && !s->decl.attrs.is_used) {
             return NULL;

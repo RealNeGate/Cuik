@@ -234,6 +234,18 @@ static bool expect_char(TokenStream* restrict s, char ch) {
     }
 }
 
+// tls -> arena
+static void* copy_out_temporary(Arena* arena, void* src, size_t count, size_t size) {
+    if (count == 0) {
+        return NULL;
+    }
+
+    void* dst = arena_alloc(arena, size * count);
+    memcpy(dst, src, size * count);
+    tls_restore(src);
+    return dst;
+}
+
 // in glsl_parser.h
 static Cuik_Type* parse_glsl_type(Cuik_Parser* restrict parser, TokenStream* restrict s);
 static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_Qualifiers* quals);

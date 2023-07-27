@@ -39,7 +39,7 @@ typedef struct Mem2Reg_Ctx {
 } Mem2Reg_Ctx;
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt);
-static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_Node* address, TB_DataType* dt, int* out_use_count);
+static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_Node* address, TB_DataType* dt);
 
 static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Node* r) {
     // TODO(NeGate): Maybe we speed this up... maybe it doesn't matter :P
@@ -138,10 +138,10 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
         }
 
         bool found = false;
-        FOREACH_N(j, 0, phi_reg->input_count) {
+        FOREACH_N(j, 0, dst->input_count) {
             if (dst->inputs[j] == bb) {
                 // try to replace
-                set_input(c->p, phi_reg, top, j);
+                set_input(c->p, phi_reg, top, j + 1);
                 found = true;
                 break;
             }
@@ -249,14 +249,14 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
 }
 
 typedef struct {
-    TB_Node* new_reg;
+    TB_Node* old_n;
 
-    int32_t offset;
+    int64_t offset;
     TB_CharUnits size;
     TB_DataType dt;
 } AggregateConfig;
 
-static ptrdiff_t find_config(size_t config_count, AggregateConfig* configs, int32_t offset) {
+static ptrdiff_t find_config(size_t config_count, AggregateConfig* configs, int64_t offset) {
     FOREACH_N(i, 0, config_count) {
         if (configs[i].offset == offset) return i;
     }
@@ -267,11 +267,11 @@ static ptrdiff_t find_config(size_t config_count, AggregateConfig* configs, int3
 
 // -1 is a bad match
 // -2 is no match, so we can add a new config
-static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* configs, int32_t offset, TB_CharUnits size, TB_DataType dt) {
-    int32_t max = offset + size;
+static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* configs, int64_t offset, TB_CharUnits size, TB_DataType dt) {
+    int64_t max = offset + size;
 
     FOREACH_N(i, 0, config_count) {
-        int32_t max2 = configs[i].offset + configs[i].size;
+        int64_t max2 = configs[i].offset + configs[i].size;
 
         if (offset >= configs[i].offset && max <= max2) {
             // they overlap... but is it a clean overlap?
@@ -324,9 +324,99 @@ static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* parent, TB_Node* n) 
     }
 }
 
+// false means failure to SROA
+static bool add_configs(TB_Passes* p, TB_TemporaryStorage* tls, User* use, TB_Node* base_address, size_t base_offset, size_t* config_count, AggregateConfig* configs, int pointer_size) {
+    for (; use; use = use->next) {
+        TB_Node* n = use->n;
+
+        // we can only SROA if we know we're not using the
+        // address for anything but direct memory ops or TB_MEMBERs.
+        if (use->slot != 1) {
+            return false;
+        }
+
+        if (n->type == TB_MEMBER_ACCESS) {
+            // same rules, different offset
+            int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
+            if (!add_configs(p, tls, find_users(p, n), base_address, base_offset + offset, config_count, configs, pointer_size)) {
+                return false;
+            }
+            continue;
+        }
+
+        // find direct memory op
+        if (n->type != TB_LOAD && n->type != TB_STORE) {
+            return false;
+        }
+
+        TB_Node* address = n->inputs[1];
+        int size = (bits_in_data_type(pointer_size, n->dt) + 7) / 8;
+
+        // see if it's a compatible configuration
+        int match = compatible_with_configs(*config_count, configs, base_offset, size, n->dt);
+        if (match == -1) {
+            return false;
+        } else if (match == -2) {
+            // add new config
+            tb_tls_push(tls, sizeof(AggregateConfig));
+            configs[(*config_count)++] = (AggregateConfig){ address, base_offset, size, n->dt };
+        } else if (configs[match].old_n != address) {
+            log_warn("%s: %p SROA config matches but reaches so via a different node, please idealize nodes before mem2reg", p->f->super.name, address);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool attempt_sroa(TB_Passes* p, TB_Function* f, TB_TemporaryStorage* tls, TB_Node* address) {
+    int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
+
+    size_t config_count = 0;
+    AggregateConfig* configs = tb_tls_push(tls, 0);
+    if (!add_configs(p, tls, find_users(p, address), address, 0, &config_count, configs, pointer_size)) {
+        return false;
+    }
+
+    uint32_t alignment = TB_NODE_GET_EXTRA_T(address, TB_NodeLocal)->align;
+    FOREACH_N(i, 0, config_count) {
+        TB_Node* new_n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
+        TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
+
+        // replace old pointer with new fancy
+        subsume_node(p, f, configs[i].old_n, new_n);
+        dyn_array_put(p->locals, new_n);
+    }
+
+    tb_pass_kill_node(p, address);
+    return true;
+}
+
 bool tb_pass_mem2reg(TB_Passes* p) {
     TB_Function* f = p->f;
     TB_TemporaryStorage* tls = tb_tls_steal();
+
+    ////////////////////////////////
+    // Try SROA first
+    ////////////////////////////////
+    int changes = 0;
+    for (size_t i = dyn_array_length(p->locals); i--;) retry: {
+        TB_Node* address = p->locals[i];
+
+        TB_DataType dt;
+        Coherency coherence = tb_get_stack_slot_coherency(p, f, address, &dt);
+        if (coherence == COHERENCY_USES_ADDRESS) {
+            void* mark = tb_tls_push(tls, 0);
+            if (attempt_sroa(p, f, tls, address)) {
+                DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p was able to SROA", f->super.name, address));
+                changes++;
+                tb_tls_restore(tls, mark);
+                goto retry; // but don't go the next int
+            } else {
+                tb_tls_restore(tls, mark);
+            }
+        }
+    }
 
     ////////////////////////////////
     // Decide which stack slots to promote
@@ -334,13 +424,11 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     size_t to_promote_count = 0;
     TB_Node** to_promote = tb_tls_push(tls, sizeof(TB_Node*) * dyn_array_length(p->locals));
 
-    int changes = 0;
     dyn_array_for(i, p->locals) {
         TB_Node* n = p->locals[i];
 
         TB_DataType dt;
-        int use_count;
-        Coherency coherence = tb_get_stack_slot_coherency(p, f, n, &dt, &use_count);
+        Coherency coherence = tb_get_stack_slot_coherency(p, f, n, &dt);
 
         switch (coherence) {
             case COHERENCY_GOOD: {
@@ -349,27 +437,23 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
                 n->dt = dt;
 
-                log_debug("%p promoting to IR register", n);
+                DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p promoting to IR register", f->super.name, n));
                 break;
             }
             case COHERENCY_UNINITIALIZED: {
-                log_debug("%p could not mem2reg a stack slot (uninitialized)", n);
+                DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p could not mem2reg (uninitialized)", f->super.name, n));
                 break;
             }
             case COHERENCY_VOLATILE: {
-                log_debug("%p could not mem2reg a stack slot (volatile load/store)", n);
+                DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p could not mem2reg (volatile load/store)", f->super.name, n));
                 break;
             }
             case COHERENCY_USES_ADDRESS: {
-                /*if (n->type == TB_LOCAL && attempt_sroa(f, tls, n, use_count)) {
-                    log_debug("SROA on %p", n);
-                    changes++;
-                } else {
-                }*/
+                DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p could not mem2reg (uses address directly)", f->super.name));
                 break;
             }
             case COHERENCY_BAD_DATA_TYPE: {
-                log_debug("%p could not mem2reg (data type is too inconsistent)");
+                DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p could not mem2reg (data type is too inconsistent)", f->super.name, n));
                 break;
             }
             default: tb_todo();
@@ -392,10 +476,8 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     c.defs = tb_tls_push(c.tls, to_promote_count * sizeof(Mem2Reg_Def));
     memset(c.defs, 0, to_promote_count * sizeof(Mem2Reg_Def));
 
-    c.order = tb_function_get_postorder(f);
-
-    // find dominators
-    c.doms = tb_get_dominators(f, c.order);
+    c.order = p->order;
+    c.doms = p->doms;
 
     TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, c.doms, &c.order);
 
@@ -485,7 +567,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
     // don't need these anymore
     FOREACH_N(var, 0, c.to_promote_count) {
-        tb_pass_kill(c.p, c.to_promote[var]);
+        tb_pass_kill_node(c.p, c.to_promote[var]);
     }
 
     // annoying nested hash map freeing
@@ -500,7 +582,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share
 // the same type and alignment along with not needing any address usage.
-static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_Node* address, TB_DataType* out_dt, int* out_use_count) {
+static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_Node* address, TB_DataType* out_dt) {
     ICodeGen* cg = tb__find_code_generator(f->super.module);
     int pointer_size = cg->pointer_size;
     int char_size = cg->minimum_addressable_size;
@@ -510,7 +592,6 @@ static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_No
     bool initialized = false;
     int dt_bits = 0;
 
-    int use_count = 0;
     for (User* use = find_users(p, address); use; use = use->next) {
         TB_Node* n = use->n;
         if (n->type == TB_MEMSET && n->inputs[1] == address && tb_node_is_constant_zero(n->inputs[2])) {
@@ -546,10 +627,7 @@ static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_No
             log_debug("%p uses pointer arithmatic (%s)", address, tb_node_get_name(n));
             return COHERENCY_USES_ADDRESS;
         }
-
-        use_count += 1;
     }
-    *out_use_count = use_count;
 
     if (!initialized) {
         return COHERENCY_UNINITIALIZED;

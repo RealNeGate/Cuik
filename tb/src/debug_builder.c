@@ -3,8 +3,7 @@
 #define NEW(...) memcpy(make_type(m), &(TB_DebugType){ __VA_ARGS__ }, sizeof(TB_DebugType))
 
 static TB_DebugType* make_type(TB_Module* m) {
-    int tid = tb__get_local_tid();
-    return arena_alloc(&tb__arena2, sizeof(TB_DebugType), _Alignof(TB_DebugType));
+    return arena_alloc(get_permanent_arena(), sizeof(TB_DebugType));
 }
 
 TB_API TB_DebugType* tb_debug_get_void(TB_Module* m) {
@@ -85,7 +84,7 @@ TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, ptr
 
 TB_API TB_DebugType** tb_debug_record_begin(TB_DebugType* type, size_t count) {
     type->record.count = count;
-    return (type->record.members = arena_alloc(&tb__arena2, count * sizeof(TB_DebugType*), _Alignof(TB_DebugType*)));
+    return (type->record.members = arena_alloc(get_permanent_arena(), count * sizeof(TB_DebugType*)));
 }
 
 TB_API void tb_debug_record_end(TB_DebugType* type, TB_CharUnits size, TB_CharUnits align) {
@@ -98,10 +97,18 @@ TB_API TB_DebugType* tb_debug_create_func(TB_Module* m, TB_CallingConv cc, size_
     t->func.cc = cc;
     t->func.has_varargs = has_varargs;
     t->func.param_count = param_count;
-    t->func.params = ARENA_ARR_ALLOC(&tb__arena2, param_count, TB_DebugType*);
+    t->func.params = ARENA_ARR_ALLOC(get_permanent_arena(), param_count, TB_DebugType*);
     t->func.return_count = return_count;
-    t->func.returns = ARENA_ARR_ALLOC(&tb__arena2, return_count, TB_DebugType*);
+    t->func.returns = ARENA_ARR_ALLOC(get_permanent_arena(), return_count, TB_DebugType*);
     return t;
+}
+
+TB_API size_t tb_debug_func_return_count(TB_DebugType* type) {
+    return type->func.return_count;
+}
+
+TB_API size_t tb_debug_func_param_count(TB_DebugType* type) {
+    return type->func.param_count;
 }
 
 TB_API TB_DebugType** tb_debug_func_params(TB_DebugType* type) {

@@ -266,7 +266,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     }
 
     size_t curr = 0;
-    char* buffer = arena_alloc(parser->arena, total_len + 3, 4);
+    char* buffer = arena_alloc(parser->arena, total_len + 3);
 
     buffer[curr++] = '\"';
 
@@ -559,7 +559,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             expect_closing_paren(s, opening_loc);
 
             // move it to a more permanent storage
-            C11GenericEntry* dst = arena_alloc(parser->arena, entry_count * sizeof(C11GenericEntry), _Alignof(C11GenericEntry));
+            C11GenericEntry* dst = arena_alloc(parser->arena, entry_count * sizeof(C11GenericEntry));
             memcpy(dst, entries, entry_count * sizeof(C11GenericEntry));
 
             e->generic_.case_count = entry_count;

@@ -67,9 +67,8 @@ TB_API TB_Attrib* tb_function_attrib_scope(TB_Function* f, TB_Attrib* parent_sco
 }
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
-    assert(f->arena);
     // return malloc(necessary_size);
-    return f->arena->alloc(f->arena, necessary_size, _Alignof(TB_Node));
+    return arena_alloc(f->arena, necessary_size);
 }
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra) {
@@ -821,7 +820,7 @@ TB_API void tb_inst_set_region_name(TB_Node* n, ptrdiff_t len, const char* name)
 
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
-    char* newstr = arena_alloc(&tb__arena2, len + 1, 1);
+    char* newstr = arena_alloc(get_permanent_arena(), len + 1);
     memcpy(newstr, name, len + 1);
     r->tag = newstr;
 }

@@ -70,7 +70,14 @@ struct Cuik_BuildStep {
     };
 };
 
-static _Thread_local TB_Arena* ir_arena;
+static Arena* get_ir_arena(void) {
+    static _Thread_local Arena ir_arena;
+    if (arena_is_empty(&ir_arena)) {
+        arena_create(&ir_arena, ARENA_LARGE_CHUNK_SIZE);
+    }
+
+    return &ir_arena;
+}
 
 static void step_error(Cuik_BuildStep* s) {
     if (s->anti_dep != NULL) {
@@ -139,35 +146,30 @@ static void sys_invoke(BuildStepInfo* info) {
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
 // ctx is non-NULL when we print asm
-static void compile_func(TB_Module* m, TB_Function* f, void* ctx) {
-    TB_FunctionOutput* out = tb_module_compile_function(m, f, TB_ISEL_FAST, ctx != NULL);
-
-    if (ctx) {
-        TB_Assembly* a = tb_output_get_asm(out);
-        for (; a; a = a->next) {
-            fwrite(a->data, a->length, 1, stdout);
-        }
-    }
-}
-
 static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
-    if (ir_arena == NULL) {
-        ir_arena = tb_default_arena();
-    }
-
+    bool print_asm = arg != NULL;
     Cuik_DriverArgs* args = arg;
     CUIK_TIMED_BLOCK("func opt") {
-        TB_Passes* p = tb_pass_enter(f, ir_arena);
+        TB_Passes* p = tb_pass_enter(f, get_ir_arena());
 
         if (args->opt_level >= 1) {
             // initial run of peepholes
             tb_pass_peephole(p);
             // Converting locals into phi nodes
-            // tb_pass_mem2reg(p), tb_pass_peephole(p);
+            tb_pass_mem2reg(p), tb_pass_peephole(p);
         }
 
+        // print IR
         if (args->emit_ir) {
             tb_pass_print(p);
+        }
+
+        // codegen
+        if (!args->emit_ir) CUIK_TIMED_BLOCK("CodeGen") {
+            TB_FunctionOutput* out = tb_pass_codegen(p, print_asm);
+            if (print_asm) {
+                tb_output_print_asm(out, stdout);
+            }
         }
 
         tb_pass_exit(p);
@@ -203,6 +205,8 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 
     Cuik_ParseResult result;
     CUIK_TIMED_BLOCK_ARGS("parse", s->cc.source) {
+        arena_create(&s->cc.arena, ARENA_LARGE_CHUNK_SIZE);
+
         result = cuikparse_run(args->version, tokens, args->target, &s->cc.arena, false);
         s->cc.tu = result.tu;
 
@@ -278,19 +282,9 @@ static void cc_invoke(BuildStepInfo* restrict info) {
             cuikpp_free(cpp);
         }
 
-        if (args->opt_level > 0 || args->emit_ir) {
+        if (args->opt_level > 0 || args->assembly || args->emit_ir) {
             // do parallel function passes
             cuiksched_per_function(s->tp, mod, args, apply_func);
-        }
-
-        // debug builds will compile functions right after IRgen
-        // to save on total memory usage, this code path is for
-        // optimized code since it needs to know what neighbors it's
-        // got for IPO.
-        if (args->assembly || (args->opt_level > 0 && !args->emit_ir)) {
-            CUIK_TIMED_BLOCK("CodeGen") {
-                cuiksched_per_function(s->tp, mod, args->assembly ? stdout : NULL, compile_func);
-            }
         }
     }
     #endif
@@ -301,7 +295,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         }
 
         CUIK_TIMED_BLOCK("Free arena") {
-            arena_free(&s->cc.arena);
+            arena_destroy(&s->cc.arena);
         }
     }
 
@@ -745,12 +739,7 @@ static void irgen_job(void* arg) {
     // unoptimized builds can just compile functions without
     // the rest of the functions being ready.
     bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->emit_ir && !task.args->assembly;
-
-    TB_Arena* allocator = NULL;
-    if (ir_arena == NULL) {
-        ir_arena = tb_default_arena();
-    }
-    allocator = ir_arena;
+    Arena* allocator = get_ir_arena();
 
     for (size_t i = 0; i < task.count; i++) {
         // skip all the typedefs
@@ -765,18 +754,13 @@ static void irgen_job(void* arg) {
         }
 
         if (do_compiles_immediately && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
-            TB_FunctionOutput* out = tb_module_compile_function(mod, (TB_Function*) s, TB_ISEL_FAST, false);
-            CUIK_CALL(allocator, clear);
+            TB_Passes* p = tb_pass_enter((TB_Function*) s, allocator);
+            tb_pass_codegen(p, false);
+            tb_pass_exit(p);
+
+            arena_clear(allocator);
         }
     }
-
-    #if CUIK_ALLOW_THREADS
-    if (task.remaining != NULL && atomic_fetch_sub(task.remaining, 1) == 1) {
-        if (do_compiles_immediately) CUIK_CALL(allocator, free);
-    }
-    #else
-    if (do_compiles_immediately) TB_CALL(allocator, free);
-    #endif
 }
 
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {

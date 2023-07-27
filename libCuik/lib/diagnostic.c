@@ -29,7 +29,7 @@ static const char* report_names[]  = { NULL, "NOTE",     "WARN",     "ERROR"    
 size_t type_as_string(size_t max_len, char* buffer, Cuik_Type* type);
 
 static char* sprintf_callback(const char* buf, void* user, int len) {
-    void* dst = arena_alloc(user, len, 1);
+    void* dst = arena_unaligned_alloc(user, len);
     memcpy(dst, buf, len);
     return NULL;
 }
@@ -79,11 +79,12 @@ Cuik_Diagnostics* cuikdg_make(Cuik_DiagCallback callback, void* userdata) {
     Cuik_Diagnostics* d = cuik_calloc(1, sizeof(Cuik_Diagnostics));
     d->callback = callback;
     d->userdata = userdata;
+    arena_create(&d->buffer, ARENA_MEDIUM_CHUNK_SIZE);
     return d;
 }
 
 void cuikdg_free(Cuik_Diagnostics* diag) {
-    arena_free(&diag->buffer);
+    arena_destroy(&diag->buffer);
     cuik_free(diag);
 }
 
@@ -97,9 +98,14 @@ CUIK_API void cuikdg_dump_to_stderr(TokenStream* tokens) {
 
 CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
     Arena* arena = &tokens->diag->buffer;
-    for (ArenaSegment* s = arena->base; s != NULL; s = s->next) {
-        fwrite(s->data, s->used, 1, stderr);
+
+    ArenaChunk* c = arena->base;
+    while (c->next) {
+        fwrite(c->data, arena->chunk_size, 1, out);
+        c = c->next;
     }
+
+    fwrite(c->data, arena->watermark - c->data, 1, out);
 }
 
 // we use the call stack so we can print in reverse order
@@ -268,7 +274,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     if (loc_start.raw != 0) {
         sprintfcb(tokens->diag, "     |\n");
     } else {
-        *(char*)arena_alloc(&tokens->diag->buffer, 1, 1) = '\n';
+        *(char*)arena_unaligned_alloc(&tokens->diag->buffer, 1) = '\n';
     }
 
     if (d->callback) d->callback(d, d->userdata, type);
@@ -319,14 +325,14 @@ void diag_header(TokenStream* tokens, DiagType type, const char* fmt, ...) {
         sprintfcb(tokens->diag, "%s%s\x1b[0m: ", report_colors[type], report_names[type]);
     }
     stbsp_vsprintfcb(sprintf_callback, &tokens->diag->buffer, tmp, fmt, ap);
-    *(char*)arena_alloc(&tokens->diag->buffer, 1, 1) = '\n';
+    *(char*)arena_unaligned_alloc(&tokens->diag->buffer, 1) = '\n';
     va_end(ap);
 }
 
 static void diag_writer_write_upto(DiagWriter* writer, size_t pos) {
     if (writer->cursor < pos) {
         int l = pos - writer->cursor;
-        memset(arena_alloc(&writer->tokens->diag->buffer, l, 1), ' ', l);
+        memset(arena_unaligned_alloc(&writer->tokens->diag->buffer, l), ' ', l);
 
         //printf("%.*s", (int)(pos - writer->cursor), writer->line_start + writer->cursor);
         writer->cursor = pos;

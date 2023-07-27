@@ -70,120 +70,82 @@ void cuik__vfree(void* ptr, size_t size) {
     #endif
 }
 
-void* arena_alloc(Arena* arena, size_t size, size_t align) {
-    if (size == 0) return NULL;
+////////////////////////////////
+// Arenas
+////////////////////////////////
+void arena_create(Arena* restrict arena, size_t chunk_size) {
+    // allocate initial chunk
+    ArenaChunk* c = cuik__valloc(chunk_size);
+    c->next = NULL;
 
-    // alignment must be a power of two
-    size_t align_mask = align - 1;
+    arena->chunk_size = chunk_size;
+    arena->watermark  = c->data;
+    arena->high_point = &c->data[chunk_size];
+    arena->base = arena->top = c;
+}
 
-    // If this ever happens... literally how...
-    if (size >= ARENA_SEGMENT_SIZE) {
-        fprintf(stderr, "error: arena cannot allocate contigous region that big! %zu (limit is %d)\n", size, ARENA_SEGMENT_SIZE);
-        exit(2);
+void arena_destroy(Arena* restrict arena) {
+    ArenaChunk* c = arena->base;
+    while (c != NULL) {
+        ArenaChunk* next = c->next;
+        cuik__vfree(c, arena->chunk_size);
+        c = next;
     }
+}
 
-    void* ptr;
-    if (arena->top && arena->top->used + size + align < ARENA_SEGMENT_SIZE - sizeof(ArenaSegment)) {
-        arena->top->used = (arena->top->used + align_mask) & ~align_mask;
-        ptr = &arena->top->data[arena->top->used];
-        arena->top->used += size;
-    } else if (arena->top == NULL || arena->top->next == NULL) {
-        /*if (cuikperf_is_active()) {
-            char p[20];
-            snprintf(p, 20, "%p", arena);
-            cuikperf_region_start(cuik_time_in_nanos(), "arena chunk", p);
-        }*/
-
-        // Add new page
-        ArenaSegment* s = cuik__valloc(ARENA_SEGMENT_SIZE);
-        if (!s) {
-            fprintf(stderr, "error: arena is out of memory!\n");
-            exit(2);
-        }
-
-        s->next = NULL;
-        s->capacity = ARENA_SEGMENT_SIZE;
-        s->used = (size + align_mask) & ~align_mask;
-        s->_pad = 0;
-        ptr = s->data;
-
-        // Insert to top of nodes
-        if (arena->top) arena->top->next = s;
-        else arena->base = s;
-
-        arena->top = s;
-
-        /*if (cuikperf_is_active()) {
-            cuikperf_region_end();
-        }*/
+void* arena_unaligned_alloc(Arena* restrict arena, size_t size) {
+    if (LIKELY(arena->watermark + size < arena->high_point)) {
+        char* ptr = arena->watermark;
+        arena->watermark += size;
+        return ptr;
     } else {
-        ArenaSegment* s = arena->top->next;
-        s->used = (size + align_mask) & ~align_mask;
-        ptr = s->data;
+        // slow path, we need to allocate more
+        ArenaChunk* c = cuik__valloc(arena->chunk_size);
+        c->next = NULL;
 
-        // Insert to top of nodes
-        if (arena->top) arena->top->next = s;
-        else arena->base = s;
+        arena->watermark  = c->data;
+        arena->high_point = &c->data[arena->chunk_size];
 
-        arena->top = s;
+        // append to top
+        arena->top->next = c;
+        arena->top = c;
+
+        return c->data;
     }
+}
 
-    return ptr;
+void arena_realign(Arena* restrict arena) {
+    ptrdiff_t pos = arena->watermark - arena->top->data;
+    pos = (pos + ARENA_ALIGNMENT - 1) & ~(ARENA_ALIGNMENT - 1);
+
+    arena->watermark = &arena->top->data[pos];
+}
+
+void* arena_alloc(Arena* restrict arena, size_t size) {
+    uintptr_t wm = (uintptr_t) arena->watermark;
+    assert((wm & ~0xFull) == wm);
+
+    size = (size + ARENA_ALIGNMENT - 1) & ~(ARENA_ALIGNMENT - 1);
+    return arena_unaligned_alloc(arena, size);
 }
 
 void arena_clear(Arena* arena) {
-    if (arena->base != NULL) {
-        arena->top = arena->base;
-        arena->base->used = 0;
+    ArenaChunk* c = arena->base;
+    arena->watermark = c->data;
+    arena->high_point = &c->data[arena->chunk_size];
+    arena->base = arena->top = c;
+
+    // remove extra chunks
+    c = c->next;
+    while (c != NULL) {
+        ArenaChunk* next = c->next;
+        cuik__vfree(c, arena->chunk_size);
+        c = next;
     }
 }
 
-void arena_free(Arena* arena) {
-    if (arena->base) {
-        ArenaSegment* c = arena->base;
-        while (c) {
-            ArenaSegment* next = c->next;
-            cuik__vfree(c, ARENA_SEGMENT_SIZE);
-            c = next;
-        }
-
-        arena->base = arena->top = NULL;
-    }
-}
-
-void arena_trim(Arena* arena) {
-    // decommit any leftover pages
-    if (arena->base) {
-        for (ArenaSegment* c = arena->base; c != NULL; c = c->next) {
-            size_t aligned_used = (sizeof(ArenaSegment) + c->used + 4095u) & ~4095u;
-
-            if (aligned_used != c->capacity) {
-                cuik__vfree((char*)c + aligned_used, c->capacity - aligned_used);
-                c->capacity = aligned_used;
-            }
-        }
-    }
-}
-
-void arena_append(Arena* arena, Arena* other) {
-    if (arena->top) {
-        if (other != NULL) {
-            arena->top->next = other->base;
-            arena->top = other->top;
-        }
-    } else {
-        // attach to start
-        arena->base = other->base;
-        arena->top = other->top;
-    }
-}
-
-size_t arena_get_memory_usage(Arena* arena) {
-    size_t c = 0;
-    for (ArenaSegment* s = arena->base; s != NULL; s = s->next) {
-        c += s->capacity;
-    }
-    return c;
+bool arena_is_empty(Arena* arena) {
+    return arena->base == NULL;
 }
 
 ////////////////////////////////

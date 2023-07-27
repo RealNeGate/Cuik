@@ -1186,7 +1186,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             size_t len = ((const char*)e->str.end - 1) - in;
 
             // it can't be bigger than the original
-            wchar_t* out = arena_alloc(&thread_arena, (len + 1) * 2, 1);
+            wchar_t* out = arena_alloc(tu->arena, (len + 1) * 2);
 
             size_t out_i = 0, in_i = 0;
             while (in_i < len) {
@@ -1213,7 +1213,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             size_t len = ((const char*)e->str.end - 1) - in;
 
             // it can't be bigger than the original
-            char* out = arena_alloc(&thread_arena, len + 1, 1);
+            char* out = arena_alloc(tu->arena, len + 1);
 
             size_t out_i = 0, in_i = 0;
             while (in_i < len) {

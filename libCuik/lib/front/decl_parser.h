@@ -635,14 +635,8 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     tokens_prev(s);
 
                     // move to more permanent storage
-                    if (count > 0) {
-                        EnumEntry* permanent_store = arena_alloc(parser->arena, count * sizeof(EnumEntry), _Alignof(EnumEntry));
-                        memcpy(permanent_store, start, count * sizeof(EnumEntry));
-
-                        type->enumerator.count = count;
-                        type->enumerator.entries = permanent_store;
-                    }
-                    tls_restore(start);
+                    type->enumerator.count = count;
+                    type->enumerator.entries = copy_out_temporary(parser->arena, start, count, sizeof(EnumEntry));
 
                     if (!parser->is_in_global_scope) {
                         type_layout2(parser, &parser->tokens, type);
@@ -805,12 +799,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     tokens_prev(s);
 
                     // put members into more permanent storage
-                    Member* permanent_store = NULL;
-                    if (member_count > 0) {
-                        permanent_store = arena_alloc(parser->arena, member_count * sizeof(Member), _Alignof(Member));
-                        memcpy(permanent_store, members, member_count * sizeof(Member));
-                    }
-
+                    Member* permanent_store = copy_out_temporary(parser->arena, members, member_count, sizeof(Member));
                     type->record = (struct Cuik_TypeRecord){
                         .name = name, .kid_count = member_count, .kids = permanent_store, .nominal = type
                     };
@@ -818,8 +807,6 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                     if (!parser->is_in_global_scope) {
                         type_layout2(parser, &parser->tokens, type);
                     }
-
-                    tls_restore(members);
                 } else {
                     // refers to a complete version of the record (which may or may not be ready yet)
                     if (name == NULL) {
@@ -1082,13 +1069,6 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
             }
             expect_closing_paren(s, opening_loc);
 
-            // Allocate some more permanent storage
-            Param* permanent_store = NULL;
-            if (param_count > 0) {
-                permanent_store = arena_alloc(parser->arena, param_count * sizeof(Param), _Alignof(Param));
-                memcpy(permanent_store, params, param_count * sizeof(Param));
-            }
-
             // Before C23 empty parameter lists mean undefined set of parameters
             // we're gonna stick with that for now...
             if (parser->version < CUIK_VERSION_C23 && param_count == 0) {
@@ -1103,14 +1083,13 @@ static Cuik_QualType parse_type_suffix2(Cuik_Parser* restrict parser, TokenStrea
                 .flags = parser->is_in_global_scope ? 0 : CUIK_TYPE_FLAG_COMPLETE,
                 .func = {
                     .return_type = type,
-                    .param_list = permanent_store,
+                    .param_list = copy_out_temporary(parser->arena, params, param_count, sizeof(Param)),
                     .param_count = param_count,
                     .has_varargs = has_varargs
                 }
             };
 
             type = cuik_uncanonical_type(t);
-            tls_restore(params);
         }
     } else if (t->type == '[') {
         // array

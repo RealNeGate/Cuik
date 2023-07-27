@@ -11,52 +11,11 @@
 // # Implement peepholes
 //     TODO
 //
-#include "../tb_internal.h"
+#include "../passes.h"
 #include <log.h>
 
-#define TB_OPTDEBUG_PEEP 0
-#define TB_OPTDEBUG_LOOP 0
-
-#define DO_IF(cond) CONCAT(DO_IF_, cond)
-#define DO_IF_0(...)
-#define DO_IF_1(...) __VA_ARGS__
-
-typedef struct User User;
-struct User {
-    User* next;
-    TB_Node* n;
-    int slot;
-};
-
-struct TB_Passes {
-    TB_Function* f;
-
-    // some function state is changed for the duration of the
-    // optimizer run, we need to track that to reset it
-    TB_Attrib* old_line_attrib;
-    TB_Arena* old_arena;
-
-    DynArray(TB_Node*) queue;
-    NL_Map(TB_Node*, int) lookup;
-
-    TB_Dominators doms;
-
-    // we wanna track locals because it's nice and easy
-    DynArray(TB_Node*) locals;
-
-    // this is used to do CSE
-    NL_HashSet cse_nodes;
-
-    // outgoing edges are incrementally updated every time we
-    // run a rewrite rule
-    NL_Map(TB_Node*, User*) users;
-};
-
-static User* find_users(TB_Passes* restrict p, TB_Node* n);
 static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled);
 static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot);
-
-static void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot);
 
 // transmutations let us generate new nodes from old ones
 void tb_transmute_to_poison(TB_Passes* restrict p, TB_Node* n);
@@ -106,7 +65,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 #include "libcalls.h"
 
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
-    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + sizeof(uint64_t));
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt) + sizeof(uint64_t));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->num_words = 1;
     i->words[0] = x;
@@ -114,7 +73,7 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
 }
 
 TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, int num_words) {
-    TB_Node* new_n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 0, sizeof(TB_NodeInt) + (num_words * sizeof(uint64_t)));
+    TB_Node* new_n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt) + (num_words * sizeof(uint64_t)));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(new_n);
     i->num_words = num_words;
     return new_n;
@@ -169,7 +128,7 @@ void tb_transmute_to_poison(TB_Passes* restrict p, TB_Node* n) {
     n->extra_count = 0;
 }
 
-void tb_pass_kill(TB_Passes* restrict p, TB_Node* n) {
+void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
     if (n->type == TB_LOCAL) {
         // remove from local list
         dyn_array_for(i, p->locals) if (p->locals[i] == n) {
@@ -222,7 +181,7 @@ static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot) {
     return NULL;
 }
 
-static void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot) {
+void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot) {
     // recycle the user
     User* old_use = remove_user(p, n, slot);
 
@@ -259,7 +218,7 @@ static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, U
     }
 }
 
-static User* find_users(TB_Passes* restrict p, TB_Node* n) {
+User* find_users(TB_Passes* restrict p, TB_Node* n) {
     ptrdiff_t search = nl_map_get(p->users, n);
     return search >= 0 ? p->users[search].v : NULL;
 }
@@ -511,7 +470,6 @@ static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 
     DO_IF(TB_OPTDEBUG_PEEP)(printf("peep? "), print_node_sexpr(f, n, 0));
 
-
     // if we fold branches, we need to know who to update
     bool terminator = is_terminator(n);
 
@@ -571,7 +529,7 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
     }
 
     tb_pass_mark_users(p, new_n);
-    tb_pass_kill(p, n);
+    tb_pass_kill_node(p, n);
 }
 
 static void generate_use_lists(TB_Passes* restrict queue, TB_Function* f) {
@@ -590,7 +548,9 @@ static void generate_use_lists(TB_Passes* restrict queue, TB_Function* f) {
     }
 }
 
-TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
+TB_Passes* tb_pass_enter(TB_Function* f, Arena* arena) {
+    tb__init_temporary_arena();
+
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
     *p = (TB_Passes){ .f = f, .old_line_attrib = f->line_attrib, .old_arena = f->arena };
 
@@ -600,9 +560,8 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     p->cse_nodes = nl_hashset_alloc(f->node_count);
 
     // generate dominators
-    TB_PostorderWalk order = tb_function_get_postorder(f);
-    p->doms = tb_get_dominators(f, order);
-    tb_function_free_postorder(&order);
+    p->order = tb_function_get_postorder(f);
+    p->doms = tb_get_dominators(f, p->order);
 
     CUIK_TIMED_BLOCK("nl_map_create") {
         nl_map_create(p->lookup, f->node_count);
@@ -649,6 +608,7 @@ void tb_pass_exit(TB_Passes* p) {
 
     nl_hashset_free(p->cse_nodes);
 
+    tb_function_free_postorder(&p->order);
     arena_clear(&tb__arena);
     nl_map_free(p->doms._);
     nl_map_free(p->users);

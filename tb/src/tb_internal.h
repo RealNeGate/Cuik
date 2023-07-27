@@ -54,14 +54,6 @@ for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 #include <threads.h>
 #include <stdatomic.h>
 
-// ***********************************
-// Constraints
-// ***********************************
-// TODO: get rid of all these
-#ifndef TB_MAX_THREADS
-#define TB_MAX_THREADS 64
-#endif
-
 // Per-thread
 #ifndef TB_TEMPORARY_STORAGE_SIZE
 #define TB_TEMPORARY_STORAGE_SIZE (1 << 20)
@@ -343,7 +335,7 @@ struct TB_Function {
     size_t node_count;
 
     // IR allocation
-    TB_Arena* arena;
+    Arena* arena;
 
     // IR building
     TB_Attrib* line_attrib;
@@ -398,7 +390,6 @@ typedef struct {
 } SmallConst;
 
 struct TB_Module {
-    int max_threads;
     bool is_jit;
 
     atomic_flag is_tls_defined;
@@ -435,13 +426,6 @@ struct TB_Module {
 
     // windows specific lol
     TB_LinkerSectionPiece* xdata;
-
-    // The code is stored into giant buffers
-    // there's on per code gen thread so that
-    // each can work at the same time without
-    // making any allocations within the code
-    // gen.
-    TB_CodeRegion* code_regions[TB_MAX_THREADS];
 };
 
 typedef struct {
@@ -466,7 +450,7 @@ typedef struct {
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage);
 
-    void (*compile_function)(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm);
+    void (*compile_function)(TB_Passes* p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm);
 } ICodeGen;
 
 // All debug formats i know of boil down to adding some extra sections to the object file
@@ -602,8 +586,22 @@ static void put_idom(TB_Dominators* doms, TB_Node* n, TB_Node* new_idom) {
 // shorthand because we use it a lot
 static TB_Node* idom(TB_Dominators doms, TB_Node* n) {
     ptrdiff_t search = nl_map_get(doms._, n);
-    assert(search < 0);
-    return n;
+    assert(search >= 0);
+    return doms._[search].v.node;
+}
+
+static int dom_depth(TB_Dominators doms, TB_Node* n) {
+    if (n == NULL) {
+        return 0;
+    }
+
+    while (n->type != TB_REGION && n->type != TB_START) {
+        n = n->inputs[0];
+    }
+
+    ptrdiff_t search = nl_map_get(doms._, n);
+    assert(search >= 0);
+    return doms._[search].v.depth;
 }
 
 typedef NL_HashSet TB_FrontierSet;
@@ -612,7 +610,6 @@ typedef NL_Map(TB_Node*, TB_FrontierSet) TB_DominanceFrontiers;
 typedef struct {
     size_t count;
     TB_Node** traversal;
-
     NL_Map(TB_Node*, char) visited;
 } TB_PostorderWalk;
 
@@ -659,7 +656,6 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 ////////////////////////////////
 // ANALYSIS
 ////////////////////////////////
-int tb__get_local_tid(void);
 TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
@@ -675,6 +671,7 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);
 uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
 char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
+void tb__init_temporary_arena(void);
 
 // temporary arena
 extern thread_local Arena tb__arena;

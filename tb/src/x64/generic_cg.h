@@ -1,4 +1,4 @@
-#include "../tb_internal.h"
+#include "../passes.h"
 #include "../codegen/emitter.h"
 #include <inttypes.h>
 #include <log.h>
@@ -106,15 +106,6 @@ typedef struct {
     int val, tmp;
 } PhiVal;
 
-typedef struct Effect Effect;
-struct Effect {
-    Effect* next;
-    TB_Node* node;
-    bool root;
-    int uses;
-    int phi_count;
-};
-
 typedef NL_Map(TB_Node*, MachineBB) MachineBBs;
 typedef DynArray(DefIndex) RegAllocWorklist;
 
@@ -125,15 +116,15 @@ typedef struct {
     TB_Function* f;
     TB_ABI target_abi;
 
-    bool in_fence;
     int caller_usage;
     TB_Node* fallthrough;
     TB_PostorderWalk order;
 
+    TB_Passes* p;
+    TB_Dominators doms;
+
     // Scheduling
-    NL_HashSet visited;
-    Effect* prev_effect;
-    NL_Map(TB_Node*, Effect*) effects;
+    NL_Map(TB_Node*, int) uses;
 
     // temporary but still precious
     DynArray(PhiVal) phi_vals;
@@ -354,7 +345,7 @@ static void reverse_bb_walk(Ctx* restrict ctx, TB_Function* f, MachineBB* bb, In
     FOREACH_N(j, 1, 4) if (inst->regs[j] < -1) {
         Def* d = &ctx->defs[-inst->regs[j] - 2];
 
-        add_range(ctx, d, bb->start, inst->time + (j == 1 ? 0 : 1));
+        add_range(ctx, d, bb->start, inst->time + (inst->type == X86_OP_R && j == 1 ? 0 : 1));
     }
 }
 
@@ -582,15 +573,10 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     DynArray(PhiVal) phi_vals = ctx->phi_vals;
     dyn_array_clear(phi_vals);
 
-    Effect* parent = nl_map_get_checked(ctx->effects, dst);
-
     size_t phi_count = 0;
-    for (Effect* e = parent->next; phi_count < parent->phi_count; e = e->next) {
-        TB_Node* n = e->node;
-
-        // only two things we should expect here
-        if (n->type == TB_LOAD) continue;
-        if (n->type != TB_PHI) break;
+    for (User* use = find_users(ctx->p, dst); use; use = use->next) {
+        TB_Node* n = use->n;
+        if (n->type != TB_PHI) continue;
 
         // allocate virtual register
         ptrdiff_t search = nl_map_get(ctx->values, n);
@@ -605,7 +591,6 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
         dyn_array_put(phi_vals, p);
         phi_count++;
     }
-    assert(phi_count == parent->phi_count);
 
     // do copies which on parallel phis (swaps usually but we don't do those yet)
     bool has_tmps = false;
@@ -647,73 +632,211 @@ static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
     ctx->phi_vals = phi_vals;
 }
 
-static Effect* insert_effect(Ctx* restrict ctx, Effect* prev, TB_Node* n) {
-    Effect* new_e = ARENA_ALLOC(&tb__arena, Effect);
-    new_e->next = prev->next;
-    new_e->node = n;
-    new_e->root = false;
-    new_e->uses = 1;
-    new_e->phi_count = 0;
-    prev->next = new_e;
-    return new_e;
-}
-
 // returns true for final use
 static bool use_load(Ctx* restrict ctx, TB_Node* n) {
-    if (n->type != TB_LOAD) {
+    return false;
+}
+
+static TB_Node* walk_up(TB_Dominators doms, TB_Node* a, TB_Node* b) {
+    // if a is deeper, line it up with b
+    int bdom = dom_depth(doms, b);
+    for (;;) {
+        TB_Node* aa = tb_get_parent_region(a);
+        ptrdiff_t search = nl_map_get(doms._, aa);
+        assert(search >= 0);
+
+        if (doms._[search].v.depth >= bdom) break;
+        a = doms._[search].v.node;
+    }
+
+    return a;
+}
+
+static TB_Node* find_lca(TB_Dominators doms, TB_Node* a, TB_Node* b) {
+    if (a == NULL) return b;
+
+    // line both up
+    a = walk_up(doms, a, b);
+    b = walk_up(doms, b, a);
+
+    while (a != b) {
+        a = idom(doms, a);
+        b = idom(doms, b);
+    }
+
+    return a;
+}
+
+static void schedule_late(Ctx* restrict ctx, TB_Node* n) {
+    // uses doubles as the visited map for this function
+    ptrdiff_t search = nl_map_get(ctx->uses, n);
+    if (search >= 0) {
+        // already visited
+        return;
+    }
+
+    // we're gonna find the least common ancestor
+    TB_Node* lca = NULL;
+    for (User* use = find_users(ctx->p, n); use; use = use->next) {
+        if (use->slot == 0) continue;
+        TB_Node* y = use->n;
+        schedule_late(ctx, y);
+
+        TB_Node* use_block = tb_get_parent_region(y->inputs[0]);
+        if (y->type == TB_PHI) {
+            ptrdiff_t j = -1;
+            for (; j < y->input_count; j++) {
+                if (y->inputs[j] == n) {
+                    break;
+                }
+            }
+            assert(j >= 0);
+
+            use_block = tb_get_parent_region(use_block->inputs[j]);
+        }
+
+        lca = find_lca(ctx->doms, lca, use_block);
+    }
+
+    if (lca == NULL) lca = ctx->f->start_node;
+
+    assert(n->inputs[0] == NULL);
+    set_input(ctx->p, n, lca, 0);
+}
+
+static void schedule_early(Ctx* restrict ctx, TB_Node* n) {
+    // uses doubles as the visited map for this function
+    ptrdiff_t search = nl_map_get(ctx->uses, n);
+    if (search >= 0) {
+        // already visited
+        return;
+    }
+
+    // mark as visited (also track use count here)
+    size_t use_count = 0;
+    for (User* use = find_users(ctx->p, n); use; use = use->next) use_count++;
+    nl_map_put(ctx->uses, n, use_count);
+
+    if (n->inputs[0] == NULL) {
+        set_input(ctx->p, n, ctx->f->start_node, 0);
+    }
+
+    FOREACH_N(i, 1, n->input_count) {
+        schedule_early(ctx, n->inputs[i]);
+
+        // choose deepest block
+        if (dom_depth(ctx->doms, n->inputs[0]) < dom_depth(ctx->doms, n->inputs[i]->inputs[0])) {
+            set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
+        }
+    }
+}
+
+static void schedule_region(Ctx* restrict ctx, TB_Node* n) {
+    TB_Node* parent = n->inputs[0];
+    if (parent->type != TB_START && parent->type != TB_REGION) {
+        schedule_region(ctx, parent);
+    } else {
+        // marks the regions as infinite users
+        nl_map_put(ctx->uses, parent, INT_MAX);
+    }
+
+    nl_map_put(ctx->uses, n, INT_MAX);
+    FOREACH_N(i, 1, n->input_count) {
+        schedule_early(ctx, n->inputs[i]);
+    }
+
+    /*for (User* use = find_users(ctx->p, n); use; use = use->next) {
+        if (use->slot != 0) schedule_late(ctx, use->n);
+    }*/
+}
+
+static bool use(Ctx* restrict ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->uses, n);
+    if (search < 0) {
         return false;
     }
 
-    Effect* e = nl_map_get_checked(ctx->effects, n);
-    e->uses -= 1;
-    return e->uses == 0;
+    ctx->uses[search].v -= 1;
+    return ctx->uses[search].v == 0;
 }
 
-// will guarentee all the dependents of the current effect are processed
-static void fence(Ctx* restrict ctx) {
-    if (ctx->prev_effect != NULL) {
-        Effect* e = ctx->prev_effect->next;
-        while (e != NULL && !e->root) {
-            if (e->uses > 0) {
-                isel(ctx, e->node);
-                e->uses -= 1;
+static void isel_region(Ctx* restrict ctx, TB_Node* control, TB_Node* next) {
+    if (control->type != TB_START && control->type != TB_REGION) {
+        isel_region(ctx, control->inputs[0], control);
+    }
+
+    // set line info
+    for (TB_Attrib* a = control->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_LOCATION) {
+        // check if it's changed
+        if (ctx->last_file != a->loc.file || ctx->last_line != a->loc.line) {
+            ctx->last_file = a->loc.file;
+            ctx->last_line = a->loc.line;
+
+            append_inst(ctx, inst_line(ctx->last_file, ctx->last_line));
+        }
+    }
+
+    // Handle branch edges
+    if (control->type == TB_BRANCH) {
+        // copy out from active phi-edges
+        TB_Node* bb = tb_get_parent_region(control);
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
+        FOREACH_N(i, 0, r->succ_count) {
+            TB_Node* dst = r->succ[i];
+
+            // find predecessor index and do that edge
+            FOREACH_N(j, 0, dst->input_count) {
+                TB_Node* pred = dst->inputs[j];
+                while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
+
+                if (pred == bb) {
+                    phi_edge(ctx, dst, j);
+                    break;
+                }
             }
+        }
+    }
 
-            e = e->next;
+    isel(ctx, control);
+}
+
+static void fence(Ctx* restrict ctx, TB_Node* self) {
+    for (User* use = find_users(ctx->p, self->inputs[0]); use; use = use->next) {
+        TB_Node* n = use->n;
+
+        // make sure to not queue 'next' node
+        ptrdiff_t search;
+        if (n != self && (search = nl_map_get(ctx->uses, n)) >= 0) {
+            // other than these two everything else can be loosely placed
+            if (ctx->uses[search].v > 0 && (n->type == TB_LOAD || n->type == TB_PHI)) {
+                isel(ctx, n);
+            }
         }
     }
 }
 
-static void scan_for_effects(Ctx* restrict ctx, TB_Node* n) {
-    if (!nl_hashset_put(&ctx->visited, n)) {
-        if (n->type == TB_LOAD) {
-            nl_map_get_checked(ctx->effects, n)->uses++;
+static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
+    for (User* use = find_users(ctx->p, self); use; use = use->next) {
+        TB_Node* n = use->n;
+
+        // make sure to not queue 'next' node
+        ptrdiff_t search;
+        if (n != ignore && (search = nl_map_get(ctx->uses, n)) >= 0) {
+            if (ctx->uses[search].v > 0) {
+                isel(ctx, n);
+            }
         }
-
-        return;
-    }
-
-    if (n->type == TB_LOAD) {
-        Effect* ld = insert_effect(ctx, nl_map_get_checked(ctx->effects, n->inputs[0]), n);
-        nl_map_put(ctx->effects, n, ld);
-    } else if (n->type == TB_PHI) {
-        Effect* parent = nl_map_get_checked(ctx->effects, n->inputs[0]);
-        insert_effect(ctx, parent, n);
-        parent->phi_count++;
-    } else if (n->type == TB_REGION || n->type == TB_START) {
-        return;
-    }
-
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-        scan_for_effects(ctx, n->inputs[i]);
     }
 }
 
 // Codegen through here is done in phases
-static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm) {
+static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm) {
+    TB_Function* restrict f = p->f;
     Ctx ctx = {
         .module = f->super.module,
         .f = f,
+        .p = p,
+        .doms = p->doms,
         .target_abi = f->super.module->target_abi,
         .safepoints = f->safepoint_count ? tb_platform_heap_alloc(f->safepoint_count * sizeof(TB_SafepointKey)) : NULL,
         .emit = {
@@ -727,7 +850,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     ctx.used_regs[0] = set_create_in_arena(&tb__arena, 16);
     ctx.used_regs[1] = set_create_in_arena(&tb__arena, 16);
-    ctx.visited = nl_hashset_alloc(f->node_count);
 
     set_put(&ctx.used_regs[0], RBP), set_put(&ctx.used_regs[0], RSP);
     // FOREACH_N(i, 8, 16) set_put(&ctx.used_regs[0], i);
@@ -743,8 +865,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     //   We compute this for register allocation along
     //   with the "ordinals" which act as our timeline.
     nl_map_create(ctx.values, f->node_count);
+    nl_map_create(ctx.uses, f->node_count);
 
-    ctx.active = arena_alloc(&tb__arena, f->node_count * sizeof(DefIndex), _Alignof(DefIndex));
+    ctx.active = arena_alloc(&tb__arena, f->node_count * sizeof(DefIndex));
 
     // allocate more stuff now that we've run stats on the IR
     ctx.emit.return_label = 0;
@@ -752,118 +875,37 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     nl_map_create(ctx.stack_slots, 8);
     dyn_array_create(ctx.debug_stack_slots, 8);
 
-    // Scheduling:
-    //   for now things are simple, we just need to walk all the nodes and
-    //   make sure the correct nodes are marked to happen after their control
-    //   dependencies
-    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-        TB_Node* bb = ctx.order.traversal[i];
+    // Scheduling: "Global Code Motion Global Value Numbering", Cliff Click 1995
+    //   https://courses.cs.washington.edu/courses/cse501/06wi/reading/click-pldi95.pdf
+    CUIK_TIMED_BLOCK("schedule") {
+        FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+            TB_Node* bb = ctx.order.traversal[i];
 
-        // append region as the first effect
-        Effect* bb_effect = ARENA_ALLOC(&tb__arena, Effect);
-        bb_effect->next = NULL;
-        bb_effect->node = bb;
-        bb_effect->root = true;
-        bb_effect->phi_count = 0;
-        nl_map_put(ctx.effects, bb, bb_effect);
-
-        // do standard walk (this only fills things in the direct line of execution
-        // the PHI and LOAD operations will need a separate pass)
-        Effect* last = NULL;
-        TB_Node* n = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
-        while (n != NULL && n->type != TB_START && n->type != TB_REGION) {
-            Effect* e = ARENA_ALLOC(&tb__arena, Effect);
-            e->next = last;
-            e->node = n;
-            e->root = true;
-            e->phi_count = 0;
-            last = e;
-
-            nl_map_put(ctx.effects, n, e);
-
-            // previous control
-            n = n->inputs[0];
-        }
-
-        // add onto region
-        bb_effect->next = last;
-    }
-
-    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-        // walk all the nodes to see if we have any PHI or LOAD
-        // we don't have conclusive results until all BBs are walked
-        // but that's fine.
-        TB_Node* n = TB_NODE_GET_EXTRA_T(ctx.order.traversal[i], TB_NodeRegion)->end;
-        while (n != NULL && n->type != TB_START && n->type != TB_REGION) {
-            FOREACH_N(i, 1, n->input_count) {
-                scan_for_effects(&ctx, n->inputs[i]);
-            }
-            n = n->inputs[0];
+            // schedule all pinned instructions
+            schedule_region(&ctx, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
         }
     }
+
+    // __debugbreak();
 
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
-    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-        TB_Node* bb = ctx.order.traversal[i];
-        nl_map_put(ctx.emit.labels, bb, 0);
+    CUIK_TIMED_BLOCK("isel") {
+        FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+            TB_Node* bb = ctx.order.traversal[i];
+            nl_map_put(ctx.emit.labels, bb, 0);
 
-        // mark fallthrough
-        ctx.fallthrough = i > 0 ? ctx.order.traversal[i - 1] : NULL;
-        if (bb) {
-            append_inst(&ctx, inst_label(bb));
-        }
-
-        ctx.prev_effect = NULL;
-
-        Effect* e = nl_map_get_checked(ctx.effects, bb);
-        while (e != NULL) {
-            TB_Node* n = e->node;
-
-            // set line info
-            for (TB_Attrib* a = n->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_LOCATION) {
-                // check if it's changed
-                if (ctx.last_file != a->loc.file || ctx.last_line != a->loc.line) {
-                    ctx.last_file = a->loc.file;
-                    ctx.last_line = a->loc.line;
-
-                    append_inst(&ctx, inst_line(ctx.last_file, ctx.last_line));
-                }
+            // mark fallthrough
+            ctx.fallthrough = i > 0 ? ctx.order.traversal[i - 1] : NULL;
+            if (bb) {
+                append_inst(&ctx, inst_label(bb));
             }
 
-            // Handle branch edges
-            if (n->type == TB_BRANCH) {
-                // copy out from active phi-edges
-                TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
-                FOREACH_N(i, 0, r->succ_count) {
-                    TB_Node* dst = r->succ[i];
-
-                    // find predecessor index and do that edge
-                    FOREACH_N(j, 0, dst->input_count) {
-                        TB_Node* pred = dst->inputs[j];
-                        while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
-
-                        if (pred == bb) {
-                            phi_edge(&ctx, dst, j);
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // schedule effect
-            if (n->type != TB_PROJ && (n->type != TB_LOCAL || nl_map_get(ctx.stack_slots, n) < 0)) {
-                isel(&ctx, e->node);
-            }
-
-            ctx.prev_effect = e;
-            e = e->next;
-
-            // skip non root effects
-            while (e != NULL && !e->root) e = e->next;
+            TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
+            isel_region(&ctx, end, NULL);
         }
     }
 
@@ -884,7 +926,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
 
         // Arch-specific: convert instruction buffer into actual instructions
-        CUIK_TIMED_BLOCK("emit sequences") {
+        CUIK_TIMED_BLOCK("emit code") {
             emit_code(&ctx, func_out);
         }
     }
@@ -892,7 +934,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     nl_map_free(ctx.emit.labels);
     nl_map_free(ctx.values);
     nl_map_free(ctx.machine_bbs);
-    nl_hashset_free(ctx.visited);
+    nl_map_free(ctx.uses);
     dyn_array_destroy(ctx.phi_vals);
 
     if (dyn_array_length(ctx.lines)) {

@@ -419,7 +419,7 @@ static DirectiveResult cpp__embed(Cuik_CPP* restrict ctx, CPPStackSlot* restrict
         return DIRECTIVE_ERROR;
     }
 
-    char* alloced_filepath = arena_alloc(&thread_arena, FILENAME_MAX + 16, 16);
+    char* alloced_filepath = arena_alloc(&thread_arena, FILENAME_MAX + 16);
     size_t token_len = snprintf(alloced_filepath, FILENAME_MAX, "\"%s\"", canonical.data);
 
     // convert #embed path => _Embed(path)

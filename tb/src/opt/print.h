@@ -9,14 +9,15 @@ typedef struct {
     NL_Map(TB_Node*, int) ordinals;
 } PrinterCtx;
 
-static size_t find_print_label(PrinterCtx* ctx, TB_Node* n) {
+static ptrdiff_t find_print_label(PrinterCtx* ctx, TB_Node* n) {
     FOREACH_N(i, 0, ctx->order.count) {
         if (ctx->order.traversal[i] == n) {
             return ctx->order.count - i - 1;
         }
     }
 
-    return tb_assert(0, "printer refers to unknown region");
+    // return tb_assert(0, "printer refers to unknown region");
+    return -1;
 }
 
 static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
@@ -27,7 +28,12 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
         if (r->tag != NULL) {
             printf(".%s", r->tag);
         } else {
-            printf(".bb%zu", find_print_label(ctx, n));
+            ptrdiff_t i = find_print_label(ctx, n);
+            if (i >= 0) {
+                printf(".bb%zu", i);
+            } else {
+                printf("*DEAD*");
+            }
         }
     } else if (n->type == TB_FLOAT32_CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
@@ -37,10 +43,10 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
         printf("%f", f->value);
     } else if (n->type == TB_GET_SYMBOL_ADDRESS) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
-        if (sym->name) {
+        if (sym->name[0]) {
             printf("%s", sym->name);
         } else {
-            printf("%p", sym);
+            printf("sym%p", sym);
         }
     } else if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
