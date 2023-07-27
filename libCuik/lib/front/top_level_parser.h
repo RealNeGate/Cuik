@@ -78,7 +78,7 @@ static ParseResult parse_pragma(Cuik_Parser* restrict parser, TokenStream* restr
                 diag_err(s, tokens_get_range(s), "pragma comment lib expected lib name");
             }
 
-            Cuik_ImportRequest* import = ARENA_ALLOC(&thread_arena, Cuik_ImportRequest);
+            Cuik_ImportRequest* import = ARENA_ALLOC(parser->arena, Cuik_ImportRequest);
             import->next = parser->import_libs;
             import->lib_name = atoms_put(comment_string.length, comment_string.data);
             parser->import_libs = import;
@@ -518,7 +518,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         // faster than walking the hash map, cache locality amirite)
         _Static_assert(sizeof(Symbol) == ((sizeof(Symbol) + 15ull) & ~15ull), "needs to be 16byte aligned to be walked in the arena easily");
         ARENA_FOR(chunk, &parser.symbols->globals_arena) {
-            size_t count = parser.symbols->globals_arena.chunk_size / sizeof(Symbol);
+            size_t count = (parser.symbols->globals_arena.chunk_size - sizeof(ArenaChunk)) / sizeof(Symbol);
             Symbol* syms = (Symbol*) chunk->data;
 
             for (size_t i = 0; i < count; i++) {

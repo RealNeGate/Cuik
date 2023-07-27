@@ -80,7 +80,7 @@ void arena_create(Arena* restrict arena, size_t chunk_size) {
 
     arena->chunk_size = chunk_size;
     arena->watermark  = c->data;
-    arena->high_point = &c->data[chunk_size];
+    arena->high_point = &c->data[chunk_size - sizeof(ArenaChunk)];
     arena->base = arena->top = c;
 }
 
@@ -103,8 +103,8 @@ void* arena_unaligned_alloc(Arena* restrict arena, size_t size) {
         ArenaChunk* c = cuik__valloc(arena->chunk_size);
         c->next = NULL;
 
-        arena->watermark  = c->data;
-        arena->high_point = &c->data[arena->chunk_size];
+        arena->watermark  = c->data + size;
+        arena->high_point = &c->data[arena->chunk_size - sizeof(ArenaChunk)];
 
         // append to top
         arena->top->next = c;
@@ -132,7 +132,7 @@ void* arena_alloc(Arena* restrict arena, size_t size) {
 void arena_clear(Arena* arena) {
     ArenaChunk* c = arena->base;
     arena->watermark = c->data;
-    arena->high_point = &c->data[arena->chunk_size];
+    arena->high_point = &c->data[arena->chunk_size - sizeof(ArenaChunk)];
     arena->base = arena->top = c;
 
     // remove extra chunks

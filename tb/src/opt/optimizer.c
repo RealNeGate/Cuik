@@ -60,6 +60,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 #include "fold.h"
 #include "load_opt.h"
 #include "loop.h"
+#include "branches.h"
 #include "print.h"
 #include "mem2reg.h"
 #include "libcalls.h"
@@ -363,6 +364,9 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         return ideal_libcall(p, f, n);
 
         // control flow
+        case TB_PHI:
+        return ideal_phi(p, f, n);
+
         case TB_BRANCH:
         return ideal_branch(p, f, n);
 
