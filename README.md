@@ -5,8 +5,8 @@
 ## Resources
 
 * [discord](https://discord.gg/UFuHChZswc)
-* [build from source](https://github.com/RealNeGate/Cuik/blob/monorepo/docs/BUILDING.txt)
-* [code structure](https://github.com/RealNeGate/Cuik/blob/monorepo/docs/STRUCTURE.txt)
+* [build from source](https://github.com/RealNeGate/Cuik/blob/master/docs/BUILDING.txt)
+* [code structure](https://github.com/RealNeGate/Cuik/blob/master/docs/STRUCTURE.txt)
 
 ## Summary
 
