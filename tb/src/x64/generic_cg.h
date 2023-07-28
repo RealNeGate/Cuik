@@ -218,6 +218,7 @@ static size_t emit_prologue(Ctx* restrict ctx);
 static size_t emit_epilogue(Ctx* restrict ctx);
 static ptrdiff_t alloc_free_reg(Ctx* restrict ctx, int reg_class);
 
+static bool is_terminator_or_label(int type);
 static bool wont_spill_around(int type);
 static Inst inst_move(TB_DataType dt, int lhs, int rhs);
 static int classify_reg_class(TB_DataType dt);
@@ -228,7 +229,7 @@ static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, T
 static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r);
 
 static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index);
-static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index);
+static void reload_from_reg(Ctx* restrict ctx, Inst* basepoint, TB_DataType dt, int dst, int src);
 
 #define ISEL(n) USE(isel(ctx, n))
 

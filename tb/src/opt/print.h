@@ -21,7 +21,9 @@ static ptrdiff_t find_print_label(PrinterCtx* ctx, TB_Node* n) {
 }
 
 static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
-    if (n->type == TB_START) {
+    if (n == NULL) {
+        printf("_");
+    } else if (n->type == TB_START) {
         printf("%s", ctx->f->super.name);
     } else if (n->type == TB_REGION) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
@@ -231,6 +233,7 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
         case TB_MEMSET:
         case TB_MEMCPY: {
             TB_NodeMemAccess* mem = TB_NODE_GET_EXTRA(n);
+            printf(" !align(%d)", mem->align);
             if (mem->is_volatile) printf(" !volatile");
             break;
         }

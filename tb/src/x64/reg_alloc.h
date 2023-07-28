@@ -76,6 +76,7 @@ static int ls_split(Ctx* restrict ctx, RegAllocWorklist* worklist, DefIndex spli
     DefIndex last_known = -1;
     Inst *inst = spill_inst->next, *prev_inst = spill_inst;
     for (; inst; prev_inst = inst, inst = inst->next) {
+        if (is_terminator_or_label(inst->type)) break;
         if (wont_spill_around(inst->type)) last_known = -1;
         if (inst->time > li.end) break;
 
@@ -121,76 +122,19 @@ static int ls_split(Ctx* restrict ctx, RegAllocWorklist* worklist, DefIndex spli
         }
     }
 
-    // reload back into original register
-    r.old = split_def;
-    reload(ctx, prev_inst, &r, 0);
+    if (last_known >= 0) {
+        reload_from_reg(ctx, prev_inst, r.dt, split_def, last_known);
+        ctx->defs[last_known].end = prev_inst->time + 1;
+    } else {
+        // reload back into original register
+        r.old = split_def;
+        reload(ctx, prev_inst, &r, 0);
+    }
 
     // remove from active list and used regs
     set_remove(&ctx->used_regs[mr.class], mr.num);
     remove_active(ctx, active_i);
     return mr.num;
-
-    #if 0
-    if (strcmp(ctx->f->super.name, "stbi__refill_buffer") == 0) {
-        __debugbreak();
-    }
-
-    // keep spilled and generate reloads on the first use in any BB
-    int endpoint = ctx->defs[split_def].end;
-
-    Inst *inst = spill_inst->next, *prev_inst = spill_inst;
-    for (; inst; prev_inst = inst, inst = inst->next) {
-        if (wont_spill_around(inst->type)) last_known = -1;
-        if (inst->time > endpoint) break;
-
-        // if it's used, refer to reload
-        bool skip_next = false;
-        FOREACH_REVERSE_N(j, 1, 4) if (inst->regs[j] == USE(split_def)) {
-            if (inst->type == INST_MOVE && j == 1) {
-                if (last_known >= 0) ctx->defs[last_known].end = inst->time + 1;
-
-                skip_next = true;
-                r.old = split_def;
-                spill(ctx, inst, &r);
-                last_known = -1;
-                continue;
-            } else if (last_known < 0) {
-                // spin up new def
-                int t = prev_inst->time + 1;
-                dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1, .hint = reg_num });
-                last_known = dyn_array_length(ctx->defs) - 1;
-
-                // place new definition into worklist sorted
-                dyn_array_put_uninit(*worklist, 1);
-                insert_sorted_def(ctx, *worklist, dyn_array_length(*worklist) - 1, t, last_known);
-
-                // generate reload before this instruction
-                r.old = last_known;
-                reload(ctx, prev_inst, &r, j);
-            }
-
-            inst->regs[j] = USE(last_known);
-            ctx->defs[last_known].end = inst->time + (j == 1 ? 0 : 1);
-        }
-
-        if (inst->regs[0] == split_def && last_known != split_def) {
-            if (last_known >= 0) ctx->defs[last_known].end = inst->time + 1;
-
-            // spill and discard our reload spot (if applies)
-            r.old = inst->regs[0];
-            spill(ctx, inst, &r);
-            last_known = -1;
-            skip_next = true;
-        }
-
-        if (skip_next) {
-            // skip this instruction to avoid infinite spills
-            prev_inst = inst, inst = inst->next;
-        }
-    }
-
-    return reg_num;
-    #endif
 }
 
 static const char* reg_name(int rg, int num) {
@@ -331,15 +275,22 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
             }
 
             if (reg_num < 0) {
-                // choose who to spill
-                tb_todo();
-                /* Inst* spill_inst = find_inst_at_time(ctx, time);
-                size_t split_i = choose_best_split(ctx, spill_inst, rc, time);
+                // choose who to spill (whoever's the oldest)
+                int active_i = 0, furthest = ctx->defs[ctx->active[active_i]].start;
+                FOREACH_N(i, 1, ctx->active_count) {
+                    if (ctx->defs[ctx->active[active_i]].reg_class == rc && furthest > ctx->defs[ctx->active[active_i]].start) {
+                        furthest = ctx->defs[ctx->active[active_i]].start;
+                        active_i = i;
+                    }
+                }
 
-                DefIndex spill_def = ctx->active[split_i];
+                DefIndex spill_def = ctx->active[active_i];
 
-                reg_num = spill_register(ctx, &worklist, spill_inst, spill_def, split_i, rc, ctx->defs[spill_def].reg);
-                d = &ctx->defs[di]; */
+                // spill for the rest of the BB
+                MachineReg mr = { rc, ctx->defs[spill_def].reg };
+                LiveInterval li = { time, INT_MAX };
+                reg_num = ls_split(ctx, &worklist, spill_def, active_i, li, mr);
+                d = &ctx->defs[di];
             }
 
             REG_ALLOC_LOG printf("  \x1b[32m#   assign %s\x1b[0m\n", reg_name(rc, reg_num));

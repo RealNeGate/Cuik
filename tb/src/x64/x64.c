@@ -132,6 +132,10 @@ static bool wont_spill_around(int t) {
     return t == INST_LABEL || t == TEST || t == CMP || t == JMP || (t >= JO && t <= JG);
 }
 
+static bool is_terminator_or_label(int t) {
+    return t == INST_LABEL || t == JMP || (t >= JO && t <= JG);
+}
+
 static Inst inst_jcc(TB_Node* target, Cond cc) {
     return (Inst){
         .type = JO + cc,
@@ -1713,6 +1717,18 @@ static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_inde
     new_inst->time = basepoint->time + 1;
     new_inst->next = basepoint->next;
     new_inst->spill_metadata = -r->old;
+    basepoint->next = new_inst;
+}
+
+static void reload_from_reg(Ctx* restrict ctx, Inst* basepoint, TB_DataType dt, int dst, int src) {
+    REG_ALLOC_LOG printf("  \x1b[32m#   reload D%d \x1b[0m\n", dst);
+    Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
+    InstType i = dt.type == TB_FLOAT ? FP_MOV : MOV;
+
+    *new_inst = inst_r(i, dt, dst, USE(src));
+    new_inst->time = basepoint->time + 1;
+    new_inst->next = basepoint->next;
+    new_inst->spill_metadata = -dst;
     basepoint->next = new_inst;
 }
 
