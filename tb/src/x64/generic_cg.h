@@ -576,70 +576,6 @@ static void hint(Ctx* restrict ctx, DefIndex di, int reg) {
     }
 }
 
-static void phi_edge(Ctx* restrict ctx, TB_Node* dst, int index) {
-    TB_NodeRegion* region = TB_NODE_GET_EXTRA(dst);
-    DynArray(PhiVal) phi_vals = ctx->phi_vals;
-    dyn_array_clear(phi_vals);
-
-    size_t phi_count = 0;
-    for (User* use = find_users(ctx->p, dst); use; use = use->next) {
-        TB_Node* n = use->n;
-        if (n->type != TB_PHI) continue;
-
-        // allocate virtual register
-        ptrdiff_t search = nl_map_get(ctx->values, n);
-        PhiVal p = { n, -1, -1 };
-        if (search < 0) {
-            p.val = DEF(n, classify_reg_class(n->dt));
-            nl_map_put(ctx->values, n, p.val);
-        } else {
-            p.val = ctx->values[search].v;
-        }
-
-        dyn_array_put(phi_vals, p);
-        phi_count++;
-    }
-
-    // do copies which on parallel phis (swaps usually but we don't do those yet)
-    bool has_tmps = false;
-    dyn_array_for(i, phi_vals) {
-        TB_Node* n = phi_vals[i].n;
-        assert(n->type == TB_PHI);
-
-        if (n->inputs[1 + index] != 0 && n->inputs[1 + index]->type == TB_PHI && n->inputs[1 + index]->inputs[0] == dst) {
-            int tmp = DEF(n, classify_reg_class(n->dt));
-            copy_value(ctx, n, USE(tmp), n->inputs[1 + index], n->dt);
-            phi_vals[i].tmp = tmp;
-            has_tmps = true;
-        }
-    }
-
-    // do normal copies
-    dyn_array_for(i, phi_vals) {
-        TB_Node* n = phi_vals[i].n;
-
-        if (n->inputs[1 + index] && phi_vals[i].tmp < 0) {
-            int dst = USE(phi_vals[i].val);
-            copy_value(ctx, n, dst, n->inputs[1 + index], n->dt);
-        }
-    }
-
-    // do temp copies
-    if (has_tmps) {
-        dyn_array_for(i, phi_vals) {
-            TB_Node* n = phi_vals[i].n;
-
-            if (phi_vals[i].tmp >= 0) {
-                int dst = USE(phi_vals[i].val);
-                int src = USE(phi_vals[i].tmp);
-                SUBMIT(inst_move(n->dt, dst, src));
-            }
-        }
-    }
-
-    ctx->phi_vals = phi_vals;
-}
-
 // returns true for final use
 static bool use_load(Ctx* restrict ctx, TB_Node* n) {
     return false;
@@ -827,31 +763,8 @@ static void isel_region(Ctx* restrict ctx, TB_Node* control, TB_Node* next) {
         }
     }
 
-    // Handle branch edges
-    if (control->type == TB_BRANCH) {
-        // copy out from active phi-edges
-        TB_Node* bb = tb_get_parent_region(control);
-        TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
-        FOREACH_N(i, 0, r->succ_count) {
-            TB_Node* dst = r->succ[i];
-
-            // find predecessor index and do that edge
-            FOREACH_N(j, 0, dst->input_count) {
-                TB_Node* pred = dst->inputs[j];
-                while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
-
-                if (pred == bb) {
-                    phi_edge(ctx, dst, j);
-                    break;
-                }
-            }
-        }
-    }
-
     isel(ctx, control);
 }
-
-static Inst inst_nullary(int op);
 
 static void fence(Ctx* restrict ctx, TB_Node* self) {
     for (User* use = find_users(ctx->p, self->inputs[0]); use; use = use->next) {
@@ -861,7 +774,7 @@ static void fence(Ctx* restrict ctx, TB_Node* self) {
         ptrdiff_t search;
         if (n != self && (search = nl_map_get(ctx->uses, n)) >= 0) {
             // other than these two everything else can be loosely placed
-            if (ctx->uses[search].v > 0 && (n->type == TB_LOAD || n->type == TB_PHI)) {
+            if (ctx->uses[search].v > 0 && n->type == TB_LOAD) {
                 isel(ctx, n);
             }
         }
@@ -869,6 +782,54 @@ static void fence(Ctx* restrict ctx, TB_Node* self) {
 }
 
 static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
+    DynArray(PhiVal) phi_vals = ctx->phi_vals;
+    dyn_array_clear(phi_vals);
+
+    if (ignore->type == TB_BRANCH) {
+        ptrdiff_t index = -1;
+        TB_Node* dst = NULL;
+
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(self);
+        FOREACH_N(i, 0, r->succ_count) {
+            dst = r->succ[i];
+
+            // find predecessor index and do that edge
+            FOREACH_N(j, 0, dst->input_count) {
+                TB_Node* pred = tb_get_parent_region(dst->inputs[j]);
+
+                if (pred == self) {
+                    index = j;
+                    break;
+                }
+            }
+        }
+
+        assert(index >= 0);
+        size_t phi_count = 0;
+        for (User* use = find_users(ctx->p, dst); use; use = use->next) {
+            TB_Node* n = use->n;
+            if (n->type != TB_PHI) continue;
+
+            // allocate virtual register
+            ptrdiff_t search = nl_map_get(ctx->values, n);
+            PhiVal p = { n, -1, -1 };
+            if (search < 0) {
+                p.val = DEF(n, classify_reg_class(n->dt));
+                nl_map_put(ctx->values, n, p.val);
+            } else {
+                p.val = ctx->values[search].v;
+            }
+
+            // evaluate PHI but don't writeback yet
+            int tmp = DEF(n, classify_reg_class(n->dt));
+            copy_value(ctx, n, USE(tmp), n->inputs[1 + index], n->dt);
+            p.tmp = tmp;
+
+            dyn_array_put(phi_vals, p);
+            phi_count++;
+        }
+    }
+
     for (User* use = find_users(ctx->p, self); use; use = use->next) {
         TB_Node* n = use->n;
 
@@ -876,6 +837,7 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
         ptrdiff_t search;
         if (n != ignore && (search = nl_map_get(ctx->uses, n)) >= 0) {
             if (ctx->uses[search].v > 0 &&
+                n->type != TB_PHI &&
                 n->type != TB_INTEGER_CONST &&
                 // n->type != TB_FLOAT32_CONST &&
                 // n->type != TB_FLOAT64_CONST &&
@@ -887,6 +849,16 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
             }
         }
     }
+
+    // writeback PHI results now
+    dyn_array_for(i, phi_vals) {
+        TB_Node* n = phi_vals[i].n;
+
+        int dst = USE(phi_vals[i].val);
+        int src = USE(phi_vals[i].tmp);
+        SUBMIT(inst_move(n->dt, dst, src));
+    }
+    ctx->phi_vals = phi_vals;
 }
 
 // Codegen through here is done in phases

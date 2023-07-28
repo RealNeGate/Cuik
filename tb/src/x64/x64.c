@@ -1669,24 +1669,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt) {
-    if (src->type == TB_ADD) {
-        if (src->inputs[1] == phi) {
-            use(ctx, src->inputs[1]);
-
-            int32_t x;
-            if (try_for_imm32(ctx, src->inputs[2], &x)) {
-                use(ctx, src->inputs[2]);
-                SUBMIT(inst_ri(ADD, dt, USE(dst), dst, x));
-            } else {
-                int other = ISEL(src->inputs[2]);
-                SUBMIT(inst_rr(ADD, dt, USE(dst), dst, other));
-            }
-
-            nl_map_put(ctx->values, src, USE(dst));
-            return;
-        }
-    }
-
     int src_v = ISEL(src);
     SUBMIT(inst_move(dt, dst, src_v));
 }
