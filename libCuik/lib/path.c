@@ -96,7 +96,7 @@ bool cuik_path_has_ext(const Cuik_Path* restrict src, const char* ext) {
     size_t ext_len = strlen(ext);
 
     return src->length > ext_len + 1
-        && src->data[src->length - ext_len + 1] == '.'
+        && src->data[src->length - ext_len - 1] == '.'
         && memcmp(&src->data[src->length - ext_len], ext, ext_len) == 0;
 }
 
