@@ -586,6 +586,11 @@ typedef void (*TB_PrintCallback)(void* user_data, const char* fmt, ...);
 // defined in common/arena.h
 typedef struct TB_Arena TB_Arena;
 
+// 0 for default
+void tb_arena_create(TB_Arena* restrict arena, size_t chunk_size);
+void tb_arena_destroy(TB_Arena* restrict arena);
+bool tb_arena_is_empty(TB_Arena* arena);
+
 ////////////////////////////////
 // Module management
 ////////////////////////////////

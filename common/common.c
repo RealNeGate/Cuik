@@ -74,6 +74,10 @@ void cuik__vfree(void* ptr, size_t size) {
 // TB_Arenas
 ////////////////////////////////
 void tb_arena_create(TB_Arena* restrict arena, size_t chunk_size) {
+    if (chunk_size == 0) {
+        chunk_size = TB_ARENA_LARGE_CHUNK_SIZE;
+    }
+
     // allocate initial chunk
     TB_ArenaChunk* c = cuik__valloc(chunk_size);
     c->next = NULL;
