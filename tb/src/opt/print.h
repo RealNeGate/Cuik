@@ -133,7 +133,7 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
     }
 
     // print operands
-    FOREACH_N(i, 1, n->input_count) {
+    FOREACH_N(i, 1, n->input_count) if (n->inputs[i]) {
         switch (n->inputs[i]->type) {
             case TB_LOAD: case TB_PHI:
             if (n->inputs[i]->inputs[0] != parent) {

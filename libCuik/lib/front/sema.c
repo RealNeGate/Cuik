@@ -1031,6 +1031,10 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
                 return NULL;
             }
 
+            for (size_t i = 0; i < level; i++) {
+                expected = cuik__new_pointer(&tu->types, cuik_uncanonical_type(expected));
+            }
+
             SET_CAST(i + 1, cuik_uncanonical_type(expected));
         }
 

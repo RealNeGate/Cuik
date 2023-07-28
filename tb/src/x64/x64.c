@@ -491,6 +491,8 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
     TB_Node* addr = n->inputs[1];
 
     if (addr->type == TB_ARRAY_ACCESS) {
+        use(ctx, addr);
+
         Inst inst = isel_array(ctx, addr, dst);
         if (inst.type == LEA) {
             inst.type = i;
@@ -500,13 +502,19 @@ static Inst isel_load(Ctx* restrict ctx, TB_Node* n, int dst) {
             return inst_m(i, n->dt, dst, dst, GPR_NONE, SCALE_X1, 0);
         }
     } else if (addr->type == TB_MEMBER_ACCESS) {
+        use(ctx, addr);
+
         int src = ISEL(addr->inputs[1]);
         int64_t offset = TB_NODE_GET_EXTRA_T(addr, TB_NodeMember)->offset;
         return inst_m(i, n->dt, dst, src, GPR_NONE, SCALE_X1, offset);
     } else if (addr->type == TB_LOCAL) {
+        use(ctx, addr);
+
         int pos = get_stack_slot(ctx, addr);
         return inst_m(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, pos);
     } else if (addr->type == TB_GET_SYMBOL_ADDRESS) {
+        use(ctx, addr);
+
         TB_NodeSymbol* s = TB_NODE_GET_EXTRA(addr);
         return inst_g(i, n->dt, dst, s->sym);
     }
@@ -1156,7 +1164,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
 
         case TB_LOAD: {
-            use_load(ctx, n);
             dst = DEF(n, n->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR);
 
             Inst ld = isel_load(ctx, n, dst);
@@ -1237,14 +1244,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             } else if (bits_in_type <= 64) op = MOV;
             else tb_todo();
 
-            if (use_load(ctx, src)) {
+            if (src->type == TB_LOAD) {
+                use(ctx, src);
+
                 Inst inst = isel_load(ctx, src, dst);
                 inst.type = op;
                 inst.data_type = legalize(dt);
                 SUBMIT(inst);
             } else {
-                int src = ISEL(n->inputs[1]);
-                SUBMIT(inst_r(op, dt, dst, src));
+                int val = ISEL(src);
+                SUBMIT(inst_r(op, dt, dst, val));
             }
             break;
         }
