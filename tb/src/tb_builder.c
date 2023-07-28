@@ -212,6 +212,9 @@ TB_API TB_Node* tb_inst_get_control(TB_Function* f) {
 TB_API void tb_inst_unreachable(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_VOID, 1, 0);
     n->inputs[0] = f->active_control_node;
+
+    TB_Node* bb = tb_get_parent_region(f->active_control_node);
+    TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end = n;
     f->active_control_node = NULL;
 }
 
