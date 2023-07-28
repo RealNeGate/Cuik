@@ -7,6 +7,11 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+void simple(int* a, int* n, int b) {
+    a[(*n)++] = b;
+}
+
+#if 0
 typedef struct Cell Cell;
 struct Cell {
     Cell* car;
@@ -30,7 +35,6 @@ int select_opt(int a, int b) {
     return a > 10 && b > 10;
 }
 
-#if 0
 int main() {
     printf("Woah! %d\n", foo(5));
     return 0;

@@ -533,7 +533,24 @@ static Inst isel_store(Ctx* restrict ctx, TB_DataType dt, TB_Node* addr, int src
     if (addr->type == TB_LOCAL) {
         int pos = get_stack_slot(ctx, addr);
         return inst_mr(i, dt, RBP, GPR_NONE, SCALE_X1, pos, src);
+    } else if (addr->type == TB_ARRAY_ACCESS) {
+        use(ctx, addr);
+
+        int tmp = DEF(addr, REG_CLASS_GPR);
+        Inst inst = isel_array(ctx, addr, tmp);
+        if (inst.type == LEA) {
+            inst.type = i;
+            inst.layout = X86_OP_MR;
+            inst.data_type = legalize(dt);
+            inst.regs[0] = -1;
+            inst.regs[1] = src;
+            return inst;
+        } else {
+            return inst_mr(i, dt, tmp, GPR_NONE, SCALE_X1, 0, src);
+        }
     } else if (addr->type == TB_MEMBER_ACCESS) {
+        use(ctx, addr->inputs[1]);
+
         Inst inst = isel_store(ctx, dt, addr->inputs[1], src);
         inst.imm[0] += TB_NODE_GET_EXTRA_T(addr, TB_NodeMember)->offset;
 
@@ -768,7 +785,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                 ctx->stack_usage += (extra_param_count * 8);
             }
-            return 0;
+            break;
         }
 
         case TB_LOCAL: {
@@ -1127,6 +1144,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
             SUBMIT(inst_ri(ADD, n->dt, dst, src, offset));
+            forget = true;
             break;
         }
         case TB_ARRAY_ACCESS: {
@@ -1248,7 +1266,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             } else if (bits_in_type <= 64) op = MOV;
             else tb_todo();
 
-            if (src->type == TB_LOAD) {
+            if (src->type == TB_LOAD && nl_map_get_checked(ctx->uses, src) == 1) {
                 use(ctx, src);
 
                 Inst inst = isel_load(ctx, src, dst);

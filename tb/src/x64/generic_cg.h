@@ -672,7 +672,29 @@ static void schedule_early(Ctx* restrict ctx, TB_Node* n) {
         schedule_early(ctx, n->inputs[i]);
 
         // choose deepest block
-        if (dom_depth(ctx->doms, n->inputs[0]) < dom_depth(ctx->doms, n->inputs[i]->inputs[0])) {
+        TB_Node* aa = tb_get_parent_region(n->inputs[0]);
+        TB_Node* bb = tb_get_parent_region(n->inputs[i]->inputs[0]);
+
+        if (aa == bb) {
+            // we need to measure dom depth within a block now
+            //
+            // aa
+            // VV     a is greater than b
+            // bb
+            TB_Node* a = n->inputs[0];
+            TB_Node* b = n->inputs[i]->inputs[0];
+
+            for (;;) {
+                if (a == b) {
+                    // a dominates b, we can't be having that
+                    set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
+                    break;
+    	        }
+
+                if (b->type == TB_START || b->type == TB_REGION) break;
+                b = b->inputs[0];
+            }
+        } else if (dom_depth(ctx->doms, aa) < dom_depth(ctx->doms, bb)) {
             set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
         }
     }
@@ -829,6 +851,8 @@ static void isel_region(Ctx* restrict ctx, TB_Node* control, TB_Node* next) {
     isel(ctx, control);
 }
 
+static Inst inst_nullary(int op);
+
 static void fence(Ctx* restrict ctx, TB_Node* self) {
     for (User* use = find_users(ctx->p, self->inputs[0]); use; use = use->next) {
         TB_Node* n = use->n;
@@ -855,6 +879,8 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
                 n->type != TB_INTEGER_CONST &&
                 // n->type != TB_FLOAT32_CONST &&
                 // n->type != TB_FLOAT64_CONST &&
+                n->type != TB_MEMBER_ACCESS &&
+                !(n->type == TB_PROJ && n->inputs[0]->type == TB_START) &&
                 n->type != TB_LOCAL &&
                 n->type != TB_GET_SYMBOL_ADDRESS) {
                 isel(ctx, n);
@@ -944,6 +970,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
         dyn_array_destroy(worklist);
         nl_hashset_free(ctx.visited);
+    }
+
+    if (strcmp(f->super.name, "stbi__load_main") == 0) {
+        __debugbreak();
     }
 
     // Instruction selection:
