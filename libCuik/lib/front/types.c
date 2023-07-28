@@ -16,7 +16,7 @@ Cuik_TypeTable init_type_table(Cuik_Target* target) {
 
 // if track is false, it's not type checked later (because it's complete)
 static Cuik_Type* type_alloc(Cuik_TypeTable* types, bool track) {
-    Cuik_Type* t = arena_alloc(types->arena, sizeof(Cuik_Type));
+    Cuik_Type* t = tb_arena_alloc(types->arena, sizeof(Cuik_Type));
     if (track && types->tracked) {
         dyn_array_put(types->tracked, t);
     }

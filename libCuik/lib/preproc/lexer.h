@@ -105,7 +105,7 @@ typedef struct {
     unsigned char* current;
 } Lexer;
 
-extern thread_local Arena thread_arena;
+extern thread_local TB_Arena thread_arena;
 
 // this is used by the preprocessor to scan tokens in
 Token lexer_read(Lexer* restrict l);

@@ -54,7 +54,7 @@ struct Cuik_BuildStep {
             Cuik_DriverArgs* args;
             const char* source;
 
-            Arena arena;
+            TB_Arena arena;
             Cuik_CPP* cpp;
             TranslationUnit* tu;
         } cc;
@@ -70,10 +70,10 @@ struct Cuik_BuildStep {
     };
 };
 
-static Arena* get_ir_arena(void) {
-    static _Thread_local Arena ir_arena;
-    if (arena_is_empty(&ir_arena)) {
-        arena_create(&ir_arena, ARENA_LARGE_CHUNK_SIZE);
+static TB_Arena* get_ir_arena(void) {
+    static _Thread_local TB_Arena ir_arena;
+    if (tb_arena_is_empty(&ir_arena)) {
+        tb_arena_create(&ir_arena, TB_ARENA_LARGE_CHUNK_SIZE);
     }
 
     return &ir_arena;
@@ -205,7 +205,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 
     Cuik_ParseResult result;
     CUIK_TIMED_BLOCK_ARGS("parse", s->cc.source) {
-        arena_create(&s->cc.arena, ARENA_LARGE_CHUNK_SIZE);
+        tb_arena_create(&s->cc.arena, TB_ARENA_LARGE_CHUNK_SIZE);
 
         result = cuikparse_run(args->version, tokens, args->target, &s->cc.arena, false);
         s->cc.tu = result.tu;
@@ -295,7 +295,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         }
 
         CUIK_TIMED_BLOCK("Free arena") {
-            arena_destroy(&s->cc.arena);
+            tb_arena_destroy(&s->cc.arena);
         }
     }
 
@@ -739,7 +739,7 @@ static void irgen_job(void* arg) {
     // unoptimized builds can just compile functions without
     // the rest of the functions being ready.
     bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->emit_ir && !task.args->assembly;
-    Arena* allocator = get_ir_arena();
+    TB_Arena* allocator = get_ir_arena();
 
     for (size_t i = 0; i < task.count; i++) {
         // skip all the typedefs
@@ -758,7 +758,7 @@ static void irgen_job(void* arg) {
             tb_pass_codegen(p, false);
             tb_pass_exit(p);
 
-            arena_clear(allocator);
+            tb_arena_clear(allocator);
         }
     }
 }

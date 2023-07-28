@@ -541,7 +541,7 @@ static int interp(Env* env, Word* w) {
 ////////////////////////////////
 // Compiler
 ////////////////////////////////
-static TB_Arena* ir_arena;
+static TB_TB_Arena* ir_arena;
 static TB_Module* ir_module;
 static TB_JITContext* jit;
 

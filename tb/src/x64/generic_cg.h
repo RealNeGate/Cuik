@@ -308,7 +308,7 @@ static Inst inst_line(TB_FileID file, int line) {
 
 #define SUBMIT(i) append_inst(ctx, i)
 static void append_inst(Ctx* restrict ctx, Inst i) {
-    Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
+    Inst* new_inst = TB_ARENA_ALLOC(&tb__arena, Inst);
     *new_inst = i;
 
     if (ctx->last == NULL) {
@@ -398,7 +398,7 @@ static int compare_defs(const void* a, const void* b) {
 // generate live intervals for virtual registers
 static RegAllocWorklist liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t def_count = dyn_array_length(ctx->defs);
-    Arena* arena = &tb__arena;
+    TB_Arena* arena = &tb__arena;
 
     // find BB boundaries in sequences
     MachineBBs seq_bb = NULL;
@@ -927,7 +927,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     nl_map_create(ctx.values, f->node_count);
     nl_map_create(ctx.uses, f->node_count);
 
-    ctx.active = arena_alloc(&tb__arena, f->node_count * sizeof(DefIndex));
+    ctx.active = tb_arena_alloc(&tb__arena, f->node_count * sizeof(DefIndex));
 
     // allocate more stuff now that we've run stats on the IR
     ctx.emit.return_label = 0;
@@ -1036,6 +1036,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     func_out->stack_slots = ctx.debug_stack_slots;
 
     tb_function_free_postorder(&ctx.order);
-    arena_clear(&tb__arena);
+    tb_arena_clear(&tb__arena);
     nl_map_free(ctx.stack_slots);
 }

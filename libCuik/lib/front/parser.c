@@ -167,7 +167,7 @@ struct Cuik_Parser {
     Cuik_SymbolTable* symbols;
     Cuik_SymbolTable* tags;
 
-    Arena* arena;
+    TB_Arena* arena;
     DynArray(Stmt*) top_level_stmts;
     Cuik_TypeTable types;
 
@@ -200,7 +200,7 @@ typedef enum ParseResult {
 } ParseResult;
 
 static void diag_unresolved_symbol(Cuik_Parser* parser, Atom name, SourceLoc loc) {
-    Diag_UnresolvedSymbol* d = ARENA_ALLOC(parser->arena, Diag_UnresolvedSymbol);
+    Diag_UnresolvedSymbol* d = TB_ARENA_ALLOC(parser->arena, Diag_UnresolvedSymbol);
     d->next = NULL;
     d->name = name;
     d->loc = (SourceRange){ loc, { loc.raw + strlen(name) } };
@@ -235,12 +235,12 @@ static bool expect_char(TokenStream* restrict s, char ch) {
 }
 
 // tls -> arena
-static void* copy_out_temporary(Arena* arena, void* src, size_t count, size_t size) {
+static void* copy_out_temporary(TB_Arena* arena, void* src, size_t count, size_t size) {
     if (count == 0) {
         return NULL;
     }
 
-    void* dst = arena_alloc(arena, size * count);
+    void* dst = tb_arena_alloc(arena, size * count);
     memcpy(dst, src, size * count);
     tls_restore(src);
     return dst;

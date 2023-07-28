@@ -56,7 +56,7 @@ TB_API void tb_node_append_attrib(TB_Node* n, TB_Attrib* a) {
 
 TB_API TB_Attrib* tb_function_attrib_variable(TB_Function* f, ptrdiff_t len, const char* name, TB_DebugType* type) {
     TB_Attrib* a = tb_platform_heap_alloc(sizeof(TB_Attrib));
-    *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .var = { tb__arena_strdup(f->super.module, len, name), type } };
+    *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .var = { tb__tb_arena_strdup(f->super.module, len, name), type } };
     return a;
 }
 
@@ -68,7 +68,7 @@ TB_API TB_Attrib* tb_function_attrib_scope(TB_Function* f, TB_Attrib* parent_sco
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
     // return malloc(necessary_size);
-    return arena_alloc(f->arena, necessary_size);
+    return tb_arena_alloc(f->arena, necessary_size);
 }
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra) {
@@ -823,7 +823,7 @@ TB_API void tb_inst_set_region_name(TB_Node* n, ptrdiff_t len, const char* name)
 
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
-    char* newstr = arena_alloc(get_permanent_arena(), len + 1);
+    char* newstr = tb_arena_alloc(get_permanent_arena(), len + 1);
     memcpy(newstr, name, len + 1);
     r->tag = newstr;
 }

@@ -1556,11 +1556,11 @@ static char* stbds_strdup(char* str) {
     return p;
 }
 
-#ifndef STBDS_STRING_ARENA_BLOCKSIZE_MIN
-#define STBDS_STRING_ARENA_BLOCKSIZE_MIN 512u
+#ifndef STBDS_STRING_TB_ARENA_BLOCKSIZE_MIN
+#define STBDS_STRING_TB_ARENA_BLOCKSIZE_MIN 512u
 #endif
-#ifndef STBDS_STRING_ARENA_BLOCKSIZE_MAX
-#define STBDS_STRING_ARENA_BLOCKSIZE_MAX (1u << 20)
+#ifndef STBDS_STRING_TB_ARENA_BLOCKSIZE_MAX
+#define STBDS_STRING_TB_ARENA_BLOCKSIZE_MAX (1u << 20)
 #endif
 
 char* stbds_stralloc(stbds_string_arena* a, char* str) {
@@ -1572,10 +1572,10 @@ char* stbds_stralloc(stbds_string_arena* a, char* str) {
 
         // size is 512, 512, 1024, 1024, 2048, 2048, 4096, 4096, etc., so that
         // there are log(SIZE) allocations to free when we destroy the table
-        blocksize = (size_t)(STBDS_STRING_ARENA_BLOCKSIZE_MIN) << (blocksize >> 1);
+        blocksize = (size_t)(STBDS_STRING_TB_ARENA_BLOCKSIZE_MIN) << (blocksize >> 1);
 
         // if size is under 1M, advance to next blocktype
-        if (blocksize < (size_t)(STBDS_STRING_ARENA_BLOCKSIZE_MAX))
+        if (blocksize < (size_t)(STBDS_STRING_TB_ARENA_BLOCKSIZE_MAX))
             ++a->block;
 
         if (len > blocksize) {

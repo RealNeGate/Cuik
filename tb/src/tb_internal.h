@@ -335,7 +335,7 @@ struct TB_Function {
     size_t node_count;
 
     // IR allocation
-    Arena* arena;
+    TB_Arena* arena;
 
     // IR building
     TB_Attrib* line_attrib;
@@ -671,11 +671,11 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);
 
 uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
-char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
+char* tb__tb_arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
 void tb__init_temporary_arena(void);
 
 // temporary arena
-extern thread_local Arena tb__arena;
+extern thread_local TB_Arena tb__arena;
 
 // NOTE(NeGate): Place all the codegen interfaces down here
 extern ICodeGen tb__x64_codegen;

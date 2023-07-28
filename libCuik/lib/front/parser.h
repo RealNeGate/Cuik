@@ -76,7 +76,7 @@ typedef struct Diag_UnresolvedSymbol {
 
 typedef struct Cuik_TypeTable {
     Cuik_Target* target;
-    Arena* arena;
+    TB_Arena* arena;
     DynArray(Cuik_Type*) tracked;
 } Cuik_TypeTable;
 
@@ -86,7 +86,7 @@ struct TranslationUnit {
     // chain of TUs for the compilation unit
     struct TranslationUnit* next;
 
-    Arena* arena;
+    TB_Arena* arena;
     void* user_data;
     bool is_free;
 

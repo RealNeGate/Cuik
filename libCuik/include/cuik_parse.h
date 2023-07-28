@@ -33,7 +33,7 @@ typedef struct Cuik_ParseResult {
     Cuik_ImportRequest* imports; // linked list of imported libs.
 } Cuik_ParseResult;
 
-CUIK_API Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, Arena* restrict arena, bool only_code_index);
+CUIK_API Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, TB_Arena* restrict arena, bool only_code_index);
 
 CUIK_API void cuik_tu_set_ordinal(TranslationUnit* restrict tu, int ordinal);
 CUIK_API int cuik_tu_get_ordinal(TranslationUnit* restrict tu);

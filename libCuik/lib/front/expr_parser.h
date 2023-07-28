@@ -67,7 +67,7 @@ static ExprInfo get_binop(TknType ty) {
 
 static Subexpr* push_expr(Cuik_Parser* parser) {
     if (parser->expr == NULL) {
-        parser->expr = ARENA_ALLOC(parser->arena, Cuik_Expr);
+        parser->expr = TB_ARENA_ALLOC(parser->arena, Cuik_Expr);
         *parser->expr = (Cuik_Expr){ .exprs = tls_push(0), .first_symbol = -1 };
     }
 
@@ -84,7 +84,7 @@ static Cuik_Expr* complete_expr(Cuik_Parser* parser) {
 
     // move to more permanent storage
     size_t count = e->count = ((Subexpr*) tls_push(0)) - e->exprs;
-    Subexpr* exprs = ARENA_ARR_ALLOC(parser->arena, count, Subexpr);
+    Subexpr* exprs = TB_ARENA_ARR_ALLOC(parser->arena, count, Subexpr);
     memcpy(exprs, e->exprs, count * sizeof(Subexpr));
     tls_restore(e->exprs);
 
@@ -99,7 +99,7 @@ static Cuik_Expr* complete_expr(Cuik_Parser* parser) {
 }
 
 static InitNode* make_init_node(Cuik_Parser* parser, TokenStream* restrict s, int mode) {
-    InitNode* n = ARENA_ALLOC(parser->arena, InitNode);
+    InitNode* n = TB_ARENA_ALLOC(parser->arena, InitNode);
     *n = (InitNode){ .mode = mode };
     return n;
 }
@@ -224,7 +224,7 @@ static void parse_initializer2(Cuik_Parser* parser, TokenStream* restrict s, Cui
     SourceLoc loc = tokens_get_location(s);
     expect_char(s, '{');
 
-    InitNode *root = ARENA_ALLOC(parser->arena, InitNode), *tail = NULL;
+    InitNode *root = TB_ARENA_ALLOC(parser->arena, InitNode), *tail = NULL;
     *root = (InitNode){ 0 };
 
     // don't expect one the first time
@@ -266,7 +266,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     }
 
     size_t curr = 0;
-    char* buffer = arena_alloc(parser->arena, total_len + 3);
+    char* buffer = tb_arena_alloc(parser->arena, total_len + 3);
 
     buffer[curr++] = '\"';
 
@@ -559,7 +559,7 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             expect_closing_paren(s, opening_loc);
 
             // move it to a more permanent storage
-            C11GenericEntry* dst = arena_alloc(parser->arena, entry_count * sizeof(C11GenericEntry));
+            C11GenericEntry* dst = tb_arena_alloc(parser->arena, entry_count * sizeof(C11GenericEntry));
             memcpy(dst, entries, entry_count * sizeof(C11GenericEntry));
 
             e->generic_.case_count = entry_count;
@@ -929,11 +929,11 @@ static void parse_binop(Cuik_Parser* restrict parser, TokenStream* restrict s, i
 
                 // copy
                 size_t count = (Subexpr*) tls_push(0) - start_of_expr;
-                Subexpr* exprs = ARENA_ARR_ALLOC(parser->arena, count, Subexpr);
+                Subexpr* exprs = TB_ARENA_ARR_ALLOC(parser->arena, count, Subexpr);
                 memcpy(exprs, start_of_expr, count * sizeof(Subexpr));
                 tls_restore(start_of_expr);
 
-                left = ARENA_ALLOC(parser->arena, Cuik_Expr);
+                left = TB_ARENA_ALLOC(parser->arena, Cuik_Expr);
                 *left = (Cuik_Expr){ .exprs = exprs, .count = count, .first_symbol = first_sym };
 
                 if (left->first_symbol >= 0) {

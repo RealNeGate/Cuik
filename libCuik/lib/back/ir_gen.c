@@ -1898,7 +1898,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
     }
 }
 
-TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Arena* arena, Stmt* restrict s) {
+TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena* arena, Stmt* restrict s) {
     if (s->op == STMT_FUNC_DECL) {
         if ((s->decl.attrs.is_static || s->decl.attrs.is_inline) && !s->decl.attrs.is_used) {
             return NULL;

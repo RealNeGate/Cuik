@@ -1496,7 +1496,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }
 
             size_t clobber_cap = tb_popcount(caller_saved_gprs) + desc->caller_saved_xmms;
-            Clobbers* clobbers = arena_alloc(&tb__arena, sizeof(Clobbers) + (clobber_cap * sizeof(MachineReg)));
+            Clobbers* clobbers = tb_arena_alloc(&tb__arena, sizeof(Clobbers) + (clobber_cap * sizeof(MachineReg)));
 
             // mark all the clobbers
             size_t clobber_count = 0;
@@ -1559,7 +1559,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int rcx = DEF_FORCED(n, REG_CLASS_GPR, RCX, rax);
 
             // clobber inputs
-            Clobbers* clobbers = arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)));
+            Clobbers* clobbers = tb_arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)));
             clobbers->count = 3;
             clobbers->_[0] = (MachineReg){ REG_CLASS_GPR, RDI };
             clobbers->_[1] = (MachineReg){ REG_CLASS_GPR, RCX };
@@ -1591,7 +1591,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int rcx = DEF_FORCED(n, REG_CLASS_GPR, RCX, rsi);
 
             // clobber inputs
-            Clobbers* clobbers = arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)));
+            Clobbers* clobbers = tb_arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)));
             clobbers->count = 3;
             clobbers->_[0] = (MachineReg){ REG_CLASS_GPR, RDI };
             clobbers->_[1] = (MachineReg){ REG_CLASS_GPR, RCX };
@@ -1701,7 +1701,7 @@ static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
 
     // write out
     InstType i = r->dt.type == TB_FLOAT ? FP_MOV : MOV;
-    Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
+    Inst* new_inst = TB_ARENA_ALLOC(&tb__arena, Inst);
 
     *new_inst = inst_mr(i, r->dt, RBP, GPR_NONE, SCALE_X1, r->stack_pos, USE(r->old));
     new_inst->time = basepoint->time + 1;
@@ -1729,7 +1729,7 @@ static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_inde
 
     REG_ALLOC_LOG printf("  \x1b[32m#   reload D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
 
-    Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
+    Inst* new_inst = TB_ARENA_ALLOC(&tb__arena, Inst);
 
     *new_inst = inst_m(i, r->dt, r->old, RBP, GPR_NONE, SCALE_X1, r->stack_pos);
     new_inst->time = basepoint->time + 1;
@@ -1740,7 +1740,7 @@ static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_inde
 
 static void reload_from_reg(Ctx* restrict ctx, Inst* basepoint, TB_DataType dt, int dst, int src) {
     REG_ALLOC_LOG printf("  \x1b[32m#   reload D%d \x1b[0m\n", dst);
-    Inst* new_inst = ARENA_ALLOC(&tb__arena, Inst);
+    Inst* new_inst = TB_ARENA_ALLOC(&tb__arena, Inst);
     InstType i = dt.type == TB_FLOAT ? FP_MOV : MOV;
 
     *new_inst = inst_r(i, dt, dst, USE(src));

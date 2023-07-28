@@ -9,7 +9,7 @@ static int parse_glsl_layout_attrib(TokenStream* restrict s, const SourceRange* 
 
 // this code might reference docs/glsl_grammar.txt
 static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, TokenStream* restrict s, Cuik_Qualifiers* quals) {
-    Cuik_GlslQuals* glsl = ARENA_ALLOC(parser->arena, Cuik_GlslQuals);
+    Cuik_GlslQuals* glsl = TB_ARENA_ALLOC(parser->arena, Cuik_GlslQuals);
 
     for (;;) {
         TknType tkn_type = tokens_get(s)->type;

@@ -3,12 +3,12 @@
 
 enum { INTERNER_EXP = 24 };
 
-thread_local static Arena atoms_arena;
+thread_local static TB_Arena atoms_arena;
 thread_local static Atom* interner;
 
 void atoms_free(void) {
     CUIK_TIMED_BLOCK("free atoms") {
-        arena_destroy(&atoms_arena);
+        tb_arena_destroy(&atoms_arena);
         cuik__vfree(interner, (1u << INTERNER_EXP) * sizeof(Atom));
         interner = NULL;
     }
@@ -18,7 +18,7 @@ Atom atoms_put(size_t len, const unsigned char* str) {
     if (interner == NULL) {
         CUIK_TIMED_BLOCK("alloc atoms") {
             interner = cuik__valloc((1u << INTERNER_EXP) * sizeof(Atom));
-            arena_create(&atoms_arena, ARENA_MEDIUM_CHUNK_SIZE);
+            tb_arena_create(&atoms_arena, TB_ARENA_MEDIUM_CHUNK_SIZE);
         }
     }
 
@@ -29,7 +29,7 @@ Atom atoms_put(size_t len, const unsigned char* str) {
     do {
         // linear probe
         if (LIKELY(interner[i] == NULL)) {
-            Atom newstr = arena_unaligned_alloc(&atoms_arena, len + 1);
+            Atom newstr = tb_arena_unaligned_alloc(&atoms_arena, len + 1);
             memcpy(newstr, str, len);
             newstr[len] = 0;
 

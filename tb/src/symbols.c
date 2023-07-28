@@ -8,7 +8,7 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, ptrdiff_t len, c
     memset(s, 0, size);
 
     s->tag = tag;
-    s->name = tb__arena_strdup(m, len, name);
+    s->name = tb__tb_arena_strdup(m, len, name);
     s->module = m;
     s->next = NULL;
 

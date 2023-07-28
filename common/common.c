@@ -71,40 +71,40 @@ void cuik__vfree(void* ptr, size_t size) {
 }
 
 ////////////////////////////////
-// Arenas
+// TB_Arenas
 ////////////////////////////////
-void arena_create(Arena* restrict arena, size_t chunk_size) {
+void tb_arena_create(TB_Arena* restrict arena, size_t chunk_size) {
     // allocate initial chunk
-    ArenaChunk* c = cuik__valloc(chunk_size);
+    TB_ArenaChunk* c = cuik__valloc(chunk_size);
     c->next = NULL;
 
     arena->chunk_size = chunk_size;
     arena->watermark  = c->data;
-    arena->high_point = &c->data[chunk_size - sizeof(ArenaChunk)];
+    arena->high_point = &c->data[chunk_size - sizeof(TB_ArenaChunk)];
     arena->base = arena->top = c;
 }
 
-void arena_destroy(Arena* restrict arena) {
-    ArenaChunk* c = arena->base;
+void tb_arena_destroy(TB_Arena* restrict arena) {
+    TB_ArenaChunk* c = arena->base;
     while (c != NULL) {
-        ArenaChunk* next = c->next;
+        TB_ArenaChunk* next = c->next;
         cuik__vfree(c, arena->chunk_size);
         c = next;
     }
 }
 
-void* arena_unaligned_alloc(Arena* restrict arena, size_t size) {
+void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
     if (LIKELY(arena->watermark + size < arena->high_point)) {
         char* ptr = arena->watermark;
         arena->watermark += size;
         return ptr;
     } else {
         // slow path, we need to allocate more
-        ArenaChunk* c = cuik__valloc(arena->chunk_size);
+        TB_ArenaChunk* c = cuik__valloc(arena->chunk_size);
         c->next = NULL;
 
         arena->watermark  = c->data + size;
-        arena->high_point = &c->data[arena->chunk_size - sizeof(ArenaChunk)];
+        arena->high_point = &c->data[arena->chunk_size - sizeof(TB_ArenaChunk)];
 
         // append to top
         arena->top->next = c;
@@ -114,62 +114,62 @@ void* arena_unaligned_alloc(Arena* restrict arena, size_t size) {
     }
 }
 
-void arena_pop(Arena* restrict arena, void* ptr, size_t size) {
+void tb_arena_pop(TB_Arena* restrict arena, void* ptr, size_t size) {
     char* p = ptr;
     assert(arena->watermark + size == p); // cannot pop from arena if it's not at the top
 
     arena->watermark = p;
 }
 
-void arena_realign(Arena* restrict arena) {
+void tb_arena_realign(TB_Arena* restrict arena) {
     ptrdiff_t pos = arena->watermark - arena->top->data;
-    pos = (pos + ARENA_ALIGNMENT - 1) & ~(ARENA_ALIGNMENT - 1);
+    pos = (pos + TB_ARENA_ALIGNMENT - 1) & ~(TB_ARENA_ALIGNMENT - 1);
 
     arena->watermark = &arena->top->data[pos];
 }
 
-ArenaSavepoint arena_save(Arena* arena) {
-    return (ArenaSavepoint){ arena->top, arena->watermark };
+TB_ArenaSavepoint tb_arena_save(TB_Arena* arena) {
+    return (TB_ArenaSavepoint){ arena->top, arena->watermark };
 }
 
-void arena_restore(Arena* arena, ArenaSavepoint sp) {
+void tb_arena_restore(TB_Arena* arena, TB_ArenaSavepoint sp) {
     // kill any chunks which are ahead of the top
-    ArenaChunk* c = sp.top->next;
+    TB_ArenaChunk* c = sp.top->next;
     while (c != NULL) {
-        ArenaChunk* next = c->next;
+        TB_ArenaChunk* next = c->next;
         cuik__vfree(c, arena->chunk_size);
         c = next;
     }
 
     arena->top = sp.top;
     arena->watermark = sp.watermark;
-    arena->high_point = &sp.top->data[arena->chunk_size - sizeof(ArenaChunk)];
+    arena->high_point = &sp.top->data[arena->chunk_size - sizeof(TB_ArenaChunk)];
 }
 
-void* arena_alloc(Arena* restrict arena, size_t size) {
+void* tb_arena_alloc(TB_Arena* restrict arena, size_t size) {
     uintptr_t wm = (uintptr_t) arena->watermark;
     assert((wm & ~0xFull) == wm);
 
-    size = (size + ARENA_ALIGNMENT - 1) & ~(ARENA_ALIGNMENT - 1);
-    return arena_unaligned_alloc(arena, size);
+    size = (size + TB_ARENA_ALIGNMENT - 1) & ~(TB_ARENA_ALIGNMENT - 1);
+    return tb_arena_unaligned_alloc(arena, size);
 }
 
-void arena_clear(Arena* arena) {
-    ArenaChunk* c = arena->base;
+void tb_arena_clear(TB_Arena* arena) {
+    TB_ArenaChunk* c = arena->base;
     arena->watermark = c->data;
-    arena->high_point = &c->data[arena->chunk_size - sizeof(ArenaChunk)];
+    arena->high_point = &c->data[arena->chunk_size - sizeof(TB_ArenaChunk)];
     arena->base = arena->top = c;
 
     // remove extra chunks
     c = c->next;
     while (c != NULL) {
-        ArenaChunk* next = c->next;
+        TB_ArenaChunk* next = c->next;
         cuik__vfree(c, arena->chunk_size);
         c = next;
     }
 }
 
-bool arena_is_empty(Arena* arena) {
+bool tb_arena_is_empty(TB_Arena* arena) {
     return arena->base == NULL;
 }
 

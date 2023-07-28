@@ -196,7 +196,7 @@ static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, U
     // just generate a new user list (if the slots don't match)
     User* use = find_users(p, in);
     if (use == NULL) {
-        use = recycled ? recycled : ARENA_ALLOC(&tb__arena, User);
+        use = recycled ? recycled : TB_ARENA_ALLOC(&tb__arena, User);
         use->next = NULL;
         use->n = n;
         use->slot = slot;
@@ -209,7 +209,7 @@ static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, U
             if (use->n == n && use->slot == slot) return;
         }
 
-        use = recycled ? recycled : ARENA_ALLOC(&tb__arena, User);
+        use = recycled ? recycled : TB_ARENA_ALLOC(&tb__arena, User);
         use->next = NULL;
         use->n = n;
         use->slot = slot;
@@ -552,7 +552,7 @@ static void generate_use_lists(TB_Passes* restrict queue, TB_Function* f) {
     }
 }
 
-TB_Passes* tb_pass_enter(TB_Function* f, Arena* arena) {
+TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     tb__init_temporary_arena();
 
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
@@ -613,7 +613,7 @@ void tb_pass_exit(TB_Passes* p) {
     nl_hashset_free(p->cse_nodes);
 
     tb_function_free_postorder(&p->order);
-    arena_clear(&tb__arena);
+    tb_arena_clear(&tb__arena);
     nl_map_free(p->doms._);
     nl_map_free(p->users);
     nl_map_free(p->lookup);

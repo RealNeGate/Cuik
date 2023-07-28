@@ -5,7 +5,7 @@
 void hook_crash_handler(void);
 void init_timer_system(void);
 
-thread_local Arena thread_arena;
+thread_local TB_Arena thread_arena;
 
 void cuik_init(bool use_crash_handler) {
     cuik_init_terminal();
@@ -18,7 +18,7 @@ void cuik_init(bool use_crash_handler) {
 
 void cuik_free_thread_resources(void) {
     atoms_free();
-    arena_destroy(&thread_arena);
+    tb_arena_destroy(&thread_arena);
 }
 
 Cuik_Target* cuik_target_host(void) {

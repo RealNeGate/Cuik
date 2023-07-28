@@ -1190,7 +1190,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             size_t len = ((const char*)e->str.end - 1) - in;
 
             // it can't be bigger than the original
-            wchar_t* out = arena_alloc(tu->arena, (len + 1) * 2);
+            wchar_t* out = tb_arena_alloc(tu->arena, (len + 1) * 2);
 
             size_t out_i = 0, in_i = 0;
             while (in_i < len) {
@@ -1217,7 +1217,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
             size_t len = ((const char*)e->str.end - 1) - in;
 
             // it can't be bigger than the original
-            char* out = arena_alloc(tu->arena, len + 1);
+            char* out = tb_arena_alloc(tu->arena, len + 1);
 
             size_t out_i = 0, in_i = 0;
             while (in_i < len) {
@@ -1744,7 +1744,7 @@ Cuik_QualType cuik__sema_expr(TranslationUnit* tu, Cuik_Expr* restrict e) {
     }
 
     // we're gonna need a type and cast_type stream
-    Cuik_QualType* t = ARENA_ARR_ALLOC(tu->arena, 2 * e->count, Cuik_QualType);
+    Cuik_QualType* t = TB_ARENA_ARR_ALLOC(tu->arena, 2 * e->count, Cuik_QualType);
     e->visited    = true;
     e->types      = t;
     e->cast_types = &t[e->count];

@@ -11,7 +11,7 @@ static Cuik_Attribute* parse_attributes(Cuik_Parser* restrict parser, TokenStrea
             // C23 attribute:
             //
             //   [[foo]]  [[foo::bar]]  [[foo(1, 3)]]
-            Cuik_Attribute* a = ARENA_ALLOC(parser->arena, Cuik_Attribute);
+            Cuik_Attribute* a = TB_ARENA_ALLOC(parser->arena, Cuik_Attribute);
             a->prev = last;
             a->loc.start = tokens_get_location(s);
 

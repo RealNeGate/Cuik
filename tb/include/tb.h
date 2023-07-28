@@ -584,7 +584,7 @@ typedef struct {
 typedef void (*TB_PrintCallback)(void* user_data, const char* fmt, ...);
 
 // defined in common/arena.h
-typedef struct Arena Arena;
+typedef struct TB_Arena TB_Arena;
 
 ////////////////////////////////
 // Module management
@@ -772,7 +772,7 @@ TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc
 // into the correct ABI and exposing sane looking nodes to the parameters.
 //
 // returns the parameters
-TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, Arena* arena, size_t* out_param_count);
+TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count);
 TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* dbg);
 
 // used for ABI parameter passing
@@ -885,7 +885,7 @@ TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr);
 TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 
 // if arena is NULL, defaults to module arena which is freed on tb_free_thread_resources
-TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, Arena* arena);
+TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena);
 TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
@@ -1054,7 +1054,7 @@ TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 typedef struct TB_Passes TB_Passes;
 
 // the arena is used to allocate the nodes while passes are being done.
-TB_API TB_Passes* tb_pass_enter(TB_Function* f, Arena* arena);
+TB_API TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena);
 TB_API void tb_pass_exit(TB_Passes* opt);
 
 // transformation passes:

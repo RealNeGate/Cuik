@@ -9,8 +9,8 @@ typedef struct Set {
     uint64_t* data;
 } Set;
 
-static Set set_create_in_arena(Arena* arena, size_t cap) {
-    void* ptr = arena_alloc(arena, ((cap + 63) / 64) * sizeof(uint64_t));
+static Set set_create_in_arena(TB_Arena* arena, size_t cap) {
+    void* ptr = tb_arena_alloc(arena, ((cap + 63) / 64) * sizeof(uint64_t));
     memset(ptr, 0, ((cap + 63) / 64) * sizeof(uint64_t));
 
     return (Set){
