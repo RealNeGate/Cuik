@@ -2,6 +2,23 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#ifndef TB_API
+#  ifdef __cplusplus
+#    define TB_EXTERN extern "C"
+#  else
+#    define TB_EXTERN
+#  endif
+#  ifdef TB_DLL
+#    ifdef TB_IMPORT_DLL
+#      define TB_API TB_EXTERN __declspec(dllimport)
+#    else
+#      define TB_API TB_EXTERN __declspec(dllexport)
+#    endif
+#  else
+#    define TB_API TB_EXTERN
+#  endif
+#endif
+
 enum {
     TB_ARENA_SMALL_CHUNK_SIZE  =        4 * 1024,
     TB_ARENA_MEDIUM_CHUNK_SIZE =      512 * 1024,
@@ -37,23 +54,23 @@ typedef struct TB_ArenaSavepoint {
 #define TB_ARENA_ALLOC(arena, T) tb_arena_alloc(arena, sizeof(T))
 #define TB_ARENA_ARR_ALLOC(arena, count, T) tb_arena_alloc(arena, (count) * sizeof(T))
 
-void tb_arena_create(TB_Arena* restrict arena, size_t chunk_size);
-void tb_arena_destroy(TB_Arena* restrict arena);
+TB_API void tb_arena_create(TB_Arena* restrict arena, size_t chunk_size);
+TB_API void tb_arena_destroy(TB_Arena* restrict arena);
 
-void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size);
-void* tb_arena_alloc(TB_Arena* restrict arena, size_t size);
+TB_API void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size);
+TB_API void* tb_arena_alloc(TB_Arena* restrict arena, size_t size);
 
 // asserts if ptr+size != watermark
-void tb_arena_pop(TB_Arena* restrict arena, void* ptr, size_t size);
+TB_API void tb_arena_pop(TB_Arena* restrict arena, void* ptr, size_t size);
 
 // in case you wanna mix unaligned and aligned arenas
-void tb_arena_realign(TB_Arena* restrict arena);
+TB_API void tb_arena_realign(TB_Arena* restrict arena);
 
-bool tb_arena_is_empty(TB_Arena* arena);
+TB_API bool tb_arena_is_empty(TB_Arena* arena);
 
 // savepoints
-TB_ArenaSavepoint tb_arena_save(TB_Arena* arena);
-void tb_arena_restore(TB_Arena* arena, TB_ArenaSavepoint sp);
+TB_API TB_ArenaSavepoint tb_arena_save(TB_Arena* arena);
+TB_API void tb_arena_restore(TB_Arena* arena, TB_ArenaSavepoint sp);
 
 // resets to only having one chunk
-void tb_arena_clear(TB_Arena* arena);
+TB_API void tb_arena_clear(TB_Arena* arena);

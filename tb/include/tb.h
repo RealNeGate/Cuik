@@ -15,20 +15,21 @@
 #define TB_VERSION_MINOR 2
 #define TB_VERSION_PATCH 0
 
-#ifdef __cplusplus
-#define TB_EXTERN extern "C"
-#else
-#define TB_EXTERN
-#endif
-
-#ifdef TB_DLL
-#  ifdef TB_IMPORT_DLL
-#    define TB_API TB_EXTERN __declspec(dllimport)
+#ifndef TB_API
+#  ifdef __cplusplus
+#    define TB_EXTERN extern "C"
 #  else
-#    define TB_API TB_EXTERN __declspec(dllexport)
+#    define TB_EXTERN
 #  endif
-#else
-#  define TB_API TB_EXTERN
+#  ifdef TB_DLL
+#    ifdef TB_IMPORT_DLL
+#      define TB_API TB_EXTERN __declspec(dllimport)
+#    else
+#      define TB_API TB_EXTERN __declspec(dllexport)
+#    endif
+#  else
+#    define TB_API TB_EXTERN
+#  endif
 #endif
 
 // These are flags
@@ -587,9 +588,9 @@ typedef void (*TB_PrintCallback)(void* user_data, const char* fmt, ...);
 typedef struct TB_Arena TB_Arena;
 
 // 0 for default
-void tb_arena_create(TB_Arena* restrict arena, size_t chunk_size);
-void tb_arena_destroy(TB_Arena* restrict arena);
-bool tb_arena_is_empty(TB_Arena* arena);
+TB_API void tb_arena_create(TB_Arena* restrict arena, size_t chunk_size);
+TB_API void tb_arena_destroy(TB_Arena* restrict arena);
+TB_API bool tb_arena_is_empty(TB_Arena* arena);
 
 ////////////////////////////////
 // Module management
