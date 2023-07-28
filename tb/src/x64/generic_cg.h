@@ -56,10 +56,13 @@ typedef struct {
     int val;
 } ValueDesc;
 
+typedef struct {
+    int start, end;
+} LiveInterval;
+
 typedef struct MachineBB {
     Inst* first;
 
-    // on the timeline/slot indices
     int start, end;
 
     // local live sets
@@ -85,6 +88,7 @@ typedef struct Def {
 
     // lifetime
     int start, end;
+    bool forced;
 
     // regalloc
     int16_t hint;
@@ -186,7 +190,7 @@ static int put_def_hinted(Ctx* restrict ctx, TB_Node* n, int reg_class, int hint
 #define DEF_FORCED(n, rg, reg, live_until) put_def_forced(ctx, n, rg, reg, live_until)
 static int put_def_forced(Ctx* restrict ctx, TB_Node* n, int reg_class, int reg, int live_until) {
     int i = dyn_array_length(ctx->defs);
-    dyn_array_put(ctx->defs, (Def){ .node = n, .start = INT_MAX, .end = INT_MIN, .reg_class = reg_class, .reg = reg, .live_until = live_until });
+    dyn_array_put(ctx->defs, (Def){ .node = n, .start = INT_MAX, .end = INT_MIN, .reg_class = reg_class, .reg = reg, .forced = true, .live_until = live_until });
     return i;
 }
 
@@ -222,6 +226,8 @@ static void finna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num);
 static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out);
 static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt);
 static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r);
+
+static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index);
 static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index);
 
 #define ISEL(n) USE(isel(ctx, n))
@@ -773,6 +779,13 @@ static bool use(Ctx* restrict ctx, TB_Node* n) {
 
     ctx->uses[search].v -= 1;
     return ctx->uses[search].v == 0;
+}
+
+static void fake_unuse(Ctx* restrict ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->uses, n);
+    if (search >= 0) {
+        ctx->uses[search].v += 1;
+    }
 }
 
 static void isel_region(Ctx* restrict ctx, TB_Node* control, TB_Node* next) {

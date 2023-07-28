@@ -18,7 +18,7 @@ static size_t choose_best_split(Ctx* restrict ctx, Inst* inst, int reg_class, in
     FOREACH_REVERSE_N(i, 0, ctx->active_count) {
         DefIndex di = ctx->active[i];
 
-        if (ctx->defs[di].reg_class == reg_class && ctx->defs[di].reg >= 0 && !check_if_used(ctx, inst, di, 3)) {
+        if (!ctx->defs[di].forced && ctx->defs[di].reg_class == reg_class && ctx->defs[di].reg >= 0 && !check_if_used(ctx, inst, di, 3)) {
             return i;
         }
     }
@@ -51,26 +51,33 @@ static Inst* find_inst_at_time(Ctx* restrict ctx, int time) {
     return NULL;
 }
 
-static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* spill_inst, DefIndex split_def, size_t split_active_i, int reg_class, int reg_num) {
+static int ls_split(Ctx* restrict ctx, RegAllocWorklist* worklist, DefIndex split_def, size_t active_i, LiveInterval li, MachineReg mr) {
+    // simple example where R1 is needed for the range 10 - 12
+    //
+    //  9: STORE [SP - 4], R1 # SPILL
+    // 10: MOV R1, #400
+    // 12: CALL ...
+    // 13: LOAD R1, [SP - 4]  # RELOAD GOES BACK INTO R1
+    //
+    // if push comes to shove and something needs to read the splitted R1 while
+    // we generate a new register.
     // insert spill
     Reload r = { TB_TYPE_I64, split_def };
     if (ctx->defs[split_def].node != NULL) {
         r.dt = ctx->defs[split_def].node->dt;
     }
 
+    Inst* spill_inst = find_inst_at_time(ctx, li.start);
     spill(ctx, spill_inst, &r);
     spill_inst = spill_inst->next;
 
-    size_t min = SIZE_MAX;
-
-    // keep spilled and generate reloads on the first use in any BB
+    // NOTE(NeGate): splits don't cross BB boundaries
+    // which makes it easier to manage this.
     DefIndex last_known = -1;
-    int endpoint = ctx->defs[split_def].end;
-
     Inst *inst = spill_inst->next, *prev_inst = spill_inst;
     for (; inst; prev_inst = inst, inst = inst->next) {
         if (wont_spill_around(inst->type)) last_known = -1;
-        if (inst->time > endpoint) break;
+        if (inst->time > li.end) break;
 
         // if it's used, refer to reload
         bool skip_next = false;
@@ -84,7 +91,7 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
             } else if (last_known < 0) {
                 // spin up new def
                 int t = prev_inst->time + 1;
-                dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1, .hint = reg_num });
+                dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1, .hint = -1 });
                 last_known = dyn_array_length(ctx->defs) - 1;
 
                 // place new definition into worklist sorted
@@ -114,9 +121,76 @@ static int spill_register(Ctx* restrict ctx, RegAllocWorklist* worklist, Inst* s
         }
     }
 
-    set_remove(&ctx->used_regs[reg_class], reg_num);
-    remove_active(ctx, split_active_i);
+    // reload back into original register
+    r.old = split_def;
+    reload(ctx, prev_inst, &r, 0);
+
+    // remove from active list and used regs
+    set_remove(&ctx->used_regs[mr.class], mr.num);
+    remove_active(ctx, active_i);
+    return mr.num;
+
+    #if 0
+    if (strcmp(ctx->f->super.name, "stbi__refill_buffer") == 0) {
+        __debugbreak();
+    }
+
+    // keep spilled and generate reloads on the first use in any BB
+    int endpoint = ctx->defs[split_def].end;
+
+    Inst *inst = spill_inst->next, *prev_inst = spill_inst;
+    for (; inst; prev_inst = inst, inst = inst->next) {
+        if (wont_spill_around(inst->type)) last_known = -1;
+        if (inst->time > endpoint) break;
+
+        // if it's used, refer to reload
+        bool skip_next = false;
+        FOREACH_REVERSE_N(j, 1, 4) if (inst->regs[j] == USE(split_def)) {
+            if (inst->type == INST_MOVE && j == 1) {
+                if (last_known >= 0) ctx->defs[last_known].end = inst->time + 1;
+
+                skip_next = true;
+                r.old = split_def;
+                spill(ctx, inst, &r);
+                last_known = -1;
+                continue;
+            } else if (last_known < 0) {
+                // spin up new def
+                int t = prev_inst->time + 1;
+                dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1, .hint = reg_num });
+                last_known = dyn_array_length(ctx->defs) - 1;
+
+                // place new definition into worklist sorted
+                dyn_array_put_uninit(*worklist, 1);
+                insert_sorted_def(ctx, *worklist, dyn_array_length(*worklist) - 1, t, last_known);
+
+                // generate reload before this instruction
+                r.old = last_known;
+                reload(ctx, prev_inst, &r, j);
+            }
+
+            inst->regs[j] = USE(last_known);
+            ctx->defs[last_known].end = inst->time + (j == 1 ? 0 : 1);
+        }
+
+        if (inst->regs[0] == split_def && last_known != split_def) {
+            if (last_known >= 0) ctx->defs[last_known].end = inst->time + 1;
+
+            // spill and discard our reload spot (if applies)
+            r.old = inst->regs[0];
+            spill(ctx, inst, &r);
+            last_known = -1;
+            skip_next = true;
+        }
+
+        if (skip_next) {
+            // skip this instruction to avoid infinite spills
+            prev_inst = inst, inst = inst->next;
+        }
+    }
+
     return reg_num;
+    #endif
 }
 
 static const char* reg_name(int rg, int num) {
@@ -134,37 +208,20 @@ static ptrdiff_t find_active_from_reg(Ctx* restrict ctx, int reg_class, int reg)
     return -1;
 }
 
-static size_t evict(Ctx* restrict ctx, RegAllocWorklist* worklist, DefIndex di, int reg_class, int reg_num, int time) {
-    if (!set_get(&ctx->used_regs[reg_class], reg_num)) {
+static size_t evict(Ctx* restrict ctx, RegAllocWorklist* worklist, MachineReg mr, LiveInterval li) {
+    if (!set_get(&ctx->used_regs[mr.class], mr.num)) {
         return false;
     }
 
-    REG_ALLOC_LOG printf("  \x1b[32m#   evict %s\x1b[0m\n", reg_name(reg_class, reg_num));
+    REG_ALLOC_LOG printf("  \x1b[32m#   evict %s\x1b[0m\n", reg_name(mr.class, mr.num));
 
-    ptrdiff_t spill_active_i = find_active_from_reg(ctx, reg_class, reg_num);
+    ptrdiff_t spill_active_i = find_active_from_reg(ctx, mr.class, mr.num);
     assert(spill_active_i >= 0 && "We both know a register in use and don't know who's doing it...");
 
     DefIndex spill_def = ctx->active[spill_active_i];
     Inst* inst = find_inst_at_time(ctx, ctx->defs[spill_def].start);
 
-    // we need to spill this sometime between 'time' and the initial
-    // definition, we're trying to push it as far as possible but we
-    // don't cross the definition BB to do so.
-    while (inst->next != NULL) {
-        Inst* next = inst->next;
-
-        if (next->type == INST_LABEL || wont_spill_around(next->type)) {
-            // stop before a BB or terminator
-            break;
-        } else if (next->time >= time) {
-            // it's now or never
-            break;
-        }
-
-        inst = next;
-    }
-
-    spill_register(ctx, worklist, inst, spill_def, spill_active_i, reg_class, reg_num);
+    ls_split(ctx, worklist, spill_def, spill_active_i, li, mr);
     return true;
 }
 
@@ -217,13 +274,15 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
 
         // clobbering will evict registers it needs
         if (d->clobbers) {
+            // only needs to evict until the end of the definition site
+            LiveInterval li = { time, time + 2 };
+
             FOREACH_N(j, 0, d->clobbers->count) {
-                evict(ctx, &worklist, di, d->clobbers->_[j].class, d->clobbers->_[j].num, time);
+                evict(ctx, &worklist, d->clobbers->_[j], li);
                 d = &ctx->defs[di];
             }
 
             d = &ctx->defs[di];
-
             next_clobber = NULL;
 
             // find the clobber, delete it
@@ -237,8 +296,11 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
         int rc = d->reg_class;
         ptrdiff_t reg_num = -1;
         if (d->reg >= 0) {
-            // pre-colored, we make room for it
-            if (evict(ctx, &worklist, di, rc, d->reg, time)) {
+            // pre-colored, we make room for it for it's entire lifetime.
+            LiveInterval li = { d->start, d->end };
+            MachineReg mr   = { rc, d->reg };
+
+            if (evict(ctx, &worklist, mr, li)) {
                 d = &ctx->defs[di];
             }
 
@@ -270,13 +332,14 @@ static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workli
 
             if (reg_num < 0) {
                 // choose who to spill
-                Inst* spill_inst = find_inst_at_time(ctx, time);
+                tb_todo();
+                /* Inst* spill_inst = find_inst_at_time(ctx, time);
                 size_t split_i = choose_best_split(ctx, spill_inst, rc, time);
 
                 DefIndex spill_def = ctx->active[split_i];
 
                 reg_num = spill_register(ctx, &worklist, spill_inst, spill_def, split_i, rc, ctx->defs[spill_def].reg);
-                d = &ctx->defs[di];
+                d = &ctx->defs[di]; */
             }
 
             REG_ALLOC_LOG printf("  \x1b[32m#   assign %s\x1b[0m\n", reg_name(rc, reg_num));

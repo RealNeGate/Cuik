@@ -51,7 +51,7 @@ struct Inst {
 
     // prefixes
     InstPrefix prefix : 16;
-    InstType type : 16;
+    InstType type;
 
     X86_OperandLayout layout;
     TB_X86_DataType data_type;
@@ -542,6 +542,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
             assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
 
             Cond cc = -1;
+            use(ctx, n);
 
             if (TB_IS_FLOAT_TYPE(cmp_dt)) {
                 int lhs = ISEL(n->inputs[1]);
@@ -585,11 +586,9 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
                 return cc;
             }
         }
-
-        src = USE(ctx->values[search].v);
-    } else {
-        src = ISEL(n);
     }
+
+    src = ISEL(n);
 
     TB_DataType dt = n->dt;
     if (TB_IS_FLOAT_TYPE(dt)) {
@@ -1263,6 +1262,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
+        case TB_UNREACHABLE:
         case TB_TRAP: {
             SUBMIT(inst_nullary(UD2));
             break;
@@ -1274,8 +1274,20 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
             TB_Node** succ = r->succ;
 
-            fence(ctx, n);
-            fence_last(ctx, bb, n);
+            if (r->succ_count == 2 && br->keys[0] == 0) {
+                use(ctx, n->inputs[1]);
+
+                // do fence without that extra use
+                fence(ctx, n);
+                fence_last(ctx, bb, n);
+
+                // we redo it because the later code will be the one to
+                // actually apply it
+                fake_unuse(ctx, n->inputs[1]);
+            } else {
+                fence(ctx, n);
+                fence_last(ctx, bb, n);
+            }
 
             if (r->succ_count == 1) {
                 if (ctx->fallthrough != succ[0]) {
@@ -1985,7 +1997,7 @@ static size_t emit_prologue(Ctx* restrict ctx) {
     }*/
 
     // if there's more than 4096 bytes of stack, we need to insert a chkstk
-    if (stack_usage >= 4096) {
+    if (0 && stack_usage >= 4096) {
         Val sym = val_global(ctx->f->super.module->chkstk_extern);
         Val imm = val_imm(stack_usage);
         Val rax = val_gpr(RAX);
