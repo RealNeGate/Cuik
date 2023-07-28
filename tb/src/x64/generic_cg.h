@@ -124,6 +124,7 @@ typedef struct {
     TB_Dominators doms;
 
     // Scheduling
+    NL_HashSet visited;
     NL_Map(TB_Node*, int) uses;
 
     // temporary but still precious
@@ -345,7 +346,7 @@ static void reverse_bb_walk(Ctx* restrict ctx, TB_Function* f, MachineBB* bb, In
     FOREACH_N(j, 1, 4) if (inst->regs[j] < -1) {
         Def* d = &ctx->defs[-inst->regs[j] - 2];
 
-        add_range(ctx, d, bb->start, inst->time + (inst->type == X86_OP_R && j == 1 ? 0 : 1));
+        add_range(ctx, d, bb->start, inst->time + (j == 1 ? 0 : 1));
     }
 }
 
@@ -637,10 +638,59 @@ static bool use_load(Ctx* restrict ctx, TB_Node* n) {
     return false;
 }
 
+////////////////////////////////
+// Early scheduling
+////////////////////////////////
+// schedule nodes below any of their pinned dependencies
+static bool is_pinned(TB_Node* n) {
+    return (n->type >= TB_START && n->type <= TB_TRAP) || n->type == TB_LOAD || n->type == TB_PHI;
+}
+
+static void schedule_early(Ctx* restrict ctx, TB_Node* n) {
+    if (!nl_hashset_put(&ctx->visited, n)) {
+        // already visited
+        return;
+    }
+
+    // mark as visited (also track use count here)
+    size_t use_count = 0;
+    for (User* use = find_users(ctx->p, n); use; use = use->next) use_count++;
+    nl_map_put(ctx->uses, n, use_count);
+
+    if (n->inputs[0] == NULL) {
+        set_input(ctx->p, n, ctx->f->start_node, 0);
+    }
+
+    FOREACH_N(i, 1, n->input_count) {
+        schedule_early(ctx, n->inputs[i]);
+
+        // choose deepest block
+        if (dom_depth(ctx->doms, n->inputs[0]) < dom_depth(ctx->doms, n->inputs[i]->inputs[0])) {
+            set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
+        }
+    }
+}
+
+static void schedule_region(Ctx* restrict ctx, TB_Node* n) {
+    TB_Node* parent = n->inputs[0];
+    if (parent->type != TB_START && parent->type != TB_REGION) {
+        schedule_region(ctx, parent);
+    }
+
+    FOREACH_N(i, 1, n->input_count) {
+        schedule_early(ctx, n->inputs[i]);
+    }
+}
+
+////////////////////////////////
+// Late scheduling
+////////////////////////////////
+// schedule nodes such that they appear the least common
+// ancestor to all their users
 static TB_Node* walk_up(TB_Dominators doms, TB_Node* a, TB_Node* b) {
     // if a is deeper, line it up with b
     int bdom = dom_depth(doms, b);
-    for (;;) {
+    while (a->input_count > 0) {
         TB_Node* aa = tb_get_parent_region(a);
         ptrdiff_t search = nl_map_get(doms._, aa);
         assert(search >= 0);
@@ -669,8 +719,7 @@ static TB_Node* find_lca(TB_Dominators doms, TB_Node* a, TB_Node* b) {
 
 static void schedule_late(Ctx* restrict ctx, TB_Node* n) {
     // uses doubles as the visited map for this function
-    ptrdiff_t search = nl_map_get(ctx->uses, n);
-    if (search >= 0) {
+    if (!nl_hashset_put(&ctx->visited, n) || is_pinned(n)) {
         // already visited
         return;
     }
@@ -679,6 +728,7 @@ static void schedule_late(Ctx* restrict ctx, TB_Node* n) {
     TB_Node* lca = NULL;
     for (User* use = find_users(ctx->p, n); use; use = use->next) {
         if (use->slot == 0) continue;
+
         TB_Node* y = use->n;
         schedule_late(ctx, y);
 
@@ -692,62 +742,27 @@ static void schedule_late(Ctx* restrict ctx, TB_Node* n) {
             }
             assert(j >= 0);
 
-            use_block = tb_get_parent_region(use_block->inputs[j]);
+            use_block = tb_get_parent_region(use_block->inputs[j - 1]);
         }
 
         lca = find_lca(ctx->doms, lca, use_block);
     }
 
-    if (lca == NULL) lca = ctx->f->start_node;
-
-    assert(n->inputs[0] == NULL);
     set_input(ctx->p, n, lca, 0);
 }
 
-static void schedule_early(Ctx* restrict ctx, TB_Node* n) {
-    // uses doubles as the visited map for this function
-    ptrdiff_t search = nl_map_get(ctx->uses, n);
-    if (search >= 0) {
-        // already visited
+// We'll be using this for late schedling
+static void postorder_all_nodes(Ctx* restrict ctx, DynArray(TB_Node*)* worklist, TB_Node* n) {
+    if (!nl_hashset_put(&ctx->visited, n)) {
         return;
     }
 
-    // mark as visited (also track use count here)
-    size_t use_count = 0;
-    for (User* use = find_users(ctx->p, n); use; use = use->next) use_count++;
-    nl_map_put(ctx->uses, n, use_count);
-
-    if (n->inputs[0] == NULL) {
-        set_input(ctx->p, n, ctx->f->start_node, 0);
+    // walk successors first
+    for (User* use = find_users(ctx->p, n); use; use = use->next) {
+        postorder_all_nodes(ctx, worklist, use->n);
     }
 
-    FOREACH_N(i, 1, n->input_count) {
-        schedule_early(ctx, n->inputs[i]);
-
-        // choose deepest block
-        if (dom_depth(ctx->doms, n->inputs[0]) < dom_depth(ctx->doms, n->inputs[i]->inputs[0])) {
-            set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
-        }
-    }
-}
-
-static void schedule_region(Ctx* restrict ctx, TB_Node* n) {
-    TB_Node* parent = n->inputs[0];
-    if (parent->type != TB_START && parent->type != TB_REGION) {
-        schedule_region(ctx, parent);
-    } else {
-        // marks the regions as infinite users
-        nl_map_put(ctx->uses, parent, INT_MAX);
-    }
-
-    nl_map_put(ctx->uses, n, INT_MAX);
-    FOREACH_N(i, 1, n->input_count) {
-        schedule_early(ctx, n->inputs[i]);
-    }
-
-    /*for (User* use = find_users(ctx->p, n); use; use = use->next) {
-        if (use->slot != 0) schedule_late(ctx, use->n);
-    }*/
+    dyn_array_put(*worklist, n);
 }
 
 static bool use(Ctx* restrict ctx, TB_Node* n) {
@@ -822,7 +837,12 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
         // make sure to not queue 'next' node
         ptrdiff_t search;
         if (n != ignore && (search = nl_map_get(ctx->uses, n)) >= 0) {
-            if (ctx->uses[search].v > 0) {
+            if (ctx->uses[search].v > 0 &&
+                n->type != TB_INTEGER_CONST &&
+                // n->type != TB_FLOAT32_CONST &&
+                // n->type != TB_FLOAT64_CONST &&
+                n->type != TB_LOCAL &&
+                n->type != TB_GET_SYMBOL_ADDRESS) {
                 isel(ctx, n);
             }
         }
@@ -878,15 +898,39 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // Scheduling: "Global Code Motion Global Value Numbering", Cliff Click 1995
     //   https://courses.cs.washington.edu/courses/cse501/06wi/reading/click-pldi95.pdf
     CUIK_TIMED_BLOCK("schedule") {
+        ctx.visited = nl_hashset_alloc(f->node_count);
         FOREACH_REVERSE_N(i, 0, ctx.order.count) {
             TB_Node* bb = ctx.order.traversal[i];
 
             // schedule all pinned instructions
             schedule_region(&ctx, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
         }
-    }
 
-    // __debugbreak();
+        // generate instruction list we can walk
+        DynArray(TB_Node*) worklist = NULL;
+
+        nl_hashset_clear(&ctx.visited);
+        postorder_all_nodes(&ctx, &worklist, f->start_node);
+
+        // move nodes closer to their usage site
+        nl_hashset_clear(&ctx.visited);
+        FOREACH_REVERSE_N(i, 0, dyn_array_length(worklist)) {
+            TB_Node* n = worklist[i];
+
+            if (is_pinned(n)) {
+                nl_hashset_put(&ctx.visited, n);
+                for (User* use = find_users(ctx.p, n); use; use = use->next) {
+                    schedule_late(&ctx, use->n);
+                }
+            } else if (n->input_count == 1) {
+                // this is gonna usually be the constants
+                schedule_late(&ctx, worklist[i]);
+            }
+        }
+
+        dyn_array_destroy(worklist);
+        nl_hashset_free(ctx.visited);
+    }
 
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are

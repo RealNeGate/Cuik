@@ -1984,6 +1984,17 @@ static size_t emit_prologue(Ctx* restrict ctx) {
         return 0;
     }*/
 
+    // if there's more than 4096 bytes of stack, we need to insert a chkstk
+    if (stack_usage >= 4096) {
+        Val sym = val_global(ctx->f->super.module->chkstk_extern);
+        Val imm = val_imm(stack_usage);
+        Val rax = val_gpr(RAX);
+
+        inst2_print(&ctx->emit, MOV, &rax, &imm, TB_X86_TYPE_DWORD);
+        inst1_print(&ctx->emit, CALL, &sym, TB_X86_TYPE_QWORD);
+        // inst2_print(&ctx->emit, SUB, &rax, TB_X86_TYPE_QWORD);
+    }
+
     // push rbp
     if (stack_usage > 0) {
         EMIT1(&ctx->emit, 0x50 + RBP);

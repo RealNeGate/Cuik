@@ -111,6 +111,11 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* fe
     m->rdata.name = tb__arena_strdup(m, -1, sys == TB_SYSTEM_WINDOWS ? ".rdata" : ".rodata");
     m->tls.name   = tb__arena_strdup(m, -1, sys == TB_SYSTEM_WINDOWS ? ".tls$"  : ".tls");
     m->tls.kind   = TB_MODULE_SECTION_TLS;
+
+    if (m->target_abi == TB_ABI_WIN64) {
+        m->chkstk_extern = (TB_Symbol*) tb_extern_create(m, -1, "__chkstk", TB_EXTERNAL_SO_LOCAL);
+    }
+
     return m;
 }
 

@@ -410,6 +410,7 @@ struct TB_Module {
     // This is a hack for windows since they've got this idea
     // of a _tls_index
     TB_Symbol* tls_index_extern;
+    TB_Symbol* chkstk_extern;
 
     size_t comdat_function_count; // compiled function count
     _Atomic size_t compiled_function_count;

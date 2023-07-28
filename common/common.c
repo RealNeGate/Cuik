@@ -114,11 +114,36 @@ void* arena_unaligned_alloc(Arena* restrict arena, size_t size) {
     }
 }
 
+void arena_pop(Arena* restrict arena, void* ptr, size_t size) {
+    char* p = ptr;
+    assert(arena->watermark + size == p); // cannot pop from arena if it's not at the top
+
+    arena->watermark = p;
+}
+
 void arena_realign(Arena* restrict arena) {
     ptrdiff_t pos = arena->watermark - arena->top->data;
     pos = (pos + ARENA_ALIGNMENT - 1) & ~(ARENA_ALIGNMENT - 1);
 
     arena->watermark = &arena->top->data[pos];
+}
+
+ArenaSavepoint arena_save(Arena* arena) {
+    return (ArenaSavepoint){ arena->top, arena->watermark };
+}
+
+void arena_restore(Arena* arena, ArenaSavepoint sp) {
+    // kill any chunks which are ahead of the top
+    ArenaChunk* c = sp.top->next;
+    while (c != NULL) {
+        ArenaChunk* next = c->next;
+        cuik__vfree(c, arena->chunk_size);
+        c = next;
+    }
+
+    arena->top = sp.top;
+    arena->watermark = sp.watermark;
+    arena->high_point = &sp.top->data[arena->chunk_size - sizeof(ArenaChunk)];
 }
 
 void* arena_alloc(Arena* restrict arena, size_t size) {
