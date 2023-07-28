@@ -972,10 +972,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         nl_hashset_free(ctx.visited);
     }
 
-    if (strcmp(f->super.name, "stbi__load_main") == 0) {
-        __debugbreak();
-    }
-
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are
     //   fixed and which need allocation. For now regalloc is handled
