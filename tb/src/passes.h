@@ -25,7 +25,7 @@ struct TB_Passes {
     TB_Arena* old_arena;
 
     DynArray(TB_Node*) queue;
-    NL_Map(TB_Node*, int) lookup;
+    NL_HashSet visited;
 
     TB_PostorderWalk order;
     TB_Dominators doms;

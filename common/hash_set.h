@@ -15,6 +15,7 @@ void nl_hashset_free(NL_HashSet hs);
 
 void nl_hashset_clear(NL_HashSet* restrict hs);
 bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr);
+bool nl_hashset_remove(NL_HashSet* restrict hs, void* ptr);
 
 // this one takes a custom hash function
 void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_CompareFunc cmp);
@@ -27,6 +28,8 @@ void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_C
 #ifdef NL_HASH_SET_IMPL
 #include <common.h>
 
+#define NL_HASHSET_HIGH_BIT ~(SIZE_MAX >> ((size_t) 1))
+#define NL_HASHSET_TOMB ((void*) UINTPTR_MAX)
 #define NL_HASHSET_HASH(ptr) ((((uintptr_t) ptr) * 11400714819323198485ull) >> 32ull)
 
 NL_HashSet nl_hashset_alloc(size_t cap) {
@@ -49,7 +52,8 @@ void nl_hashset_free(NL_HashSet hs) {
     cuik_free(hs.data);
 }
 
-bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
+// lookup into hash map for ptr, it's also used to put things in
+static size_t nl_hashset_lookup(NL_HashSet* restrict hs, void* ptr, size_t* out_first) {
     assert(ptr);
     uint32_t h = NL_HASHSET_HASH(ptr);
 
@@ -58,25 +62,53 @@ bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
 
     do {
         if (hs->data[i] == NULL) {
-            hs->count++;
-            hs->data[i] = ptr;
-            return true;
+            *out_first = first;
+            return i;
         } else if (hs->data[i] == ptr) {
-            return false;
+            return ~(SIZE_MAX >> ((size_t) 1)) | i; // highest bit set
         }
 
         i = (i + 1) & mask;
     } while (i != first);
 
-    NL_HashSet new_hs = nl_hashset_alloc(nl_hashset_capacity(hs));
-    nl_hashset_for(p, hs) {
-        nl_hashset_put(&new_hs, *p);
-    }
-    nl_hashset_free(*hs);
-    *hs = new_hs;
+    return SIZE_MAX;
+}
 
-    // "tail" calls amirite
-    return nl_hashset_put(hs, ptr);
+bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
+    size_t first, index = nl_hashset_lookup(hs, ptr, &first);
+
+    // rehash (ideally only once? statistically not impossible for two?)
+    while (index == SIZE_MAX) {
+        NL_HashSet new_hs = nl_hashset_alloc(nl_hashset_capacity(hs));
+        nl_hashset_for(p, hs) {
+            nl_hashset_put(&new_hs, *p);
+        }
+        nl_hashset_free(*hs);
+        *hs = new_hs;
+
+        // "tail" calls amirite
+        index = nl_hashset_lookup(hs, ptr, &first);
+    }
+
+    if (index & NL_HASHSET_HIGH_BIT) {
+        // slot is already filled
+        return false;
+    } else {
+        hs->count++;
+        hs->data[index] = ptr;
+        return true;
+    }
+}
+
+bool nl_hashset_remove(NL_HashSet* restrict hs, void* ptr) {
+    size_t first, index = nl_hashset_lookup(hs, ptr, &first);
+    if (index == SIZE_MAX || (index & NL_HASHSET_HIGH_BIT) == 0) {
+        return false;
+    }
+
+    hs->count--;
+    hs->data[index] = NL_HASHSET_TOMB;
+    return true;
 }
 
 // returns old value

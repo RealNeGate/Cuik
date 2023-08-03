@@ -657,6 +657,8 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 ////////////////////////////////
 // ANALYSIS
 ////////////////////////////////
+void print_node_sexpr(TB_Function* f, TB_Node* n, int depth);
+
 TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 

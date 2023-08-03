@@ -10,64 +10,10 @@ enum {
 
 enum {
     REG_CLASS_GPR,
-    REG_CLASS_XMM
-};
+    REG_CLASS_XMM,
 
-typedef int X86_InstType;
-
-// for memory operands imm[0] is two fields:
-//   top 32bits is scale, bottom 32bits is displacement
-typedef enum X86_OperandLayout {
-    X86_OP_NONE,
-
-    // label
-    X86_OP_L,
-    // global
-    X86_OP_G,
-
-    // integer unary
-    X86_OP_R,
-    X86_OP_M,
-    X86_OP_I,
-    X86_OP_A,
-
-    // integer binary ops
-    X86_OP_RR,
-    X86_OP_RI,
-    X86_OP_MI,
-    X86_OP_RM,
-    X86_OP_MR,
-} X86_OperandLayout;
-
-typedef enum {
-    INST_LOCK   = 1,
-    INST_REP    = 2,
-    INST_REPNE  = 4,
-} InstPrefix;
-
-typedef struct Inst Inst;
-struct Inst {
-    Inst* next;
-
-    // prefixes
-    InstPrefix prefix : 16;
-    InstType type;
-
-    X86_OperandLayout layout;
-    TB_X86_DataType data_type;
-    int time;
-
-    // helps with printing spill comment.
-    //   <0 means reload
-    //   =0 means none
-    //   >0 means spill
-    int spill_metadata;
-
-    // virtual registers (-1 means none, -2 and lower is VREGs, 0+ is normal registers)
-    //
-    //   regs[0] is a destination
-    int regs[4];
-    uint64_t imm[2];
+    FIRST_GPR = 0,
+    FIRST_XMM = 16, // we're getting more GPRs in intel APX so this might change :)
 };
 
 typedef struct {
@@ -76,6 +22,22 @@ typedef struct {
     int old;
     int stack_pos;
 } Reload;
+
+static const struct ParamDescriptor {
+    int gpr_count;
+    int xmm_count;
+    uint16_t caller_saved_xmms; // XMM0 - XMMwhatever
+    uint16_t caller_saved_gprs; // bitfield
+
+    GPR gprs[6];
+} param_descs[] = {
+    // win64
+    { 4, 4, 6, WIN64_ABI_CALLER_SAVED,  { RCX, RDX, R8,  R9,  0,  0 } },
+    // system v
+    { 6, 4, 5, SYSV_ABI_CALLER_SAVED,    { RDI, RSI, RDX, RCX, R8, R9 } },
+    // syscall
+    { 6, 4, 5, SYSCALL_ABI_CALLER_SAVED, { RDI, RSI, RDX, R10, R8, R9 } },
+};
 
 #include "generic_cg.h"
 
@@ -128,6 +90,10 @@ static TB_X86_DataType legalize(TB_DataType dt) {
     }
 }
 
+static int classify_reg_class(TB_DataType dt) {
+    return dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR;
+}
+
 static bool wont_spill_around(int t) {
     return t == INST_LABEL || t == TEST || t == CMP || t == JMP || (t >= JO && t <= JG);
 }
@@ -136,6 +102,402 @@ static bool is_terminator_or_label(int t) {
     return t == INST_LABEL || t == JMP || (t >= JO && t <= JG);
 }
 
+static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
+    uint64_t mask = UINT64_MAX;
+    TB_Node* prev = n;
+    if (n->type == TB_SIGN_EXT) {
+        n = n->inputs[1];
+    } else if (n->type == TB_TRUNCATE) {
+        assert(n->dt.type == TB_INT);
+
+        n = n->inputs[1];
+        mask = n->dt.data == 64 ? UINT64_MAX : (1ull << n->dt.data) - 1;
+    }
+
+    if (n->type == TB_INTEGER_CONST) {
+        TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+        if (i->num_words == 1 && fits_into_int32(i->words[0] & mask)) {
+            if (prev != n) use(ctx, prev);
+
+            *out_x = i->words[0] & mask;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->stack_slots, n);
+    if (search >= 0) {
+        return ctx->stack_slots[search].v;
+    } else {
+        TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
+
+        int pos = STACK_ALLOC(local->size, local->align);
+        nl_map_put(ctx->stack_slots, n, pos);
+
+        add_debug_local(ctx, n, pos);
+        return pos;
+    }
+}
+
+static int isel(Ctx* restrict ctx, TB_Node* n) {
+    use(ctx, n);
+
+    ptrdiff_t search = nl_map_get(ctx->values, n);
+    if (search >= 0) {
+        return ctx->values[search].v;
+    }
+
+    TB_NodeTypeEnum type = n->type;
+    int dst = -1;
+    bool forget = false;
+
+    switch (type) {
+        case TB_REGION: {
+            TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+            break;
+        }
+
+        case TB_START: {
+            TB_NodeRegion* start = TB_NODE_GET_EXTRA(n);
+            const TB_FunctionPrototype* restrict proto = ctx->f->prototype;
+            bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
+
+            const GPR* gpr_params  = is_sysv ? SYSV_GPR_PARAMETERS : WIN64_GPR_PARAMETERS;
+            size_t gpr_param_count = is_sysv ? COUNTOF(SYSV_GPR_PARAMETERS) : COUNTOF(WIN64_GPR_PARAMETERS);
+            int xmm_param_count    = is_sysv ? 8 : 4;
+
+            // Handle known parameters
+            // handle known parameters
+            int used_gpr = 0, used_xmm = 0;
+            FOREACH_N(i, 0, proto->param_count) {
+                TB_Node* proj = start->projs[i];
+                bool is_float = proj->dt.type == TB_FLOAT;
+
+                // copy from parameter
+                int reg_class = (is_float ? REG_CLASS_XMM : REG_CLASS_GPR);
+                int v = -1;
+
+                int id = is_float ? used_gpr : used_xmm;
+                if (is_sysv) {
+                    if (is_float) used_xmm += 1;
+                    else used_gpr += 1;
+                } else {
+                    // win64 will expend the slot regardless of if it's used
+                    used_gpr += 1;
+                    used_xmm += 1;
+                }
+
+                int reg_limit = is_float ? xmm_param_count : gpr_param_count;
+                if (id < reg_limit) {
+                    int reg_num = (proj->dt.type == TB_FLOAT ? id : gpr_params[id]);
+
+                    v = DEF(proj, proj->dt);
+                    hint_reg(ctx, v, reg_num);
+                    SUBMIT(inst_move(proj->dt, v, reg_num));
+
+                    nl_map_put(ctx->values, proj, v);
+                }
+            }
+
+            // walk the entry to find any parameter stack slots
+            bool has_param_slots = false;
+            TB_Node* curr = start->end;
+            while (curr->type != TB_START) {
+                if (curr->type == TB_STORE) {
+                    // handle parameter storage, the first few parameters
+                    // have reserved space for them in Win64.
+                    if (curr->inputs[1]->type == TB_LOCAL &&
+                        curr->inputs[2]->type == TB_PROJ &&
+                        curr->inputs[2]->inputs[0]->type == TB_START) {
+                        TB_NodeProj* p = TB_NODE_GET_EXTRA(curr->inputs[2]);
+
+                        int pos = 16 + (p->index * 8);
+                        nl_map_put(ctx->stack_slots, curr->inputs[1], pos);
+
+                        if (p->index >= 4 && ctx->target_abi == TB_ABI_WIN64) {
+                            nl_map_put(ctx->values, curr, -1); // marks as visited (stores don't return so we can -1)
+                        }
+
+                        // add parameter to debug info
+                        add_debug_local(ctx, curr->inputs[1], pos);
+
+                        has_param_slots = true;
+                    }
+                }
+
+                // previous in control
+                curr = curr->inputs[0];
+            }
+
+            if (has_param_slots) {
+                ctx->stack_usage += 16 + (proto->param_count * 8);
+            } else {
+                ctx->stack_usage += 16;
+            }
+
+            // Handle unknown parameters (if we have varargs)
+            if (proto->has_varargs) {
+                const GPR* parameter_gprs = is_sysv ? SYSV_GPR_PARAMETERS : WIN64_GPR_PARAMETERS;
+
+                // spill the rest of the parameters (assumes they're all in the GPRs)
+                size_t gpr_count = is_sysv ? 6 : 4;
+                size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
+
+                FOREACH_N(i, 0, extra_param_count) {
+                    size_t param_num = proto->param_count + i;
+
+                    int dst_pos = 16 + (param_num * 8);
+                    GPR src = parameter_gprs[param_num];
+
+                    tb_todo();
+                    // SUBMIT(inst_mr(MOV, TB_TYPE_I64, RBP, GPR_NONE, SCALE_X1, dst_pos, src));
+                }
+
+                ctx->stack_usage += (extra_param_count * 8);
+            }
+            break;
+        }
+
+        case TB_INTEGER_CONST: {
+            TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+            assert(i->num_words == 1);
+
+            dst = DEF(n, n->dt);
+            uint64_t x = i->words[0];
+
+            // mask off bits
+            uint64_t bits_in_type = n->dt.type == TB_PTR ? 64 : n->dt.data;
+            if (bits_in_type < 64) {
+                x &= (1ull << bits_in_type) - 1;
+            }
+
+            if (!fits_into_int32(x)) {
+                // movabs reg, imm64
+                SUBMIT(inst_op_abs(MOVABS, n->dt, dst, x));
+            } else {
+                SUBMIT(inst_op_imm(MOV, n->dt, dst, x));
+            }
+            forget = true;
+            break;
+        }
+
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB: {
+            const static InstType ops[] = { AND, OR, XOR, ADD, SUB };
+            InstType op = ops[type - TB_AND];
+
+            dst = DEF(n, n->dt);
+
+            int32_t x;
+            if (try_for_imm32(ctx, n->inputs[2], &x)) {
+                use(ctx, n->inputs[2]);
+
+                int lhs = ISEL(n->inputs[1]);
+                SUBMIT(inst_op_ri(op, n->dt, dst, lhs, x));
+            } else {
+                int lhs = ISEL(n->inputs[1]);
+                int rhs = ISEL(n->inputs[2]);
+                SUBMIT(inst_op_rr(op, n->dt, dst, lhs, rhs));
+            }
+            break;
+        }
+
+        case TB_MUL: {
+            dst = DEF(n, n->dt);
+
+            int lhs = ISEL(n->inputs[1]);
+            int rhs = ISEL(n->inputs[2]);
+            SUBMIT(inst_op_rr(IMUL, n->dt, dst, lhs, rhs));
+            break;
+        }
+
+        case TB_SCALL:
+        case TB_CALL: {
+            bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
+            const struct ParamDescriptor* restrict desc = &param_descs[is_sysv ? 1 : 0];
+            if (type == TB_SCALL) {
+                desc = &param_descs[2];
+            }
+
+            dst = DEF(n, n->dt);
+            hint_reg(ctx, dst, 0); // RAX or XMM0 depending
+
+            // system calls don't count, we track this for ABI
+            // and stack allocation purposes.
+            if (ctx->caller_usage < n->input_count) {
+                ctx->caller_usage = n->input_count;
+            }
+
+            uint32_t caller_saved_gprs = desc->caller_saved_gprs;
+
+            // parameter passing is separate from eval from regalloc reasons
+            size_t in_count = 0;
+            RegIndex ins[16];
+
+            size_t xmms_used = 0, gprs_used = 0;
+            FOREACH_N(i, 2, n->input_count) {
+                TB_Node* param = n->inputs[i];
+                TB_DataType param_dt = param->dt;
+
+                bool use_xmm = TB_IS_FLOAT_TYPE(param_dt) || param_dt.width;
+                int reg = use_xmm ? xmms_used : gprs_used;
+                if (is_sysv) {
+                    if (use_xmm) {
+                        xmms_used++;
+                    } else {
+                        gprs_used++;
+                        caller_saved_gprs &= ~(1u << gprs_used);
+                    }
+                } else {
+                    // win64 will always expend a register
+                    xmms_used++;
+                    gprs_used++;
+                }
+
+                // first few parameters are passed as inputs to the CALL instruction.
+                // the rest are written into the stack at specific places.
+                RegIndex src = isel(ctx, param);
+                if (reg >= desc->gpr_count) {
+                    tb_todo();
+                    // SUBMIT(inst_mr(FP_MOV, param->dt, RSP, GPR_NONE, SCALE_X1, reg * 8, USE(src)));
+                } else {
+                    int phys_reg = use_xmm ? reg : desc->gprs[reg];
+                    hint_reg(ctx, src, phys_reg);
+
+                    ins[in_count++] = src;
+                }
+            }
+
+            // all these registers need to be spilled and reloaded if they're used across
+            // the function call boundary... you might see why inlining could be nice to implement
+            size_t clobbers = tb_popcount(caller_saved_gprs) + desc->caller_saved_xmms;
+            TB_Node* target = n->inputs[1];
+
+            bool static_call = n->type == TB_CALL && target->type == TB_GET_SYMBOL_ADDRESS;
+            Inst* call_inst = alloc_inst(n->type == TB_SCALL ? SYSCALL : CALL, n->dt, 1, in_count + !static_call, 0);
+
+            // return value (either XMM0 or RAX)
+            call_inst->operands[0] = dst;
+
+            // write inputs
+            RegIndex* dst_ins = &call_inst->operands[call_inst->out_count];
+            if (static_call) {
+                call_inst->flags |= INST_GLOBAL;
+                call_inst->s = TB_NODE_GET_EXTRA_T(target, TB_NodeSymbol)->sym;
+            } else {
+                *dst_ins++ = ISEL(target);
+            }
+
+            memcpy(dst_ins, ins, in_count * sizeof(RegIndex));
+
+            fence(ctx, n);
+            SUBMIT(call_inst);
+
+            /*
+            // the number of float parameters is written into AL
+            if (is_sysv) {
+                SUBMIT(inst_i(MOV, TB_TYPE_I64, RAX, xmms_used));
+            }
+            */
+
+            TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+            if (n->extra_count > sizeof(TB_NodeCall)) {
+                // multiple returns must fill up the projections
+                tb_todo();
+            } else {
+                if (n->dt.type == TB_FLOAT) {
+                    tb_todo();
+                } else {
+                    SUBMIT(inst_move(n->dt, dst, RAX));
+                }
+            }
+            break;
+        }
+
+        case TB_LOCAL: {
+            int pos = get_stack_slot(ctx, n);
+
+            dst = DEF(n, n->dt);
+            SUBMIT(inst_op_rm(LEA, n->dt, dst, RBP, -1, SCALE_X1, pos));
+            forget = true;
+            break;
+        }
+        case TB_LOAD: {
+            dst = DEF(n, n->dt);
+
+            TB_Node* addr = n->inputs[1];
+            if (addr->type == TB_LOCAL) {
+                use(ctx, addr);
+
+                int pos = get_stack_slot(ctx, addr);
+                SUBMIT(inst_op_rm(MOV, n->dt, dst, RBP, -1, SCALE_X1, pos));
+            } else {
+                int base = isel(ctx, addr);
+                SUBMIT(inst_op_rm(MOV, n->dt, dst, base, -1, SCALE_X1, 0));
+            }
+            break;
+        }
+        case TB_STORE: {
+            int src = isel(ctx, n->inputs[2]);
+
+            Inst* inst = NULL;
+            TB_Node* addr = n->inputs[1];
+            if (addr->type == TB_LOCAL) {
+                use(ctx, addr);
+
+                int pos = get_stack_slot(ctx, addr);
+                inst = inst_op_mr(MOV, n->dt, RBP, -1, SCALE_X1, pos, src);
+            } else {
+                int base = isel(ctx, addr);
+                inst = inst_op_mr(MOV, n->dt, base, -1, SCALE_X1, 0, src);
+            }
+
+            fence(ctx, n);
+            SUBMIT(inst);
+            break;
+        }
+
+        case TB_RET: {
+            if (n->input_count > 1) {
+                assert(n->input_count <= 2 && "We don't support multiple returns here");
+
+                int src = isel(ctx, n->inputs[1]);
+                hint_reg(ctx, src, 0);
+
+                // we don't really need a fence if we're about to exit
+                // fence(ctx, n);
+
+                // copy to return register
+                TB_DataType dt = n->inputs[1]->dt;
+                if (dt.type == TB_FLOAT) {
+                    tb_todo();
+                } else {
+                    SUBMIT(inst_move(dt, RAX, src));
+                }
+            }
+
+            if (ctx->fallthrough != NULL && !empty_bb(ctx->fallthrough)) {
+                SUBMIT(inst_goto(NULL));
+            }
+            break;
+        }
+
+        default: tb_todo();
+    }
+
+    if (!forget) {
+        nl_map_put(ctx->values, n, dst);
+    }
+    return dst;
+}
+
+#if 0
 static Inst inst_jcc(TB_Node* target, Cond cc) {
     return (Inst){
         .type = JO + cc,
@@ -219,24 +581,6 @@ static Inst inst_g(int op, TB_DataType dt, int dst, const TB_Symbol* sym) {
     };
 }
 
-static Inst inst_move(TB_DataType dt, int lhs, int rhs) {
-    return (Inst){
-        .type = (int)INST_MOVE,
-        .layout = X86_OP_RR,
-        .data_type = legalize(dt),
-        .regs = { -1, lhs, rhs }
-    };
-}
-
-static Inst inst_copy(TB_DataType dt, int lhs, int rhs) {
-    return (Inst){
-        .type = INST_COPY,
-        .layout = X86_OP_R,
-        .data_type = legalize(dt),
-        .regs = { lhs, rhs }
-    };
-}
-
 static Inst inst_rr(int op, TB_DataType dt, int dst, int lhs, int rhs) {
     assert(lhs != -1);
     return (Inst){
@@ -316,72 +660,6 @@ static Inst inst_mi(int op, TB_DataType dt, int base, int index, Scale scale, in
     };
 }
 
-static int classify_reg_class(TB_DataType dt) {
-    return dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR;
-}
-
-static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) {
-    static const char* type_names[] = {
-        "ptr",
-        "byte",    "word",    "dword",   "qword",
-        "pbyte",   "pword",   "pdword",  "pqword",
-        "xmmword", "xmmword", "xmmword", "xmmword",
-        "xmmword"
-    };
-
-    switch (v->type) {
-        case VAL_GPR: {
-            assert(v->reg >= 0 && v->reg < 16);
-            EMITA(e, "%s", GPR_NAMES[v->reg]);
-            break;
-        }
-        case VAL_XMM: EMITA(e, "XMM%d", v->reg); break;
-        case VAL_IMM: EMITA(e, "%d", v->imm); break;
-        case VAL_ABS: EMITA(e, "%#"PRIx64, v->abs); break;
-        case VAL_MEM: {
-            EMITA(e, "%s ", type_names[dt]);
-
-            if (v->index == -1) {
-                EMITA(e, "[%s", GPR_NAMES[v->reg]);
-            } else {
-                EMITA(e, "[%s + %s*%d", GPR_NAMES[v->reg], GPR_NAMES[v->index], 1u << v->scale);
-            }
-
-            if (v->imm != 0) {
-                EMITA(e, " + %d", v->imm);
-            }
-            EMITA(e, "]");
-            break;
-        }
-        case VAL_GLOBAL: {
-            const TB_Symbol* target = v->symbol;
-            if (*target->name == 0) {
-                if (v->imm == 0) {
-                    EMITA(e, "sym%p", target);
-                } else {
-                    EMITA(e, "[sym%p + %d]", target, v->imm);
-                }
-            } else {
-                if (v->imm == 0) {
-                    EMITA(e, "%s", target->name);
-                } else {
-                    EMITA(e, "[%s + %d]", target->name, v->imm);
-                }
-            }
-            break;
-        }
-        case VAL_LABEL: {
-            if (v->target == NULL) {
-                EMITA(e, ".ret");
-            } else {
-                EMITA(e, "L%p", (TB_Node*) v->target);
-            }
-            break;
-        }
-        default: tb_todo();
-    }
-}
-
 static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
@@ -392,46 +670,6 @@ static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     }
 
     return false;
-}
-
-static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
-    uint64_t mask = UINT64_MAX;
-    TB_Node* prev = n;
-    if (n->type == TB_SIGN_EXT) {
-        n = n->inputs[1];
-    } else if (n->type == TB_TRUNCATE) {
-        assert(n->dt.type == TB_INT);
-
-        n = n->inputs[1];
-        mask = n->dt.data == 64 ? UINT64_MAX : (1ull << n->dt.data) - 1;
-    }
-
-    if (n->type == TB_INTEGER_CONST) {
-        TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-        if (i->num_words == 1 && fits_into_int32(i->words[0] & mask)) {
-            if (prev != n) use(ctx, prev);
-
-            *out_x = i->words[0] & mask;
-            return true;
-        }
-    }
-
-    return false;
-}
-
-static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->stack_slots, n);
-    if (search >= 0) {
-        return ctx->stack_slots[search].v;
-    } else {
-        TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
-
-        int pos = STACK_ALLOC(local->size, local->align);
-        nl_map_put(ctx->stack_slots, n, pos);
-
-        add_debug_local(ctx, n, pos);
-        return pos;
-    }
 }
 
 static Inst isel_array(Ctx* restrict ctx, TB_Node* n, int dst) {
@@ -698,7 +936,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             size_t gpr_param_count = is_sysv ? COUNTOF(SYSV_GPR_PARAMETERS) : COUNTOF(WIN64_GPR_PARAMETERS);
             int xmm_param_count    = is_sysv ? 8 : 4;
 
-            // Handle known parameters
+            // handle known parameters
             int used_gpr = 0, used_xmm = 0;
             FOREACH_N(i, 0, proto->param_count) {
                 TB_Node* proj = start->projs[i];
@@ -1554,9 +1792,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
 
         case TB_MEMSET: {
-            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
-            int rdi = DEF_FORCED(n, REG_CLASS_GPR, RDI, rax);
-            int rcx = DEF_FORCED(n, REG_CLASS_GPR, RCX, rax);
+            int rax = DEF_FORCED(n->inputs[2], REG_CLASS_GPR, RAX, -1);
+            int rcx = DEF_FORCED(n->inputs[3], REG_CLASS_GPR, RCX, rax);
+            int rdi = DEF_FORCED(n->inputs[1], REG_CLASS_GPR, RDI, rax);
 
             // clobber inputs
             Clobbers* clobbers = tb_arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)));
@@ -1583,12 +1821,15 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             Inst i = inst_nullary(STOSB);
             i.prefix |= INST_REP;
             SUBMIT(i);
+            SUBMIT(inst_use(rdi));
+            SUBMIT(inst_use(rcx));
+            SUBMIT(inst_use(rax));
             break;
         }
         case TB_MEMCPY: {
-            int rsi = DEF_FORCED(n, REG_CLASS_GPR, RSI, -1);
-            int rdi = DEF_FORCED(n, REG_CLASS_GPR, RDI, rsi);
-            int rcx = DEF_FORCED(n, REG_CLASS_GPR, RCX, rsi);
+            int rsi = DEF_FORCED(n->inputs[2], REG_CLASS_GPR, RSI, -1);
+            int rdi = DEF_FORCED(n->inputs[1], REG_CLASS_GPR, RDI, rsi);
+            int rcx = DEF_FORCED(n->inputs[3], REG_CLASS_GPR, RCX, rsi);
 
             // clobber inputs
             Clobbers* clobbers = tb_arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)));
@@ -1615,6 +1856,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             Inst i = inst_nullary(MOVSB);
             i.prefix |= INST_REP;
             SUBMIT(i);
+            SUBMIT(inst_use(rdi));
+            SUBMIT(inst_use(rcx));
+            SUBMIT(inst_use(rsi));
             break;
         }
 
@@ -1667,78 +1911,68 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
     }
     return dst;
 }
+#endif
 
-static void copy_value(Ctx* restrict ctx, TB_Node* phi, int dst, TB_Node* src, TB_DataType dt) {
-    int src_v = ISEL(src);
-    SUBMIT(inst_move(dt, dst, src_v));
-}
+static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) {
+    static const char* type_names[] = {
+        "ptr",
+        "byte",    "word",    "dword",   "qword",
+        "pbyte",   "pword",   "pdword",  "pqword",
+        "xmmword", "xmmword", "xmmword", "xmmword",
+        "xmmword"
+    };
 
-static void spill(Ctx* restrict ctx, Inst* basepoint, Reload* r) {
-    // allocate stack slot
-    if (r->stack_pos == 0) {
-        r->stack_pos = STACK_ALLOC(8, 8);
+    switch (v->type) {
+        case VAL_GPR: {
+            assert(v->reg >= 0 && v->reg < 16);
+            EMITA(e, "%s", GPR_NAMES[v->reg]);
+            break;
+        }
+        case VAL_XMM: EMITA(e, "XMM%d", v->reg); break;
+        case VAL_IMM: EMITA(e, "%d", v->imm); break;
+        case VAL_ABS: EMITA(e, "%#"PRIx64, v->abs); break;
+        case VAL_MEM: {
+            EMITA(e, "%s ", type_names[dt]);
+
+            if (v->index == -1) {
+                EMITA(e, "[%s", GPR_NAMES[v->reg]);
+            } else {
+                EMITA(e, "[%s + %s*%d", GPR_NAMES[v->reg], GPR_NAMES[v->index], 1u << v->scale);
+            }
+
+            if (v->imm != 0) {
+                EMITA(e, " + %d", v->imm);
+            }
+            EMITA(e, "]");
+            break;
+        }
+        case VAL_GLOBAL: {
+            const TB_Symbol* target = v->symbol;
+            if (*target->name == 0) {
+                if (v->imm == 0) {
+                    EMITA(e, "sym%p", target);
+                } else {
+                    EMITA(e, "[sym%p + %d]", target, v->imm);
+                }
+            } else {
+                if (v->imm == 0) {
+                    EMITA(e, "%s", target->name);
+                } else {
+                    EMITA(e, "[%s + %d]", target->name, v->imm);
+                }
+            }
+            break;
+        }
+        case VAL_LABEL: {
+            if (v->target == NULL) {
+                EMITA(e, ".ret");
+            } else {
+                EMITA(e, "L%p", (TB_Node*) v->target);
+            }
+            break;
+        }
+        default: tb_todo();
     }
-
-    REG_ALLOC_LOG printf("  \x1b[32m#   spill D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
-
-    // write out
-    InstType i = r->dt.type == TB_FLOAT ? FP_MOV : MOV;
-    Inst* new_inst = TB_ARENA_ALLOC(&tb__arena, Inst);
-
-    *new_inst = inst_mr(i, r->dt, RBP, GPR_NONE, SCALE_X1, r->stack_pos, USE(r->old));
-    new_inst->time = basepoint->time + 1;
-    new_inst->next = basepoint->next;
-    new_inst->spill_metadata = r->old;
-    basepoint->next = new_inst;
-}
-
-static void reload(Ctx* restrict ctx, Inst* basepoint, Reload* r, size_t op_index) {
-    InstType i = r->dt.type == TB_FLOAT ? FP_MOV : MOV;
-
-    Inst* next = basepoint->next;
-    if (next->type == INST_COPY && op_index == 1) {
-        REG_ALLOC_LOG printf("  \x1b[32m#   folded reload D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
-
-        int old_time = next->time;
-        Inst* old_next = next->next;
-
-        *next = inst_m(i, r->dt, next->regs[0], RBP, GPR_NONE, SCALE_X1, r->stack_pos);
-        next->time = old_time;
-        next->next = old_next;
-        next->spill_metadata = -r->old;
-        return;
-    }
-
-    REG_ALLOC_LOG printf("  \x1b[32m#   reload D%d (rbp + %d)\x1b[0m\n", r->old, r->stack_pos);
-
-    Inst* new_inst = TB_ARENA_ALLOC(&tb__arena, Inst);
-
-    *new_inst = inst_m(i, r->dt, r->old, RBP, GPR_NONE, SCALE_X1, r->stack_pos);
-    new_inst->time = basepoint->time + 1;
-    new_inst->next = basepoint->next;
-    new_inst->spill_metadata = -r->old;
-    basepoint->next = new_inst;
-}
-
-static void reload_from_reg(Ctx* restrict ctx, Inst* basepoint, TB_DataType dt, int dst, int src) {
-    REG_ALLOC_LOG printf("  \x1b[32m#   reload D%d \x1b[0m\n", dst);
-    Inst* new_inst = TB_ARENA_ALLOC(&tb__arena, Inst);
-    InstType i = dt.type == TB_FLOAT ? FP_MOV : MOV;
-
-    *new_inst = inst_r(i, dt, dst, USE(src));
-    new_inst->time = basepoint->time + 1;
-    new_inst->next = basepoint->next;
-    new_inst->spill_metadata = -dst;
-    basepoint->next = new_inst;
-}
-
-static int8_t resolve_def(Ctx* restrict ctx, int x) {
-    return ctx->defs[x].reg;
-}
-
-static int8_t resolve_use(Ctx* restrict ctx, int x) {
-    if (x < -1) return ctx->defs[-x - 2].reg;
-    return x;
 }
 
 static void inst2_print(TB_CGEmitter* restrict e, InstType type, Val* dst, Val* src, TB_X86_DataType dt) {
@@ -1770,6 +2004,39 @@ static void inst1_print(TB_CGEmitter* restrict e, int type, Val* src, TB_X86_Dat
         EMITA(e, "\n");
     }
     inst1(e, type, src, dt);
+}
+
+static int resolve_interval(Ctx* restrict ctx, Inst* inst, int i, Val* val) {
+    LiveInterval* interval = &ctx->intervals[inst->operands[i]];
+
+    if (inst->flags & INST_MEM) {
+        int op_count = inst->flags & INST_INDEXED ? 2 : 1;
+        int in_base = inst->out_count;
+        int slot = ((inst->flags & INST_STORE) ? 0 : in_base + (inst->in_count - op_count));
+
+        if (i == slot) {
+            *val = (Val){
+                .type = VAL_MEM,
+                .reg  = interval->assigned,
+                .index = GPR_NONE,
+                .scale = inst->scale,
+                .imm = inst->disp,
+            };
+
+            if (inst->flags & INST_INDEXED) {
+                interval = &ctx->intervals[inst->operands[i]];
+                val->index = interval->assigned;
+            }
+
+            return op_count;
+        }
+    }
+
+    *val = (Val){
+        .type = interval->reg_class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR,
+        .reg  = interval->assigned
+    };
+    return 1;
 }
 
 static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
@@ -1804,6 +2071,140 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
     // emit prologue
     func_out->prologue_length = emit_prologue(ctx);
 
+    #if 1
+    for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
+        size_t in_base = inst->out_count;
+
+        if (inst->type == INST_LABEL) {
+            TB_Node* bb = inst->n;
+            uint32_t pos = GET_CODE_POS(&ctx->emit);
+            tb_resolve_rel32(&ctx->emit, &nl_map_get_checked(ctx->emit.labels, bb), pos);
+
+            if (bb != ctx->f->start_node) {
+                EMITA(e, "L%p:\n", bb);
+            }
+        } else if (inst->type == INST_LINE) {
+        } else if (inst->type == INST_BRANCH) {
+            Val target;
+            if (inst->flags & INST_NODE) {
+                target = val_label(inst->n);
+            } else {
+                tb_todo();
+            }
+
+            inst1_print(e, JMP, &target, inst->dt);
+        } else if (inst->type == CALL || inst->type == SYSCALL) {
+            bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
+            const struct ParamDescriptor* restrict desc = &param_descs[is_sysv ? 1 : 0];
+            if (inst->type == SYSCALL) {
+                desc = &param_descs[2];
+            }
+
+            // tons of fun ABI shit
+            size_t i = 0;
+            Val target;
+            if (inst->flags & INST_GLOBAL) {
+                target = val_global(inst->s);
+            } else {
+                i += resolve_interval(ctx, inst, in_base + i, &target);
+            }
+
+            uint32_t caller_saved_gprs = desc->caller_saved_gprs;
+            size_t xmms_used = 0, gprs_used = 0;
+            for (; i < inst->in_count; i++) {
+                int rc = ctx->intervals[inst->operands[in_base + i]].reg_class;
+
+                Val dst = { 0 };
+                dst.type = rc == REG_CLASS_XMM ? VAL_XMM : VAL_GPR;
+                dst.reg  = rc == REG_CLASS_XMM ? xmms_used : desc->gprs[gprs_used];
+
+                if (is_sysv) {
+                    if (rc == REG_CLASS_XMM) {
+                        xmms_used++;
+                    } else {
+                        gprs_used++;
+                        caller_saved_gprs &= ~(1u << gprs_used);
+                    }
+                } else {
+                    // win64 will always expend a register
+                    xmms_used++;
+                    gprs_used++;
+                }
+
+                Val in;
+                i += resolve_interval(ctx, inst, in_base + i, &in);
+                if (!is_value_match(&dst, &in)) {
+                    inst2_print(e, MOV, &dst, &in, inst->dt);
+                }
+            }
+
+            inst1_print(&ctx->emit, CALL, &target, TB_X86_TYPE_QWORD);
+
+            // copy out return value
+            LiveInterval* ret = &ctx->intervals[inst->operands[0]];
+            if (ret->start != ret->end) {
+                Val val;
+                resolve_interval(ctx, inst, 0, &val);
+
+                if (ret->reg_class == REG_CLASS_GPR) {
+                    if (ret->assigned != RAX) {
+                        Val rax = val_gpr(RAX);
+                        inst2_print(e, MOV, &val, &rax, inst->dt);
+                    }
+                } else if (ret->reg_class == REG_CLASS_XMM) {
+                    if (ret->assigned != XMM0) {
+                        Val xmm0 = val_xmm(XMM0);
+                        inst2_print(e, MOV, &val, &xmm0, inst->dt);
+                    }
+                } else {
+                    tb_todo();
+                }
+            }
+        } else {
+            // resolve output
+            Val out;
+            if (inst->out_count == 1) {
+                resolve_interval(ctx, inst, 0, &out);
+            }
+
+            if ((inst->flags & INST_IMM) && inst->out_count == 1) {
+                // imm (+ optional input) -> 1 output
+                if (inst->in_count == 1) {
+                    Val in;
+                    resolve_interval(ctx, inst, in_base, &in);
+
+                    if (!is_value_match(&out, &in)) {
+                        inst2_print(e, MOV, &out, &in, inst->dt);
+                    }
+                }
+
+                Val imm = val_imm(inst->imm);
+                inst2_print(e, inst->type, &out, &imm, inst->dt);
+            } else if (inst->in_count >= 1 && inst->out_count == 1) {
+                // 1 input (+ optional input) -> 1 output
+                int i = 0;
+                if (inst->in_count == 2) {
+                    Val in;
+                    i += resolve_interval(ctx, inst, in_base, &in);
+
+                    if (!is_value_match(&out, &in)) {
+                        inst2_print(e, MOV, &out, &in, inst->dt);
+                    }
+                }
+
+                Val rhs;
+                i += resolve_interval(ctx, inst, in_base + i, &rhs);
+
+                if (inst->type != MOV || (inst->type == MOV && !is_value_match(&out, &rhs))) {
+                    inst2_print(e, inst->type, &out, &rhs, inst->dt);
+                }
+            } else {
+                // unknown
+                tb_todo();
+            }
+        }
+    }
+    #else
     Val ops[4];
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         if (inst->type == INST_LABEL) {
@@ -1976,6 +2377,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             tb_todo();
         }
     }
+    #endif
 
     // return label goes here
     EMITA(&ctx->emit, ".ret:\n");

@@ -214,7 +214,6 @@ static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, U
         use->n = n;
         use->slot = slot;
 
-        assert(prev);
         prev->next = use;
     }
 }
@@ -240,28 +239,22 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
 }
 
 bool tb_pass_mark(TB_Passes* restrict p, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(p->lookup, n);
-    if (search >= 0) {
+    if (!nl_hashset_put(&p->visited, n)) {
         return false;
     }
 
     // log_debug("  %p: push %s", n, tb_node_get_name(n));
 
-    size_t i = dyn_array_length(p->queue);
     dyn_array_put(p->queue, n);
-    nl_map_put(p->lookup, n, i);
+    nl_hashset_put(&p->visited, n);
     return true;
 }
 
 static void fill_all(TB_Passes* restrict p, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(p->lookup, n);
-    if (search >= 0) {
+    if (!nl_hashset_put(&p->visited, n)) {
         return;
     }
-
-    size_t index = dyn_array_length(p->queue);
     dyn_array_put(p->queue, n);
-    nl_map_put(p->lookup, n, index);
 
     FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
         tb_assert(n->inputs[i], "empty input... in this economy?");
@@ -280,7 +273,7 @@ static void fill_all(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
-static void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
+void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
         printf("%"PRId64, num->words[0]);
@@ -568,7 +561,7 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     p->doms = tb_get_dominators(f, p->order);
 
     CUIK_TIMED_BLOCK("nl_map_create") {
-        nl_map_create(p->lookup, f->node_count);
+        p->visited = nl_hashset_alloc(f->node_count);
     }
 
     // generate work list (put everything)
@@ -592,7 +585,7 @@ bool tb_pass_peephole(TB_Passes* p) {
         while (dyn_array_length(p->queue) > 0) CUIK_TIMED_BLOCK("iter") {
             // pull from worklist
             TB_Node* n = dyn_array_pop(p->queue);
-            nl_map_remove(p->lookup, n);
+            nl_hashset_remove(&p->visited, n);
 
             if (peephole(p, f, n)) {
                 changes = true;
@@ -611,11 +604,11 @@ void tb_pass_exit(TB_Passes* p) {
     f->arena = p->old_arena;
 
     nl_hashset_free(p->cse_nodes);
+    nl_hashset_free(p->visited);
 
     tb_function_free_postorder(&p->order);
     tb_arena_clear(&tb__arena);
     nl_map_free(p->doms._);
     nl_map_free(p->users);
-    nl_map_free(p->lookup);
     dyn_array_destroy(p->queue);
 }

@@ -1,6 +1,7 @@
 // linear scan allocator with some improvements around lifetime holes,
 // based on Efficient global register allocation, 2011:
 //   https://arxiv.org/pdf/2011.05608.pdf
+#if 0
 typedef struct {
     size_t def_count;
     Set future_active;
@@ -22,9 +23,9 @@ static void fancy_lsra(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workl
     ra.active        = set_create_in_arena(&tb__arena, ra.def_count);
     ra.live_out      = set_create_in_arena(&tb__arena, ra.def_count);
 
-    FOREACH_REVERSE_N(i, 0, dyn_array_length(worklist)) {
-        if (ctx->defs[worklist[i]].reg >= 0) set_put(&ra.future_active, i);
-    }
+    /*FOREACH_REVERSE_N(i, 0, dyn_array_length(worklist)) {
+        if (ctx->intervals[worklist[i]].reg >= 0) set_put(&ra.future_active, i);
+    }*/
 
     size_t current_bb = 0;
 
@@ -93,3 +94,4 @@ static void fancy_lsra(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist workl
         current_bb++;
     }
 }
+#endif

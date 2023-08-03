@@ -4,14 +4,16 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+int bar(int x, int y);
 
+int foo(int x) { return bar(x+1 & 3 * 16, 10); }
+// int foo() { return 42+1 & 3 * 16; }
+
+#if 0
 void simple(int* a, int* n, int b) {
     a[(*n)++] = b;
 }
 
-#if 0
 typedef struct Cell Cell;
 struct Cell {
     Cell* car;
