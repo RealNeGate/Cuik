@@ -140,10 +140,13 @@ void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
 
     FOREACH_N(i, 0, n->input_count) {
         remove_user(p, n, i);
+        n->inputs[i] = NULL;
     }
 
     nl_map_remove(p->users, n);
-    TB_KILL_NODE(n);
+
+    n->input_count = 1;
+    n->type = TB_NULL;
 }
 
 static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot) {

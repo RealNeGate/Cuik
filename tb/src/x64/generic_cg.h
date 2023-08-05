@@ -13,6 +13,13 @@ enum {
     INST_LABEL = 1024,
     INST_BRANCH,
     INST_LINE,
+
+    // this is where parameters come from
+    INST_ENTRY,
+
+    //    XORPS xmm0, xmm0
+    // or XOR   eax,  eax
+    INST_ZERO,
 };
 
 typedef struct Inst Inst;
@@ -103,16 +110,17 @@ static bool fits_into_int8(uint64_t x) {
 }
 
 static bool fits_into_int32(uint64_t x) {
-    /*int64_t y = ((int32_t) x);
+    int64_t y = ((int32_t) x);
     uint32_t hi = y >> 32ull;
-    return hi == 0 || hi == 0xFFFFFFFF;*/
-    int32_t y = x & 0xFFFFFFFF;
-    return (int64_t)y == x;
+    return hi == 0 || hi == 0xFFFFFFFF;
+    /*int32_t y = x & 0xFFFFFFFF;
+    return (int64_t)y == x;*/
 }
 
 static size_t emit_prologue(Ctx* restrict ctx);
 static size_t emit_epilogue(Ctx* restrict ctx);
 static ptrdiff_t alloc_free_reg(Ctx* restrict ctx, int reg_class);
+static void init_regalloc(Ctx* restrict ctx);
 
 static TB_X86_DataType legalize(TB_DataType dt);
 static bool is_terminator_or_label(int type);
@@ -120,8 +128,10 @@ static bool wont_spill_around(int type);
 static int classify_reg_class(TB_DataType dt);
 static int isel(Ctx* restrict ctx, TB_Node* n);
 
-static void finna_use_reg(Ctx* restrict ctx, int reg_class, int reg_num);
 static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out);
+
+static void pre_callee_saved_constraints(Ctx* restrict ctx, int start, int end);
+static void post_callee_saved_constraints(Ctx* restrict ctx, int start, int end);
 
 #define ISEL(n) isel(ctx, n)
 
@@ -153,9 +163,6 @@ typedef enum {
     INST_REP    = 2,
     INST_REPNE  = 4,
 
-    // uses memory operand for storing
-    INST_STORE  = 8,
-
     // operands
     INST_MEM    = 16,
     INST_GLOBAL = 32,  // operand to TB_Symbol*
@@ -176,7 +183,7 @@ struct Inst {
     InstFlags flags;
 
     TB_X86_DataType dt;
-    int time;
+    int time, mem_slot;
 
     union {
         int32_t imm;
@@ -230,17 +237,20 @@ static Inst* alloc_inst(int type, TB_DataType dt, int outs, int ins, int tmps) {
     return i;
 }
 
-static Inst* inst_goto(TB_Node* target) {
-    Inst* i = alloc_inst(INST_BRANCH, TB_TYPE_VOID, 0, 0, 0);
-    i->flags = INST_NODE;
-    i->n = target;
-    return i;
-}
-
 static Inst* inst_move(TB_DataType dt, RegIndex dst, RegIndex src) {
     Inst* i = alloc_inst(MOV, dt, 1, 1, 0);
     i->operands[0] = dst;
     i->operands[1] = src;
+    return i;
+}
+
+static Inst* inst_op_global(int type, TB_DataType dt, RegIndex dst, TB_Symbol* s) {
+    Inst* i = alloc_inst(type, dt, 1, 1, 0);
+    i->flags = INST_GLOBAL;
+    i->mem_slot = 1;
+    i->operands[0] = dst;
+    i->operands[1] = RSP;
+    i->s = s;
     return i;
 }
 
@@ -255,6 +265,7 @@ static Inst* inst_op_abs(int type, TB_DataType dt, RegIndex dst, uint64_t imm) {
 static Inst* inst_op_rm(int type, TB_DataType dt, RegIndex dst, RegIndex base, RegIndex index, Scale scale, int32_t disp) {
     Inst* i = alloc_inst(type, dt, 1, index >= 0 ? 2 : 1, 0);
     i->flags = INST_MEM | (index >= 0 ? INST_INDEXED : 0);
+    i->mem_slot = 1;
     i->operands[0] = dst;
     i->operands[1] = base;
     if (index >= 0) {
@@ -266,8 +277,9 @@ static Inst* inst_op_rm(int type, TB_DataType dt, RegIndex dst, RegIndex base, R
 }
 
 static Inst* inst_op_mr(int type, TB_DataType dt, RegIndex base, RegIndex index, Scale scale, int32_t disp, RegIndex src) {
-    Inst* i = alloc_inst(type, dt, 1, index >= 0 ? 2 : 1, 0);
-    i->flags = INST_MEM | (index >= 0 ? INST_INDEXED : 0) | INST_STORE;
+    Inst* i = alloc_inst(type, dt, 0, index >= 0 ? 3 : 2, 0);
+    i->flags = INST_MEM | (index >= 0 ? INST_INDEXED : 0);
+    i->mem_slot = 0;
     if (index >= 0) {
         i->operands[0] = base;
         i->operands[1] = index;
@@ -281,7 +293,7 @@ static Inst* inst_op_mr(int type, TB_DataType dt, RegIndex base, RegIndex index,
     return i;
 }
 
-static Inst* inst_op_ri(int type, TB_DataType dt, RegIndex dst, RegIndex src, int32_t imm) {
+static Inst* inst_op_rri(int type, TB_DataType dt, RegIndex dst, RegIndex src, int32_t imm) {
     Inst* i = alloc_inst(type, dt, 1, 1, 0);
     i->flags = INST_IMM;
     i->operands[0] = dst;
@@ -290,7 +302,7 @@ static Inst* inst_op_ri(int type, TB_DataType dt, RegIndex dst, RegIndex src, in
     return i;
 }
 
-static Inst* inst_op_rr(int type, TB_DataType dt, RegIndex dst, RegIndex lhs, RegIndex rhs) {
+static Inst* inst_op_rrr(int type, TB_DataType dt, RegIndex dst, RegIndex lhs, RegIndex rhs) {
     Inst* i = alloc_inst(type, dt, 1, 2, 0);
     i->operands[0] = dst;
     i->operands[1] = lhs;
@@ -306,11 +318,38 @@ static Inst* inst_op_imm(int type, TB_DataType dt, RegIndex dst, int32_t imm) {
     return i;
 }
 
+static Inst* inst_op_ri(int type, TB_DataType dt, RegIndex src, int32_t imm) {
+    Inst* i = alloc_inst(type, dt, 0, 1, 0);
+    i->flags = INST_IMM;
+    i->operands[0] = src;
+    i->imm = imm;
+    return i;
+}
+
+static Inst* inst_op_rr(int type, TB_DataType dt, RegIndex dst, RegIndex src) {
+    Inst* i = alloc_inst(type, dt, 1, 1, 0);
+    i->operands[0] = dst;
+    i->operands[1] = src;
+    return i;
+}
+
+static Inst* inst_op_rr_no_dst(int type, TB_DataType dt, RegIndex lhs, RegIndex rhs) {
+    Inst* i = alloc_inst(type, dt, 0, 2, 0);
+    i->operands[0] = lhs;
+    i->operands[1] = rhs;
+    return i;
+}
+
+static Inst* inst_op_zero(TB_DataType dt, RegIndex dst) {
+    Inst* i = alloc_inst(INST_ZERO, dt, 1, 0, 0);
+    i->operands[0] = dst;
+    return i;
+}
+
 ////////////////////////////////
 // Register allocation
 ////////////////////////////////
 #include "reg_alloc.h"
-#include "fancy_reg_alloc.h"
 
 #define DEF(n, dt) alloc_vreg(ctx, n, dt)
 static int alloc_vreg(Ctx* restrict ctx, TB_Node* n, TB_DataType dt) {
@@ -326,7 +365,7 @@ static void hint_reg(Ctx* restrict ctx, int i, int phys_reg) {
 ////////////////////////////////
 // Data flow analysis
 ////////////////////////////////
-static void liveness(Ctx* restrict ctx, TB_Function* f) {
+static int liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t interval_count = dyn_array_length(ctx->intervals);
     TB_Arena* arena = &tb__arena;
 
@@ -344,6 +383,7 @@ static void liveness(Ctx* restrict ctx, TB_Function* f) {
     }
 
     // generate local live sets
+    int timeline = 4;
     if (ctx->first) {
         Inst* restrict inst = ctx->first;
         assert(inst->type == INST_LABEL);
@@ -352,10 +392,10 @@ static void liveness(Ctx* restrict ctx, TB_Function* f) {
         MachineBB* mbb = &nl_map_get_checked(seq_bb, f->start_node);
         mbb->first = inst;
         mbb->start = 2;
+        inst->time = 2;
         inst = inst->next;
 
         TB_Node* bb = f->start_node;
-        int timeline = 2;
         for (; inst; inst = inst->next) {
             if (inst->type == INST_LABEL) {
                 nl_map_get_checked(seq_bb, bb).end = timeline;
@@ -425,6 +465,7 @@ static void liveness(Ctx* restrict ctx, TB_Function* f) {
     } while (changes);
 
     ctx->machine_bbs = seq_bb;
+    return timeline;
 }
 
 ////////////////////////////////
@@ -450,34 +491,40 @@ static void schedule_early(Ctx* restrict ctx, TB_Node* n) {
         set_input(ctx->p, n, ctx->f->start_node, 0);
     }
 
+    bool pin = is_pinned(n);
     FOREACH_N(i, 1, n->input_count) {
         schedule_early(ctx, n->inputs[i]);
 
-        // choose deepest block
-        TB_Node* aa = tb_get_parent_region(n->inputs[0]);
-        TB_Node* bb = tb_get_parent_region(n->inputs[i]->inputs[0]);
+        if (!pin) {
+            // choose deepest block
+            TB_Node* aa = tb_get_parent_region(n->inputs[0]);
+            TB_Node* bb = tb_get_parent_region(n->inputs[i]->inputs[0]);
 
-        if (aa == bb) {
-            // we need to measure dom depth within a block now
-            //
-            // aa
-            // VV     a is greater than b
-            // bb
-            TB_Node* a = n->inputs[0];
-            TB_Node* b = n->inputs[i]->inputs[0];
+            if (aa == bb) {
+                // we need to measure dom depth within a block now
+                //
+                // aa
+                // VV     a is greater than b
+                // bb
+                TB_Node* a = n->inputs[0];
+                TB_Node* b = n->inputs[i]->inputs[0];
 
-            for (;;) {
-                if (a == b) {
-                    // a dominates b, we can't be having that
-                    set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
-                    break;
-    	        }
+                for (;;) {
+                    if (a == b) {
+                        // a dominates b, we can't be having that
+                        set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
+                        break;
+                    }
 
-                if (b->type == TB_START || b->type == TB_REGION) break;
-                b = b->inputs[0];
+                    if (b->type == TB_START || b->type == TB_REGION) break;
+                    b = b->inputs[0];
+                }
+            } else if (dom_depth(ctx->doms, aa) < dom_depth(ctx->doms, bb)) {
+                tb_assert(n->inputs[i]->inputs[0], "missing control");
+                set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
             }
-        } else if (dom_depth(ctx->doms, aa) < dom_depth(ctx->doms, bb)) {
-            set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
+        } else {
+            tb_assert(n->inputs[0], "if the node is pinned, it must have a control node");
         }
     }
 }
@@ -541,10 +588,20 @@ static void schedule_late(Ctx* restrict ctx, TB_Node* n) {
         if (use->slot == 0) continue;
 
         TB_Node* y = use->n;
+        // dead node
+        if (y->inputs[0] == NULL) continue;
+
         schedule_late(ctx, y);
 
         TB_Node* use_block = tb_get_parent_region(y->inputs[0]);
         if (y->type == TB_PHI) {
+            if (y->input_count != use_block->input_count + 1) {
+                // report error
+                ctx->p->error_n = y;
+                tb_pass_print(ctx->p);
+                tb_panic("phi has parent with mismatched predecessors");
+            }
+
             ptrdiff_t j = -1;
             for (; j < y->input_count; j++) {
                 if (y->inputs[j] == n) {
@@ -559,6 +616,7 @@ static void schedule_late(Ctx* restrict ctx, TB_Node* n) {
         lca = find_lca(ctx->doms, lca, use_block);
     }
 
+    tb_assert(lca, "missing least common ancestor");
     set_input(ctx->p, n, lca, 0);
 }
 
@@ -569,8 +627,8 @@ static void postorder_all_nodes(Ctx* restrict ctx, DynArray(TB_Node*)* worklist,
     }
 
     // walk successors first
-    for (User* use = find_users(ctx->p, n); use; use = use->next) {
-        postorder_all_nodes(ctx, worklist, use->n);
+    FOREACH_N(i, 0, n->input_count) {
+        postorder_all_nodes(ctx, worklist, n->inputs[i]);
     }
 
     dyn_array_put(*worklist, n);
@@ -651,7 +709,6 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
         }
 
         assert(index >= 0);
-        size_t phi_count = 0;
         for (User* use = find_users(ctx->p, dst); use; use = use->next) {
             TB_Node* n = use->n;
             if (n->type != TB_PHI) continue;
@@ -668,11 +725,10 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
 
             // evaluate PHI but don't writeback yet
             p.tmp = DEF(n, n->dt);
-            int src = ISEL(n->inputs[1 + index]);
+            int src = isel(ctx, n->inputs[1 + index]);
             SUBMIT(inst_move(n->dt, p.tmp, src));
 
             dyn_array_put(phi_vals, p);
-            phi_count++;
         }
     }
 
@@ -733,14 +789,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     nl_map_create(ctx.values, f->node_count);
     nl_map_create(ctx.uses, f->node_count);
 
-    // Generate intervals for physical registers
-    FOREACH_N(i, FIRST_GPR, FIRST_GPR + 16) {
-        dyn_array_put(ctx.intervals, (LiveInterval){ .reg_class = REG_CLASS_GPR, .dt = TB_X86_TYPE_QWORD, .reg = i, .assigned = i });
-    }
-
-    FOREACH_N(i, FIRST_XMM, FIRST_XMM + 16) {
-        dyn_array_put(ctx.intervals, (LiveInterval){ .reg_class = REG_CLASS_XMM, .dt = TB_X86_TYPE_XMMWORD, .reg = i, .assigned = i });
-    }
+    init_regalloc(&ctx);
 
     // allocate more stuff now that we've run stats on the IR
     ctx.emit.return_label = 0;
@@ -763,7 +812,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         DynArray(TB_Node*) worklist = NULL;
 
         nl_hashset_clear(&ctx.visited);
-        postorder_all_nodes(&ctx, &worklist, f->start_node);
+        FOREACH_N(i, 0, ctx.order.count) {
+            TB_Node* bb = ctx.order.traversal[i];
+            postorder_all_nodes(&ctx, &worklist, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
+        }
 
         // move nodes closer to their usage site
         nl_hashset_clear(&ctx.visited);
@@ -773,7 +825,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             if (is_pinned(n)) {
                 nl_hashset_put(&ctx.visited, n);
                 for (User* use = find_users(ctx.p, n); use; use = use->next) {
-                    schedule_late(&ctx, use->n);
+                    if (use->n->inputs[0] != NULL) {
+                        schedule_late(&ctx, use->n);
+                    }
                 }
             } else if (n->input_count == 1) {
                 // this is gonna usually be the constants
@@ -808,14 +862,21 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     EMITA(&ctx.emit, "%s:\n", f->super.name);
     {
+        int end;
         CUIK_TIMED_BLOCK("data flow") {
-            liveness(&ctx, f);
+            end = liveness(&ctx, f);
         }
 
-        // we can in theory have other regalloc solutions and eventually will put
-        // graph coloring here.
         CUIK_TIMED_BLOCK("reg alloc") {
-            linear_scan(&ctx, f);
+            // Callee saved:
+            //   the physical register is used at the start and end of the function which means
+            //   we must preserve it throughout the entire function but because of the use points
+            //   being at the top and bottom, regalloc may split in the middle.
+            pre_callee_saved_constraints(&ctx, 2, end);
+
+            // we can in theory have other regalloc solutions and eventually will put
+            // graph coloring here.
+            ctx.stack_usage = linear_scan(&ctx, f, ctx.stack_usage, end);
         }
 
         // Arch-specific: convert instruction buffer into actual instructions
@@ -839,7 +900,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     func_out->code = ctx.emit.data;
     func_out->code_size = ctx.emit.count;
     func_out->stack_usage = ctx.stack_usage;
-    func_out->prologue_epilogue_metadata = ctx.regs_to_save;
     func_out->lines = ctx.lines;
     func_out->safepoints = ctx.safepoints;
     func_out->stack_slots = ctx.debug_stack_slots;

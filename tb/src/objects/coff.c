@@ -88,7 +88,7 @@ static Unwind generate_unwind_info(const ICodeGen* restrict code_gen, size_t sec
         TB_FunctionOutput* out_f = f->output;
         if (out_f != NULL) {
             out_f->unwind_info = xdata.count;
-            code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->prologue_epilogue_metadata, out_f->stack_usage);
+            code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->stack_usage);
             out_f->unwind_size = xdata.count - out_f->unwind_info;
 
             // write pdata

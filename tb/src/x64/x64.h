@@ -3,8 +3,6 @@
 #include "../tb_internal.h"
 #include <tb_x64.h>
 
-#define TB_TEMP_REG INT_MAX
-
 static_assert(sizeof(float) == sizeof(uint32_t), "Float needs to be a 32-bit float!");
 static_assert(sizeof(double) == sizeof(uint64_t), "Double needs to be a 64-bit float!");
 

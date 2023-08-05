@@ -255,6 +255,10 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
         }
     }
 
+    if (ctx->opt->error_n == n) {
+        printf("\x1b[31m  <-- ERROR\x1b[0m");
+    }
+
     printf("\n");
 }
 

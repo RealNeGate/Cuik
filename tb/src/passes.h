@@ -36,6 +36,9 @@ struct TB_Passes {
     // this is used to do CSE
     NL_HashSet cse_nodes;
 
+    // debug shit:
+    TB_Node* error_n;
+
     // outgoing edges are incrementally updated every time we
     // run a rewrite rule
     NL_Map(TB_Node*, User*) users;

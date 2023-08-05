@@ -419,8 +419,6 @@ struct TB_Node {
     char extra[];
 };
 
-#define TB_KILL_NODE(n) ((n)->type = TB_NULL)
-
 // These are the extra data in specific nodes
 #define TB_NODE_GET_EXTRA(n)         ((void*) n->extra)
 #define TB_NODE_GET_EXTRA_T(n, T)    ((T*) (n)->extra)

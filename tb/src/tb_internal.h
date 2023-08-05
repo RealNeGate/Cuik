@@ -284,11 +284,6 @@ typedef struct TB_FunctionOutput {
     uint8_t epilogue_length;
 
     TB_Assembly* asm_out;
-
-    // NOTE(NeGate): This data is actually specific to the
-    // architecture run but generically can be thought of as
-    // 64bits which keep track of which registers to save.
-    uint64_t prologue_epilogue_metadata;
     uint64_t stack_usage;
 
     TB_CodeRegion* code_region;
@@ -449,7 +444,7 @@ typedef struct {
     size_t (*emit_call_patches)(TB_Module* restrict m);
 
     // NULLable if doesn't apply
-    void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage);
+    void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
 
     void (*compile_function)(TB_Passes* p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm);
 } ICodeGen;
