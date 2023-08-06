@@ -344,6 +344,19 @@ struct TB_Function {
     TB_FunctionOutput* output;
 };
 
+// Thread local module state
+typedef struct TB_ThreadInfo TB_ThreadInfo;
+struct TB_ThreadInfo {
+    TB_Module* owner;
+    TB_ThreadInfo* next;
+    TB_ThreadInfo* next_in_module;
+
+    TB_Arena perm_arena;
+    TB_Arena tmp_arena;
+
+    TB_CodeRegion* code; // compiled output
+};
+
 typedef enum {
     // stores globals
     TB_MODULE_SECTION_DATA,
@@ -392,6 +405,9 @@ struct TB_Module {
     // we have a global lock since the arena can be accessed
     // from any thread.
     mtx_t lock;
+
+    // thread info
+    _Atomic(TB_ThreadInfo*) first_info_in_module;
 
     // small constants are interned because they
     // come up a lot.
@@ -514,6 +530,8 @@ do {                                      \
 #define CONCAT_(x, y) x ## y
 #define CONCAT(x, y) CONCAT_(x, y)
 #endif
+
+TB_ThreadInfo* tb_thread_info(TB_Module* m);
 
 // NOTE(NeGate): if you steal it you should restore the used amount back to what it was before
 TB_TemporaryStorage* tb_tls_steal(void);
@@ -669,10 +687,14 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);
 uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
 char* tb__tb_arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
-void tb__init_temporary_arena(void);
 
-// temporary arena
-extern thread_local TB_Arena tb__arena;
+static TB_Arena* get_temporary_arena(TB_Module* m) {
+    return &tb_thread_info(m)->tmp_arena;
+}
+
+static TB_Arena* get_permanent_arena(TB_Module* m) {
+    return &tb_thread_info(m)->perm_arena;
+}
 
 // NOTE(NeGate): Place all the codegen interfaces down here
 extern ICodeGen tb__x64_codegen;

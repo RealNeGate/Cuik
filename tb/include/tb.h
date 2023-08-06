@@ -837,7 +837,7 @@ TB_API TB_DebugType* tb_debug_create_union(TB_Module* m, ptrdiff_t len, const ch
 TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, ptrdiff_t len, const char* name, TB_CharUnits offset);
 
 // returns the array you need to fill with fields
-TB_API TB_DebugType** tb_debug_record_begin(TB_DebugType* type, size_t count);
+TB_API TB_DebugType** tb_debug_record_begin(TB_Module* m, TB_DebugType* type, size_t count);
 TB_API void tb_debug_record_end(TB_DebugType* type, TB_CharUnits size, TB_CharUnits align);
 
 TB_API TB_DebugType* tb_debug_create_func(TB_Module* m, TB_CallingConv cc, size_t param_count, size_t return_count, bool has_varargs);
@@ -900,7 +900,7 @@ TB_API TB_Node* tb_inst_get_control(TB_Function* f);
 TB_API TB_Node* tb_inst_region(TB_Function* f);
 
 // if len is -1, it's null terminated
-TB_API void tb_inst_set_region_name(TB_Node* n, ptrdiff_t len, const char* name);
+TB_API void tb_inst_set_region_name(TB_Module* m, TB_Node* n, ptrdiff_t len, const char* name);
 
 TB_API void tb_inst_unreachable(TB_Function* f);
 TB_API void tb_inst_debugbreak(TB_Function* f);

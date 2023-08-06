@@ -160,7 +160,8 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
         }
 
         // print IR
-        if (args->emit_ir) {
+        if (1 || args->emit_ir) {
+            printf("\n\n\n");
             tb_pass_print(p);
         }
 
@@ -248,8 +249,8 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         goto done;
     } else if (args->ast) {
         CUIK_FOR_EACH_TU(tu, cu) {
-            log_error("Cannot dump translation unit... TODO");
-            // cuik_dump_translation_unit(stdout, tu, true);
+            // log_error("Cannot dump translation unit... TODO");
+            cuik_dump_translation_unit(stdout, tu, true);
         }
         goto done;
     }

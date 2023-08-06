@@ -3,6 +3,8 @@
 #include <inttypes.h>
 #include <log.h>
 
+static thread_local TB_Arena* tmp_arena;
+
 enum {
     CG_VAL_UNRESOLVED = 0,
     CG_VAL_FLAGS      = 1,
@@ -185,6 +187,10 @@ struct Inst {
     TB_X86_DataType dt;
     int time, mem_slot;
 
+    #ifndef NDEBUG
+    int spill_metadata;
+    #endif
+
     union {
         int32_t imm;
         uint64_t abs;
@@ -209,13 +215,13 @@ struct Inst {
 
 // generic instructions
 static Inst* inst_label(TB_Node* n) {
-    Inst* i = TB_ARENA_ALLOC(&tb__arena, Inst);
+    Inst* i = TB_ARENA_ALLOC(tmp_arena, Inst);
     *i = (Inst){ .type = INST_LABEL, .flags = INST_NODE, .n = n };
     return i;
 }
 
 static Inst* inst_line(TB_Attrib* a) {
-    Inst* i = TB_ARENA_ALLOC(&tb__arena, Inst);
+    Inst* i = TB_ARENA_ALLOC(tmp_arena, Inst);
     *i = (Inst){ .type = INST_LINE, .flags = INST_ATTRIB, .a = a };
     return i;
 }
@@ -232,7 +238,7 @@ static void append_inst(Ctx* restrict ctx, Inst* inst) {
 
 static Inst* alloc_inst(int type, TB_DataType dt, int outs, int ins, int tmps) {
     int total = outs + ins + tmps;
-    Inst* i = tb_arena_alloc(&tb__arena, sizeof(Inst) + (total * sizeof(RegIndex)));
+    Inst* i = tb_arena_alloc(tmp_arena, sizeof(Inst) + (total * sizeof(RegIndex)));
     *i = (Inst){ .type = type, .dt = legalize(dt), .out_count = outs, ins, tmps };
     return i;
 }
@@ -367,7 +373,7 @@ static void hint_reg(Ctx* restrict ctx, int i, int phys_reg) {
 ////////////////////////////////
 static int liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t interval_count = dyn_array_length(ctx->intervals);
-    TB_Arena* arena = &tb__arena;
+    TB_Arena* arena = tmp_arena;
 
     // find BB boundaries in sequences
     MachineBBs seq_bb = NULL;
@@ -762,6 +768,9 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
 
 // Codegen through here is done in phases
 static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm) {
+    tmp_arena = get_temporary_arena(p->f->super.module);
+    tb_arena_clear(tmp_arena);
+
     TB_Function* restrict f = p->f;
     Ctx ctx = {
         .module = f->super.module,
@@ -905,7 +914,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     func_out->stack_slots = ctx.debug_stack_slots;
 
     tb_function_free_postorder(&ctx.order);
-    tb_arena_clear(&tb__arena);
+    tb_arena_clear(tmp_arena);
     nl_map_free(ctx.stack_slots);
 }
 

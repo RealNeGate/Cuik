@@ -183,7 +183,7 @@ static void replace_use_in_insts(LSRA* restrict ra, int start, int end, int old_
             if (!spill) {
                 spill = true;
 
-                Inst* new_inst = tb_arena_alloc(&tb__arena, sizeof(Inst) + (2 * sizeof(RegIndex)));
+                Inst* new_inst = tb_arena_alloc(tmp_arena, sizeof(Inst) + (2 * sizeof(RegIndex)));
                 *new_inst = (Inst){ .type = MOV, .dt = dt, .out_count = 1, 1 };
                 new_inst->operands[0] = new_reg;
                 new_inst->operands[1] = old_reg;
@@ -202,24 +202,29 @@ static void replace_use_in_insts(LSRA* restrict ra, int start, int end, int old_
 
             // insert reload slot if we need a register
             int t = prev->time + 1;
-            int total = inst->in_count + inst->tmp_count;
+            int total = inst->out_count + inst->in_count;
             FOREACH_N(i, inst->out_count, total) {
                 if (inst->operands[i] == old_reg) {
                     if (reload < 0) {
                         reload = dyn_array_length(ra->intervals);
-                        dyn_array_put(ra->unhandled, reload);
+
+                        // if it was forced, then we need to force the reload into the same slot
+                        int assigned = ra->intervals[old_reg].reg;
+                        if (assigned < 0) {
+                            dyn_array_put(ra->unhandled, reload);
+                        }
 
                         dyn_array_put_uninit(ra->intervals, 1);
                         ra->intervals[reload] = (LiveInterval){
-                            .assigned = -1, .dt = dt, .reg_class = rc, .start = t, .end = t
+                            .assigned = assigned, .reg = -1, .dt = dt, .reg_class = rc, .start = t, .end = t
                         };
                         add_range(&ra->intervals[reload], inst->time, inst->time);
 
                         // insert reload instruction
-                        Inst* new_inst = tb_arena_alloc(&tb__arena, sizeof(Inst) + (2 * sizeof(RegIndex)));
+                        Inst* new_inst = tb_arena_alloc(tmp_arena, sizeof(Inst) + (2 * sizeof(RegIndex)));
                         *new_inst = (Inst){ .type = MOV, .dt = dt, .out_count = 1, 1 };
                         new_inst->operands[0] = reload;
-                        new_inst->operands[1] = old_reg;
+                        new_inst->operands[1] = new_reg;
                         new_inst->time = t;
                         new_inst->next = prev->next;
                         prev->next = new_inst;
@@ -243,7 +248,7 @@ static void replace_use_in_insts(LSRA* restrict ra, int start, int end, int old_
 
     // spill back our new version of the value
     if (writeback) {
-        Inst* new_inst = tb_arena_alloc(&tb__arena, sizeof(Inst) + (2 * sizeof(RegIndex)));
+        Inst* new_inst = tb_arena_alloc(tmp_arena, sizeof(Inst) + (2 * sizeof(RegIndex)));
         *new_inst = (Inst){ .type = MOV, .dt = dt, .out_count = 1, 1 };
         new_inst->operands[0] = new_reg;
         new_inst->operands[1] = old_reg;
@@ -362,7 +367,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     if (pos == 0) {
         // alloc failure
         return -1;
-    } else if (pos > interval->end) {
+    } else if (pos > interval->end || pos == INT_MAX) {
         // we can steal it completely
         REG_ALLOC_LOG printf("  #   assign to %s\n", reg_name(rc, highest));
         return highest;
@@ -436,7 +441,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
     } else {
         int split_pos = interval->start - 1;
 
-        if (ra->block_pos[highest] <= interval->end) {
+        if (ra->block_pos[highest] <= interval->end && pos != INT_MAX) {
             REG_ALLOC_LOG printf("  \x1b[33m#   split %s before t=%d\x1b[0m\n", reg_name(rc, highest), pos);
             split_intersecting(ra, pos, interval);
         }
@@ -464,7 +469,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
     LSRA ra = { .abi = f->super.module->target_abi, .first = ctx->first, .intervals = ctx->intervals, .stack_usage = stack_usage };
 
     FOREACH_N(i, 0, CG_REGISTER_CLASSES) {
-        ra.active_set[i] = set_create_in_arena(&tb__arena, 16);
+        ra.active_set[i] = set_create_in_arena(tmp_arena, 16);
     }
 
     // build intervals:
@@ -505,9 +510,9 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
     cuiksort_defs(ctx->intervals, 0, interval_count - 1, ra.unhandled);
 
     // only need enough to store for the biggest register class
-    ra.free_pos  = TB_ARENA_ARR_ALLOC(&tb__arena, 16, int);
-    ra.use_pos   = TB_ARENA_ARR_ALLOC(&tb__arena, 16, int);
-    ra.block_pos = TB_ARENA_ARR_ALLOC(&tb__arena, 16, int);
+    ra.free_pos  = TB_ARENA_ARR_ALLOC(tmp_arena, 16, int);
+    ra.use_pos   = TB_ARENA_ARR_ALLOC(tmp_arena, 16, int);
+    ra.block_pos = TB_ARENA_ARR_ALLOC(tmp_arena, 16, int);
 
     // linear scan main loop
     while (dyn_array_length(ra.unhandled)) {

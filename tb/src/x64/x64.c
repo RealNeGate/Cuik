@@ -416,6 +416,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             size_t gpr_param_count = is_sysv ? COUNTOF(SYSV_GPR_PARAMETERS) : COUNTOF(WIN64_GPR_PARAMETERS);
             int xmm_param_count    = is_sysv ? 8 : 4;
 
+            Inst* prev = ctx->last;
+
+            int out_count = 0;
+            RegIndex outs[16];
+
             // handle known parameters
             int used_gpr = 0, used_xmm = 0;
             FOREACH_N(i, 0, proto->param_count) {
@@ -438,15 +443,25 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                 int reg_limit = is_float ? xmm_param_count : gpr_param_count;
                 if (id < reg_limit) {
-                    int reg_num = (proj->dt.type == TB_FLOAT ? id : gpr_params[id]);
+                    int reg_num = is_float ? id : gpr_params[id];
+                    int vreg = (is_float ? FIRST_XMM : 0) + reg_num;
 
                     v = DEF(proj, proj->dt);
                     hint_reg(ctx, v, reg_num);
-                    SUBMIT(inst_move(proj->dt, v, reg_num));
+                    SUBMIT(inst_move(proj->dt, v, vreg));
+
+                    outs[out_count++] = vreg;
 
                     nl_map_put(ctx->values, proj, v);
                 }
             }
+
+            // insert INST_ENTRY (this is where parameter register come from)
+            Inst* entry_inst = alloc_inst(INST_ENTRY, TB_TYPE_I64, out_count, 0, 0);
+            memcpy(entry_inst->operands, outs, out_count * sizeof(RegIndex));
+
+            entry_inst->next = prev->next;
+            prev->next = entry_inst;
 
             // walk the entry to find any parameter stack slots
             bool has_param_slots = false;
@@ -2533,7 +2548,21 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         size_t in_base = inst->out_count;
         InstCategory cat = inst_table[inst->type].cat;
 
-        if (inst->type == INST_LABEL) {
+        if (1) {
+            EMITA(e, " \x1b[32m# { outs: ");
+            FOREACH_N(i, 0, inst->out_count) {
+                EMITA(e, " v%d", inst->operands[i]);
+            }
+            EMITA(e, ", ins: ");
+            FOREACH_N(i, inst->out_count, inst->out_count + inst->in_count) {
+                EMITA(e, " v%d", inst->operands[i]);
+            }
+            EMITA(e, "}\x1b[0m\n");
+        }
+
+        if (inst->type == INST_ENTRY) {
+            // does nothing
+        } else if (inst->type == INST_LABEL) {
             TB_Node* bb = inst->n;
             uint32_t pos = GET_CODE_POS(&ctx->emit);
             tb_resolve_rel32(&ctx->emit, &nl_map_get_checked(ctx->emit.labels, bb), pos);

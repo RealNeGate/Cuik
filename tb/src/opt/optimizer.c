@@ -32,6 +32,13 @@ TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, T
 
 static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
 
+static thread_local TB_Arena* tmp_arena;
+
+static void reload_tmp_arena(TB_Function* f) {
+    tmp_arena = get_temporary_arena(f->super.module);
+    tb_arena_clear(tmp_arena);
+}
+
 static int bits_in_data_type(int pointer_size, TB_DataType dt) {
     switch (dt.type) {
         case TB_INT: return dt.data;
@@ -199,7 +206,7 @@ static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, U
     // just generate a new user list (if the slots don't match)
     User* use = find_users(p, in);
     if (use == NULL) {
-        use = recycled ? recycled : TB_ARENA_ALLOC(&tb__arena, User);
+        use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
         use->next = NULL;
         use->n = n;
         use->slot = slot;
@@ -212,7 +219,7 @@ static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, U
             if (use->n == n && use->slot == slot) return;
         }
 
-        use = recycled ? recycled : TB_ARENA_ALLOC(&tb__arena, User);
+        use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
         use->next = NULL;
         use->n = n;
         use->slot = slot;
@@ -549,7 +556,7 @@ static void generate_use_lists(TB_Passes* restrict queue, TB_Function* f) {
 }
 
 TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
-    tb__init_temporary_arena();
+    reload_tmp_arena(f);
 
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
     *p = (TB_Passes){ .f = f, .old_line_attrib = f->line_attrib, .old_arena = f->arena };
@@ -581,10 +588,10 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 }
 
 bool tb_pass_peephole(TB_Passes* p) {
+    TB_Function* f = p->f;
+
     bool changes = false;
     CUIK_TIMED_BLOCK("peephole") {
-        TB_Function* f = p->f;
-
         while (dyn_array_length(p->queue) > 0) CUIK_TIMED_BLOCK("iter") {
             // pull from worklist
             TB_Node* n = dyn_array_pop(p->queue);
@@ -603,6 +610,7 @@ bool tb_pass_peephole(TB_Passes* p) {
 
 void tb_pass_exit(TB_Passes* p) {
     TB_Function* f = p->f;
+
     f->line_attrib = p->old_line_attrib;
     f->arena = p->old_arena;
 
@@ -610,7 +618,7 @@ void tb_pass_exit(TB_Passes* p) {
     nl_hashset_free(p->visited);
 
     tb_function_free_postorder(&p->order);
-    tb_arena_clear(&tb__arena);
+    tb_arena_clear(tmp_arena);
     nl_map_free(p->doms._);
     nl_map_free(p->users);
     dyn_array_destroy(p->queue);
