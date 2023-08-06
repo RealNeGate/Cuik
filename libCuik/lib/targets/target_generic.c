@@ -137,12 +137,12 @@ static Cuik_Type* expect_pointer(TranslationUnit* tu, Cuik_Expr* e, Cuik_Expr* a
     return cuik_canonical_type(dst_type->ptr_to);
 }
 
+#ifdef CUIK_USE_TB
 static int get_memory_order_val(TB_Node* n) {
     assert(n->type == TB_INTEGER_CONST && "get_memory_order_val got bad input?");
     return TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->words[0];
 }
 
-#ifdef CUIK_USE_TB
 #define ZZZ(x) (BuiltinResult){ x }
 #define RVAL(i) cvt2rval(tu, func, &args[i])
 BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, IRVal* args) {
