@@ -70,6 +70,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 #include "branches.h"
 #include "print.h"
 #include "mem2reg.h"
+#include "gcm.h"
 #include "libcalls.h"
 
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {

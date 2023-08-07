@@ -45,11 +45,11 @@ static const struct ParamDescriptor {
 static void init_regalloc(Ctx* restrict ctx) {
     // Generate intervals for physical registers
     FOREACH_N(i, 0, 16) {
-        dyn_array_put(ctx->intervals, (LiveInterval){ .reg_class = REG_CLASS_GPR, .dt = TB_X86_TYPE_QWORD, .reg = i, .assigned = i });
+        dyn_array_put(ctx->intervals, (LiveInterval){ .reg_class = REG_CLASS_GPR, .dt = TB_X86_TYPE_QWORD, .reg = i, .assigned = i, .hint = -1, .start = INT_MAX, .split_kid = -1 });
     }
 
     FOREACH_N(i, 0, 16) {
-        dyn_array_put(ctx->intervals, (LiveInterval){ .reg_class = REG_CLASS_XMM, .dt = TB_X86_TYPE_XMMWORD, .reg = i, .assigned = i });
+        dyn_array_put(ctx->intervals, (LiveInterval){ .reg_class = REG_CLASS_XMM, .dt = TB_X86_TYPE_XMMWORD, .reg = i, .assigned = i, .hint = -1, .start = INT_MAX, .split_kid = -1 });
     }
 }
 
@@ -64,14 +64,18 @@ static void pre_callee_saved_constraints(Ctx* restrict ctx, int start, int end) 
     callee_saved_gprs &= ~(1u << RSP);
 
     FOREACH_N(i, 0, 16) if (callee_saved_gprs & (1ull << i)) {
-        add_use_pos(&ctx->intervals[FIRST_GPR + i], end, true);
+        LiveInterval* interval = &ctx->intervals[FIRST_GPR + i];
+        add_use_pos(interval, end, true);
+        add_range(interval, start, end);
     }
 
     FOREACH_N(i, desc->caller_saved_xmms, 16) {
-        add_use_pos(&ctx->intervals[FIRST_XMM + i], end, true);
+        LiveInterval* interval = &ctx->intervals[FIRST_XMM + i];
+        add_use_pos(interval, end, true);
+        add_range(interval, start, end);
     }
 
-    MachineBBs mbbs = ctx->machine_bbs;
+    /*MachineBBs mbbs = ctx->machine_bbs;
     FOREACH_N(i, 0, ctx->order.count) {
         TB_Node* bb = ctx->order.traversal[i];
         MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
@@ -88,7 +92,7 @@ static void pre_callee_saved_constraints(Ctx* restrict ctx, int start, int end) 
             LiveInterval* interval = &ctx->intervals[FIRST_XMM + i];
             add_range(interval, start, end);
         }
-    }
+    }*/
 }
 
 static void post_callee_saved_constraints(Ctx* restrict ctx, int start, int end) {
@@ -447,7 +451,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     int vreg = (is_float ? FIRST_XMM : 0) + reg_num;
 
                     v = DEF(proj, proj->dt);
-                    hint_reg(ctx, v, reg_num);
+                    hint_reg(ctx, v, vreg);
                     SUBMIT(inst_move(proj->dt, v, vreg));
 
                     outs[out_count++] = vreg;
@@ -687,9 +691,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
         // memory op
         case TB_MEMCPY: {
-            SUBMIT(inst_move(n->dt, RDI, isel(ctx, n->inputs[1])));
-            SUBMIT(inst_move(n->dt, RSI, isel(ctx, n->inputs[2])));
-            SUBMIT(inst_move(n->dt, RCX, isel(ctx, n->inputs[3])));
+            TB_DataType ptr_dt = TB_TYPE_I64;
+            SUBMIT(inst_move(ptr_dt, RDI, isel(ctx, n->inputs[1])));
+            SUBMIT(inst_move(ptr_dt, RSI, isel(ctx, n->inputs[2])));
+            SUBMIT(inst_move(ptr_dt, RCX, isel(ctx, n->inputs[3])));
 
             Inst* i = alloc_inst(MOVSB, TB_TYPE_VOID, 0, 3, 0);
             i->flags |= INST_REP;
@@ -709,7 +714,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }
 
             dst = DEF(n, n->dt);
-            hint_reg(ctx, dst, 0); // RAX or XMM0 depending
 
             // system calls don't count, we track this for ABI
             // and stack allocation purposes.
@@ -753,7 +757,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     int phys_reg = use_xmm ? reg : desc->gprs[reg];
                     int dst = (use_xmm ? FIRST_XMM : FIRST_GPR) + phys_reg;
 
-                    hint_reg(ctx, src, phys_reg);
+                    hint_reg(ctx, src, dst);
                     SUBMIT(inst_move(param_dt, dst, src));
                     ins[in_count++] = dst;
 
@@ -769,6 +773,14 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             if (is_sysv) {
                 SUBMIT(inst_op_imm(MOV, TB_TYPE_I8, RAX, xmms_used));
                 ins[in_count++] = FIRST_GPR + RAX;
+                caller_saved_gprs &= ~(1ull << RAX);
+            }
+
+            bool use_xmm_ret = TB_IS_FLOAT_TYPE(n->dt) || n->dt.width;
+            if (use_xmm_ret) {
+                caller_saved_xmms &= ~(1ull << XMM0);
+            } else {
+                caller_saved_gprs &= ~(1ull << RAX);
             }
 
             // all these registers need to be spilled and reloaded if they're used across
@@ -781,7 +793,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             // mark clobber list
             {
-                RegIndex* clobbers = &call_inst->operands[call_inst->out_count];
+                RegIndex* clobbers = &call_inst->operands[call_inst->out_count + call_inst->in_count];
                 FOREACH_N(i, 0, 16) if (caller_saved_gprs & (1u << i)) {
                     *clobbers++ = FIRST_GPR + i;
                 }
@@ -792,7 +804,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }
 
             // return value (either XMM0 or RAX)
-            call_inst->operands[0] = dst;
+            call_inst->operands[0] = RAX;
 
             // write inputs
             RegIndex* dst_ins = &call_inst->operands[call_inst->out_count];
@@ -810,6 +822,32 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             fence(ctx, n);
             SUBMIT(call_inst);
+
+            // copy out return
+            if (use_xmm_ret) {
+                hint_reg(ctx, dst, FIRST_XMM + XMM0);
+                SUBMIT(inst_move(n->dt, dst, FIRST_XMM + XMM0));
+            } else {
+                hint_reg(ctx, dst, RAX);
+                SUBMIT(inst_move(n->dt, dst, RAX));
+            }
+            break;
+        }
+
+        case TB_CMP_EQ:
+        case TB_CMP_NE:
+        case TB_CMP_SLT:
+        case TB_CMP_SLE:
+        case TB_CMP_ULT:
+        case TB_CMP_ULE:
+        case TB_CMP_FLT:
+        case TB_CMP_FLE: {
+            dst = DEF(n, n->dt);
+            SUBMIT(inst_op_zero(n->dt, dst));
+
+            // use SETcc to convert into integer
+            Cond cc = isel_cmp(ctx, n);
+            SUBMIT(inst_op_r(SETO + cc, TB_TYPE_I8, dst));
             break;
         }
 
@@ -954,7 +992,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 assert(n->input_count <= 2 && "We don't support multiple returns here");
 
                 int src = isel(ctx, n->inputs[1]);
-                hint_reg(ctx, src, 0);
 
                 // we don't really need a fence if we're about to exit
                 // fence(ctx, n);
@@ -962,8 +999,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 // copy to return register
                 TB_DataType dt = n->inputs[1]->dt;
                 if (dt.type == TB_FLOAT) {
+                    hint_reg(ctx, src, FIRST_XMM + XMM0);
                     tb_todo();
                 } else {
+                    hint_reg(ctx, src, RAX);
                     SUBMIT(inst_move(dt, RAX, src));
                 }
             }
@@ -2543,13 +2582,12 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
     // emit prologue
     func_out->prologue_length = emit_prologue(ctx);
 
-    #if 1
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
         InstCategory cat = inst_table[inst->type].cat;
 
-        if (1) {
-            EMITA(e, " \x1b[32m# { outs: ");
+        if (0) {
+            EMITA(e, " \x1b[32m# t=%d { outs:", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
                 EMITA(e, " v%d", inst->operands[i]);
             }
@@ -2622,12 +2660,12 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
                 resolve_interval(ctx, inst, 0, &val);
 
                 if (ret->reg_class == REG_CLASS_GPR) {
-                    if (ret->assigned != RAX) {
+                    if (!is_value_gpr(&val, RAX)) {
                         Val rax = val_gpr(RAX);
                         inst2_print(e, MOV, &val, &rax, inst->dt);
                     }
                 } else if (ret->reg_class == REG_CLASS_XMM) {
-                    if (ret->assigned != XMM0) {
+                    if (!is_value_xmm(&val, XMM0)) {
                         Val xmm0 = val_xmm(XMM0);
                         inst2_print(e, MOV, &val, &xmm0, inst->dt);
                     }
@@ -2691,180 +2729,6 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             }
         }
     }
-    #else
-    Val ops[4];
-    for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
-        if (inst->type == INST_LABEL) {
-            TB_Node* bb = (TB_Node*) inst->imm[0];
-            uint32_t pos = GET_CODE_POS(&ctx->emit);
-            tb_resolve_rel32(&ctx->emit, &nl_map_get_checked(ctx->emit.labels, bb), pos);
-
-            if (bb != ctx->f->start_node) {
-                EMITA(e, "L%p:\n", bb);
-            }
-            continue;
-        } else if (inst->type == INST_LINE) {
-            TB_Function* f = ctx->f;
-            EMITA(e, "  #loc %s %"PRIu64"\n", f->super.module->files[inst->imm[0]].path, inst->imm[1]);
-
-            TB_Line l = {
-                .file = inst->imm[0],
-                .line = inst->imm[1],
-                .pos = GET_CODE_POS(&ctx->emit)
-            };
-            dyn_array_put(ctx->lines, l);
-            continue;
-        } else if (inst->type == INST_USE) {
-            continue;
-        }
-
-        // spill notes
-        if (inst->spill_metadata < 0) {
-            EMITA(e, "  # reload D%d\n", -inst->spill_metadata);
-        } else if (inst->spill_metadata > 0) {
-            EMITA(e, "  # spill D%d\n", inst->spill_metadata);
-        }
-
-        bool has_def = false;
-        if (inst->regs[0] >= 0) {
-            ops[0] = val_gpr(resolve_def(ctx, inst->regs[0]));
-            has_def = true;
-        }
-
-        int8_t regs[4];
-        regs[0] = 0;
-        FOREACH_N(i, 1, 4) {
-            regs[i] = resolve_use(ctx, inst->regs[i]);
-        }
-
-        // convert into normie operands
-        int op_count = 0;
-        switch (inst->layout) {
-            case X86_OP_NONE: {
-                op_count = 0;
-                break;
-            }
-            case X86_OP_R: {
-                ops[1] = val_gpr(regs[1]);
-                op_count = has_def ? 2 : 1;
-                break;
-            }
-            case X86_OP_I: {
-                ops[1] = val_imm(inst->imm[0]);
-                op_count = 2;
-                break;
-            }
-            case X86_OP_A: {
-                ops[1] = val_abs((inst->imm[1] << 32) | inst->imm[0]);
-                op_count = 2;
-                break;
-            }
-            case X86_OP_G: {
-                ops[1] = val_global((TB_Symbol*) (uintptr_t) inst->imm[0]);
-                op_count = has_def ? 2 : 1;
-                break;
-            }
-            case X86_OP_L: {
-                ops[1] = val_label((TB_Node*) inst->imm[0]);
-                op_count = 1;
-                break;
-            }
-            case X86_OP_RR: {
-                ops[1] = val_gpr(regs[1]);
-                ops[2] = val_gpr(regs[2]);
-                op_count = 3;
-                break;
-            }
-            case X86_OP_RI: {
-                ops[1] = val_gpr(regs[1]);
-                ops[2] = val_imm(inst->imm[0]);
-                op_count = 3;
-                break;
-            }
-            case X86_OP_M: {
-                Scale scale = (inst->imm[0] >> 32);
-                int32_t disp = inst->imm[0] & 0xFFFFFFFF;
-
-                ops[1] = val_base_index_disp(regs[2], regs[3], scale, disp);
-                op_count = 2;
-                break;
-            }
-            case X86_OP_MR: {
-                Scale scale = (inst->imm[0] >> 32);
-                int32_t disp = inst->imm[0] & 0xFFFFFFFF;
-
-                ops[1] = val_base_index_disp(regs[2], regs[3], scale, disp);
-                ops[2] = val_gpr(regs[1]);
-                op_count = 3;
-                break;
-            }
-            case X86_OP_MI: {
-                Scale scale = (inst->imm[0] >> 32);
-                int32_t disp = inst->imm[0] & 0xFFFFFFFF;
-
-                ops[1] = val_base_index_disp(regs[2], regs[3], scale, disp);
-                ops[2] = val_imm(inst->imm[1]);
-                op_count = 3;
-                break;
-            }
-            default: tb_todo();
-        }
-
-        bool is_fp = (inst->data_type >= TB_X86_TYPE_SSE_SS && inst->data_type <= TB_X86_TYPE_SSE_PD);
-        if (is_fp) {
-            FOREACH_N(j, 0, op_count) {
-                if (ops[j].type == VAL_GPR) ops[j].type = VAL_XMM;
-            }
-        }
-
-        // TODO(NeGate): this can potentially place the prefix too early
-        if (inst->prefix & INST_REP) EMIT1(e, 0xF3);
-
-        if (inst->type == INST_MOVE) {
-            if (!is_value_match(&ops[1], &ops[2])) {
-                inst2_print(e, is_fp ? FP_MOV : MOV, &ops[1], &ops[2], inst->data_type);
-            }
-        } else if (inst->type == INST_COPY) {
-            if (!is_value_match(&ops[0], &ops[1])) {
-                inst2_print(e, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
-            }
-        } else if (op_count == 0) {
-            inst0(e, inst->type, inst->data_type);
-            EMITA(e, "  %s\n", inst_table[inst->type].mnemonic);
-        } else if (op_count == 1) {
-            if (!has_def) {
-                inst1_print(e, inst->type, &ops[1], inst->data_type);
-            } else {
-                tb_todo();
-            }
-        } else if (op_count == 2) {
-            if (inst->type == JMP || inst->type == CALL) {
-                inst1_print(e, inst->type, &ops[1], inst->data_type);
-            } else {
-                // sometimes 2ary is a unary with a separated dst and src, or a binop
-                if (inst_table[inst->type].cat <= INST_UNARY_EXT) {
-                    if (!is_value_match(&ops[0], &ops[1])) {
-                        inst2_print(e, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
-                    }
-                    inst1_print(e, inst->type, &ops[0], inst->data_type);
-                } else {
-                    inst2_print(e, inst->type, &ops[0], &ops[1], inst->data_type);
-                }
-            }
-        } else if (op_count == 3) {
-            if (!has_def) {
-                inst2_print(e, (InstType) inst->type, &ops[1], &ops[2], inst->data_type);
-            } else {
-                if (!is_value_match(&ops[0], &ops[1])) {
-                    inst2_print(e, is_fp ? FP_MOV : MOV, &ops[0], &ops[1], inst->data_type);
-                }
-                inst2_print(e, (InstType) inst->type, &ops[0], &ops[2], inst->data_type);
-            }
-        } else {
-            tb_todo();
-        }
-    }
-    #endif
 
     // return label goes here
     EMITA(&ctx->emit, ".ret:\n");

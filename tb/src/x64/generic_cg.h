@@ -4,6 +4,7 @@
 #include <log.h>
 
 static thread_local TB_Arena* tmp_arena;
+static thread_local bool reg_alloc_log;
 
 enum {
     CG_VAL_UNRESOLVED = 0,
@@ -175,6 +176,7 @@ typedef enum {
 
     // memory op
     INST_INDEXED = 1024,
+    INST_SPILL   = 2048,
 } InstFlags;
 
 struct Inst {
@@ -186,10 +188,6 @@ struct Inst {
 
     TB_X86_DataType dt;
     int time, mem_slot;
-
-    #ifndef NDEBUG
-    int spill_metadata;
-    #endif
 
     union {
         int32_t imm;
@@ -332,6 +330,12 @@ static Inst* inst_op_ri(int type, TB_DataType dt, RegIndex src, int32_t imm) {
     return i;
 }
 
+static Inst* inst_op_r(int type, TB_DataType dt, RegIndex dst) {
+    Inst* i = alloc_inst(type, dt, 1, 0, 0);
+    i->operands[0] = dst;
+    return i;
+}
+
 static Inst* inst_op_rr(int type, TB_DataType dt, RegIndex dst, RegIndex src) {
     Inst* i = alloc_inst(type, dt, 1, 1, 0);
     i->operands[0] = dst;
@@ -360,12 +364,14 @@ static Inst* inst_op_zero(TB_DataType dt, RegIndex dst) {
 #define DEF(n, dt) alloc_vreg(ctx, n, dt)
 static int alloc_vreg(Ctx* restrict ctx, TB_Node* n, TB_DataType dt) {
     int i = dyn_array_length(ctx->intervals);
-    dyn_array_put(ctx->intervals, (LiveInterval){ .reg_class = classify_reg_class(dt), .n = n, .reg = -1, .hint = -1, .assigned = -1, .dt = legalize(dt), .start = INT_MAX });
+    dyn_array_put(ctx->intervals, (LiveInterval){ .reg_class = classify_reg_class(dt), .n = n, .reg = -1, .hint = -1, .assigned = -1, .dt = legalize(dt), .start = INT_MAX, .split_kid = -1 });
     return i;
 }
 
 static void hint_reg(Ctx* restrict ctx, int i, int phys_reg) {
-    ctx->intervals[i].hint = phys_reg;
+    if (ctx->intervals[i].hint < 0) {
+        ctx->intervals[i].hint = phys_reg;
+    }
 }
 
 ////////////////////////////////
@@ -472,172 +478,6 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
     ctx->machine_bbs = seq_bb;
     return timeline;
-}
-
-////////////////////////////////
-// Early scheduling
-////////////////////////////////
-// schedule nodes below any of their pinned dependencies
-static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_START && n->type <= TB_TRAP) || n->type == TB_LOAD || n->type == TB_PHI;
-}
-
-static void schedule_early(Ctx* restrict ctx, TB_Node* n) {
-    if (!nl_hashset_put(&ctx->visited, n)) {
-        // already visited
-        return;
-    }
-
-    // mark as visited (also track use count here)
-    size_t use_count = 0;
-    for (User* use = find_users(ctx->p, n); use; use = use->next) use_count++;
-    nl_map_put(ctx->uses, n, use_count);
-
-    if (n->inputs[0] == NULL) {
-        set_input(ctx->p, n, ctx->f->start_node, 0);
-    }
-
-    bool pin = is_pinned(n);
-    FOREACH_N(i, 1, n->input_count) {
-        schedule_early(ctx, n->inputs[i]);
-
-        if (!pin) {
-            // choose deepest block
-            TB_Node* aa = tb_get_parent_region(n->inputs[0]);
-            TB_Node* bb = tb_get_parent_region(n->inputs[i]->inputs[0]);
-
-            if (aa == bb) {
-                // we need to measure dom depth within a block now
-                //
-                // aa
-                // VV     a is greater than b
-                // bb
-                TB_Node* a = n->inputs[0];
-                TB_Node* b = n->inputs[i]->inputs[0];
-
-                for (;;) {
-                    if (a == b) {
-                        // a dominates b, we can't be having that
-                        set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
-                        break;
-                    }
-
-                    if (b->type == TB_START || b->type == TB_REGION) break;
-                    b = b->inputs[0];
-                }
-            } else if (dom_depth(ctx->doms, aa) < dom_depth(ctx->doms, bb)) {
-                tb_assert(n->inputs[i]->inputs[0], "missing control");
-                set_input(ctx->p, n, n->inputs[i]->inputs[0], 0);
-            }
-        } else {
-            tb_assert(n->inputs[0], "if the node is pinned, it must have a control node");
-        }
-    }
-}
-
-static void schedule_region(Ctx* restrict ctx, TB_Node* n) {
-    TB_Node* parent = n->inputs[0];
-    if (parent->type != TB_START && parent->type != TB_REGION) {
-        schedule_region(ctx, parent);
-    }
-
-    FOREACH_N(i, 1, n->input_count) {
-        schedule_early(ctx, n->inputs[i]);
-    }
-}
-
-////////////////////////////////
-// Late scheduling
-////////////////////////////////
-// schedule nodes such that they appear the least common
-// ancestor to all their users
-static TB_Node* walk_up(TB_Dominators doms, TB_Node* a, TB_Node* b) {
-    // if a is deeper, line it up with b
-    int bdom = dom_depth(doms, b);
-    while (a->input_count > 0) {
-        TB_Node* aa = tb_get_parent_region(a);
-        ptrdiff_t search = nl_map_get(doms._, aa);
-        assert(search >= 0);
-
-        if (doms._[search].v.depth >= bdom) break;
-        a = doms._[search].v.node;
-    }
-
-    return a;
-}
-
-static TB_Node* find_lca(TB_Dominators doms, TB_Node* a, TB_Node* b) {
-    if (a == NULL) return b;
-
-    // line both up
-    a = walk_up(doms, a, b);
-    b = walk_up(doms, b, a);
-
-    while (a != b) {
-        a = idom(doms, a);
-        b = idom(doms, b);
-    }
-
-    return a;
-}
-
-static void schedule_late(Ctx* restrict ctx, TB_Node* n) {
-    // uses doubles as the visited map for this function
-    if (!nl_hashset_put(&ctx->visited, n) || is_pinned(n)) {
-        // already visited
-        return;
-    }
-
-    // we're gonna find the least common ancestor
-    TB_Node* lca = NULL;
-    for (User* use = find_users(ctx->p, n); use; use = use->next) {
-        if (use->slot == 0) continue;
-
-        TB_Node* y = use->n;
-        // dead node
-        if (y->inputs[0] == NULL) continue;
-
-        schedule_late(ctx, y);
-
-        TB_Node* use_block = tb_get_parent_region(y->inputs[0]);
-        if (y->type == TB_PHI) {
-            if (y->input_count != use_block->input_count + 1) {
-                // report error
-                ctx->p->error_n = y;
-                tb_pass_print(ctx->p);
-                tb_panic("phi has parent with mismatched predecessors");
-            }
-
-            ptrdiff_t j = -1;
-            for (; j < y->input_count; j++) {
-                if (y->inputs[j] == n) {
-                    break;
-                }
-            }
-            assert(j >= 0);
-
-            use_block = tb_get_parent_region(use_block->inputs[j - 1]);
-        }
-
-        lca = find_lca(ctx->doms, lca, use_block);
-    }
-
-    tb_assert(lca, "missing least common ancestor");
-    set_input(ctx->p, n, lca, 0);
-}
-
-// We'll be using this for late schedling
-static void postorder_all_nodes(Ctx* restrict ctx, DynArray(TB_Node*)* worklist, TB_Node* n) {
-    if (!nl_hashset_put(&ctx->visited, n)) {
-        return;
-    }
-
-    // walk successors first
-    FOREACH_N(i, 0, n->input_count) {
-        postorder_all_nodes(ctx, worklist, n->inputs[i]);
-    }
-
-    dyn_array_put(*worklist, n);
 }
 
 static bool use(Ctx* restrict ctx, TB_Node* n) {
@@ -768,10 +608,23 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
 
 // Codegen through here is done in phases
 static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm) {
-    tmp_arena = get_temporary_arena(p->f->super.module);
+    TB_Function* restrict f = p->f;
+
+    tmp_arena = get_temporary_arena(f->super.module);
     tb_arena_clear(tmp_arena);
 
-    TB_Function* restrict f = p->f;
+    // gives every single node a control edge so we know when they
+    // need to schedule
+    tb_pass_schedule(p);
+
+    /*reg_alloc_log = strcmp(f->super.name, "_vfprintf_l") == 0;
+    if (reg_alloc_log) {
+        printf("\n\n\n");
+        tb_pass_print(p);
+    } else {
+        emit_asm = false;
+    }*/
+
     Ctx ctx = {
         .module = f->super.module,
         .f = f,
@@ -806,47 +659,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     nl_map_create(ctx.stack_slots, 8);
     dyn_array_create(ctx.debug_stack_slots, 8);
 
-    // Scheduling: "Global Code Motion Global Value Numbering", Cliff Click 1995
-    //   https://courses.cs.washington.edu/courses/cse501/06wi/reading/click-pldi95.pdf
-    CUIK_TIMED_BLOCK("schedule") {
-        ctx.visited = nl_hashset_alloc(f->node_count);
-        FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-            TB_Node* bb = ctx.order.traversal[i];
-
-            // schedule all pinned instructions
-            schedule_region(&ctx, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
-        }
-
-        // generate instruction list we can walk
-        DynArray(TB_Node*) worklist = NULL;
-
-        nl_hashset_clear(&ctx.visited);
-        FOREACH_N(i, 0, ctx.order.count) {
-            TB_Node* bb = ctx.order.traversal[i];
-            postorder_all_nodes(&ctx, &worklist, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
-        }
-
-        // move nodes closer to their usage site
-        nl_hashset_clear(&ctx.visited);
-        FOREACH_REVERSE_N(i, 0, dyn_array_length(worklist)) {
-            TB_Node* n = worklist[i];
-
-            if (is_pinned(n)) {
-                nl_hashset_put(&ctx.visited, n);
-                for (User* use = find_users(ctx.p, n); use; use = use->next) {
-                    if (use->n->inputs[0] != NULL) {
-                        schedule_late(&ctx, use->n);
-                    }
-                }
-            } else if (n->input_count == 1) {
-                // this is gonna usually be the constants
-                schedule_late(&ctx, worklist[i]);
-            }
-        }
-
-        dyn_array_destroy(worklist);
-        nl_hashset_free(ctx.visited);
-    }
+    // mark as visited (also track use count here)
+    /* size_t use_count = 0;
+    for (User* use = find_users(ctx->p, n); use; use = use->next) use_count++;
+    nl_map_put(ctx->uses, n, use_count); */
 
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are

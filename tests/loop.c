@@ -4,12 +4,22 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-// int bar(int x, int y);
-// int foo(int x) { return bar(x+1 & 3 * 16, 10); }
+void simple(int* a, int* n, int b) {
+    a[(*n)++] = b;
+}
 
-int foo() { return 42+1 & 3 * 16; }
+/*int bounds_checks(size_t n, int* arr) {
+    int sum;
+    memset(&sum, 0, sizeof(sum));
 
-/*uint32_t murmur3_32(const void* key, size_t len) {
+    for (size_t i = 0; i < n; i++) {
+        if (i >= n) return -1; // bounds check
+        sum += arr[i];
+    }
+    return sum;
+}
+
+uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time
@@ -40,16 +50,17 @@ int foo() { return 42+1 & 3 * 16; }
     return (h ^ (h >> 16));
 }*/
 
+// int bar(int x, int y);
+// int foo(int x) { return bar(x+1 & 3 * 16, 10); }
+int foo() { return 42+1 & 3 * 16; }
+
 int main() {
     printf("Woah! %d\n", foo());
+    // printf("Wack! %d\n", murmur3_32("Hello", 5));
     return 0;
 }
 
 #if 0
-void simple(int* a, int* n, int b) {
-    a[(*n)++] = b;
-}
-
 typedef struct Cell Cell;
 struct Cell {
     Cell* car;
@@ -127,17 +138,6 @@ int nil_pilled(int* ptr) {
     }
 
     return 0;
-}
-
-int bounds_checks(size_t n, int* arr) {
-    int sum;
-    memset(&sum, 0, sizeof(sum));
-
-    for (size_t i = 0; i < n; i++) {
-        if (i >= n) return -1; // bounds check
-        sum += arr[i];
-    }
-    return sum;
 }
 #endif
 

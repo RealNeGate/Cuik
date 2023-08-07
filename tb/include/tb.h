@@ -1080,6 +1080,8 @@ TB_API bool tb_pass_loop(TB_Passes* opt);
 //   print: prints IR in a flattened text form.
 TB_API bool tb_pass_print(TB_Passes* opt);
 
+TB_API void tb_pass_schedule(TB_Passes* opt);
+
 // codegen
 TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, bool emit_asm);
 

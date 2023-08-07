@@ -160,8 +160,7 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
         }
 
         // print IR
-        if (1 || args->emit_ir) {
-            printf("\n\n\n");
+        if (args->emit_ir) {
             tb_pass_print(p);
         }
 
