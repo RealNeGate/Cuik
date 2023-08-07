@@ -68,7 +68,6 @@ typedef struct {
     TB_PostorderWalk order;
 
     TB_Passes* p;
-    TB_Dominators doms;
 
     // Scheduling
     NL_HashSet visited;
@@ -629,7 +628,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         .module = f->super.module,
         .f = f,
         .p = p,
-        .doms = p->doms,
         .target_abi = f->super.module->target_abi,
         .safepoints = f->safepoint_count ? tb_platform_heap_alloc(f->safepoint_count * sizeof(TB_SafepointKey)) : NULL,
         .emit = {

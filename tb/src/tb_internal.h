@@ -583,28 +583,12 @@ uint32_t tb_get4b(TB_Emitter* o, uint32_t pos);
 ////////////////////////////////
 // CFG analysis
 ////////////////////////////////
-typedef struct {
-    int depth;
-    TB_Node* node;
-} TB_Dom;
-
-typedef struct {
-    NL_Map(TB_Node*, TB_Dom) _;
-} TB_Dominators;
-
-static void put_idom(TB_Dominators* doms, TB_Node* n, TB_Node* new_idom) {
-    TB_Dom d = { -1, new_idom };
-    nl_map_put(doms->_, n, d);
-}
-
 // shorthand because we use it a lot
-static TB_Node* idom(TB_Dominators doms, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(doms._, n);
-    assert(search >= 0);
-    return doms._[search].v.node;
+static TB_Node* idom(TB_Node* n) {
+    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom;
 }
 
-static int dom_depth(TB_Dominators doms, TB_Node* n) {
+static int dom_depth(TB_Node* n) {
     if (n == NULL) {
         return 0;
     }
@@ -613,9 +597,7 @@ static int dom_depth(TB_Dominators doms, TB_Node* n) {
         n = n->inputs[0];
     }
 
-    ptrdiff_t search = nl_map_get(doms._, n);
-    assert(search >= 0);
-    return doms._[search].v.depth;
+    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom_depth;
 }
 
 typedef NL_HashSet TB_FrontierSet;
@@ -627,7 +609,7 @@ typedef struct {
     NL_Map(TB_Node*, char) visited;
 } TB_PostorderWalk;
 
-TB_Dominators tb_get_dominators(TB_Function* f, TB_PostorderWalk order);
+void tb_compute_dominators(TB_Function* f, TB_PostorderWalk order);
 
 // Allocates from the heap and requires freeing with tb_function_free_postorder
 TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);

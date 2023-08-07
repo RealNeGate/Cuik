@@ -815,6 +815,9 @@ TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b) {
 
 TB_Node* tb_inst_region(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_TUPLE, 0, sizeof(TB_NodeRegion));
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+    r->dom_depth = -1; // unresolved
+    r->dom = NULL;
     return n;
 }
 

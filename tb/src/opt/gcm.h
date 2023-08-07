@@ -44,7 +44,7 @@ static void schedule_early(TB_Passes* passes, NL_HashSet* visited, TB_Node* n) {
                     if (b->type == TB_START || b->type == TB_REGION) break;
                     b = b->inputs[0];
                 }
-            } else if (dom_depth(passes->doms, aa) < dom_depth(passes->doms, bb)) {
+            } else if (dom_depth(aa) < dom_depth(bb)) {
                 tb_assert(n->inputs[i]->inputs[0], "missing control");
                 set_input(passes, n, n->inputs[i]->inputs[0], 0);
             }
@@ -70,31 +70,31 @@ static void schedule_region(TB_Passes* passes, NL_HashSet* visited, TB_Node* n) 
 ////////////////////////////////
 // schedule nodes such that they appear the least common
 // ancestor to all their users
-static TB_Node* walk_up(TB_Dominators doms, TB_Node* a, TB_Node* b) {
+static TB_Node* walk_up(TB_Node* a, TB_Node* b) {
     // if a is deeper, line it up with b
-    int bdom = dom_depth(doms, b);
+    int bdom = dom_depth(b);
     while (a->input_count > 0) {
         TB_Node* aa = tb_get_parent_region(a);
-        ptrdiff_t search = nl_map_get(doms._, aa);
-        assert(search >= 0);
+        if (dom_depth(aa) >= bdom) {
+            break;
+        }
 
-        if (doms._[search].v.depth >= bdom) break;
-        a = doms._[search].v.node;
+        a = idom(aa);
     }
 
     return a;
 }
 
-static TB_Node* find_lca(TB_Dominators doms, TB_Node* a, TB_Node* b) {
+static TB_Node* find_lca(TB_Node* a, TB_Node* b) {
     if (a == NULL) return b;
 
     // line both up
-    a = walk_up(doms, a, b);
-    b = walk_up(doms, b, a);
+    a = walk_up(a, b);
+    b = walk_up(b, a);
 
     while (a != b) {
-        a = idom(doms, a);
-        b = idom(doms, b);
+        a = idom(a);
+        b = idom(b);
     }
 
     return a;
@@ -135,7 +135,7 @@ static void schedule_late(TB_Passes* passes, NL_HashSet* visited, TB_Node* n) {
             use_block = tb_get_parent_region(use_block->inputs[j - 1]);
         }
 
-        lca = find_lca(passes->doms, lca, use_block);
+        lca = find_lca(lca, use_block);
     }
 
     tb_assert(lca, "missing least common ancestor");

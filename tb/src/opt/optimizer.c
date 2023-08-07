@@ -569,7 +569,7 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 
     // generate dominators
     p->order = tb_function_get_postorder(f);
-    p->doms = tb_get_dominators(f, p->order);
+    tb_compute_dominators(f, p->order);
 
     CUIK_TIMED_BLOCK("nl_map_create") {
         p->visited = nl_hashset_alloc(f->node_count);
@@ -620,7 +620,6 @@ void tb_pass_exit(TB_Passes* p) {
 
     tb_function_free_postorder(&p->order);
     tb_arena_clear(tmp_arena);
-    nl_map_free(p->doms._);
     nl_map_free(p->users);
     dyn_array_destroy(p->queue);
 }

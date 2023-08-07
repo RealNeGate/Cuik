@@ -24,9 +24,7 @@ static void add_region_pred_tracked(TB_Passes* opt, TB_Function* f, TB_Node* n, 
 
 bool tb_passes_loop(TB_Passes* opt) {
     TB_Function* f = opt->f;
-
-    TB_PostorderWalk order = tb_function_get_postorder(f);
-    TB_Dominators doms = tb_get_dominators(f, order);
+    TB_PostorderWalk order = opt->order;
 
     // canonicalize loops
     DynArray(ptrdiff_t) backedges = NULL;
@@ -39,7 +37,7 @@ bool tb_passes_loop(TB_Passes* opt) {
         // find backedges, we'll be unifying them soon
         dyn_array_clear(backedges);
         FOREACH_N(j, 0, header->input_count) {
-            if (tb_is_dominated_by(doms, header, tb_get_parent_region(header->inputs[j]))) {
+            if (tb_is_dominated_by(header, tb_get_parent_region(header->inputs[j]))) {
                 dyn_array_put(backedges, j);
             }
         }
@@ -66,7 +64,7 @@ bool tb_passes_loop(TB_Passes* opt) {
         TB_Node* backedge_proj = header->inputs[backedges[0]];
         TB_Node* backedge_bb = tb_get_parent_region(backedge_proj);
         FOREACH_N(j, 0, r->succ_count) {
-            if (!tb_is_dominated_by(doms, r->succ[j], backedge_bb)) {
+            if (!tb_is_dominated_by(r->succ[j], backedge_bb)) {
                 DO_IF(TB_OPTDEBUG_LOOP)(printf("  exit %p\n", r->succ[j]));
                 exit_i = j;
                 break;

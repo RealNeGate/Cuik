@@ -504,6 +504,10 @@ typedef struct {
     TB_Node* end;
     const char* tag;
 
+    // immediate dominator (can be approximate)
+    int dom_depth;
+    TB_Node* dom;
+
     size_t succ_count;
     TB_Node** succ;
 
@@ -1070,11 +1074,15 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 //     data flow analysis possible on the code and allows to codegen
 //     to place variables into registers.
 //
+//   cfg: performs simplifications on the CFG like `a && b => select(a, b, 0)`
+//     or removing redundant branches.
+//
 //   loop: NOT READY
 //
 TB_API bool tb_pass_peephole(TB_Passes* opt);
 TB_API bool tb_pass_mem2reg(TB_Passes* opt);
 TB_API bool tb_pass_loop(TB_Passes* opt);
+TB_API bool tb_pass_cfg(TB_Passes* opt);
 
 // analysis
 //   print: prints IR in a flattened text form.

@@ -8,7 +8,7 @@ void simple(int* a, int* n, int b) {
     a[(*n)++] = b;
 }
 
-/*int bounds_checks(size_t n, int* arr) {
+int bounds_checks(size_t n, int* arr) {
     int sum;
     memset(&sum, 0, sizeof(sum));
 
@@ -19,7 +19,7 @@ void simple(int* a, int* n, int b) {
     return sum;
 }
 
-uint32_t murmur3_32(const void* key, size_t len) {
+/*uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time

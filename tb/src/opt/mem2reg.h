@@ -35,7 +35,6 @@ typedef struct Mem2Reg_Ctx {
     Mem2Reg_Def* defs;
 
     TB_PostorderWalk order;
-    TB_Dominators doms;
 } Mem2Reg_Ctx;
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt);
@@ -236,9 +235,12 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     //
     // TODO(NeGate): maybe we want a data structure for this because it'll
     // be "kinda" slow.
-    nl_map_for(i, c->doms._) {
-        if (c->doms._[i].v.node == bb && c->doms._[i].k != bb) {
-            ssa_rename(c, f, c->doms._[i].k, stack);
+    FOREACH_N(i, 0, c->order.count) {
+        TB_Node* k = c->order.traversal[i];
+        TB_Node* v = idom(k);
+
+        if (v == bb && k != bb) {
+            ssa_rename(c, f, k, stack);
         }
     }
 
@@ -477,9 +479,8 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     memset(c.defs, 0, to_promote_count * sizeof(Mem2Reg_Def));
 
     c.order = p->order;
-    c.doms = p->doms;
 
-    TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, c.doms, &c.order);
+    TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, &c.order);
 
     ////////////////////////////////
     // Phase 1: Insert phi functions

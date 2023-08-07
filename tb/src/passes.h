@@ -28,7 +28,6 @@ struct TB_Passes {
     NL_HashSet visited;
 
     TB_PostorderWalk order;
-    TB_Dominators doms;
 
     // we wanna track locals because it's nice and easy
     DynArray(TB_Node*) locals;
