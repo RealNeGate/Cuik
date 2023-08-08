@@ -211,10 +211,6 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
 }
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data) {
-    if (strcmp(f->super.name, "bounds_checks") != 0) {
-        return;
-    }
-
     P("digraph %s {\n  rankdir=\"TB\"\n", f->super.name ? f->super.name : "unnamed");
 
     NL_HashSet visited = nl_hashset_alloc(f->node_count);

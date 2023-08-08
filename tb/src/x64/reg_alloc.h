@@ -185,7 +185,7 @@ static void insert_split_move(LSRA* restrict ra, int t, int old_reg, int new_reg
     }
 
     // folded spill
-    if (inst->type == MOV && inst->flags == 0 && inst->operands[0] == old_reg) {
+    if (inst && inst->type == MOV && inst->flags == 0 && inst->operands[0] == old_reg) {
         inst->operands[0] = new_reg;
         return;
     }
