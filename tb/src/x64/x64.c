@@ -602,6 +602,62 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
+        case TB_UDIV:
+        case TB_SDIV:
+        case TB_UMOD:
+        case TB_SMOD: {
+            bool is_signed = (type == TB_SDIV || type == TB_SMOD);
+            bool is_div    = (type == TB_UDIV || type == TB_SDIV);
+
+            TB_DataType dt = n->dt;
+            assert(dt.type == TB_INT);
+
+            int op = MOV;
+            if (dt.data <= 8)       op = is_signed ? MOVSXB : MOVZXB;
+            else if (dt.data <= 16) op = is_signed ? MOVSXW : MOVZXW;
+
+            // division is scaled up to 32bit
+            if (dt.data < 32) dt.data = 32;
+
+            // mov rax, lhs
+            int lhs = isel(ctx, n->inputs[1]);
+            SUBMIT(inst_op_rr(op, dt, RAX, lhs));
+
+            int rhs = isel(ctx, n->inputs[2]);
+            if (n->dt.data < 32) {
+                // add cast
+                int new_rhs = DEF(n->inputs[2], TB_TYPE_I32);
+                SUBMIT(inst_op_rr(op, TB_TYPE_I32, new_rhs, rhs));
+                rhs = new_rhs;
+            }
+
+            // if signed:
+            //   cqo/cdq (sign extend RAX into RDX)
+            // else:
+            //   xor rdx, rdx
+            if (is_signed) {
+                Inst* inst = alloc_inst(CAST, dt, 1, 1, 0);
+                inst->operands[0] = RDX;
+                inst->operands[1] = RAX;
+                SUBMIT(inst);
+            } else {
+                SUBMIT(inst_op_zero(dt, RDX));
+            }
+
+            {
+                Inst* inst = alloc_inst(is_signed ? IDIV : DIV, dt, 1, 3, 0);
+                inst->operands[0] = is_div ? RAX : RDX;
+                inst->operands[1] = rhs;
+                inst->operands[2] = RDX;
+                inst->operands[3] = RAX;
+                SUBMIT(inst);
+            }
+
+            dst = DEF(n, n->dt);
+            SUBMIT(inst_move(dt, dst, is_div ? RAX : RDX));
+            break;
+        }
+
         // pointer arithmatic
         case TB_LOCAL:
         dst = DEF(n, n->dt);
@@ -2584,9 +2640,9 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
 
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
-        InstCategory cat = inst_table[inst->type].cat;
+        InstCategory cat = inst->type > 1024 ? INST_BINOP : inst_table[inst->type].cat;
 
-        if (0) {
+        if (1) {
             EMITA(e, " \x1b[32m# t=%d { outs:", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
                 EMITA(e, " v%d", inst->operands[i]);
@@ -2620,7 +2676,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             };
             dyn_array_put(ctx->lines, l);
             continue;
-        } else if (inst->type == STOSB || inst->type == MOVSB) {
+        } else if (cat == INST_BYTE || cat == INST_BYTE_EXT) {
             if (inst->flags & INST_REP) EMIT1(e, 0xF3);
 
             inst0(e, inst->type, inst->dt);
@@ -2713,6 +2769,12 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
                 }
             }
 
+            // unary ops
+            if (cat == INST_UNARY || cat == INST_UNARY_EXT) {
+                inst1_print(e, inst->type, &out, inst->dt);
+                continue;
+            }
+
             if (inst->flags & INST_IMM) {
                 Val rhs = val_imm(inst->imm);
                 inst2_print(e, inst->type, &out, &rhs, inst->dt);
@@ -2721,7 +2783,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
                 inst2_print(e, inst->type, &out, &rhs, inst->dt);
             } else if (ternary) {
                 Val rhs;
-                i += resolve_interval(ctx, inst, in_base + i, &rhs);
+                i += resolve_interval(ctx, inst, i, &rhs);
 
                 if (inst->type != MOV || (inst->type == MOV && !is_value_match(&out, &rhs))) {
                     inst2_print(e, inst->type, &out, &rhs, inst->dt);

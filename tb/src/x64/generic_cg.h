@@ -479,6 +479,17 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     return timeline;
 }
 
+static void visit_uses(Ctx* restrict ctx, NL_HashSet* visited, TB_Node* n) {
+    if (!nl_hashset_put(visited, n)) {
+        return;
+    }
+
+    // track use count
+    size_t use_count = 0;
+    for (User* use = find_users(ctx->p, n); use; use = use->next) use_count++;
+    nl_map_put(ctx->uses, n, use_count);
+}
+
 static bool use(Ctx* restrict ctx, TB_Node* n) {
     ptrdiff_t search = nl_map_get(ctx->uses, n);
     if (search < 0) {
@@ -616,7 +627,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // need to schedule
     tb_pass_schedule(p);
 
-    /*reg_alloc_log = strcmp(f->super.name, "_vfprintf_l") == 0;
+    /*reg_alloc_log = strcmp(f->super.name, "foo") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
@@ -651,16 +662,17 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     init_regalloc(&ctx);
 
+    NL_HashSet visited = nl_hashset_alloc(f->node_count);
+    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+        visit_uses(&ctx, &visited, ctx.order.traversal[i]);
+    }
+    nl_hashset_free(visited);
+
     // allocate more stuff now that we've run stats on the IR
     ctx.emit.return_label = 0;
     nl_map_create(ctx.emit.labels, f->control_node_count);
     nl_map_create(ctx.stack_slots, 8);
     dyn_array_create(ctx.debug_stack_slots, 8);
-
-    // mark as visited (also track use count here)
-    /* size_t use_count = 0;
-    for (User* use = find_users(ctx->p, n); use; use = use->next) use_count++;
-    nl_map_put(ctx->uses, n, use_count); */
 
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are
