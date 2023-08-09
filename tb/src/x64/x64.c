@@ -177,18 +177,6 @@ static bool is_terminator_or_label(int t) {
     return t == INST_LABEL || t == JMP || (t >= JO && t <= JG);
 }
 
-static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
-    if (n->type == TB_INTEGER_CONST) {
-        TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-        if (i->num_words == 1 && fits_into_int8(i->words[0])) {
-            *out_x = i->words[0];
-            return true;
-        }
-    }
-
-    return false;
-}
-
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     uint64_t mask = UINT64_MAX;
     TB_Node* prev = n;
@@ -272,8 +260,22 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst) {
     int index = -1;
 
     if (n->type == TB_ARRAY_ACCESS) {
+        TB_Node* base = n->inputs[1];
         int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
-        index = isel(ctx, n->inputs[2]);
+
+        use(ctx, n);
+        n = n->inputs[2];
+
+        int32_t x;
+        if (n->type == TB_SHL && try_for_imm32(ctx, n->inputs[2], &x)) {
+            use(ctx, n);
+            use(ctx, n->inputs[2]);
+
+            n = n->inputs[1];
+            stride *= (1ull << x);
+        }
+
+        index = isel(ctx, n);
 
         // compute index
         if (stride == 1) {
@@ -301,8 +303,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst) {
             index = dst;
         }
 
-        use(ctx, n);
-        n = n->inputs[1];
+        n = base;
     }
 
     int base;
@@ -360,8 +361,11 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
                         SUBMIT(inst_op_ri(CMP, cmp_dt, lhs, x));
                     }
                 } else {
+                    int tmp = DEF(n, cmp_dt);
+                    SUBMIT(inst_move(cmp_dt, tmp, lhs));
+
                     int rhs = ISEL(n->inputs[2]);
-                    SUBMIT(inst_op_rr_no_dst(CMP, cmp_dt, lhs, rhs));
+                    SUBMIT(inst_op_rr_no_dst(CMP, cmp_dt, tmp, rhs));
                 }
 
                 switch (n->type) {
@@ -553,23 +557,38 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_OR:
         case TB_XOR:
         case TB_ADD:
-        case TB_SUB:
-        case TB_MUL: {
-            const static InstType ops[] = { AND, OR, XOR, ADD, SUB, IMUL };
+        case TB_SUB: {
+            const static InstType ops[] = { AND, OR, XOR, ADD, SUB };
             InstType op = ops[type - TB_AND];
 
             dst = DEF(n, n->dt);
 
+            int lhs = isel(ctx, n->inputs[1]);
+            hint_reg(ctx, dst, lhs);
+            SUBMIT(inst_move(n->dt, dst, lhs));
+
             int32_t x;
             if (try_for_imm32(ctx, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
-
-                int lhs = ISEL(n->inputs[1]);
-                SUBMIT(inst_op_rri(op, n->dt, dst, lhs, x));
+                SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
             } else {
-                int lhs = ISEL(n->inputs[1]);
-                int rhs = ISEL(n->inputs[2]);
-                SUBMIT(inst_op_rrr(op, n->dt, dst, lhs, rhs));
+                int rhs = isel(ctx, n->inputs[2]);
+                SUBMIT(inst_op_rrr(op, n->dt, dst, dst, rhs));
+            }
+            break;
+        }
+
+        case TB_MUL: {
+            dst = DEF(n, n->dt);
+            int lhs = isel(ctx, n->inputs[1]);
+
+            int32_t x;
+            if (try_for_imm32(ctx, n->inputs[2], &x)) {
+                use(ctx, n->inputs[2]);
+                SUBMIT(inst_op_rri(IMUL, n->dt, dst, lhs, x));
+            } else {
+                int rhs = isel(ctx, n->inputs[2]);
+                SUBMIT(inst_op_rrr(IMUL, n->dt, dst, lhs, rhs));
             }
             break;
         }
@@ -585,20 +604,22 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             dst = DEF(n, n->dt);
 
+            int lhs = isel(ctx, n->inputs[1]);
+            hint_reg(ctx, dst, lhs);
+            SUBMIT(inst_move(n->dt, dst, lhs));
+
             int32_t x;
-            if (try_for_imm8(ctx, n->inputs[2], &x)) {
+            if (try_for_imm32(ctx, n->inputs[2], &x) && x == (int8_t)x) {
                 use(ctx, n->inputs[2]);
-
-                int lhs = isel(ctx, n->inputs[1]);
-                SUBMIT(inst_op_rri(op, n->dt, dst, lhs, x));
-            } else {
-                // the shift operations need their right hand side in CL (RCX's low 8bit)
-                int lhs = isel(ctx, n->inputs[1]);
-                int rhs = isel(ctx, n->inputs[2]);
-
-                SUBMIT(inst_move(n->dt, RCX, rhs));
-                SUBMIT(inst_op_rrr(op, n->dt, dst, lhs, RCX));
+                SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
+                break;
             }
+
+            // the shift operations need their right hand side in CL (RCX's low 8bit)
+            int rhs = isel(ctx, n->inputs[2]);
+
+            SUBMIT(inst_move(n->dt, RCX, rhs));
+            SUBMIT(inst_op_rrr(op, n->dt, dst, dst, RCX));
             break;
         }
 
@@ -645,11 +666,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }
 
             {
-                Inst* inst = alloc_inst(is_signed ? IDIV : DIV, dt, 1, 3, 0);
+                Inst* inst = alloc_inst(is_signed ? IDIV : DIV, dt, 2, 3, 0);
                 inst->operands[0] = is_div ? RAX : RDX;
-                inst->operands[1] = rhs;
-                inst->operands[2] = RDX;
-                inst->operands[3] = RAX;
+                inst->operands[1] = is_div ? RDX : RAX;
+                inst->operands[2] = rhs;
+                inst->operands[3] = RDX;
+                inst->operands[4] = RAX;
                 SUBMIT(inst);
             }
 
@@ -746,6 +768,20 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
 
         // memory op
+        case TB_MEMSET: {
+            TB_DataType ptr_dt = TB_TYPE_I64;
+            SUBMIT(inst_move(ptr_dt,     RDI, isel(ctx, n->inputs[1])));
+            SUBMIT(inst_move(TB_TYPE_I8, RAX, isel(ctx, n->inputs[2])));
+            SUBMIT(inst_move(ptr_dt,     RCX, isel(ctx, n->inputs[3])));
+
+            Inst* i = alloc_inst(STOSB, TB_TYPE_VOID, 0, 3, 0);
+            i->flags |= INST_REP;
+            i->operands[0] = RDI;
+            i->operands[1] = RAX;
+            i->operands[2] = RCX;
+            SUBMIT(i);
+            break;
+        }
         case TB_MEMCPY: {
             TB_DataType ptr_dt = TB_TYPE_I64;
             SUBMIT(inst_move(ptr_dt, RDI, isel(ctx, n->inputs[1])));
@@ -1018,8 +1054,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 int pos = get_stack_slot(ctx, addr);
                 SUBMIT(inst_op_rm(MOV, n->dt, dst, RBP, -1, SCALE_X1, pos));
             } else {
-                int base = isel(ctx, addr);
-                SUBMIT(inst_op_rm(MOV, n->dt, dst, base, -1, SCALE_X1, 0));
+                Inst* ld_inst = isel_addr(ctx, addr, dst);
+                ld_inst->type = MOV;
+                SUBMIT(ld_inst);
             }
             break;
         }
@@ -1239,18 +1276,6 @@ static Inst inst_mi(int op, TB_DataType dt, int base, int index, Scale scale, in
         .regs = { -1, -1, base, index },
         .imm = { ((uint64_t) scale << 32u) | ((uint64_t) disp), rhs },
     };
-}
-
-static bool try_for_imm8(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
-    if (n->type == TB_INTEGER_CONST) {
-        TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-        if (i->num_words == 1 && fits_into_int8(i->words[0])) {
-            *out_x = i->words[0];
-            return true;
-        }
-    }
-
-    return false;
 }
 
 static Inst isel_array(Ctx* restrict ctx, TB_Node* n, int dst) {
@@ -1740,16 +1765,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             dst = DEF(n, REG_CLASS_GPR);
 
+            int lhs = ISEL(n->inputs[1]);
+            SUBMIT(inst_move(op, n->dt, dst, lhs));
+
             int32_t x;
             if (try_for_imm32(ctx, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
-
-                int lhs = ISEL(n->inputs[1]);
-                SUBMIT(inst_ri(op, n->dt, dst, lhs, x));
+                SUBMIT(inst_ri(op, n->dt, dst, dst, x));
             } else {
-                int lhs = ISEL(n->inputs[1]);
                 int rhs = ISEL(n->inputs[2]);
-                SUBMIT(inst_rr(op, n->dt, dst, lhs, rhs));
+                SUBMIT(inst_rr(op, n->dt, dst, dst, rhs));
             }
             break;
         }
@@ -2735,8 +2760,10 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             int i = 0;
             if (inst->out_count == 1) {
                 i += resolve_interval(ctx, inst, i, &out);
+                assert(i == in_base);
+            } else {
+                i = in_base;
             }
-            assert(i == in_base);
 
             // first parameter
             bool ternary = false;
@@ -2762,6 +2789,9 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
 
                 if (inst->out_count == 0) {
                     out = lhs;
+                } else if (inst->type == IDIV || inst->type == DIV) {
+                    inst1_print(e, inst->type, &lhs, inst->dt);
+                    continue;
                 } else {
                     if (!is_value_match(&out, &lhs)) {
                         inst2_print(e, ternary ? MOV : inst->type, &out, &lhs, inst->dt);

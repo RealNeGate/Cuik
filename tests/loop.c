@@ -4,11 +4,15 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+int tiling(int* a, size_t i) {
+    return a[i*2] + a[i*2 + 1] + a[i*2 + 2];
+}
+
 void simple(int* a, int* n, int b) {
     a[(*n)++] = b;
 }
 
-int bounds_checks(size_t n, int* arr) {
+/*int bounds_checks(size_t n, int* arr) {
     int sum;
     memset(&sum, 0, sizeof(sum));
 
@@ -17,7 +21,7 @@ int bounds_checks(size_t n, int* arr) {
         sum += arr[i];
     }
     return sum;
-}
+}*/
 
 uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
@@ -57,6 +61,7 @@ int foo() { return 42+1 & 3 * 16; }
 int main() {
     printf("Woah! %d\n", foo());
     printf("Wack! %d\n", murmur3_32("Hello", 5));
+    printf("Wack! %d\n", murmur3_32("Why", 3));
     return 0;
 }
 

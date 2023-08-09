@@ -141,7 +141,8 @@ static TB_Node* ideal_int_unary(TB_Passes* restrict opt, TB_Function* f, TB_Node
 }
 
 static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
-    if (is_commutative(n->type)) {
+    TB_NodeTypeEnum type = n->type;
+    if (is_commutative(type)) {
         // if it's commutative: we wanna have a canonical form.
         // lower types to the right (constants are basically the lowest things)
         if (n->inputs[1]->type < n->inputs[2]->type) {
@@ -154,7 +155,7 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
 
     TB_Node* a = n->inputs[1];
     TB_Node* b = n->inputs[2];
-    if (n->type == TB_OR) {
+    if (type == TB_OR) {
         assert(n->dt.type == TB_INT);
         int bits = n->dt.data;
 
@@ -172,6 +173,17 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
                 return n;
             }
         }
+    } else if (type == TB_MUL) {
+        uint64_t rhs;
+        if (get_int_const(b, &rhs)) {
+            uint64_t log2 = tb_ffs(rhs) - 1;
+            if (rhs == (UINT64_C(1) << log2)) {
+                TB_Node* shl_node = tb_alloc_node(f, TB_SHL, n->dt, 3, sizeof(TB_NodeBinopInt));
+                set_input(opt, shl_node, a, 1);
+                set_input(opt, shl_node, make_int_node(f, opt, n->dt, log2), 2);
+                return shl_node;
+            }
+        }
     }
 
     if (a->type != TB_INTEGER_CONST || b->type != TB_INTEGER_CONST) {
@@ -186,7 +198,6 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
     size_t num_words = ai->num_words;
     BigInt_t *a_words = ai->words, *b_words = bi->words;
 
-    TB_NodeTypeEnum type = n->type;
     if (type >= TB_CMP_EQ && type <= TB_CMP_ULE) {
         TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, ai->num_words);
         BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
@@ -250,7 +261,7 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
         // (udiv a N) => a >> log2(N) where N is a power of two
         uint64_t log2 = tb_ffs(y) - 1;
         if (!is_signed && y == (UINT64_C(1) << log2)) {
-            TB_Node* shr_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeMulPair));
+            TB_Node* shr_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
             set_input(opt, shr_node, x, 1);
             set_input(opt, shr_node, make_int_node(f, opt, dt, log2), 2);
             return shr_node;
@@ -338,16 +349,47 @@ static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_N
 // Pointer idealizations
 ////////////////////////////////
 static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
-    if (n->inputs[2]->type != TB_INTEGER_CONST) return NULL;
+    int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
+    TB_Node* base  = n->inputs[1];
+    TB_Node* index = n->inputs[2];
 
-    TB_NodeInt* src_i = TB_NODE_GET_EXTRA(n->inputs[2]);
-    if (src_i->num_words != 1) return NULL;
+    // (array A B 4) => (member A B*4) where B is constant
+    if (index->type == TB_INTEGER_CONST) {
+        TB_NodeInt* src_i = TB_NODE_GET_EXTRA(index);
+        if (src_i->num_words != 1) return NULL;
 
-    int64_t offset = src_i->words[0] * TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
-    TB_Node* new_n = tb_alloc_node(f, TB_MEMBER_ACCESS, n->dt, 2, sizeof(TB_NodeMember));
-    set_input(opt, new_n, n->inputs[1], 1);
-    TB_NODE_SET_EXTRA(new_n, TB_NodeMember, .offset = offset);
-    return new_n;
+        int64_t offset = src_i->words[0] * stride;
+        TB_Node* new_n = tb_alloc_node(f, TB_MEMBER_ACCESS, n->dt, 2, sizeof(TB_NodeMember));
+        set_input(opt, new_n, base, 1);
+        TB_NODE_SET_EXTRA(new_n, TB_NodeMember, .offset = offset);
+        return new_n;
+    }
+
+    // (array A (add B C) D) => (member (array A B D) C*D)
+    if (index->type == TB_ADD) {
+        TB_Node* new_index = index->inputs[1];
+        TB_Node* add_rhs   = index->inputs[2];
+
+        uint64_t offset;
+        if (get_int_const(add_rhs, &offset)) {
+            offset *= stride;
+
+            TB_Node* new_n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 3, sizeof(TB_NodeArray));
+            set_input(opt, new_n, base, 1);
+            set_input(opt, new_n, new_index, 2);
+            TB_NODE_SET_EXTRA(new_n, TB_NodeArray, .stride = stride);
+
+            TB_Node* new_member = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
+            set_input(opt, new_member, new_n, 1);
+            TB_NODE_SET_EXTRA(new_member, TB_NodeMember, .offset = offset);
+
+            tb_pass_mark(opt, new_n);
+            tb_pass_mark(opt, new_member);
+            return new_member;
+        }
+    }
+
+    return NULL;
 }
 
 #if 0

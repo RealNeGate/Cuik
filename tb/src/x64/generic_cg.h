@@ -241,7 +241,10 @@ static Inst* alloc_inst(int type, TB_DataType dt, int outs, int ins, int tmps) {
 }
 
 static Inst* inst_move(TB_DataType dt, RegIndex dst, RegIndex src) {
-    Inst* i = alloc_inst(MOV, dt, 1, 1, 0);
+    int machine_dt = legalize(dt);
+
+    Inst* i = tb_arena_alloc(tmp_arena, sizeof(Inst) + (2 * sizeof(RegIndex)));
+    *i = (Inst){ .type = machine_dt >= TB_X86_TYPE_SSE_SS ? FP_MOV : MOV, .dt = machine_dt, .out_count = 1, 1 };
     i->operands[0] = dst;
     i->operands[1] = src;
     return i;
@@ -367,9 +370,9 @@ static int alloc_vreg(Ctx* restrict ctx, TB_Node* n, TB_DataType dt) {
     return i;
 }
 
-static void hint_reg(Ctx* restrict ctx, int i, int phys_reg) {
+static void hint_reg(Ctx* restrict ctx, int i, int j) {
     if (ctx->intervals[i].hint < 0) {
-        ctx->intervals[i].hint = phys_reg;
+        ctx->intervals[i].hint = j;
     }
 }
 
@@ -582,6 +585,8 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
             // evaluate PHI but don't writeback yet
             p.tmp = DEF(n, n->dt);
             int src = isel(ctx, n->inputs[1 + index]);
+
+            hint_reg(ctx, p.tmp, src);
             SUBMIT(inst_move(n->dt, p.tmp, src));
 
             dyn_array_put(phi_vals, p);
@@ -611,6 +616,8 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
     // writeback PHI results now
     dyn_array_for(i, phi_vals) {
         TB_Node* n = phi_vals[i].n;
+
+        hint_reg(ctx, phi_vals[i].val, phi_vals[i].tmp);
         SUBMIT(inst_move(n->dt, phi_vals[i].val, phi_vals[i].tmp));
     }
     ctx->phi_vals = phi_vals;
@@ -627,13 +634,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // need to schedule
     tb_pass_schedule(p);
 
-    /*reg_alloc_log = strcmp(f->super.name, "foo") == 0;
+    reg_alloc_log = strcmp(f->super.name, "murmur3_32") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }*/
+    }
 
     Ctx ctx = {
         .module = f->super.module,
@@ -707,7 +714,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             //   the physical register is used at the start and end of the function which means
             //   we must preserve it throughout the entire function but because of the use points
             //   being at the top and bottom, regalloc may split in the middle.
-            pre_callee_saved_constraints(&ctx, 2, end);
+            pre_callee_saved_constraints(&ctx, 0, end);
 
             // we can in theory have other regalloc solutions and eventually will put
             // graph coloring here.
