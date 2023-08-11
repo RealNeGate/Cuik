@@ -270,7 +270,7 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
     if (b->type == VAL_MEM) {
         base  = b->reg;
         index = b->index != GPR_NONE ? b->index : 0;
-    } else if (b->type == VAL_XMM) {
+    } else if (b->type == VAL_XMM || b->type == VAL_GPR) {
         base  = b->reg;
         index = 0;
     } else if (b->type == VAL_GLOBAL) {

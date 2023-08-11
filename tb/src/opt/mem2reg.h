@@ -395,6 +395,8 @@ static bool attempt_sroa(TB_Passes* p, TB_Function* f, TB_TemporaryStorage* tls,
 }
 
 bool tb_pass_mem2reg(TB_Passes* p) {
+    verify_tmp_arena(p);
+
     TB_Function* f = p->f;
     TB_TemporaryStorage* tls = tb_tls_steal();
 

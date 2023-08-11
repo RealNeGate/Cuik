@@ -17,11 +17,15 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     }
 
     info = tb_platform_heap_alloc(sizeof(TB_ThreadInfo));
-    *info = (TB_ThreadInfo){ 0 };
+    *info = (TB_ThreadInfo){ .owner = m };
 
     // add new thread info
     tb_arena_create(&info->perm_arena, TB_ARENA_LARGE_CHUNK_SIZE);
     tb_arena_create(&info->tmp_arena, TB_ARENA_LARGE_CHUNK_SIZE);
+
+    // thread local so it doesn't need to synchronize
+    info->next = chain;
+    chain = info;
 
     // link to the TB_Module* (we need to this to free later)
     TB_ThreadInfo* old_top;

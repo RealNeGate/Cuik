@@ -14,6 +14,8 @@
 #include "../passes.h"
 #include <log.h>
 
+thread_local TB_Arena* tmp_arena;
+
 static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled);
 static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot);
 
@@ -32,11 +34,23 @@ TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, T
 
 static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
 
-static thread_local TB_Arena* tmp_arena;
+void verify_tmp_arena(TB_Passes* p) {
+    // once passes are run on a thread, they're pinned to it.
+    TB_Module* m = p->f->super.module;
+    TB_ThreadInfo* info = tb_thread_info(m);
 
-static void reload_tmp_arena(TB_Function* f) {
-    tmp_arena = get_temporary_arena(f->super.module);
-    tb_arena_clear(tmp_arena);
+    if (p->pinned_thread == NULL) {
+        p->pinned_thread = info;
+        tb_arena_clear(&p->pinned_thread->tmp_arena);
+    } else if (p->pinned_thread != info) {
+        tb_panic(
+            "TB_Passes are bound to a thread, you can't switch which threads they're run on\n\n"
+            "NOTE: if you really need to run across threads you'll need to exit the passes and\n"
+            "start anew... though you pay a performance hit everytime you start one"
+        );
+    }
+
+    tmp_arena = &p->pinned_thread->tmp_arena;
 }
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt) {
@@ -52,7 +66,7 @@ static int bits_in_data_type(int pointer_size, TB_DataType dt) {
 }
 
 static char* lil_name(TB_Function* f, const char* fmt, ...) {
-    char* buf = alloc_from_node_arena(f, 30);
+    char* buf = TB_ARENA_ALLOC(tmp_arena, 30);
 
     va_list ap;
     va_start(ap, fmt);
@@ -62,6 +76,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 }
 
 // unity build with all the passes
+#include "lattice.h"
 #include "cse.h"
 #include "dce.h"
 #include "fold.h"
@@ -225,6 +240,7 @@ static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, U
         use->n = n;
         use->slot = slot;
 
+        tb_assert(prev != use, "self referential nodes are cringe");
         prev->next = use;
     }
 }
@@ -557,13 +573,13 @@ static void generate_use_lists(TB_Passes* restrict queue, TB_Function* f) {
 }
 
 TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
-    reload_tmp_arena(f);
-
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
     *p = (TB_Passes){ .f = f, .old_line_attrib = f->line_attrib, .old_arena = f->arena };
 
     f->line_attrib = NULL; // don't add line info automatically to pimizer-generated nodes
     f->arena = arena;
+
+    verify_tmp_arena(p);
 
     p->cse_nodes = nl_hashset_alloc(f->node_count);
 
@@ -589,8 +605,9 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 }
 
 bool tb_pass_peephole(TB_Passes* p) {
-    TB_Function* f = p->f;
+    verify_tmp_arena(p);
 
+    TB_Function* f = p->f;
     bool changes = false;
     CUIK_TIMED_BLOCK("peephole") {
         while (dyn_array_length(p->queue) > 0) CUIK_TIMED_BLOCK("iter") {
@@ -610,6 +627,7 @@ bool tb_pass_peephole(TB_Passes* p) {
 }
 
 void tb_pass_exit(TB_Passes* p) {
+    verify_tmp_arena(p);
     TB_Function* f = p->f;
 
     f->line_attrib = p->old_line_attrib;

@@ -64,6 +64,9 @@ typedef struct {
     int* use_pos;
     int* block_pos;
 
+    int endpoint;
+    uint64_t callee_saved[CG_REGISTER_CLASSES];
+
     Set active_set[CG_REGISTER_CLASSES];
     RegIndex active[CG_REGISTER_CLASSES][16];
 } LSRA;
@@ -114,7 +117,8 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
             interval->ranges[dyn_array_length(interval->ranges) - 1].start = inst->time;
         }
 
-        add_use_pos(interval, inst->time, inst->type == IMUL || (inst->flags & INST_MEM) ? USE_REG : USE_OUT);
+        bool use_reg = inst->type == IMUL || inst->type == INST_ZERO || (inst->flags & (INST_MEM | INST_GLOBAL));
+        add_use_pos(interval, inst->time, use_reg ? USE_REG : USE_OUT);
     }
 
     FOREACH_N(i, 0, inst->in_count) {
@@ -376,15 +380,46 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     if (pos == 0) {
         // alloc failure
         return -1;
-    } else if (interval->end < pos) {
-        // we can steal it completely
-        REG_ALLOC_LOG printf("  #   assign to %s\n", reg_name(rc, highest));
-        return highest;
     } else {
-        // TODO(NeGate): split current at optimal position before current
-        interval->assigned = highest;
-        split_intersecting(ra, pos - 1, interval, true);
-        return highest;
+        if (ra->callee_saved[rc] & (1ull << highest)) {
+            ra->callee_saved[rc] &= ~(1ull << highest);
+
+            REG_ALLOC_LOG printf("  #   spill callee saved register %s\n", reg_name(rc, highest));
+
+            int size = rc ? 16 : 8;
+            int vreg = (rc ? FIRST_XMM : FIRST_GPR) + highest;
+            ra->stack_usage = align_up(ra->stack_usage + size, size);
+
+            LiveInterval it = {
+                .spill = ra->stack_usage,
+                .dt = ra->intervals[vreg].dt,
+                .assigned = -1,
+                .reg = -1,
+                .split_kid = -1,
+            };
+
+            int old_reg = interval - ra->intervals;
+            int spill_slot = dyn_array_length(ra->intervals);
+            dyn_array_put(ra->intervals, it);
+
+            // insert spill and reload
+            insert_split_move(ra, 0,            vreg, spill_slot);
+            insert_split_move(ra, ra->endpoint, spill_slot, vreg);
+
+            // adding to intervals might resized this
+            interval = &ra->intervals[old_reg];
+        }
+
+        if (interval->end < pos) {
+            // we can steal it completely
+            REG_ALLOC_LOG printf("  #   assign to %s\n", reg_name(rc, highest));
+            return highest;
+        } else {
+            // TODO(NeGate): split current at optimal position before current
+            interval->assigned = highest;
+            split_intersecting(ra, pos - 1, interval, true);
+            return highest;
+        }
     }
 }
 
@@ -479,19 +514,18 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
     return highest;
 }
 
-static void move_to_active(LSRA* restrict ra, LiveInterval* interval) {
+static void move_to_active(LSRA* restrict ra, LiveInterval* interval, int pos) {
     int rc = interval->reg_class, reg = interval->assigned;
     int ri = interval - ra->intervals;
 
     // fixed intervals will force things out of their spot if they have to
-    /*if (set_get(&ra->active_set[rc], reg)) {
+    if (set_get(&ra->active_set[rc], reg)) {
         tb_assert(interval->reg >= 0, "non-fixed interval attempted to force a register out");
-        int split_pos = interval->ranges[dyn_array_length(interval->ranges) - 1].end;
 
         LiveInterval* old_interval = &ra->intervals[ra->active[rc][reg]];
-        split_intersecting(ra, split_pos - 1, old_interval, true);
+        split_intersecting(ra, pos - 1, old_interval, true);
         interval = &ra->intervals[ri]; // might've resized the intervals
-    }*/
+    }
 
     set_put(&ra->active_set[rc], reg);
     ra->active[rc][reg] = ri;
@@ -535,7 +569,8 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
         }
     }
 
-    post_callee_saved_constraints(ctx, 0, end);
+    ra.endpoint = end;
+    mark_callee_saved_constraints(ctx, ra.callee_saved);
 
     // generate unhandled interval list (sorted by starting point)
     ra.unhandled = dyn_array_create(LiveInterval*, (interval_count * 4) / 3);
@@ -605,7 +640,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                     REG_ALLOC_LOG printf("  #   inactive %s is active again (until t=%d)\n", reg_name(it->reg_class, it->assigned), end);
 
                     // set active
-                    move_to_active(&ra, it);
+                    move_to_active(&ra, it, end);
                     dyn_array_remove(ra.inactive, i);
                     continue;
                 }
@@ -645,7 +680,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
         // add to active set
         if (reg >= 0) {
             interval->assigned = reg;
-            move_to_active(&ra, interval);
+            move_to_active(&ra, interval, interval->start);
         }
 
         // display active set
@@ -684,7 +719,8 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                 LiveInterval* end = split_interval_at(&ra, interval, target->start);
 
                 if (start != end) {
-                    __debugbreak();
+                    // __debugbreak();
+                    insert_split_move(&ra, mbb->end - 3, start - ra.intervals, end - ra.intervals);
                 }
             }
 

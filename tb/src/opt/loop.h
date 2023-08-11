@@ -22,9 +22,11 @@ static void add_region_pred_tracked(TB_Passes* opt, TB_Function* f, TB_Node* n, 
     add_user(opt, n, pred, old_count, NULL);
 }
 
-bool tb_passes_loop(TB_Passes* opt) {
-    TB_Function* f = opt->f;
-    TB_PostorderWalk order = opt->order;
+bool tb_passes_loop(TB_Passes* p) {
+    verify_tmp_arena(p);
+
+    TB_Function* f = p->f;
+    TB_PostorderWalk order = p->order;
 
     // canonicalize loops
     DynArray(ptrdiff_t) backedges = NULL;
@@ -92,11 +94,11 @@ bool tb_passes_loop(TB_Passes* opt) {
         TB_Node* body = r->succ[1 - exit_i];
 
         // move phi nodes from the header to the body
-        User* use = find_users(opt, header);
+        User* use = find_users(p, header);
         while (use != NULL) {
             User* next = use->next;
             if (use->n->type == TB_PHI) {
-                set_input(opt, use->n, body, 0);
+                set_input(p, use->n, body, 0);
             }
             use = next;
         }
@@ -107,8 +109,8 @@ bool tb_passes_loop(TB_Passes* opt) {
 
         // duplicate condition for backedge
         bool n;
-        TB_Node* dupped_cond = clone_node(opt, f, header, cond, &n);
-        set_input(opt, br, dupped_cond, 0);
+        TB_Node* dupped_cond = clone_node(p, f, header, cond, &n);
+        set_input(p, br, dupped_cond, 0);
 
         // backedge needs to refer to the body not the header
         TB_NodeRegion* backedge = TB_NODE_GET_EXTRA(backedge_bb);
@@ -120,8 +122,8 @@ bool tb_passes_loop(TB_Passes* opt) {
         backedge->succ[1] = exit;
 
         // backedge should now point into the body
-        add_region_pred_tracked(opt, f, body, backedge_proj);
-        add_region_pred_tracked(opt, f, exit, backedge_proj);
+        add_region_pred_tracked(p, f, body, backedge_proj);
+        add_region_pred_tracked(p, f, exit, backedge_proj);
 
         {
             TB_Node* backedge_br = backedge_proj->inputs[0];
@@ -131,20 +133,20 @@ bool tb_passes_loop(TB_Passes* opt) {
             backedge_br->inputs = alloc_from_node_arena(f, 2 * sizeof(TB_Node*));
             backedge_br->inputs[0] = old;
 
-            add_user(opt, backedge_br, cond, 1, NULL);
+            add_user(p, backedge_br, cond, 1, NULL);
             backedge_br->inputs[1] = cond;
         }
 
         // the other path leaves the loop
         {
             TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
-            set_input(opt, proj, backedge_proj->inputs[0], 0);
+            set_input(p, proj, backedge_proj->inputs[0], 0);
             TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = 1);
-            add_region_pred_tracked(opt, f, exit, proj);
+            add_region_pred_tracked(p, f, exit, proj);
         }
 
         if (backedges[0] == 1) {
-            set_input(opt, header, header->inputs[1 - backedges[0]], 0);
+            set_input(p, header, header->inputs[1 - backedges[0]], 0);
         }
         header->input_count = 1;
     }

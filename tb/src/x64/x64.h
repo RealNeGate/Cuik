@@ -195,6 +195,10 @@ inline static bool is_value_xmm(const Val* v, XMM x) {
 inline static bool is_value_match(const Val* a, const Val* b) {
     if (a->type != b->type) return false;
 
+    if (a->type == VAL_MEM) {
+        return a->reg == b->reg && a->index == b->index && a->scale == b->scale && a->index == b->index;
+    }
+
     return (a->type == VAL_GPR || a->type == VAL_XMM) ? a->reg == b->reg : false;
 }
 

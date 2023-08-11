@@ -3,7 +3,6 @@
 #include <inttypes.h>
 #include <log.h>
 
-static thread_local TB_Arena* tmp_arena;
 static thread_local bool reg_alloc_log;
 
 enum {
@@ -131,9 +130,7 @@ static int classify_reg_class(TB_DataType dt);
 static int isel(Ctx* restrict ctx, TB_Node* n);
 
 static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out);
-
-static void pre_callee_saved_constraints(Ctx* restrict ctx, int start, int end);
-static void post_callee_saved_constraints(Ctx* restrict ctx, int start, int end);
+static void mark_callee_saved_constraints(Ctx* restrict ctx, uint64_t callee_saved[CG_REGISTER_CLASSES]);
 
 #define ISEL(n) isel(ctx, n)
 
@@ -583,7 +580,7 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
             }
 
             // evaluate PHI but don't writeback yet
-            p.tmp = DEF(n, n->dt);
+            p.tmp = DEF(NULL, n->dt);
             int src = isel(ctx, n->inputs[1 + index]);
 
             hint_reg(ctx, p.tmp, src);
@@ -625,22 +622,21 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
 
 // Codegen through here is done in phases
 static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm) {
-    TB_Function* restrict f = p->f;
+    verify_tmp_arena(p);
 
-    tmp_arena = get_temporary_arena(f->super.module);
-    tb_arena_clear(tmp_arena);
+    TB_Function* restrict f = p->f;
 
     // gives every single node a control edge so we know when they
     // need to schedule
     tb_pass_schedule(p);
 
-    reg_alloc_log = strcmp(f->super.name, "murmur3_32") == 0;
+    /*reg_alloc_log = strcmp(f->super.name, "murmur3_32") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }
+    }*/
 
     Ctx ctx = {
         .module = f->super.module,
@@ -710,12 +706,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         }
 
         CUIK_TIMED_BLOCK("reg alloc") {
-            // Callee saved:
-            //   the physical register is used at the start and end of the function which means
-            //   we must preserve it throughout the entire function but because of the use points
-            //   being at the top and bottom, regalloc may split in the middle.
-            pre_callee_saved_constraints(&ctx, 0, end);
-
             // we can in theory have other regalloc solutions and eventually will put
             // graph coloring here.
             ctx.stack_usage = linear_scan(&ctx, f, ctx.stack_usage, end);
@@ -747,7 +737,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     func_out->stack_slots = ctx.debug_stack_slots;
 
     tb_function_free_postorder(&ctx.order);
-    tb_arena_clear(tmp_arena);
     nl_map_free(ctx.stack_slots);
 }
 

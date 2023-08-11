@@ -19,6 +19,10 @@ struct User {
 struct TB_Passes {
     TB_Function* f;
 
+    // we use this to verify that we're on the same thread
+    // for the entire duration of the TB_Passes.
+    TB_ThreadInfo* pinned_thread;
+
     // some function state is changed for the duration of the
     // optimizer run, we need to track that to reset it
     TB_Attrib* old_line_attrib;
@@ -43,6 +47,9 @@ struct TB_Passes {
     NL_Map(TB_Node*, User*) users;
 };
 
+extern thread_local TB_Arena* tmp_arena;
+
+void verify_tmp_arena(TB_Passes* p);
 User* find_users(TB_Passes* restrict p, TB_Node* n);
 void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot);
 
