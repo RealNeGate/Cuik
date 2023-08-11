@@ -88,7 +88,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
 
         case TB_CALL: return "call";
         case TB_SCALL: return "syscall";
-        case TB_BRANCH: return "br";
+        case TB_BRANCH: return "branch";
 
         default: tb_todo();return "(unknown)";
     }
@@ -188,6 +188,11 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             break;
         }
 
+        case TB_START:
+        case TB_REGION:
+        case TB_BRANCH:
+        break;
+
         default:
         tb_print_type(n->dt, callback, user_data);
         break;
@@ -202,7 +207,9 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             P(" [color=\"red\"]");
         }
 
-        if (n->type == TB_PHI && i > 0) {
+        if (n->input_count == 3 && n->inputs[0] == 0) {
+            P(" [label=\"%s\"];\n", i == 1 ? "L" : "R");
+        } else if (n->type == TB_PHI && i > 0) {
             P(" [label=\"%zu\"];\n", i - 1);
         } else {
             P("\n");
