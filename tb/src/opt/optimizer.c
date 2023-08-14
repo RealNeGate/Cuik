@@ -220,28 +220,22 @@ void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot) {
 
 static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled) {
     // just generate a new user list (if the slots don't match)
-    User* use = find_users(p, in);
-    if (use == NULL) {
-        use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
+    ptrdiff_t search = nl_map_get(p->users, in);
+    if (search < 0) {
+        User* use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
         use->next = NULL;
         use->n = n;
         use->slot = slot;
 
         nl_map_put(p->users, in, use);
     } else {
-        // the slot might've already existed, let's check
-        User* prev = NULL;
-        for (; use != NULL; prev = use, use = use->next) {
-            if (use->n == n && use->slot == slot) return;
-        }
+        User* old = p->users[search].v;
 
-        use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
-        use->next = NULL;
+        User* use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
+        use->next = old;
         use->n = n;
         use->slot = slot;
-
-        tb_assert(prev != use, "self referential nodes are cringe");
-        prev->next = use;
+        p->users[search].v = use;
     }
 }
 

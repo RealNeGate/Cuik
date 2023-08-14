@@ -12,45 +12,42 @@ static void schedule_early(TB_Passes* passes, NL_HashSet* visited, TB_Node* n) {
         return;
     }
 
-    if (n->inputs[0] == NULL) {
-        set_input(passes, n, passes->f->start_node, 0);
-    }
-
-    bool pin = is_pinned(n);
-    FOREACH_N(i, 1, n->input_count) {
-        schedule_early(passes, visited, n->inputs[i]);
-
-        if (!pin) {
-            // choose deepest block
-            TB_Node* aa = tb_get_parent_region(n->inputs[0]);
-            TB_Node* bb = tb_get_parent_region(n->inputs[i]->inputs[0]);
-
-            if (aa == bb) {
-                // we need to measure dom depth within a block now
-                //
-                // aa
-                // VV     a is greater than b
-                // bb
-                TB_Node* a = n->inputs[0];
-                TB_Node* b = n->inputs[i]->inputs[0];
-
-                for (;;) {
-                    if (a == b) {
-                        // a dominates b, we can't be having that
-                        set_input(passes, n, n->inputs[i]->inputs[0], 0);
-                        break;
-                    }
-
-                    if (b->type == TB_START || b->type == TB_REGION) break;
-                    b = b->inputs[0];
-                }
-            } else if (dom_depth(aa) < dom_depth(bb)) {
-                tb_assert(n->inputs[i]->inputs[0], "missing control");
-                set_input(passes, n, n->inputs[i]->inputs[0], 0);
-            }
-        } else {
-            tb_assert(n->inputs[0], "if the node is pinned, it must have a control node");
+    if (is_pinned(n)) {
+        // pinned nodes will schedule their inputs but they themselves can't move
+        tb_assert(n->inputs[0], "needs a control node already");
+        FOREACH_N(i, 1, n->input_count) {
+            schedule_early(passes, visited, n->inputs[i]);
         }
+    } else {
+        if (n->inputs[0] == NULL) {
+            // add_user without remove because we know there's nothing there
+            TB_Node* root = passes->f->start_node;
+            n->inputs[0] = root;
+            add_user(passes, n, root, 0, NULL);
+        }
+
+        TB_Node* best = tb_get_parent_region(n->inputs[0]);
+        int best_depth = TB_NODE_GET_EXTRA_T(best, TB_NodeRegion)->dom_depth;
+
+        FOREACH_N(i, 1, n->input_count) {
+            schedule_early(passes, visited, n->inputs[i]);
+
+            // choose deepest block
+            TB_Node* bb = n->inputs[i]->inputs[0];
+            if (UNLIKELY(bb->type != TB_START && bb->type != TB_REGION)) {
+                do {
+                    bb = bb->inputs[0];
+                } while (bb->type != TB_START && bb->type != TB_REGION);
+            }
+
+            int bb_depth = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->dom_depth;
+            if (best_depth < bb_depth) {
+                best = bb;
+                best_depth = bb_depth;
+            }
+        }
+
+        set_input(passes, n, best, 0);
     }
 }
 
@@ -110,6 +107,7 @@ static void schedule_late(TB_Passes* passes, NL_HashSet* visited, TB_Node* n) {
     // we're gonna find the least common ancestor
     TB_Node* lca = NULL;
     for (User* use = find_users(passes, n); use; use = use->next) {
+        // only care about control nodes
         if (use->slot == 0) continue;
 
         TB_Node* y = use->n;
@@ -156,46 +154,56 @@ static void postorder_all_nodes(NL_HashSet* visited, DynArray(TB_Node*)* worklis
     dyn_array_put(*worklist, n);
 }
 
-TB_API void tb_pass_schedule(TB_Passes* passes) {
+void tb_pass_schedule(TB_Passes* passes) {
     // Scheduling: "Global Code Motion Global Value Numbering", Cliff Click 1995
     //   https://courses.cs.washington.edu/courses/cse501/06wi/reading/click-pldi95.pdf
     CUIK_TIMED_BLOCK("schedule") {
         NL_HashSet visited = nl_hashset_alloc(passes->f->node_count);
-        FOREACH_REVERSE_N(i, 0, passes->order.count) {
-            TB_Node* bb = passes->order.traversal[i];
 
-            // schedule all pinned instructions
-            schedule_region(passes, &visited, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
+        CUIK_TIMED_BLOCK("early schedule") {
+            FOREACH_REVERSE_N(i, 0, passes->order.count) {
+                TB_Node* bb = passes->order.traversal[i];
+
+                // schedule all pinned instructions
+                schedule_region(passes, &visited, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
+            }
         }
 
         // generate instruction list we can walk
         DynArray(TB_Node*) worklist = NULL;
 
-        nl_hashset_clear(&visited);
-        FOREACH_N(i, 0, passes->order.count) {
-            TB_Node* bb = passes->order.traversal[i];
-            postorder_all_nodes(&visited, &worklist, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
-        }
-
-        // move nodes closer to their usage site
-        nl_hashset_clear(&visited);
-        FOREACH_REVERSE_N(i, 0, dyn_array_length(worklist)) {
-            TB_Node* n = worklist[i];
-
-            if (is_pinned(n)) {
-                nl_hashset_put(&visited, n);
-                for (User* use = find_users(passes, n); use; use = use->next) {
-                    if (use->n->inputs[0] != NULL) {
-                        schedule_late(passes, &visited, use->n);
-                    }
-                }
-            } else if (n->input_count == 1) {
-                // this is gonna usually be the constants
-                schedule_late(passes, &visited, worklist[i]);
+        CUIK_TIMED_BLOCK("gen worklist") {
+            nl_hashset_clear(&visited);
+            FOREACH_N(i, 0, passes->order.count) {
+                TB_Node* bb = passes->order.traversal[i];
+                postorder_all_nodes(&visited, &worklist, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
             }
         }
 
-        dyn_array_destroy(worklist);
-        nl_hashset_free(visited);
+        // move nodes closer to their usage site
+        CUIK_TIMED_BLOCK("late schedule") {
+            nl_hashset_clear(&visited);
+            FOREACH_REVERSE_N(i, 0, dyn_array_length(worklist)) {
+                TB_Node* n = worklist[i];
+
+                if (is_pinned(n)) {
+                    nl_hashset_put(&visited, n);
+
+                    for (User* use = find_users(passes, n); use; use = use->next) {
+                        if (use->n->inputs[0] != NULL) {
+                            schedule_late(passes, &visited, use->n);
+                        }
+                    }
+                } else if (n->input_count == 1) {
+                    // this is gonna usually be the constants
+                    schedule_late(passes, &visited, worklist[i]);
+                }
+            }
+        }
+
+        CUIK_TIMED_BLOCK("freeing") {
+            dyn_array_destroy(worklist);
+            nl_hashset_free(visited);
+        }
     }
 }
