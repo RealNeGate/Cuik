@@ -69,34 +69,34 @@ int test(int x, int y) {
     return callee(x, 0, x / y);
 }
 
-/*unsigned int stbi__zreceive(stbi__zbuf *z, int n)
+unsigned int stbi__zreceive(stbi__zbuf *z, int n)
 {
     unsigned int k;
-    // if (z->num_bits < n) stbi__fill_bits(z);
+    if (z->num_bits < n) stbi__fill_bits(z);
     k = z->code_buffer & ((1 << n) - 1);
-    // z->code_buffer >>= n;
-    // z->num_bits -= n;
+    z->code_buffer >>= n;
+    z->num_bits -= n;
     return k;
-}*/
+}
 
 stbi_uc stbi__zget8(stbi__zbuf *z);
 
-/*void stbi__fill_bits(stbi__zbuf *z)
+void stbi__fill_bits(stbi__zbuf *z)
 {
-    // do {
-    //     if (z->code_buffer >= (1U << z->num_bits)) {
-    //         z->zbuffer = z->zbuffer_end;
-    //         return;
-    //     }
-    z->code_buffer |= (unsigned int) stbi__zget8(z) << z->num_bits;
-    //     z->num_bits += 8;
-    // } while (z->num_bits <= 24);
-}*/
+    do {
+        if (z->code_buffer >= (1U << z->num_bits)) {
+            z->zbuffer = z->zbuffer_end;
+            return;
+        }
+        z->code_buffer |= (unsigned int) stbi__zget8(z) << z->num_bits;
+        z->num_bits += 8;
+    } while (z->num_bits <= 24);
+}
 
-/*void stbi__skip(stbi__context *s, int n)
+void stbi__skip(stbi__context *s, int n)
 {
     int blen = (int) (s->img_buffer_end - s->img_buffer);
-}*/
+}
 
 #if 0
 int tiling(int* a, size_t i) {

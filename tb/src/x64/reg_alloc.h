@@ -42,8 +42,8 @@ struct LiveInterval {
     // spill point, -1 if there's none
     int spill, split_kid;
 
-    // help speed up some of these 'covers' checks in the inactive->active path
-    int inactive_until;
+    // help speed up some of the main allocation loop
+    int active_range;
 
     // we're gonna have so much memory to clean up...
     DynArray(LiveRange) ranges;
@@ -71,6 +71,8 @@ typedef struct {
 
     Set active_set[CG_REGISTER_CLASSES];
     RegIndex active[CG_REGISTER_CLASSES][16];
+
+    Inst* cache;
 } LSRA;
 
 static LiveRange* last_range(LiveInterval* i) {
@@ -109,6 +111,8 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
     // we shouldn't force only register uses or else we'll make spilling more
     // prominent.
     RegIndex* ops = inst->operands;
+    bool dst_use_reg = inst->type == IMUL || inst->type == INST_ZERO || (inst->flags & (INST_MEM | INST_GLOBAL));
+
     FOREACH_N(i, 0, inst->out_count) {
         LiveInterval* interval = &ra->intervals[*ops++];
 
@@ -119,8 +123,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
             interval->ranges[dyn_array_length(interval->ranges) - 1].start = inst->time;
         }
 
-        bool use_reg = inst->type == IMUL || inst->type == INST_ZERO || (inst->flags & (INST_MEM | INST_GLOBAL));
-        add_use_pos(interval, inst->time, use_reg ? USE_REG : USE_OUT);
+        add_use_pos(interval, inst->time, dst_use_reg ? USE_REG : USE_OUT);
     }
 
     FOREACH_N(i, 0, inst->in_count) {
@@ -187,15 +190,15 @@ static int covers(LiveInterval* it, int start, int end) {
     for (; i < count; i++) {
         // if the end is greater than the start, then we've overshot
         if (start > it->ranges[i].end) {
-            return -(i == 0 ? end : it->ranges[i - 1].start) + 1;
+            return -1;
         }
 
         if (end >= it->ranges[i].start) {
-            return it->ranges[i].end;
+            return i;
         }
     }
 
-    return -it->ranges[count - 1].start + 1;
+    return -1;
 }
 
 static LiveInterval* get_active(LSRA* restrict ra, int rc, int reg) {
@@ -207,15 +210,24 @@ static LiveInterval* get_active(LSRA* restrict ra, int rc, int reg) {
 }
 
 static void insert_split_move(LSRA* restrict ra, int t, int old_reg, int new_reg) {
-    Inst *prev = ra->first, *inst = prev->next;
+    Inst *prev, *inst;
     TB_X86_DataType dt = ra->intervals[old_reg].dt;
 
-    while (inst != NULL) {
-        if (inst->time > t) {
-            break;
-        }
+    // invalidate
+    if (ra->cache->time >= t) {
+        ra->cache = ra->first;
+    }
 
-        prev = inst, inst = inst->next;
+    prev = ra->cache, inst = prev->next;
+    CUIK_TIMED_BLOCK("walk") {
+        while (inst != NULL) {
+            if (inst->time > t) {
+                ra->cache = prev;
+                break;
+            }
+
+            prev = inst, inst = inst->next;
+        }
     }
 
     // folded spill
@@ -390,11 +402,11 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     }
 
     int pos = ra->free_pos[highest];
-    if (pos == 0) {
+    if (UNLIKELY(pos == 0)) {
         // alloc failure
         return -1;
     } else {
-        if (ra->callee_saved[rc] & (1ull << highest)) {
+        if (UNLIKELY(ra->callee_saved[rc] & (1ull << highest))) {
             ra->callee_saved[rc] &= ~(1ull << highest);
 
             REG_ALLOC_LOG printf("  #   spill callee saved register %s\n", reg_name(rc, highest));
@@ -562,7 +574,7 @@ static void move_to_active(LSRA* restrict ra, LiveInterval* interval, int pos) {
 
 static void cuiksort_defs(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, RegIndex* arr);
 static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int end) {
-    LSRA ra = { .abi = f->super.module->target_abi, .first = ctx->first, .intervals = ctx->intervals, .stack_usage = stack_usage };
+    LSRA ra = { .abi = f->super.module->target_abi, .first = ctx->first, .cache = ctx->first, .intervals = ctx->intervals, .stack_usage = stack_usage };
 
     FOREACH_N(i, 0, CG_REGISTER_CLASSES) {
         ra.active_set[i] = set_create_in_arena(tmp_arena, 16);
@@ -572,7 +584,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
     //   we also track when uses happen to aid in splitting
     MachineBBs mbbs = ctx->machine_bbs;
     size_t interval_count = dyn_array_length(ra.intervals);
-    CUIK_TIMED_BLOCK("liveness") {
+    CUIK_TIMED_BLOCK("build intervals") {
         FOREACH_N(i, 0, ctx->order.count) {
             TB_Node* bb = ctx->order.traversal[i];
             MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
@@ -600,8 +612,10 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
         }
     }
 
-    FOREACH_N(i, 0, 32) {
-        ra.intervals[i].start = 0;
+    // we use every fixed interval at the very start to force them into
+    // the inactive set.
+    FOREACH_N(i, 0, 32) if (ra.intervals[i].ranges) {
+        add_range(&ra.intervals[i], 0, 1);
     }
 
     ra.endpoint = end;
@@ -662,13 +676,14 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                     REG_ALLOC_LOG printf("  #   expired %s (v%d)\n", reg_name(rc, reg), active_i);
                     set_remove(&ra.active_set[rc], reg);
                 } else {
-                    int end = covers(it, time, before_next_time);
-                    if (end < 0) {
-                        // active -> inactive
-                        REG_ALLOC_LOG printf("  #   active %s is going quiet for now\n", reg_name(rc, reg));
-
+                    int active_end = it->ranges[it->active_range].end;
+                    if (time > active_end) {
                         // find next inactive region
-                        it->inactive_until = -end - 1;
+                        assert(it->active_range > 0);
+                        it->active_range -= 1;
+
+                        // active -> inactive
+                        REG_ALLOC_LOG printf("  #   active %s is going quiet for now (until %d, t=v%d)\n", reg_name(rc, reg), it->ranges[it->active_range].start, active_i);
 
                         set_remove(&ra.active_set[rc], reg);
                         dyn_array_put(ra.inactive, active_i);
@@ -683,14 +698,14 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                     REG_ALLOC_LOG printf("  #   inactive %s has expired (v%d)\n", reg_name(it->reg_class, it->assigned), ra.inactive[i]);
                     dyn_array_remove(ra.inactive, i);
                     continue;
-                } else if (time >= it->inactive_until) {
-                    int end = covers(it, time, before_next_time);
-                    if (end >= 0 && end != time) {
+                } else {
+                    int hole_end = it->ranges[it->active_range].start;
+                    if (time >= hole_end) {
                         // inactive -> active
                         REG_ALLOC_LOG printf("  #   inactive %s is active again (until t=%d, v%d)\n", reg_name(it->reg_class, it->assigned), end, ra.inactive[i]);
 
                         // set active
-                        move_to_active(&ra, it, end < time ? end : time);
+                        move_to_active(&ra, it, hole_end < time ? hole_end : time);
                         dyn_array_remove(ra.inactive, i);
 
                         interval = &ra.intervals[ri]; // might've resized the intervals
@@ -732,6 +747,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
             // add to active set
             if (reg >= 0) {
                 interval->assigned = reg;
+                interval->active_range = dyn_array_length(interval->ranges) - 1;
                 move_to_active(&ra, interval, interval->start);
             }
 
