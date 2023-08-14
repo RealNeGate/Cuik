@@ -376,7 +376,7 @@ static void hint_reg(Ctx* restrict ctx, int i, int j) {
 ////////////////////////////////
 // Data flow analysis
 ////////////////////////////////
-static int liveness(Ctx* restrict ctx, TB_Function* f) {
+static int liveness(Ctx* restrict ctx, NL_HashSet* visited, TB_Function* f) {
     size_t interval_count = dyn_array_length(ctx->intervals);
     TB_Arena* arena = tmp_arena;
 
@@ -386,8 +386,10 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
     FOREACH_N(i, 0, ctx->order.count) {
         MachineBB bb = {
-            .gen = set_create_in_arena(arena, interval_count), .kill = set_create_in_arena(arena, interval_count),
-            .live_in = set_create_in_arena(arena, interval_count), .live_out = set_create_in_arena(arena, interval_count)
+            .gen = set_create_in_arena(arena, interval_count),
+            .kill = set_create_in_arena(arena, interval_count),
+            .live_in = set_create_in_arena(arena, interval_count),
+            .live_out = set_create_in_arena(arena, interval_count)
         };
 
         nl_map_put(seq_bb, ctx->order.traversal[i], bb);
@@ -395,86 +397,105 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
     // generate local live sets
     int timeline = 4;
-    if (ctx->first) {
-        Inst* restrict inst = ctx->first;
-        assert(inst->type == INST_LABEL);
+    CUIK_TIMED_BLOCK("local liveness") {
+        if (ctx->first) {
+            Inst* restrict inst = ctx->first;
+            assert(inst->type == INST_LABEL);
 
-        // initial label
-        MachineBB* mbb = &nl_map_get_checked(seq_bb, f->start_node);
-        mbb->first = inst;
-        mbb->start = 2;
-        inst->time = 2;
-        inst = inst->next;
+            // initial label
+            MachineBB* mbb = &nl_map_get_checked(seq_bb, f->start_node);
+            mbb->first = inst;
+            mbb->start = 2;
+            inst->time = 2;
+            inst = inst->next;
 
-        TB_Node* bb = f->start_node;
-        for (; inst; inst = inst->next) {
-            if (inst->type == INST_LABEL) {
-                nl_map_get_checked(seq_bb, bb).end = timeline;
-                timeline += 2; // reserved two extra spaces at the end of the BB
+            TB_Node* bb = f->start_node;
+            for (; inst; inst = inst->next) {
+                if (inst->type == INST_LABEL) {
+                    nl_map_get_checked(seq_bb, bb).end = timeline;
+                    timeline += 2; // reserved two extra spaces at the end of the BB
 
-                tb_assert(inst->flags & INST_NODE, "label instruction has no TB_Node* for the region");
-                bb = inst->n;
-                mbb = &nl_map_get_checked(seq_bb, bb);
-                mbb->first = inst->next;
-                mbb->start = timeline;
-            }
+                    tb_assert(inst->flags & INST_NODE, "label instruction has no TB_Node* for the region");
+                    bb = inst->n;
+                    mbb = &nl_map_get_checked(seq_bb, bb);
+                    mbb->first = inst->next;
+                    mbb->start = timeline;
+                }
 
-            Set* restrict gen = &mbb->gen;
-            Set* restrict kill = &mbb->kill;
+                Set* restrict gen = &mbb->gen;
+                Set* restrict kill = &mbb->kill;
 
-            inst->time = timeline;
-            timeline += 2;
+                inst->time = timeline;
+                timeline += 2;
 
-            RegIndex* ins = inst->operands + inst->out_count;
-            FOREACH_N(i, 0, inst->in_count) {
-                if (!set_get(kill, ins[i])) {
-                    set_put(gen, ins[i]);
+                RegIndex* ins = inst->operands + inst->out_count;
+                FOREACH_N(i, 0, inst->in_count) {
+                    if (!set_get(kill, ins[i])) {
+                        set_put(gen, ins[i]);
+                    }
+                }
+
+                RegIndex* outs = inst->operands;
+                FOREACH_N(i, 0, inst->out_count) {
+                    set_put(kill, outs[i]);
                 }
             }
 
-            RegIndex* outs = inst->operands;
-            FOREACH_N(i, 0, inst->out_count) {
-                set_put(kill, outs[i]);
-            }
+            mbb->end = timeline;
         }
-
-        mbb->end = timeline;
     }
 
     // generate global live sets
-    bool changes;
-    do {
-        changes = false;
+    nl_hashset_clear(visited);
+    DynArray(TB_Node*) worklist = dyn_array_create(TB_Node*, ctx->order.count);
 
-        FOREACH_REVERSE_N(i, 0, ctx->order.count) {
-            TB_Node* bb = ctx->order.traversal[i];
-            TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
-            MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
+    dyn_array_put(worklist, ctx->f->start_node);
+    nl_hashset_put(visited, ctx->f->start_node);
 
-            set_clear(&mbb->live_out);
+    Set tmp_out = set_create_in_arena(arena, interval_count);
+    while (dyn_array_length(worklist)) CUIK_TIMED_BLOCK("global iter") {
+        TB_Node* bb = dyn_array_pop(worklist);
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
+        MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
 
-            // walk all successors
-            FOREACH_N(i, 0, r->succ_count) {
-                // union with successor's lives
-                MachineBB* succ = &nl_map_get_checked(seq_bb, r->succ[i]);
-                set_union(&mbb->live_out, &succ->live_in);
-            }
+        // walk all successors
+        set_clear(&tmp_out);
+        FOREACH_N(i, 0, r->succ_count) {
+            // union with successor's lives
+            MachineBB* succ = &nl_map_get_checked(seq_bb, r->succ[i]);
+            set_union(&tmp_out, &succ->live_in);
+        }
 
-            Set* restrict live_in = &mbb->live_in;
-            Set* restrict live_out = &mbb->live_out;
-            Set* restrict kill = &mbb->kill;
-            Set* restrict gen = &mbb->gen;
+        bool changes = false;
 
-            // live_in = (live_out - live_kill) U live_gen
-            FOREACH_N(i, 0, (interval_count + 63) / 64) {
-                uint64_t new_val = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
-
-                changes |= (live_in->data[i] != new_val);
-                live_in->data[i] = new_val;
+        // copy to live_out but also check for changes, if
+        // there's changes we need to put the successors in
+        // the worklist.
+        Set* restrict live_out = &mbb->live_out;
+        FOREACH_N(i, 0, (interval_count + 63) / 64) {
+            if (live_out->data[i] != tmp_out.data[i]) {
+                live_out->data[i] = tmp_out.data[i];
+                changes = true;
             }
         }
-    } while (changes);
 
+        if (changes) {
+            FOREACH_N(i, 0, r->succ_count) if (nl_hashset_put(visited, r->succ[i])) {
+                dyn_array_put(worklist, r->succ[i]);
+            }
+        }
+
+        Set* restrict live_in = &mbb->live_in;
+        Set* restrict kill = &mbb->kill;
+        Set* restrict gen = &mbb->gen;
+
+        // live_in = (live_out - live_kill) U live_gen
+        FOREACH_N(i, 0, (interval_count + 63) / 64) {
+            live_in->data[i] = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
+        }
+    }
+
+    dyn_array_destroy(worklist);
     ctx->machine_bbs = seq_bb;
     return timeline;
 }
@@ -669,7 +690,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     FOREACH_REVERSE_N(i, 0, ctx.order.count) {
         visit_uses(&ctx, &visited, ctx.order.traversal[i]);
     }
-    nl_hashset_free(visited);
 
     // allocate more stuff now that we've run stats on the IR
     ctx.emit.return_label = 0;
@@ -702,14 +722,12 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     {
         int end;
         CUIK_TIMED_BLOCK("data flow") {
-            end = liveness(&ctx, f);
+            end = liveness(&ctx, &visited, f);
         }
 
-        CUIK_TIMED_BLOCK("reg alloc") {
-            // we can in theory have other regalloc solutions and eventually will put
-            // graph coloring here.
-            ctx.stack_usage = linear_scan(&ctx, f, ctx.stack_usage, end);
-        }
+        // we can in theory have other regalloc solutions and eventually will put
+        // graph coloring here.
+        ctx.stack_usage = linear_scan(&ctx, f, ctx.stack_usage, end);
 
         // Arch-specific: convert instruction buffer into actual instructions
         CUIK_TIMED_BLOCK("emit code") {
@@ -717,6 +735,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         }
     }
 
+    nl_hashset_free(visited);
     nl_map_free(ctx.emit.labels);
     nl_map_free(ctx.values);
     nl_map_free(ctx.machine_bbs);
