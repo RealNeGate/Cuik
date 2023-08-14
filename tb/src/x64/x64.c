@@ -278,9 +278,17 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst) {
 }
 
 static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->values, n);
+    bool invert = false;
+    /*if (n->type == TB_CMP_EQ && n->dt.type == TB_INT && n->dt.data == 1 && n->inputs[2]->type == TB_INTEGER_CONST) {
+        TB_NodeInt* b = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt);
+        if (b->num_words == 1 && b->words[0] == 0) {
+            invert = true;
+            n = n->inputs[1];
+        }
+    }*/
 
     int src;
+    ptrdiff_t search = nl_map_get(ctx->values, n);
     if (search < 0) {
         if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
             TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
@@ -301,7 +309,6 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
                     case TB_CMP_FLE: cc = BE; break;
                     default: tb_unreachable();
                 }
-                return cc;
             } else {
                 bool invert = false;
                 int32_t x;
@@ -331,8 +338,9 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
                     case TB_CMP_ULE: cc = invert ? NB : BE; break;
                     default: tb_unreachable();
                 }
-                return cc;
             }
+
+            return cc ^ invert;
         }
     }
 
@@ -343,11 +351,10 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
         int tmp = DEF(n, n->dt);
         SUBMIT(inst_op_zero(dt, tmp));
         SUBMIT(inst_op_rr_no_dst(FP_UCOMI, dt, src, tmp));
-        return NE;
     } else {
         SUBMIT(inst_op_rr_no_dst(TEST, dt, src, src));
-        return NE;
     }
+    return NE ^ invert;
 }
 
 static int isel(Ctx* restrict ctx, TB_Node* n) {
@@ -519,14 +526,17 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             int lhs = isel(ctx, n->inputs[1]);
             hint_reg(ctx, dst, lhs);
-            SUBMIT(inst_move(n->dt, dst, lhs));
 
             int32_t x;
             if (try_for_imm32(ctx, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
+
+                SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
             } else {
                 int rhs = isel(ctx, n->inputs[2]);
+
+                SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rrr(op, n->dt, dst, dst, rhs));
             }
             break;
@@ -535,13 +545,18 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_MUL: {
             dst = DEF(n, n->dt);
             int lhs = isel(ctx, n->inputs[1]);
+            hint_reg(ctx, dst, lhs);
 
             int32_t x;
             if (try_for_imm32(ctx, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
+
+                SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rri(IMUL, n->dt, dst, lhs, x));
             } else {
                 int rhs = isel(ctx, n->inputs[2]);
+
+                SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rrr(IMUL, n->dt, dst, lhs, rhs));
             }
             break;
@@ -560,11 +575,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             int lhs = isel(ctx, n->inputs[1]);
             hint_reg(ctx, dst, lhs);
-            SUBMIT(inst_move(n->dt, dst, lhs));
 
             int32_t x;
             if (try_for_imm32(ctx, n->inputs[2], &x) && x == (int8_t)x) {
                 use(ctx, n->inputs[2]);
+                SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
                 break;
             }
@@ -572,6 +587,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // the shift operations need their right hand side in CL (RCX's low 8bit)
             int rhs = isel(ctx, n->inputs[2]);
 
+            SUBMIT(inst_move(n->dt, dst, lhs));
             SUBMIT(inst_move(n->dt, RCX, rhs));
             SUBMIT(inst_op_rrr(op, n->dt, dst, dst, RCX));
             break;
@@ -886,6 +902,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // parameter passing is separate from eval from regalloc reasons
             size_t in_count = 0;
             RegIndex ins[16];
+            RegIndex param_srcs[16];
 
             size_t xmms_used = 0, gprs_used = 0;
             FOREACH_N(i, 2, n->input_count) {
@@ -917,8 +934,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     int dst = (use_xmm ? FIRST_XMM : FIRST_GPR) + phys_reg;
 
                     hint_reg(ctx, src, dst);
-                    SUBMIT(inst_move(param_dt, dst, src));
-                    ins[in_count++] = dst;
+
+                    param_srcs[in_count] = src;
+                    ins[in_count] = dst;
+                    in_count += 1;
 
                     if (use_xmm) {
                         caller_saved_xmms &= ~(1ull << phys_reg);
@@ -926,6 +945,21 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                         caller_saved_gprs &= ~(1ull << phys_reg);
                     }
                 }
+            }
+
+            // compute the target (unless it's a symbol) before the
+            // registers all need to be forcibly shuffled
+            TB_Node* target = n->inputs[1];
+            bool static_call = n->type == TB_CALL && target->type == TB_GET_SYMBOL_ADDRESS;
+
+            int target_val = RSP; // placeholder really
+            if (!static_call) {
+                target_val = ISEL(target);
+            }
+
+            // perform last minute copies (this avoids keeping parameter registers alive for too long)
+            FOREACH_N(i, 0, in_count) {
+                SUBMIT(inst_move(n->inputs[2 + i]->dt, ins[i], param_srcs[i]));
             }
 
             // the number of float parameters is written into AL
@@ -945,9 +979,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // all these registers need to be spilled and reloaded if they're used across
             // the function call boundary... you might see why inlining could be nice to implement
             size_t clobber_count = tb_popcount(caller_saved_gprs) + tb_popcount(caller_saved_xmms);
-            TB_Node* target = n->inputs[1];
-
-            bool static_call = n->type == TB_CALL && target->type == TB_GET_SYMBOL_ADDRESS;
             Inst* call_inst = alloc_inst(n->type == TB_SCALL ? SYSCALL : CALL, n->dt, 1, 1 + in_count, clobber_count);
 
             // mark clobber list
@@ -971,12 +1002,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 call_inst->flags |= INST_GLOBAL;
                 call_inst->mem_slot = 1;
                 call_inst->s = TB_NODE_GET_EXTRA_T(target, TB_NodeSymbol)->sym;
-
-                *dst_ins++ = RSP; // placeholder really
-            } else {
-                *dst_ins++ = ISEL(target);
             }
 
+            *dst_ins++ = target_val;
             memcpy(dst_ins, ins, in_count * sizeof(RegIndex));
 
             fence(ctx, n);
@@ -1001,7 +1029,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_CMP_ULE:
         case TB_CMP_FLT:
         case TB_CMP_FLE: {
-            dst = DEF(n, n->dt);
+            dst = DEF(n, TB_TYPE_I32);
             SUBMIT(inst_op_zero(n->dt, dst));
 
             // use SETcc to convert into integer
@@ -1103,6 +1131,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
+        case TB_DEBUGBREAK:
+        SUBMIT(alloc_inst(INT3, TB_TYPE_VOID, 0, 0, 0));
+        break;
+
+        case TB_UNREACHABLE:
+        case TB_TRAP: {
+            SUBMIT(alloc_inst(UD2, TB_TYPE_VOID, 0, 0, 0));
+            break;
+        }
+
         case TB_GET_SYMBOL_ADDRESS: {
             dst = DEF(n, n->dt);
 
@@ -1116,23 +1154,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int mov_op = (TB_IS_FLOAT_TYPE(n->dt) || n->dt.width) ? FP_MOV : MOV;
 
             TB_Node* addr = n->inputs[1];
-            if (addr->type == TB_LOCAL) {
-                use(ctx, addr);
 
-                int pos = get_stack_slot(ctx, addr);
-                SUBMIT(inst_op_rm(mov_op, n->dt, dst, RBP, -1, SCALE_X1, pos));
-            } else {
-                Inst* ld_inst = isel_addr(ctx, addr, dst);
-                ld_inst->type = mov_op;
-                ld_inst->dt = legalize(n->dt);
-
-                if ((ld_inst->flags & INST_MEM) == 0) {
-                    ld_inst->flags |= INST_MEM;
-                    ld_inst->mem_slot = 1;
-                }
-
-                SUBMIT(ld_inst);
+            Inst* ld_inst = isel_addr(ctx, addr, dst);
+            ld_inst->type = mov_op;
+            ld_inst->dt = legalize(n->dt);
+            if ((ld_inst->flags & INST_MEM) == 0) {
+                ld_inst->flags |= INST_MEM;
+                ld_inst->mem_slot = 1;
             }
+
+            SUBMIT(ld_inst);
             break;
         }
         case TB_STORE: {
@@ -1942,7 +1973,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         InstCategory cat = inst->type > 1024 ? INST_BINOP : inst_table[inst->type].cat;
 
         if (0) {
-            EMITA(e, " \x1b[32m# t=%d { outs:", inst->time);
+            EMITA(e, "  \x1b[32m# %s t=%d { outs:", inst->type < 1024 ? inst_table[inst->type].mnemonic : "???", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
                 EMITA(e, " v%d", inst->operands[i]);
             }
@@ -1966,7 +1997,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
             TB_Attrib* loc = inst->a;
-            EMITA(e, "  #loc %s %"PRIu64"\n", f->super.module->files[loc->loc.file].path, loc->loc.line);
+            EMITA(e, "  \x1b[33m# loc %s %"PRIu64"\x1b[0m\n", f->super.module->files[loc->loc.file].path, loc->loc.line);
 
             TB_Line l = {
                 .file = loc->loc.file,
@@ -2047,8 +2078,12 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
                     inst1_print(e, inst->type, &lhs, inst->dt);
                     continue;
                 } else {
-                    if (!is_value_match(&out, &lhs)) {
-                        inst2_print(e, ternary ? mov_op : inst->type, &out, &lhs, inst->dt);
+                    if (ternary || inst->type == MOV || inst->type == FP_MOV) {
+                        if (!is_value_match(&out, &lhs)) {
+                            inst2_print(e, mov_op, &out, &lhs, inst->dt);
+                        }
+                    } else {
+                        inst2_print(e, inst->type, &out, &lhs, inst->dt);
                     }
                 }
             }
@@ -2120,49 +2155,49 @@ static size_t emit_prologue(Ctx* restrict ctx) {
         return 0;
     }
 
-    // if there's more than 4096 bytes of stack, we need to insert a chkstk
-    if (0 && stack_usage >= 4096) {
-        Val sym = val_global(ctx->f->super.module->chkstk_extern);
-        Val imm = val_imm(stack_usage);
-        Val rax = val_gpr(RAX);
-
-        inst2_print(&ctx->emit, MOV, &rax, &imm, TB_X86_TYPE_DWORD);
-        inst1_print(&ctx->emit, CALL, &sym, TB_X86_TYPE_QWORD);
-        // inst2_print(&ctx->emit, SUB, &rax, TB_X86_TYPE_QWORD);
-    }
-
     TB_CGEmitter* e = &ctx->emit;
 
     // push rbp
     if (stack_usage > 0) {
         EMITA(e, "  push RBP\n");
-        EMIT1(&ctx->emit, 0x50 + RBP);
+        EMIT1(e, 0x50 + RBP);
 
         // mov rbp, rsp
         EMITA(e, "  mov RBP, RSP\n");
-        EMIT1(&ctx->emit, rex(true, RSP, RBP, 0));
-        EMIT1(&ctx->emit, 0x89);
-        EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, RSP, RBP));
+        EMIT1(e, rex(true, RSP, RBP, 0));
+        EMIT1(e, 0x89);
+        EMIT1(e, mod_rx_rm(MOD_DIRECT, RSP, RBP));
     }
 
-    if (stack_usage > 0) {
+    // if there's more than 4096 bytes of stack, we need to insert a chkstk
+    if (stack_usage >= 4096) {
+        assert(ctx->f->super.module->chkstk_extern);
+        Val sym = val_global(ctx->f->super.module->chkstk_extern);
+        Val imm = val_imm(stack_usage);
+        Val rax = val_gpr(RAX);
+        Val rsp = val_gpr(RSP);
+
+        inst2_print(e, MOV, &rax, &imm, TB_X86_TYPE_DWORD);
+        inst1_print(e, CALL, &sym, TB_X86_TYPE_QWORD);
+        inst2_print(e, SUB, &rsp, &rax, TB_X86_TYPE_QWORD);
+    } else if (stack_usage > 0) {
         EMITA(e, "  sub RSP, %d\n", stack_usage);
         if (stack_usage == (int8_t)stack_usage) {
             // sub rsp, stack_usage
-            EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
-            EMIT1(&ctx->emit, 0x83);
-            EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
-            EMIT1(&ctx->emit, stack_usage);
+            EMIT1(e, rex(true, 0x00, RSP, 0));
+            EMIT1(e, 0x83);
+            EMIT1(e, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
+            EMIT1(e, stack_usage);
         } else {
             // sub rsp, stack_usage
-            EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
-            EMIT1(&ctx->emit, 0x81);
-            EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
-            EMIT4(&ctx->emit, stack_usage);
+            EMIT1(e, rex(true, 0x00, RSP, 0));
+            EMIT1(e, 0x81);
+            EMIT1(e, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
+            EMIT4(e, stack_usage);
         }
     }
 
-    return ctx->emit.count;
+    return e->count;
 }
 
 static size_t emit_epilogue(Ctx* restrict ctx) {

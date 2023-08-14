@@ -168,7 +168,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
                 TB_Node* key = n->inputs[0]->input_count > 1 ? n->inputs[0]->inputs[1] : NULL;
                 if (br->keys[0] == 0 && key && key->dt.type == TB_INT && key->dt.data == 1) {
                     // boolean branch, we can use true and false
-                    P(index ? "is true?" : "is false?");
+                    P(index ? "is false?" : "is true?");
                 } else if (index == 0) {
                     P("is default?");
                 } else {

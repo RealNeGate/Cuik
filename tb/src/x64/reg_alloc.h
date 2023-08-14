@@ -175,9 +175,14 @@ static int next_use(LiveInterval* interval, int time) {
     return INT_MAX;
 }
 
-static int covers(LiveInterval* it, int time) {
+static int covers(LiveInterval* it, int start, int end) {
     FOREACH_N(i, 0, dyn_array_length(it->ranges)) {
-        if (time >= it->ranges[i].start && time < it->ranges[i].end) {
+        // if the end is greater than the start, then we've overshot
+        if (start >= it->ranges[i].end) {
+            break;
+        }
+
+        if (end >= it->ranges[i].start) {
             return it->ranges[i].end;
         }
     }
@@ -212,7 +217,7 @@ static void insert_split_move(LSRA* restrict ra, int t, int old_reg, int new_reg
     }
 
     Inst* new_inst = tb_arena_alloc(tmp_arena, sizeof(Inst) + (2 * sizeof(RegIndex)));
-    *new_inst = (Inst){ .type = MOV, .dt = dt, .out_count = 1, 1 };
+    *new_inst = (Inst){ .type = MOV, .flags = INST_SPILL, .dt = dt, .out_count = 1, 1 };
     new_inst->operands[0] = new_reg;
     new_inst->operands[1] = old_reg;
     new_inst->time = prev->time + 1;
@@ -413,13 +418,13 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
         if (interval->end < pos) {
             // we can steal it completely
             REG_ALLOC_LOG printf("  #   assign to %s\n", reg_name(rc, highest));
-            return highest;
         } else {
             // TODO(NeGate): split current at optimal position before current
             interval->assigned = highest;
             split_intersecting(ra, pos - 1, interval, true);
-            return highest;
         }
+
+        return highest;
     }
 }
 
@@ -474,7 +479,9 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
 
     int pos = ra->use_pos[highest];
     int first_use = interval->uses[dyn_array_length(interval->uses) - 1].pos;
-    if (pos < first_use) {
+
+    bool spilled = false;
+    if (first_use > pos) {
         int size = 8;
 
         // spill interval
@@ -489,13 +496,9 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
             }
         }
 
-        return -1;
+        spilled = true;
     } else {
         int split_pos = (interval->start & ~1) - 1;
-
-        if (ra->block_pos[highest] <= interval->end && pos != INT_MAX) {
-            split_intersecting(ra, pos, interval, true);
-        }
 
         // split active or inactive interval reg
         LiveInterval* to_split = get_active(ra, rc, highest);
@@ -503,6 +506,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
             split_intersecting(ra, split_pos, to_split, true);
         }
 
+        // split any inactive interval for reg at the end of it's lifetime hole
         dyn_array_for(i, ra->inactive) {
             LiveInterval* it = &ra->intervals[ra->inactive[i]];
             if (it->reg_class == rc && it->assigned == highest) {
@@ -511,7 +515,14 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
         }
     }
 
-    return highest;
+    // split active reg if it intersects with fixed interval
+    LiveInterval* fix_interval = &ra->intervals[(rc ? FIRST_XMM : FIRST_GPR) + highest];
+    int p = interval_intersect(interval, fix_interval);
+    if (p >= 0) {
+        split_intersecting(ra, p, fix_interval, true);
+    }
+
+    return spilled ? -1 : highest;
 }
 
 static void move_to_active(LSRA* restrict ra, LiveInterval* interval, int pos) {
@@ -523,8 +534,17 @@ static void move_to_active(LSRA* restrict ra, LiveInterval* interval, int pos) {
         tb_assert(interval->reg >= 0, "non-fixed interval attempted to force a register out");
 
         LiveInterval* old_interval = &ra->intervals[ra->active[rc][reg]];
-        split_intersecting(ra, pos - 1, old_interval, true);
-        interval = &ra->intervals[ri]; // might've resized the intervals
+        FOREACH_N(i, 0, dyn_array_length(old_interval->ranges)) {
+            if (old_interval->ranges[i].end == pos) {
+                old_interval = NULL;
+                break;
+            }
+        }
+
+        if (old_interval) {
+            split_intersecting(ra, pos - 1, old_interval, true);
+            interval = &ra->intervals[ri]; // might've resized the intervals
+        }
     }
 
     set_put(&ra->active_set[rc], reg);
@@ -569,6 +589,10 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
         }
     }
 
+    FOREACH_N(i, 0, 32) {
+        ra.intervals[i].start = 0;
+    }
+
     ra.endpoint = end;
     mark_callee_saved_constraints(ctx, ra.callee_saved);
 
@@ -591,6 +615,16 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
         if (interval->ranges == NULL) continue;
 
         int time = interval->start;
+        int rc = interval->reg_class;
+
+        int before_next_time = interval->start;
+        if (dyn_array_length(ra.unhandled)) {
+            int before = ra.intervals[ra.unhandled[dyn_array_length(ra.unhandled) - 1]].start - 1;
+            if (before > before_next_time) {
+                before_next_time = before;
+            }
+        }
+
         if (interval->reg >= 0) {
             REG_ALLOC_LOG printf("  # %-5s t=[%-4d - %4d)\n", reg_name(interval->reg_class, interval->reg), time, interval->end);
         } else if (interval->spill > 0) {
@@ -609,15 +643,14 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
         }
 
         // expire intervals
-        int rc = interval->reg_class;
         FOREACH_SET(reg, ra.active_set[rc]) {
             RegIndex active_i = ra.active[rc][reg];
             LiveInterval* it = &ra.intervals[active_i];
 
             if (it->end < time) {
-                REG_ALLOC_LOG printf("  #   expired %s\n", reg_name(rc, reg));
+                REG_ALLOC_LOG printf("  #   expired %s (v%d)\n", reg_name(rc, reg), active_i);
                 set_remove(&ra.active_set[rc], reg);
-            } else if (covers(it, time) < 0) {
+            } else if (covers(it, time, before_next_time) < 0) {
                 // active -> inactive
                 REG_ALLOC_LOG printf("  #   active %s is going quiet for now\n", reg_name(rc, reg));
 
@@ -630,18 +663,20 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
             LiveInterval* it = &ra.intervals[ra.inactive[i]];
 
             if (it->end < time) {
-                REG_ALLOC_LOG printf("  #   inactive %s has expired\n", reg_name(it->reg_class, it->assigned));
+                REG_ALLOC_LOG printf("  #   inactive %s has expired (v%d)\n", reg_name(it->reg_class, it->assigned), ra.inactive[i]);
                 dyn_array_remove(ra.inactive, i);
                 continue;
             } else {
-                int end = covers(it, time);
-                if (end >= 0) {
+                int end = covers(it, time, before_next_time);
+                if (end >= 0 && end != time) {
                     // inactive -> active
-                    REG_ALLOC_LOG printf("  #   inactive %s is active again (until t=%d)\n", reg_name(it->reg_class, it->assigned), end);
+                    REG_ALLOC_LOG printf("  #   inactive %s is active again (until t=%d, v%d)\n", reg_name(it->reg_class, it->assigned), end, ra.inactive[i]);
 
                     // set active
-                    move_to_active(&ra, it, end);
+                    move_to_active(&ra, it, end < time ? end : time);
                     dyn_array_remove(ra.inactive, i);
+
+                    interval = &ra.intervals[ri]; // might've resized the intervals
                     continue;
                 }
             }
@@ -673,7 +708,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                 reg = allocate_blocked_reg(&ra, interval);
                 interval = &ra.intervals[ri]; // might've resized the intervals
 
-                tb_assert(reg >= 0, "regalloc failure");
+                // tb_assert(reg >= 0, "regalloc failure");
             }
         }
 

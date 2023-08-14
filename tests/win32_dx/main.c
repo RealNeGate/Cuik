@@ -48,22 +48,22 @@ static LRESULT CALLBACK WindowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lpa
         PostQuitMessage(0);
         return 0;
     }
-    return DefWindowProcW(wnd, msg, wparam, lparam);
+    return DefWindowProcA(wnd, msg, wparam, lparam);
 }
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, int cmdshow)
 {
     // register window class to have custom WindowProc callback
-    WNDCLASSEXW wc =
+    WNDCLASSEXA wc =
     {
         .cbSize = sizeof(wc),
         .lpfnWndProc = WindowProc,
         .hInstance = instance,
         .hIcon = LoadIcon(NULL, IDI_APPLICATION),
         .hCursor = LoadCursor(NULL, IDC_ARROW),
-        .lpszClassName = L"d3d11_window_class",
+        .lpszClassName = "d3d11_window_class",
     };
-    ATOM atom = RegisterClassExW(&wc);
+    ATOM atom = RegisterClassExA(&wc);
     Assert(atom && "Failed to register window class");
 
     // window properties - width, height and style
@@ -83,8 +83,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     //height = rect.bottom - rect.top;
 
     // create window
-    HWND window = CreateWindowExW(
-        exstyle, wc.lpszClassName, L"D3D11 Window", style,
+    HWND window = CreateWindowExA(
+        exstyle, wc.lpszClassName, "D3D11 Window", style,
         CW_USEDEFAULT, CW_USEDEFAULT, width, height,
         NULL, NULL, wc.hInstance, NULL);
     Assert(window && "Failed to create window");

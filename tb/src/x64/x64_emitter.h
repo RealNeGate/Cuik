@@ -66,12 +66,14 @@ static void inst0(TB_CGEmitter* restrict e, InstType type, TB_X86_DataType dt) {
 static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, TB_X86_DataType dt) {
     assert(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
-    bool is_rexw = (dt == TB_X86_TYPE_QWORD);
+
+    bool is_rex = (dt == TB_X86_TYPE_BYTE || dt == TB_X86_TYPE_QWORD);
+    bool is_rexw = dt == TB_X86_TYPE_QWORD;
 
     uint8_t op = inst->op_i, rx = inst->rx_i;
     if (r->type == VAL_GPR) {
-        if (is_rexw || r->reg >= 8) {
-            EMIT1(e, rex(true, 0x00, r->reg, 0x00));
+        if (is_rex || r->reg >= 8) {
+            EMIT1(e, rex(is_rexw, 0x00, r->reg, 0x00));
         }
         EXT_OP(INST_UNARY_EXT);
         EMIT1(e, op ? op : inst->op);
@@ -109,7 +111,7 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, TB_X86_
             EXT_OP(INST_UNARY_EXT);
             EMIT1(e, inst->op);
         } else {
-            if (is_rexw) EMIT1(e, 0x48);
+            if (is_rex) EMIT1(e, is_rexw ? 0x48 : 0x40);
             EXT_OP(INST_UNARY_EXT);
             EMIT1(e, op);
             EMIT1(e, ((rx & 7) << 3) | RBP);

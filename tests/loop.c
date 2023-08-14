@@ -4,6 +4,101 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+typedef unsigned char stbi_uc;
+typedef unsigned short stbi__uint16;
+typedef unsigned int stbi__uint32;
+typedef short stbi__int16;
+
+// fast-way is faster to check than jpeg huffman, but slow way is slower
+#define STBI__ZFAST_BITS  9 // accelerate all cases in default tables
+#define STBI__ZFAST_MASK  ((1 << STBI__ZFAST_BITS) - 1)
+
+// zlib-style huffman encoding
+// (jpegs packs from left, zlib from right, so can't share code)
+typedef struct
+{
+    stbi__uint16 fast[1 << STBI__ZFAST_BITS];
+    stbi__uint16 firstcode[16];
+    int maxcode[17];
+    stbi__uint16 firstsymbol[16];
+    stbi_uc  size[288];
+    stbi__uint16 value[288];
+} stbi__zhuffman;
+
+typedef struct
+{
+    stbi_uc *zbuffer, *zbuffer_end;
+    int num_bits;
+    stbi__uint32 code_buffer;
+
+    char *zout;
+    char *zout_start;
+    char *zout_end;
+    int   z_expandable;
+
+    stbi__zhuffman z_length, z_distance;
+} stbi__zbuf;
+
+typedef struct
+{
+    int      (*read)  (void *user,char *data,int size);   // fill 'data' with 'size' bytes.  return number of bytes actually read
+    void     (*skip)  (void *user,int n);                 // skip the next 'n' bytes, or 'unget' the last -n bytes if negative
+    int      (*eof)   (void *user);                       // returns nonzero if we are at end of file/data
+} stbi_io_callbacks;
+
+typedef struct
+{
+    stbi__uint32 img_x, img_y;
+    int img_n, img_out_n;
+
+    stbi_io_callbacks io;
+    void *io_user_data;
+
+    int read_from_callbacks;
+    int buflen;
+    stbi_uc buffer_start[128];
+    int callback_already_read;
+
+    stbi_uc *img_buffer, *img_buffer_end;
+    stbi_uc *img_buffer_original, *img_buffer_original_end;
+} stbi__context;
+
+int callee(int x, int y, int z);
+
+int test(int x, int y) {
+    return callee(x, 0, x / y);
+}
+
+/*unsigned int stbi__zreceive(stbi__zbuf *z, int n)
+{
+    unsigned int k;
+    // if (z->num_bits < n) stbi__fill_bits(z);
+    k = z->code_buffer & ((1 << n) - 1);
+    // z->code_buffer >>= n;
+    // z->num_bits -= n;
+    return k;
+}*/
+
+stbi_uc stbi__zget8(stbi__zbuf *z);
+
+/*void stbi__fill_bits(stbi__zbuf *z)
+{
+    // do {
+    //     if (z->code_buffer >= (1U << z->num_bits)) {
+    //         z->zbuffer = z->zbuffer_end;
+    //         return;
+    //     }
+    z->code_buffer |= (unsigned int) stbi__zget8(z) << z->num_bits;
+    //     z->num_bits += 8;
+    // } while (z->num_bits <= 24);
+}*/
+
+/*void stbi__skip(stbi__context *s, int n)
+{
+    int blen = (int) (s->img_buffer_end - s->img_buffer);
+}*/
+
+#if 0
 int tiling(int* a, size_t i) {
     return a[i*2] + a[i*2 + 1] + a[i*2 + 2];
 }
@@ -12,16 +107,16 @@ void simple(int* a, int* n, int b) {
     a[(*n)++] = b;
 }
 
-/*int bounds_checks(size_t n, int* arr) {
-    int sum;
-    memset(&sum, 0, sizeof(sum));
+int bounds_checks(size_t n, int* arr) {
+    int sum = 0;
+    // memset(&sum, 0, sizeof(sum));
 
     for (size_t i = 0; i < n; i++) {
-        if (i >= n) return -1; // bounds check
+        // if (i >= n) return -1; // bounds check
         sum += arr[i];
     }
     return sum;
-}*/
+}
 
 uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
@@ -64,6 +159,7 @@ int main() {
     printf("Wack! %d\n", murmur3_32("Why", 3));
     return 0;
 }
+#endif
 
 #if 0
 typedef struct Cell Cell;
@@ -147,24 +243,25 @@ int nil_pilled(int* ptr) {
 #endif
 
 #if 0
-uint64_t sfc64(uint64_t s[4]) {
-    uint64_t r = s[0] + s[1] + s[3]++;
-    s[0] = (s[1] >> 11) ^ s[1];
-    s[1] = (s[2] << 3) + s[2];
-    s[2] = r + (s[2] << 24 | s[2] >> 40);
-    return r;
+void dummy(uint64_t a, uint64_t b, uint64_t c, uint64_t d);
+uint64_t sfc64(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+    uint64_t r = a + b + d++;
+    a = (b >> 11) ^ b;
+    b = (c << 3) + c;
+    c = r + (c << 24 | c >> 40);
+    dummy(a, b, c, d);
+}
+
+int cmp_test(int x, int y) {
+    switch (x & y) {
+        case 5: return x+y;
+        case 10: return x*y;
+        default: return x-y;
+    }
 }
 #endif
 
 #if 0
-int cmp_test(int x) {
-    if (x == 5) {
-        return 4;
-    }
-
-    return 0;
-}
-
 #include <stddef.h>
 #include <string.h>
 #include <stdint.h>
