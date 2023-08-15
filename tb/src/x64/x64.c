@@ -279,13 +279,13 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst) {
 
 static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     bool invert = false;
-    /*if (n->type == TB_CMP_EQ && n->dt.type == TB_INT && n->dt.data == 1 && n->inputs[2]->type == TB_INTEGER_CONST) {
+    if (n->type == TB_CMP_EQ && n->dt.type == TB_INT && n->dt.data == 1 && n->inputs[2]->type == TB_INTEGER_CONST) {
         TB_NodeInt* b = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt);
         if (b->num_words == 1 && b->words[0] == 0) {
             invert = true;
             n = n->inputs[1];
         }
-    }*/
+    }
 
     int src;
     ptrdiff_t search = nl_map_get(ctx->values, n);
