@@ -1,5 +1,9 @@
 // https://ssw.jku.at/Research/Papers/Wimmer04Master/Wimmer04Master.pdf
+#ifdef NDEBUG
+#define REG_ALLOC_LOG if (0)
+#else
 #define REG_ALLOC_LOG if (reg_alloc_log)
+#endif
 
 typedef struct {
     int start, end;

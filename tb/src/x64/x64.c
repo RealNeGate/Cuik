@@ -580,7 +580,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             if (try_for_imm32(ctx, n->inputs[2], &x) && x == (int8_t)x) {
                 use(ctx, n->inputs[2]);
                 SUBMIT(inst_move(n->dt, dst, lhs));
-                SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
+                SUBMIT(inst_op_rri_tmp(op, n->dt, dst, dst, x, RCX));
                 break;
             }
 
@@ -589,7 +589,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             SUBMIT(inst_move(n->dt, dst, lhs));
             SUBMIT(inst_move(n->dt, RCX, rhs));
-            SUBMIT(inst_op_rrr(op, n->dt, dst, dst, RCX));
+            SUBMIT(inst_op_rrr_tmp(op, n->dt, dst, dst, RCX, RCX));
             break;
         }
 

@@ -316,6 +316,25 @@ static Inst* inst_op_rrr(int type, TB_DataType dt, RegIndex dst, RegIndex lhs, R
     return i;
 }
 
+static Inst* inst_op_rri_tmp(int type, TB_DataType dt, RegIndex dst, RegIndex src, int32_t imm, RegIndex tmp) {
+    Inst* i = alloc_inst(type, dt, 1, 1, 1);
+    i->flags = INST_IMM;
+    i->operands[0] = dst;
+    i->operands[1] = src;
+    i->operands[2] = tmp;
+    i->imm = imm;
+    return i;
+}
+
+static Inst* inst_op_rrr_tmp(int type, TB_DataType dt, RegIndex dst, RegIndex lhs, RegIndex rhs, RegIndex tmp) {
+    Inst* i = alloc_inst(type, dt, 1, 2, 1);
+    i->operands[0] = dst;
+    i->operands[1] = lhs;
+    i->operands[2] = rhs;
+    i->operands[3] = tmp;
+    return i;
+}
+
 static Inst* inst_op_imm(int type, TB_DataType dt, RegIndex dst, int32_t imm) {
     Inst* i = alloc_inst(type, dt, 1, 0, 0);
     i->flags = INST_IMM;
@@ -657,7 +676,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // need to schedule
     tb_pass_schedule(p);
 
-    /*reg_alloc_log = strcmp(f->super.name, "murmur3_32") == 0;
+    /*reg_alloc_log = strcmp(f->super.name, "stbi__fill_bits") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
