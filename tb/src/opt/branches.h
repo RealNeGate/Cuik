@@ -41,6 +41,11 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
         }
     }
 
+    return NULL;
+}
+
+bool tb_pass_cfg(TB_Passes* opt) {
+    #if 0
     // walk dominators to see if we've already checked this condition
     TB_Node* other_bb = bb;
     while (0 && other_bb != f->start_node) retry: {
@@ -85,7 +90,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
             }
         }
     }
+    #endif
 
-    return NULL;
+    return false;
 }
-

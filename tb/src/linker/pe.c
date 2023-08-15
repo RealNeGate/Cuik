@@ -482,7 +482,7 @@ static void pe_append_module(TB_Linker* l, TB_Module* m) {
 
                 if (out_f != NULL) {
                     out_f->unwind_info = xdata.count;
-                    code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->prologue_epilogue_metadata, out_f->stack_usage);
+                    code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->stack_usage);
                 }
             }
 

@@ -88,42 +88,13 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
 
         case TB_CALL: return "call";
         case TB_SCALL: return "syscall";
-        case TB_BRANCH: return "br";
+        case TB_BRANCH: return "branch";
 
         default: tb_todo();return "(unknown)";
     }
 }
 
-typedef struct {
-    NL_Map(TB_Node*, char) visited;
-    NL_Map(TB_Node*, int) ordinals;
-    int count;
-} TB_PrinterCtx;
-
-// returns true if it's the first time
-static bool visit(TB_PrinterCtx* ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->visited, n);
-    if (search < 0) {
-        nl_map_put(ctx->visited, n, 0);
-        return true;
-    }
-
-    return false;
-}
-
-// just a unique identifier for printing
 #define P(...) callback(user_data, __VA_ARGS__)
-#define NAME(n) get_name(ctx, n)
-static int get_name(TB_PrinterCtx* ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->ordinals, n);
-    if (search < 0) {
-        nl_map_put(ctx->ordinals, n, ctx->count);
-        return ctx->count++;
-    }
-
-    return ctx->ordinals[search].v;
-}
-
 static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_data) {
     assert(dt.width < 8 && "Vector width too big!");
 
@@ -155,133 +126,77 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
     }
 }
 
-#if 0
-static void tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
-    TB_NodeTypeEnum type = n->type;
-    TB_DataType dt = n->dt;
-
-    // check if non-void
-    if ((dt.type == TB_INT && dt.data == 0) || n->type == TB_STORE) {
-        P("  ");
-    } else {
-        P("  r%-8d = ", NAME(n));
-        tb_print_type(dt, callback, user_data);
-        P(".");
+static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
+    if (!nl_hashset_put(visited, n)) {
+        return;
     }
 
-    P("%s ", tb_node_get_name(n));
-
-    FOREACH_N(i, 0, n->input_count) {
-        if (i) P(", ");
-
-        if (n->inputs[i]) {
-            P("r%d", NAME(n->inputs[i]));
-        } else {
-            P("_");
-        }
-    }
-
-    switch (type) {
-        case TB_INTEGER_CONST: {
-            TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
-
-            if (num->num_words == 1) {
-                P("%"PRIu64, num->words[0]);
-            } else {
-                P("0x");
-                FOREACH_N(i, 0, num->num_words) {
-                    if (num) P("'");
-                    P("%016"PRIx64, num->words[i]);
-                }
-            }
-            break;
-        }
-        case TB_LOCAL: {
-            TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-            P("@size %zu @align %zu", l->size, l->align);
-            break;
-        }
-        case TB_MEMBER_ACCESS: {
-            TB_NodeMember* m = TB_NODE_GET_EXTRA(n);
-            P(" + %lld", m->offset);
-            break;
-        }
-        case TB_ARRAY_ACCESS: {
-            TB_NodeArray* a = TB_NODE_GET_EXTRA(n);
-            P(" * %lld", a->stride);
-            break;
-        }
-        case TB_GET_SYMBOL_ADDRESS: {
-            TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n);
-            P("%s", s->sym->name);
-            break;
-        }
-        case TB_LINE_INFO: {
-            TB_NodeLine* l = TB_NODE_GET_EXTRA(n);
-            TB_Module* m = f->super.module;
-
-            P("\"%s\" @ line %d", m->files[l->file].path, l->line);
-            break;
-        }
-        case TB_BRANCH: {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-
-            if (br->count == 0) {
-                P(" L%d", br->default_label);
-            } else {
-                P(" { ");
-                FOREACH_N(i, 0, br->count) {
-                    if (i) P(", ");
-                    P("%llu: L%d", br->targets[i].key, br->targets[i].value);
-                }
-                P(" } else L%d", br->default_label);
-            }
-            break;
-        }
-        default: break;
-    }
-
-    for (TB_Attrib* attrib = n->first_attrib; attrib != NULL; attrib = attrib->next) {
-        if (attrib->type == TB_ATTRIB_VARIABLE) {
-            callback(user_data, ", var '%s'", attrib->var.name);
-        } else {
-            tb_todo();
-        }
-    }
-}
-#endif
-
-static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
-    int id = get_name(ctx, n);
-    if (!visit(ctx, n)) {
-        return id;
-    }
-
-    P("  r%p [label=\"%s ", n, tb_node_get_name(n));
+    bool is_effect = n->type == TB_START || n->type == TB_REGION || (n->type >= TB_CALL && n->type <= TB_TRAP);
+    P("  r%p [style=\"rounded,filled\"; shape=box; fillcolor=%s; label=\"%s ", n, is_effect ? "lightgrey" : "antiquewhite1", tb_node_get_name(n));
     switch (n->type) {
         case TB_INTEGER_CONST: {
             TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
+            tb_print_type(n->dt, callback, user_data);
 
             if (num->num_words == 1) {
-                P("%"PRIu64" ", num->words[0]);
+                int bits = n->dt.type == TB_PTR ? 64 : n->dt.data;
+                int64_t x = tb__sxt(num->words[0], bits, 64);
+
+                P(" %"PRId64, x);
             } else {
-                P("0x");
+                P(" 0x");
                 FOREACH_REVERSE_N(i, 0, num->num_words) {
                     if (num) P("'");
                     P("%016"PRIx64, num->words[i]);
                 }
-                P(" ");
             }
-
-            tb_print_type(n->dt, callback, user_data);
             break;
         }
 
         case TB_MEMBER_ACCESS: {
             TB_NodeMember* m = TB_NODE_GET_EXTRA(n);
-            P("%"PRId64" ", m->offset);
+            P("%"PRId64, m->offset);
             break;
         }
+
+        case TB_PROJ: {
+            if (n->inputs[0]->type == TB_BRANCH) {
+                // branch projections can get nicer looking
+                TB_NodeBranch* br = TB_NODE_GET_EXTRA(n->inputs[0]);
+                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+                TB_Node* key = n->inputs[0]->input_count > 1 ? n->inputs[0]->inputs[1] : NULL;
+                if (br->keys[0] == 0 && key && key->dt.type == TB_INT && key->dt.data == 1) {
+                    // boolean branch, we can use true and false
+                    P(index ? "is false?" : "is true?");
+                } else if (index == 0) {
+                    P("is default?");
+                } else {
+                    P("is %d?", br->keys[index - 1]);
+                }
+            } else {
+                P("[%d]", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
+            }
+            break;
+        }
+
+        case TB_RET: {
+            FOREACH_N(i, 1, n->input_count) {
+                if (i != 1) P(", ");
+                tb_print_type(n->inputs[i]->dt, callback, user_data);
+            }
+            break;
+        }
+
+        case TB_STORE: {
+            tb_print_type(n->inputs[2]->dt, callback, user_data);
+            break;
+        }
+
+        case TB_START:
+        case TB_REGION:
+        case TB_BRANCH:
+        break;
 
         default:
         tb_print_type(n->dt, callback, user_data);
@@ -290,46 +205,43 @@ static int tb_print_node(TB_Function* f, TB_PrinterCtx* ctx, TB_PrintCallback ca
     P("\"];\n");
 
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-        if (n->inputs[i]->type != TB_START && n->inputs[i]->type != TB_REGION) {
-            tb_print_node(f, ctx, callback, user_data, n->inputs[i]);
-        }
+        tb_print_node(f, visited, callback, user_data, n->inputs[i]);
 
         P("  r%p -> r%p", n->inputs[i], n);
         if (i == 0 || n->type == TB_REGION) {
             P(" [color=\"red\"]");
         }
 
-        if (n->type == TB_PHI && i > 0) {
+        if (n->input_count == 3 && n->inputs[0] == 0) {
+            P(" [label=\"%s\"];\n", i == 1 ? "L" : "R");
+        } else if (n->type == TB_PHI && i > 0) {
             P(" [label=\"%zu\"];\n", i - 1);
-        } else if (n->type == TB_PROJ) {
-            P(" [label=\"%d\"];\n", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
         } else {
             P("\n");
         }
     }
-
-    return id;
 }
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data) {
     P("digraph %s {\n  rankdir=\"TB\"\n", f->super.name ? f->super.name : "unnamed");
-    TB_PrinterCtx ctx = { 0 };
+
+    NL_HashSet visited = nl_hashset_alloc(f->node_count);
     TB_PostorderWalk order = tb_function_get_postorder(f);
 
     FOREACH_REVERSE_N(i, 0, order.count) {
         TB_Node* region = order.traversal[i];
         TB_Node* n = TB_NODE_GET_EXTRA_T(region, TB_NodeRegion)->end;
 
-        // P("subgraph cluster_%p {\nstyle=filled;color=lightgrey;\n", n);
+        n = TB_NODE_GET_EXTRA_T(region, TB_NodeRegion)->end;
         do {
-            tb_print_node(f, &ctx, callback, user_data, n);
+            tb_print_node(f, &visited, callback, user_data, n);
             n = n->inputs[0];
         } while (n->type != TB_START && n->type != TB_REGION);
 
-        tb_print_node(f, &ctx, callback, user_data, n);
-        // P("}\n");
+        tb_print_node(f, &visited, callback, user_data, n);
     }
 
+    nl_hashset_free(visited);
     tb_function_free_postorder(&order);
     P("}\n\n");
 }

@@ -103,7 +103,7 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
     FOREACH_N(tag, 0, TB_SYMBOL_MAX) {
         if (m->symbol_count[tag] < 1) continue;
 
-        if (0) CUIK_TIMED_BLOCK("sort") {
+        CUIK_TIMED_BLOCK("sort") {
             size_t count = m->symbol_count[tag];
             array_form = tb_platform_heap_realloc(array_form, count * sizeof(TB_Symbol*));
 
@@ -148,9 +148,9 @@ TB_API void tb_module_layout_sections(TB_Module* m) {
 
     CUIK_TIMED_BLOCK("layout code") {
         size_t offset = 0, comdat = 0, comdat_count = 0, comdat_relocs = 0;
-        TB_FOR_GLOBALS(g, m) {
+        /*TB_FOR_GLOBALS(g, m) {
             dyn_array_put(g->parent->globals, g);
-        }
+        }*/
 
         TB_FOR_FUNCTIONS(f, m) {
             TB_FunctionOutput* func_out = f->output;

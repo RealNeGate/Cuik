@@ -53,20 +53,19 @@ static TB_Node* find_region(TB_Node* n) {
     return n;
 }
 
-static int resolve_dom_depth(TB_Dominators doms, TB_Node* bb) {
-    TB_Dom* d = &nl_map_get_checked(doms._, bb);
-    if (d->depth >= 0) {
-        return d->depth;
+static int resolve_dom_depth(TB_Node* bb) {
+    if (dom_depth(bb) >= 0) {
+        return dom_depth(bb);
     }
 
-    int parent = resolve_dom_depth(doms, d->node);
+    int parent = resolve_dom_depth(idom(bb));
 
     // it's one more than it's parent
-    nl_map_get_checked(doms._, bb).depth = parent + 1;
+    TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->dom_depth = parent + 1;
     return parent + 1;
 }
 
-TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Dominators doms, const TB_PostorderWalk* order) {
+TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, const TB_PostorderWalk* order) {
     TB_DominanceFrontiers df = NULL;
 
     FOREACH_REVERSE_N(i, 0, order->count) {
@@ -76,7 +75,7 @@ TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Domin
             FOREACH_N(k, 0, bb->input_count) {
                 TB_Node* runner = find_region(bb->inputs[k]);
 
-                while (runner->input_count > 0 && runner != idom(doms, bb)) {
+                while (runner->input_count > 0 && runner != idom(bb)) {
                     // add to frontier set
                     ptrdiff_t search = nl_map_get(df, runner);
                     TB_FrontierSet* set = NULL;
@@ -86,7 +85,7 @@ TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, TB_Domin
                     }
 
                     nl_hashset_put(&df[search].v, bb);
-                    runner = idom(doms, runner);
+                    runner = idom(runner);
                 }
             }
         }
@@ -103,13 +102,9 @@ TB_API void tb_free_dominance_frontiers(TB_Function* f, TB_DominanceFrontiers fr
 }
 
 // https://www.cs.rice.edu/~keith/EMBED/dom.pdf
-TB_API TB_Dominators tb_get_dominators(TB_Function* f, TB_PostorderWalk order) {
+void tb_compute_dominators(TB_Function* f, TB_PostorderWalk order) {
     // entrypoint dominates itself
     DomContext ctx = { .f = f, .order = order };
-
-    TB_Dominators doms = { 0 };
-    nl_map_create(doms._, f->control_node_count);
-    put_idom(&doms, f->start_node, f->start_node);
 
     // identify post order traversal order
     int entry_dom = ctx.order.count - 1;
@@ -128,8 +123,8 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f, TB_PostorderWalk order) {
                 TB_Node* p = find_region(b->inputs[j]);
 
                 // if doms[p] already calculated
-                ptrdiff_t search_p = nl_map_get(doms._, p);
-                if (search_p < 0 && p->input_count > 0) {
+                TB_Node* idom_p = TB_NODE_GET_EXTRA_T(p, TB_NodeRegion)->dom;
+                if (idom_p == NULL && p->input_count > 0) {
                     int a = find_traversal_index(&ctx, p);
                     int b = find_traversal_index(&ctx, new_idom);
 
@@ -137,15 +132,15 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f, TB_PostorderWalk order) {
                         // while (finger1 < finger2)
                         //   finger1 = doms[finger1]
                         while (a < b) {
-                            ptrdiff_t search = nl_map_get(doms._, ctx.order.traversal[a]);
-                            a = search >= 0 ? find_traversal_index(&ctx, doms._[search].v.node) : entry_dom;
+                            TB_Node* d = idom(ctx.order.traversal[a]);
+                            a = d ? find_traversal_index(&ctx, d) : entry_dom;
                         }
 
                         // while (finger2 < finger1)
                         //   finger2 = doms[finger2]
                         while (b < a) {
-                            ptrdiff_t search = nl_map_get(doms._, ctx.order.traversal[b]);
-                            b = search >= 0 ? find_traversal_index(&ctx, doms._[search].v.node) : entry_dom;
+                            TB_Node* d = idom(ctx.order.traversal[b]);
+                            b = d ? find_traversal_index(&ctx, d) : entry_dom;
                         }
                     }
 
@@ -153,12 +148,10 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f, TB_PostorderWalk order) {
                 }
             }
 
-            ptrdiff_t search_b = nl_map_get(doms._, b);
-            if (search_b < 0) {
-                put_idom(&doms, b, new_idom);
-                changed = true;
-            } else if (doms._[search_b].v.node != new_idom) {
-                doms._[search_b].v.node = new_idom;
+            assert(new_idom != NULL);
+            TB_NodeRegion* region_b = TB_NODE_GET_EXTRA_T(b, TB_NodeRegion);
+            if (region_b->dom != new_idom) {
+                region_b->dom = new_idom;
                 changed = true;
             }
         }
@@ -166,13 +159,10 @@ TB_API TB_Dominators tb_get_dominators(TB_Function* f, TB_PostorderWalk order) {
 
     // generate depth values
     CUIK_TIMED_BLOCK("generate dom tree") {
-        nl_map_get_checked(doms._, f->start_node).depth = 0;
         FOREACH_N(i, 0, ctx.order.count - 1) {
-            resolve_dom_depth(doms, ctx.order.traversal[i]);
+            resolve_dom_depth(ctx.order.traversal[i]);
         }
     }
-
-    return doms;
 }
 
 TB_API TB_Node* tb_get_parent_region(TB_Node* n) {
@@ -184,12 +174,13 @@ TB_API TB_Node* tb_get_parent_region(TB_Node* n) {
     return n;
 }
 
-TB_API bool tb_is_dominated_by(TB_Dominators doms, TB_Node* expected_dom, TB_Node* bb) {
+TB_API bool tb_is_dominated_by(TB_Node* expected_dom, TB_Node* bb) {
     while (expected_dom != bb) {
-        TB_Node* new_bb = idom(doms, bb);
+        TB_Node* new_bb = idom(bb);
         if (bb == new_bb) {
             return false;
         }
+
         bb = new_bb;
     }
 

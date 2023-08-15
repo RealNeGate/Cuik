@@ -3,8 +3,6 @@
 #include "../tb_internal.h"
 #include <tb_x64.h>
 
-#define TB_TEMP_REG INT_MAX
-
 static_assert(sizeof(float) == sizeof(uint32_t), "Float needs to be a 32-bit float!");
 static_assert(sizeof(double) == sizeof(uint64_t), "Double needs to be a 64-bit float!");
 
@@ -196,6 +194,10 @@ inline static bool is_value_xmm(const Val* v, XMM x) {
 
 inline static bool is_value_match(const Val* a, const Val* b) {
     if (a->type != b->type) return false;
+
+    if (a->type == VAL_MEM) {
+        return a->reg == b->reg && a->index == b->index && a->scale == b->scale && a->index == b->index;
+    }
 
     return (a->type == VAL_GPR || a->type == VAL_XMM) ? a->reg == b->reg : false;
 }

@@ -88,7 +88,7 @@ static Unwind generate_unwind_info(const ICodeGen* restrict code_gen, size_t sec
         TB_FunctionOutput* out_f = f->output;
         if (out_f != NULL) {
             out_f->unwind_info = xdata.count;
-            code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->prologue_epilogue_metadata, out_f->stack_usage);
+            code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->stack_usage);
             out_f->unwind_size = xdata.count - out_f->unwind_info;
 
             // write pdata
@@ -178,7 +178,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     // there's one shared for all normal functions, and one
     // table per COMDAT function.
     size_t unwind_count = 1 + m->comdat_function_count;
-    Unwind* unwinds = TB_ARENA_ARR_ALLOC(&tb__arena, unwind_count, Unwind);
+    Unwind* unwinds = TB_ARENA_ARR_ALLOC(get_temporary_arena(m), unwind_count, Unwind);
     {
         unwinds[0] = generate_unwind_info(code_gen, section_count, (TB_Function*) m->first_symbol_of_tag[TB_SYMBOL_FUNCTION], normal_function_count);
         section_count += 2;

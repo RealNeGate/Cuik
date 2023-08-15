@@ -177,6 +177,17 @@ bool tb_arena_is_empty(TB_Arena* arena) {
     return arena->base == NULL;
 }
 
+size_t tb_arena_current_size(TB_Arena* arena) {
+    size_t total = 0;
+    TB_ArenaChunk* c = arena->base;
+    while (c != arena->top) {
+        total += arena->chunk_size;
+        c = c->next;
+    }
+
+    return total + (arena->watermark - (char*) arena->top);
+}
+
 ////////////////////////////////
 // Futex functions
 ////////////////////////////////

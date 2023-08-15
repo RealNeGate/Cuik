@@ -1,150 +1,209 @@
-// TODO(NeGate): We should switch to Efficient global regsiter allocation, 2011
-// https://arxiv.org/pdf/2011.05608.pdf
+// https://ssw.jku.at/Research/Papers/Wimmer04Master/Wimmer04Master.pdf
+#ifdef NDEBUG
 #define REG_ALLOC_LOG if (0)
+#else
+#define REG_ALLOC_LOG if (reg_alloc_log)
+#endif
 
-// returns true if used in the next n instructions
-static bool check_if_used(Ctx* restrict ctx, Inst* inst, int def_i, int n) {
-    // check if it's unused for the next instruction
-    for (size_t i = 0; inst && i < n; inst = inst->next, i++) {
-        FOREACH_N(j, 1, 4) if (inst->regs[j] == USE(def_i)) {
-            return true;
-        }
-    }
+typedef struct {
+    int start, end;
+} LiveRange;
 
-    return false;
-}
+typedef struct {
+    int pos;
 
-static size_t choose_best_split(Ctx* restrict ctx, Inst* inst, int reg_class, int time) {
-    FOREACH_REVERSE_N(i, 0, ctx->active_count) {
-        DefIndex di = ctx->active[i];
-
-        if (!ctx->defs[di].forced && ctx->defs[di].reg_class == reg_class && ctx->defs[di].reg >= 0 && !check_if_used(ctx, inst, di, 3)) {
-            return i;
-        }
-    }
-
-    return 0;
-}
-
-static void insert_sorted_def(Ctx* restrict ctx, DefIndex* sorted, size_t count, int start, DefIndex di) {
-    size_t i = count;
-    while (i--) {
-        if (ctx->defs[sorted[i]].start >= start) break;
-    }
-
-    // we know where to insert
-    memmove(&sorted[i + 1], &sorted[i], (count - i) * sizeof(DefIndex));
-    sorted[i + 1] = di;
-}
-
-static Inst* find_inst_at_time(Ctx* restrict ctx, int time) {
-    Inst *prev = ctx->first, *inst = prev->next;
-
-    while (inst != NULL) {
-        if (inst->time >= time) {
-            return prev;
-        }
-
-        prev = inst, inst = inst->next;
-    }
-
-    return NULL;
-}
-
-static int ls_split(Ctx* restrict ctx, RegAllocWorklist* worklist, DefIndex split_def, size_t active_i, LiveInterval li, MachineReg mr) {
-    // simple example where R1 is needed for the range 10 - 12
+    // this is used to denote folded reloads
     //
-    //  9: STORE [SP - 4], R1 # SPILL
-    // 10: MOV R1, #400
-    // 12: CALL ...
-    // 13: LOAD R1, [SP - 4]  # RELOAD GOES BACK INTO R1
+    //   # r2 is spilled
+    //   add r0, r1, r2
     //
-    // if push comes to shove and something needs to read the splitted R1 while
-    // we generate a new register.
-    // insert spill
-    Reload r = { TB_TYPE_I64, split_def };
-    if (ctx->defs[split_def].node != NULL) {
-        r.dt = ctx->defs[split_def].node->dt;
+    // when we codegen, we don't need to allocate
+    // a register for r2 here.
+    //
+    //   add r0, r1, [sp - 24]
+    enum {
+        USE_OUT,
+        USE_REG,
+        USE_MEM_OR_REG,
+    } kind;
+} UsePos;
+
+struct LiveInterval {
+    int reg_class;
+
+    TB_Node* n;
+    TB_X86_DataType dt;
+
+    // results of regalloc
+    int assigned;
+
+    // register num, -1 if the interval isn't a physical reg
+    int reg, hint;
+
+    // whole interval
+    int start, end;
+
+    // spill point, -1 if there's none
+    int spill, split_kid;
+
+    // help speed up some of the main allocation loop
+    int active_range;
+
+    // we're gonna have so much memory to clean up...
+    DynArray(LiveRange) ranges;
+    DynArray(UsePos) uses;
+};
+
+typedef DynArray(RegIndex) IntervalList;
+
+typedef struct {
+    TB_ABI abi;
+
+    DynArray(LiveInterval) intervals;
+    DynArray(RegIndex) inactive;
+    IntervalList unhandled;
+    Inst* first;
+
+    int stack_usage;
+
+    // time when the physical registers will be free again
+    int* free_pos;
+    int* block_pos;
+
+    int endpoint;
+    uint64_t callee_saved[CG_REGISTER_CLASSES];
+
+    Set active_set[CG_REGISTER_CLASSES];
+    RegIndex active[CG_REGISTER_CLASSES][16];
+
+    Inst* cache;
+} LSRA;
+
+static LiveRange* last_range(LiveInterval* i) {
+    return &i->ranges[dyn_array_length(i->ranges) - 1];
+}
+
+////////////////////////////////
+// Generate intervals
+////////////////////////////////
+static void add_use_pos(LiveInterval* interval, int t, int kind) {
+    UsePos u = { t, kind };
+    dyn_array_put(interval->uses, u);
+}
+
+static void add_range(LiveInterval* interval, int start, int end) {
+    size_t count = dyn_array_length(interval->ranges);
+    if (count > 0 && interval->ranges[count - 1].start == end) {
+        // coalesce
+        interval->ranges[count - 1].start = start;
+    } else {
+        LiveRange r = { start, end };
+        dyn_array_put(interval->ranges, r);
     }
 
-    Inst* spill_inst = find_inst_at_time(ctx, li.start);
-    spill(ctx, spill_inst, &r);
-    spill_inst = spill_inst->next;
+    if (start < interval->start) interval->start = start;
+    if (end < interval->start) interval->start = end;
 
-    // NOTE(NeGate): splits don't cross BB boundaries
-    // which makes it easier to manage this.
-    DefIndex last_known = -1;
-    Inst *inst = spill_inst->next, *prev_inst = spill_inst;
-    for (; inst; prev_inst = inst, inst = inst->next) {
-        if (is_terminator_or_label(inst->type)) break;
-        if (wont_spill_around(inst->type)) last_known = -1;
-        if (inst->time > li.end) break;
+    // max
+    if (start > interval->end) interval->end = start;
+    if (end > interval->end) interval->end = end;
+}
 
-        // if it's used, refer to reload
-        bool skip_next = false;
-        FOREACH_REVERSE_N(j, 1, 4) if (inst->regs[j] == USE(split_def)) {
-            if (inst->type == INST_MOVE && j == 1) {
-                skip_next = true;
-                r.old = split_def;
-                spill(ctx, inst, &r);
-                last_known = -1;
-                continue;
-            } else if (last_known < 0) {
-                // spin up new def
-                int t = prev_inst->time + 1;
-                dyn_array_put(ctx->defs, (Def){ .start = t, .end = t, .reg = -1, .hint = -1 });
-                last_known = dyn_array_length(ctx->defs) - 1;
+static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
+    Inst* next = inst->next;
+    if (next && next->type != INST_LABEL) {
+        reverse_bb_walk(ra, bb, next);
+    }
 
-                // place new definition into worklist sorted
-                dyn_array_put_uninit(*worklist, 1);
-                insert_sorted_def(ctx, *worklist, dyn_array_length(*worklist) - 1, t, last_known);
+    // mark outputs, inputs and temps
+    //
+    // TODO(NeGate): on x86 we can have one memory operand per instruction.
+    // we shouldn't force only register uses or else we'll make spilling more
+    // prominent.
+    RegIndex* ops = inst->operands;
+    bool dst_use_reg = inst->type == IMUL || inst->type == INST_ZERO || (inst->flags & (INST_MEM | INST_GLOBAL));
 
-                // generate reload before this instruction
-                r.old = last_known;
-                reload(ctx, prev_inst, &r, j);
+    FOREACH_N(i, 0, inst->out_count) {
+        LiveInterval* interval = &ra->intervals[*ops++];
+
+        if (interval->ranges == NULL) {
+            add_range(interval, inst->time, inst->time);
+        } else {
+            interval->start = inst->time;
+            interval->ranges[dyn_array_length(interval->ranges) - 1].start = inst->time;
+        }
+
+        add_use_pos(interval, inst->time, dst_use_reg ? USE_REG : USE_OUT);
+    }
+
+    FOREACH_N(i, 0, inst->in_count) {
+        LiveInterval* interval = &ra->intervals[*ops++];
+
+        add_range(interval, bb->start, inst->time);
+        add_use_pos(interval, inst->time, USE_REG);
+    }
+
+    // calls use the temporaries for clobbers
+    bool is_call = (inst->type == CALL || inst->type == SYSCALL);
+    FOREACH_N(i, 0, inst->tmp_count) {
+        LiveInterval* interval = &ra->intervals[*ops++];
+
+        add_range(interval, inst->time, inst->time + 1);
+        if (!is_call) {
+            add_use_pos(interval, inst->time, USE_REG);
+        }
+    }
+}
+
+static int interval_intersect(LiveInterval* a, LiveInterval* b) {
+    if (!(b->start <= a->end && a->start <= b->end)) {
+        return -1; // don't intersect at all
+    }
+
+    FOREACH_N(i, 0, dyn_array_length(a->ranges)) {
+        LiveRange a_range = a->ranges[i];
+
+        FOREACH_N(j, 0, dyn_array_length(b->ranges)) {
+            LiveRange b_range = b->ranges[j];
+
+            // if the end is greater than the start, then we've overshot
+            if (a_range.start >= b_range.end) {
+                break;
             }
 
-            inst->regs[j] = USE(last_known);
-            ctx->defs[last_known].end = inst->time + (j == 1 ? 0 : 1);
-        }
-
-        if (inst->regs[0] == split_def && last_known != split_def) {
-            // spill and discard our reload spot (if applies)
-            r.old = inst->regs[0];
-            spill(ctx, inst, &r);
-            last_known = -1;
-            skip_next = true;
-        }
-
-        if (skip_next) {
-            // skip this instruction to avoid infinite spills
-            prev_inst = inst, inst = inst->next;
+            if (a_range.end >= b_range.start) {
+                return b_range.start > a_range.start ? b_range.start : a_range.start;
+            }
         }
     }
 
-    if (last_known >= 0) {
-        reload_from_reg(ctx, prev_inst, r.dt, split_def, last_known);
-        ctx->defs[last_known].end = prev_inst->time + 1;
-    } else {
-        // reload back into original register
-        r.old = split_def;
-        reload(ctx, prev_inst, &r, 0);
+    return -1;
+}
+
+#define FOREACH_SET(it, set) \
+FOREACH_N(_i, 0, ((set).capacity + 63) / 64) \
+for (uint64_t bits = (set).data[_i], it = _i*64; bits; bits >>= 1, it++) if (bits & 1)
+
+static int next_use(LiveInterval* interval, int time) {
+    FOREACH_N(i, 0, dyn_array_length(interval->uses)) {
+        if (interval->uses[i].pos > time) {
+            return interval->uses[i].pos;
+        }
     }
 
-    // remove from active list and used regs
-    set_remove(&ctx->used_regs[mr.class], mr.num);
-    remove_active(ctx, active_i);
-    return mr.num;
+    return INT_MAX;
 }
 
-static const char* reg_name(int rg, int num) {
-    return (rg == REG_CLASS_XMM ? XMM_NAMES : GPR_NAMES)[num];
-}
+// if < 0, then it's -x - 1 where x is the nearest starting point
+static int covers(LiveInterval* it, int start, int end) {
+    size_t i = 0, count = dyn_array_length(it->ranges);
+    for (; i < count; i++) {
+        // if the end is greater than the start, then we've overshot
+        if (start > it->ranges[i].end) {
+            return -1;
+        }
 
-static ptrdiff_t find_active_from_reg(Ctx* restrict ctx, int reg_class, int reg) {
-    FOREACH_N(i, 0, ctx->active_count) {
-        Def* d = &ctx->defs[ctx->active[i]];
-        if (d->reg_class == reg_class && d->reg == reg) {
+        if (end >= it->ranges[i].start) {
             return i;
         }
     }
@@ -152,156 +211,669 @@ static ptrdiff_t find_active_from_reg(Ctx* restrict ctx, int reg_class, int reg)
     return -1;
 }
 
-static size_t evict(Ctx* restrict ctx, RegAllocWorklist* worklist, MachineReg mr, LiveInterval li) {
-    if (!set_get(&ctx->used_regs[mr.class], mr.num)) {
-        return false;
+static LiveInterval* get_active(LSRA* restrict ra, int rc, int reg) {
+    if (!set_get(&ra->active_set[rc], reg)) {
+        return NULL;
     }
 
-    REG_ALLOC_LOG printf("  \x1b[32m#   evict %s\x1b[0m\n", reg_name(mr.class, mr.num));
-
-    ptrdiff_t spill_active_i = find_active_from_reg(ctx, mr.class, mr.num);
-    assert(spill_active_i >= 0 && "We both know a register in use and don't know who's doing it...");
-
-    DefIndex spill_def = ctx->active[spill_active_i];
-    Inst* inst = find_inst_at_time(ctx, ctx->defs[spill_def].start);
-
-    ls_split(ctx, worklist, spill_def, spill_active_i, li, mr);
-    return true;
+    return &ra->intervals[ra->active[rc][reg]];
 }
 
-static void reg_alloc(Ctx* restrict ctx, TB_Function* f, RegAllocWorklist worklist) {
-    Set reg_masks[CG_REGISTER_CLASSES];
-    FOREACH_N(i, 0, CG_REGISTER_CLASSES){
-        reg_masks[i] = set_create_in_arena(&tb__arena, ctx->used_regs[i].capacity);
+static void insert_split_move(LSRA* restrict ra, int t, int old_reg, int new_reg) {
+    Inst *prev, *inst;
+    TB_X86_DataType dt = ra->intervals[old_reg].dt;
+
+    // invalidate
+    if (ra->cache->time >= t) {
+        ra->cache = ra->first;
     }
+
+    prev = ra->cache, inst = prev->next;
+    CUIK_TIMED_BLOCK("walk") {
+        while (inst != NULL) {
+            if (inst->time > t) {
+                ra->cache = prev;
+                break;
+            }
+
+            prev = inst, inst = inst->next;
+        }
+    }
+
+    // folded spill
+    if (inst && inst->type == MOV && inst->flags == 0 && inst->operands[0] == old_reg) {
+        inst->operands[0] = new_reg;
+        return;
+    }
+
+    Inst* new_inst = tb_arena_alloc(tmp_arena, sizeof(Inst) + (2 * sizeof(RegIndex)));
+    *new_inst = (Inst){ .type = MOV, .flags = INST_SPILL, .dt = dt, .out_count = 1, 1 };
+    new_inst->operands[0] = new_reg;
+    new_inst->operands[1] = old_reg;
+    new_inst->time = prev->time + 1;
+    new_inst->next = prev->next;
+    prev->next = new_inst;
+}
+
+static LiveInterval* split_interval_at(LSRA* restrict ra, LiveInterval* interval, int pos) {
+    // skip past previous intervals
+    while (interval->split_kid >= 0 && pos > interval->end) {
+        interval = &ra->intervals[interval->split_kid];
+    }
+
+    return interval;
+}
+
+// any uses after `pos` after put into the new interval
+static int split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, bool is_spill) {
+    if (interval->spill > 0) {
+        REG_ALLOC_LOG printf("  \x1b[33m#   reload [RBP - %d] at t=%d\x1b[0m\n", interval->spill, pos);
+    } else {
+        // allocate stack slot
+        int size = 8;
+        ra->stack_usage = align_up(ra->stack_usage + size, size);
+
+        REG_ALLOC_LOG printf("  \x1b[33m#   spill %s to [RBP - %d] at t=%d\x1b[0m\n", reg_name(interval->reg_class, interval->assigned), ra->stack_usage, pos);
+    }
+
+    // split lifetime
+    LiveInterval it = *interval;
+    if (is_spill) {
+        it.spill = ra->stack_usage;
+    } else {
+        it.spill = -1;
+        it.reg = -1;
+    }
+    it.assigned = it.reg = -1;
+    it.start = pos;
+    it.end = interval->end;
+    it.uses = NULL;
+    it.ranges = NULL;
+    it.n = NULL;
+    it.split_kid = -1;
+    interval->end = pos;
+
+    int old_reg = interval - ra->intervals;
+    int new_reg = dyn_array_length(ra->intervals);
+    interval->split_kid = new_reg;
+
+    dyn_array_put(ra->intervals, it);
+    interval = &ra->intervals[old_reg];
+
+    if (!is_spill) {
+        // since the split is starting at pos and pos is at the top of the
+        // unhandled list... we can push this to the top wit no problem
+        size_t i = 0, count = dyn_array_length(ra->unhandled);
+        for (; i < count; i++) {
+            if (pos > ra->intervals[ra->unhandled[i]].start) break;
+        }
+
+        // we know where to insert
+        dyn_array_put(ra->unhandled, 0);
+        memmove(&ra->unhandled[i + 1], &ra->unhandled[i], (count - i) * sizeof(RegIndex));
+        ra->unhandled[i] = new_reg;
+    }
+
+    // split uses
+    size_t use_count = dyn_array_length(interval->uses);
+    FOREACH_REVERSE_N(i, 0, use_count) {
+        if (interval->uses[i].pos > pos) {
+            size_t split_count = use_count - (i + 1);
+            DynArray(UsePos) uses = dyn_array_create(UsePos, split_count);
+            dyn_array_set_length(uses, split_count);
+            memcpy(uses, &interval->uses[i + 1], split_count * sizeof(UsePos));
+
+            dyn_array_set_length(interval->uses, i + 1);
+            it.uses = interval->uses;
+            interval->uses = uses;
+            break;
+        }
+    }
+
+    // split ranges
+    for (size_t i = 0; i < dyn_array_length(interval->ranges);) {
+        LiveRange* range = &interval->ranges[i];
+        if (range->start > pos) {
+            dyn_array_put(it.ranges, *range);
+            interval = &ra->intervals[old_reg];
+
+            // remove-shift
+            size_t shift = dyn_array_length(interval->ranges) - (i + 1);
+            if (shift > 0) {
+                memmove(range, range + 1, shift * sizeof(LiveRange));
+            }
+            dyn_array_pop(interval->ranges);
+        } else if (range->end > pos) {
+            // intersects pos, we need to split the range
+            LiveRange r = { pos, range->end };
+            range->end = pos;
+            dyn_array_put(it.ranges, r);
+
+            interval = &ra->intervals[old_reg];
+            continue;
+        }
+
+        i++;
+    }
+
+    ra->intervals[new_reg] = it;
+
+    // insert move (the control flow aware moves are inserted later)
+    insert_split_move(ra, pos, old_reg, new_reg);
+
+    // reload before next use
+    if (is_spill) {
+        FOREACH_REVERSE_N(i, 0, dyn_array_length(it.uses)) {
+            if (it.uses[i].kind == USE_REG) {
+                // new split
+                split_intersecting(ra, it.uses[i].pos - 1, &ra->intervals[new_reg], false);
+                break;
+            }
+        }
+    }
+
+    return new_reg;
+}
+
+// returns -1 if no registers are available
+static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
+    int rc = interval->reg_class;
+
+    FOREACH_N(i, 0, 16) ra->free_pos[i] = INT_MAX;
+
+    // for each active reg, set the free pos to 0
+    FOREACH_SET(i, ra->active_set[rc]) {
+        ra->free_pos[i] = 0;
+    }
+
+    // for each inactive which intersects current
+    dyn_array_for(i, ra->inactive) {
+        LiveInterval* inactive_it = &ra->intervals[ra->inactive[i]];
+
+        int fp = ra->free_pos[inactive_it->assigned];
+        if (fp > 0) {
+            int p = interval_intersect(interval, inactive_it);
+            if (p >= 0 && p < fp) {
+                ra->free_pos[inactive_it->assigned] = p;
+            }
+        }
+    }
+
+    if (rc == REG_CLASS_GPR) {
+        // reserved regs
+        ra->free_pos[RBP] = 0;
+        ra->free_pos[RSP] = 0;
+    }
+
+    // pick highest free pos
+    int highest = 0;
+    FOREACH_N(i, 1, 16) if (ra->free_pos[i] > ra->free_pos[highest]) {
+        highest = i;
+    }
+
+    int pos = ra->free_pos[highest];
+    if (UNLIKELY(pos == 0)) {
+        // alloc failure
+        return -1;
+    } else {
+        if (UNLIKELY(ra->callee_saved[rc] & (1ull << highest))) {
+            ra->callee_saved[rc] &= ~(1ull << highest);
+
+            REG_ALLOC_LOG printf("  #   spill callee saved register %s\n", reg_name(rc, highest));
+
+            int size = rc ? 16 : 8;
+            int vreg = (rc ? FIRST_XMM : FIRST_GPR) + highest;
+            ra->stack_usage = align_up(ra->stack_usage + size, size);
+
+            LiveInterval it = {
+                .spill = ra->stack_usage,
+                .dt = ra->intervals[vreg].dt,
+                .assigned = -1,
+                .reg = -1,
+                .split_kid = -1,
+            };
+
+            int old_reg = interval - ra->intervals;
+            int spill_slot = dyn_array_length(ra->intervals);
+            dyn_array_put(ra->intervals, it);
+
+            // insert spill and reload
+            insert_split_move(ra, 0,            vreg, spill_slot);
+            insert_split_move(ra, ra->endpoint, spill_slot, vreg);
+
+            // adding to intervals might resized this
+            interval = &ra->intervals[old_reg];
+        }
+
+        if (interval->end < pos) {
+            // we can steal it completely
+            REG_ALLOC_LOG printf("  #   assign to %s\n", reg_name(rc, highest));
+        } else {
+            // TODO(NeGate): split current at optimal position before current
+            interval->assigned = highest;
+            split_intersecting(ra, pos - 1, interval, true);
+        }
+
+        return highest;
+    }
+}
+
+static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval) {
+    int rc = interval->reg_class;
+    int* use_pos = ra->free_pos;
+
+    FOREACH_N(i, 0, 16) ra->block_pos[i] = INT_MAX;
+    FOREACH_N(i, 0, 16) use_pos[i] = INT_MAX;
+
+    // mark non-fixed intervals
+    FOREACH_SET(i, ra->active_set[rc]) {
+        LiveInterval* it = &ra->intervals[ra->active[rc][i]];
+        if (it->reg_class == rc && it->reg < 0) {
+            use_pos[i] = next_use(it, interval->start);
+        }
+    }
+
+    dyn_array_for(i, ra->inactive) {
+        LiveInterval* it = &ra->intervals[ra->inactive[i]];
+        if (it->reg_class == rc && it->reg < 0) {
+            use_pos[i] = next_use(it, interval->start);
+        }
+    }
+
+    // mark fixed intervals
+    FOREACH_SET(i, ra->active_set[rc]) {
+        LiveInterval* it = &ra->intervals[ra->active[rc][i]];
+        if (it->reg_class == rc && it->reg >= 0) {
+            use_pos[i] = 0;
+            ra->block_pos[i] = 0;
+        }
+    }
+
+    dyn_array_for(i, ra->inactive) {
+        LiveInterval* it = &ra->intervals[ra->inactive[i]];
+        if (it->reg_class == rc && it->reg >= 0) {
+            __debugbreak();
+        }
+    }
+
+    if (rc == REG_CLASS_GPR) {
+        // reserved regs
+        use_pos[RBP] = 0;
+        use_pos[RSP] = 0;
+    }
+
+    // pick highest use pos
+    int highest = 0;
+    FOREACH_N(i, 1, 16) if (use_pos[i] > use_pos[highest]) {
+        highest = i;
+    }
+
+    int pos = use_pos[highest];
+    int first_use = interval->uses[dyn_array_length(interval->uses) - 1].pos;
+
+    bool spilled = false;
+    if (first_use > pos) {
+        int size = 8;
+
+        // spill interval
+        ra->stack_usage = align_up(ra->stack_usage + size, size);
+        interval->spill = ra->stack_usage;
+
+        // split at optimal spot before first use that requires a register
+        FOREACH_REVERSE_N(i, 0, dyn_array_length(interval->uses)) {
+            if (interval->uses[i].pos >= pos && interval->uses[i].kind == USE_REG) {
+                split_intersecting(ra, interval->uses[i].pos - 1, interval, false);
+                break;
+            }
+        }
+
+        spilled = true;
+    } else {
+        int split_pos = (interval->start & ~1) - 1;
+
+        // split active or inactive interval reg
+        LiveInterval* to_split = get_active(ra, rc, highest);
+        if (to_split != NULL) {
+            split_intersecting(ra, split_pos, to_split, true);
+        }
+
+        // split any inactive interval for reg at the end of it's lifetime hole
+        dyn_array_for(i, ra->inactive) {
+            LiveInterval* it = &ra->intervals[ra->inactive[i]];
+            if (it->reg_class == rc && it->assigned == highest) {
+                split_intersecting(ra, split_pos, it, true);
+            }
+        }
+    }
+
+    // split active reg if it intersects with fixed interval
+    LiveInterval* fix_interval = &ra->intervals[(rc ? FIRST_XMM : FIRST_GPR) + highest];
+    int p = interval_intersect(interval, fix_interval);
+    if (p >= 0) {
+        split_intersecting(ra, p, fix_interval, true);
+    }
+
+    return spilled ? -1 : highest;
+}
+
+static void move_to_active(LSRA* restrict ra, LiveInterval* interval, int pos) {
+    int rc = interval->reg_class, reg = interval->assigned;
+    int ri = interval - ra->intervals;
+
+    // fixed intervals will force things out of their spot if they have to
+    if (set_get(&ra->active_set[rc], reg)) {
+        tb_assert(interval->reg >= 0, "non-fixed interval attempted to force a register out");
+
+        LiveInterval* old_interval = &ra->intervals[ra->active[rc][reg]];
+        FOREACH_N(i, 0, dyn_array_length(old_interval->ranges)) {
+            if (old_interval->ranges[i].end == pos) {
+                old_interval = NULL;
+                break;
+            }
+        }
+
+        if (old_interval) {
+            split_intersecting(ra, pos - 1, old_interval, true);
+            interval = &ra->intervals[ri]; // might've resized the intervals
+        }
+    }
+
+    set_put(&ra->active_set[rc], reg);
+    ra->active[rc][reg] = ri;
+}
+
+static void cuiksort_defs(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, RegIndex* arr);
+static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int end) {
+    LSRA ra = { .abi = f->super.module->target_abi, .first = ctx->first, .cache = ctx->first, .intervals = ctx->intervals, .stack_usage = stack_usage };
+
+    FOREACH_N(i, 0, CG_REGISTER_CLASSES) {
+        ra.active_set[i] = set_create_in_arena(tmp_arena, 16);
+    }
+
+    // build intervals:
+    //   we also track when uses happen to aid in splitting
+    MachineBBs mbbs = ctx->machine_bbs;
+    size_t interval_count = dyn_array_length(ra.intervals);
+    CUIK_TIMED_BLOCK("build intervals") {
+        FOREACH_N(i, 0, ctx->order.count) {
+            TB_Node* bb = ctx->order.traversal[i];
+            MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
+
+            int bb_start = mbb->start;
+            int bb_end = mbb->end + 2;
+
+            // for anything that's live out, add the entire range
+            Set* live_in = &mbb->live_in;
+            Set* live_out = &mbb->live_out;
+            FOREACH_N(i, 0, (interval_count + 63) / 64) {
+                uint64_t bits = live_in->data[i] & live_out->data[i];
+                if (bits == 0) continue;
+
+                FOREACH_N(j, 0, 64) if (bits & (1ull << j)) {
+                    size_t k = (i*64) + j;
+                    add_range(&ra.intervals[k], bb_start, bb_end);
+                }
+            }
+
+            // for all instruction in BB (in reverse), add ranges
+            if (mbb->first) {
+                reverse_bb_walk(&ra, mbb, mbb->first);
+            }
+        }
+    }
+
+    // we use every fixed interval at the very start to force them into
+    // the inactive set.
+    FOREACH_N(i, 0, 32) if (ra.intervals[i].ranges) {
+        add_range(&ra.intervals[i], 0, 1);
+    }
+
+    dyn_array_destroy(ra.intervals[RBP].ranges);
+    dyn_array_destroy(ra.intervals[RSP].ranges);
+
+    ra.endpoint = end;
+    mark_callee_saved_constraints(ctx, ra.callee_saved);
+
+    // generate unhandled interval list (sorted by starting point)
+    ra.unhandled = dyn_array_create(LiveInterval*, (interval_count * 4) / 3);
+    FOREACH_N(i, 0, interval_count) dyn_array_put(ra.unhandled, i);
+    cuiksort_defs(ctx->intervals, 0, interval_count - 1, ra.unhandled);
+
+    // only need enough to store for the biggest register class
+    ra.free_pos  = TB_ARENA_ARR_ALLOC(tmp_arena, 16, int);
+    ra.block_pos = TB_ARENA_ARR_ALLOC(tmp_arena, 16, int);
 
     // linear scan main loop
-    //
-    // the worklist is sorted such that we pop the lowest start time.
-    // splits will introduce new definitions to the top.
-    while (dyn_array_length(worklist) > 0) {
-        DefIndex di = dyn_array_pop(worklist);
-        Def* d = &ctx->defs[di];
+    CUIK_TIMED_BLOCK("reg alloc") {
+        while (dyn_array_length(ra.unhandled)) CUIK_TIMED_BLOCK("pop") {
+            RegIndex ri = dyn_array_pop(ra.unhandled);
+            LiveInterval* interval = &ra.intervals[ri];
 
-        Def* next_clobber = NULL;
-        if (dyn_array_length(ctx->clobbers) > 0) {
-            next_clobber = &ctx->defs[ctx->clobbers[dyn_array_length(ctx->clobbers) - 1]];
+            // unused interval, skip
+            if (interval->ranges == NULL) continue;
 
-            // if they don't intersect, stop caring about it
-            if (!(d->start <= next_clobber->end && next_clobber->start <= d->end)) {
-                next_clobber = NULL;
+            int time = interval->start;
+            int rc = interval->reg_class;
+
+            int before_next_time = interval->start;
+            if (dyn_array_length(ra.unhandled)) {
+                int before = ra.intervals[ra.unhandled[dyn_array_length(ra.unhandled) - 1]].start - 1;
+                if (before > before_next_time) {
+                    before_next_time = before;
+                }
             }
-        }
 
-        int time = d->start;
-        REG_ALLOC_LOG {
-            printf("  \x1b[32m# D%zu t=[%d,%d) ", di, time, d->end);
-            if (d->node) printf("%p %s", d->node, tb_node_get_name(d->node));
-            printf("\x1b[0m\n");
-        }
-
-        // expire old intervals
-        for (size_t j = 0; j < ctx->active_count;) {
-            Def* k = &ctx->defs[ctx->active[j]];
-            if (k->end > time) break;
-
-            if (k->reg >= 0) {
-                // move from active to handled
-                REG_ALLOC_LOG printf("  \x1b[32m#   kill %s\x1b[0m\n", reg_name(k->reg_class, k->reg));
-
-                set_remove(&ctx->used_regs[k->reg_class], k->reg);
-                remove_active(ctx, j);
+            if (interval->reg >= 0) {
+                REG_ALLOC_LOG printf("  # %-5s t=[%-4d - %4d)\n", reg_name(interval->reg_class, interval->reg), time, interval->end);
+            } else if (interval->spill > 0) {
+                REG_ALLOC_LOG {
+                    printf("  # v%-4d t=[%-4d - %4d) SPILLED [RBP - %d]\n", ri, time, interval->end, interval->spill);
+                }
+                continue;
             } else {
-                j++;
-            }
-        }
-
-        // clobbering will evict registers it needs
-        if (d->clobbers) {
-            // only needs to evict until the end of the definition site
-            LiveInterval li = { time, time + 2 };
-
-            FOREACH_N(j, 0, d->clobbers->count) {
-                evict(ctx, &worklist, d->clobbers->_[j], li);
-                d = &ctx->defs[di];
+                REG_ALLOC_LOG {
+                    printf("  # v%-4d t=[%-4d - %4d)   ", ri, time, interval->end);
+                    if (interval->n != NULL) {
+                        print_node_sexpr(f, interval->n, 0);
+                    }
+                    printf("\n");
+                }
             }
 
-            d = &ctx->defs[di];
-            next_clobber = NULL;
+            // expire intervals
+            CUIK_TIMED_BLOCK("A->I") FOREACH_SET(reg, ra.active_set[rc]) {
+                RegIndex active_i = ra.active[rc][reg];
+                LiveInterval* it = &ra.intervals[active_i];
 
-            // find the clobber, delete it
-            size_t top = dyn_array_length(ctx->clobbers) - 1;
-            if (d == &ctx->defs[ctx->clobbers[top]]) {
-                dyn_array_pop(ctx->clobbers);
+                if (time >= it->end) {
+                    REG_ALLOC_LOG printf("  #   expired %s (v%d)\n", reg_name(rc, reg), active_i);
+                    set_remove(&ra.active_set[rc], reg);
+                } else {
+                    // active -> inactive
+                    while (time >= it->ranges[it->active_range].end) {
+                        assert(it->active_range > 0);
+                        it->active_range -= 1;
+
+                        int hole_end = it->ranges[it->active_range].start;
+                        if (time < hole_end) {
+                            REG_ALLOC_LOG printf("  #   active %s is going quiet for now (until t=%d, v%d)\n", reg_name(rc, reg), hole_end, active_i);
+
+                            set_remove(&ra.active_set[rc], reg);
+                            dyn_array_put(ra.inactive, active_i);
+                            break;
+                        }
+                    }
+                }
             }
-        }
 
-        // find register for current
-        int rc = d->reg_class;
-        ptrdiff_t reg_num = -1;
-        if (d->reg >= 0) {
-            // pre-colored, we make room for it for it's entire lifetime.
-            LiveInterval li = { d->start, d->end };
-            MachineReg mr   = { rc, d->reg };
+            CUIK_TIMED_BLOCK("I->A") for (size_t i = 0; i < dyn_array_length(ra.inactive);) {
+                RegIndex inactive_i = ra.inactive[i];
+                LiveInterval* it = &ra.intervals[inactive_i];
 
-            if (evict(ctx, &worklist, mr, li)) {
-                d = &ctx->defs[di];
+                int hole_end = it->ranges[it->active_range].start;
+                int active_end = it->ranges[it->active_range].end;
+
+                if (time > hole_end) {
+                    // inactive -> active
+                    REG_ALLOC_LOG printf("  #   inactive %s is active again (until t=%d, v%d)\n", reg_name(it->reg_class, it->assigned), active_end, inactive_i);
+
+                    // set active
+                    move_to_active(&ra, it, hole_end);
+                    dyn_array_remove(ra.inactive, i);
+                    interval = &ra.intervals[ri]; // might've resized the intervals
+
+                    // expire
+                    if (time > it->end) {
+                        REG_ALLOC_LOG printf("  #   inactive %s has expired (v%d)\n", reg_name(it->reg_class, it->assigned), inactive_i);
+                        set_remove(&ra.active_set[rc], it->assigned);
+                    }
+                    continue;
+                }
+
+                i++;
             }
 
-            reg_num = d->reg;
-            REG_ALLOC_LOG printf("  \x1b[32m#   forced assign %s\x1b[0m\n", reg_name(rc, reg_num));
-        } else if (d->hint >= 0 && !set_get(&ctx->used_regs[rc], d->hint)) {
-            reg_num = d->hint;
-            REG_ALLOC_LOG printf("  \x1b[32m#   hinted assign %s\x1b[0m\n", reg_name(rc, reg_num));
-        } else {
-            if (next_clobber != NULL) {
-                set_copy(&reg_masks[rc], &ctx->used_regs[rc]);
+            ptrdiff_t reg = interval->reg;
+            if (reg < 0) {
+                // try hint
+                if (interval->hint >= 0) {
+                    LiveInterval* hint = &ra.intervals[interval->hint];
+                    assert(hint->reg_class == rc);
 
-                // avoid the registers which finna get clobbered
-                Clobbers* c = next_clobber->clobbers;
-                FOREACH_N(j, 0, c->count) {
-                    if (c->_[j].class == rc) {
-                        set_put(&reg_masks[rc], c->_[j].num);
+                    if (!set_get(&ra.active_set[rc], hint->assigned)) {
+                        REG_ALLOC_LOG printf("  #   assign to %s (HINTED)\n", reg_name(rc, hint->assigned));
+                        reg = hint->assigned;
                     }
                 }
 
-                // try clobberless path
-                reg_num = set_pop_any(&reg_masks[rc]);
-            }
-
-            // try normal path
-            if (reg_num < 0) {
-                reg_num = alloc_free_reg(ctx, rc);
-            }
-
-            if (reg_num < 0) {
-                // choose who to spill (whoever's the oldest)
-                int active_i = 0, furthest = ctx->defs[ctx->active[active_i]].start;
-                FOREACH_N(i, 1, ctx->active_count) {
-                    if (ctx->defs[ctx->active[active_i]].reg_class == rc && furthest > ctx->defs[ctx->active[active_i]].start) {
-                        furthest = ctx->defs[ctx->active[active_i]].start;
-                        active_i = i;
-                    }
+                // find register for virtual interval
+                if (reg < 0) {
+                    reg = allocate_free_reg(&ra, interval);
+                    interval = &ra.intervals[ri]; // might've resized the intervals
                 }
 
-                DefIndex spill_def = ctx->active[active_i];
+                // alloc failure
+                if (reg < 0) {
+                    reg = allocate_blocked_reg(&ra, interval);
+                    interval = &ra.intervals[ri]; // might've resized the intervals
 
-                // spill for the rest of the BB
-                MachineReg mr = { rc, ctx->defs[spill_def].reg };
-                LiveInterval li = { time, INT_MAX };
-                reg_num = ls_split(ctx, &worklist, spill_def, active_i, li, mr);
-                d = &ctx->defs[di];
+                    // tb_assert(reg >= 0, "regalloc failure");
+                }
             }
 
-            REG_ALLOC_LOG printf("  \x1b[32m#   assign %s\x1b[0m\n", reg_name(rc, reg_num));
+            // add to active set
+            if (reg >= 0) {
+                interval->assigned = reg;
+                interval->active_range = dyn_array_length(interval->ranges) - 1;
+                move_to_active(&ra, interval, interval->start);
+            }
+
+            // display active set
+            REG_ALLOC_LOG {
+                printf("  \x1b[32m{ ");
+                FOREACH_N(rc, 0, CG_REGISTER_CLASSES) {
+                    FOREACH_SET(reg, ra.active_set[rc]) {
+                        int id = ra.active[rc][reg];
+
+                        if (ra.intervals[id].reg >= 0) {
+                            printf("%s ", reg_name(rc, ra.intervals[id].reg));
+                        } else {
+                            printf("v%d:%s ", ra.active[rc][reg], reg_name(rc, reg));
+                        }
+                    }
+                }
+                printf("}\x1b[0m\n");
+            }
         }
-
-        finna_use_reg(ctx, rc, reg_num);
-
-        set_put(&ctx->used_regs[rc], reg_num);
-        add_active(ctx, di);
-        d->reg = reg_num;
     }
 
-    REG_ALLOC_LOG printf("\n\n\n");
+    // move resolver
+    CUIK_TIMED_BLOCK("move resolver") {
+        FOREACH_N(i, 0, ctx->order.count) {
+            MachineBB* mbb = &nl_map_get_checked(mbbs, ctx->order.traversal[i]);
+            TB_NodeRegion* r = TB_NODE_GET_EXTRA(ctx->order.traversal[i]);
+
+            FOREACH_REVERSE_N(i, 0, r->succ_count) {
+                TB_Node* bb = r->succ[i];
+                MachineBB* target = &nl_map_get_checked(mbbs, bb);
+
+                // for all live-ins, we should check if we need to insert a move
+                FOREACH_SET(i, target->live_in) {
+                    LiveInterval* interval = &ra.intervals[i];
+
+                    // if the value changes across the edge, insert move
+                    LiveInterval* start = split_interval_at(&ra, interval, mbb->end);
+                    LiveInterval* end = split_interval_at(&ra, interval, target->start);
+
+                    if (start != end) {
+                        if (start->spill > 0) {
+                            assert(end->spill <= 0 && "TODO: both can't be spills yet");
+                            insert_split_move(&ra, target->start + 1, start - ra.intervals, end - ra.intervals);
+                        } else {
+                            insert_split_move(&ra, mbb->terminator - 1, start - ra.intervals, end - ra.intervals);
+                        }
+                    }
+                }
+
+                // the moves are inserted either at the end of block from or at the beginning of block to,
+                // depending on the control flow
+                // resolver.find_insert_position(from, to)
+
+                // insert all moves in correct order (without overwriting registers that are used later)
+                // resolver.resolve_mappings()
+            }
+        }
+    }
+
+    // resolve all split interval references
+    CUIK_TIMED_BLOCK("split resolver") {
+        for (Inst* restrict inst = ra.first; inst; inst = inst->next) {
+            if (inst->flags & INST_SPILL) {
+                continue;
+            }
+
+            int pos = inst->time;
+            FOREACH_N(i, 0, inst->out_count + inst->in_count + inst->tmp_count) {
+                inst->operands[i] = split_interval_at(&ra, &ra.intervals[inst->operands[i]], pos) - ra.intervals;
+            }
+        }
+    }
+
+    ctx->intervals = ra.intervals;
+    return ra.stack_usage;
+}
+
+////////////////////////////////
+// Sorting unhandled list
+////////////////////////////////
+static size_t partition(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, RegIndex* arr) {
+    int pivot = intervals[arr[(hi - lo) / 2 + lo]].start; // middle
+
+    ptrdiff_t i = lo - 1, j = hi + 1;
+    for (;;) {
+        // Move the left index to the right at least once and while the element at
+        // the left index is less than the pivot
+        do { i += 1; } while (intervals[arr[i]].start > pivot);
+
+        // Move the right index to the left at least once and while the element at
+        // the right index is greater than the pivot
+        do { j -= 1; } while (intervals[arr[j]].start < pivot);
+
+        // If the indices crossed, return
+        if (i >= j) return j;
+
+        // Swap the elements at the left and right indices
+        SWAP(RegIndex, arr[i], arr[j]);
+    }
+}
+
+static void cuiksort_defs(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, RegIndex* arr) {
+    if (lo >= 0 && hi >= 0 && lo < hi) {
+        // get pivot
+        size_t p = partition(intervals, lo, hi, arr);
+
+        // sort both sides
+        cuiksort_defs(intervals, lo, p, arr);
+        cuiksort_defs(intervals, p + 1, hi, arr);
+    }
 }

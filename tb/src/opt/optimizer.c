@@ -14,6 +14,8 @@
 #include "../passes.h"
 #include <log.h>
 
+thread_local TB_Arena* tmp_arena;
+
 static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled);
 static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot);
 
@@ -32,6 +34,25 @@ TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, T
 
 static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
 
+void verify_tmp_arena(TB_Passes* p) {
+    // once passes are run on a thread, they're pinned to it.
+    TB_Module* m = p->f->super.module;
+    TB_ThreadInfo* info = tb_thread_info(m);
+
+    if (p->pinned_thread == NULL) {
+        p->pinned_thread = info;
+        tb_arena_clear(&p->pinned_thread->tmp_arena);
+    } else if (p->pinned_thread != info) {
+        tb_panic(
+            "TB_Passes are bound to a thread, you can't switch which threads they're run on\n\n"
+            "NOTE: if you really need to run across threads you'll need to exit the passes and\n"
+            "start anew... though you pay a performance hit everytime you start one"
+        );
+    }
+
+    tmp_arena = &p->pinned_thread->tmp_arena;
+}
+
 static int bits_in_data_type(int pointer_size, TB_DataType dt) {
     switch (dt.type) {
         case TB_INT: return dt.data;
@@ -45,7 +66,7 @@ static int bits_in_data_type(int pointer_size, TB_DataType dt) {
 }
 
 static char* lil_name(TB_Function* f, const char* fmt, ...) {
-    char* buf = alloc_from_node_arena(f, 30);
+    char* buf = TB_ARENA_ALLOC(tmp_arena, 30);
 
     va_list ap;
     va_start(ap, fmt);
@@ -55,6 +76,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 }
 
 // unity build with all the passes
+#include "lattice.h"
 #include "cse.h"
 #include "dce.h"
 #include "fold.h"
@@ -63,6 +85,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 #include "branches.h"
 #include "print.h"
 #include "mem2reg.h"
+#include "gcm.h"
 #include "libcalls.h"
 
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
@@ -140,10 +163,13 @@ void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
 
     FOREACH_N(i, 0, n->input_count) {
         remove_user(p, n, i);
+        n->inputs[i] = NULL;
     }
 
     nl_map_remove(p->users, n);
-    TB_KILL_NODE(n);
+
+    n->input_count = 1;
+    n->type = TB_NULL;
 }
 
 static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot) {
@@ -194,28 +220,22 @@ void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot) {
 
 static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled) {
     // just generate a new user list (if the slots don't match)
-    User* use = find_users(p, in);
-    if (use == NULL) {
-        use = recycled ? recycled : TB_ARENA_ALLOC(&tb__arena, User);
+    ptrdiff_t search = nl_map_get(p->users, in);
+    if (search < 0) {
+        User* use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
         use->next = NULL;
         use->n = n;
         use->slot = slot;
 
         nl_map_put(p->users, in, use);
     } else {
-        // the slot might've already existed, let's check
-        User* prev = NULL;
-        for (; use != NULL; prev = use, use = use->next) {
-            if (use->n == n && use->slot == slot) return;
-        }
+        User* old = p->users[search].v;
 
-        use = recycled ? recycled : TB_ARENA_ALLOC(&tb__arena, User);
-        use->next = NULL;
+        User* use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
+        use->next = old;
         use->n = n;
         use->slot = slot;
-
-        assert(prev);
-        prev->next = use;
+        p->users[search].v = use;
     }
 }
 
@@ -240,28 +260,22 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
 }
 
 bool tb_pass_mark(TB_Passes* restrict p, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(p->lookup, n);
-    if (search >= 0) {
+    if (!nl_hashset_put(&p->visited, n)) {
         return false;
     }
 
     // log_debug("  %p: push %s", n, tb_node_get_name(n));
 
-    size_t i = dyn_array_length(p->queue);
     dyn_array_put(p->queue, n);
-    nl_map_put(p->lookup, n, i);
+    nl_hashset_put(&p->visited, n);
     return true;
 }
 
 static void fill_all(TB_Passes* restrict p, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(p->lookup, n);
-    if (search >= 0) {
+    if (!nl_hashset_put(&p->visited, n)) {
         return;
     }
-
-    size_t index = dyn_array_length(p->queue);
     dyn_array_put(p->queue, n);
-    nl_map_put(p->lookup, n, index);
 
     FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
         tb_assert(n->inputs[i], "empty input... in this economy?");
@@ -280,7 +294,7 @@ static void fill_all(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
-static void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
+void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
         printf("%"PRId64, num->words[0]);
@@ -553,22 +567,22 @@ static void generate_use_lists(TB_Passes* restrict queue, TB_Function* f) {
 }
 
 TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
-    tb__init_temporary_arena();
-
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
     *p = (TB_Passes){ .f = f, .old_line_attrib = f->line_attrib, .old_arena = f->arena };
 
     f->line_attrib = NULL; // don't add line info automatically to pimizer-generated nodes
     f->arena = arena;
 
+    verify_tmp_arena(p);
+
     p->cse_nodes = nl_hashset_alloc(f->node_count);
 
     // generate dominators
     p->order = tb_function_get_postorder(f);
-    p->doms = tb_get_dominators(f, p->order);
+    tb_compute_dominators(f, p->order);
 
     CUIK_TIMED_BLOCK("nl_map_create") {
-        nl_map_create(p->lookup, f->node_count);
+        p->visited = nl_hashset_alloc(f->node_count);
     }
 
     // generate work list (put everything)
@@ -585,14 +599,15 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 }
 
 bool tb_pass_peephole(TB_Passes* p) {
+    verify_tmp_arena(p);
+
+    TB_Function* f = p->f;
     bool changes = false;
     CUIK_TIMED_BLOCK("peephole") {
-        TB_Function* f = p->f;
-
         while (dyn_array_length(p->queue) > 0) CUIK_TIMED_BLOCK("iter") {
             // pull from worklist
             TB_Node* n = dyn_array_pop(p->queue);
-            nl_map_remove(p->lookup, n);
+            nl_hashset_remove(&p->visited, n);
 
             if (peephole(p, f, n)) {
                 changes = true;
@@ -606,16 +621,17 @@ bool tb_pass_peephole(TB_Passes* p) {
 }
 
 void tb_pass_exit(TB_Passes* p) {
+    verify_tmp_arena(p);
     TB_Function* f = p->f;
+
     f->line_attrib = p->old_line_attrib;
     f->arena = p->old_arena;
 
     nl_hashset_free(p->cse_nodes);
+    nl_hashset_free(p->visited);
 
     tb_function_free_postorder(&p->order);
-    tb_arena_clear(&tb__arena);
-    nl_map_free(p->doms._);
+    tb_arena_clear(tmp_arena);
     nl_map_free(p->users);
-    nl_map_free(p->lookup);
     dyn_array_destroy(p->queue);
 }

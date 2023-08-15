@@ -255,6 +255,10 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
         }
     }
 
+    if (ctx->opt->error_n == n) {
+        printf("\x1b[31m  <-- ERROR\x1b[0m");
+    }
+
     printf("\n");
 }
 
@@ -321,20 +325,20 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                         if (i != 1) printf(", ");
                         print_ref_to_node(ctx, n->inputs[i]);
                     }
-                    printf("%s=> {", n->input_count > 1 ? " " : "");
+                    printf("%s=> {\n", n->input_count > 1 ? " " : "");
 
                     FOREACH_N(i, 0, region->succ_count) {
-                        if (i != 0) printf(", %"PRId64": ", br->keys[i - 1]);
-                        else printf("default: ");
+                        if (i != 0) printf("    %"PRId64": ", br->keys[i - 1]);
+                        else printf("    default: ");
 
                         TB_Node* target = region->succ[i];
                         if (TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag) {
-                            printf("%s", TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag);
+                            printf("%s\n", TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag);
                         } else {
-                            printf(".bb%zu", find_print_label(ctx, target));
+                            printf(".bb%zu\n", find_print_label(ctx, target));
                         }
                     }
-                    printf("}\n");
+                    printf("  }\n");
                 }
                 break;
             }

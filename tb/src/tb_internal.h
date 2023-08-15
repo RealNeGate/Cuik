@@ -284,11 +284,6 @@ typedef struct TB_FunctionOutput {
     uint8_t epilogue_length;
 
     TB_Assembly* asm_out;
-
-    // NOTE(NeGate): This data is actually specific to the
-    // architecture run but generically can be thought of as
-    // 64bits which keep track of which registers to save.
-    uint64_t prologue_epilogue_metadata;
     uint64_t stack_usage;
 
     TB_CodeRegion* code_region;
@@ -349,6 +344,19 @@ struct TB_Function {
     TB_FunctionOutput* output;
 };
 
+// Thread local module state
+typedef struct TB_ThreadInfo TB_ThreadInfo;
+struct TB_ThreadInfo {
+    TB_Module* owner;
+    TB_ThreadInfo* next;
+    TB_ThreadInfo* next_in_module;
+
+    TB_Arena perm_arena;
+    TB_Arena tmp_arena;
+
+    TB_CodeRegion* code; // compiled output
+};
+
 typedef enum {
     // stores globals
     TB_MODULE_SECTION_DATA,
@@ -397,6 +405,9 @@ struct TB_Module {
     // we have a global lock since the arena can be accessed
     // from any thread.
     mtx_t lock;
+
+    // thread info
+    _Atomic(TB_ThreadInfo*) first_info_in_module;
 
     // small constants are interned because they
     // come up a lot.
@@ -449,7 +460,7 @@ typedef struct {
     size_t (*emit_call_patches)(TB_Module* restrict m);
 
     // NULLable if doesn't apply
-    void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t saved, uint64_t stack_usage);
+    void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
 
     void (*compile_function)(TB_Passes* p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm);
 } ICodeGen;
@@ -520,6 +531,8 @@ do {                                      \
 #define CONCAT(x, y) CONCAT_(x, y)
 #endif
 
+TB_ThreadInfo* tb_thread_info(TB_Module* m);
+
 // NOTE(NeGate): if you steal it you should restore the used amount back to what it was before
 TB_TemporaryStorage* tb_tls_steal(void);
 TB_TemporaryStorage* tb_tls_allocate(void);
@@ -570,28 +583,12 @@ uint32_t tb_get4b(TB_Emitter* o, uint32_t pos);
 ////////////////////////////////
 // CFG analysis
 ////////////////////////////////
-typedef struct {
-    int depth;
-    TB_Node* node;
-} TB_Dom;
-
-typedef struct {
-    NL_Map(TB_Node*, TB_Dom) _;
-} TB_Dominators;
-
-static void put_idom(TB_Dominators* doms, TB_Node* n, TB_Node* new_idom) {
-    TB_Dom d = { -1, new_idom };
-    nl_map_put(doms->_, n, d);
-}
-
 // shorthand because we use it a lot
-static TB_Node* idom(TB_Dominators doms, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(doms._, n);
-    assert(search >= 0);
-    return doms._[search].v.node;
+static TB_Node* idom(TB_Node* n) {
+    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom;
 }
 
-static int dom_depth(TB_Dominators doms, TB_Node* n) {
+static int dom_depth(TB_Node* n) {
     if (n == NULL) {
         return 0;
     }
@@ -600,9 +597,7 @@ static int dom_depth(TB_Dominators doms, TB_Node* n) {
         n = n->inputs[0];
     }
 
-    ptrdiff_t search = nl_map_get(doms._, n);
-    assert(search >= 0);
-    return doms._[search].v.depth;
+    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom_depth;
 }
 
 typedef NL_HashSet TB_FrontierSet;
@@ -614,7 +609,7 @@ typedef struct {
     NL_Map(TB_Node*, char) visited;
 } TB_PostorderWalk;
 
-TB_Dominators tb_get_dominators(TB_Function* f, TB_PostorderWalk order);
+void tb_compute_dominators(TB_Function* f, TB_PostorderWalk order);
 
 // Allocates from the heap and requires freeing with tb_function_free_postorder
 TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);
@@ -657,6 +652,8 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 ////////////////////////////////
 // ANALYSIS
 ////////////////////////////////
+void print_node_sexpr(TB_Function* f, TB_Node* n, int depth);
+
 TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
@@ -672,10 +669,14 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);
 uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
 char* tb__tb_arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
-void tb__init_temporary_arena(void);
 
-// temporary arena
-extern thread_local TB_Arena tb__arena;
+static TB_Arena* get_temporary_arena(TB_Module* m) {
+    return &tb_thread_info(m)->tmp_arena;
+}
+
+static TB_Arena* get_permanent_arena(TB_Module* m) {
+    return &tb_thread_info(m)->perm_arena;
+}
 
 // NOTE(NeGate): Place all the codegen interfaces down here
 extern ICodeGen tb__x64_codegen;

@@ -157,11 +157,14 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
             tb_pass_peephole(p);
             // Converting locals into phi nodes
             tb_pass_mem2reg(p), tb_pass_peephole(p);
+            // Simplify CFG
+            // tb_pass_cfg(p), tb_pass_peephole(p);
         }
 
         // print IR
         if (args->emit_ir) {
-            tb_pass_print(p);
+            tb_function_print(f, tb_default_print_callback, stdout);
+            // tb_pass_print(p);
         }
 
         // codegen
@@ -248,8 +251,8 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         goto done;
     } else if (args->ast) {
         CUIK_FOR_EACH_TU(tu, cu) {
-            log_error("Cannot dump translation unit... TODO");
-            // cuik_dump_translation_unit(stdout, tu, true);
+            // log_error("Cannot dump translation unit... TODO");
+            cuik_dump_translation_unit(stdout, tu, true);
         }
         goto done;
     }
@@ -341,6 +344,12 @@ static void ld_invoke(BuildStepInfo* info) {
         cuik_path_append2(&output_path, strlen(args->output_name), args->output_name, 4, ".exe");
     } else {
         cuik_path_set(&output_path, args->output_name);
+    }
+
+    if (args->run) {
+        fprintf(stderr, "error: C JIT not ready yet");
+        assert(0);
+        goto done;
     }
 
     ////////////////////////////////
@@ -754,11 +763,14 @@ static void irgen_job(void* arg) {
         }
 
         if (do_compiles_immediately && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
-            TB_Passes* p = tb_pass_enter((TB_Function*) s, allocator);
-            tb_pass_codegen(p, false);
-            tb_pass_exit(p);
+            CUIK_TIMED_BLOCK("codegen") {
+                TB_Passes* p = tb_pass_enter((TB_Function*) s, allocator);
+                tb_pass_codegen(p, false);
+                tb_pass_exit(p);
 
-            tb_arena_clear(allocator);
+                // log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);
+                tb_arena_clear(allocator);
+            }
         }
     }
 }

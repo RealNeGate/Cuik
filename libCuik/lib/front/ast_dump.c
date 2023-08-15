@@ -1,4 +1,3 @@
-#if 0
 // It's only *sorta* part of the semantics pass
 #include "sema.h"
 
@@ -6,121 +5,6 @@
 static thread_local char temp_string0[1024], temp_string1[1024];
 static thread_local Stmt* function_stmt;
 static thread_local bool barz[64];
-
-void cuik_dump_expr(FILE* stream, Expr* e, int depth) {
-    for (int i = 0; i < depth; i++) printf("  ");
-
-    if (e->cast_type.raw != e->type.raw) {
-        // qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
-        qual_type_as_string(sizeof(temp_string1), temp_string1, e->cast_type);
-
-        if (e->op != EXPR_CAST && e->cast_type.raw && cuik_canonical_type(e->cast_type)->kind != KIND_VOID) {
-            // we don't wanna place implicit casts to void, it's weird
-            printf("implicit-cast %s\n", temp_string1);
-            depth++;
-
-            for (int i = 0; i < depth; i++) printf("  ");
-            printf("\n");
-        }
-    }
-
-    switch (e->op) {
-        case EXPR_CHAR:
-        case EXPR_WCHAR: {
-            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
-            fprintf(stream, "char '%s' %u\n", temp_string0, e->char_lit);
-            break;
-        }
-        case EXPR_INT: {
-            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
-            fprintf(stream, "int '%s' %llu\n", temp_string0, e->int_num.num);
-            break;
-        }
-        case EXPR_COMMA:
-        case EXPR_PLUS:
-        case EXPR_MINUS:
-        case EXPR_TIMES:
-        case EXPR_SLASH:
-        case EXPR_PERCENT:
-        case EXPR_AND:
-        case EXPR_OR:
-        case EXPR_XOR:
-        case EXPR_SHL:
-        case EXPR_SHR:
-        case EXPR_PLUS_ASSIGN:
-        case EXPR_MINUS_ASSIGN:
-        case EXPR_ASSIGN:
-        case EXPR_TIMES_ASSIGN:
-        case EXPR_PERCENT_ASSIGN:
-        case EXPR_SLASH_ASSIGN:
-        case EXPR_AND_ASSIGN:
-        case EXPR_OR_ASSIGN:
-        case EXPR_XOR_ASSIGN:
-        case EXPR_SHL_ASSIGN:
-        case EXPR_SHR_ASSIGN:
-        case EXPR_CMPEQ:
-        case EXPR_CMPNE:
-        case EXPR_CMPGT:
-        case EXPR_CMPGE:
-        case EXPR_CMPLT:
-        case EXPR_CMPLE:
-        case EXPR_LOGICAL_AND:
-        case EXPR_LOGICAL_OR:
-        case EXPR_PTRADD:
-        case EXPR_PTRSUB:
-        case EXPR_PTRDIFF: {
-            static const char* names[] = {
-                [EXPR_COMMA] = "Comma",
-
-                [EXPR_PLUS] = "add",
-                [EXPR_MINUS] = "sub",
-                [EXPR_TIMES] = "mul",
-                [EXPR_SLASH] = "div",
-                [EXPR_PERCENT] = "mod",
-                [EXPR_AND] = "bit-and",
-                [EXPR_OR] = "bit-or",
-                [EXPR_XOR] = "bit-xor",
-                [EXPR_SHL] = "shl",
-                [EXPR_SHR] = "shr",
-
-                [EXPR_PLUS_ASSIGN] = "add-assign",
-                [EXPR_MINUS_ASSIGN] = "sub-assign",
-                [EXPR_ASSIGN] = "assign",
-                [EXPR_TIMES_ASSIGN] = "mul-assign",
-                [EXPR_PERCENT_ASSIGN] = "mod-assign",
-                [EXPR_SLASH_ASSIGN] = "div-assign",
-                [EXPR_AND_ASSIGN] = "bit-and-assign",
-                [EXPR_OR_ASSIGN] = "bit-or-assign",
-                [EXPR_XOR_ASSIGN] = "bit-xor-assign",
-                [EXPR_SHL_ASSIGN] = "shl-assign",
-                [EXPR_SHR_ASSIGN] = "shr-assign",
-
-                [EXPR_CMPEQ] = "cmp-equal",
-                [EXPR_CMPNE] = "cmp-not-equal",
-                [EXPR_CMPGT] = "cmp-greater",
-                [EXPR_CMPGE] = "cmp-greater-equal",
-                [EXPR_CMPLT] = "cmp-lesser",
-                [EXPR_CMPLE] = "cmp-lesser-equal",
-
-                [EXPR_LOGICAL_AND] = "and",
-                [EXPR_LOGICAL_OR] = "or",
-
-                [EXPR_PTRADD] = "ptradd",
-                [EXPR_PTRSUB] = "ptrsub",
-                [EXPR_PTRDIFF] = "ptrdiff"
-            };
-
-            qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
-            fprintf(stream, "%s '%s'\n", names[e->op], temp_string0);
-
-            cuik_dump_expr(stream, e->bin_op.left, depth + 1);
-            cuik_dump_expr(stream, e->bin_op.right, depth + 1);
-            break;
-        }
-        default:
-        abort();
-    }
-}
 
 static void print_barz(int depth, bool last_node) {
     if (last_node) {
@@ -137,10 +21,11 @@ static void print_barz(int depth, bool last_node) {
     barz[depth - 1] = !last_node;
 }
 
-static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node) {
+static void dump_expr(FILE* stream, Cuik_Expr* restrict e, int depth, bool last_node) {
     print_barz(depth, last_node);
+    fprintf(stream, "Expr\n");
 
-    if (e->cast_type.raw != e->type.raw) {
+    /*if (e->cast_type.raw != e->type.raw) {
         qual_type_as_string(sizeof(temp_string0), temp_string0, e->type);
         qual_type_as_string(sizeof(temp_string1), temp_string1, e->cast_type);
 
@@ -516,7 +401,7 @@ static void dump_expr(FILE* stream, Expr* restrict e, int depth, bool last_node)
         }
         default:
         abort();
-    }
+    }*/
 
     barz[depth - 1] = false;
 }
@@ -759,57 +644,3 @@ void cuik_dump(FILE* stream, size_t count, Stmt** top_level, bool minimalist) {
 void cuik_dump_translation_unit(FILE* stream, TranslationUnit* tu, bool minimalist) {
     cuik_dump(stream, dyn_array_length(tu->top_level_stmts), tu->top_level_stmts, minimalist);
 }
-
-void ast_dump_stats(TranslationUnit* tu, FILE* stream) {
-    printf("\n~~~ AST STATS ~~~\n");
-    printf("# Top level stmts: %zu\n", dyn_array_length(tu->top_level_stmts));
-    // printf("# TB_Arena:  %zu kB\n", tb_arena_get_memory_usage(&tu->arena) / 1024);
-}
-
-void ast_dump_type(TranslationUnit* tu, Cuik_Type* ty, int depth, int offset) {
-    for (int i = 0; i < depth; i++) printf("  ");
-
-    if (ty->kind == KIND_STRUCT || ty->kind == KIND_UNION) {
-        printf("%s %s {",
-            ty->kind == KIND_STRUCT ? "struct" : "union",
-            ty->record.name ? (char*)ty->record.name : "<unnamed>"
-        );
-
-        ResolvedSourceLoc r = cuikpp_find_location(&tu->tokens, ty->loc.start);
-        printf("// %s:%d\n", r.file->filename, r.line);
-
-        char temp_string0[1024];
-        Member* kids = ty->record.kids;
-        size_t kid_count = ty->record.kid_count;
-
-        for (size_t i = 0; i < kid_count; i++) {
-            Member* member = &kids[i];
-            Cuik_Type* type = cuik_canonical_type(member->type);
-
-            if (member->name == NULL || type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-                ast_dump_type(tu, type, depth + 1, offset + member->offset);
-            } else {
-                for (int i = 0; i < depth; i++) printf("  ");
-                printf("  ");
-
-                qual_type_as_string(sizeof(temp_string0), temp_string0, member->type);
-
-                int l = printf("%s %s", temp_string0, member->name);
-                l += (depth + 1) * 2;
-
-                for (int i = l; i < 42; i++) printf(" ");
-                printf(" %d\n", offset + member->offset);
-            }
-        }
-
-        for (int i = 0; i < depth; i++) printf("  ");
-        printf("}\n");
-    } else {
-        printf("Could not represent type yet...\n");
-    }
-
-    if (depth == 0) {
-        printf("STATS:\n  sizeof = %d\n  alignof = %d\n", ty->size, ty->align);
-    }
-}
-#endif

@@ -419,8 +419,6 @@ struct TB_Node {
     char extra[];
 };
 
-#define TB_KILL_NODE(n) ((n)->type = TB_NULL)
-
 // These are the extra data in specific nodes
 #define TB_NODE_GET_EXTRA(n)         ((void*) n->extra)
 #define TB_NODE_GET_EXTRA_T(n, T)    ((T*) (n)->extra)
@@ -505,6 +503,10 @@ typedef struct {
 typedef struct {
     TB_Node* end;
     const char* tag;
+
+    // immediate dominator (can be approximate)
+    int dom_depth;
+    TB_Node* dom;
 
     size_t succ_count;
     TB_Node** succ;
@@ -839,7 +841,7 @@ TB_API TB_DebugType* tb_debug_create_union(TB_Module* m, ptrdiff_t len, const ch
 TB_API TB_DebugType* tb_debug_create_field(TB_Module* m, TB_DebugType* type, ptrdiff_t len, const char* name, TB_CharUnits offset);
 
 // returns the array you need to fill with fields
-TB_API TB_DebugType** tb_debug_record_begin(TB_DebugType* type, size_t count);
+TB_API TB_DebugType** tb_debug_record_begin(TB_Module* m, TB_DebugType* type, size_t count);
 TB_API void tb_debug_record_end(TB_DebugType* type, TB_CharUnits size, TB_CharUnits align);
 
 TB_API TB_DebugType* tb_debug_create_func(TB_Module* m, TB_CallingConv cc, size_t param_count, size_t return_count, bool has_varargs);
@@ -882,6 +884,7 @@ TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line);
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat);
 
+TB_API TB_Arena* tb_function_get_arena(TB_Function* f);
 TB_API void* tb_function_get_jit_pos(TB_Function* f);
 
 // if len is -1, it's null terminated
@@ -902,7 +905,7 @@ TB_API TB_Node* tb_inst_get_control(TB_Function* f);
 TB_API TB_Node* tb_inst_region(TB_Function* f);
 
 // if len is -1, it's null terminated
-TB_API void tb_inst_set_region_name(TB_Node* n, ptrdiff_t len, const char* name);
+TB_API void tb_inst_set_region_name(TB_Module* m, TB_Node* n, ptrdiff_t len, const char* name);
 
 TB_API void tb_inst_unreachable(TB_Function* f);
 TB_API void tb_inst_debugbreak(TB_Function* f);
@@ -1072,15 +1075,21 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 //     data flow analysis possible on the code and allows to codegen
 //     to place variables into registers.
 //
+//   cfg: performs simplifications on the CFG like `a && b => select(a, b, 0)`
+//     or removing redundant branches.
+//
 //   loop: NOT READY
 //
 TB_API bool tb_pass_peephole(TB_Passes* opt);
 TB_API bool tb_pass_mem2reg(TB_Passes* opt);
 TB_API bool tb_pass_loop(TB_Passes* opt);
+TB_API bool tb_pass_cfg(TB_Passes* opt);
 
 // analysis
 //   print: prints IR in a flattened text form.
 TB_API bool tb_pass_print(TB_Passes* opt);
+
+TB_API void tb_pass_schedule(TB_Passes* opt);
 
 // codegen
 TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, bool emit_asm);

@@ -132,7 +132,7 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
             result = t->kind == KIND_STRUCT ? tb_debug_create_struct(mod, -1, tag) : tb_debug_create_union(mod, -1, tag);
             atomic_exchange(&t->debug_type, result);
 
-            TB_DebugType** list = tb_debug_record_begin(result, count);
+            TB_DebugType** list = tb_debug_record_begin(mod, result, count);
             for (size_t i = 0; i < count; i++) {
                 Member* member = &kids[i];
 
