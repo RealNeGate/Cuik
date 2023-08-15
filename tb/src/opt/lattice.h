@@ -50,7 +50,7 @@ static Lattice lattice_top(TB_DataType dt) {
         case TB_INT: {
             assert(dt.data <= 64);
             uint64_t max_bits = UINT64_MAX >> dt.data;
-            __debugbreak();
+            tb_todo();
 
             return (Lattice){ LATTICE_INT, ._int = { 0, max_bits } };
         }
