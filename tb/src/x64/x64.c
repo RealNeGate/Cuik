@@ -1983,7 +1983,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         size_t in_base = inst->out_count;
         InstCategory cat = inst->type > 1024 ? INST_BINOP : inst_table[inst->type].cat;
 
-        if (1) {
+        if (0) {
             EMITA(e, "  \x1b[32m# %s t=%d { outs:", inst->type < 1024 ? inst_table[inst->type].mnemonic : "???", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
                 EMITA(e, " v%d", inst->operands[i]);

@@ -884,6 +884,7 @@ TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line);
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat);
 
+TB_API TB_Arena* tb_function_get_arena(TB_Function* f);
 TB_API void* tb_function_get_jit_pos(TB_Function* f);
 
 // if len is -1, it's null terminated

@@ -1,13 +1,17 @@
 #include <stdio.h>
 #include <dyn_array.h>
 #include <hash_map.h>
+#include <perf.h>
 
 #define CUIK_FS_IMPL
 #include <cuik_fs.h>
 
 #include <tb.h>
+#include <arena.h>
 
-#define JIT_THRESHOLD 10
+// compile threads are separate from interpreter threads
+#include <threads.h>
+#include <stdatomic.h>
 
 typedef struct Env Env;
 typedef struct Word Word;
@@ -39,9 +43,6 @@ enum {
     OP_KEY   = -14,
 };
 
-typedef int (*Trampoline)(Env* env, uint64_t* args, void* fn);
-static Trampoline jit_callers[16];
-
 struct Word {
     NL_Slice name;
     DynArray(int64_t) ops;
@@ -50,10 +51,13 @@ struct Word {
     int arity, outputs;
     int tails;
 
-    // JIT
-    int trip_count;
-    void* jitted;
-    TB_Function* ir;
+    // for now there's no tiers or recompilation.
+    //
+    // so once 'trip_count' == JIT_THRESHOLD, we submit
+    // to the JIT thread. once it's ready later we can
+    // check 'jitted'
+    _Atomic int trip_count;
+    _Atomic(void*) jitted;
 };
 
 static void infer(Word* w);
@@ -396,28 +400,17 @@ enum {
     // no errors
     INTERP_OK = 0,
 
+    // not enough elements on the stack
+    INTERP_UNDERFLOW,
+
+    // the function
+    INTERP_NO_JIT,
+
     // if env->single_step is on this is what we return
     INTERP_STEP,
 };
 
-// returns true when a JIT function is available
-static bool jit_trippin(Env* env, Word* w) {
-    // this is where the JIT happens. we
-    // hit enough trips and we'll attempt
-    // to compile the word.
-    if (w->jitted != NULL) {
-        assert(env->head >= w->arity && "JIT entered without enough arguments");
-        return true;
-    }
-
-    if (w->trip_count++ >= JIT_THRESHOLD) {
-        // it's async in theory so it won't be ready
-        // until next time
-        compile_word(w);
-    }
-
-    return false;
-}
+#include "forth_jit.h"
 
 // written as a non-recursive style to accomodate pausing and resuming
 // because the JIT will do those sorts of things.
@@ -426,13 +419,13 @@ static int interp(Env* env, Word* w) {
     if (w != NULL) {
         // if the JIT is ready, we'll just use this, ideally
         // we switch to directly calling the JIT soon
-        if (w->jitted != NULL) {
-            assert(env->head >= w->arity);
-            return jit_callers[w->arity](env, &env->stack[env->head - w->arity], w->jitted);
+        int r = jit_try_call(env, w);
+        if (r != INTERP_NO_JIT) {
+            return r;
+        } else {
+            env->control_head = 1;
+            env->control[0] = 0;
         }
-
-        env->control_head = 1;
-        env->control[0] = 0;
     }
 
     while (env->control_head > 0) recover: {
@@ -448,9 +441,8 @@ static int interp(Env* env, Word* w) {
             if (x >= 0) { // trivial literals
                 push(env, w->ops[i]), i += 1;
             } else if (x == OP_TAIL) {
-                if (!env->single_step && jit_trippin(env, w)) {
-                    jit_callers[w->arity](env, &env->stack[env->head - w->arity], w->jitted);
-
+                int r = env->single_step ? INTERP_NO_JIT : jit_try_call(env, w);
+                if (r != INTERP_NO_JIT) {
                     // once the JIT finishes with a tail call, we just return
                     break;
                 } else {
@@ -459,8 +451,8 @@ static int interp(Env* env, Word* w) {
             } else if (x <= -1000) {
                 Word* new_w = &words[-x - 1000];
 
-                if (!env->single_step && jit_trippin(env, new_w)) {
-                    jit_callers[new_w->arity](env, &env->stack[env->head - new_w->arity], new_w->jitted);
+                int r = env->single_step ? INTERP_NO_JIT : jit_try_call(env, w);
+                if (r != INTERP_NO_JIT) {
                     i += 1;
                 } else {
                     // save return continuation
@@ -538,405 +530,13 @@ static int interp(Env* env, Word* w) {
     return INTERP_OK;
 }
 
-////////////////////////////////
-// Compiler
-////////////////////////////////
-static TB_TB_Arena* ir_arena;
-static TB_Module* ir_module;
-static TB_JITContext* jit;
-
-// this is how we call from the interpreter
-static TB_FunctionPrototype* proto;
-
-// the JIT will use functions where the arguments are proper arguments
-// as opposed to in-memory stack elements. each needs a matching JITted
-// caller function, we do these lazily.
-static TB_FunctionPrototype* internal_protos[16];
-
-// imported functions
-static TB_FunctionPrototype *putnum_proto, *putchar_proto, *getchar_proto, *interp_proto;
-static TB_Symbol *putnum_sym, *putchar_sym, *getchar_sym, *interp_sym;
-
-// we don't need to waste cycles JITting this lmao
-static int jit_caller_0ary(Env* env, uint64_t* stack, void* jitted) {
-    return ((int (*)(Env*)) jitted)(env);
-}
-
-static void get_trampoline(int arity, bool needs_trampoline) {
-    // lazily generate prototype and caller (if not already)
-    if (internal_protos[arity] == NULL) {
-        TB_PrototypeParam params[17];
-        params[0] = (TB_PrototypeParam){ TB_TYPE_PTR }; // Env*
-        for (size_t i = 0; i < arity; i++) {
-            params[i + 1] = (TB_PrototypeParam){ TB_TYPE_I64 };
-        }
-
-        TB_PrototypeParam ret = { TB_TYPE_I32 };
-        internal_protos[arity] = tb_prototype_create(ir_module, TB_STDCALL, arity + 1, params, 1, &ret, false);
-    }
-
-    if (needs_trampoline) {
-        if (arity == 0) {
-            jit_callers[0] = jit_caller_0ary;
-        } else if (jit_callers[arity] == NULL) {
-            // log_debug("jit: compiling caller for %d arity", arity);
-
-            char name[32];
-            snprintf(name, 32, "jit_caller_%dary", arity);
-
-            // generate caller
-            TB_Function* f = tb_function_create(ir_module, -1, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
-            tb_function_set_prototype(f, proto, ir_arena);
-
-            // top of the stack is gonna be loaded into params
-            TB_Node* tos = tb_inst_param(f, 1);
-
-            TB_Node* args[17];
-            args[0] = tb_inst_param(f, 0);
-            for (size_t i = 0; i < arity; i++) {
-                TB_Node* ptr = tb_inst_member_access(f, tos, i * sizeof(uint64_t));
-                args[i + 1] = tb_inst_load(f, TB_TYPE_I64, ptr, _Alignof(size_t), false);
-            }
-
-            TB_MultiOutput o = tb_inst_call(f, internal_protos[arity], tb_inst_param(f, 2), arity + 1, args);
-            tb_inst_ret(f, 1, &o.single);
-
-            // tb_function_print(f, tb_default_print_callback, stdout);
-
-            // JIT & export
-            tb_module_compile_function(ir_module, f, TB_ISEL_FAST, false);
-
-            jit_callers[arity] = tb_module_apply_function(jit, f);
-            tb_module_ready_jit(jit);
-        }
-    }
-}
-
-static TB_Node* shift_head(TB_Function* f, TB_Node* env, int delta) {
-    TB_Node* head_ptr = tb_inst_member_access(f, env, offsetof(Env, head));
-    TB_Node* ld_head = tb_inst_load(f, TB_TYPE_I64, head_ptr, _Alignof(size_t), false);
-
-    // writeback new head
-    if (delta != 0) {
-        // write out new head
-        TB_Node* add_head = NULL;
-        if (delta < 0) {
-            add_head = tb_inst_sub(f, ld_head, tb_inst_sint(f, TB_TYPE_I64, -delta), 0);
-        } else {
-            add_head = tb_inst_add(f, ld_head, tb_inst_sint(f, TB_TYPE_I64, delta), 0);
-        }
-        tb_inst_store(f, TB_TYPE_I64, head_ptr, add_head, _Alignof(size_t), false);
-    }
-
-    return ld_head;
-}
-
-static TB_Node* spill_stack(TB_Function* f, TB_Node* env, TB_Node** stack, TB_Node* ld_head, int count) {
-    // dump stack (args is the top of the stack)
-    TB_Node* tos = tb_inst_member_access(f, env, offsetof(Env, stack));
-    tos = tb_inst_array_access(f, tos, ld_head, sizeof(size_t));
-
-    for (size_t i = 0; i < count; i++) {
-        TB_Node* ptr = tb_inst_member_access(f, tos, i * sizeof(uint64_t));
-        tb_inst_store(f, TB_TYPE_I64, ptr, stack[i], _Alignof(size_t), false);
-    }
-
-    return tos;
-}
-
-static void compile_word(Word* w) {
-    assert(w->arity < 16 && "TODO: compile functions with more params");
-    // log_debug("jit: compiling %.*s after %d trips", (int) w->name.length, w->name.data, w->trip_count - 1);
-
-    char name[32];
-    snprintf(name, 32, "%.*s", (int) w->name.length, w->name.data);
-
-    get_trampoline(w->arity, true);
-    TB_Function* f = tb_function_create(ir_module, -1, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
-    tb_function_set_prototype(f, internal_protos[w->arity], ir_arena);
-
-    ControlStack cs;
-    cs.head = 0;
-
-    TB_Node* env = tb_inst_param(f, 0);
-
-    // ir-based value stack
-    size_t head = w->arity;
-    TB_Node* stack[64];
-
-    for (size_t i = 0; i < w->arity; i++) {
-        stack[i] = tb_inst_param(f, i + 1);
-    }
-
-    TB_Node** phis = NULL;
-    TB_Node* loop_body = NULL;
-    if (w->tails > 0) {
-        phis = cuik_malloc(w->arity * sizeof(TB_Node*));
-
-        loop_body = tb_inst_region(f);
-        tb_inst_goto(f, loop_body);
-        tb_inst_set_control(f, loop_body);
-
-        // convert parameters into placeholder PHIs
-        for (size_t i = 0; i < w->arity; i++) {
-            phis[i] = tb_inst_incomplete_phi(f, TB_TYPE_I64, loop_body, 1 + w->tails);
-            phis[i]->inputs[1] = stack[i];
-
-            stack[i] = phis[i];
-        }
-    }
-
-    // functions we might import
-    TB_Node* getchar_n = NULL;
-    TB_Node* putchar_n = NULL;
-    TB_Node* putnum_n = NULL;
-    TB_Node* interp_n = NULL;
-
-    size_t len = dyn_array_length(w->ops);
-    for (size_t i = 0; i < len; i++) {
-        if (tb_inst_get_control(f) == NULL) {
-            tb_inst_set_control(f, tb_inst_region(f));
-        }
-
-        int64_t x = w->ops[i];
-
-        if (x >= 0) { // push literal
-            assert(head < 64);
-            stack[head++] = tb_inst_sint(f, TB_TYPE_I64, x);
-        } else if (x == OP_TAIL) {
-            int arity = w->arity;
-            head -= arity;
-            TB_Node** args = &stack[head];
-
-            TB_Node* region = tb_get_parent_region(tb_inst_get_control(f));
-            tb_inst_goto(f, loop_body);
-
-            for (size_t i = 0; i < w->arity; i++) {
-                if (!tb_inst_add_phi_operand(f, phis[i], region, args[i])) {
-                    assert(0 && "we should've reserved enough phi operands?");
-    	        }
-            }
-        } else if (x <= -1000) {
-            Word* new_w = &words[-x - 1000];
-
-            head -= new_w->arity;
-            TB_Node** src_args = &stack[head];
-
-            TB_Node* ld_head = shift_head(f, env, new_w->arity);
-            if (new_w->jitted == NULL) {
-                if (interp_n == NULL) {
-                    interp_n = tb_inst_get_symbol_address(f, interp_sym);
-                }
-
-                // we have to spill to the stack
-                if (new_w->arity > 0) {
-                    spill_stack(f, env, stack, ld_head, new_w->arity);
-                }
-
-                // this is kinda hacky but we're JITting it's fine
-                TB_Node* new_w_node = tb_inst_uint(f, TB_TYPE_PTR, (uintptr_t) new_w);
-
-                TB_Node* args[2] = { env, new_w_node };
-                tb_inst_call(f, interp_proto, interp_n, 2, args);
-            } else {
-                // generate argument list
-                TB_Node* args[32];
-                args[0] = env;
-                for (size_t i = 0; i < new_w->arity; i++) {
-                    args[1 + i] = src_args[i];
-                }
-
-                TB_Node* target = tb_inst_get_symbol_address(f, (TB_Symbol*) new_w->ir);
-                tb_inst_call(f, internal_protos[new_w->arity], target, 1 + new_w->arity, args);
-            }
-
-            // pop returns off the stack
-            int outputs = new_w->outputs;
-            if (outputs > 0) {
-                TB_Node* ld_head = shift_head(f, env, -outputs);
-
-                // dump stack (args is the top of the stack)
-                TB_Node* tos = tb_inst_member_access(f, env, offsetof(Env, stack));
-                tos = tb_inst_array_access(f, tos, ld_head, sizeof(size_t));
-
-                for (size_t i = 0; i < head; i++) {
-                    TB_Node* ptr = tb_inst_member_access(f, tos, i * sizeof(uint64_t));
-                    src_args[i] = tb_inst_load(f, TB_TYPE_I64, ptr, _Alignof(size_t), false);
-                }
-                head += outputs;
-            }
-        } else {
-            // all primitives have static effects, let's make sure all args
-            // are available before we continue
-            int arity = prim_arity(x);
-            head -= arity;
-            TB_Node** args = &stack[head];
-
-            TB_Node* new_head = NULL;
-            switch (x) {
-                // arithmatic
-                case OP_ADD: stack[head++] = tb_inst_add(f, args[0], args[1], 0); break;
-                case OP_SUB: stack[head++] = tb_inst_sub(f, args[0], args[1], 0); break;
-
-                // stack
-                case OP_DUP: stack[head] = args[0], stack[head+1] = args[0], head += 2; break;
-                case OP_DROP: /* no op, just throws away argument */ break;
-
-                // console
-                case OP_KEY: {
-                    if (getchar_n == NULL) {
-                        getchar_n = tb_inst_get_symbol_address(f, getchar_sym);
-                    }
-
-                    stack[head++] = tb_inst_sxt(f, tb_inst_call(f, getchar_proto, getchar_n, 0, NULL).single, TB_TYPE_I64);
-                    break;
-                }
-                case OP_EMIT: {
-                    if (putchar_n == NULL) {
-                        putchar_n = tb_inst_get_symbol_address(f, putchar_sym);
-                    }
-
-                    TB_Node* t = tb_inst_trunc(f, args[0], TB_TYPE_I32);
-                    tb_inst_call(f, putchar_proto, putchar_n, 1, &t);
-                    break;
-                }
-                case OP_PRINT: {
-                    if (putnum_n == NULL) {
-                        putnum_n = tb_inst_get_symbol_address(f, putnum_sym);
-                    }
-
-                    tb_inst_call(f, putnum_proto, putnum_n, 1, &args[0]);
-                    break;
-                }
-
-                // control flow
-                case OP_IF: {
-                    Control* c = control_push(f, &cs, i, head);
-                    tb_inst_if(f, args[0], c->on, c->off);
-                    tb_inst_set_control(f, c->on);
-                    break;
-                }
-                case OP_ELSE: {
-                    Control* c = control_peek(&cs);
-                    assert(c && "missing if{");
-
-                    // mark the "out_count" known at this point,
-                    // if the else case doesn't match we'll cry
-                    c->out_count = head;
-                    c->outs = cuik_malloc(c->out_count * sizeof(TB_Node*));
-
-                    // mark outputs
-                    TB_Node** top = &stack[head - c->out_count];
-                    size_t j = 0;
-                    while (j < c->out_count) {
-                        c->outs[j] = top[j], j += 1;
-                    }
-
-                    // reset arity to what the if said
-                    head = c->arity;
-
-                    tb_inst_goto(f, c->exit);
-                    tb_inst_set_control(f, c->off);
-                    break;
-                }
-                case OP_CLOSE: {
-                    Control* c = control_pop(&cs);
-                    assert(head == c->out_count && "stinky dynamic effects");
-
-                    // fallthrough
-                    tb_inst_goto(f, c->exit);
-                    tb_inst_set_control(f, c->exit);
-
-                    // insert phis
-                    TB_Node** top = &stack[head - c->out_count];
-                    size_t j = 0;
-                    while (j < c->out_count) {
-                        top[j] = tb_inst_phi2(f, c->exit, c->outs[j], top[j]);
-                        j += 1;
-                    }
-                    break;
-                }
-
-                default: assert(0 && "TODO");
-            }
-        }
-    }
-
-    assert(cs.head == 0 && "you're missing closing braces?");
-
-    if (tb_inst_get_control(f) != NULL) {
-        assert(head == w->outputs);
-        if (head != w->arity) {
-            TB_Node* ld_head = shift_head(f, env, head - w->arity);
-
-            if (head > 0) {
-                spill_stack(f, env, stack, ld_head, head);
-            }
-        }
-
-        TB_Node* ret = tb_inst_uint(f, TB_TYPE_I32, INTERP_OK);
-        tb_inst_ret(f, 1, &ret);
-    }
-
-    // tb_function_print(f, tb_default_print_callback, stdout);
-
-    // compile & apply
-    tb_module_compile_function(ir_module, f, TB_ISEL_FAST, true);
-
-    w->jitted = tb_module_apply_function(jit, f);
-    w->ir = f;
-    tb_module_ready_jit(jit);
-}
-
-static void putnum(int64_t num) {
-    printf("%lld", num);
-}
-
 int main(int argc, const char** argv) {
     cuik_init_terminal();
 
-    TB_FeatureSet features = { 0 };
-    ir_arena = tb_default_arena();
-    ir_module = tb_module_create_for_host(&features, true);
-    jit = tb_module_begin_jit(ir_module, 0);
-
-    // all JIT regions use the same prototype
-    TB_PrototypeParam params[] = { { TB_TYPE_PTR }, { TB_TYPE_PTR }, { TB_TYPE_PTR } };
-    TB_PrototypeParam ret = { TB_TYPE_I32 };
-    proto = tb_prototype_create(ir_module, TB_STDCALL, 3, params, 1, &ret, false);
-
-    {
-        TB_PrototypeParam params[] = { { TB_TYPE_PTR }, { TB_TYPE_PTR } };
-        TB_PrototypeParam ret = { TB_TYPE_I32 };
-        interp_proto = tb_prototype_create(ir_module, TB_STDCALL, 2, params, 1, &ret, false);
-
-        interp_sym = (TB_Symbol*) tb_extern_create(ir_module, -1, "interp", TB_EXTERNAL_SO_EXPORT);
-        tb_symbol_bind_ptr(interp_sym, &interp);
-    }
-
-    {
-        TB_PrototypeParam params[] = { { TB_TYPE_I32 } };
-        TB_PrototypeParam ret = { TB_TYPE_I32 };
-        putchar_proto = tb_prototype_create(ir_module, TB_STDCALL, 1, params, 1, &ret, false);
-
-        putchar_sym = (TB_Symbol*) tb_extern_create(ir_module, -1, "putchar", TB_EXTERNAL_SO_EXPORT);
-        tb_symbol_bind_ptr(putchar_sym, &putchar);
-    }
-
-    {
-        TB_PrototypeParam params[] = { { TB_TYPE_I64 } };
-        putnum_proto = tb_prototype_create(ir_module, TB_STDCALL, 1, params, 0, NULL, false);
-
-        putnum_sym = (TB_Symbol*) tb_extern_create(ir_module, -1, "putnum", TB_EXTERNAL_SO_EXPORT);
-        tb_symbol_bind_ptr(putnum_sym, &putnum);
-    }
-
-    {
-        TB_PrototypeParam ret = { TB_TYPE_I32 };
-        getchar_proto = tb_prototype_create(ir_module, TB_STDCALL, 0, NULL, 1, &ret, false);
-
-        getchar_sym = (TB_Symbol*) tb_extern_create(ir_module, -1, "getchar", TB_EXTERNAL_SO_EXPORT);
-        tb_symbol_bind_ptr(getchar_sym, &getchar);
+    thrd_t jit_thread;
+    if (thrd_create(&jit_thread, jit_thread_routine, NULL) != thrd_success) {
+        fprintf(stderr, "error: could not create JIT thread");
+        return EXIT_FAILURE;
     }
 
     nl_map_create(dict, 256);
@@ -982,6 +582,9 @@ int main(int argc, const char** argv) {
     // run interpreter+JIT
     interp(&env, &root);
 
-    tb_module_destroy(ir_module);
+    // wait for JIT thread to stop
+    jit.running = false;
+    thrd_join(&jit_thread, NULL);
+
     return 0;
 }

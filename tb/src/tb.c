@@ -197,6 +197,10 @@ TB_Assembly* tb_output_get_asm(TB_FunctionOutput* out) {
     return out->asm_out;
 }
 
+TB_API TB_Arena* tb_function_get_arena(TB_Function* f) {
+    return f->arena;
+}
+
 size_t tb_module_get_function_count(TB_Module* m) {
     return m->symbol_count[TB_SYMBOL_FUNCTION];
 }
