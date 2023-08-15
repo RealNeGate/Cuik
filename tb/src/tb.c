@@ -306,7 +306,7 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
     }
 
     f->control_node_count = 1;
-    f->active_control_node = f->start_node = tb_alloc_node(f, TB_START, TB_TYPE_TUPLE, 0, extra_size);
+    f->active_control_node = f->start_node = tb_alloc_node(f, TB_START, TB_TYPE_CONTROL, 0, extra_size);
 
     TB_NodeRegion* start = TB_NODE_GET_EXTRA(f->start_node);
     start->dom_depth = 0;

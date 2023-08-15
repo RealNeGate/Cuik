@@ -15,7 +15,7 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
 
     char* fname = sym->name;
     if (strcmp(fname, "memcpy") == 0) {
-        TB_Node* n2 = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_VOID, 4, sizeof(TB_NodeMemAccess));
+        TB_Node* n2 = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_CONTROL, 4, sizeof(TB_NodeMemAccess));
         set_input(passes, n2, n->inputs[0], 0); // control
         set_input(passes, n2, n->inputs[2], 1); // dst
         set_input(passes, n2, n->inputs[3], 2); // val
@@ -34,7 +34,7 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
 
         return n2;
     } else if (strcmp(fname, "memset") == 0) {
-        TB_Node* n2 = tb_alloc_node(f, TB_MEMSET, TB_TYPE_VOID, 4, sizeof(TB_NodeMemAccess));
+        TB_Node* n2 = tb_alloc_node(f, TB_MEMSET, TB_TYPE_CONTROL, 4, sizeof(TB_NodeMemAccess));
         set_input(passes, n2, n->inputs[0], 0); // control
         set_input(passes, n2, n->inputs[2], 1); // dst
         set_input(passes, n2, n->inputs[3], 2); // val

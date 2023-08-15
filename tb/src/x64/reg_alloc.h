@@ -1,5 +1,5 @@
 // https://ssw.jku.at/Research/Papers/Wimmer04Master/Wimmer04Master.pdf
-#define REG_ALLOC_LOG if (0)
+#define REG_ALLOC_LOG if (reg_alloc_log)
 
 typedef struct {
     int start, end;
@@ -88,8 +88,14 @@ static void add_use_pos(LiveInterval* interval, int t, int kind) {
 }
 
 static void add_range(LiveInterval* interval, int start, int end) {
-    LiveRange r = { start, end };
-    dyn_array_put(interval->ranges, r);
+    size_t count = dyn_array_length(interval->ranges);
+    if (count > 0 && interval->ranges[count - 1].start == end) {
+        // coalesce
+        interval->ranges[count - 1].start = start;
+    } else {
+        LiveRange r = { start, end };
+        dyn_array_put(interval->ranges, r);
+    }
 
     if (start < interval->start) interval->start = start;
     if (end < interval->start) interval->start = end;
@@ -618,6 +624,9 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
         add_range(&ra.intervals[i], 0, 1);
     }
 
+    dyn_array_destroy(ra.intervals[RBP].ranges);
+    dyn_array_destroy(ra.intervals[RSP].ranges);
+
     ra.endpoint = end;
     mark_callee_saved_constraints(ctx, ra.callee_saved);
 
@@ -672,45 +681,49 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                 RegIndex active_i = ra.active[rc][reg];
                 LiveInterval* it = &ra.intervals[active_i];
 
-                if (it->end < time) {
+                if (time >= it->end) {
                     REG_ALLOC_LOG printf("  #   expired %s (v%d)\n", reg_name(rc, reg), active_i);
                     set_remove(&ra.active_set[rc], reg);
                 } else {
-                    int active_end = it->ranges[it->active_range].end;
-                    if (time > active_end) {
-                        // find next inactive region
+                    // active -> inactive
+                    while (time >= it->ranges[it->active_range].end) {
                         assert(it->active_range > 0);
                         it->active_range -= 1;
 
-                        // active -> inactive
-                        REG_ALLOC_LOG printf("  #   active %s is going quiet for now (until %d, t=v%d)\n", reg_name(rc, reg), it->ranges[it->active_range].start, active_i);
+                        int hole_end = it->ranges[it->active_range].start;
+                        if (time < hole_end) {
+                            REG_ALLOC_LOG printf("  #   active %s is going quiet for now (until t=%d, v%d)\n", reg_name(rc, reg), hole_end, active_i);
 
-                        set_remove(&ra.active_set[rc], reg);
-                        dyn_array_put(ra.inactive, active_i);
+                            set_remove(&ra.active_set[rc], reg);
+                            dyn_array_put(ra.inactive, active_i);
+                            break;
+                        }
                     }
                 }
             }
 
             CUIK_TIMED_BLOCK("I->A") for (size_t i = 0; i < dyn_array_length(ra.inactive);) {
-                LiveInterval* it = &ra.intervals[ra.inactive[i]];
+                RegIndex inactive_i = ra.inactive[i];
+                LiveInterval* it = &ra.intervals[inactive_i];
 
-                if (it->end < time) {
-                    REG_ALLOC_LOG printf("  #   inactive %s has expired (v%d)\n", reg_name(it->reg_class, it->assigned), ra.inactive[i]);
+                int hole_end = it->ranges[it->active_range].start;
+                int active_end = it->ranges[it->active_range].end;
+
+                if (time > hole_end) {
+                    // inactive -> active
+                    REG_ALLOC_LOG printf("  #   inactive %s is active again (until t=%d, v%d)\n", reg_name(it->reg_class, it->assigned), active_end, inactive_i);
+
+                    // set active
+                    move_to_active(&ra, it, hole_end);
                     dyn_array_remove(ra.inactive, i);
-                    continue;
-                } else {
-                    int hole_end = it->ranges[it->active_range].start;
-                    if (time >= hole_end) {
-                        // inactive -> active
-                        REG_ALLOC_LOG printf("  #   inactive %s is active again (until t=%d, v%d)\n", reg_name(it->reg_class, it->assigned), end, ra.inactive[i]);
+                    interval = &ra.intervals[ri]; // might've resized the intervals
 
-                        // set active
-                        move_to_active(&ra, it, hole_end < time ? hole_end : time);
-                        dyn_array_remove(ra.inactive, i);
-
-                        interval = &ra.intervals[ri]; // might've resized the intervals
-                        continue;
+                    // expire
+                    if (time > it->end) {
+                        REG_ALLOC_LOG printf("  #   inactive %s has expired (v%d)\n", reg_name(it->reg_class, it->assigned), inactive_i);
+                        set_remove(&ra.active_set[rc], it->assigned);
                     }
+                    continue;
                 }
 
                 i++;
@@ -789,8 +802,12 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                     LiveInterval* end = split_interval_at(&ra, interval, target->start);
 
                     if (start != end) {
-                        // __debugbreak();
-                        insert_split_move(&ra, mbb->end - 3, start - ra.intervals, end - ra.intervals);
+                        if (start->spill > 0) {
+                            assert(end->spill <= 0 && "TODO: both can't be spills yet");
+                            insert_split_move(&ra, target->start + 1, start - ra.intervals, end - ra.intervals);
+                        } else {
+                            insert_split_move(&ra, mbb->terminator - 1, start - ra.intervals, end - ra.intervals);
+                        }
                     }
                 }
 

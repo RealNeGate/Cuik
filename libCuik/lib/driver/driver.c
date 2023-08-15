@@ -163,8 +163,8 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
 
         // print IR
         if (args->emit_ir) {
-            // tb_function_print(f, tb_default_print_callback, stdout);
-            tb_pass_print(p);
+            tb_function_print(f, tb_default_print_callback, stdout);
+            // tb_pass_print(p);
         }
 
         // codegen

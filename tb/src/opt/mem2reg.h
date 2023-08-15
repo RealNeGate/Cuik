@@ -192,7 +192,10 @@ static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* n, DynArray(TB_Node*)* stac
 
     if (kill) {
         log_info("%p: pass to %p", n, n->inputs[0]);
-        subsume_node(c->p, c->f, n, n->inputs[0]);
+
+        TB_Node* into = n->inputs[0];
+        set_input(c->p, n, NULL, 0);
+        subsume_node(c->p, c->f, n, into);
     }
 }
 
@@ -351,17 +354,18 @@ static bool add_configs(TB_Passes* p, TB_TemporaryStorage* tls, User* use, TB_No
             return false;
         }
 
+        TB_DataType dt = n->type == TB_LOAD ? n->dt : n->inputs[2]->dt;
         TB_Node* address = n->inputs[1];
         int size = (bits_in_data_type(pointer_size, n->dt) + 7) / 8;
 
         // see if it's a compatible configuration
-        int match = compatible_with_configs(*config_count, configs, base_offset, size, n->dt);
+        int match = compatible_with_configs(*config_count, configs, base_offset, size, dt);
         if (match == -1) {
             return false;
         } else if (match == -2) {
             // add new config
             tb_tls_push(tls, sizeof(AggregateConfig));
-            configs[(*config_count)++] = (AggregateConfig){ address, base_offset, size, n->dt };
+            configs[(*config_count)++] = (AggregateConfig){ address, base_offset, size, dt };
         } else if (configs[match].old_n != address) {
             log_warn("%s: %p SROA config matches but reaches so via a different node, please idealize nodes before mem2reg", p->f->super.name, address);
             return false;
@@ -614,17 +618,18 @@ static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_No
             if (TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
                 return COHERENCY_VOLATILE;
             } else {
+                TB_DataType mem_dt = n->type == TB_LOAD ? n->dt : n->inputs[2]->dt;
                 if (!initialized) {
-                    dt = n->dt;
+                    dt = mem_dt;
                     initialized = true;
+                } else {
+                    // we're hoping all data types match in size to continue along
+                    int bits = bits_in_data_type(pointer_size, mem_dt);
+                    if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
+                        return COHERENCY_BAD_DATA_TYPE;
+                    }
+                    dt_bits = bits;
                 }
-
-                // we're hoping all data types match in size to continue along
-                int bits = bits_in_data_type(pointer_size, dt);
-                if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
-                    return COHERENCY_BAD_DATA_TYPE;
-                }
-                dt_bits = bits;
             }
         } else {
             log_debug("%p uses pointer arithmatic (%s)", address, tb_node_get_name(n));

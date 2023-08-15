@@ -271,7 +271,7 @@ TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnit
 void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, uint32_t alignment, bool is_volatile) {
     assert(TB_DATA_TYPE_EQUALS(dt, val->dt));
 
-    TB_Node* n = tb_alloc_node(f, TB_STORE, dt, 3, sizeof(TB_NodeMemAccess));
+    TB_Node* n = tb_alloc_node(f, TB_STORE, TB_TYPE_CONTROL, 3, sizeof(TB_NodeMemAccess));
     n->inputs[0] = f->active_control_node; // control edge
     n->inputs[1] = addr;
     n->inputs[2] = val;
@@ -814,7 +814,7 @@ TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b) {
 }
 
 TB_Node* tb_inst_region(TB_Function* f) {
-    TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_TUPLE, 0, sizeof(TB_NodeRegion));
+    TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
     r->dom_depth = -1; // unresolved
     r->dom = NULL;

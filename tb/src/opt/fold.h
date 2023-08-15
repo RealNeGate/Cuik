@@ -163,8 +163,8 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
         if (a->type == TB_SHR && b->type == TB_SHL) {
             uint64_t shl_amt, shr_amt;
             if (a->inputs[1] == b->inputs[1] &&
-                get_int_const(a->inputs[2], &shl_amt) &&
-                get_int_const(b->inputs[2], &shr_amt) &&
+                get_int_const(a->inputs[2], &shr_amt) &&
+                get_int_const(b->inputs[2], &shl_amt) &&
                 shl_amt == bits - shr_amt) {
                 // convert to rotate left
                 n->type = TB_ROL;
@@ -337,11 +337,16 @@ static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_N
     switch (n->type) {
         default: return n;
 
-        case TB_ADD: return n->inputs[1];
-        case TB_SUB: return n->inputs[1];
-        case TB_MUL: return n->inputs[1];
-        case TB_UDIV: return tb_inst_poison(f);
-        case TB_SDIV: return tb_inst_poison(f);
+        case TB_SHL:
+        case TB_SHR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_MUL:
+        return n->inputs[1];
+
+        case TB_UDIV:
+        case TB_SDIV:
+        return tb_inst_poison(f);
     }
 }
 

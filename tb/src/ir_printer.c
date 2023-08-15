@@ -188,6 +188,11 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             break;
         }
 
+        case TB_STORE: {
+            tb_print_type(n->inputs[2]->dt, callback, user_data);
+            break;
+        }
+
         case TB_START:
         case TB_REGION:
         case TB_BRANCH:

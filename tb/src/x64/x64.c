@@ -127,8 +127,8 @@ static bool wont_spill_around(int t) {
     return t == INST_LABEL || t == TEST || t == CMP || t == JMP || (t >= JO && t <= JG);
 }
 
-static bool is_terminator_or_label(int t) {
-    return t == INST_LABEL || t == JMP || (t >= JO && t <= JG);
+static bool is_terminator(int t) {
+    return t == INST_TERMINATOR || t == INT3 || t == UD2;
 }
 
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
@@ -867,9 +867,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
         case TB_MEMCPY: {
             TB_DataType ptr_dt = TB_TYPE_I64;
-            SUBMIT(inst_move(ptr_dt, RDI, isel(ctx, n->inputs[1])));
-            SUBMIT(inst_move(ptr_dt, RSI, isel(ctx, n->inputs[2])));
-            SUBMIT(inst_move(ptr_dt, RCX, isel(ctx, n->inputs[3])));
+            int rdi = isel(ctx, n->inputs[1]);
+            int rsi = isel(ctx, n->inputs[2]);
+            int rcx = isel(ctx, n->inputs[3]);
+
+            hint_reg(ctx, rdi, RDI);
+            hint_reg(ctx, rsi, RSI);
+            hint_reg(ctx, rcx, RCX);
+            SUBMIT(inst_move(ptr_dt, RDI, rdi));
+            SUBMIT(inst_move(ptr_dt, RSI, rsi));
+            SUBMIT(inst_move(ptr_dt, RCX, rcx));
 
             Inst* i = alloc_inst(MOVSB, TB_TYPE_VOID, 0, 3, 0);
             i->flags |= INST_REP;
@@ -1059,6 +1066,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 fence_last(ctx, bb, n);
             }
 
+            SUBMIT(alloc_inst(INST_TERMINATOR, TB_TYPE_VOID, 0, 0, 0));
+
             if (r->succ_count == 1) {
                 if (ctx->fallthrough != succ[0]) {
                     SUBMIT(inst_jmp(succ[0]));
@@ -1167,8 +1176,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
         case TB_STORE: {
+            TB_DataType store_dt = n->inputs[2]->dt;
             int src = isel(ctx, n->inputs[2]);
-            int mov_op = (TB_IS_FLOAT_TYPE(n->dt) || n->dt.width) ? FP_MOV : MOV;
+            int mov_op = (TB_IS_FLOAT_TYPE(store_dt) || store_dt.width) ? FP_MOV : MOV;
 
             Inst* inst = NULL;
             TB_Node* addr = n->inputs[1];
@@ -1176,10 +1186,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 use(ctx, addr);
 
                 int pos = get_stack_slot(ctx, addr);
-                inst = inst_op_mr(mov_op, n->dt, RBP, -1, SCALE_X1, pos, src);
+                inst = inst_op_mr(mov_op, store_dt, RBP, -1, SCALE_X1, pos, src);
             } else {
                 int base = isel(ctx, addr);
-                inst = inst_op_mr(mov_op, n->dt, base, -1, SCALE_X1, 0, src);
+                inst = inst_op_mr(mov_op, store_dt, base, -1, SCALE_X1, 0, src);
             }
 
             fence(ctx, n);
@@ -1967,12 +1977,13 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
 
     // emit prologue
     func_out->prologue_length = emit_prologue(ctx);
+    EMITA(&ctx->emit, ".body:\n");
 
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
         InstCategory cat = inst->type > 1024 ? INST_BINOP : inst_table[inst->type].cat;
 
-        if (0) {
+        if (1) {
             EMITA(e, "  \x1b[32m# %s t=%d { outs:", inst->type < 1024 ? inst_table[inst->type].mnemonic : "???", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
                 EMITA(e, " v%d", inst->operands[i]);
@@ -1984,7 +1995,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             EMITA(e, "}\x1b[0m\n");
         }
 
-        if (inst->type == INST_ENTRY) {
+        if (inst->type == INST_ENTRY || inst->type == INST_TERMINATOR) {
             // does nothing
         } else if (inst->type == INST_LABEL) {
             TB_Node* bb = inst->n;
@@ -2009,6 +2020,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         } else if (cat == INST_BYTE || cat == INST_BYTE_EXT) {
             if (inst->flags & INST_REP) EMIT1(e, 0xF3);
 
+            EMITA(e, "  %s\n", inst_table[inst->type].mnemonic);
             inst0(e, inst->type, inst->dt);
         } else if (inst->type == INST_ZERO) {
             Val dst;

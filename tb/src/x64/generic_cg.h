@@ -13,8 +13,10 @@ enum {
 
 enum {
     INST_LABEL = 1024,
-    INST_BRANCH,
     INST_LINE,
+
+    // marks the terminator
+    INST_TERMINATOR,
 
     // this is where parameters come from
     INST_ENTRY,
@@ -34,6 +36,7 @@ typedef struct MachineBB {
     Inst* first;
 
     int start, end;
+    int terminator;
 
     // local live sets
     Set gen, kill;
@@ -124,7 +127,7 @@ static ptrdiff_t alloc_free_reg(Ctx* restrict ctx, int reg_class);
 static void init_regalloc(Ctx* restrict ctx);
 
 static TB_X86_DataType legalize(TB_DataType dt);
-static bool is_terminator_or_label(int type);
+static bool is_terminator(int type);
 static bool wont_spill_around(int type);
 static int classify_reg_class(TB_DataType dt);
 static int isel(Ctx* restrict ctx, TB_Node* n);
@@ -376,7 +379,7 @@ static void hint_reg(Ctx* restrict ctx, int i, int j) {
 ////////////////////////////////
 // Data flow analysis
 ////////////////////////////////
-static int liveness(Ctx* restrict ctx, NL_HashSet* visited, TB_Function* f) {
+static int liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t interval_count = dyn_array_length(ctx->intervals);
     TB_Arena* arena = tmp_arena;
 
@@ -420,6 +423,8 @@ static int liveness(Ctx* restrict ctx, NL_HashSet* visited, TB_Function* f) {
                     mbb = &nl_map_get_checked(seq_bb, bb);
                     mbb->first = inst->next;
                     mbb->start = timeline;
+                } else if (is_terminator(inst->type) && mbb->terminator == 0) {
+                    mbb->terminator = timeline;
                 }
 
                 Set* restrict gen = &mbb->gen;
@@ -446,11 +451,12 @@ static int liveness(Ctx* restrict ctx, NL_HashSet* visited, TB_Function* f) {
     }
 
     // generate global live sets
-    nl_hashset_clear(visited);
     DynArray(TB_Node*) worklist = dyn_array_create(TB_Node*, ctx->order.count);
 
-    dyn_array_put(worklist, ctx->f->start_node);
-    nl_hashset_put(visited, ctx->f->start_node);
+    // all nodes go into the worklist
+    FOREACH_N(i, 0, ctx->order.count) {
+        dyn_array_put(worklist, ctx->order.traversal[i]);
+    }
 
     Set tmp_out = set_create_in_arena(arena, interval_count);
     while (dyn_array_length(worklist)) CUIK_TIMED_BLOCK("global iter") {
@@ -480,7 +486,7 @@ static int liveness(Ctx* restrict ctx, NL_HashSet* visited, TB_Function* f) {
         }
 
         if (changes) {
-            FOREACH_N(i, 0, r->succ_count) if (nl_hashset_put(visited, r->succ[i])) {
+            FOREACH_N(i, 0, r->succ_count) {
                 dyn_array_put(worklist, r->succ[i]);
             }
         }
@@ -651,13 +657,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // need to schedule
     tb_pass_schedule(p);
 
-    /*reg_alloc_log = strcmp(f->super.name, "test") == 0;
+    reg_alloc_log = strcmp(f->super.name, "murmur3_32") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }*/
+    }
 
     Ctx ctx = {
         .module = f->super.module,
@@ -722,7 +728,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     {
         int end;
         CUIK_TIMED_BLOCK("data flow") {
-            end = liveness(&ctx, &visited, f);
+            end = liveness(&ctx, f);
         }
 
         // we can in theory have other regalloc solutions and eventually will put
@@ -735,7 +741,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         }
     }
 
-    nl_hashset_free(visited);
     nl_map_free(ctx.emit.labels);
     nl_map_free(ctx.values);
     nl_map_free(ctx.machine_bbs);
