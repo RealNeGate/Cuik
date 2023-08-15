@@ -63,7 +63,7 @@ typedef struct
     stbi_uc *img_buffer_original, *img_buffer_original_end;
 } stbi__context;
 
-int callee(int x, int y, int z);
+/*int callee(int x, int y, int z);
 
 int test(int x, int y) {
     return callee(x, 0, x / y);
@@ -96,27 +96,7 @@ void stbi__fill_bits(stbi__zbuf *z)
 void stbi__skip(stbi__context *s, int n)
 {
     int blen = (int) (s->img_buffer_end - s->img_buffer);
-}
-
-#if 0
-int tiling(int* a, size_t i) {
-    return a[i*2] + a[i*2 + 1] + a[i*2 + 2];
-}
-
-void simple(int* a, int* n, int b) {
-    a[(*n)++] = b;
-}
-
-int bounds_checks(size_t n, int* arr) {
-    int sum = 0;
-    // memset(&sum, 0, sizeof(sum));
-
-    for (size_t i = 0; i < n; i++) {
-        // if (i >= n) return -1; // bounds check
-        sum += arr[i];
-    }
-    return sum;
-}
+}*/
 
 uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
@@ -149,16 +129,43 @@ uint32_t murmur3_32(const void* key, size_t len) {
     return (h ^ (h >> 16));
 }
 
-// int bar(int x, int y);
-// int foo(int x) { return bar(x+1 & 3 * 16, 10); }
-int foo() { return 42+1 & 3 * 16; }
+/*int callee(int x, int y, int z);
+
+int test(int x, int y) {
+    return callee(x, 0, x / y);
+}*/
+
+static int foo() { return 42+1 & 3 * 16; }
 
 int main() {
-    printf("Woah! %d\n", foo());
+    // printf("Woah! %d\n", foo());
     printf("Wack! %d\n", murmur3_32("Hello", 5));
     printf("Wack! %d\n", murmur3_32("Why", 3));
     return 0;
 }
+
+#if 0
+int tiling(int* a, size_t i) {
+    return a[i*2] + a[i*2 + 1] + a[i*2 + 2];
+}
+
+void simple(int* a, int* n, int b) {
+    a[(*n)++] = b;
+}
+
+int bounds_checks(size_t n, int* arr) {
+    int sum = 0;
+    // memset(&sum, 0, sizeof(sum));
+
+    for (size_t i = 0; i < n; i++) {
+        // if (i >= n) return -1; // bounds check
+        sum += arr[i];
+    }
+    return sum;
+}
+
+// int bar(int x, int y);
+// int foo(int x) { return bar(x+1 & 3 * 16, 10); }
 #endif
 
 #if 0

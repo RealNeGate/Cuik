@@ -768,6 +768,7 @@ static void irgen_job(void* arg) {
                 tb_pass_codegen(p, false);
                 tb_pass_exit(p);
 
+                // log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);
                 tb_arena_clear(allocator);
             }
         }
