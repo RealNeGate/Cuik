@@ -91,7 +91,10 @@ static TB_Node* find_lca(TB_Node* a, TB_Node* b) {
 
     while (a != b) {
         a = idom(a);
+        if (a == NULL) return b;
+
         b = idom(b);
+        if (b == NULL) return a;
     }
 
     return a;
