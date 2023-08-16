@@ -10,8 +10,7 @@ static thread_local const char* function_name;
 
 static thread_local TB_PassingRule func_return_rule;
 
-// For aggregate returns
-static _Thread_local TB_Attrib* scope_attrib;
+static _Thread_local TB_Node* current_scope;
 
 static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc);
 
@@ -1508,17 +1507,17 @@ static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc)
     }
 
     // TODO(NeGate): Fix this up later!!!
-    static thread_local TB_FileID last_file_id;
+    static thread_local TB_SourceFile* last_file;
     static thread_local const char* last_filepath;
 
     ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
     if (rloc.file->filename[0] != '<') {
         if (rloc.file->filename != last_filepath) {
             last_filepath = rloc.file->filename;
-            last_file_id = tb_file_create(tu->ir_mod, rloc.file->filename);
+            last_file = tb_get_source_file(tu->ir_mod, rloc.file->filename);
         }
 
-        tb_inst_set_location(func, last_file_id, rloc.line);
+        tb_inst_set_location(func, last_file, rloc.line, rloc.column);
     }
 }
 
@@ -1555,7 +1554,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 tb_inst_goto(func, target.reg);
             } else {
                 // TODO(NeGate): Handle computed goto case
-                abort();
+                assert(0 && "todo: computed goto");
             }
             break;
         }
@@ -1563,9 +1562,14 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             Stmt** kids = s->compound.kids;
             size_t count = s->compound.kids_count;
 
+            // TB_Node* old = current_scope;
+            // current_scope = ...;
+
             for (size_t i = 0; i < count; i++) {
                 irgen_stmt(tu, func, kids[i]);
             }
+
+            // current_scope = old;
             break;
         }
         case STMT_DECL: {
@@ -1623,8 +1627,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
             TB_Node* addr = tb_inst_local(func, size, align);
             if (tu->has_tb_debug_info && s->decl.name != NULL) {
-                TB_Attrib* a = tb_function_attrib_variable(func, -1, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
-                tb_node_append_attrib(addr, a);
+                tb_function_attrib_variable(func, addr, current_scope, -1, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
             }
 
             if (s->decl.initial) {

@@ -129,12 +129,6 @@ uint32_t murmur3_32(const void* key, size_t len) {
     return (h ^ (h >> 16));
 }
 
-/*int callee(int x, int y, int z);
-
-int test(int x, int y) {
-    return callee(x, 0, x / y);
-}*/
-
 static int foo() { return 42+1 & 3 * 16; }
 
 int main() {

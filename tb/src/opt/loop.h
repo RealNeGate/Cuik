@@ -1,7 +1,7 @@
 
 TB_Attrib* get_debug_var(TB_Node* n) {
-    for (TB_Attrib* a = n->first_attrib; a != NULL; a = a->next) {
-        if (a->type == TB_ATTRIB_VARIABLE) return a;
+    dyn_array_for(i, n->attribs) {
+        if (n->attribs[i].tag == TB_ATTRIB_VARIABLE) return &n->attribs[i];
     }
 
     return NULL;

@@ -29,13 +29,10 @@ int main() {
 
                 int N = 8 * ((f * e - c * d * g) * m - c * d * e - f * g - l * d * n);
 
-                z[o] = D;
-                b[o] = string[N > 0 ? N : 0];
-
-                /*if (22 > y && y > 0 && x > 0 && 80 > x && D > z[o]) {
+                if (22 > y && y > 0 && x > 0 && 80 > x && D > z[o]) {
                     z[o] = D;
                     b[o] = string[N > 0 ? N : 0];
-                }*/
+                }
             }
         }
 

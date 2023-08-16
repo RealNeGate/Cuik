@@ -405,10 +405,26 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
         ra->free_pos[RSP] = 0;
     }
 
+    // try hint
+    int highest = -1;
+    int hint_reg = -1;
+
+    if (interval->hint >= 0) {
+        LiveInterval* hint = &ra->intervals[interval->hint];
+        assert(hint->reg_class == rc);
+        hint_reg = hint->assigned;
+
+        if (interval->end <= ra->free_pos[hint_reg]) {
+            highest = hint_reg;
+        }
+    }
+
     // pick highest free pos
-    int highest = 0;
-    FOREACH_N(i, 1, 16) if (ra->free_pos[i] > ra->free_pos[highest]) {
-        highest = i;
+    if (highest < 0) {
+        highest = 0;
+        FOREACH_N(i, 1, 16) if (ra->free_pos[i] > ra->free_pos[highest]) {
+            highest = i;
+        }
     }
 
     int pos = ra->free_pos[highest];
@@ -445,9 +461,19 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             interval = &ra->intervals[old_reg];
         }
 
-        if (interval->end < pos) {
+        if (interval->end <= pos) {
             // we can steal it completely
-            REG_ALLOC_LOG printf("  #   assign to %s\n", reg_name(rc, highest));
+            REG_ALLOC_LOG printf("  #   assign to %s", reg_name(rc, highest));
+
+            if (interval->hint >= 0) {
+                if (highest == hint_reg) {
+                    REG_ALLOC_LOG printf(" (HINTED)\n");
+                } else {
+                    REG_ALLOC_LOG printf(" (FAILED HINT %s)\n", reg_name(rc, hint_reg));
+                }
+            } else {
+                REG_ALLOC_LOG printf("\n");
+            }
         } else {
             // TODO(NeGate): split current at optimal position before current
             interval->assigned = highest;
@@ -735,17 +761,6 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
             ptrdiff_t reg = interval->reg;
             if (reg < 0) {
-                // try hint
-                if (interval->hint >= 0) {
-                    LiveInterval* hint = &ra.intervals[interval->hint];
-                    assert(hint->reg_class == rc);
-
-                    if (!set_get(&ra.active_set[rc], hint->assigned)) {
-                        REG_ALLOC_LOG printf("  #   assign to %s (HINTED)\n", reg_name(rc, hint->assigned));
-                        reg = hint->assigned;
-                    }
-                }
-
                 // find register for virtual interval
                 if (reg < 0) {
                     reg = allocate_free_reg(&ra, interval);

@@ -1,4 +1,4 @@
-// cuik main.c -r --lib user32.lib,d3d11.lib,d3dcompiler.lib,dxgi.lib,dxguid.lib
+// cuik main.c -g
 //
 // example how to set up D3D11 rendering on Windows in C
 // require Windows 7 Platform Update or newer Windows version
@@ -17,7 +17,7 @@
 
 #define STBI_NO_SIMD
 #define STB_IMAGE_IMPLEMENTATION
-#include "../stb_image.h"
+#include "stb_image.h"
 
 // replace this with your favorite Assert() implementation
 #include <intrin.h>

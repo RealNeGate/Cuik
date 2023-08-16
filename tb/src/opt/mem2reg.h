@@ -66,10 +66,10 @@ static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Nod
     set_input(c->p, n, block, 0);
 
     // append variable attrib
-    for (TB_Attrib* a = c->to_promote[var]->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_VARIABLE) {
+    /*for (TB_Attrib* a = c->to_promote[var]->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_VARIABLE) {
         tb_node_append_attrib(n, a);
         break;
-    }
+    }*/
 
     log_debug("%p: insert new PHI node (in %p)", n, block);
     tb_pass_mark(c->p, n);

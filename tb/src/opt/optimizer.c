@@ -568,9 +568,9 @@ static void generate_use_lists(TB_Passes* restrict queue, TB_Function* f) {
 
 TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
-    *p = (TB_Passes){ .f = f, .old_line_attrib = f->line_attrib, .old_arena = f->arena };
+    *p = (TB_Passes){ .f = f };
 
-    f->line_attrib = NULL; // don't add line info automatically to pimizer-generated nodes
+    f->line_attrib.loc.file = NULL;
     f->arena = arena;
 
     verify_tmp_arena(p);
@@ -623,9 +623,6 @@ bool tb_pass_peephole(TB_Passes* p) {
 void tb_pass_exit(TB_Passes* p) {
     verify_tmp_arena(p);
     TB_Function* f = p->f;
-
-    f->line_attrib = p->old_line_attrib;
-    f->arena = p->old_arena;
 
     nl_hashset_free(p->cse_nodes);
     nl_hashset_free(p->visited);

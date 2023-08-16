@@ -11,7 +11,7 @@ typedef uint32_t ReturnPatch;
 
 typedef struct LabelPatch {
     int pos;
-    TB_Label target_lbl;
+    int target_lbl;
 } LabelPatch;
 
 typedef struct {

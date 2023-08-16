@@ -30,7 +30,7 @@ TB_API bool tb_uses_effects(TB_Node* n) {
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_TRAP:
-        case TB_SCALL:
+        case TB_SYSCALL:
         case TB_CALL:
         return true;
 
@@ -70,7 +70,7 @@ TB_API bool tb_has_effects(TB_Node* n) {
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_TRAP:
-        case TB_SCALL:
+        case TB_SYSCALL:
         case TB_CALL:
         return true;
 

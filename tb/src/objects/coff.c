@@ -246,7 +246,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
     }
 
     TB_SectionGroup debug_sections = { 0 };
-    if (dbg) {
+    if (dbg) CUIK_TIMED_BLOCK("generate debug") {
         debug_sections = dbg->generate_debug_info(m, tls);
     }
 

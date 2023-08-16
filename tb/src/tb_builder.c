@@ -49,21 +49,39 @@ bool tb_node_is_constant_zero(TB_Node* n) {
     return false;
 }
 
-void tb_node_append_attrib(TB_Node* n, TB_Attrib* a) {
-    a->next = n->first_attrib;
-    n->first_attrib = a;
+void tb_function_attrib_variable(TB_Function* f, TB_Node* n, TB_Node* parent, ptrdiff_t len, const char* name, TB_DebugType* type) {
+    if (n->attribs == NULL) {
+        n->attribs = dyn_array_create(TB_Attrib, 4);
+    }
+
+    TB_Attrib a = { TB_ATTRIB_VARIABLE, .var = { parent, tb__tb_arena_strdup(f->super.module, len, name), type } };
+    dyn_array_put(n->attribs, a);
 }
 
-TB_Attrib* tb_function_attrib_variable(TB_Function* f, ptrdiff_t len, const char* name, TB_DebugType* type) {
-    TB_Attrib* a = tb_platform_heap_alloc(sizeof(TB_Attrib));
-    *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .var = { tb__tb_arena_strdup(f->super.module, len, name), type } };
-    return a;
+void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent) {
+    if (n->attribs == NULL) {
+        n->attribs = dyn_array_create(TB_Attrib, 4);
+    }
+
+    TB_Attrib a = { TB_ATTRIB_VARIABLE, .scope = { parent } };
+    dyn_array_put(n->attribs, a);
 }
 
-TB_Attrib* tb_function_attrib_scope(TB_Function* f, TB_Attrib* parent_scope) {
-    TB_Attrib* a = tb_platform_heap_alloc(sizeof(TB_Attrib));
-    *a = (TB_Attrib) { .type = TB_ATTRIB_VARIABLE, .scope = { parent_scope } };
-    return a;
+void tb_function_attrib_location(TB_Function* f, TB_Node* n, TB_SourceFile* file, int line, int column) {
+    if (n->attribs == NULL) {
+        n->attribs = dyn_array_create(TB_Attrib, 4);
+    }
+
+    TB_Attrib a = { TB_ATTRIB_LOCATION, .loc = { file, line, column } };
+    dyn_array_put(n->attribs, a);
+}
+
+void tb_inst_set_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
+    f->line_attrib = (TB_Attrib){ TB_ATTRIB_LOCATION, .loc = { file, line, column } };
+}
+
+void tb_inst_reset_location(TB_Function* f) {
+    f->line_attrib.loc.file = NULL;
 }
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
@@ -84,7 +102,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     n->dt = dt;
     n->input_count = input_count;
     n->extra_count = extra;
-    n->first_attrib = NULL;
+    n->attribs = NULL;
 
     if (input_count > 0) {
         n->inputs = alloc_from_node_arena(f, input_count * sizeof(TB_Node*));
@@ -97,8 +115,13 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
         memset(n->extra, 0, n->extra_count);
     }
 
-    if (f->line_attrib != NULL) {
-        tb_node_append_attrib(n, f->line_attrib);
+    // effect nodes get line info
+    if (f->line_attrib.loc.file != NULL && dt.type == TB_CONTROL) {
+        if (n->attribs == NULL) {
+            n->attribs = dyn_array_create(TB_Attrib, 4);
+        }
+
+        dyn_array_put(n->attribs, f->line_attrib);
     }
 
     return n;
@@ -236,12 +259,6 @@ TB_Node* tb_inst_poison(TB_Function* f) {
     return n;
 }
 
-void tb_inst_set_location(TB_Function* f, TB_FileID file, int line) {
-    TB_Attrib* a = alloc_from_node_arena(f, sizeof(TB_Attrib));
-    *a = (TB_Attrib) { .type = TB_ATTRIB_LOCATION, .loc = { file, line } };
-    f->line_attrib = a;
-}
-
 TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment) {
     assert(size > 0);
     assert(alignment > 0 && tb_is_power_of_two(alignment));
@@ -377,48 +394,67 @@ TB_Node* tb_inst_safepoint(TB_Function* f, size_t param_count, TB_Node** params)
 }
 
 TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_node(f, TB_SCALL, dt, 2 + param_count, 0);
+    TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 2 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*));
     n->inputs[0] = f->active_control_node;
     n->inputs[1] = syscall_num;
     memcpy(n->inputs, params, param_count * sizeof(TB_Node*));
 
-    f->active_control_node = n;
-    return n;
+    // control proj
+    TB_Node* cproj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
+    cproj->inputs[0] = n;
+    TB_NODE_SET_EXTRA(cproj, TB_NodeProj, .index = 0);
+    f->active_control_node = cproj;
+
+    // return
+    TB_Node* dproj = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
+    dproj->inputs[0] = n;
+    TB_NODE_SET_EXTRA(dproj, TB_NodeProj, .index = 1);
+
+    TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+    c->proto = NULL;
+    c->projs[0] = cproj;
+    c->projs[1] = dproj;
+    return dproj;
 }
 
 TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
-    size_t proj_count = proto->return_count > 1 ? proto->return_count : 0;
+    size_t proj_count = 1 + (proto->return_count > 1 ? proto->return_count : 1);
 
-    TB_DataType dt;
-    if (proto->return_count > 1) {
-        dt = TB_TYPE_TUPLE;
-    } else if (proto->return_count == 1) {
-        dt = TB_PROTOTYPE_RETURNS(proto)->dt;
-    } else {
-        dt = TB_TYPE_VOID;
-    }
-
-    TB_Node* n = tb_alloc_node(f, TB_CALL, dt, 2 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
+    TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 2 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
     n->inputs[0] = f->active_control_node;
     n->inputs[1] = target;
     memcpy(n->inputs + 2, params, param_count * sizeof(TB_Node*));
-    f->active_control_node = n;
 
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
     c->proto = proto;
 
-    if (proto->return_count > 1) {
-        // create projections
-        TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
-        FOREACH_N(i, 0, proto->return_count) {
-            TB_Node* proj = tb_alloc_node(f, TB_PROJ, rets[i].dt, 1, sizeof(TB_NodeProj));
-            proj->inputs[0] = n;
-            TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i);
-        }
+    // control proj
+    TB_Node* cproj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
+    cproj->inputs[0] = n;
+    TB_NODE_SET_EXTRA(cproj, TB_NodeProj, .index = 0);
 
-        return (TB_MultiOutput){ .count = proto->return_count, .multiple = c->projs };
+    // create data projections
+    TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
+    FOREACH_N(i, 0, proto->return_count) {
+        TB_Node* proj = tb_alloc_node(f, TB_PROJ, rets[i].dt, 1, sizeof(TB_NodeProj));
+        proj->inputs[0] = n;
+        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i + 1);
+
+        c->projs[i + 1] = proj;
+    }
+
+    // we'll slot a NULL so it's easy to tell when it's empty
+    if (proto->return_count == 0) {
+        c->projs[1] = NULL;
+    }
+
+    c->projs[0] = cproj;
+    f->active_control_node = cproj;
+
+    if (proto->return_count == 1) {
+        return (TB_MultiOutput){ .count = proto->return_count, .single = c->projs[1] };
     } else {
-        return (TB_MultiOutput){ .count = proto->return_count, .single = n };
+        return (TB_MultiOutput){ .count = proto->return_count, .multiple = c->projs + 1 };
     }
 }
 

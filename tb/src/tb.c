@@ -112,8 +112,6 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* fe
         m->features = *features;
     }
 
-    dyn_array_put(m->files, (TB_File){ 0 });
-
     // we start a little off the start just because
     mtx_init(&m->lock, mtx_plain);
 
@@ -240,31 +238,30 @@ void tb_module_destroy(TB_Module* m) {
     tb_platform_heap_free(m);
 }
 
-TB_FileID tb_file_create(TB_Module* m, const char* path) {
+TB_SourceFile* tb_get_source_file(TB_Module* m, const char* path) {
     mtx_lock(&m->lock);
 
-    // skip the NULL file entry
-    // TODO(NeGate): we should introduce a hash map
-    FOREACH_N(i, 1, dyn_array_length(m->files)) {
-        if (strcmp(m->files[i].path, path) == 0) {
-            mtx_unlock(&m->lock);
-            return i;
-        }
+    NL_Slice key = {
+        .length = strlen(path),
+        .data = (const uint8_t*) path,
+    };
+
+    TB_SourceFile* file;
+    ptrdiff_t search = nl_map_get(m->files, key);
+    if (search < 0) {
+        file = tb_arena_alloc(get_permanent_arena(m), sizeof(TB_SourceFile) + key.length + 1);
+        file->id = -1;
+        file->len = key.length;
+
+        memcpy(file->path, key.data, key.length);
+        key.data = file->path;
+
+        nl_map_put(m->files, key, file);
+    } else {
+        file = m->files[search].v;
     }
-
-    // Allocate string (for now they all live to the end of the module, we might
-    // allow for changing this later, doesn't matter for AOT... which is the usecase
-    // of this?)
-    size_t len = strlen(path);
-    char* newstr = tb_arena_alloc(get_permanent_arena(m), len + 1);
-    memcpy(newstr, path, len);
-
-    TB_File f = { .path = newstr };
-    TB_FileID id = dyn_array_length(m->files);
-    dyn_array_put(m->files, f);
-
     mtx_unlock(&m->lock);
-    return id;
+    return file;
 }
 
 TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_t param_count, const TB_PrototypeParam* params, size_t return_count, const TB_PrototypeParam* returns, bool has_varargs) {

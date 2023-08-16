@@ -23,11 +23,6 @@ struct TB_Passes {
     // for the entire duration of the TB_Passes.
     TB_ThreadInfo* pinned_thread;
 
-    // some function state is changed for the duration of the
-    // optimizer run, we need to track that to reset it
-    TB_Attrib* old_line_attrib;
-    TB_Arena* old_arena;
-
     DynArray(TB_Node*) queue;
     NL_HashSet visited;
 

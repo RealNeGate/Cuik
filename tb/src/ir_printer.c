@@ -87,7 +87,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_STORE: return "store";
 
         case TB_CALL: return "call";
-        case TB_SCALL: return "syscall";
+        case TB_SYSCALL: return "syscall";
         case TB_BRANCH: return "branch";
 
         default: tb_todo();return "(unknown)";
@@ -132,9 +132,11 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
     }
 
     bool is_effect = n->type == TB_START || n->type == TB_REGION || (n->type >= TB_CALL && n->type <= TB_TRAP);
-    P("  r%p [style=\"rounded,filled\"; shape=box; fillcolor=%s; label=\"%s ", n, is_effect ? "lightgrey" : "antiquewhite1", tb_node_get_name(n));
+    P("  r%p [style=\"rounded,filled\"; shape=box; fillcolor=%s; label=\"", n, is_effect ? "lightgrey" : "antiquewhite1");
     switch (n->type) {
         case TB_INTEGER_CONST: {
+            P("%s ", tb_node_get_name(n));
+
             TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
             tb_print_type(n->dt, callback, user_data);
 
@@ -155,15 +157,18 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
 
         case TB_MEMBER_ACCESS: {
             TB_NodeMember* m = TB_NODE_GET_EXTRA(n);
-            P("%"PRId64, m->offset);
+            P("member %"PRId64, m->offset);
             break;
         }
 
         case TB_PROJ: {
-            if (n->inputs[0]->type == TB_BRANCH) {
+            int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+            if (n->inputs[0]->type == TB_CALL && index == 0) {
+                P("cproj");
+            } else if (n->inputs[0]->type == TB_BRANCH) {
                 // branch projections can get nicer looking
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n->inputs[0]);
-                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
 
                 TB_Node* key = n->inputs[0]->input_count > 1 ? n->inputs[0]->inputs[1] : NULL;
                 if (br->keys[0] == 0 && key && key->dt.type == TB_INT && key->dt.data == 1) {
@@ -175,12 +180,15 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
                     P("is %d?", br->keys[index - 1]);
                 }
             } else {
-                P("[%d]", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
+                P("proj ");
+                tb_print_type(n->dt, callback, user_data);
+                P(" [%d]", index);
             }
             break;
         }
 
         case TB_RET: {
+            P("ret ");
             FOREACH_N(i, 1, n->input_count) {
                 if (i != 1) P(", ");
                 tb_print_type(n->inputs[i]->dt, callback, user_data);
@@ -189,6 +197,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
         }
 
         case TB_STORE: {
+            P("store ");
             tb_print_type(n->inputs[2]->dt, callback, user_data);
             break;
         }
@@ -196,9 +205,11 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
         case TB_START:
         case TB_REGION:
         case TB_BRANCH:
+        P("%s", tb_node_get_name(n));
         break;
 
         default:
+        P("%s ", tb_node_get_name(n));
         tb_print_type(n->dt, callback, user_data);
         break;
     }

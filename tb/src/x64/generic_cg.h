@@ -86,9 +86,9 @@ typedef struct {
     MachineBBs machine_bbs;
 
     // Line info
-    DynArray(TB_Line) lines;
-    TB_FileID last_file;
-    int last_line;
+    DynArray(TB_Location) locations;
+    TB_SourceFile* last_file;
+    int last_line, last_column;
 
     // Stack
     uint32_t stack_usage;
@@ -140,8 +140,9 @@ static void mark_callee_saved_constraints(Ctx* restrict ctx, uint64_t callee_sav
 static void add_debug_local(Ctx* restrict ctx, TB_Node* n, int pos) {
     // could be costly if you had more than like 2-3 attributes per stack slot... which you
     // wouldn't do right?
-    for (TB_Attrib* a = n->first_attrib; a != NULL; a = a->next) {
-        if (a->type == TB_ATTRIB_VARIABLE) {
+    dyn_array_for(i, n->attribs) {
+        TB_Attrib* a = &n->attribs[i];
+        if (a->tag == TB_ATTRIB_VARIABLE) {
             TB_StackSlot s = {
                 .position = pos,
                 .storage_type = a->var.storage,
@@ -559,11 +560,14 @@ static void isel_region(Ctx* restrict ctx, TB_Node* control, TB_Node* next) {
     }
 
     // set line info
-    for (TB_Attrib* a = control->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_LOCATION) {
+    dyn_array_for(i, control->attribs) {
+        TB_Attrib* a = &control->attribs[i];
+
         // check if it's changed
-        if (ctx->last_file != a->loc.file || ctx->last_line != a->loc.line) {
+        if (a->tag == TB_ATTRIB_LOCATION && (ctx->last_file != a->loc.file || ctx->last_line != a->loc.line || ctx->last_column != a->loc.column)) {
             ctx->last_file = a->loc.file;
             ctx->last_line = a->loc.line;
+            ctx->last_column = a->loc.column;
 
             SUBMIT(inst_line(a));
         }
@@ -766,8 +770,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     nl_map_free(ctx.uses);
     dyn_array_destroy(ctx.phi_vals);
 
-    if (dyn_array_length(ctx.lines)) {
-        ctx.lines[0].pos = 0;
+    if (dyn_array_length(ctx.locations)) {
+        ctx.locations[0].pos = 0;
     }
 
     // we're done, clean up
@@ -775,7 +779,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     func_out->code = ctx.emit.data;
     func_out->code_size = ctx.emit.count;
     func_out->stack_usage = ctx.stack_usage;
-    func_out->lines = ctx.lines;
+    func_out->locations = ctx.locations;
     func_out->safepoints = ctx.safepoints;
     func_out->stack_slots = ctx.debug_stack_slots;
 

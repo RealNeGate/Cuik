@@ -201,7 +201,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
         tb_out4b(&debugs_out, 0x00000004);
 
         // File nametable
-        if (true) {
+        CUIK_TIMED_BLOCK("write file nametable") {
             tb_out4b(&debugs_out, 0x000000F3);
 
             size_t field_length_patch = debugs_out.count;
@@ -209,16 +209,17 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
             tb_out1b(&debugs_out, 0);
 
             // skip the NULL file entry
-            size_t pos = 1;
+            size_t pos = 1, counter = 0;
             file_table_offset[0] = 0;
-            FOREACH_N(i, 1, file_count) {
-                size_t len = strlen(m->files[i].path);
+            nl_map_for_str(i, m->files) {
+                TB_SourceFile* f = m->files[i].v;
+                f->id = counter++;
 
-                tb_out_reserve(&debugs_out, len + 1);
-                tb_outs_UNSAFE(&debugs_out, len + 1, (const uint8_t*)m->files[i].path);
+                tb_out_reserve(&debugs_out, f->len + 1);
+                tb_outs_UNSAFE(&debugs_out, f->len + 1, (const uint8_t*) f->path);
 
                 file_table_offset[i] = pos;
-                pos += len + 1;
+                pos += f->len + 1;
             }
 
             tb_patch4b(&debugs_out, field_length_patch, (debugs_out.count - field_length_patch) - 4);
@@ -228,16 +229,18 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
         // Source file table
         // we practically transmute the file_table_offset from meaning file string
         // table entries into source file entries.
-        if (true) {
+        CUIK_TIMED_BLOCK("write file hashes") {
             tb_out4b(&debugs_out, 0x000000F4);
 
             size_t field_length_patch = debugs_out.count;
             tb_out4b(&debugs_out, 0);
 
             size_t pos = 0;
-            FOREACH_N(i, 1, file_count) {
+            nl_map_for_str(i, m->files) {
+                TB_SourceFile* f = m->files[i].v;
+
                 uint8_t sum[16];
-                md5sum_file(sum, m->files[i].path);
+                md5sum_file(sum, (const char*) f->path);
 
                 tb_out4b(&debugs_out, file_table_offset[i]);
                 tb_out2b(&debugs_out, 0x0110);
@@ -254,13 +257,13 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
         }
 
         // Line info table
-        if (true) {
+        CUIK_TIMED_BLOCK("write line info") {
             TB_FOR_FUNCTIONS(f, m) {
                 TB_FunctionOutput* out_f = f->output;
                 if (!out_f) continue;
 
                 // Layout crap
-                DynArray(TB_Line) lines = out_f->lines;
+                DynArray(TB_Location) lines = out_f->locations;
 
                 tb_out4b(&debugs_out, 0x000000F2);
                 size_t field_length_patch = debugs_out.count;
@@ -283,36 +286,36 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                 // region we just finished
                 uint32_t backpatch = 0;
                 int last_line = 0;
-                TB_FileID last_file = 0;
+                TB_SourceFile* last_file = 0;
                 uint32_t current_line_count = 0;
 
                 dyn_array_for(line_id, lines) {
-                    TB_Line line = lines[line_id];
+                    TB_Location loc = lines[line_id];
 
-                    if (last_file != line.file) {
+                    if (last_file != loc.file) {
                         if (backpatch) {
                             tb_patch4b(&debugs_out, backpatch, current_line_count);
                             tb_patch4b(&debugs_out, backpatch + 4, 12 + (current_line_count * 8));
                         }
-                        last_file = line.file;
+                        last_file = loc.file;
 
                         // File entry
-                        tb_out4b(&debugs_out, file_table_offset[line.file]);
+                        tb_out4b(&debugs_out, file_table_offset[loc.file->id]);
                         backpatch = debugs_out.count;
                         tb_out4b(&debugs_out, 0);
                         tb_out4b(&debugs_out, 0);
 
-                        // printf("  FILE %d\n", line.file);
+                        // printf("  FILE %d\n", loc.file);
                         current_line_count = 0;
                         last_line = 0;
                     }
 
-                    if (last_line != line.line) {
-                        last_line = line.line;
-                        // printf("  * LINE %d : %x\n", line.line, line.pos);
+                    if (last_line != loc.line) {
+                        last_line = loc.line;
+                        // printf("  * LINE %d : %x\n", loc.line, loc.pos);
 
-                        tb_out4b(&debugs_out, line.pos);
-                        tb_out4b(&debugs_out, line.line);
+                        tb_out4b(&debugs_out, loc.pos);
+                        tb_out4b(&debugs_out, loc.line);
                         current_line_count++;
                     }
                 }
@@ -368,153 +371,157 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
             tb_out2b(&debugs_out, 0);
         }
 
-        TB_FOR_GLOBALS(g, m) {
-            const char* name = g->super.name;
-            if (name == NULL) continue;
+        CUIK_TIMED_BLOCK("cv: globals") {
+            TB_FOR_GLOBALS(g, m) {
+                const char* name = g->super.name;
+                if (name == NULL) continue;
 
-            size_t name_len = strlen(g->super.name) + 1;
-            CV_TypeIndex type = g->dbg_type ? convert_to_codeview_type(&builder, g->dbg_type) : T_VOID;
+                size_t name_len = strlen(g->super.name) + 1;
+                CV_TypeIndex type = g->dbg_type ? convert_to_codeview_type(&builder, g->dbg_type) : T_VOID;
 
-            // printf("%-20s : %d\n", name, type);
-            size_t baseline = debugs_out.count;
-            tb_out2b(&debugs_out, 0);
-            tb_out2b(&debugs_out, S_GDATA32);
-            tb_out4b(&debugs_out, type); // type index
-            {
-                size_t id = g->super.symbol_id;
-                size_t patch_pos = debugs_out.count;
-                add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, id, patch_pos }, reloc_cap);
-                add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, id, patch_pos + 4 }, reloc_cap);
+                // printf("%-20s : %d\n", name, type);
+                size_t baseline = debugs_out.count;
+                tb_out2b(&debugs_out, 0);
+                tb_out2b(&debugs_out, S_GDATA32);
+                tb_out4b(&debugs_out, type); // type index
+                {
+                    size_t id = g->super.symbol_id;
+                    size_t patch_pos = debugs_out.count;
+                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, id, patch_pos }, reloc_cap);
+                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, id, patch_pos + 4 }, reloc_cap);
+                }
+                tb_out4b(&debugs_out, 0); // offset
+                tb_out2b(&debugs_out, 0); // section
+
+                tb_out_reserve(&debugs_out, name_len);
+                tb_outs_UNSAFE(&debugs_out, name_len, (const uint8_t*) name);
+
+                // patch field length
+                tb_patch2b(&debugs_out, baseline, (debugs_out.count - baseline) - 2);
             }
-            tb_out4b(&debugs_out, 0); // offset
-            tb_out2b(&debugs_out, 0); // section
-
-            tb_out_reserve(&debugs_out, name_len);
-            tb_outs_UNSAFE(&debugs_out, name_len, (const uint8_t*) name);
-
-            // patch field length
-            tb_patch2b(&debugs_out, baseline, (debugs_out.count - baseline) - 2);
         }
 
         // Symbols
-        TB_FOR_FUNCTIONS(f, m) {
-            TB_FunctionOutput* out_f = f->output;
-            if (!out_f) continue;
+        CUIK_TIMED_BLOCK("cv: funcs") {
+            TB_FOR_FUNCTIONS(f, m) {
+                TB_FunctionOutput* out_f = f->output;
+                if (!out_f) continue;
 
-            const char* name = f->super.name;
-            size_t name_len = strlen(f->super.name) + 1;
+                const char* name = f->super.name;
+                size_t name_len = strlen(f->super.name) + 1;
 
-            size_t baseline = debugs_out.count;
-            tb_out2b(&debugs_out, 0);
-            tb_out2b(&debugs_out, S_GPROC32_ID);
-
-            tb_out4b(&debugs_out, 0); // pointer to the parent
-            tb_out4b(&debugs_out, 0); // pointer to this blocks end (left as zero?)
-            tb_out4b(&debugs_out, 0); // pointer to the next symbol (left as zero?)
-
-            CV_TypeIndex function_type;
-            {
-                const TB_FunctionPrototype* proto = f->prototype;
-
-                // Create argument list
-                CV_TypeIndex* params = tb_tls_push(tls, proto->param_count * sizeof(CV_TypeIndex));
-                FOREACH_N(i, 0, proto->param_count) {
-                    TB_DebugType* t = proto->params[i].debug_type;
-                    params[i] = t ? convert_to_codeview_type(&builder, t) : T_VOID;
-                }
-
-                CV_TypeIndex arg_list = tb_codeview_builder_add_arg_list(&builder, proto->param_count, params, proto->has_varargs);
-                tb_tls_restore(tls, params);
-
-                // Create return type... if it's multiple returns use a struct
-                CV_TypeIndex return_type = T_VOID;
-                if (proto->return_count == 1) {
-                    const TB_PrototypeParam* ret = &TB_PROTOTYPE_RETURNS(proto)[0];
-                    return_type = ret->debug_type ? convert_to_codeview_type(&builder, ret->debug_type) : get_codeview_type(ret->dt);
-                }
-
-                // Create the procedure type
-                CV_TypeIndex proc = tb_codeview_builder_add_procedure(&builder, return_type, arg_list, proto->param_count);
-
-                // Create the function ID type... which is somehow different from the procedure...
-                // it's basically referring to the procedure but it has a name
-                function_type = tb_codeview_builder_add_function_id(&builder, proc, name);
-            }
-
-            tb_out4b(&debugs_out, out_f->code_size); // procedure length
-            tb_out4b(&debugs_out, 0);                // debug start offset
-            tb_out4b(&debugs_out, out_f->code_size); // debug end offset
-            tb_out4b(&debugs_out, function_type);    // type index
-
-            // we save this location because there's two relocations
-            // we'll put there:
-            //   type      target     size
-            //   SECREL    .text     4 bytes
-            //   SECTION   .text     2 bytes
-            {
-                size_t func_id = f->super.symbol_id;
-                size_t patch_pos = debugs_out.count;
-                add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, func_id, patch_pos }, reloc_cap);
-                add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, func_id, patch_pos + 4 }, reloc_cap);
-            }
-            tb_out4b(&debugs_out, 0); // offset
-            tb_out2b(&debugs_out, 0); // segment
-
-            // the 1 means we have a frame pointer present
-            tb_out1b(&debugs_out, 1); // flags
-
-            tb_out_reserve(&debugs_out, name_len);
-            tb_outs_UNSAFE(&debugs_out, name_len, (const uint8_t*)name);
-
-            // patch field length
-            tb_patch2b(&debugs_out, baseline, (debugs_out.count - baseline) - 2);
-
-            {
-                // frameproc
-                size_t frameproc_baseline = debugs_out.count;
-
+                size_t baseline = debugs_out.count;
                 tb_out2b(&debugs_out, 0);
-                tb_out2b(&debugs_out, S_FRAMEPROC);
+                tb_out2b(&debugs_out, S_GPROC32_ID);
 
-                size_t stack_usage = out_f->stack_usage == 8 ? 0 : out_f->stack_usage;
+                tb_out4b(&debugs_out, 0); // pointer to the parent
+                tb_out4b(&debugs_out, 0); // pointer to this blocks end (left as zero?)
+                tb_out4b(&debugs_out, 0); // pointer to the next symbol (left as zero?)
 
-                tb_out4b(&debugs_out, stack_usage); // count of bytes of total frame of procedure
-                tb_out4b(&debugs_out, 0); // count of bytes of padding in the frame
-                tb_out4b(&debugs_out, 0); // offset (relative to frame poniter) to where padding starts
-                tb_out4b(&debugs_out, 0); // count of bytes of callee save registers
-                tb_out4b(&debugs_out, 0); // offset of exception handler
-                tb_out2b(&debugs_out, 0); // section id of exception handler
-                tb_out4b(&debugs_out, 0x00114200); // flags
+                CV_TypeIndex function_type;
+                {
+                    const TB_FunctionPrototype* proto = f->prototype;
 
-                tb_patch2b(&debugs_out, frameproc_baseline, (debugs_out.count - frameproc_baseline) - 2);
+                    // Create argument list
+                    CV_TypeIndex* params = tb_tls_push(tls, proto->param_count * sizeof(CV_TypeIndex));
+                    FOREACH_N(i, 0, proto->param_count) {
+                        TB_DebugType* t = proto->params[i].debug_type;
+                        params[i] = t ? convert_to_codeview_type(&builder, t) : T_VOID;
+                    }
 
-                dyn_array_for(j, out_f->stack_slots) {
-                    int stack_pos = out_f->stack_slots[j].position;
-                    TB_DebugType* type = out_f->stack_slots[j].storage_type;
+                    CV_TypeIndex arg_list = tb_codeview_builder_add_arg_list(&builder, proto->param_count, params, proto->has_varargs);
+                    tb_tls_restore(tls, params);
 
-                    const char* var_name = out_f->stack_slots[j].name;
-                    if (var_name == NULL) continue;
+                    // Create return type... if it's multiple returns use a struct
+                    CV_TypeIndex return_type = T_VOID;
+                    if (proto->return_count == 1) {
+                        const TB_PrototypeParam* ret = &TB_PROTOTYPE_RETURNS(proto)[0];
+                        return_type = ret->debug_type ? convert_to_codeview_type(&builder, ret->debug_type) : get_codeview_type(ret->dt);
+                    }
 
-                    size_t var_name_len = strlen(var_name);
-                    uint32_t type_index = convert_to_codeview_type(&builder, type);
+                    // Create the procedure type
+                    CV_TypeIndex proc = tb_codeview_builder_add_procedure(&builder, return_type, arg_list, proto->param_count);
 
-                    // define S_REGREL32
-                    CV_RegRel32 l = {
-                        .reclen = sizeof(CV_RegRel32) + (var_name_len + 1) - 2,
-                        .rectyp = S_REGREL32,
-                        .off = stack_pos,
-                        .typind = type_index,
-                        // AMD64_RBP is 334, AMD64_RSP is 335
-                        .reg = 334,
-                    };
-                    tb_outs(&debugs_out, sizeof(CV_RegRel32), &l);
-                    tb_outs(&debugs_out, var_name_len + 1, (const uint8_t*) var_name);
+                    // Create the function ID type... which is somehow different from the procedure...
+                    // it's basically referring to the procedure but it has a name
+                    function_type = tb_codeview_builder_add_function_id(&builder, proc, name);
                 }
-            }
 
-            // end the block
-            tb_out2b(&debugs_out, 2);
-            tb_out2b(&debugs_out, S_PROC_ID_END);
+                tb_out4b(&debugs_out, out_f->code_size); // procedure length
+                tb_out4b(&debugs_out, 0);                // debug start offset
+                tb_out4b(&debugs_out, out_f->code_size); // debug end offset
+                tb_out4b(&debugs_out, function_type);    // type index
+
+                // we save this location because there's two relocations
+                // we'll put there:
+                //   type      target     size
+                //   SECREL    .text     4 bytes
+                //   SECTION   .text     2 bytes
+                {
+                    size_t func_id = f->super.symbol_id;
+                    size_t patch_pos = debugs_out.count;
+                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECREL, func_id, patch_pos }, reloc_cap);
+                    add_reloc(&sections[0], &(TB_ObjectReloc){ TB_OBJECT_RELOC_SECTION, func_id, patch_pos + 4 }, reloc_cap);
+                }
+                tb_out4b(&debugs_out, 0); // offset
+                tb_out2b(&debugs_out, 0); // segment
+
+                // the 1 means we have a frame pointer present
+                tb_out1b(&debugs_out, 1); // flags
+
+                tb_out_reserve(&debugs_out, name_len);
+                tb_outs_UNSAFE(&debugs_out, name_len, (const uint8_t*)name);
+
+                // patch field length
+                tb_patch2b(&debugs_out, baseline, (debugs_out.count - baseline) - 2);
+
+                {
+                    // frameproc
+                    size_t frameproc_baseline = debugs_out.count;
+
+                    tb_out2b(&debugs_out, 0);
+                    tb_out2b(&debugs_out, S_FRAMEPROC);
+
+                    size_t stack_usage = out_f->stack_usage == 8 ? 0 : out_f->stack_usage;
+
+                    tb_out4b(&debugs_out, stack_usage); // count of bytes of total frame of procedure
+                    tb_out4b(&debugs_out, 0); // count of bytes of padding in the frame
+                    tb_out4b(&debugs_out, 0); // offset (relative to frame poniter) to where padding starts
+                    tb_out4b(&debugs_out, 0); // count of bytes of callee save registers
+                    tb_out4b(&debugs_out, 0); // offset of exception handler
+                    tb_out2b(&debugs_out, 0); // section id of exception handler
+                    tb_out4b(&debugs_out, 0x00114200); // flags
+
+                    tb_patch2b(&debugs_out, frameproc_baseline, (debugs_out.count - frameproc_baseline) - 2);
+
+                    dyn_array_for(j, out_f->stack_slots) {
+                        int stack_pos = out_f->stack_slots[j].position;
+                        TB_DebugType* type = out_f->stack_slots[j].storage_type;
+
+                        const char* var_name = out_f->stack_slots[j].name;
+                        if (var_name == NULL) continue;
+
+                        size_t var_name_len = strlen(var_name);
+                        uint32_t type_index = convert_to_codeview_type(&builder, type);
+
+                        // define S_REGREL32
+                        CV_RegRel32 l = {
+                            .reclen = sizeof(CV_RegRel32) + (var_name_len + 1) - 2,
+                            .rectyp = S_REGREL32,
+                            .off = stack_pos,
+                            .typind = type_index,
+                            // AMD64_RBP is 334, AMD64_RSP is 335
+                            .reg = 334,
+                        };
+                        tb_outs(&debugs_out, sizeof(CV_RegRel32), &l);
+                        tb_outs(&debugs_out, var_name_len + 1, (const uint8_t*) var_name);
+                    }
+                }
+
+                // end the block
+                tb_out2b(&debugs_out, 2);
+                tb_out2b(&debugs_out, S_PROC_ID_END);
+            }
         }
         tb_patch4b(&debugs_out, field_length_patch, (debugs_out.count - field_length_patch) - 4);
         align_up_emitter(&debugs_out, 4);

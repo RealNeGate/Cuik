@@ -209,8 +209,8 @@ typedef enum TB_NodeTypeEnum {
     // projection
     TB_PROJ,
 
-    TB_CALL,  // normal call
-    TB_SCALL, // system call
+    TB_CALL,    // normal call
+    TB_SYSCALL, // system call
 
     // Managed ops
     TB_SAFEPOINT,
@@ -334,8 +334,6 @@ typedef enum TB_NodeTypeEnum {
 } TB_NodeTypeEnum;
 typedef uint8_t TB_NodeType;
 
-typedef int TB_Label;
-
 // just represents some region of bytes, usually in file parsing crap
 typedef struct {
     size_t length;
@@ -345,7 +343,13 @@ typedef struct {
 // represents byte counts
 typedef uint32_t TB_CharUnits;
 
-typedef unsigned int TB_FileID;
+// will get interned so each TB_Module has a unique identifier for the source file
+typedef struct {
+    // used by the debug info export
+    int id;
+    size_t len;
+    uint8_t path[];
+} TB_SourceFile;
 
 // SO refers to shared objects which mean either shared libraries (.so or .dll)
 // or executables (.exe or ELF executables)
@@ -362,10 +366,11 @@ typedef struct TB_External          TB_External;
 typedef struct TB_Function          TB_Function;
 
 typedef struct TB_Module            TB_Module;
-typedef struct TB_Attrib            TB_Attrib;
 typedef struct TB_DebugType         TB_DebugType;
 typedef struct TB_ModuleSection     TB_ModuleSection;
 typedef struct TB_FunctionPrototype TB_FunctionPrototype;
+
+typedef struct TB_Attrib            TB_Attrib;
 
 // Refers generically to objects within a module
 //
@@ -404,8 +409,6 @@ typedef struct TB_Symbol {
     // after this point it's tag-specific storage
 } TB_Symbol;
 
-typedef int TB_Reg;
-
 typedef struct TB_Node TB_Node;
 struct TB_Node {
     TB_NodeType type;
@@ -413,7 +416,7 @@ struct TB_Node {
     uint16_t input_count; // number of node inputs
     uint16_t extra_count; // number of bytes for extra operand data
 
-    TB_Attrib* first_attrib;
+    TB_Attrib* attribs;
     TB_Node** inputs;
 
     char extra[];
@@ -462,8 +465,8 @@ typedef struct {
 } TB_NodeLocal;
 
 typedef struct {
-    TB_FileID file;
-    int line;
+    TB_SourceFile* file;
+    int line, column;
 } TB_NodeLine;
 
 typedef struct {
@@ -738,7 +741,8 @@ TB_API TB_ExternalType tb_extern_get_type(TB_External* e);
 TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkage linkage);
 
 TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type);
-TB_API TB_FileID tb_file_create(TB_Module* m, const char* path);
+
+TB_API TB_SourceFile* tb_get_source_file(TB_Module* m, const char* path);
 
 // Called once you're done with TB operations on a thread (or i guess when it's
 // about to be killed :p), not calling it can only result in leaks on that thread
@@ -820,11 +824,10 @@ TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m);
 ////////////////////////////////
 // Function Attributes
 ////////////////////////////////
-TB_API void tb_node_append_attrib(TB_Node* n, TB_Attrib* a);
-
 // These are parts of a function that describe metadata for instructions
-TB_API TB_Attrib* tb_function_attrib_variable(TB_Function* f, ptrdiff_t len, const char* name, TB_DebugType* type);
-TB_API TB_Attrib* tb_function_attrib_scope(TB_Function* f, TB_Attrib* parent_scope);
+TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, TB_Node* parent, ptrdiff_t len, const char* name, TB_DebugType* type);
+TB_API void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent);
+TB_API void tb_function_attrib_location(TB_Function* f, TB_Node* n, TB_SourceFile* file, int line, int column);
 
 ////////////////////////////////
 // Debug info Generation
@@ -879,7 +882,8 @@ TB_API void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, 
 // the user_data is expected to be a valid FILE*
 TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...);
 
-TB_API void tb_inst_set_location(TB_Function* f, TB_FileID file, int line);
+TB_API void tb_inst_set_location(TB_Function* f, TB_SourceFile* file, int line, int column);
+TB_API void tb_inst_reset_location(TB_Function* f);
 
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat);

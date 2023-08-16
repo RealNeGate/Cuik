@@ -1,6 +1,6 @@
 #define STBI_NO_SIMD
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "win32_dx/stb_image.h"
 // #include <stdio.h>
 
 static void handle_stuff() {

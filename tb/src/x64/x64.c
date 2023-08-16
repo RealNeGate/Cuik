@@ -887,15 +887,21 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
-        case TB_SCALL:
+        case TB_SYSCALL:
         case TB_CALL: {
             bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
             const struct ParamDescriptor* restrict desc = &param_descs[is_sysv ? 1 : 0];
-            if (type == TB_SCALL) {
+            if (type == TB_SYSCALL) {
                 desc = &param_descs[2];
             }
 
-            dst = DEF(n, n->dt);
+            TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[1];
+            TB_DataType ret_dt = ret_node ? ret_node->dt : TB_TYPE_VOID;
+
+            int ret_val = -1;
+            if (ret_node != NULL) {
+                ret_val = DEF(ret_node, ret_dt);
+            }
 
             // system calls don't count, we track this for ABI
             // and stack allocation purposes.
@@ -976,17 +982,19 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 caller_saved_gprs &= ~(1ull << RAX);
             }
 
-            bool use_xmm_ret = TB_IS_FLOAT_TYPE(n->dt) || n->dt.width;
-            if (use_xmm_ret) {
-                caller_saved_xmms &= ~(1ull << XMM0);
-            } else {
-                caller_saved_gprs &= ~(1ull << RAX);
+            bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_dt) || ret_dt.width;
+            if (ret_node != NULL) {
+                if (use_xmm_ret) {
+                    caller_saved_xmms &= ~(1ull << XMM0);
+                } else {
+                    caller_saved_gprs &= ~(1ull << RAX);
+                }
             }
 
             // all these registers need to be spilled and reloaded if they're used across
             // the function call boundary... you might see why inlining could be nice to implement
             size_t clobber_count = tb_popcount(caller_saved_gprs) + tb_popcount(caller_saved_xmms);
-            Inst* call_inst = alloc_inst(n->type == TB_SCALL ? SYSCALL : CALL, n->dt, 1, 1 + in_count, clobber_count);
+            Inst* call_inst = alloc_inst(n->type == TB_SYSCALL ? SYSCALL : CALL, ret_dt, 1, 1 + in_count, clobber_count);
 
             // mark clobber list
             {
@@ -1018,12 +1026,16 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             SUBMIT(call_inst);
 
             // copy out return
-            if (use_xmm_ret) {
-                hint_reg(ctx, dst, FIRST_XMM + XMM0);
-                SUBMIT(inst_move(n->dt, dst, FIRST_XMM + XMM0));
-            } else {
-                hint_reg(ctx, dst, RAX);
-                SUBMIT(inst_move(n->dt, dst, RAX));
+            if (ret_node != NULL) {
+                if (use_xmm_ret) {
+                    hint_reg(ctx, ret_val, FIRST_XMM + XMM0);
+                    SUBMIT(inst_move(ret_dt, ret_val, FIRST_XMM + XMM0));
+                } else {
+                    hint_reg(ctx, ret_val, RAX);
+                    SUBMIT(inst_move(ret_dt, ret_val, RAX));
+                }
+
+                nl_map_put(ctx->values, ret_node, ret_val);
             }
             break;
         }
@@ -1219,6 +1231,32 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             if (ctx->fallthrough != NULL && !empty_bb(ctx->fallthrough)) {
                 SUBMIT(inst_jmp(NULL));
+            }
+            break;
+        }
+
+        case TB_PROJ: {
+            if (n->inputs[0]->type == TB_START) {
+                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+                // past the first 4 parameters, it's all stack
+                if ((ctx->target_abi == TB_ABI_WIN64   && index >= 4) ||
+                    (ctx->target_abi == TB_ABI_SYSTEMV && index >= 6)) {
+                    dst = DEF(n, n->dt);
+
+                    InstType i = n->dt.type == TB_FLOAT ? FP_MOV : MOV;
+                    SUBMIT(inst_op_rm(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, 16 + index*8));
+                    forget = true;
+                    break;
+                }
+            } else if (n->inputs[0]->type == TB_CALL || n->inputs[0]->type == TB_SYSCALL) {
+                // do nothing, be happy
+            } else {
+                isel(ctx, n->inputs[0]);
+
+                ptrdiff_t search = nl_map_get(ctx->values, n);
+                assert(search >= 0);
+                dst = ctx->values[search].v;
             }
             break;
         }
@@ -1547,7 +1585,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
-        case TB_SCALL:
+        case TB_SYSCALL:
         case TB_CALL: {
             static const struct ParamDescriptor {
                 int gpr_count;
@@ -1567,7 +1605,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
             const struct ParamDescriptor* restrict desc = &param_descs[is_sysv ? 1 : 0];
-            if (type == TB_SCALL) {
+            if (type == TB_SYSCALL) {
                 desc = &param_descs[2];
             }
 
@@ -1654,7 +1692,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             ctx->defs[fake_dst].clobbers = clobbers;
 
             TB_Node* target = n->inputs[1];
-            if (type == TB_SCALL) {
+            if (type == TB_SYSCALL) {
                 int num = ISEL(target);
                 fence(ctx, n);
 
@@ -2008,14 +2046,15 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
             TB_Attrib* loc = inst->a;
-            EMITA(e, "  \x1b[33m# loc %s %"PRIu64"\x1b[0m\n", f->super.module->files[loc->loc.file].path, loc->loc.line);
+            EMITA(e, "  \x1b[33m# loc %s %"PRIu64"\x1b[0m\n", loc->loc.file->path, loc->loc.line);
 
-            TB_Line l = {
+            TB_Location l = {
                 .file = loc->loc.file,
                 .line = loc->loc.line,
+                .column = loc->loc.column,
                 .pos = GET_CODE_POS(&ctx->emit)
             };
-            dyn_array_put(ctx->lines, l);
+            dyn_array_put(ctx->locations, l);
             continue;
         } else if (cat == INST_BYTE || cat == INST_BYTE_EXT) {
             if (inst->flags & INST_REP) EMIT1(e, 0xF3);

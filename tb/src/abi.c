@@ -164,7 +164,7 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, 
             }
 
             // mark debug info
-            tb_node_append_attrib(params[i], tb_function_attrib_variable(f, -1, name, type));
+            tb_function_attrib_variable(f, params[i], NULL, -1, name, type);
         }
     }
 

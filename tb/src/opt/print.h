@@ -249,9 +249,10 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
         default: tb_assert(n->extra_count == 0, "TODO");
     }
 
-    for (TB_Attrib* attrib = n->first_attrib; attrib != NULL; attrib = attrib->next) {
-        if (attrib->type == TB_ATTRIB_VARIABLE) {
-            printf(" !var(%s)", attrib->var.name);
+    dyn_array_for(i, n->attribs) {
+        TB_Attrib* a = &n->attribs[i];
+        if (a->tag == TB_ATTRIB_VARIABLE) {
+            printf(" !var(%s)", a->var.name);
         }
     }
 

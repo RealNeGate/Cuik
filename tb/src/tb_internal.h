@@ -48,6 +48,18 @@ for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
 #define FOREACH_REVERSE_N(it, start, end) \
 for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 
+#define PP_ARG0(a, ...) a
+#define PP_AFTER0(a, ...) __VA_ARGS__
+
+#define PP_ID(...) __VA_ARGS__
+#define PP_VOID(...)
+#define PP_JOIN(a, b) a b
+
+#ifndef CONCAT
+#define CONCAT_(x, y) x ## y
+#define CONCAT(x, y) CONCAT_(x, y)
+#endif
+
 #include <arena.h>
 #include "set.h"
 
@@ -219,36 +231,19 @@ struct TB_DebugType {
     };
 };
 
-typedef struct TB_Line {
-    TB_FileID file;
-    int line;
+typedef struct TB_Location {
+    TB_SourceFile* file;
+    int line, column;
     uint32_t pos;
-} TB_Line;
+} TB_Location;
 
-typedef enum {
-    TB_ATTRIB_NONE,
-    TB_ATTRIB_VARIABLE,
-    TB_ATTRIB_LOCATION,
-} TB_AttribType;
-
-struct TB_Attrib {
-    TB_Attrib* next;
-    TB_AttribType type;
-
-    union {
-        struct {
-            TB_Attrib* parent;
-        } scope;
-        struct {
-            char* name;
-            TB_DebugType* storage;
-        } var;
-        struct {
-            TB_FileID file;
-            int line;
-        } loc;
-    };
-};
+#define TERMS(x) \
+(TB_Attrib, \
+    x(TB_ATTRIB_VARIABLE, var,   TB_Node* parent; char* name; TB_DebugType* storage) \
+    x(TB_ATTRIB_SCOPE,    scope, TB_Node* parent) \
+    x(TB_ATTRIB_LOCATION, loc,   TB_SourceFile* file; int line, column) \
+)
+#include "tagged_union.h"
 
 typedef struct TB_StackSlot {
     // TODO(NeGate): support complex variable descriptions
@@ -302,7 +297,7 @@ typedef struct TB_FunctionOutput {
     DynArray(TB_StackSlot) stack_slots;
 
     // Part of the debug info
-    DynArray(TB_Line) lines;
+    DynArray(TB_Location) locations;
 
     // safepoints are stored into a binary tree to allow
     // for scanning neighbors really quickly
@@ -333,7 +328,7 @@ struct TB_Function {
     TB_Arena* arena;
 
     // IR building
-    TB_Attrib* line_attrib;
+    TB_Attrib line_attrib;
 
     // Compilation output
     union {
@@ -430,7 +425,8 @@ struct TB_Module {
     _Atomic size_t symbol_count[TB_SYMBOL_MAX];
     _Atomic(TB_Symbol*) first_symbol_of_tag[TB_SYMBOL_MAX];
 
-    DynArray(TB_File) files;
+    // needs to be locked with 'TB_Module.lock'
+    NL_Strmap(TB_SourceFile*) files;
 
     // Common sections
     // TODO(NeGate): custom sections
@@ -524,11 +520,6 @@ do {                                      \
 
 #ifndef COUNTOF
 #define COUNTOF(...) (sizeof(__VA_ARGS__) / sizeof((__VA_ARGS__)[0]))
-#endif
-
-#ifndef CONCAT
-#define CONCAT_(x, y) x ## y
-#define CONCAT(x, y) CONCAT_(x, y)
 #endif
 
 TB_ThreadInfo* tb_thread_info(TB_Module* m);

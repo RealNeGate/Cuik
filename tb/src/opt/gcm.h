@@ -3,7 +3,7 @@
 ////////////////////////////////
 // schedule nodes below any of their pinned dependencies
 static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_START && n->type <= TB_TRAP) || n->type == TB_LOAD || n->type == TB_PHI;
+    return (n->type >= TB_START && n->type <= TB_TRAP) || n->type == TB_LOAD || n->type == TB_PHI || (n->type == TB_PROJ && n->dt.type == TB_CONTROL);
 }
 
 static void schedule_early(TB_Passes* passes, NL_HashSet* visited, TB_Node* n) {
