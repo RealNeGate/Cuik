@@ -399,6 +399,7 @@ static bool attempt_sroa(TB_Passes* p, TB_Function* f, TB_TemporaryStorage* tls,
 }
 
 bool tb_pass_mem2reg(TB_Passes* p) {
+    cuikperf_region_start("mem2reg", NULL);
     verify_tmp_arena(p);
 
     TB_Function* f = p->f;
@@ -407,7 +408,6 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     ////////////////////////////////
     // Try SROA first
     ////////////////////////////////
-    int changes = 0;
     for (size_t i = dyn_array_length(p->locals); i--;) retry: {
         TB_Node* address = p->locals[i];
 
@@ -417,7 +417,6 @@ bool tb_pass_mem2reg(TB_Passes* p) {
             void* mark = tb_tls_push(tls, 0);
             if (attempt_sroa(p, f, tls, address)) {
                 DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p was able to SROA", f->super.name, address));
-                changes++;
                 tb_tls_restore(tls, mark);
                 goto retry; // but don't go the next int
             } else {
@@ -470,7 +469,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
     if (to_promote_count == 0) {
         // doesn't need to mem2reg
-        return (changes != 0);
+        goto no_changes;
     }
 
     Mem2Reg_Ctx c = { 0 };
@@ -584,7 +583,12 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     nl_map_free(df);
     tb_tls_restore(tls, to_promote);
 
+    cuikperf_region_end();
     return true;
+
+    no_changes:
+    cuikperf_region_end();
+    return false;
 }
 
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share
