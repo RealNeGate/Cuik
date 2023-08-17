@@ -531,7 +531,7 @@ Cuikpp_Status cuikpp_run(Cuik_CPP* restrict ctx) {
     #endif /* CPP_DBG */
 
     if (cuikperf_is_active()) {
-        cuikperf_region_start(cuik_time_in_nanos(), "preprocess", slot->filepath->data);
+        cuikperf_region_start("preprocess", slot->filepath->data);
     }
 
     TokenStream* restrict s = &ctx->tokens;

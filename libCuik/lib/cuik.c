@@ -3,13 +3,12 @@
 
 // hacky
 void hook_crash_handler(void);
-void init_timer_system(void);
 
 thread_local TB_Arena thread_arena;
 
 void cuik_init(bool use_crash_handler) {
     cuik_init_terminal();
-    init_timer_system();
+    cuik_init_timer_system();
 
     if (use_crash_handler) {
         hook_crash_handler();

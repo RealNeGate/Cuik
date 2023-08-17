@@ -115,7 +115,7 @@ static double get_rdtsc_freq(void) {
 #endif
 #endif
 
-void init_timer_system(void) {
+void cuik_init_timer_system(void) {
     #if defined(_AMD64_) || defined(__amd64__)
     rdtsc_freq = get_rdtsc_freq() / 1000000.0;
     timer_start = __rdtsc();
@@ -134,7 +134,7 @@ void cuikperf_start(void* ud, const Cuik_IProfiler* p, bool lock_on_plot) {
     }
 
     profiler->start(profiler_userdata);
-    profiler->begin_plot(profiler_userdata, cuik_time_in_nanos(), "libCuik", "");
+    profiler->begin_plot(profiler_userdata, cuik_time_in_nanos(), "main thread", "");
 }
 
 void cuikperf_stop(void) {
@@ -162,8 +162,9 @@ uint64_t cuik_time_in_nanos(void) {
     #endif
 }
 
-void cuikperf_region_start(uint64_t nanos, const char* fmt, const char* extra) {
+void cuikperf_region_start(const char* fmt, const char* extra) {
     if (profiler == NULL) return;
+    uint64_t nanos = cuik_time_in_nanos();
 
     // lock if necessary
     if (should_lock_profiler) mtx_lock(&timer_mutex);

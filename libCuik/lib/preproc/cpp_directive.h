@@ -232,7 +232,7 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     compute_line_map(&ctx->tokens, l & LOCATE_SYSTEM, ctx->stack_ptr - 1, new_slot->loc, alloced_filepath->data, next_file.data, next_file.length);
 
     if (cuikperf_is_active()) {
-        cuikperf_region_start(cuik_time_in_nanos(), "preprocess", filename);
+        cuikperf_region_start("preprocess", filename);
     }
 
     return DIRECTIVE_YIELD;
