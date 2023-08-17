@@ -27,6 +27,7 @@ enum {
     FOREIGN_GETCHAR,
     FOREIGN_PUTCHAR,
     FOREIGN_PUTNUM,
+    FOREIGN_RECT,
 
     FOREIGN_MAX,
 };
@@ -80,12 +81,92 @@ static uintptr_t jit__thread_key(void) {
     return key;
 }
 
+////////////////////////////////
+// Compilation queue
+////////////////////////////////
 // i love forward decls gon...
 static JIT_Caller jit__get_trampoline(size_t arity);
-static void jit__compile_blob(Env* env, Word* w);
+static void* jit__compile_trampoline(TB_FunctionPrototype* proto, int arity);
 
 static void jit__queue_push(uint32_t exp, _Atomic uint32_t* queue, void** elems, void* val);
 static void* jit__queue_pop(uint32_t exp, _Atomic uint32_t* queue, void** elems);
+
+// we don't need to waste cycles JITting this lmao
+static int jit__caller_0ary(Env* env, uint64_t* stack, void* jitted) {
+    return ((int (*)(Env*)) jitted)(env);
+}
+
+JIT_API int jit_try_call(Env* env, Word* w) {
+    void* fn = atomic_load(&w->jitted);
+    if (fn == NULL) {
+        if (atomic_fetch_add(&w->trip_count, 1) == JIT_THRESHOLD) {
+            log_debug("jit: trip count exceeded for %.*s (first compile)", (int) w->name.length, w->name.data);
+
+            // put word into queue
+            jit__queue_push(8, &jit.queue, jit.queue_elems, w);
+        }
+
+        return INTERP_NO_JIT;
+    }
+
+    if (env->head < w->arity) {
+        return INTERP_UNDERFLOW;
+    }
+
+    JIT_Caller c = jit__get_trampoline(w->arity);
+    return c(env, &env->stack[env->head - w->arity], w->jitted);
+}
+
+static JIT_Caller jit__get_trampoline(size_t arity) {
+    if (arity == 0) {
+        return jit__caller_0ary;
+    }
+
+    // if the caller is not ready, make sure to initialize it now.
+    // since it can be called on multiple threads, once one of the
+    // threads grabs hold, it'll compile while the others wait, this
+    // is a really tiny compilation so it's ok.
+    cuikperf_region_start("get trampoline", NULL);
+    uintptr_t sign_bit = ~(UINTPTR_MAX >> 1);
+    uintptr_t key = jit__thread_key();
+
+    _Atomic(uintptr_t)* caller = &jit.callers[arity];
+    for (;;) {
+        uintptr_t p = atomic_load(caller);
+
+        // check if someone is already working on it
+        if (p & sign_bit) {
+            assert(p != key && "somehow we've already started compiling the caller on this thread?");
+            continue;
+        } else if (p == 0) {
+            // try lock?
+            if (!atomic_compare_exchange_strong(caller, &(uintptr_t){ 0 }, key)) {
+                continue;
+            }
+
+            // make prototype
+            TB_PrototypeParam params[17];
+            params[0] = (TB_PrototypeParam){ TB_TYPE_PTR }; // Env*
+            for (size_t i = 0; i < arity; i++) {
+                params[i + 1] = (TB_PrototypeParam){ TB_TYPE_I64 };
+            }
+
+            TB_PrototypeParam ret = { TB_TYPE_I32 };
+            TB_FunctionPrototype* proto = tb_prototype_create(jit.mod, TB_STDCALL, arity + 1, params, 1, &ret, false);
+            jit.internal_protos[arity] = proto;
+
+            // compile caller
+            p = (uintptr_t) jit__compile_trampoline(proto, arity);
+
+            // unlock
+            atomic_store(caller, p);
+        }
+
+        // it's ready
+        cuikperf_region_end();
+        return (JIT_Caller) p;
+    }
+}
 
 static void* jit__compile_trampoline(TB_FunctionPrototype* proto, int arity) {
     char name[32];
@@ -121,110 +202,9 @@ static void* jit__compile_trampoline(TB_FunctionPrototype* proto, int arity) {
     return fn;
 }
 
-// we don't need to waste cycles JITting this lmao
-static int jit_caller_0ary(Env* env, uint64_t* stack, void* jitted) {
-    return ((int (*)(Env*)) jitted)(env);
-}
-
-JIT_API int jit_try_call(Env* env, Word* w) {
-    void* fn = atomic_load(&w->jitted);
-    if (fn == NULL) {
-        if (atomic_fetch_add(&w->trip_count, 1) == JIT_THRESHOLD) {
-            log_debug("jit: trip count exceeded for %s (first compile)");
-
-            // put word into queue
-            jit__queue_push(8, &jit.queue, jit.queue_elems, w);
-        }
-
-        return INTERP_NO_JIT;
-    }
-
-    if (env->head < w->arity) {
-        return INTERP_UNDERFLOW;
-    }
-
-    JIT_Caller c = jit__get_trampoline(w->arity);
-    return c(env, &env->stack[env->head - w->arity], w->jitted);
-}
-
-static JIT_Caller jit__get_trampoline(size_t arity) {
-    // if the caller is not ready, make sure to initialize it now.
-    // since it can be called on multiple threads, once one of the
-    // threads grabs hold, it'll compile while the others wait, this
-    // is a really tiny compilation so it's ok.
-    uintptr_t sign_bit = ~(UINTPTR_MAX >> 1);
-    uintptr_t key = jit__thread_key();
-
-    _Atomic(uintptr_t)* caller = &jit.callers[arity];
-    for (;;) {
-        uintptr_t p = atomic_load(caller);
-
-        // check if someone is already working on it
-        if (p & sign_bit) {
-            assert(p != key && "somehow we've already started compiling the caller on this thread?");
-            continue;
-        } else if (p == 0) {
-            // try lock?
-            if (!atomic_compare_exchange_strong(caller, &(uintptr_t){ 0 }, key)) {
-                continue;
-            }
-
-            // make prototype
-            TB_PrototypeParam params[17];
-            params[0] = (TB_PrototypeParam){ TB_TYPE_PTR }; // Env*
-            for (size_t i = 0; i < arity; i++) {
-                params[i + 1] = (TB_PrototypeParam){ TB_TYPE_I64 };
-            }
-
-            TB_PrototypeParam ret = { TB_TYPE_I32 };
-            TB_FunctionPrototype* proto = tb_prototype_create(jit.mod, TB_STDCALL, arity + 1, params, 1, &ret, false);
-            jit.internal_protos[arity] = proto;
-
-            // compile caller
-            log_debug("jit: compiling caller[%d]", arity);
-            if (arity == 0) {
-                p = (uintptr_t) jit_caller_0ary; // easy case
-            } else {
-                p = (uintptr_t) jit__compile_trampoline(proto, arity);
-            }
-            log_debug("jit: done compiling caller[%d]", arity);
-
-            // unlock
-            atomic_store(caller, p);
-        }
-
-        // it's ready
-        return (JIT_Caller) p;
-    }
-}
-
 ////////////////////////////////
 // Compilation queue
 ////////////////////////////////
-#define JIT__BIND(i, n, r, ...) jit__bind_builtin_foreign(FOREIGN_ ## i, #n, &n, r, PP_NARG(__VA_ARGS__), ## __VA_ARGS__)
-static void jit__bind_builtin_foreign(size_t index, const char* name, void* ptr, TB_DataType ret, size_t param_count, ...) {
-    assert(param_count < 16);
-    TB_PrototypeParam proto_params[16];
-
-    va_list ap;
-    va_start(ap, param_count);
-    for (size_t i = 0; i < param_count; i++) {
-        proto_params[i] = (TB_PrototypeParam){ va_arg(ap, TB_DataType) };
-    }
-    va_end(ap);
-
-    bool has_ret = !(ret.type == TB_INT && ret.data == 0);
-    TB_PrototypeParam proto_ret = { ret };
-
-    assert(index < FOREIGN_MAX);
-    jit.builtins[index].proto = tb_prototype_create(jit.mod, TB_STDCALL, param_count, proto_params, has_ret, &proto_ret, false);
-    jit.builtins[index].sym = (TB_Symbol*) tb_extern_create(jit.mod, -1, name, TB_EXTERNAL_SO_EXPORT);
-    tb_symbol_bind_ptr(jit.builtins[index].sym, ptr);
-}
-
-// used by jitted code
-static void jit__putnum(int64_t num) { printf("%lld", num); }
-
 static void jit__queue_push(uint32_t exp, _Atomic uint32_t* queue, void** elems, void* val) {
     uint32_t mask = (1u << exp) - 1;
 
@@ -276,28 +256,64 @@ static void* jit__queue_pop(uint32_t exp, _Atomic uint32_t* queue, void** elems)
     return tmp;
 }
 
+////////////////////////////////
+// Compiler thread
+////////////////////////////////
+static void draw_rect(uint32_t color, float x, float y, float w, float h);
+static void jit__compile_blob(Env* env, Word* w, const char* name);
+
+// used by jitted code, needs to be bound on startup
+static void jit__putnum(int64_t num) { printf("%lld", num); }
+static void jit__rect(int x, int y, int w, int h) { draw_rect(0xFFE6E1E5, x, y, w, h); }
+
+#define JIT__BIND(i, n, r, ...) jit__bind_builtin_foreign(FOREIGN_ ## i, #n, &n, r, PP_NARG(__VA_ARGS__), ## __VA_ARGS__)
+static void jit__bind_builtin_foreign(size_t index, const char* name, void* ptr, TB_DataType ret, size_t param_count, ...) {
+    assert(param_count < 16);
+    TB_PrototypeParam proto_params[16];
+
+    va_list ap;
+    va_start(ap, param_count);
+    for (size_t i = 0; i < param_count; i++) {
+        proto_params[i] = (TB_PrototypeParam){ va_arg(ap, TB_DataType) };
+    }
+    va_end(ap);
+
+    bool has_ret = !(ret.type == TB_INT && ret.data == 0);
+    TB_PrototypeParam proto_ret = { ret };
+
+    assert(index < FOREIGN_MAX);
+    jit.builtins[index].proto = tb_prototype_create(jit.mod, TB_STDCALL, param_count, proto_params, has_ret, &proto_ret, false);
+    jit.builtins[index].sym = (TB_Symbol*) tb_extern_create(jit.mod, -1, name, TB_EXTERNAL_SO_EXPORT);
+    tb_symbol_bind_ptr(jit.builtins[index].sym, ptr);
+}
+
 static int jit_thread_routine(void* arg) {
     ////////////////////////////////
     // Initializer compiler
     ////////////////////////////////
+    spallperf__start_thread();
+
     Env* env = arg;
-    tb_arena_create(&jit.arena, TB_ARENA_LARGE_CHUNK_SIZE);
+    CUIK_TIMED_BLOCK("init") {
+        tb_arena_create(&jit.arena, TB_ARENA_LARGE_CHUNK_SIZE);
 
-    TB_FeatureSet features = { 0 };
-    jit.mod = tb_module_create_for_host(&features, true);
-    jit.jit = tb_module_begin_jit(jit.mod, 0);
+        TB_FeatureSet features = { 0 };
+        jit.mod = tb_module_create_for_host(&features, true);
+        jit.jit = tb_module_begin_jit(jit.mod, 0);
 
-    // all JIT regions use the same prototype
-    TB_PrototypeParam params[] = { { TB_TYPE_PTR }, { TB_TYPE_PTR }, { TB_TYPE_PTR } };
-    TB_PrototypeParam ret = { TB_TYPE_I32 };
-    jit.proto = tb_prototype_create(jit.mod, TB_STDCALL, 3, params, 1, &ret, false);
+        // all JIT regions use the same prototype
+        TB_PrototypeParam params[] = { { TB_TYPE_PTR }, { TB_TYPE_PTR }, { TB_TYPE_PTR } };
+        TB_PrototypeParam ret = { TB_TYPE_I32 };
+        jit.proto = tb_prototype_create(jit.mod, TB_STDCALL, 3, params, 1, &ret, false);
 
-    JIT__BIND(INTERP,  interp,      TB_TYPE_I32,  TB_TYPE_PTR, TB_TYPE_PTR);
-    JIT__BIND(PUTCHAR, putchar,     TB_TYPE_I32,  TB_TYPE_I32);
-    JIT__BIND(PUTNUM,  jit__putnum, TB_TYPE_VOID, TB_TYPE_I64);
-    JIT__BIND(GETCHAR, getchar,     TB_TYPE_I32);
+        JIT__BIND(INTERP,  interp,      TB_TYPE_I32,  TB_TYPE_PTR, TB_TYPE_PTR);
+        JIT__BIND(PUTCHAR, putchar,     TB_TYPE_I32,  TB_TYPE_I32);
+        JIT__BIND(PUTNUM,  jit__putnum, TB_TYPE_VOID, TB_TYPE_I64);
+        JIT__BIND(GETCHAR, getchar,     TB_TYPE_I32);
+        JIT__BIND(RECT,    jit__rect,   TB_TYPE_VOID, TB_TYPE_I32, TB_TYPE_I32, TB_TYPE_I32, TB_TYPE_I32);
 
-    jit.running = true;
+        jit.running = true;
+    }
 
     // Compile words which were submitted
     while (jit.running) {
@@ -309,16 +325,16 @@ static int jit_thread_routine(void* arg) {
             continue;
         }
 
-        uint64_t start = cuik_time_in_nanos();
-        log_debug("jit: %.*s: begin compiling", (int) w->name.length, w->name.data);
+        char name[32];
+        snprintf(name, 32, "%.*s", (int) w->name.length, w->name.data);
 
-        jit__compile_blob(env, w);
-
-        uint64_t end = cuik_time_in_nanos();
-        log_debug("jit: %.*s: after %f ms", (int) w->name.length, w->name.data, (end - start) / 1000000.0);
+        CUIK_TIMED_BLOCK_ARGS("blob", name) {
+            jit__compile_blob(env, w, name);
+        }
     }
 
     tb_module_destroy(jit.mod);
+    spallperf__stop_thread();
     return 0;
 }
 
@@ -514,6 +530,10 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
                     jit__call_builtin(ctx, FOREIGN_PUTNUM, 1, &args[0]);
                     break;
                 }
+                case OP_RECT: {
+                    jit__call_builtin(ctx, FOREIGN_RECT, 4, &args[0]);
+                    break;
+                }
 
                 // control flow
                 case OP_IF: {
@@ -574,10 +594,7 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
 
 // blob refers to a set of words, we start with the root but
 // we will end up inlining early if things are small.
-static void jit__compile_blob(Env* env, Word* w) {
-    char name[32];
-    snprintf(name, 32, "%.*s", (int) w->name.length, w->name.data);
-
+static void jit__compile_blob(Env* env, Word* w, const char* name) {
     JIT_Builder builder;
     builder.cs.head = 0;
 
@@ -592,7 +609,8 @@ static void jit__compile_blob(Env* env, Word* w) {
 
     TB_Function* f = builder.f = tb_function_create(jit.mod, -1, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
     tb_function_set_prototype(f, proto, &jit.arena);
-    {
+
+    CUIK_TIMED_BLOCK("IR") {
         // fill parameter into the stack
         builder.head = w->arity;
         builder.env = tb_inst_param(f, 0);
@@ -628,7 +646,7 @@ static void jit__compile_blob(Env* env, Word* w) {
             tb_pass_mem2reg(p), tb_pass_peephole(p);
         }
 
-        tb_function_print(f, tb_default_print_callback, stdout);
+        // tb_function_print(f, tb_default_print_callback, stdout);
 
         // compile
         tb_pass_codegen(p, false);

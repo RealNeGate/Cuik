@@ -18,28 +18,18 @@ static uint64_t get_last_write_time(const char* filepath) {
     return i.QuadPart;
 }
 
-// currently we only support modifying the main file when the live loop is active
-// it'll return true when it changes happen, it returns false once the user asks to quit.
-static bool live_compile_watch(LiveCompiler* l, Cuik_DriverArgs* args) {
-    if (dyn_array_length(args->sources) > 1) {
-        printf("TODO: live compile does not support multiple files yet!");
-        return false;
-    }
-
-    const char* source_file = args->sources[0]->data;
-    l->og_last_write = get_last_write_time(source_file);
-
+// returns false if no changes are made, true if the file is ready to be reloaded
+static bool live_compile_watch(LiveCompiler* l, const char* source_file) {
     // Wait for the user to save again
     uint64_t current_last_write;
-    while (current_last_write = get_last_write_time(source_file), l->og_last_write == current_last_write) {
-        SleepEx(100, FALSE);
+    if (current_last_write = get_last_write_time(source_file), l->og_last_write == current_last_write) {
+        return false;
     }
 
     l->og_last_write = current_last_write;
 
     // wait for it to finish writing before trying to compile
     int ticks = 0;
-
     while (GetFileAttributesA(source_file) == INVALID_FILE_ATTRIBUTES) {
         SleepEx(1, FALSE);
 
@@ -56,13 +46,7 @@ static uint64_t get_last_write_time(const char* filepath) {
     return 0;
 }
 
-static bool live_compile_watch(LiveCompiler* l, Cuik_DriverArgs* args) {
-    if (dyn_array_length(args->sources) > 1) {
-        printf("TODO: live compile does not support multiple files yet!");
-        return false;
-    }
-
-    const char* source_file = args->sources[0]->data;
+static bool live_compile_watch(LiveCompiler* l, const char* source_file) {
     l->og_last_write = get_last_write_time(source_file);
     return false;
 }

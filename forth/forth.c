@@ -2,6 +2,7 @@
 #include <dyn_array.h>
 #include <hash_map.h>
 #include <perf.h>
+#include "../main/spall_perf.h"
 
 #define CUIK_FS_IMPL
 #include <cuik_fs.h>
@@ -13,7 +14,18 @@
 #include <threads.h>
 #include <stdatomic.h>
 
-typedef struct Env Env;
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <GL/gl.h>
+
+#include "../main/live.h"
+
+#pragma comment(lib, "opengl32.lib")
+
+// no need for do while crap if it's an expression :p
+// it's basically an assert but it doesn't get vaporized
+#define CHECK(x) ((x) ? (void)0 : abort())
+
 typedef struct Word Word;
 
 enum {
@@ -30,7 +42,7 @@ enum {
     // control flow
     OP_IF    = -7,  // if{
     OP_ELSE  = -8,  // }else{
-    OP_CLOSE = -9, // }
+    OP_CLOSE = -9,  // }
 
     OP_TAIL  = -10, // no name, generated automatically
 
@@ -41,6 +53,9 @@ enum {
     OP_EMIT  = -12,
     OP_PRINT = -13,
     OP_KEY   = -14,
+
+    // graphics
+    OP_RECT  = -15, // ( x y w h -- )
 };
 
 struct Word {
@@ -62,12 +77,12 @@ struct Word {
 
 static void infer(Word* w);
 
-////////////////////////////////
-// Parser
-////////////////////////////////
 static DynArray(Word) words;
 static NL_Strmap(int) dict;
 
+////////////////////////////////
+// Parser
+////////////////////////////////
 typedef struct {
     const char* source;
 } Parser;
@@ -82,7 +97,7 @@ static NL_Slice lex(Parser* p) {
     // skip spaces & comments
     const char* line = p->source;
     for (;;) {
-        while (*line == '\n' || *line == '\t' || *line == ' ') line++;
+        while (*line > 0 && *line <= 32) line++;
 
         if (*line == 0) {
             return (NL_Slice){ 0 };
@@ -96,7 +111,7 @@ static NL_Slice lex(Parser* p) {
 
     // read word
     const char* end = line;
-    while (*end && *end != '\n' && *end != '\t' && *end != ' ') end++;
+    while (*end > 32) end++;
 
     // advance
     p->source = *end ? end + 1 : end;
@@ -224,6 +239,9 @@ static int prim_arity(int64_t x) {
         case OP_KEY:
         return 0;
 
+        case OP_RECT:
+        return 4;
+
         default:
         assert(0 && "TODO");
         return -1;
@@ -309,6 +327,9 @@ static void infer(Word* w) {
                 case OP_EMIT: break;
                 case OP_PRINT: break;
 
+                // graphics
+                case OP_RECT: break;
+
                 // control flow
                 case OP_IF: control_push(NULL, &cs, i, head); break;
                 case OP_ELSE: {
@@ -354,7 +375,8 @@ static void infer(Word* w) {
 ////////////////////////////////
 // Interpreter
 ////////////////////////////////
-struct Env {
+typedef struct Env {
+    // data stack
     size_t head;
     uint64_t stack[64];
 
@@ -364,7 +386,7 @@ struct Env {
 
     // debugging
     bool single_step;
-};
+} Env;
 
 #define PEEK()  (env->stack[env->head - 1])
 #define POP()   (env->stack[--env->head])
@@ -474,6 +496,14 @@ static int interp(Env* env, Word* w) {
                     case OP_KEY:  push(env, getchar()); break;
                     case OP_EMIT: printf("%c", (char) pop(env)); break;
                     case OP_PRINT:printf("%lld", pop(env)); break;
+                    case OP_RECT: {
+                        int h = pop(env);
+                        int w = pop(env);
+                        int y = pop(env);
+                        int x = pop(env);
+                        draw_rect(0xFFE6E1E5, x, y, w, h);
+                        break;
+                    }
                     case OP_DUMP: dump(env); break;
                     case OP_IF: {
                         // find matching }else{
@@ -530,15 +560,114 @@ static int interp(Env* env, Word* w) {
     return INTERP_OK;
 }
 
-int main(int argc, const char** argv) {
-    cuik_init_terminal();
+static BITMAPINFO bitmap;
 
-    thrd_t jit_thread;
-    if (thrd_create(&jit_thread, jit_thread_routine, NULL) != thrd_success) {
-        fprintf(stderr, "error: could not create JIT thread");
-        return EXIT_FAILURE;
+static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+        // force shutdown
+        case WM_CLOSE:
+        jit.running = false;
+        return 1;
+
+        case WM_ACTIVATEAPP: {
+            bool is_opaque = false;
+            SetLayeredWindowAttributes(hwnd, RGB(0,0,0), is_opaque || wparam ? 255 : 100, LWA_ALPHA);
+            break;
+        }
     }
 
+    return DefWindowProcA(hwnd, message, wparam, lparam);
+}
+
+static HWND gimme_window(int w, int h) {
+    WNDCLASSA wc = {
+        .style = (CS_HREDRAW | CS_VREDRAW | CS_OWNDC),
+        .lpfnWndProc = WndProc,
+        .hInstance = GetModuleHandle(NULL),
+        .hCursor = LoadCursor(NULL, IDC_ARROW),
+        .lpszClassName = "WindowClass",
+    };
+
+    if (!RegisterClassA(&wc)) {
+        printf("RegisterClassA failed!");
+        abort();
+    }
+
+    const DWORD style = WS_OVERLAPPEDWINDOW;
+    const DWORD ex_style = WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED;
+
+    // Get the size of the border.
+    RECT border_rect = { 0 };
+    AdjustWindowRectEx(&border_rect, style, false, ex_style);
+
+    RECT monitor_rect;
+    GetClientRect(GetDesktopWindow(), &monitor_rect);
+
+    int window_x = (monitor_rect.right / 2) - (w / 2);
+    int window_y = (monitor_rect.bottom / 2) - (h / 2);
+    int window_w = w;
+    int window_h = h;
+
+    // Border rectangle in this case is negative.
+    window_x += border_rect.left;
+    window_y += border_rect.top;
+
+    // Grow the window size by the OS border. This makes the client width/height correct.
+    window_w += border_rect.right - border_rect.left;
+    window_h += border_rect.bottom - border_rect.top;
+
+    HWND wnd = CreateWindowExA(
+        ex_style, wc.lpszClassName, "NeGate's forth", style,
+        window_x, window_y, window_w, window_h,
+        0, 0, wc.hInstance, 0
+    );
+
+    if (wnd == NULL) {
+        printf("CreateWindowExA failed!");
+        return NULL;
+    }
+
+    bitmap.bmiHeader.biSize = sizeof(BITMAPINFO);
+    bitmap.bmiHeader.biPlanes = 1;
+    bitmap.bmiHeader.biBitCount = 32;
+    bitmap.bmiHeader.biCompression = BI_RGB;
+    return wnd;
+}
+
+static void set_color(void fn(float, float, float, float), uint32_t color) {
+    fn(
+        ((color >> 16) & 0xFF) / 255.0f,  ((color >> 8)  & 0xFF) / 255.0f,
+        ((color >> 0)  & 0xFF) / 255.0f, ((color >> 24) & 0xFF) / 255.0f
+    );
+}
+
+static void draw_rect(uint32_t color, float x, float y, float w, float h) {
+    float x1 = x + w;
+    float y1 = y + h;
+
+    glBegin(GL_QUADS);
+    set_color(glColor4f, color);
+    glVertex2f(x, y),   glVertex2f(x1, y);
+    glVertex2f(x1, y1), glVertex2f(x, y1);
+    glEnd();
+}
+
+static bool load_forth(Env* env, const char* path) {
+    Cuik_File* f = cuikfs_open(path, false);
+
+    size_t len;
+    if (!cuikfs_get_length(f, &len)) {
+        printf("error: bad file!\n");
+        return false;
+    }
+
+    char* buffer = cuik_malloc(len + 1);
+    cuikfs_read(f, buffer, len);
+    buffer[len] = 0;
+
+    cuikfs_close(f);
+
+    // initialize dictionary
     nl_map_create(dict, 256);
     nl_map_put_cstr(dict, "+",      OP_ADD);
     nl_map_put_cstr(dict, "-",      OP_SUB);
@@ -548,6 +677,7 @@ int main(int argc, const char** argv) {
     nl_map_put_cstr(dict, "dup",    OP_DUP);
     nl_map_put_cstr(dict, "drop",   OP_DROP);
     nl_map_put_cstr(dict, "emit",   OP_EMIT);
+    nl_map_put_cstr(dict, "rect",   OP_RECT);
     nl_map_put_cstr(dict, "dump",   OP_DUMP);
     nl_map_put_cstr(dict, "key",    OP_KEY);
     nl_map_put_cstr(dict, "if{",    OP_IF);
@@ -555,36 +685,109 @@ int main(int argc, const char** argv) {
     nl_map_put_cstr(dict, "}",      OP_CLOSE);
     nl_map_put_cstr(dict, "tail",   OP_TAIL);
 
-    Env env;
-    env.head = 0;
-    env.single_step = false;
-
-    Cuik_File* f = cuikfs_open("rect.forth", false);
-
-    size_t len;
-    if (!cuikfs_get_length(f, &len)) {
-        printf("error: bad file!\n");
-        return 1;
-    }
-
-    char* buffer = cuik_malloc(len + 1);
-    cuikfs_read(f, buffer, len);
-    buffer[len] = 0;
-
-    cuikfs_close(f);
+    env->head = 0;
+    env->single_step = false;
 
     // parse
-    Word root = { 0 };
-    dyn_array_put_uninit(words, 1);
-    parse(&(Parser){ .source = buffer }, &root);
-    words[0] = root;
+    dyn_array_put(words, (Word){ 0 });
+    Word* root = &words[0];
+    root->name = (NL_Slice){ 6, (const uint8_t*) "<root>" };
 
-    // run interpreter+JIT
-    interp(&env, &root);
+    parse(&(Parser){ .source = buffer }, root);
+    infer(root);
+    return true;
+}
 
+int main(int argc, const char** argv) {
+    cuik_init_terminal();
+    cuik_init_timer_system();
+    cuikperf_start("forth.spall", &spall_profiler, false);
+
+    thrd_t jit_thread;
+    if (thrd_create(&jit_thread, jit_thread_routine, NULL) != thrd_success) {
+        fprintf(stderr, "error: could not create JIT thread");
+        return EXIT_FAILURE;
+    }
+
+    HWND wnd = gimme_window(1600, 900);
+    ShowWindow(wnd, SW_SHOW);
+    SetFocus(wnd);
+
+    // create GL context
+    HDC dc = GetDC(wnd);
+
+    PIXELFORMATDESCRIPTOR pfd = {
+        .nSize = sizeof(pfd),
+        .nVersion = 1,
+        .iPixelType = PFD_TYPE_RGBA,
+        .dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
+        .cColorBits = 32,
+        .cAlphaBits = 8,
+        .iLayerType = PFD_MAIN_PLANE
+    };
+
+    int pixel_format;
+    CHECK(pixel_format = ChoosePixelFormat(dc, &pfd));
+    CHECK(SetPixelFormat(dc, pixel_format, &pfd));
+
+    HGLRC glctx;
+    CHECK(glctx = wglCreateContext(dc));
+    CHECK(wglMakeCurrent(dc, glctx));
+
+    set_color(glClearColor, 0xFF1C1B1F);
+
+    Env env;
+    LiveCompiler live = { 0 };
+
+    while (jit.running) CUIK_TIMED_BLOCK("main loop") {
+        // Win32 message pump
+        MSG message;
+        while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
+            if (message.message == WM_QUIT) goto exit_program;
+
+            TranslateMessage(&message);
+            DispatchMessage(&message);
+        }
+
+        // check hot reload
+        if (live_compile_watch(&live, "rect.forth")) {
+            dyn_array_clear(words);
+            nl_map_free(dict);
+
+            CUIK_TIMED_BLOCK("load code") {
+                if (!load_forth(&env, "rect.forth")) {
+                    abort();
+                }
+            }
+        }
+
+        RECT rect;
+        GetWindowRect(wnd, &rect);
+        int w = rect.right - rect.left, h = rect.bottom - rect.top;
+
+        glViewport(0, 0, w, h);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0, w, 0, h, -1, 1);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+
+        // run interpreter+JIT
+        push(&env, w);
+        push(&env, h);
+        interp(&env, &words[0]);
+        assert(env.head == 0 && "stack \"leak\"?");
+
+        SwapBuffers(dc);
+    }
+
+    exit_program:
     // wait for JIT thread to stop
     jit.running = false;
     thrd_join(&jit_thread, NULL);
+    cuikperf_stop();
 
     return 0;
 }
