@@ -707,7 +707,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
             }
 
             // expire intervals
-            CUIK_TIMED_BLOCK("A->I") FOREACH_SET(reg, ra.active_set[rc]) {
+            FOREACH_SET(reg, ra.active_set[rc]) {
                 RegIndex active_i = ra.active[rc][reg];
                 LiveInterval* it = &ra.intervals[active_i];
 
@@ -732,7 +732,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                 }
             }
 
-            CUIK_TIMED_BLOCK("I->A") for (size_t i = 0; i < dyn_array_length(ra.inactive);) {
+            for (size_t i = 0; i < dyn_array_length(ra.inactive);) {
                 RegIndex inactive_i = ra.inactive[i];
                 LiveInterval* it = &ra.intervals[inactive_i];
 
