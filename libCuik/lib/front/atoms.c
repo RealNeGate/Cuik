@@ -23,7 +23,7 @@ Atom atoms_put(size_t len, const unsigned char* str) {
     }
 
     uint32_t mask = (1 << INTERNER_EXP) - 1;
-    uint32_t hash = murmur3_32(str, len);
+    uint32_t hash = tb__murmur3_32(str, len);
     size_t first = hash & mask, i = first;
 
     do {

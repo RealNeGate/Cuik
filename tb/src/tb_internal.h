@@ -651,9 +651,6 @@ void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos);
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data);
 
-// trusty lil hash functions
-uint32_t tb__crc32(uint32_t crc, size_t length, const void* data);
-
 // out_bytes needs at least 16 bytes
 void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);
 

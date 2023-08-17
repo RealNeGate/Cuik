@@ -53,7 +53,7 @@ void nl_hashset_free(NL_HashSet hs) {
 }
 
 // lookup into hash map for ptr, it's also used to put things in
-static size_t nl_hashset_lookup(NL_HashSet* restrict hs, void* ptr, size_t* out_first) {
+static size_t nl_hashset_lookup(NL_HashSet* restrict hs, void* ptr) {
     assert(ptr);
     uint32_t h = NL_HASHSET_HASH(ptr);
 
@@ -62,7 +62,6 @@ static size_t nl_hashset_lookup(NL_HashSet* restrict hs, void* ptr, size_t* out_
 
     do {
         if (hs->data[i] == NULL) {
-            *out_first = first;
             return i;
         } else if (hs->data[i] == ptr) {
             return ~(SIZE_MAX >> ((size_t) 1)) | i; // highest bit set
@@ -75,7 +74,7 @@ static size_t nl_hashset_lookup(NL_HashSet* restrict hs, void* ptr, size_t* out_
 }
 
 bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
-    size_t first, index = nl_hashset_lookup(hs, ptr, &first);
+    size_t index = nl_hashset_lookup(hs, ptr);
 
     // rehash (ideally only once? statistically not impossible for two?)
     while (index == SIZE_MAX) {
@@ -87,7 +86,7 @@ bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
         *hs = new_hs;
 
         // "tail" calls amirite
-        index = nl_hashset_lookup(hs, ptr, &first);
+        index = nl_hashset_lookup(hs, ptr);
     }
 
     if (index & NL_HASHSET_HIGH_BIT) {
@@ -101,7 +100,7 @@ bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
 }
 
 bool nl_hashset_remove(NL_HashSet* restrict hs, void* ptr) {
-    size_t first, index = nl_hashset_lookup(hs, ptr, &first);
+    size_t index = nl_hashset_lookup(hs, ptr);
     if (index == SIZE_MAX || (index & NL_HASHSET_HIGH_BIT) == 0) {
         return false;
     }

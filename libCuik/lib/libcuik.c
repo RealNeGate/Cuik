@@ -2,8 +2,10 @@
 // become single header libs maybe even the entire thing.
 #include "tls.c"
 #include "str.c"
-#include "hash.c"
 #include "path.c"
+
+// Used around the place
+#include "hashes.h"
 
 #include <hash_map.h>
 #include <file_map.h>

@@ -1,7 +1,7 @@
 
 static size_t insert_symtab(Cuik_CPP* ctx, size_t len, const char* key) {
     uint32_t mask = (1u << ctx->macros.exp) - 1;
-    uint32_t hash = murmur3_32((const unsigned char*) key, len);
+    uint32_t hash = tb__murmur3_32((const unsigned char*) key, len);
     for (size_t i = hash;;) {
         // hash table lookup
         uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
@@ -86,7 +86,7 @@ bool cuikpp_undef_cstr(Cuik_CPP* ctx, const char* key) {
 
 bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
     uint32_t mask = (1u << ctx->macros.exp) - 1;
-    uint32_t hash = murmur3_32(key, keylen);
+    uint32_t hash = tb__murmur3_32(key, keylen);
     for (size_t i = hash;;) {
         // hash table lookup
         uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;
@@ -141,7 +141,7 @@ static bool find_define(Cuik_CPP* restrict ctx, size_t* out_index, const unsigne
 
     bool found = false;
     uint32_t mask = (1u << ctx->macros.exp) - 1;
-    uint32_t hash = murmur3_32(start, length);
+    uint32_t hash = tb__murmur3_32(start, length);
     for (size_t i = hash;;) {
         // hash table lookup
         uint32_t step = (hash >> (32 - ctx->macros.exp)) | 1;

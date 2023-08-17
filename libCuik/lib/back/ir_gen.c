@@ -486,7 +486,7 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
         size_t len = s->str.end - s->str.start;
 
         if (type->kind == KIND_PTR) {
-            uint32_t hash = murmur3_32(s->str.start, len);
+            uint32_t hash = tb__murmur3_32(s->str.start, len);
 
             TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
             ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
@@ -653,7 +653,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
         case EXPR_WSTR: {
             // The string is preprocessed to be a flat and nice byte buffer by the semantics pass
             size_t len = e->str.end - e->str.start;
-            uint32_t hash = murmur3_32(e->str.start, len);
+            uint32_t hash = tb__murmur3_32(e->str.start, len);
 
             TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
             ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
