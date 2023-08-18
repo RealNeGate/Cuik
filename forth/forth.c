@@ -62,6 +62,10 @@ enum {
     OP_RECT  = -17, // ( x y w h -- )
 };
 
+enum {
+    WORD_VAR = 1,
+};
+
 struct Word {
     // we don't want to free the word while the
     // JIT is using that memory
@@ -74,6 +78,8 @@ struct Word {
     int arity, outputs;
     int tails;
 
+    uint32_t flags;
+
     // we might wanna move this out of here to avoid false-sharing
     //
     // for now there's no tiers or recompilation.
@@ -85,17 +91,29 @@ struct Word {
     _Atomic(void*) jitted;
 };
 
-static void infer(Word* w);
-
 static _Thread_local bool is_main_thread;
 
 #include "forth_dict.h"
 
 static Dictionary root_dict;
 
+static void dump_type(Word* w) {
+    printf(": %.*s ( ", (int) w->name.length, w->name.data);
+    for (int i = 0; i < w->arity; i++) {
+        printf("%c ", 'a'+i);
+    }
+    printf("-- ");
+    for (int i = 0; i < w->outputs; i++) {
+        printf("%c ", 'A'+i);
+    }
+    printf(") ... ;\n");
+}
+
 ////////////////////////////////
 // Parser
 ////////////////////////////////
+static void infer(Word* w);
+
 typedef struct {
     const char* source;
 } Parser;
@@ -126,6 +144,8 @@ static Word* add_new_to_dictionary(Dictionary* dict, NL_Slice name, int ins, int
     Word* w = &words.entries[id];
     *w = (Word){ .refs = 1, .name = name, .arity = ins, .outputs = outs };
     dict_put(dict, name.length, (const char*) name.data, -1000 - id);
+
+    dump_type(w);
     return w;
 }
 
@@ -189,14 +209,18 @@ static void parse(Dictionary* dict, Parser* p, Word* w) {
             if (tb_arena_is_empty(&dict->data)) {
                 tb_arena_create(&dict->data, TB_ARENA_MEDIUM_CHUNK_SIZE);
             }
+
             void* ptr = tb_arena_alloc(&dict->data, sizeof(int64_t));
+            memset(ptr, 0, sizeof(int64_t));
 
             // generate words
             Word* st_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s!", name.data), 1, 0);
+            st_word->flags |= WORD_VAR;
             dyn_array_put(st_word->ops, (uintptr_t) ptr);
             dyn_array_put(st_word->ops, OP_WRITE);
 
             Word* ld_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s@", name.data), 0, 1);
+            ld_word->flags |= WORD_VAR;
             dyn_array_put(ld_word->ops, (uintptr_t) ptr);
             dyn_array_put(ld_word->ops, OP_READ);
 
@@ -426,18 +450,7 @@ static void infer(Word* w) {
         w->outputs = head;
     }
 
-    // dump resulting type
-    if (1) {
-        printf(": %.*s ( ", (int) w->name.length, w->name.data);
-        for (int i = 0; i < w->arity; i++) {
-            printf("%c ", 'a'+i);
-        }
-        printf("-- ");
-        for (int i = 0; i < head; i++) {
-            printf("%c ", 'A'+i);
-        }
-        printf(") ... ;\n");
-    }
+    dump_type(w);
 }
 
 ////////////////////////////////
@@ -799,7 +812,9 @@ int main(int argc, const char** argv) {
 
     set_color(glClearColor, 0xFF1C1B1F);
 
-    Dictionary sandbox = { };
+    Dictionary sandbox[2] = { 0 };
+    int curr = 0; // which of the sandboxes we're in
+
     LiveCompiler live = { 0 };
 
     // initialize dictionary
@@ -833,13 +848,19 @@ int main(int argc, const char** argv) {
 
         // check hot reload
         if (live_compile_watch(&live, "rect.forth")) {
-            dict_free(&sandbox);
-            sandbox.parent = &root_dict;
-
             CUIK_TIMED_BLOCK("load code") {
-                WordIndex root_word = load_forth(&sandbox, "rect.forth");
+                int old = curr;
+                curr = (curr + 1) % 2;
+
+                sandbox[curr].parent = &root_dict;
+                WordIndex root_word = load_forth(&sandbox[curr], "rect.forth");
                 assert(root_word < 0);
 
+                // move any old values which match in name to new values
+                dict_migrate(&sandbox[curr], &sandbox[old]);
+                dict_free(&sandbox[old]);
+
+                // run init code (maybe we shouldn't do this multiple times?)
                 env.head = 0;
                 env.single_step = false;
                 interp(&env, &words.entries[-1000 - root_word]);
@@ -860,7 +881,7 @@ int main(int argc, const char** argv) {
         glLoadIdentity();
 
         // per frame logic
-        WordIndex update_word = dict_get(&sandbox, -1, "update");
+        WordIndex update_word = dict_get(&sandbox[curr], -1, "update");
         if (update_word < 0) {
             push(&env, w);
             push(&env, h);

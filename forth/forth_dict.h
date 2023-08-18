@@ -58,12 +58,12 @@ static void unref_word(WordIndex w) {
 // length segregated entry (<= 4)
 typedef struct {
     uint32_t key;
-    uint32_t val;
+    WordIndex val;
 } DictionaryEntry4;
 
 typedef struct {
     const char* key;
-    uint32_t val;
+    WordIndex val;
 } DictionaryEntry;
 
 typedef struct Dictionary Dictionary;
@@ -236,6 +236,43 @@ DICT_API void dict_put(Dictionary* dict, ptrdiff_t len, const char* key, WordInd
         dict_entry4_put(dict, len, short_key, val);
     } else {
         dict_entry_big_put(dict, len, key, val);
+    }
+}
+
+static void dict_migrate_word(Word* w, Dictionary* dict, Dictionary* old_dict) {
+    if ((w->flags & WORD_VAR) && w->ops[1] == OP_WRITE) {
+        // if no old version existed, don't migrate
+        WordIndex found = dict_get(old_dict, w->name.length, (const char*) w->name.data);
+        if (found >= 0 && (words.entries[-1000 - found].flags & WORD_VAR) == 0) return;
+
+        void* old_ptr = (void*) words.entries[-1000 - found].ops[0];
+        void* new_ptr = (void*) w->ops[0];
+        memcpy(new_ptr, old_ptr, sizeof(int64_t));
+
+        log_debug("dict: migrate %s (%p -> %p)", w->name.data, old_ptr, new_ptr);
+    }
+}
+
+// migrates any data into a new arena
+DICT_API void dict_migrate(Dictionary* dict, Dictionary* old_dict) {
+    log_debug("dict: migrating old variables to new dictionary");
+
+    if (dict->short_table.entries != NULL) {
+        size_t short_cap = 1ull << dict->short_table.exp;
+        for (size_t i = 0; i < short_cap; i++) {
+            if (dict->short_table.entries[i].key != 0 && dict->short_table.entries[i].val < 0) {
+                dict_migrate_word(&words.entries[-1000 - dict->short_table.entries[i].val], dict, old_dict);
+            }
+        }
+    }
+
+    if (dict->big_table.entries != NULL) {
+        size_t big_cap = 1ull << dict->big_table.exp;
+        for (size_t i = 0; i < big_cap; i++) {
+            if (dict->big_table.entries[i].key != NULL && dict->big_table.entries[i].val < 0) {
+                dict_migrate_word(&words.entries[-1000 - dict->big_table.entries[i].val], dict, old_dict);
+            }
+        }
     }
 }
 

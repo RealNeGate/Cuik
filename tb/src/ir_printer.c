@@ -140,7 +140,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
             tb_print_type(n->dt, callback, user_data);
 
-            if (num->num_words == 1) {
+            if (num->num_words == 1 && num->words[0] < 0xFFFF) {
                 int bits = n->dt.type == TB_PTR ? 64 : n->dt.data;
                 int64_t x = tb__sxt(num->words[0], bits, 64);
 
@@ -148,7 +148,6 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             } else {
                 P(" 0x");
                 FOREACH_REVERSE_N(i, 0, num->num_words) {
-                    if (num) P("'");
                     P("%016"PRIx64, num->words[i]);
                 }
             }
@@ -231,6 +230,8 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
 
         if (n->input_count == 3 && n->inputs[0] == 0) {
             P(" [label=\"%s\"];\n", i == 1 ? "L" : "R");
+        } else if (n->type == TB_CALL && i > 1) {
+            P(" [label=\"%zu\"];\n", i - 2);
         } else if (n->type == TB_PHI && i > 0) {
             P(" [label=\"%zu\"];\n", i - 1);
         } else {
