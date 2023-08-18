@@ -120,7 +120,7 @@ void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
 
 void tb_arena_pop(TB_Arena* restrict arena, void* ptr, size_t size) {
     char* p = ptr;
-    assert(arena->watermark + size == p); // cannot pop from arena if it's not at the top
+    assert(p + size == arena->watermark); // cannot pop from arena if it's not at the top
 
     arena->watermark = p;
 }
@@ -160,6 +160,8 @@ void* tb_arena_alloc(TB_Arena* restrict arena, size_t size) {
 
 void tb_arena_clear(TB_Arena* arena) {
     TB_ArenaChunk* c = arena->base;
+    if (c == NULL) return;
+
     arena->watermark = c->data;
     arena->high_point = &c->data[arena->chunk_size - sizeof(TB_ArenaChunk)];
     arena->base = arena->top = c;

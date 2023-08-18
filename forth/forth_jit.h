@@ -100,7 +100,7 @@ JIT_API int jit_try_call(Env* env, Word* w) {
     void* fn = atomic_load(&w->jitted);
     if (fn == NULL) {
         if (atomic_fetch_add(&w->trip_count, 1) == JIT_THRESHOLD) {
-            log_debug("jit: trip count exceeded for %.*s (first compile)", (int) w->name.length, w->name.data);
+            // log_debug("jit: trip count exceeded for %.*s (first compile)", (int) w->name.length, w->name.data);
 
             // put word into queue
             jit__queue_push(8, &jit.queue, jit.queue_elems, w);
@@ -306,6 +306,13 @@ static int jit_thread_routine(void* arg) {
         TB_PrototypeParam ret = { TB_TYPE_I32 };
         jit.proto = tb_prototype_create(jit.mod, TB_STDCALL, 3, params, 1, &ret, false);
 
+        jit.internal_protos[0] = tb_prototype_create(
+            jit.mod, TB_STDCALL,
+            1, &(TB_PrototypeParam){ TB_TYPE_PTR },
+            1, &(TB_PrototypeParam){ TB_TYPE_I32 },
+            false
+        );
+
         JIT__BIND(INTERP,  interp,      TB_TYPE_I32,  TB_TYPE_PTR, TB_TYPE_PTR);
         JIT__BIND(PUTCHAR, putchar,     TB_TYPE_I32,  TB_TYPE_I32);
         JIT__BIND(PUTNUM,  jit__putnum, TB_TYPE_VOID, TB_TYPE_I64);
@@ -350,6 +357,9 @@ typedef struct {
     TB_Node* env;
     ControlStack cs;
 
+    // how many words in the blob, used for early-inlining
+    size_t accum_words;
+
     size_t head;
     TB_Node* stack[64];
 } JIT_Builder;
@@ -368,7 +378,7 @@ static TB_Node* jit__call_builtin(JIT_Builder* ctx, size_t id, size_t count, TB_
     return tb_inst_call(ctx->f, jit.builtins[id].proto, jit__get_builtin(ctx, id), count, args).single;
 }
 
-static TB_Node* jit__shift_head(TB_Function* f, TB_Node* env, int delta) {
+static TB_Node* jit__shift_head(TB_Function* f, TB_Node* env, int delta, bool post) {
     TB_Node* head_ptr = tb_inst_member_access(f, env, offsetof(Env, head));
     TB_Node* ld_head = tb_inst_load(f, TB_TYPE_I64, head_ptr, _Alignof(size_t), false);
 
@@ -382,6 +392,7 @@ static TB_Node* jit__shift_head(TB_Function* f, TB_Node* env, int delta) {
             add_head = tb_inst_add(f, ld_head, tb_inst_sint(f, TB_TYPE_I64, delta), 0);
         }
         tb_inst_store(f, TB_TYPE_I64, head_ptr, add_head, _Alignof(size_t), false);
+        return post ? add_head : ld_head;
     }
 
     return ld_head;
@@ -403,6 +414,9 @@ static TB_Node* jit__spill_stack(TB_Function* f, TB_Node* env, TB_Node** stack, 
 static void jit__compile_word(JIT_Builder* ctx, Word* w) {
     TB_Function* f = ctx->f;
     TB_Node* env = ctx->env;
+
+    // accumulate more words
+    ctx->accum_words += dyn_array_length(w->ops);
 
     TB_Node** phis = NULL;
     TB_Node* loop_body = NULL;
@@ -452,53 +466,63 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
                 }
             }
         } else if (x <= -1000) {
-            Word* new_w = &words[-x - 1000];
+            Word* new_w = &words.entries[-x - 1000];
+            ref_word(new_w - words.entries);
 
             head -= new_w->arity;
             TB_Node** src_args = &stack[head];
 
-            TB_Node* ld_head = jit__shift_head(f, env, new_w->arity);
-            /*if (new_w->jitted == NULL) {
-                // we have to spill to the stack
-                if (new_w->arity > 0) {
-                    jit__spill_stack(f, env, stack, ld_head, new_w->arity);
-                }
-
-                // this is kinda hacky but we're JITting it's fine
-                TB_Node* new_w_node = tb_inst_uint(f, TB_TYPE_PTR, (uintptr_t) new_w);
-
-                TB_Node* args[2] = { env, new_w_node };
-                jit__call_builtin(ctx, FOREIGN_INTERP, 2, args);
+            if (0) {
+                // early inlining
+                __debugbreak();
             } else {
-                // generate argument list
-                TB_Node* args[32];
-                args[0] = env;
-                for (size_t i = 0; i < new_w->arity; i++) {
-                    args[1 + i] = src_args[i];
+                TB_Node* ld_head = jit__shift_head(f, env, new_w->arity, false);
+
+                // if a JITted form already exists, use that
+                _Atomic(void*) jitted = atomic_load(&new_w->jitted);
+                if (jitted == NULL) {
+                    // we have to spill to the stack
+                    if (new_w->arity > 0) {
+                        jit__spill_stack(f, env, stack, ld_head, new_w->arity);
+                    }
+
+                    // this is kinda hacky but we're JITting it's fine
+                    TB_Node* new_w_node = tb_inst_uint(f, TB_TYPE_PTR, (uintptr_t) new_w);
+
+                    TB_Node* args[2] = { env, new_w_node };
+                    jit__call_builtin(ctx, FOREIGN_INTERP, 2, args);
+                } else {
+                    // generate argument list
+                    TB_Node* args[32];
+                    args[0] = env;
+                    for (size_t i = 0; i < new_w->arity; i++) {
+                        args[1 + i] = src_args[i];
+                    }
+
+                    // make sure the caller & proto are ready
+                    jit__get_trampoline(new_w->arity);
+
+                    TB_Node* target = tb_inst_uint(f, TB_TYPE_PTR, (uintptr_t) jitted); // tb_inst_get_symbol_address(f, (TB_Symbol*) new_w->ir);
+                    tb_inst_call(f, jit.internal_protos[new_w->arity], target, 1 + new_w->arity, args);
                 }
 
-                // make sure the caller & proto are ready
-                jit__get_trampoline(new_w->arity);
+                // pop returns off the stack
+                int outputs = new_w->outputs;
+                if (outputs > 0) {
+                    TB_Node* ld_head = jit__shift_head(f, env, -outputs, true);
 
-                TB_Node* target = tb_inst_get_symbol_address(f, (TB_Symbol*) new_w->ir);
-                jit__call_builtin(f, jit.internal_protos[new_w->arity], target, 1 + new_w->arity, args);
-            }*/
+                    // dump stack (args is the top of the stack)
+                    TB_Node* tos = tb_inst_member_access(f, env, offsetof(Env, stack));
+                    tos = tb_inst_array_access(f, tos, ld_head, sizeof(size_t));
 
-            // pop returns off the stack
-            int outputs = new_w->outputs;
-            if (outputs > 0) {
-                TB_Node* ld_head = jit__shift_head(f, env, -outputs);
-
-                // dump stack (args is the top of the stack)
-                TB_Node* tos = tb_inst_member_access(f, env, offsetof(Env, stack));
-                tos = tb_inst_array_access(f, tos, ld_head, sizeof(size_t));
-
-                for (size_t i = 0; i < head; i++) {
-                    TB_Node* ptr = tb_inst_member_access(f, tos, i * sizeof(uint64_t));
-                    src_args[i] = tb_inst_load(f, TB_TYPE_I64, ptr, _Alignof(size_t), false);
+                    for (size_t i = 0; i < outputs; i++) {
+                        TB_Node* ptr = tb_inst_member_access(f, tos, i * sizeof(uint64_t));
+                        src_args[i] = tb_inst_load(f, TB_TYPE_I64, ptr,  _Alignof(size_t), false);
+                    }
+                    head += outputs;
                 }
-                head += outputs;
             }
+            unref_word(new_w - words.entries);
         } else {
             // all primitives have static effects, let's make sure all args
             // are available before we continue
@@ -515,6 +539,16 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
                 // stack
                 case OP_DUP: stack[head] = args[0], stack[head+1] = args[0], head += 2; break;
                 case OP_DROP: /* no op, just throws away argument */ break;
+
+                // memory
+                case OP_READ: {
+                    stack[head++] = tb_inst_load(f, TB_TYPE_I64, args[0], 8, false);
+                    break;
+                }
+                case OP_WRITE: {
+                    tb_inst_store(f, TB_TYPE_I64, args[0], args[1], 8, false);
+                    break;
+                }
 
                 // console
                 case OP_KEY: {
@@ -625,7 +659,7 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
         if (tb_inst_get_control(f) != NULL) {
             assert(builder.head == w->outputs);
             if (builder.head != w->arity) {
-                TB_Node* ld_head = jit__shift_head(f, builder.env, builder.head - w->arity);
+                TB_Node* ld_head = jit__shift_head(f, builder.env, builder.head - w->arity, false);
 
                 if (builder.head > 0) {
                     jit__spill_stack(f, builder.env, builder.stack, ld_head, builder.head);
@@ -649,8 +683,8 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
         // tb_function_print(f, tb_default_print_callback, stdout);
 
         // compile
-        tb_pass_codegen(p, false);
-        // tb_output_print_asm(out, stdout);
+        TB_FunctionOutput* out = tb_pass_codegen(p, true);
+        tb_output_print_asm(out, stdout);
     }
     tb_pass_exit(p);
 

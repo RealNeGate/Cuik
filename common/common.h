@@ -47,6 +47,12 @@
 #define COUNTOF(...) (sizeof(__VA_ARGS__) / sizeof(__VA_ARGS__[0]))
 #endif
 
+#ifdef NDEBUG
+#define ASSUME(x) ((x) ? 0 : __builtin_unreachable())
+#else
+#define ASSUME(x) ((x) ? 0 : (fprintf(stderr, __FILE__ ": " STR(__LINE__) ": bad assumption: " #x "\n")))
+#endif
+
 #define LIKELY(x)      __builtin_expect(!!(x), 1)
 #define UNLIKELY(x)    __builtin_expect(!!(x), 0)
 
