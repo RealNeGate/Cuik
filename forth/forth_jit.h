@@ -469,13 +469,17 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
             Word* new_w = &words.entries[-x - 1000];
             ref_word(new_w - words.entries);
 
-            head -= new_w->arity;
-            TB_Node** src_args = &stack[head];
-
-            if (0) {
-                // early inlining
-                __debugbreak();
+            if (dyn_array_length(new_w->ops) < 5) {
+                // always inline very tiny words
+                CUIK_TIMED_BLOCK_ARGS("inlined", (const char*) new_w->name.data) {
+                    ctx->head = head;
+                    jit__compile_word(ctx, new_w);
+                    head = ctx->head;
+                }
             } else {
+                head -= new_w->arity;
+
+                TB_Node** src_args = &stack[head];
                 TB_Node* ld_head = jit__shift_head(f, env, new_w->arity, false);
 
                 // if a JITted form already exists, use that
@@ -546,7 +550,7 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
                     break;
                 }
                 case OP_WRITE: {
-                    tb_inst_store(f, TB_TYPE_I64, args[0], args[1], 8, false);
+                    tb_inst_store(f, TB_TYPE_I64, args[1], args[0], 8, false);
                     break;
                 }
 
@@ -630,6 +634,7 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
 // we will end up inlining early if things are small.
 static void jit__compile_blob(Env* env, Word* w, const char* name) {
     JIT_Builder builder;
+    builder.accum_words = 0;
     builder.cs.head = 0;
 
     for (size_t i = 0; i < FOREIGN_MAX; i++) {
@@ -653,7 +658,9 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
         }
 
         // do word
-        jit__compile_word(&builder, w);
+        CUIK_TIMED_BLOCK_ARGS("word", (const char*) w->name.data) {
+            jit__compile_word(&builder, w);
+        }
 
         // finalize the blob, spill leftover stack elements
         if (tb_inst_get_control(f) != NULL) {

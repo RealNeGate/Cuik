@@ -12,12 +12,10 @@ var: y ;
 	200 300 200 200 rect
 
 	x@ y@ 50 50 rect
+
+	\ advance
+	x@ 1 + x!
 ;
-
-\ advance
-\ x@ 1 + x!
-
-
 
 
 
