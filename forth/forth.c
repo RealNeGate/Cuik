@@ -639,8 +639,7 @@ static int interp(Env* env, Word* w) {
     return INTERP_OK;
 }
 
-static BITMAPINFO bitmap;
-static bool is_opaque = true;
+static bool is_opaque = false;
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
@@ -706,10 +705,6 @@ static HWND gimme_window(int w, int h) {
         return NULL;
     }
 
-    bitmap.bmiHeader.biSize = sizeof(BITMAPINFO);
-    bitmap.bmiHeader.biPlanes = 1;
-    bitmap.bmiHeader.biBitCount = 32;
-    bitmap.bmiHeader.biCompression = BI_RGB;
     return wnd;
 }
 
