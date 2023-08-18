@@ -161,6 +161,12 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             break;
         }
 
+        case TB_GET_SYMBOL_ADDRESS: {
+            TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n);
+            P("symbol %s", s->sym->name ? s->sym->name : "???");
+            break;
+        }
+
         case TB_PROJ: {
             int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
 

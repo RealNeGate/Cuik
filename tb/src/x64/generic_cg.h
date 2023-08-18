@@ -114,11 +114,8 @@ static bool fits_into_int8(uint64_t x) {
 }
 
 static bool fits_into_int32(uint64_t x) {
-    int64_t y = ((int32_t) x);
-    uint32_t hi = y >> 32ull;
+    uint32_t hi = x >> 32ull;
     return hi == 0 || hi == 0xFFFFFFFF;
-    /*int32_t y = x & 0xFFFFFFFF;
-    return (int64_t)y == x;*/
 }
 
 static size_t emit_prologue(Ctx* restrict ctx);
@@ -533,7 +530,10 @@ static void visit_uses(Ctx* restrict ctx, NL_HashSet* visited, TB_Node* n) {
 
     // track use count
     size_t use_count = 0;
-    for (User* use = find_users(ctx->p, n); use; use = use->next) use_count++;
+    for (User* use = find_users(ctx->p, n); use; use = use->next) {
+        visit_uses(ctx, visited, use->n);
+        use_count++;
+    }
     nl_map_put(ctx->uses, n, use_count);
 }
 
