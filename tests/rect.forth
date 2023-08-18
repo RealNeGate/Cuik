@@ -17,12 +17,3 @@ var: y ;
 	x@ 1 + x!
 ;
 
-
-
-\ simple stack effects
-: foo 3 4 + + ;
-
-\ simple condition
-: bar if{ 65 emit }else{ 66 emit } ;
-: baz 65 emit ;
-
