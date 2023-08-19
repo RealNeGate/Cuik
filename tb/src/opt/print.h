@@ -346,7 +346,8 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
 
             case TB_MEMSET:
             case TB_MEMCPY:
-            case TB_CALL: {
+            case TB_CALL:
+            case TB_PROJ: {
                 print_node(ctx, n, n);
                 break;
             }
