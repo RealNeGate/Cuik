@@ -111,6 +111,19 @@ static void print_type(TB_DataType dt) {
     }
 }
 
+int get_ordinal(PrinterCtx* ctx, TB_Node* n) {
+    int id;
+    ptrdiff_t search = nl_map_get(ctx->ordinals, n);
+    if (search >= 0) {
+        id = ctx->ordinals[search].v;
+    } else {
+        // alloc new ID
+        id = ctx->count++;
+        nl_map_put(ctx->ordinals, n, id);
+    }
+    return id;
+}
+
 // returns true if it's the first time
 static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
     if (n->type == TB_REGION || n->type == TB_START || n->type == TB_STORE || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST || n->type == TB_GET_SYMBOL_ADDRESS) {
@@ -124,15 +137,7 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
     if (nl_map_get(ctx->visited, n) >= 0) return;
     nl_map_put(ctx->visited, n, 0);
 
-    int id;
-    ptrdiff_t search = nl_map_get(ctx->ordinals, n);
-    if (search >= 0) {
-        id = ctx->ordinals[search].v;
-    } else {
-        // alloc new ID
-        id = ctx->count++;
-        nl_map_put(ctx->ordinals, n, id);
-    }
+    int id = get_ordinal(ctx, n);
 
     // print operands
     FOREACH_N(i, 1, n->input_count) if (n->inputs[i]) {
@@ -152,16 +157,7 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
     if (n->dt.type == TB_INT && n->dt.data == 0) {
         printf("  %s.", tb_node_get_name(n));
     } else {
-        bool actually_used = false;
-        for (User* use = find_users(ctx->opt, n); use; use = use->next) {
-            if (use->slot != 0) { actually_used = true; break; }
-        }
-
-        if (actually_used) {
-            printf("  v%d = %s.", id, tb_node_get_name(n));
-        } else {
-            printf("  _ = %s.", tb_node_get_name(n));
-        }
+        printf("  v%d = %s.", id, tb_node_get_name(n));
     }
 
     TB_DataType dt = n->dt;
@@ -271,9 +267,11 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
     }
 
     // has control dependencies on this node, we put these after
-    for (User* use = find_users(ctx->opt, n); use; use = use->next) {
-        if (use->slot == 0 && (use->n->type == TB_PHI || use->n->type == TB_PROJ)) {
-            print_node(ctx, use->n, n);
+    if (n->type != TB_CALL) {
+        for (User* use = find_users(ctx->opt, n); use; use = use->next) {
+            if (use->slot == 0 && (use->n->type == TB_PHI || use->n->type == TB_PROJ)) {
+                print_node(ctx, use->n, n);
+            }
         }
     }
 
@@ -372,7 +370,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
     }
 
     for (User* use = find_users(ctx->opt, n); use; use = use->next) {
-        if (use->slot == 0 && use->n->type == TB_LOAD) {
+        if (use->slot == 0 && (use->n->type == TB_LOAD || (n->type == TB_CALL && use->n->type == TB_PROJ))) {
             print_node(ctx, use->n, n);
         }
     }
