@@ -204,6 +204,9 @@ void tb_pass_schedule(TB_Passes* passes) {
             }
         }
 
+        // reset node count
+        passes->f->node_count = visited.count;
+
         CUIK_TIMED_BLOCK("freeing") {
             dyn_array_destroy(worklist);
             nl_hashset_free(visited);

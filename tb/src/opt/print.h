@@ -53,7 +53,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
     } else if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
-        if (num->num_words == 1) {
+        if (num->num_words == 1 && num->words[0] < 0xFFFF) {
             printf("%"PRId64, num->words[0]);
         } else {
             printf("0x");

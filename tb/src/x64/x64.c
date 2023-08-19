@@ -564,12 +564,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 use(ctx, n->inputs[2]);
 
                 SUBMIT(inst_move(n->dt, dst, lhs));
-                SUBMIT(inst_op_rri(IMUL, n->dt, dst, lhs, x));
+                SUBMIT(inst_op_rri(IMUL, n->dt, dst, dst, x));
             } else {
                 int rhs = isel(ctx, n->inputs[2]);
 
                 SUBMIT(inst_move(n->dt, dst, lhs));
-                SUBMIT(inst_op_rrr(IMUL, n->dt, dst, lhs, rhs));
+                SUBMIT(inst_op_rrr(IMUL, n->dt, dst, dst, rhs));
             }
             break;
         }

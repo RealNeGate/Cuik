@@ -707,22 +707,26 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     //   we run through BBs in a reverse postorder walk, currently
     //   there's no reodering based on branch weights (since we don't
     //   do those but if we did that would go here.
-    ctx.order = tb_function_get_postorder(f);
-    assert(ctx.order.traversal[ctx.order.count - 1] == f->start_node && "Codegen must always schedule entry BB first");
+    CUIK_TIMED_BLOCK("postorder") {
+        ctx.order = tb_function_get_postorder(f);
+        assert(ctx.order.traversal[ctx.order.count - 1] == f->start_node && "Codegen must always schedule entry BB first");
+    }
 
     nl_map_create(ctx.values, f->node_count);
-    nl_map_create(ctx.uses, f->node_count);
-
     init_regalloc(&ctx);
 
-    NL_HashSet visited = nl_hashset_alloc(f->node_count);
-    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-        visit_uses(&ctx, &visited, ctx.order.traversal[i]);
+    CUIK_TIMED_BLOCK("uses") {
+        NL_HashSet visited = nl_hashset_arena_alloc(tmp_arena, f->node_count);
+        nl_map_create(ctx.uses, f->node_count);
+        FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+            visit_uses(&ctx, &visited, ctx.order.traversal[i]);
+        }
+        nl_hashset_free(visited);
     }
 
     // allocate more stuff now that we've run stats on the IR
     ctx.emit.return_label = 0;
-    nl_map_create(ctx.emit.labels, f->control_node_count);
+    nl_map_create(ctx.emit.labels, ctx.order.count);
     nl_map_create(ctx.stack_slots, 8);
     dyn_array_create(ctx.debug_stack_slots, 8);
 

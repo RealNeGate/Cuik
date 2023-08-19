@@ -3,6 +3,8 @@
 #define NL_HASH_SET_H
 
 typedef struct NL_HashSet {
+    TB_Arena* allocator;
+
     size_t exp, count;
     void** data;
 } NL_HashSet;
@@ -11,11 +13,12 @@ typedef uint32_t (*NL_HashFunc)(void* a);
 typedef bool (*NL_CompareFunc)(void* a, void* b);
 
 NL_HashSet nl_hashset_alloc(size_t cap);
+NL_HashSet nl_hashset_arena_alloc(TB_Arena* arena, size_t cap);
 void nl_hashset_free(NL_HashSet hs);
 
 void nl_hashset_clear(NL_HashSet* restrict hs);
-bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr);
 bool nl_hashset_remove(NL_HashSet* restrict hs, void* ptr);
+bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr);
 
 // this one takes a custom hash function
 void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_CompareFunc cmp);
@@ -48,8 +51,30 @@ NL_HashSet nl_hashset_alloc(size_t cap) {
     return (NL_HashSet){ .exp = exp, .data = cuik_calloc(cap, sizeof(void*)) };
 }
 
+NL_HashSet nl_hashset_arena_alloc(TB_Arena* arena, size_t cap) {
+    cap = (cap * 4) / 3;
+    if (cap < 4) cap = 4;
+
+    // next power of two
+    #if defined(_MSC_VER) && !defined(__clang__)
+    size_t exp = 64 - _lzcnt_u64(cap - 1);
+    #else
+    size_t exp = 64 - __builtin_clzll(cap - 1);
+    #endif
+
+    cap = (cap == 1 ? 1 : 1 << exp);
+
+    void* data = tb_arena_alloc(arena, cap * sizeof(void*));
+    memset(data, 0, cap * sizeof(void*));
+    return (NL_HashSet){ .allocator = arena, .exp = exp, .data = data };
+}
+
 void nl_hashset_free(NL_HashSet hs) {
-    cuik_free(hs.data);
+    if (hs.allocator == NULL) {
+        cuik_free(hs.data);
+    } else {
+        tb_arena_pop(hs.allocator, hs.data, (1ull << hs.exp) * sizeof(void*));
+    }
 }
 
 // lookup into hash map for ptr, it's also used to put things in
@@ -78,6 +103,7 @@ bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr) {
 
     // rehash (ideally only once? statistically not impossible for two?)
     while (index == SIZE_MAX) {
+        assert(hs->allocator == NULL && "arena hashsets can't be resized!");
         NL_HashSet new_hs = nl_hashset_alloc(nl_hashset_capacity(hs));
         nl_hashset_for(p, hs) {
             nl_hashset_put(&new_hs, *p);
