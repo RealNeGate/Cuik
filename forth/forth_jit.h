@@ -1,4 +1,3 @@
-#define JIT_API static
 #define JIT_THRESHOLD 100
 
 #define PP_NARG(...)  PP_NARG_(__VA_ARGS__,PP_RSEQ_N())
@@ -96,11 +95,11 @@ static int jit__caller_0ary(Env* env, uint64_t* stack, void* jitted) {
     return ((int (*)(Env*)) jitted)(env);
 }
 
-JIT_API int jit_try_call(Env* env, Word* w) {
+int jit_try_call(Env* env, Word* w) {
     void* fn = atomic_load(&w->jitted);
     if (fn == NULL) {
         if (atomic_fetch_add(&w->trip_count, 1) == JIT_THRESHOLD) {
-            // log_debug("jit: trip count exceeded for %.*s (first compile)", (int) w->name.length, w->name.data);
+            log_debug("jit: trip count exceeded for %.*s (%d hits)", (int) w->name.length, w->name.data, JIT_THRESHOLD);
 
             // put word into queue
             jit__queue_push(8, &jit.queue, jit.queue_elems, w);
@@ -191,14 +190,17 @@ static void* jit__compile_trampoline(TB_FunctionPrototype* proto, int arity) {
 
     // JIT & export
     TB_Passes* p = tb_pass_enter(f, tb_function_get_arena(f));
-    tb_pass_codegen(p, false);
+    tb_pass_codegen(p, true);
     tb_pass_exit(p);
 
     // we can throw away the function IR now
     tb_arena_clear(tb_function_get_arena(f));
 
-    void* fn = tb_module_apply_function(jit.jit, f);
-    tb_module_ready_jit(jit.jit);
+    void* fn;
+    CUIK_TIMED_BLOCK("apply") {
+        fn = tb_module_apply_function(jit.jit, f);
+        tb_module_ready_jit(jit.jit);
+    }
     return fn;
 }
 
@@ -259,12 +261,11 @@ static void* jit__queue_pop(uint32_t exp, _Atomic uint32_t* queue, void** elems)
 ////////////////////////////////
 // Compiler thread
 ////////////////////////////////
-static void draw_rect(uint32_t color, float x, float y, float w, float h);
 static void jit__compile_blob(Env* env, Word* w, const char* name);
 
 // used by jitted code, needs to be bound on startup
 static void jit__putnum(int64_t num) { printf("%lld", num); }
-static void jit__rect(int x, int y, int w, int h) { draw_rect(0xFFE6E1E5, x, y, w, h); }
+static void jit__rect(int x, int y, int w, int h) { draw_rect2(0xFFE6E1E5, x, y, w, h); }
 
 #define JIT__BIND(i, n, r, ...) jit__bind_builtin_foreign(FOREIGN_ ## i, #n, &n, r, PP_NARG(__VA_ARGS__), ## __VA_ARGS__)
 static void jit__bind_builtin_foreign(size_t index, const char* name, void* ptr, TB_DataType ret, size_t param_count, ...) {
@@ -338,6 +339,7 @@ static int jit_thread_routine(void* arg) {
         CUIK_TIMED_BLOCK_ARGS("blob", name) {
             jit__compile_blob(env, w, name);
         }
+        // log_debug("jit: compiled %s", name);
     }
 
     tb_module_destroy(jit.mod);
@@ -469,7 +471,7 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
             Word* new_w = &words.entries[-x - 1000];
             ref_word(new_w - words.entries);
 
-            if (dyn_array_length(new_w->ops) < 5) {
+            if (dyn_array_length(new_w->ops) < 10) {
                 // always inline very tiny words
                 CUIK_TIMED_BLOCK_ARGS("inlined", (const char*) new_w->name.data) {
                     ctx->head = head;
@@ -534,15 +536,17 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
             head -= arity;
             TB_Node** args = &stack[head];
 
-            TB_Node* new_head = NULL;
+            TB_Node* tmp = NULL;
             switch (x) {
                 // arithmatic
                 case OP_ADD: stack[head++] = tb_inst_add(f, args[0], args[1], 0); break;
                 case OP_SUB: stack[head++] = tb_inst_sub(f, args[0], args[1], 0); break;
+                case OP_MUL: stack[head++] = tb_inst_mul(f, args[0], args[1], 0); break;
 
                 // stack
                 case OP_DUP: stack[head] = args[0], stack[head+1] = args[0], head += 2; break;
                 case OP_DROP: /* no op, just throws away argument */ break;
+                case OP_SWAP: tmp = args[0], args[0] = args[1], args[1] = tmp, head += 2; break;
 
                 // memory
                 case OP_READ: {
@@ -688,14 +692,17 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
         }
 
         // tb_function_print(f, tb_default_print_callback, stdout);
+        // tb_pass_print(p);
 
         // compile
-        tb_pass_codegen(p, false);
+        TB_FunctionOutput* out = tb_pass_codegen(p, false);
         // tb_output_print_asm(out, stdout);
     }
     tb_pass_exit(p);
 
     // write out results
-    w->jitted = tb_module_apply_function(jit.jit, f);
-    tb_module_ready_jit(jit.jit);
+    CUIK_TIMED_BLOCK("apply") {
+        w->jitted = tb_module_apply_function(jit.jit, f);
+        tb_module_ready_jit(jit.jit);
+    }
 }

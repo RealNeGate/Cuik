@@ -20,13 +20,14 @@
 
 #include "../main/live.h"
 
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
+
 #pragma comment(lib, "opengl32.lib")
 
 // no need for do while crap if it's an expression :p
 // it's basically an assert but it doesn't get vaporized
 #define CHECK(x) ((x) ? (void)0 : abort())
-
-typedef struct Word Word;
 
 enum {
     // arithmatic
@@ -38,35 +39,39 @@ enum {
     // stack
     OP_DUP  = -5,
     OP_DROP = -6,
+    OP_SWAP = -7,
 
     // memory
-    OP_READ  = -7,
-    OP_WRITE = -8,
+    OP_READ  = -8,
+    OP_WRITE = -9,
 
     // control flow
-    OP_IF    = -9,  // if{
-    OP_ELSE  = -10, // }else{
-    OP_CLOSE = -11, // }
+    OP_IF    = -10, // if{
+    OP_ELSE  = -11, // }else{
+    OP_CLOSE = -12, // }
 
-    OP_TAIL  = -12, // no name, generated automatically
+    OP_TAIL  = -13, // no name, generated automatically
 
     // debug
-    OP_DUMP  = -13,
+    OP_DUMP  = -14,
 
     // console
-    OP_EMIT  = -14,
-    OP_PRINT = -15,
-    OP_KEY   = -16,
+    OP_EMIT  = -15,
+    OP_PRINT = -16,
+    OP_KEY   = -17,
 
     // graphics
-    OP_RECT  = -17, // ( x y w h -- )
+    OP_RECT  = -18, // ( x y w h -- )
 };
 
 enum {
-    WORD_VAR = 1,
+    WORD_NORMAL,
+    WORD_VAR,
+    WORD_TYPE,
 };
 
-struct Word {
+typedef struct Dictionary Dictionary;
+typedef struct {
     // we don't want to free the word while the
     // JIT is using that memory
     _Atomic int refs;
@@ -74,11 +79,13 @@ struct Word {
     NL_Slice name;
     DynArray(int64_t) ops;
 
+    Dictionary* as_type;
+
     // type
     int arity, outputs;
     int tails;
 
-    uint32_t flags;
+    uint32_t kind;
 
     // we might wanna move this out of here to avoid false-sharing
     //
@@ -89,7 +96,7 @@ struct Word {
     // check 'jitted'
     _Atomic int trip_count;
     _Atomic(void*) jitted;
-};
+} Word;
 
 static _Thread_local bool is_main_thread;
 
@@ -176,7 +183,7 @@ static NL_Slice lex(Parser* p) {
 }
 
 // parse builds up a word
-static void parse(Dictionary* dict, Parser* p, Word* w) {
+static void parse(Dictionary* dict, Parser* p, Word* w, bool in_record) {
     for (;;) {
         NL_Slice token = lex(p);
 
@@ -188,13 +195,33 @@ static void parse(Dictionary* dict, Parser* p, Word* w) {
 
             WordIndex id = alloc_word();
             Word* w = &words.entries[id];
-            *w = (Word){ .refs = 1, .name = name };
+            *w = (Word){ 0 };
 
             dict_put(dict, name.length, (const char*) name.data, -1000 - id);
 
             // build up word inside root word
+            Word kid = { .refs = 1, .name = name };
+            parse(dict, p, &kid, false);
+
+            // split from the parse function to avoid resize problems
+            kid.name = name;
+            *w = kid;
+
+            infer(w);
+        } else if (token.length == 7 && memcmp(token.data, "record:", 7) == 0) {
+            NL_Slice name = dup_slice(lex(p));
+
+            WordIndex id = alloc_word();
+            Word* w = &words.entries[id];
+            *w = (Word){ .refs = 1, .name = name, .kind = WORD_TYPE };
+
+            dict_put(dict, name.length, (const char*) name.data, -1000 - id);
+
+            // build up word within separate dictionary
+            Dictionary* record_dict = cuik_calloc(1, sizeof(Dictionary));
+
             Word kid = { 0 };
-            parse(dict, p, &kid);
+            parse(record_dict, p, &kid, true);
 
             // split from the parse function to avoid resize problems
             kid.name = name;
@@ -203,30 +230,50 @@ static void parse(Dictionary* dict, Parser* p, Word* w) {
             infer(w);
         } else if (token.length == 4 && memcmp(token.data, "var:", 4) == 0) {
             // define variable
-            NL_Slice name = dup_slice(lex(p));
+            token = lex(p);
+            while (token.length != 1 || token.data[0] != ';') {
+                NL_Slice name = dup_slice(token);
+                token = lex(p);
 
-            // allocate some memory for it
-            if (tb_arena_is_empty(&dict->data)) {
-                tb_arena_create(&dict->data, TB_ARENA_MEDIUM_CHUNK_SIZE);
+                // allocate some memory for it
+                if (tb_arena_is_empty(&dict->data)) {
+                    tb_arena_create(&dict->data, TB_ARENA_MEDIUM_CHUNK_SIZE);
+                }
+
+                void* ptr = tb_arena_alloc(&dict->data, sizeof(int64_t));
+                memset(ptr, 0, sizeof(int64_t));
+
+                // generate words
+                if (in_record) {
+                    // the accessor words in a record are relative to a pointer
+                    dict->field_count += 1;
+                    size_t offset = dict->data_size;
+                    dict->data_size += sizeof(int64_t);
+
+                    Word* st_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, ".%s!", name.data), 2, 0);
+                    dyn_array_put(st_word->ops, offset);
+                    dyn_array_put(st_word->ops, OP_ADD);
+                    dyn_array_put(st_word->ops, OP_WRITE);
+
+                    Word* ld_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, ".%s@", name.data), 1, 1);
+                    dyn_array_put(ld_word->ops, offset);
+                    dyn_array_put(st_word->ops, OP_ADD);
+                    dyn_array_put(ld_word->ops, OP_READ);
+                    ld_word->kind = WORD_VAR;
+                } else {
+                    Word* st_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s!", name.data), 1, 0);
+                    dyn_array_put(st_word->ops, (uintptr_t) ptr);
+                    dyn_array_put(st_word->ops, OP_WRITE);
+
+                    Word* ld_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s@", name.data), 0, 1);
+                    dyn_array_put(ld_word->ops, (uintptr_t) ptr);
+                    dyn_array_put(ld_word->ops, OP_READ);
+                    ld_word->kind = WORD_VAR;
+                }
             }
 
-            void* ptr = tb_arena_alloc(&dict->data, sizeof(int64_t));
-            memset(ptr, 0, sizeof(int64_t));
-
-            // generate words
-            Word* st_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s!", name.data), 1, 0);
-            st_word->flags |= WORD_VAR;
-            dyn_array_put(st_word->ops, (uintptr_t) ptr);
-            dyn_array_put(st_word->ops, OP_WRITE);
-
-            Word* ld_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s@", name.data), 0, 1);
-            ld_word->flags |= WORD_VAR;
-            dyn_array_put(ld_word->ops, (uintptr_t) ptr);
-            dyn_array_put(ld_word->ops, OP_READ);
-
-            token = lex(p);
             if (token.length != 1 || token.data[0] != ';') {
-                printf("error: missing semicolon after var: %s decl\n", name.data);
+                printf("error: missing semicolon after var: decl\n");
                 abort();
             }
         } else if (token.length == 1 && token.data[0] == ';') {
@@ -312,6 +359,7 @@ static int prim_arity(int64_t x) {
         case OP_MUL:
         case OP_DIV:
         case OP_WRITE:
+        case OP_SWAP:
         return 2;
 
         case OP_DUP:
@@ -410,6 +458,7 @@ static void infer(Word* w) {
                 // stack
                 case OP_DUP: head += 2; break;
                 case OP_DROP: break;
+                case OP_SWAP: head += 2; break;
 
                 // memory
                 case OP_READ: head += 1; break;
@@ -453,206 +502,12 @@ static void infer(Word* w) {
     dump_type(w);
 }
 
-////////////////////////////////
-// Interpreter
-////////////////////////////////
-typedef struct Env {
-    // data stack
-    size_t head;
-    uint64_t stack[64];
+static void draw_rect2(uint32_t color, float x, float y, float w, float h);
 
-    // control stack
-    size_t control_head;
-    uint64_t control[32];
-
-    // debugging
-    bool single_step;
-} Env;
-
-#define PEEK()  (env->stack[env->head - 1])
-#define POP()   (env->stack[--env->head])
-#define PUSH(x) (env->stack[env->head++] = (x))
-
-static void compile_word(Word* w);
-
-static void push(Env* env, uint64_t x) {
-    assert(env->head < 64);
-    env->stack[env->head++] = x;
-}
-
-static uint64_t pop(Env* env) {
-    assert(env->head > 0);
-    return env->stack[--env->head];
-}
-
-static uint64_t peek(Env* env) {
-    assert(env->head > 0);
-    return env->stack[env->head - 1];
-}
-
-static void dump(Env* env) {
-    printf("[ ");
-    for (size_t i = env->head; i--;) {
-        printf("%llu ", env->stack[i]);
-    }
-    printf("]\n");
-}
-
-// this is the interp() result
-enum {
-    // no errors
-    INTERP_OK = 0,
-
-    // not enough elements on the stack
-    INTERP_UNDERFLOW,
-
-    // the function
-    INTERP_NO_JIT,
-
-    // if env->single_step is on this is what we return
-    INTERP_STEP,
-};
-
+#include "forth_interp.h"
 #include "forth_jit.h"
 
-// written as a non-recursive style to accomodate pausing and resuming
-// because the JIT will do those sorts of things.
-static int interp(Env* env, Word* w) {
-    // this is used to initialize the control flow easily
-    if (w != NULL) {
-        // if the JIT is ready, we'll just use this, ideally
-        // we switch to directly calling the JIT soon
-        int r = jit_try_call(env, w);
-        if (r != INTERP_NO_JIT) {
-            return r;
-        } else {
-            env->control_head = 1;
-            env->control[0] = (w - words.entries) << 32ull;
-        }
-    }
-
-    while (env->control_head > 0) recover: {
-        // peek the top control
-        uint64_t ip = env->control[env->control_head - 1];
-
-        // process next instruction
-        w = &words.entries[ip >> 32ull];
-        size_t i = ip & 0xFFFFFFFF, len = dyn_array_length(w->ops);
-        while (i < len) {
-            int64_t x = w->ops[i];
-
-            if (x >= 0) { // trivial literals
-                push(env, w->ops[i]), i += 1;
-            } else if (x == OP_TAIL) {
-                int r = env->single_step ? INTERP_NO_JIT : jit_try_call(env, w);
-                if (r != INTERP_NO_JIT) {
-                    // once the JIT finishes with a tail call, we just return
-                    break;
-                } else {
-                    i = 0;
-                }
-            } else if (x <= -1000) {
-                Word* new_w = &words.entries[-x - 1000];
-
-                int r = env->single_step ? INTERP_NO_JIT : jit_try_call(env, w);
-                if (r != INTERP_NO_JIT) {
-                    i += 1;
-                } else {
-                    // save return continuation
-                    env->control[env->control_head - 1] = ((w - words.entries) << 32ull) | (i + 1);
-
-                    // push new continuation
-                    env->control[env->control_head++] = (new_w - words.entries) << 32ull;
-                    goto recover;
-                }
-            } else {
-                uint64_t tmp;
-                switch (x) {
-                    case OP_ADD:  tmp = pop(env), push(env, pop(env) + tmp); break;
-                    case OP_SUB:  tmp = pop(env), push(env, pop(env) - tmp); break;
-                    case OP_MUL:  tmp = pop(env), push(env, pop(env) * tmp); break;
-                    case OP_DIV:  tmp = pop(env), push(env, pop(env) / tmp); break;
-                    case OP_DUP:  tmp = peek(env), push(env, tmp); break;
-                    case OP_DROP: env->head -= 1; break;
-                    case OP_READ: {
-                        uint64_t* addr = (uint64_t*) pop(env);
-                        push(env, *addr);
-                        break;
-                    }
-                    case OP_WRITE: {
-                        uint64_t* addr = (uint64_t*) pop(env);
-                        uint64_t val = pop(env);
-                        *addr = val;
-                        break;
-                    }
-                    case OP_KEY:  push(env, getchar()); break;
-                    case OP_EMIT: printf("%c", (char) pop(env)); break;
-                    case OP_PRINT: printf("%lld", pop(env)); break;
-                    case OP_RECT: {
-                        int h = pop(env);
-                        int w = pop(env);
-                        int y = pop(env);
-                        int x = pop(env);
-                        draw_rect(0xFFE6E1E5, x, y, w, h);
-                        break;
-                    }
-                    case OP_DUMP: dump(env); break;
-                    case OP_IF: {
-                        // find matching }else{
-                        int depth = 0, brace = i;
-                        while (brace < len) {
-                            brace += 1;
-
-                            if (w->ops[brace] == OP_IF) depth++;
-                            if (w->ops[brace] == OP_CLOSE) depth--;
-                            if (w->ops[brace] == OP_ELSE && depth == 0) break;
-                        }
-                        assert(brace != len && "missing }else{");
-
-                        int x = pop(env);
-                        if (x == 0) {
-                            i = brace; // jump to else
-                        }
-                        break;
-                    }
-                    case OP_ELSE: {
-                        // skip to matching closing brace
-                        int depth = 1, brace = i;
-                        while (brace < len && depth != 0) {
-                            brace += 1;
-
-                            if (w->ops[brace] == OP_IF) depth++;
-                            if (w->ops[brace] == OP_CLOSE) depth--;
-                        }
-                        assert(brace != len && "missing }");
-
-                        i = brace;
-                        break;
-                    }
-                    case OP_CLOSE: break; // doesn't really do anything, it's more of a marker
-                    default: assert(0 && "TODO"); break;
-                }
-                i += 1;
-            }
-
-            if (env->single_step) {
-                // interpreter savepoint
-                env->control[env->control_head - 1] = ((w - words.entries) << 32ull) | i;
-                return INTERP_STEP;
-            }
-        }
-
-        // pop
-        env->control_head -= 1;
-        if (env->single_step) {
-            return INTERP_STEP;
-        }
-    }
-
-    return INTERP_OK;
-}
-
-static bool is_opaque = false;
+static bool is_opaque = true;
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
@@ -721,6 +576,49 @@ static HWND gimme_window(int w, int h) {
     return wnd;
 }
 
+////////////////////////////////
+// UI
+////////////////////////////////
+// https://halt.software/dead-simple-layouts/
+typedef struct {
+    float minx, miny, maxx, maxy;
+} Rect;
+
+Rect cut_inset(Rect rect, float a) {
+    return (Rect){ rect.minx + a, rect.miny + a, rect.maxx - a, rect.maxy - a };
+}
+
+Rect cut_left(Rect* rect, float a) {
+    float minx = rect->minx;
+    rect->minx = min(rect->maxx, rect->minx + a);
+    return (Rect){ minx, rect->miny, rect->minx, rect->maxy };
+}
+
+Rect cut_right(Rect* rect, float a) {
+    float maxx = rect->maxx;
+    rect->maxx = max(rect->minx, rect->maxx - a);
+    return (Rect){ rect->maxx, rect->miny, maxx, rect->maxy };
+}
+
+Rect cut_top(Rect* rect, float a) {
+    float miny = rect->miny;
+    rect->miny = min(rect->maxy, rect->miny + a);
+    return (Rect){ rect->minx, miny, rect->maxx, rect->miny };
+}
+
+Rect cut_bottom(Rect* rect, float a) {
+    float maxy = rect->maxy;
+    rect->maxy = max(rect->miny, rect->maxy - a);
+    return (Rect){ rect->minx, rect->maxy, rect->maxx, maxy };
+}
+
+// Shitty font setup
+static float font_size;
+static unsigned char ttf_buffer[1<<20];
+static unsigned char temp_bitmap[512*512];
+static stbtt_bakedchar cdata[96]; // ASCII 32..126 is 95 glyphs
+static GLuint ftex;
+
 static void set_color(void fn(float, float, float, float), uint32_t color) {
     fn(
         ((color >> 16) & 0xFF) / 255.0f,  ((color >> 8)  & 0xFF) / 255.0f,
@@ -728,7 +626,7 @@ static void set_color(void fn(float, float, float, float), uint32_t color) {
     );
 }
 
-static void draw_rect(uint32_t color, float x, float y, float w, float h) {
+static void draw_rect2(uint32_t color, float x, float y, float w, float h) {
     float x1 = x + w;
     float y1 = y + h;
 
@@ -737,6 +635,45 @@ static void draw_rect(uint32_t color, float x, float y, float w, float h) {
     glVertex2f(x, y),   glVertex2f(x1, y);
     glVertex2f(x1, y1), glVertex2f(x, y1);
     glEnd();
+}
+
+static void draw_rect(uint32_t color, Rect r) {
+    glBegin(GL_QUADS);
+    set_color(glColor4f, color);
+    glVertex2f(r.minx, r.miny), glVertex2f(r.maxx, r.miny);
+    glVertex2f(r.maxx, r.maxy), glVertex2f(r.minx, r.maxy);
+    glEnd();
+}
+
+static void draw_text(uint32_t color, float x, float y, const char* text) {
+    glEnable(GL_TEXTURE_2D);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glBindTexture(GL_TEXTURE_2D, ftex);
+
+    glBegin(GL_QUADS);
+    set_color(glColor4f, color);
+
+    float xx = x, yy = 0.0f;
+    for (; *text; text++) {
+        if (*text >= 32) {
+            stbtt_aligned_quad q;
+            stbtt_GetBakedQuad(cdata, 512, 512, *text - 32, &xx, &yy, &q, 0);
+
+            q.x0 = floorf(q.x0);
+            q.x1 = floorf(q.x1);
+
+            glTexCoord2f(q.s0,q.t0); glVertex2f(q.x0,y-q.y0);
+            glTexCoord2f(q.s1,q.t0); glVertex2f(q.x1,y-q.y0);
+            glTexCoord2f(q.s1,q.t1); glVertex2f(q.x1,y-q.y1);
+            glTexCoord2f(q.s0,q.t1); glVertex2f(q.x0,y-q.y1);
+        }
+    }
+    glEnd();
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_BLEND);
+    glDisable(GL_TEXTURE_2D);
 }
 
 static WordIndex load_forth(Dictionary* dict, const char* path) {
@@ -767,13 +704,14 @@ static WordIndex load_forth(Dictionary* dict, const char* path) {
         .name = { 6, (const uint8_t*) "<root>" }
     };
 
-    parse(dict, &(Parser){ .source = buffer }, root);
+    parse(dict, &(Parser){ .source = buffer }, root, false);
     infer(root);
     return -1000 - i;
 }
 
 int main(int argc, const char** argv) {
     is_main_thread = true;
+    SetProcessDPIAware();
 
     cuik_init_terminal();
     cuik_init_timer_system();
@@ -785,7 +723,7 @@ int main(int argc, const char** argv) {
         return EXIT_FAILURE;
     }
 
-    HWND wnd = gimme_window(1600, 900);
+    HWND wnd = gimme_window(3200, 1600);
     ShowWindow(wnd, SW_SHOW);
     SetFocus(wnd);
 
@@ -819,21 +757,38 @@ int main(int argc, const char** argv) {
 
     // initialize dictionary
     init_word_pool();
-    dict_put(&root_dict, 1, "+",      OP_ADD);
-    dict_put(&root_dict, 1, "-",      OP_SUB);
-    dict_put(&root_dict, 1, "*",      OP_MUL);
-    dict_put(&root_dict, 1, "/",      OP_DIV);
-    dict_put(&root_dict, 1, ".",      OP_PRINT);
-    dict_put(&root_dict, 3, "dup",    OP_DUP);
-    dict_put(&root_dict, 4, "drop",   OP_DROP);
-    dict_put(&root_dict, 4, "emit",   OP_EMIT);
-    dict_put(&root_dict, 4, "rect",   OP_RECT);
-    dict_put(&root_dict, 4, "dump",   OP_DUMP);
-    dict_put(&root_dict, 3, "key",    OP_KEY);
-    dict_put(&root_dict, 3, "if{",    OP_IF);
-    dict_put(&root_dict, 6, "}else{", OP_ELSE);
-    dict_put(&root_dict, 1, "}",      OP_CLOSE);
-    dict_put(&root_dict, 4, "tail",   OP_TAIL);
+    dict_put(&root_dict, 1, "+",         OP_ADD);
+    dict_put(&root_dict, 1, "-",         OP_SUB);
+    dict_put(&root_dict, 1, "*",         OP_MUL);
+    dict_put(&root_dict, 1, "/",         OP_DIV);
+    dict_put(&root_dict, 1, ".",         OP_PRINT);
+    dict_put(&root_dict, 3, "dup",       OP_DUP);
+    dict_put(&root_dict, 4, "drop",      OP_DROP);
+    dict_put(&root_dict, 4, "swap",      OP_SWAP);
+    dict_put(&root_dict, 4, "emit",      OP_EMIT);
+    dict_put(&root_dict, 4, "dump",      OP_DUMP);
+    dict_put(&root_dict, 3, "key",       OP_KEY);
+    dict_put(&root_dict, 3, "if{",       OP_IF);
+    dict_put(&root_dict, 6, "}else{",    OP_ELSE);
+    dict_put(&root_dict, 1, "}",         OP_CLOSE);
+    dict_put(&root_dict, 4, "tail",      OP_TAIL);
+    dict_put(&root_dict, 9, "draw-rect", OP_RECT);
+
+    {
+        font_size = 36.0;
+
+        FILE* f = fopen("C:\\Windows\\Fonts\\consola.ttf", "rb");
+        fread(ttf_buffer, 1, 1<<20, f);
+        stbtt_BakeFontBitmap(ttf_buffer,0, font_size, temp_bitmap,512,512, 32,96, cdata); // no guarantee this fits!
+        // can free ttf_buffer at this point
+        glGenTextures(1, &ftex);
+        glBindTexture(GL_TEXTURE_2D, ftex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_ALPHA, 512,512, 0, GL_ALPHA, GL_UNSIGNED_BYTE, temp_bitmap);
+        // can free temp_bitmap at this point
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        fclose(f);
+    }
 
     Env env;
     while (jit.running) CUIK_TIMED_BLOCK("main loop") {
@@ -888,6 +843,12 @@ int main(int argc, const char** argv) {
             interp(&env, &words.entries[-1000 - update_word]);
             assert(env.head == 0 && "stack \"leak\"?");
         }
+
+        /*Rect window = { 0, 0, w, h };
+        {
+            Rect code_panel = cut_left(&window, window.maxx / 3.0f);
+            draw_rect(0xFF332E44, code_panel);
+        }*/
 
         SwapBuffers(dc);
     }
