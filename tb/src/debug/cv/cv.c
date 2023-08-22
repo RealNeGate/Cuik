@@ -178,7 +178,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
 
     // Write type table
     size_t file_count = nl_map__get_header(m->files)->count;
-    uint32_t* file_table_offset = tb_tls_push(tls, (file_count + 1) * sizeof(uint32_t));
+    uint32_t* file_table_offset = tb_tls_push(tls, file_count * sizeof(uint32_t));
 
     TB_Emitter debugs_out = { 0 };
 
@@ -209,7 +209,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
             tb_out1b(&debugs_out, 0);
 
             // skip the NULL file entry
-            size_t pos = 1, counter = 1;
+            size_t pos = 1, counter = 0;
             file_table_offset[0] = 0;
             nl_map_for_str(i, m->files) {
                 TB_SourceFile* f = m->files[i].v;
