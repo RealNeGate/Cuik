@@ -118,7 +118,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     // effect nodes get line info
     if (f->line_attrib.loc.file != NULL) {
         if (n->attribs == NULL) {
-            n->attribs = dyn_array_create(TB_Attrib, 4);
+            n->attribs = dyn_array_create(TB_Attrib, 2);
         }
 
         dyn_array_put(n->attribs, f->line_attrib);

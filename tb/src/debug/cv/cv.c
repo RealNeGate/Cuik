@@ -177,8 +177,8 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
     sections[0].relocations = tb_platform_heap_alloc(reloc_cap * sizeof(TB_ObjectReloc));
 
     // Write type table
-    size_t file_count = dyn_array_length(m->files);
-    uint32_t* file_table_offset = tb_tls_push(tls, file_count * sizeof(uint32_t));
+    size_t file_count = nl_map__get_header(m->files)->count;
+    uint32_t* file_table_offset = tb_tls_push(tls, (file_count + 1) * sizeof(uint32_t));
 
     TB_Emitter debugs_out = { 0 };
 
@@ -209,7 +209,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
             tb_out1b(&debugs_out, 0);
 
             // skip the NULL file entry
-            size_t pos = 1, counter = 0;
+            size_t pos = 1, counter = 1;
             file_table_offset[0] = 0;
             nl_map_for_str(i, m->files) {
                 TB_SourceFile* f = m->files[i].v;
@@ -218,7 +218,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                 tb_out_reserve(&debugs_out, f->len + 1);
                 tb_outs_UNSAFE(&debugs_out, f->len + 1, (const uint8_t*) f->path);
 
-                file_table_offset[i] = pos;
+                file_table_offset[f->id] = pos;
                 pos += f->len + 1;
             }
 
@@ -242,13 +242,13 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                 uint8_t sum[16];
                 md5sum_file(sum, (const char*) f->path);
 
-                tb_out4b(&debugs_out, file_table_offset[i]);
+                tb_out4b(&debugs_out, file_table_offset[f->id]);
                 tb_out2b(&debugs_out, 0x0110);
                 tb_out_reserve(&debugs_out, MD5_HASHBYTES);
                 tb_outs_UNSAFE(&debugs_out, MD5_HASHBYTES, sum);
                 tb_out2b(&debugs_out, 0);
 
-                file_table_offset[i] = pos;
+                file_table_offset[f->id] = pos;
                 pos += 4 + 2 + MD5_HASHBYTES + 2;
             }
 
