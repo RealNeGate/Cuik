@@ -250,10 +250,10 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
 
         // if the store is changed, the users (potential loads) should
         // be notified.
-        if (use->n->type == TB_STORE || use->n->type == TB_REGION ||
-            use->n->type == TB_PROJ || use->n->type == TB_CMP_NE ||
-            use->n->type == TB_CMP_EQ || use->n->type == TB_SHR ||
-            use->n->type == TB_SHL) {
+        if (use->n->type == TB_STORE  || use->n->type == TB_REGION ||
+            use->n->type == TB_PROJ   || use->n->type == TB_CMP_NE ||
+            use->n->type == TB_CMP_EQ || use->n->type == TB_PHI ||
+            use->n->type == TB_SHL    || use->n->type == TB_SHR) {
             tb_pass_mark_users(p, use->n);
         }
     }
@@ -294,14 +294,34 @@ static void fill_all(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
+static void cool_print_type(TB_Node* n) {
+    TB_DataType dt = n->dt;
+    if (n->type != TB_START && n->type != TB_REGION && !(n->type == TB_BRANCH && n->input_count == 1)) {
+        if (n->type == TB_STORE) {
+            dt = n->inputs[2]->dt;
+        } else if (n->type == TB_BRANCH) {
+            dt = n->inputs[1]->dt;
+        } else if (n->type == TB_RET) {
+            dt = n->inputs[1]->dt;
+        } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
+            dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
+        }
+        printf(".");
+        print_type(dt);
+    }
+}
+
 void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
         printf("%"PRId64, num->words[0]);
     } else if (depth > 0) {
-        printf("(%s ...)", tb_node_get_name(n));
+        printf("(%s", tb_node_get_name(n));
+        cool_print_type(n);
+        printf(" ...)");
     } else {
         printf("(%s", tb_node_get_name(n));
+        cool_print_type(n);
         FOREACH_N(i, 1, n->input_count) if (n->inputs[i]) {
             printf(" ");
             print_node_sexpr(f, n->inputs[i], depth + 1);

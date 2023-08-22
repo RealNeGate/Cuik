@@ -2055,6 +2055,10 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             if (bb != ctx->f->start_node) {
                 EMITA(e, "L%p:\n", bb);
             }
+        } else if (inst->type == INST_EPILOGUE) {
+            // return label goes here
+            EMITA(&ctx->emit, ".ret:\n");
+            tb_resolve_rel32(&ctx->emit, &ctx->emit.return_label, GET_CODE_POS(&ctx->emit));
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
             TB_Attrib* loc = inst->a;
@@ -2173,10 +2177,6 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             }
         }
     }
-
-    // return label goes here
-    EMITA(&ctx->emit, ".ret:\n");
-    tb_resolve_rel32(&ctx->emit, &ctx->emit.return_label, GET_CODE_POS(&ctx->emit));
 
     func_out->epilogue_length = emit_epilogue(ctx);
 }

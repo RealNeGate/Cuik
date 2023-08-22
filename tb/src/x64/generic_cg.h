@@ -17,6 +17,7 @@ enum {
 
     // marks the terminator
     INST_TERMINATOR,
+    INST_EPILOGUE,
 
     // this is where parameters come from
     INST_ENTRY,
@@ -416,7 +417,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     }
 
     // generate local live sets
-    int timeline = 4;
+    int timeline = 4, epilogue = -1;
     CUIK_TIMED_BLOCK("local liveness") {
         if (ctx->first) {
             Inst* restrict inst = ctx->first;
@@ -442,6 +443,8 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
                     mbb->start = timeline;
                 } else if (is_terminator(inst->type) && mbb->terminator == 0) {
                     mbb->terminator = timeline;
+                } else if (inst->type == INST_EPILOGUE) {
+                    epilogue = timeline;
                 }
 
                 Set* restrict gen = &mbb->gen;
@@ -520,7 +523,9 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
     dyn_array_destroy(worklist);
     ctx->machine_bbs = seq_bb;
-    return timeline;
+
+    assert(epilogue >= 0);
+    return epilogue;
 }
 
 static void visit_uses(Ctx* restrict ctx, NL_HashSet* visited, TB_Node* n) {
@@ -749,6 +754,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
             isel_region(&ctx, end, NULL);
         }
+
+        append_inst(&ctx, alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
     }
 
     EMITA(&ctx.emit, "%s:\n", f->super.name);

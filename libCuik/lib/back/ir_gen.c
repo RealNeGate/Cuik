@@ -275,14 +275,19 @@ static TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
             break;
         }
         case RVALUE_PHI: {
-            fallthrough_label(func, v->phi.if_true);
+            TB_Node* old = tb_inst_get_control(func);
+
+            tb_inst_set_control(func, v->phi.if_true);
+            TB_Node* one = tb_inst_bool(func, true);
             tb_inst_goto(func, v->phi.merger);
 
             tb_inst_set_control(func, v->phi.if_false);
+            TB_Node* zero = tb_inst_bool(func, false);
             tb_inst_goto(func, v->phi.merger);
 
-            TB_Node* one = tb_inst_bool(func, true);
-            TB_Node* zero = tb_inst_bool(func, false);
+            if (old != v->phi.merger) {
+                tb_inst_goto(func, old);
+            }
 
             tb_inst_set_control(func, v->phi.merger);
             reg = tb_inst_phi2(func, v->phi.merger, one, zero);

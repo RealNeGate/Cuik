@@ -83,6 +83,29 @@ static TB_Node* ideal_int2ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
 
 static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
+
+    // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))
+    if (src->type == TB_PHI) {
+        FOREACH_N(i, 1, src->input_count) {
+            if (src->inputs[i]->type != TB_INTEGER_CONST) return NULL;
+        }
+
+        // generate extension nodes
+        TB_NodeTypeEnum ext_type = n->type;
+        TB_DataType dt = n->dt;
+        FOREACH_N(i, 1, src->input_count) {
+            assert(src->inputs[i]->type == TB_INTEGER_CONST);
+
+            TB_Node* ext_node = tb_alloc_node(f, ext_type, dt, 2, 0);
+            set_input(opt, ext_node, src->inputs[i], 1);
+            set_input(opt, src, ext_node, i);
+            tb_pass_mark(opt, ext_node);
+        }
+
+        src->dt = dt;
+        return src;
+    }
+
     if (src->type != TB_INTEGER_CONST) {
         return NULL;
     }
