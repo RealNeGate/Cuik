@@ -317,6 +317,10 @@ struct TB_Function {
     TB_FunctionPrototype* prototype;
     TB_Comdat comdat;
 
+    // raw parameters
+    size_t param_count;
+    TB_Node** params;
+
     TB_Node* start_node;
     TB_Node* active_control_node;
 

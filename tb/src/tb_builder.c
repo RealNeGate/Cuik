@@ -215,8 +215,8 @@ TB_Node* tb_inst_bitcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
 }
 
 TB_Node* tb_inst_param(TB_Function* f, int param_id) {
-    assert(param_id < f->prototype->param_count);
-    return TB_NODE_GET_EXTRA_T(f->start_node, TB_NodeRegion)->projs[param_id];
+    assert(param_id < f->param_count);
+    return f->params[param_id];
 }
 
 void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t* align) {

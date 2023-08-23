@@ -392,8 +392,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             // handle known parameters
             int used_gpr = 0, used_xmm = 0;
-            FOREACH_N(i, 0, proto->param_count) {
-                TB_Node* proj = start->projs[i];
+            TB_Node** params = ctx->f->params;
+            FOREACH_N(i, 0, ctx->f->param_count) {
+                TB_Node* proj = params[i];
                 bool is_float = proj->dt.type == TB_FLOAT;
 
                 // copy from parameter

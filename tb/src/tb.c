@@ -314,8 +314,9 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
     start->dom = f->start_node;
     start->succ_count = 0;
     start->succ = NULL;
-    start->proj_count = param_count;
-    start->projs = tb_arena_alloc(f->arena, param_count * sizeof(TB_Node*));
+
+    f->param_count = param_count;
+    f->params = tb_arena_alloc(f->arena, param_count * sizeof(TB_Node*));
 
     // create parameter projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);
@@ -327,7 +328,7 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
         TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i);
 
         // fill in acceleration structure
-        start->projs[i] = proj;
+        f->params[i] = proj;
     }
 
     f->prototype = p;
