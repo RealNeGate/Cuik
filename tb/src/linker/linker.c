@@ -565,22 +565,22 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
         if (func_out == NULL) continue;
 
         for (TB_SymbolPatch* patch = func_out->last_patch; patch; patch = patch->prev) {
+            _Atomic(int32_t)* dst = (_Atomic(int32_t)*) &output[text_piece_file + out_f->code_pos + patch->pos];
+
+            int32_t p = 0;
             if (patch->target->tag == TB_SYMBOL_EXTERNAL) {
                 TB_FunctionOutput* out_f = patch->source->output;
-                size_t actual_pos = text_piece_rva + out_f->code_pos + out_f->prologue_length + patch->pos + 4;
+                size_t actual_pos = text_piece_rva + out_f->code_pos + patch->pos + 4;
 
                 ImportThunk* thunk = patch->target->address;
                 assert(thunk != NULL);
 
-                int32_t p = (trampoline_rva + (thunk->thunk_id * 6)) - actual_pos;
-                int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + out_f->prologue_length + patch->pos];
-
-                (*dst) += p;
+                p = (trampoline_rva + (thunk->thunk_id * 6)) - actual_pos;
             } else if (patch->target->tag == TB_SYMBOL_FUNCTION) {
                 // internal patching has already handled this
             } else if (patch->target->tag == TB_SYMBOL_GLOBAL) {
                 TB_FunctionOutput* out_f = patch->source->output;
-                size_t actual_pos = text_piece_rva + out_f->code_pos + out_f->prologue_length + patch->pos + 4;
+                size_t actual_pos = text_piece_rva + out_f->code_pos + patch->pos + 4;
 
                 TB_Global* global = (TB_Global*) patch->target;
                 assert(global->super.tag == TB_SYMBOL_GLOBAL);
@@ -588,17 +588,17 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
                 TB_LinkerSectionPiece* piece = global->parent->piece;
                 uint32_t piece_rva = piece->parent->address + piece->offset;
 
-                int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + out_f->prologue_length + patch->pos];
+                int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + patch->pos];
                 if (global->parent->kind != TB_MODULE_SECTION_TLS) {
-                    int32_t p = (piece_rva + global->pos) - actual_pos;
-
-                    (*dst) += p;
+                    p = (piece_rva + global->pos) - actual_pos;
                 } else {
-                    (*dst) += (piece_rva + global->pos);
+                    p = piece_rva + global->pos;
                 }
             } else {
                 tb_todo();
             }
+
+            atomic_fetch_add(dst, p);
         }
     }
 }

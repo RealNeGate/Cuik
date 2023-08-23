@@ -3,7 +3,6 @@
 #include "hash.c"
 #include "abi.c"
 #include "analysis.c"
-#include "tb_atomic.c"
 #include "tb_builder.c"
 #include "debug_builder.c"
 #include "ir_printer.c"

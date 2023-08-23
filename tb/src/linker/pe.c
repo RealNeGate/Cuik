@@ -578,7 +578,7 @@ static void apply_external_relocs(TB_Linker* l, uint8_t* output, uint64_t image_
             TB_LinkerSectionPiece* restrict p = rel->src_piece;
             TB_LinkerSection* restrict s = p->parent;
 
-            int32_t* dst = (int32_t*) &output[s->offset + p->offset + rel->src_offset];
+            _Atomic(int32_t)* dst = (_Atomic(int32_t)*) &output[s->offset + p->offset + rel->src_offset];
 
             // patch (we do it atomically in case any relocations overlap when we do multithreading)
             uint32_t patch_amt = target_rva;
@@ -595,7 +595,7 @@ static void apply_external_relocs(TB_Linker* l, uint8_t* output, uint64_t image_
                 tb_todo();
             }
 
-            tb_atomic_int_add(dst, patch_amt);
+            atomic_fetch_add(dst, patch_amt);
         }
     }
 

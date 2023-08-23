@@ -71,20 +71,6 @@ for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 #define TB_TEMPORARY_STORAGE_SIZE (1 << 20)
 #endif
 
-// ***********************************
-// Atomics
-// ***********************************
-// We use C11 atomics, fuck you if you can't. we don't serve Microsofts.
-int tb_atomic_int_load(int* dst);
-int tb_atomic_int_add(int* dst, int src);
-int tb_atomic_int_store(int* dst, int src);
-bool tb_atomic_int_cmpxchg(int* address, int old_value, int new_value);
-
-size_t tb_atomic_size_load(size_t* dst);
-size_t tb_atomic_size_add(size_t* dst, size_t src);
-size_t tb_atomic_size_sub(size_t* dst, size_t src);
-size_t tb_atomic_size_store(size_t* dst, size_t src);
-
 #define CODE_REGION_BUFFER_SIZE (128 * 1024 * 1024)
 
 typedef struct TB_Emitter {
