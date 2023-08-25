@@ -459,10 +459,6 @@ TB_ExternalType tb_extern_get_type(TB_External* e) {
     return e->type;
 }
 
-void* tb_function_get_jit_pos(TB_Function* f) {
-    return f->compiled_pos;
-}
-
 TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
     assert(name != NULL);
 

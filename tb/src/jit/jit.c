@@ -36,7 +36,7 @@ typedef struct {
     AllocRegion* region;
 } TB_JITHeap;
 
-struct TB_JITContext {
+struct TB_JIT {
     NL_Strmap(void*) loaded_funcs;
 
     TB_JITHeap rx_heap;
@@ -136,7 +136,7 @@ void tb_jitheap_free_region(TB_JITHeap* c, void* ptr, size_t s) {
     __debugbreak();
 }
 
-static void* get_proc(TB_JITContext* jit, const char* name) {
+static void* get_proc(TB_JIT* jit, const char* name) {
     #ifdef _WIN32
     static HMODULE kernel32, user32, gdi32, opengl32, msvcrt;
     if (user32 == NULL) {
@@ -176,14 +176,18 @@ static void* get_symbol_address(const TB_Symbol* s) {
     }
 }
 
-TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
+void* tb_jit_place_function(TB_JIT* jit, TB_Function* f) {
     TB_FunctionOutput* func_out = f->output;
+    if (f->compiled_pos != NULL) {
+        return f->compiled_pos;
+    }
 
     // copy machine code
     char* dst = tb_jitheap_alloc_region(&jit->rx_heap, func_out->code_size);
     memcpy(dst, func_out->code, func_out->code_size);
+    f->compiled_pos = dst;
 
-    // printf("JIT: apply function %s (%p)\n", f->super.name, dst);
+    log_debug("jit: apply function %s (%p)", f->super.name, dst);
 
     // apply relocations, any leftovers are mapped to thunks
     for (TB_SymbolPatch* p = func_out->last_patch; p; p = p->prev) {
@@ -193,10 +197,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
         int32_t* patch = (int32_t*) &dst[actual_pos];
         if (tag == TB_SYMBOL_FUNCTION) {
             TB_Function* f = (TB_Function*) p->target;
-            void* addr = f->compiled_pos;
-            if (addr == NULL) {
-                addr = tb_module_apply_function(jit, f);
-            }
+            void* addr = tb_jit_place_function(jit, f);
 
             int32_t rel32 = (intptr_t)addr - ((intptr_t)patch + 4);
             *patch += rel32;
@@ -234,26 +235,27 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
             }
         } else if (tag == TB_SYMBOL_GLOBAL) {
             TB_Global* g = (TB_Global*) p->target;
-            if (g->address == NULL) {
-                // lazy init globals
-                tb_module_apply_global(jit, g);
-            }
+            void* addr = tb_jit_place_global(jit, g);
 
             int32_t* patch = (int32_t*) &dst[actual_pos];
-            int32_t rel32 = (intptr_t)g->address - ((intptr_t)patch + 4);
+            int32_t rel32 = (intptr_t)addr - ((intptr_t)patch + 4);
             *patch += rel32;
         } else {
             tb_todo();
         }
     }
 
-    f->compiled_pos = dst;
     return dst;
 }
 
-TB_API void* tb_module_apply_global(TB_JITContext* jit, TB_Global* g) {
-    // printf("JIT: apply global %s\n", g->super.name ? g->super.name : "<unnamed>");
+void* tb_jit_place_global(TB_JIT* jit, TB_Global* g) {
+    if (g->address != NULL) {
+        return g->address;
+    }
+
+    log_debug("jit: apply global %s", g->super.name ? g->super.name : "<unnamed>");
     char* data = tb_jitheap_alloc_region(&jit->rw_heap, g->size);
+    g->address = data;
 
     memset(data, 0, g->size);
     FOREACH_N(k, 0, g->obj_count) {
@@ -271,29 +273,33 @@ TB_API void* tb_module_apply_global(TB_JITContext* jit, TB_Global* g) {
         }
     }
 
-    g->address = data;
     return data;
 }
 
-TB_API TB_JITContext* tb_module_begin_jit(TB_Module* m, size_t jit_heap_capacity) {
+TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity) {
     if (jit_heap_capacity == 0) {
         jit_heap_capacity = 2*1024*1024;
     }
 
-    char* ptr = tb_platform_valloc(jit_heap_capacity*2);
-    tb_platform_vprotect(ptr, jit_heap_capacity*2, TB_PAGE_RXW);
+    size_t semi_space = jit_heap_capacity / 2;
+    char* ptr = tb_platform_valloc(jit_heap_capacity);
+    tb_platform_vprotect(ptr, semi_space, TB_PAGE_RXW);
 
-    TB_JITContext* jit = tb_platform_heap_alloc(sizeof(TB_JITContext));
-    *jit = (TB_JITContext){
-        .rx_heap = tb_jitheap_create(TB_PAGE_RX, ptr, jit_heap_capacity),
-        .rw_heap = tb_jitheap_create(TB_PAGE_RW, &ptr[jit_heap_capacity], jit_heap_capacity)
+    TB_JIT* jit = tb_platform_heap_alloc(sizeof(TB_JIT));
+    *jit = (TB_JIT){
+        .rx_heap = tb_jitheap_create(TB_PAGE_RX, ptr, semi_space),
+        .rw_heap = tb_jitheap_create(TB_PAGE_RW, &ptr[semi_space], semi_space)
     };
 
     return jit;
 }
 
-TB_API void tb_module_end_jit(TB_JITContext* jit) {
+void tb_jit_end(TB_JIT* jit) {
     tb_platform_vfree(jit->rx_heap.block, jit->rx_heap.capacity);
     tb_platform_vfree(jit->rw_heap.block, jit->rw_heap.capacity);
     tb_platform_heap_free(jit);
+}
+
+void* tb_jit_get_code_ptr(TB_Function* f) {
+    return f->compiled_pos;
 }

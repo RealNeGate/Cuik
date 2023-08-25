@@ -3,22 +3,11 @@
 #pragma once
 #include <setjmp.h>
 
-#if 0
-void* guard_malloc(size_t size);
-void* guard_realloc(void* ptr, size_t size);
-void guard_free(void* ptr);
-
-// adds guard pages so we segfault from accessing out of bounds
-#define tb_platform_heap_alloc(size) guard_malloc(size)
-#define tb_platform_heap_realloc(ptr, size) guard_realloc(ptr, size)
-#define tb_platform_heap_free(ptr) guard_free(ptr)
-
-#elif defined(TB_USE_MIMALLOC)
+#if defined(TB_USE_MIMALLOC)
 #include <mimalloc.h>
-
-#define tb_platform_heap_alloc(size) mi_malloc(size)
+#define tb_platform_heap_alloc(size)        mi_malloc(size)
 #define tb_platform_heap_realloc(ptr, size) mi_realloc(ptr, size)
-#define tb_platform_heap_free(ptr) mi_free(ptr)
+#define tb_platform_heap_free(ptr)          mi_free(ptr)
 #else
 #define tb_platform_heap_alloc(size)        malloc(size)
 #define tb_platform_heap_free(ptr)          free(ptr)

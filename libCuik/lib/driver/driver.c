@@ -348,22 +348,23 @@ static void ld_invoke(BuildStepInfo* info) {
     }
 
     if (args->run) {
-        TB_JITContext* jit = tb_module_begin_jit(mod, 0);
+        TB_JIT* jit = tb_jit_begin(mod, 0);
 
         // put every function into the heap
-        TB_Function* entry_f = NULL;
+        int(*entry)(int, char**) = NULL;
         TB_FOR_FUNCTIONS(f, mod) {
-            if (strcmp(tb_symbol_get_name((TB_Symbol*) f), "main") == 0) entry_f = f;
-            tb_module_apply_function(jit, f);
+            void* ptr = tb_jit_place_function(jit, f);
+            if (strcmp(tb_symbol_get_name((TB_Symbol*) f), "main") == 0) {
+                entry = ptr;
+            }
         }
 
-        assert(entry_f);
+        assert(entry != NULL);
 
         // run main()
-        int(*entry)(int, char**) = tb_function_get_jit_pos(entry_f);
-
         char* argv = (char[]){ "jit" };
         int code = entry(1, &argv);
+        tb_jit_end(jit);
 
         fprintf(stderr, "C JIT exit with %d\n", code);
         goto done;

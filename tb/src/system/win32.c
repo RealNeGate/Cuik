@@ -9,40 +9,6 @@
 #pragma comment(linker, "/alternatename:__imp_toupper=toupper")
 #endif
 
-void* guard_malloc(size_t size) {
-    size_t baseline = 4096 - (size % 4096);
-    size_t end = (baseline + size + 4095) & ~4095;
-    char* ptr = VirtualAlloc(NULL, end + 4096, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-
-    // add guard page at the end of the allocation
-    DWORD old_protect;
-    if (!VirtualProtect(ptr + end, 4096, PAGE_NOACCESS, &old_protect)) {
-        tb_panic("VirtualProtect failed!\n");
-    }
-
-    return ptr + baseline;
-}
-
-void* guard_realloc(void* ptr, size_t size) {
-    tb_todo();
-
-    /* char* new_buffer = guard_malloc(size);
-    char* page_start = (char*) (((uintptr_t) ptr) & ~0xFFFull);
-
-    MEMORY_BASIC_INFORMATION range;
-    VirtualQueryEx(GetCurrentProcess(), page_start, &range, size + 8192);
-
-    __debugbreak();
-    memcpy(new_buffer, ptr, range.RegionSize);
-    guard_free(ptr);
-
-    return new_buffer; */
-}
-
-void guard_free(void* ptr) {
-    VirtualFree(ptr, 0, MEM_RELEASE);
-}
-
 void* tb_platform_valloc(size_t size) {
     return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 }
@@ -64,4 +30,55 @@ bool tb_platform_vprotect(void* ptr, size_t size, TB_MemProtect prot) {
     DWORD old_protect;
     return VirtualProtect(ptr, size, protect, &old_protect);
 }
+
+size_t get_large_pages(void) {
+    static bool init;
+    static size_t large_page_size;
+
+    if (!init) {
+        init = true;
+
+        unsigned long err = 0;
+        HANDLE token = NULL;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
+            goto err;
+        }
+
+        TOKEN_PRIVILEGES tp;
+        if (!LookupPrivilegeValue(NULL, TEXT("SeLockMemoryPrivilege"), &tp.Privileges[0].Luid)) {
+            goto err;
+        }
+
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        if (!AdjustTokenPrivileges(token, FALSE, &tp, 0, (PTOKEN_PRIVILEGES)NULL, 0)) {
+            goto err;
+        }
+
+        large_page_size = GetLargePageMinimum();
+
+        err:
+        CloseHandle(token);
+    }
+
+    return large_page_size;
+}
+
+void* tb_jit_create_stack(size_t* out_size) {
+    size_t size = get_large_pages();
+
+    // TODO(NeGate): we don't support non-large page stacks
+    if (size == 0) tb_todo();
+
+    // natural alignment stack because it makes it easy to always find
+    // the base.
+    MEM_EXTENDED_PARAMETER param = {
+        .Type = MemExtendedParameterAddressRequirements,
+        .Pointer = &(MEM_ADDRESS_REQUIREMENTS){ .Alignment = size }
+    };
+
+    *out_size = size;
+    return VirtualAlloc2(GetCurrentProcess(), NULL, size, MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE, &param, 1);
+}
+
 #endif

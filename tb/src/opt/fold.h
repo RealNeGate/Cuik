@@ -228,6 +228,9 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
                 TB_Node* shl_node = tb_alloc_node(f, TB_SHL, n->dt, 3, sizeof(TB_NodeBinopInt));
                 set_input(opt, shl_node, a, 1);
                 set_input(opt, shl_node, make_int_node(f, opt, n->dt, log2), 2);
+
+                tb_pass_mark(opt, shl_node->inputs[1]);
+                tb_pass_mark(opt, shl_node->inputs[2]);
                 return shl_node;
             }
         }

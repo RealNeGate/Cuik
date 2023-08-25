@@ -383,7 +383,7 @@ TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
     return n;
 }
 
-TB_Node* tb_inst_safepoint(TB_Function* f, size_t param_count, TB_Node** params) {
+TB_Node* tb_inst_safepoint(TB_Function* f, TB_Node* poke_site, size_t param_count, TB_Node** params) {
     TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_CONTROL, 1 + param_count, sizeof(TB_NodeSafepoint));
     n->inputs[0] = f->active_control_node;
     memcpy(n->inputs + 1, params, param_count * sizeof(TB_Node*));
