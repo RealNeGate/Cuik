@@ -147,8 +147,9 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
 
 // ctx is non-NULL when we print asm
 static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
-    bool print_asm = arg != NULL;
     Cuik_DriverArgs* args = arg;
+    bool print_asm = args->assembly;
+
     CUIK_TIMED_BLOCK("func opt") {
         TB_Passes* p = tb_pass_enter(f, get_ir_arena());
 
@@ -163,8 +164,8 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
 
         // print IR
         if (args->emit_ir) {
-            tb_function_print(f, tb_default_print_callback, stdout);
-            // tb_pass_print(p);
+            // tb_function_print(f, tb_default_print_callback, stdout);
+            tb_pass_print(p);
         }
 
         // codegen
@@ -347,8 +348,24 @@ static void ld_invoke(BuildStepInfo* info) {
     }
 
     if (args->run) {
-        fprintf(stderr, "error: C JIT not ready yet");
-        assert(0);
+        TB_JITContext* jit = tb_module_begin_jit(mod, 0);
+
+        // put every function into the heap
+        TB_Function* entry_f = NULL;
+        TB_FOR_FUNCTIONS(f, mod) {
+            if (strcmp(tb_symbol_get_name((TB_Symbol*) f), "main") == 0) entry_f = f;
+            tb_module_apply_function(jit, f);
+        }
+
+        assert(entry_f);
+
+        // run main()
+        int(*entry)(int, char**) = tb_function_get_jit_pos(entry_f);
+
+        char* argv = (char[]){ "jit" };
+        int code = entry(1, &argv);
+
+        fprintf(stderr, "C JIT exit with %d\n", code);
         goto done;
     }
 
