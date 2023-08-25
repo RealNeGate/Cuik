@@ -1,4 +1,7 @@
 
+// TODO(NeGate): implement dual? from there i can do join with
+//
+// dual(dual(x) ^ dual(y)) = join(x, y)
 typedef struct {
     uint64_t bot, top;
 
@@ -8,7 +11,6 @@ typedef struct {
 } LatticeInt;
 
 // a simplification of the set of all pointers (or floats)
-// we can easily JOIN two trifectas with a min.
 typedef enum {
     LATTICE_UNKNOWN,        // top aka {nan, non-nan} or for pointers {null, non-null}
 
@@ -69,9 +71,9 @@ static Lattice lattice_top(TB_DataType dt) {
     }
 }
 
-static LatticeTrifecta lattice_trifecta_meet(LatticeTrifecta a, LatticeTrifecta b) {
-    return a < b ? a : b;
-}
+// known X ^ known X => known X or
+// known X ^ unknown => unknown (commutative btw)
+#define TRIFECTA_MEET(a, b) ((a).trifecta == (b).trifecta ? (a).trifecta : LATTICE_UNKNOWN)
 
 // generates the greatest lower bound between a and b
 static Lattice lattice_meet(const Lattice* a, const Lattice* b) {
@@ -93,22 +95,15 @@ static Lattice lattice_meet(const Lattice* a, const Lattice* b) {
 
         case LATTICE_FLOAT32:
         case LATTICE_FLOAT64: {
-            LatticeFloat aa = a->_float;
-            LatticeFloat bb = b->_float;
-
-            LatticeFloat f = { .trifecta = lattice_trifecta_meet(aa.trifecta, bb.trifecta) };
+            LatticeFloat f = { .trifecta = TRIFECTA_MEET(a->_float, b->_float) };
             return (Lattice){ a->tag, ._float = f };
         }
 
         case LATTICE_POINTER: {
-            LatticePointer aa = a->_ptr;
-            LatticePointer bb = b->_ptr;
-
-            LatticePointer p = { .trifecta = lattice_trifecta_meet(aa.trifecta, bb.trifecta) };
+            LatticePointer p = { .trifecta = TRIFECTA_MEET(a->_ptr, b->_ptr) };
             return (Lattice){ LATTICE_POINTER, ._ptr = p };
         }
 
         default: tb_todo();
     }
 }
-

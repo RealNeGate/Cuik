@@ -81,6 +81,25 @@ static TB_Node* ideal_int2ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     return new_n;
 }
 
+static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+    TB_Node* src = n->inputs[1];
+
+    // T(some_bool ? 1 : 0) => movzx(T, some_bool)
+    if (src->dt.type == TB_INT && src->dt.data == 1) {
+        uint64_t on_true, on_false;
+        if (get_int_const(n->inputs[2], &on_true) && get_int_const(n->inputs[3], &on_false)) {
+            if (on_true == 1 && on_false == 0) {
+                TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
+                set_input(opt, ext_node, src, 1);
+                tb_pass_mark(opt, ext_node);
+                return ext_node;
+            }
+        }
+    }
+
+    return NULL;
+}
+
 static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
@@ -106,36 +125,41 @@ static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node
         return src;
     }
 
-    if (src->type != TB_INTEGER_CONST) {
-        return NULL;
+    return NULL;
+}
+
+static TB_Node* identity_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+    TB_Node* src = n->inputs[1];
+    if (src->type == TB_INTEGER_CONST) {
+        TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
+
+        size_t src_num_words = src_i->num_words;
+        size_t dst_num_words = (n->dt.data + (BigIntWordSize*8) - 1) / (BigIntWordSize*8);
+        bool is_signed = false;
+        if (n->type == TB_SIGN_EXT) {
+            is_signed = BigInt_bextr(src_i->num_words, src_i->words, src->dt.data-1);
+        }
+
+        TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, dst_num_words);
+        BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
+
+        BigInt_copy(src_i->num_words, words, src_i->words);
+
+        FOREACH_N(i, src_i->num_words, dst_num_words) {
+            words[i] = is_signed ? ~UINT64_C(0) : 0;
+        }
+
+        // fixup the bits here
+        uint64_t shift = (64 - (src->dt.data % 64));
+        uint64_t mask = (~UINT64_C(0) >> shift) << shift;
+
+        if (is_signed) words[src_num_words - 1] |= mask;
+        else words[src_num_words - 1] &= ~mask;
+
+        return new_n;
+    } else {
+        return n;
     }
-
-    TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
-
-    size_t src_num_words = src_i->num_words;
-    size_t dst_num_words = (n->dt.data + (BigIntWordSize*8) - 1) / (BigIntWordSize*8);
-    bool is_signed = false;
-    if (n->type == TB_SIGN_EXT) {
-        is_signed = BigInt_bextr(src_i->num_words, src_i->words, src->dt.data-1);
-    }
-
-    TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, dst_num_words);
-    BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
-
-    BigInt_copy(src_i->num_words, words, src_i->words);
-
-    FOREACH_N(i, src_i->num_words, dst_num_words) {
-        words[i] = is_signed ? ~UINT64_C(0) : 0;
-    }
-
-    // fixup the bits here
-    uint64_t shift = (64 - (src->dt.data % 64));
-    uint64_t mask = (~UINT64_C(0) >> shift) << shift;
-
-    if (is_signed) words[src_num_words - 1] |= mask;
-    else words[src_num_words - 1] &= ~mask;
-
-    return new_n;
 }
 
 static TB_Node* ideal_int_unary(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
@@ -206,6 +230,28 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
                 set_input(opt, shl_node, make_int_node(f, opt, n->dt, log2), 2);
                 return shl_node;
             }
+        }
+    } else if (type == TB_CMP_EQ) {
+        // (a == 0) is !a
+        TB_Node* cmp = n->inputs[1];
+
+        uint64_t rhs;
+        if (get_int_const(n->inputs[2], &rhs) && rhs == 0) {
+            // !(a <  b) is (b <= a)
+            switch (cmp->type) {
+                case TB_CMP_SLT: n->type = TB_CMP_SLE; break;
+                case TB_CMP_SLE: n->type = TB_CMP_SLT; break;
+                case TB_CMP_ULT: n->type = TB_CMP_ULE; break;
+                case TB_CMP_ULE: n->type = TB_CMP_ULT; break;
+                default: return NULL;
+            }
+
+            TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cmp, TB_NodeCompare)->cmp_dt;
+            TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = cmp_dt);
+
+            set_input(opt, n, cmp->inputs[2], 1);
+            set_input(opt, n, cmp->inputs[1], 2);
+            return n;
         }
     }
 

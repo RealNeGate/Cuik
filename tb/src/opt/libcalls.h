@@ -24,10 +24,9 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
 
         TB_Node* dst_ptr = n->inputs[2];
 
-        // memcpy returns the destination pointer, convert any non-control users
-        // and pass them to dst
+        // memcpy returns the destination pointer, convert any users of that to dst
         for (User* use = find_users(passes, n); use; use = use->next) {
-            if (use->slot != 0) {
+            if (use->slot == 1 && use->n->type == TB_PROJ) {
                 subsume_node(passes, f, use->n, dst_ptr);
             }
         }
@@ -43,10 +42,9 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
 
         TB_Node* dst_ptr = n->inputs[2];
 
-        // memset returns the destination pointer, convert any non-control users
-        // and pass them to dst
+        // memset returns the destination pointer, convert any users of that to dst
         for (User* use = find_users(passes, n); use; use = use->next) {
-            if (use->slot != 0) {
+            if (use->slot == 1 && use->n->type == TB_PROJ) {
                 subsume_node(passes, f, use->n, dst_ptr);
             }
         }

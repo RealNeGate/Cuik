@@ -1,4 +1,4 @@
-// Certain load pimizations technically count as peepholes lmao, these can get fancy
+// Certain aliasing optimizations technically count as peepholes lmao, these can get fancy
 // so the sliding window notion starts to break down but there's no global analysis and
 // i can make them incremental technically so we'll go wit it.
 typedef struct {
@@ -36,6 +36,33 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 
     set_input(p, n, n->inputs[0]->inputs[0], 0);
     return n;
+}
+
+static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    // god i need a pattern matcher
+    //   (load (store X A Y) A) => Y
+    if (n->inputs[0]->type == TB_STORE &&
+        n->inputs[0]->inputs[1] == n->inputs[1] &&
+        n->dt.raw == n->inputs[0]->inputs[2]->dt.raw &&
+        is_nonvolatile_same_align(n, n->inputs[0])) {
+        return n->inputs[0]->inputs[2];
+    }
+
+    return n;
+}
+
+static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    // god i need a pattern matcher
+    //   (store (store X A Y) A Z) => (store X A Z)
+    if (n->inputs[0]->type == TB_STORE &&
+        n->inputs[0]->inputs[1] == n->inputs[1] &&
+        n->inputs[2]->dt.raw == n->inputs[0]->inputs[2]->dt.raw &&
+        is_nonvolatile_same_align(n, n->inputs[0])) {
+        set_input(p, n, n->inputs[0]->inputs[0], 0);
+        return n;
+    }
+
+    return NULL;
 }
 
 static TB_Node* ideal_memset(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {

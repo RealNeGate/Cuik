@@ -857,12 +857,12 @@ TB_Node* tb_inst_region(TB_Function* f) {
     return n;
 }
 
-void tb_inst_set_region_name(TB_Module* m, TB_Node* n, ptrdiff_t len, const char* name) {
+void tb_inst_set_region_name(TB_Function* f, TB_Node* n, ptrdiff_t len, const char* name) {
     if (len < 0) len = strlen(name);
 
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
-    char* newstr = tb_arena_alloc(get_permanent_arena(m), len + 1);
+    char* newstr = alloc_from_node_arena(f, len + 1);
     memcpy(newstr, name, len + 1);
     r->tag = newstr;
 }
@@ -883,7 +883,7 @@ static void add_region_pred(TB_Function* f, TB_Node* n, TB_Node* pred) {
 static TB_Node** add_successors(TB_Function* f, TB_Node* terminator, size_t count) {
     TB_NodeRegion* bb = TB_NODE_GET_EXTRA(tb_get_parent_region(f->active_control_node));
     bb->end = terminator;
-    bb->succ_count = count;
+    bb->succ_count = TB_NODE_GET_EXTRA_T(terminator, TB_NodeBranch)->succ_count = count;
     bb->succ = alloc_from_node_arena(f, count * sizeof(TB_Node*));
     return bb->succ;
 }

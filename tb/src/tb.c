@@ -314,6 +314,7 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
     start->dom = f->start_node;
     start->succ_count = 0;
     start->succ = NULL;
+    start->tag = f->super.name;
 
     f->param_count = param_count;
     f->params = tb_arena_alloc(f->arena, param_count * sizeof(TB_Node*));

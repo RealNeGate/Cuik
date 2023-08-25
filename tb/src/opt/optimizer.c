@@ -16,6 +16,8 @@
 
 thread_local TB_Arena* tmp_arena;
 
+// helps us do some matching later
+static TB_Node* unsafe_get_region(TB_Node* n);
 static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled);
 static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot);
 
@@ -75,12 +77,63 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
     return buf;
 }
 
+static bool is_nonvolatile_same_align(TB_Node* a, TB_Node* b) {
+    TB_NodeMemAccess* aa = TB_NODE_GET_EXTRA(a);
+    TB_NodeMemAccess* bb = TB_NODE_GET_EXTRA(b);
+    return !aa->is_volatile && !bb->is_volatile && aa->align == bb->align;
+}
+
+// some LOADs can always be derefenced like
+static bool cooler_no_effects(TB_Node* n) {
+    if (n->inputs[0] == NULL) {
+        return false;
+    }
+
+    // loading from locals or globals is unconditionally possible
+    if (n->type == TB_LOAD && !TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
+        return n->inputs[1]->type == TB_LOCAL || n->inputs[1]->type == TB_GET_SYMBOL_ADDRESS;
+    } else {
+        return true;
+    }
+}
+
+static bool is_empty_bb(TB_Passes* restrict p, TB_Node* bb) {
+    TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
+    if (end->inputs[0] != bb) return false;
+
+    for (User* use = find_users(p, bb); use; use = use->next) {
+        TB_Node* n = use->n;
+
+        // loading from locals or globals is unconditionally possible
+        if (n->type == TB_LOAD && !TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
+            if (n->inputs[1]->type == TB_LOCAL || n->inputs[1]->type == TB_GET_SYMBOL_ADDRESS) {
+                continue;
+            }
+        }
+
+        if (use->n != end) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
+    if (n->type == TB_BRANCH && n->input_count == 2 && TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->succ_count == 2) {
+        *falsey = TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->keys[0];
+        return true;
+    }
+
+    return false;
+}
+
 // unity build with all the passes
 #include "lattice.h"
 #include "cse.h"
 #include "dce.h"
 #include "fold.h"
-#include "load_opt.h"
+#include "mem_opt.h"
 #include "loop.h"
 #include "branches.h"
 #include "print.h"
@@ -118,9 +171,11 @@ static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* regio
 static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size_t i) {
     // remove swap
     n->input_count--;
-    set_input(p, n, NULL, n->input_count);
-    if (n->input_count != i) {
-        set_input(p, n, n->inputs[n->input_count], i);
+    if (n->input_count > 0) {
+        if (n->input_count != i) {
+            set_input(p, n, n->inputs[n->input_count], i);
+        }
+        set_input(p, n, NULL, n->input_count);
     }
 }
 
@@ -132,11 +187,11 @@ static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_
 
             // update PHIs
             for (User* use = find_users(p, dst); use; use = use->next) {
-                if (use->n->type == TB_PHI) {
+                if (use->n->type == TB_PHI && use->slot == 0) {
                     remove_input(p, f, use->n, i);
                 }
             }
-            break;
+            return;
         }
     }
 }
@@ -244,17 +299,36 @@ User* find_users(TB_Passes* restrict p, TB_Node* n) {
     return search >= 0 ? p->users[search].v : NULL;
 }
 
+static void tb_pass_mark_users_raw(TB_Passes* restrict p, TB_Node* n) {
+    for (User* use = find_users(p, n); use; use = use->next) {
+        tb_pass_mark(p, use->n);
+    }
+}
+
 void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
     for (User* use = find_users(p, n); use; use = use->next) {
         tb_pass_mark(p, use->n);
+        TB_NodeTypeEnum type = use->n->type;
 
-        // if the store is changed, the users (potential loads) should
-        // be notified.
-        if (use->n->type == TB_STORE  || use->n->type == TB_REGION ||
-            use->n->type == TB_PROJ   || use->n->type == TB_CMP_NE ||
-            use->n->type == TB_CMP_EQ || use->n->type == TB_PHI ||
-            use->n->type == TB_SHL    || use->n->type == TB_SHR) {
+        // tuples changing means their projections did too.
+        if (use->n->dt.type == TB_TUPLE || type == TB_PROJ) {
             tb_pass_mark_users(p, use->n);
+        }
+
+        // if the store is changed, the users (potential loads) should be notified.
+        // (br (cmp ...))
+        if (type == TB_CMP_NE || type == TB_CMP_EQ || type == TB_STORE) {
+            tb_pass_mark_users_raw(p, use->n);
+        }
+
+        // regions will mark their users (+ successors)
+        if (type == TB_REGION) {
+            tb_pass_mark_users_raw(p, use->n);
+
+            TB_NodeRegion* r = TB_NODE_GET_EXTRA(use->n);
+            FOREACH_N(i, 0, r->succ_count) {
+                tb_pass_mark_users_raw(p, r->succ[i]);
+            }
         }
     }
 }
@@ -322,8 +396,10 @@ void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
     } else {
         printf("(%s", tb_node_get_name(n));
         cool_print_type(n);
-        FOREACH_N(i, 1, n->input_count) if (n->inputs[i]) {
-            printf(" ");
+        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+            if (i == 0) printf(" @");
+            else printf(" ");
+
             print_node_sexpr(f, n->inputs[i], depth + 1);
         }
 
@@ -374,6 +450,9 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         case TB_LOAD:
         return ideal_load(p, f, n);
 
+        case TB_STORE:
+        return ideal_store(p, f, n);
+
         case TB_MEMSET:
         return ideal_memset(p, f, n);
 
@@ -396,6 +475,9 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 
         case TB_CALL:
         return ideal_libcall(p, f, n);
+
+        case TB_SELECT:
+        return ideal_select(p, f, n);
 
         // control flow
         case TB_PHI:
@@ -430,11 +512,18 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         case TB_CMP_ULE:
         return identity_int_binop(p, f, n);
 
+        case TB_SIGN_EXT:
+        case TB_ZERO_EXT:
+        return identity_extension(p, f, n);
+
         case TB_MEMBER_ACCESS:
         if (TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset == 0) {
             return n->inputs[1];
         }
         return n;
+
+        case TB_LOAD:
+        return identity_load(p, f, n);
 
         // dumb phis
         case TB_PHI: {
@@ -474,54 +563,57 @@ static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     //
     // if there's one predecessor and it's to an unconditional branch, merge them.
     if (n->type == TB_REGION) {
-        if (
-            n->input_count == 1 &&
-            n->inputs[0]->type == TB_PROJ &&
-            n->inputs[0]->inputs[0]->type == TB_BRANCH &&
-            n->inputs[0]->inputs[0]->input_count == 1
-        ) {
-            TB_Node* top_node = unsafe_get_region(n->inputs[0]);
-            TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
-            TB_NodeRegion* bot_region = TB_NODE_GET_EXTRA(n);
+        if (n->input_count == 1) {
+            if (
+                n->inputs[0]->type == TB_PROJ &&
+                n->inputs[0]->inputs[0]->type == TB_BRANCH &&
+                n->inputs[0]->inputs[0]->input_count == 1
+            ) {
+                TB_Node* top_node = unsafe_get_region(n->inputs[0]);
+                TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
+                TB_NodeRegion* bot_region = TB_NODE_GET_EXTRA(n);
 
-            // update k's sucessors to what n says
-            size_t succ_count = bot_region->succ_count;
-            if (succ_count == 0) {
-                top_region->succ_count = 0;
-                top_region->succ = NULL;
-    	    } else {
-                if (top_region->succ_count < succ_count) {
-                    top_region->succ_count = succ_count;
-                    top_region->succ = alloc_from_node_arena(f, succ_count * sizeof(TB_Node*));
+                tb_pass_mark_users(p, TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->end);
+
+                // bottom's region should be joined to whatever is above top's terminator
+                subsume_node(p, f, n, n->inputs[0]->inputs[0]->inputs[0]);
+                subsume_node(p, f, top_region->end, bot_region->end);
+
+                // hand the top region all the bottom's successors and terminator
+                size_t succ_count = bot_region->succ_count;
+                top_region->succ_count = succ_count;
+                top_region->succ = bot_region->succ;
+                top_region->end = bot_region->end;
+
+                if (top_region->end->type == TB_BRANCH) {
+                    TB_NODE_GET_EXTRA_T(top_region->end, TB_NodeBranch)->succ_count = succ_count;
                 }
-                memcpy(top_region->succ, bot_region->succ, succ_count * sizeof(TB_Node*));
-            }
 
-            // stitch bot_region's top to the top_region's bottom
-            subsume_node(p, f, n, n->inputs[0]->inputs[0]->inputs[0]);
-            top_region->end = bot_region->end;
-            return n;
-        } else {
-            return NULL;
+                // re-evaluate traversal
+                CUIK_TIMED_BLOCK("recompute order") {
+                    tb_function_free_postorder(&p->order);
+                    p->order = tb_function_get_postorder(f);
+                }
+                return n;
+            }
         }
+
+        return NULL;
     }
 
     DO_IF(TB_OPTDEBUG_PEEP)(printf("peep? "), print_node_sexpr(f, n, 0));
-
-    // if we fold branches, we need to know who to update
-    bool terminator = is_terminator(n);
 
     // idealize node (in a loop of course)
     TB_Node* k = idealize(p, f, n);
     DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
     while (k != NULL) {
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[%dm", 36+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
 
         tb_pass_mark_users(p, k);
 
         // transfer users from n -> k
         if (n != k) {
-            tb_assert(!terminator, "can't peephole a branch into a new branch");
+            tb_assert(!is_terminator(n), "can't peephole a branch into a new branch");
             subsume_node(p, f, n, k);
 
             n = k;
@@ -537,7 +629,7 @@ static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // convert into matching identity
     k = identity(p, f, n);
     if (n != k) {
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[%dm", 37+loop_count), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
         subsume_node(p, f, n, k);
         return k;
     }
