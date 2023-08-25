@@ -6,206 +6,145 @@ size_t tb_helper_write_data_section(size_t write_pos, TB_Module* m, uint8_t* out
 size_t tb_helper_write_rodata_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
 
 enum {
-    SLAB_SIZE = 0x1000,
-    BITMAP_GRANULARITY = 16,
+    ALLOC_GRANULARITY = 16,
 
-    USED_BITMAP_COUNT = (SLAB_SIZE / BITMAP_GRANULARITY) / 8,
+    ALLOC_COOKIE = 0xBAADF00D,
+    ALLOC_IN_USE = 0x8000,
 };
 
-typedef struct Slab {
-    // protect is what it's supposed to be, but active_protect is what it's actually
-    TB_MemProtect protect, active_protect;
-    uint64_t used_bitmap[USED_BITMAP_COUNT];
-} Slab;
+typedef struct AllocRegion AllocRegion;
+struct AllocRegion {
+    AllocRegion *next;
+
+    // in bytes
+    uint32_t size;
+    uint8_t* data;
+
+    // each AllocRegion has offsets for each
+    // entry, this may grow as the region has
+    // more allocations.
+    uint32_t count, cap;
+    uint16_t offsets[];
+};
 
 typedef struct {
-    size_t capacity;
+    // linear allocator that backs our stuff
+    size_t capacity, used;
     uint8_t* block;
 
-    size_t slab_count;
-    Slab* slabs;
+    TB_MemProtect prot;
+    AllocRegion* region;
 } TB_JITHeap;
 
 struct TB_JITContext {
     NL_Strmap(void*) loaded_funcs;
 
-    // all our globals, import tables and functions go here
-    TB_JITHeap heap;
+    TB_JITHeap rx_heap;
+    TB_JITHeap rw_heap;
 };
 
-static TB_JITHeap tb_jitheap_create(size_t size) {
-    assert(size == (uint32_t) size);
+static const char* prot_names[] = {
+    "RO",
+    "RW",
+    "RX",
+    "RXW",
+};
 
-    // align to page size
-    size = (size + SLAB_SIZE - 1) & ~(SLAB_SIZE - 1);
-    uint32_t slab_count = size / SLAB_SIZE;
-
-    TB_JITHeap h = { 0 };
-    h.capacity = size;
-    h.block = tb_platform_valloc(size);
-    h.slab_count = slab_count;
-    h.slabs = tb_platform_heap_alloc(slab_count * sizeof(Slab));
-
-    FOREACH_N(i, 0, slab_count) {
-        h.slabs[i] = (Slab){ 0 };
-    }
-    return h;
+static TB_JITHeap tb_jitheap_create(TB_MemProtect prot, void* ptr, size_t size) {
+    return (TB_JITHeap){
+        .prot = prot,
+        .capacity = size,
+        .block = ptr,
+    };
 }
 
-// done with changes, apply protection again
-static void tb_jitheap_unlock(TB_JITHeap* c, void* ptr, size_t size) {
-    ptrdiff_t count = (size + (SLAB_SIZE - 1)) / SLAB_SIZE;
-    ptrdiff_t page = ((uint8_t*) ptr - c->block) / SLAB_SIZE;
-
-    FOREACH_N(i, page, page + count) {
-        Slab* s = &c->slabs[i];
-
-        if (s->active_protect != s->protect) {
-            s->active_protect = s->protect;
-            tb_platform_vprotect(c->block + (i * SLAB_SIZE), SLAB_SIZE, s->protect);
-        }
-    }
+static void* push_region(TB_JITHeap* c, size_t size) {
+    void* ptr = &c->block[c->used];
+    c->used += size;
+    return ptr;
 }
 
-static bool find_free_sequence(uint64_t* bitmap, size_t bitmap_cap, size_t bits_needed, size_t* out_i) {
-    size_t i = 0;
+static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t size) {
+    size = (size + ALLOC_GRANULARITY - 1) & ~(ALLOC_GRANULARITY - 1);
 
-    // biggest bit sequence
-    size_t start_bit  = 0;
-    size_t bit_length = 0;
+    AllocRegion* r = c->region;
+    size_t offset = 0;
 
-    for (; i < bitmap_cap; i++) {
-        uint64_t bits = bitmap[i];
-        size_t free_bit_local = (bits ? tb_ffs64(~bits) - 1 : 0);
-        size_t free_bit = i*64 + free_bit_local;
+    while (r != NULL && r->size < size) {
+        // find free region
+        size_t count = r->count, total_size = r->size;
 
-        // after the first free bit, we need to find out how long it is
-        uint64_t remainder = bits >> free_bit_local;
-        size_t seq_len = remainder ? tb_ffs64(remainder) - 1 : 64 - free_bit_local;
+        FOREACH_N(i, 0, count) {
+            size_t curr = r->offsets[i];
+            if (curr & ALLOC_IN_USE) continue;
 
-        // is it connected to the old bit sequence
-        if (start_bit + bit_length == free_bit) {
-            bit_length += seq_len;
-        } else {
-            // restart sequence
-            start_bit = free_bit;
-            bit_length = seq_len;
-        }
+            curr &= ~ALLOC_IN_USE;
+            size_t next = i + 1 < count ? r->offsets[i + 1] : total_size;
+            size_t obj_size = (next & ~ALLOC_IN_USE) - curr;
+            if (obj_size >= size) {
+                // split free region, we need to move things which is slow...
+                assert(count + 1 < r->cap);
 
-        if (bit_length >= bits_needed) {
-            // fill entire bit sequence
-            size_t start_word = start_bit / 64;
-            size_t end_word = (start_bit + bits_needed + 63) / 64;
+                // moved the free space over
+                r->offsets[i] = (curr + size);
+                if (curr + size == total_size) {
+                    // remove free space, there's no more here
+                    r->count--;
+    	        }
 
-            if (start_word + 1 == end_word) {
-                size_t start_bit_local = start_bit % 64;
-                uint64_t mask = (UINT64_C(1) << bits_needed) - 1;
-                bitmap[start_word] |= mask << start_bit_local;
-
-                *out_i = start_bit;
-                return true;
-            } else {
-                // extend from start bit to the end of the word
-                size_t start_bit_local = start_bit % 64;
-                uint64_t mask = UINT64_MAX << start_bit_local;
-                bitmap[start_word] |= mask;
-
-                FOREACH_N(j, start_word + 1, end_word - 1) {
-                    bitmap[j] |= UINT64_MAX;
-                }
-
-                size_t end_bit_local = (start_bit + bits_needed) % 64;
-                mask = UINT64_MAX >> (64 - end_bit_local);
-                bitmap[end_word - 1] |= mask;
-
-                *out_i = start_bit;
-                return true;
+                offset = curr & ~ALLOC_IN_USE;
+                goto done;
             }
         }
+
+        r = r->next;
     }
 
-    return false;
-}
-
-// locks memory it allocates
-static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t size, TB_MemProtect protect) {
-    // align to alloc granularity
-    size_t block_count = (size + 15) / 16;
-    assert(block_count < 64 && "TODO: support bigger allocations");
-
-    // printf("JIT: allocate %zu blocks\n", block_count);
-
-    FOREACH_N(i, 0, c->slab_count) {
-        Slab* restrict s = &c->slabs[i];
-        if (s->protect != TB_PAGE_INVALID) {
-            if (s->protect != protect) continue;
-        } else {
-            s->protect = protect;
-            s->active_protect = TB_PAGE_INVALID;
-        }
-
-        // by default, pages are mapped as writable until the user finalizes their changes
-        uint8_t* page = c->block + (i * SLAB_SIZE);
-        if (s->active_protect != TB_PAGE_READWRITE) {
-            s->active_protect = TB_PAGE_READWRITE;
-            tb_platform_vprotect(page, SLAB_SIZE, TB_PAGE_READWRITE);
-        }
-
-        uint64_t* bitmap = s->used_bitmap;
-        size_t bitmap_count = (block_count + 63) / 64;
-
-        // find first free slot
-        size_t j = 0;
-        while (j < USED_BITMAP_COUNT && bitmap[j] == UINT64_MAX) j++;
-
-        // find empty bit sequence
-        assert(j != USED_BITMAP_COUNT);
-
-        size_t k;
-        if (find_free_sequence(&bitmap[j], USED_BITMAP_COUNT - j, block_count, &k)) {
-            // printf("  alloc [%zu][%zu][%zu] (%zu blocks)\n", i, j, k, block_count);
-            return &page[((j * 64) + k) * BITMAP_GRANULARITY];
-        }
-
-        tb_todo();
+    // allocate enough free pages
+    size_t rounded_size = tb_next_pow2(size);
+    if (rounded_size < 4096) {
+        rounded_size = 4096;
     }
 
-    return NULL;
+    size_t entry_cap = (rounded_size + ALLOC_GRANULARITY - 1) / ALLOC_GRANULARITY;
+    assert(entry_cap >= 2);
+
+    r = tb_platform_heap_alloc(sizeof(AllocRegion) + sizeof(uint16_t)*entry_cap);
+    *r = (AllocRegion){
+        .size  = rounded_size,
+        .cap   = entry_cap,
+        .count = 1,
+        .data = push_region(c, rounded_size)
+    };
+
+    r->offsets[0] = ALLOC_IN_USE | 0;
+    if (size != rounded_size) {
+        // put leftovers into region
+        r->offsets[1] = size;
+        r->count++;
+    }
+
+    r->next = c->region;
+    c->region = r;
+
+    done:
+    log_debug("jit heap %s: alloc %-4zu => [ %-4zu - %-4zu ]", prot_names[c->prot], size, offset, offset + size);
+    return &r->data[offset];
 }
 
 void tb_jitheap_free_region(TB_JITHeap* c, void* ptr, size_t s) {
-    size_t offset = ((uint8_t*) ptr) - c->block;
-    assert(offset < c->capacity);
-
-    size_t start_bit = offset / 16;
-    size_t block_count = (s + 15) / 16;
-    Slab* restrict slab = &c->slabs[offset / SLAB_SIZE];
-
-    // extend from start bit to the end of the word
-    size_t start_word = start_bit / 64;
-    size_t end_word = (start_bit + block_count + 63) / 64;
-
-    size_t start_bit_local = start_bit % 64;
-    uint64_t mask = UINT64_MAX << start_bit_local;
-    slab->used_bitmap[start_word] &= ~mask;
-
-    FOREACH_N(j, start_word + 1, end_word - 1) {
-        slab->used_bitmap[j] = 0;
-    }
-
-    size_t end_bit_local = (start_bit + block_count) % 64;
-    mask = UINT64_MAX >> (64 - end_bit_local);
-    slab->used_bitmap[end_word - 1] &= ~mask;
+    __debugbreak();
 }
 
 static void* get_proc(TB_JITContext* jit, const char* name) {
     #ifdef _WIN32
-    static HMODULE kernel32, user32, gdi32, opengl32;
+    static HMODULE kernel32, user32, gdi32, opengl32, msvcrt;
     if (user32 == NULL) {
         kernel32 = LoadLibrary("kernel32.dll");
         user32   = LoadLibrary("user32.dll");
         gdi32    = LoadLibrary("gdi32.dll");
         opengl32 = LoadLibrary("opengl32.dll");
+        msvcrt   = LoadLibrary("msvcrt.dll");
     }
 
     // check cache first
@@ -217,6 +156,7 @@ static void* get_proc(TB_JITContext* jit, const char* name) {
     if (addr == NULL) addr = GetProcAddress(user32, name);
     if (addr == NULL) addr = GetProcAddress(gdi32, name);
     if (addr == NULL) addr = GetProcAddress(opengl32, name);
+    if (addr == NULL) addr = GetProcAddress(msvcrt, name);
 
     // printf("JIT: loaded %s (%p)\n", name, addr);
     nl_map_put_cstr(jit->loaded_funcs, name, addr);
@@ -240,7 +180,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
     TB_FunctionOutput* func_out = f->output;
 
     // copy machine code
-    char* dst = tb_jitheap_alloc_region(&jit->heap, func_out->code_size, TB_PAGE_READEXECUTE);
+    char* dst = tb_jitheap_alloc_region(&jit->rx_heap, func_out->code_size);
     memcpy(dst, func_out->code, func_out->code_size);
 
     // printf("JIT: apply function %s (%p)\n", f->super.name, dst);
@@ -277,7 +217,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
                 memcpy(dst + actual_pos, &rel32, sizeof(int32_t));
             } else {
                 // generate thunk to make far call
-                char* thunk = tb_jitheap_alloc_region(&jit->heap, 6 + sizeof(void*), TB_PAGE_READEXECUTE);
+                char* thunk = tb_jitheap_alloc_region(&jit->rx_heap, 6 + sizeof(void*));
                 thunk[0] = 0xFF; // jmp qword [rip]
                 thunk[1] = 0x25;
                 thunk[2] = 0x00;
@@ -313,7 +253,7 @@ TB_API void* tb_module_apply_function(TB_JITContext* jit, TB_Function* f) {
 
 TB_API void* tb_module_apply_global(TB_JITContext* jit, TB_Global* g) {
     // printf("JIT: apply global %s\n", g->super.name ? g->super.name : "<unnamed>");
-    char* data = tb_jitheap_alloc_region(&jit->heap, g->size, TB_PAGE_READWRITE);
+    char* data = tb_jitheap_alloc_region(&jit->rw_heap, g->size);
 
     memset(data, 0, g->size);
     FOREACH_N(k, 0, g->obj_count) {
@@ -335,28 +275,25 @@ TB_API void* tb_module_apply_global(TB_JITContext* jit, TB_Global* g) {
     return data;
 }
 
-TB_API void tb_module_ready_jit(TB_JITContext* jit) {
-    FOREACH_N(i, 0, jit->heap.slab_count) {
-        Slab* restrict s = &jit->heap.slabs[i];
-
-        if (s->active_protect != s->protect) {
-            s->active_protect = s->protect;
-            tb_platform_vprotect(jit->heap.block + (i * SLAB_SIZE), SLAB_SIZE, s->protect);
-        }
-    }
-}
-
 TB_API TB_JITContext* tb_module_begin_jit(TB_Module* m, size_t jit_heap_capacity) {
-    if (jit_heap_capacity == 0) jit_heap_capacity = 4*1024*1024;
-    // ICodeGen* restrict codegen = tb__find_code_generator(m);
+    if (jit_heap_capacity == 0) {
+        jit_heap_capacity = 2*1024*1024;
+    }
+
+    char* ptr = tb_platform_valloc(jit_heap_capacity*2);
+    tb_platform_vprotect(ptr, jit_heap_capacity*2, TB_PAGE_RXW);
 
     TB_JITContext* jit = tb_platform_heap_alloc(sizeof(TB_JITContext));
-    *jit = (TB_JITContext){ .heap = tb_jitheap_create(jit_heap_capacity) };
+    *jit = (TB_JITContext){
+        .rx_heap = tb_jitheap_create(TB_PAGE_RX, ptr, jit_heap_capacity),
+        .rw_heap = tb_jitheap_create(TB_PAGE_RW, &ptr[jit_heap_capacity], jit_heap_capacity)
+    };
 
     return jit;
 }
 
 TB_API void tb_module_end_jit(TB_JITContext* jit) {
-    tb_platform_vfree(jit->heap.block, jit->heap.capacity);
+    tb_platform_vfree(jit->rx_heap.block, jit->rx_heap.capacity);
+    tb_platform_vfree(jit->rw_heap.block, jit->rw_heap.capacity);
     tb_platform_heap_free(jit);
 }

@@ -29,11 +29,10 @@ void guard_free(void* ptr);
 // Virtual memory management
 ////////////////////////////////
 typedef enum {
-    TB_PAGE_INVALID,
-
-    TB_PAGE_READONLY,
-    TB_PAGE_READWRITE,
-    TB_PAGE_READEXECUTE,
+    TB_PAGE_RO,
+    TB_PAGE_RW,
+    TB_PAGE_RX,
+    TB_PAGE_RXW,
 } TB_MemProtect;
 
 // This is used for JIT compiler pages or any large scale memory allocations.
