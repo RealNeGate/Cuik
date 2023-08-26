@@ -97,10 +97,13 @@ static bool cooler_no_effects(TB_Node* n) {
     }
 }
 
-static bool is_empty_bb(TB_Passes* restrict p, TB_Node* bb) {
-    TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
-    if (end->inputs[0] != bb) return false;
+static bool is_empty_bb(TB_Passes* restrict p, TB_Node* end) {
+    assert(end->type == TB_BRANCH || end->type == TB_UNREACHABLE);
+    if (end->inputs[0]->type != TB_START && end->inputs[0]->type != TB_REGION) {
+        return false;
+    }
 
+    TB_Node* bb = end->inputs[0];
     for (User* use = find_users(p, bb); use; use = use->next) {
         TB_Node* n = use->n;
 

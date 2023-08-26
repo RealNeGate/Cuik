@@ -47,9 +47,13 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
             if (phi_count > 1) return NULL;
         }
 
+        // guarentee paths are effectless
+        if (!is_empty_bb(opt, region->inputs[0]->inputs[0])) { return NULL; }
+        if (!is_empty_bb(opt, region->inputs[1]->inputs[0])) { return NULL; }
+
         // these don't have directions, i just need names
-        TB_Node* left  = unsafe_get_region(region->inputs[0]);
-        TB_Node* right = unsafe_get_region(region->inputs[1]);
+        TB_Node* left  = region->inputs[0]->inputs[0]->inputs[0];
+        TB_Node* right = region->inputs[1]->inputs[0]->inputs[0];
 
         // is it a proper if-diamond?
         if (left->input_count == 1 && right->input_count == 1 &&
@@ -60,10 +64,6 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
             TB_NodeRegion* header = TB_NODE_GET_EXTRA(header_node);
 
             if (header->succ_count == 2) {
-                // guarentee paths are effectless
-                if (!is_empty_bb(opt, left))  { return NULL; }
-                if (!is_empty_bb(opt, right)) { return NULL; }
-
                 assert(left->inputs[0]->inputs[0]->input_count == 2);
                 TB_Node* cond    = branch->inputs[1];
                 TB_Node* left_v  = n->inputs[1];
@@ -71,7 +71,6 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
 
                 bool right_false = header->succ[0] == right;
                 uint64_t falsey = TB_NODE_GET_EXTRA_T(branch, TB_NodeBranch)->keys[0];
-                // TB_Node* false_node = make_int_node(f, opt, n->dt, falsey);
 
                 // TODO(NeGate): handle non-zero falseys
                 if (falsey == 0) {
@@ -96,14 +95,14 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     TB_NodeRegion* region = TB_NODE_GET_EXTRA(bb);
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
 
-    if (region->succ_count == 2) {
+    if (br->succ_count == 2) {
         if (n->input_count == 2 && br->keys[0] == 0) {
             TB_Node* cmp_node = n->inputs[1];
             TB_NodeTypeEnum cmp_type = cmp_node->type;
 
             // empty BB, just does if branch but the condition is effect-less
             // if (a && b) A else B => if (a ? b : 0) A else B
-            if (n->inputs[0] == bb && is_empty_bb(opt, bb)) {
+            if (is_empty_bb(opt, n)) {
                 uint64_t falsey = br->keys[0];
                 TB_Node* pred_branch = bb->inputs[0]->inputs[0];
 
