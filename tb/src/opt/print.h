@@ -58,7 +58,6 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
         } else {
             printf("0x");
             FOREACH_REVERSE_N(i, 0, num->num_words) {
-                if (num) printf("'");
                 printf("%016"PRIx64, num->words[i]);
             }
         }

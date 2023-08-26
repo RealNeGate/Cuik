@@ -551,54 +551,67 @@ static TB_Node* unsafe_get_region(TB_Node* n) {
     return n;
 }
 
-static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    // if there's one predecessor and it's to an unconditional branch, merge them.
+    if (n->input_count == 1) {
+        if (
+            n->inputs[0]->type == TB_PROJ &&
+            n->inputs[0]->inputs[0]->type == TB_BRANCH &&
+            n->inputs[0]->inputs[0]->input_count == 1
+        ) {
+            TB_Node* top_node = unsafe_get_region(n->inputs[0]);
+            TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
+            TB_NodeRegion* bot_region = TB_NODE_GET_EXTRA(n);
+
+            // bottom's region should be joined to whatever is above top's terminator
+            subsume_node(p, f, n, n->inputs[0]->inputs[0]->inputs[0]);
+            subsume_node(p, f, top_region->end, bot_region->end);
+
+            // hand the top region all the bottom's successors and terminator
+            size_t succ_count = bot_region->succ_count;
+            top_region->succ_count = succ_count;
+            top_region->succ = bot_region->succ;
+            top_region->end = bot_region->end;
+
+            if (top_region->end->type == TB_BRANCH) {
+                TB_NODE_GET_EXTRA_T(top_region->end, TB_NodeBranch)->succ_count = succ_count;
+            }
+
+            // re-evaluate traversal
+            CUIK_TIMED_BLOCK("recompute order") {
+                tb_function_free_postorder(&p->order);
+                p->order = tb_function_get_postorder(f);
+            }
+
+            tb_pass_mark(p, top_node);
+            return top_node;
+        }
+    }
+
+    return NULL;
+}
+
+static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // must've dead sometime between getting scheduled and getting
     // here.
     if (find_users(p, n) == NULL) {
-        return NULL;
+        return false;
     }
 
-    // special case is peepholes on regions, we're basically just checking
-    // for jump threading here
-    //
-    // if there's one predecessor and it's to an unconditional branch, merge them.
+    // special case is peepholes on regions
     if (n->type == TB_REGION) {
-        if (n->input_count == 1) {
-            if (
-                n->inputs[0]->type == TB_PROJ &&
-                n->inputs[0]->inputs[0]->type == TB_BRANCH &&
-                n->inputs[0]->inputs[0]->input_count == 1
-            ) {
-                TB_Node* top_node = unsafe_get_region(n->inputs[0]);
-                TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
-                TB_NodeRegion* bot_region = TB_NODE_GET_EXTRA(n);
-
-                tb_pass_mark_users(p, TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->end);
-
-                // bottom's region should be joined to whatever is above top's terminator
-                subsume_node(p, f, n, n->inputs[0]->inputs[0]->inputs[0]);
-                subsume_node(p, f, top_region->end, bot_region->end);
-
-                // hand the top region all the bottom's successors and terminator
-                size_t succ_count = bot_region->succ_count;
-                top_region->succ_count = succ_count;
-                top_region->succ = bot_region->succ;
-                top_region->end = bot_region->end;
-
-                if (top_region->end->type == TB_BRANCH) {
-                    TB_NODE_GET_EXTRA_T(top_region->end, TB_NodeBranch)->succ_count = succ_count;
-                }
-
-                // re-evaluate traversal
-                CUIK_TIMED_BLOCK("recompute order") {
-                    tb_function_free_postorder(&p->order);
-                    p->order = tb_function_get_postorder(f);
-                }
-                return n;
+        // check if it's a dead region
+        if (n->input_count == 0) {
+            // remove predecessor from other branches
+            TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+            FOREACH_N(i, 0, r->succ_count) {
+                remove_pred(p, f, n, r->succ[i]);
             }
+
+            return true;
         }
 
-        return NULL;
+        return ideal_region(p, f, n);
     }
 
     DO_IF(TB_OPTDEBUG_PEEP)(printf("peep? "), print_node_sexpr(f, n, 0));
@@ -723,7 +736,6 @@ bool tb_pass_peephole(TB_Passes* p) {
 
             if (peephole(p, f, n)) {
                 changes = true;
-
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
             }
         }
