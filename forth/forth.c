@@ -64,13 +64,21 @@ enum {
     OP_RECT  = -18, // ( x y w h -- )
 };
 
-enum {
+typedef struct Dictionary Dictionary;
+
+typedef enum {
     WORD_NORMAL,
     WORD_VAR,
     WORD_TYPE,
-};
+} WordTag;
 
-typedef struct Dictionary Dictionary;
+// if a dictionary is NULL, then the type is INT
+typedef struct {
+    int tails;
+    int in_count, out_count;
+    Dictionary **inputs, **outputs;
+} WordType;
+
 typedef struct {
     // we don't want to free the word while the
     // JIT is using that memory
@@ -82,232 +90,51 @@ typedef struct {
     Dictionary* as_type;
 
     // type
-    int arity, outputs;
-    int tails;
+    WordType type;
+    WordTag tag;
 
-    uint32_t kind;
-
-    // we might wanna move this out of here to avoid false-sharing
-    //
-    // for now there's no tiers or recompilation.
-    //
-    // so once 'trip_count' == JIT_THRESHOLD, we submit
+    // once 'trip_count' == JIT_THRESHOLD, we submit
     // to the JIT thread. once it's ready later we can
     // check 'jitted'
-    _Atomic int trip_count;
     _Atomic(void*) jitted;
+    _Atomic int trip_count;
+
+    // when we've pushed onto the queue, this is set to true
+    // to avoid anyone else pushing the same function to the
+    // queue.
+    _Atomic bool jit_mark;
 } Word;
+
+typedef struct {
+    Dictionary* dict;
+    char data[];
+} Obj;
 
 static _Thread_local bool is_main_thread;
 
+static TB_Arena young_gen;
+
 #include "forth_dict.h"
+
+// builtin type
+static Dictionary int_dict = { .name = "INT" };
 
 static Dictionary root_dict;
 
 static void dump_type(Word* w) {
     printf(": %.*s ( ", (int) w->name.length, w->name.data);
-    for (int i = 0; i < w->arity; i++) {
-        printf("%c ", 'a'+i);
+    for (int i = w->type.in_count; i--;) {
+        printf("%c:%s ", 'a'+i, w->type.inputs[i]->name);
     }
     printf("-- ");
-    for (int i = 0; i < w->outputs; i++) {
-        printf("%c ", 'A'+i);
+    for (int i = 0; i < w->type.out_count; i++) {
+        printf("%c:%s ", 'A'+i, w->type.outputs[i]->name);
     }
     printf(") ... ;\n");
 }
 
 ////////////////////////////////
-// Parser
-////////////////////////////////
-static void infer(Word* w);
-
-typedef struct {
-    const char* source;
-} Parser;
-
-static NL_Slice dup_slice(NL_Slice s) {
-    uint8_t* new_mem = cuik_malloc(s.length + 1);
-    memcpy(new_mem, s.data, s.length);
-    new_mem[s.length] = 0;
-    return (NL_Slice){ s.length, new_mem };
-}
-
-static NL_Slice slice_fmt(TB_Arena* arena, const char* fmt, ...) {
-    char* buf = tb_arena_alloc(arena, 64);
-
-    va_list ap;
-    va_start(ap, fmt);
-    int len = vsnprintf(buf, 64, fmt, ap);
-    va_end(ap);
-
-    tb_arena_pop(arena, buf + len + 1, 64 - (len + 1));
-    tb_arena_realign(arena);
-
-    return (NL_Slice){ len, (const uint8_t*) buf };
-}
-
-static Word* add_new_to_dictionary(Dictionary* dict, NL_Slice name, int ins, int outs) {
-    WordIndex id = alloc_word();
-    Word* w = &words.entries[id];
-    *w = (Word){ .refs = 1, .name = name, .arity = ins, .outputs = outs };
-    dict_put(dict, name.length, (const char*) name.data, -1000 - id);
-
-    dump_type(w);
-    return w;
-}
-
-static NL_Slice lex(Parser* p) {
-    // skip spaces & comments
-    const char* line = p->source;
-    for (;;) {
-        while (*line > 0 && *line <= 32) line++;
-
-        if (*line == 0) {
-            return (NL_Slice){ 0 };
-        } else if (*line == '\\') {
-            while (*line && *line != '\n') line++;
-            continue;
-        }
-
-        break;
-    }
-
-    // read word
-    const char* end = line;
-    while (*end > 32) end++;
-
-    // advance
-    p->source = *end ? end + 1 : end;
-
-    return (NL_Slice){ end - line, (const uint8_t*) line };
-}
-
-// parse builds up a word
-static void parse(Dictionary* dict, Parser* p, Word* w, bool in_record) {
-    for (;;) {
-        NL_Slice token = lex(p);
-
-        if (token.length == 0) {
-            break;
-        } else if (token.length == 1 && token.data[0] == ':') {
-            // define word
-            NL_Slice name = dup_slice(lex(p));
-
-            WordIndex id = alloc_word();
-            Word* w = &words.entries[id];
-            *w = (Word){ 0 };
-
-            dict_put(dict, name.length, (const char*) name.data, -1000 - id);
-
-            // build up word inside root word
-            Word kid = { .refs = 1, .name = name };
-            parse(dict, p, &kid, false);
-
-            // split from the parse function to avoid resize problems
-            kid.name = name;
-            *w = kid;
-
-            infer(w);
-        } else if (token.length == 7 && memcmp(token.data, "record:", 7) == 0) {
-            NL_Slice name = dup_slice(lex(p));
-
-            WordIndex id = alloc_word();
-            Word* w = &words.entries[id];
-            *w = (Word){ .refs = 1, .name = name, .kind = WORD_TYPE };
-
-            dict_put(dict, name.length, (const char*) name.data, -1000 - id);
-
-            // build up word within separate dictionary
-            Dictionary* record_dict = cuik_calloc(1, sizeof(Dictionary));
-
-            Word kid = { 0 };
-            parse(record_dict, p, &kid, true);
-
-            // split from the parse function to avoid resize problems
-            kid.name = name;
-            *w = kid;
-
-            infer(w);
-        } else if (token.length == 4 && memcmp(token.data, "var:", 4) == 0) {
-            // define variable
-            token = lex(p);
-            while (token.length != 1 || token.data[0] != ';') {
-                NL_Slice name = dup_slice(token);
-                token = lex(p);
-
-                // allocate some memory for it
-                if (tb_arena_is_empty(&dict->data)) {
-                    tb_arena_create(&dict->data, TB_ARENA_MEDIUM_CHUNK_SIZE);
-                }
-
-                void* ptr = tb_arena_alloc(&dict->data, sizeof(int64_t));
-                memset(ptr, 0, sizeof(int64_t));
-
-                // generate words
-                if (in_record) {
-                    // the accessor words in a record are relative to a pointer
-                    dict->field_count += 1;
-                    size_t offset = dict->data_size;
-                    dict->data_size += sizeof(int64_t);
-
-                    Word* st_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, ".%s!", name.data), 2, 0);
-                    dyn_array_put(st_word->ops, offset);
-                    dyn_array_put(st_word->ops, OP_ADD);
-                    dyn_array_put(st_word->ops, OP_WRITE);
-
-                    Word* ld_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, ".%s@", name.data), 1, 1);
-                    dyn_array_put(ld_word->ops, offset);
-                    dyn_array_put(st_word->ops, OP_ADD);
-                    dyn_array_put(ld_word->ops, OP_READ);
-                    ld_word->kind = WORD_VAR;
-                } else {
-                    Word* st_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s!", name.data), 1, 0);
-                    dyn_array_put(st_word->ops, (uintptr_t) ptr);
-                    dyn_array_put(st_word->ops, OP_WRITE);
-
-                    Word* ld_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s@", name.data), 0, 1);
-                    dyn_array_put(ld_word->ops, (uintptr_t) ptr);
-                    dyn_array_put(ld_word->ops, OP_READ);
-                    ld_word->kind = WORD_VAR;
-                }
-            }
-
-            if (token.length != 1 || token.data[0] != ';') {
-                printf("error: missing semicolon after var: decl\n");
-                abort();
-            }
-        } else if (token.length == 1 && token.data[0] == ';') {
-            return;
-        } else if (token.data[0] == '\'') {
-            // char literals
-            dyn_array_put(w->ops, token.data[1]);
-            assert(token.data[2] == '\'');
-        } else if (token.data[0] >= '0' && token.data[0] <= '9') {
-            uint64_t num = 0;
-            for (size_t i = 0; i < token.length; i++) {
-                if (token.data[i] < '0' || token.data[i] > '9') {
-                    break;
-                }
-
-                num *= 10;
-                num += token.data[i] - '0';
-            }
-
-            dyn_array_put(w->ops, num);
-        } else {
-            WordIndex found = dict_get(dict, token.length, (const char*) token.data);
-            if (found >= 0) {
-                printf("error: undefined word %.*s\n", (int) token.length, token.data);
-                abort();
-            }
-
-            dyn_array_put(w->ops, found);
-        }
-    }
-}
-
-////////////////////////////////
-// Type checker
+// Type checking
 ////////////////////////////////
 // represents control flow structures like if{ }else{ }
 typedef struct {
@@ -352,6 +179,278 @@ static Control* control_pop(ControlStack* restrict cs) {
     return &cs->stack[--cs->head];
 }
 
+// it's mostly inferred, if some operation needs an INT
+// it'll ask for one, if there's ever an operation which
+// has multiple answers it'll ask you to annotate (dot words).
+// for example:
+//
+//    \ will just assume ( INT -- INT )
+//    : foo dup * ;
+//
+//    \ can't assume INT because dot words require objects
+//    : first-elem 0 swap .at ;
+//
+//    \ you'll need to tell it what kind of object it is
+//    : first-elem ( WORKLIST )
+//
+typedef struct {
+    // arity
+    DynArray(Dictionary*) inputs;
+
+    // type stack
+    size_t head;
+    DynArray(Dictionary*) stack;
+
+    ControlStack cs;
+} TypeChecker;
+
+static void type_check_push(TypeChecker* restrict chk, Dictionary* t) {
+    dyn_array_put(chk->stack, t);
+}
+
+static Dictionary* type_check_pop(TypeChecker*  restrict chk, Dictionary* expected) {
+    // infer new parameter, default to expected
+    if (dyn_array_length(chk->stack) == 0) {
+        if (expected == NULL) {
+            expected = &int_dict;
+            // fprintf(stderr, "error: word expected generic input which cannot be inferred\n");
+            // abort();
+        }
+
+        dyn_array_put(chk->inputs, expected);
+        return expected;
+    }
+
+    Dictionary* t = dyn_array_pop(chk->stack);
+    if (expected != NULL && t != expected) {
+        fprintf(stderr, "error: expected type %s got type %s\n", expected->name, t->name);
+        abort();
+    }
+
+    return t;
+}
+
+static Dictionary* type_check_pop_obj(TypeChecker* restrict chk) {
+    // can't infer new parameter, notify the user
+    if (dyn_array_length(chk->stack) == 0) {
+        fprintf(stderr, "error: word expected object-value which could not be inferred\n");
+        abort();
+    }
+
+    Dictionary* t = dyn_array_pop(chk->stack);
+    if (t == &int_dict) {
+        fprintf(stderr, "error: word expected object, got %s\n", t->name);
+        abort();
+    }
+
+    return t;
+}
+
+static void type_check(Dictionary* dict, Word* w) {
+    // we'll be building this up as we go
+    TypeChecker chk = { 0 };
+
+    size_t len = dyn_array_length(w->ops);
+    for (size_t i = 0; i < len; i++) {
+        int64_t x = w->ops[i];
+
+        if (x >= 0) { // push literal
+            type_check_push(&chk, &int_dict);
+        } else if (x <= -1000) {
+            Word* new_w = &words.entries[-x - 1000];
+
+            // pluck parameter from outside the word
+            /*if (new_w->arity > head) {
+                w->arity += new_w->arity - head;
+                head = 0;
+            } else {
+                head -= new_w->arity;
+            }
+
+            // check for tail recursion
+            if (w == new_w) {
+                // we're literally at the end
+                size_t j = i + 1;
+                if (j < len && w->ops[j] == OP_ELSE) {
+                    // if it's an }else{ we might be able to reach the end
+                    int depth = 1;
+                    while (j < len && depth != 0) {
+                        j += 1;
+
+                        if (w->ops[j] == OP_IF) depth++;
+                        if (w->ops[j] == OP_CLOSE) depth--;
+                    }
+                    assert(j != len && "missing }");
+                }
+
+                if (j == len - 1) {
+                    w->ops[i] = OP_TAIL;
+                    w->tails++;
+                }
+            }
+            head += new_w->outputs;*/
+
+            assert(w != new_w);
+            for (size_t i = new_w->type.in_count; i--;) {
+                type_check_pop(&chk, new_w->type.inputs[i]);
+            }
+
+            size_t out_count = new_w->type.out_count;
+            for (size_t i = 0; i < out_count; i++) {
+                type_check_push(&chk, new_w->type.outputs[i]);
+            }
+        } else if (x == OP_TAIL) {
+            // tails can't pluck parameter from outside the word
+            size_t arity = dyn_array_length(chk.inputs);
+            assert(arity <= dyn_array_length(chk.stack));
+
+            for (size_t i = arity; i--;) {
+                type_check_pop(&chk, chk.inputs[i]);
+            }
+            w->type.tails++;
+        } else {
+            switch (x) {
+                // arithmatic
+                case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV:
+                type_check_pop(&chk, &int_dict), type_check_pop(&chk, &int_dict), type_check_push(&chk, &int_dict);
+                break;
+
+                // stack
+                case OP_DUP: {
+                    Dictionary* t = type_check_pop(&chk, NULL);
+                    type_check_push(&chk, t);
+                    type_check_push(&chk, t);
+                    break;
+                }
+                case OP_DROP: type_check_pop(&chk, NULL); break;
+                case OP_SWAP: {
+                    Dictionary* a = type_check_pop(&chk, NULL);
+                    Dictionary* b = type_check_pop(&chk, NULL);
+                    type_check_push(&chk, a);
+                    type_check_push(&chk, b);
+                    break;
+                }
+
+                // memory
+                case OP_READ: type_check_pop(&chk, &int_dict), type_check_push(&chk, &int_dict); break;
+
+                // console
+                case OP_KEY:   type_check_push(&chk, &int_dict); break;
+                case OP_EMIT:  type_check_pop(&chk, &int_dict);  break;
+                case OP_PRINT: type_check_pop(&chk, &int_dict);  break;
+
+                // graphics
+                case OP_RECT: type_check_pop(&chk, &int_dict), type_check_pop(&chk, &int_dict), type_check_pop(&chk, &int_dict), type_check_pop(&chk, &int_dict); break;
+
+                // control flow
+                case OP_IF: {
+                    type_check_pop(&chk, &int_dict);
+                    control_push(NULL, &chk.cs, i, dyn_array_length(chk.stack));
+                    break;
+                }
+
+                case OP_ELSE: {
+                    Control* c = control_peek(&chk.cs);
+                    assert(c && "missing if{");
+
+                    c->out_count = dyn_array_length(chk.stack);
+                    dyn_array_set_length(chk.stack, c->arity);
+                    break;
+                }
+                case OP_CLOSE: {
+                    Control* c = control_pop(&chk.cs);
+                    assert(dyn_array_length(chk.stack) == c->out_count && "stinky dynamic effects");
+                    break;
+                }
+
+                default: assert(0 && "TODO");
+            }
+        }
+    }
+
+    assert(chk.cs.head == 0 && "you're missing closing braces?");
+    if (w->type.tails > 0 && dyn_array_length(chk.stack) != 0) {
+        fprintf(stderr, "error: tail recursive functions can't return things... yet?");
+        abort();
+    }
+
+    // convert into inputs array
+    w->type.in_count = dyn_array_length(chk.inputs);
+    w->type.inputs = tb_arena_alloc(&dict->data, sizeof(Dictionary*) * w->type.in_count);
+    memcpy(w->type.inputs, chk.inputs, sizeof(Dictionary*) * w->type.in_count);
+
+    // convert into outputs array
+    w->type.out_count = dyn_array_length(chk.stack);
+    w->type.outputs = tb_arena_alloc(&dict->data, sizeof(Dictionary*) * w->type.out_count);
+    memcpy(w->type.outputs, chk.stack, sizeof(Dictionary*) * w->type.out_count);
+
+    dump_type(w);
+}
+
+////////////////////////////////
+// Parser
+////////////////////////////////
+typedef struct {
+    const char* source;
+} Parser;
+
+static NL_Slice dup_slice(NL_Slice s) {
+    uint8_t* new_mem = cuik_malloc(s.length + 1);
+    memcpy(new_mem, s.data, s.length);
+    new_mem[s.length] = 0;
+    return (NL_Slice){ s.length, new_mem };
+}
+
+static NL_Slice slice_fmt(TB_Arena* arena, const char* fmt, ...) {
+    char* buf = tb_arena_alloc(arena, 64);
+
+    va_list ap;
+    va_start(ap, fmt);
+    int len = vsnprintf(buf, 64, fmt, ap);
+    va_end(ap);
+
+    tb_arena_pop(arena, buf + len + 1, 64 - (len + 1));
+    tb_arena_realign(arena);
+
+    return (NL_Slice){ len, (const uint8_t*) buf };
+}
+
+static Word* add_new_to_dictionary(Dictionary* dict, NL_Slice name, WordType t) {
+    WordIndex id = alloc_word();
+    Word* w = &words.entries[id];
+    *w = (Word){ .refs = 1, .name = name, .type = t };
+    dict_put(dict, name.length, (const char*) name.data, -1000 - id);
+
+    dump_type(w);
+    return w;
+}
+
+static NL_Slice lex(Parser* p) {
+    // skip spaces & comments
+    const char* line = p->source;
+    for (;;) {
+        while (*line > 0 && *line <= 32) line++;
+
+        if (*line == 0) {
+            return (NL_Slice){ 0 };
+        } else if (*line == '\\') {
+            while (*line && *line != '\n') line++;
+            continue;
+        }
+
+        break;
+    }
+
+    // read word
+    const char* end = line;
+    while (*end > 32) end++;
+
+    // advance
+    p->source = *end ? end + 1 : end;
+
+    return (NL_Slice){ end - line, (const uint8_t*) line };
+}
+
 static int prim_arity(int64_t x) {
     switch (x) {
         case OP_ADD:
@@ -385,121 +484,135 @@ static int prim_arity(int64_t x) {
     }
 }
 
-static void infer(Word* w) {
-    // we'll be building this up as we go
-    w->arity = 0;
-    w->outputs = 0;
+// parse builds up a word
+static void parse(Dictionary* dict, Parser* p, Word* w) {
+    for (;;) {
+        NL_Slice token = lex(p);
 
-    ControlStack cs;
-    cs.head = 0;
+        if (token.length == 0) {
+            break;
+        } else if (token.length == 1 && token.data[0] == ':') {
+            // define word
+            NL_Slice name = dup_slice(lex(p));
 
-    bool has_tail = false;
-    size_t head = 0, len = dyn_array_length(w->ops);
-    for (size_t i = 0; i < len; i++) {
-        int64_t x = w->ops[i];
+            WordIndex id = alloc_word();
+            Word* w = &words.entries[id];
 
-        if (x >= 0) { // push literal
-            head++;
-        } else if (x <= -1000) {
-            Word* new_w = &words.entries[-x - 1000];
+            dict_put(dict, name.length, (const char*) name.data, -1000 - id);
 
-            // pluck parameter from outside the word
-            if (new_w->arity > head) {
-                w->arity += new_w->arity - head;
-                head = 0;
-            } else {
-                head -= new_w->arity;
+            // build up word inside root word
+            *w = (Word){ .refs = 1, .name = name };
+            parse(dict, p, w);
+        } else if (token.length == 1 && token.data[0] == '(') {
+            __debugbreak();
+        } else if (token.length == 7 && memcmp(token.data, "record:", 7) == 0) {
+            NL_Slice name = dup_slice(lex(p));
+
+            WordIndex id = alloc_word();
+            Word* w = &words.entries[id];
+            *w = (Word){ 0 };
+
+            dict_put(dict, name.length, (const char*) name.data, -1000 - id);
+
+            // build up word within separate dictionary
+            Dictionary* record_dict = cuik_calloc(1, sizeof(Dictionary));
+
+            *w = (Word){ .refs = 1, .name = name, .tag = WORD_TYPE, .as_type = record_dict };
+
+            token = lex(p);
+            while (token.length != 1 || token.data[0] != ';') {
+                NL_Slice name = dup_slice(token);
+                token = lex(p);
+
+                // the accessor words in a record are relative to a pointer
+                record_dict->field_count += 1;
+                size_t offset = record_dict->data_size;
+                record_dict->data_size += sizeof(int64_t);
+
+                __debugbreak();
+
+                /*Word* ld_word = add_new_to_dictionary(record_dict, slice_fmt(&record_dict->data, ".%s@", name.data), 1, 1);
+                dyn_array_put(ld_word->ops, offset);
+                dyn_array_put(ld_word->ops, OP_ADD);
+                dyn_array_put(ld_word->ops, OP_READ);
+                ld_word->tag = WORD_VAR;*/
+
+                Field* f = tb_arena_alloc(&record_dict->data, sizeof(Field));
+                f->next = record_dict->fields;
+                f->name = (const char*) name.data;
+                f->offset = offset;
+                record_dict->fields = f;
             }
 
-            // check for tail recursion
-            if (w == new_w) {
-                // we're literally at the end
-                size_t j = i + 1;
-                if (j < len && w->ops[j] == OP_ELSE) {
-                    // if it's an }else{ we might be able to reach the end
-                    int depth = 1;
-                    while (j < len && depth != 0) {
-                        j += 1;
-
-                        if (w->ops[j] == OP_IF) depth++;
-                        if (w->ops[j] == OP_CLOSE) depth--;
-                    }
-                    assert(j != len && "missing }");
-                }
-
-                if (j == len - 1) {
-                    w->ops[i] = OP_TAIL;
-                    w->tails++;
-                }
+            if (token.length != 1 || token.data[0] != ';') {
+                printf("error: missing semicolon after record: decl\n");
+                abort();
             }
 
-            head += new_w->outputs;
-        } else if (x == OP_TAIL) {
-            // tails can't pluck parameter from outside the word
-            assert(w->arity <= head);
-            head -= w->arity;
+            // ( fields -- ref )
+            // infer(w, record_dict->field_count, 1);
+        } else if (token.length == 4 && memcmp(token.data, "var:", 4) == 0) {
+            // define variable
+            token = lex(p);
+            while (token.length != 1 || token.data[0] != ';') {
+                NL_Slice name = dup_slice(token);
+                token = lex(p);
 
-            w->tails++;
+                void* ptr = tb_arena_alloc(&dict->data, sizeof(int64_t));
+                memset(ptr, 0, sizeof(int64_t));
+
+                // store word
+                Dictionary** arr = tb_arena_alloc(&dict->data, sizeof(Dictionary*));
+                arr[0] = &int_dict;
+
+                Word* st_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s!", name.data), (WordType){ .in_count = 1, .inputs = arr });
+                dyn_array_put(st_word->ops, (uintptr_t) ptr);
+                dyn_array_put(st_word->ops, OP_WRITE);
+
+                // load word
+                arr = tb_arena_alloc(&dict->data, sizeof(Dictionary*));
+                arr[0] = &int_dict;
+
+                Word* ld_word = add_new_to_dictionary(dict, slice_fmt(&dict->data, "%s@", name.data), (WordType){ .out_count = 1, .outputs = arr });
+                dyn_array_put(ld_word->ops, (uintptr_t) ptr);
+                dyn_array_put(ld_word->ops, OP_READ);
+                ld_word->tag = WORD_VAR;
+            }
+
+            if (token.length != 1 || token.data[0] != ';') {
+                printf("error: missing semicolon after var: decl\n");
+                abort();
+            }
+        } else if (token.length == 1 && token.data[0] == ';') {
+            break;
+        } else if (token.data[0] == '\'') {
+            // char literals
+            dyn_array_put(w->ops, token.data[1]);
+            assert(token.data[2] == '\'');
+        } else if (token.data[0] >= '0' && token.data[0] <= '9') {
+            uint64_t num = 0;
+            for (size_t i = 0; i < token.length; i++) {
+                if (token.data[i] < '0' || token.data[i] > '9') {
+                    break;
+                }
+
+                num *= 10;
+                num += token.data[i] - '0';
+            }
+
+            dyn_array_put(w->ops, num);
         } else {
-            int arity = prim_arity(x);
-
-            // pluck parameter from outside the word
-            if (arity > head) {
-                w->arity += arity - head;
-                head = 0;
-            } else {
-                head -= arity;
+            WordIndex found = dict_get(dict, token.length, (const char*) token.data);
+            if (found >= 0) {
+                printf("error: undefined word %.*s\n", (int) token.length, token.data);
+                abort();
             }
 
-            switch (x) {
-                // arithmatic
-                case OP_ADD: case OP_SUB: case OP_MUL: case OP_DIV: head += 1; break;
-
-                // stack
-                case OP_DUP: head += 2; break;
-                case OP_DROP: break;
-                case OP_SWAP: head += 2; break;
-
-                // memory
-                case OP_READ: head += 1; break;
-
-                // console
-                case OP_KEY: head += 1; break;
-                case OP_EMIT: break;
-                case OP_PRINT: break;
-
-                // graphics
-                case OP_RECT: break;
-
-                // control flow
-                case OP_IF: control_push(NULL, &cs, i, head); break;
-                case OP_ELSE: {
-                    Control* c = control_peek(&cs);
-                    assert(c && "missing if{");
-
-                    c->out_count = head;
-                    head = c->arity;
-                    break;
-                }
-                case OP_CLOSE: {
-                    Control* c = control_pop(&cs);
-                    assert(head == c->out_count && "stinky dynamic effects");
-                    break;
-                }
-
-                default: assert(0 && "TODO");
-            }
+            dyn_array_put(w->ops, found);
         }
     }
 
-    assert(cs.head == 0 && "you're missing closing braces?");
-    if (w->tails > 0) {
-        assert(w->outputs == 0 && "tail recursive functions can't return things... yet?");
-    } else {
-        w->outputs = head;
-    }
-
-    dump_type(w);
+    type_check(dict, w);
 }
 
 static void draw_rect2(uint32_t color, float x, float y, float w, float h);
@@ -696,6 +809,11 @@ static WordIndex load_forth(Dictionary* dict, const char* path) {
 
     cuikfs_close(f);
 
+    // allocate some memory for it
+    if (tb_arena_is_empty(&dict->data)) {
+        tb_arena_create(&dict->data, TB_ARENA_SMALL_CHUNK_SIZE);
+    }
+
     // parse
     WordIndex i = alloc_word();
     Word* root = &words.entries[i];
@@ -704,8 +822,7 @@ static WordIndex load_forth(Dictionary* dict, const char* path) {
         .name = { 6, (const uint8_t*) "<root>" }
     };
 
-    parse(dict, &(Parser){ .source = buffer }, root, false);
-    infer(root);
+    parse(dict, &(Parser){ .source = buffer }, root);
     return -1000 - i;
 }
 
@@ -749,6 +866,8 @@ int main(int argc, const char** argv) {
     CHECK(wglMakeCurrent(dc, glctx));
 
     set_color(glClearColor, 0xFF1C1B1F);
+
+    tb_arena_create(&young_gen, TB_ARENA_LARGE_CHUNK_SIZE);
 
     Dictionary sandbox[2] = { 0 };
     int curr = 0; // which of the sandboxes we're in

@@ -1,15 +1,29 @@
 ////////////////////////////////
 // Interpreter
 ////////////////////////////////
+typedef struct {
+    Dictionary* dict;
+    union {
+        uint64_t i;
+        Obj* o;
+    };
+} Value;
+
+#define VALUE_IS_INT(v)  ((v).dict == NULL)
+#define VALUE_IS_OBJ(v) ((v).dict != NULL)
+
 enum {
     // no errors
     INTERP_OK = 0,
 
+    // no errors except the function didn't have JITting ready
+    INTERP_NO_JIT,
+
     // not enough elements on the stack
     INTERP_UNDERFLOW,
 
-    // the function
-    INTERP_NO_JIT,
+    // expected to pop correct type
+    INTERP_BAD_TYPE,
 
     // if env->single_step is on this is what we return
     INTERP_STEP,
@@ -18,7 +32,7 @@ enum {
 typedef struct Env {
     // data stack
     size_t head;
-    uint64_t stack[64];
+    Value stack[64];
 
     // control stack
     size_t control_head;
@@ -34,25 +48,39 @@ typedef struct Env {
 
 static int jit_try_call(Env* env, Word* w);
 
-static void push(Env* env, uint64_t x) {
+static void pusho(Env* env, Dictionary* dict, Obj* o) {
     assert(env->head < 64);
-    env->stack[env->head++] = x;
+    env->stack[env->head++] = (Value){ dict, .o = o };
+}
+
+static void push(Env* env, int64_t x) {
+    assert(env->head < 64);
+    env->stack[env->head++] = (Value){ .i = x };
 }
 
 static uint64_t pop(Env* env) {
-    assert(env->head > 0);
-    return env->stack[--env->head];
+    assert(env->head > 0 && env->stack[env->head - 1].dict == NULL);
+    return env->stack[--env->head].i;
+}
+
+static Obj* popo(Env* env) {
+    assert(env->head > 0 && env->stack[env->head - 1].dict != NULL);
+    return env->stack[--env->head].o;
 }
 
 static uint64_t peek(Env* env) {
-    assert(env->head > 0);
-    return env->stack[env->head - 1];
+    assert(env->head > 0 && env->stack[env->head - 1].dict == NULL);
+    return env->stack[env->head - 1].i;
 }
 
 static void dump(Env* env) {
     printf("[ ");
     for (size_t i = env->head; i--;) {
-        printf("%llu ", env->stack[i]);
+        if (env->stack[i].dict) {
+            printf("%p ", env->stack[i].o);
+        } else {
+            printf("%llu ", env->stack[i].i);
+        }
     }
     printf("]\n");
 }
@@ -117,9 +145,9 @@ static int interp(Env* env, Word* w) {
                     case OP_DUP:  tmp = peek(env), push(env, tmp); break;
                     case OP_DROP: env->head -= 1; break;
                     case OP_SWAP: {
-                        tmp = env->stack[env->head - 1];
+                        Value t = env->stack[env->head - 1];
                         env->stack[env->head - 1] = env->stack[env->head - 2];
-                        env->stack[env->head - 2] = tmp;
+                        env->stack[env->head - 2] = t;
                         break;
                     }
                     case OP_READ: {
@@ -188,6 +216,24 @@ static int interp(Env* env, Word* w) {
                 env->control[env->control_head - 1] = ((w - words.entries) << 32ull) | i;
                 return INTERP_STEP;
             }
+        }
+
+        // construct object here
+        if (w->tag == WORD_TYPE) {
+            Dictionary* dict = w->as_type;
+            assert(dict != NULL);
+
+            Obj* o = tb_arena_alloc(&young_gen, sizeof(Obj) + dict->data_size);
+            o->dict = dict;
+            memset(o->data, 0, dict->data_size);
+
+            // pop + copy fields
+            for (Field* f = dict->fields; f; f = f->next) {
+                int64_t v = pop(env);
+                memcpy(o->data + f->offset, &v, sizeof(v));
+            }
+
+            push(env, (uintptr_t) o);
         }
 
         // pop

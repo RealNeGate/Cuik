@@ -66,8 +66,16 @@ typedef struct {
     WordIndex val;
 } DictionaryEntry;
 
+typedef struct Field Field;
+struct Field {
+    Field* next;
+    const char* name;
+    ptrdiff_t offset;
+};
+
 struct Dictionary {
     Dictionary* parent;
+    const char* name;
 
     // string -> word index
     struct {
@@ -81,6 +89,7 @@ struct Dictionary {
     } big_table;
 
     size_t field_count, data_size;
+    Field* fields; // in reverse
 
     // dictionaries have variables which take up some space.
     // they'll also store relevant some strings in here.
@@ -242,15 +251,15 @@ DICT_API void dict_put(Dictionary* dict, ptrdiff_t len, const char* key, WordInd
 }
 
 static void dict__migrate_word(Word* w, Dictionary* dict, Dictionary* old_dict) {
-    if (w->kind == WORD_VAR) {
+    if (w->tag == WORD_VAR) {
         // if no old version existed, don't migrate
         WordIndex found = dict_get(old_dict, w->name.length, (const char*) w->name.data);
-        if (found < 0 && words.entries[-1000 - found].kind == WORD_VAR) {
+        if (found < 0 && words.entries[-1000 - found].tag == WORD_VAR) {
             void* old_ptr = (void*) words.entries[-1000 - found].ops[0];
             void* new_ptr = (void*) w->ops[0];
             memcpy(new_ptr, old_ptr, sizeof(int64_t));
 
-            log_debug("dict: migrate %s (%p -> %p)", w->name.data, old_ptr, new_ptr);
+            // log_debug("dict: migrate %s (%p -> %p)", w->name.data, old_ptr, new_ptr);
         }
     }
 }
