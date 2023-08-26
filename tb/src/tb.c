@@ -312,8 +312,6 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
     TB_NodeRegion* start = TB_NODE_GET_EXTRA(f->start_node);
     start->dom_depth = 0;
     start->dom = f->start_node;
-    start->succ_count = 0;
-    start->succ = NULL;
     start->tag = f->super.name;
 
     f->param_count = param_count;

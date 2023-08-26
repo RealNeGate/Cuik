@@ -432,7 +432,9 @@ struct TB_Node {
 
 // this represents switch (many targets), if (one target) and goto (only default) logic.
 typedef struct { // TB_BRANCH
-    uint64_t succ_count; // duplicate
+    size_t succ_count;
+    TB_Node** succ;
+
     int64_t keys[];
 } TB_NodeBranch;
 
@@ -507,9 +509,6 @@ typedef struct {
     // immediate dominator (can be approximate)
     int dom_depth;
     TB_Node* dom;
-
-    size_t succ_count;
-    TB_Node** succ;
 } TB_NodeRegion;
 
 typedef struct TB_MultiOutput {

@@ -883,9 +883,11 @@ static void add_region_pred(TB_Function* f, TB_Node* n, TB_Node* pred) {
 static TB_Node** add_successors(TB_Function* f, TB_Node* terminator, size_t count) {
     TB_NodeRegion* bb = TB_NODE_GET_EXTRA(tb_get_parent_region(f->active_control_node));
     bb->end = terminator;
-    bb->succ_count = TB_NODE_GET_EXTRA_T(terminator, TB_NodeBranch)->succ_count = count;
-    bb->succ = alloc_from_node_arena(f, count * sizeof(TB_Node*));
-    return bb->succ;
+
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(terminator);
+    br->succ_count = count;
+    br->succ = alloc_from_node_arena(f, count * sizeof(TB_Node*));
+    return br->succ;
 }
 
 void tb_inst_goto(TB_Function* f, TB_Node* target) {

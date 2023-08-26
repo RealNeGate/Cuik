@@ -486,10 +486,13 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
         // walk all successors
         set_clear(&tmp_out);
-        FOREACH_N(i, 0, r->succ_count) {
-            // union with successor's lives
-            MachineBB* succ = &nl_map_get_checked(seq_bb, r->succ[i]);
-            set_union(&tmp_out, &succ->live_in);
+        if (r->end->type == TB_BRANCH) {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+            FOREACH_N(i, 0, br->succ_count) {
+                // union with successor's lives
+                MachineBB* succ = &nl_map_get_checked(seq_bb, br->succ[i]);
+                set_union(&tmp_out, &succ->live_in);
+            }
         }
 
         bool changes = false;
@@ -505,9 +508,10 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
             }
         }
 
-        if (changes) {
-            FOREACH_N(i, 0, r->succ_count) {
-                dyn_array_put(worklist, r->succ[i]);
+        if (changes && r->end->type == TB_BRANCH) {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+            FOREACH_N(i, 0, br->succ_count) {
+                dyn_array_put(worklist, br->succ[i]);
             }
         }
 
@@ -605,16 +609,19 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
         TB_Node* dst = NULL;
 
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(self);
-        FOREACH_N(i, 0, r->succ_count) {
-            dst = r->succ[i];
+        if (r->end->type == TB_BRANCH) {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+            FOREACH_N(i, 0, br->succ_count) {
+                dst = br->succ[i];
 
-            // find predecessor index and do that edge
-            FOREACH_N(j, 0, dst->input_count) {
-                TB_Node* pred = tb_get_parent_region(dst->inputs[j]);
+                // find predecessor index and do that edge
+                FOREACH_N(j, 0, dst->input_count) {
+                    TB_Node* pred = tb_get_parent_region(dst->inputs[j]);
 
-                if (pred == self) {
-                    index = j;
-                    break;
+                    if (pred == self) {
+                        index = j;
+                        break;
+                    }
                 }
             }
         }

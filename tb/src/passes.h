@@ -3,7 +3,7 @@
 
 #define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
-#define TB_OPTDEBUG_MEM2REG 1
+#define TB_OPTDEBUG_MEM2REG 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
 #define DO_IF_0(...)

@@ -17,8 +17,11 @@ static void postorder(TB_Function* f, TB_PostorderWalk* ctx, TB_Node* n) {
 
     // walk control edges (aka predecessors)
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-    FOREACH_REVERSE_N(i, 0, r->succ_count) {
-        postorder(f, ctx, r->succ[i]);
+    if (r->end->type == TB_BRANCH) {
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+        FOREACH_REVERSE_N(i, 0, br->succ_count) {
+            postorder(f, ctx, br->succ[i]);
+        }
     }
 
     assert(ctx->count < f->control_node_count);

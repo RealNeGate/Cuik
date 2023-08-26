@@ -55,9 +55,9 @@ bool tb_passes_loop(TB_Passes* p) {
         // the header in uncanonical form has a branch at the top to exit,
         // also this branch should be a trivial IF not anything wacky like
         // a switch... tf?
-        TB_NodeRegion* r = TB_NODE_GET_EXTRA(header);
-        TB_Node* br = r->end;
-        if (br->type != TB_BRANCH || br->input_count != 2 || r->succ_count != 2) {
+        TB_Node* br = TB_NODE_GET_EXTRA_T(header, TB_NodeRegion)->end;
+        TB_NodeBranch* br_info = TB_NODE_GET_EXTRA(br);
+        if (br->type != TB_BRANCH || br->input_count != 2 || br_info->succ_count != 2) {
             continue;
         }
 
@@ -65,9 +65,9 @@ bool tb_passes_loop(TB_Passes* p) {
         ptrdiff_t exit_i = -1;
         TB_Node* backedge_proj = header->inputs[backedges[0]];
         TB_Node* backedge_bb = tb_get_parent_region(backedge_proj);
-        FOREACH_N(j, 0, r->succ_count) {
-            if (!tb_is_dominated_by(r->succ[j], backedge_bb)) {
-                DO_IF(TB_OPTDEBUG_LOOP)(printf("  exit %p\n", r->succ[j]));
+        FOREACH_N(j, 0, br_info->succ_count) {
+            if (!tb_is_dominated_by(br_info->succ[j], backedge_bb)) {
+                DO_IF(TB_OPTDEBUG_LOOP)(printf("  exit %p\n", br_info->succ[j]));
                 exit_i = j;
                 break;
             }
@@ -90,8 +90,8 @@ bool tb_passes_loop(TB_Passes* p) {
         //     +-latch          exit:                      exit:
         //
         TB_Node* cond = br->inputs[1];
-        TB_Node* exit = r->succ[exit_i];
-        TB_Node* body = r->succ[1 - exit_i];
+        TB_Node* exit = br_info->succ[exit_i];
+        TB_Node* body = br_info->succ[1 - exit_i];
 
         // move phi nodes from the header to the body
         User* use = find_users(p, header);
@@ -104,8 +104,8 @@ bool tb_passes_loop(TB_Passes* p) {
         }
 
         DO_IF(TB_OPTDEBUG_LOOP)(r->tag = lil_name(f, "loop.header.%d", i));
-        r->succ_count = 1;
-        r->succ[0] = body;
+        br_info->succ_count = 1;
+        br_info->succ[0] = body;
 
         // duplicate condition for backedge
         bool n;
@@ -113,20 +113,20 @@ bool tb_passes_loop(TB_Passes* p) {
         set_input(p, br, dupped_cond, 0);
 
         // backedge needs to refer to the body not the header
-        TB_NodeRegion* backedge = TB_NODE_GET_EXTRA(backedge_bb);
+        TB_Node* backedge_br = backedge_proj->inputs[0];
+        TB_NodeBranch* backedge_br_info = TB_NODE_GET_EXTRA(backedge_br);
         DO_IF(TB_OPTDEBUG_LOOP)(backedge->tag = lil_name(f, "loop.back.%d", i));
 
-        backedge->succ_count = 2;
-        backedge->succ = alloc_from_node_arena(f, 2 * sizeof(TB_Node*));
-        backedge->succ[0] = body;
-        backedge->succ[1] = exit;
+        backedge_br_info->succ_count = 2;
+        backedge_br_info->succ = alloc_from_node_arena(f, 2 * sizeof(TB_Node*));
+        backedge_br_info->succ[0] = body;
+        backedge_br_info->succ[1] = exit;
 
         // backedge should now point into the body
         add_region_pred_tracked(p, f, body, backedge_proj);
         add_region_pred_tracked(p, f, exit, backedge_proj);
 
         {
-            TB_Node* backedge_br = backedge_proj->inputs[0];
             TB_Node* old = backedge_br->inputs[0];
 
             backedge_br->input_count = 2;

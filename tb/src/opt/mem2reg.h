@@ -71,7 +71,7 @@ static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Nod
         break;
     }*/
 
-    log_debug("%p: insert new PHI node (in %p)", n, block);
+    DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%p: insert new PHI node (in %p)", n, block));
     tb_pass_mark(c->p, n);
     return n;
 }
@@ -89,7 +89,7 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
 
     assert(phi_node->type == TB_PHI);
     TB_Node* phi_region = phi_node->inputs[0];
-    log_debug("%p: adding %p to PHI", phi_node, node);
+    DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%p: adding %p to PHI", phi_node, node));
 
     // the slot to fill is based on the predecessor list of the region
     FOREACH_N(i, 0, phi_region->input_count) {
@@ -191,8 +191,7 @@ static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* n, DynArray(TB_Node*)* stac
     }
 
     if (kill) {
-        log_info("%p: pass to %p", n, n->inputs[0]);
-
+        // log_info("%p: pass to %p", n, n->inputs[0]);
         TB_Node* into = n->inputs[0];
         set_input(c->p, n, NULL, 0);
         subsume_node(c->p, c->f, n, into);
@@ -225,8 +224,9 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
         if (end->type == TB_NULL || end->type == TB_RET || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
             /* RET can't do shit in this context */
         } else if (end->type == TB_BRANCH) {
-            FOREACH_N(i, 0, r->succ_count) {
-                ssa_replace_phi_arg(c, f, bb, r->succ[i], stack);
+            TB_NodeBranch* br_info = TB_NODE_GET_EXTRA(end);
+            FOREACH_N(i, 0, br_info->succ_count) {
+                ssa_replace_phi_arg(c, f, bb, br_info->succ[i], stack);
             }
         } else {
             tb_todo();
@@ -636,7 +636,7 @@ static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_No
                 }
             }
         } else {
-            log_debug("%p uses pointer arithmatic (%s)", address, tb_node_get_name(n));
+            DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%p uses pointer arithmatic (%s)", address, tb_node_get_name(n)));
             return COHERENCY_USES_ADDRESS;
         }
     }

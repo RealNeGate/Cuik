@@ -808,8 +808,13 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
             MachineBB* mbb = &nl_map_get_checked(mbbs, ctx->order.traversal[i]);
             TB_NodeRegion* r = TB_NODE_GET_EXTRA(ctx->order.traversal[i]);
 
-            FOREACH_REVERSE_N(i, 0, r->succ_count) {
-                TB_Node* bb = r->succ[i];
+            if (r->end->type != TB_BRANCH) {
+                continue;
+            }
+
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+            FOREACH_REVERSE_N(i, 0, br->succ_count) {
+                TB_Node* bb = br->succ[i];
                 MachineBB* target = &nl_map_get_checked(mbbs, bb);
 
                 // for all live-ins, we should check if we need to insert a move

@@ -296,13 +296,11 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
 
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-                TB_NodeRegion* region = TB_NODE_GET_EXTRA(tb_get_parent_region(n));
-
-                if (region->succ_count == 1) {
+                if (br->succ_count == 1) {
                     printf("  goto ");
-                    print_ref_to_node(ctx, region->succ[0]);
+                    print_ref_to_node(ctx, br->succ[0]);
                     printf("\n");
-                } else if (region->succ_count == 2) {
+                } else if (br->succ_count == 2) {
                     printf("  if ");
                     FOREACH_N(i, 1, n->input_count) {
                         if (i != 1) printf(", ");
@@ -313,9 +311,9 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                     } else {
                         printf(" != %"PRId64" then ", br->keys[0]);
                     }
-                    print_ref_to_node(ctx, region->succ[0]);
+                    print_ref_to_node(ctx, br->succ[0]);
                     printf(" else ");
-                    print_ref_to_node(ctx, region->succ[1]);
+                    print_ref_to_node(ctx, br->succ[1]);
                     printf("\n");
                 } else {
                     printf("  br ");
@@ -325,11 +323,11 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                     }
                     printf("%s=> {\n", n->input_count > 1 ? " " : "");
 
-                    FOREACH_N(i, 0, region->succ_count) {
+                    FOREACH_N(i, 0, br->succ_count) {
                         if (i != 0) printf("    %"PRId64": ", br->keys[i - 1]);
                         else printf("    default: ");
 
-                        TB_Node* target = region->succ[i];
+                        TB_Node* target = br->succ[i];
                         if (TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag) {
                             printf("%s\n", TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag);
                         } else {

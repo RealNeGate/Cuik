@@ -5,7 +5,7 @@
 //   performed incrementally which means that certain mutations must go through
 //   functions to guarentee they update correctly. Let's go over those:
 //
-//   set_input(queue, n, in, slot)
+//   set_input(opt, n, in, slot)
 //     basically `n->inputs[slot] = in` except it correctly updates the user set
 //
 // # Implement peepholes
@@ -226,7 +226,7 @@ void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
 
     nl_map_remove(p->users, n);
 
-    n->input_count = 1;
+    n->input_count = 0;
     n->type = TB_NULL;
 }
 
@@ -324,13 +324,20 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
             tb_pass_mark_users_raw(p, use->n);
         }
 
-        // regions will mark their users (+ successors)
         if (type == TB_REGION) {
             tb_pass_mark_users_raw(p, use->n);
 
             TB_NodeRegion* r = TB_NODE_GET_EXTRA(use->n);
-            FOREACH_N(i, 0, r->succ_count) {
-                tb_pass_mark_users_raw(p, r->succ[i]);
+            TB_Node* end = r->end;
+            if (end->type == TB_BRANCH) {
+                tb_pass_mark(p, end);
+
+                // mark direct successors
+                TB_NodeBranch* br_info = TB_NODE_GET_EXTRA(end);
+                FOREACH_N(i, 0, br_info->succ_count) {
+                    tb_pass_mark(p, br_info->succ[i]);
+                    tb_pass_mark_users_raw(p, br_info->succ[i]);
+                }
             }
         }
     }
@@ -362,8 +369,11 @@ static void fill_all(TB_Passes* restrict p, TB_Node* n) {
     // walk successors for regions
     if (n->type == TB_START || n->type == TB_REGION) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-        FOREACH_N(i, 0, r->succ_count) {
-            fill_all(p, r->succ[i]);
+        if (r->end->type == TB_BRANCH) {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+            FOREACH_N(i, 0, br->succ_count) {
+                fill_all(p, br->succ[i]);
+            }
         }
 
         tb_assert(r->end, "missing terminator");
@@ -413,6 +423,10 @@ void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
 
             case TB_MEMBER_ACCESS:
             printf(" %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
+            break;
+
+            case TB_PROJ:
+            printf(" %d", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
             break;
         }
         printf(")");
@@ -567,18 +581,11 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
             TB_NodeRegion* bot_region = TB_NODE_GET_EXTRA(n);
 
             // bottom's region should be joined to whatever is above top's terminator
-            subsume_node(p, f, n, n->inputs[0]->inputs[0]->inputs[0]);
+            subsume_node(p, f, n, top_region->end->inputs[0]);
+
+            // set new terminator
             subsume_node(p, f, top_region->end, bot_region->end);
-
-            // hand the top region all the bottom's successors and terminator
-            size_t succ_count = bot_region->succ_count;
-            top_region->succ_count = succ_count;
-            top_region->succ = bot_region->succ;
             top_region->end = bot_region->end;
-
-            if (top_region->end->type == TB_BRANCH) {
-                TB_NODE_GET_EXTRA_T(top_region->end, TB_NodeBranch)->succ_count = succ_count;
-            }
 
             // re-evaluate traversal
             CUIK_TIMED_BLOCK("recompute order") {
@@ -607,8 +614,12 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         if (n->input_count == 0) {
             // remove predecessor from other branches
             TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-            FOREACH_N(i, 0, r->succ_count) {
-                remove_pred(p, f, n, r->succ[i]);
+            if (r->end->type == TB_BRANCH) {
+                TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+                FOREACH_N(i, 0, br->succ_count) if (br->succ[i]->input_count > 0) {
+                    remove_pred(p, f, n, br->succ[i]);
+                    tb_pass_mark(p, br->succ[i]);
+                }
             }
 
             return true;

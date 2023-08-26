@@ -1072,11 +1072,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
         case TB_BRANCH: {
             TB_Node* bb = tb_get_parent_region(n);
-            TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-            TB_Node** succ = r->succ;
+            TB_Node** succ = br->succ;
 
-            if (r->succ_count == 2 && br->keys[0] == 0) {
+            if (br->succ_count == 2 && br->keys[0] == 0) {
                 use(ctx, n->inputs[1]);
 
                 // do fence without that extra use
@@ -1093,11 +1092,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             SUBMIT(alloc_inst(INST_TERMINATOR, TB_TYPE_VOID, 0, 0, 0));
 
-            if (r->succ_count == 1) {
+            if (br->succ_count == 1) {
                 if (ctx->fallthrough != succ[0]) {
                     SUBMIT(inst_jmp(succ[0]));
                 }
-            } else if (r->succ_count == 2) {
+            } else if (br->succ_count == 2) {
                 TB_DataType dt = n->inputs[1]->dt;
 
                 // if-like branch
@@ -1130,7 +1129,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 uint64_t min = last, max = last;
 
                 bool use_jump_table = true;
-                FOREACH_N(i, 2, r->succ_count) {
+                FOREACH_N(i, 2, br->succ_count) {
                     uint64_t key = br->keys[i - 1];
                     min = (min > key) ? key : min;
                     max = (max > key) ? max : key;
@@ -1148,7 +1147,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     log_debug("Should do range check (%llu .. %llu)", min, max);
                 }
 
-                FOREACH_N(i, 1, r->succ_count) {
+                FOREACH_N(i, 1, br->succ_count) {
                     uint64_t curr_key = br->keys[i-1];
 
                     if (fits_into_int32(curr_key)) {
