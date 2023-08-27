@@ -909,6 +909,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }
 
             TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[1];
+            if (!has_users(ctx, ret_node)) {
+                ret_node = NULL;
+            }
+
             TB_DataType ret_dt = ret_node ? ret_node->dt : TB_TYPE_VOID;
 
             int ret_val = -1;
