@@ -363,8 +363,8 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
 
     #ifndef NDEBUG
     uint64_t sh2 = 0;
-    while(y > (1ull << sh2)){ sh2++; }        // sh' = ceil(log2(y))
-    sh2 += 63 - 64;                           // sh  = ceil(log2(y)) + w - 64
+    while(y > (1ull << sh2)){ sh2++; }    // sh' = ceil(log2(y))
+    sh2 += 63 - 64;                       // sh  = ceil(log2(y)) + w - 64
 
     assert(sh == sh2);
     #endif
@@ -436,20 +436,18 @@ static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_N
         case TB_SDIV:
         return tb_inst_poison(f);
 
+        // (cmp.ne a 0) => a
         case TB_CMP_NE: {
-            // (cmp.ne a 0) => a
-            uint64_t rhs;
-            if (get_int_const(n->inputs[2], &rhs) && rhs == 0) {
-                // walk up extension
-                TB_Node* src = n->inputs[1];
-                if (src->type == TB_ZERO_EXT) {
-                    src = src->inputs[1];
-                }
-
-                if (src->dt.type == TB_INT && src->dt.data == 1) {
-                    return src;
-                }
+            // walk up extension
+            TB_Node* src = n->inputs[1];
+            if (src->type == TB_ZERO_EXT) {
+                src = src->inputs[1];
             }
+
+            if (src->dt.type == TB_INT && src->dt.data == 1) {
+                return src;
+            }
+
             return n;
         }
     }
