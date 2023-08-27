@@ -312,8 +312,8 @@ int main(int argc, char** argv) {
     fprintf(file, "    DFA_SIGILS       = %d,\n", sigils);
     fprintf(file, "    DFA_IDENTIFIER_L = %d,\n", wide_str);
     fprintf(file, "};\n");
-    fprintf(file, "static uint64_t dfa[129][2] = {\n");
-    for (int i = 0; i < 129; i++) {
+    fprintf(file, "static uint64_t dfa[256][2] = {\n");
+    for (int i = 0; i < 256; i++) {
         fprintf(file, "    { ");
         for (int j = 0; j < 32; j += 16) {
             if (j) fprintf(file, ", ");
