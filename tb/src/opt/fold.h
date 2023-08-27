@@ -256,6 +256,22 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
             set_input(opt, n, cmp->inputs[1], 2);
             return n;
         }
+    } else if (type == TB_SHL || type == TB_SHR) {
+        // (a << b) >> c = a << (b - c)
+        // (a >> b) << c = a >> (b - c)
+        TB_NodeTypeEnum flipped = type == TB_SHL ? TB_SHR : TB_SHL;
+
+        uint64_t a, b;
+        if (n->inputs[1]->type == flipped &&
+            get_int_const(n->inputs[1]->inputs[2], &a) &&
+            get_int_const(n->inputs[2], &b)) {
+            TB_Node* imm = make_int_node(f, opt, n->dt, a - b);
+            tb_pass_mark(opt, imm);
+
+            set_input(opt, n, n->inputs[1]->inputs[1], 1);
+            set_input(opt, n, imm, 2);
+            return n;
+        }
     }
 
     if (a->type != TB_INTEGER_CONST || b->type != TB_INTEGER_CONST) {
@@ -419,6 +435,23 @@ static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_N
         case TB_UDIV:
         case TB_SDIV:
         return tb_inst_poison(f);
+
+        case TB_CMP_NE: {
+            // (cmp.ne a 0) => a
+            uint64_t rhs;
+            if (get_int_const(n->inputs[2], &rhs) && rhs == 0) {
+                // walk up extension
+                TB_Node* src = n->inputs[1];
+                if (src->type == TB_ZERO_EXT) {
+                    src = src->inputs[1];
+                }
+
+                if (src->dt.type == TB_INT && src->dt.data == 1) {
+                    return src;
+                }
+            }
+            return n;
+        }
     }
 }
 
