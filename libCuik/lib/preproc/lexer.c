@@ -197,7 +197,6 @@ static Token lexer_read(Lexer* restrict l) {
     unsigned char* start = current;
     uint64_t state = 0;
 
-    // printf("0");
     for (;;) {
         uint8_t ch = *current;
 
@@ -206,11 +205,10 @@ static Token lexer_read(Lexer* restrict l) {
         uint64_t delta = (row >> state) & 0xF;
         if (__builtin_expect(delta == 15, 0)) break;
 
-        // printf(" => %llu", (state/4)+delta);
         state += delta*4, current += 1;
     }
 
-    state /= 4; // convert from shift amount to state number
+    state /= 4;
     // printf(" (%.*s)\n", (int)(current - start), start);
 
     // generate valid token types
