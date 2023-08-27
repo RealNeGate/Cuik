@@ -104,6 +104,18 @@ CUIK_API void cuik_parse_args(Cuik_Arguments* restrict args, int argc, const cha
     for (int i = 0; i < argc; i++) {
         const char* first = argv[i];
 
+        // these are necessary
+        if (strcmp("-version", first) == 0) {
+            fprintf(stderr, "\x1b[31merror\x1b[0m: could not find match for %s\n", first);
+            fprintf(stderr, "did you mean: '--version'?\n");
+            continue;
+        }
+        if (strcmp("--version", first) == 0) {
+            fprintf(stderr, "\x1b[31merror\x1b[0m: could not find match for %s\n", first);
+            fprintf(stderr, "did you mean: '-version'?\n");
+            continue;
+        }
+
         // non-flag argument
         if (first[0] != '-') {
             insert_arg(args, 0)->value = first;
