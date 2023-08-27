@@ -138,61 +138,57 @@ static Token lexer_read(Lexer* restrict l) {
 
     // NOTE(NeGate): We canonicalized spaces \t \v
     // in the preprocessor so we don't need to handle them
-    //
-    // skip whitespace
-    uint8_t ch;
-    retry: switch (ch = *current, ch) {
-        case 0:
-        t.type = '\0';
-        return (Token){ 0 };
+    redo_lex: {
+        if (*current == '\0') {
+            // quit, we're done
+            t.hit_line = true;
+            t.type = '\0';
+            return (Token){ 0 };
+        } else if (*current == '\r' || *current == '\n') {
+            current++;
+            current += (*current == '\n');
 
-        case '\\':
-        if (current[1] == '\r' || current[1] == '\n') {
+            t.hit_line = true;
+            goto redo_lex;
+        } else if (*current == ' ') {
+            #if !USE_INTRIN
+            current += 1;
+            #else
+            // SIMD space skip
+            __m128i chars = _mm_loadu_si128((__m128i*) current);
+            int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
+            current += len - 1;
+            #endif
+
+            goto redo_lex;
+        } else if (*current == '/') {
+            if (current[1] == '/') {
+                do {
+                    current++;
+                } while (*current && *current != '\n');
+
+                current += 1;
+                t.hit_line = true;
+                goto redo_lex;
+            } else if (current[1] == '*') {
+                current++;
+
+                unsigned char* start = current;
+                do {
+                    if (*current == '\n') t.hit_line = true;
+
+                    current++;
+                } while (*current && !(current[0] == '/' && current[-1] == '*'));
+                current++;
+                goto redo_lex;
+            }
+        } else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
             // this happens when there's a backslash-newline that doesn't
             // necessarily need to join tokens but just joins the lines
             current += 1;
             current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
-            goto retry;
+            goto redo_lex;
         }
-        break;
-
-        case '/':
-        if (current[1] == '/') {
-            do {
-                current++;
-            } while (*current && *current != '\n');
-
-            current += 1;
-            t.hit_line = true;
-            goto retry;
-        } else if (current[1] == '*') {
-            current++;
-
-            unsigned char* start = current;
-            do {
-                if (*current == '\n') t.hit_line = true;
-
-                current++;
-            } while (*current && !(current[0] == '/' && current[-1] == '*'));
-            current++;
-            goto retry;
-        }
-        break;
-
-        case ' ': case '\n': case '\r':
-        // slow path: SIMD skipping
-        __m128i chars  = _mm_loadu_si128((__m128i*) current);
-        uint32_t space = _mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' ')));
-
-        // we might be able to combine these
-        uint32_t cr = _mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8('\r')));
-        uint32_t lf = _mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8('\n')));
-
-        int len = __builtin_ffs(~(space | cr | lf));
-
-        current += len - 1;
-        t.hit_line = (cr | lf);
-        goto retry;
     }
 
     ////////////////////////////////
