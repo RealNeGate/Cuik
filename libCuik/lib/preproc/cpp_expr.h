@@ -113,8 +113,7 @@ static intmax_t eval_unary(Cuik_CPP* restrict c, TokenList* restrict in) {
             longjmp(eval__restore_point, 1);
         }
     } else {
-        SourceLoc loc = c->tokens.list.tokens[c->tokens.list.current].location;
-        diag_err(&c->tokens, (SourceRange){ loc, loc }, "could macro expression");
+        diag_err(&c->tokens, get_token_range(&t), "could not parse macro expression");
         longjmp(eval__restore_point, 1);
     }
 

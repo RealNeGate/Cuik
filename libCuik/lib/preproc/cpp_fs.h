@@ -51,7 +51,7 @@ bool cuikpp_default_fs(void* user_data, const Cuik_Path* restrict input, Cuik_Fi
         String source = *(String*) user_data;
 
         // allocate proper buffer for source
-        char* buffer = cuik__valloc(source.length + 1);
+        char* buffer = cuik__valloc(source.length + 17);
         memcpy(buffer, source.data, source.length);
 
         cuiklex_canonicalize(source.length, buffer);
@@ -77,7 +77,7 @@ bool cuikpp_default_fs(void* user_data, const Cuik_Path* restrict input, Cuik_Fi
         size_t length;
         if (!cuikfs_get_length(file, &length)) goto err;
 
-        char* buffer = cuik__valloc(length + 1);
+        char* buffer = cuik__valloc(length + 17);
         if (!cuikfs_read(file, buffer, length)) goto err;
 
         cuiklex_canonicalize(length, buffer);

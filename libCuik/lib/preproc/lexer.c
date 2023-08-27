@@ -128,7 +128,7 @@ static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* c
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
-Token lexer_read(Lexer* restrict l) {
+static Token lexer_read(Lexer* restrict l) {
     unsigned char* current = l->current;
     Token t = { 0 };
 
@@ -196,11 +196,22 @@ Token lexer_read(Lexer* restrict l) {
     unsigned char* start = current;
     uint64_t state = 0;
 
+    // printf("0");
     for (;;) {
-        uint8_t next = dfa[*current][state];
-        if (next == 0) break;
-        state = next, current += 1;
+        uint8_t ch = *current;
+        if (ch > 128) ch = 128;
+
+        // get next state as a delta
+        uint64_t row = dfa[ch][state / 64];
+        uint64_t delta = (row >> state) & 0xF;
+        if (__builtin_expect(delta == 15, 0)) break;
+
+        // printf(" => %llu", (state/4)+delta);
+        state += delta*4, current += 1;
     }
+
+    state /= 4; // convert from shift amount to state number
+    // printf(" (%.*s)\n", (int)(current - start), start);
 
     // generate valid token types
     switch (state) {
@@ -290,6 +301,11 @@ Token lexer_read(Lexer* restrict l) {
             break;
         }
         default: {
+            // dots can go on forever :p
+            if (current[-1] == '.') {
+                while (*current == '.') current++;
+            }
+
             // add chars together (max of 3)
             int length = current - start;
             if (length > 3) length = 3;

@@ -228,7 +228,9 @@ static DirectiveResult cpp__include(Cuik_CPP* restrict ctx, CPPStackSlot* restri
     new_slot->include_guard = (struct CPPIncludeGuard){ 0 };
     // initialize the lexer in the stack slot & record file entry
     new_slot->file_id = dyn_array_length(ctx->tokens.files);
-    new_slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), next_file.length, next_file.data);
+    CUIK_TIMED_BLOCK("convert to tokens") {
+        new_slot->tokens = convert_to_token_list(ctx, dyn_array_length(ctx->tokens.files), next_file.length, next_file.data);
+    }
     compute_line_map(&ctx->tokens, l & LOCATE_SYSTEM, ctx->stack_ptr - 1, new_slot->loc, alloced_filepath->data, next_file.data, next_file.length);
 
     if (cuikperf_is_active()) {

@@ -108,7 +108,7 @@ typedef struct {
 extern thread_local TB_Arena thread_arena;
 
 // this is used by the preprocessor to scan tokens in
-Token lexer_read(Lexer* restrict l);
+static Token lexer_read(Lexer* restrict l);
 
 ptrdiff_t parse_char(size_t len, const char* str, int* output);
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix);

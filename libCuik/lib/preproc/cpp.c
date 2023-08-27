@@ -131,12 +131,35 @@ static TokenArray convert_to_token_list(Cuik_CPP* restrict c, uint32_t file_id, 
     TokenArray list = { 0 };
     list.tokens = dyn_array_create(Token, expected);
 
+    #if 1
+    DynArrayHeader* header = ((DynArrayHeader*) list.tokens) - 1;
+    size_t i = 0, cap = header->capacity;
+    for (;;) {
+        // hot loop based on capacity
+        assert(i == dyn_array_length(list.tokens));
+
+        while (i < cap) {
+            Token t = lexer_read(&l);
+            if (__builtin_expect(t.type == 0, 0)) goto exit;
+            list.tokens[i++] = t;
+        }
+
+        // resync & cold array resize
+        header->size = i;
+        list.tokens = dyn_array_internal_reserve(list.tokens, sizeof(Token), 1);
+        header = ((DynArrayHeader*) list.tokens) - 1;
+        cap = header->capacity;
+    }
+
+    exit:
+    header->size = i;
+    #else
     for (;;) {
         Token t = lexer_read(&l);
         if (t.type == 0) break;
-
         dyn_array_put(list.tokens, t);
     }
+    #endif
 
     dyn_array_put(list.tokens, (Token){ 0 });
     return list;

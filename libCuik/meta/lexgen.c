@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <assert.h>
 #include <inttypes.h>
 
 static const char keywords[][16] = {
@@ -182,15 +183,18 @@ static int ns(void) { return table_id_counter++; }
 
 #define RANGE(old, new, ...) range_pattern(old, new, sizeof((const char*[]){ __VA_ARGS__ }) / sizeof(const char*), (const char*[]){ __VA_ARGS__ })
 static uint64_t range_pattern(uint64_t old, uint64_t new, int c, const char* ranges[]) {
+    if (new < old) { fprintf(stderr, "error: our DFA can't travel backwards %llu -> %llu\n", old, new); abort(); }
+    assert(new - old < 15);
+
     for (int i = 0; i < c; i++) {
         unsigned char min = ranges[i][0], max = ranges[i][1];
 
         if (max == 0) {
-            table[min][old] = new;
-        } else {
-            for (int j = min; j <= max; j++) {
-                table[j][old] = new;
-            }
+            max = min;
+        }
+
+        for (int j = min; j <= max; j++) {
+            table[j][old] = new;
         }
     }
     return new;
@@ -198,6 +202,9 @@ static uint64_t range_pattern(uint64_t old, uint64_t new, int c, const char* ran
 
 #define CHARS(old, new, ...) chars_pattern(old, new, __VA_ARGS__)
 static uint64_t chars_pattern(uint64_t old, uint64_t new, const char* str) {
+    if (new < old) { fprintf(stderr, "error: our DFA can't travel backwards %llu %llu\n", old, new); abort(); }
+    assert(new - old < 15);
+
     for (; *str; str++) {
         table[(unsigned char) *str][old] = new;
     }
@@ -222,63 +229,69 @@ int main(int argc, char** argv) {
     }
     fclose(file);
 
+    int wide_str = ns();
     int ident = ns();
-    RANGE(0, ident, "AZ", "az", "_", "$", "\x80\xFF", "\\");
-    RANGE(ident, ident, "AZ", "az", "_", "$", "09", "\x80\xFF", "\\");
-
-    int num = ns();
-    {
-        // we handle the real number parsing in the lexer code
-        CHARS(0, num, "0123456789");
-        CHARS(CHARS(0, ns(), "."), num, "0123456789");
-    }
-
-    CHARS(0, ns(), "@?;:,(){}");
-
-    // *= /= %= != &= ^= ~=
-    int ops = CHARS(0, ns(), "*/%!=&^~");
-    int eq = CHARS(ops, ns(), "=");
-
-    // >>= <<= >= <= > <
-    int s1 = CHARS(0, ns(), "><");
-    int s2 = CHARS(s1, ns(), "><");
-    int s3 = CHARS(s2, ns(), "=");
-    CHARS(s1, eq, "=");
-
-    // - -= -> --
-    CHARS(CHARS(0, ns(), "-"), ns(), "=>-");
-
-    int hash = CHARS(0, ns(), "&");
-    CHARS(hash, ns(), "&");
-    CHARS(hash, eq, "=");
-
-    CHARS(CHARS(0, ns(), "+"), ns(), "+");
-    CHARS(CHARS(0, ns(), "#"), ns(), "#");
-    CHARS(0, ns(), "[");
-    CHARS(0, ns(), "]");
-
-    int plus = CHARS(0, ns(), "+"), plus_end = ns();
-    CHARS(plus, plus_end, "+");
-    CHARS(plus, plus_end, "=");
-
-    int pipe = CHARS(0, ns(), "|"), pipe_end = ns();
-    CHARS(pipe, pipe_end, "|");
-    CHARS(pipe, pipe_end, "=");
-
-    int dot = CHARS(0, ns(), ".");
-    CHARS(dot, dot, ".");
-
     int str = CHARS(0, ns(), "\'\"");
+    RANGE(0, ident, "AZ", "az", "_", "$", "\x80\xFF", "\\");
+    CHARS(0, wide_str, "L");
 
     // string
-    int wide_str = CHARS(0, ns(), "L");
     CHARS(wide_str, str, "\'\"");
-
+    // ident
+    RANGE(ident, ident, "AZ", "az", "_", "$", "09", "\x80\xFF", "\\");
     // wide string
     RANGE(
         wide_str, ident,
         "AZ", "az", "_", "$", "09", "\x80\xFF", "\\",
     );
+
+    int num_dot = ns();
+    int num = ns();
+    {
+        // we handle the real number parsing in the lexer code
+        CHARS(0, num, "0123456789");
+        CHARS(CHARS(0, num_dot, "."), num, "0123456789");
+    }
+
+    int sigils = CHARS(0, ns(), "@?;:,(){}.");
+
+    // *= /= %= != ^= ~=
+    int ops = CHARS(0, ns(), "*/%!=^~");
+
+    // >>= <<= >= <= > <
+    int s1 = CHARS(0, ns(), "><");
+
+    // - -= -> --
+    int minus = CHARS(0, ns(), "-");
+    // + += ++
+    int plus = CHARS(0, ns(), "+");
+    int hash = CHARS(0, ns(), "#");
+    int pipe = CHARS(0, ns(), "|");
+    int amp = CHARS(0, ns(), "&");
+    CHARS(0, ns(), "[]");
+
+    CHARS(hash, ns(), "#");
+    CHARS(plus, ns(), "+");
+
+    int after_minus = ns();
+    CHARS(minus, after_minus, "=>-");
+
+    int eq = CHARS(ops, ns(), "=");
+    int s2 = CHARS(s1, ns(), "><");
+    int s3 = CHARS(s2, ns(), "=");
+    CHARS(s1, eq, "=");
+
+    int amp_end = ns();
+    CHARS(amp, amp_end, "&");
+    CHARS(amp, amp_end, "=");
+
+    int plus_end = ns();
+    CHARS(plus, plus_end, "+");
+    CHARS(plus, plus_end, "=");
+
+    int pipe_end = ns();
+    CHARS(pipe, pipe_end, "|");
+    CHARS(pipe, pipe_end, "=");
 
     if (table_id_counter >= 32) {
         fprintf(stderr, "Failed to generate DFA (too many states)\n");
@@ -296,14 +309,24 @@ int main(int argc, char** argv) {
     fprintf(file, "    DFA_IDENTIFIER   = %d,\n", ident);
     fprintf(file, "    DFA_NUMBER       = %d,\n", num);
     fprintf(file, "    DFA_STRING       = %d,\n", str);
+    fprintf(file, "    DFA_SIGILS       = %d,\n", sigils);
     fprintf(file, "    DFA_IDENTIFIER_L = %d,\n", wide_str);
     fprintf(file, "};\n");
-    fprintf(file, "static uint8_t dfa[256][32] = {\n");
-    for (int i = 0; i < 256; i++) {
+    fprintf(file, "static uint64_t dfa[129][2] = {\n");
+    for (int i = 0; i < 129; i++) {
         fprintf(file, "    { ");
-        for (int j = 0; j < 32; j++) {
+        for (int j = 0; j < 32; j += 16) {
             if (j) fprintf(file, ", ");
-            fprintf(file, "0x%02x", table[i][j]);
+
+            // construct packed states (16 per 64bit)
+            uint64_t v = 0;
+            for (int k = 0; k < 16; k++) {
+                int l = j + k;
+                uint64_t part = table[i][l];
+                v |= (part ? part - l : 0xF) << (k*4);
+            }
+
+            fprintf(file, "0x%016llx", v);
         }
         fprintf(file, " },\n");
     }
