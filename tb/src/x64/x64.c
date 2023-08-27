@@ -1153,7 +1153,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     if (fits_into_int32(curr_key)) {
                         SUBMIT(inst_op_ri(CMP, dt, key, curr_key));
                     } else {
-                        int tmp = DEF(n, n->dt);
+                        int tmp = DEF(n, dt);
                         SUBMIT(inst_op_abs(MOVABS, dt, tmp, curr_key));
                         SUBMIT(inst_op_rr(CMP, dt, key, tmp));
                     }
