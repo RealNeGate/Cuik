@@ -166,14 +166,21 @@ static JIT_Caller jit__get_trampoline(size_t arity) {
 
     _Atomic(uintptr_t)* caller = &jit.callers[arity];
     uintptr_t p;
-    for (;;) {
+    retry: {
         p = atomic_load(caller);
 
         // check if someone is already working on it
         if (p & sign_bit) {
             assert(p != key && "somehow we've already started compiling the caller on this thread?");
-        } else if (p == 0 && atomic_compare_exchange_strong(caller, &(uintptr_t){ 0 }, key)) {
+            goto retry;
+        }
+
+        if (p == 0) {
             // try lock?
+            if (!atomic_compare_exchange_strong(caller, &(uintptr_t){ 0 }, key)) {
+                goto retry;
+            }
+
             // make prototype
             TB_PrototypeParam params[17];
             params[0] = (TB_PrototypeParam){ TB_TYPE_PTR }; // Env*
@@ -190,7 +197,6 @@ static JIT_Caller jit__get_trampoline(size_t arity) {
 
             // unlock
             atomic_store(caller, p);
-            break;
         }
     }
 
@@ -213,7 +219,9 @@ static void* jit__compile_trampoline(TB_FunctionPrototype* proto, int arity) {
     TB_Node* args[17];
     args[0] = tb_inst_param(f, 0);
     for (size_t i = 0; i < arity; i++) {
-        TB_Node* ptr = tb_inst_member_access(f, tos, i*sizeof(Value) + offsetof(Value, i));
+        size_t offset = i*sizeof(Value) + offsetof(Value, i);
+
+        TB_Node* ptr = tb_inst_member_access(f, tos, offset);
         args[i + 1] = tb_inst_load(f, TB_TYPE_I64, ptr, _Alignof(size_t), false);
     }
 
@@ -222,7 +230,7 @@ static void* jit__compile_trampoline(TB_FunctionPrototype* proto, int arity) {
 
     // JIT & export
     TB_Passes* p = tb_pass_enter(f, tb_function_get_arena(f));
-    tb_pass_codegen(p, true);
+    tb_pass_codegen(p, false);
     tb_pass_exit(p);
 
     // we can throw away the function IR now
@@ -537,6 +545,8 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
                         args[1 + i] = src_args[i];
                     }
 
+                    // log_debug("jit %s: calling separate jit function %s (%p)", w->name.data, new_w->name.data, jitted);
+
                     // make sure the caller & proto are ready
                     jit__get_trampoline(new_w->type.in_count);
 
@@ -732,12 +742,12 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
             tb_pass_mem2reg(p), tb_pass_peephole(p);
         }
 
+        // tb_pass_print(p);
         // tb_function_print(f, tb_default_print_callback, stdout);
-        tb_pass_print(p);
 
         // compile
-        TB_FunctionOutput* out = tb_pass_codegen(p, true);
-        tb_output_print_asm(out, stdout);
+        TB_FunctionOutput* out = tb_pass_codegen(p, false);
+        // tb_output_print_asm(out, stdout);
     }
     tb_pass_exit(p);
 
