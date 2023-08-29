@@ -386,7 +386,8 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule
                 TB_Node* temp_slot = tb_inst_local(func, size, align);
                 TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
-                tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align, is_volatile);
+                assert(is_volatile);
+                tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align);
 
                 out_param[0] = temp_slot;
             }
@@ -449,7 +450,7 @@ static void eval_local_initializer(TranslationUnit* tu, TB_Function* func, TB_No
             }
         } else if (type->kind == KIND_ARRAY && child_type->kind == KIND_ARRAY) {
             TB_Node* addr_offset = tb_inst_member_access(func, addr, n->offset);
-            tb_inst_memcpy(func, addr_offset, val, tb_inst_uint(func, TB_TYPE_I64, type->size), type->align, false);
+            tb_inst_memcpy(func, addr_offset, val, tb_inst_uint(func, TB_TYPE_I64, type->size), type->align);
         } else {
             TB_Node* addr_offset = tb_inst_member_access(func, addr, n->offset);
             tb_inst_store(func, dt, addr_offset, val, type->align, false);
@@ -460,7 +461,7 @@ static void eval_local_initializer(TranslationUnit* tu, TB_Function* func, TB_No
 static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Node* addr, Cuik_Type* type, InitNode* root_node) {
     TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
     TB_Node* val_reg = tb_inst_uint(func, TB_TYPE_I8, 0);
-    tb_inst_memset(func, addr, val_reg, size_reg, type->align, false);
+    tb_inst_memset(func, addr, val_reg, size_reg, type->align);
 
     eval_local_initializer(tu, func, addr, root_node);
 }
@@ -1364,8 +1365,9 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                     if (e->op != EXPR_ASSIGN) abort();
 
+                    assert(!is_volatile && "volatile assign with struct doesn't work");
                     TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
-                    tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align, is_volatile);
+                    tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align);
                     data = rhs.reg;
                 } else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
                     TB_Node* r = cvt2rval(tu, func, &rhs);
@@ -1644,12 +1646,12 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                         IRVal v = irgen_expr(tu, func, s->decl.initial);
                         TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
-                        tb_inst_memcpy(func, addr, v.reg, size_reg, align, false);
+                        tb_inst_memcpy(func, addr, v.reg, size_reg, align);
                     } else if (kind == KIND_STRUCT || kind == KIND_UNION) {
                         IRVal v = irgen_expr(tu, func, s->decl.initial);
                         TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
-                        tb_inst_memcpy(func, addr, v.reg, size_reg, align, false);
+                        tb_inst_memcpy(func, addr, v.reg, size_reg, align);
                     } else {
                         TB_Node* v = irgen_as_rvalue(tu, func, s->decl.initial);
 
@@ -1679,13 +1681,12 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             if (func_return_rule == TB_PASSING_INDIRECT) {
                 // returning aggregates just copies into the first parameter
                 // which is agreed to be a caller owned buffer.
-                int size = type->size;
-                int align = type->align;
+                int size = type->size, align = type->align;
 
                 TB_Node* dst_address = tb_inst_param(func, 0);
                 TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
-                tb_inst_memcpy(func, dst_address, v.reg, size_reg, align, false);
+                tb_inst_memcpy(func, dst_address, v.reg, size_reg, align);
                 tb_inst_ret(func, 1, &dst_address);
             } else {
                 TB_Node* r = NULL;
@@ -1713,6 +1714,8 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
         case STMT_IF: {
             IRVal cond = irgen_expr(tu, func, s->if_.cond);
 
+            // if (strcmp(tb_symbol_get_name((TB_Symbol*) func), "stbi__parse_zlib") == 0) __debugbreak();
+
             TB_Node *if_true, *if_false, *exit;
             if (cond.value_type == RVALUE_PHI) {
                 exit = cond.phi.merger;
@@ -1721,7 +1724,9 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             } else {
                 exit = tb_inst_region(func);
                 if_true = tb_inst_region(func);
-                if_false = tb_inst_region(func);
+
+                // if there's no else case, then false is just exit
+                if_false = s->if_.next ? tb_inst_region(func) : exit;
 
                 // Cast to bool
                 tb_inst_if(func, cvt2rval(tu, func, &cond), if_true, if_false);
@@ -1737,7 +1742,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
                 tb_inst_set_control(func, if_false);
                 irgen_stmt(tu, func, s->if_.next);
-            } else {
+            } else if (exit != if_false) {
                 fallthrough_label(func, if_false);
             }
             fallthrough_label(func, exit);
@@ -1933,6 +1938,16 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             func_return_rule = tb_get_passing_rule_from_dbg(tu->ir_mod, dbg_ret, true);
         } else {
             func_return_rule = TB_PASSING_DIRECT;
+        }
+
+        // mark where the return site is
+        if (tu->has_tb_debug_info) {
+            SourceLoc loc = s->decl.initial_as_stmt->loc.end;
+            ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
+            if (rloc.file->filename[0] != '<') {
+                TB_SourceFile* f = tb_get_source_file(tu->ir_mod, rloc.file->filename);
+                tb_inst_set_location(func, f, rloc.line, rloc.column);
+            }
         }
 
         // compile body

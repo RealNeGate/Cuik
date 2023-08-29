@@ -51,6 +51,14 @@ static int find_traversal_index(DomContext* ctx, TB_Node* bb) {
     tb_todo();
 }
 
+static int try_find_traversal_index(DomContext* ctx, TB_Node* bb) {
+    FOREACH_N(i, 0, ctx->order.count) {
+        if (ctx->order.traversal[i] == bb) return i;
+    }
+
+    return -1;
+}
+
 static TB_Node* find_region(TB_Node* n) {
     while (n->type != TB_REGION && n->type != TB_START) n = n->inputs[0];
     return n;
@@ -128,22 +136,23 @@ void tb_compute_dominators(TB_Function* f, TB_PostorderWalk order) {
                 // if doms[p] already calculated
                 TB_Node* idom_p = TB_NODE_GET_EXTRA_T(p, TB_NodeRegion)->dom;
                 if (idom_p == NULL && p->input_count > 0) {
-                    int a = find_traversal_index(&ctx, p);
-                    int b = find_traversal_index(&ctx, new_idom);
+                    int a = try_find_traversal_index(&ctx, p);
+                    if (a >= 0) {
+                        int b = find_traversal_index(&ctx, new_idom);
+                        while (a != b) {
+                            // while (finger1 < finger2)
+                            //   finger1 = doms[finger1]
+                            while (a < b) {
+                                TB_Node* d = idom(ctx.order.traversal[a]);
+                                a = d ? find_traversal_index(&ctx, d) : entry_dom;
+                            }
 
-                    while (a != b) {
-                        // while (finger1 < finger2)
-                        //   finger1 = doms[finger1]
-                        while (a < b) {
-                            TB_Node* d = idom(ctx.order.traversal[a]);
-                            a = d ? find_traversal_index(&ctx, d) : entry_dom;
-                        }
-
-                        // while (finger2 < finger1)
-                        //   finger2 = doms[finger2]
-                        while (b < a) {
-                            TB_Node* d = idom(ctx.order.traversal[b]);
-                            b = d ? find_traversal_index(&ctx, d) : entry_dom;
+                            // while (finger2 < finger1)
+                            //   finger2 = doms[finger2]
+                            while (b < a) {
+                                TB_Node* d = idom(ctx.order.traversal[b]);
+                                b = d ? find_traversal_index(&ctx, d) : entry_dom;
+                            }
                         }
                     }
 

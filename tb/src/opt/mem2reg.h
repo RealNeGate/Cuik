@@ -221,7 +221,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
 
     // replace phi arguments on successor
     if (end != NULL) {
-        if (end->type == TB_NULL || end->type == TB_RET || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
+        if (end->type == TB_NULL || end->type == TB_STOP || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
             /* RET can't do shit in this context */
         } else if (end->type == TB_BRANCH) {
             TB_NodeBranch* br_info = TB_NODE_GET_EXTRA(end);
@@ -356,7 +356,7 @@ static bool add_configs(TB_Passes* p, TB_TemporaryStorage* tls, User* use, TB_No
 
         TB_DataType dt = n->type == TB_LOAD ? n->dt : n->inputs[2]->dt;
         TB_Node* address = n->inputs[1];
-        int size = (bits_in_data_type(pointer_size, n->dt) + 7) / 8;
+        int size = (bits_in_data_type(pointer_size, dt) + 7) / 8;
 
         // see if it's a compatible configuration
         int match = compatible_with_configs(*config_count, configs, base_offset, size, dt);
@@ -618,22 +618,20 @@ static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_No
                 }
                 dt_bits = bits;
             }
+        } else if (n->type == TB_READ || n->type == TB_WRITE) {
+            return COHERENCY_VOLATILE;
         } else if ((n->type == TB_LOAD || n->type == TB_STORE) && n->inputs[1] == address) {
-            if (TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
-                return COHERENCY_VOLATILE;
+            TB_DataType mem_dt = n->type == TB_LOAD ? n->dt : n->inputs[2]->dt;
+            if (!initialized) {
+                dt = mem_dt;
+                initialized = true;
             } else {
-                TB_DataType mem_dt = n->type == TB_LOAD ? n->dt : n->inputs[2]->dt;
-                if (!initialized) {
-                    dt = mem_dt;
-                    initialized = true;
-                } else {
-                    // we're hoping all data types match in size to continue along
-                    int bits = bits_in_data_type(pointer_size, mem_dt);
-                    if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
-                        return COHERENCY_BAD_DATA_TYPE;
-                    }
-                    dt_bits = bits;
+                // we're hoping all data types match in size to continue along
+                int bits = bits_in_data_type(pointer_size, mem_dt);
+                if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
+                    return COHERENCY_BAD_DATA_TYPE;
                 }
+                dt_bits = bits;
             }
         } else {
             DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%p uses pointer arithmatic (%s)", address, tb_node_get_name(n)));

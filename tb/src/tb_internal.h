@@ -308,6 +308,8 @@ struct TB_Function {
     TB_Node** params;
 
     TB_Node* start_node;
+    TB_Node* stop_node;
+
     TB_Node* active_control_node;
 
     size_t safepoint_count;
@@ -318,6 +320,8 @@ struct TB_Function {
     TB_Arena* arena;
 
     // IR building
+    size_t return_input_cap;
+    TB_Attrib exit_attrib;
     TB_Attrib line_attrib;
 
     // Compilation output

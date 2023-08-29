@@ -104,11 +104,6 @@ typedef struct {
     TB_SafepointKey* safepoints;
 } Ctx;
 
-static bool empty_bb(TB_Node* n) {
-    TB_Node* end = TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->end;
-    return end->type == TB_RET && end->input_count == 1 && end->inputs[0] == n;
-}
-
 static bool fits_into_int8(uint64_t x) {
     int8_t y = x & 0xFF;
     return (int64_t)y == x;
@@ -537,10 +532,14 @@ static void visit_uses(Ctx* restrict ctx, NL_HashSet* visited, TB_Node* n) {
         return;
     }
 
+    FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
+        tb_assert(n->inputs[i], "empty input... in this economy?");
+        visit_uses(ctx, visited, n->inputs[i]);
+    }
+
     // track use count
     size_t use_count = 0;
     for (User* use = find_users(ctx->p, n); use; use = use->next) {
-        visit_uses(ctx, visited, use->n);
         use_count++;
     }
     nl_map_put(ctx->uses, n, use_count);
@@ -671,7 +670,7 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
                 n->type != TB_MEMBER_ACCESS &&
                 !(n->type == TB_PROJ && n->inputs[0]->type == TB_START) &&
                 n->type != TB_LOCAL &&
-                n->type != TB_GET_SYMBOL_ADDRESS) {
+                n->type != TB_SYMBOL) {
                 isel(ctx, n);
             }
         }
@@ -697,7 +696,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // need to schedule
     tb_pass_schedule(p);
 
-    /*reg_alloc_log = strcmp(f->super.name, "stbi__fill_bits") == 0;
+    DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
+
+    /*reg_alloc_log = strcmp(f->super.name, "stbi__zhuffman_decode_slowpath") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
@@ -736,8 +737,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         NL_HashSet visited = nl_hashset_arena_alloc(tmp_arena, f->node_count);
         nl_map_create(ctx.uses, f->node_count);
         FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-            visit_uses(&ctx, &visited, ctx.order.traversal[i]);
+            visit_uses(&ctx, &visited, TB_NODE_GET_EXTRA_T(ctx.order.traversal[i], TB_NodeRegion)->end);
         }
+        assert(visited.count <= f->node_count);
         nl_hashset_free(visited);
     }
 
@@ -753,21 +755,39 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     //   immediately but in theory it could be delayed until all selection
     //   is done.
     CUIK_TIMED_BLOCK("isel") {
+        TB_Node* stop_node = f->stop_node;
+        TB_Node* stop_bb = tb_get_parent_region(stop_node);
+
+        bool has_stop = false;
         FOREACH_REVERSE_N(i, 0, ctx.order.count) {
             TB_Node* bb = ctx.order.traversal[i];
             nl_map_put(ctx.emit.labels, bb, 0);
 
-            // mark fallthrough
-            ctx.fallthrough = i > 0 ? ctx.order.traversal[i - 1] : NULL;
-            if (bb) {
-                append_inst(&ctx, inst_label(bb));
-            }
+            if (bb != stop_bb) {
+                // mark fallthrough
+                ctx.fallthrough = i > 0 ? ctx.order.traversal[i - 1] : NULL;
+                if (ctx.fallthrough == stop_bb) ctx.fallthrough = NULL;
 
-            TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
-            isel_region(&ctx, end, NULL);
+                append_inst(&ctx, inst_label(bb));
+                TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
+                isel_region(&ctx, end, NULL);
+            } else {
+                has_stop = true;
+            }
         }
 
-        append_inst(&ctx, alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
+        // always schedule the STOP node here
+        if (has_stop) {
+            // mark fallthrough
+            ctx.fallthrough = NULL;
+
+            append_inst(&ctx, inst_label(stop_bb));
+            TB_Node* end = TB_NODE_GET_EXTRA_T(stop_bb, TB_NodeRegion)->end;
+            isel_region(&ctx, end, NULL);
+        } else {
+            // liveness expects one but we don't really have shit to put down there... it's never reached
+            append_inst(&ctx, alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
+        }
     }
 
     EMITA(&ctx.emit, "%s:\n", f->super.name);

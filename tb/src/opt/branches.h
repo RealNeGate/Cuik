@@ -85,6 +85,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
                     set_input(opt, selector, cond, 1);
                     set_input(opt, selector, left_v, 2 + right_false);
                     set_input(opt, selector, right_v, 2 + !right_false);
+
                     return selector;
                 }
             }

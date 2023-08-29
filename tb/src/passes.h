@@ -23,7 +23,7 @@ struct TB_Passes {
     // for the entire duration of the TB_Passes.
     TB_ThreadInfo* pinned_thread;
 
-    DynArray(TB_Node*) queue;
+    DynArray(TB_Node*) worklist;
     NL_HashSet visited;
 
     TB_PostorderWalk order;

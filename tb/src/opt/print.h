@@ -32,7 +32,8 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
         } else {
             ptrdiff_t i = find_print_label(ctx, n);
             if (i >= 0) {
-                printf(".bb%zu", i);
+                printf("%p", n);
+                // printf(".bb%zu", i);
             } else {
                 printf("*DEAD*");
             }
@@ -43,7 +44,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
     } else if (n->type == TB_FLOAT64_CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
         printf("%f", f->value);
-    } else if (n->type == TB_GET_SYMBOL_ADDRESS) {
+    } else if (n->type == TB_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
         if (sym->name[0]) {
             printf("%s", sym->name);
@@ -125,7 +126,7 @@ int get_ordinal(PrinterCtx* ctx, TB_Node* n) {
 
 // returns true if it's the first time
 static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
-    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_STORE || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST || n->type == TB_GET_SYMBOL_ADDRESS) {
+    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_STORE || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL) {
         return;
     }
 
@@ -229,7 +230,6 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
         case TB_MEMCPY: {
             TB_NodeMemAccess* mem = TB_NODE_GET_EXTRA(n);
             printf(" !align(%d)", mem->align);
-            if (mem->is_volatile) printf(" !volatile");
             break;
         }
 
@@ -263,6 +263,15 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
     if (aint_region) {
         print_effect(ctx, n->inputs[0]);
         printf("  # fence\n");
+    }
+
+    dyn_array_for(i, n->attribs) {
+        TB_Attrib* a = &n->attribs[i];
+
+        // check if it's changed
+        if (a->tag == TB_ATTRIB_LOCATION) {
+            printf("  # location %s:%d\n", a->loc.file->path, a->loc.line);
+        }
     }
 
     // has control dependencies on this node, we put these after
@@ -327,12 +336,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                         if (i != 0) printf("    %"PRId64": ", br->keys[i - 1]);
                         else printf("    default: ");
 
-                        TB_Node* target = br->succ[i];
-                        if (TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag) {
-                            printf("%s\n", TB_NODE_GET_EXTRA_T(target, TB_NodeRegion)->tag);
-                        } else {
-                            printf(".bb%zu\n", find_print_label(ctx, target));
-                        }
+                        print_ref_to_node(ctx, br->succ[i]);
                     }
                     printf("  }\n");
                 }
@@ -352,8 +356,8 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                 break;
     	    }
 
-            case TB_RET: {
-                printf("  ret ");
+            case TB_STOP: {
+                printf("  stop ");
                 FOREACH_N(i, 1, n->input_count) {
                     if (i != 1) printf(", ");
                     print_ref_to_node(ctx, n->inputs[i]);
@@ -373,46 +377,62 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
     }
 }
 
+static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
+    const char* tag = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->tag;
+
+    print_ref_to_node(ctx, bb);
+    printf(":");
+
+    // print predecessors
+    if (bb->input_count > 0) {
+        printf(" # preds: ");
+        FOREACH_N(j, 0, bb->input_count) {
+            print_ref_to_node(ctx, tb_get_parent_region(bb->inputs[j]));
+            printf(" ");
+        }
+    }
+
+    if (ctx->opt->error_n == bb) {
+        printf("\x1b[31m  <-- ERROR\x1b[0m");
+    }
+    printf("\n");
+
+    if (bb->type == TB_START) {
+        dyn_array_for(i, ctx->opt->locals) {
+            print_node(ctx, ctx->opt->locals[i], NULL);
+        }
+    }
+
+    TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
+    print_effect(ctx, end);
+}
+
 bool tb_pass_print(TB_Passes* opt) {
     TB_Function* f = opt->f;
 
     PrinterCtx ctx = { opt, f };
     ctx.order = tb_function_get_postorder(f);
 
+    TB_Node* stop_bb = tb_get_parent_region(f->stop_node);
+
+    bool has_stop = false;
     FOREACH_REVERSE_N(i, 0, ctx.order.count) {
         TB_Node* bb = ctx.order.traversal[i];
-        const char* tag = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->tag;
-
-        if (bb->type == TB_START) {
-            printf("%s:", f->super.name);
-        } else if (tag != NULL) {
-            printf(".%s:", tag);
+        if (bb != stop_bb) {
+            print_bb(&ctx, bb);
         } else {
-            printf(".bb%zu:", ctx.order.count - i - 1);
+            has_stop = true;
         }
+    }
 
-        // print predecessors
-        if (bb->input_count > 0) {
-            printf(" # preds: ");
-            FOREACH_N(j, 0, bb->input_count) {
-                print_ref_to_node(&ctx, tb_get_parent_region(bb->inputs[j]));
-                printf(" ");
-            }
-        }
-        printf("\n");
-
-        if (bb->type == TB_START) {
-            dyn_array_for(i, opt->locals) {
-                print_node(&ctx, opt->locals[i], NULL);
-            }
-        }
-
-        TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
-        print_effect(&ctx, end);
+    if (has_stop) {
+        print_bb(&ctx, stop_bb);
     }
 
     nl_map_free(ctx.ordinals);
     nl_map_free(ctx.visited);
     tb_function_free_postorder(&ctx.order);
+    ctx.opt->error_n = NULL;
+
     return false;
 }

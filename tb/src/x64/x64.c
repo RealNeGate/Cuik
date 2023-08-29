@@ -980,7 +980,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // compute the target (unless it's a symbol) before the
             // registers all need to be forcibly shuffled
             TB_Node* target = n->inputs[1];
-            bool static_call = n->type == TB_CALL && target->type == TB_GET_SYMBOL_ADDRESS;
+            bool static_call = n->type == TB_CALL && target->type == TB_SYMBOL;
 
             int target_val = RSP; // placeholder really
             if (!static_call) {
@@ -1178,7 +1178,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
-        case TB_GET_SYMBOL_ADDRESS: {
+        case TB_SYMBOL: {
             dst = DEF(n, n->dt);
 
             TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n);
@@ -1225,14 +1225,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
 
-        case TB_RET: {
+        case TB_STOP: {
             if (n->input_count > 1) {
                 assert(n->input_count <= 2 && "We don't support multiple returns here");
 
                 int src = isel(ctx, n->inputs[1]);
-
-                // we don't really need a fence if we're about to exit
-                // fence(ctx, n);
 
                 // copy to return register
                 TB_DataType dt = n->inputs[1]->dt;
@@ -1245,9 +1242,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 }
             }
 
-            if (ctx->fallthrough != NULL && !empty_bb(ctx->fallthrough)) {
-                SUBMIT(inst_jmp(NULL));
-            }
+            // we don't really need a fence if we're about to exit but we do
+            // need to mark that it's the epilogue to tell regalloc where callee
+            // regs need to get restored.
+            append_inst(ctx, alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
             break;
         }
 
@@ -1722,7 +1720,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     SUBMIT(inst_i(MOV, TB_TYPE_I64, RAX, xmms_used));
                 }
 
-                if (target->type == TB_GET_SYMBOL_ADDRESS) {
+                if (target->type == TB_SYMBOL) {
                     TB_NodeSymbol* s = TB_NODE_GET_EXTRA(target);
                     SUBMIT(inst_call(n->dt, fake_dst, s->sym));
                 } else {
@@ -2031,9 +2029,9 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
 
     // emit prologue
     func_out->prologue_length = emit_prologue(ctx);
-    EMITA(&ctx->emit, ".body:\n");
 
-    for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
+    Inst* prev = NULL;
+    for (Inst* restrict inst = ctx->first; inst; prev = inst, inst = inst->next) {
         size_t in_base = inst->out_count;
         InstCategory cat = inst->type > 1024 ? INST_BINOP : inst_table[inst->type].cat;
 
@@ -2066,15 +2064,20 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
             TB_Attrib* loc = inst->a;
-            EMITA(e, "  \x1b[33m# loc %s %"PRIu64"\x1b[0m\n", loc->loc.file->path, loc->loc.line);
+            uint32_t pos = GET_CODE_POS(&ctx->emit);
 
-            TB_Location l = {
-                .file = loc->loc.file,
-                .line = loc->loc.line,
-                .column = loc->loc.column,
-                .pos = GET_CODE_POS(&ctx->emit)
-            };
-            dyn_array_put(ctx->locations, l);
+            size_t top = dyn_array_length(ctx->locations);
+            if (prev == NULL || prev->type != INST_LINE) {
+                EMITA(e, "  \x1b[33m# loc %s %"PRIu64"\x1b[0m\n", loc->loc.file->path, loc->loc.line);
+
+                TB_Location l = {
+                    .file = loc->loc.file,
+                    .line = loc->loc.line,
+                    .column = loc->loc.column,
+                    .pos = pos
+                };
+                dyn_array_put(ctx->locations, l);
+            }
             continue;
         } else if (cat == INST_BYTE || cat == INST_BYTE_EXT) {
             if (inst->flags & INST_REP) EMIT1(e, 0xF3);

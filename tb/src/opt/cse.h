@@ -49,7 +49,8 @@ bool cse_compare(void* a, void* b) {
             TB_NodeInt* ai = TB_NODE_GET_EXTRA(x);
             TB_NodeInt* bi = TB_NODE_GET_EXTRA(y);
 
-            return ai->num_words == bi->num_words && memcmp(ai->words, bi->words, ai->num_words * sizeof(BigInt_t)) == 0;
+            return ai->num_words == bi->num_words &&
+                memcmp(ai->words, bi->words, ai->num_words * sizeof(uint64_t)) == 0;
         }
 
         case TB_AND:
@@ -71,9 +72,6 @@ bool cse_compare(void* a, void* b) {
             return ai->ab == bi->ab;
         }
 
-        // in practice, two volatiles accesses can't refer to the same
-        // effect without there being malformed so we won't match against
-        // that.
         case TB_LOAD: {
             TB_NodeMemAccess* am = TB_NODE_GET_EXTRA(x);
             TB_NodeMemAccess* bm = TB_NODE_GET_EXTRA(y);
@@ -92,7 +90,7 @@ bool cse_compare(void* a, void* b) {
             return aa->stride == bb->stride;
         }
 
-        case TB_GET_SYMBOL_ADDRESS: {
+        case TB_SYMBOL: {
             TB_NodeSymbol* aa = TB_NODE_GET_EXTRA(x);
             TB_NodeSymbol* bb = TB_NODE_GET_EXTRA(y);
             return aa->sym == bb->sym;

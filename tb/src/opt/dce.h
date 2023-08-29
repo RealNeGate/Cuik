@@ -1,9 +1,10 @@
-TB_API bool tb_uses_effects(TB_Node* n) {
-    switch (n->type) {
-        case TB_LOAD:
-        return true;
 
+bool tb_uses_effects(TB_Node* n) {
+    switch (n->type) {
         // memory effects
+        case TB_LOAD:
+        case TB_READ:
+        case TB_WRITE:
         case TB_STORE:
         case TB_MEMCPY:
         case TB_MEMSET:
@@ -14,8 +15,6 @@ TB_API bool tb_uses_effects(TB_Node* n) {
         case TB_ATOMIC_AND:
         case TB_ATOMIC_XOR:
         case TB_ATOMIC_OR:
-        case TB_ATOMIC_CLEAR:
-        case TB_ATOMIC_TEST_AND_SET:
         return true;
 
         case TB_PROJ:
@@ -26,7 +25,7 @@ TB_API bool tb_uses_effects(TB_Node* n) {
         case TB_START:
         case TB_REGION:
         case TB_BRANCH:
-        case TB_RET:
+        case TB_STOP:
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_TRAP:
@@ -39,12 +38,11 @@ TB_API bool tb_uses_effects(TB_Node* n) {
     }
 }
 
-TB_API bool tb_has_effects(TB_Node* n) {
+bool tb_has_effects(TB_Node* n) {
     switch (n->type) {
-        case TB_LOAD:
-        return TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile;
-
         // memory effects
+        case TB_READ:
+        case TB_WRITE:
         case TB_STORE:
         case TB_MEMCPY:
         case TB_MEMSET:
@@ -55,8 +53,6 @@ TB_API bool tb_has_effects(TB_Node* n) {
         case TB_ATOMIC_AND:
         case TB_ATOMIC_XOR:
         case TB_ATOMIC_OR:
-        case TB_ATOMIC_CLEAR:
-        case TB_ATOMIC_TEST_AND_SET:
         return true;
 
         case TB_PROJ:
@@ -66,7 +62,7 @@ TB_API bool tb_has_effects(TB_Node* n) {
         case TB_START:
         case TB_REGION:
         case TB_BRANCH:
-        case TB_RET:
+        case TB_STOP:
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_TRAP:

@@ -3,7 +3,7 @@
 ////////////////////////////////
 // schedule nodes below any of their pinned dependencies
 static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_START && n->type <= TB_TRAP) || n->type == TB_LOAD || n->type == TB_PHI || (n->type == TB_PROJ && n->dt.type == TB_CONTROL);
+    return (n->type >= TB_START && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ;
 }
 
 static void schedule_early(TB_Passes* passes, NL_HashSet* visited, TB_Node* n) {
@@ -139,7 +139,7 @@ static void schedule_late(TB_Passes* passes, NL_HashSet* visited, TB_Node* n) {
         lca = find_lca(lca, use_block);
     }
 
-    tb_assert(lca, "missing least common ancestor");
+    // tb_assert(lca, "missing least common ancestor");
     set_input(passes, n, lca, 0);
 }
 

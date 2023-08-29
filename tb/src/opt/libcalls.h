@@ -1,7 +1,7 @@
 
 // this is a peephole lmao
 static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Node* n) {
-    if (n->inputs[1]->type != TB_GET_SYMBOL_ADDRESS) {
+    if (n->inputs[1]->type != TB_SYMBOL) {
         return NULL;
     }
 
@@ -20,7 +20,7 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
         set_input(passes, n2, n->inputs[2], 1); // dst
         set_input(passes, n2, n->inputs[3], 2); // val
         set_input(passes, n2, n->inputs[4], 3); // size
-        TB_NODE_SET_EXTRA(n2, TB_NodeMemAccess, .align = 1, .is_volatile = false);
+        TB_NODE_SET_EXTRA(n2, TB_NodeMemAccess, .align = 1);
 
         TB_Node* dst_ptr = n->inputs[2];
 
@@ -38,7 +38,7 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
         set_input(passes, n2, n->inputs[2], 1); // dst
         set_input(passes, n2, n->inputs[3], 2); // val
         set_input(passes, n2, n->inputs[4], 3); // size
-        TB_NODE_SET_EXTRA(n2, TB_NodeMemAccess, .align = 1, .is_volatile = false);
+        TB_NODE_SET_EXTRA(n2, TB_NodeMemAccess, .align = 1);
 
         TB_Node* dst_ptr = n->inputs[2];
 

@@ -77,24 +77,10 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
     return buf;
 }
 
-static bool is_nonvolatile_same_align(TB_Node* a, TB_Node* b) {
+static bool is_same_align(TB_Node* a, TB_Node* b) {
     TB_NodeMemAccess* aa = TB_NODE_GET_EXTRA(a);
     TB_NodeMemAccess* bb = TB_NODE_GET_EXTRA(b);
-    return !aa->is_volatile && !bb->is_volatile && aa->align == bb->align;
-}
-
-// some LOADs can always be derefenced like
-static bool cooler_no_effects(TB_Node* n) {
-    if (n->inputs[0] == NULL) {
-        return false;
-    }
-
-    // loading from locals or globals is unconditionally possible
-    if (n->type == TB_LOAD && !TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
-        return n->inputs[1]->type == TB_LOCAL || n->inputs[1]->type == TB_GET_SYMBOL_ADDRESS;
-    } else {
-        return true;
-    }
+    return aa->align == bb->align;
 }
 
 static bool is_empty_bb(TB_Passes* restrict p, TB_Node* end) {
@@ -106,17 +92,7 @@ static bool is_empty_bb(TB_Passes* restrict p, TB_Node* end) {
     TB_Node* bb = end->inputs[0];
     for (User* use = find_users(p, bb); use; use = use->next) {
         TB_Node* n = use->n;
-
-        // loading from locals or globals is unconditionally possible
-        if (n->type == TB_LOAD && !TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->is_volatile) {
-            if (n->inputs[1]->type == TB_LOCAL || n->inputs[1]->type == TB_GET_SYMBOL_ADDRESS) {
-                continue;
-            }
-        }
-
-        if (use->n != end) {
-            return false;
-        }
+        if (use->n != end) return false;
     }
 
     return true;
@@ -191,7 +167,7 @@ static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_
             // update PHIs
             for (User* use = find_users(p, dst); use; use = use->next) {
                 if (use->n->type == TB_PHI && use->slot == 0) {
-                    remove_input(p, f, use->n, i);
+                    remove_input(p, f, use->n, i + 1);
                 }
             }
             return;
@@ -350,7 +326,7 @@ bool tb_pass_mark(TB_Passes* restrict p, TB_Node* n) {
 
     // log_debug("  %p: push %s", n, tb_node_get_name(n));
 
-    dyn_array_put(p->queue, n);
+    dyn_array_put(p->worklist, n);
     nl_hashset_put(&p->visited, n);
     return true;
 }
@@ -359,7 +335,7 @@ static void fill_all(TB_Passes* restrict p, TB_Node* n) {
     if (!nl_hashset_put(&p->visited, n)) {
         return;
     }
-    dyn_array_put(p->queue, n);
+    dyn_array_put(p->worklist, n);
 
     FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
         tb_assert(n->inputs[i], "empty input... in this economy?");
@@ -369,15 +345,16 @@ static void fill_all(TB_Passes* restrict p, TB_Node* n) {
     // walk successors for regions
     if (n->type == TB_START || n->type == TB_REGION) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+
+        tb_assert(r->end, "missing terminator");
+        fill_all(p, r->end);
+
         if (r->end->type == TB_BRANCH) {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
             FOREACH_N(i, 0, br->succ_count) {
                 fill_all(p, br->succ[i]);
             }
         }
-
-        tb_assert(r->end, "missing terminator");
-        fill_all(p, r->end);
     }
 }
 
@@ -388,7 +365,7 @@ static void cool_print_type(TB_Node* n) {
             dt = n->inputs[2]->dt;
         } else if (n->type == TB_BRANCH) {
             dt = n->inputs[1]->dt;
-        } else if (n->type == TB_RET) {
+        } else if (n->type == TB_STOP) {
             dt = n->inputs[1]->dt;
         } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
             dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
@@ -558,7 +535,7 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 }
 
 static bool is_terminator(TB_Node* n) {
-    return n->type == TB_BRANCH || n->type == TB_RET || n->type == TB_UNREACHABLE;
+    return n->type == TB_BRANCH || n->type == TB_STOP || n->type == TB_TRAP || n->type == TB_UNREACHABLE;
 }
 
 static TB_Node* unsafe_get_region(TB_Node* n) {
@@ -587,6 +564,10 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
             subsume_node(p, f, top_region->end, bot_region->end);
             top_region->end = bot_region->end;
 
+            if (top_region->tag == NULL) {
+                top_region->tag = bot_region->tag;
+            }
+
             // re-evaluate traversal
             CUIK_TIMED_BLOCK("recompute order") {
                 tb_function_free_postorder(&p->order);
@@ -612,13 +593,17 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     if (n->type == TB_REGION) {
         // check if it's a dead region
         if (n->input_count == 0) {
+            DO_IF(TB_OPTDEBUG_PEEP)(printf("kill! "), print_node_sexpr(f, n, 0));
+
             // remove predecessor from other branches
             TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
             if (r->end->type == TB_BRANCH) {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
                 FOREACH_N(i, 0, br->succ_count) if (br->succ[i]->input_count > 0) {
                     remove_pred(p, f, n, br->succ[i]);
+
                     tb_pass_mark(p, br->succ[i]);
+                    tb_pass_mark_users(p, br->succ[i]);
                 }
             }
 
@@ -689,23 +674,24 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
     tb_pass_kill_node(p, n);
 }
 
-static void generate_use_lists(TB_Passes* restrict queue, TB_Function* f) {
-    dyn_array_for(i, queue->queue) {
-        TB_Node* n = queue->queue[i];
-        nl_hashset_put2(&queue->cse_nodes, n, cse_hash, cse_compare);
+static void generate_use_lists(TB_Passes* restrict p, TB_Function* f) {
+    dyn_array_for(i, p->worklist) {
+        TB_Node* n = p->worklist[i];
+        nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
 
         if (n->type == TB_LOCAL) {
-            // we don't need to check for duplicates here, the queue is uniques
-            dyn_array_put(queue->locals, n);
+            // we don't need to check for duplicates here, the worklist is uniques
+            dyn_array_put(p->locals, n);
         }
 
         FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-            add_user(queue, n, n->inputs[i], i, NULL);
+            add_user(p, n, n->inputs[i], i, NULL);
         }
     }
 }
 
 TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
+    assert(f->stop_node && "missing return");
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
     *p = (TB_Passes){ .f = f };
 
@@ -719,18 +705,18 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     // generate dominators
     p->order = tb_function_get_postorder(f);
     tb_compute_dominators(f, p->order);
-
-    CUIK_TIMED_BLOCK("nl_map_create") {
-        p->visited = nl_hashset_alloc(f->node_count);
-    }
+    p->visited = nl_hashset_alloc(f->node_count);
 
     // generate work list (put everything)
-    CUIK_TIMED_BLOCK("tb_pqueue_fill_all") {
+    CUIK_TIMED_BLOCK("gen worklist") {
         fill_all(p, f->start_node);
     }
 
+    f->node_count = dyn_array_length(p->worklist);
+    DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting passes with %d nodes", f->super.name, f->node_count));
+
     // find all outgoing edges
-    CUIK_TIMED_BLOCK("generate_use_lists") {
+    CUIK_TIMED_BLOCK("gen users") {
         generate_use_lists(p, f);
     }
 
@@ -743,9 +729,9 @@ bool tb_pass_peephole(TB_Passes* p) {
     TB_Function* f = p->f;
     bool changes = false;
     CUIK_TIMED_BLOCK("peephole") {
-        while (dyn_array_length(p->queue) > 0) CUIK_TIMED_BLOCK("iter") {
+        while (dyn_array_length(p->worklist) > 0) CUIK_TIMED_BLOCK("iter") {
             // pull from worklist
-            TB_Node* n = dyn_array_pop(p->queue);
+            TB_Node* n = dyn_array_pop(p->worklist);
             nl_hashset_remove(&p->visited, n);
 
             if (peephole(p, f, n)) {
@@ -768,5 +754,5 @@ void tb_pass_exit(TB_Passes* p) {
     tb_function_free_postorder(&p->order);
     tb_arena_clear(tmp_arena);
     nl_map_free(p->users);
-    dyn_array_destroy(p->queue);
+    dyn_array_destroy(p->worklist);
 }

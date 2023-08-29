@@ -44,7 +44,7 @@ static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n)
     if (n->inputs[0]->type == TB_STORE &&
         n->inputs[0]->inputs[1] == n->inputs[1] &&
         n->dt.raw == n->inputs[0]->inputs[2]->dt.raw &&
-        is_nonvolatile_same_align(n, n->inputs[0])) {
+        is_same_align(n, n->inputs[0])) {
         return n->inputs[0]->inputs[2];
     }
 
@@ -57,7 +57,7 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     if (n->inputs[0]->type == TB_STORE &&
         n->inputs[0]->inputs[1] == n->inputs[1] &&
         n->inputs[2]->dt.raw == n->inputs[0]->inputs[2]->dt.raw &&
-        is_nonvolatile_same_align(n, n->inputs[0])) {
+        is_same_align(n, n->inputs[0])) {
         set_input(p, n, n->inputs[0]->inputs[0], 0);
         return n;
     }
@@ -82,3 +82,4 @@ static TB_Node* ideal_memset(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
     return n;*/
     return NULL;
 }
+
