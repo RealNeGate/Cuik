@@ -306,6 +306,7 @@ static const uint8_t dfa[20][EQ_MAX] = {
     [0][EQ_L]      = 18,
     [18][EQ_IDENT] = 2,
     [18][EQ_NUM]   = 2,
+    [18][EQ_L]     = 2,
     [18][EQ_QUOTE] = 10,
 };
 
