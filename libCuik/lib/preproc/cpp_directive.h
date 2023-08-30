@@ -294,6 +294,8 @@ static DirectiveResult cpp__define(Cuik_CPP* restrict ctx, CPPStackSlot* restric
     SourceLoc loc = peek(in).location;
     String value = get_pp_tokens_until_newline(ctx, in);
 
+    // printf("%.*s -> %.*s\n", (int)key.content.length, key.content.data, (int)value.length, value.data);
+
     size_t i = insert_symtab(ctx, key.content.length, (const char*) key.content.data);
     ctx->macros.vals[i] = (MacroDef){ value, loc };
     return DIRECTIVE_SUCCESS;

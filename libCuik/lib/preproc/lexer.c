@@ -11,8 +11,6 @@
 #define ALWAYS_INLINE __attribute__((always_inline))
 #endif
 
-// Just a big table called 'dfa'
-// https://gist.github.com/RealNeGate/9fd2886c56fa01049c5e85fc8f0fd9b7
 #include "dfa.h"
 
 static uint64_t hash_with_len(const void* data, size_t len) {
@@ -125,43 +123,95 @@ static unsigned char* slow_identifier_lexing(Lexer* restrict l, unsigned char* c
     return (unsigned char*) &newstr[j];
 }
 
+static unsigned char* backslash_join(Lexer* restrict l, unsigned char* start, unsigned char* current) {
+    // skip backslash and newline
+    current += 1;
+    current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
+
+    // find token boundary to shift things correctly
+    unsigned char* next_token_bound = current;
+    for (unsigned char* s = current;; s++) {
+        if (s[0] == '\0' || s[0] == ' ' || s[0] == '\n') {
+            next_token_bound = s;
+            break;
+        } else if (s[0] == '\\' && s[1] == '\n') {
+            s += 1;
+        }
+    }
+
+    // join backslash-newlines
+    size_t length = (next_token_bound - start);
+    for (size_t i = 0; i < length; i++) {
+        if (start[i] == '\\' && (start[i + 1] == '\r' || start[i + 1] == '\n')) {
+            size_t deletion_len = (start[i + 1] + start[i + 2] == '\r' + '\n') ? 3 : 2;
+
+            memmove(start + i, start + i + deletion_len, length - (i + deletion_len));
+            length -= deletion_len, i -= 1;
+        }
+    }
+
+    // fill excess with spaces
+    size_t space_count = (next_token_bound - start) - length;
+    memset(start + length, ' ', space_count);
+
+    // re-read token
+    Lexer mini = { .start = start, .current = start };
+    lexer_read(&mini);
+    return mini.current;
+}
+
+static size_t dfa_fn(uint8_t ch, size_t state) {
+    // eval dfa
+    uint64_t row = dfa[ch][state&1];
+    return (row >> (state & 63)) & 63;
+}
+
 // NOTE(NeGate): The input string has a fat null terminator of 16bytes to allow
 // for some optimizations overall, one of the important ones is being able to read
 // a whole 16byte SIMD register at once for any SIMD optimizations.
 static Token lexer_read(Lexer* restrict l) {
+    return lexer_read_inline(l);
+}
+
+#ifdef NDEBUG
+// glitches out debug info
+__attribute__((always_inline))
+#endif
+static Token lexer_read_inline(Lexer* restrict l) {
     unsigned char* current = l->current;
     Token t = { 0 };
 
-    // Skip any whitespace and comments
     // branchless space skip
     current += (*current == ' ');
 
     // NOTE(NeGate): We canonicalized spaces \t \v
     // in the preprocessor so we don't need to handle them
-    redo_lex: {
-        if (*current == '\0') {
-            // quit, we're done
-            t.hit_line = true;
-            t.type = '\0';
-            return (Token){ 0 };
-        } else if (*current == '\r' || *current == '\n') {
-            current++;
-            current += (*current == '\n');
+    static uint64_t early_out[4] = {
+        [0] = (1ull << ' ') | (1ull << '\r') | (1ull << '\n') | (1ull << '/'),
+        [1] = (1ull << ('\\' - 64)),
+    };
 
-            t.hit_line = true;
-            goto redo_lex;
-        } else if (*current == ' ') {
-            #if !USE_INTRIN
-            current += 1;
-            #else
-            // SIMD space skip
-            __m128i chars = _mm_loadu_si128((__m128i*) current);
-            int len = __builtin_ffs(~_mm_movemask_epi8(_mm_cmpeq_epi8(chars, _mm_set1_epi8(' '))));
-            current += len - 1;
-            #endif
+    while ((early_out[*current / 64] >> (*current % 64)) & 1) {
+        // SIMD whitespace skip
+        __m128i chars = _mm_loadu_si128((__m128i*) current);
+        __m128i mask = _mm_cmpeq_epi8(chars, _mm_set1_epi8(' '));
+        mask = _mm_or_si128(mask, _mm_cmpeq_epi8(chars, _mm_set1_epi8('\r')));
 
-            goto redo_lex;
-        } else if (*current == '/') {
+        __m128i line = _mm_cmpeq_epi8(chars, _mm_set1_epi8('\n'));
+        mask = _mm_or_si128(mask, line);
+
+        uint32_t line_mask = _mm_movemask_epi8(line);
+        int len = __builtin_ffs(~(_mm_movemask_epi8(mask) | line_mask));
+        current += len - 1;
+
+        // mark hit line
+        int line_len = __builtin_ffs(line_mask);
+        if (*current != '\\' && line_len > 0 && line_len < len) {
+            t.hit_line = true;
+        }
+
+        // check for comments
+        if (*current == '/') {
             if (current[1] == '/') {
                 do {
                     current++;
@@ -169,9 +219,8 @@ static Token lexer_read(Lexer* restrict l) {
 
                 current += 1;
                 t.hit_line = true;
-                goto redo_lex;
             } else if (current[1] == '*') {
-                current++;
+                current += 2;
 
                 unsigned char* start = current;
                 do {
@@ -180,46 +229,47 @@ static Token lexer_read(Lexer* restrict l) {
                     current++;
                 } while (*current && !(current[0] == '/' && current[-1] == '*'));
                 current++;
-                goto redo_lex;
+            } else {
+                break;
             }
-        } else if (current[0] == '\\' && (current[1] == '\r' || current[1] == '\n')) {
-            // this happens when there's a backslash-newline that doesn't
-            // necessarily need to join tokens but just joins the lines
+        } else if (*current == '\\') {
+            // backslash-newline join but it doesn't really do shit here
             current += 1;
             current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
-            goto redo_lex;
+        } else if (len <= 1) {
+            // we didn't make progress exit
+            break;
         }
     }
 
-    ////////////////////////////////
-    // Try to actually parse a token
-    ////////////////////////////////
-    unsigned char* start = current;
-    uint64_t state = 0;
+    // quit, we're done
+    if (__builtin_expect(*current == '\0', 0)) return (Token){ 0 };
 
+    // eval DFA for token
+    unsigned char* start = current;
+    size_t state = 0;
     for (;;) {
         uint8_t ch = *current;
 
-        // get next state as a delta
-        uint64_t row = dfa[ch][state / 64];
-        uint64_t delta = (row >> state) & 0xF;
-        if (__builtin_expect(delta == 15, 0)) break;
+        // read convert to class (compresses the DFA a lot)
+        // uint8_t eq_row = eq_classes[ch >> 1];
+        // uint8_t eq = (eq_row >> (ch & 1)*4) & 0xF;
 
-        state += delta*4, current += 1;
+        // eval dfa
+        size_t next = dfa_fn(ch, state);
+        if (next == 0) break;
+
+        state = next;
+        current += 1;
     }
+    assert(current != start || *current == 0);
 
-    state /= 4;
-    // printf(" (%.*s)\n", (int)(current - start), start);
+    // printf("%c%.*s", t.hit_line ? '\n' : ' ', (int) (current - start), start);
 
     // generate valid token types
     switch (state) {
-        case 0: {
-            fprintf(stderr, "illegal lexer char: %c (%d)\n", *start, *start);
-            abort();
-        }
-        case DFA_IDENTIFIER_L:
-        case DFA_IDENTIFIER: {
-            t.type = TOKEN_IDENTIFIER;
+        case 6:
+        case 54: {
             if (current[-1] == '\\') {
                 current -= 1;
             }
@@ -253,12 +303,15 @@ static Token lexer_read(Lexer* restrict l) {
                 }
             }
             #endif
+
+            t.type = TOKEN_IDENTIFIER;
             break;
         }
-        case DFA_NUMBER: {
-            t.type = TOKEN_INTEGER;
-            current = start;
 
+        case 7: {
+            t.type = TOKEN_INTEGER;
+
+            // we've gotten through the simple integer stuff, time for floats
             for (;;) {
                 char a = *current;
                 if (a == '.') {
@@ -274,7 +327,8 @@ static Token lexer_read(Lexer* restrict l) {
             }
             break;
         }
-        case DFA_STRING: {
+
+        case 30: {
             char quote_type = current[-1];
 
             for (; *current && *current != quote_type; current++) {
@@ -297,6 +351,7 @@ static Token lexer_read(Lexer* restrict l) {
             }
             break;
         }
+
         default: {
             // dots can go on forever :p
             if (current[-1] == '.') {
@@ -321,41 +376,7 @@ static Token lexer_read(Lexer* restrict l) {
     // NOTE(NeGate): the lexer will modify code to allow for certain patterns
     // if we wanna get rid of this we should make virtual code regions
     if (__builtin_expect(current[0] == '\\' && (current[1] == '\r' || current[1] == '\n'), 0)) {
-        // skip backslash and newline
-        current += 1;
-        current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
-
-        // find token boundary to shift things correctly
-        unsigned char* next_token_bound = current;
-        for (unsigned char* s = current;; s++) {
-            if (s[0] == '\0' || s[0] == ' ' || s[0] == '\n') {
-                next_token_bound = s;
-                break;
-            } else if (s[0] == '\\' && s[1] == '\n') {
-                s += 1;
-            }
-        }
-
-        // join backslash-newlines
-        size_t length = (next_token_bound - start);
-        for (size_t i = 0; i < length; i++) {
-            if (start[i] == '\\' && (start[i + 1] == '\r' || start[i + 1] == '\n')) {
-                size_t deletion_len = (start[i + 1] + start[i + 2] == '\r' + '\n') ? 3 : 2;
-
-                memmove(start + i, start + i + deletion_len, length - (i + deletion_len));
-                length -= deletion_len, i -= 1;
-            }
-        }
-
-        // fill excess with spaces
-        size_t space_count = (next_token_bound - start) - length;
-        memset(start + length, ' ', space_count);
-
-        // re-read token
-        Lexer mini = { .start = start, .current = start };
-        lexer_read(&mini);
-
-        current = mini.current;
+        current = backslash_join(l, start, current);
     }
     l->current = current;
 

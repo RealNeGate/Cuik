@@ -211,6 +211,136 @@ static uint64_t chars_pattern(uint64_t old, uint64_t new, const char* str) {
     return new;
 }
 
+enum {
+    EQ_NONE,
+    EQ_SIGIL, // @?;:,(){}[].
+    EQ_OPS,   // *%/!=^~
+    EQ_NUM,   // 0-9
+    EQ_L,     // L
+    EQ_IDENT, // _ A-Z a-z $
+    EQ_DOT,   // .
+    EQ_AMP,   // &
+    EQ_PIPE,  // |
+    EQ_LT,    // <
+    EQ_GT,    // >
+    EQ_PLUS,  // +
+    EQ_MINUS, // -
+    EQ_HASH,  // #
+    EQ_EQUAL, // =
+    EQ_QUOTE, // ' "
+    EQ_MAX = 16,
+};
+
+enum { ACCEPT = 1 };
+static const uint8_t dfa[20][EQ_MAX] = {
+    // terminator state
+    // ...
+
+    // identifier: IDENT(IDENT | NUM)*
+    [0][EQ_IDENT] = 2,
+    [2][EQ_IDENT] = 2,
+    [2][EQ_NUM]   = 2,
+    [2][EQ_L]     = 2,
+
+    // number: NUM+ (DOT NUM+ IDENT+)
+    [0][EQ_NUM]   = 3,
+    [3][EQ_NUM]   = 3,
+
+    // sigils: just a single char
+    [0][EQ_SIGIL] = 19,
+
+    // . ...
+    [0][EQ_DOT]   = 4,
+    [4][EQ_DOT]   = 5,
+    [5][EQ_DOT]   = 1,
+
+    // & && &=
+    [0][EQ_AMP]   = 6,
+    [6][EQ_AMP]   = ACCEPT,
+    [6][EQ_EQUAL] = ACCEPT,
+
+    // | || |=
+    [0][EQ_PIPE]  = 7,
+    [7][EQ_PIPE]  = ACCEPT,
+    [7][EQ_EQUAL] = ACCEPT,
+
+    // + ++ +=
+    [0][EQ_PLUS]  = 8,
+    [8][EQ_PLUS]  = ACCEPT,
+    [8][EQ_EQUAL] = ACCEPT,
+
+    // OP | (OP EQUAL)
+    [0][EQ_OPS]    = 9,
+    [9][EQ_EQUAL] = ACCEPT,
+
+    // quotes
+    [0][EQ_QUOTE] = 10,
+
+    // < << <= <<=
+    [0][EQ_LT]     = 11,
+    [11][EQ_LT]    = 12,
+    [11][EQ_EQUAL] = ACCEPT,
+    [12][EQ_EQUAL] = ACCEPT,
+
+    // > >> >= >>=
+    [0][EQ_GT]     = 13,
+    [13][EQ_GT]    = 14,
+    [13][EQ_EQUAL] = ACCEPT,
+    [14][EQ_EQUAL] = ACCEPT,
+
+    // - -- -= ->
+    [0][EQ_MINUS]  = 15,
+    [15][EQ_GT]    = ACCEPT,
+    [15][EQ_MINUS] = ACCEPT,
+    [15][EQ_EQUAL] = ACCEPT,
+
+    // = ==
+    [0][EQ_EQUAL]  = 16,
+    [16][EQ_EQUAL] = ACCEPT,
+
+    // # ##
+    [0][EQ_HASH]   = 17,
+    [17][EQ_HASH]  = ACCEPT,
+
+    // L"string"
+    [0][EQ_L]      = 18,
+    [18][EQ_IDENT] = 2,
+    [18][EQ_NUM]   = 2,
+    [18][EQ_QUOTE] = 10,
+};
+
+// we compress this into 4bit entries so it's 128bytes of eq_class
+static uint8_t eq_classes[256] = {
+    // A-Z is added later
+    ['a' ... 'z']   = EQ_IDENT,
+    [0x80 ... 0xFF] = EQ_IDENT,
+    ['_']           = EQ_IDENT,
+    ['$']           = EQ_IDENT,
+    ['\\']          = EQ_IDENT,
+
+    ['*'] = EQ_OPS, ['%'] = EQ_OPS, ['!'] = EQ_OPS,
+    ['^'] = EQ_OPS, ['~'] = EQ_OPS, ['/'] = EQ_OPS,
+
+    ['@'] = EQ_SIGIL, ['?'] = EQ_SIGIL, [';'] = EQ_SIGIL,
+    [':'] = EQ_SIGIL, [','] = EQ_SIGIL, ['('] = EQ_SIGIL,
+    [')'] = EQ_SIGIL, ['{'] = EQ_SIGIL, ['}'] = EQ_SIGIL,
+    ['['] = EQ_SIGIL, [']'] = EQ_SIGIL,
+
+    ['0' ... '9'] = EQ_NUM,
+
+    ['\''] = EQ_QUOTE, ['"'] = EQ_QUOTE,
+
+    ['>']  = EQ_GT,
+    ['<']  = EQ_LT,
+    ['.']  = EQ_DOT,
+    ['&']  = EQ_AMP,
+    ['#']  = EQ_HASH,
+    ['=']  = EQ_EQUAL,
+    ['|']  = EQ_PIPE,
+    ['+']  = EQ_PLUS,
+    ['-']  = EQ_MINUS,
+};
+
 int main(int argc, char** argv) {
     FILE* file = fopen("libCuik/lib/preproc/keywords.h", "wb");
     for (int i = 0; i < num_keywords; i++) {
@@ -229,74 +359,10 @@ int main(int argc, char** argv) {
     }
     fclose(file);
 
-    int wide_str = ns();
-    int ident = ns();
-    int str = CHARS(0, ns(), "\'\"");
-    RANGE(0, ident, "AZ", "az", "_", "$", "\x80\xFF", "\\");
-    CHARS(0, wide_str, "L");
-
-    // string
-    CHARS(wide_str, str, "\'\"");
-    // ident
-    RANGE(ident, ident, "AZ", "az", "_", "$", "09", "\x80\xFF", "\\");
-    // wide string
-    RANGE(
-        wide_str, ident,
-        "AZ", "az", "_", "$", "09", "\x80\xFF", "\\",
-    );
-
-    int num_dot = ns();
-    int num = ns();
-    {
-        // we handle the real number parsing in the lexer code
-        CHARS(0, num, "0123456789");
-        CHARS(CHARS(0, num_dot, "."), num, "0123456789");
+    for (int i = 'A'; i <= 'Z'; i++) {
+        eq_classes[i] = EQ_IDENT;
     }
-
-    int sigils = CHARS(0, ns(), "@?;:,(){}.");
-
-    // *= /= %= != ^= ~=
-    int ops = CHARS(0, ns(), "*/%!=^~");
-
-    // >>= <<= >= <= > <
-    int s1 = CHARS(0, ns(), "><");
-
-    // - -= -> --
-    int minus = CHARS(0, ns(), "-");
-    // + += ++
-    int plus = CHARS(0, ns(), "+");
-    int hash = CHARS(0, ns(), "#");
-    int pipe = CHARS(0, ns(), "|");
-    int amp = CHARS(0, ns(), "&");
-    CHARS(0, ns(), "[]");
-
-    CHARS(hash, ns(), "#");
-    CHARS(plus, ns(), "+");
-
-    int after_minus = ns();
-    CHARS(minus, after_minus, "=>-");
-
-    int eq = CHARS(ops, ns(), "=");
-    int s2 = CHARS(s1, ns(), "><");
-    int s3 = CHARS(s2, ns(), "=");
-    CHARS(s1, eq, "=");
-
-    int amp_end = ns();
-    CHARS(amp, amp_end, "&");
-    CHARS(amp, amp_end, "=");
-
-    int plus_end = ns();
-    CHARS(plus, plus_end, "+");
-    CHARS(plus, plus_end, "=");
-
-    int pipe_end = ns();
-    CHARS(pipe, pipe_end, "|");
-    CHARS(pipe, pipe_end, "=");
-
-    if (table_id_counter >= 32) {
-        fprintf(stderr, "Failed to generate DFA (too many states)\n");
-        return 1;
-    }
+    eq_classes['L'] = EQ_L;
 
     file = fopen("libCuik/lib/preproc/dfa.h", "wb");
     run_keyword_tablegen(file);
@@ -305,32 +371,37 @@ int main(int argc, char** argv) {
         fprintf(file, "    \"%s\",\n", keywords[i]);
     }
     fprintf(file, "};\n\n");
-    fprintf(file, "enum {\n");
-    fprintf(file, "    DFA_IDENTIFIER   = %d,\n", ident);
-    fprintf(file, "    DFA_NUMBER       = %d,\n", num);
-    fprintf(file, "    DFA_STRING       = %d,\n", str);
-    fprintf(file, "    DFA_SIGILS       = %d,\n", sigils);
-    fprintf(file, "    DFA_IDENTIFIER_L = %d,\n", wide_str);
-    fprintf(file, "};\n");
-    fprintf(file, "static uint64_t dfa[256][2] = {\n");
-    for (int i = 0; i < 256; i++) {
-        fprintf(file, "    { ");
-        for (int j = 0; j < 32; j += 16) {
-            if (j) fprintf(file, ", ");
+    // fprintf(file, "enum { EQ_MAX = %d };\n", EQ_MAX);
+    fprintf(file, "static const uint64_t dfa[256][2] = {\n");
+    for (int j = 0; j < 256; j++) {
+        int cl = eq_classes[j];
 
-            // construct packed states (16 per 64bit)
-            uint64_t v = 0;
-            for (int k = 0; k < 16; k++) {
-                int l = j + k;
-                uint64_t part = table[i][l];
-                v |= (part ? part - l : 0xF) << (k*4);
-            }
+        // for (int j = 0; j < EQ_MAX; j++) {
+        // construct packed states (10 per 6bit)
+        uint64_t v[2] = { 0 };
+        for (int i = 0; i < 20; i++) {
+            uint64_t next = dfa[i][cl];
 
-            fprintf(file, "0x%016llx", v);
+            // printf("[%d][%d]: %llu * 6 (%llu) @ %d,%d\n", i, j, next, ((next>>1)*6) | (next & 1), i&1, (i>>1)*6);
+            v[i & 1] |= (((next>>1) * 6) | (next & 1)) << ((i >> 1) * 6);
         }
-        fprintf(file, " },\n");
+
+        v[1] <<= 1;
+
+        fprintf(file, "    { 0x%016llx, 0x%016llx },\n", v[0], v[1]);
     }
-    fprintf(file, "};\n");
+    fprintf(file, "};\n\n");
+    /*fprintf(file, "static const uint8_t eq_classes[128] = {");
+    for (int i = 0; i < 256; i += 2) {
+        if (i % 16 == 0) fprintf(file, "\n    ");
+
+        // construct packed states (2 per 8bit)
+        uint8_t v = eq_classes[i];
+        v |= eq_classes[i+1] << 4;
+
+        fprintf(file, "0x%02x, ", v);
+    }
+    fprintf(file, "\n};\n");*/
     fclose(file);
     return 0;
 }

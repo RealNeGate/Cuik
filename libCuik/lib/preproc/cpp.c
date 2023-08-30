@@ -139,7 +139,7 @@ static TokenArray convert_to_token_list(Cuik_CPP* restrict c, uint32_t file_id, 
         assert(i == dyn_array_length(list.tokens));
 
         while (i < cap) {
-            Token t = lexer_read(&l);
+            Token t = lexer_read_inline(&l);
             if (__builtin_expect(t.type == 0, 0)) goto exit;
             list.tokens[i++] = t;
         }

@@ -53,7 +53,7 @@ for i = 1, #arg do
 end
 
 local ldflags = ""
-local cflags = " -g -msse4 -I common -Wall -Werror -Wno-unused -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
+local cflags = " -g -march=haswell -I common -Wall -Werror -Wno-unused -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
 
 if options.asan then
 	cflags = cflags.." -fsanitize=address"
