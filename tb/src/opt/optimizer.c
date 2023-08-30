@@ -120,6 +120,28 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 #include "gcm.h"
 #include "libcalls.h"
 
+static void recompute_cfg(TB_Function* f, TB_Passes* restrict p) {
+    CUIK_TIMED_BLOCK("recompute order") {
+        tb_function_free_postorder(&p->order);
+        p->order = tb_function_get_postorder(f);
+    }
+
+    CUIK_TIMED_BLOCK("doms") {
+        FOREACH_N(i, 0, p->order.count) {
+            TB_NodeRegion* r = TB_NODE_GET_EXTRA(p->order.traversal[i]);
+            r->dom_depth = -1; // unresolved
+            r->dom = NULL;
+        }
+
+        // entry dominates itself
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(f->start_node);
+        r->dom_depth = 0;
+        r->dom = f->start_node;
+
+        tb_compute_dominators(f, p->order);
+    }
+}
+
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt) + sizeof(uint64_t));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
@@ -569,10 +591,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
             }
 
             // re-evaluate traversal
-            CUIK_TIMED_BLOCK("recompute order") {
-                tb_function_free_postorder(&p->order);
-                p->order = tb_function_get_postorder(f);
-            }
+            recompute_cfg(f, p);
 
             tb_pass_mark(p, top_node);
             return top_node;

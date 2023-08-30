@@ -185,6 +185,7 @@ static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* n, DynArray(TB_Node*)* stac
                     val = stack[var][dyn_array_length(stack[var]) - 1];
                 }
 
+                set_input(c->p, use, NULL, 1); // unlink first
                 subsume_node(c->p, c->f, use, val);
             }
         }

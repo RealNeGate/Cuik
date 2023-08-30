@@ -81,6 +81,17 @@ static TB_Node* ideal_int2ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     return new_n;
 }
 
+// cmp.slt(a, 0) => is_sign(a)
+static bool sign_check(TB_Node* n) {
+    uint64_t x;
+    return n->type == TB_CMP_SLT && get_int_const(n->inputs[2], &x) && x == 0;
+}
+
+static bool is_zero(TB_Node* n) {
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    return n->type == TB_INTEGER_CONST && i->num_words == 1 && i->words[0];
+}
+
 static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
@@ -420,7 +431,7 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
 // a * 0 => 0
 // a / 0 => poison
 static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
-    if (!tb_node_is_constant_zero(n->inputs[2])) return n;
+    if (!is_zero(n->inputs[2])) return n;
 
     switch (n->type) {
         default: return n;

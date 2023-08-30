@@ -132,7 +132,13 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
     }
 
     bool is_effect = tb_has_effects(n);
-    P("  r%p [style=\"rounded,filled\"; shape=box; fillcolor=%s; label=\"", n, is_effect ? "lightgrey" : "antiquewhite1");
+
+    const char* fillcolor = is_effect ? "lightgrey" : "antiquewhite1";
+    if (n->type == TB_PROJ) {
+        fillcolor = "lightblue";
+    }
+
+    P("  r%p [style=\"rounded,filled\"; ordering=in; shape=box; fillcolor=%s; label=\"", n, fillcolor);
     switch (n->type) {
         case TB_INTEGER_CONST: {
             P("%s ", tb_node_get_name(n));
@@ -187,8 +193,14 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
         P("%s", tb_node_get_name(n));
         break;
 
-        case TB_PROJ:
-        assert(0);
+        case TB_PROJ: {
+            int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+            P("proj.");
+            tb_print_type(n->dt, callback, user_data);
+            P(" %zu", index);
+            break;
+        }
 
         case TB_CMP_EQ:
         case TB_CMP_NE:
@@ -212,7 +224,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
         TB_Node* in = n->inputs[i];
 
-        if (in->type == TB_PROJ) {
+        if (in->type == TB_PROJ && (in->inputs[0]->type != TB_START || in->dt.type == TB_CONTROL)) {
             // projections get treated as edges
             TB_Node* src = in->inputs[0];
             int index = TB_NODE_GET_EXTRA_T(in, TB_NodeProj)->index;
@@ -225,7 +237,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(src);
 
                 TB_Node* key = src->input_count > 1 ? src->inputs[1] : NULL;
-                if (br->keys[0] == 0 && br->succ_count == 2 && key && key->dt.type == TB_INT && key->dt.data == 1) {
+                if (br->keys[0] == 0 && br->succ_count == 2 && key && key->dt.type == TB_INT) {
                     // boolean branch, we can use true and false
                     P(index ? "is false?" : "is true?");
                 } else if (br->succ_count == 1) {
@@ -235,7 +247,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
                 } else {
                     P("is %d?", br->keys[index - 1]);
                 }
-            } else if (src->dt.type == TB_CONTROL) {
+            } else if (in->dt.type == TB_CONTROL) {
                 P("cproj");
             } else {
                 P("%zu", index);
@@ -253,9 +265,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
                 P(" [color=\"red\"]");
             }
 
-            if (n->input_count == 3 && n->inputs[0] == 0) {
-                P(" [label=\"%s\"];\n", i == 1 ? "L" : "R");
-            } else if (n->type == TB_CALL && i > 1) {
+            if (n->type == TB_CALL && i > 1) {
                 P(" [label=\"%zu\"];\n", i - 2);
             } else if (n->type == TB_PHI && i > 0) {
                 P(" [label=\"%zu\"];\n", i - 1);
@@ -267,7 +277,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
 }
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data) {
-    P("digraph %s {\n  rankdir=\"TB\"\n", f->super.name ? f->super.name : "unnamed");
+    P("digraph %s {\n  overlap = false; rankdir=\"TB\"\n", f->super.name ? f->super.name : "unnamed");
 
     NL_HashSet visited = nl_hashset_alloc(f->node_count);
     tb_print_node(f, &visited, callback, user_data, f->stop_node);
