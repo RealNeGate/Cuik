@@ -564,7 +564,7 @@ static void fake_unuse(Ctx* restrict ctx, TB_Node* n) {
 
 static bool has_users(Ctx* restrict ctx, TB_Node* n) {
     ptrdiff_t search = nl_map_get(ctx->uses, n);
-    return ctx->uses[search].v > 0;
+    return search >= 0 ? ctx->uses[search].v > 0 : false;
 }
 
 static void isel_region(Ctx* restrict ctx, TB_Node* control, TB_Node* next) {
