@@ -87,9 +87,14 @@ static bool sign_check(TB_Node* n) {
     return n->type == TB_CMP_SLT && get_int_const(n->inputs[2], &x) && x == 0;
 }
 
+static bool is_non_zero(TB_Node* n) {
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    return n->type == TB_INTEGER_CONST && i->num_words == 1 && i->words[0] != 0;
+}
+
 static bool is_zero(TB_Node* n) {
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    return n->type == TB_INTEGER_CONST && i->num_words == 1 && i->words[0];
+    return n->type == TB_INTEGER_CONST && i->num_words == 1 && i->words[0] == 0;
 }
 
 static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {

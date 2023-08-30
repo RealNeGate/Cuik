@@ -147,7 +147,18 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->num_words = 1;
     i->words[0] = x;
-    return n;
+
+    // try CSE, if we succeed, just delete the node and use the old copy
+    TB_Node* k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
+    if (k != NULL) {
+        // try free?
+        log_debug("%s: early CSE on integer %lld", f->super.name, x);
+        tb_arena_free(f->arena, n->inputs, sizeof(TB_Node*));
+        tb_arena_free(f->arena, n, sizeof(TB_Node) + n->extra_count);
+        return k;
+    } else {
+        return n;
+    }
 }
 
 TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, int num_words) {
@@ -388,7 +399,7 @@ static void cool_print_type(TB_Node* n) {
         } else if (n->type == TB_BRANCH) {
             dt = n->inputs[1]->dt;
         } else if (n->type == TB_STOP) {
-            dt = n->inputs[1]->dt;
+            dt = n->input_count > 1 ? n->inputs[1]->dt : TB_TYPE_VOID;
         } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
             dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
         }
