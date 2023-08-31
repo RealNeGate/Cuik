@@ -185,6 +185,15 @@ static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* n, DynArray(TB_Node*)* stac
                     val = stack[var][dyn_array_length(stack[var]) - 1];
                 }
 
+                // make sure it's the right type
+                if (use->dt.raw != val->dt.raw) {
+                    TB_Node* cast = tb_alloc_node(c->f, TB_BITCAST, use->dt, 2, 0);
+                    tb_pass_mark(c->p, cast);
+                    set_input(c->p, cast, val, 1);
+
+                    val = cast;
+                }
+
                 set_input(c->p, use, NULL, 1); // unlink first
                 subsume_node(c->p, c->f, use, val);
             }

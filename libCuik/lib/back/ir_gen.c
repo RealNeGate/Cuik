@@ -401,11 +401,6 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule
                 TB_Node* n = cvt2rval(tu, func, &arg);
                 TB_DataType dt = n->dt;
 
-                if (is_vararg && dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0) {
-                    // win64: convert any float variadic arguments into integers
-                    n = tb_inst_bitcast(func, n, TB_TYPE_I64);
-                }
-
                 out_param[0] = n;
                 return 1;
             }

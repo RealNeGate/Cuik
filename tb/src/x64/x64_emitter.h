@@ -149,7 +149,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 
     bool dir = b->type == VAL_MEM || b->type == VAL_GLOBAL;
-    if (dir || inst->op == 0x63 || inst->op == 0x69 || (type >= CMOVO && type <= CMOVG) || inst->op == 0xAF || inst->cat == INST_BINOP_EXT2) {
+    if (dir || inst->op == 0x63 || inst->op == 0x69 || inst->op == 0x6E || (type >= CMOVO && type <= CMOVG) || inst->op == 0xAF || inst->cat == INST_BINOP_EXT2) {
         SWAP(const Val*, a, b);
     }
 
@@ -164,12 +164,16 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     bool is_gpr_only_dst = (inst->op & 1);
     bool dir_flag = (dir != is_gpr_only_dst) && inst->op != 0x69;
 
-    // Address size prefix
-    if (dt == TB_X86_TYPE_WORD && inst->cat != INST_BINOP_EXT2) {
+    if (inst->cat != INST_BINOP_EXT3) {
+        // Address size prefix
+        if (dt == TB_X86_TYPE_WORD && inst->cat != INST_BINOP_EXT2) {
+            EMIT1(e, 0x66);
+        }
+
+        assert((b->type == VAL_GPR || b->type == VAL_IMM) && "secondary operand is invalid!");
+    } else {
         EMIT1(e, 0x66);
     }
-
-    assert((b->type == VAL_GPR || b->type == VAL_IMM) && "secondary operand is invalid!");
 
     // REX PREFIX
     //  0 1 0 0 W R X B
@@ -190,7 +194,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
         rex_prefix |= ((a->index >> 3) << 1);
     }
 
-    uint8_t rx = (b->type == VAL_GPR) ? b->reg : inst->rx_i;
+    uint8_t rx = (b->type == VAL_GPR || b->type == VAL_XMM) ? b->reg : inst->rx_i;
     if (inst->cat == INST_BINOP_CL) {
         assert(b->type == VAL_IMM || (b->type == VAL_GPR && b->reg == RCX));
 
@@ -207,25 +211,31 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
         EMIT1(e, rex_prefix);
     }
 
-    // Opcode
-    if (inst->cat == INST_BINOP_EXT || inst->cat == INST_BINOP_EXT2) {
-        // DEF instructions can only be 32bit and 64bit... maybe?
-        if (type != XADD) sz = 0;
+    if (inst->cat == INST_BINOP_EXT3) {
+        // movd/movq add the ADDR16 prefix for reasons?
         EMIT1(e, 0x0F);
+        EMIT1(e, inst->op);
+    } else {
+        // Opcode
+        if (inst->cat == INST_BINOP_EXT || inst->cat == INST_BINOP_EXT2) {
+            // DEF instructions can only be 32bit and 64bit... maybe?
+            if (type != XADD) sz = 0;
+            EMIT1(e, 0x0F);
+        }
+
+        // Immediates have a custom opcode
+        assert((b->type != VAL_IMM || inst->op_i != 0 || inst->rx_i != 0) && "no immediate variant of instruction");
+        uint8_t opcode = b->type == VAL_IMM ? inst->op_i : inst->op;
+
+        // bottom bit usually means size, 0 for 8bit, 1 for everything else.
+        opcode |= sz;
+
+        // you can't actually be flipped in the immediates because it would mean
+        // you're storing into an immediate so they reuse that direction bit for size.
+        opcode |= dir_flag << 1;
+        opcode |= short_imm << 1;
+        EMIT1(e, opcode);
     }
-
-    // Immediates have a custom opcode
-    assert((b->type != VAL_IMM || inst->op_i != 0 || inst->rx_i != 0) && "no immediate variant of instruction");
-    uint8_t opcode = b->type == VAL_IMM ? inst->op_i : inst->op;
-
-    // bottom bit usually means size, 0 for 8bit, 1 for everything else.
-    opcode |= sz;
-
-    // you can't actually be flipped in the immediates because it would mean
-    // you're storing into an immediate so they reuse that direction bit for size.
-    opcode |= dir_flag << 1;
-    opcode |= short_imm << 1;
-    EMIT1(e, opcode);
 
     emit_memory_operand(e, rx, a);
     // BTW memory displacements go before immediates

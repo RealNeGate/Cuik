@@ -95,6 +95,7 @@ typedef enum {
     INST_BINOP_PLUS, // +r
     INST_BINOP_EXT,  // 0F
     INST_BINOP_EXT2, // 0F (movzx, movsx)
+    INST_BINOP_EXT3, // 66 (movd, movq)
     INST_BINOP_CL, // implicit CL, used by the shift ops
 
     // SSE

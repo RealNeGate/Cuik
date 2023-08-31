@@ -337,6 +337,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                         else printf("    default: ");
 
                         print_ref_to_node(ctx, br->succ[i]);
+                        printf("\n");
                     }
                     printf("  }\n");
                 }

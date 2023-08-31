@@ -54,18 +54,17 @@ static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n)
 static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // god i need a pattern matcher
     //   (store (store X A Y) A Z) => (store X A Z)
-    if (n->inputs[0]->type == TB_STORE &&
+    /*if (n->inputs[0]->type == TB_STORE &&
         n->inputs[0]->inputs[1] == n->inputs[1] &&
         n->inputs[2]->dt.raw == n->inputs[0]->inputs[2]->dt.raw &&
         is_same_align(n, n->inputs[0])) {
         set_input(p, n, n->inputs[0]->inputs[0], 0);
         return n;
-    }
+    }*/
 
     return NULL;
 }
 
-static TB_Node* ideal_memset(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_memcpy(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     return NULL;
 }
-

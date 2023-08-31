@@ -140,6 +140,18 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
 
     P("  r%p [style=\"rounded,filled\"; ordering=in; shape=box; fillcolor=%s; label=\"", n, fillcolor);
     switch (n->type) {
+        case TB_FLOAT32_CONST: {
+            TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
+            P("f32 %f", f->value);
+            break;
+        }
+
+        case TB_FLOAT64_CONST: {
+            TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
+            P("f64 %f", f->value);
+            break;
+        }
+
         case TB_INTEGER_CONST: {
             P("%s ", tb_node_get_name(n));
 

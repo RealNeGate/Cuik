@@ -477,7 +477,7 @@ void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, T
     assert(TB_IS_POINTER_TYPE(dst->dt));
     assert(TB_IS_INTEGER_TYPE(val->dt) && val->dt.data == 8);
 
-    TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_VOID, 4, sizeof(TB_NodeMemAccess));
+    TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_CONTROL, 4, sizeof(TB_NodeMemAccess));
     n->inputs[0] = f->active_control_node; // control edge
     n->inputs[1] = dst;
     n->inputs[2] = val;
@@ -491,7 +491,7 @@ void tb_inst_memcpy(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, T
     assert(TB_IS_POINTER_TYPE(dst->dt));
     assert(TB_IS_POINTER_TYPE(val->dt));
 
-    TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_VOID, 4, sizeof(TB_NodeMemAccess));
+    TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_CONTROL, 4, sizeof(TB_NodeMemAccess));
     n->inputs[0] = f->active_control_node; // control edge
     n->inputs[1] = dst;
     n->inputs[2] = val;

@@ -480,8 +480,8 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         case TB_STORE:
         return ideal_store(p, f, n);
 
-        case TB_MEMSET:
-        return ideal_memset(p, f, n);
+        case TB_MEMCPY:
+        return ideal_memcpy(p, f, n);
 
         // division
         case TB_SDIV:

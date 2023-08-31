@@ -15,6 +15,9 @@ enum {
     INST_LABEL = 1024,
     INST_LINE,
 
+    // inline machine code
+    INST_INLINE,
+
     // marks the terminator
     INST_TERMINATOR,
     INST_EPILOGUE,
@@ -32,6 +35,7 @@ typedef struct Inst Inst;
 // the first set of indices are reserved for physical registers, the
 // rest are allocated as virtual registers.
 typedef int RegIndex;
+_Static_assert(sizeof(TB_PhysicalReg) == sizeof(RegIndex), "these should be the same");
 
 typedef struct MachineBB {
     Inst* first;
@@ -562,6 +566,16 @@ static void fake_unuse(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
+static bool on_last_use(Ctx* restrict ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->uses, n);
+    return search >= 0 ? ctx->uses[search].v == 1 : false;
+}
+
+static bool on_2nd_to_last_use(Ctx* restrict ctx, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(ctx->uses, n);
+    return search >= 0 ? ctx->uses[search].v == 2 : false;
+}
+
 static bool has_users(Ctx* restrict ctx, TB_Node* n) {
     ptrdiff_t search = nl_map_get(ctx->uses, n);
     return search >= 0 ? ctx->uses[search].v > 0 : false;
@@ -698,13 +712,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
-    /*reg_alloc_log = strcmp(f->super.name, "stbi__zhuffman_decode_slowpath") == 0;
+    reg_alloc_log = strcmp(f->super.name, "stbi__parse_huffman_block") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }*/
+    }
 
     Ctx ctx = {
         .module = f->super.module,
@@ -861,4 +875,3 @@ static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_ali
         default: tb_unreachable();
     }
 }
-

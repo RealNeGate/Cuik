@@ -392,7 +392,7 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     //   x / y  => mulhi(x, a) >> sh
     int bits = dt.data;
     if (bits > 32) {
-        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, dt, 3, sizeof(TB_NodeMulPair));
+        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, sizeof(TB_NodeMulPair));
         set_input(opt, mul_node, x, 1);
         set_input(opt, mul_node, make_int_node(f, opt, dt, a), 2);
 

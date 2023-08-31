@@ -25,13 +25,11 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
         TB_Node* dst_ptr = n->inputs[2];
 
         // memcpy returns the destination pointer, convert any users of that to dst
-        for (User* use = find_users(passes, n); use; use = use->next) {
-            if (use->slot == 1 && use->n->type == TB_PROJ) {
-                subsume_node(passes, f, use->n, dst_ptr);
-            }
-        }
-
-        return n2;
+        // and CALL has a projection we wanna get rid of
+        TB_NodeCall* c = TB_NODE_GET_EXTRA_T(n, TB_NodeCall);
+        subsume_node(passes, f, c->projs[0], n2);
+        subsume_node(passes, f, c->projs[1], dst_ptr);
+        return dst_ptr;
     } else if (strcmp(fname, "memset") == 0) {
         TB_Node* n2 = tb_alloc_node(f, TB_MEMSET, TB_TYPE_CONTROL, 4, sizeof(TB_NodeMemAccess));
         set_input(passes, n2, n->inputs[0], 0); // control
@@ -43,13 +41,11 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
         TB_Node* dst_ptr = n->inputs[2];
 
         // memset returns the destination pointer, convert any users of that to dst
-        for (User* use = find_users(passes, n); use; use = use->next) {
-            if (use->slot == 1 && use->n->type == TB_PROJ) {
-                subsume_node(passes, f, use->n, dst_ptr);
-            }
-        }
-
-        return n2;
+        // and CALL has a projection we wanna get rid of
+        TB_NodeCall* c = TB_NODE_GET_EXTRA_T(n, TB_NodeCall);
+        subsume_node(passes, f, c->projs[0], n2);
+        subsume_node(passes, f, c->projs[1], dst_ptr);
+        return dst_ptr;
     } else {
         return NULL;
     }

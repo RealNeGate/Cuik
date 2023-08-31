@@ -185,8 +185,31 @@ static Inst* inst_jcc(TB_Node* target, Cond cc) {
     return i;
 }
 
+// store(binop(load(a), b))
+static int can_folded_store(Ctx* restrict ctx, TB_Node* addr, TB_Node* src) {
+    switch (src->type) {
+        default: return -1;
+
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB: {
+            if (src->inputs[1]->type == TB_LOAD &&
+                src->inputs[1]->inputs[1] == addr &&
+                on_last_use(ctx, src) &&
+                on_last_use(ctx, src->inputs[1])) {
+                const static InstType ops[] = { AND, OR, XOR, ADD, SUB };
+                return ops[src->type - TB_AND];
+            }
+
+            return -1;
+        }
+    }
+}
+
 // generates an LEA for computing the address of n.
-static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst) {
+static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int src) {
     int64_t offset = 0;
     if (n->type == TB_VA_START) {
         assert(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
@@ -238,6 +261,11 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst) {
             scale = tb_ffs(stride) - 1;
 
             if (scale > 3) {
+                if (dst < 0) {
+                    assert(store_op >= 0);
+                    dst = DEF(NULL, TB_TYPE_I64);
+                }
+
                 // we can't fit this into an LEA, might as well just do a shift
                 SUBMIT(inst_op_rri(SHL, TB_TYPE_I64, dst, index, scale));
                 index = dst, scale = 1;
@@ -253,7 +281,12 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst) {
             //
             //   LEA b,   [a * 8]
             //   LEA dst, [b * 2 + b]
-            SUBMIT(inst_op_rri(IMUL, n->dt, dst, index, stride));
+            if (dst < 0) {
+                assert(store_op >= 0);
+                dst = DEF(NULL, TB_TYPE_I64);
+            }
+
+            SUBMIT(inst_op_rri(IMUL, TB_TYPE_I64, dst, index, stride));
             index = dst;
         }
 
@@ -270,10 +303,14 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst) {
     }
 
     // compute base
-    if (index < 0 && offset == 0) {
-        return inst_move(n->dt, dst, base);
+    if (store_op < 0) {
+        if (index < 0 && offset == 0) {
+            return inst_move(n->dt, dst, base);
+        } else {
+            return inst_op_rm(LEA, n->dt, dst, base, index, scale, offset);
+        }
     } else {
-        return inst_op_rm(LEA, n->dt, dst, base, index, scale, offset);
+        return inst_op_mr(store_op, n->dt, base, index, scale, offset, src);
     }
 }
 
@@ -574,6 +611,27 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }
             break;
         }
+        case TB_MULPAIR: {
+            // returns into both lo and hi
+            TB_NodeMulPair* p = TB_NODE_GET_EXTRA(n);
+            TB_DataType dt = p->lo->dt;
+
+            int lo = DEF(n, dt);
+            int hi = DEF(n, dt);
+            nl_map_put(ctx->values, p->lo, lo);
+            nl_map_put(ctx->values, p->hi, hi);
+            {
+                Inst* inst = alloc_inst(MUL, dt, 2, 2, 0);
+                inst->operands[0] = RAX;
+                inst->operands[1] = RDX;
+                inst->operands[2] = RAX;
+                inst->operands[3] = RDX;
+                SUBMIT(inst);
+            }
+            SUBMIT(inst_move(dt, lo, RAX));
+            SUBMIT(inst_move(dt, hi, RDX));
+            break;
+        }
 
         // bit shifts
         case TB_SHL:
@@ -779,7 +837,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         // pointer arithmatic
         case TB_LOCAL:
         dst = DEF(n, n->dt);
-        SUBMIT(isel_addr(ctx, n, dst));
+        SUBMIT(isel_addr(ctx, n, dst, -1, -1));
         forget = true;
         break;
 
@@ -787,7 +845,25 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_MEMBER_ACCESS:
         case TB_ARRAY_ACCESS: {
             dst = DEF(n, n->dt);
-            SUBMIT(isel_addr(ctx, n, dst));
+            SUBMIT(isel_addr(ctx, n, dst, -1, -1));
+            break;
+        }
+
+        // bitcasting
+        case TB_BITCAST: {
+            TB_DataType src_dt = n->inputs[1]->dt;
+            int src = isel(ctx, n->inputs[1]);
+
+            dst = DEF(n, n->dt);
+            if (src_dt.type == TB_FLOAT && n->dt.type == TB_INT) {
+                // float -> int
+                SUBMIT(inst_op_rr(MOV_F2I, n->dt, dst, src));
+            } else if (src_dt.type == TB_INT && n->dt.type == TB_FLOAT) {
+                // int -> float
+                SUBMIT(inst_op_rr(MOV_I2F, src_dt, dst, src));
+            } else {
+                SUBMIT(inst_move(n->dt, dst, src));
+            }
             break;
         }
 
@@ -934,6 +1010,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             RegIndex ins[16];
             RegIndex param_srcs[16];
 
+            TB_FunctionPrototype* proto = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto;
+            int vararg_cutoff = proto && proto->has_varargs ? proto->param_count : n->input_count-2;
+
             size_t xmms_used = 0, gprs_used = 0;
             FOREACH_N(i, 2, n->input_count) {
                 TB_Node* param = n->inputs[i];
@@ -989,7 +1068,18 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             // perform last minute copies (this avoids keeping parameter registers alive for too long)
             FOREACH_N(i, 0, in_count) {
-                SUBMIT(inst_move(n->inputs[2 + i]->dt, ins[i], param_srcs[i]));
+                TB_DataType dt = n->inputs[2 + i]->dt;
+
+                bool use_xmm = TB_IS_FLOAT_TYPE(dt) || dt.width;
+                SUBMIT(inst_move(dt, ins[i], param_srcs[i]));
+
+                // in win64, float params past the vararg cutoff are
+                // duplicated in their respective GPR slot
+                if (use_xmm && i >= vararg_cutoff && i < desc->gpr_count) {
+                    int phys_reg = desc->gprs[i];
+                    SUBMIT(inst_op_rr(MOV_F2I, TB_TYPE_I64, phys_reg, ins[i]));
+                    ins[in_count++] = FIRST_GPR + phys_reg;
+                }
             }
 
             // the number of float parameters is written into AL
@@ -1192,7 +1282,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             TB_Node* addr = n->inputs[1];
 
-            Inst* ld_inst = isel_addr(ctx, addr, dst);
+            Inst* ld_inst = isel_addr(ctx, addr, dst, -1, -1);
             ld_inst->type = mov_op;
             ld_inst->dt = legalize(n->dt);
             if ((ld_inst->flags & INST_MEM) == 0) {
@@ -1205,23 +1295,36 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
         case TB_STORE: {
             TB_DataType store_dt = n->inputs[2]->dt;
-            int src = isel(ctx, n->inputs[2]);
             int mov_op = (TB_IS_FLOAT_TYPE(store_dt) || store_dt.width) ? FP_MOV : MOV;
 
-            Inst* inst = NULL;
+            // if we can couple the LOAD & STORE
             TB_Node* addr = n->inputs[1];
-            if (addr->type == TB_LOCAL) {
-                use(ctx, addr);
+            int fold_op = can_folded_store(ctx, addr, n->inputs[2]);
+            if (fold_op >= 0) {
+                use(ctx, n->inputs[2]);
+                use(ctx, n->inputs[2]->inputs[1]);
+                use(ctx, n->inputs[2]->inputs[1]->inputs[1]);
+                fence(ctx, n);
 
-                int pos = get_stack_slot(ctx, addr);
-                inst = inst_op_mr(mov_op, store_dt, RBP, -1, SCALE_X1, pos, src);
+                int src = isel(ctx, n->inputs[2]->inputs[2]);
+
+                Inst* st_inst = isel_addr(ctx, addr, dst, fold_op, src);
+                st_inst->dt = legalize(store_dt);
+                assert(st_inst->flags & INST_MEM);
+
+                SUBMIT(st_inst);
             } else {
-                int base = isel(ctx, addr);
-                inst = inst_op_mr(mov_op, store_dt, base, -1, SCALE_X1, 0, src);
-            }
+                Inst* inst = NULL;
 
-            fence(ctx, n);
-            SUBMIT(inst);
+                // flip the operands on an isel_addr op
+                int src = isel(ctx, n->inputs[2]);
+                Inst* st_inst = isel_addr(ctx, addr, dst, mov_op, src);
+                st_inst->dt = legalize(store_dt);
+                assert(st_inst->flags & INST_MEM);
+
+                fence(ctx, n);
+                SUBMIT(st_inst);
+            }
             break;
         }
 
@@ -1235,7 +1338,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 TB_DataType dt = n->inputs[1]->dt;
                 if (dt.type == TB_FLOAT) {
                     hint_reg(ctx, src, FIRST_XMM + XMM0);
-                    tb_todo();
+                    SUBMIT(inst_move(dt, FIRST_XMM + XMM0, src));
                 } else {
                     hint_reg(ctx, src, RAX);
                     SUBMIT(inst_move(dt, RAX, src));
@@ -1246,6 +1349,18 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // need to mark that it's the epilogue to tell regalloc where callee
             // regs need to get restored.
             append_inst(ctx, alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
+            break;
+        }
+
+        case TB_MACHINE_OP: {
+            TB_NodeMachineOp* mach = TB_NODE_GET_EXTRA(n);
+            size_t total = mach->outs + mach->ins + mach->tmps;
+
+            if (total == 0) tb_todo();
+
+            Inst* inst = alloc_inst(INST_INLINE, TB_TYPE_VOID, mach->outs, mach->ins, mach->tmps);
+            memcpy(inst->operands, mach->regs, total * sizeof(TB_PhysicalReg));
+            append_inst(ctx, inst);
             break;
         }
 
@@ -1283,590 +1398,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
     }
     return dst;
 }
-
-#if 0
-static int isel(Ctx* restrict ctx, TB_Node* n) {
-    use(ctx, n);
-
-    ptrdiff_t search = nl_map_get(ctx->values, n);
-    if (search >= 0) {
-        return ctx->values[search].v;
-    }
-
-    TB_NodeTypeEnum type = n->type;
-    int dst = -1;
-    bool forget = false;
-
-    switch (type) {
-        case TB_SELECT: {
-            dst = DEF(n, REG_CLASS_GPR);
-
-            int lhs = ISEL(n->inputs[2]);
-            int rhs = ISEL(n->inputs[3]);
-
-            Cond cc = isel_cmp(ctx, n->inputs[1]);
-            SUBMIT(inst_rr(CMOVO + cc, n->dt, dst, rhs, lhs));
-            break;
-        }
-
-        case TB_MULPAIR: {
-            dst = DEF(n, REG_CLASS_GPR);
-
-            int fake_dst = DEF(n, REG_CLASS_GPR);
-
-            // mov rax, lhs
-            int lhs = ISEL(n->inputs[1]);
-            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, fake_dst);
-            SUBMIT(inst_copy(n->dt, rax, lhs));
-
-            int rhs = ISEL(n->inputs[2]);
-            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, fake_dst);
-            SUBMIT(inst_def(rdx));
-
-            SUBMIT(inst_r(MUL, n->dt, -1, rhs));
-            SUBMIT(inst_copy(n->dt, fake_dst, USE(rax))); // use fake_dst
-
-            // returns into both lo and hi
-            TB_NodeMulPair* p = TB_NODE_GET_EXTRA(n);
-
-            int lo = DEF(n, REG_CLASS_GPR);
-            int hi = DEF(n, REG_CLASS_GPR);
-            nl_map_put(ctx->values, p->lo, lo);
-            nl_map_put(ctx->values, p->hi, hi);
-
-            SUBMIT(inst_copy(n->dt, lo, USE(rdx)));      // hi
-            SUBMIT(inst_copy(n->dt, hi, USE(fake_dst))); // lo
-            break;
-        }
-        case TB_UDIV:
-        case TB_SDIV:
-        case TB_UMOD:
-        case TB_SMOD: {
-            bool is_signed = (type == TB_SDIV || type == TB_SMOD);
-            bool is_div    = (type == TB_UDIV || type == TB_SDIV);
-
-            int rax = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
-            int rdx = DEF_FORCED(n, REG_CLASS_GPR, RDX, -1);
-
-            TB_DataType dt = n->dt;
-            assert(dt.type == TB_INT);
-
-            int op = INST_COPY;
-            if (dt.data <= 8)       op = is_signed ? MOVSXB : MOVZXB;
-            else if (dt.data <= 16) op = is_signed ? MOVSXW : MOVZXW;
-
-            // division is scaled up to 32bit
-            if (dt.data < 32) dt.data = 32;
-
-            // mov rax, lhs
-            int lhs = ISEL(n->inputs[1]);
-            SUBMIT(inst_r(op, dt, rax, lhs));
-
-            int rhs = ISEL(n->inputs[2]);
-            if (n->dt.data < 32) {
-                // add cast
-                int new_rhs = DEF(n->inputs[2], REG_CLASS_GPR);
-                SUBMIT(inst_r(op, TB_TYPE_I32, new_rhs, rhs));
-                rhs = USE(new_rhs);
-            }
-
-            // if signed:
-            //   cqo/cdq (sign extend RAX into RDX)
-            // else:
-            //   xor rdx, rdx
-            if (is_signed) {
-                SUBMIT(inst_def(rdx));
-                SUBMIT(inst_u(CAST, dt));
-            } else {
-                SUBMIT(inst_i(MOV, dt, rdx, 0));
-            }
-            SUBMIT(inst_r(is_signed ? IDIV : DIV, dt, -1, rhs));
-            SUBMIT(inst_use(rax));
-            SUBMIT(inst_use(rdx));
-
-            dst = DEF(n, REG_CLASS_GPR);
-            SUBMIT(inst_copy(dt, dst, USE(is_div ? rax : rdx)));
-            break;
-        }
-        case TB_SHL:
-        case TB_SHR:
-        case TB_SAR:
-        case TB_ROL:
-        case TB_ROR: {
-            const static InstType ops[] = { SHL, SHR, SAR, ROL, ROR };
-            InstType op = ops[type - TB_SHL];
-
-            dst = DEF(n, REG_CLASS_GPR);
-
-            int32_t x;
-            if (try_for_imm8(ctx, n->inputs[2], &x)) {
-                use(ctx, n->inputs[2]);
-
-                int lhs = ISEL(n->inputs[1]);
-                SUBMIT(inst_ri(op, n->dt, dst, lhs, x));
-            } else {
-                // the shift operations need their right hand side in CL (RCX's low 8bit)
-                int lhs = ISEL(n->inputs[1]);
-                int rhs = ISEL(n->inputs[2]); // TODO(NeGate): hint into RCX
-
-                int cl = DEF_FORCED(n, REG_CLASS_GPR, RCX, -1);
-                SUBMIT(inst_copy(n->dt, cl, rhs));
-                SUBMIT(inst_rr(op, n->dt, dst, lhs, USE(cl)));
-            }
-            break;
-        }
-
-        case TB_INT2PTR:
-        case TB_SIGN_EXT:
-        case TB_ZERO_EXT: {
-            TB_Node* src = n->inputs[1];
-
-            TB_DataType src_dt = src->dt;
-            bool sign_ext = (type == TB_SIGN_EXT);
-            int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
-
-            dst = DEF(n, REG_CLASS_GPR);
-
-            int32_t imm;
-            if (try_for_imm32(ctx, src, &imm)) {
-                #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
-                use(ctx, src);
-
-                uint64_t src = imm;
-                uint64_t sign_bit = (src >> (bits_in_type - 1)) & 1;
-                uint64_t mask = MASK_UPTO(64) & ~MASK_UPTO(bits_in_type);
-
-                src = (src & ~mask) | (sign_bit ? mask : 0);
-                if (!fits_into_int32(src)) {
-                    // movabs reg, imm64
-                    SUBMIT(inst_i64(MOVABS, n->dt, dst, src));
-                } else {
-                    SUBMIT(inst_i(MOV, n->dt, dst, src));
-                }
-
-                return dst;
-                #undef MASK_UPTO
-            }
-
-            TB_DataType dt = n->dt;
-
-            int op = MOV;
-            if (bits_in_type <= 8) op = sign_ext ? MOVSXB : MOVZXB;
-            else if (bits_in_type <= 16) op = sign_ext ? MOVSXW : MOVZXW;
-            else if (bits_in_type <= 32) {
-                if (sign_ext) op = MOVSXD;
-                else dt = src_dt;
-            } else if (bits_in_type <= 64) op = MOV;
-            else tb_todo();
-
-            if (src->type == TB_LOAD && nl_map_get_checked(ctx->uses, src) == 1) {
-                use(ctx, src);
-
-                Inst inst = isel_load(ctx, src, dst);
-                inst.type = op;
-                inst.data_type = legalize(dt);
-                SUBMIT(inst);
-            } else {
-                int val = ISEL(src);
-                SUBMIT(inst_r(op, dt, dst, val));
-            }
-            break;
-        }
-        case TB_PTR2INT:
-        case TB_TRUNCATE: {
-            int src = ISEL(n->inputs[1]);
-
-            if (n->dt.type == TB_FLOAT) {
-                dst = DEF(n, REG_CLASS_XMM);
-                SUBMIT(inst_r(FP_CVT, n->inputs[1]->dt, dst, src));
-            } else {
-                dst = DEF(n, REG_CLASS_GPR);
-                SUBMIT(inst_copy(n->dt, dst, src));
-            }
-            break;
-        }
-
-        case TB_UNREACHABLE:
-        case TB_TRAP: {
-            SUBMIT(inst_nullary(UD2));
-            break;
-        }
-
-        case TB_BRANCH: {
-            TB_Node* bb = tb_get_parent_region(n);
-            TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-            TB_Node** succ = r->succ;
-
-            if (r->succ_count == 2 && br->keys[0] == 0) {
-                use(ctx, n->inputs[1]);
-
-                // do fence without that extra use
-                fence(ctx, n);
-                fence_last(ctx, bb, n);
-
-                // we redo it because the later code will be the one to
-                // actually apply it
-                fake_unuse(ctx, n->inputs[1]);
-            } else {
-                fence(ctx, n);
-                fence_last(ctx, bb, n);
-            }
-
-            if (r->succ_count == 1) {
-                if (ctx->fallthrough != succ[0]) {
-                    SUBMIT(inst_jmp(succ[0]));
-                }
-            } else if (r->succ_count == 2) {
-                TB_DataType dt = n->inputs[1]->dt;
-
-                // if-like branch
-                if (br->keys[0] == 0) {
-                    Cond cc = isel_cmp(ctx, n->inputs[1]);
-
-                    // if flipping avoids a jmp, do that
-                    TB_Node *f = succ[0], *t = succ[1];
-                    if (ctx->fallthrough == f) {
-                        SUBMIT(inst_jcc(t, cc ^ 1));
-                    } else {
-                        SUBMIT(inst_jcc(f, cc));
-
-                        if (ctx->fallthrough != t) {
-                            SUBMIT(inst_jmp(t));
-                        }
-                    }
-                } else {
-                    int key = USE(ISEL(n->inputs[1]));
-                    SUBMIT(inst_i(CMP, dt, key, br->keys[0]));
-                    SUBMIT(inst_jcc(succ[1], E));
-                    SUBMIT(inst_jmp(succ[0]));
-                }
-            } else {
-                TB_DataType dt = n->inputs[1]->dt;
-                int key = USE(ISEL(n->inputs[1]));
-
-                // check if there's at most only one space between entries
-                uint64_t last = br->keys[1];
-                uint64_t min = last, max = last;
-
-                bool use_jump_table = true;
-                FOREACH_N(i, 2, r->succ_count) {
-                    uint64_t key = br->keys[i - 1];
-                    min = (min > key) ? key : min;
-                    max = (max > key) ? max : key;
-
-                    int64_t dist = key - last;
-                    if (dist > 2) {
-                        use_jump_table = false;
-                        break;
-                    }
-                    last = key;
-                }
-
-                if (use_jump_table) {
-                    // Simple range check
-                    log_debug("Should do range check (%llu .. %llu)", min, max);
-                }
-
-                FOREACH_N(i, 1, r->succ_count) {
-                    uint64_t curr_key = br->keys[i-1];
-
-                    if (fits_into_int32(curr_key)) {
-                        SUBMIT(inst_ri(CMP, dt, -1, USE(key), curr_key));
-                    } else {
-                        int tmp = DEF(n, REG_CLASS_GPR);
-                        SUBMIT(inst_i64(MOVABS, dt, tmp, curr_key));
-                        SUBMIT(inst_rr(CMP, dt, -1, USE(key), USE(tmp)));
-                    }
-                    SUBMIT(inst_jcc(succ[i], E));
-                }
-                SUBMIT(inst_jmp(succ[0]));
-            }
-            break;
-        }
-
-        // the good thing is that safepoints don't need live ranges or anything
-        case TB_SAFEPOINT: {
-            TB_SafepointKey* key = &ctx->safepoints[TB_NODE_GET_EXTRA_T(n, TB_NodeSafepoint)->id];
-            TB_Safepoint* restrict sp = malloc(sizeof(TB_Safepoint) + (n->input_count * sizeof(int32_t)));
-
-            FOREACH_N(i, 1, n->input_count) {
-                int src = ISEL(n->inputs[i]);
-                SUBMIT(inst_use(src));
-            }
-
-            key->sp = sp;
-            break;
-        }
-
-        case TB_SYSCALL:
-        case TB_CALL: {
-            static const struct ParamDescriptor {
-                int gpr_count;
-                int xmm_count;
-                uint16_t caller_saved_xmms; // XMM0 - XMMwhatever
-                uint16_t caller_saved_gprs; // bitfield
-
-                GPR gprs[6];
-            } param_descs[] = {
-                // win64
-                { 4, 4, 6, WIN64_ABI_CALLER_SAVED,  { RCX, RDX, R8,  R9,  0,  0 } },
-                // system v
-                { 6, 4, 5, SYSV_ABI_CALLER_SAVED,    { RDI, RSI, RDX, RCX, R8, R9 } },
-                // syscall
-                { 6, 4, 5, SYSCALL_ABI_CALLER_SAVED, { RDI, RSI, RDX, R10, R8, R9 } },
-            };
-
-            bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
-            const struct ParamDescriptor* restrict desc = &param_descs[is_sysv ? 1 : 0];
-            if (type == TB_SYSCALL) {
-                desc = &param_descs[2];
-            }
-
-            // system calls don't count, we track this for ABI
-            // and stack allocation purposes.
-            if (ctx->caller_usage < n->input_count) {
-                ctx->caller_usage = n->input_count;
-            }
-
-            // generate clones of each parameter which live until the CALL instruction executes
-            int fake_dst;
-            if (n->dt.type == TB_FLOAT) {
-                fake_dst = DEF_FORCED(n, REG_CLASS_XMM, XMM0, -1);
-            } else {
-                fake_dst = DEF_FORCED(n, REG_CLASS_GPR, RAX, -1);
-            }
-            uint32_t caller_saved_gprs = desc->caller_saved_gprs;
-
-            // parameter passing is separate from eval from regalloc reasons
-            size_t xmms_used = 0;
-            FOREACH_REVERSE_N(i, 2, n->input_count) {
-                TB_Node* param = n->inputs[i];
-                TB_DataType param_dt = param->dt;
-
-                // signed 32bit immediates get love
-                int32_t imm;
-                if (try_for_imm32(ctx, param, &imm)) {
-                    use(ctx, param);
-
-                    if (i - 2 < desc->gpr_count) {
-                        int param_def = DEF_FORCED(param, REG_CLASS_GPR, desc->gprs[i - 2], fake_dst);
-                        SUBMIT(inst_i(MOV, param->dt, param_def, imm));
-                    } else {
-                        SUBMIT(inst_mi(MOV, param->dt, RSP, GPR_NONE, SCALE_X1, (i - 2) * 8, imm));
-                    }
-                    continue;
-                }
-
-                int src = isel(ctx, param);
-                if (TB_IS_FLOAT_TYPE(param_dt) || param_dt.width) {
-                    int xmm_id = is_sysv ? xmms_used++ : i - 2;
-                    if (xmm_id == 0 && n->dt.type == TB_FLOAT) {
-                        // xmm0 is in use, let's not make another forced GPR
-                        SUBMIT(inst_copy(param->dt, fake_dst, USE(src)));
-                    } else if (xmm_id < desc->gpr_count) {
-                        // hint src into XMM
-                        XMM target_xmm = xmm_id;
-                        hint(ctx, src, target_xmm);
-
-                        int param_def = DEF_FORCED(param, REG_CLASS_XMM, target_xmm, fake_dst);
-                        SUBMIT(inst_copy(param->dt, param_def, USE(src)));
-                    } else {
-                        SUBMIT(inst_mr(FP_MOV, param->dt, RSP, GPR_NONE, SCALE_X1, (i - 2) * 8, USE(src)));
-                    }
-                } else {
-                    if (i - 2 < desc->gpr_count) {
-                        // hint src into GPR
-                        GPR target_gpr = desc->gprs[i - 2];
-                        hint(ctx, src, target_gpr);
-
-                        int param_def = DEF_FORCED(param, REG_CLASS_GPR, target_gpr, fake_dst);
-                        SUBMIT(inst_copy(param->dt, param_def, USE(src)));
-                    } else {
-                        SUBMIT(inst_mr(MOV, param->dt, RSP, GPR_NONE, SCALE_X1, (i - 2) * 8, USE(src)));
-                    }
-                }
-            }
-
-            size_t clobber_cap = tb_popcount(caller_saved_gprs) + desc->caller_saved_xmms;
-            Clobbers* clobbers = tb_arena_alloc(&tb__arena, sizeof(Clobbers) + (clobber_cap * sizeof(MachineReg)));
-
-            // mark all the clobbers
-            size_t clobber_count = 0;
-            FOREACH_N(i, 0, 16) if (caller_saved_gprs & (1u << i)) {
-                clobbers->_[clobber_count++] = (MachineReg){ REG_CLASS_GPR, i };
-            }
-
-            FOREACH_N(i, 0, desc->caller_saved_xmms) {
-                clobbers->_[clobber_count++] = (MachineReg){ REG_CLASS_XMM, i };
-            }
-
-            assert(clobber_count == clobber_cap);
-            clobbers->count = clobber_count;
-            ctx->defs[fake_dst].clobbers = clobbers;
-
-            TB_Node* target = n->inputs[1];
-            if (type == TB_SYSCALL) {
-                int num = ISEL(target);
-                fence(ctx, n);
-
-                SUBMIT(inst_copy(n->dt, fake_dst, num));
-                SUBMIT(inst_nullary(SYSCALL));
-            } else {
-                fence(ctx, n);
-
-                // the number of float parameters is written into AL
-                if (is_sysv) {
-                    SUBMIT(inst_i(MOV, TB_TYPE_I64, RAX, xmms_used));
-                }
-
-                if (target->type == TB_SYMBOL) {
-                    TB_NodeSymbol* s = TB_NODE_GET_EXTRA(target);
-                    SUBMIT(inst_call(n->dt, fake_dst, s->sym));
-                } else {
-                    int call_target = ISEL(target);
-
-                    SUBMIT(inst_r(CALL, n->dt, fake_dst, call_target));
-                }
-            }
-
-            TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
-            if (n->extra_count > sizeof(TB_NodeCall)) {
-                // multiple returns must fill up the projections
-                tb_todo();
-            } else {
-                if (n->dt.type == TB_FLOAT) {
-                    dst = DEF_HINTED(n, REG_CLASS_XMM, XMM0);
-                    SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
-                } else {
-                    dst = DEF_HINTED(n, REG_CLASS_GPR, RAX);
-                    SUBMIT(inst_copy(n->dt, dst, USE(fake_dst)));
-                }
-            }
-            break;
-        }
-
-        case TB_MEMSET: {
-            int rax = DEF_FORCED(n->inputs[2], REG_CLASS_GPR, RAX, -1);
-            int rcx = DEF_FORCED(n->inputs[3], REG_CLASS_GPR, RCX, rax);
-            int rdi = DEF_FORCED(n->inputs[1], REG_CLASS_GPR, RDI, rax);
-
-            // clobber inputs
-            Clobbers* clobbers = tb_arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)));
-            clobbers->count = 3;
-            clobbers->_[0] = (MachineReg){ REG_CLASS_GPR, RDI };
-            clobbers->_[1] = (MachineReg){ REG_CLASS_GPR, RCX };
-            clobbers->_[2] = (MachineReg){ REG_CLASS_GPR, RAX };
-            ctx->defs[rax].clobbers = clobbers;
-
-            // rep stosb
-            //   mov rdi, ADDRESS
-            int addr = isel(ctx, n->inputs[1]);
-            hint(ctx, addr, RDI);
-            SUBMIT(inst_copy(TB_TYPE_PTR, rdi, USE(addr)));
-            //   mov rcx, SIZE
-            int size = isel(ctx, n->inputs[3]);
-            hint(ctx, size, RCX);
-            SUBMIT(inst_copy(TB_TYPE_I64, rcx, USE(size)));
-            //   mov rax, SRC
-            int src = isel(ctx, n->inputs[2]);
-            hint(ctx, src, RAX);
-            SUBMIT(inst_copy(TB_TYPE_I8, rax, USE(src)));
-            //   rep stosb
-            Inst i = inst_nullary(STOSB);
-            i.prefix |= INST_REP;
-            SUBMIT(i);
-            SUBMIT(inst_use(rdi));
-            SUBMIT(inst_use(rcx));
-            SUBMIT(inst_use(rax));
-            break;
-        }
-        case TB_MEMCPY: {
-            int rsi = DEF_FORCED(n->inputs[2], REG_CLASS_GPR, RSI, -1);
-            int rdi = DEF_FORCED(n->inputs[1], REG_CLASS_GPR, RDI, rsi);
-            int rcx = DEF_FORCED(n->inputs[3], REG_CLASS_GPR, RCX, rsi);
-
-            // clobber inputs
-            Clobbers* clobbers = tb_arena_alloc(&tb__arena, sizeof(Clobbers) + (3 * sizeof(MachineReg)));
-            clobbers->count = 3;
-            clobbers->_[0] = (MachineReg){ REG_CLASS_GPR, RDI };
-            clobbers->_[1] = (MachineReg){ REG_CLASS_GPR, RCX };
-            clobbers->_[2] = (MachineReg){ REG_CLASS_GPR, RSI };
-            ctx->defs[rsi].clobbers = clobbers;
-
-            // rep movsb
-            //   mov rdi, ADDRESS
-            int addr = isel(ctx, n->inputs[1]);
-            hint(ctx, addr, RDI);
-            SUBMIT(inst_copy(TB_TYPE_PTR, rdi, USE(addr)));
-            //   mov rcx, SIZE
-            int size = isel(ctx, n->inputs[3]);
-            hint(ctx, size, RCX);
-            SUBMIT(inst_copy(TB_TYPE_I64, rcx, USE(size)));
-            //   mov rsi, SRC
-            int src = isel(ctx, n->inputs[2]);
-            hint(ctx, src, RSI);
-            SUBMIT(inst_copy(TB_TYPE_PTR, rsi, USE(src)));
-            //   rep movsb
-            Inst i = inst_nullary(MOVSB);
-            i.prefix |= INST_REP;
-            SUBMIT(i);
-            SUBMIT(inst_use(rdi));
-            SUBMIT(inst_use(rcx));
-            SUBMIT(inst_use(rsi));
-            break;
-        }
-
-        // x86 intrinsics
-        case TB_DEBUGBREAK: {
-            SUBMIT(inst_nullary(INT3));
-            break;
-        }
-
-        /*case TB_X86INTRIN_RDTSC: {
-            SUBMIT(inst_nullary(RDTSC));
-            break;
-        }*/
-
-        case TB_PROJ: {
-            isel(ctx, n->inputs[0]);
-
-            if (n->inputs[0]->type == TB_START) {
-                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-
-                // past the first 4 parameters, it's all stack
-                if (index >= 4 && ctx->target_abi == TB_ABI_WIN64) {
-                    dst = DEF(n, classify_reg_class(n->dt));
-
-                    InstType i = n->dt.type == TB_FLOAT ? FP_MOV : MOV;
-                    SUBMIT(inst_m(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, 16 + (index * 8)));
-                    forget = true;
-                    break;
-                }
-            }
-
-            ptrdiff_t search = nl_map_get(ctx->values, n);
-            assert(search >= 0);
-
-            dst = ctx->values[search].v;
-            break;
-        }
-
-        case TB_POISON: {
-            dst = DEF(n, REG_CLASS_GPR);
-            break;
-        }
-
-        case TB_NULL: break;
-        default: tb_todo();
-    }
-
-    if (!forget) {
-        nl_map_put(ctx->values, n, dst);
-    }
-    return dst;
-}
-#endif
 
 static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) {
     static const char* type_names[] = {
@@ -1937,7 +1468,10 @@ static void inst2_print(TB_CGEmitter* restrict e, InstType type, Val* dst, Val* 
 
     if (e->emit_asm) {
         EMITA(e, "  %s", inst_table[type].mnemonic);
-        if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
+        if (inst_table[type].cat == INST_BINOP_EXT3) {
+            // movd/q
+            EMITA(e, "%c ", dt == TB_X86_TYPE_QWORD ? 'q' : 'd');
+        } else if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
             static const char suffixes[4][3] = { "ss", "sd", "ps", "pd" };
             EMITA(e, "%s ", suffixes[dt - TB_X86_TYPE_SSE_SS]);
         } else {
@@ -2057,6 +1591,14 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             if (bb != ctx->f->start_node) {
                 EMITA(e, "L%p:\n", bb);
             }
+        } else if (inst->type == INST_INLINE) {
+            TB_NodeMachineOp* mach = TB_NODE_GET_EXTRA(inst->n);
+
+            EMITA(&ctx->emit, "  INLINE MACHINE CODE:");
+            FOREACH_N(i, 0, mach->length) {
+                EMITA(&ctx->emit, " %#02x", mach->data[i]);
+            }
+            EMITA(&ctx->emit, "\n");
         } else if (inst->type == INST_EPILOGUE) {
             // return label goes here
             EMITA(&ctx->emit, ".ret:\n");

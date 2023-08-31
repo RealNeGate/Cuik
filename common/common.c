@@ -126,6 +126,8 @@ void tb_arena_pop(TB_Arena* restrict arena, void* ptr, size_t size) {
 }
 
 bool tb_arena_free(TB_Arena* restrict arena, void* ptr, size_t size) {
+    size = (size + TB_ARENA_ALIGNMENT - 1) & ~(TB_ARENA_ALIGNMENT - 1);
+
     char* p = ptr;
     if (p + size == arena->watermark) {
         arena->watermark = p;

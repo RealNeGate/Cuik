@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <stdio.h>
 
 typedef unsigned char stbi_uc;
@@ -63,6 +64,119 @@ typedef struct
     stbi_uc *img_buffer_original, *img_buffer_original_end;
 } stbi__context;
 
+static int stbi__parse_zlib_header(stbi__zbuf *a);
+
+// returns 1 if the product is valid, 0 on overflow.
+// negative factors are considered invalid.
+int stbi__mul2sizes_valid(int a, int b)
+{
+    if (a < 0 || b < 0) return 0;
+    if (b == 0) return 1; // mul-by-0 is always safe
+    // portable way to check for no overflows in a*b
+    return a <= INT_MAX/b;
+}
+
+int stbi__parse_zlib(stbi__zbuf *a, int parse_header)
+{
+    // stbi__parse_zlib_header(a);
+    return 1;
+}
+
+uint64_t foo(uint64_t x, uint64_t y) {
+    if ((x * 2) / 2) return x;
+    else             return y;
+}
+
+void array_ops(size_t n, int* arr) {
+    for (size_t i = 0; i < n; i++) {
+        arr[i] |= 1;
+    }
+}
+
+uint32_t div_tricks(uint32_t n) {
+    return n / 3;
+}
+
+int bar(int n) {
+    int arr[2];
+    arr[0] = n;
+    arr[1] = 1;
+
+    while (arr[0] < 10) {
+        arr[1] *= arr[0];
+        arr[0]++;
+    }
+
+    return arr[1];
+}
+
+uint32_t murmur3_32(const void* key, size_t len) {
+    uint32_t h = 0;
+
+    // main body, work on 32-bit blocks at a time
+    for (size_t i=0;i<len/4;i++) {
+        uint32_t k;
+        memcpy(&k, &key[i * 4], sizeof(k));
+
+        k *= 0xcc9e2d51;
+        k = ((k << 15) | (k >> 17))*0x1b873593;
+        h = (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
+    }
+
+    // load/mix up to 3 remaining tail bytes into a tail block
+    uint32_t t = 0;
+    const uint8_t *tail = ((const uint8_t*) key) + 4*(len/4);
+    switch(len & 3) {
+        case 3: t ^= tail[2] << 16;
+        case 2: t ^= tail[1] <<  8;
+        case 1: {
+            t ^= tail[0] <<  0;
+            h ^= ((0xcc9e2d51*t << 15) | (0xcc9e2d51*t >> 17))*0x1b873593;
+        }
+    }
+
+    // finalization mix, including key length
+    h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
+    h = (h ^ (h >> 13))*0xc2b2ae35;
+    return (h ^ (h >> 16));
+}
+
+static int folding(void) {
+    return 42+1 & 3 * 16;
+}
+
+int bitcast(float x) {
+    return *(int*) &x;
+}
+
+float Q_rsqrt(float number) {
+    long i;
+    float x2, y;
+    const float threehalfs = 1.5F;
+
+    x2 = number * 0.5F;
+    y  = number;
+    i  = * ( long * ) &y;                       // evil floating point bit level hacking
+    i  = 0x5f3759df - ( i >> 1 );               // what the fuck?
+    y  = * ( float * ) &i;
+    y  = y * ( threehalfs - ( x2 * y * y ) );   // 1st iteration
+    // y  = y * ( threehalfs - ( x2 * y * y ) );   // 2nd iteration, this can be removed
+    return y;
+}
+
+int main() {
+    for (int i = 0; i < 100; i++) {
+        printf("%f\n", Q_rsqrt(i / 100.0f));
+    }
+    return 0;
+}
+
+#if 0
+int main() {
+    printf("%d\n", bar(1));
+}
+#endif
+
 /*int callee(int x, int y, int z);
 
 int test(int x, int y) {
@@ -96,47 +210,14 @@ void stbi__fill_bits(stbi__zbuf *z)
 void stbi__skip(stbi__context *s, int n)
 {
     int blen = (int) (s->img_buffer_end - s->img_buffer);
-}*/
-
-uint32_t murmur3_32(const void* key, size_t len) {
-    uint32_t h = 0;
-
-    // main body, work on 32-bit blocks at a time
-    for (size_t i=0;i<len/4;i++) {
-        uint32_t k;
-        memcpy(&k, &key[i * 4], sizeof(k));
-
-        k *= 0xcc9e2d51;
-        k = ((k << 15) | (k >> 17))*0x1b873593;
-        h = (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
-    }
-
-    // load/mix up to 3 remaining tail bytes into a tail block
-    uint32_t t = 0;
-    const uint8_t *tail = ((const uint8_t*) key) + 4*(len/4);
-    switch(len & 3) {
-        case 3: t ^= tail[2] << 16;
-        case 2: t ^= tail[1] <<  8;
-        case 1: {
-            t ^= tail[0] <<  0;
-            h ^= ((0xcc9e2d51*t << 15) | (0xcc9e2d51*t >> 17))*0x1b873593;
-        }
-    }
-
-    // finalization mix, including key length
-    h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
-    h = (h ^ (h >> 13))*0xc2b2ae35;
-    return (h ^ (h >> 16));
 }
-
-static int foo() { return 42+1 & 3 * 16; }
 
 int main() {
     // printf("Woah! %d\n", foo());
     printf("Wack! %d\n", murmur3_32("Hello", 5));
     printf("Wack! %d\n", murmur3_32("Why", 3));
     return 0;
-}
+}*/
 
 #if 0
 int tiling(int* a, size_t i) {
@@ -169,19 +250,6 @@ struct Cell {
     Cell* cdr;
 };
 
-int foo(int n) {
-    int arr[2];
-    arr[0] = n;
-    arr[1] = 1;
-
-    while (arr[0] < 10) {
-        arr[1] *= arr[0];
-        arr[0]++;
-    }
-
-    return arr[1];
-}
-
 int select_opt(int a, int b) {
     return a > 10 && b > 10;
 }
@@ -201,16 +269,6 @@ static int stbi__addsizes_valid(int a, int b)
     // And "a + b <= INT_MAX" (which might overflow) is the
     // same as a <= INT_MAX - b (no overflow)
     return a <= INT_MAX - b;
-}
-
-// returns 1 if the product is valid, 0 on overflow.
-// negative factors are considered invalid.
-static int stbi__mul2sizes_valid(int a, int b)
-{
-    if (a < 0 || b < 0) return 0;
-    if (b == 0) return 1; // mul-by-0 is always safe
-    // portable way to check for no overflows in a*b
-    return a <= INT_MAX/b;
 }
 
 static int stbi__mad2sizes_valid(int a, int b, int add)

@@ -1,7 +1,7 @@
 #pragma once
 #include "tb_internal.h"
 
-#define TB_OPTDEBUG_PEEP 1
+#define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
 #define TB_OPTDEBUG_MEM2REG 0
 

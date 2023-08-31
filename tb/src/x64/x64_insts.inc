@@ -5,7 +5,7 @@ X(RET,       "ret",         BYTE,       0xC3)
 X(INT3,      "int3",        BYTE,       0xCC)
 X(STOSB,     "rep stosb",   BYTE,       0xAA)
 X(MOVSB,     "rep movsb",   BYTE,       0xA4)
-X(CAST,      NULL,          BYTE,       0x99)
+X(CAST,      "cvt",         BYTE,       0x99)
 X(SYSCALL,   "syscall",     BYTE_EXT,   0x05)
 X(RDTSC,     "rdtsc",       BYTE_EXT,   0x31)
 X(UD2,       "ud2",         BYTE_EXT,   0x0B)
@@ -100,6 +100,10 @@ X(MOVSXW,    "movsxw",      BINOP_EXT2, 0xBF)
 X(MOVSXD,    "movsxd",      BINOP,      0x63)
 X(MOVZXB,    "movzxb",      BINOP_EXT2, 0xB6)
 X(MOVZXW,    "movzxw",      BINOP_EXT2, 0xB7)
+
+// gpr<->xmm
+X(MOV_I2F,   "mov",         BINOP_EXT3, 0x6E)
+X(MOV_F2I,   "mov",         BINOP_EXT3, 0x7E)
 
 // SSE binops
 X(FP_MOV,    "mov",         BINOP_SSE,  0x10)

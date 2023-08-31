@@ -124,6 +124,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
     bool dst_use_reg = inst->type == IMUL || inst->type == INST_ZERO || (inst->flags & (INST_MEM | INST_GLOBAL));
 
     FOREACH_N(i, 0, inst->out_count) {
+        assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
         if (interval->ranges == NULL) {
@@ -137,6 +138,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
     }
 
     FOREACH_N(i, 0, inst->in_count) {
+        assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
         add_range(interval, bb->start, inst->time);
@@ -146,6 +148,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
     // calls use the temporaries for clobbers
     bool is_call = (inst->type == CALL || inst->type == SYSCALL);
     FOREACH_N(i, 0, inst->tmp_count) {
+        assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
         add_range(interval, inst->time, inst->time + 1);
@@ -379,7 +382,13 @@ static int split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval
 static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     int rc = interval->reg_class;
 
-    FOREACH_N(i, 0, 16) ra->free_pos[i] = INT_MAX;
+    // callee saved will be biased to have nearer free positions to avoid incurring
+    // a spill on them early.
+    int half_free = 1 << 16;
+    FOREACH_N(i, 0, 16) {
+        ra->free_pos[i] = (ra->callee_saved[rc] & (1ull << i)) ? half_free : INT_MAX;
+        // ra->free_pos[i] = INT_MAX;
+    }
 
     // for each active reg, set the free pos to 0
     FOREACH_SET(i, ra->active_set[rc]) {
