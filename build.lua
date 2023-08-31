@@ -61,6 +61,10 @@ else
 	cflags = cflags.." -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC"
 end
 
+if options.driver then
+	cflags = cflags.." -DCUIK_USE_CUIK"
+end
+
 if options.gcc then
 	cflags = cflags.." -Wno-enum-compare -Wno-array-bounds"
 end

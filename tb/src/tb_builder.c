@@ -1018,7 +1018,7 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
         size_t phi_count = end->input_count;
         for (; i < phi_count; i++) {
             // put poison in the leftovers?
-            log_warn("%s: ir: generated poisoned because of inconsistent number of returned values", f->super.name);
+            log_warn("%s: ir: generated poison due to inconsistent number of returned values", f->super.name);
 
             TB_Node* poison = tb_alloc_node(f, TB_POISON, end->inputs[i]->dt, 1, 0);
             add_input_late(f, end->inputs[i], poison);

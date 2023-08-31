@@ -154,9 +154,9 @@ void tb_compute_dominators(TB_Function* f, TB_PostorderWalk order) {
                                 b = d ? find_traversal_index(&ctx, d) : entry_dom;
                             }
                         }
-                    }
 
-                    new_idom = ctx.order.traversal[a];
+                        new_idom = ctx.order.traversal[a];
+                    }
                 }
             }
 

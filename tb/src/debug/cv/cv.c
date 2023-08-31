@@ -305,7 +305,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                         tb_out4b(&debugs_out, 0);
                         tb_out4b(&debugs_out, 0);
 
-                        // printf("  FILE %d\n", loc.file);
+                        // printf("  FILE %s\n", loc.file->path);
                         current_line_count = 0;
                         last_line = 0;
                     }

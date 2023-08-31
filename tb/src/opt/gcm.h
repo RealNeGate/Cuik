@@ -1,3 +1,4 @@
+
 ////////////////////////////////
 // Early scheduling
 ////////////////////////////////
@@ -161,55 +162,51 @@ void tb_pass_schedule(TB_Passes* passes) {
     // Scheduling: "Global Code Motion Global Value Numbering", Cliff Click 1995
     //   https://courses.cs.washington.edu/courses/cse501/06wi/reading/click-pldi95.pdf
     CUIK_TIMED_BLOCK("schedule") {
-        NL_HashSet visited = nl_hashset_alloc(passes->f->node_count);
+        tb_pass_ensure_empty(passes);
+
+        NL_HashSet* restrict visited = &passes->visited;
+        DynArray(TB_Node*)* restrict worklist = &passes->worklist;
 
         CUIK_TIMED_BLOCK("early schedule") {
             FOREACH_REVERSE_N(i, 0, passes->order.count) {
                 TB_Node* bb = passes->order.traversal[i];
 
                 // schedule all pinned instructions
-                schedule_region(passes, &visited, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
+                schedule_region(passes, visited, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
             }
         }
 
         // generate instruction list we can walk
-        DynArray(TB_Node*) worklist = NULL;
-
         CUIK_TIMED_BLOCK("gen worklist") {
-            nl_hashset_clear(&visited);
+            nl_hashset_clear(visited);
             FOREACH_N(i, 0, passes->order.count) {
                 TB_Node* bb = passes->order.traversal[i];
-                postorder_all_nodes(&visited, &worklist, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
+                postorder_all_nodes(visited, worklist, TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end);
             }
         }
 
         // move nodes closer to their usage site
         CUIK_TIMED_BLOCK("late schedule") {
-            nl_hashset_clear(&visited);
-            FOREACH_REVERSE_N(i, 0, dyn_array_length(worklist)) {
-                TB_Node* n = worklist[i];
+            nl_hashset_clear(visited);
+            FOREACH_REVERSE_N(i, 0, dyn_array_length(*worklist)) {
+                TB_Node* n = (*worklist)[i];
 
                 if (is_pinned(n)) {
-                    nl_hashset_put(&visited, n);
+                    nl_hashset_put(visited, n);
 
                     for (User* use = find_users(passes, n); use; use = use->next) {
                         if (use->n->inputs[0] != NULL) {
-                            schedule_late(passes, &visited, use->n);
+                            schedule_late(passes, visited, use->n);
                         }
                     }
                 } else if (n->input_count == 1) {
                     // this is gonna usually be the constants
-                    schedule_late(passes, &visited, worklist[i]);
+                    schedule_late(passes, visited, (*worklist)[i]);
                 }
             }
         }
 
         // reset node count
-        passes->f->node_count = visited.count;
-
-        CUIK_TIMED_BLOCK("freeing") {
-            dyn_array_destroy(worklist);
-            nl_hashset_free(visited);
-        }
+        passes->f->node_count = visited->count;
     }
 }

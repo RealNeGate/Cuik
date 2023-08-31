@@ -31,6 +31,7 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
 static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node);
 
 // node creation helpers
+TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt);
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
@@ -139,6 +140,22 @@ static void recompute_cfg(TB_Function* f, TB_Passes* restrict p) {
         r->dom = f->start_node;
 
         tb_compute_dominators(f, p->order);
+    }
+}
+
+TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
+    TB_Node* n = tb_alloc_node(f, TB_POISON, dt, 1, 0);
+
+    // try CSE, if we succeed, just delete the node and use the old copy
+    TB_Node* k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
+    if (k != NULL) {
+        // try free?
+        log_debug("%s: early CSE on poison", f->super.name);
+        tb_arena_free(f->arena, n->inputs, sizeof(TB_Node*));
+        tb_arena_free(f->arena, n, sizeof(TB_Node) + n->extra_count);
+        return k;
+    } else {
+        return n;
     }
 }
 
@@ -317,6 +334,16 @@ static void tb_pass_mark_users_raw(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
+void tb_pass_ensure_empty(TB_Passes* restrict p) {
+    if (dyn_array_length(p->worklist) == 0) {
+        dyn_array_clear(p->worklist);
+    }
+
+    CUIK_TIMED_BLOCK("clear visited") {
+        nl_hashset_clear(&p->visited);
+    }
+}
+
 void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
     for (User* use = find_users(p, n); use; use = use->next) {
         tb_pass_mark(p, use->n);
@@ -412,11 +439,20 @@ void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
         printf("%"PRId64, num->words[0]);
-    } else if (depth > 0) {
+    } else if (n->type == TB_SYMBOL) {
+        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+        if (sym->name[0]) {
+            printf("%s", sym->name);
+        } else {
+            printf("sym%p", sym);
+        }
+    } else if (depth >= 1) {
         printf("(%s", tb_node_get_name(n));
         cool_print_type(n);
         printf(" ...)");
     } else {
+        depth -= (n->type == TB_PROJ);
+
         printf("(%s", tb_node_get_name(n));
         cool_print_type(n);
         FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {

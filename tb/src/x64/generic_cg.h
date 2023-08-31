@@ -77,8 +77,8 @@ typedef struct {
     TB_Passes* p;
 
     // Scheduling
-    NL_HashSet visited;
-    NL_Map(TB_Node*, int) uses;
+    NL_HashSet* visited; // reusing the TB_Passes one.
+    int* uses;           // the indices match the visited set.
 
     // Regalloc
     DynArray(LiveInterval) intervals;
@@ -531,54 +531,61 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     return epilogue;
 }
 
-static void visit_uses(Ctx* restrict ctx, NL_HashSet* visited, TB_Node* n) {
-    if (!nl_hashset_put(visited, n)) {
+static void visit_uses(TB_Passes* passes, NL_HashSet* visited, int* uses, TB_Node* n) {
+    size_t index = nl_hashset_lookup(visited, n);
+    if (index & NL_HASHSET_HIGH_BIT) {
         return;
     }
+    visited->data[index & NL_HASHSET_INDEX_BITS] = n;
 
     FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
         tb_assert(n->inputs[i], "empty input... in this economy?");
-        visit_uses(ctx, visited, n->inputs[i]);
+        visit_uses(passes, visited, uses, n->inputs[i]);
     }
 
     // track use count
     size_t use_count = 0;
-    for (User* use = find_users(ctx->p, n); use; use = use->next) {
+    for (User* use = find_users(passes, n); use; use = use->next) {
         use_count++;
     }
-    nl_map_put(ctx->uses, n, use_count);
+
+    // we don't have to worry about resizing here which is really nice
+    uses[index & NL_HASHSET_INDEX_BITS] = use_count;
 }
 
-static bool use(Ctx* restrict ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->uses, n);
-    if (search < 0) {
-        return false;
+static int* lookup_use_count(Ctx* restrict ctx, TB_Node* n) {
+    size_t i = nl_hashset_lookup(ctx->visited, n);
+    if (i == SIZE_MAX || (i & NL_HASHSET_HIGH_BIT) == 0) {
+        return NULL;
     }
 
-    ctx->uses[search].v -= 1;
-    return ctx->uses[search].v == 0;
+    i &= NL_HASHSET_INDEX_BITS;
+    return &ctx->uses[i];
+}
+
+static void use(Ctx* restrict ctx, TB_Node* n) {
+    int* u = lookup_use_count(ctx, n);
+    assert(u != NULL);
+    *u -= 1;
 }
 
 static void fake_unuse(Ctx* restrict ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->uses, n);
-    if (search >= 0) {
-        ctx->uses[search].v += 1;
-    }
+    int* u = lookup_use_count(ctx, n);
+    assert(u != NULL);
+    *u += 1;
 }
 
 static bool on_last_use(Ctx* restrict ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->uses, n);
-    return search >= 0 ? ctx->uses[search].v == 1 : false;
-}
-
-static bool on_2nd_to_last_use(Ctx* restrict ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->uses, n);
-    return search >= 0 ? ctx->uses[search].v == 2 : false;
+    int* u = lookup_use_count(ctx, n);
+    return u ? *u == 1 : false;
 }
 
 static bool has_users(Ctx* restrict ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->uses, n);
-    return search >= 0 ? ctx->uses[search].v > 0 : false;
+    if (n != NULL) {
+        int* u = lookup_use_count(ctx, n);
+        return u ? *u > 0 : false;
+    }
+    return false;
 }
 
 static void isel_region(Ctx* restrict ctx, TB_Node* control, TB_Node* next) {
@@ -608,10 +615,10 @@ static void fence(Ctx* restrict ctx, TB_Node* self) {
         TB_Node* n = use->n;
 
         // make sure to not queue 'next' node
-        ptrdiff_t search;
-        if (n != self && (search = nl_map_get(ctx->uses, n)) >= 0) {
+        int* u;
+        if (n != self && (u = lookup_use_count(ctx, n), u != NULL)) {
             // other than these two everything else can be loosely placed
-            if (ctx->uses[search].v > 0 && n->type == TB_LOAD) {
+            if (*u > 0 && n->type == TB_LOAD) {
                 isel(ctx, n);
             }
         }
@@ -674,9 +681,9 @@ static void fence_last(Ctx* restrict ctx, TB_Node* self, TB_Node* ignore) {
         TB_Node* n = use->n;
 
         // make sure to not queue 'next' node
-        ptrdiff_t search;
-        if (n != ignore && (search = nl_map_get(ctx->uses, n)) >= 0) {
-            if (ctx->uses[search].v > 0 &&
+        int* u;
+        if (n != ignore && (u = lookup_use_count(ctx, n), u != NULL)) {
+            if (*u > 0 &&
                 n->type != TB_PHI &&
                 n->type != TB_INTEGER_CONST &&
                 // n->type != TB_FLOAT32_CONST &&
@@ -712,13 +719,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
-    reg_alloc_log = strcmp(f->super.name, "stbi__parse_huffman_block") == 0;
+    /*reg_alloc_log = strcmp(f->super.name, "stbi__jpeg_huff_decode") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }
+    }*/
 
     Ctx ctx = {
         .module = f->super.module,
@@ -745,16 +752,30 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     nl_map_create(ctx.values, f->node_count);
-    init_regalloc(&ctx);
 
+    CUIK_TIMED_BLOCK("init regalloc") {
+        init_regalloc(&ctx);
+    }
+
+    // codegen will steal the visited set to store it's use counts, by this
+    // point the number of nodes doesn't change so we can statically allocate
+    // a uses array for it.
     CUIK_TIMED_BLOCK("uses") {
-        NL_HashSet visited = nl_hashset_arena_alloc(tmp_arena, f->node_count);
-        nl_map_create(ctx.uses, f->node_count);
-        FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-            visit_uses(&ctx, &visited, TB_NODE_GET_EXTRA_T(ctx.order.traversal[i], TB_NodeRegion)->end);
+        tb_pass_ensure_empty(p);
+
+        // don't care about clearing the memory it doesn't matter... unless it bites
+        // me when it makes some other bug harder to spot lmao
+        ctx.visited = &p->visited;
+        ctx.uses = tb_arena_alloc(tmp_arena, (1ull << ctx.visited->exp) * sizeof(int));
+        FOREACH_N(i, 0, 1ull << ctx.visited->exp) {
+            ctx.uses[i] = -1;
         }
-        assert(visited.count <= f->node_count);
-        nl_hashset_free(visited);
+
+        FOREACH_REVERSE_N(i, 0, ctx.order.count) {
+            visit_uses(p, ctx.visited, ctx.uses, TB_NODE_GET_EXTRA_T(ctx.order.traversal[i], TB_NodeRegion)->end);
+        }
+
+        assert(ctx.visited->count <= f->node_count);
     }
 
     // allocate more stuff now that we've run stats on the IR
@@ -824,7 +845,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     nl_map_free(ctx.emit.labels);
     nl_map_free(ctx.values);
     nl_map_free(ctx.machine_bbs);
-    nl_map_free(ctx.uses);
     dyn_array_destroy(ctx.phi_vals);
 
     if (dyn_array_length(ctx.locations)) {

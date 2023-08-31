@@ -29,7 +29,7 @@ void spallperf__start_thread(void) {
     #else
     if (cuikperf_is_active()) {
         size_t size = 4 * 1024 * 1024;
-        muh_buffer = (SpallBuffer){ malloc(size), size };
+        muh_buffer = (SpallBuffer){ cuik_malloc(size), size };
         spall_buffer_init(&ctx, &muh_buffer);
     }
     #endif

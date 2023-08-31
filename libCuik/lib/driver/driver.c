@@ -288,7 +288,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 
         if (args->opt_level > 0 || args->assembly || args->emit_ir) {
             // do parallel function passes
-            cuiksched_per_function(s->tp, mod, args, apply_func);
+            cuiksched_per_function(s->tp, args->threads, mod, args, apply_func);
         }
     }
     #endif
@@ -755,7 +755,7 @@ typedef struct {
     size_t count;
 
     #if CUIK_ALLOW_THREADS
-    atomic_size_t* remaining;
+    Futex* remaining;
     #endif
 } IRGenTask;
 
@@ -768,7 +768,7 @@ static void irgen_job(void* arg) {
     bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->emit_ir && !task.args->assembly;
     TB_Arena* allocator = get_ir_arena();
 
-    for (size_t i = 0; i < task.count; i++) {
+    CUIK_TIMED_BLOCK("taste") for (size_t i = 0; i < task.count; i++) {
         // skip all the typedefs
         if (task.stmts[i]->decl.attrs.is_typedef || !task.stmts[i]->decl.attrs.is_used) {
             continue;
@@ -786,35 +786,41 @@ static void irgen_job(void* arg) {
                 tb_pass_codegen(p, false);
                 tb_pass_exit(p);
 
-                // log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);
+                log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);
                 tb_arena_clear(allocator);
             }
         }
+    }
+
+    if (task.remaining) {
+        futex_dec(task.remaining);
     }
 }
 
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {
     if (thread_pool != NULL) {
         #if CUIK_ALLOW_THREADS
-        size_t task_capacity = 0;
+        size_t stmt_count = 0;
         CUIK_FOR_EACH_TU(tu, cu) {
             if (cuik_get_entrypoint_status(tu) == CUIK_ENTRYPOINT_WINMAIN && args->subsystem == TB_WIN_SUBSYSTEM_UNKNOWN) {
                 args->subsystem = TB_WIN_SUBSYSTEM_WINDOWS;
             }
 
-            size_t c = cuik_num_of_top_level_stmts(tu);
-            task_capacity += (c + (IRGEN_TASK_BATCH_SIZE - 1)) / IRGEN_TASK_BATCH_SIZE;
+            stmt_count += cuik_num_of_top_level_stmts(tu);
         }
 
+        size_t batch_size = good_batch_size(args->threads, stmt_count);
+        size_t task_capacity = (stmt_count + batch_size - 1) / batch_size;
+
         IRGenTask* tasks = cuik_malloc(task_capacity * sizeof(IRGenTask));
-        atomic_size_t tasks_remaining = task_capacity;
+        Futex remaining = task_capacity;
 
         size_t task_count = 0;
         CUIK_FOR_EACH_TU(tu, cu) {
             size_t top_level_count = cuik_num_of_top_level_stmts(tu);
             Stmt** top_level = cuik_get_top_level_stmts(tu);
-            for (size_t i = 0; i < top_level_count; i += IRGEN_TASK_BATCH_SIZE) {
-                size_t end = i + IRGEN_TASK_BATCH_SIZE;
+            for (size_t i = 0; i < top_level_count; i += batch_size) {
+                size_t end = i + batch_size;
                 if (end >= top_level_count) end = top_level_count;
 
                 assert(task_count < task_capacity);
@@ -824,17 +830,15 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
                     .args = args,
                     .stmts = &top_level[i],
                     .count = end - i,
-                    .remaining = &tasks_remaining
+                    .remaining = &remaining
                 };
 
                 CUIK_CALL(thread_pool, submit, irgen_job, sizeof(task), &task);
             }
         }
 
-        // while the other threads work we chunk at collecting garbage
-        while (atomic_load(&tasks_remaining) != 0) {
-            CUIK_CALL(thread_pool, work_one_job);
-        }
+        // wait for the threads to finish
+        futex_wait_eq(&remaining, 0);
         #else
         fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
         abort();

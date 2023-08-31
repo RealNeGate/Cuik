@@ -2,6 +2,9 @@
 #ifndef NL_HASH_SET_H
 #define NL_HASH_SET_H
 
+#define NL_HASHSET_HIGH_BIT (~(SIZE_MAX >> ((size_t) 1)))
+#define NL_HASHSET_INDEX_BITS (SIZE_MAX >> ((size_t) 1))
+
 typedef struct NL_HashSet {
     TB_Arena* allocator;
 
@@ -19,6 +22,7 @@ void nl_hashset_free(NL_HashSet hs);
 void nl_hashset_clear(NL_HashSet* restrict hs);
 bool nl_hashset_remove(NL_HashSet* restrict hs, void* ptr);
 bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr);
+size_t nl_hashset_lookup(NL_HashSet* restrict hs, void* ptr);
 
 // this one takes a custom hash function
 void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_CompareFunc cmp);
@@ -31,7 +35,6 @@ void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_C
 #ifdef NL_HASH_SET_IMPL
 #include <common.h>
 
-#define NL_HASHSET_HIGH_BIT ~(SIZE_MAX >> ((size_t) 1))
 #define NL_HASHSET_TOMB ((void*) UINTPTR_MAX)
 #define NL_HASHSET_HASH(ptr) ((((uintptr_t) ptr) * 11400714819323198485ull) >> 32ull)
 
@@ -78,7 +81,7 @@ void nl_hashset_free(NL_HashSet hs) {
 }
 
 // lookup into hash map for ptr, it's also used to put things in
-static size_t nl_hashset_lookup(NL_HashSet* restrict hs, void* ptr) {
+size_t nl_hashset_lookup(NL_HashSet* restrict hs, void* ptr) {
     assert(ptr);
     uint32_t h = NL_HASHSET_HASH(ptr);
 

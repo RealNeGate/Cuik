@@ -68,7 +68,7 @@ static int stbi__parse_zlib_header(stbi__zbuf *a);
 
 // returns 1 if the product is valid, 0 on overflow.
 // negative factors are considered invalid.
-int stbi__mul2sizes_valid(int a, int b)
+static int stbi__mul2sizes_valid(int a, int b)
 {
     if (a < 0 || b < 0) return 0;
     if (b == 0) return 1; // mul-by-0 is always safe
@@ -76,28 +76,22 @@ int stbi__mul2sizes_valid(int a, int b)
     return a <= INT_MAX/b;
 }
 
-int stbi__parse_zlib(stbi__zbuf *a, int parse_header)
-{
-    // stbi__parse_zlib_header(a);
-    return 1;
-}
-
-uint64_t foo(uint64_t x, uint64_t y) {
+static uint64_t foo(uint64_t x, uint64_t y) {
     if ((x * 2) / 2) return x;
     else             return y;
 }
 
-void array_ops(size_t n, int* arr) {
+static void array_ops(size_t n, int* arr) {
     for (size_t i = 0; i < n; i++) {
         arr[i] |= 1;
     }
 }
 
-uint32_t div_tricks(uint32_t n) {
+static uint32_t div_tricks(uint32_t n) {
     return n / 3;
 }
 
-int bar(int n) {
+static int bar(int n) {
     int arr[2];
     arr[0] = n;
     arr[1] = 1;
@@ -110,7 +104,7 @@ int bar(int n) {
     return arr[1];
 }
 
-uint32_t murmur3_32(const void* key, size_t len) {
+static uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time
@@ -145,11 +139,11 @@ static int folding(void) {
     return 42+1 & 3 * 16;
 }
 
-int bitcast(float x) {
+static int bitcast(float x) {
     return *(int*) &x;
 }
 
-float Q_rsqrt(float number) {
+static float Q_rsqrt(float number) {
     long i;
     float x2, y;
     const float threehalfs = 1.5F;
@@ -164,11 +158,31 @@ float Q_rsqrt(float number) {
     return y;
 }
 
+int store_elim(int* a) {
+    *a = 16;
+    *a = 5;
+    return *a;
+}
+
+int select_opt(int a, int b) {
+    return a > 10 && !(b > 10);
+}
+
 int main() {
+    /*printf("%d\n", select_opt(11, 5));
+    printf("%d\n", select_opt(11, 11));
+    printf("%d\n", select_opt(5, 5));
+    printf("%d\n", select_opt(0, 0));
+    printf("%d\n", select_opt(5, 11));
+
     for (int i = 0; i < 100; i++) {
         printf("%f\n", Q_rsqrt(i / 100.0f));
-    }
-    return 0;
+    }*/
+
+    int a = 69;
+    store_elim(&a);
+
+    // printf("%d\n", store_elim(&a));
 }
 
 #if 0

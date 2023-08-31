@@ -112,7 +112,6 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* fe
         m->features = *features;
     }
 
-    // we start a little off the start just because
     mtx_init(&m->lock, mtx_plain);
 
     m->text.name  = tb__tb_arena_strdup(m, -1, ".text");
@@ -394,18 +393,19 @@ TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data) {
 
     mtx_lock(&m->lock);
     ptrdiff_t search = nl_map_get(m->global_interns, c);
+
+    TB_Global* g;
     if (search >= 0) {
-        return m->global_interns[search].v;
+        g = m->global_interns[search].v;
+    } else {
+        g = tb_global_create(m, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+        g->super.ordinal = *((uint64_t*) &c.data);
+        tb_global_set_storage(m, &m->rdata, g, len, len, 1);
+
+        char* buffer = tb_global_add_region(m, g, 0, len);
+        memcpy(buffer, data, len);
+        nl_map_put(m->global_interns, c, g);
     }
-
-    TB_Global* g = tb_global_create(m, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-    g->super.ordinal = *((uint64_t*) &c.data);
-    tb_global_set_storage(m, &m->rdata, g, len, len, 1);
-
-    char* buffer = tb_global_add_region(m, g, 0, len);
-    memcpy(buffer, data, len);
-    nl_map_put(m->global_interns, c, g);
-
     mtx_unlock(&m->lock);
     return g;
 }

@@ -44,6 +44,8 @@ struct TB_Passes {
 
 extern thread_local TB_Arena* tmp_arena;
 
+void tb_pass_ensure_empty(TB_Passes* p);
+
 void verify_tmp_arena(TB_Passes* p);
 User* find_users(TB_Passes* restrict p, TB_Node* n);
 void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot);
