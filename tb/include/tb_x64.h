@@ -31,6 +31,11 @@ typedef enum {
 } TB_X86_InstFlags;
 
 typedef enum {
+    TB_X86_RAX, TB_X86_RCX, TB_X86_RDX, TB_X86_RBX, TB_X86_RSP, TB_X86_RBP, TB_X86_RSI, TB_X86_RDI,
+    TB_X86_R8,  TB_X86_R9,  TB_X86_R10, TB_X86_R11, TB_X86_R12, TB_X86_R13, TB_X86_R14, TB_X86_R15,
+} TB_X86_GPR;
+
+typedef enum {
     TB_X86_SEGMENT_DEFAULT = 0,
 
     TB_X86_SEGMENT_ES, TB_X86_SEGMENT_CS,
@@ -60,10 +65,10 @@ typedef enum {
 } TB_X86_DataType;
 
 typedef struct {
-    int16_t type;
+    int32_t opcode;
 
-    // registers (there's 4 max taking up 4bit slots each)
-    uint16_t regs;
+    // registers (there's 4 max taking up 8bit slots each)
+    int8_t regs[4];
     uint8_t flags;
 
     // bitpacking amirite
@@ -74,6 +79,7 @@ typedef struct {
 
     // memory operand
     //   X86_INSTR_USE_MEMOP
+    uint8_t base, index, scale;
     int32_t disp;
 
     // immediate operand
@@ -85,6 +91,7 @@ typedef struct {
     };
 } TB_X86_Inst;
 
-TB_X86_Inst tb_x86_disasm(size_t length, const uint8_t data[length]);
+bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data);
+const char* tb_x86_reg_name(int8_t reg, TB_X86_DataType dt);
 
 #endif /* TB_X64_H */

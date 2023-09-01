@@ -103,16 +103,39 @@ int run_objdump(int argc, const char** argv) {
         }
 
         const uint8_t* data = s->raw_data.data;
-        if (0) { // s->flags & TB_COFF_SECTION_CODE) {
+        if (0 && (s->flags & TB_COFF_SECTION_CODE)) {
             // dump assembly
             size_t current = 0;
             while (current < size) {
-                TB_X86_Inst inst = tb_x86_disasm(size - current, &data[current]);
-                if (inst.type >= 0) {
+                TB_X86_Inst inst;
+                if (tb_x86_disasm(&inst, size - current, &data[current])) {
+                    // print instruction
+                    printf("  %02x ", inst.opcode);
+
+                    uint8_t flags = inst.flags;
+                    for (int i = 0; i < 4; i++) {
+                        int8_t reg = inst.regs[i];
+                        if (reg < 0) {
+                            if (flags & TB_X86_INSTR_USE_MEMOP) {
+                                flags &= ~TB_X86_INSTR_USE_MEMOP;
+                                assert(0 && "TODO");
+                            } else if (flags & TB_X86_INSTR_IMMEDIATE) {
+                                flags &= ~TB_X86_INSTR_IMMEDIATE;
+                                assert(0 && "TODO");
+                            } else {
+                                break;
+                            }
+                        } else {
+                            if (i) printf(", ");
+                            printf("%s", tb_x86_reg_name(reg, inst.data_type));
+                        }
+                    }
+
+                    printf("\n");
+                    current += inst.length;
+                } else {
                     assert(0 && "TODO");
                 }
-
-                current += inst.length;
             }
         } else {
             // dump raw data

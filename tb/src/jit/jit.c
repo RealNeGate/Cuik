@@ -133,7 +133,7 @@ static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t size) {
 }
 
 void tb_jitheap_free_region(TB_JITHeap* c, void* ptr, size_t s) {
-    __debugbreak();
+    tb_todo();
 }
 
 static void* get_proc(TB_JIT* jit, const char* name) {
