@@ -1,5 +1,7 @@
 // Our precious libCuik unity build, ideally a lot of the smaller components will
 // become single header libs maybe even the entire thing.
+#include <xmmintrin.h>
+
 #include "tls.c"
 #include "str.c"
 #include "path.c"
