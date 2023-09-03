@@ -17,10 +17,10 @@ static KnownPointer known_pointer(TB_Node* n) {
 static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // if a load is control dependent on a store and it doesn't alias we can move the
     // dependency up a bit.
-    if (n->inputs[0]->type != TB_STORE) return NULL;
+    /*if (n->inputs[1]->type != TB_STORE) return NULL;
 
-    KnownPointer ld_ptr = known_pointer(n->inputs[1]);
-    KnownPointer st_ptr = known_pointer(n->inputs[0]->inputs[1]);
+    KnownPointer ld_ptr = known_pointer(n->inputs[2]);
+    KnownPointer st_ptr = known_pointer(n->inputs[1]->inputs[2]);
     if (ld_ptr.base != st_ptr.base) return NULL;
 
     // it's probably not the fastest way to grab this value ngl...
@@ -34,18 +34,18 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // both bases match so if the effective ranges don't intersect, they don't alias.
     if (ld_ptr.offset <= stored_end && st_ptr.offset <= loaded_end) return NULL;
 
-    set_input(p, n, n->inputs[0]->inputs[0], 0);
-    return n;
+    set_input(p, n, n->inputs[1]->inputs[1], 1);
+    return n;*/
+    return NULL;
 }
 
 static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // god i need a pattern matcher
     //   (load (store X A Y) A) => Y
-    if (n->inputs[0]->type == TB_STORE &&
-        n->inputs[0]->inputs[1] == n->inputs[1] &&
-        n->dt.raw == n->inputs[0]->inputs[2]->dt.raw &&
-        is_same_align(n, n->inputs[0])) {
-        return n->inputs[0]->inputs[2];
+    TB_Node *mem = n->inputs[1], *addr = n->inputs[2];
+    if (mem->type == TB_STORE && mem->inputs[2] == addr &&
+        n->dt.raw == mem->inputs[3]->dt.raw && is_same_align(n, mem)) {
+        return mem->inputs[3];
     }
 
     return n;
@@ -53,14 +53,16 @@ static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n)
 
 static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // god i need a pattern matcher
-    //   (store (store X A Y) A Z) => (store X A Z)
-    /*if (n->inputs[0]->type == TB_STORE &&
-        n->inputs[0]->inputs[1] == n->inputs[1] &&
-        n->inputs[2]->dt.raw == n->inputs[0]->inputs[2]->dt.raw &&
-        is_same_align(n, n->inputs[0])) {
-        set_input(p, n, n->inputs[0]->inputs[0], 0);
+    //   (store (store X A Y) A Z) => (store X A Y Z)
+    TB_Node *mem = n->inputs[1], *addr = n->inputs[2];
+    TB_DataType dt = n->inputs[3]->dt;
+
+    if (mem->type == TB_STORE && mem->inputs[2] == addr &&
+        dt.raw == mem->inputs[3]->dt.raw && is_same_align(n, mem)) {
+        // remove link to parent
+        set_input(p, n, mem->inputs[1], 1);
         return n;
-    }*/
+    }
 
     return NULL;
 }

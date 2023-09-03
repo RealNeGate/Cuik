@@ -107,6 +107,10 @@ static void print_type(TB_DataType dt) {
             printf("control");
             break;
         }
+        case TB_MEMORY: {
+            printf("memory");
+            break;
+        }
         default: tb_todo();
     }
 }
@@ -294,11 +298,11 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
 
             case TB_STORE: {
                 printf("  store.");
-                print_type(n->inputs[2]->dt);
+                print_type(n->inputs[3]->dt);
                 printf(" ");
-                print_ref_to_node(ctx, n->inputs[1]);
-                printf(", ");
                 print_ref_to_node(ctx, n->inputs[2]);
+                printf(", ");
+                print_ref_to_node(ctx, n->inputs[3]);
                 printf("\n");
                 break;
             }
@@ -357,7 +361,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
                 break;
     	    }
 
-            case TB_STOP: {
+            case TB_END: {
                 printf("  stop ");
                 FOREACH_N(i, 1, n->input_count) {
                     if (i != 1) printf(", ");

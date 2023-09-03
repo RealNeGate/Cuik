@@ -6,6 +6,31 @@
 // the machine code output or later analysis stages.
 #include "tb_internal.h"
 
+// adds memory effect to region
+static TB_Node* append_mem(TB_Function* f, TB_Node* new_mem) {
+    TB_Node* bb = tb_get_parent_region(f->active_control_node);
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
+
+    TB_Node* old_mem = r->mem_out;
+    assert(old_mem != NULL && "how?");
+
+    r->mem_out = new_mem;
+    return old_mem;
+}
+
+static TB_Node* peek_mem(TB_Function* f, TB_Node* ctrl) {
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(tb_get_parent_region(ctrl));
+    return r->mem_out;
+}
+
+static TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int index) {
+    assert(src->dt.type == TB_TUPLE);
+    TB_Node* proj = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
+    proj->inputs[0] = src;
+    TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = index);
+    return proj;
+}
+
 bool tb_node_is_constant_int(TB_Function* f, TB_Node* n, uint64_t imm) {
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     if (n->type == TB_INTEGER_CONST && i->num_words == 1) {
@@ -120,7 +145,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     }
 
     // ignore REGION
-    if (f->line_attrib.loc.file != NULL && type != TB_REGION && type != TB_STOP) {
+    if (f->line_attrib.loc.file != NULL && type != TB_REGION && type != TB_END) {
         if (n->attribs == NULL) {
             n->attribs = dyn_array_create(TB_Attrib, 2);
         }
@@ -220,7 +245,7 @@ TB_Node* tb_inst_bitcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
 
 TB_Node* tb_inst_param(TB_Function* f, int param_id) {
     assert(param_id < f->param_count);
-    return f->params[param_id];
+    return f->params[2 + param_id];
 }
 
 void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t* align) {
@@ -274,25 +299,16 @@ TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment
 }
 
 TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnits alignment, bool is_volatile) {
-    assert(f->active_control_node);
     assert(addr);
 
-    TB_Node* n = tb_alloc_node(f, is_volatile ? TB_READ : TB_LOAD, is_volatile ? TB_TYPE_TUPLE : dt, 2, sizeof(TB_NodeMemAccess));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
+    TB_Node* n = tb_alloc_node(f, is_volatile ? TB_READ : TB_LOAD, is_volatile ? TB_TYPE_TUPLE : dt, 3, sizeof(TB_NodeMemAccess));
+    n->inputs[1] = peek_mem(f, f->active_control_node);
+    n->inputs[2] = addr;
     TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = alignment);
 
     if (is_volatile) {
-        // control proj
-        TB_Node* cproj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
-        cproj->inputs[0] = n;
-        TB_NODE_SET_EXTRA(cproj, TB_NodeProj, .index = 0);
-        f->active_control_node = cproj;
-
-        TB_Node* proj = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
-        proj->inputs[0] = n;
-        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = 1);
-        return proj;
+        append_mem(f, tb__make_proj(f, TB_TYPE_MEMORY, n, 0));
+        return tb__make_proj(f, dt, n, 1);
     } else {
         return n;
     }
@@ -301,13 +317,39 @@ TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnit
 void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, uint32_t alignment, bool is_volatile) {
     assert(TB_DATA_TYPE_EQUALS(dt, val->dt));
 
-    TB_Node* n = tb_alloc_node(f, is_volatile ? TB_WRITE : TB_STORE, TB_TYPE_CONTROL, 3, sizeof(TB_NodeMemAccess));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    n->inputs[2] = val;
+    TB_Node* n = tb_alloc_node(f, is_volatile ? TB_WRITE : TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
+    n->inputs[1] = append_mem(f, n);
+    n->inputs[2] = addr;
+    n->inputs[3] = val;
     TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = alignment);
+}
 
-    f->active_control_node = n;
+void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align) {
+    assert(TB_IS_POINTER_TYPE(dst->dt));
+    assert(TB_IS_INTEGER_TYPE(val->dt) && val->dt.data == 8);
+
+    TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_CONTROL, 5, sizeof(TB_NodeMemAccess));
+    n->inputs[1] = append_mem(f, n);
+    n->inputs[2] = dst;
+    n->inputs[3] = val;
+    n->inputs[4] = size;
+    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
+}
+
+void tb_inst_memcpy(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align) {
+    assert(TB_IS_POINTER_TYPE(dst->dt));
+    assert(TB_IS_POINTER_TYPE(val->dt));
+
+    TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_CONTROL, 5, sizeof(TB_NodeMemAccess));
+    n->inputs[1] = append_mem(f, n);
+    n->inputs[2] = dst;
+    n->inputs[3] = val;
+    n->inputs[4] = size;
+    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
+}
+
+void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* count, TB_CharUnits align) {
+    tb_inst_memset(f, dst, tb_inst_uint(f, TB_TYPE_I8, 0), count, align);
 }
 
 TB_Node* tb_inst_bool(TB_Function* f, bool imm) {
@@ -415,15 +457,11 @@ TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, s
     memcpy(n->inputs, params, param_count * sizeof(TB_Node*));
 
     // control proj
-    TB_Node* cproj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
-    cproj->inputs[0] = n;
-    TB_NODE_SET_EXTRA(cproj, TB_NodeProj, .index = 0);
+    TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
     f->active_control_node = cproj;
 
-    // return
-    TB_Node* dproj = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
-    dproj->inputs[0] = n;
-    TB_NODE_SET_EXTRA(dproj, TB_NodeProj, .index = 1);
+    // return value
+    TB_Node* dproj = tb__make_proj(f, dt, n, 1);
 
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
     c->proto = NULL;
@@ -444,18 +482,12 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
     c->proto = proto;
 
     // control proj
-    TB_Node* cproj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
-    cproj->inputs[0] = n;
-    TB_NODE_SET_EXTRA(cproj, TB_NodeProj, .index = 0);
+    TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
 
     // create data projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
     FOREACH_N(i, 0, proto->return_count) {
-        TB_Node* proj = tb_alloc_node(f, TB_PROJ, rets[i].dt, 1, sizeof(TB_NodeProj));
-        proj->inputs[0] = n;
-        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i + 1);
-
-        c->projs[i + 1] = proj;
+        c->projs[i + 1] = tb__make_proj(f, rets[i].dt, n, i + 1);
     }
 
     // we'll slot a NULL so it's easy to tell when it's empty
@@ -471,38 +503,6 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
     } else {
         return (TB_MultiOutput){ .count = proto->return_count, .multiple = c->projs + 1 };
     }
-}
-
-void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align) {
-    assert(TB_IS_POINTER_TYPE(dst->dt));
-    assert(TB_IS_INTEGER_TYPE(val->dt) && val->dt.data == 8);
-
-    TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_CONTROL, 4, sizeof(TB_NodeMemAccess));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = dst;
-    n->inputs[2] = val;
-    n->inputs[3] = size;
-    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
-
-    f->active_control_node = n;
-}
-
-void tb_inst_memcpy(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align) {
-    assert(TB_IS_POINTER_TYPE(dst->dt));
-    assert(TB_IS_POINTER_TYPE(val->dt));
-
-    TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_CONTROL, 4, sizeof(TB_NodeMemAccess));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = dst;
-    n->inputs[2] = val;
-    n->inputs[3] = size;
-    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
-
-    f->active_control_node = n;
-}
-
-void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* count, TB_CharUnits align) {
-    tb_inst_memset(f, dst, tb_inst_uint(f, TB_TYPE_I8, 0), count, align);
 }
 
 TB_Node* tb_inst_not(TB_Function* f, TB_Node* src) {
@@ -869,6 +869,10 @@ TB_Node* tb_inst_region(TB_Function* f) {
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
     r->dom_depth = -1; // unresolved
     r->dom = NULL;
+
+    TB_Node* phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 1, 0);
+    phi->inputs[0] = n;
+    r->mem_in = r->mem_out = phi;
     return n;
 }
 
@@ -906,7 +910,16 @@ static TB_Node** add_successors(TB_Function* f, TB_Node* terminator, size_t coun
     return br->succ;
 }
 
+static void add_memory_edge(TB_Function* f, TB_Node* n, TB_Node* mem_state, TB_Node* target) {
+    assert(target->type == TB_REGION);
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(target);
+    assert(r->mem_in && r->mem_in->type == TB_PHI);
+    add_input_late(f, r->mem_in, mem_state);
+}
+
 void tb_inst_goto(TB_Function* f, TB_Node* target) {
+    TB_Node* mem_state = peek_mem(f, f->active_control_node);
+
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 1, sizeof(TB_NodeBranch));
     n->inputs[0] = f->active_control_node; // control edge
 
@@ -915,15 +928,15 @@ void tb_inst_goto(TB_Function* f, TB_Node* target) {
     f->active_control_node = NULL;
 
     {
-        TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
-        proj->inputs[0] = n;
-        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = 0);
-
-        add_input_late(f, target, proj);
+        TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+        add_input_late(f, target, cproj);
+        add_memory_edge(f, n, mem_state, target);
     }
 }
 
 void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_false) {
+    TB_Node* mem_state = peek_mem(f, f->active_control_node);
+
     // generate control projections
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(int64_t));
     n->inputs[0] = f->active_control_node; // control edge
@@ -932,11 +945,9 @@ void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_fal
     FOREACH_N(i, 0, 2) {
         TB_Node* target = i ? if_false : if_true;
 
-        TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
-        proj->inputs[0] = n;
-        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i);
-
-        add_input_late(f, target, proj);
+        TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
+        add_input_late(f, target, cproj);
+        add_memory_edge(f, n, mem_state, target);
     }
 
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
@@ -949,7 +960,7 @@ void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_fal
 }
 
 void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_label, size_t entry_count, const TB_SwitchEntry* entries) {
-    assert(f->active_control_node != NULL);
+    TB_Node* mem_state = peek_mem(f, f->active_control_node);
 
     // generate control projections
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + (sizeof(int64_t) * entry_count));
@@ -959,11 +970,9 @@ void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* defau
     FOREACH_N(i, 0, 1 + entry_count) {
         TB_Node* target = i ? entries[i - 1].value : default_label;
 
-        TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
-        proj->inputs[0] = n;
-        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i);
-
-        add_input_late(f, target, proj);
+        TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
+        add_input_late(f, target, cproj);
+        add_memory_edge(f, n, mem_state, target);
     }
 
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
@@ -981,12 +990,14 @@ void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* defau
 }
 
 void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
+    TB_Node* mem_state = peek_mem(f, f->active_control_node);
+
     // allocate return node
     TB_Node* end = f->stop_node;
     if (end == NULL) {
         TB_Node* region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
 
-        end = tb_alloc_node(f, TB_STOP, TB_TYPE_CONTROL, 1 + count, 0);
+        end = tb_alloc_node(f, TB_END, TB_TYPE_CONTROL, 2 + count, 0);
         end->inputs[0] = region;
 
         if (f->exit_attrib.loc.file != NULL) {
@@ -994,25 +1005,31 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
             dyn_array_put(end->attribs, f->line_attrib);
         }
 
+        TB_Node* mem_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 2, 0);
+        mem_phi->inputs[0] = region;
+        mem_phi->inputs[1] = mem_state;
+        end->inputs[1] = mem_phi;
+
         FOREACH_N(i, 0, count) {
             TB_Node* phi = tb_alloc_node(f, TB_PHI, values[i]->dt, 2, 0);
             phi->inputs[0] = region;
             phi->inputs[1] = values[i];
 
             // add phi to STOP
-            end->inputs[1 + i] = phi;
+            end->inputs[2 + i] = phi;
         }
 
         f->stop_node = end;
-        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .end = end, .tag = "ret");
+        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .mem_in = mem_phi, .mem_out = mem_phi, .end = end, .tag = "ret");
     } else {
         // add to PHIs
-        assert(end->input_count >= 1 + count);
+        assert(end->input_count >= 2 + count);
+        add_input_late(f, end->inputs[1], mem_state);
 
-        size_t i = 1;
-        for (; i < count + 1; i++) {
-            assert(end->inputs[i]->dt.raw == values[i - 1]->dt.raw && "datatype mismatch");
-            add_input_late(f, end->inputs[i], values[i - 1]);
+        size_t i = 2;
+        for (; i < count + 2; i++) {
+            assert(end->inputs[i]->dt.raw == values[i - 2]->dt.raw && "datatype mismatch");
+            add_input_late(f, end->inputs[i], values[i - 2]);
         }
 
         size_t phi_count = end->input_count;
@@ -1025,5 +1042,14 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
         }
     }
 
-    tb_inst_goto(f, end->inputs[0]);
+    // basically just tb_inst_goto without the memory PHI (we did it earlier)
+    TB_Node* region = end->inputs[0];
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 1, sizeof(TB_NodeBranch));
+    n->inputs[0] = f->active_control_node; // control edge
+
+    TB_Node** succ = add_successors(f, n, 1);
+    succ[0] = region;
+    f->active_control_node = NULL;
+
+    add_input_late(f, region, tb__make_proj(f, TB_TYPE_CONTROL, n, 0));
 }

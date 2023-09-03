@@ -25,7 +25,7 @@ bool tb_uses_effects(TB_Node* n) {
         case TB_START:
         case TB_REGION:
         case TB_BRANCH:
-        case TB_STOP:
+        case TB_END:
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_TRAP:
@@ -62,7 +62,7 @@ bool tb_has_effects(TB_Node* n) {
         case TB_START:
         case TB_REGION:
         case TB_BRANCH:
-        case TB_STOP:
+        case TB_END:
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_TRAP:

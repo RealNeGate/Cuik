@@ -146,7 +146,9 @@ static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
         if (i->num_words == 1 && fits_into_int32(i->words[0] & mask)) {
-            if (prev != n) use(ctx, prev);
+            if (prev != n) {
+                use(ctx, prev);
+            }
 
             *out_x = i->words[0] & mask;
             return true;
@@ -196,7 +198,7 @@ static int can_folded_store(Ctx* restrict ctx, TB_Node* addr, TB_Node* src) {
         case TB_ADD:
         case TB_SUB: {
             if (src->inputs[1]->type == TB_LOAD &&
-                src->inputs[1]->inputs[1] == addr &&
+                src->inputs[1]->inputs[2] == addr &&
                 on_last_use(ctx, src) &&
                 on_last_use(ctx, src->inputs[1])) {
                 const static InstType ops[] = { AND, OR, XOR, ADD, SUB };
@@ -252,7 +254,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
             stride *= (1ull << x);
         }
 
-        index = isel(ctx, n);
+        index = input_reg(ctx, n);
 
         // compute index
         if (stride == 1) {
@@ -299,7 +301,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
         offset += get_stack_slot(ctx, n);
         base = RBP;
     } else {
-        base = isel(ctx, n);
+        base = input_reg(ctx, n);
     }
 
     // compute base
@@ -324,95 +326,82 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
         }
     }
 
-    int src;
-    ptrdiff_t search = nl_map_get(ctx->values, n);
-    if (search < 0) {
-        if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
-            TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
-            assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
+    if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
+        TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
+        assert(cmp_dt.width == 0 && "TODO: Implement vector compares");
 
-            Cond cc = -1;
-            use(ctx, n);
+        Cond cc = -1;
+        use(ctx, n);
 
-            if (TB_IS_FLOAT_TYPE(cmp_dt)) {
-                int lhs = ISEL(n->inputs[1]);
-                int rhs = ISEL(n->inputs[2]);
-                SUBMIT(inst_op_rr_no_dst(FP_UCOMI, cmp_dt, lhs, rhs));
+        if (TB_IS_FLOAT_TYPE(cmp_dt)) {
+            int lhs = input_reg(ctx, n->inputs[1]);
+            int rhs = input_reg(ctx, n->inputs[2]);
+            SUBMIT(inst_op_rr_no_dst(FP_UCOMI, cmp_dt, lhs, rhs));
 
-                switch (n->type) {
-                    case TB_CMP_EQ:  cc = E; break;
-                    case TB_CMP_NE:  cc = NE; break;
-                    case TB_CMP_FLT: cc = B; break;
-                    case TB_CMP_FLE: cc = BE; break;
-                    default: tb_unreachable();
+            switch (n->type) {
+                case TB_CMP_EQ:  cc = E; break;
+                case TB_CMP_NE:  cc = NE; break;
+                case TB_CMP_FLT: cc = B; break;
+                case TB_CMP_FLE: cc = BE; break;
+                default: tb_unreachable();
+            }
+        } else {
+            bool invert = false;
+            int32_t x;
+            int lhs = input_reg(ctx, n->inputs[1]);
+            if (try_for_imm32(ctx, n->inputs[2], &x)) {
+                use(ctx, n->inputs[2]);
+
+                if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
+                    SUBMIT(inst_op_rr_no_dst(TEST, cmp_dt, lhs, lhs));
+                } else {
+                    SUBMIT(inst_op_ri(CMP, cmp_dt, lhs, x));
                 }
             } else {
-                bool invert = false;
-                int32_t x;
-                int lhs = ISEL(n->inputs[1]);
-                if (try_for_imm32(ctx, n->inputs[2], &x)) {
-                    use(ctx, n->inputs[2]);
+                int tmp = DEF(n, cmp_dt);
+                SUBMIT(inst_move(cmp_dt, tmp, lhs));
 
-                    if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-                        SUBMIT(inst_op_rr_no_dst(TEST, cmp_dt, lhs, lhs));
-                    } else {
-                        SUBMIT(inst_op_ri(CMP, cmp_dt, lhs, x));
-                    }
-                } else {
-                    int tmp = DEF(n, cmp_dt);
-                    SUBMIT(inst_move(cmp_dt, tmp, lhs));
-
-                    int rhs = ISEL(n->inputs[2]);
-                    SUBMIT(inst_op_rr_no_dst(CMP, cmp_dt, tmp, rhs));
-                }
-
-                switch (n->type) {
-                    case TB_CMP_EQ: cc = E; break;
-                    case TB_CMP_NE: cc = NE; break;
-                    case TB_CMP_SLT: cc = invert ? G  : L;  break;
-                    case TB_CMP_SLE: cc = invert ? GE : LE; break;
-                    case TB_CMP_ULT: cc = invert ? A  : B;  break;
-                    case TB_CMP_ULE: cc = invert ? NB : BE; break;
-                    default: tb_unreachable();
-                }
+                int rhs = input_reg(ctx, n->inputs[2]);
+                SUBMIT(inst_op_rr_no_dst(CMP, cmp_dt, tmp, rhs));
             }
 
-            return cc ^ invert;
+            switch (n->type) {
+                case TB_CMP_EQ: cc = E; break;
+                case TB_CMP_NE: cc = NE; break;
+                case TB_CMP_SLT: cc = invert ? G  : L;  break;
+                case TB_CMP_SLE: cc = invert ? GE : LE; break;
+                case TB_CMP_ULT: cc = invert ? A  : B;  break;
+                case TB_CMP_ULE: cc = invert ? NB : BE; break;
+                default: tb_unreachable();
+            }
         }
-    }
 
-    src = ISEL(n);
-
-    TB_DataType dt = n->dt;
-    if (TB_IS_FLOAT_TYPE(dt)) {
-        int tmp = DEF(n, n->dt);
-        SUBMIT(inst_op_zero(dt, tmp));
-        SUBMIT(inst_op_rr_no_dst(FP_UCOMI, dt, src, tmp));
+        return cc ^ invert;
     } else {
-        SUBMIT(inst_op_rr_no_dst(TEST, dt, src, src));
+        int src = input_reg(ctx, n);
+
+        TB_DataType dt = n->dt;
+        if (TB_IS_FLOAT_TYPE(dt)) {
+            int tmp = DEF(n, n->dt);
+            SUBMIT(inst_op_zero(dt, tmp));
+            SUBMIT(inst_op_rr_no_dst(FP_UCOMI, dt, src, tmp));
+        } else {
+            SUBMIT(inst_op_rr_no_dst(TEST, dt, src, src));
+        }
+        return NE ^ invert;
     }
-    return NE ^ invert;
 }
 
-static int isel(Ctx* restrict ctx, TB_Node* n) {
-    use(ctx, n);
+static bool should_rematerialize(TB_Node* n) {
+    return n->type == TB_LOCAL || n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS;
+}
 
-    ptrdiff_t search = nl_map_get(ctx->values, n);
-    if (search >= 0) {
-        return ctx->values[search].v;
-    }
-
+static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
     TB_NodeTypeEnum type = n->type;
-    int dst = -1;
-    bool forget = false;
-
     switch (type) {
-        case TB_PHI: {
-            dst = DEF(n, n->dt);
-            break;
-        }
-
+        case TB_PHI: break;
         case TB_REGION: break;
+
         case TB_START: {
             TB_NodeRegion* start = TB_NODE_GET_EXTRA(n);
             const TB_FunctionPrototype* restrict proto = ctx->f->prototype;
@@ -422,7 +411,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             size_t gpr_param_count = is_sysv ? COUNTOF(SYSV_GPR_PARAMETERS) : COUNTOF(WIN64_GPR_PARAMETERS);
             int xmm_param_count    = is_sysv ? 8 : 4;
 
-            Inst* prev = ctx->last;
+            Inst* prev = ctx->head;
 
             int out_count = 0;
             RegIndex outs[16];
@@ -431,13 +420,11 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             int used_gpr = 0, used_xmm = 0;
             TB_Node** params = ctx->f->params;
             FOREACH_N(i, 0, ctx->f->param_count) {
-                TB_Node* proj = params[i];
+                TB_Node* proj = params[2 + i];
                 bool is_float = proj->dt.type == TB_FLOAT;
 
                 // copy from parameter
                 int reg_class = (is_float ? REG_CLASS_XMM : REG_CLASS_GPR);
-                int v = -1;
-
                 int id = is_float ? used_gpr : used_xmm;
                 if (is_sysv) {
                     if (is_float) used_xmm += 1;
@@ -449,17 +436,15 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 }
 
                 int reg_limit = is_float ? xmm_param_count : gpr_param_count;
-                if (id < reg_limit) {
+                ValueDesc* v = lookup_val(ctx, proj);
+                if (v != NULL && v->vreg >= 0 && id < reg_limit) {
                     int reg_num = is_float ? id : gpr_params[id];
                     int vreg = (is_float ? FIRST_XMM : 0) + reg_num;
 
-                    v = DEF(proj, proj->dt);
-                    hint_reg(ctx, v, vreg);
-                    SUBMIT(inst_move(proj->dt, v, vreg));
+                    hint_reg(ctx, v->vreg, vreg);
+                    SUBMIT(inst_move(proj->dt, v->vreg, vreg));
 
                     outs[out_count++] = vreg;
-
-                    nl_map_put(ctx->values, proj, v);
                 }
             }
 
@@ -468,6 +453,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             memcpy(entry_inst->operands, outs, out_count * sizeof(RegIndex));
 
             entry_inst->next = prev->next;
+            if (prev->next == NULL) {
+                ctx->head = entry_inst;
+            }
             prev->next = entry_inst;
 
             // walk the entry to find any parameter stack slots
@@ -486,7 +474,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                         nl_map_put(ctx->stack_slots, curr->inputs[1], pos);
 
                         if (p->index >= 4 && ctx->target_abi == TB_ABI_WIN64) {
-                            nl_map_put(ctx->values, curr, -1); // marks as visited (stores don't return so we can -1)
+                            // marks as visited (stores don't return so we can -1)
+                            // nl_map_put(ctx->values, curr, -1);
                         }
 
                         // add parameter to debug info
@@ -531,7 +520,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
             assert(i->num_words == 1);
 
-            dst = DEF(n, n->dt);
             uint64_t x = i->words[0];
 
             // mask off bits
@@ -548,15 +536,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             } else {
                 SUBMIT(inst_op_imm(MOV, n->dt, dst, x));
             }
-            forget = true;
             break;
         }
 
         case TB_SELECT: {
-            dst = DEF(n, n->dt);
-
-            int lhs = isel(ctx, n->inputs[2]);
-            int rhs = isel(ctx, n->inputs[3]);
+            int lhs = input_reg(ctx, n->inputs[2]);
+            int rhs = input_reg(ctx, n->inputs[3]);
 
             Cond cc = isel_cmp(ctx, n->inputs[1]);
             SUBMIT(inst_move(n->dt, dst, rhs));
@@ -572,9 +557,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             const static InstType ops[] = { AND, OR, XOR, ADD, SUB };
             InstType op = ops[type - TB_AND];
 
-            dst = DEF(n, n->dt);
-
-            int lhs = isel(ctx, n->inputs[1]);
+            int lhs = input_reg(ctx, n->inputs[1]);
             hint_reg(ctx, dst, lhs);
 
             int32_t x;
@@ -584,7 +567,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
             } else {
-                int rhs = isel(ctx, n->inputs[2]);
+                int rhs = input_reg(ctx, n->inputs[2]);
 
                 SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rrr(op, n->dt, dst, dst, rhs));
@@ -593,8 +576,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
 
         case TB_MUL: {
-            dst = DEF(n, n->dt);
-            int lhs = isel(ctx, n->inputs[1]);
+            int lhs = input_reg(ctx, n->inputs[1]);
             hint_reg(ctx, dst, lhs);
 
             int32_t x;
@@ -604,7 +586,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rri(IMUL, n->dt, dst, dst, x));
             } else {
-                int rhs = isel(ctx, n->inputs[2]);
+                int rhs = input_reg(ctx, n->inputs[2]);
 
                 SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rrr(IMUL, n->dt, dst, dst, rhs));
@@ -618,8 +600,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             int lo = DEF(n, dt);
             int hi = DEF(n, dt);
-            nl_map_put(ctx->values, p->lo, lo);
-            nl_map_put(ctx->values, p->hi, hi);
+            put_val(ctx, p->lo, lo);
+            put_val(ctx, p->hi, hi);
             {
                 Inst* inst = alloc_inst(MUL, dt, 2, 2, 0);
                 inst->operands[0] = RAX;
@@ -642,9 +624,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             const static InstType ops[] = { SHL, SHR, SAR, ROL, ROR };
             InstType op = ops[type - TB_SHL];
 
-            dst = DEF(n, n->dt);
-
-            int lhs = isel(ctx, n->inputs[1]);
+            int lhs = input_reg(ctx, n->inputs[1]);
             hint_reg(ctx, dst, lhs);
 
             int32_t x;
@@ -656,7 +636,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             }
 
             // the shift operations need their right hand side in CL (RCX's low 8bit)
-            int rhs = isel(ctx, n->inputs[2]);
+            int rhs = input_reg(ctx, n->inputs[2]);
 
             SUBMIT(inst_move(n->dt, dst, lhs));
             SUBMIT(inst_move(n->dt, RCX, rhs));
@@ -682,10 +662,10 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             if (dt.data < 32) dt.data = 32;
 
             // mov rax, lhs
-            int lhs = isel(ctx, n->inputs[1]);
+            int lhs = input_reg(ctx, n->inputs[1]);
             SUBMIT(inst_op_rr(op, dt, RAX, lhs));
 
-            int rhs = isel(ctx, n->inputs[2]);
+            int rhs = input_reg(ctx, n->inputs[2]);
             if (n->dt.data < 32) {
                 // add cast
                 int new_rhs = DEF(n->inputs[2], TB_TYPE_I32);
@@ -716,7 +696,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                 SUBMIT(inst);
             }
 
-            dst = DEF(n, n->dt);
             hint_reg(ctx, dst, is_div ? RAX : RDX);
             SUBMIT(inst_move(dt, dst, is_div ? RAX : RDX));
             break;
@@ -726,43 +705,35 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             assert(n->dt.type == TB_FLOAT && n->dt.width == 0);
             uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
 
-            dst = DEF(n, n->dt);
             if (imm == 0) {
                 SUBMIT(inst_op_zero(n->dt, dst));
             } else {
                 TB_Global* g = tb__small_data_intern(ctx->module, sizeof(float), &imm);
                 SUBMIT(inst_op_global(FP_MOV, n->dt, dst, (TB_Symbol*) g));
             }
-            forget = true;
             break;
         }
         case TB_FLOAT64_CONST: {
             assert(n->dt.type == TB_FLOAT && n->dt.width == 0);
             uint64_t imm = (Cvt_F64U64){ .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat64)->value }.i;
 
-            dst = DEF(n, n->dt);
             if (imm == 0) {
                 SUBMIT(inst_op_zero(n->dt, dst));
             } else {
                 TB_Global* g = tb__small_data_intern(ctx->module, sizeof(double), &imm);
                 SUBMIT(inst_op_global(FP_MOV, n->dt, dst, (TB_Symbol*) g));
             }
-            forget = true;
             break;
         }
         case TB_FLOAT_EXT: {
-            dst = DEF(n, n->dt);
-
-            int src = isel(ctx, n->inputs[1]);
+            int src = input_reg(ctx, n->inputs[1]);
             SUBMIT(inst_op_rr(FP_CVT, n->inputs[1]->dt, dst, src));
             break;
         }
         case TB_NEG:
         case TB_NOT: {
-            dst = DEF(n, n->dt);
-
             if (n->dt.type != TB_FLOAT) {
-                int src = ISEL(n->inputs[1]);
+                int src = input_reg(ctx, n->inputs[1]);
 
                 SUBMIT(inst_op_rr(type == TB_NOT ? NOT : NEG, n->dt, dst, src));
             } else {
@@ -790,13 +761,12 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_FMUL:
         case TB_FDIV: {
             const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV };
-            dst = DEF(n, n->dt);
 
-            int lhs = isel(ctx, n->inputs[1]);
+            int lhs = input_reg(ctx, n->inputs[1]);
             hint_reg(ctx, dst, lhs);
             SUBMIT(inst_move(n->dt, dst, lhs));
 
-            int rhs = isel(ctx, n->inputs[2]);
+            int rhs = input_reg(ctx, n->inputs[2]);
             SUBMIT(inst_op_rrr(ops[type - TB_FADD], n->dt, dst, dst, rhs));
             break;
         }
@@ -808,11 +778,9 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // it's either 32bit or 64bit conversion
             //   CVTSI2SS r/m32, xmm1
             //   CVTSI2SD r/m64, xmm1
-            dst = DEF(n, n->dt);
-
             bool is_64bit = src_dt.data > 32;
 
-            int src = isel(ctx, n->inputs[1]);
+            int src = input_reg(ctx, n->inputs[1]);
             SUBMIT(inst_op_rr(is_64bit ? FP_CVT64 : FP_CVT32, n->dt, dst, src));
             break;
         }
@@ -827,24 +795,19 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             // F3 REX.W 0F 2C /r      CVTTSS2SI xmm1, r/m64
             // F2 0F 2C /r            CVTTSD2SI xmm1, r/m32
             // F2 REX.W 0F 2C /r      CVTTSD2SI xmm1, r/m64
-            dst = DEF(n, n->dt);
-
-            int src = isel(ctx, n->inputs[1]);
+            int src = input_reg(ctx, n->inputs[1]);
             SUBMIT(inst_op_rr(FP_CVTT, src_dt, dst, src));
             break;
         }
 
         // pointer arithmatic
         case TB_LOCAL:
-        dst = DEF(n, n->dt);
         SUBMIT(isel_addr(ctx, n, dst, -1, -1));
-        forget = true;
         break;
 
         case TB_VA_START:
         case TB_MEMBER_ACCESS:
         case TB_ARRAY_ACCESS: {
-            dst = DEF(n, n->dt);
             SUBMIT(isel_addr(ctx, n, dst, -1, -1));
             break;
         }
@@ -852,9 +815,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         // bitcasting
         case TB_BITCAST: {
             TB_DataType src_dt = n->inputs[1]->dt;
-            int src = isel(ctx, n->inputs[1]);
+            int src = input_reg(ctx, n->inputs[1]);
 
-            dst = DEF(n, n->dt);
             if (src_dt.type == TB_FLOAT && n->dt.type == TB_INT) {
                 // float -> int
                 SUBMIT(inst_op_rr(MOV_F2I, n->dt, dst, src));
@@ -870,9 +832,8 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         // downcasting
         case TB_PTR2INT:
         case TB_TRUNCATE: {
-            int src = isel(ctx, n->inputs[1]);
+            int src = input_reg(ctx, n->inputs[1]);
 
-            dst = DEF(n, n->dt);
             if (n->dt.type == TB_FLOAT) {
                 SUBMIT(inst_op_rr(FP_CVT, n->inputs[1]->dt, dst, src));
             } else {
@@ -891,8 +852,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             bool sign_ext = (type == TB_SIGN_EXT);
             int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
 
-            dst = DEF(n, n->dt);
-
             int32_t imm;
             if (try_for_imm32(ctx, src, &imm)) {
                 #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
@@ -910,69 +869,31 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     SUBMIT(inst_op_imm(MOV, n->dt, dst, src));
                 }
 
-                return dst;
                 #undef MASK_UPTO
+            } else {
+                TB_DataType dt = n->dt;
+
+                int op = MOV;
+                if (bits_in_type <= 8) op = sign_ext ? MOVSXB : MOVZXB;
+                else if (bits_in_type <= 16) op = sign_ext ? MOVSXW : MOVZXW;
+                else if (bits_in_type <= 32) {
+                    if (sign_ext) op = MOVSXD;
+                    else dt = src_dt;
+                } else if (bits_in_type <= 64) op = MOV;
+                else tb_todo();
+
+                /*if (src->type == TB_LOAD && nl_map_get_checked(ctx->uses, src) == 1) {
+                    use(ctx, src);
+
+                    Inst inst = isel_load(ctx, src, dst);
+                    inst.type = op;
+                    inst.data_type = legalize(dt);
+                    SUBMIT(inst);
+                } else {*/
+                int val = input_reg(ctx, src);
+                SUBMIT(inst_op_rr(op, dt, dst, val));
+                // }
             }
-
-            TB_DataType dt = n->dt;
-
-            int op = MOV;
-            if (bits_in_type <= 8) op = sign_ext ? MOVSXB : MOVZXB;
-            else if (bits_in_type <= 16) op = sign_ext ? MOVSXW : MOVZXW;
-            else if (bits_in_type <= 32) {
-                if (sign_ext) op = MOVSXD;
-                else dt = src_dt;
-            } else if (bits_in_type <= 64) op = MOV;
-            else tb_todo();
-
-            /*if (src->type == TB_LOAD && nl_map_get_checked(ctx->uses, src) == 1) {
-                use(ctx, src);
-
-                Inst inst = isel_load(ctx, src, dst);
-                inst.type = op;
-                inst.data_type = legalize(dt);
-                SUBMIT(inst);
-            } else {*/
-            int val = ISEL(src);
-            SUBMIT(inst_op_rr(op, dt, dst, val));
-            // }
-            break;
-        }
-
-        // memory op
-        case TB_MEMSET: {
-            TB_DataType ptr_dt = TB_TYPE_I64;
-            SUBMIT(inst_move(ptr_dt,     RDI, isel(ctx, n->inputs[1])));
-            SUBMIT(inst_move(TB_TYPE_I8, RAX, isel(ctx, n->inputs[2])));
-            SUBMIT(inst_move(ptr_dt,     RCX, isel(ctx, n->inputs[3])));
-
-            Inst* i = alloc_inst(STOSB, TB_TYPE_VOID, 0, 3, 0);
-            i->flags |= INST_REP;
-            i->operands[0] = RDI;
-            i->operands[1] = RAX;
-            i->operands[2] = RCX;
-            SUBMIT(i);
-            break;
-        }
-        case TB_MEMCPY: {
-            TB_DataType ptr_dt = TB_TYPE_I64;
-            int rdi = isel(ctx, n->inputs[1]);
-            int rsi = isel(ctx, n->inputs[2]);
-            int rcx = isel(ctx, n->inputs[3]);
-
-            hint_reg(ctx, rdi, RDI);
-            hint_reg(ctx, rsi, RSI);
-            hint_reg(ctx, rcx, RCX);
-            SUBMIT(inst_move(ptr_dt, RDI, rdi));
-            SUBMIT(inst_move(ptr_dt, RSI, rsi));
-            SUBMIT(inst_move(ptr_dt, RCX, rcx));
-
-            Inst* i = alloc_inst(MOVSB, TB_TYPE_VOID, 0, 3, 0);
-            i->flags |= INST_REP;
-            i->operands[0] = RDI;
-            i->operands[1] = RSI;
-            i->operands[2] = RCX;
-            SUBMIT(i);
             break;
         }
 
@@ -1035,7 +956,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
                 // first few parameters are passed as inputs to the CALL instruction.
                 // the rest are written into the stack at specific places.
-                RegIndex src = isel(ctx, param);
+                RegIndex src = input_reg(ctx, param);
                 if (reg >= desc->gpr_count) {
                     SUBMIT(inst_op_mr(use_xmm ? FP_MOV : MOV, param->dt, RSP, GPR_NONE, SCALE_X1, reg * 8, src));
                 } else {
@@ -1063,7 +984,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
 
             int target_val = RSP; // placeholder really
             if (!static_call) {
-                target_val = ISEL(target);
+                target_val = input_reg(ctx, target);
             }
 
             // perform last minute copies (this avoids keeping parameter registers alive for too long)
@@ -1129,7 +1050,6 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             *dst_ins++ = target_val;
             memcpy(dst_ins, ins, in_count * sizeof(RegIndex));
 
-            fence(ctx, n);
             SUBMIT(call_inst);
 
             // copy out return
@@ -1142,7 +1062,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                     SUBMIT(inst_move(ret_dt, ret_val, RAX));
                 }
 
-                nl_map_put(ctx->values, ret_node, ret_val);
+                put_val(ctx, ret_node, ret_val);
             }
             break;
         }
@@ -1155,8 +1075,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_CMP_ULE:
         case TB_CMP_FLT:
         case TB_CMP_FLE: {
-            dst = DEF(n, TB_TYPE_I32);
-            SUBMIT(inst_op_zero(n->dt, dst));
+            // SUBMIT(inst_op_zero(n->dt, dst));
 
             // use SETcc to convert into integer
             Cond cc = isel_cmp(ctx, n);
@@ -1169,23 +1088,7 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
             TB_Node** succ = br->succ;
 
-            if (br->succ_count == 2 && br->keys[0] == 0) {
-                use(ctx, n->inputs[1]);
-
-                // do fence without that extra use
-                fence(ctx, n);
-                fence_last(ctx, bb, n);
-
-                // we redo it because the later code will be the one to
-                // actually apply it
-                fake_unuse(ctx, n->inputs[1]);
-            } else {
-                fence(ctx, n);
-                fence_last(ctx, bb, n);
-            }
-
             SUBMIT(alloc_inst(INST_TERMINATOR, TB_TYPE_VOID, 0, 0, 0));
-
             if (br->succ_count == 1) {
                 if (ctx->fallthrough != succ[0]) {
                     SUBMIT(inst_jmp(succ[0]));
@@ -1209,14 +1112,14 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
                         }
                     }
                 } else {
-                    int key = isel(ctx, n->inputs[1]);
+                    int key = input_reg(ctx, n->inputs[1]);
                     SUBMIT(inst_op_ri(CMP, dt, key, br->keys[0]));
                     SUBMIT(inst_jcc(succ[1], E));
                     SUBMIT(inst_jmp(succ[0]));
                 }
             } else {
                 TB_DataType dt = n->inputs[1]->dt;
-                int key = isel(ctx, n->inputs[1]);
+                int key = input_reg(ctx, n->inputs[1]);
 
                 // check if there's at most only one space between entries
                 uint64_t last = br->keys[1];
@@ -1269,18 +1172,13 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         }
 
         case TB_SYMBOL: {
-            dst = DEF(n, n->dt);
-
             TB_NodeSymbol* s = TB_NODE_GET_EXTRA(n);
             SUBMIT(inst_op_global(LEA, n->dt, dst, s->sym));
-            forget = true;
             break;
         }
         case TB_LOAD: {
-            dst = DEF(n, n->dt);
             int mov_op = (TB_IS_FLOAT_TYPE(n->dt) || n->dt.width) ? FP_MOV : MOV;
-
-            TB_Node* addr = n->inputs[1];
+            TB_Node* addr = n->inputs[2];
 
             Inst* ld_inst = isel_addr(ctx, addr, dst, -1, -1);
             ld_inst->type = mov_op;
@@ -1294,48 +1192,87 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
             break;
         }
         case TB_STORE: {
-            TB_DataType store_dt = n->inputs[2]->dt;
-            int mov_op = (TB_IS_FLOAT_TYPE(store_dt) || store_dt.width) ? FP_MOV : MOV;
+            TB_DataType store_dt = n->inputs[3]->dt;
 
             // if we can couple the LOAD & STORE
-            TB_Node* addr = n->inputs[1];
-            int fold_op = can_folded_store(ctx, addr, n->inputs[2]);
-            if (fold_op >= 0) {
+            TB_Node* addr = n->inputs[2];
+            TB_Node* src = n->inputs[3];
+            int store_op = can_folded_store(ctx, addr, n->inputs[3]);
+            if (store_op >= 0) {
                 use(ctx, n->inputs[2]);
                 use(ctx, n->inputs[2]->inputs[1]);
                 use(ctx, n->inputs[2]->inputs[1]->inputs[1]);
-                fence(ctx, n);
 
-                int src = isel(ctx, n->inputs[2]->inputs[2]);
+                src = n->inputs[2]->inputs[2];
+            } else {
+                store_op = (TB_IS_FLOAT_TYPE(store_dt) || store_dt.width) ? FP_MOV : MOV;
+            }
 
-                Inst* st_inst = isel_addr(ctx, addr, dst, fold_op, src);
+            int32_t imm;
+            if (try_for_imm32(ctx, src, &imm)) {
+                Inst* st_inst = isel_addr(ctx, addr, dst, store_op, -1);
+                st_inst->in_count -= 1;
                 st_inst->dt = legalize(store_dt);
+                st_inst->flags |= INST_IMM;
+                st_inst->imm = imm;
                 assert(st_inst->flags & INST_MEM);
 
                 SUBMIT(st_inst);
             } else {
-                Inst* inst = NULL;
+                int src_reg = input_reg(ctx, src);
 
-                // flip the operands on an isel_addr op
-                int src = isel(ctx, n->inputs[2]);
-                Inst* st_inst = isel_addr(ctx, addr, dst, mov_op, src);
+                Inst* st_inst = isel_addr(ctx, addr, dst, store_op, src_reg);
                 st_inst->dt = legalize(store_dt);
                 assert(st_inst->flags & INST_MEM);
 
-                fence(ctx, n);
                 SUBMIT(st_inst);
             }
             break;
         }
+        case TB_MEMSET: {
+            TB_DataType ptr_dt = TB_TYPE_I64;
+            SUBMIT(inst_move(ptr_dt,     RDI, input_reg(ctx, n->inputs[2])));
+            SUBMIT(inst_move(TB_TYPE_I8, RAX, input_reg(ctx, n->inputs[3])));
+            SUBMIT(inst_move(ptr_dt,     RCX, input_reg(ctx, n->inputs[4])));
 
-        case TB_STOP: {
+            Inst* i = alloc_inst(STOSB, TB_TYPE_VOID, 0, 3, 0);
+            i->flags |= INST_REP;
+            i->operands[0] = RDI;
+            i->operands[1] = RAX;
+            i->operands[2] = RCX;
+            SUBMIT(i);
+            break;
+        }
+        case TB_MEMCPY: {
+            TB_DataType ptr_dt = TB_TYPE_I64;
+            int rdi = input_reg(ctx, n->inputs[2]);
+            int rsi = input_reg(ctx, n->inputs[3]);
+            int rcx = input_reg(ctx, n->inputs[4]);
+
+            hint_reg(ctx, rdi, RDI);
+            hint_reg(ctx, rsi, RSI);
+            hint_reg(ctx, rcx, RCX);
+            SUBMIT(inst_move(ptr_dt, RDI, rdi));
+            SUBMIT(inst_move(ptr_dt, RSI, rsi));
+            SUBMIT(inst_move(ptr_dt, RCX, rcx));
+
+            Inst* i = alloc_inst(MOVSB, TB_TYPE_VOID, 0, 3, 0);
+            i->flags |= INST_REP;
+            i->operands[0] = RDI;
+            i->operands[1] = RSI;
+            i->operands[2] = RCX;
+            SUBMIT(i);
+            break;
+        }
+
+        case TB_END: {
             if (n->input_count > 1) {
-                assert(n->input_count <= 2 && "We don't support multiple returns here");
+                assert(n->input_count <= 3 && "We don't support multiple returns here");
 
-                int src = isel(ctx, n->inputs[1]);
+                int src = input_reg(ctx, n->inputs[2]);
 
                 // copy to return register
-                TB_DataType dt = n->inputs[1]->dt;
+                TB_DataType dt = n->inputs[2]->dt;
                 if (dt.type == TB_FLOAT) {
                     hint_reg(ctx, src, FIRST_XMM + XMM0);
                     SUBMIT(inst_move(dt, FIRST_XMM + XMM0, src));
@@ -1367,36 +1304,21 @@ static int isel(Ctx* restrict ctx, TB_Node* n) {
         case TB_PROJ: {
             if (n->inputs[0]->type == TB_START) {
                 int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+                int param_gpr_count = ctx->target_abi == TB_ABI_WIN64 ? 4 : 6;
 
-                // past the first 4 parameters, it's all stack
-                if ((ctx->target_abi == TB_ABI_WIN64   && index >= 4) ||
-                    (ctx->target_abi == TB_ABI_SYSTEMV && index >= 6)) {
-                    dst = DEF(n, n->dt);
-
+                // past the first register parameters, it's all stack
+                if (index >= param_gpr_count) {
                     InstType i = n->dt.type == TB_FLOAT ? FP_MOV : MOV;
                     SUBMIT(inst_op_rm(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, 16 + index*8));
-                    forget = true;
-                    break;
                 }
             } else if (n->inputs[0]->type == TB_CALL || n->inputs[0]->type == TB_SYSCALL) {
                 // do nothing, be happy
-            } else {
-                isel(ctx, n->inputs[0]);
-
-                ptrdiff_t search = nl_map_get(ctx->values, n);
-                assert(search >= 0);
-                dst = ctx->values[search].v;
             }
             break;
         }
 
         default: tb_todo();
     }
-
-    if (!forget) {
-        nl_map_put(ctx->values, n, dst);
-    }
-    return dst;
 }
 
 static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) {

@@ -13,6 +13,8 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
         return NULL;
     }
 
+    tb_todo();
+
     char* fname = sym->name;
     if (strcmp(fname, "memcpy") == 0) {
         TB_Node* n2 = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_CONTROL, 4, sizeof(TB_NodeMemAccess));
@@ -50,3 +52,4 @@ static TB_Node* ideal_libcall(TB_Passes* restrict passes, TB_Function* f, TB_Nod
         return NULL;
     }
 }
+

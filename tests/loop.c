@@ -76,11 +76,6 @@ static int stbi__mul2sizes_valid(int a, int b)
     return a <= INT_MAX/b;
 }
 
-static uint64_t foo(uint64_t x, uint64_t y) {
-    if ((x * 2) / 2) return x;
-    else             return y;
-}
-
 static void array_ops(size_t n, int* arr) {
     for (size_t i = 0; i < n; i++) {
         arr[i] |= 1;
@@ -164,12 +159,31 @@ int store_elim(int* a) {
     return *a;
 }
 
-int select_opt(int a, int b) {
-    return a > 10 && !(b > 10);
+int branching_store(int* a) {
+    *a = 16;
+    if (*a) {
+        *a = 6;
+    }
+    return *a;
 }
 
-int main() {
-    /*printf("%d\n", select_opt(11, 5));
+/*static int select_opt(int a, int b) {
+    return a > 10 && !(b > 10);
+}*/
+
+static int aliasing(int* restrict a, int* restrict b) {
+    *a = 1;
+    *b = 2;
+    return *a;
+}
+
+uint64_t foo(uint64_t x, uint64_t y) {
+    if ((x * 2) / 2) return x;
+    else             return y;
+}
+
+/*int main() {
+    printf("%d\n", select_opt(11, 5));
     printf("%d\n", select_opt(11, 11));
     printf("%d\n", select_opt(5, 5));
     printf("%d\n", select_opt(0, 0));
@@ -177,13 +191,13 @@ int main() {
 
     for (int i = 0; i < 100; i++) {
         printf("%f\n", Q_rsqrt(i / 100.0f));
-    }*/
+    }
 
     int a = 69;
     store_elim(&a);
 
     // printf("%d\n", store_elim(&a));
-}
+}*/
 
 #if 0
 int main() {

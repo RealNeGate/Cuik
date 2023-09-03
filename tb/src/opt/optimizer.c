@@ -20,6 +20,7 @@ thread_local TB_Arena* tmp_arena;
 static TB_Node* unsafe_get_region(TB_Node* n);
 static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled);
 static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot);
+static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size_t i);
 
 // transmutations let us generate new nodes from old ones
 void tb_transmute_to_poison(TB_Passes* restrict p, TB_Node* n);
@@ -31,6 +32,7 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
 static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node);
 
 // node creation helpers
+TB_Node* make_dead(TB_Function* f, TB_Passes* restrict p);
 TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt);
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
@@ -150,7 +152,7 @@ TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
     TB_Node* k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
     if (k != NULL) {
         // try free?
-        log_debug("%s: early CSE on poison", f->super.name);
+        // log_debug("%s: early CSE on poison", f->super.name);
         tb_arena_free(f->arena, n->inputs, sizeof(TB_Node*));
         tb_arena_free(f->arena, n, sizeof(TB_Node) + n->extra_count);
         return k;
@@ -169,7 +171,7 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
     TB_Node* k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
     if (k != NULL) {
         // try free?
-        log_debug("%s: early CSE on integer %lld", f->super.name, x);
+        // log_debug("%s: early CSE on integer %lld", f->super.name, x);
         tb_arena_free(f->arena, n->inputs, sizeof(TB_Node*));
         tb_arena_free(f->arena, n, sizeof(TB_Node) + n->extra_count);
         return k;
@@ -220,6 +222,9 @@ static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_
                     remove_input(p, f, use->n, i + 1);
                 }
             }
+
+            tb_pass_mark(p, dst);
+            tb_pass_mark_users(p, dst);
             return;
         }
     }
@@ -335,7 +340,7 @@ static void tb_pass_mark_users_raw(TB_Passes* restrict p, TB_Node* n) {
 }
 
 void tb_pass_ensure_empty(TB_Passes* restrict p) {
-    if (dyn_array_length(p->worklist) == 0) {
+    if (dyn_array_length(p->worklist) != 0) {
         dyn_array_clear(p->worklist);
     }
 
@@ -422,10 +427,10 @@ static void cool_print_type(TB_Node* n) {
     TB_DataType dt = n->dt;
     if (n->type != TB_START && n->type != TB_REGION && !(n->type == TB_BRANCH && n->input_count == 1)) {
         if (n->type == TB_STORE) {
-            dt = n->inputs[2]->dt;
+            dt = n->inputs[3]->dt;
         } else if (n->type == TB_BRANCH) {
             dt = n->inputs[1]->dt;
-        } else if (n->type == TB_STOP) {
+        } else if (n->type == TB_END) {
             dt = n->input_count > 1 ? n->inputs[1]->dt : TB_TYPE_VOID;
         } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
             dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
@@ -435,7 +440,7 @@ static void cool_print_type(TB_Node* n) {
     }
 }
 
-void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
+void print_node_sexpr(TB_Node* n, int depth) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
         printf("%"PRId64, num->words[0]);
@@ -459,7 +464,7 @@ void print_node_sexpr(TB_Function* f, TB_Node* n, int depth) {
             if (i == 0) printf(" @");
             else printf(" ");
 
-            print_node_sexpr(f, n->inputs[i], depth + 1);
+            print_node_sexpr(n->inputs[i], depth + 1);
         }
 
         switch (n->type) {
@@ -546,8 +551,33 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         case TB_PHI:
         return ideal_phi(p, f, n);
 
+        case TB_REGION:
+        return ideal_region(p, f, n);
+
         case TB_BRANCH:
         return ideal_branch(p, f, n);
+
+        /*case TB_BRANCH:
+        case TB_DEBUGBREAK:
+        case TB_TRAP:
+        case TB_UNREACHABLE:
+        case TB_CALL:
+        case TB_SYSCALL:
+        case TB_SAFEPOINT:
+        case TB_SAFEPOINT_POLL:
+        return n->inputs[0]->type == TB_DEAD ? n->inputs[0] : n;
+
+        case TB_REGION: {
+            if (n->input_count != 0) {
+                FOREACH_N(i, 0, n->input_count) {
+                    if (n->inputs[i]->type != TB_DEAD) return n;
+                }
+
+                return n->inputs[0];
+            } else {
+                return n;
+            }
+        }*/
 
         default:
         return NULL;
@@ -595,6 +625,12 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
                 if (same != n->inputs[i]) return n;
             }
 
+            if (same->dt.type == TB_MEMORY) {
+                TB_NodeRegion* r = TB_NODE_GET_EXTRA(n->inputs[0]);
+                if (r->mem_in == n)  r->mem_in = NULL;
+                if (r->mem_out == n) r->mem_out = NULL;
+            }
+
             return same;
         }
 
@@ -604,7 +640,7 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 }
 
 static bool is_terminator(TB_Node* n) {
-    return n->type == TB_BRANCH || n->type == TB_STOP || n->type == TB_TRAP || n->type == TB_UNREACHABLE;
+    return n->type == TB_BRANCH || n->type == TB_END || n->type == TB_TRAP || n->type == TB_UNREACHABLE;
 }
 
 static TB_Node* unsafe_get_region(TB_Node* n) {
@@ -614,78 +650,20 @@ static TB_Node* unsafe_get_region(TB_Node* n) {
     return n;
 }
 
-static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
-    // if there's one predecessor and it's to an unconditional branch, merge them.
-    if (n->input_count == 1) {
-        if (
-            n->inputs[0]->type == TB_PROJ &&
-            n->inputs[0]->inputs[0]->type == TB_BRANCH &&
-            n->inputs[0]->inputs[0]->input_count == 1
-        ) {
-            TB_Node* top_node = unsafe_get_region(n->inputs[0]);
-            TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
-            TB_NodeRegion* bot_region = TB_NODE_GET_EXTRA(n);
-
-            // bottom's region should be joined to whatever is above top's terminator
-            subsume_node(p, f, n, top_region->end->inputs[0]);
-
-            // set new terminator
-            subsume_node(p, f, top_region->end, bot_region->end);
-            top_region->end = bot_region->end;
-
-            if (top_region->tag == NULL) {
-                top_region->tag = bot_region->tag;
-            }
-
-            // re-evaluate traversal
-            recompute_cfg(f, p);
-
-            tb_pass_mark(p, top_node);
-            return top_node;
-        }
-    }
-
-    return NULL;
-}
-
 static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // must've dead sometime between getting scheduled and getting
     // here.
-    if (find_users(p, n) == NULL) {
+    if (n->type != TB_END && find_users(p, n) == NULL) {
         return false;
     }
 
-    // special case is peepholes on regions
-    if (n->type == TB_REGION) {
-        // check if it's a dead region
-        if (n->input_count == 0) {
-            DO_IF(TB_OPTDEBUG_PEEP)(printf("kill! "), print_node_sexpr(f, n, 0));
-
-            // remove predecessor from other branches
-            TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-            if (r->end->type == TB_BRANCH) {
-                TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
-                FOREACH_N(i, 0, br->succ_count) if (br->succ[i]->input_count > 0) {
-                    remove_pred(p, f, n, br->succ[i]);
-
-                    tb_pass_mark(p, br->succ[i]);
-                    tb_pass_mark_users(p, br->succ[i]);
-                }
-            }
-
-            return true;
-        }
-
-        return ideal_region(p, f, n);
-    }
-
-    DO_IF(TB_OPTDEBUG_PEEP)(printf("peep? "), print_node_sexpr(f, n, 0));
+    DO_IF(TB_OPTDEBUG_PEEP)(printf("peep? "), print_node_sexpr(n, 0));
 
     // idealize node (in a loop of course)
     TB_Node* k = idealize(p, f, n);
     DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
     while (k != NULL) {
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
 
         tb_pass_mark_users(p, k);
 
@@ -707,7 +685,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // convert into matching identity
     k = identity(p, f, n);
     if (n != k) {
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), print_node_sexpr(f, k, 0), printf("\x1b[0m"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
         subsume_node(p, f, n, k);
         return k;
     }
@@ -805,6 +783,11 @@ bool tb_pass_peephole(TB_Passes* p) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
             }
         }
+    }
+
+    if (p->cfg_dirty) {
+        recompute_cfg(f, p);
+        p->cfg_dirty = false;
     }
 
     return changes;

@@ -306,7 +306,7 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
     }
 
     f->control_node_count = 1;
-    f->active_control_node = f->start_node = tb_alloc_node(f, TB_START, TB_TYPE_CONTROL, 0, extra_size);
+    f->start_node = tb_alloc_node(f, TB_START, TB_TYPE_TUPLE, 0, extra_size);
 
     TB_NodeRegion* start = TB_NODE_GET_EXTRA(f->start_node);
     start->dom_depth = 0;
@@ -314,19 +314,20 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
     start->tag = f->super.name;
 
     f->param_count = param_count;
-    f->params = tb_arena_alloc(f->arena, param_count * sizeof(TB_Node*));
+    f->params = tb_arena_alloc(f->arena, (2+param_count) * sizeof(TB_Node*));
+
+    // fill in acceleration structure
+    f->params[0] = f->active_control_node = tb__make_proj(f, TB_TYPE_CONTROL, f->start_node, 0);
+    f->params[1] = tb__make_proj(f, TB_TYPE_MEMORY, f->start_node, 1);
+
+    // mark the input memory as both mem_in and mem_out
+    start->mem_in = start->mem_out = f->params[1];
 
     // create parameter projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);
     FOREACH_N(i, 0, param_count) {
         TB_DataType dt = p->params[i].dt;
-
-        TB_Node* proj = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
-        proj->inputs[0] = f->start_node;
-        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = i);
-
-        // fill in acceleration structure
-        f->params[i] = proj;
+        f->params[2+i] = tb__make_proj(f, dt, f->start_node, 2+i);
     }
 
     f->prototype = p;

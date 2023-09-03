@@ -13,7 +13,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_NULL: return "BAD";
 
         case TB_START:  return "start";
-        case TB_STOP:   return "stop";
+        case TB_END:    return "end";
         case TB_PROJ:   return "proj";
         case TB_REGION: return "region";
 
@@ -118,6 +118,10 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
             P("tuple");
             break;
         }
+        case TB_MEMORY: {
+            P("memory");
+            break;
+        }
         case TB_CONTROL: {
             P("control");
             break;
@@ -138,7 +142,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
         fillcolor = "lightblue";
     }
 
-    P("  r%p [style=\"rounded,filled\"; ordering=in; shape=box; fillcolor=%s; label=\"", n, fillcolor);
+    P("  r%p [style=\"filled\"; ordering=in; shape=box; fillcolor=%s; label=\"", n, fillcolor);
     switch (n->type) {
         case TB_FLOAT32_CONST: {
             TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
@@ -184,7 +188,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             break;
         }
 
-        case TB_STOP: {
+        case TB_END: {
             P("stop ");
             FOREACH_N(i, 1, n->input_count) {
                 if (i != 1) P(", ");
@@ -195,7 +199,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
 
         case TB_STORE: {
             P("store ");
-            tb_print_type(n->inputs[2]->dt, callback, user_data);
+            tb_print_type(n->inputs[3]->dt, callback, user_data);
             break;
         }
 
@@ -266,7 +270,7 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             }
 
             if (in->dt.type == TB_CONTROL) {
-                P("\"] [color=\"red\"]");
+                P("\"] [color=\"red\"]\n");
             } else {
                 P("\"]\n");
             }
@@ -275,6 +279,8 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             P("  r%p -> r%p", in, n);
             if (i == 0 || n->type == TB_REGION) {
                 P(" [color=\"red\"]");
+            } else if (in->dt.type == TB_MEMORY) {
+                P(" [color=\"blue\" style=\"dashed\"]");
             }
 
             if (n->type == TB_CALL && i > 1) {

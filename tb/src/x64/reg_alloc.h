@@ -709,7 +709,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                 REG_ALLOC_LOG {
                     printf("  # v%-4d t=[%-4d - %4d)   ", ri, time, interval->end);
                     if (interval->n != NULL) {
-                        print_node_sexpr(f, interval->n, 0);
+                        print_node_sexpr(interval->n, 0);
                     }
                     printf("\n");
                 }

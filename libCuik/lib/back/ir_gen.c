@@ -1723,6 +1723,9 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 // if there's no else case, then false is just exit
                 if_false = s->if_.next ? tb_inst_region(func) : exit;
 
+                tb_inst_set_region_name(func, if_true,  -1, "if.true");
+                tb_inst_set_region_name(func, if_false, -1, "if.false");
+
                 // Cast to bool
                 tb_inst_if(func, cvt2rval(tu, func, &cond), if_true, if_false);
             }
@@ -1737,6 +1740,11 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
                 tb_inst_set_control(func, if_false);
                 irgen_stmt(tu, func, s->if_.next);
+
+                // if there's no control here, then we can't fallthrough
+                if (tb_inst_get_control(func) != NULL) {
+                    tb_inst_goto(func, exit);
+                }
             } else if (exit != if_false) {
                 fallthrough_label(func, if_false);
             }

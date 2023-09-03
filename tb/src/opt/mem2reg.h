@@ -1,6 +1,7 @@
 // Based on Dominance Frontiers
 //    https://www.ed.tus.ac.jp/j-mune/keio/m/ssa2.pdf
 typedef enum {
+    COHERENCY_DEAD,
     COHERENCY_GOOD,
 
     // failure states
@@ -125,8 +126,8 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
         TB_Node* top;
         if (dyn_array_length(stack[var]) == 0) {
             // this is UB land, insert poison
-            top = make_poison(f, c->p, TB_TYPE_VOID);
             log_warn("%s: ir: generated poison due to read of uninitialized local", f->super.name);
+            top = make_poison(f, c->p, TB_TYPE_VOID);
         } else {
             top = stack[var][dyn_array_length(stack[var]) - 1];
         }
@@ -147,59 +148,85 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
     }
 }
 
+static bool is_effect_tuple(TB_Node* n) {
+    return n->type == TB_CALL ||
+        n->type == TB_SYSCALL ||
+        n->type == TB_READ    ||
+        n->type == TB_WRITE   ||
+        n->type == TB_MACHINE_OP;
+}
+
 static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* n, DynArray(TB_Node*)* stack) {
-    if (n->type != TB_REGION && n->type != TB_START) {
-        ssa_rename_node(c, n->inputs[0], stack);
-    }
-
-    // find promoted stack slots
-    bool kill = false;
-    if (n->type == TB_STORE) {
-        int var = get_variable_id(c, n->inputs[1]);
-        if (var >= 0) {
-            // push new store value onto the stack
-            dyn_array_put(stack[var], n->inputs[2]);
-            kill = true;
-        }
-    }
-
-    // check for any loads and replace them
-    for (User* u = find_users(c->p, n); u; u = u->next) {
-        TB_Node* use = u->n;
-
-        if (use->type == TB_LOAD) {
-            int var = get_variable_id(c, use->inputs[1]);
+    while (n != NULL) {
+        // find promoted stack slots
+        bool kill = false;
+        if (n->type == TB_STORE) {
+            int var = get_variable_id(c, n->inputs[2]);
             if (var >= 0) {
-                TB_Node* val;
-                if (dyn_array_length(stack[var]) == 0) {
-                    // this is UB since it implies we've read before initializing the
-                    // stack slot.
-                    val = c->poison;
-                    log_warn("%p: found load-before-init in mem2reg, this is UB", use);
-                } else {
-                    val = stack[var][dyn_array_length(stack[var]) - 1];
-                }
-
-                // make sure it's the right type
-                if (use->dt.raw != val->dt.raw) {
-                    TB_Node* cast = tb_alloc_node(c->f, TB_BITCAST, use->dt, 2, 0);
-                    tb_pass_mark(c->p, cast);
-                    set_input(c->p, cast, val, 1);
-
-                    val = cast;
-                }
-
-                set_input(c->p, use, NULL, 1); // unlink first
-                subsume_node(c->p, c->f, use, val);
+                // push new store value onto the stack
+                dyn_array_put(stack[var], n->inputs[3]);
+                kill = true;
             }
         }
-    }
 
-    if (kill) {
-        // log_info("%p: pass to %p", n, n->inputs[0]);
-        TB_Node* into = n->inputs[0];
-        set_input(c->p, n, NULL, 0);
-        subsume_node(c->p, c->f, n, into);
+        // check for any loads and replace them
+        for (User* u = find_users(c->p, n); u; u = u->next) {
+            TB_Node* use = u->n;
+
+            if (use->type == TB_LOAD) {
+                int var = get_variable_id(c, use->inputs[2]);
+                if (var >= 0) {
+                    TB_Node* val;
+                    if (dyn_array_length(stack[var]) == 0) {
+                        // this is UB since it implies we've read before initializing the
+                        // stack slot.
+                        val = c->poison;
+                        log_warn("%p: found load-before-init in mem2reg, this is UB", use);
+                    } else {
+                        val = stack[var][dyn_array_length(stack[var]) - 1];
+                    }
+
+                    // make sure it's the right type
+                    if (use->dt.raw != val->dt.raw) {
+                        TB_Node* cast = tb_alloc_node(c->f, TB_BITCAST, use->dt, 2, 0);
+                        tb_pass_mark(c->p, cast);
+                        set_input(c->p, cast, val, 1);
+
+                        val = cast;
+                    }
+
+                    set_input(c->p, use, NULL, 1); // unlink first
+                    subsume_node(c->p, c->f, use, val);
+                }
+            }
+        }
+
+        TB_Node* next = NULL;
+        for (User* use = find_users(c->p, n); use; use = use->next) {
+            TB_Node* use_n = use->n;
+
+            if (use->slot == 1) {
+                if (use_n->dt.type == TB_TUPLE) {
+                    // it's an effect tuple, we need to walk past it to the projection
+                    assert(is_effect_tuple(use_n));
+                    use = find_users(c->p, use_n);
+                } else if (use_n->dt.type == TB_MEMORY) {
+                    next = use_n;
+                    break;
+                }
+            }
+        }
+
+        // we can remove the effect now
+        if (kill) {
+            // log_info("%p: pass to %p", n, n->inputs[0]);
+            TB_Node* into = n->inputs[1];
+            set_input(c->p, n, NULL, 1);
+            subsume_node(c->p, c->f, n, into);
+        }
+
+        // don't cross regions
+        n = (next && next->type != TB_PHI) ? next : NULL;
     }
 }
 
@@ -222,11 +249,11 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     TB_Node* end = r->end;
 
     // for through all uses and replace their accessors
-    ssa_rename_node(c, end, stack);
+    ssa_rename_node(c, r->mem_in, stack);
 
     // replace phi arguments on successor
     if (end != NULL) {
-        if (end->type == TB_NULL || end->type == TB_STOP || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
+        if (end->type == TB_NULL || end->type == TB_END || end->type == TB_TRAP || end->type == TB_UNREACHABLE) {
             /* RET can't do shit in this context */
         } else if (end->type == TB_BRANCH) {
             TB_NodeBranch* br_info = TB_NODE_GET_EXTRA(end);
@@ -301,35 +328,10 @@ static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* parent, TB_Node* n) 
         insert_phis(ctx, parent, n->inputs[0]);
     }
 
-    if (n->type == TB_MEMSET) {
-        int var = get_variable_id(ctx, n->inputs[1]);
+    if (n->type == TB_STORE) {
+        int var = get_variable_id(ctx, n->inputs[2]);
         if (var >= 0) {
-            // this stores the "primary type" of the specific address
-            TB_DataType dt = ctx->to_promote[var]->dt;
-            (void) dt;
-
-            tb_todo();
-            /* if (dt.type == TB_FLOAT && dt.data == TB_FLT_32) {
-                f->nodes[r].type = TB_FLOAT32_CONST;
-                f->nodes[r].dt = dt;
-                f->nodes[r].flt32.value = 0.0;
-            } else if (dt.type == TB_FLOAT && dt.data == TB_FLT_64) {
-                f->nodes[r].type = TB_FLOAT64_CONST;
-                f->nodes[r].dt = dt;
-                f->nodes[r].flt64.value = 0.0;
-            } else {
-                f->nodes[r].type = TB_INTEGER_CONST;
-                f->nodes[r].dt = dt;
-                f->nodes[r].integer.num_words = 1;
-                f->nodes[r].integer.single_word = 0;
-            } */
-
-            write_variable(ctx, var, parent, n);
-        }
-    } else if (n->type == TB_STORE) {
-        int var = get_variable_id(ctx, n->inputs[1]);
-        if (var >= 0) {
-            write_variable(ctx, var, parent, n->inputs[2]);
+            write_variable(ctx, var, parent, n->inputs[3]);
         }
     }
 }
@@ -359,8 +361,8 @@ static bool add_configs(TB_Passes* p, TB_TemporaryStorage* tls, User* use, TB_No
             return false;
         }
 
-        TB_DataType dt = n->type == TB_LOAD ? n->dt : n->inputs[2]->dt;
-        TB_Node* address = n->inputs[1];
+        TB_DataType dt = n->type == TB_LOAD ? n->dt : n->inputs[3]->dt;
+        TB_Node* address = n->inputs[2];
         int size = (bits_in_data_type(pointer_size, dt) + 7) / 8;
 
         // see if it's a compatible configuration
@@ -418,7 +420,10 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
         TB_DataType dt;
         Coherency coherence = tb_get_stack_slot_coherency(p, f, address, &dt);
-        if (coherence == COHERENCY_USES_ADDRESS) {
+        if (coherence == COHERENCY_DEAD) {
+            DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p was unused", f->super.name, address));
+            dyn_array_remove(p->locals, i);
+        } else if (coherence == COHERENCY_USES_ADDRESS) {
             void* mark = tb_tls_push(tls, 0);
             if (attempt_sroa(p, f, tls, address)) {
                 DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p was able to SROA", f->super.name, address));
@@ -599,6 +604,11 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share
 // the same type and alignment along with not needing any address usage.
 static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_Node* address, TB_DataType* out_dt) {
+    User* use = find_users(p, address);
+    if (use == NULL) {
+        return COHERENCY_DEAD;
+    }
+
     ICodeGen* cg = tb__find_code_generator(f->super.module);
     int pointer_size = cg->pointer_size;
     int char_size = cg->minimum_addressable_size;
@@ -608,25 +618,12 @@ static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_No
     bool initialized = false;
     int dt_bits = 0;
 
-    for (User* use = find_users(p, address); use; use = use->next) {
+    for (; use; use = use->next) {
         TB_Node* n = use->n;
-        if (n->type == TB_MEMSET && n->inputs[1] == address && tb_node_is_constant_zero(n->inputs[2])) {
-            TB_NodeInt* size = TB_NODE_GET_EXTRA(n->inputs[2]);
-
-            if (n->inputs[3]->type == TB_INTEGER_CONST && size->num_words == 1) {
-                // untyped zeroing store
-                // we're hoping all data types match in size to continue along
-                int bits = char_size * size->words[0];
-
-                if (bits == 0 || (dt_bits > 0 && bits != dt_bits)) {
-                    return COHERENCY_BAD_DATA_TYPE;
-                }
-                dt_bits = bits;
-            }
-        } else if (n->type == TB_READ || n->type == TB_WRITE) {
+        if (n->type == TB_READ || n->type == TB_WRITE) {
             return COHERENCY_VOLATILE;
-        } else if ((n->type == TB_LOAD || n->type == TB_STORE) && n->inputs[1] == address) {
-            TB_DataType mem_dt = n->type == TB_LOAD ? n->dt : n->inputs[2]->dt;
+        } else if ((n->type == TB_LOAD || n->type == TB_STORE) && n->inputs[2] == address) {
+            TB_DataType mem_dt = n->type == TB_LOAD ? n->dt : n->inputs[3]->dt;
             if (!initialized) {
                 dt = mem_dt;
                 initialized = true;

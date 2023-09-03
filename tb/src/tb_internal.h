@@ -565,41 +565,6 @@ uint8_t  tb_get1b(TB_Emitter* o, uint32_t pos);
 uint16_t tb_get2b(TB_Emitter* o, uint32_t pos);
 uint32_t tb_get4b(TB_Emitter* o, uint32_t pos);
 
-////////////////////////////////
-// CFG analysis
-////////////////////////////////
-// shorthand because we use it a lot
-static TB_Node* idom(TB_Node* n) {
-    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom;
-}
-
-static int dom_depth(TB_Node* n) {
-    if (n == NULL) {
-        return 0;
-    }
-
-    while (n->type != TB_REGION && n->type != TB_START) {
-        n = n->inputs[0];
-    }
-
-    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom_depth;
-}
-
-typedef NL_HashSet TB_FrontierSet;
-typedef NL_Map(TB_Node*, TB_FrontierSet) TB_DominanceFrontiers;
-
-typedef struct {
-    size_t count;
-    TB_Node** traversal;
-    NL_Map(TB_Node*, char) visited;
-} TB_PostorderWalk;
-
-void tb_compute_dominators(TB_Function* f, TB_PostorderWalk order);
-
-// Allocates from the heap and requires freeing with tb_function_free_postorder
-TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f);
-TB_API void tb_function_free_postorder(TB_PostorderWalk* walk);
-
 inline static uint64_t align_up(uint64_t a, uint64_t b) {
     return a + (b - (a % b)) % b;
 }
@@ -621,6 +586,7 @@ inline static bool tb_is_power_of_two(uint64_t x) {
 #endif
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
+TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int index);
 
 ////////////////////////////////
 // EXPORTER HELPER
@@ -637,7 +603,7 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 ////////////////////////////////
 // ANALYSIS
 ////////////////////////////////
-void print_node_sexpr(TB_Function* f, TB_Node* n, int depth);
+void print_node_sexpr(TB_Node* n, int depth);
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);

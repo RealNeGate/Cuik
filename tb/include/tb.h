@@ -242,11 +242,11 @@ typedef enum TB_NodeTypeEnum {
     // CONTROL
     ////////////////////////////////
     //   there's only one START and STOP per function
-    TB_START,      // () -> (Control, Memory)
-    TB_STOP,       // (Control, Memory, Data?) -> ()
+    TB_START,      // () -> (Control, Memory, Data...)
+    TB_END,        // (Control, Memory, Data?) -> ()
     //   regions are used to represent paths which have multiple entries.
     //   each input is a predecessor.
-    TB_REGION,     // (Control...) -> (Control, Memory)
+    TB_REGION,     // (Control...) -> (Control)
     //   phi nodes work the same as in SSA CFG, the value is based on which predecessor was taken.
     //   each input lines up with the regions such that region.in[i] will use phi.in[i+1] as the
     //   subsequent data.
@@ -260,13 +260,28 @@ typedef enum TB_NodeTypeEnum {
     //
     //   it's possible to not pass a key and the default successor is always called, this is
     //   a GOTO. tb_inst_goto, tb_inst_if can handle common cases for you.
-    TB_BRANCH,      // (Control, Memory, Data?) -> (Control...)
+    TB_BRANCH,      // (Control, Data?) -> (Control...)
     //   debugbreak will trap in a continuable manner.
     TB_DEBUGBREAK,  // (Control, Memory) -> (Control)
     //   trap will not be continuable but will stop execution.
     TB_TRAP,        // (Control, Memory) -> ()
     //   unreachable means it won't trap or be continuable.
     TB_UNREACHABLE, // (Control, Memory) -> ()
+
+    ////////////////////////////////
+    // CONTROL + MEMORY
+    ////////////////////////////////
+    //   nothing special, it's just a function call, 3rd argument here is the
+    //   target pointer (or syscall number) and the rest are just data args.
+    TB_CALL,           // (Control, Memory, Data, Data...) -> (Control, Memory, Data)
+    TB_SYSCALL,        // (Control, Memory, Data, Data...) -> (Control, Memory, Data)
+    //   safepoints allow us to preserve state once it's compiled, this is
+    //   usually for jumping out of the JIT.
+    TB_SAFEPOINT,      // (Control, Memory, Data...)       -> (Control, Memory)
+    //   safepoint polls are the same except they only trigger if the poll site
+    //   says to (platform specific but almost always just the page being made
+    //   unmapped/guard), 3rd argument is the poll site.
+    TB_SAFEPOINT_POLL, // (Control, Memory, Ptr, Data...)  -> (Control, Memory)
 
     ////////////////////////////////
     // MEMORY
@@ -295,21 +310,6 @@ typedef enum TB_NodeTypeEnum {
     TB_ATOMIC_XOR,  // (Memory, Ptr, Data)  -> (Memory, Data)
     TB_ATOMIC_OR,   // (Memory, Ptr, Data)  -> (Memory, Data)
     TB_ATOMIC_CAS,  // (Memory, Data, Data) -> (Memory, Data, Bool)
-
-    ////////////////////////////////
-    // CONTROL + MEMORY
-    ////////////////////////////////
-    //   nothing special, it's just a function call, 3rd argument here is the
-    //   target pointer (or syscall number) and the rest are just data args.
-    TB_CALL,           // (Control, Memory, Data, Data...) -> (Control, Memory, Data)
-    TB_SYSCALL,        // (Control, Memory, Data, Data...) -> (Control, Memory, Data)
-    //   safepoints allow us to preserve state once it's compiled, this is
-    //   usually for jumping out of the JIT.
-    TB_SAFEPOINT,      // (Control, Memory, Data...)       -> (Control, Memory)
-    //   safepoint polls are the same except they only trigger if the poll site
-    //   says to (platform specific but almost always just the page being made
-    //   unmapped/guard), 3rd argument is the poll site.
-    TB_SAFEPOINT_POLL, // (Control, Memory, Ptr, Data...)  -> (Control, Memory)
 
     ////////////////////////////////
     // POINTERS
@@ -488,8 +488,8 @@ struct TB_Node {
     uint16_t input_count; // number of node inputs
     uint16_t extra_count; // number of bytes for extra operand data
 
-    // local to the TB_Passes
-    uint32_t lattice_id;
+    // makes it easier to track in graph walks
+    uint32_t gvn_id;
 
     TB_Attrib* attribs;
     TB_Node** inputs;
@@ -590,6 +590,13 @@ typedef struct {
     // immediate dominator (can be approximate)
     int dom_depth;
     TB_Node* dom;
+
+    // used for IR building only, stale after that.
+    //
+    // this represents the first and last memory values within a region,
+    // if a region ever has multiple predecessors we apply a join on these
+    // memory.
+    TB_Node *mem_in, *mem_out;
 } TB_NodeRegion;
 
 typedef struct TB_MultiOutput {
@@ -639,7 +646,7 @@ typedef struct {
 #define TB_TYPE_F64     TB_DataType{ { TB_FLOAT, 0, TB_FLT_64 } }
 #define TB_TYPE_BOOL    TB_DataType{ { TB_INT,   0, 1 } }
 #define TB_TYPE_PTR     TB_DataType{ { TB_PTR,   0, 0 } }
-
+#define TB_TYPE_MEMORY  TB_DataType{ { TB_MEMORY,0, 0 } }
 #define TB_TYPE_INTN(N) TB_DataType{ { TB_INT,   0, (N) } }
 #define TB_TYPE_PTRN(N) TB_DataType{ { TB_PTR,   0, (N) } }
 
@@ -656,8 +663,9 @@ typedef struct {
 #define TB_TYPE_F64     (TB_DataType){ { TB_FLOAT, 0, TB_FLT_64 } }
 #define TB_TYPE_BOOL    (TB_DataType){ { TB_INT,   0, 1 } }
 #define TB_TYPE_PTR     (TB_DataType){ { TB_PTR,   0, 0 } }
-#define TB_TYPE_INTN(N) (TB_DataType){ { TB_INT,  0, (N) } }
-#define TB_TYPE_PTRN(N) (TB_DataType){ { TB_PTR,  0, (N) } }
+#define TB_TYPE_MEMORY  (TB_DataType){ { TB_MEMORY,0, 0 } }
+#define TB_TYPE_INTN(N) (TB_DataType){ { TB_INT,   0, (N) } }
+#define TB_TYPE_PTRN(N) (TB_DataType){ { TB_PTR,   0, (N) } }
 
 #endif
 
@@ -1156,29 +1164,26 @@ TB_API TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena);
 TB_API void tb_pass_exit(TB_Passes* opt);
 
 // transformation passes:
-//   peephole: runs most simple reductions on the code,
-//     should be run after any bigger passes (it's incremental
-//     so it's not that bad)
+//   peephole: 99% of the optimizer, i'm sea of nodes pilled so i
+//     break down most optimizations into local rewrites, it's
+//     incremental and recommended to run after any non-peephole
+//     pass.
 //
-//   mem2reg: lowers TB_LOCALs into SSA values, this makes more
+//   mem2reg: lowers TB_LOCALs into SoN values, this makes more
 //     data flow analysis possible on the code and allows to codegen
 //     to place variables into registers.
-//
-//   cfg: performs simplifications on the CFG like `a && b => select(a, b, 0)`
-//     or removing redundant branches.
 //
 //   loop: NOT READY
 //
 TB_API bool tb_pass_peephole(TB_Passes* opt);
 TB_API bool tb_pass_mem2reg(TB_Passes* opt);
 TB_API bool tb_pass_loop(TB_Passes* opt);
-TB_API bool tb_pass_cfg(TB_Passes* opt);
+
+TB_API void tb_pass_schedule(TB_Passes* opt);
 
 // analysis
 //   print: prints IR in a flattened text form.
 TB_API bool tb_pass_print(TB_Passes* opt);
-
-TB_API void tb_pass_schedule(TB_Passes* opt);
 
 // codegen
 TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, bool emit_asm);
