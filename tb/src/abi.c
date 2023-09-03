@@ -63,6 +63,22 @@ static int debug_type_align(TB_ABI abi, TB_DebugType* t) {
     return debug_type_size(abi, t);
 }
 
+static bool debug_type_has_unaligned_fields(TB_ABI abi, TB_DebugType* t) {
+    if(t->tag == TB_DEBUG_TYPE_STRUCT || t->tag == TB_DEBUG_TYPE_UNION) {
+        return false;
+    }
+    FOREACH_N(i, 0, t->record.count) {
+        TB_DebugType* member = t->record.members[i];
+        assert(member->field.type->tag == TB_DEBUG_TYPE_FIELD);
+        int align = debug_type_align(abi, t);
+        uint32_t offset = member->field.offset;
+        if(offset%align != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static RegClass classify_reg(TB_ABI abi, TB_DebugType* t) {
     switch (abi) {
         // [https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention]
@@ -76,6 +92,47 @@ static RegClass classify_reg(TB_ABI abi, TB_DebugType* t) {
             }
 
             return RG_MEMORY;
+        }
+        
+        // https://refspecs.linuxbase.org/elf/x86_64-abi-0.99.pdf
+        case TB_ABI_SYSTEMV: {
+            // Don't care about aliases, just gimme da type
+            while (t->tag == TB_DEBUG_TYPE_ALIAS) {
+                t = t->alias.type;
+            }
+            // Integers and the like go into integer class
+            if (t->tag == TB_DEBUG_TYPE_UINT ||
+                t->tag == TB_DEBUG_TYPE_INT ||
+                t->tag == TB_DEBUG_TYPE_BOOL ||
+                t->tag == TB_DEBUG_TYPE_POINTER) {
+                return RG_INTEGER;
+            }
+            // Floats and the like to into SSE class
+            else if (t->tag == TB_DEBUG_TYPE_FLOAT) {
+                return RG_SSE;
+            }
+            // Records and arrays are special
+            else if (t->tag == TB_DEBUG_TYPE_ARRAY ||
+                t->tag == TB_DEBUG_TYPE_STRUCT ||
+                t->tag == TB_DEBUG_TYPE_UNION) {
+                // If size larger than 4 eightbytes, its memory, don't care further
+                int s = debug_type_size(abi, t);
+                if (s > 32) {
+                    return RG_MEMORY;
+                }
+                // If struct or union contains unaliged items its also memory
+                if(debug_type_has_unaligned_fields(abi, t)) {
+                    return RG_MEMORY;
+                }
+                // Here we continue classifying record types. Basically
+                // systemv allows splitting one struct into multiple RG_INTEGER
+                // classes, which this function interface doesn't support
+                // I'm thinking that storing the memory class in TB_DebugType
+                // struct is a better idea, because it will further allow
+                // easier recursive struct classification, which is done
+                // in multiple passes.
+                tb_todo();
+            }
         }
 
         default: tb_todo();
