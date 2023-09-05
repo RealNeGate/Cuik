@@ -3,22 +3,7 @@ typedef struct {
     TB_Passes* opt;
     TB_Function* f;
     TB_PostorderWalk order;
-
-    int count;
-    NL_Map(TB_Node*, char) visited;
-    NL_Map(TB_Node*, int) ordinals;
 } PrinterCtx;
-
-static ptrdiff_t find_print_label(PrinterCtx* ctx, TB_Node* n) {
-    FOREACH_N(i, 0, ctx->order.count) {
-        if (ctx->order.traversal[i] == n) {
-            return ctx->order.count - i - 1;
-        }
-    }
-
-    // return tb_assert(0, "printer refers to unknown region");
-    return -1;
-}
 
 static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
     if (n == NULL) {
@@ -30,10 +15,9 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
         if (r->tag != NULL) {
             printf(".%s", r->tag);
         } else {
-            ptrdiff_t i = find_print_label(ctx, n);
+            ptrdiff_t i = try_find_traversal_index(n);
             if (i >= 0) {
-                printf("%p", n);
-                // printf(".bb%zu", i);
+                printf(".bb%zu", i);
             } else {
                 printf("*DEAD*");
             }
@@ -62,21 +46,8 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
                 printf("%016"PRIx64, num->words[i]);
             }
         }
-    } else if (n->type == TB_PHI || n->type == TB_LOAD) {
-        ptrdiff_t search = nl_map_get(ctx->ordinals, n);
-        if (search < 0) {
-            // alloc new ID
-            int id = ctx->count++;
-            nl_map_put(ctx->ordinals, n, id);
-
-            printf("v%d", id);
-        } else {
-            printf("v%d", ctx->ordinals[search].v);
-        }
     } else {
-        ptrdiff_t search = nl_map_get(ctx->ordinals, n);
-        assert(search >= 0);
-        printf("v%d", ctx->ordinals[search].v);
+        printf("v%llu", n->gvn);
     }
 }
 
@@ -115,22 +86,9 @@ static void print_type(TB_DataType dt) {
     }
 }
 
-int get_ordinal(PrinterCtx* ctx, TB_Node* n) {
-    int id;
-    ptrdiff_t search = nl_map_get(ctx->ordinals, n);
-    if (search >= 0) {
-        id = ctx->ordinals[search].v;
-    } else {
-        // alloc new ID
-        id = ctx->count++;
-        nl_map_put(ctx->ordinals, n, id);
-    }
-    return id;
-}
-
 // returns true if it's the first time
 static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
-    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_STORE || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL) {
+    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL) {
         return;
     }
 
@@ -138,10 +96,9 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
         return;
     }
 
-    if (nl_map_get(ctx->visited, n) >= 0) return;
-    nl_map_put(ctx->visited, n, 0);
-
-    int id = get_ordinal(ctx, n);
+    if (worklist_test_n_set(&ctx->opt->worklist, n)) {
+        return;
+    }
 
     // print operands
     FOREACH_N(i, 1, n->input_count) if (n->inputs[i]) {
@@ -161,7 +118,7 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
     if (n->dt.type == TB_INT && n->dt.data == 0) {
         printf("  %s.", tb_node_get_name(n));
     } else {
-        printf("  v%d = %s.", id, tb_node_get_name(n));
+        printf("  v%llu = %s.", n->gvn, tb_node_get_name(n));
     }
 
     TB_DataType dt = n->dt;
@@ -241,7 +198,7 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
 
         case TB_LOCAL: {
             TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-            printf("!size %u !align %u", l->size, l->align);
+            printf("!size(%u) !align(%u)", l->size, l->align);
             break;
         }
 
@@ -295,17 +252,6 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
         switch (n->type) {
             case TB_DEBUGBREAK: printf("  debugbreak\n"); break;
             case TB_UNREACHABLE: printf("  unreachable\n"); break;
-
-            case TB_STORE: {
-                printf("  store.");
-                print_type(n->inputs[3]->dt);
-                printf(" ");
-                print_ref_to_node(ctx, n->inputs[2]);
-                printf(", ");
-                print_ref_to_node(ctx, n->inputs[3]);
-                printf("\n");
-                break;
-            }
 
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
@@ -415,14 +361,18 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
 bool tb_pass_print(TB_Passes* opt) {
     TB_Function* f = opt->f;
 
-    PrinterCtx ctx = { opt, f };
-    ctx.order = tb_function_get_postorder(f);
+    // schedule nodes
+    tb_pass_schedule(opt);
 
-    TB_Node* stop_bb = tb_get_parent_region(f->stop_node);
+    PrinterCtx ctx = { opt, f };
+    worklist_clear(&opt->worklist);
+
+    size_t block_count = tb_push_postorder(f, &opt->worklist);
+    TB_Node* stop_bb = get_block_begin(f->stop_node);
 
     bool has_stop = false;
-    FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-        TB_Node* bb = ctx.order.traversal[i];
+    FOREACH_REVERSE_N(i, 0, block_count) {
+        TB_Node* bb = opt->worklist.items[i];
         if (bb != stop_bb) {
             print_bb(&ctx, bb);
         } else {
@@ -434,10 +384,6 @@ bool tb_pass_print(TB_Passes* opt) {
         print_bb(&ctx, stop_bb);
     }
 
-    nl_map_free(ctx.ordinals);
-    nl_map_free(ctx.visited);
-    tb_function_free_postorder(&ctx.order);
     ctx.opt->error_n = NULL;
-
     return false;
 }

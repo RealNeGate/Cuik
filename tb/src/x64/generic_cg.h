@@ -75,14 +75,13 @@ typedef struct {
 
     int caller_usage;
     TB_Node* fallthrough;
-    TB_PostorderWalk order;
 
     TB_Passes* p;
 
     // Scheduling
-    DynArray(TB_Node*) worklist; // reusing from TB_Passes.
-    NL_HashSet* visited;         // reusing from TB_Passes.
-    ValueDesc* values;           // the indices match the visited set.
+    size_t block_count;
+    Worklist worklist; // reusing from TB_Passes.
+    ValueDesc* values; // the indices match the GVN.
 
     // Regalloc
     DynArray(LiveInterval) intervals;
@@ -105,9 +104,6 @@ typedef struct {
     DynArray(TB_StackSlot) debug_stack_slots;
 
     uint64_t regs_to_save;
-
-    // current value table
-    TB_SafepointKey* safepoints;
 } Ctx;
 
 static bool fits_into_int8(uint64_t x) {
@@ -399,9 +395,9 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
     // find BB boundaries in sequences
     MachineBBs seq_bb = NULL;
-    nl_map_create(seq_bb, ctx->order.count);
+    nl_map_create(seq_bb, ctx->block_count);
 
-    FOREACH_N(i, 0, ctx->order.count) {
+    FOREACH_N(i, 0, ctx->block_count) {
         MachineBB bb = {
             .gen = set_create_in_arena(arena, interval_count),
             .kill = set_create_in_arena(arena, interval_count),
@@ -409,7 +405,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
             .live_out = set_create_in_arena(arena, interval_count)
         };
 
-        nl_map_put(seq_bb, ctx->order.traversal[i], bb);
+        nl_map_put(seq_bb, ctx->worklist.items[i], bb);
     }
 
     // generate local live sets
@@ -467,17 +463,18 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     }
 
     // generate global live sets
-    DynArray(TB_Node*) worklist = ctx->worklist;
-    assert(dyn_array_length(worklist) == 0);
+    size_t base = dyn_array_length(ctx->worklist.items);
+    assert(base == ctx->block_count);
 
     // all nodes go into the worklist
-    FOREACH_N(i, 0, ctx->order.count) {
-        dyn_array_put(worklist, ctx->order.traversal[i]);
+    FOREACH_N(i, 0, ctx->block_count) {
+        TB_Node* n = ctx->worklist.items[i];
+        dyn_array_put(ctx->worklist.items, n);
     }
 
     Set tmp_out = set_create_in_arena(arena, interval_count);
-    while (dyn_array_length(worklist)) CUIK_TIMED_BLOCK("global iter") {
-        TB_Node* bb = dyn_array_pop(worklist);
+    while (dyn_array_length(ctx->worklist.items) > base) CUIK_TIMED_BLOCK("global iter") {
+        TB_Node* bb = dyn_array_pop(ctx->worklist.items);
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
         MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
 
@@ -508,7 +505,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         if (changes && r->end->type == TB_BRANCH) {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
             FOREACH_N(i, 0, br->succ_count) {
-                dyn_array_put(worklist, br->succ[i]);
+                dyn_array_put(ctx->worklist.items, br->succ[i]);
             }
         }
 
@@ -521,22 +518,17 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
             live_in->data[i] = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
         }
     }
+    dyn_array_set_length(ctx->worklist.items, ctx->block_count);
 
-    dyn_array_clear(worklist);
-
-    ctx->worklist = worklist;
     ctx->machine_bbs = seq_bb;
-
     assert(epilogue >= 0);
     return epilogue;
 }
 
-static bool try_def(TB_Passes* passes, NL_HashSet* visited, ValueDesc* values, TB_Node* n) {
-    size_t index = nl_hashset_lookup(visited, n);
-    if (index & NL_HASHSET_HIGH_BIT) {
+static bool try_def(TB_Passes* passes, Worklist* ws, ValueDesc* values, TB_Node* n) {
+    if (worklist_test_n_set(ws, n)) {
         return false;
     }
-    visited->data[index & NL_HASHSET_INDEX_BITS] = n;
 
     // track use count
     size_t use_count = 0;
@@ -545,19 +537,13 @@ static bool try_def(TB_Passes* passes, NL_HashSet* visited, ValueDesc* values, T
     }
 
     // we don't have to worry about resizing here which is really nice
-    values[index & NL_HASHSET_INDEX_BITS].uses = use_count;
-    values[index & NL_HASHSET_INDEX_BITS].vreg = -1;
+    values[n->gvn].uses = use_count;
+    values[n->gvn].vreg = -1;
     return true;
 }
 
 static ValueDesc* lookup_val(Ctx* restrict ctx, TB_Node* n) {
-    size_t i = nl_hashset_lookup(ctx->visited, n);
-    if (i == SIZE_MAX || (i & NL_HASHSET_HIGH_BIT) == 0) {
-        return NULL;
-    }
-
-    i &= NL_HASHSET_INDEX_BITS;
-    return &ctx->values[i];
+    return worklist_test(&ctx->worklist, n) ? &ctx->values[n->gvn] : NULL;
 }
 
 static void put_val(Ctx* restrict ctx, TB_Node* n, int src) {
@@ -622,7 +608,7 @@ static bool is_mem_out_op(TB_Node* n) {
 }
 
 static void isel_bfs_push(Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
-    if (is_same_bb(bb, n) && try_def(ctx->p, ctx->visited, ctx->values, n)) {
+    if (is_same_bb(bb, n) && try_def(ctx->p, &ctx->worklist, ctx->values, n)) {
         // tuples should initialize their projections
         if (n->dt.type == TB_TUPLE) {
             for (User* use = find_users(ctx->p, n); use; use = use->next) {
@@ -633,14 +619,13 @@ static void isel_bfs_push(Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
             }
         }
 
-        dyn_array_put(ctx->worklist, n);
+        dyn_array_put(ctx->worklist.items, n);
     }
 }
 
 static void isel_bfs(Ctx* restrict ctx, TB_Node* bb, TB_Node* root) {
-    size_t cursor = dyn_array_length(ctx->worklist);
+    size_t cursor = dyn_array_length(ctx->worklist.items);
 
-    // push initial node
     isel_bfs_push(ctx, bb, root);
 
     // if we're a branch, push our PHI nodes
@@ -671,7 +656,7 @@ static void isel_bfs(Ctx* restrict ctx, TB_Node* bb, TB_Node* root) {
                 TB_Node* val = phi->inputs[1 + phi_index];
 
                 // reserve PHI space
-                try_def(ctx->p, ctx->visited, ctx->values, phi);
+                try_def(ctx->p, &ctx->worklist, ctx->values, phi);
                 if (phi->dt.type != TB_MEMORY) {
                     PhiVal p;
                     p.phi = phi;
@@ -703,8 +688,8 @@ static void isel_bfs(Ctx* restrict ctx, TB_Node* bb, TB_Node* root) {
         }
     }
 
-    while (cursor < dyn_array_length(ctx->worklist)) {
-        TB_Node* n = ctx->worklist[cursor++];
+    while (cursor < dyn_array_length(ctx->worklist.items)) {
+        TB_Node* n = ctx->worklist.items[cursor++];
 
         // memory effects have anti-dependencies, the previous loads
         // must finish before the next memory effect is applied.
@@ -728,17 +713,25 @@ static void isel_bfs(Ctx* restrict ctx, TB_Node* bb, TB_Node* root) {
 }
 
 static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
+    assert(dyn_array_length(ctx->worklist.items) == ctx->block_count);
+
     // phase 1: flatten nodes in the basic block using BFS
     TB_Node* n = end;
-    while (n->type != TB_START && n->type != TB_REGION) {
+    do {
         isel_bfs(ctx, bb, n);
         n = n->inputs[0];
+    } while (!is_block_begin(n));
+
+    // push leftovers
+    for (User* use = find_users(ctx->p, bb); use; use = use->next) {
+        isel_bfs_push(ctx, bb, use->n);
     }
-    isel_bfs(ctx, bb, bb);
+
+    // add root at the very end
+    dyn_array_put(ctx->worklist.items, bb);
 
     // within the BB, the phi nodes should view itself as the previous value
     // not the new one we're producing.
-    DynArray(TB_Node*) worklist = ctx->worklist;
     DynArray(PhiVal) phi_vals = ctx->phi_vals;
 
     if (bb->input_count > 1) {
@@ -759,10 +752,11 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
     // isel is emitting start->end but we're iterating in reverse order so we need
     // to reverse the instruction stream as we go, it's a linked list so it's not
     // hard.
-    printf("BB %p\n", bb);
+    DO_IF(TB_OPTDEBUG_CODEGEN)(printf("BB %p\n", bb));
+
     Inst *head = ctx->head, *last = NULL;
-    FOREACH_N(i, 0, dyn_array_length(worklist)) {
-        TB_Node* n = worklist[i];
+    FOREACH_N(i, ctx->block_count, dyn_array_length(ctx->worklist.items)) {
+        TB_Node* n = ctx->worklist.items[i];
         ValueDesc* val = lookup_val(ctx, n);
 
         // attach to dummy list
@@ -772,9 +766,11 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
 
         // if the value hasn't been asked for yet and
         if (val->vreg < 0 && should_rematerialize(n)) {
-            printf("  DISCARD: ");
-            print_node_sexpr(n, 0);
-            printf("\n");
+            DO_IF(TB_OPTDEBUG_CODEGEN)(
+                printf("  DISCARD: "),
+                print_node_sexpr(n, 0),
+                printf("\n")
+            );
             continue;
         }
 
@@ -793,9 +789,11 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
                 }
             }
 
-            printf("  EFFECT: ");
-            print_node_sexpr(n, 0);
-            printf("\n");
+            DO_IF(TB_OPTDEBUG_CODEGEN)(
+                printf("  EFFECT %zu: ", n->gvn),
+                print_node_sexpr(n, 0),
+                printf("\n")
+            );
 
             if (n->type == TB_BRANCH) {
                 // writeback PHIs
@@ -817,16 +815,19 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
                 val->vreg = DEF(n, n->dt);
             }
 
-            printf("  DATA: ");
-            print_node_sexpr(n, 0);
-            printf("\n");
+            DO_IF(TB_OPTDEBUG_CODEGEN)(
+                printf("  DATA %zu: ", n->gvn),
+                print_node_sexpr(n, 0),
+                printf("\n")
+            );
 
             isel(ctx, n, val->vreg);
-            val->uses -= 1;
         } else {
-            printf("  DEAD: ");
-            print_node_sexpr(n, 0);
-            printf("\n");
+            DO_IF(TB_OPTDEBUG_CODEGEN)(
+                printf("  DEAD %zu: ", n->gvn),
+                print_node_sexpr(n, 0),
+                printf("\n")
+            );
         }
         Inst* seq_start = dummy.next;
         Inst* seq_end   = ctx->head;
@@ -856,8 +857,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
         }
     }
 
-    dyn_array_clear(worklist);
-    ctx->worklist = worklist;
+    dyn_array_set_length(ctx->worklist.items, ctx->block_count);
 }
 
 // Codegen through here is done in phases
@@ -867,24 +867,22 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_Function* restrict f = p->f;
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
-    tb_function_print(f, tb_default_print_callback, stdout);
+    // tb_pass_print(p);
     tb_pass_schedule(p);
 
-    /*reg_alloc_log = strcmp(f->super.name, "stbi__jpeg_huff_decode") == 0;
+    reg_alloc_log = strcmp(f->super.name, "murmur3_32") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }*/
+    }
 
     Ctx ctx = {
         .module = f->super.module,
         .f = f,
         .p = p,
         .target_abi = f->super.module->target_abi,
-        .safepoints = f->safepoint_count ? tb_platform_heap_alloc(f->safepoint_count * sizeof(TB_SafepointKey)) : NULL,
-        .order = p->order,
         .emit = {
             .f = f,
             .emit_asm = emit_asm,
@@ -893,27 +891,24 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             .capacity = out_capacity,
         }
     };
-    assert(ctx.order.traversal[ctx.order.count - 1] == f->start_node && "Codegen must always schedule entry BB first");
 
     CUIK_TIMED_BLOCK("init regalloc") {
         init_regalloc(&ctx);
     }
 
-    tb_pass_ensure_empty(p);
-
-    // codegen will steal the visited set to store it's use counts, by this
-    // point the number of nodes doesn't change so we can statically allocate
-    // a uses array for it.
-    CUIK_TIMED_BLOCK("init value map") {
-        ctx.visited = &p->visited;
-        ctx.values = tb_arena_alloc(tmp_arena, (1ull << ctx.visited->exp) * sizeof(ValueDesc));
-    }
+    worklist_clear(&p->worklist);
+    ctx.worklist = p->worklist;
+    ctx.values = tb_arena_alloc(tmp_arena, f->node_count * sizeof(ValueDesc));
 
     // allocate more stuff now that we've run stats on the IR
     ctx.emit.return_label = 0;
-    nl_map_create(ctx.emit.labels, ctx.order.count);
+    nl_map_create(ctx.emit.labels, ctx.block_count);
     nl_map_create(ctx.stack_slots, 8);
     dyn_array_create(ctx.debug_stack_slots, 8);
+
+    // We need to generate a CFG
+    ctx.block_count = tb_push_postorder(f, &p->worklist);
+    assert(p->worklist.items[ctx.block_count - 1] == f->start_node && "Codegen must always schedule entry BB first");
 
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are
@@ -921,20 +916,20 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     //   immediately but in theory it could be delayed until all selection
     //   is done.
     CUIK_TIMED_BLOCK("isel") {
-        assert(dyn_array_length(p->worklist) == 0);
-        ctx.worklist = p->worklist;
+        assert(dyn_array_length(ctx.worklist.items) == ctx.block_count);
 
         TB_Node* stop_node = f->stop_node;
         TB_Node* stop_bb = tb_get_parent_region(stop_node);
 
         bool has_stop = false;
-        FOREACH_REVERSE_N(i, 0, ctx.order.count) {
-            TB_Node* bb = ctx.order.traversal[i];
-            nl_map_put(ctx.emit.labels, bb, 0);
+        FOREACH_REVERSE_N(i, 0, ctx.block_count) {
+            TB_Node* bb = ctx.worklist.items[i];
+            assert(bb->type == TB_START || bb->type == TB_REGION);
 
+            nl_map_put(ctx.emit.labels, bb, 0);
             if (bb != stop_bb) {
                 // mark fallthrough
-                ctx.fallthrough = i > 0 ? ctx.order.traversal[i - 1] : NULL;
+                ctx.fallthrough = i > 0 ? ctx.worklist.items[i - 1] : NULL;
                 if (ctx.fallthrough == stop_bb) ctx.fallthrough = NULL;
 
                 Inst* label = inst_label(bb);
@@ -969,9 +964,20 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             // liveness expects one but we don't really have shit to put down there... it's never reached
             append_inst(&ctx, alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
         }
-
-        p->worklist = ctx.worklist;
     }
+    p->worklist = ctx.worklist;
+
+    /*for (Inst* restrict inst = ctx.first; inst; inst = inst->next) {
+        printf("  \x1b[32m# %s t=%d { outs:", inst->type < 1024 ? inst_table[inst->type].mnemonic : "???", inst->time);
+        FOREACH_N(i, 0, inst->out_count) {
+            printf(" v%d", inst->operands[i]);
+        }
+        printf(", ins: ");
+        FOREACH_N(i, inst->out_count, inst->out_count + inst->in_count) {
+            printf(" v%d", inst->operands[i]);
+        }
+        printf("}\x1b[0m\n");
+    }*/
 
     EMITA(&ctx.emit, "%s:\n", f->super.name);
     {
@@ -1004,7 +1010,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     func_out->code_size = ctx.emit.count;
     func_out->stack_usage = ctx.stack_usage;
     func_out->locations = ctx.locations;
-    func_out->safepoints = ctx.safepoints;
     func_out->stack_slots = ctx.debug_stack_slots;
     nl_map_free(ctx.stack_slots);
 }

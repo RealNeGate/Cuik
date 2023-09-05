@@ -1,5 +1,3 @@
-// Based on Dominance Frontiers
-//    https://www.ed.tus.ac.jp/j-mune/keio/m/ssa2.pdf
 typedef enum {
     COHERENCY_DEAD,
     COHERENCY_GOOD,
@@ -25,7 +23,8 @@ typedef struct Mem2Reg_Ctx {
     TB_Function* f;
     TB_Passes* p;
 
-    TB_Node* poison;
+    size_t block_count;
+    TB_Node** blocks;
 
     // Stack slots we're going to convert into
     // SSA form
@@ -34,8 +33,6 @@ typedef struct Mem2Reg_Ctx {
 
     // [to_promote_count]
     Mem2Reg_Def* defs;
-
-    TB_PostorderWalk order;
 } Mem2Reg_Ctx;
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt);
@@ -48,14 +45,6 @@ static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Node* r) {
     }
 
     return -1;
-}
-
-static int find_traversal_index2(Mem2Reg_Ctx* restrict ctx, TB_Node* bb) {
-    FOREACH_N(i, 0, ctx->order.count) {
-        if (ctx->order.traversal[i] == bb) return i;
-    }
-
-    tb_todo();
 }
 
 // This doesn't really generate a PHI node, it just produces a NULL node which will
@@ -180,7 +169,7 @@ static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* n, DynArray(TB_Node*)* stac
                     if (dyn_array_length(stack[var]) == 0) {
                         // this is UB since it implies we've read before initializing the
                         // stack slot.
-                        val = c->poison;
+                        val = make_poison(c->f, c->p, TB_TYPE_VOID);
                         log_warn("%p: found load-before-init in mem2reg, this is UB", use);
                     } else {
                         val = stack[var][dyn_array_length(stack[var]) - 1];
@@ -270,8 +259,8 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     //
     // TODO(NeGate): maybe we want a data structure for this because it'll
     // be "kinda" slow.
-    FOREACH_N(i, 0, c->order.count) {
-        TB_Node* k = c->order.traversal[i];
+    FOREACH_N(i, 0, c->block_count) {
+        TB_Node* k = c->blocks[i];
         TB_Node* v = idom(k);
 
         if (v == bb && k != bb) {
@@ -493,31 +482,32 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     c.defs = tb_tls_push(c.tls, to_promote_count * sizeof(Mem2Reg_Def));
     memset(c.defs, 0, to_promote_count * sizeof(Mem2Reg_Def));
 
-    c.order = p->order;
+    c.block_count = tb_push_postorder(f, &p->worklist);
+    c.blocks = &p->worklist.items[0];
 
-    TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, &c.order);
+    TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, c.block_count, c.blocks);
 
     ////////////////////////////////
     // Phase 1: Insert phi functions
     ////////////////////////////////
     // Identify the final value of all the variables in the function per basic block
-    FOREACH_REVERSE_N(i, 0, c.order.count) {
-        TB_Node* end = TB_NODE_GET_EXTRA_T(c.order.traversal[i], TB_NodeRegion)->end;
-        insert_phis(&c, c.order.traversal[i], end);
+    FOREACH_REVERSE_N(i, 0, c.block_count) {
+        TB_Node* end = TB_NODE_GET_EXTRA_T(c.blocks[i], TB_NodeRegion)->end;
+        insert_phis(&c, c.blocks[i], end);
     }
 
     // for each global name we'll insert phi nodes
-    TB_Node** phi_p = tb_tls_push(tls, c.order.count * sizeof(TB_Node*));
+    TB_Node** phi_p = tb_tls_push(tls, c.block_count * sizeof(TB_Node*));
 
-    NL_HashSet ever_worked = nl_hashset_alloc(c.order.count);
-    NL_HashSet has_already = nl_hashset_alloc(c.order.count);
+    NL_HashSet ever_worked = nl_hashset_alloc(c.block_count);
+    NL_HashSet has_already = nl_hashset_alloc(c.block_count);
     FOREACH_N(var, 0, c.to_promote_count) {
         nl_hashset_clear(&ever_worked);
         nl_hashset_clear(&has_already);
 
         size_t p_count = 0;
-        FOREACH_REVERSE_N(i, 0, c.order.count) {
-            TB_Node* bb = c.order.traversal[i];
+        FOREACH_REVERSE_N(i, 0, c.block_count) {
+            TB_Node* bb = c.blocks[i];
 
             ptrdiff_t search = nl_map_get(c.defs[var], bb);
             if (search >= 0) {

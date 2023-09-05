@@ -285,10 +285,6 @@ typedef struct TB_FunctionOutput {
     // Part of the debug info
     DynArray(TB_Location) locations;
 
-    // safepoints are stored into a binary tree to allow
-    // for scanning neighbors really quickly
-    TB_SafepointKey* safepoints;
-
     // Relocations
     uint32_t patch_pos;
     uint32_t patch_count;
@@ -310,17 +306,14 @@ struct TB_Function {
     TB_Node* start_node;
     TB_Node* stop_node;
 
-    TB_Node* active_control_node;
-
-    size_t safepoint_count;
-    size_t control_node_count;
+    // for GVN
     size_t node_count;
 
     // IR allocation
     TB_Arena* arena;
 
     // IR building
-    size_t return_input_cap;
+    TB_Node* active_control_node;
     TB_Attrib exit_attrib;
     TB_Attrib line_attrib;
 

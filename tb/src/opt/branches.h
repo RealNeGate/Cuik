@@ -1,54 +1,39 @@
 
-static TB_Node* ideal_region(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
-    return NULL;
-
+static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // if there's one predecessor and it's to an unconditional branch, merge them.
-    /*if (n->input_count == 1 && n->inputs[0]->type == TB_PROJ &&
+    if (n->input_count == 1 && n->inputs[0]->type == TB_PROJ &&
         n->inputs[0]->inputs[0]->type == TB_BRANCH &&
         n->inputs[0]->inputs[0]->input_count == 1) {
         TB_Node* top_node = unsafe_get_region(n->inputs[0]);
         TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
         TB_NodeRegion* bot_region = TB_NODE_GET_EXTRA(n);
 
-        // bottom's region should be joined to whatever is above top's terminator
-        subsume_node(opt, f, n, top_region->end->inputs[0]);
-
         // set new terminator
-        subsume_node(opt, f, top_region->end, bot_region->end);
         top_region->end = bot_region->end;
-
-        if (top_region->tag == NULL) {
-            top_region->tag = bot_region->tag;
-        }
-
-        opt->cfg_dirty = true;
-        tb_pass_mark(opt, top_node);
-        return NULL;
+        return n->inputs[0]->inputs[0]->inputs[0];
     }
 
-    return NULL;*/
+    // if a region is dead, dettach it's succesors
+    if (n->input_count == 0) {
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+        if (r->end->type == TB_BRANCH) {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+            FOREACH_N(i, 0, br->succ_count) {
+                TB_Node* succ = br->succ[i];
+                if (succ->input_count > 0) {
+                    remove_pred(p, f, n, succ);
 
-    // remove dead nodes
-    /*bool changes = false;
-    size_t i = 0;
-    while (i < n->input_count) {
-        if (n->inputs[i]->type == TB_DEAD) {
-            remove_input(opt, f, n, i);
-
-            // update PHIs
-            for (User* use = find_users(opt, n); use; use = use->next) {
-                if (use->n->type == TB_PHI && use->slot == 0) {
-                    remove_input(opt, f, use->n, i + 1);
+                    tb_pass_mark(p, succ);
+                    tb_pass_mark_users(p, succ);
                 }
             }
 
-            changes = true;
-        } else {
-            i++;
+            br->succ_count = 0;
+            return br->succ_count ? n : NULL;
         }
     }
 
-    return changes ? n : NULL;*/
+    return NULL;
 }
 
 static void transmute_goto(TB_Passes* restrict opt, TB_Function* f, TB_Node* br, TB_Node* dst) {
@@ -84,8 +69,6 @@ static void transmute_goto(TB_Passes* restrict opt, TB_Function* f, TB_Node* br,
     tb_pass_mark(opt, proj);
     tb_pass_mark(opt, dst);
     tb_pass_mark_users(opt, bb);
-
-    opt->cfg_dirty = true;
 }
 
 static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {

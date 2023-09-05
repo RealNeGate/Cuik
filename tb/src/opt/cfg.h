@@ -1,67 +1,47 @@
-// This file contains generic analysis functions for operating on the TBIR
-#include "tb_internal.h"
 
 typedef struct {
     TB_Function* f;
-    TB_PostorderWalk order;
+
+    size_t block_count;
+    TB_Node** blocks;
 } DomContext;
 
 // we'll be walking backwards from the end node
-static void postorder(TB_Function* f, TB_PostorderWalk* ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->visited, n);
-    if (search >= 0) {
-        return;
-    }
-
-    nl_map_put(ctx->visited, n, 0);
-
-    // walk control edges (aka predecessors)
-    TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-    if (r->end->type == TB_BRANCH) {
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
-        FOREACH_REVERSE_N(i, 0, br->succ_count) {
-            postorder(f, ctx, br->succ[i]);
+static void postorder(Worklist* restrict ws, TB_Node* n) {
+    if (!worklist_test_n_set(ws, n)) {
+        // walk control edges (aka predecessors)
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+        if (r->end->type == TB_BRANCH) {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+            FOREACH_REVERSE_N(i, 0, br->succ_count) {
+                postorder(ws, br->succ[i]);
+            }
         }
+
+        dyn_array_put(ws->items, n);
     }
-
-    assert(ctx->count < f->control_node_count);
-    ctx->traversal[ctx->count++] = n;
 }
 
-TB_API TB_PostorderWalk tb_function_get_postorder(TB_Function* f) {
-    TB_PostorderWalk walk = {
-        .traversal = tb_platform_heap_alloc(f->control_node_count * sizeof(TB_Node*))
-    };
-
-    nl_map_create(walk.visited, f->control_node_count);
-    postorder(f, &walk, f->start_node);
-    nl_map_free(walk.visited);
-    return walk;
-}
-
-TB_API void tb_function_free_postorder(TB_PostorderWalk* walk) {
-    tb_platform_heap_free(walk->traversal);
-}
-
-static int find_traversal_index(DomContext* ctx, TB_Node* bb) {
-    FOREACH_N(i, 0, ctx->order.count) {
-        if (ctx->order.traversal[i] == bb) return i;
-    }
-
-    tb_todo();
-}
-
-static int try_find_traversal_index(DomContext* ctx, TB_Node* bb) {
-    FOREACH_N(i, 0, ctx->order.count) {
-        if (ctx->order.traversal[i] == bb) return i;
-    }
-
-    return -1;
+size_t tb_push_postorder(TB_Function* f, Worklist* restrict ws) {
+    assert(dyn_array_length(ws->items) == 0);
+    postorder(ws, f->start_node);
+    return dyn_array_length(ws->items);
 }
 
 static TB_Node* find_region(TB_Node* n) {
     while (n->type != TB_REGION && n->type != TB_START) n = n->inputs[0];
     return n;
+}
+
+static int find_traversal_index(TB_Node* n) {
+    assert(n->type == TB_REGION || n->type == TB_START);
+    assert(TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->postorder_id >= 0);
+    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->postorder_id;
+}
+
+static int try_find_traversal_index(TB_Node* n) {
+    assert(n->type == TB_REGION || n->type == TB_START);
+    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->postorder_id;
 }
 
 static int resolve_dom_depth(TB_Node* bb) {
@@ -76,11 +56,11 @@ static int resolve_dom_depth(TB_Node* bb) {
     return parent + 1;
 }
 
-TB_API TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, const TB_PostorderWalk* order) {
+TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, size_t count, TB_Node** blocks) {
     TB_DominanceFrontiers df = NULL;
 
-    FOREACH_REVERSE_N(i, 0, order->count) {
-        TB_Node* bb = order->traversal[i];
+    FOREACH_REVERSE_N(i, 0, count) {
+        TB_Node* bb = blocks[i];
 
         if (bb->input_count >= 2) {
             FOREACH_N(k, 0, bb->input_count) {
@@ -113,20 +93,31 @@ TB_API void tb_free_dominance_frontiers(TB_Function* f, TB_DominanceFrontiers fr
 }
 
 // https://www.cs.rice.edu/~keith/EMBED/dom.pdf
-void tb_compute_dominators(TB_Function* f, TB_PostorderWalk order) {
-    // entrypoint dominates itself
-    DomContext ctx = { .f = f, .order = order };
+void tb_compute_dominators(TB_Function* f, size_t count, TB_Node** blocks) {
+    DomContext ctx = { .f = f, .block_count = count, .blocks = blocks };
+
+    FOREACH_N(i, 0, count) {
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(blocks[i]);
+        r->dom_depth = -1; // unresolved
+        r->dom = NULL;
+        r->postorder_id = i;
+    }
+
+    // entry dominates itself
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(f->start_node);
+    r->dom_depth = 0;
+    r->dom = f->start_node;
 
     // identify post order traversal order
-    int entry_dom = ctx.order.count - 1;
+    int entry_dom = ctx.block_count - 1;
 
     bool changed = true;
     while (changed) {
         changed = false;
 
         // for all nodes, b, in reverse postorder (except start node)
-        FOREACH_REVERSE_N(i, 0, ctx.order.count - 1) {
-            TB_Node* b = ctx.order.traversal[i];
+        FOREACH_REVERSE_N(i, 0, count - 1) {
+            TB_Node* b = blocks[i];
             TB_Node* new_idom = find_region(b->inputs[0]);
 
             // for all other predecessors, p, of b
@@ -136,26 +127,26 @@ void tb_compute_dominators(TB_Function* f, TB_PostorderWalk order) {
                 // if doms[p] already calculated
                 TB_Node* idom_p = TB_NODE_GET_EXTRA_T(p, TB_NodeRegion)->dom;
                 if (idom_p == NULL && p->input_count > 0) {
-                    int a = try_find_traversal_index(&ctx, p);
+                    int a = try_find_traversal_index(p);
                     if (a >= 0) {
-                        int b = find_traversal_index(&ctx, new_idom);
+                        int b = find_traversal_index(new_idom);
                         while (a != b) {
                             // while (finger1 < finger2)
                             //   finger1 = doms[finger1]
                             while (a < b) {
-                                TB_Node* d = idom(ctx.order.traversal[a]);
-                                a = d ? find_traversal_index(&ctx, d) : entry_dom;
+                                TB_Node* d = idom(blocks[a]);
+                                a = d ? find_traversal_index(d) : entry_dom;
                             }
 
                             // while (finger2 < finger1)
                             //   finger2 = doms[finger2]
                             while (b < a) {
-                                TB_Node* d = idom(ctx.order.traversal[b]);
-                                b = d ? find_traversal_index(&ctx, d) : entry_dom;
+                                TB_Node* d = idom(blocks[b]);
+                                b = d ? find_traversal_index(d) : entry_dom;
                             }
                         }
 
-                        new_idom = ctx.order.traversal[a];
+                        new_idom = blocks[a];
                     }
                 }
             }
@@ -171,8 +162,8 @@ void tb_compute_dominators(TB_Function* f, TB_PostorderWalk order) {
 
     // generate depth values
     CUIK_TIMED_BLOCK("generate dom tree") {
-        FOREACH_N(i, 0, ctx.order.count - 1) {
-            resolve_dom_depth(ctx.order.traversal[i]);
+        FOREACH_N(i, 0, count - 1) {
+            resolve_dom_depth(blocks[i]);
         }
     }
 }
@@ -198,3 +189,4 @@ TB_API bool tb_is_dominated_by(TB_Node* expected_dom, TB_Node* bb) {
 
     return true;
 }
+

@@ -1,4 +1,4 @@
-
+#if 0
 TB_Attrib* get_debug_var(TB_Node* n) {
     dyn_array_for(i, n->attribs) {
         if (n->attribs[i].tag == TB_ATTRIB_VARIABLE) return &n->attribs[i];
@@ -154,3 +154,4 @@ bool tb_passes_loop(TB_Passes* p) {
     tb_function_print(f, tb_default_print_callback, stdout);
     return false;
 }
+#endif

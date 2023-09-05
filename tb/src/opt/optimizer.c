@@ -23,7 +23,6 @@ static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot);
 static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size_t i);
 
 // transmutations let us generate new nodes from old ones
-void tb_transmute_to_poison(TB_Passes* restrict p, TB_Node* n);
 TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, int num_words);
 
 static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* new_n);
@@ -38,6 +37,90 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
 static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
+
+////////////////////////////////
+// Worklist
+////////////////////////////////
+void worklist_alloc(Worklist* restrict ws, size_t initial_cap) {
+    ws->visited_cap = (initial_cap + 63) / 64;
+    ws->visited = tb_platform_heap_alloc(ws->visited_cap * sizeof(uint64_t));
+    ws->items = dyn_array_create(uint64_t, ws->visited_cap);
+    FOREACH_N(i, 0, ws->visited_cap) {
+        ws->visited[i] = 0;
+    }
+}
+
+void worklist_free(Worklist* restrict ws) {
+    tb_platform_heap_free(ws->visited);
+    dyn_array_destroy(ws->items);
+}
+
+void worklist_clear_visited(Worklist* restrict ws) {
+    CUIK_TIMED_BLOCK("clear visited") {
+        memset(ws->visited, 0, ws->visited_cap * sizeof(uint64_t));
+    }
+}
+
+void worklist_clear(Worklist* restrict ws) {
+    CUIK_TIMED_BLOCK("clear worklist") {
+        memset(ws->visited, 0, ws->visited_cap * sizeof(uint64_t));
+        dyn_array_clear(ws->items);
+    }
+}
+
+// checks if node is visited but doesn't push item
+bool worklist_test(Worklist* restrict ws, TB_Node* n) {
+    uint64_t gvn_word = n->gvn / 64; // which word this ID is at
+    if (gvn_word >= ws->visited_cap) return false;
+
+    uint64_t gvn_mask = 1ull << (n->gvn % 64);
+    return ws->visited[gvn_word] & gvn_mask;
+}
+
+bool worklist_test_n_set(Worklist* restrict ws, TB_Node* n) {
+    uint64_t gvn_word = n->gvn / 64; // which word this ID is at
+
+    // resize?
+    if (gvn_word >= ws->visited_cap) {
+        size_t new_cap = gvn_word + 16;
+        ws->visited = tb_platform_heap_realloc(ws->visited, new_cap * sizeof(uint64_t));
+
+        // clear new space
+        FOREACH_N(i, ws->visited_cap, new_cap) {
+            ws->visited[i] = 0;
+        }
+
+        ws->visited_cap = new_cap;
+    }
+
+    uint64_t gvn_mask = 1ull << (n->gvn % 64);
+    if (ws->visited[gvn_word] & gvn_mask) {
+        return true;
+    } else {
+        ws->visited[gvn_word] |= gvn_mask;
+        return false;
+    }
+}
+
+void worklist_push(Worklist* restrict ws, TB_Node* restrict n) {
+    if (!worklist_test_n_set(ws, n)) {
+        dyn_array_put(ws->items, n);
+    }
+}
+
+TB_Node* worklist_pop(Worklist* ws) {
+    if (dyn_array_length(ws->items)) {
+        TB_Node* n = dyn_array_pop(ws->items);
+        uint64_t gvn_word = n->gvn / 64;
+        uint64_t gvn_mask = 1ull << (n->gvn % 64);
+
+        ws->visited[gvn_word] &= ~gvn_mask;
+        return n;
+    } else {
+        return NULL;
+    }
+}
+
 
 void verify_tmp_arena(TB_Passes* p) {
     // once passes are run on a thread, they're pinned to it.
@@ -112,6 +195,7 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 
 // unity build with all the passes
 #include "lattice.h"
+#include "cfg.h"
 #include "cse.h"
 #include "dce.h"
 #include "fold.h"
@@ -123,42 +207,21 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 #include "gcm.h"
 #include "libcalls.h"
 
-static void recompute_cfg(TB_Function* f, TB_Passes* restrict p) {
-    CUIK_TIMED_BLOCK("recompute order") {
-        tb_function_free_postorder(&p->order);
-        p->order = tb_function_get_postorder(f);
-    }
-
-    CUIK_TIMED_BLOCK("doms") {
-        FOREACH_N(i, 0, p->order.count) {
-            TB_NodeRegion* r = TB_NODE_GET_EXTRA(p->order.traversal[i]);
-            r->dom_depth = -1; // unresolved
-            r->dom = NULL;
-        }
-
-        // entry dominates itself
-        TB_NodeRegion* r = TB_NODE_GET_EXTRA(f->start_node);
-        r->dom_depth = 0;
-        r->dom = f->start_node;
-
-        tb_compute_dominators(f, p->order);
-    }
-}
-
-TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
-    TB_Node* n = tb_alloc_node(f, TB_POISON, dt, 1, 0);
-
+static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n) {
     // try CSE, if we succeed, just delete the node and use the old copy
     TB_Node* k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
     if (k != NULL) {
-        // try free?
-        // log_debug("%s: early CSE on poison", f->super.name);
-        tb_arena_free(f->arena, n->inputs, sizeof(TB_Node*));
-        tb_arena_free(f->arena, n, sizeof(TB_Node) + n->extra_count);
+        // try free
+        tb_arena_free(p->f->arena, n->inputs, sizeof(TB_Node*));
+        tb_arena_free(p->f->arena, n, sizeof(TB_Node) + n->extra_count);
         return k;
     } else {
         return n;
     }
+}
+
+TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
+    return gvn(p, tb_alloc_node(f, TB_POISON, dt, 1, 0));
 }
 
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
@@ -166,18 +229,7 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->num_words = 1;
     i->words[0] = x;
-
-    // try CSE, if we succeed, just delete the node and use the old copy
-    TB_Node* k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
-    if (k != NULL) {
-        // try free?
-        // log_debug("%s: early CSE on integer %lld", f->super.name, x);
-        tb_arena_free(f->arena, n->inputs, sizeof(TB_Node*));
-        tb_arena_free(f->arena, n, sizeof(TB_Node) + n->extra_count);
-        return k;
-    } else {
-        return n;
-    }
+    return gvn(p, n);
 }
 
 TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, int num_words) {
@@ -228,17 +280,6 @@ static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_
             return;
         }
     }
-}
-
-void tb_transmute_to_poison(TB_Passes* restrict p, TB_Node* n) {
-    // remove old users
-    FOREACH_N(i, 0, n->input_count) {
-        remove_user(p, n, i);
-    }
-
-    n->type = TB_POISON;
-    n->input_count = 0;
-    n->extra_count = 0;
 }
 
 void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
@@ -339,14 +380,8 @@ static void tb_pass_mark_users_raw(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
-void tb_pass_ensure_empty(TB_Passes* restrict p) {
-    if (dyn_array_length(p->worklist) != 0) {
-        dyn_array_clear(p->worklist);
-    }
-
-    CUIK_TIMED_BLOCK("clear visited") {
-        nl_hashset_clear(&p->visited);
-    }
+void tb_pass_mark(TB_Passes* opt, TB_Node* n) {
+    worklist_push(&opt->worklist, n);
 }
 
 void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
@@ -377,48 +412,34 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
                 TB_NodeBranch* br_info = TB_NODE_GET_EXTRA(end);
                 FOREACH_N(i, 0, br_info->succ_count) {
                     tb_pass_mark(p, br_info->succ[i]);
-                    tb_pass_mark_users_raw(p, br_info->succ[i]);
                 }
             }
         }
     }
 }
 
-bool tb_pass_mark(TB_Passes* restrict p, TB_Node* n) {
-    if (!nl_hashset_put(&p->visited, n)) {
-        return false;
-    }
+static void push_all_nodes(Worklist* restrict ws, TB_Node* n) {
+    if (!worklist_test_n_set(ws, n)) {
+        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+            tb_assert(n->inputs[i], "empty input... in this economy?");
+            push_all_nodes(ws, n->inputs[i]);
+        }
 
-    // log_debug("  %p: push %s", n, tb_node_get_name(n));
+        dyn_array_put(ws->items, n);
 
-    dyn_array_put(p->worklist, n);
-    nl_hashset_put(&p->visited, n);
-    return true;
-}
+        // walk successors for regions
+        if (n->type == TB_START || n->type == TB_REGION) {
+            TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
-static void fill_all(TB_Passes* restrict p, TB_Node* n) {
-    if (!nl_hashset_put(&p->visited, n)) {
-        return;
-    }
-    dyn_array_put(p->worklist, n);
-
-    FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
-        tb_assert(n->inputs[i], "empty input... in this economy?");
-        fill_all(p, n->inputs[i]);
-    }
-
-    // walk successors for regions
-    if (n->type == TB_START || n->type == TB_REGION) {
-        TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-
-        tb_assert(r->end, "missing terminator");
-        fill_all(p, r->end);
-
-        if (r->end->type == TB_BRANCH) {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
-            FOREACH_N(i, 0, br->succ_count) {
-                fill_all(p, br->succ[i]);
+            if (r->end->type == TB_BRANCH) {
+                TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+                FOREACH_N(i, 0, br->succ_count) {
+                    push_all_nodes(ws, br->succ[i]);
+                }
             }
+
+            tb_assert(r->end, "missing terminator");
+            push_all_nodes(ws, r->end);
         }
     }
 }
@@ -719,8 +740,8 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
 }
 
 static void generate_use_lists(TB_Passes* restrict p, TB_Function* f) {
-    dyn_array_for(i, p->worklist) {
-        TB_Node* n = p->worklist[i];
+    dyn_array_for(i, p->worklist.items) {
+        TB_Node* n = p->worklist.items[i];
         nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
 
         if (n->type == TB_LOCAL) {
@@ -739,24 +760,20 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
     *p = (TB_Passes){ .f = f };
 
+    TB_Arena* old_arena = f->arena;
     f->line_attrib.loc.file = NULL;
     f->arena = arena;
 
     verify_tmp_arena(p);
 
+    worklist_alloc(&p->worklist, f->node_count);
     p->cse_nodes = nl_hashset_alloc(f->node_count);
-
-    // generate dominators
-    p->order = tb_function_get_postorder(f);
-    tb_compute_dominators(f, p->order);
-    p->visited = nl_hashset_alloc(f->node_count);
 
     // generate work list (put everything)
     CUIK_TIMED_BLOCK("gen worklist") {
-        fill_all(p, f->start_node);
+        push_all_nodes(&p->worklist, f->start_node);
     }
 
-    f->node_count = dyn_array_length(p->worklist);
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting passes with %d nodes", f->super.name, f->node_count));
 
     // find all outgoing edges
@@ -767,41 +784,32 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     return p;
 }
 
-bool tb_pass_peephole(TB_Passes* p) {
+void tb_pass_peephole(TB_Passes* p) {
     verify_tmp_arena(p);
 
     TB_Function* f = p->f;
-    bool changes = false;
     CUIK_TIMED_BLOCK("peephole") {
-        while (dyn_array_length(p->worklist) > 0) CUIK_TIMED_BLOCK("iter") {
-            // pull from worklist
-            TB_Node* n = dyn_array_pop(p->worklist);
-            nl_hashset_remove(&p->visited, n);
-
+        TB_Node* n;
+        while ((n = worklist_pop(&p->worklist))) CUIK_TIMED_BLOCK("iter") {
             if (peephole(p, f, n)) {
-                changes = true;
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
             }
         }
     }
 
-    if (p->cfg_dirty) {
+    /*if (p->cfg_dirty) {
         recompute_cfg(f, p);
         p->cfg_dirty = false;
-    }
-
-    return changes;
+    }*/
 }
 
 void tb_pass_exit(TB_Passes* p) {
     verify_tmp_arena(p);
     TB_Function* f = p->f;
 
+    worklist_free(&p->worklist);
     nl_hashset_free(p->cse_nodes);
-    nl_hashset_free(p->visited);
 
-    tb_function_free_postorder(&p->order);
     tb_arena_clear(tmp_arena);
     nl_map_free(p->users);
-    dyn_array_destroy(p->worklist);
 }

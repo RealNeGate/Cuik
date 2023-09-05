@@ -393,6 +393,10 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static bool should_rematerialize(TB_Node* n) {
+    if (n->type == TB_ZERO_EXT || n->type == TB_SIGN_EXT) {
+        if (n->inputs[1]->type == TB_INTEGER_CONST) return true;
+    }
+
     return n->type == TB_LOCAL || n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS;
 }
 
@@ -935,7 +939,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int vararg_cutoff = proto && proto->has_varargs ? proto->param_count : n->input_count-2;
 
             size_t xmms_used = 0, gprs_used = 0;
-            FOREACH_N(i, 2, n->input_count) {
+            FOREACH_N(i, 3, n->input_count) {
                 TB_Node* param = n->inputs[i];
                 TB_DataType param_dt = param->dt;
 
@@ -979,7 +983,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             // compute the target (unless it's a symbol) before the
             // registers all need to be forcibly shuffled
-            TB_Node* target = n->inputs[1];
+            TB_Node* target = n->inputs[2];
             bool static_call = n->type == TB_CALL && target->type == TB_SYMBOL;
 
             int target_val = RSP; // placeholder really
@@ -989,7 +993,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             // perform last minute copies (this avoids keeping parameter registers alive for too long)
             FOREACH_N(i, 0, in_count) {
-                TB_DataType dt = n->inputs[2 + i]->dt;
+                TB_DataType dt = n->inputs[3 + i]->dt;
 
                 bool use_xmm = TB_IS_FLOAT_TYPE(dt) || dt.width;
                 SUBMIT(inst_move(dt, ins[i], param_srcs[i]));
@@ -1199,17 +1203,19 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             TB_Node* src = n->inputs[3];
             int store_op = can_folded_store(ctx, addr, n->inputs[3]);
             if (store_op >= 0) {
-                use(ctx, n->inputs[2]);
-                use(ctx, n->inputs[2]->inputs[1]);
-                use(ctx, n->inputs[2]->inputs[1]->inputs[1]);
+                use(ctx, src);
+                use(ctx, src->inputs[1]);
+                use(ctx, src->inputs[1]->inputs[1]);
 
-                src = n->inputs[2]->inputs[2];
+                src = src->inputs[2];
             } else {
                 store_op = (TB_IS_FLOAT_TYPE(store_dt) || store_dt.width) ? FP_MOV : MOV;
             }
 
             int32_t imm;
             if (try_for_imm32(ctx, src, &imm)) {
+                use(ctx, src);
+
                 Inst* st_inst = isel_addr(ctx, addr, dst, store_op, -1);
                 st_inst->in_count -= 1;
                 st_inst->dt = legalize(store_dt);

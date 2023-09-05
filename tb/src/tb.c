@@ -271,8 +271,12 @@ TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_
     p->return_count = return_count;
     p->param_count = param_count;
     p->has_varargs = has_varargs;
-    memcpy(p->params, params, param_count * sizeof(TB_PrototypeParam));
-    memcpy(p->params + param_count, returns, return_count * sizeof(TB_PrototypeParam));
+    if (param_count > 0) {
+        memcpy(p->params, params, param_count * sizeof(TB_PrototypeParam));
+    }
+    if (return_count > 0) {
+        memcpy(p->params + param_count, returns, return_count * sizeof(TB_PrototypeParam));
+    }
     return p;
 }
 
@@ -305,7 +309,7 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
         f->arena = arena;
     }
 
-    f->control_node_count = 1;
+    f->node_count = 0;
     f->start_node = tb_alloc_node(f, TB_START, TB_TYPE_TUPLE, 0, extra_size);
 
     TB_NodeRegion* start = TB_NODE_GET_EXTRA(f->start_node);
@@ -412,7 +416,7 @@ TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data) {
 }
 
 TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
-    size_t left = 0;
+    /*size_t left = 0;
     size_t right = f->safepoint_count;
 
     uint32_t ip = relative_ip;
@@ -423,7 +427,7 @@ TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
         if (keys[middle].ip == ip) return keys[left].sp;
         if (keys[middle].ip < ip) left = middle + 1;
         else right = middle;
-    }
+    }*/
 
     return NULL;
 }

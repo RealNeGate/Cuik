@@ -489,7 +489,7 @@ struct TB_Node {
     uint16_t extra_count; // number of bytes for extra operand data
 
     // makes it easier to track in graph walks
-    uint32_t gvn_id;
+    uint64_t gvn;
 
     TB_Attrib* attribs;
     TB_Node** inputs;
@@ -587,6 +587,8 @@ typedef struct {
     TB_Node* end;
     const char* tag;
 
+    // position in a postorder walk
+    int postorder_id;
     // immediate dominator (can be approximate)
     int dom_depth;
     TB_Node* dom;
@@ -1173,11 +1175,8 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 //     data flow analysis possible on the code and allows to codegen
 //     to place variables into registers.
 //
-//   loop: NOT READY
-//
-TB_API bool tb_pass_peephole(TB_Passes* opt);
+TB_API void tb_pass_peephole(TB_Passes* opt);
 TB_API bool tb_pass_mem2reg(TB_Passes* opt);
-TB_API bool tb_pass_loop(TB_Passes* opt);
 
 TB_API void tb_pass_schedule(TB_Passes* opt);
 
@@ -1189,7 +1188,7 @@ TB_API bool tb_pass_print(TB_Passes* opt);
 TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, bool emit_asm);
 
 TB_API void tb_pass_kill_node(TB_Passes* opt, TB_Node* n);
-TB_API bool tb_pass_mark(TB_Passes* opt, TB_Node* n);
+TB_API void tb_pass_mark(TB_Passes* opt, TB_Node* n);
 TB_API void tb_pass_mark_users(TB_Passes* opt, TB_Node* n);
 
 ////////////////////////////////

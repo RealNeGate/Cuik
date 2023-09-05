@@ -120,15 +120,11 @@ static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra) {
     assert(input_count < UINT16_MAX && "too many inputs!");
-    f->node_count += 1;
-
-    if (type == TB_REGION) {
-        f->control_node_count += 1;
-    }
 
     TB_Node* n = alloc_from_node_arena(f, sizeof(TB_Node) + extra);
     n->type = type;
     n->dt = dt;
+    n->gvn = f->node_count++;
     n->input_count = input_count;
     n->extra_count = extra;
     n->attribs = NULL;
@@ -302,6 +298,7 @@ TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnit
     assert(addr);
 
     TB_Node* n = tb_alloc_node(f, is_volatile ? TB_READ : TB_LOAD, is_volatile ? TB_TYPE_TUPLE : dt, 3, sizeof(TB_NodeMemAccess));
+    n->inputs[0] = tb_get_parent_region(f->active_control_node);
     n->inputs[1] = peek_mem(f, f->active_control_node);
     n->inputs[2] = addr;
     TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = alignment);
@@ -441,20 +438,22 @@ TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
 }
 
 TB_Node* tb_inst_safepoint(TB_Function* f, TB_Node* poke_site, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_CONTROL, 1 + param_count, sizeof(TB_NodeSafepoint));
+    tb_todo();
+    /*TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_CONTROL, 1 + param_count, sizeof(TB_NodeSafepoint));
     n->inputs[0] = f->active_control_node;
     memcpy(n->inputs + 1, params, param_count * sizeof(TB_Node*));
     TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = f->safepoint_count++);
 
     f->active_control_node = n;
-    return n;
+    return n;*/
 }
 
 TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 2 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*));
+    TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*));
     n->inputs[0] = f->active_control_node;
-    n->inputs[1] = syscall_num;
-    memcpy(n->inputs, params, param_count * sizeof(TB_Node*));
+    n->inputs[1] = append_mem(f, n);
+    n->inputs[2] = syscall_num;
+    memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
     // control proj
     TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
@@ -473,10 +472,11 @@ TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, s
 TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
     size_t proj_count = 1 + (proto->return_count > 1 ? proto->return_count : 1);
 
-    TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 2 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
+    TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
     n->inputs[0] = f->active_control_node;
-    n->inputs[1] = target;
-    memcpy(n->inputs + 2, params, param_count * sizeof(TB_Node*));
+    n->inputs[1] = append_mem(f, n);
+    n->inputs[2] = target;
+    memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
     c->proto = proto;
@@ -867,6 +867,7 @@ TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b) {
 TB_Node* tb_inst_region(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+    r->postorder_id = -1;
     r->dom_depth = -1; // unresolved
     r->dom = NULL;
 

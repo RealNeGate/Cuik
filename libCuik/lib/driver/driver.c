@@ -156,15 +156,16 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
         if (args->opt_level >= 1) {
             // initial run of peepholes
             tb_pass_peephole(p);
+
             // Converting locals into phi nodes
-            tb_pass_mem2reg(p), tb_pass_peephole(p);
+            // tb_pass_mem2reg(p), tb_pass_peephole(p);
         }
 
         // print IR
         if (args->emit_ir) {
-            tb_function_print(f, tb_default_print_callback, stdout);
-            // tb_pass_print(p);
+            tb_pass_print(p);
         }
+        tb_function_print(f, tb_default_print_callback, stdout);
 
         // codegen
         if (!args->emit_ir) CUIK_TIMED_BLOCK("CodeGen") {

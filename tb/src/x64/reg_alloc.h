@@ -527,7 +527,13 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
     dyn_array_for(i, ra->inactive) {
         LiveInterval* it = &ra->intervals[ra->inactive[i]];
         if (it->reg_class == rc && it->reg >= 0) {
-            tb_todo();
+            int bp = ra->block_pos[it->assigned];
+            if (bp > 0) {
+                int p = interval_intersect(interval, it);
+                if (p >= 0 && p < bp) {
+                    ra->block_pos[it->assigned] = p;
+                }
+            }
         }
     }
 
@@ -630,8 +636,8 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
     MachineBBs mbbs = ctx->machine_bbs;
     size_t interval_count = dyn_array_length(ra.intervals);
     CUIK_TIMED_BLOCK("build intervals") {
-        FOREACH_N(i, 0, ctx->order.count) {
-            TB_Node* bb = ctx->order.traversal[i];
+        FOREACH_N(i, 0, ctx->block_count) {
+            TB_Node* bb = ctx->worklist.items[i];
             MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
 
             int bb_start = mbb->start;
@@ -813,9 +819,12 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
     // move resolver
     CUIK_TIMED_BLOCK("move resolver") {
-        FOREACH_N(i, 0, ctx->order.count) {
-            MachineBB* mbb = &nl_map_get_checked(mbbs, ctx->order.traversal[i]);
-            TB_NodeRegion* r = TB_NODE_GET_EXTRA(ctx->order.traversal[i]);
+        FOREACH_N(i, 0, ctx->block_count) {
+            TB_Node* bb = ctx->worklist.items[i];
+            assert(bb->type == TB_START || bb->type == TB_REGION);
+
+            MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
+            TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
 
             if (r->end->type != TB_BRANCH) {
                 continue;
