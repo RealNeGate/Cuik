@@ -1,7 +1,7 @@
 #pragma once
 #include "tb_internal.h"
 
-#define TB_OPTDEBUG_PEEP 0
+#define TB_OPTDEBUG_PEEP 1
 #define TB_OPTDEBUG_LOOP 0
 #define TB_OPTDEBUG_MEM2REG 0
 #define TB_OPTDEBUG_CODEGEN 1
@@ -92,19 +92,16 @@ static int dom_depth(TB_Node* n) {
     return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom_depth;
 }
 
-// pushes postorder walk into worklist items, also modifies the visited set.
-// some entries will not be START or REGION, instead you'll see
-size_t tb_push_postorder(TB_Function* f, Worklist* restrict ws);
-
 extern thread_local TB_Arena* tmp_arena;
 
 void verify_tmp_arena(TB_Passes* p);
 User* find_users(TB_Passes* restrict p, TB_Node* n);
 void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot);
 
-void compute_cfg();
-
 // CFG
+//   pushes postorder walk into worklist items, also modifies the visited set.
+//   some entries will not be START or REGION, instead you'll see
+size_t tb_push_postorder(TB_Function* f, Worklist* restrict ws);
 //   postorder walk -> dominators
 void tb_compute_dominators(TB_Function* f, size_t count, TB_Node** blocks);
 

@@ -174,6 +174,7 @@ static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static Inst* inst_jmp(TB_Node* target) {
+    assert(target->type > 0);
     Inst* i = alloc_inst(JMP, TB_TYPE_VOID, 0, 0, 0);
     i->flags = INST_NODE;
     i->n = target;
@@ -358,11 +359,8 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
                     SUBMIT(inst_op_ri(CMP, cmp_dt, lhs, x));
                 }
             } else {
-                int tmp = DEF(n, cmp_dt);
-                SUBMIT(inst_move(cmp_dt, tmp, lhs));
-
                 int rhs = input_reg(ctx, n->inputs[2]);
-                SUBMIT(inst_op_rr_no_dst(CMP, cmp_dt, tmp, rhs));
+                SUBMIT(inst_op_rr_no_dst(CMP, cmp_dt, lhs, rhs));
             }
 
             switch (n->type) {
@@ -393,10 +391,6 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static bool should_rematerialize(TB_Node* n) {
-    if (n->type == TB_ZERO_EXT || n->type == TB_SIGN_EXT) {
-        if (n->inputs[1]->type == TB_INTEGER_CONST) return true;
-    }
-
     return n->type == TB_LOCAL || n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS;
 }
 
@@ -1008,7 +1002,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             // the number of float parameters is written into AL
-            if (is_sysv) {
+            if (is_sysv && type != TB_SYSCALL) {
                 SUBMIT(inst_op_imm(MOV, TB_TYPE_I8, RAX, xmms_used));
                 ins[in_count++] = FIRST_GPR + RAX;
                 caller_saved_gprs &= ~(1ull << RAX);

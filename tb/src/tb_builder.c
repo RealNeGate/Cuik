@@ -290,6 +290,7 @@ TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment
 
     // insert in the entry block
     TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
+    n->inputs[0] = f->start_node; // pin to START
     TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = alignment);
     return n;
 }
@@ -298,7 +299,7 @@ TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnit
     assert(addr);
 
     TB_Node* n = tb_alloc_node(f, is_volatile ? TB_READ : TB_LOAD, is_volatile ? TB_TYPE_TUPLE : dt, 3, sizeof(TB_NodeMemAccess));
-    n->inputs[0] = tb_get_parent_region(f->active_control_node);
+    n->inputs[0] = f->active_control_node;
     n->inputs[1] = peek_mem(f, f->active_control_node);
     n->inputs[2] = addr;
     TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = alignment);
@@ -315,6 +316,7 @@ void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, 
     assert(TB_DATA_TYPE_EQUALS(dt, val->dt));
 
     TB_Node* n = tb_alloc_node(f, is_volatile ? TB_WRITE : TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
+    n->inputs[0] = f->active_control_node;
     n->inputs[1] = append_mem(f, n);
     n->inputs[2] = addr;
     n->inputs[3] = val;
@@ -326,6 +328,7 @@ void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, T
     assert(TB_IS_INTEGER_TYPE(val->dt) && val->dt.data == 8);
 
     TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_CONTROL, 5, sizeof(TB_NodeMemAccess));
+    n->inputs[0] = f->active_control_node;
     n->inputs[1] = append_mem(f, n);
     n->inputs[2] = dst;
     n->inputs[3] = val;
@@ -338,6 +341,7 @@ void tb_inst_memcpy(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, T
     assert(TB_IS_POINTER_TYPE(val->dt));
 
     TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_CONTROL, 5, sizeof(TB_NodeMemAccess));
+    n->inputs[0] = f->active_control_node;
     n->inputs[1] = append_mem(f, n);
     n->inputs[2] = dst;
     n->inputs[3] = val;

@@ -4,6 +4,7 @@
 //   SSA  - single static assignment
 //   GVN  - global value numbering
 //   CSE  - common subexpression elimination
+//   DSE  - dead store elimination
 //   GCM  - global code motion
 //   SROA - scalar replacement of aggregates
 #ifndef TB_CORE_H
@@ -1158,6 +1159,19 @@ TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 ////////////////////////////////
 // Passes
 ////////////////////////////////
+typedef enum {
+    // allowed to remove PHIs nodes, this is
+    // helpful because the default IR building
+    // will produce tons of useless memory PHIs.
+    TB_PEEPHOLE_PHI = 1,
+
+    // it's allowed to fold memory operations (store or load elimination)
+    TB_PEEPHOLE_MEMORY = 2,
+
+    // just do every reduction rule i can provide you
+    TB_PEEPHOLE_ALL = 3,
+} TB_PeepholeFlags;
+
 // Function analysis, optimizations, and codegen are all part of this
 typedef struct TB_Passes TB_Passes;
 
@@ -1175,7 +1189,7 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 //     data flow analysis possible on the code and allows to codegen
 //     to place variables into registers.
 //
-TB_API void tb_pass_peephole(TB_Passes* opt);
+TB_API void tb_pass_peephole(TB_Passes* opt, TB_PeepholeFlags flags);
 TB_API bool tb_pass_mem2reg(TB_Passes* opt);
 
 TB_API void tb_pass_schedule(TB_Passes* opt);

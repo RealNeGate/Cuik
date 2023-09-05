@@ -376,7 +376,11 @@ static Inst* inst_op_zero(TB_DataType dt, RegIndex dst) {
 #define DEF(n, dt) alloc_vreg(ctx, n, dt)
 static int alloc_vreg(Ctx* restrict ctx, TB_Node* n, TB_DataType dt) {
     int i = dyn_array_length(ctx->intervals);
-    dyn_array_put(ctx->intervals, (LiveInterval){ .reg_class = classify_reg_class(dt), .n = n, .reg = -1, .hint = -1, .assigned = -1, .dt = legalize(dt), .start = INT_MAX, .split_kid = -1 });
+    dyn_array_put(ctx->intervals, (LiveInterval){
+            .reg_class = classify_reg_class(n->dt),
+            .n = n, .reg = -1, .hint = -1, .assigned = -1,
+            .dt = legalize(n->dt), .start = INT_MAX, .split_kid = -1
+        });
     return i;
 }
 
@@ -555,25 +559,30 @@ static void put_val(Ctx* restrict ctx, TB_Node* n, int src) {
 // always folded.
 static RegIndex input_reg(Ctx* restrict ctx, TB_Node* n) {
     ValueDesc* val = lookup_val(ctx, n);
+    if (val == NULL) {
+        log_debug("%s: materialize on the spot for node %zu", ctx->f->super.name, n->gvn);
+        int tmp = DEF(n, n->dt);
+        isel(ctx, n, tmp);
+        return tmp;
+    }
+
     val->uses -= 1;
 
     if (val->vreg >= 0) {
         return val->vreg;
+    } else if (should_rematerialize(n)) {
+        int tmp = DEF(n, n->dt);
+        isel(ctx, n, tmp);
+        return tmp;
     } else {
-        int i = dyn_array_length(ctx->intervals);
-        dyn_array_put(ctx->intervals, (LiveInterval){
-                .reg_class = classify_reg_class(n->dt),
-                .n = n, .reg = -1, .hint = -1, .assigned = -1,
-                .dt = legalize(n->dt), .start = INT_MAX, .split_kid = -1
-            });
+        int i = DEF(n, n->dt);
         return (val->vreg = i);
     }
 }
 
 static void use(Ctx* restrict ctx, TB_Node* n) {
     ValueDesc* v = lookup_val(ctx, n);
-    assert(v != NULL);
-    v->uses -= 1;
+    if (v != NULL) { v->uses -= 1; }
 }
 
 static void fake_unuse(Ctx* restrict ctx, TB_Node* n) {
@@ -705,7 +714,7 @@ static void isel_bfs(Ctx* restrict ctx, TB_Node* bb, TB_Node* root) {
 
         // push all inputs first
         if (n->type != TB_REGION) {
-            FOREACH_N(i, 1, n->input_count) {
+            FOREACH_REVERSE_N(i, 1, n->input_count) {
                 isel_bfs_push(ctx, bb, n->inputs[i]);
             }
         }
@@ -718,7 +727,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
     // phase 1: flatten nodes in the basic block using BFS
     TB_Node* n = end;
     do {
-        isel_bfs(ctx, bb, n);
+        isel_walk(ctx, bb, n);
         n = n->inputs[0];
     } while (!is_block_begin(n));
 
@@ -767,7 +776,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
         // if the value hasn't been asked for yet and
         if (val->vreg < 0 && should_rematerialize(n)) {
             DO_IF(TB_OPTDEBUG_CODEGEN)(
-                printf("  DISCARD: "),
+                printf("  DISCARD %zu: ", n->gvn),
                 print_node_sexpr(n, 0),
                 printf("\n")
             );

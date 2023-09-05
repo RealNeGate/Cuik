@@ -383,6 +383,7 @@ static bool attempt_sroa(TB_Passes* p, TB_Function* f, TB_TemporaryStorage* tls,
     uint32_t alignment = TB_NODE_GET_EXTRA_T(address, TB_NodeLocal)->align;
     FOREACH_N(i, 0, config_count) {
         TB_Node* new_n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
+        set_input(p, new_n, f->start_node, 0);
         TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
 
         // replace old pointer with new fancy

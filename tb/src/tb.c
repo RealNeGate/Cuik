@@ -17,14 +17,17 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     }
 
     info = tb_platform_heap_alloc(sizeof(TB_ThreadInfo));
-    *info = (TB_ThreadInfo){ .owner = m };
+    *info = (TB_ThreadInfo){ .owner = m, .chain = &chain };
 
-    // add new thread info
+    // allocate memory for it
     tb_arena_create(&info->perm_arena, TB_ARENA_LARGE_CHUNK_SIZE);
     tb_arena_create(&info->tmp_arena, TB_ARENA_LARGE_CHUNK_SIZE);
 
     // thread local so it doesn't need to synchronize
     info->next = chain;
+    if (chain != NULL) {
+        chain->prev = info;
+    }
     chain = info;
 
     // link to the TB_Module* (we need to this to free later)
@@ -229,6 +232,14 @@ void tb_module_destroy(TB_Module* m) {
 
         tb_arena_destroy(&info->tmp_arena);
         tb_arena_destroy(&info->perm_arena);
+
+        // unlink, this isn't synchronized
+        if (info->prev == NULL) {
+            *info->chain = info->next;
+        } else {
+            info->prev->next = info->next;
+        }
+
         tb_platform_heap_free(info);
         info = next;
     }

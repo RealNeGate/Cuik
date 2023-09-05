@@ -86,9 +86,17 @@ static void print_type(TB_DataType dt) {
     }
 }
 
+static bool is_same_bb(TB_Node* bb, TB_Node* n) {
+    while (n->type != TB_START && n->type != TB_REGION) {
+        n = n->inputs[0];
+    }
+
+    return n == bb;
+}
+
 // returns true if it's the first time
 static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
-    if (n->type == TB_REGION || n->type == TB_START || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL) {
+    if (n->type == TB_REGION || n->type == TB_BRANCH || n->type == TB_START || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL) {
         return;
     }
 
@@ -124,6 +132,8 @@ static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
     TB_DataType dt = n->dt;
     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
         dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
+    } else if (n->type == TB_STORE) {
+        dt = n->inputs[3]->dt;
     }
     print_type(dt);
     printf(" ");
@@ -235,15 +245,6 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
         }
     }
 
-    // has control dependencies on this node, we put these after
-    if (n->type != TB_CALL) {
-        for (User* use = find_users(ctx->opt, n); use; use = use->next) {
-            if (use->slot == 0 && (use->n->type == TB_PHI || use->n->type == TB_PROJ)) {
-                print_node(ctx, use->n, n);
-            }
-        }
-    }
-
     if (aint_region) {
         FOREACH_N(i, 1, n->input_count) {
             print_node(ctx, n->inputs[i], n);
@@ -322,7 +323,7 @@ static void print_effect(PrinterCtx* ctx, TB_Node* n) {
     }
 
     for (User* use = find_users(ctx->opt, n); use; use = use->next) {
-        if (use->slot == 0 && (use->n->type == TB_LOAD || (n->type == TB_CALL && use->n->type == TB_PROJ))) {
+        if (use->slot == 0) {
             print_node(ctx, use->n, n);
         }
     }

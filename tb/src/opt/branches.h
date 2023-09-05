@@ -1,36 +1,39 @@
 
 static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+
     // if there's one predecessor and it's to an unconditional branch, merge them.
     if (n->input_count == 1 && n->inputs[0]->type == TB_PROJ &&
         n->inputs[0]->inputs[0]->type == TB_BRANCH &&
         n->inputs[0]->inputs[0]->input_count == 1) {
         TB_Node* top_node = unsafe_get_region(n->inputs[0]);
         TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
-        TB_NodeRegion* bot_region = TB_NODE_GET_EXTRA(n);
 
         // set new terminator
-        top_region->end = bot_region->end;
-        return n->inputs[0]->inputs[0]->inputs[0];
+        top_region->end = r->end;
+        TB_Node* parent = n->inputs[0]->inputs[0]->inputs[0];
+
+        tb_pass_kill_node(p, n->inputs[0]->inputs[0]);
+        tb_pass_kill_node(p, n->inputs[0]);
+
+        return parent;
     }
 
     // if a region is dead, dettach it's succesors
-    if (n->input_count == 0) {
-        TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-        if (r->end->type == TB_BRANCH) {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
-            FOREACH_N(i, 0, br->succ_count) {
-                TB_Node* succ = br->succ[i];
-                if (succ->input_count > 0) {
-                    remove_pred(p, f, n, succ);
+    if (n->input_count == 0 && r->end->type == TB_BRANCH) {
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+        FOREACH_N(i, 0, br->succ_count) {
+            TB_Node* succ = br->succ[i];
+            if (succ->input_count > 0) {
+                remove_pred(p, f, n, succ);
 
-                    tb_pass_mark(p, succ);
-                    tb_pass_mark_users(p, succ);
-                }
+                tb_pass_mark(p, succ);
+                tb_pass_mark_users(p, succ);
             }
-
-            br->succ_count = 0;
-            return br->succ_count ? n : NULL;
         }
+
+        br->succ_count = 0;
+        return br->succ_count ? n : NULL;
     }
 
     return NULL;

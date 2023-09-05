@@ -155,10 +155,12 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
 
         if (args->opt_level >= 1) {
             // initial run of peepholes
-            tb_pass_peephole(p);
-
+            tb_pass_peephole(p, TB_PEEPHOLE_ALL);
             // Converting locals into phi nodes
             // tb_pass_mem2reg(p), tb_pass_peephole(p);
+        } else {
+            // only do remove dumb PHIs and constant fold
+            tb_pass_peephole(p, TB_PEEPHOLE_PHI);
         }
 
         // print IR

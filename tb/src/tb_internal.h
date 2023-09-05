@@ -326,12 +326,19 @@ struct TB_Function {
     TB_FunctionOutput* output;
 };
 
-// Thread local module state
+// Thread local module state, only next_in_module is ever mutated
+// on multiple threads (when first attached)
 typedef struct TB_ThreadInfo TB_ThreadInfo;
 struct TB_ThreadInfo {
     TB_Module* owner;
-    TB_ThreadInfo* next;
     TB_ThreadInfo* next_in_module;
+
+    TB_ThreadInfo* prev;
+    TB_ThreadInfo* next;
+
+    // used for moving the start of the
+    // linked list forward.
+    TB_ThreadInfo** chain;
 
     TB_Arena perm_arena;
     TB_Arena tmp_arena;

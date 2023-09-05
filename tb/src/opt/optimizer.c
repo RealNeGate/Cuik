@@ -505,9 +505,8 @@ void print_node_sexpr(TB_Node* n, int depth) {
     }
 }
 
-// Returns NULL or a modified node (could be the same node, we can stitch it back into
-// place)
-static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+// Returns NULL or a modified node (could be the same node, we can stitch it back into place)
+static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
     switch (n->type) {
         case TB_NOT:
         case TB_NEG:
@@ -537,10 +536,10 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 
         // memory
         case TB_LOAD:
-        return ideal_load(p, f, n);
+        return (flags & TB_PEEPHOLE_MEMORY) ? ideal_load(p, f, n) : NULL;
 
         case TB_STORE:
-        return ideal_store(p, f, n);
+        return (flags & TB_PEEPHOLE_MEMORY) ? ideal_store(p, f, n) : NULL;
 
         case TB_MEMCPY:
         return ideal_memcpy(p, f, n);
@@ -570,7 +569,7 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 
         // control flow
         case TB_PHI:
-        return ideal_phi(p, f, n);
+        return (flags & TB_PEEPHOLE_PHI) ? ideal_phi(p, f, n) : NULL;
 
         case TB_REGION:
         return ideal_region(p, f, n);
@@ -578,35 +577,13 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         case TB_BRANCH:
         return ideal_branch(p, f, n);
 
-        /*case TB_BRANCH:
-        case TB_DEBUGBREAK:
-        case TB_TRAP:
-        case TB_UNREACHABLE:
-        case TB_CALL:
-        case TB_SYSCALL:
-        case TB_SAFEPOINT:
-        case TB_SAFEPOINT_POLL:
-        return n->inputs[0]->type == TB_DEAD ? n->inputs[0] : n;
-
-        case TB_REGION: {
-            if (n->input_count != 0) {
-                FOREACH_N(i, 0, n->input_count) {
-                    if (n->inputs[i]->type != TB_DEAD) return n;
-                }
-
-                return n->inputs[0];
-            } else {
-                return n;
-            }
-        }*/
-
         default:
         return NULL;
     }
 }
 
 // May return one of the inputs, this is used
-static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
     switch (n->type) {
         // integer ops
         case TB_AND:
@@ -637,10 +614,10 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         return n;
 
         case TB_LOAD:
-        return identity_load(p, f, n);
+        return (flags & TB_PEEPHOLE_MEMORY) ? identity_load(p, f, n) : n;
 
         // dumb phis
-        case TB_PHI: {
+        case TB_PHI: if (flags & TB_PEEPHOLE_PHI) {
             TB_Node* same = n->inputs[1];
             FOREACH_N(i, 2, n->input_count) {
                 if (same != n->inputs[i]) return n;
@@ -653,6 +630,8 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
             }
 
             return same;
+        } else {
+            return n;
         }
 
         default:
@@ -671,7 +650,7 @@ static TB_Node* unsafe_get_region(TB_Node* n) {
     return n;
 }
 
-static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
     // must've dead sometime between getting scheduled and getting
     // here.
     if (n->type != TB_END && find_users(p, n) == NULL) {
@@ -681,7 +660,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     DO_IF(TB_OPTDEBUG_PEEP)(printf("peep? "), print_node_sexpr(n, 0));
 
     // idealize node (in a loop of course)
-    TB_Node* k = idealize(p, f, n);
+    TB_Node* k = idealize(p, f, n, flags);
     DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
     while (k != NULL) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
@@ -697,14 +676,12 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         }
 
         // try again, maybe we get another transformation
-        k = idealize(p, f, n);
-
+        k = idealize(p, f, n, flags);
         DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 10) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
-    // DO_IF(TB_OPTDEBUG_PEEP)(printf(loop_count ? "\n" : "\x1b[2K\x1b[0G"));
 
     // convert into matching identity
-    k = identity(p, f, n);
+    k = identity(p, f, n, flags);
     if (n != k) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
         subsume_node(p, f, n, k);
@@ -784,14 +761,14 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     return p;
 }
 
-void tb_pass_peephole(TB_Passes* p) {
+void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
     verify_tmp_arena(p);
 
     TB_Function* f = p->f;
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
         while ((n = worklist_pop(&p->worklist))) CUIK_TIMED_BLOCK("iter") {
-            if (peephole(p, f, n)) {
+            if (peephole(p, f, n, flags)) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
             }
         }
