@@ -612,34 +612,39 @@ static bool is_same_bb(TB_Node* bb, TB_Node* n) {
     return n == bb;
 }
 
+static bool is_region(TB_Node* n) {
+    return n->type == TB_REGION || n->type == TB_START;
+}
+
 static bool is_mem_out_op(TB_Node* n) {
     return n->type == TB_END || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS);
 }
 
-static void isel_bfs_push(Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
-    if (is_same_bb(bb, n) && try_def(ctx->p, &ctx->worklist, ctx->values, n)) {
-        // tuples should initialize their projections
-        if (n->dt.type == TB_TUPLE) {
-            for (User* use = find_users(ctx->p, n); use; use = use->next) {
-                TB_Node* use_n = use->n;
-                if (use_n->type == TB_PROJ) {
-                    isel_bfs_push(ctx, bb, use_n);
-                }
+static void isel_walk(Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
+    if (!is_same_bb(bb, n) || !try_def(ctx->p, &ctx->worklist, ctx->values, n)) {
+        return;
+    }
+
+    // push inputs
+    FOREACH_REVERSE_N(i, 0, n->input_count) {
+        isel_walk(ctx, bb, n->inputs[i]);
+    }
+
+    // memory effects have anti-dependencies, the previous loads
+    // must finish before the next memory effect is applied.
+    if (is_mem_out_op(n)) {
+        TB_Node* prev_mem = n->inputs[1];
+        for (User* use = find_users(ctx->p, prev_mem); use; use = use->next) {
+            TB_Node* use_n = use->n;
+            if (use_n->type == TB_LOAD) {
+                isel_walk(ctx, bb, use_n);
             }
         }
-
-        dyn_array_put(ctx->worklist.items, n);
     }
-}
-
-static void isel_bfs(Ctx* restrict ctx, TB_Node* bb, TB_Node* root) {
-    size_t cursor = dyn_array_length(ctx->worklist.items);
-
-    isel_bfs_push(ctx, bb, root);
 
     // if we're a branch, push our PHI nodes
-    if (root->type == TB_BRANCH) {
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(root);
+    if (n->type == TB_BRANCH) {
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
         TB_Node** succ = br->succ;
 
         FOREACH_N(i, 0, br->succ_count) {
@@ -675,7 +680,7 @@ static void isel_bfs(Ctx* restrict ctx, TB_Node* bb, TB_Node* root) {
                     dyn_array_put(ctx->phi_vals, p);
 
                     // make sure there's a value for it
-                    isel_bfs_push(ctx, bb, val);
+                    isel_walk(ctx, bb, val);
                 } else {
                     // fill in the anti-dependencies for the memory PHI, it will handle
                     // the rest later.
@@ -683,40 +688,46 @@ static void isel_bfs(Ctx* restrict ctx, TB_Node* bb, TB_Node* root) {
                     for (User* use = find_users(ctx->p, val); use; use = use->next) {
                         TB_Node* use_n = use->n;
                         if (use_n->type == TB_LOAD) {
-                            isel_bfs_push(ctx, bb, use_n);
+                            isel_walk(ctx, bb, use_n);
                             antis++;
                         }
                     }
 
                     // if there's no anti-deps, let's just push the MEMORY
                     if (antis == 0) {
-                        isel_bfs_push(ctx, bb, val);
+                        isel_walk(ctx, bb, val);
                     }
                 }
             }
         }
     }
 
-    while (cursor < dyn_array_length(ctx->worklist.items)) {
-        TB_Node* n = ctx->worklist.items[cursor++];
+    dyn_array_put(ctx->worklist.items, n);
 
-        // memory effects have anti-dependencies, the previous loads
-        // must finish before the next memory effect is applied.
-        if (is_mem_out_op(n)) {
-            TB_Node* prev_mem = n->inputs[1];
-            for (User* use = find_users(ctx->p, prev_mem); use; use = use->next) {
-                TB_Node* use_n = use->n;
-                if (use_n->type == TB_LOAD) {
-                    isel_bfs_push(ctx, bb, use_n);
-                }
+    // push outputs (projections, if they apply)
+    if (n->dt.type == TB_TUPLE) {
+        for (User* use = find_users(ctx->p, n); use; use = use->next) {
+            TB_Node* use_n = use->n;
+            if (use_n->type == TB_PROJ) {
+                isel_walk(ctx, bb, use_n);
             }
         }
+    }
+}
 
-        // push all inputs first
-        if (n->type != TB_REGION) {
-            FOREACH_REVERSE_N(i, 1, n->input_count) {
-                isel_bfs_push(ctx, bb, n->inputs[i]);
-            }
+static void isel_set_location(Ctx* restrict ctx, TB_Node* n) {
+    dyn_array_for(i, n->attribs) {
+        TB_Attrib* a = &n->attribs[i];
+
+        // check if it's changed
+        if (a->tag == TB_ATTRIB_LOCATION && (ctx->last_file != a->loc.file || ctx->last_line != a->loc.line || ctx->last_column != a->loc.column)) {
+            ctx->last_file = a->loc.file;
+            ctx->last_line = a->loc.line;
+            ctx->last_column = a->loc.column;
+
+            SUBMIT(inst_line(a));
+            printf("  LINE %llu %s:%d\n", n->gvn, a->loc.file->path, a->loc.line);
+            break;
         }
     }
 }
@@ -724,20 +735,8 @@ static void isel_bfs(Ctx* restrict ctx, TB_Node* bb, TB_Node* root) {
 static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
     assert(dyn_array_length(ctx->worklist.items) == ctx->block_count);
 
-    // phase 1: flatten nodes in the basic block using BFS
-    TB_Node* n = end;
-    do {
-        isel_walk(ctx, bb, n);
-        n = n->inputs[0];
-    } while (!is_block_begin(n));
-
-    // push leftovers
-    for (User* use = find_users(ctx->p, bb); use; use = use->next) {
-        isel_bfs_push(ctx, bb, use->n);
-    }
-
-    // add root at the very end
-    dyn_array_put(ctx->worklist.items, bb);
+    // phase 1: topological sort
+    isel_walk(ctx, bb, end);
 
     // within the BB, the phi nodes should view itself as the previous value
     // not the new one we're producing.
@@ -764,14 +763,10 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
     DO_IF(TB_OPTDEBUG_CODEGEN)(printf("BB %p\n", bb));
 
     Inst *head = ctx->head, *last = NULL;
-    FOREACH_N(i, ctx->block_count, dyn_array_length(ctx->worklist.items)) {
+    TB_Node* prev_effect = NULL;
+    FOREACH_REVERSE_N(i, ctx->block_count, dyn_array_length(ctx->worklist.items)) {
         TB_Node* n = ctx->worklist.items[i];
         ValueDesc* val = lookup_val(ctx, n);
-
-        // attach to dummy list
-        Inst dummy;
-        dummy.next = NULL;
-        ctx->head = &dummy;
 
         // if the value hasn't been asked for yet and
         if (val->vreg < 0 && should_rematerialize(n)) {
@@ -783,21 +778,12 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
             continue;
         }
 
+        // attach to dummy list
+        Inst dummy;
+        dummy.next = NULL;
+        ctx->head = &dummy;
+
         if (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY) {
-            // set line info
-            dyn_array_for(i, n->attribs) {
-                TB_Attrib* a = &n->attribs[i];
-
-                // check if it's changed
-                if (a->tag == TB_ATTRIB_LOCATION && (ctx->last_file != a->loc.file || ctx->last_line != a->loc.line || ctx->last_column != a->loc.column)) {
-                    ctx->last_file = a->loc.file;
-                    ctx->last_line = a->loc.line;
-                    ctx->last_column = a->loc.column;
-
-                    SUBMIT(inst_line(a));
-                }
-            }
-
             DO_IF(TB_OPTDEBUG_CODEGEN)(
                 printf("  EFFECT %zu: ", n->gvn),
                 print_node_sexpr(n, 0),
@@ -819,6 +805,13 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
             }
 
             isel(ctx, n, -1);
+
+            if (n->type != TB_PROJ) {
+                if (prev_effect != NULL) {
+                    isel_set_location(ctx, prev_effect);
+                }
+                prev_effect = n;
+            }
         } else if (val->uses > 0 || val->vreg >= 0) {
             if (val->vreg < 0) {
                 val->vreg = DEF(n, n->dt);
@@ -838,6 +831,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
                 printf("\n")
             );
         }
+
         Inst* seq_start = dummy.next;
         Inst* seq_end   = ctx->head;
         assert(seq_end->next == NULL);
@@ -879,13 +873,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // tb_pass_print(p);
     tb_pass_schedule(p);
 
-    reg_alloc_log = strcmp(f->super.name, "murmur3_32") == 0;
+    /*reg_alloc_log = strcmp(f->super.name, "murmur3_32") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }
+    }*/
 
     Ctx ctx = {
         .module = f->super.module,
@@ -918,6 +912,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // We need to generate a CFG
     ctx.block_count = tb_push_postorder(f, &p->worklist);
     assert(p->worklist.items[ctx.block_count - 1] == f->start_node && "Codegen must always schedule entry BB first");
+
+    worklist_clear_visited(&p->worklist);
 
     // Instruction selection:
     //   we just decide which instructions to emit, which operands are

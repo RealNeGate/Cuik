@@ -109,6 +109,7 @@ void tb_compute_dominators(TB_Function* f, size_t count, TB_Node** blocks);
 void worklist_alloc(Worklist* restrict ws, size_t initial_cap);
 void worklist_free(Worklist* restrict ws);
 void worklist_clear(Worklist* restrict ws);
+void worklist_clear_visited(Worklist* restrict ws);
 bool worklist_test(Worklist* restrict ws, TB_Node* n);
 bool worklist_test_n_set(Worklist* restrict ws, TB_Node* n);
 void worklist_push(Worklist* restrict ws, TB_Node* restrict n);
