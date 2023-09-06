@@ -2,7 +2,7 @@
 typedef struct {
     TB_Passes* opt;
     TB_Function* f;
-    TB_PostorderWalk order;
+    size_t block_count;
 } PrinterCtx;
 
 static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
@@ -86,252 +86,7 @@ static void print_type(TB_DataType dt) {
     }
 }
 
-static bool is_same_bb(TB_Node* bb, TB_Node* n) {
-    while (n->type != TB_START && n->type != TB_REGION) {
-        n = n->inputs[0];
-    }
-
-    return n == bb;
-}
-
-// returns true if it's the first time
-static void print_node(PrinterCtx* ctx, TB_Node* n, TB_Node* parent) {
-    if (n->type == TB_REGION || n->type == TB_BRANCH || n->type == TB_START || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL) {
-        return;
-    }
-
-    if (n->type == TB_PROJ && n->dt.type == TB_CONTROL) {
-        return;
-    }
-
-    if (worklist_test_n_set(&ctx->opt->worklist, n)) {
-        return;
-    }
-
-    // print operands
-    FOREACH_N(i, 1, n->input_count) if (n->inputs[i]) {
-        switch (n->inputs[i]->type) {
-            case TB_LOAD: case TB_PHI:
-            if (n->inputs[i]->inputs[0] != parent) {
-                break;
-            }
-
-            default:
-            print_node(ctx, n->inputs[i], parent);
-            break;
-        }
-    }
-
-    // print as instruction
-    if (n->dt.type == TB_INT && n->dt.data == 0) {
-        printf("  %s.", tb_node_get_name(n));
-    } else {
-        printf("  v%llu = %s.", n->gvn, tb_node_get_name(n));
-    }
-
-    TB_DataType dt = n->dt;
-    if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
-        dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
-    } else if (n->type == TB_STORE) {
-        dt = n->inputs[3]->dt;
-    }
-    print_type(dt);
-    printf(" ");
-
-    size_t first = n->type == TB_PROJ ? 0 : 1;
-    FOREACH_N(i, first, n->input_count) {
-        if (i != first) printf(", ");
-        print_ref_to_node(ctx, n->inputs[i]);
-    }
-
-    // print extra data
-    switch (n->type) {
-        case TB_CMP_EQ:
-        case TB_CMP_NE:
-        case TB_CMP_ULT:
-        case TB_CMP_ULE:
-        case TB_CMP_SLT:
-        case TB_CMP_SLE:
-        case TB_CMP_FLT:
-        case TB_CMP_FLE:
-        case TB_SELECT:
-        case TB_BITCAST:
-        break;
-
-        case TB_MEMBER_ACCESS: {
-            printf(", %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
-            break;
-        }
-
-        case TB_ARRAY_ACCESS: {
-            printf(", %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride);
-            break;
-        }
-
-        case TB_PROJ: {
-            printf(", %d", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
-            break;
-        }
-
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
-        case TB_MUL:
-        case TB_SHL:
-        case TB_SHR:
-        case TB_ROL:
-        case TB_ROR:
-        case TB_SAR:
-        case TB_UDIV:
-        case TB_SDIV:
-        case TB_UMOD:
-        case TB_SMOD:
-        {
-            TB_NodeBinopInt* b = TB_NODE_GET_EXTRA(n);
-            if (b->ab & TB_ARITHMATIC_NSW) printf(" !nsw");
-            if (b->ab & TB_ARITHMATIC_NUW) printf(" !nuw");
-            break;
-        }
-
-        case TB_LOAD:
-        case TB_STORE:
-        case TB_MEMSET:
-        case TB_MEMCPY: {
-            TB_NodeMemAccess* mem = TB_NODE_GET_EXTRA(n);
-            printf(" !align(%d)", mem->align);
-            break;
-        }
-
-        case TB_CALL: break;
-
-        case TB_LOCAL: {
-            TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-            printf("!size(%u) !align(%u)", l->size, l->align);
-            break;
-        }
-
-        default: tb_assert(n->extra_count == 0, "TODO");
-    }
-
-    dyn_array_for(i, n->attribs) {
-        TB_Attrib* a = &n->attribs[i];
-        if (a->tag == TB_ATTRIB_VARIABLE) {
-            printf(" !var(%s)", a->var.name);
-        }
-    }
-
-    if (ctx->opt->error_n == n) {
-        printf("\x1b[31m  <-- ERROR\x1b[0m");
-    }
-
-    printf("\n");
-}
-
-static void print_effect(PrinterCtx* ctx, TB_Node* n) {
-    bool aint_region = n->type != TB_REGION && n->type != TB_START;
-    if (aint_region) {
-        print_effect(ctx, n->inputs[0]);
-        printf("  # fence\n");
-    }
-
-    dyn_array_for(i, n->attribs) {
-        TB_Attrib* a = &n->attribs[i];
-
-        // check if it's changed
-        if (a->tag == TB_ATTRIB_LOCATION) {
-            printf("  # location %s:%d\n", a->loc.file->path, a->loc.line);
-        }
-    }
-
-    if (aint_region) {
-        FOREACH_N(i, 1, n->input_count) {
-            print_node(ctx, n->inputs[i], n);
-        }
-
-        switch (n->type) {
-            case TB_DEBUGBREAK: printf("  debugbreak\n"); break;
-            case TB_UNREACHABLE: printf("  unreachable\n"); break;
-
-            case TB_BRANCH: {
-                TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-                if (br->succ_count == 1) {
-                    printf("  goto ");
-                    print_ref_to_node(ctx, br->succ[0]);
-                    printf("\n");
-                } else if (br->succ_count == 2) {
-                    printf("  if ");
-                    FOREACH_N(i, 1, n->input_count) {
-                        if (i != 1) printf(", ");
-                        print_ref_to_node(ctx, n->inputs[i]);
-                    }
-                    if (br->keys[0] == 0) {
-                        printf(" then ");
-                    } else {
-                        printf(" != %"PRId64" then ", br->keys[0]);
-                    }
-                    print_ref_to_node(ctx, br->succ[0]);
-                    printf(" else ");
-                    print_ref_to_node(ctx, br->succ[1]);
-                    printf("\n");
-                } else {
-                    printf("  br ");
-                    FOREACH_N(i, 1, n->input_count) {
-                        if (i != 1) printf(", ");
-                        print_ref_to_node(ctx, n->inputs[i]);
-                    }
-                    printf("%s=> {\n", n->input_count > 1 ? " " : "");
-
-                    FOREACH_N(i, 0, br->succ_count) {
-                        if (i != 0) printf("    %"PRId64": ", br->keys[i - 1]);
-                        else printf("    default: ");
-
-                        print_ref_to_node(ctx, br->succ[i]);
-                        printf("\n");
-                    }
-                    printf("  }\n");
-                }
-                break;
-            }
-
-            case TB_MEMSET:
-            case TB_MEMCPY:
-            case TB_CALL:
-            case TB_PROJ: {
-                print_node(ctx, n, n);
-                break;
-            }
-
-            case TB_TRAP: {
-                printf("  trap\n");
-                break;
-    	    }
-
-            case TB_END: {
-                printf("  stop ");
-                FOREACH_N(i, 1, n->input_count) {
-                    if (i != 1) printf(", ");
-                    print_ref_to_node(ctx, n->inputs[i]);
-                }
-                printf("\n");
-                break;
-            }
-
-            default: tb_todo();
-        }
-    }
-
-    for (User* use = find_users(ctx->opt, n); use; use = use->next) {
-        if (use->slot == 0) {
-            print_node(ctx, use->n, n);
-        }
-    }
-}
-
 static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
-    const char* tag = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->tag;
-
     print_ref_to_node(ctx, bb);
     printf(":");
 
@@ -349,14 +104,198 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
     }
     printf("\n");
 
-    if (bb->type == TB_START) {
-        dyn_array_for(i, ctx->opt->locals) {
-            print_node(ctx, ctx->opt->locals[i], NULL);
+    /*dyn_array_for(i, n->attribs) {
+        TB_Attrib* a = &n->attribs[i];
+
+        // check if it's changed
+        if (a->tag == TB_ATTRIB_LOCATION) {
+            printf("  # location %s:%d\n", a->loc.file->path, a->loc.line);
         }
-    }
+    }*/
 
     TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
-    print_effect(ctx, end);
+    Worklist* ws = &ctx->opt->worklist;
+    sched_walk(ctx->opt, ws, NULL, bb, end);
+
+    FOREACH_N(i, ctx->block_count, dyn_array_length(ws->items)) {
+        TB_Node* n = ws->items[i];
+
+        // skip these
+        if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST ||
+            n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
+            (n->type == TB_PROJ && n->dt.type == TB_CONTROL)) {
+            continue;
+        }
+
+        switch (n->type) {
+            case TB_DEBUGBREAK: printf("  debugbreak\n"); break;
+            case TB_UNREACHABLE: printf("  unreachable\n"); break;
+
+            case TB_BRANCH: {
+                TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+                if (br->succ_count == 1) {
+                    printf("  goto ");
+                    print_ref_to_node(ctx, br->succ[0]);
+                } else if (br->succ_count == 2) {
+                    printf("  if ");
+                    FOREACH_N(i, 1, n->input_count) {
+                        if (i != 1) printf(", ");
+                        print_ref_to_node(ctx, n->inputs[i]);
+                    }
+                    if (br->keys[0] == 0) {
+                        printf(" then ");
+                    } else {
+                        printf(" != %"PRId64" then ", br->keys[0]);
+                    }
+                    print_ref_to_node(ctx, br->succ[0]);
+                    printf(" else ");
+                    print_ref_to_node(ctx, br->succ[1]);
+                } else {
+                    printf("  br ");
+                    FOREACH_N(i, 1, n->input_count) {
+                        if (i != 1) printf(", ");
+                        print_ref_to_node(ctx, n->inputs[i]);
+                    }
+                    printf("%s=> {\n", n->input_count > 1 ? " " : "");
+
+                    FOREACH_N(i, 0, br->succ_count) {
+                        if (i != 0) printf("    %"PRId64": ", br->keys[i - 1]);
+                        else printf("    default: ");
+
+                        print_ref_to_node(ctx, br->succ[i]);
+                        printf("\n");
+                    }
+                    printf("  }");
+                }
+                break;
+            }
+
+            case TB_TRAP: {
+                printf("  trap");
+                break;
+    	    }
+
+            case TB_END: {
+                printf("  end ");
+                FOREACH_N(i, 1, n->input_count) {
+                    if (i != 1) printf(", ");
+                    print_ref_to_node(ctx, n->inputs[i]);
+                }
+                break;
+            }
+
+            default: {
+                // print as normal instruction
+                if (n->dt.type == TB_INT && n->dt.data == 0) {
+                    printf("  %s.", tb_node_get_name(n));
+                } else {
+                    printf("  v%zu = %s.", n->gvn, tb_node_get_name(n));
+                }
+
+                TB_DataType dt = n->dt;
+                if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
+                    dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
+                } else if (n->type == TB_STORE) {
+                    dt = n->inputs[3]->dt;
+                }
+                print_type(dt);
+                printf(" ");
+
+                size_t first = n->type == TB_PROJ ? 0 : 1;
+                FOREACH_N(i, first, n->input_count) {
+                    if (i != first) printf(", ");
+                    print_ref_to_node(ctx, n->inputs[i]);
+                }
+
+                // print extra data
+                switch (n->type) {
+                    case TB_START:
+                    case TB_CMP_EQ:
+                    case TB_CMP_NE:
+                    case TB_CMP_ULT:
+                    case TB_CMP_ULE:
+                    case TB_CMP_SLT:
+                    case TB_CMP_SLE:
+                    case TB_CMP_FLT:
+                    case TB_CMP_FLE:
+                    case TB_SELECT:
+                    case TB_BITCAST:
+                    break;
+
+                    case TB_MEMBER_ACCESS: {
+                        printf(", %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
+                        break;
+                    }
+
+                    case TB_ARRAY_ACCESS: {
+                        printf(", %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride);
+                        break;
+                    }
+
+                    case TB_PROJ: {
+                        printf(", %d", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
+                        break;
+                    }
+
+                    case TB_AND:
+                    case TB_OR:
+                    case TB_XOR:
+                    case TB_ADD:
+                    case TB_SUB:
+                    case TB_MUL:
+                    case TB_SHL:
+                    case TB_SHR:
+                    case TB_ROL:
+                    case TB_ROR:
+                    case TB_SAR:
+                    case TB_UDIV:
+                    case TB_SDIV:
+                    case TB_UMOD:
+                    case TB_SMOD:
+                    {
+                        TB_NodeBinopInt* b = TB_NODE_GET_EXTRA(n);
+                        if (b->ab & TB_ARITHMATIC_NSW) printf(" !nsw");
+                        if (b->ab & TB_ARITHMATIC_NUW) printf(" !nuw");
+                        break;
+                    }
+
+                    case TB_LOAD:
+                    case TB_STORE:
+                    case TB_MEMSET:
+                    case TB_MEMCPY: {
+                        TB_NodeMemAccess* mem = TB_NODE_GET_EXTRA(n);
+                        printf(" !align(%d)", mem->align);
+                        break;
+                    }
+
+                    case TB_CALL: break;
+
+                    case TB_LOCAL: {
+                        TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
+                        printf("!size %u !align %u", l->size, l->align);
+                        break;
+                    }
+
+                    default: tb_assert(n->extra_count == 0, "TODO");
+                }
+                break;
+            }
+        }
+
+        dyn_array_for(i, n->attribs) {
+            TB_Attrib* a = &n->attribs[i];
+            if (a->tag == TB_ATTRIB_VARIABLE) {
+                printf(" !var(%s)", a->var.name);
+            }
+        }
+
+        if (ctx->opt->error_n == n) {
+            printf("\x1b[31m  <-- ERROR\x1b[0m");
+        }
+
+        printf("\n");
+    }
+    dyn_array_set_length(ws->items, ctx->block_count);
 }
 
 bool tb_pass_print(TB_Passes* opt) {

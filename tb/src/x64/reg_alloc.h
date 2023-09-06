@@ -686,7 +686,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
     // linear scan main loop
     CUIK_TIMED_BLOCK("reg alloc") {
-        while (dyn_array_length(ra.unhandled)) CUIK_TIMED_BLOCK("pop") {
+        while (dyn_array_length(ra.unhandled)) {
             RegIndex ri = dyn_array_pop(ra.unhandled);
             LiveInterval* interval = &ra.intervals[ri];
 

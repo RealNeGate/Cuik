@@ -158,9 +158,6 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
             tb_pass_peephole(p, TB_PEEPHOLE_ALL);
             // Converting locals into phi nodes
             // tb_pass_mem2reg(p), tb_pass_peephole(p);
-        } else {
-            // only do remove dumb PHIs and constant fold
-            tb_pass_peephole(p, TB_PEEPHOLE_PHI);
         }
 
         // print IR
@@ -768,7 +765,7 @@ static void irgen_job(void* arg) {
     bool do_compiles_immediately = task.args->opt_level == 0 && !task.args->emit_ir && !task.args->assembly;
     TB_Arena* allocator = get_ir_arena();
 
-    CUIK_TIMED_BLOCK("taste") for (size_t i = 0; i < task.count; i++) {
+    for (size_t i = 0; i < task.count; i++) {
         // skip all the typedefs
         if (task.stmts[i]->decl.attrs.is_typedef || !task.stmts[i]->decl.attrs.is_used) {
             continue;
@@ -786,7 +783,7 @@ static void irgen_job(void* arg) {
                 tb_pass_codegen(p, false);
                 tb_pass_exit(p);
 
-                log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);
+                // log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);
                 tb_arena_clear(allocator);
             }
         }

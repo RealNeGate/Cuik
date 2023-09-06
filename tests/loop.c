@@ -99,6 +99,60 @@ static int bar(int n) {
     return arr[1];
 }
 
+static int folding(void) {
+    return 42+1 & 3 * 16;
+}
+
+static int bitcast(float x) {
+    return *(int*) &x;
+}
+
+static float Q_rsqrt(float number) {
+    long i;
+    float x2, y;
+    const float threehalfs = 1.5F;
+
+    x2 = number * 0.5F;
+    y  = number;
+    i  = * ( long * ) &y;                       // evil floating point bit level hacking
+    i  = 0x5f3759df - ( i >> 1 );               // what the fuck?
+    y  = * ( float * ) &i;
+    y  = y * ( threehalfs - ( x2 * y * y ) );   // 1st iteration
+    // y  = y * ( threehalfs - ( x2 * y * y ) );   // 2nd iteration, this can be removed
+    return y;
+}
+
+#if 0
+int store_elim(int* a) {
+    *a = 16;
+    *a = 5;
+    return *a;
+}
+
+int branching_store(int* a) {
+    *a = 16;
+    if (*a) {
+        *a = 6;
+    }
+    return *a;
+}
+
+static int aliasing(int* restrict a, int* restrict b) {
+    *a = 1;
+    *b = 2;
+    return *a;
+}
+
+uint64_t foo(uint64_t x, uint64_t y) {
+    if ((x * 2) / 2) return x;
+    else             return y;
+}
+#endif
+
+static int select_opt(int a, int b) {
+    return a > 10 && !(b > 10);
+}
+
 static uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
@@ -130,59 +184,14 @@ static uint32_t murmur3_32(const void* key, size_t len) {
     return (h ^ (h >> 16));
 }
 
-static int folding(void) {
-    return 42+1 & 3 * 16;
-}
+/*extern int* ra1();
+extern int ra2(int* a, int b, int c, int d, int e);
 
-static int bitcast(float x) {
-    return *(int*) &x;
-}
-
-static float Q_rsqrt(float number) {
-    long i;
-    float x2, y;
-    const float threehalfs = 1.5F;
-
-    x2 = number * 0.5F;
-    y  = number;
-    i  = * ( long * ) &y;                       // evil floating point bit level hacking
-    i  = 0x5f3759df - ( i >> 1 );               // what the fuck?
-    y  = * ( float * ) &i;
-    y  = y * ( threehalfs - ( x2 * y * y ) );   // 1st iteration
-    // y  = y * ( threehalfs - ( x2 * y * y ) );   // 2nd iteration, this can be removed
-    return y;
-}
-
-int store_elim(int* a) {
-    *a = 16;
-    *a = 5;
-    return *a;
-}
-
-int branching_store(int* a) {
-    *a = 16;
-    if (*a) {
-        *a = 6;
-    }
-    return *a;
-}
-
-/*static int select_opt(int a, int b) {
-    return a > 10 && !(b > 10);
+int ra3(int a, int b, int c, int d) {
+    return ra2(ra1(), a, b, c, d);
 }*/
 
-static int aliasing(int* restrict a, int* restrict b) {
-    *a = 1;
-    *b = 2;
-    return *a;
-}
-
-uint64_t foo(uint64_t x, uint64_t y) {
-    if ((x * 2) / 2) return x;
-    else             return y;
-}
-
-/*int main() {
+int main() {
     printf("%d\n", select_opt(11, 5));
     printf("%d\n", select_opt(11, 11));
     printf("%d\n", select_opt(5, 5));
@@ -193,15 +202,20 @@ uint64_t foo(uint64_t x, uint64_t y) {
         printf("%f\n", Q_rsqrt(i / 100.0f));
     }
 
-    int a = 69;
-    store_elim(&a);
+    printf("%x\n", murmur3_32("Hello", 5));
+    printf("%x\n", murmur3_32("Bye",   3));
+    printf("%x\n", murmur3_32("gg",    2));
+    printf("%x\n", murmur3_32("Good cheese", 11));
+
+    // int a = 69;
+    // store_elim(&a);
 
     // printf("%d\n", store_elim(&a));
-}*/
+}
 
 #if 0
 int main() {
-    printf("%d\n", bar(1));
+    printf("%d\n", select_opt(11, 5));
 }
 #endif
 
@@ -406,13 +420,6 @@ int fibonacci1() {
         print(lo);
     }
     return hi;
-}
-
-extern int* ra1();
-extern int ra2(int* a, int b, int c, int d, int e);
-
-static int ra3(int a, int b, int c, int d) {
-    ra2(ra1(), a, b, c, d);
 }
 
 int foo(int x, int y) {

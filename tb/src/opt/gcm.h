@@ -105,13 +105,15 @@ static void schedule_late(TB_Passes* passes, TB_Node* n) {
     TB_Node* lca = NULL;
     for (User* use = find_users(passes, n); use; use = use->next) {
         TB_Node* y = use->n;
+        if (y->inputs[0] == NULL) continue; // dead
+
         TB_Node* use_block = tb_get_parent_region(y->inputs[0]);
         if (y->type == TB_PHI) {
             if (y->input_count != use_block->input_count + 1) {
                 tb_panic("phi has parent with mismatched predecessors");
             }
 
-            ptrdiff_t j = -1;
+            ptrdiff_t j = 0;
             for (; j < y->input_count; j++) {
                 if (y->inputs[j] == n) {
                     break;

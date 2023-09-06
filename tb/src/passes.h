@@ -1,10 +1,10 @@
 #pragma once
 #include "tb_internal.h"
 
-#define TB_OPTDEBUG_PEEP 1
+#define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
 #define TB_OPTDEBUG_MEM2REG 0
-#define TB_OPTDEBUG_CODEGEN 1
+#define TB_OPTDEBUG_CODEGEN 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
 #define DO_IF_0(...)
@@ -13,18 +13,17 @@
 typedef NL_HashSet TB_FrontierSet;
 typedef NL_Map(TB_Node*, TB_FrontierSet) TB_DominanceFrontiers;
 
-typedef struct {
-    size_t count;
-    TB_Node** traversal;
-    NL_Map(TB_Node*, char) visited;
-} TB_PostorderWalk;
-
 typedef struct User User;
 struct User {
     User* next;
     TB_Node* n;
     int slot;
 };
+
+typedef struct {
+    TB_Node *phi, *n;
+    int dst, src;
+} PhiVal;
 
 typedef struct {
     DynArray(TB_Node*) items;
@@ -114,5 +113,8 @@ bool worklist_test(Worklist* restrict ws, TB_Node* n);
 bool worklist_test_n_set(Worklist* restrict ws, TB_Node* n);
 void worklist_push(Worklist* restrict ws, TB_Node* restrict n);
 TB_Node* worklist_pop(Worklist* ws);
+
+// Local scheduler
+void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_Node* bb, TB_Node* n);
 
 static void push_all_nodes(Worklist* restrict ws, TB_Node* n);

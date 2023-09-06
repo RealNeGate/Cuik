@@ -132,25 +132,10 @@ static bool is_terminator(int t) {
 }
 
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
-    uint64_t mask = UINT64_MAX;
-    TB_Node* prev = n;
-    if (n->type == TB_SIGN_EXT) {
-        n = n->inputs[1];
-    } else if (n->type == TB_TRUNCATE) {
-        assert(n->dt.type == TB_INT);
-
-        n = n->inputs[1];
-        mask = n->dt.data == 64 ? UINT64_MAX : (1ull << n->dt.data) - 1;
-    }
-
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-        if (i->num_words == 1 && fits_into_int32(i->words[0] & mask)) {
-            if (prev != n) {
-                use(ctx, prev);
-            }
-
-            *out_x = i->words[0] & mask;
+        if (i->num_words == 1 && fits_into_int32(i->words[0])) {
+            *out_x = i->words[0];
             return true;
         }
     }
@@ -391,7 +376,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static bool should_rematerialize(TB_Node* n) {
-    return n->type == TB_LOCAL || n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS;
+    return n->type == TB_LOCAL || n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS || (n->type == TB_PROJ && n->inputs[0]->type == TB_START);
 }
 
 static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
@@ -434,15 +419,20 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 }
 
                 int reg_limit = is_float ? xmm_param_count : gpr_param_count;
-                ValueDesc* v = lookup_val(ctx, proj);
-                if (v != NULL && v->vreg >= 0 && id < reg_limit) {
-                    int reg_num = is_float ? id : gpr_params[id];
-                    int vreg = (is_float ? FIRST_XMM : 0) + reg_num;
+                if (id < reg_limit) {
+                    ValueDesc* v = lookup_val(ctx, proj);
+                    if (v != NULL) {
+                        assert(v->vreg < 0 && "shouldn't have been initialized yet?");
+                        v->vreg = DEF(proj, proj->dt);
 
-                    hint_reg(ctx, v->vreg, vreg);
-                    SUBMIT(inst_move(proj->dt, v->vreg, vreg));
+                        int reg_num = is_float ? id : gpr_params[id];
+                        int vreg = (is_float ? FIRST_XMM : 0) + reg_num;
 
-                    outs[out_count++] = vreg;
+                        hint_reg(ctx, v->vreg, vreg);
+                        SUBMIT(inst_move(proj->dt, v->vreg, vreg));
+
+                        outs[out_count++] = vreg;
+                    }
                 }
             }
 
@@ -458,32 +448,34 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             // walk the entry to find any parameter stack slots
             bool has_param_slots = false;
-            TB_Node* curr = start->end;
-            while (curr->type != TB_START) {
-                if (curr->type == TB_STORE) {
-                    // handle parameter storage, the first few parameters
-                    // have reserved space for them in Win64.
-                    if (curr->inputs[1]->type == TB_LOCAL &&
-                        curr->inputs[2]->type == TB_PROJ &&
-                        curr->inputs[2]->inputs[0]->type == TB_START) {
-                        TB_NodeProj* p = TB_NODE_GET_EXTRA(curr->inputs[2]);
-
-                        int pos = 16 + (p->index * 8);
-                        nl_map_put(ctx->stack_slots, curr->inputs[1], pos);
-
-                        if (p->index >= 4 && ctx->target_abi == TB_ABI_WIN64) {
-                            // marks as visited (stores don't return so we can -1)
-                            // nl_map_put(ctx->values, curr, -1);
-                        }
-
-                        // add parameter to debug info
-                        add_debug_local(ctx, curr->inputs[1], pos);
-                        has_param_slots = true;
-                    }
+            FOREACH_N(i, 0, ctx->f->param_count) {
+                TB_Node* proj = params[2 + i];
+                User* use = find_users(ctx->p, proj);
+                if (use == NULL || use->next != NULL || use->slot == 0) {
+                    continue;
                 }
 
-                // previous in control
-                curr = curr->inputs[0];
+                TB_Node* store_op = use->n;
+                if (store_op->type != TB_STORE || tb_get_parent_region(store_op->inputs[0]) != n) {
+                    continue;
+                }
+
+                TB_Node* addr = store_op->inputs[2];
+                if (addr->type != TB_LOCAL) {
+                    continue;
+                }
+
+                int pos = 16 + (i * 8);
+                nl_map_put(ctx->stack_slots, addr, pos);
+
+                if (i >= 4 && ctx->target_abi == TB_ABI_WIN64) {
+                    // marks as visited (stores don't return so we can -1)
+                    put_val(ctx, store_op, 0);
+                }
+
+                // add parameter to debug info
+                add_debug_local(ctx, addr, pos);
+                has_param_slots = true;
             }
 
             if (has_param_slots) {
@@ -903,7 +895,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 desc = &param_descs[2];
             }
 
-            TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[1];
+            TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[2];
             if (!has_users(ctx, ret_node)) {
                 ret_node = NULL;
             }
@@ -912,13 +904,13 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             int ret_val = -1;
             if (ret_node != NULL) {
-                ret_val = DEF(ret_node, ret_dt);
+                ret_val = input_reg(ctx, ret_node);
             }
 
             // system calls don't count, we track this for ABI
             // and stack allocation purposes.
-            if (ctx->caller_usage < n->input_count) {
-                ctx->caller_usage = n->input_count;
+            if (ctx->caller_usage < n->input_count - 3) {
+                ctx->caller_usage = n->input_count - 3;
             }
 
             uint32_t caller_saved_gprs = desc->caller_saved_gprs;
@@ -1059,8 +1051,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                     hint_reg(ctx, ret_val, RAX);
                     SUBMIT(inst_move(ret_dt, ret_val, RAX));
                 }
-
-                put_val(ctx, ret_node, ret_val);
             }
             break;
         }
@@ -1190,6 +1180,12 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
         case TB_STORE: {
+            if (dst >= 0) {
+                use(ctx, n->inputs[2]);
+                use(ctx, n->inputs[3]);
+                break;
+            }
+
             TB_DataType store_dt = n->inputs[3]->dt;
 
             // if we can couple the LOAD & STORE
@@ -1266,7 +1262,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
 
         case TB_END: {
-            if (n->input_count > 1) {
+            if (n->input_count > 2) {
                 assert(n->input_count <= 3 && "We don't support multiple returns here");
 
                 int src = input_reg(ctx, n->inputs[2]);
@@ -1303,7 +1299,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
         case TB_PROJ: {
             if (n->inputs[0]->type == TB_START) {
-                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index - 2;
                 int param_gpr_count = ctx->target_abi == TB_ABI_WIN64 ? 4 : 6;
 
                 // past the first register parameters, it's all stack

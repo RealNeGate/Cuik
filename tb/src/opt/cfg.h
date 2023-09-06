@@ -85,7 +85,7 @@ TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, size_t count, T
     return df;
 }
 
-TB_API void tb_free_dominance_frontiers(TB_Function* f, TB_DominanceFrontiers frontiers, const TB_PostorderWalk* order) {
+TB_API void tb_free_dominance_frontiers(TB_Function* f, TB_DominanceFrontiers frontiers) {
     nl_map_for(i, frontiers) {
         nl_hashset_free(frontiers[i].v);
     }

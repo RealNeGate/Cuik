@@ -453,9 +453,8 @@ TB_Node* tb_inst_safepoint(TB_Function* f, TB_Node* poke_site, size_t param_coun
 }
 
 TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*));
+    TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*[3]));
     n->inputs[0] = f->active_control_node;
-    n->inputs[1] = append_mem(f, n);
     n->inputs[2] = syscall_num;
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
@@ -463,22 +462,26 @@ TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, s
     TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
     f->active_control_node = cproj;
 
+    // memory proj
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
+    n->inputs[1] = append_mem(f, mproj);
+
     // return value
-    TB_Node* dproj = tb__make_proj(f, dt, n, 1);
+    TB_Node* dproj = tb__make_proj(f, dt, n, 2);
 
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
     c->proto = NULL;
     c->projs[0] = cproj;
-    c->projs[1] = dproj;
+    c->projs[1] = mproj;
+    c->projs[2] = dproj;
     return dproj;
 }
 
 TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
-    size_t proj_count = 1 + (proto->return_count > 1 ? proto->return_count : 1);
+    size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
 
     TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
     n->inputs[0] = f->active_control_node;
-    n->inputs[1] = append_mem(f, n);
     n->inputs[2] = target;
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
@@ -488,10 +491,14 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
     // control proj
     TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
 
+    // memory proj
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
+    n->inputs[1] = append_mem(f, mproj);
+
     // create data projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
     FOREACH_N(i, 0, proto->return_count) {
-        c->projs[i + 1] = tb__make_proj(f, rets[i].dt, n, i + 1);
+        c->projs[i + 2] = tb__make_proj(f, rets[i].dt, n, i + 2);
     }
 
     // we'll slot a NULL so it's easy to tell when it's empty
@@ -500,12 +507,13 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
     }
 
     c->projs[0] = cproj;
+    c->projs[1] = mproj;
     f->active_control_node = cproj;
 
     if (proto->return_count == 1) {
-        return (TB_MultiOutput){ .count = proto->return_count, .single = c->projs[1] };
+        return (TB_MultiOutput){ .count = proto->return_count, .single = c->projs[2] };
     } else {
-        return (TB_MultiOutput){ .count = proto->return_count, .multiple = c->projs + 1 };
+        return (TB_MultiOutput){ .count = proto->return_count, .multiple = c->projs + 2 };
     }
 }
 

@@ -206,6 +206,7 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 #include "mem2reg.h"
 #include "gcm.h"
 #include "libcalls.h"
+#include "scheduler.h"
 
 static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n) {
     // try CSE, if we succeed, just delete the node and use the old copy
@@ -719,7 +720,6 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
 static void generate_use_lists(TB_Passes* restrict p, TB_Function* f) {
     dyn_array_for(i, p->worklist.items) {
         TB_Node* n = p->worklist.items[i];
-        nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
 
         if (n->type == TB_LOCAL) {
             // we don't need to check for duplicates here, the worklist is uniques
@@ -744,7 +744,6 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     verify_tmp_arena(p);
 
     worklist_alloc(&p->worklist, f->node_count);
-    p->cse_nodes = nl_hashset_alloc(f->node_count);
 
     // generate work list (put everything)
     CUIK_TIMED_BLOCK("gen worklist") {
@@ -764,6 +763,10 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
     verify_tmp_arena(p);
 
+    if (p->cse_nodes.data == NULL) {
+        p->cse_nodes = nl_hashset_alloc(p->f->node_count);
+    }
+
     TB_Function* f = p->f;
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
@@ -773,11 +776,6 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
             }
         }
     }
-
-    /*if (p->cfg_dirty) {
-        recompute_cfg(f, p);
-        p->cfg_dirty = false;
-    }*/
 }
 
 void tb_pass_exit(TB_Passes* p) {

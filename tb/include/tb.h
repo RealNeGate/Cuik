@@ -490,7 +490,7 @@ struct TB_Node {
     uint16_t extra_count; // number of bytes for extra operand data
 
     // makes it easier to track in graph walks
-    uint64_t gvn;
+    size_t gvn;
 
     TB_Attrib* attribs;
     TB_Node** inputs;
@@ -1169,7 +1169,7 @@ typedef enum {
     TB_PEEPHOLE_MEMORY = 2,
 
     // just do every reduction rule i can provide you
-    TB_PEEPHOLE_ALL = 3,
+    TB_PEEPHOLE_ALL = 7,
 } TB_PeepholeFlags;
 
 // Function analysis, optimizations, and codegen are all part of this
