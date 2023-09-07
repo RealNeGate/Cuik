@@ -134,8 +134,8 @@ static bool is_terminator(int t) {
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-        if (i->num_words == 1 && fits_into_int32(i->words[0])) {
-            *out_x = i->words[0];
+        if (fits_into_int32(i->value)) {
+            *out_x = i->value;
             return true;
         }
     }
@@ -306,7 +306,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     bool invert = false;
     if (n->type == TB_CMP_EQ && n->dt.type == TB_INT && n->dt.data == 1 && n->inputs[2]->type == TB_INTEGER_CONST) {
         TB_NodeInt* b = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt);
-        if (b->num_words == 1 && b->words[0] == 0) {
+        if (b->value == 0) {
             invert = true;
             n = n->inputs[1];
         }
@@ -507,10 +507,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
 
         case TB_INTEGER_CONST: {
-            TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-            assert(i->num_words == 1);
-
-            uint64_t x = i->words[0];
+            uint64_t x = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
 
             // mask off bits
             uint64_t bits_in_type = n->dt.type == TB_PTR ? 64 : n->dt.data;
@@ -585,13 +582,11 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
         case TB_MULPAIR: {
             // returns into both lo and hi
-            TB_NodeMulPair* p = TB_NODE_GET_EXTRA(n);
+            TB_NodeArithPair* p = TB_NODE_GET_EXTRA(n);
             TB_DataType dt = p->lo->dt;
 
-            int lo = DEF(n, dt);
-            int hi = DEF(n, dt);
-            put_val(ctx, p->lo, lo);
-            put_val(ctx, p->hi, hi);
+            int lo = input_reg(ctx, p->lo);
+            int hi = input_reg(ctx, p->hi);
             {
                 Inst* inst = alloc_inst(MUL, dt, 2, 2, 0);
                 inst->operands[0] = RAX;

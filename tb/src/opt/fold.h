@@ -9,6 +9,10 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
     return dst | (sign_bit ? mask : 0);
 }
 
+uint64_t tb__mask(uint64_t bits) {
+    return ~UINT64_C(0) >> (64 - bits);
+}
+
 static bool is_associative(TB_NodeTypeEnum type) {
     switch (type) {
         case TB_ADD: case TB_MUL:
@@ -33,13 +37,13 @@ static bool is_commutative(TB_NodeTypeEnum type) {
 }
 
 static bool get_int_const(TB_Node* n, uint64_t* imm) {
-    if (n->type != TB_INTEGER_CONST) return false;
-
-    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    if (i->num_words != 1) return false;
-
-    *imm = i->words[0];
-    return true;
+    if (n->type == TB_INTEGER_CONST) {
+        TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+        *imm = i->value;
+        return true;
+    } else {
+        return false;
+    }
 }
 
 ////////////////////////////////
@@ -52,18 +56,10 @@ static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node*
     }
 
     TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
-    size_t src_num_words = src_i->num_words;
-
-    TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, src_i->num_words);
-    BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
-
-    BigInt_copy(src_i->num_words, words, src_i->words);
 
     // mask bits on the top word
-    uint64_t top_mask = (1ull << (src->dt.data & 63)) - 1;
-    words[src_i->num_words - 1] &= ~top_mask;
-
-    return new_n;
+    uint64_t mask = (1ull << (src->dt.data & 63)) - 1;
+    return make_int_node(f, opt, n->dt, src_i->value & ~mask);
 }
 
 static TB_Node* ideal_int2ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
@@ -73,12 +69,7 @@ static TB_Node* ideal_int2ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     }
 
     TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
-
-    TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, src_i->num_words);
-    BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
-
-    BigInt_copy(src_i->num_words, words, src_i->words);
-    return new_n;
+    return make_int_node(f, opt, n->dt, src_i->value);
 }
 
 // cmp.slt(a, 0) => is_sign(a)
@@ -89,12 +80,12 @@ static bool sign_check(TB_Node* n) {
 
 static bool is_non_zero(TB_Node* n) {
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    return n->type == TB_INTEGER_CONST && i->num_words == 1 && i->words[0] != 0;
+    return n->type == TB_INTEGER_CONST && i->value != 0;
 }
 
 static bool is_zero(TB_Node* n) {
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    return n->type == TB_INTEGER_CONST && i->num_words == 1 && i->words[0] == 0;
+    return n->type == TB_INTEGER_CONST && i->value == 0;
 }
 
 static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
@@ -147,32 +138,20 @@ static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node
 static TB_Node* identity_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
     if (src->type == TB_INTEGER_CONST) {
-        TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
+        uint64_t src_i = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
 
-        size_t src_num_words = src_i->num_words;
-        size_t dst_num_words = (n->dt.data + (BigIntWordSize*8) - 1) / (BigIntWordSize*8);
-        bool is_signed = false;
+        size_t src_bits = src->dt.data;
+        size_t dst_bits = n->dt.data;
+
+        uint64_t mask = ~UINT64_C(0) >> (64 - src_bits);
+        uint64_t val;
         if (n->type == TB_SIGN_EXT) {
-            is_signed = BigInt_bextr(src_i->num_words, src_i->words, src->dt.data-1);
+            val = tb__sxt(src_i, src_bits, dst_bits);
+        } else {
+            val = src_i & mask;
         }
 
-        TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, dst_num_words);
-        BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
-
-        BigInt_copy(src_i->num_words, words, src_i->words);
-
-        FOREACH_N(i, src_i->num_words, dst_num_words) {
-            words[i] = is_signed ? ~UINT64_C(0) : 0;
-        }
-
-        // fixup the bits here
-        uint64_t shift = (64 - (src->dt.data % 64));
-        uint64_t mask = (~UINT64_C(0) >> shift) << shift;
-
-        if (is_signed) words[src_num_words - 1] |= mask;
-        else words[src_num_words - 1] &= ~mask;
-
-        return new_n;
+        return make_int_node(f, opt, n->dt, val);
     } else {
         return n;
     }
@@ -181,26 +160,19 @@ static TB_Node* identity_extension(TB_Passes* restrict opt, TB_Function* f, TB_N
 static TB_Node* ideal_int_unary(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     assert(n->type == TB_NOT || n->type == TB_NEG);
     TB_Node* src = n->inputs[1];
+    if (src->type == TB_INTEGER_CONST) {
+        assert(src->dt.type == TB_INT && src->dt.data > 0);
+        uint64_t src_i = ~TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
 
-    if (src->type != TB_INTEGER_CONST) {
+        if (n->type == TB_NEG) {
+            // -x => ~x + 1
+            src_i += 1;
+        }
+
+        return make_int_node(f, opt, n->dt, src_i);
+    } else {
         return NULL;
     }
-
-    assert(src->dt.type == TB_INT && src->dt.data > 0);
-    TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
-
-    TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, src_i->num_words);
-    BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
-
-    BigInt_copy(src_i->num_words, words, src_i->words);
-    BigInt_not(src_i->num_words, words);
-
-    if (n->type == TB_NEG) {
-        // -x => ~x + 1
-        BigInt_inc(src_i->num_words, words);
-    }
-
-    return new_n;
 }
 
 static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
@@ -295,45 +267,33 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
     }
 
     // fully fold
-    TB_NodeInt* ai = TB_NODE_GET_EXTRA(a);
-    TB_NodeInt* bi = TB_NODE_GET_EXTRA(b);
-
-    assert(ai->num_words == bi->num_words);
-    size_t num_words = ai->num_words;
-    BigInt_t *a_words = ai->words, *b_words = bi->words;
-
+    uint64_t ai = TB_NODE_GET_EXTRA_T(a, TB_NodeInt)->value;
+    uint64_t bi = TB_NODE_GET_EXTRA_T(b, TB_NodeInt)->value;
     if (type >= TB_CMP_EQ && type <= TB_CMP_ULE) {
-        TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, ai->num_words);
-        BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
-
         bool result = false;
         switch (type) {
-            case TB_CMP_EQ:  result = BigInt_cmp(num_words, a_words, b_words) == 0; break;
-            case TB_CMP_NE:  result = BigInt_cmp(num_words, a_words, b_words) != 0; break;
-            case TB_CMP_ULT: result = BigInt_cmp(num_words, a_words, b_words) <  0; break;
-            case TB_CMP_ULE: result = BigInt_cmp(num_words, a_words, b_words) <= 0; break;
+            case TB_CMP_EQ:  result = ai == bi; break;
+            case TB_CMP_NE:  result = ai != bi; break;
+            case TB_CMP_ULT: result = ai <  bi; break;
+            case TB_CMP_ULE: result = ai <= bi; break;
             default: tb_unreachable();
         }
 
-        words[0] = result;
-        return new_n;
+        return make_int_node(f, opt, n->dt, result);
     } else if (type >= TB_AND && type <= TB_MUL) {
-        TB_Node* new_n = tb_transmute_to_int(f, opt, n->dt, ai->num_words);
-        BigInt_t* words = TB_NODE_GET_EXTRA_T(new_n, TB_NodeInt)->words;
+        uint64_t dst;
         switch (type) {
-            case TB_AND: BigInt_and(num_words, a_words, b_words, words); break;
-            case TB_OR:  BigInt_or(num_words, a_words, b_words, words); break;
-            case TB_XOR: BigInt_xor(num_words, a_words, b_words, words); break;
-            case TB_ADD: BigInt_add(num_words, a_words, num_words, b_words, num_words, words); break;
-            case TB_SUB: BigInt_sub(num_words, a_words, num_words, b_words, num_words, words); break;
-            case TB_MUL: BigInt_mul_basic(num_words, a_words, b_words, words); break;
+            case TB_AND: dst = ai & bi; break;
+            case TB_OR:  dst = ai | bi; break;
+            case TB_XOR: dst = ai ^ bi; break;
+            case TB_ADD: dst = ai + bi; break;
+            case TB_SUB: dst = ai - bi; break;
+            case TB_MUL: dst = ai * bi; break;
             default: tb_unreachable();
         }
 
-        // fixup the bits here
-        uint64_t shift = (64 - (n->dt.data % 64)), mask = (~UINT64_C(0) >> shift) << shift;
-        words[num_words-1] &= ~mask;
-        return new_n;
+        // truncate
+        return make_int_node(f, opt, n->dt, dst & tb__mask(n->dt.data));
     } else {
         return NULL;
     }
@@ -350,14 +310,11 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     TB_DataType dt = n->dt;
     TB_Node* x = n->inputs[1];
 
-    // we haven't implemented the large int case
-    TB_NodeInt* bi = TB_NODE_GET_EXTRA(n->inputs[2]);
-    if (bi->num_words != 1 || bi->words[0] >= (1ull << 63ull)) return NULL;
-
-    uint64_t y = bi->words[0];
-
-    // handle simpler cases
-    if (y == 0) {
+    uint64_t y = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
+    if (y >= (1ull << 63ull)) {
+        // we haven't implemented the large int case
+        return NULL;
+    } else if (y == 0) {
         return tb_alloc_node(f, TB_POISON, dt, 1, 0);
     } else if (y == 1) {
         return x;
@@ -392,13 +349,13 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     //   x / y  => mulhi(x, a) >> sh
     int bits = dt.data;
     if (bits > 32) {
-        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, sizeof(TB_NodeMulPair));
+        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, sizeof(TB_NodeArithPair));
         set_input(opt, mul_node, x, 1);
         set_input(opt, mul_node, make_int_node(f, opt, dt, a), 2);
 
         TB_Node* lo = make_proj_node(f, opt, dt, mul_node, 1);
         TB_Node* hi = make_proj_node(f, opt, dt, mul_node, 2);
-        TB_NODE_SET_EXTRA(mul_node, TB_NodeMulPair, .lo = lo, .hi = hi);
+        TB_NODE_SET_EXTRA(mul_node, TB_NodeArithPair, .lo = lo, .hi = hi);
 
         TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
         set_input(opt, sh_node, hi, 1);
@@ -479,10 +436,9 @@ static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node
 
     // (array A B 4) => (member A B*4) where B is constant
     if (index->type == TB_INTEGER_CONST) {
-        TB_NodeInt* src_i = TB_NODE_GET_EXTRA(index);
-        if (src_i->num_words != 1) return NULL;
+        int64_t src_i = TB_NODE_GET_EXTRA_T(index, TB_NodeInt)->value;
 
-        int64_t offset = src_i->words[0] * stride;
+        int64_t offset = src_i * stride;
         TB_Node* new_n = tb_alloc_node(f, TB_MEMBER_ACCESS, n->dt, 2, sizeof(TB_NodeMember));
         set_input(opt, new_n, base, 1);
         TB_NODE_SET_EXTRA(new_n, TB_NodeMember, .offset = offset);
@@ -515,27 +471,3 @@ static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node
 
     return NULL;
 }
-
-#if 0
-static bool const_fold(TB_Function* f, TB_Label bb, TB_Node* n) {
-    TB_DataType dt = n->dt;
-
-    switch (n->type) {
-        case TB_TRUNCATE: {
-            TB_Node* src = n->inputs[0];
-            if (src->type == TB_INTEGER_CONST) {
-                TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
-
-                size_t dst_num_words = (n->dt.data + (BigIntWordSize*8) - 1) / (BigIntWordSize*8);
-                uint64_t* words = tb_transmute_to_int(f, opt, n, dst_num_words);
-                BigInt_copy(dst_num_words, words, src_i->words);
-
-                // fixup the bits here
-                uint64_t shift = (64 - (dt.data % 64)), mask = (~UINT64_C(0) >> shift) << shift;
-                words[dst_num_words-1] &= ~mask;
-                return true;
-            }
-        }
-    }
-}
-#endif

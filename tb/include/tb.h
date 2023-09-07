@@ -159,13 +159,12 @@ typedef enum TB_ISelMode {
 
 typedef enum TB_DataTypeEnum {
     // Integers, note void is an i0 and bool is an i1
-    //   i(0-2047)
+    //   i(0-64)
     TB_INT,
     // Floating point numbers
     //   f{32,64}
     TB_FLOAT,
     // Pointers
-    //   ptr(0-2047)
     TB_PTR,
     // Tuples, these cannot be used in memory ops, just accessed via projections
     TB_TUPLE,
@@ -190,6 +189,7 @@ typedef union TB_DataType {
     };
     uint32_t raw;
 } TB_DataType;
+_Static_assert(sizeof(TB_DataType) == 4, "im expecting this to be a uint32_t");
 
 // classify data types
 #define TB_IS_VOID_TYPE(x)     ((x).type == TB_INT && (x).data == 0)
@@ -388,8 +388,11 @@ typedef enum TB_NodeTypeEnum {
     TB_CMP_FLE,
 
     // Special ops
-    // does full multiplication (64x64=128 and so on) returning
-    // the low and high values in separate projections
+    //   adds two paired integers to two other paired integers and returns
+    //   a low and high value
+    TB_ADDPAIR,
+    //   does full multiplication (64x64=128 and so on) returning
+    //   the low and high values in separate projections
     TB_MULPAIR,
 
     // variadic
@@ -485,9 +488,8 @@ typedef struct TB_Symbol {
 typedef struct TB_Node TB_Node;
 struct TB_Node {
     TB_NodeType type;
+    uint16_t input_count; // number of node inputs.
     TB_DataType dt;
-    uint16_t input_count; // number of node inputs
-    uint16_t extra_count; // number of bytes for extra operand data
 
     // makes it easier to track in graph walks
     size_t gvn;
@@ -515,9 +517,8 @@ typedef struct { // TB_PROJ
     int index;
 } TB_NodeProj;
 
-typedef struct { // TB_INT
-    uint64_t num_words;
-    uint64_t words[];
+typedef struct { // TB_INTEGER_CONST
+    uint64_t value;
 } TB_NodeInt;
 
 typedef struct { // any compare operator
@@ -530,7 +531,7 @@ typedef struct { // any integer binary operator
 
 typedef struct { // TB_MULPAIR
     TB_Node *lo, *hi;
-} TB_NodeMulPair;
+} TB_NodeArithPair;
 
 typedef struct {
     TB_CharUnits align;

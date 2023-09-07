@@ -38,13 +38,10 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n) {
     } else if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
-        if (num->num_words == 1 && num->words[0] < 0xFFFF) {
-            printf("%"PRId64, num->words[0]);
+        if (num->value < 0xFFFF) {
+            printf("%"PRId64, num->value);
         } else {
-            printf("0x");
-            FOREACH_REVERSE_N(i, 0, num->num_words) {
-                printf("%016"PRIx64, num->words[i]);
-            }
+            printf("%#0"PRIx64, num->value);
         }
     } else {
         printf("v%llu", n->gvn);
@@ -117,7 +114,10 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
     Worklist* ws = &ctx->opt->worklist;
     sched_walk(ctx->opt, ws, NULL, bb, end);
 
-    FOREACH_N(i, ctx->block_count, dyn_array_length(ws->items)) {
+    TB_Node* top = ws->items[ctx->block_count];
+    assert(top->type == TB_START || top->type == TB_REGION);
+
+    FOREACH_N(i, ctx->block_count + 1, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];
 
         // skip these
@@ -209,7 +209,6 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
 
                 // print extra data
                 switch (n->type) {
-                    case TB_START:
                     case TB_CMP_EQ:
                     case TB_CMP_NE:
                     case TB_CMP_ULT:
@@ -276,7 +275,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
                         break;
                     }
 
-                    default: tb_assert(n->extra_count == 0, "TODO");
+                    default: tb_assert(extra_bytes(n) == 0, "TODO");
                 }
                 break;
             }
@@ -307,11 +306,13 @@ bool tb_pass_print(TB_Passes* opt) {
     PrinterCtx ctx = { opt, f };
     worklist_clear(&opt->worklist);
 
-    size_t block_count = tb_push_postorder(f, &opt->worklist);
+    ctx.block_count = tb_push_postorder(f, &opt->worklist);
     TB_Node* stop_bb = get_block_begin(f->stop_node);
 
+    worklist_clear_visited(&opt->worklist);
+
     bool has_stop = false;
-    FOREACH_REVERSE_N(i, 0, block_count) {
+    FOREACH_REVERSE_N(i, 0, ctx.block_count) {
         TB_Node* bb = opt->worklist.items[i];
         if (bb != stop_bb) {
             print_bb(&ctx, bb);

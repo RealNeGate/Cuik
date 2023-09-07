@@ -222,17 +222,15 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
 
             // br ((x != y) != 0) => br (x != y)
             if ((cmp_type == TB_CMP_NE || cmp_type == TB_CMP_EQ) && cmp_node->inputs[2]->type == TB_INTEGER_CONST) {
-                TB_NodeInt* i = TB_NODE_GET_EXTRA(cmp_node->inputs[2]);
-                if (i->num_words == 1) {
-                    set_input(opt, n, cmp_node->inputs[1], 1);
-                    br->keys[0] = i->words[0];
+                uint64_t imm = TB_NODE_GET_EXTRA_T(cmp_node->inputs[2], TB_NodeInt)->value;
+                set_input(opt, n, cmp_node->inputs[1], 1);
+                br->keys[0] = imm;
 
-                    // flip successors
-                    if (cmp_type == TB_CMP_EQ) {
-                        SWAP(TB_Node*, br->succ[0], br->succ[1]);
-                    }
-                    return n;
+                // flip successors
+                if (cmp_type == TB_CMP_EQ) {
+                    SWAP(TB_Node*, br->succ[0], br->succ[1]);
                 }
+                return n;
             }
         }
     }

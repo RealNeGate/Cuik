@@ -1,12 +1,107 @@
 #include "../tb_internal.h"
 
+static size_t extra_bytes(TB_Node* n) {
+    switch (n->type) {
+        case TB_INTEGER_CONST: return sizeof(TB_NodeInt);
+        case TB_FLOAT32_CONST: return sizeof(TB_NodeFloat32);
+        case TB_FLOAT64_CONST: return sizeof(TB_NodeFloat64);
+        case TB_SYMBOL:        return sizeof(TB_NodeSymbol);
+        case TB_LOCAL:         return sizeof(TB_NodeLocal);
+
+        case TB_BRANCH: {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+            return sizeof(TB_NodeBranch) + ((br->succ_count - 1) * sizeof(int64_t));
+        }
+
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_MUL:
+        case TB_SHL:
+        case TB_SHR:
+        case TB_SAR:
+        case TB_ROL:
+        case TB_ROR:
+        case TB_UDIV:
+        case TB_SDIV:
+        case TB_UMOD:
+        case TB_SMOD:
+        return sizeof(TB_NodeBinopInt);
+
+        case TB_ADDPAIR:
+        case TB_MULPAIR:
+        return sizeof(TB_NodeArithPair);
+
+        case TB_MEMBER_ACCESS:
+        return sizeof(TB_NodeMember);
+
+        case TB_ARRAY_ACCESS:
+        return sizeof(TB_NodeArray);
+
+        case TB_TRUNCATE:
+        case TB_INT2PTR:
+        case TB_PTR2INT:
+        case TB_INT2FLOAT:
+        case TB_FLOAT2INT:
+        case TB_FLOAT_EXT:
+        case TB_SIGN_EXT:
+        case TB_ZERO_EXT:
+        case TB_BITCAST:
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV:
+        case TB_END:
+        case TB_PROJ:
+        case TB_PHI:
+        case TB_VA_START:
+        return 0;
+
+        case TB_START:
+        case TB_REGION:
+        return sizeof(TB_NodeRegion);
+
+        case TB_CALL:
+        case TB_SYSCALL:
+        return sizeof(TB_NodeCall);
+
+        case TB_LOAD:
+        case TB_STORE:
+        case TB_MEMCPY:
+        case TB_MEMSET:
+        case TB_READ:
+        case TB_WRITE:
+        case TB_ATOMIC_LOAD:
+        case TB_ATOMIC_XCHG:
+        case TB_ATOMIC_ADD:
+        case TB_ATOMIC_SUB:
+        case TB_ATOMIC_AND:
+        case TB_ATOMIC_XOR:
+        case TB_ATOMIC_OR:
+        case TB_ATOMIC_CAS:
+        return sizeof(TB_NodeMemAccess);
+
+        case TB_CMP_EQ:
+        case TB_CMP_NE:
+        case TB_CMP_ULT:
+        case TB_CMP_ULE:
+        case TB_CMP_SLT:
+        case TB_CMP_SLE:
+        case TB_CMP_FLT:
+        case TB_CMP_FLE:
+        return sizeof(TB_NodeCompare);
+
+        default: tb_todo();
+    }
+}
+
 uint32_t cse_hash(void* a) {
     TB_Node* n = a;
 
-    uint32_t h = n->type
-        + n->dt.raw
-        + n->input_count
-        + n->extra_count;
+    size_t extra = extra_bytes(n);
+    uint32_t h = n->type + n->dt.raw + n->input_count + extra;
 
     // fib hashing amirite
     h = ((uint64_t) h * 11400714819323198485llu) >> 32llu;
@@ -16,7 +111,7 @@ uint32_t cse_hash(void* a) {
     }
 
     // fnv1a the extra space
-    FOREACH_N(i, 0, n->extra_count) {
+    FOREACH_N(i, 0, extra) {
         h = (n->extra[i] ^ h) * 0x01000193;
     }
 
@@ -27,10 +122,7 @@ bool cse_compare(void* a, void* b) {
     TB_Node *x = a, *y = b;
 
     // early outs
-    if (x->type != y->type ||
-        x->input_count != y->input_count ||
-        x->extra_count != y->extra_count ||
-        x->dt.raw != y->dt.raw) {
+    if (x->type != y->type || x->input_count != y->input_count || x->dt.raw != y->dt.raw) {
         return false;
     }
 
@@ -41,16 +133,11 @@ bool cse_compare(void* a, void* b) {
         }
     }
 
-    // If there's no extra data, we good
-    if (x->extra_count == 0) return true;
-
     switch (x->type) {
         case TB_INTEGER_CONST: {
             TB_NodeInt* ai = TB_NODE_GET_EXTRA(x);
             TB_NodeInt* bi = TB_NODE_GET_EXTRA(y);
-
-            return ai->num_words == bi->num_words &&
-                memcmp(ai->words, bi->words, ai->num_words * sizeof(uint64_t)) == 0;
+            return ai->value == bi->value;
         }
 
         case TB_AND:
@@ -108,6 +195,21 @@ bool cse_compare(void* a, void* b) {
             TB_NodeCompare* bb = TB_NODE_GET_EXTRA(y);
             return aa->cmp_dt.raw == bb->cmp_dt.raw;
         }
+
+        case TB_TRUNCATE:
+        case TB_INT2PTR:
+        case TB_PTR2INT:
+        case TB_INT2FLOAT:
+        case TB_FLOAT2INT:
+        case TB_FLOAT_EXT:
+        case TB_SIGN_EXT:
+        case TB_ZERO_EXT:
+        case TB_BITCAST:
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV:
+        return true;
 
         default: return false;
     }

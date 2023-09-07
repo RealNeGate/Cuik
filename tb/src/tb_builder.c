@@ -32,46 +32,15 @@ static TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int 
 }
 
 bool tb_node_is_constant_int(TB_Function* f, TB_Node* n, uint64_t imm) {
-    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    if (n->type == TB_INTEGER_CONST && i->num_words == 1) {
-        return (i->words[0] == imm);
-    }
-
-    return false;
+    return n->type == TB_INTEGER_CONST ? (TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value == imm) : false;
 }
 
 bool tb_node_is_constant_non_zero(TB_Node* n) {
-    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    if (n->type == TB_INTEGER_CONST) {
-        if (i->num_words == 1) {
-            if (i->words[0] != 0) {
-                return true;
-            }
-        } else {
-            if (!BigInt_is_zero(i->num_words, i->words)) {
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return n->type == TB_INTEGER_CONST ? (TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value != 0) : false;
 }
 
 bool tb_node_is_constant_zero(TB_Node* n) {
-    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    if (n->type == TB_INTEGER_CONST) {
-        if (i->num_words == 1) {
-            if (i->words[0] == 0) {
-                return true;
-            }
-        } else {
-            if (BigInt_is_zero(i->num_words, i->words)) {
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return n->type == TB_INTEGER_CONST ? (TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value == 0) : false;
 }
 
 void tb_function_attrib_variable(TB_Function* f, TB_Node* n, TB_Node* parent, ptrdiff_t len, const char* name, TB_DebugType* type) {
@@ -126,7 +95,6 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     n->dt = dt;
     n->gvn = f->node_count++;
     n->input_count = input_count;
-    n->extra_count = extra;
     n->attribs = NULL;
 
     if (input_count > 0) {
@@ -136,8 +104,8 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
         n->inputs = NULL;
     }
 
-    if (n->extra_count > 0) {
-        memset(n->extra, 0, n->extra_count);
+    if (extra > 0) {
+        memset(n->extra, 0, extra);
     }
 
     // ignore REGION
@@ -194,9 +162,8 @@ TB_Node* tb_inst_int2float(TB_Function* f, TB_Node* src, TB_DataType dt, bool is
     assert(src->dt.type == TB_INT);
     assert(src->dt.width == dt.width);
 
-    TB_NodeInt* i = TB_NODE_GET_EXTRA(src);
-    if (src->type == TB_INTEGER_CONST && i->num_words == 1) {
-        uint64_t y = i->words[0];
+    if (src->type == TB_INTEGER_CONST) {
+        uint64_t y = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
         if (is_signed) {
             y = tb__sxt(y, src->dt.data, 64);
         }
@@ -354,11 +321,8 @@ void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* count, TB_CharUnits 
 }
 
 TB_Node* tb_inst_bool(TB_Function* f, bool imm) {
-    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, TB_TYPE_BOOL, 1, sizeof(TB_NodeInt) + sizeof(uint64_t));
-
-    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    i->num_words = 1;
-    i->words[0] = imm;
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, TB_TYPE_BOOL, 1, sizeof(TB_NodeInt));
+    TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = imm);
     return n;
 }
 
@@ -370,26 +334,21 @@ TB_Node* tb_inst_uint(TB_Function* f, TB_DataType dt, uint64_t imm) {
         imm &= mask;
     }
 
-    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt) + sizeof(uint64_t));
-    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    i->num_words = 1;
-    i->words[0] = imm;
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
+    TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = imm);
     return n;
 }
 
 TB_Node* tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm) {
     assert(TB_IS_POINTER_TYPE(dt) || (TB_IS_INTEGER_TYPE(dt) && (dt.data <= 64)));
 
-    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt) + sizeof(uint64_t));
-    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    i->num_words = 1;
-    i->words[0] = imm;
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
+    TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = imm);
     return n;
 }
 
 TB_Node* tb_inst_float32(TB_Function* f, float imm) {
     TB_Node* n = tb_alloc_node(f, TB_FLOAT32_CONST, TB_TYPE_F32, 1, sizeof(TB_NodeFloat32));
-
     TB_NODE_SET_EXTRA(n, TB_NodeFloat32, .value = imm);
     return n;
 }
@@ -558,8 +517,8 @@ TB_Node* tb_inst_popcount(TB_Function* f, TB_Node* src) {
 
 TB_Node* tb_inst_neg(TB_Function* f, TB_Node* src) {
     TB_DataType dt = src->dt;
-    if (src->type == TB_INTEGER_CONST && TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->num_words == 1) {
-        uint64_t x = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->words[0];
+    if (src->type == TB_INTEGER_CONST) {
+        uint64_t x = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
         uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
 
         // two's complement negate is just invert and add 1

@@ -208,13 +208,13 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 #include "libcalls.h"
 #include "scheduler.h"
 
-static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n) {
+static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra) {
     // try CSE, if we succeed, just delete the node and use the old copy
     TB_Node* k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
     if (k != NULL) {
         // try free
         tb_arena_free(p->f->arena, n->inputs, sizeof(TB_Node*));
-        tb_arena_free(p->f->arena, n, sizeof(TB_Node) + n->extra_count);
+        tb_arena_free(p->f->arena, n, sizeof(TB_Node) + extra);
         return k;
     } else {
         return n;
@@ -222,22 +222,14 @@ static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n) {
 }
 
 TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
-    return gvn(p, tb_alloc_node(f, TB_POISON, dt, 1, 0));
+    return gvn(p, tb_alloc_node(f, TB_POISON, dt, 1, 0), 0);
 }
 
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
-    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt) + sizeof(uint64_t));
+    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    i->num_words = 1;
-    i->words[0] = x;
-    return gvn(p, n);
-}
-
-TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, int num_words) {
-    TB_Node* new_n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt) + (num_words * sizeof(uint64_t)));
-    TB_NodeInt* i = TB_NODE_GET_EXTRA(new_n);
-    i->num_words = num_words;
-    return new_n;
+    i->value = x;
+    return gvn(p, n, sizeof(TB_NodeInt));
 }
 
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i) {
@@ -465,7 +457,7 @@ static void cool_print_type(TB_Node* n) {
 void print_node_sexpr(TB_Node* n, int depth) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
-        printf("%"PRId64, num->words[0]);
+        printf("%"PRId64, num->value);
     } else if (n->type == TB_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
         if (sym->name[0]) {

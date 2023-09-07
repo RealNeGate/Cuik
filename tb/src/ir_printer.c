@@ -162,16 +162,13 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
             TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
             tb_print_type(n->dt, callback, user_data);
 
-            if (num->num_words == 1 && num->words[0] < 0xFFFF) {
+            if (num->value < 0xFFFF) {
                 int bits = n->dt.type == TB_PTR ? 64 : n->dt.data;
-                int64_t x = tb__sxt(num->words[0], bits, 64);
+                int64_t x = tb__sxt(num->value, bits, 64);
 
                 P(" %"PRId64, x);
             } else {
-                P(" 0x");
-                FOREACH_REVERSE_N(i, 0, num->num_words) {
-                    P("%016"PRIx64, num->words[i]);
-                }
+                P("%#0"PRIx64, num->value);
             }
             break;
         }
