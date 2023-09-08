@@ -31,7 +31,6 @@
 #endif
 
 #include "tb_platform.h"
-#include "bigint/BigInt.h"
 #include "dyn_array.h"
 #include "builtins.h"
 #include "pool.h"
@@ -335,6 +334,8 @@ struct TB_ThreadInfo {
 
     TB_ThreadInfo* prev;
     TB_ThreadInfo* next;
+
+    mtx_t* lock;
 
     // used for moving the start of the
     // linked list forward.
