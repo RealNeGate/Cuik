@@ -626,6 +626,13 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
     size_t our_phis = dyn_array_length(phi_vals);
     CUIK_TIMED_BLOCK("phase 3") {
         TB_Node* top = ctx->worklist.items[ctx->block_count];
+        FOREACH_N(i, 0, our_phis) {
+            PhiVal* v = &phi_vals[i];
+
+            // mark the proper output, especially before we make the BB-local ones
+            v->dst = input_reg(ctx, v->phi);
+        }
+
         for (User* use = find_users(ctx->p, top); use; use = use->next) {
             if (use->n->type == TB_PHI && use->n->dt.type != TB_MEMORY) {
                 ValueDesc* val = &ctx->values[use->n->gvn];
@@ -689,11 +696,10 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
                         PhiVal* v = &phi_vals[i];
                         TB_DataType dt = v->phi->dt;
 
-                        int dst = input_reg(ctx, v->phi);
                         int src = input_reg(ctx, v->n);
 
-                        hint_reg(ctx, dst, src);
-                        SUBMIT(inst_move(dt, dst, src));
+                        hint_reg(ctx, v->dst, src);
+                        SUBMIT(inst_move(dt, v->dst, src));
                     }
                 }
 
@@ -748,16 +754,16 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
                 }
             }
         }
+
+        // restore the PHI value to normal
+        FOREACH_N(i, our_phis, dyn_array_length(phi_vals)) {
+            PhiVal* v = &phi_vals[i];
+            lookup_val(ctx, v->phi)->vreg = v->dst;
+        }
+
         dyn_array_clear(phi_vals);
-
-        ctx->head = last ? last : head;
         ctx->phi_vals = phi_vals;
-    }
-
-    // restore the PHI value to normal
-    FOREACH_N(i, our_phis, dyn_array_length(phi_vals)) {
-        PhiVal* v = &phi_vals[i];
-        lookup_val(ctx, v->phi)->vreg = v->dst;
+        ctx->head = last ? last : head;
     }
 
     dyn_array_set_length(ctx->worklist.items, ctx->block_count);

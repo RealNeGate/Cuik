@@ -57,6 +57,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_PROJ:
         case TB_PHI:
         case TB_VA_START:
+        case TB_POISON:
         return 0;
 
         case TB_START:
