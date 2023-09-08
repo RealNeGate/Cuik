@@ -737,16 +737,13 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
     TB_Passes* p = tb_pass_enter(f, &jit.arena);
     {
         // optimizer
-        {
-            tb_pass_peephole(p);
-            tb_pass_mem2reg(p), tb_pass_peephole(p);
-        }
+        tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 
-        // tb_pass_print(p);
+        tb_pass_print(p);
         // tb_function_print(f, tb_default_print_callback, stdout);
 
         // compile
-        TB_FunctionOutput* out = tb_pass_codegen(p, false);
+        TB_FunctionOutput* out = tb_pass_codegen(p, true);
         // tb_output_print_asm(out, stdout);
     }
     tb_pass_exit(p);

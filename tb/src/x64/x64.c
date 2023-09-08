@@ -174,7 +174,7 @@ static Inst* inst_jcc(TB_Node* target, Cond cc) {
 }
 
 // store(binop(load(a), b))
-static int can_folded_store(Ctx* restrict ctx, TB_Node* addr, TB_Node* src) {
+static int can_folded_store(Ctx* restrict ctx, TB_Node* mem, TB_Node* addr, TB_Node* src) {
     switch (src->type) {
         default: return -1;
 
@@ -184,6 +184,7 @@ static int can_folded_store(Ctx* restrict ctx, TB_Node* addr, TB_Node* src) {
         case TB_ADD:
         case TB_SUB: {
             if (src->inputs[1]->type == TB_LOAD &&
+                src->inputs[1]->inputs[1] == mem &&
                 src->inputs[1]->inputs[2] == addr &&
                 on_last_use(ctx, src) &&
                 on_last_use(ctx, src->inputs[1])) {
@@ -1191,7 +1192,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             // if we can couple the LOAD & STORE
             TB_Node* addr = n->inputs[2];
             TB_Node* src = n->inputs[3];
-            int store_op = can_folded_store(ctx, addr, n->inputs[3]);
+            int store_op = can_folded_store(ctx, n->inputs[1], addr, n->inputs[3]);
             if (store_op >= 0) {
                 use(ctx, src);
                 use(ctx, src->inputs[1]);

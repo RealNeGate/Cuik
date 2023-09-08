@@ -620,7 +620,7 @@ static void draw_rect2(uint32_t color, float x, float y, float w, float h);
 #include "forth_interp.h"
 #include "forth_jit.h"
 
-static bool is_opaque = false;
+static bool is_opaque = true;
 
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
