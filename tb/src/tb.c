@@ -4,6 +4,16 @@
 
 TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     static thread_local TB_ThreadInfo* chain;
+    static thread_local mtx_t lock;
+    static thread_local bool init;
+
+    if (!init) {
+        init = true;
+        mtx_init(&lock, mtx_plain);
+    }
+
+    // there shouldn't really be contention here
+    mtx_lock(&lock);
 
     // almost always refers to one TB_ThreadInfo, but
     // we can't assume the user has merely on TB_Module
@@ -11,7 +21,7 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     TB_ThreadInfo* info = chain;
     while (info != NULL) {
         if (info->owner == m) {
-            return info;
+            goto done;
         }
         info = info->next;
     }
@@ -37,6 +47,8 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
         info->next_in_module = old_top;
     } while (!atomic_compare_exchange_strong(&m->first_info_in_module, &old_top, info));
 
+    done:
+    mtx_unlock(&lock);
     return info;
 }
 
@@ -233,12 +245,15 @@ void tb_module_destroy(TB_Module* m) {
         tb_arena_destroy(&info->tmp_arena);
         tb_arena_destroy(&info->perm_arena);
 
-        // unlink, this isn't synchronized
+        // unlink, this needs to be synchronized in case another thread is
+        // accessing while we're freeing.
+        mtx_lock(info->lock);
         if (info->prev == NULL) {
             *info->chain = info->next;
         } else {
             info->prev->next = info->next;
         }
+        mtx_unlock(info->lock);
 
         tb_platform_heap_free(info);
         info = next;
