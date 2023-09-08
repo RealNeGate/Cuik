@@ -13,7 +13,7 @@ static bool str_ends_with(const char* cstr, const char* postfix) {
 }
 
 // handles the **.c *.c type stuff
-/*static void filtered_append(Cuik_DriverArgs* args, const char* path, bool recursive) {
+static void filtered_append(Cuik_DriverArgs* args, const char* path, bool recursive) {
     const char* slash = path;
     for (const char* p = path; *p; p++) {
         if (*p == '/' || *p == '\\') {
@@ -36,11 +36,11 @@ static bool str_ends_with(const char* cstr, const char* postfix) {
             }
 
             Cuik_Path* new_path = cuik_malloc(sizeof(Cuik_Path));
-            if (!cuik_canonicalize_path(new_path, tmp)) {
+            if (!cuikfs_canonicalize(new_path, tmp, false)) {
                 fprintf(stderr, "Invalid filepath! %s\n", tmp);
             }
 
-            if (str_ends_with(new_path, ".a") || str_ends_with(new_path, ".lib")) {
+            if (cuik_path_has_ext(new_path, "a") || cuik_path_has_ext(new_path, "lib")) {
                 dyn_array_put(args->libraries, new_path);
             } else {
                 dyn_array_put(args->sources, new_path);
@@ -70,7 +70,7 @@ static bool str_ends_with(const char* cstr, const char* postfix) {
     #else
     #error "filtered_append isn't implemented on this platform yet"
     #endif
-}*/
+}
 
 static void append_input_path(Cuik_DriverArgs* args, const char* path) {
     // we don't check this very well because we're based
@@ -82,8 +82,8 @@ static void append_input_path(Cuik_DriverArgs* args, const char* path) {
         }
     }
 
-    if (0) { // star != NULL) {
-        // filtered_append(args, path, star[1] == '*');
+    if (star != NULL) {
+        filtered_append(args, path, star[1] == '*');
     } else {
         Cuik_Path* newstr = cuik_malloc(sizeof(Cuik_Path));
         if (cuikfs_canonicalize(newstr, path, args->toolchain.case_insensitive)) {
