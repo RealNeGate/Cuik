@@ -1636,7 +1636,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
                 i += resolve_interval(ctx, inst, i, &lhs);
 
                 ternary = (i < in_base + inst->in_count) || (inst->flags & (INST_IMM | INST_ABS));
-                if (ternary && inst->type == IMUL && (inst->flags & INST_IMM)) {
+                if (ternary && inst->type == IMUL && (inst->flags & INST_IMM) && inst->dt != TB_X86_TYPE_BYTE) {
                     // there's a special case for ternary IMUL r64, r/m64, imm32
                     if (e->emit_asm) {
                         EMITA(e, "  imul ");
@@ -1647,7 +1647,11 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
                     }
 
                     inst2(e, IMUL3, &out, &lhs, inst->dt);
-                    EMIT4(e, inst->imm);
+                    if (inst->dt == TB_X86_TYPE_WORD) {
+                        EMIT2(e, inst->imm);
+                    } else {
+                        EMIT4(e, inst->imm);
+                    }
                     continue;
                 }
 
