@@ -200,7 +200,23 @@ static int can_folded_store(Ctx* restrict ctx, TB_Node* mem, TB_Node* addr, TB_N
 // generates an LEA for computing the address of n.
 static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int src) {
     int64_t offset = 0;
-    if (n->type == TB_VA_START) {
+    if (n->type == TB_SYMBOL) {
+        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+
+        Inst* i = alloc_inst(LEA, TB_TYPE_PTR, 1, 1, 0);
+        i->flags = INST_GLOBAL;
+        if (store_op < 0) {
+            i->mem_slot = 1;
+            i->operands[0] = dst;
+            i->operands[1] = RSP;
+        } else {
+            i->mem_slot = 0;
+            i->operands[0] = RSP;
+            i->operands[1] = src;
+        }
+        i->s = sym;
+        return i;
+    } else if (n->type == TB_VA_START) {
         assert(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
 
         // on Win64 va_start just means whatever is one parameter away from
@@ -617,7 +633,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             if (try_for_imm32(ctx, n->inputs[2], &x) && x == (int8_t)x) {
                 use(ctx, n->inputs[2]);
                 SUBMIT(inst_move(n->dt, dst, lhs));
-                SUBMIT(inst_op_rri_tmp(op, n->dt, dst, dst, x, RCX));
+                SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
                 break;
             }
 
@@ -1168,7 +1184,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             Inst* ld_inst = isel_addr(ctx, addr, dst, -1, -1);
             ld_inst->type = mov_op;
             ld_inst->dt = legalize(n->dt);
-            if ((ld_inst->flags & INST_MEM) == 0) {
+            if ((ld_inst->flags & (INST_GLOBAL | INST_MEM)) == 0) {
                 ld_inst->flags |= INST_MEM;
                 ld_inst->mem_slot = 1;
             }
@@ -1180,6 +1196,27 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             SUBMIT(ld_inst);
             break;
         }
+        case TB_SAFEPOINT_POLL: {
+            TB_Node* addr = n->inputs[2];
+
+            // force uses of the inputs
+            FOREACH_N(i, 3, n->input_count) {
+                input_reg(ctx, n->inputs[i]);
+            }
+
+            // test tmp, dword [poll_site]
+            int tmp = DEF(n, TB_TYPE_I32);
+            Inst* ld_inst = isel_addr(ctx, addr, tmp, -1, -1);
+            ld_inst->type = TEST;
+            ld_inst->dt = TB_X86_TYPE_DWORD;
+            if ((ld_inst->flags & (INST_GLOBAL | INST_MEM)) == 0) {
+                ld_inst->flags |= INST_MEM;
+                ld_inst->mem_slot = 1;
+            }
+            SUBMIT(ld_inst);
+            break;
+        }
+
         case TB_STORE: {
             if (dst >= 0) {
                 use(ctx, n->inputs[2]);
@@ -1212,7 +1249,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 st_inst->dt = legalize(store_dt);
                 st_inst->flags |= INST_IMM;
                 st_inst->imm = imm;
-                assert(st_inst->flags & INST_MEM);
+                assert(st_inst->flags & (INST_MEM | INST_GLOBAL));
 
                 SUBMIT(st_inst);
             } else {
@@ -1220,7 +1257,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
                 Inst* st_inst = isel_addr(ctx, addr, dst, store_op, src_reg);
                 st_inst->dt = legalize(store_dt);
-                assert(st_inst->flags & INST_MEM);
+                assert(st_inst->flags & (INST_MEM | INST_GLOBAL));
 
                 SUBMIT(st_inst);
             }
@@ -1336,6 +1373,23 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
 
+        case TB_CYCLE_COUNTER: {
+            // rdtsc
+            Inst* inst = alloc_inst(RDTSC, TB_TYPE_I64, 2, 0, 0);
+            inst->operands[0] = RDX;
+            inst->operands[1] = RAX;
+            SUBMIT(inst);
+
+            // shl rdx, 32
+            SUBMIT(inst_op_rri(SHL, TB_TYPE_I64, RDX, RDX, 32));
+            // or rax, rdx
+            SUBMIT(inst_op_rrr(OR, TB_TYPE_I64, RAX, RAX, RDX));
+            // mov dst, rax
+            hint_reg(ctx, dst, RAX);
+            SUBMIT(inst_move(TB_TYPE_I64, dst, RAX));
+            break;
+        }
+
         case TB_PROJ: {
             if (n->inputs[0]->type == TB_START) {
                 int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index - 2;
@@ -1391,15 +1445,17 @@ static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) 
         }
         case VAL_GLOBAL: {
             const TB_Symbol* target = v->symbol;
+            EMITA(e, "%s ", type_names[dt]);
+
             if (*target->name == 0) {
                 if (v->imm == 0) {
-                    EMITA(e, "sym%p", target);
+                    EMITA(e, "[sym%p]", target);
                 } else {
                     EMITA(e, "[sym%p + %d]", target, v->imm);
                 }
             } else {
                 if (v->imm == 0) {
-                    EMITA(e, "%s", target->name);
+                    EMITA(e, "[%s]", target->name);
                 } else {
                     EMITA(e, "[%s + %d]", target->name, v->imm);
                 }
@@ -1601,16 +1657,26 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             }
 
             inst1_print(e, inst->type, &target, inst->dt);
-        } else if (inst->type == CALL || inst->type == SYSCALL) {
-            bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
-            const struct ParamDescriptor* restrict desc = &param_descs[is_sysv ? 1 : 0];
-            if (inst->type == SYSCALL) {
-                desc = &param_descs[2];
-            }
-
+        } else if (inst->type == CALL) {
             Val target;
             size_t i = resolve_interval(ctx, inst, in_base, &target);
-            inst1_print(&ctx->emit, CALL, &target, TB_X86_TYPE_QWORD);
+            if (target.type == VAL_GLOBAL) {
+                EMITA(e, "  call ");
+
+                if (*target.symbol->name == 0) {
+                    EMITA(e, "sym%p", target.symbol);
+                } else {
+                    EMITA(e, "%s", target.symbol->name);
+                }
+
+                if (target.imm != 0) {
+                    EMITA(e, " + %d", target.imm);
+                }
+                EMITA(e, "\n");
+                inst1(e, CALL, &target, TB_X86_TYPE_QWORD);
+            } else {
+                inst1_print(e, CALL, &target, TB_X86_TYPE_QWORD);
+            }
         } else {
             int mov_op = inst->dt >= TB_X86_TYPE_PBYTE && inst->dt <= TB_X86_TYPE_XMMWORD ? FP_MOV : MOV;
 

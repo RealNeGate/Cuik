@@ -13,6 +13,9 @@ static size_t extra_bytes(TB_Node* n) {
             return sizeof(TB_NodeBranch) + ((br->succ_count - 1) * sizeof(int64_t));
         }
 
+        case TB_SAFEPOINT_POLL:
+        return sizeof(TB_NodeSafepoint);
+
         case TB_AND:
         case TB_OR:
         case TB_XOR:

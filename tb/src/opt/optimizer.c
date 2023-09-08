@@ -121,7 +121,6 @@ TB_Node* worklist_pop(Worklist* ws) {
     }
 }
 
-
 void verify_tmp_arena(TB_Passes* p) {
     // once passes are run on a thread, they're pinned to it.
     TB_Module* m = p->f->super.module;
@@ -413,26 +412,11 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
 
 static void push_all_nodes(Worklist* restrict ws, TB_Node* n) {
     if (!worklist_test_n_set(ws, n)) {
+        dyn_array_put(ws->items, n);
+
         FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
             tb_assert(n->inputs[i], "empty input... in this economy?");
             push_all_nodes(ws, n->inputs[i]);
-        }
-
-        dyn_array_put(ws->items, n);
-
-        // walk successors for regions
-        if (n->type == TB_START || n->type == TB_REGION) {
-            TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-
-            if (r->end->type == TB_BRANCH) {
-                TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
-                FOREACH_N(i, 0, br->succ_count) {
-                    push_all_nodes(ws, br->succ[i]);
-                }
-            }
-
-            tb_assert(r->end, "missing terminator");
-            push_all_nodes(ws, r->end);
         }
     }
 }
@@ -739,7 +723,7 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 
     // generate work list (put everything)
     CUIK_TIMED_BLOCK("gen worklist") {
-        push_all_nodes(&p->worklist, f->start_node);
+        push_all_nodes(&p->worklist, f->stop_node);
     }
 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting passes with %d nodes", f->super.name, f->node_count));

@@ -262,6 +262,18 @@ TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment
     return n;
 }
 
+void tb_inst_safepoint_poll(TB_Function* f, TB_Node* addr, int input_count, TB_Node** inputs) {
+    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_POLL, TB_TYPE_VOID, 3 + input_count, sizeof(TB_NodeSafepoint));
+    n->inputs[0] = f->active_control_node;
+    n->inputs[1] = peek_mem(f, f->active_control_node);
+    n->inputs[2] = addr;
+    if (input_count > 0) {
+        memcpy(n->inputs + 3, inputs, input_count * sizeof(TB_Node*));
+    }
+    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, 0);
+    f->active_control_node = n;
+}
+
 TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnits alignment, bool is_volatile) {
     assert(addr);
 
@@ -710,8 +722,10 @@ TB_Node* tb_inst_x86_ldmxcsr(TB_Function* f, TB_Node* a) {
     return n;
 }
 
-TB_Node* tb_inst_x86_rdtsc(TB_Function* f) {
-    return tb_alloc_node(f, TB_X86INTRIN_RDTSC, TB_TYPE_I64, 1, 0);
+TB_Node* tb_inst_cycle_counter(TB_Function* f) {
+    TB_Node* n = tb_alloc_node(f, TB_CYCLE_COUNTER, TB_TYPE_I64, 1, 0);
+    n->inputs[0] = f->active_control_node;
+    return n;
 }
 
 TB_Node* tb_inst_x86_stmxcsr(TB_Function* f) {

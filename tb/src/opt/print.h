@@ -345,6 +345,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
 
                     case TB_CALL:
                     case TB_SYSCALL:
+                    case TB_SAFEPOINT_POLL:
                     break;
 
                     case TB_LOCAL: {
