@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <limits.h>
 
 typedef unsigned char stbi_uc;
 typedef unsigned short stbi__uint16;

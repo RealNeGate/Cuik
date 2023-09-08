@@ -314,7 +314,12 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
     TOGGLE(ARG_NOLIBC, nocrt);
 
     if (comp_args->verbose) {
-        comp_args->toolchain.print_verbose(comp_args->toolchain.ctx, comp_args);
+        if (comp_args->toolchain.print_verbose != NULL) {
+            comp_args->toolchain.print_verbose(comp_args->toolchain.ctx, comp_args);
+        }
+        else {
+            printf("warning: this driver doesn't output verbose messages\n");
+        }
     }
 
     return true;

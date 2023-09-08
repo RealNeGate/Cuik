@@ -6,12 +6,19 @@
 #define _CRT_SECURE_NO_WARNINGS
 #endif
 
+#if __has_builtin(__builtin_debugtrap)
+#define _tb_debug_break() __builtin_debugtrap()
+#else
+#define _tb_debug_break() __debugbreak()
+#endif
+
 #include "tb.h"
 #include "tb_formats.h"
 
 #include <limits.h>
 #include <time.h>
 #include <stdalign.h>
+#include <inttypes.h>
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <immintrin.h>
