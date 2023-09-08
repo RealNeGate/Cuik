@@ -1159,7 +1159,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             SUBMIT(inst_op_global(LEA, n->dt, dst, s->sym));
             break;
         }
-        case TB_LOAD: {
+        case TB_LOAD:
+        case TB_ATOMIC_LOAD: {
             int mov_op = (TB_IS_FLOAT_TYPE(n->dt) || n->dt.width) ? FP_MOV : MOV;
             TB_Node* addr = n->inputs[2];
 
@@ -1169,6 +1170,10 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             if ((ld_inst->flags & INST_MEM) == 0) {
                 ld_inst->flags |= INST_MEM;
                 ld_inst->mem_slot = 1;
+            }
+
+            if (n->type == TB_ATOMIC_LOAD) {
+                ld_inst->flags |= INST_LOCK;
             }
 
             SUBMIT(ld_inst);
