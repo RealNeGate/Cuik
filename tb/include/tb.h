@@ -832,7 +832,7 @@ TB_API TB_External* tb_next_external(TB_External* e);
 
 // this is used JIT scenarios to tell the compiler what externals map to
 TB_API TB_ExternalType tb_extern_get_type(TB_External* e);
-TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkage linkage);
+TB_API TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkage linkage);
 
 TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type);
 
