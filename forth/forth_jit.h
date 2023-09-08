@@ -739,11 +739,11 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
         // optimizer
         tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 
-        tb_pass_print(p);
+        // tb_pass_print(p);
         // tb_function_print(f, tb_default_print_callback, stdout);
 
         // compile
-        TB_FunctionOutput* out = tb_pass_codegen(p, true);
+        TB_FunctionOutput* out = tb_pass_codegen(p, false);
         // tb_output_print_asm(out, stdout);
     }
     tb_pass_exit(p);
