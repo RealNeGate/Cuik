@@ -105,7 +105,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             printf("%#0"PRIx64, num->value);
         }
     } else {
-        printf("v%llu", n->gvn);
+        printf("v%llu", (long long unsigned) n->gvn);
     }
 }
 

@@ -10,6 +10,13 @@
 #define READ32(x)   (memcpy(&(x), &data[current], 4), current += 4, x)
 #define READ32LE(x) READ32(x)
 
+#ifndef _WIN32
+#include <signal.h>
+void __debugbreak(void) {
+  raise(SIGTRAP);
+}
+#endif
+
 static bool x86_parse_memory_op(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data, int reg_slot, uint8_t mod, uint8_t rm, uint8_t rex) {
     if (mod == MOD_DIRECT) {
         inst->regs[reg_slot] = (rex&1 ? 8 : 0) | rm;

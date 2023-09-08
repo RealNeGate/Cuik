@@ -18,7 +18,7 @@ static bool is_mem_out_op(TB_Node* n) {
     return n->type == TB_END || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS);
 }
 
-static void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_Node* bb, TB_Node* n) {
+void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_Node* bb, TB_Node* n) {
     if (!is_same_bb(bb, n) || worklist_test_n_set(ws, n)) {
         return;
     }

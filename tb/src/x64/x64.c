@@ -84,7 +84,7 @@ static TB_X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
     else if (dt.data <= 64) bits = 64, t = TB_X86_TYPE_QWORD;
 
     assert(bits != 0 && "TODO: large int support");
-    uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
+    uint64_t mask = dt.data == 0 ? 0 :  ~UINT64_C(0) >> (64 - dt.data);
 
     *out_mask = (dt.data == bits) ? 0 : mask;
     return t;
@@ -970,6 +970,12 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int target_val = RSP; // placeholder really
             if (!static_call) {
                 target_val = input_reg(ctx, target);
+
+                //  FIXME
+                //  Ad hok fix for SYSCALL
+                //
+                if (type == TB_SYSCALL)
+                  SUBMIT(inst_move(n->inputs[2]->dt, RAX, target_val));
             }
 
             // perform last minute copies (this avoids keeping parameter registers alive for too long)
@@ -1523,10 +1529,10 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
     Inst* prev_line = NULL;
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
-        InstCategory cat = inst->type > 1024 ? INST_BINOP : inst_table[inst->type].cat;
+        InstCategory cat = inst->type >= (sizeof inst_table / sizeof *inst_table) ? INST_BINOP : inst_table[inst->type].cat;
 
         if (0) {
-            EMITA(e, "  \x1b[32m# %s t=%d { outs:", inst->type < 1024 ? inst_table[inst->type].mnemonic : "???", inst->time);
+            EMITA(e, "  \x1b[32m# %s t=%d { outs:", inst->type < sizeof inst_table / sizeof *inst_table ? inst_table[inst->type].mnemonic : "???", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
                 EMITA(e, " v%d", inst->operands[i]);
             }

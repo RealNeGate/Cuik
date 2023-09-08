@@ -23,7 +23,7 @@ static TB_Node* peek_mem(TB_Function* f, TB_Node* ctrl) {
     return r->mem_out;
 }
 
-static TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int index) {
+TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int index) {
     assert(src->dt.type == TB_TUPLE);
     TB_Node* proj = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
     proj->inputs[0] = src;
@@ -842,7 +842,8 @@ static void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
 
     size_t old_count = n->input_count;
     TB_Node** new_inputs = alloc_from_node_arena(f, (old_count + 1) * sizeof(TB_Node*));
-    memcpy(new_inputs, n->inputs, old_count * sizeof(TB_Node*));
+    if (n->inputs != NULL)
+      memcpy(new_inputs, n->inputs, old_count * sizeof(TB_Node*));
     new_inputs[old_count] = in;
 
     n->inputs = new_inputs;
