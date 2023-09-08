@@ -39,7 +39,7 @@ static const struct ParamDescriptor {
     { 6, 4, 5, SYSCALL_ABI_CALLER_SAVED, { RDI, RSI, RDX, R10, R8, R9 } },
 };
 
-#include "generic_cg.h"
+#include "../codegen/generic_cg.h"
 
 // initialize register allocator state
 static void init_regalloc(Ctx* restrict ctx) {
