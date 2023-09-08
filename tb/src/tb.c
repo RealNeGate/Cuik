@@ -27,7 +27,7 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     }
 
     info = tb_platform_heap_alloc(sizeof(TB_ThreadInfo));
-    *info = (TB_ThreadInfo){ .owner = m, .chain = &chain };
+    *info = (TB_ThreadInfo){ .owner = m, .chain = &chain, .lock = &lock };
 
     // allocate memory for it
     tb_arena_create(&info->perm_arena, TB_ARENA_LARGE_CHUNK_SIZE);
