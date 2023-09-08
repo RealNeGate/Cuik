@@ -59,6 +59,15 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_CMP_FLT: return "cmp.lt";
         case TB_CMP_FLE: return "cmp.le";
 
+        case TB_ATOMIC_LOAD: return "atomic.load";
+        case TB_ATOMIC_XCHG: return "atomic.xchg";
+        case TB_ATOMIC_ADD: return "atomic.add";
+        case TB_ATOMIC_SUB: return "atomic.sub";
+        case TB_ATOMIC_AND: return "atomic.and";
+        case TB_ATOMIC_XOR: return "atomic.xor";
+        case TB_ATOMIC_OR: return "atomic.or";
+        case TB_ATOMIC_CAS: return "atomic.cas";
+
         case TB_NEG: return "neg";
         case TB_NOT: return "not";
         case TB_AND: return "and";

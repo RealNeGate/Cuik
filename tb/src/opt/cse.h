@@ -73,6 +73,8 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_MEMSET:
         case TB_READ:
         case TB_WRITE:
+        return sizeof(TB_NodeMemAccess);
+
         case TB_ATOMIC_LOAD:
         case TB_ATOMIC_XCHG:
         case TB_ATOMIC_ADD:
@@ -81,7 +83,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_ATOMIC_XOR:
         case TB_ATOMIC_OR:
         case TB_ATOMIC_CAS:
-        return sizeof(TB_NodeMemAccess);
+        return sizeof(TB_NodeAtomic);
 
         case TB_CMP_EQ:
         case TB_CMP_NE:

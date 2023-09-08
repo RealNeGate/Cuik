@@ -598,95 +598,72 @@ TB_Node* tb_inst_ror(TB_Function* f, TB_Node* a, TB_Node* b) {
 ////////////////////////////////
 // Atomics
 ////////////////////////////////
-TB_Node* tb_inst_atomic_load(TB_Function* f, TB_Node* addr, TB_DataType dt, TB_MemoryOrder order) {
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_LOAD, dt, 2, sizeof(TB_NodeAtomic));
+static TB_Node* atomic_op(TB_Function* f, int op, TB_DataType dt, TB_Node* addr, TB_Node* src, TB_MemoryOrder order) {
+    TB_Node* n = tb_alloc_node(f, op, TB_TYPE_TUPLE, src ? 4 : 3, sizeof(TB_NodeAtomic));
     n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
-    return n;
+    n->inputs[2] = addr;
+    if (src) n->inputs[3] = src;
+
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 0);
+    TB_Node* dproj = tb__make_proj(f, dt, n, 1);
+    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST, .proj0 = mproj, .proj1 = dproj);
+
+    // memory proj
+    n->inputs[1] = append_mem(f, mproj);
+    return dproj;
+}
+
+TB_Node* tb_inst_atomic_load(TB_Function* f, TB_Node* addr, TB_DataType dt, TB_MemoryOrder order) {
+    return atomic_op(f, TB_ATOMIC_LOAD, dt, addr, NULL, order);
 }
 
 TB_Node* tb_inst_atomic_xchg(TB_Function* f, TB_Node* addr, TB_Node* src, TB_MemoryOrder order) {
-    TB_DataType dt = src->dt;
-
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_XCHG, dt, 3, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    n->inputs[2] = src;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
-
-    f->active_control_node = n;
-    return n;
+    assert(src);
+    return atomic_op(f, TB_ATOMIC_XCHG, src->dt, addr, src, order);
 }
 
 TB_Node* tb_inst_atomic_add(TB_Function* f, TB_Node* addr, TB_Node* src, TB_MemoryOrder order) {
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_ADD, src->dt, 3, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    n->inputs[2] = src;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
-
-    f->active_control_node = n;
-    return n;
+    assert(src);
+    return atomic_op(f, TB_ATOMIC_ADD, src->dt, addr, src, order);
 }
 
 TB_Node* tb_inst_atomic_sub(TB_Function* f, TB_Node* addr, TB_Node* src, TB_MemoryOrder order) {
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_SUB, src->dt, 3, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    n->inputs[2] = src;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
-
-    f->active_control_node = n;
-    return n;
+    assert(src);
+    return atomic_op(f, TB_ATOMIC_SUB, src->dt, addr, src, order);
 }
 
 TB_Node* tb_inst_atomic_and(TB_Function* f, TB_Node* addr, TB_Node* src, TB_MemoryOrder order) {
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_AND, src->dt, 3, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    n->inputs[2] = src;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
-
-    f->active_control_node = n;
-    return n;
+    assert(src);
+    return atomic_op(f, TB_ATOMIC_AND, src->dt, addr, src, order);
 }
 
 TB_Node* tb_inst_atomic_xor(TB_Function* f, TB_Node* addr, TB_Node* src, TB_MemoryOrder order) {
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_XOR, src->dt, 3, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    n->inputs[2] = src;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
-
-    f->active_control_node = n;
-    return n;
+    assert(src);
+    return atomic_op(f, TB_ATOMIC_XOR, src->dt, addr, src, order);
 }
 
 TB_Node* tb_inst_atomic_or(TB_Function* f, TB_Node* addr, TB_Node* src, TB_MemoryOrder order) {
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_OR, src->dt, 3, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    n->inputs[2] = src;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
-
-    f->active_control_node = n;
-    return n;
+    assert(src);
+    return atomic_op(f, TB_ATOMIC_OR, src->dt, addr, src, order);
 }
 
 TB_Node* tb_inst_atomic_cmpxchg(TB_Function* f, TB_Node* addr, TB_Node* expected, TB_Node* desired, TB_MemoryOrder succ, TB_MemoryOrder fail) {
     assert(TB_DATA_TYPE_EQUALS(desired->dt, expected->dt));
     TB_DataType dt = desired->dt;
 
-    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_CAS, dt, 4, sizeof(TB_NodeAtomic));
+    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_CAS, TB_TYPE_TUPLE, 5, sizeof(TB_NodeAtomic));
     n->inputs[0] = f->active_control_node; // control edge
-    n->inputs[1] = addr;
-    n->inputs[2] = expected;
-    n->inputs[3] = desired;
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = succ, .order2 = fail);
+    n->inputs[2] = addr;
+    n->inputs[3] = expected;
+    n->inputs[4] = desired;
 
-    f->active_control_node = n;
-    return n;
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 0);
+    TB_Node* dproj = tb__make_proj(f, dt, n, 1);
+    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = succ, .order2 = fail, .proj0 = mproj, .proj1 = dproj);
+
+    // memory proj
+    n->inputs[1] = append_mem(f, mproj);
+    return dproj;
 }
 
 // TODO(NeGate): Maybe i should split the bitshift operations into a separate kind of

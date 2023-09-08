@@ -1013,6 +1013,15 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
             } else {
                 expected = t_type;
             }
+        } else if (ch == 'C') {
+            // it's a constant integer, anything goes
+            if (!cuik_type_is_integer(cuik_canonical_type(arg_type))) {
+                diag_err(&tu->tokens, arg->loc, "expected integer for argument, got %!T", cuik_canonical_type(arg_type));
+                return NULL;
+            }
+
+            SET_CAST(i + 1, GET_TYPE(i + 1));
+            continue;
         }
 
         int level;

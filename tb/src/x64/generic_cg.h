@@ -89,8 +89,6 @@ typedef struct {
 
     // Line info
     DynArray(TB_Location) locations;
-    TB_SourceFile* last_file;
-    int last_line, last_column;
 
     // Stack
     uint32_t stack_usage;
@@ -590,14 +588,9 @@ static void isel_set_location(Ctx* restrict ctx, TB_Node* n) {
         TB_Attrib* a = &n->attribs[i];
 
         // check if it's changed
-        if (a->tag == TB_ATTRIB_LOCATION && (ctx->last_file != a->loc.file || ctx->last_line != a->loc.line || ctx->last_column != a->loc.column)) {
-            ctx->last_file = a->loc.file;
-            ctx->last_line = a->loc.line;
-            ctx->last_column = a->loc.column;
-
+        if (a->tag == TB_ATTRIB_LOCATION) {
             SUBMIT(inst_line(a));
-            // printf("  LINE %llu %s:%d\n", n->gvn, a->loc.file->path, a->loc.line);
-            break;
+            return;
         }
     }
 }
@@ -630,30 +623,26 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
 
     // phase 3: within the BB, the phi nodes should view itself as the previous value
     // not the new one we're producing.
+    size_t our_phis = dyn_array_length(phi_vals);
     CUIK_TIMED_BLOCK("phase 3") {
-        FOREACH_N(i, 0, dyn_array_length(phi_vals)) {
-            PhiVal* v = &phi_vals[i];
-            ValueDesc* val = &ctx->values[v->phi->gvn];
+        TB_Node* top = ctx->worklist.items[ctx->block_count];
+        for (User* use = find_users(ctx->p, top); use; use = use->next) {
+            if (use->n->type == TB_PHI && use->n->dt.type != TB_MEMORY) {
+                ValueDesc* val = &ctx->values[use->n->gvn];
 
-            // we don't care about the number of users to a PHI
-            val->uses = INT_MAX;
-            val->vreg = v->dst = input_reg(ctx, v->phi);
-        }
+                // copy PHI into temporary
+                PhiVal p = { .phi = use->n, .dst = input_reg(ctx, use->n) };
+                dyn_array_put(phi_vals, p);
 
-        if (bb->input_count > 1) {
-            FOREACH_N(i, 0, dyn_array_length(phi_vals)) {
-                PhiVal* v = &phi_vals[i];
-                ValueDesc* val = &ctx->values[v->phi->gvn];
-
-                TB_DataType dt = v->phi->dt;
+                TB_DataType dt = p.phi->dt;
                 int tmp = DEF(NULL, dt);
-                SUBMIT(inst_move(dt, tmp, v->dst));
+                SUBMIT(inst_move(dt, tmp, p.dst));
 
+                // assign temporary as the PHI until the end of the BB
                 val->vreg = tmp;
             }
         }
 
-        TB_Node* top = ctx->worklist.items[ctx->block_count];
         assert(top->type == TB_START || top->type == TB_REGION);
         isel(ctx, top, -1);
     }
@@ -696,15 +685,15 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
 
                 if (n->type == TB_BRANCH) {
                     // writeback PHIs
-                    size_t phis = dyn_array_length(phi_vals);
-                    FOREACH_N(i, 0, phis) {
+                    FOREACH_N(i, 0, our_phis) {
                         PhiVal* v = &phi_vals[i];
                         TB_DataType dt = v->phi->dt;
 
+                        int dst = input_reg(ctx, v->phi);
                         int src = input_reg(ctx, v->n);
 
-                        hint_reg(ctx, v->dst, src);
-                        SUBMIT(inst_move(dt, v->dst, src));
+                        hint_reg(ctx, dst, src);
+                        SUBMIT(inst_move(dt, dst, src));
                     }
                 }
 
@@ -715,6 +704,14 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
                         isel_set_location(ctx, prev_effect);
                     }
                     prev_effect = n;
+
+                    // find next line
+                    /* FOREACH_N(j, i + 1, dyn_array_length(ctx->worklist.items)) {
+                        TB_Node* m = ctx->worklist.items[j];
+                        if (m->type != TB_PROJ && (m->dt.type == TB_TUPLE || m->dt.type == TB_CONTROL || m->dt.type == TB_MEMORY)) {
+                            break;
+                        }
+                    }*/
                 }
             } else if (val->uses > 0 || val->vreg >= 0) {
                 if (val->vreg < 0) {
@@ -758,11 +755,9 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
     }
 
     // restore the PHI value to normal
-    if (bb->input_count > 1) {
-        FOREACH_N(i, 0, dyn_array_length(phi_vals)) {
-            PhiVal* v = &phi_vals[i];
-            lookup_val(ctx, v->phi)->vreg = v->dst;
-        }
+    FOREACH_N(i, our_phis, dyn_array_length(phi_vals)) {
+        PhiVal* v = &phi_vals[i];
+        lookup_val(ctx, v->phi)->vreg = v->dst;
     }
 
     dyn_array_set_length(ctx->worklist.items, ctx->block_count);
@@ -777,13 +772,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     tb_pass_schedule(p);
 
-    /*reg_alloc_log = strcmp(f->super.name, "ra3") == 0;
+    reg_alloc_log = strcmp(f->super.name, "atomic_test") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }*/
+    }
 
     Ctx ctx = {
         .module = f->super.module,
@@ -827,6 +822,21 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     CUIK_TIMED_BLOCK("isel") {
         assert(dyn_array_length(ctx.worklist.items) == ctx.block_count);
 
+        // define all PHIs early
+        FOREACH_REVERSE_N(i, 0, ctx.block_count) {
+            TB_Node* bb = ctx.worklist.items[i];
+
+            for (User* use = find_users(p, bb); use; use = use->next) {
+                TB_Node* n = use->n;
+                if (n->type == TB_PHI && n->dt.type != TB_MEMORY) {
+                    worklist_test_n_set(&ctx.worklist, n);
+                    ctx.values[n->gvn].uses = INT_MAX;
+                    ctx.values[n->gvn].vreg = -1;
+                }
+            }
+        }
+
+        // compile all nodes which aren't the STOP node
         TB_Node* stop_node = f->stop_node;
         TB_Node* stop_bb = tb_get_parent_region(stop_node);
 
@@ -875,18 +885,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         }
     }
     p->worklist = ctx.worklist;
-
-    /*for (Inst* restrict inst = ctx.first; inst; inst = inst->next) {
-        printf("  \x1b[32m# %s t=%d { outs:", inst->type < 1024 ? inst_table[inst->type].mnemonic : "???", inst->time);
-        FOREACH_N(i, 0, inst->out_count) {
-            printf(" v%d", inst->operands[i]);
-        }
-        printf(", ins: ");
-        FOREACH_N(i, inst->out_count, inst->out_count + inst->in_count) {
-            printf(" v%d", inst->operands[i]);
-        }
-        printf("}\x1b[0m\n");
-    }*/
 
     EMITA(&ctx.emit, "%s:\n", f->super.name);
     {

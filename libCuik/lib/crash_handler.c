@@ -12,7 +12,7 @@
 
 static mtx_t crash_mutex;
 
-static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptrs) {
+static LONG WINAPI unhandled_exception_handler(EXCEPTION_POINTERS* e) {
     mtx_lock(&crash_mutex);
 
     HANDLE process = GetCurrentProcess();
@@ -25,8 +25,40 @@ static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptr
     symbol->MaxNameLen   = 255;
     symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
 
-    printf("\nCrash dump:\n");
-    for (size_t i = 0; i < frames; i++) {
+    switch (e->ExceptionRecord->ExceptionCode) {
+        case EXCEPTION_ACCESS_VIOLATION: {
+            uintptr_t addr = e->ExceptionRecord->ExceptionInformation[1];
+
+            if (e->ExceptionRecord->ExceptionInformation[0] == 8) {
+                printf("\nIllegal jump to %#llx\n", addr);
+            } else {
+                bool is_write = e->ExceptionRecord->ExceptionInformation[0] == 1;
+                if (addr <= 0xFFFF) {
+                    printf("\nIllegal %s from null pointer (%#llx)\n", is_write ? "write" : "read", addr);
+                } else {
+                    printf("\nIllegal %s from %#llx\n", is_write ? "write" : "read", addr);
+                }
+            }
+            break;
+        }
+
+        default:
+        printf("\nCrash dump:\n");
+        break;
+    }
+
+    size_t i = 0;
+
+    // skip exception stack frames
+    for (; i < frames; i++) {
+        SymFromAddr(process, (DWORD64) stack[i], 0, symbol);
+        if (strcmp(symbol->Name, "KiUserExceptionDispatcher") == 0) {
+            i += 1;
+            break;
+        }
+    }
+
+    for (; i < frames; i++) {
         SymFromAddr(process, (DWORD64) stack[i], 0, symbol);
 
         DWORD disp;
@@ -36,11 +68,13 @@ static LONG WINAPI unhandled_exception_handler(PEXCEPTION_POINTERS exception_ptr
         } else {
             printf("    %-40s - 0x%llX\n", symbol->Name, symbol->Address);
         }
+
+        if (strcmp(symbol->Name, "main") == 0) {
+            break;
+        }
     }
 
-    cuik_free(symbol);
     exit(1);
-
     return EXCEPTION_CONTINUE_SEARCH;
 }
 

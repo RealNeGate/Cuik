@@ -44,7 +44,7 @@ static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_
 void worklist_alloc(Worklist* restrict ws, size_t initial_cap) {
     ws->visited_cap = (initial_cap + 63) / 64;
     ws->visited = tb_platform_heap_alloc(ws->visited_cap * sizeof(uint64_t));
-    ws->items = dyn_array_create(uint64_t, ws->visited_cap);
+    ws->items = dyn_array_create(uint64_t, ws->visited_cap * 64);
     FOREACH_N(i, 0, ws->visited_cap) {
         ws->visited[i] = 0;
     }
@@ -776,6 +776,7 @@ void tb_pass_exit(TB_Passes* p) {
 
     worklist_free(&p->worklist);
     nl_hashset_free(p->cse_nodes);
+    dyn_array_destroy(p->locals);
 
     tb_arena_clear(tmp_arena);
     nl_map_free(p->users);

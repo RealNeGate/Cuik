@@ -618,6 +618,10 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
 char* tb__tb_arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
 
+static bool is_same_location(TB_Attrib* a, TB_Attrib* b) {
+    return a->loc.file == b->loc.file && a->loc.line == b->loc.line && a->loc.column == b->loc.column;
+}
+
 static TB_Arena* get_temporary_arena(TB_Module* m) {
     return &tb_thread_info(m)->tmp_arena;
 }

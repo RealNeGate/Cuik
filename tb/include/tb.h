@@ -574,6 +574,8 @@ typedef struct {
 typedef struct {
     TB_MemoryOrder order;
     TB_MemoryOrder order2;
+    TB_Node* proj0;
+    TB_Node* proj1;
 } TB_NodeAtomic;
 
 typedef struct {

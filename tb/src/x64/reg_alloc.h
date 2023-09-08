@@ -877,6 +877,13 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
         }
     }
 
+    CUIK_TIMED_BLOCK("free intervals") {
+        dyn_array_for(i, ra.intervals) {
+            dyn_array_destroy(ra.intervals[i].ranges);
+            dyn_array_destroy(ra.intervals[i].uses);
+        }
+    }
+
     ctx->intervals = ra.intervals;
     return ra.stack_usage;
 }

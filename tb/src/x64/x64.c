@@ -1292,6 +1292,44 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
 
+        // atomic RMW
+        case TB_ATOMIC_XCHG:
+        case TB_ATOMIC_ADD:
+        case TB_ATOMIC_SUB:
+        case TB_ATOMIC_AND:
+        case TB_ATOMIC_XOR:
+        case TB_ATOMIC_OR: {
+            // tbl is for normal locking operations which don't care about the result,
+            // fetch will need to worry about it which means slightly different codegen.
+            const static int tbl[]       = { MOV, ADD, SUB, AND, XOR, OR };
+            const static int fetch_tbl[] = { XCHG, XADD, XADD, 0, 0, 0 };
+
+            TB_NodeAtomic* a = TB_NODE_GET_EXTRA(n);
+            TB_DataType dt = a->proj1->dt;
+            bool dst_users = !has_users(ctx, a->proj1);
+
+            int op = (dst_users ? fetch_tbl : tbl)[type - TB_ATOMIC_XCHG];
+            if (op == 0) {
+                tb_todo(); // unsupported atomic op, we need to emulate it :(
+            }
+
+            int src = input_reg(ctx, n->inputs[3]);
+
+            // copy src into proj1 because the operation will be swapping SRC with
+            // the old value of the address.
+            int proj1 = input_reg(ctx, a->proj1);
+            hint_reg(ctx, proj1, src);
+            SUBMIT(inst_move(dt, proj1, src));
+
+            // ATOMIC-OP [addr], proj1
+            Inst* st_inst = isel_addr(ctx, n->inputs[2], -1, op, proj1);
+            st_inst->flags |= INST_LOCK;
+            st_inst->dt = legalize(dt);
+            assert(st_inst->flags & INST_MEM);
+            SUBMIT(st_inst);
+            break;
+        }
+
         case TB_PROJ: {
             if (n->inputs[0]->type == TB_START) {
                 int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index - 2;
@@ -1477,8 +1515,8 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
     // emit prologue
     func_out->prologue_length = emit_prologue(ctx);
 
-    Inst* prev = NULL;
-    for (Inst* restrict inst = ctx->first; inst; prev = inst, inst = inst->next) {
+    Inst* prev_line = NULL;
+    for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
         InstCategory cat = inst->type > 1024 ? INST_BINOP : inst_table[inst->type].cat;
 
@@ -1522,7 +1560,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             uint32_t pos = GET_CODE_POS(&ctx->emit);
 
             size_t top = dyn_array_length(ctx->locations);
-            if (prev == NULL || prev->type != INST_LINE) {
+            if (prev_line == NULL || !is_same_location(prev_line->a, loc)) {
                 EMITA(e, "  \x1b[33m# loc %s %"PRIu64"\x1b[0m\n", loc->loc.file->path, loc->loc.line);
 
                 TB_Location l = {
@@ -1532,6 +1570,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
                     .pos = pos
                 };
                 dyn_array_put(ctx->locations, l);
+                prev_line = inst;
             }
             continue;
         } else if (cat == INST_BYTE || cat == INST_BYTE_EXT) {
@@ -1568,6 +1607,12 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             inst1_print(&ctx->emit, CALL, &target, TB_X86_TYPE_QWORD);
         } else {
             int mov_op = inst->dt >= TB_X86_TYPE_PBYTE && inst->dt <= TB_X86_TYPE_XMMWORD ? FP_MOV : MOV;
+
+            // prefix
+            if (inst->flags & INST_LOCK) {
+                EMITA(e, "  LOCK");
+                EMIT1(e, 0xF0);
+            }
 
             // resolve output
             Val out;
