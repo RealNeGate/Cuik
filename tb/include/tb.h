@@ -1134,9 +1134,9 @@ TB_API TB_Node* tb_inst_cmp_fge(TB_Function* f, TB_Node* a, TB_Node* b);
 
 // General intrinsics
 TB_API TB_Node* tb_inst_va_start(TB_Function* f, TB_Node* a);
+TB_API TB_Node* tb_inst_cycle_counter(TB_Function* f);
 
 // x86 Intrinsics
-TB_API TB_Node* tb_inst_x86_rdtsc(TB_Function* f);
 TB_API TB_Node* tb_inst_x86_ldmxcsr(TB_Function* f, TB_Node* a);
 TB_API TB_Node* tb_inst_x86_stmxcsr(TB_Function* f);
 TB_API TB_Node* tb_inst_x86_sqrt(TB_Function* f, TB_Node* a);
@@ -1200,9 +1200,6 @@ TB_API void tb_pass_schedule(TB_Passes* opt);
 // analysis
 //   print: prints IR in a flattened text form.
 TB_API bool tb_pass_print(TB_Passes* opt);
-
-// serialization
-TB_API void tb_pass_save(TB_Passes* opt, FILE* fp);
 
 // codegen
 TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, bool emit_asm);
