@@ -34,11 +34,15 @@ typedef struct {
 // Helper macros
 #define EMITA(e, fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
 #define EMIT1(e, b) (*((uint8_t*)  tb_cgemit_reserve(e, 1)) = (b), (e)->count += 1)
-#define EMIT2(e, b) (*((uint16_t*) tb_cgemit_reserve(e, 2)) = (b), (e)->count += 2)
-#define EMIT4(e, b) (*((uint32_t*) tb_cgemit_reserve(e, 4)) = (b), (e)->count += 4)
-#define EMIT8(e, b) (*((uint64_t*) tb_cgemit_reserve(e, 8)) = (b), (e)->count += 8)
-#define RELOC4(e, p, b) (*((uint32_t*) &(e)->data[p]) += (b))
-#define PATCH4(e, p, b) (*((uint32_t*) &(e)->data[p])  = (b))
+#define EMIT2(e, b) do { uint32_t _b = (b); memcpy(tb_cgemit_reserve(e, 2), &_b, 2); (e)->count += 2; } while (0)
+#define EMIT4(e, b) do { uint32_t _b = (b); memcpy(tb_cgemit_reserve(e, 4), &_b, 4); (e)->count += 4; } while (0)
+#define EMIT8(e, b) do { uint32_t _b = (b); memcpy(tb_cgemit_reserve(e, 8), &_b, 8); (e)->count += 8; } while (0)
+#define RELOC4(e, p, b) do {  void *_ptr = &(e)->data[p];           \
+                              uint32_t _b = (b), _temp;             \
+                              memcpy(&_temp, _ptr, 4);              \
+                              _temp += _b;                          \
+                              memcpy(_ptr, &_temp, 4); } while (0)
+#define PATCH4(e, p, b) do { uint32_t _b = (b); memcpy(&(e)->data[p], &_b, 4); } while (0)
 #define GET_CODE_POS(e) ((e)->count)
 
 static void tb_asm_print(TB_CGEmitter* restrict e, const char* fmt, ...) {
@@ -82,7 +86,8 @@ static void tb_resolve_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t 
     // walk previous relocations
     uint32_t curr = *head;
     while (curr != 0 && (curr & 0x80000000) == 0) {
-        uint32_t next = *((uint32_t*) &e->data[curr]);
+        uint32_t next;
+        memcpy(&next, &e->data[curr], 4);
         PATCH4(e, curr, target - (curr + 4));
         curr = next;
     }

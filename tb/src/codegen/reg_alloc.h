@@ -270,13 +270,13 @@ static LiveInterval* split_interval_at(LSRA* restrict ra, LiveInterval* interval
 // any uses after `pos` after put into the new interval
 static int split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, bool is_spill) {
     if (interval->spill > 0) {
-        REG_ALLOC_LOG printf("  \x1b[33m#   v%lld: reload [RBP - %d] at t=%d\x1b[0m\n", interval - ra->intervals, interval->spill, pos);
+        REG_ALLOC_LOG printf("  \x1b[33m#   v%lld: reload [RBP - %d] at t=%d\x1b[0m\n", (long long) (interval - ra->intervals), interval->spill, pos);
     } else {
         // allocate stack slot
         int size = 8;
         ra->stack_usage = align_up(ra->stack_usage + size, size);
 
-        REG_ALLOC_LOG printf("  \x1b[33m#   v%lld: spill %s to [RBP - %d] at t=%d\x1b[0m\n", interval - ra->intervals, reg_name(interval->reg_class, interval->assigned), ra->stack_usage, pos);
+        REG_ALLOC_LOG printf("  \x1b[33m#   v%lld: spill %s to [RBP - %d] at t=%d\x1b[0m\n", (long long) (interval - ra->intervals), reg_name(interval->reg_class, interval->assigned), ra->stack_usage, pos);
     }
 
     // split lifetime

@@ -1,4 +1,5 @@
 #include <tb_x64.h>
+#include <common.h> // __debugbreak
 
 // this is used to parse ModRM and SIB
 #define UNPACK_233(a, b, c, src) \
