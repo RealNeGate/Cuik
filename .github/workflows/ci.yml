@@ -4,7 +4,6 @@ on: [pull_request, workflow_dispatch, push]
 jobs:
   build_win:
     runs-on: windows-2019
-    if: false
     steps:
       - uses: actions/checkout@v3
       - uses: seanmiddleditch/gha-setup-ninja@master
@@ -40,7 +39,6 @@ jobs:
           path: cuik.dll
   build_linux:
     runs-on: ubuntu-latest
-    if: false
     steps:
       - uses: actions/checkout@v3
       - uses: seanmiddleditch/gha-setup-ninja@master
