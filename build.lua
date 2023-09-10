@@ -11,22 +11,26 @@
 
 --]]
 
+--  TODO
+--  Don't build unnecessary modules, e.g. don't build Cuik when doing tb_unittests.
+
 -- silly little OS detection
 local is_windows = package.config:sub(1,1) == "\\"
 
 local options = {
-	log    = false,
-	debug  = false,
-	cuik   = false,
-	tb     = false,
-	driver = false,
-	shared = false,
-	test   = false,
-	forth  = false,
-	lld    = false,
-	gcc    = false,
-	asan   = false,
-	spall_auto = false
+	log           = false,
+	debug         = false,
+	cuik          = false,
+	tb            = false,
+  tb_unittests  = false,
+	driver        = false,
+	shared        = false,
+	test          = false,
+	forth         = false,
+	lld           = false,
+	gcc           = false,
+	asan          = false,
+	spall_auto    = false
 }
 
 -- Cuik/TB are broken down into several pieces
@@ -37,9 +41,11 @@ local modules = {
 
 	-- executables:
 	--   Cuik command line
-	driver = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik", "tb"} },
+	driver       = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik", "tb"} },
 	--   forth
-	forth  = { is_exe=true, srcs={"forth/forth.c"}, deps={"common", "tb"}, flags="-I libCuik/include" },
+	forth        = { is_exe=true, srcs={"forth/forth.c"}, deps={"common", "tb"}, flags="-I libCuik/include" },
+  --   TB unittests
+	tb_unittests = { is_exe=true, srcs={"tb/unittests/tb_unittests.c"}, flags="-I tb/include -DCUIK_USE_TB", deps={"tb", "common"} },
 
 	-- external dependencies
 	mimalloc = { srcs={"mimalloc/src/static.c"} }
@@ -263,8 +269,9 @@ end
 local obj_names = table.concat(objs, " ")
 
 local exe_name = "cuik"
-if options.tb then exe_name = "tb" end
-if options.forth then exe_name = "forth" end
+if options.tb           then exe_name = "tb" end
+if options.tb_unittests then exe_name = "tb_unittests" end
+if options.forth        then exe_name = "forth" end
 
 -- link or archive
 if options.shared then
