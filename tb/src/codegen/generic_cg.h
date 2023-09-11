@@ -792,13 +792,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     tb_pass_schedule(p);
 
-    reg_alloc_log = strcmp(f->super.name, "stbi__idct_block") == 0;
+    /*reg_alloc_log = strcmp(f->super.name, "stbi__idct_block") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }
+    }*/
 
     Ctx ctx = {
         .module = f->super.module,

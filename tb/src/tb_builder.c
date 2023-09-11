@@ -230,7 +230,10 @@ void tb_inst_unreachable(TB_Function* f) {
 
     TB_Node* bb = tb_get_parent_region(f->active_control_node);
     TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end = n;
-    f->active_control_node = NULL;
+    f->active_control_node = n;
+
+    // return afterwards
+    tb_inst_ret(f, 0, NULL);
 }
 
 void tb_inst_debugbreak(TB_Function* f) {
@@ -242,8 +245,13 @@ void tb_inst_debugbreak(TB_Function* f) {
 void tb_inst_trap(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_VOID, 1, 0);
     n->inputs[0] = f->active_control_node;
-    TB_NODE_GET_EXTRA_T(tb_get_parent_region(f->active_control_node), TB_NodeRegion)->end = n;
-    f->active_control_node = NULL;
+
+    TB_Node* bb = tb_get_parent_region(f->active_control_node);
+    TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end = n;
+    f->active_control_node = n;
+
+    // return afterwards
+    tb_inst_ret(f, 0, NULL);
 }
 
 TB_Node* tb_inst_poison(TB_Function* f) {

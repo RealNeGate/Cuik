@@ -267,9 +267,9 @@ typedef enum TB_NodeTypeEnum {
     //   debugbreak will trap in a continuable manner.
     TB_DEBUGBREAK,  // (Control, Memory) -> (Control)
     //   trap will not be continuable but will stop execution.
-    TB_TRAP,        // (Control, Memory) -> ()
+    TB_TRAP,        // (Control) -> (Control)
     //   unreachable means it won't trap or be continuable.
-    TB_UNREACHABLE, // (Control, Memory) -> ()
+    TB_UNREACHABLE, // (Control) -> (Control)
 
     ////////////////////////////////
     // CONTROL + MEMORY
