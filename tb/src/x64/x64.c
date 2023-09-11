@@ -588,17 +588,27 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int lhs = input_reg(ctx, n->inputs[1]);
             hint_reg(ctx, dst, lhs);
 
+            // promote any <16bit multiplies up a bit:
+            //   should be fair game to compute the multiply
+            //   with garbage bits at the top as long as we
+            //   don't read them.
+            TB_DataType dt = n->dt;
+            assert(dt.type == TB_INT);
+            if (dt.data < 16) {
+                dt.data = 16;
+            }
+
             int32_t x;
             if (try_for_imm32(ctx, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
 
                 SUBMIT(inst_move(n->dt, dst, lhs));
-                SUBMIT(inst_op_rri(IMUL, n->dt, dst, dst, x));
+                SUBMIT(inst_op_rri(IMUL, dt, dst, dst, x));
             } else {
                 int rhs = input_reg(ctx, n->inputs[2]);
 
                 SUBMIT(inst_move(n->dt, dst, lhs));
-                SUBMIT(inst_op_rrr(IMUL, n->dt, dst, dst, rhs));
+                SUBMIT(inst_op_rrr(IMUL, dt, dst, dst, rhs));
             }
             break;
         }
@@ -889,17 +899,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 } else if (bits_in_type <= 64) op = MOV;
                 else tb_todo();
 
-                /*if (src->type == TB_LOAD && nl_map_get_checked(ctx->uses, src) == 1) {
-                    use(ctx, src);
-
-                    Inst inst = isel_load(ctx, src, dst);
-                    inst.type = op;
-                    inst.data_type = legalize(dt);
-                    SUBMIT(inst);
-                } else {*/
                 int val = input_reg(ctx, src);
                 SUBMIT(inst_op_rr(op, dt, dst, val));
-                // }
             }
             break;
         }
@@ -1714,7 +1715,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
                 i += resolve_interval(ctx, inst, i, &lhs);
 
                 ternary = (i < in_base + inst->in_count) || (inst->flags & (INST_IMM | INST_ABS));
-                if (ternary && inst->type == IMUL && (inst->flags & INST_IMM) && inst->dt != TB_X86_TYPE_BYTE) {
+                if (ternary && inst->type == IMUL && (inst->flags & INST_IMM)) {
                     // there's a special case for ternary IMUL r64, r/m64, imm32
                     if (e->emit_asm) {
                         EMITA(e, "  imul ");

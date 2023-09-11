@@ -630,33 +630,8 @@ static void move_to_active(LSRA* restrict ra, LiveInterval* interval, int pos) {
     int rc = interval->reg_class, reg = interval->assigned;
     int ri = interval - ra->intervals;
 
-    // fixed intervals will force things out of their spot if they have to
     if (set_get(&ra->active_set[rc], reg)) {
-        tb_todo();
-        /*LiveInterval* old_interval = &ra->intervals[ra->active[rc][reg]];
-
-        // skip forward to the latest version
-        while (old_interval->split_kid >= 0) {
-            old_interval = &ra->intervals[old_interval->split_kid];
-        }
-
-        size_t i = 0, count = dyn_array_length(old_interval->ranges);
-        for (; i < count - 1; i++) {
-            if (pos >= old_interval->ranges[i].end && pos < old_interval->ranges[i + 1].start) {
-                old_interval = NULL;
-                break;
-            }
-        }
-
-        if (i == count - 1 && pos > old_interval->ranges[count - 1].end) {
-            old_interval = NULL;
-        }
-
-        if (old_interval) {
-            tb_assert(old_interval->reg < 0, "non-fixed interval attempted to force a register out");
-            split_intersecting(ra, pos - 1, old_interval, true);
-            interval = &ra->intervals[ri]; // might've resized the intervals
-        }*/
+        tb_panic("intervals should never be forced out, we should've accomodated them in the first place");
     }
 
     set_put(&ra->active_set[rc], reg);
