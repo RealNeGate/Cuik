@@ -330,19 +330,19 @@ static bool add_configs(TB_Passes* p, TB_TemporaryStorage* tls, User* use, TB_No
     for (; use; use = use->next) {
         TB_Node* n = use->n;
 
-        // we can only SROA if we know we're not using the
-        // address for anything but direct memory ops or TB_MEMBERs.
-        if (use->slot != 1) {
-            return false;
-        }
-
-        if (n->type == TB_MEMBER_ACCESS) {
+        if (n->type == TB_MEMBER_ACCESS && use->slot == 1) {
             // same rules, different offset
             int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
             if (!add_configs(p, tls, find_users(p, n), base_address, base_offset + offset, config_count, configs, pointer_size)) {
                 return false;
             }
             continue;
+        }
+
+        // we can only SROA if we know we're not using the
+        // address for anything but direct memory ops or TB_MEMBERs.
+        if (use->slot != 2) {
+            return false;
         }
 
         // find direct memory op
@@ -372,58 +372,12 @@ static bool add_configs(TB_Passes* p, TB_TemporaryStorage* tls, User* use, TB_No
 }
 
 static bool attempt_sroa(TB_Passes* p, TB_Function* f, TB_TemporaryStorage* tls, TB_Node* address) {
-    int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
-
-    size_t config_count = 0;
-    AggregateConfig* configs = tb_tls_push(tls, 0);
-    if (!add_configs(p, tls, find_users(p, address), address, 0, &config_count, configs, pointer_size)) {
-        return false;
-    }
-
-    uint32_t alignment = TB_NODE_GET_EXTRA_T(address, TB_NodeLocal)->align;
-    FOREACH_N(i, 0, config_count) {
-        TB_Node* new_n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
-        set_input(p, new_n, f->start_node, 0);
-        TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
-
-        // replace old pointer with new fancy
-        subsume_node(p, f, configs[i].old_n, new_n);
-        dyn_array_put(p->locals, new_n);
-    }
-
-    tb_pass_kill_node(p, address);
     return true;
 }
 
 bool tb_pass_mem2reg(TB_Passes* p) {
-    cuikperf_region_start("mem2reg", NULL);
-    verify_tmp_arena(p);
-
     TB_Function* f = p->f;
     TB_TemporaryStorage* tls = tb_tls_steal();
-
-    ////////////////////////////////
-    // Try SROA first
-    ////////////////////////////////
-    for (size_t i = dyn_array_length(p->locals); i--;) retry: {
-        TB_Node* address = p->locals[i];
-
-        TB_DataType dt;
-        Coherency coherence = tb_get_stack_slot_coherency(p, f, address, &dt);
-        if (coherence == COHERENCY_DEAD) {
-            DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p was unused", f->super.name, address));
-            dyn_array_remove(p->locals, i);
-        } else if (coherence == COHERENCY_USES_ADDRESS) {
-            void* mark = tb_tls_push(tls, 0);
-            if (attempt_sroa(p, f, tls, address)) {
-                DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: %p was able to SROA", f->super.name, address));
-                tb_tls_restore(tls, mark);
-                goto retry; // but don't go the next int
-            } else {
-                tb_tls_restore(tls, mark);
-            }
-        }
-    }
 
     ////////////////////////////////
     // Decide which stack slots to promote
@@ -473,7 +427,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     }
 
     Mem2Reg_Ctx c = { 0 };
-    c.tls = tb_tls_steal();
+    c.tls = tls;
     c.f = f;
     c.p = p;
 
@@ -590,6 +544,54 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     no_changes:
     cuikperf_region_end();
     return false;
+}
+
+void tb_pass_sroa(TB_Passes* p) {
+    cuikperf_region_start("sroa", NULL);
+    verify_tmp_arena(p);
+
+    TB_Function* f = p->f;
+    TB_TemporaryStorage* tls = tb_tls_steal();
+
+    ////////////////////////////////
+    // Try SROA first
+    ////////////////////////////////
+    for (size_t i = dyn_array_length(p->locals); i--;) retry: {
+        TB_Node* address = p->locals[i];
+        void* mark = tb_tls_push(tls, 0);
+
+        int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
+
+        size_t config_count = 0;
+        AggregateConfig* configs = tb_tls_push(tls, 0);
+        if (!add_configs(p, tls, find_users(p, address), address, 0, &config_count, configs, pointer_size)) {
+            continue;
+        }
+
+        if (config_count <= 1) {
+            continue;
+        }
+
+        DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: v%zu was able to SROA into %zu pieces", f->super.name, address->gvn, config_count));
+
+        uint32_t alignment = TB_NODE_GET_EXTRA_T(address, TB_NodeLocal)->align;
+        FOREACH_N(i, 0, config_count) {
+            TB_Node* new_n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
+            set_input(p, new_n, f->start_node, 0);
+            TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
+
+            // mark all users, there may be some fun new opts now
+            tb_pass_mark_users(p, configs[i].old_n);
+
+            // replace old pointer with new fancy
+            subsume_node(p, f, configs[i].old_n, new_n);
+            dyn_array_put(p->locals, new_n);
+        }
+        tb_tls_restore(tls, mark);
+        goto retry; // retry but don't go the next int
+    }
+
+    cuikperf_region_end();
 }
 
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share

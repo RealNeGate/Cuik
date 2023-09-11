@@ -189,7 +189,7 @@ typedef union TB_DataType {
     };
     uint32_t raw;
 } TB_DataType;
-_Static_assert(sizeof(TB_DataType) == 4, "im expecting this to be a uint32_t");
+static_assert(sizeof(TB_DataType) == 4, "im expecting this to be a uint32_t");
 
 // classify data types
 #define TB_IS_VOID_TYPE(x)     ((x).type == TB_INT && (x).data == 0)
@@ -1192,7 +1192,10 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 //     data flow analysis possible on the code and allows to codegen
 //     to place variables into registers.
 //
+//   SROA: splits LOCALs into multiple to allow for more dataflow
+//     analysis later on.
 TB_API void tb_pass_peephole(TB_Passes* opt, TB_PeepholeFlags flags);
+TB_API void tb_pass_sroa(TB_Passes* opt);
 TB_API bool tb_pass_mem2reg(TB_Passes* opt);
 
 TB_API void tb_pass_schedule(TB_Passes* opt);

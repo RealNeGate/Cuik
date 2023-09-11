@@ -192,6 +192,7 @@ static Token lexer_read_inline(Lexer* restrict l) {
     };
 
     while ((early_out[*current / 64] >> (*current % 64)) & 1) {
+        #if USE_INTRIN && CUIK__IS_X64
         // SIMD whitespace skip
         __m128i chars = _mm_loadu_si128((__m128i*) current);
         __m128i mask = _mm_cmpeq_epi8(chars, _mm_set1_epi8(' '));
@@ -209,6 +210,15 @@ static Token lexer_read_inline(Lexer* restrict l) {
         if (*current != '\\' && line_len > 0 && line_len < len) {
             t.hit_line = true;
         }
+        #else
+        // skip whitespace
+        while (*current == ' ' || *current == '\t') { current++; }
+
+        if (*current == '\r' || *current == '\n') {
+            current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
+            t.hit_line = true;
+        }
+        #endif
 
         // check for comments
         if (*current == '/') {

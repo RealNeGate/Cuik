@@ -833,7 +833,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             IRVal* target = &GET_ARG(0);
             if (target->value_type == LVALUE_EXPR && target->e->op == EXPR_BUILTIN_SYMBOL) {
                 const char* name = (const char*) target->e->builtin_sym.name;
-                TB_Node* val = tu->target->compile_builtin(tu, func, name, arg_count, args);
+                TB_Node* val = tu->target->compile_builtin(tu, func, name, arg_count + 1, args);
 
                 return (IRVal){
                     .value_type = RVALUE,

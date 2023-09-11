@@ -176,11 +176,14 @@ struct Inst {
     int time, mem_slot;
 
     union {
-        int32_t imm;
-        uint64_t abs;
         TB_Symbol* s;
         TB_Node* n;
         TB_Attrib* a;
+    };
+
+    union {
+        int32_t imm;
+        uint64_t abs;
     };
 
     int32_t disp;
@@ -466,11 +469,16 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
     // all nodes go into the worklist
     FOREACH_N(i, 0, ctx->block_count) {
-        TB_Node* n = ctx->worklist.items[i];
-        dyn_array_put(ctx->worklist.items, n);
+        TB_Node* bb = ctx->worklist.items[i];
+        assert(bb->type == TB_START || bb->type == TB_REGION);
+
+        dyn_array_put(ctx->worklist.items, bb);
+
+        // in(bb) = use(bb)
+        MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
+        set_copy(&mbb->live_in, &mbb->gen);
     }
 
-    Set tmp_out = set_create_in_arena(arena, interval_count);
     while (dyn_array_length(ctx->worklist.items) > base) // CUIK_TIMED_BLOCK("global iter")
     {
         TB_Node* bb = dyn_array_pop(ctx->worklist.items);
@@ -478,33 +486,15 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
 
         // walk all successors
-        set_clear(&tmp_out);
+        Set* restrict live_out = &mbb->live_out;
+        set_clear(live_out);
+
         if (r->end->type == TB_BRANCH) {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
             FOREACH_N(i, 0, br->succ_count) {
                 // union with successor's lives
                 MachineBB* succ = &nl_map_get_checked(seq_bb, br->succ[i]);
-                set_union(&tmp_out, &succ->live_in);
-            }
-        }
-
-        bool changes = false;
-
-        // copy to live_out but also check for changes, if
-        // there's changes we need to put the successors in
-        // the worklist.
-        Set* restrict live_out = &mbb->live_out;
-        FOREACH_N(i, 0, (interval_count + 63) / 64) {
-            if (live_out->data[i] != tmp_out.data[i]) {
-                live_out->data[i] = tmp_out.data[i];
-                changes = true;
-            }
-        }
-
-        if (changes && r->end->type == TB_BRANCH) {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
-            FOREACH_N(i, 0, br->succ_count) {
-                dyn_array_put(ctx->worklist.items, br->succ[i]);
+                set_union(live_out, &succ->live_in);
             }
         }
 
@@ -513,11 +503,35 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         Set* restrict gen = &mbb->gen;
 
         // live_in = (live_out - live_kill) U live_gen
+        bool changes = false;
         FOREACH_N(i, 0, (interval_count + 63) / 64) {
-            live_in->data[i] = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
+            bool changes = false;
+            uint64_t new_in = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
+
+            changes |= (live_in->data[i] != new_in);
+            live_in->data[i] = new_in;
+        }
+
+        // if we have changes, mark the predeccesors
+        if (changes) {
+            FOREACH_N(i, 0, bb->input_count) {
+                dyn_array_put(ctx->worklist.items, tb_get_parent_region(bb->inputs[i]));
+            }
         }
     }
     dyn_array_set_length(ctx->worklist.items, ctx->block_count);
+
+    /*FOREACH_REVERSE_N(i, 0, ctx->block_count) {
+        MachineBB* mbb = &nl_map_get_checked(seq_bb, ctx->worklist.items[i]);
+        int j = 120;
+
+        printf("v%zu:", i);
+        if (set_get(&mbb->gen, j)) printf("GEN ");
+        if (set_get(&mbb->kill, j)) printf("KILL ");
+        if (set_get(&mbb->live_in, j)) printf("IN ");
+        if (set_get(&mbb->live_out, j)) printf("OUT ");
+        printf("\n");
+    }*/
 
     ctx->machine_bbs = seq_bb;
     assert(epilogue >= 0);
@@ -778,13 +792,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     tb_pass_schedule(p);
 
-    /*reg_alloc_log = strcmp(f->super.name, "mul_test") == 0;
+    reg_alloc_log = strcmp(f->super.name, "stbi__idct_block") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
     } else {
         emit_asm = false;
-    }*/
+    }
 
     Ctx ctx = {
         .module = f->super.module,

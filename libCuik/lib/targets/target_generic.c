@@ -236,12 +236,12 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         return ZZZ(NULL);
     } else if (strcmp(name, "__builtin_syscall") == 0) {
         TB_Node* num = RVAL(1);
-        TB_Node** arg_regs = tls_push((arg_count - 1) * sizeof(TB_Node*));
+        TB_Node** arg_regs = tls_push((arg_count - 2) * sizeof(TB_Node*));
         for (size_t i = 2; i < arg_count; i++) {
             arg_regs[i - 2] = RVAL(i);
         }
 
-        TB_Node* result = tb_inst_syscall(func, TB_TYPE_I64, num, arg_count - 1, arg_regs);
+        TB_Node* result = tb_inst_syscall(func, TB_TYPE_I64, num, arg_count - 2, arg_regs);
         tls_restore(arg_regs);
 
         return ZZZ(result);

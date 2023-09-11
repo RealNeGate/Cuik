@@ -154,10 +154,9 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
         TB_Passes* p = tb_pass_enter(f, get_ir_arena());
 
         if (args->opt_level >= 1) {
-            // initial run of peepholes
             tb_pass_peephole(p, TB_PEEPHOLE_ALL);
-            // Converting locals into phi nodes
-            // tb_pass_mem2reg(p), tb_pass_peephole(p);
+            tb_pass_sroa(p);
+            tb_pass_peephole(p, TB_PEEPHOLE_ALL);
         }
 
         // print IR
@@ -783,7 +782,7 @@ static void irgen_job(void* arg) {
                 tb_pass_codegen(p, false);
                 tb_pass_exit(p);
 
-                // log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);
+                log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);
                 tb_arena_clear(allocator);
             }
         }
