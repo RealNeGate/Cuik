@@ -285,7 +285,8 @@ static LiveInterval* split_interval_at(LSRA* restrict ra, LiveInterval* interval
 
 // any uses after `pos` after put into the new interval
 static int split_intersecting(LSRA* restrict ra, int current_time, int pos, LiveInterval* interval, bool is_spill) {
-    // assert(interval->reg < 0);
+    assert(interval->reg < 0);
+
     int ri = interval - ra->intervals;
     if (interval->spill > 0) {
         REG_ALLOC_LOG printf("  \x1b[33m#   v%d: reload [RBP - %d] at t=%d\x1b[0m\n", ri, interval->spill, pos);
@@ -605,7 +606,9 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
         // split any inactive interval for reg at the end of it's lifetime hole
         dyn_array_for(i, ra->inactive) {
             LiveInterval* it = &ra->intervals[ra->inactive[i]];
-            if (it->reg_class == rc && it->assigned == highest) {
+            LiveRange* r = &it->ranges[it->active_range];
+
+            if (it->reg_class == rc && it->assigned == highest && r->start <= pos+1 && pos <= r->end) {
                 split_intersecting(ra, interval->start, split_pos, it, true);
             }
         }
