@@ -321,6 +321,20 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
     }
 }
 
+static Inst* isel_addr2(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int src) {
+    // compute base
+    if (ctx->values[n->gvn].uses >= 2 || ctx->values[n->gvn].vreg >= 0) {
+        int base = input_reg(ctx, n);
+        if (store_op < 0) {
+            return inst_move(TB_TYPE_PTR, dst, base);
+        } else {
+            return inst_op_mr(store_op, TB_TYPE_PTR, base, -1, SCALE_X1, 0, src);
+        }
+    } else {
+        return isel_addr(ctx, n, dst, store_op, src);
+    }
+}
+
 static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     bool invert = false;
     if (n->type == TB_CMP_EQ && n->dt.type == TB_INT && n->dt.data == 1 && n->inputs[2]->type == TB_INTEGER_CONST) {
@@ -1193,7 +1207,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int mov_op = (TB_IS_FLOAT_TYPE(n->dt) || n->dt.width) ? FP_MOV : MOV;
             TB_Node* addr = n->inputs[2];
 
-            Inst* ld_inst = isel_addr(ctx, addr, dst, -1, -1);
+            Inst* ld_inst = isel_addr2(ctx, addr, dst, -1, -1);
             ld_inst->type = mov_op;
             ld_inst->dt = legalize(n->dt);
             if ((ld_inst->flags & (INST_GLOBAL | INST_MEM)) == 0) {
@@ -1218,7 +1232,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             // test tmp, dword [poll_site]
             int tmp = DEF(n, TB_TYPE_I32);
-            Inst* ld_inst = isel_addr(ctx, addr, tmp, -1, -1);
+            Inst* ld_inst = isel_addr2(ctx, addr, tmp, -1, -1);
             ld_inst->type = TEST;
             ld_inst->dt = TB_X86_TYPE_DWORD;
             if ((ld_inst->flags & (INST_GLOBAL | INST_MEM)) == 0) {
@@ -1256,7 +1270,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             if (try_for_imm32(ctx, src, &imm)) {
                 use(ctx, src);
 
-                Inst* st_inst = isel_addr(ctx, addr, dst, store_op, -1);
+                Inst* st_inst = isel_addr2(ctx, addr, dst, store_op, -1);
                 st_inst->in_count -= 1;
                 st_inst->dt = legalize(store_dt);
                 st_inst->flags |= INST_IMM;
@@ -1267,7 +1281,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             } else {
                 int src_reg = input_reg(ctx, src);
 
-                Inst* st_inst = isel_addr(ctx, addr, dst, store_op, src_reg);
+                Inst* st_inst = isel_addr2(ctx, addr, dst, store_op, src_reg);
                 st_inst->dt = legalize(store_dt);
                 assert(st_inst->flags & (INST_MEM | INST_GLOBAL));
 
@@ -1377,7 +1391,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             SUBMIT(inst_move(dt, proj1, src));
 
             // ATOMIC-OP [addr], proj1
-            Inst* st_inst = isel_addr(ctx, n->inputs[2], -1, op, proj1);
+            Inst* st_inst = isel_addr2(ctx, n->inputs[2], -1, op, proj1);
             st_inst->flags |= INST_LOCK;
             st_inst->dt = legalize(dt);
             assert(st_inst->flags & INST_MEM);

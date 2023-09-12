@@ -1053,6 +1053,10 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
         }
     }
 
+    if (*format == '.') {
+        format++;
+    }
+
     assert(*format == ' ');
     format++;
 

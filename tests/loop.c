@@ -82,11 +82,17 @@ static void array_ops(size_t n, int* arr) {
     }
 }
 
+void max_array(size_t n, float* restrict x, float* y) {
+    for (size_t i = 0; i < n; i++) {
+        x[i] = x[i] > y[i] ? x[i] : y[i];
+    }
+}
+
 static uint32_t div_tricks(uint32_t n) {
     return n / 3;
 }
 
-static int bar(int n) {
+/*int bar(int n) {
     int arr[2];
     arr[0] = n;
     arr[1] = 1;
@@ -97,7 +103,7 @@ static int bar(int n) {
     }
 
     return arr[1];
-}
+}*/
 
 static int folding(void) {
     return 42+1 & 3 * 16;
@@ -153,6 +159,18 @@ static int select_opt(int a, int b) {
     return a > 10 && !(b > 10);
 }
 
+static short mul(void) {
+    return (short)5 * (short)9;
+}
+
+static void syscall_test(void) {
+    __builtin_syscall(1, 69);
+}
+
+static int phi_test(int color) {
+    return (color & 2 ? 3 : 1) + (color & 4 ? 1 : 0);
+}
+
 static uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
@@ -191,7 +209,7 @@ int ra3(int a, int b, int c, int d) {
     return ra2(ra1(), a, b, c, d);
 }*/
 
-int main() {
+/*int main() {
     printf("%d\n", select_opt(11, 5));
     printf("%d\n", select_opt(11, 11));
     printf("%d\n", select_opt(5, 5));
@@ -211,7 +229,7 @@ int main() {
     // store_elim(&a);
 
     // printf("%d\n", store_elim(&a));
-}
+}*/
 
 #if 0
 int main() {

@@ -286,6 +286,9 @@ typedef enum TB_NodeTypeEnum {
     ////////////////////////////////
     // MEMORY
     ////////////////////////////////
+    //   MERGEMEM will join multiple non-aliasing memory effects, because
+    //   they don't alias there's no ordering guarentee.
+    TB_MERGEMEM,// (Memory...) -> Memory
     //   LOAD and STORE are standard memory accesses, they can be folded away.
     TB_LOAD,    // (Memory, Ptr)       -> Data
     TB_STORE,   // (Memory, Ptr, Data) -> Memory
@@ -375,6 +378,8 @@ typedef enum TB_NodeTypeEnum {
     TB_FSUB,
     TB_FMUL,
     TB_FDIV,
+    TB_FMAX,
+    TB_FMIN,
 
     // Comparisons
     TB_CMP_EQ,
@@ -537,6 +542,7 @@ typedef struct {
 
 typedef struct {
     TB_CharUnits size, align;
+    int alias_index; // 0 if local is used beyond direct memops, 1...n as a unique alias name
 } TB_NodeLocal;
 
 typedef struct {
@@ -1197,6 +1203,9 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 TB_API void tb_pass_peephole(TB_Passes* opt, TB_PeepholeFlags flags);
 TB_API void tb_pass_sroa(TB_Passes* opt);
 TB_API bool tb_pass_mem2reg(TB_Passes* opt);
+
+// this just runs the optimizer in the default configuration
+TB_API void tb_pass_optimize(TB_Passes* opt);
 
 TB_API void tb_pass_schedule(TB_Passes* opt);
 

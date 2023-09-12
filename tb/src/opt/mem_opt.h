@@ -14,6 +14,59 @@ static KnownPointer known_pointer(TB_Node* n) {
     }
 }
 
+static TB_Node* data_phi_from_memory_phi(TB_Passes* restrict p, TB_Function* f, TB_DataType dt, TB_Node* n, TB_Node* addr, TB_CharUnits* out_align) {
+    assert(n->type == TB_PHI);
+    assert(n->dt.type == TB_MEMORY && "memory input should be memory");
+
+    TB_Arena* func_arena = p->f->arena;
+    TB_ArenaSavepoint sp = tb_arena_save(func_arena);
+
+    size_t path_count = n->input_count - 1;
+    TB_Node** paths = tb_arena_alloc(func_arena, path_count * sizeof(TB_Node*));
+
+    // walk each path to find relevant STOREs
+    TB_CharUnits align = 0;
+    TB_Node** phi_ins = n->inputs;
+    FOREACH_N(i, 0, path_count) {
+        TB_Node* head = phi_ins[1 + i];
+        TB_Node* ctrl = head->inputs[0];
+        TB_Node* path = NULL;
+
+        do {
+            if (head->type == TB_STORE && addr == head->inputs[2]) {
+                TB_CharUnits st_align = TB_NODE_GET_EXTRA_T(head, TB_NodeMemAccess)->align;
+                path = head->inputs[3];
+
+                // alignment should be the lowest common alignment
+                if (align == 0 || align > st_align) {
+                    align = st_align;
+                }
+                break;
+            }
+
+            // previous memory effect
+            head = head->inputs[1];
+        } while (head->inputs[0] == ctrl);
+
+        if (path == NULL) {
+            // we have a path with an unknown value... sadge
+            tb_arena_restore(func_arena, sp);
+            return NULL;
+        }
+        paths[i] = path;
+    }
+
+    // convert to PHI
+    TB_Node* phi = tb_alloc_node(f, TB_PHI, dt, 1 + path_count, 0);
+    set_input(p, phi, phi_ins[0], 0);
+    FOREACH_N(i, 0, path_count) {
+        set_input(p, phi, paths[i], 1+i);
+    }
+
+    if (out_align) *out_align = align;
+    return phi;
+}
+
 static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     TB_Node* addr = n->inputs[2];
     if (n->inputs[0] != NULL) {
@@ -30,49 +83,9 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     }
 
     // loads based on PHIs may be reduced into data PHIs
-    if (n->inputs[1]->type == TB_PHI) {
-        assert(n->inputs[1]->dt.type == TB_MEMORY && "memory input should be memory");
-
-        TB_Arena* func_arena = p->f->arena;
-        TB_ArenaSavepoint sp = tb_arena_save(func_arena);
-
-        size_t path_count = n->inputs[1]->input_count - 1;
-        TB_Node** paths = tb_arena_alloc(func_arena, path_count * sizeof(TB_Node*));
-
-        // walk each path to find relevant STOREs
-        TB_Node** phi_ins = n->inputs[1]->inputs;
-        FOREACH_N(i, 0, path_count) {
-            TB_Node* head = phi_ins[1 + i];
-            TB_Node* ctrl = head->inputs[0];
-            TB_Node* path = NULL;
-
-            do {
-                if (head->type == TB_STORE && addr == head->inputs[2]) {
-                    path = head->inputs[3];
-                    break;
-                }
-
-                // previous memory effect
-                head = head->inputs[1];
-            } while (head->inputs[0] == ctrl);
-
-            if (path == NULL) {
-                // we have a path with an unknown value... sadge
-                tb_arena_restore(func_arena, sp);
-                return NULL;
-            }
-            paths[i] = path;
-        }
-
-        // convert to PHI
-        TB_Node* phi = tb_alloc_node(f, TB_PHI, n->dt, 1 + path_count, 0);
-        set_input(p, phi, phi_ins[0], 0);
-        FOREACH_N(i, 0, path_count) {
-            set_input(p, phi, paths[i], 1+i);
-        }
-
-        return phi;
-    }
+    /*if (n->inputs[1]->type == TB_PHI) {
+        return data_phi_from_memory_phi(p, f, n->dt, n->inputs[1], addr, NULL);
+    }*/
 
     // if a load is control dependent on a store and it doesn't alias we can move the
     // dependency up a bit.
@@ -129,37 +142,8 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
-// LOCALs can be unlinked here
-static TB_Node* dead_mem(TB_Passes* restrict p, TB_Function* f, TB_Node* mem) {
-    if (single_use(p, mem) && mem->type == TB_STORE && mem->inputs[2]->type == TB_LOCAL) {
-        tb_pass_kill_node(p, mem);
-        return mem->inputs[1];
-    }
-
-    return NULL;
-}
-
 static TB_Node* ideal_end(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
-    // END will perform dead store on local vars
-    bool changes = false;
-    /*TB_Node* mem = n->inputs[1];
-    if (mem->type == TB_PHI) {
-        FOREACH_N(i, 1, mem->input_count) {
-            TB_Node* above = dead_mem(p, f, mem->inputs[i]);
-            if (above) {
-                set_input(p, mem, above, i);
-                changes = true;
-            }
-        }
-    } else {
-        TB_Node* above = dead_mem(p, f, mem);
-        if (above) {
-            set_input(p, n, above, 1);
-            changes = true;
-        }
-    }*/
-
-    return changes ? n : NULL;
+    return NULL;
 }
 
 static TB_Node* ideal_memcpy(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {

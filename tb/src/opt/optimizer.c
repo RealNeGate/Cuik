@@ -162,6 +162,20 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
     return buf;
 }
 
+static TB_Node* mem_user(TB_Passes* restrict p, TB_Node* n, int slot) {
+    for (User* u = find_users(p, n); u; u = u->next) {
+        if (u->slot == slot && is_mem_out_op(u->n)) return u->n;
+    }
+
+    return NULL;
+}
+
+static TB_Node* single_user(TB_Passes* restrict p, TB_Node* n) {
+    User* u = find_users(p, n);
+    assert(u && u->next == NULL);
+    return u->n;
+}
+
 static bool single_use(TB_Passes* restrict p, TB_Node* n) {
     return find_users(p, n)->next == NULL;
 }
@@ -601,11 +615,14 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
 
         // dumb phis
         case TB_PHI: if (flags & TB_PEEPHOLE_PHI) {
-            TB_Node* same = n->inputs[1];
-            FOREACH_N(i, 2, n->input_count) {
-                if (same != n->inputs[i]) return n;
+            TB_Node* same = NULL;
+            FOREACH_N(i, 1, n->input_count) {
+                if (n->inputs[i] == n) continue;
+                if (same && same != n->inputs[i]) return n;
+                same = n->inputs[i];
             }
 
+            assert(same);
             if (same->dt.type == TB_MEMORY) {
                 TB_NodeRegion* r = TB_NODE_GET_EXTRA(n->inputs[0]);
                 if (r->mem_in == n)  r->mem_in = NULL;
@@ -655,7 +672,6 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
         if (n != k) {
             tb_assert(!is_terminator(n), "can't peephole a branch into a new branch");
             subsume_node(p, f, n, k);
-
             n = k;
         }
 
@@ -730,6 +746,13 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 
     worklist_alloc(&p->worklist, f->node_count);
 
+    // generate early doms
+    /*CUIK_TIMED_BLOCK("doms") {
+        size_t block_count = tb_push_postorder(f, &p->worklist);
+        tb_compute_dominators(f, block_count, p->worklist.items);
+        worklist_clear(&p->worklist);
+    }*/
+
     // generate work list (put everything)
     CUIK_TIMED_BLOCK("gen worklist") {
         push_all_nodes(&p->worklist, f->stop_node);
@@ -743,6 +766,14 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     }
 
     return p;
+}
+
+void tb_pass_optimize(TB_Passes* p) {
+    tb_pass_peephole(p, TB_PEEPHOLE_ALL);
+    tb_pass_sroa(p);
+    tb_pass_peephole(p, TB_PEEPHOLE_ALL);
+    tb_pass_mem2reg(p);
+    tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 }
 
 void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {

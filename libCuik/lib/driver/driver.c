@@ -154,13 +154,12 @@ static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
         TB_Passes* p = tb_pass_enter(f, get_ir_arena());
 
         if (args->opt_level >= 1) {
-            tb_pass_peephole(p, TB_PEEPHOLE_ALL);
-            tb_pass_sroa(p);
-            tb_pass_peephole(p, TB_PEEPHOLE_ALL);
+            tb_pass_optimize(p);
         }
 
         // print IR
         if (args->emit_ir) {
+            // tb_function_print(f, tb_default_print_callback, stdout);
             tb_pass_print(p);
         }
 

@@ -1,9 +1,9 @@
 #pragma once
 #include "tb_internal.h"
 
-#define TB_OPTDEBUG_PEEP 1
+#define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
-#define TB_OPTDEBUG_MEM2REG 1
+#define TB_OPTDEBUG_MEM2REG 0
 #define TB_OPTDEBUG_CODEGEN 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
@@ -53,6 +53,8 @@ struct TB_Passes {
     // this is used to do CSE
     NL_HashSet cse_nodes;
 
+    TB_Node* merge_mem;
+
     // debug shit:
     TB_Node* error_n;
 };
@@ -69,7 +71,7 @@ static bool is_block_end(TB_Node* n) {
 }
 
 static bool is_mem_out_op(TB_Node* n) {
-    return n->type == TB_END || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS);
+    return n->type == TB_END || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type == TB_PHI && n->dt.type == TB_MEMORY);
 }
 
 // schedule nodes below any of their pinned dependencies
