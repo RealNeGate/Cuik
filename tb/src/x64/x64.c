@@ -790,8 +790,10 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         case TB_FADD:
         case TB_FSUB:
         case TB_FMUL:
-        case TB_FDIV: {
-            const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV };
+        case TB_FDIV:
+        case TB_FMAX:
+        case TB_FMIN: {
+            const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV, FP_MAX, FP_MIN };
 
             int lhs = input_reg(ctx, n->inputs[1]);
             hint_reg(ctx, dst, lhs);

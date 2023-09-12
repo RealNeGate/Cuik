@@ -92,10 +92,13 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_FSUB: return "fsub";
         case TB_FMUL: return "fmul";
         case TB_FDIV: return "fdiv";
+        case TB_FMAX: return "fmax";
+        case TB_FMIN: return "fmin";
 
         case TB_MULPAIR: return "mulpair";
         case TB_LOAD: return "load";
         case TB_STORE: return "store";
+        case TB_MERGEMEM: return "merge";
 
         case TB_CALL: return "call";
         case TB_SYSCALL: return "syscall";
@@ -141,6 +144,7 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
     }
 }
 
+#if 0
 static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
     if (!nl_hashset_put(visited, n)) {
         return;
@@ -301,12 +305,85 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
         }
     }
 }
+#endif
+
+static void print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
+    if (!nl_hashset_put(visited, n)) {
+        return;
+    }
+
+    bool is_effect = tb_has_effects(n);
+    const char* fillcolor = is_effect ? "lightgrey" : "antiquewhite1";
+    P("  r%p [style=\"filled\"; ordering=in; shape=box; fillcolor=%s; label=\"", n, fillcolor);
+    P("\"];\n");
+
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+        TB_Node* in = n->inputs[i];
+    }
+}
+
+static void print_graph_bb(TB_Function* f, NL_HashSet* visited, TB_PrintCallback callback, void* user_data, TB_Node* restrict bb) {
+    if (!nl_hashset_put(visited, bb)) {
+        return;
+    }
+
+    // walk control edges (aka predecessors)
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
+    if (r->end->type == TB_BRANCH) {
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
+        FOREACH_REVERSE_N(i, 0, br->succ_count) {
+            print_graph_bb(f, visited, callback, user_data, br->succ[i]);
+        }
+    }
+
+    P("  subgraph {\n", bb->gvn);
+    TB_Node* curr = r->end;
+    do {
+        P("    r%p [style=\"filled\"; shape=box; fillcolor=antiquewhite1; label=\"", curr);
+        if (curr->type == TB_END) {
+            P("END");
+        } else {
+            P("EFFECT");
+        }
+        P("\"]\n    r%p -> r%p\n", curr->inputs[0], curr);
+        curr = curr->inputs[0];
+    } while (curr != bb);
+
+    // basic block header
+    P("    r%p [style=\"filled\"; shape=box; fillcolor=antiquewhite1; label=\"%s\"]\n", bb, bb->type == TB_START ? "START" : "REGION");
+    if (bb->type == TB_START) {
+        P("    { rank=min; r%p }\n", bb);
+    } else if (r->end->type == TB_END) {
+        P("    { rank=max; r%p }\n", r->end);
+    }
+    P("  }\n");
+
+    // write predecessor edges
+    FOREACH_N(i, 0, bb->input_count) {
+        TB_Node* pred = bb->inputs[i];
+        if (pred->type == TB_PROJ) {
+            P("  r%p -> r%p\n", pred->inputs[0], bb);
+        } else {
+            P("  r%p -> r%p\n", bb->inputs[i], bb);
+        }
+    }
+
+    // process adjacent nodes
+    curr = r->end;
+    do {
+        FOREACH_N(i, 1, curr->input_count) {
+            P("    r%p -> r%p\n", curr->inputs[i], curr);
+            print_graph_node(f, visited, callback, user_data, curr->inputs[i]);
+        }
+        curr = curr->inputs[0];
+    } while (curr != bb);
+}
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data) {
-    P("digraph %s {\n  overlap = false; rankdir=\"TB\"\n", f->super.name ? f->super.name : "unnamed");
+    P("digraph %s {\n  rankdir=TB\n", f->super.name ? f->super.name : "unnamed");
 
     NL_HashSet visited = nl_hashset_alloc(f->node_count);
-    tb_print_node(f, &visited, callback, user_data, f->stop_node);
+    print_graph_bb(f, &visited, callback, user_data, f->start_node);
     nl_hashset_free(visited);
 
     P("}\n\n");

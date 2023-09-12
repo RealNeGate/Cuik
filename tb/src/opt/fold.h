@@ -104,6 +104,28 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
         }
     }
 
+    // (select.f32 (v43: cmp.lt.f32 ...) (v41: load.f32 ...) (v42: load.f32 ...))
+    if (n->dt.type == TB_FLOAT && src->type == TB_CMP_FLT) {
+        TB_Node* a = src->inputs[1];
+        TB_Node* b = src->inputs[2];
+
+        // (select (lt A B) A B) => (min A B)
+        if (n->inputs[2] == a && n->inputs[3] == b) {
+            TB_Node* new_node = tb_alloc_node(f, TB_FMIN, n->dt, 3, 0);
+            set_input(opt, new_node, a, 1);
+            set_input(opt, new_node, b, 2);
+            return new_node;
+        }
+
+        // (select (lt A B) B A) => (max A B)
+        if (n->inputs[2] == b && n->inputs[3] == a) {
+            TB_Node* new_node = tb_alloc_node(f, TB_FMAX, n->dt, 3, 0);
+            set_input(opt, new_node, a, 1);
+            set_input(opt, new_node, b, 2);
+            return new_node;
+        }
+    }
+
     return NULL;
 }
 

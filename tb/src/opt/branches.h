@@ -90,8 +90,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
         int phi_count = 0;
         for (User* use = find_users(opt, region); use; use = use->next) {
             if (use->n->type == TB_PHI) {
-                if (use->n->dt.type == TB_MEMORY) return NULL;
-                phi_count++;
+                if (use->n->dt.type != TB_MEMORY) phi_count++;
             }
             if (phi_count > 1) return NULL;
         }

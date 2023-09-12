@@ -82,6 +82,21 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         }
     }
 
+    // if LOAD has already been safely accessed we're allowed to fold them
+    if (n->inputs[0] != NULL && n->inputs[0]->type == TB_REGION && n->inputs[0]->input_count == 1) {
+        TB_Node* parent_bb = get_block_begin(n->inputs[0]->inputs[0]);
+
+        for (User* u = find_users(p, parent_bb); u; u = u->next) {
+            TB_Node* use = u->n;
+            if (use != n && use->type == TB_LOAD && use->dt.raw == n->dt.raw && use->inputs[2] == addr) {
+                tb_pass_mark_users(p, get_block_begin(n->inputs[0]));
+                return use;
+            }
+        }
+    }
+
+    return NULL;
+
     // loads based on PHIs may be reduced into data PHIs
     /*if (n->inputs[1]->type == TB_PHI) {
         return data_phi_from_memory_phi(p, f, n->dt, n->inputs[1], addr, NULL);
@@ -108,7 +123,6 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 
     set_input(p, n, n->inputs[1]->inputs[1], 1);
     return n;*/
-    return NULL;
 }
 
 static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
