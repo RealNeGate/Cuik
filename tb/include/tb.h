@@ -189,7 +189,7 @@ typedef union TB_DataType {
     };
     uint32_t raw;
 } TB_DataType;
-_Static_assert(sizeof(TB_DataType) == 4, "im expecting this to be a uint32_t");
+static_assert(sizeof(TB_DataType) == 4, "im expecting this to be a uint32_t");
 
 // classify data types
 #define TB_IS_VOID_TYPE(x)     ((x).type == TB_INT && (x).data == 0)
@@ -267,9 +267,9 @@ typedef enum TB_NodeTypeEnum {
     //   debugbreak will trap in a continuable manner.
     TB_DEBUGBREAK,  // (Control, Memory) -> (Control)
     //   trap will not be continuable but will stop execution.
-    TB_TRAP,        // (Control, Memory) -> ()
+    TB_TRAP,        // (Control) -> (Control)
     //   unreachable means it won't trap or be continuable.
-    TB_UNREACHABLE, // (Control, Memory) -> ()
+    TB_UNREACHABLE, // (Control) -> (Control)
 
     ////////////////////////////////
     // CONTROL + MEMORY
@@ -1134,9 +1134,9 @@ TB_API TB_Node* tb_inst_cmp_fge(TB_Function* f, TB_Node* a, TB_Node* b);
 
 // General intrinsics
 TB_API TB_Node* tb_inst_va_start(TB_Function* f, TB_Node* a);
+TB_API TB_Node* tb_inst_cycle_counter(TB_Function* f);
 
 // x86 Intrinsics
-TB_API TB_Node* tb_inst_x86_rdtsc(TB_Function* f);
 TB_API TB_Node* tb_inst_x86_ldmxcsr(TB_Function* f, TB_Node* a);
 TB_API TB_Node* tb_inst_x86_stmxcsr(TB_Function* f);
 TB_API TB_Node* tb_inst_x86_sqrt(TB_Function* f, TB_Node* a);
@@ -1192,7 +1192,10 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 //     data flow analysis possible on the code and allows to codegen
 //     to place variables into registers.
 //
+//   SROA: splits LOCALs into multiple to allow for more dataflow
+//     analysis later on.
 TB_API void tb_pass_peephole(TB_Passes* opt, TB_PeepholeFlags flags);
+TB_API void tb_pass_sroa(TB_Passes* opt);
 TB_API bool tb_pass_mem2reg(TB_Passes* opt);
 
 TB_API void tb_pass_schedule(TB_Passes* opt);
@@ -1200,9 +1203,6 @@ TB_API void tb_pass_schedule(TB_Passes* opt);
 // analysis
 //   print: prints IR in a flattened text form.
 TB_API bool tb_pass_print(TB_Passes* opt);
-
-// serialization
-TB_API void tb_pass_save(TB_Passes* opt, FILE* fp);
 
 // codegen
 TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, bool emit_asm);

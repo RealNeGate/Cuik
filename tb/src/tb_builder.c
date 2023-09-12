@@ -230,7 +230,10 @@ void tb_inst_unreachable(TB_Function* f) {
 
     TB_Node* bb = tb_get_parent_region(f->active_control_node);
     TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end = n;
-    f->active_control_node = NULL;
+    f->active_control_node = n;
+
+    // return afterwards
+    tb_inst_ret(f, 0, NULL);
 }
 
 void tb_inst_debugbreak(TB_Function* f) {
@@ -242,8 +245,13 @@ void tb_inst_debugbreak(TB_Function* f) {
 void tb_inst_trap(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_VOID, 1, 0);
     n->inputs[0] = f->active_control_node;
-    TB_NODE_GET_EXTRA_T(tb_get_parent_region(f->active_control_node), TB_NodeRegion)->end = n;
-    f->active_control_node = NULL;
+
+    TB_Node* bb = tb_get_parent_region(f->active_control_node);
+    TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end = n;
+    f->active_control_node = n;
+
+    // return afterwards
+    tb_inst_ret(f, 0, NULL);
 }
 
 TB_Node* tb_inst_poison(TB_Function* f) {
@@ -306,7 +314,7 @@ void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, T
     assert(TB_IS_POINTER_TYPE(dst->dt));
     assert(TB_IS_INTEGER_TYPE(val->dt) && val->dt.data == 8);
 
-    TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_CONTROL, 5, sizeof(TB_NodeMemAccess));
+    TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
     n->inputs[0] = f->active_control_node;
     n->inputs[1] = append_mem(f, n);
     n->inputs[2] = dst;
@@ -319,7 +327,7 @@ void tb_inst_memcpy(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, T
     assert(TB_IS_POINTER_TYPE(dst->dt));
     assert(TB_IS_POINTER_TYPE(val->dt));
 
-    TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_CONTROL, 5, sizeof(TB_NodeMemAccess));
+    TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
     n->inputs[0] = f->active_control_node;
     n->inputs[1] = append_mem(f, n);
     n->inputs[2] = dst;
@@ -857,7 +865,7 @@ static void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
     size_t old_count = n->input_count;
     TB_Node** new_inputs = alloc_from_node_arena(f, (old_count + 1) * sizeof(TB_Node*));
     if (n->inputs != NULL)
-      memcpy(new_inputs, n->inputs, old_count * sizeof(TB_Node*));
+        memcpy(new_inputs, n->inputs, old_count * sizeof(TB_Node*));
     new_inputs[old_count] = in;
 
     n->inputs = new_inputs;

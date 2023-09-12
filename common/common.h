@@ -28,13 +28,14 @@
 #endif
 #endif
 
-#if defined(__amd64__) || defined(_M_AMD64)
+#if defined(__amd64) || defined(__amd64__) || defined(_M_AMD64) || defined(__x86_64__) || defined(__x86_64)
 #define CUIK__IS_X64 1
 #elif defined(__aarch64__)
 #define CUIK__IS_AARCH64 1
 #endif
 
-#if defined(__CUIK__) || !defined(__amd64__) || !defined(_M_AMD64)
+// Cuik doesn't have SIMD intrinsics yet... sadge
+#if defined(__CUIK__)
 #define USE_INTRIN 0
 #else
 #define USE_INTRIN 1

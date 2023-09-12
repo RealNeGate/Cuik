@@ -46,7 +46,7 @@ static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const ch
     } else if (strcmp(name, "_mm_getcsr") == 0) {
         return tb_inst_x86_stmxcsr(func);
     } else if (strcmp(name, "__rdtsc") == 0) {
-        return tb_inst_x86_rdtsc(func);
+        return tb_inst_cycle_counter(func);
     } else if (strcmp(name, "__readgsqword") == 0) {
         // TODO(NeGate): implement readgs/writegs with all the type variants
         return tb_inst_uint(func, TB_TYPE_I16, 0);

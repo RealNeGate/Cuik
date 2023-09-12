@@ -1,6 +1,8 @@
 #include "../tb_internal.h"
 #include <ctype.h>
 
+#pragma comment(lib, "onecore.lib")
+
 size_t get_large_pages(void) {
     static bool init;
     static size_t large_page_size;

@@ -4,19 +4,15 @@
 ////////////////////////////////
 // Early scheduling
 ////////////////////////////////
-// schedule nodes below any of their pinned dependencies
-static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_START && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ || n->type == TB_LOCAL;
-}
-
-static bool is_memory_writer(TB_Node* n) {
-    return (n->type >= TB_CALL && n->type == TB_SYSCALL) && (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS);
-}
-
 static void schedule_early(TB_Passes* passes, TB_Node* n) {
     // already visited
     if (worklist_test_n_set(&passes->worklist, n)) {
         return;
+    }
+
+    // track leaf nodes
+    if (n->input_count <= 2) {
+        dyn_array_put(passes->worklist.items, n);
     }
 
     // schedule inputs first
@@ -52,34 +48,16 @@ static void schedule_early(TB_Passes* passes, TB_Node* n) {
 ////////////////////////////////
 // schedule nodes such that they appear the least common
 // ancestor to all their users
-static TB_Node* walk_up(TB_Node* a, TB_Node* b) {
-    // if a is deeper, line it up with b
-    int bdom = dom_depth(b);
-    while (a->input_count > 0) {
-        TB_Node* aa = tb_get_parent_region(a);
-        if (dom_depth(aa) >= bdom) {
-            break;
-        }
-
-        a = idom(aa);
-    }
-
-    return a;
-}
-
 static TB_Node* find_lca(TB_Node* a, TB_Node* b) {
     if (a == NULL) return b;
 
     // line both up
-    a = walk_up(a, b);
-    b = walk_up(b, a);
+    while (dom_depth(a) > dom_depth(b)) a = idom(a);
+    while (dom_depth(b) > dom_depth(a)) b = idom(b);
 
     while (a != b) {
-        a = idom(a);
-        if (a == NULL) return b;
-
         b = idom(b);
-        if (b == NULL) return a;
+        a = idom(a);
     }
 
     return a;
@@ -113,7 +91,7 @@ static void schedule_late(TB_Passes* passes, TB_Node* n) {
                 tb_panic("phi has parent with mismatched predecessors");
             }
 
-            ptrdiff_t j = 0;
+            ptrdiff_t j = 1;
             for (; j < y->input_count; j++) {
                 if (y->inputs[j] == n) {
                     break;
@@ -125,6 +103,10 @@ static void schedule_late(TB_Passes* passes, TB_Node* n) {
         }
 
         lca = find_lca(lca, use_block);
+    }
+
+    if (passes->f->start_node == lca) {
+        lca = passes->f->params[0];
     }
 
     // tb_assert(lca, "missing least common ancestor");
@@ -142,7 +124,6 @@ static void postorder_all_nodes(NL_HashSet* visited, DynArray(TB_Node*)* worklis
         postorder_all_nodes(visited, worklist, n->inputs[i]);
     }
 
-    dyn_array_put(*worklist, n);
 }
 
 void tb_pass_schedule(TB_Passes* p) {
@@ -157,8 +138,8 @@ void tb_pass_schedule(TB_Passes* p) {
         CUIK_TIMED_BLOCK("dominators") {
             worklist_clear(ws);
 
-            size_t block_count = tb_push_postorder(p->f, &p->worklist);
-            TB_Node** blocks   = &p->worklist.items[0];
+            size_t block_count = tb_push_postorder(p->f, ws);
+            TB_Node** blocks   = &ws->items[0];
             tb_compute_dominators(p->f, block_count, blocks);
         }
 
@@ -170,6 +151,12 @@ void tb_pass_schedule(TB_Passes* p) {
         // move nodes closer to their usage site
         CUIK_TIMED_BLOCK("late schedule") {
             worklist_clear_visited(ws);
+
+            // schedule late on leaves
+            FOREACH_N(i, 0, dyn_array_length(ws->items)) {
+                schedule_late(p, ws->items[i]);
+            }
+
             schedule_late(p, p->f->start_node);
         }
     }

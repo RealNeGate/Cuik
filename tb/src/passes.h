@@ -1,9 +1,9 @@
 #pragma once
 #include "tb_internal.h"
 
-#define TB_OPTDEBUG_PEEP 0
+#define TB_OPTDEBUG_PEEP 1
 #define TB_OPTDEBUG_LOOP 0
-#define TB_OPTDEBUG_MEM2REG 0
+#define TB_OPTDEBUG_MEM2REG 1
 #define TB_OPTDEBUG_CODEGEN 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
@@ -57,16 +57,33 @@ struct TB_Passes {
     TB_Node* error_n;
 };
 
-////////////////////////////////
-// CFG analysis
-////////////////////////////////
 // it's either START, REGION or control node with CONTROL PROJ predecessor
 static bool is_block_begin(TB_Node* n) {
     // regions also have a CONTROL PROJ so we
     // don't need to check them explicitly.
-    return n->type == TB_START || (n->inputs[0]->type == TB_PROJ || n->inputs[0]->dt.type == TB_CONTROL);
+    return n->type == TB_START || (n->inputs[0]->type == TB_PROJ && n->inputs[0]->dt.type == TB_CONTROL);
 }
 
+static bool is_block_end(TB_Node* n) {
+    return n->type == TB_BRANCH;
+}
+
+static bool is_mem_out_op(TB_Node* n) {
+    return n->type == TB_END || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS);
+}
+
+// schedule nodes below any of their pinned dependencies
+static bool is_pinned(TB_Node* n) {
+    return (n->type >= TB_START && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ || n->type == TB_LOCAL;
+}
+
+static bool is_mem_in_op(TB_Node* n) {
+    return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
+}
+
+////////////////////////////////
+// CFG analysis
+////////////////////////////////
 static TB_Node* get_block_begin(TB_Node* n) {
     while (!is_block_begin(n)) {
         n = n->inputs[0];

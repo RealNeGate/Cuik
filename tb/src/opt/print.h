@@ -96,6 +96,18 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         } else {
             printf("sym%p", sym);
         }
+    } else if (n->type == TB_ZERO_EXT) {
+        printf("(zxt.");
+        print_type(n->dt);
+        printf(" ");
+        print_ref_to_node(ctx, n->inputs[1], false);
+        printf(")");
+    } else if (n->type == TB_SIGN_EXT) {
+        printf("(sxt.");
+        print_type(n->dt);
+        printf(" ");
+        print_ref_to_node(ctx, n->inputs[1], false);
+        printf(")");
     } else if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
@@ -109,7 +121,20 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
     }
 }
 
+static void print_location(TB_Node* n) {
+    dyn_array_for(i, n->attribs) {
+        TB_Attrib* a = &n->attribs[i];
+
+        // check if it's changed
+        if (a->tag == TB_ATTRIB_LOCATION) {
+            printf("  # location %s:%d\n", a->loc.file->path, a->loc.line);
+            return;
+        }
+    }
+}
+
 static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
+    assert(bb->type == TB_START || bb->type == TB_REGION);
     print_ref_to_node(ctx, bb, true);
     printf(":");
 
@@ -127,35 +152,31 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
     }
     printf("\n");
 
-    /*dyn_array_for(i, n->attribs) {
-        TB_Attrib* a = &n->attribs[i];
-
-        // check if it's changed
-        if (a->tag == TB_ATTRIB_LOCATION) {
-            printf("  # location %s:%d\n", a->loc.file->path, a->loc.line);
-        }
-    }*/
-
     TB_Node* end = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->end;
     Worklist* ws = &ctx->opt->worklist;
+
     sched_walk(ctx->opt, ws, NULL, bb, end);
+    assert(ws->items[ctx->block_count] == bb);
 
-    TB_Node* top = ws->items[ctx->block_count];
-    assert(top->type == TB_START || top->type == TB_REGION);
-
+    TB_Node* prev_effect = NULL;
     FOREACH_N(i, ctx->block_count + 1, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];
 
         // skip these
         if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST ||
             n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
+            n->type == TB_SIGN_EXT || n->type == TB_ZERO_EXT ||
             n->type == TB_PROJ) {
             continue;
         }
 
+        if (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY) {
+            print_location(n);
+        }
+
         switch (n->type) {
-            case TB_DEBUGBREAK: printf("  debugbreak\n"); break;
-            case TB_UNREACHABLE: printf("  unreachable\n"); break;
+            case TB_DEBUGBREAK: printf("  debugbreak"); break;
+            case TB_UNREACHABLE: printf("  unreachable"); break;
 
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);

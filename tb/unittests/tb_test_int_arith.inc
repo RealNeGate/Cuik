@@ -14,7 +14,7 @@
                                                                      \
     EXIT_WITH_(sum);                                                 \
                                                                      \
-    TB_TEST_MODULE_END_(test_##name_, (res_), 0);                    \
+    TB_TEST_MODULE_END_(test_##prefix_##_##inst_op_, (res_), 0);     \
     return status;                                                   \
   }
 

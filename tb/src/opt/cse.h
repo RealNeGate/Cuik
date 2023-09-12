@@ -56,11 +56,14 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_FSUB:
         case TB_FMUL:
         case TB_FDIV:
+        case TB_NEG:
+        case TB_NOT:
         case TB_END:
         case TB_PROJ:
         case TB_PHI:
         case TB_VA_START:
         case TB_POISON:
+        case TB_SELECT:
         return 0;
 
         case TB_START:
@@ -215,6 +218,9 @@ bool cse_compare(void* a, void* b) {
         case TB_FSUB:
         case TB_FMUL:
         case TB_FDIV:
+        return true;
+
+        case TB_PHI:
         return true;
 
         default: return false;

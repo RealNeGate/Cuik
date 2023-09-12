@@ -604,7 +604,7 @@ void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, 
     TB_Module* m = func_out->parent->super.module;
     TB_SymbolPatch* p = TB_ARENA_ALLOC(get_permanent_arena(m), TB_SymbolPatch);
 
-    // doesn't need to be atomic
+    // function local, no need to synchronize
     *p = (TB_SymbolPatch){ .prev = func_out->last_patch, .source = func_out->parent, .target = target, .pos = pos };
     func_out->last_patch = p;
     func_out->patch_count += 1;

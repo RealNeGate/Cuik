@@ -1,7 +1,7 @@
 #ifndef TB_TEST_UTIL_INC
 #define TB_TEST_UTIL_INC
 
-#ifdef __GCC__
+#if defined(__GCC__) || defined(__clang__)
 #  pragma GCC diagnostic ignored "-Wunknown-pragmas"
 #  pragma GCC diagnostic ignored "-Wunused-function"
 #endif
@@ -95,25 +95,21 @@ static void tb_test_link_library(TB_Linker  *linker,
 
 #if TB_TEST_IS_WINDOWS_
 
-//  TODO
-//  Call ExitProcess
-#  define EXIT_WITH_(node_status_)                                \
-    do {                                                          \
-      TB_PrototypeParam param0 = { .dt   = TB_TYPE_I32,           \
-                                   .name = "uExitCode" };         \
-                                                                  \
-      TB_Global *g_ExitProcess = tb_global_create(                \
-          module, -1, "ExitProcess", NULL, TB_LINKAGE_PRIVATE);   \
-                                                                  \
-      TB_FunctionPrototype *fp_ExitProcess = tb_prototype_create( \
-          module, TB_STDCALL, 1, &param0, 0, NULL, 0);            \
-                                                                  \
-      TB_Node *addr_ExitProcess = tb_inst_get_symbol_address(     \
-          f_main, (TB_Symbol *) g_ExitProcess);                   \
-                                                                  \
-      tb_inst_call(f_main, fp_ExitProcess, addr_ExitProcess, 1,   \
-                   &(node_status_));                              \
-      tb_inst_ret(f_main, 0, NULL);                               \
+#  define EXIT_WITH_(node_status_)                                    \
+    do {                                                              \
+      TB_PrototypeParam     param0         = { .dt   = TB_TYPE_I32,   \
+                                               .name = "uExitCode" }; \
+      TB_FunctionPrototype *fp_ExitProcess = tb_prototype_create(     \
+          module, TB_STDCALL, 1, &param0, 0, NULL, 0);                \
+                                                                      \
+      TB_Node *addr_ExitProcess = tb_inst_get_symbol_address(         \
+          f_main,                                                     \
+          (TB_Symbol *) tb_extern_create(module, -1, "ExitProcess",   \
+                                         TB_EXTERNAL_SO_LOCAL));      \
+                                                                      \
+      tb_inst_call(f_main, fp_ExitProcess, addr_ExitProcess, 1,       \
+                   &(node_status_));                                  \
+      tb_inst_ret(f_main, 0, NULL);                                   \
     } while (0)
 
 #else
@@ -152,57 +148,59 @@ static void tb_test_link_library(TB_Linker  *linker,
   if (f_main == NULL)                                         \
     ERROR("tb_function_create failed.");
 
-#define TB_TEST_MODULE_END_(name_, result_, print_asm_)        \
-  {                                                            \
-    TB_Function *f = tb_first_function(module);                \
-    while (f != NULL) {                                        \
-      TB_Passes *passes = tb_pass_enter(f, NULL);              \
-                                                               \
-      if (passes == NULL)                                      \
-        ERROR("tb_pass_enter failed.");                        \
-                                                               \
-      TB_FunctionOutput *asm_out = tb_pass_codegen(passes, 1); \
-                                                               \
-      if ((print_asm_) && asm_out != NULL) {                   \
-        printf("\n");                                          \
-        tb_output_print_asm(asm_out, stdout);                  \
-      }                                                        \
-                                                               \
-      tb_pass_exit(passes);                                    \
-                                                               \
-      f = tb_next_function(f);                                 \
-    }                                                          \
-  }                                                            \
-                                                               \
-  linker = tb_linker_create(tb_test_exe_type, tb_test_arch);   \
-                                                               \
-  if (linker == NULL)                                          \
-    ERROR("tb_linker_create failed.");                         \
-                                                               \
-  tb_linker_append_module(linker, module);                     \
-                                                               \
-  tb_linker_set_entrypoint(linker, "main");                    \
-                                                               \
-  if (TB_TEST_IS_WINDOWS_)                                     \
-    tb_test_link_library(linker, "kernel32.lib");              \
-                                                               \
-  TB_ExportBuffer buf = tb_linker_export(linker);              \
-  tb_export_buffer_to_file(buf, "bin/" #name_);                \
-  tb_export_buffer_free(buf);                                  \
-                                                               \
-  if (!TB_TEST_IS_WINDOWS_) {                                  \
-    (void) system("chmod a+x bin/" #name_);                    \
-    ret = WEXITSTATUS(system("./bin/" #name_));                \
-  } else                                                       \
-    ret = WEXITSTATUS(system("start bin\\" #name_));           \
-                                                               \
-  if (ret != (result_))                                        \
-    status = 0;                                                \
-                                                               \
-_final:                                                        \
-  if (module != NULL)                                          \
-    tb_module_destroy(module);                                 \
-  if (linker != NULL)                                          \
+#define TB_TEST_MODULE_END_(name_, result_, print_asm_)          \
+  {                                                              \
+    TB_Function *f = tb_first_function(module);                  \
+    while (f != NULL) {                                          \
+      TB_Passes *passes = tb_pass_enter(f, NULL);                \
+                                                                 \
+      if (passes == NULL)                                        \
+        ERROR("tb_pass_enter failed.");                          \
+                                                                 \
+      TB_FunctionOutput *asm_out = tb_pass_codegen(passes, 1);   \
+                                                                 \
+      if ((print_asm_) && asm_out != NULL) {                     \
+        printf("\n");                                            \
+        tb_output_print_asm(asm_out, stdout);                    \
+      }                                                          \
+                                                                 \
+      tb_pass_exit(passes);                                      \
+                                                                 \
+      f = tb_next_function(f);                                   \
+    }                                                            \
+  }                                                              \
+                                                                 \
+  linker = tb_linker_create(tb_test_exe_type, tb_test_arch);     \
+                                                                 \
+  if (linker == NULL)                                            \
+    ERROR("tb_linker_create failed.");                           \
+                                                                 \
+  tb_linker_append_module(linker, module);                       \
+                                                                 \
+  tb_linker_set_entrypoint(linker, "main");                      \
+                                                                 \
+  if (TB_TEST_IS_WINDOWS_)                                       \
+    tb_test_link_library(linker, "kernel32.lib");                \
+                                                                 \
+  TB_ExportBuffer buf = tb_linker_export(linker);                \
+  tb_export_buffer_to_file(buf, "bin/" #name_);                  \
+  tb_export_buffer_free(buf);                                    \
+                                                                 \
+  if (!TB_TEST_IS_WINDOWS_) {                                    \
+    (void) system("chmod a+x bin/" #name_);                      \
+    ret = WEXITSTATUS(system("./bin/" #name_));                  \
+  } else                                                         \
+    ret = WEXITSTATUS(system("start bin\\" #name_));             \
+                                                                 \
+  if (ret != (result_)) {                                        \
+    printf("Got %d, expected %d\n", (int) ret, (int) (result_)); \
+    status = 0;                                                  \
+  }                                                              \
+                                                                 \
+_final:                                                          \
+  if (module != NULL)                                            \
+    tb_module_destroy(module);                                   \
+  if (linker != NULL)                                            \
     tb_linker_destroy(linker);
 
 #endif

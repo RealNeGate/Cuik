@@ -202,6 +202,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
     int64_t offset = 0;
     if (n->type == TB_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+        assert(sym->tag != 0);
 
         Inst* i = alloc_inst(LEA, TB_TYPE_PTR, 1, 1, 0);
         i->flags = INST_GLOBAL;
@@ -210,6 +211,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
             i->operands[0] = dst;
             i->operands[1] = RSP;
         } else {
+            i->type = store_op;
             i->mem_slot = 0;
             i->operands[0] = RSP;
             i->operands[1] = src;
@@ -393,7 +395,10 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static bool should_rematerialize(TB_Node* n) {
-    return n->type == TB_LOCAL || n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS || (n->type == TB_PROJ && n->inputs[0]->type == TB_START);
+    return (n->type == TB_PROJ && n->inputs[0]->type == TB_START) ||
+        n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST ||
+        n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS ||
+        n->type == TB_LOCAL || n->type == TB_SYMBOL;
 }
 
 static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
@@ -583,17 +588,27 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int lhs = input_reg(ctx, n->inputs[1]);
             hint_reg(ctx, dst, lhs);
 
+            // promote any <16bit multiplies up a bit:
+            //   should be fair game to compute the multiply
+            //   with garbage bits at the top as long as we
+            //   don't read them.
+            TB_DataType dt = n->dt;
+            assert(dt.type == TB_INT);
+            if (dt.data < 16) {
+                dt.data = 16;
+            }
+
             int32_t x;
             if (try_for_imm32(ctx, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
 
                 SUBMIT(inst_move(n->dt, dst, lhs));
-                SUBMIT(inst_op_rri(IMUL, n->dt, dst, dst, x));
+                SUBMIT(inst_op_rri(IMUL, dt, dst, dst, x));
             } else {
                 int rhs = input_reg(ctx, n->inputs[2]);
 
                 SUBMIT(inst_move(n->dt, dst, lhs));
-                SUBMIT(inst_op_rrr(IMUL, n->dt, dst, dst, rhs));
+                SUBMIT(inst_op_rrr(IMUL, dt, dst, dst, rhs));
             }
             break;
         }
@@ -884,17 +899,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 } else if (bits_in_type <= 64) op = MOV;
                 else tb_todo();
 
-                /*if (src->type == TB_LOAD && nl_map_get_checked(ctx->uses, src) == 1) {
-                    use(ctx, src);
-
-                    Inst inst = isel_load(ctx, src, dst);
-                    inst.type = op;
-                    inst.data_type = legalize(dt);
-                    SUBMIT(inst);
-                } else {*/
                 int val = input_reg(ctx, src);
                 SUBMIT(inst_op_rr(op, dt, dst, val));
-                // }
             }
             break;
         }
@@ -930,8 +936,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             // parameter passing is separate from eval from regalloc reasons
             size_t in_count = 0;
-            RegIndex ins[16];
-            RegIndex param_srcs[16];
+            RegIndex ins[64];
+            RegIndex param_srcs[64];
 
             TB_FunctionPrototype* proto = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto;
             int vararg_cutoff = proto && proto->has_varargs ? proto->param_count : n->input_count-2;
@@ -979,22 +985,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 }
             }
 
-            // compute the target (unless it's a symbol) before the
-            // registers all need to be forcibly shuffled
-            TB_Node* target = n->inputs[2];
-            bool static_call = n->type == TB_CALL && target->type == TB_SYMBOL;
-
-            int target_val = RSP; // placeholder really
-            if (!static_call) {
-                target_val = input_reg(ctx, target);
-
-                //  FIXME
-                //  Ad hok fix for SYSCALL
-                //
-                if (type == TB_SYSCALL)
-                  SUBMIT(inst_move(n->inputs[2]->dt, RAX, target_val));
-            }
-
             // perform last minute copies (this avoids keeping parameter registers alive for too long)
             FOREACH_N(i, 0, in_count) {
                 TB_DataType dt = n->inputs[3 + i]->dt;
@@ -1011,11 +1001,27 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 }
             }
 
-            // the number of float parameters is written into AL
-            if (is_sysv && type != TB_SYSCALL) {
-                SUBMIT(inst_op_imm(MOV, TB_TYPE_I8, RAX, xmms_used));
+            // compute the target (unless it's a symbol) before the
+            // registers all need to be forcibly shuffled
+            TB_Node* target = n->inputs[2];
+            bool static_call = n->type == TB_CALL && target->type == TB_SYMBOL;
+
+            int target_val = RSP; // placeholder really
+            if (!static_call) {
+                target_val = input_reg(ctx, target);
+            }
+
+            if (type == TB_SYSCALL) {
                 ins[in_count++] = FIRST_GPR + RAX;
-                caller_saved_gprs &= ~(1ull << RAX);
+                hint_reg(ctx, target_val, RAX);
+                SUBMIT(inst_move(target->dt, RAX, target_val));
+            } else {
+                // the number of float parameters is written into AL
+                if (is_sysv) {
+                    SUBMIT(inst_op_imm(MOV, TB_TYPE_I8, RAX, xmms_used));
+                    ins[in_count++] = FIRST_GPR + RAX;
+                    caller_saved_gprs &= ~(1ull << RAX);
+                }
             }
 
             bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_dt) || ret_dt.width;
@@ -1709,7 +1715,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
                 i += resolve_interval(ctx, inst, i, &lhs);
 
                 ternary = (i < in_base + inst->in_count) || (inst->flags & (INST_IMM | INST_ABS));
-                if (ternary && inst->type == IMUL && (inst->flags & INST_IMM) && inst->dt != TB_X86_TYPE_BYTE) {
+                if (ternary && inst->type == IMUL && (inst->flags & INST_IMM)) {
                     // there's a special case for ternary IMUL r64, r/m64, imm32
                     if (e->emit_asm) {
                         EMITA(e, "  imul ");
@@ -1902,6 +1908,7 @@ static size_t emit_call_patches(TB_Module* restrict m) {
                 if (&patch->source->super == patch->target || (!tb_symbol_is_comdat(&patch->source->super) && !tb_symbol_is_comdat(patch->target))) {
                     TB_FunctionOutput* out_f = patch->source->output;
                     assert(out_f && "Patch cannot be applied to function with no compiled output");
+                    assert(patch->pos < out_f->code_size);
 
                     // x64 thinks of relative addresses as being relative
                     // to the end of the instruction or in this case just

@@ -66,9 +66,9 @@ static void filtered_append(Cuik_DriverArgs* args, const char* path, bool recurs
         }
         FindClose(dir);
     }
-
     #else
-    #error "filtered_append isn't implemented on this platform yet"
+    fprintf(stderr, "todo: glob search not implemented on this platform yet!\n");
+    exit(1);
     #endif
 }
 

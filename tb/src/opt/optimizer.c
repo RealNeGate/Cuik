@@ -162,6 +162,10 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
     return buf;
 }
 
+static bool single_use(TB_Passes* restrict p, TB_Node* n) {
+    return find_users(p, n)->next == NULL;
+}
+
 static bool is_same_align(TB_Node* a, TB_Node* b) {
     TB_NodeMemAccess* aa = TB_NODE_GET_EXTRA(a);
     TB_NodeMemAccess* bb = TB_NODE_GET_EXTRA(b);
@@ -415,7 +419,6 @@ static void push_all_nodes(Worklist* restrict ws, TB_Node* n) {
         dyn_array_put(ws->items, n);
 
         FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-            tb_assert(n->inputs[i], "empty input... in this economy?");
             push_all_nodes(ws, n->inputs[i]);
         }
     }
@@ -450,7 +453,7 @@ void print_node_sexpr(TB_Node* n, int depth) {
             printf("sym%p", sym);
         }
     } else if (depth >= 1) {
-        printf("(%s", tb_node_get_name(n));
+        printf("(v%zu: %s", n->gvn, tb_node_get_name(n));
         cool_print_type(n);
         printf(" ...)");
     } else {
@@ -517,6 +520,9 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
 
         case TB_STORE:
         return (flags & TB_PEEPHOLE_MEMORY) ? ideal_store(p, f, n) : NULL;
+
+        case TB_END:
+        return (flags & TB_PEEPHOLE_MEMORY) ? ideal_end(p, f, n) : NULL;
 
         case TB_MEMCPY:
         return ideal_memcpy(p, f, n);
@@ -642,7 +648,8 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     while (k != NULL) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
 
-        tb_pass_mark_users(p, k);
+        // only the n users actually changed
+        tb_pass_mark_users(p, n);
 
         // transfer users from n -> k
         if (n != k) {
@@ -661,6 +668,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     k = identity(p, f, n, flags);
     if (n != k) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
+        tb_pass_mark_users(p, n);
         subsume_node(p, f, n, k);
         return k;
     }
@@ -669,6 +677,8 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
     if (k && (k != n)) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[31mCSE\x1b[0m"));
+
+        tb_pass_mark_users(p, n);
         subsume_node(p, f, n, k);
         return k;
     }
@@ -689,7 +699,6 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
         use = next;
     }
 
-    tb_pass_mark_users(p, new_n);
     tb_pass_kill_node(p, n);
 }
 
