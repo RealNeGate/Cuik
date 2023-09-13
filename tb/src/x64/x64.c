@@ -323,7 +323,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
 
 static Inst* isel_addr2(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int src) {
     // compute base
-    if (ctx->values[n->gvn].uses >= 2 || ctx->values[n->gvn].vreg >= 0) {
+    if (n->type == TB_ARRAY_ACCESS && (ctx->values[n->gvn].uses >= 2 || ctx->values[n->gvn].vreg >= 0)) {
         int base = input_reg(ctx, n);
         if (store_op < 0) {
             return inst_move(TB_TYPE_PTR, dst, base);
