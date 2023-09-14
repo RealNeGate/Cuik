@@ -693,6 +693,24 @@ static TB_LinkerSymbol* pe_resolve_sym(TB_Linker* l, TB_LinkerSymbol* sym, TB_Sl
     return sym;
 }
 
+static void resolve_external(TB_Linker* l, TB_Module* m, TB_External* ext, size_t mod_index) {
+    TB_Slice name = { strlen(ext->super.name), (uint8_t*) ext->super.name };
+    TB_LinkerSymbol* sym = tb__find_symbol(&l->symtab, name);
+    if (sym == NULL) {
+        tb__unresolved_symbol(l, name)->reloc = mod_index;
+        return;
+    }
+
+    if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
+        ext->super.address = tb__find_or_create_import(l, sym);
+    } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
+        TB_LinkerSymbol* isym = sym->thunk.import_sym;
+        ext->super.address = tb__find_or_create_import(l, isym);
+    } else {
+        ext->super.address = (void*) ((uintptr_t) sym | 1);
+    }
+}
+
 // returns the two new section pieces for the IAT and ILT
 static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* imp_dir, PE_ImageDataDirectory* iat_dir) {
     CUIK_TIMED_BLOCK("generate thunks from TB modules") {
@@ -702,19 +720,11 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
 
             // Find all the imports & place them into the right buckets
             TB_FOR_EXTERNALS(ext, m) {
-                TB_Slice name = { strlen(ext->super.name), (uint8_t*) ext->super.name };
-                TB_LinkerSymbol* sym = tb__find_symbol(&l->symtab, name);
-                if (sym == NULL) {
-                    tb__unresolved_symbol(l, name)->reloc = j;
-                    continue;
-                }
+                resolve_external(l, m, ext, j);
+            }
 
-                if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
-                    ext->super.address = tb__find_or_create_import(l, sym);
-                } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
-                    TB_LinkerSymbol* isym = sym->thunk.import_sym;
-                    ext->super.address = tb__find_or_create_import(l, isym);
-                }
+            if (m->chkstk_extern) {
+                resolve_external(l, m, (TB_External*) m->chkstk_extern, j);
             }
         }
     }

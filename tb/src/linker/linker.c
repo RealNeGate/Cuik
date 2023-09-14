@@ -572,10 +572,16 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
             if (patch->target->tag == TB_SYMBOL_EXTERNAL) {
                 size_t actual_pos = text_piece_rva + out_f->code_pos + patch->pos + 4;
 
-                ImportThunk* thunk = patch->target->address;
-                assert(thunk != NULL);
+                uintptr_t thunk_p = (uintptr_t) patch->target->address;
+                if (thunk_p & 1) {
+                    TB_LinkerSymbol* sym = (TB_LinkerSymbol*) (thunk_p & ~1);
+                    p = tb__get_symbol_rva(l, sym);
+                } else {
+                    ImportThunk* thunk = (ImportThunk*) thunk_p;
+                    assert(thunk != NULL);
 
-                p = (trampoline_rva + (thunk->thunk_id * 6)) - actual_pos;
+                    p = (trampoline_rva + (thunk->thunk_id * 6)) - actual_pos;
+                }
             } else if (patch->target->tag == TB_SYMBOL_FUNCTION) {
                 // internal patching has already handled this
             } else if (patch->target->tag == TB_SYMBOL_GLOBAL) {
@@ -692,6 +698,7 @@ bool tb__finalize_sections(TB_Linker* l) {
                         array_form[j++] = p;
                     }
                 }
+
                 // fprintf(stderr, "%.*s: %zu -> %zu\n", (int) s->name.length, s->name.data, piece_count, j);
                 piece_count = j;
             }
