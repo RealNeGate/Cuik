@@ -147,7 +147,7 @@ static bool is_effect_tuple(TB_Node* n) {
 
 static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* bb, TB_Node* n, DynArray(TB_Node*)* stack) {
     TB_Node* parent = (n->type == TB_PROJ ? n->inputs[0] : n);
-    if (parent->input_count >= 2 && get_block_begin(parent->inputs[1]->inputs[0]) == bb) {
+    if (parent->input_count >= 2 && unsafe_get_region(parent->inputs[1]) == bb) {
         assert(parent->inputs[1]->dt.type == TB_MEMORY);
         ssa_rename_node(c, bb, parent->inputs[1], stack);
     }
@@ -189,6 +189,7 @@ static void ssa_rename_node(Mem2Reg_Ctx* c, TB_Node* bb, TB_Node* n, DynArray(TB
                     val = cast;
                 }
 
+                tb_pass_mark_users(c->p, use);
                 set_input(c->p, use, NULL, 1); // unlink first
                 subsume_node(c->p, c->f, use, val);
             }
@@ -223,6 +224,9 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     // rewrite operations
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
     TB_Node* end = r->end;
+
+    tb_pass_mark(c->p, bb);
+    tb_pass_mark_users(c->p, bb);
 
     // go through all uses and replace their accessors
     if (r->mem_out) {

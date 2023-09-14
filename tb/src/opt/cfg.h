@@ -28,11 +28,6 @@ size_t tb_push_postorder(TB_Function* f, Worklist* restrict ws) {
     return dyn_array_length(ws->items);
 }
 
-static TB_Node* find_region(TB_Node* n) {
-    while (n->type != TB_REGION && n->type != TB_START) n = n->inputs[0];
-    return n;
-}
-
 static int find_traversal_index(TB_Node* n) {
     assert(n->type == TB_REGION || n->type == TB_START);
     assert(TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->postorder_id >= 0);
@@ -64,7 +59,7 @@ TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, size_t count, T
 
         if (bb->input_count >= 2) {
             FOREACH_N(k, 0, bb->input_count) {
-                TB_Node* runner = find_region(bb->inputs[k]);
+                TB_Node* runner = unsafe_get_region(bb->inputs[k]);
 
                 while (runner->input_count > 0 && runner != idom(bb)) {
                     // add to frontier set
@@ -118,11 +113,11 @@ void tb_compute_dominators(TB_Function* f, size_t count, TB_Node** blocks) {
         // for all nodes, b, in reverse postorder (except start node)
         FOREACH_REVERSE_N(i, 0, count - 1) {
             TB_Node* b = blocks[i];
-            TB_Node* new_idom = find_region(b->inputs[0]);
+            TB_Node* new_idom = unsafe_get_region(b->inputs[0]);
 
             // for all other predecessors, p, of b
             FOREACH_N(j, 1, b->input_count) {
-                TB_Node* p = find_region(b->inputs[j]);
+                TB_Node* p = unsafe_get_region(b->inputs[j]);
 
                 // if doms[p] already calculated
                 TB_Node* idom_p = TB_NODE_GET_EXTRA_T(p, TB_NodeRegion)->dom;

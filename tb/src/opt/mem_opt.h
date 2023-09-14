@@ -68,6 +68,7 @@ static TB_Node* data_phi_from_memory_phi(TB_Passes* restrict p, TB_Function* f, 
 }
 
 static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    TB_Node* mem = n->inputs[1];
     TB_Node* addr = n->inputs[2];
     if (n->inputs[0] != NULL) {
         TB_Node* base = addr;
@@ -82,15 +83,17 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         }
     }
 
-    // if LOAD has already been safely accessed we're allowed to fold them
+    // if LOAD has already been safely accessed we can relax our control dependency
     if (n->inputs[0] != NULL && n->inputs[0]->type == TB_REGION && n->inputs[0]->input_count == 1) {
         TB_Node* parent_bb = get_block_begin(n->inputs[0]->inputs[0]);
 
         for (User* u = find_users(p, parent_bb); u; u = u->next) {
             TB_Node* use = u->n;
-            if (use != n && use->type == TB_LOAD && use->dt.raw == n->dt.raw && use->inputs[2] == addr) {
+            if (use != n && use->type == TB_LOAD && use->inputs[2] == addr) {
                 tb_pass_mark_users(p, get_block_begin(n->inputs[0]));
-                return use;
+
+                set_input(p, n, use->inputs[0], 0);
+                return n;
             }
         }
     }

@@ -87,12 +87,10 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     if (region->input_count == 2) {
         // for now we'll leave multi-phi scenarios alone, we need
         // to come up with a cost-model around this stuff.
-        int phi_count = 0;
         for (User* use = find_users(opt, region); use; use = use->next) {
             if (use->n->type == TB_PHI) {
-                if (use->n->dt.type != TB_MEMORY) phi_count++;
+                if (use->n != n) return NULL;
             }
-            if (phi_count > 1) return NULL;
         }
 
         // guarentee paths are effectless
@@ -121,14 +119,31 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
 
                 // TODO(NeGate): handle non-zero falseys
                 if (falsey == 0) {
+                    // kill both successors, since they were unique we can properly murder em'
+                    tb_pass_kill_node(opt, left->inputs[0]);
+                    tb_pass_kill_node(opt, left);
+                    tb_pass_kill_node(opt, right->inputs[0]);
+                    tb_pass_kill_node(opt, right);
+
                     // header -> merge
-                    transmute_goto(opt, f, branch, region);
+                    {
+                        TB_Node* parent = branch->inputs[0];
+                        tb_pass_kill_node(opt, branch);
+
+                        TB_NodeRegion* header = TB_NODE_GET_EXTRA(unsafe_get_region(parent));
+                        header->end = TB_NODE_GET_EXTRA_T(region, TB_NodeRegion)->end;
+
+                        // attach the header and merge to each other
+                        tb_pass_mark(opt, parent);
+                        tb_pass_mark_users(opt, region);
+                        subsume_node(opt, f, region, parent);
+                        subsume_node(opt, f, region, parent);
+                    }
 
                     TB_Node* selector = tb_alloc_node(f, TB_SELECT, dt, 4, 0);
                     set_input(opt, selector, cond, 1);
                     set_input(opt, selector, left_v, 2 + right_false);
                     set_input(opt, selector, right_v, 2 + !right_false);
-
                     return selector;
                 }
             }

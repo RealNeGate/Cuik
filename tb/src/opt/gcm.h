@@ -26,7 +26,7 @@ static void schedule_early(TB_Passes* passes, TB_Node* n) {
 
         // choose deepest block
         FOREACH_N(i, 0, n->input_count) if (n->inputs[i] && n->inputs[i]->inputs[0]) {
-            TB_Node* bb = get_block_begin(n->inputs[i]->inputs[0]);
+            TB_Node* bb = unsafe_get_region(n->inputs[i]);
 
             int bb_depth = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->dom_depth;
             if (best_depth < bb_depth) {
@@ -99,7 +99,7 @@ static void schedule_late(TB_Passes* passes, TB_Node* n) {
             }
             assert(j >= 0);
 
-            use_block = tb_get_parent_region(use_block->inputs[j - 1]);
+            use_block = get_block_begin(use_block->inputs[j - 1]);
         }
 
         lca = find_lca(lca, use_block);

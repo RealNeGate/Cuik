@@ -63,7 +63,7 @@ struct TB_Passes {
 static bool is_block_begin(TB_Node* n) {
     // regions also have a CONTROL PROJ so we
     // don't need to check them explicitly.
-    return n->type == TB_START || (n->inputs[0]->type == TB_PROJ && n->inputs[0]->dt.type == TB_CONTROL);
+    return n->type == TB_REGION || (n->type == TB_PROJ && n->inputs[0]->type == TB_START);
 }
 
 static bool is_block_end(TB_Node* n) {
@@ -95,6 +95,9 @@ static TB_Node* get_block_begin(TB_Node* n) {
 
 // shorthand because we use it a lot
 static TB_Node* idom(TB_Node* n) {
+    if (n->type == TB_PROJ) n = n->inputs[0];
+
+    assert(n->type == TB_START || n->type == TB_REGION);
     return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom;
 }
 

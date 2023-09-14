@@ -10,6 +10,22 @@ static bool is_same_bb(TB_Node* bb, TB_Node* n) {
     return n == bb;
 }
 
+static void sched_walk_phi(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_Node* bb, TB_Node* phi, size_t phi_index) {
+    TB_Node* val = phi->inputs[1 + phi_index];
+
+    // reserve PHI space
+    if (phi_vals && phi->dt.type != TB_MEMORY) {
+        PhiVal p;
+        p.phi = phi;
+        p.n   = val;
+        p.dst = -1;
+        p.src = -1;
+        dyn_array_put(*phi_vals, p);
+    }
+
+    sched_walk(passes, ws, phi_vals, bb, val);
+}
+
 void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_Node* bb, TB_Node* n) {
     if (!is_same_bb(bb, n) || worklist_test_n_set(ws, n)) {
         return;
@@ -26,7 +42,7 @@ void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_
             // find predecessor index and do that edge
             ptrdiff_t phi_index = -1;
             FOREACH_N(j, 0, dst->input_count) {
-                TB_Node* pred = tb_get_parent_region(dst->inputs[j]);
+                TB_Node* pred = unsafe_get_region(dst->inputs[j]);
 
                 if (pred == bb) {
                     phi_index = j;
@@ -35,30 +51,26 @@ void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_
             }
             if (phi_index < 0) continue;
 
-            // schedule PHIs
+            // schedule memory PHIs
             for (User* use = find_users(passes, dst); use; use = use->next) {
                 TB_Node* phi = use->n;
-                if (phi->type != TB_PHI) continue;
-
-                TB_Node* val = phi->inputs[1 + phi_index];
-
-                // reserve PHI space
-                if (phi_vals && phi->dt.type != TB_MEMORY) {
-                    PhiVal p;
-                    p.phi = phi;
-                    p.n   = val;
-                    p.dst = -1;
-                    p.src = -1;
-                    dyn_array_put(*phi_vals, p);
+                if (phi->type == TB_PHI && phi->dt.type == TB_MEMORY) {
+                    sched_walk_phi(passes, ws, phi_vals, bb, phi, phi_index);
                 }
+            }
 
-                sched_walk(passes, ws, phi_vals, bb, val);
+            // schedule data PHIs, we schedule these afterwards because it's "generally" better
+            for (User* use = find_users(passes, dst); use; use = use->next) {
+                TB_Node* phi = use->n;
+                if (phi->type == TB_PHI && phi->dt.type != TB_MEMORY) {
+                    sched_walk_phi(passes, ws, phi_vals, bb, phi, phi_index);
+                }
             }
         }
     }
 
     // push inputs
-    FOREACH_REVERSE_N(i, 0, n->input_count) {
+    FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
         sched_walk(passes, ws, phi_vals, bb, n->inputs[i]);
     }
 

@@ -188,7 +188,7 @@ static bool is_same_align(TB_Node* a, TB_Node* b) {
 
 static bool is_empty_bb(TB_Passes* restrict p, TB_Node* end) {
     assert(end->type == TB_BRANCH || end->type == TB_UNREACHABLE);
-    if (end->inputs[0]->type != TB_START && end->inputs[0]->type != TB_REGION) {
+    if (!is_block_begin(end->inputs[0])) {
         return false;
     }
 
@@ -629,6 +629,7 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
                 if (r->mem_out == n) r->mem_out = NULL;
             }
 
+            tb_pass_mark_users(p, n->inputs[0]);
             return same;
         } else {
             return n;
@@ -644,9 +645,10 @@ static bool is_terminator(TB_Node* n) {
 }
 
 static TB_Node* unsafe_get_region(TB_Node* n) {
-    do {
+    while (n->type != TB_REGION && n->type != TB_START) {
         n = n->inputs[0];
-    } while (n->type != TB_REGION && n->type != TB_START);
+    }
+
     return n;
 }
 
@@ -657,7 +659,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
         return false;
     }
 
-    DO_IF(TB_OPTDEBUG_PEEP)(printf("peep? "), print_node_sexpr(n, 0));
+    DO_IF(TB_OPTDEBUG_PEEP)(printf("peep v%zu? ", n->gvn), print_node_sexpr(n, 0));
 
     // idealize node (in a loop of course)
     TB_Node* k = idealize(p, f, n, flags);
@@ -694,8 +696,11 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     if (k && (k != n)) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[31mCSE\x1b[0m"));
 
-        tb_pass_mark_users(p, n);
         subsume_node(p, f, n, k);
+
+        // because certain optimizations apply when things are merged
+        // we mark ALL users including the ones who didn't get changed.
+        tb_pass_mark_users(p, k);
         return k;
     }
 
