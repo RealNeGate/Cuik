@@ -47,6 +47,9 @@ for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
 #define FOREACH_REVERSE_N(it, start, end) \
 for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 
+#define TB_MIN(x, y) ((x) < (y) ? (x) : (y))
+#define TB_MAX(x, y) ((x) > (y) ? (x) : (y))
+
 #define PP_ARG0(a, ...) a
 #define PP_AFTER0(a, ...) __VA_ARGS__
 

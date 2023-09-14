@@ -91,21 +91,21 @@ static void add_use_pos(LiveInterval* interval, int t, int kind) {
     dyn_array_put(interval->uses, u);
 }
 
+// interval->start is filled in by the definition
 static void add_range(LiveInterval* interval, int start, int end) {
+    assert(start <= end);
     size_t count = dyn_array_length(interval->ranges);
-    if (count > 0 && interval->ranges[count - 1].start == end) {
+    if (count > 0 && interval->ranges[count - 1].start <= end) {
+        LiveRange* top = &interval->ranges[count - 1];
+
         // coalesce
-        interval->ranges[count - 1].start = start;
+        top->start = TB_MIN(top->start, start);
+        top->end   = TB_MAX(top->end,   end);
     } else {
         LiveRange r = { start, end };
         dyn_array_put(interval->ranges, r);
     }
 
-    if (start < interval->start) interval->start = start;
-    if (end < interval->start) interval->start = end;
-
-    // max
-    if (start > interval->end) interval->end = start;
     if (end > interval->end) interval->end = end;
 }
 
@@ -130,10 +130,10 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
         if (interval->ranges == NULL) {
             add_range(interval, inst->time, inst->time);
         } else {
-            interval->start = inst->time;
             interval->ranges[dyn_array_length(interval->ranges) - 1].start = inst->time;
         }
 
+        interval->start = inst->time;
         add_use_pos(interval, inst->time, dst_use_reg ? USE_REG : USE_OUT);
     }
 
@@ -626,7 +626,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
     return spilled ? -1 : highest;
 }
 
-static void move_to_active(LSRA* restrict ra, LiveInterval* interval, int pos) {
+static void move_to_active(LSRA* restrict ra, LiveInterval* interval) {
     int rc = interval->reg_class, reg = interval->assigned;
     int ri = interval - ra->intervals;
 
@@ -636,6 +636,49 @@ static void move_to_active(LSRA* restrict ra, LiveInterval* interval, int pos) {
 
     set_put(&ra->active_set[rc], reg);
     ra->active[rc][reg] = ri;
+}
+
+// update active range to match where the position is currently
+static bool update_interval(LSRA* restrict ra, LiveInterval* restrict interval, bool is_active, int time, int inactive_index) {
+    int ri = interval - ra->intervals;
+
+    // get to the right range first
+    while (interval->ranges[interval->active_range].end <= time) {
+        interval->active_range -= 1;
+    }
+
+    int hole_end = interval->ranges[interval->active_range].start;
+    int active_end = interval->ranges[interval->active_range].end;
+    bool is_now_active = time >= hole_end;
+
+    int rc = interval->reg_class;
+    int reg = interval->assigned;
+
+    if (time >= interval->end) { // expired
+        if (is_active) {
+            REG_ALLOC_LOG printf("  #   active %s has expired (v%d)\n", reg_name(rc, reg), ri);
+            set_remove(&ra->active_set[rc], reg);
+        } else {
+            REG_ALLOC_LOG printf("  #   inactive %s has expired (v%d)\n", reg_name(rc, reg), ri);
+            dyn_array_remove(ra->inactive, inactive_index);
+            return true;
+        }
+    } else if (is_now_active != is_active) { // if we moved, change which list we're in
+        if (is_now_active) { // inactive -> active
+            REG_ALLOC_LOG printf("  #   inactive %s is active again (until t=%d, v%d)\n", reg_name(rc, reg), active_end, ri);
+
+            move_to_active(ra, interval);
+            dyn_array_remove(ra->inactive, inactive_index);
+            return true;
+        } else { // active -> inactive
+            REG_ALLOC_LOG printf("  #   active %s is going quiet for now (until t=%d, v%d)\n", reg_name(rc, reg), hole_end, ri);
+
+            set_remove(&ra->active_set[rc], reg);
+            dyn_array_put(ra->inactive, ri);
+        }
+    }
+
+    return false;
 }
 
 static void cuiksort_defs(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, RegIndex* arr);
@@ -679,6 +722,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
     // we use every fixed interval at the very start to force them into
     // the inactive set.
     FOREACH_N(i, 0, 32) if (ra.intervals[i].ranges) {
+        ra.intervals[i].start = 0;
         add_range(&ra.intervals[i], 0, 1);
     }
 
@@ -737,27 +781,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
             FOREACH_N(rc, 0, CG_REGISTER_CLASSES) {
                 FOREACH_SET(reg, ra.active_set[rc]) {
                     RegIndex active_i = ra.active[rc][reg];
-                    LiveInterval* it = &ra.intervals[active_i];
-
-                    if (time >= it->end) {
-                        REG_ALLOC_LOG printf("  #   expired %s (v%d)\n", reg_name(rc, reg), active_i);
-                        set_remove(&ra.active_set[rc], reg);
-                    } else {
-                        // active -> inactive
-                        while (time >= it->ranges[it->active_range].end) {
-                            assert(it->active_range > 0);
-                            it->active_range -= 1;
-
-                            int hole_end = it->ranges[it->active_range].start;
-                            if (time < hole_end) {
-                                REG_ALLOC_LOG printf("  #   active %s is going quiet for now (until t=%d, v%d)\n", reg_name(rc, reg), hole_end, active_i);
-
-                                set_remove(&ra.active_set[rc], reg);
-                                dyn_array_put(ra.inactive, active_i);
-                                break;
-                            }
-                        }
-                    }
+                    update_interval(&ra, &ra.intervals[active_i], true, time, -1);
                 }
             }
 
@@ -766,23 +790,8 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                 RegIndex inactive_i = ra.inactive[i];
                 LiveInterval* it = &ra.intervals[inactive_i];
 
-                int hole_end = it->ranges[it->active_range].start;
-                int active_end = it->ranges[it->active_range].end;
-
-                if (time > hole_end) {
-                    // inactive -> active
-                    REG_ALLOC_LOG printf("  #   inactive %s is active again (until t=%d, v%d)\n", reg_name(it->reg_class, it->assigned), active_end, inactive_i);
-
-                    // set active
-                    move_to_active(&ra, it, hole_end);
-                    dyn_array_remove(ra.inactive, i);
+                if (update_interval(&ra, it, false, time, i)) {
                     interval = &ra.intervals[ri]; // might've resized the intervals
-
-                    // expire
-                    if (time > it->end) {
-                        REG_ALLOC_LOG printf("  #   inactive %s has expired (v%d)\n", reg_name(it->reg_class, it->assigned), inactive_i);
-                        set_remove(&ra.active_set[rc], it->assigned);
-                    }
                     continue;
                 }
 
@@ -810,7 +819,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
             if (reg >= 0) {
                 interval->assigned = reg;
                 interval->active_range = dyn_array_length(interval->ranges) - 1;
-                move_to_active(&ra, interval, interval->start);
+                move_to_active(&ra, interval);
             }
 
             // display active set

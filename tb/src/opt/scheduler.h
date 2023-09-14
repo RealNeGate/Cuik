@@ -3,6 +3,10 @@
 //
 // Once the worklist is filled, you can walk backwards and generate instructions accordingly.
 static bool is_same_bb(TB_Node* bb, TB_Node* n) {
+    if (n->type != TB_START && n->inputs[0] == NULL) {
+        return false;
+    }
+
     while (n->type != TB_START && n->type != TB_REGION) {
         n = n->inputs[0];
     }
