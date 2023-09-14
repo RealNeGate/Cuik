@@ -1272,6 +1272,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int store_op = can_folded_store(ctx, n->inputs[1], addr, n->inputs[3]);
             if (store_op >= 0) {
                 use(ctx, src);
+                use(ctx, addr);
                 use(ctx, src->inputs[1]);
                 use(ctx, src->inputs[1]->inputs[1]);
 
@@ -1622,7 +1623,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         size_t in_base = inst->out_count;
         InstCategory cat = inst->type >= (sizeof inst_table / sizeof *inst_table) ? INST_BINOP : inst_table[inst->type].cat;
 
-        if (1) {
+        if (0) {
             EMITA(e, "  \x1b[32m# %s t=%d { outs:", inst->type < sizeof inst_table / sizeof *inst_table ? inst_table[inst->type].mnemonic : "???", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
                 EMITA(e, " v%d", inst->operands[i]);

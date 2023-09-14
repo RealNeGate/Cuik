@@ -103,6 +103,8 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
 
         // is it a proper if-diamond?
         if (left->input_count == 1 && right->input_count == 1 &&
+            left->inputs[0]->type == TB_PROJ &&
+            left->inputs[0]->type == TB_PROJ &&
             left->inputs[0]->inputs[0]->type == TB_BRANCH &&
             left->inputs[0]->inputs[0] == right->inputs[0]->inputs[0]) {
             TB_Node* branch = left->inputs[0]->inputs[0];
