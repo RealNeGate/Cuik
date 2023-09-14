@@ -807,7 +807,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     tb_pass_schedule(p);
 
-    #if 1
+    #if 0
     reg_alloc_log = strcmp(f->super.name, "shl_test") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
