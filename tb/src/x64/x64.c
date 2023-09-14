@@ -199,17 +199,25 @@ static int can_folded_store(Ctx* restrict ctx, TB_Node* mem, TB_Node* addr, TB_N
 
 // generates an LEA for computing the address of n.
 static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int src) {
+    bool has_second_in = store_op < 0 && src >= 0;
+
     int64_t offset = 0;
     if (n->type == TB_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
         assert(sym->tag != 0);
 
-        Inst* i = alloc_inst(LEA, TB_TYPE_PTR, 1, 1, 0);
+        Inst* i = alloc_inst(LEA, TB_TYPE_PTR, 1, 1+has_second_in, 0);
         i->flags = INST_GLOBAL;
         if (store_op < 0) {
-            i->mem_slot = 1;
             i->operands[0] = dst;
-            i->operands[1] = RSP;
+            if (has_second_in) {
+                i->mem_slot = 2;
+                i->operands[1] = src;
+                i->operands[2] = RSP;
+            } else {
+                i->mem_slot = 2;
+                i->operands[1] = RSP;
+            }
         } else {
             i->type = store_op;
             i->mem_slot = 0;
@@ -311,8 +319,8 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
 
     // compute base
     if (store_op < 0) {
-        if (index < 0 && offset == 0) {
-            return inst_move(n->dt, dst, base);
+        if (has_second_in) {
+            return inst_op_rrm(LEA, n->dt, dst, src, base, index, scale, offset);
         } else {
             return inst_op_rm(LEA, n->dt, dst, base, index, scale, offset);
         }
@@ -323,10 +331,14 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
 
 static Inst* isel_addr2(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int src) {
     // compute base
-    if (n->type == TB_ARRAY_ACCESS && (ctx->values[n->gvn].uses >= 2 || ctx->values[n->gvn].vreg >= 0)) {
+    if (n->type == TB_ARRAY_ACCESS && (ctx->values[n->gvn].uses >  2 || ctx->values[n->gvn].vreg >= 0)) {
         int base = input_reg(ctx, n);
         if (store_op < 0) {
-            return inst_move(TB_TYPE_PTR, dst, base);
+            if (src >= 0) {
+                return inst_op_rrm(LEA, TB_TYPE_PTR, dst, src, base, -1, SCALE_X1, 0);
+            } else {
+                return inst_op_rm(LEA, TB_TYPE_PTR, dst, base, -1, SCALE_X1, 0);
+            }
         } else {
             return inst_op_mr(store_op, TB_TYPE_PTR, base, -1, SCALE_X1, 0, src);
         }
@@ -799,8 +811,17 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             hint_reg(ctx, dst, lhs);
             SUBMIT(inst_move(n->dt, dst, lhs));
 
-            int rhs = input_reg(ctx, n->inputs[2]);
-            SUBMIT(inst_op_rrr(ops[type - TB_FADD], n->dt, dst, dst, rhs));
+            if (n->inputs[2]->type == TB_LOAD) {
+                use(ctx, n->inputs[2]);
+
+                Inst* inst = isel_addr2(ctx, n->inputs[2]->inputs[2], dst, -1, dst);
+                inst->type = ops[type - TB_FADD];
+                inst->dt = legalize(n->dt);
+                SUBMIT(inst);
+            } else {
+                int rhs = input_reg(ctx, n->inputs[2]);
+                SUBMIT(inst_op_rrr(ops[type - TB_FADD], n->dt, dst, dst, rhs));
+            }
             break;
         }
         case TB_UINT2FLOAT:
@@ -1212,11 +1233,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             Inst* ld_inst = isel_addr2(ctx, addr, dst, -1, -1);
             ld_inst->type = mov_op;
             ld_inst->dt = legalize(n->dt);
-            if ((ld_inst->flags & (INST_GLOBAL | INST_MEM)) == 0) {
-                ld_inst->flags |= INST_MEM;
-                ld_inst->mem_slot = 1;
-            }
-
             if (n->type == TB_ATOMIC_LOAD) {
                 ld_inst->flags |= INST_LOCK;
             }
@@ -1237,10 +1253,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             Inst* ld_inst = isel_addr2(ctx, addr, tmp, -1, -1);
             ld_inst->type = TEST;
             ld_inst->dt = TB_X86_TYPE_DWORD;
-            if ((ld_inst->flags & (INST_GLOBAL | INST_MEM)) == 0) {
-                ld_inst->flags |= INST_MEM;
-                ld_inst->mem_slot = 1;
-            }
             SUBMIT(ld_inst);
             break;
         }
@@ -1610,7 +1622,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         size_t in_base = inst->out_count;
         InstCategory cat = inst->type >= (sizeof inst_table / sizeof *inst_table) ? INST_BINOP : inst_table[inst->type].cat;
 
-        if (0) {
+        if (1) {
             EMITA(e, "  \x1b[32m# %s t=%d { outs:", inst->type < sizeof inst_table / sizeof *inst_table ? inst_table[inst->type].mnemonic : "???", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
                 EMITA(e, " v%d", inst->operands[i]);

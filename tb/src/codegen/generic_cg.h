@@ -269,6 +269,21 @@ static Inst* inst_op_rm(int type, TB_DataType dt, RegIndex dst, RegIndex base, R
     return i;
 }
 
+static Inst* inst_op_rrm(int type, TB_DataType dt, RegIndex dst, RegIndex src, RegIndex base, RegIndex index, Scale scale, int32_t disp) {
+    Inst* i = alloc_inst(type, dt, 1, index >= 0 ? 3 : 2, 0);
+    i->flags = INST_MEM | (index >= 0 ? INST_INDEXED : 0);
+    i->mem_slot = 2;
+    i->operands[0] = dst;
+    i->operands[1] = src;
+    i->operands[2] = base;
+    if (index >= 0) {
+        i->operands[3] = index;
+    }
+    i->disp = disp;
+    i->scale = scale;
+    return i;
+}
+
 static Inst* inst_op_mr(int type, TB_DataType dt, RegIndex base, RegIndex index, Scale scale, int32_t disp, RegIndex src) {
     Inst* i = alloc_inst(type, dt, 0, index >= 0 ? 3 : 2, 0);
     i->flags = INST_MEM | (index >= 0 ? INST_INDEXED : 0);
@@ -792,8 +807,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     tb_pass_schedule(p);
 
-    #if 0
-    reg_alloc_log = strcmp(f->super.name, "max_array") == 0;
+    #if 1
+    reg_alloc_log = strcmp(f->super.name, "shl_test") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
