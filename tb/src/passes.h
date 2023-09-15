@@ -1,6 +1,8 @@
 #pragma once
 #include "tb_internal.h"
 
+#define TB_OPTDEBUG_STATS 1
+
 #define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
 #define TB_OPTDEBUG_MEM2REG 0
@@ -57,6 +59,15 @@ struct TB_Passes {
 
     // debug shit:
     TB_Node* error_n;
+
+    // nice stats
+    #if TB_OPTDEBUG_STATS
+    struct {
+        int initial;
+        int cse_hit, cse_miss;
+        int peeps, identities, rewrites;
+    } stats;
+    #endif
 };
 
 // it's either START, REGION or control node with CONTROL PROJ predecessor
@@ -134,6 +145,7 @@ void worklist_clear_visited(Worklist* restrict ws);
 bool worklist_test(Worklist* restrict ws, TB_Node* n);
 bool worklist_test_n_set(Worklist* restrict ws, TB_Node* n);
 void worklist_push(Worklist* restrict ws, TB_Node* restrict n);
+int worklist_popcount(Worklist* ws);
 TB_Node* worklist_pop(Worklist* ws);
 
 // Local scheduler

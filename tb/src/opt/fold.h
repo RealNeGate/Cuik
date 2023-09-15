@@ -57,9 +57,8 @@ static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node*
 
     TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
 
-    // mask bits on the top word
-    uint64_t mask = (1ull << (src->dt.data & 63)) - 1;
-    return make_int_node(f, opt, n->dt, src_i->value & ~mask);
+    uint64_t mask = n->dt.data == 64 ? UINT64_MAX : (1ull << n->dt.data) - 1;
+    return make_int_node(f, opt, n->dt, src_i->value & mask);
 }
 
 static TB_Node* ideal_int2ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {

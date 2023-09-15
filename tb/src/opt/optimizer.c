@@ -121,6 +121,14 @@ TB_Node* worklist_pop(Worklist* ws) {
     }
 }
 
+int worklist_popcount(Worklist* ws) {
+    int sum = 0;
+    for (size_t i = 0; i < ws->visited_cap; i++) {
+        sum += tb_popcount64(ws->visited[i]);
+    }
+    return sum;
+}
+
 void verify_tmp_arena(TB_Passes* p) {
     // once passes are run on a thread, they're pinned to it.
     TB_Module* m = p->f->super.module;
@@ -659,12 +667,14 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
         return false;
     }
 
+    DO_IF(TB_OPTDEBUG_STATS)(p->stats.peeps++);
     DO_IF(TB_OPTDEBUG_PEEP)(printf("peep v%zu? ", n->gvn), print_node_sexpr(n, 0));
 
     // idealize node (in a loop of course)
     TB_Node* k = idealize(p, f, n, flags);
     DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
     while (k != NULL) {
+        DO_IF(TB_OPTDEBUG_STATS)(p->stats.rewrites++);
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
 
         // only the n users actually changed
@@ -685,7 +695,9 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     // convert into matching identity
     k = identity(p, f, n, flags);
     if (n != k) {
+        DO_IF(TB_OPTDEBUG_STATS)(p->stats.identities++);
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
+
         tb_pass_mark_users(p, n);
         subsume_node(p, f, n, k);
         return k;
@@ -694,6 +706,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     // common subexpression elim
     k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
     if (k && (k != n)) {
+        DO_IF(TB_OPTDEBUG_STATS)(p->stats.cse_hit++);
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[31mCSE\x1b[0m"));
 
         subsume_node(p, f, n, k);
@@ -702,6 +715,8 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
         // we mark ALL users including the ones who didn't get changed.
         tb_pass_mark_users(p, k);
         return k;
+    } else {
+        DO_IF(TB_OPTDEBUG_STATS)(p->stats.cse_miss++);
     }
 
     return n;
@@ -761,6 +776,7 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     // generate work list (put everything)
     CUIK_TIMED_BLOCK("gen worklist") {
         push_all_nodes(&p->worklist, f->stop_node);
+        DO_IF(TB_OPTDEBUG_STATS)(p->stats.initial = worklist_popcount(&p->worklist));
     }
 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting passes with %d nodes", f->super.name, f->node_count));
@@ -800,8 +816,19 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
 }
 
 void tb_pass_exit(TB_Passes* p) {
-    verify_tmp_arena(p);
     TB_Function* f = p->f;
+
+    #if TB_OPTDEBUG_STATS
+    push_all_nodes(&p->worklist, f->stop_node);
+    int final_count = worklist_popcount(&p->worklist);
+
+    printf("%s: stats:\n", f->super.name);
+    printf("  %4d   -> %4d nodes\n", p->stats.initial, final_count);
+    printf("  %4d CSE hit    %4d CSE miss\n", p->stats.cse_hit, p->stats.cse_miss);
+    printf("  %4d peepholes  %4d rewrites    %4d identities\n", p->stats.peeps, p->stats.rewrites, p->stats.identities);
+    #endif
+
+    verify_tmp_arena(p);
 
     worklist_free(&p->worklist);
     nl_hashset_free(p->cse_nodes);

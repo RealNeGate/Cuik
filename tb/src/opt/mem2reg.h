@@ -307,7 +307,7 @@ static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* c
 
 static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
     TB_Node* parent = (n->type == TB_PROJ ? n->inputs[0] : n);
-    if (parent->inputs[0] == bb) {
+    if (parent->input_count >= 2 && unsafe_get_region(parent->inputs[1]) == bb) {
         assert(parent->inputs[1]->dt.type == TB_MEMORY);
         insert_phis(ctx, bb, parent->inputs[1]);
     }
@@ -413,6 +413,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
             insert_phis(&c, c.blocks[i], latest_mem);
         }
 
+        assert(latest_mem->type);
         TB_NODE_GET_EXTRA_T(c.blocks[i], TB_NodeRegion)->mem_out = latest_mem;
     }
 
