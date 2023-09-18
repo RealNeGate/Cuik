@@ -822,8 +822,10 @@ void tb_pass_exit(TB_Passes* p) {
     push_all_nodes(&p->worklist, f->stop_node);
     int final_count = worklist_popcount(&p->worklist);
 
+    double factor = ((double) final_count / (double) p->stats.initial) * 100.0;
+
     printf("%s: stats:\n", f->super.name);
-    printf("  %4d   -> %4d nodes\n", p->stats.initial, final_count);
+    printf("  %4d   -> %4d nodes (%.2f%%)\n", p->stats.initial, final_count, factor);
     printf("  %4d CSE hit    %4d CSE miss\n", p->stats.cse_hit, p->stats.cse_miss);
     printf("  %4d peepholes  %4d rewrites    %4d identities\n", p->stats.peeps, p->stats.rewrites, p->stats.identities);
     #endif

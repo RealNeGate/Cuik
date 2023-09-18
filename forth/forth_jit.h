@@ -1,4 +1,7 @@
+#include <hash_set.h>
+
 #define JIT_THRESHOLD 50
+#define JIT_RECOMPILE_THRESHOLD 500
 
 #define PP_NARG(...)  PP_NARG_(__VA_ARGS__,PP_RSEQ_N())
 #define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
@@ -36,6 +39,11 @@ typedef struct {
     TB_Symbol *sym;
 } JIT_ForeignFunc;
 
+typedef struct {
+    TB_Function* f;
+    TB_FunctionPrototype* proto;
+} JIT_Trampoline;
+
 typedef int (*JIT_Caller)(Env* env, Value* args, void* fn);
 
 // for now it's 1 jit thread, N forths
@@ -45,6 +53,8 @@ static struct {
     TB_Arena arena;
     TB_Module* mod;
     TB_JIT* jit;
+
+    TB_Global* poll_site_global;
 
     // this is how we call from the interpreter
     TB_FunctionPrototype* proto;
@@ -56,29 +66,10 @@ static struct {
     _Atomic uint32_t queue;
     void* queue_elems[256];
 
-    // the JIT will use functions where the arguments are proper arguments
-    // as opposed to in-memory stack elements. each needs a matching JITted
-    // caller function, we do these lazily.
-    _Atomic(TB_FunctionPrototype*) internal_protos[16];
-
     // these are used to call JITted words from interpreters
-    _Atomic(uintptr_t) callers[16];
+    mtx_t trampoline_lock;
+    NL_Map(uint64_t, JIT_Trampoline) trampolines;
 } jit;
-
-// have the sign bit set to make them look distinct from pointers.
-static uintptr_t jit__thread_key(void) {
-    #ifdef _WIN32
-    extern unsigned long GetCurrentThreadId();
-    uintptr_t key = GetCurrentThreadId();
-    #else
-    #error "Unsupported"
-    #endif
-
-    // set sign bit
-    key |= ~(UINTPTR_MAX >> 1);
-
-    return key;
-}
 
 static bool should_early_inline(Word* w) {
     return w->tag != WORD_TYPE && dyn_array_length(w->ops) < 10;
@@ -88,19 +79,12 @@ static bool should_early_inline(Word* w) {
 // Compilation queue
 ////////////////////////////////
 // i love forward decls gon...
-static JIT_Caller jit__get_trampoline(size_t arity);
-static void* jit__compile_trampoline(TB_FunctionPrototype* proto, int arity);
+static JIT_Trampoline jit__get_trampoline(size_t arity, size_t outs);
 
 static void jit__queue_push(uint32_t exp, _Atomic uint32_t* queue, void** elems, void* val);
 static void* jit__queue_pop(uint32_t exp, _Atomic uint32_t* queue, void** elems);
 
-// we don't need to waste cycles JITting this lmao
-static int jit__caller_0ary(Env* env, Value* stack, void* jitted) {
-    return ((int (*)(Env*)) jitted)(env);
-}
-
 int jit_try_call(Env* env, Word* w) {
-    // never jit:
     if (w->tag == WORD_TYPE) {
         return INTERP_NO_JIT;
     }
@@ -146,101 +130,90 @@ int jit_try_call(Env* env, Word* w) {
         return INTERP_UNDERFLOW;
     }
 
-    // type check trampoline
-    JIT_Caller c = jit__get_trampoline(arity);
-    return c(env, &env->stack[env->head - arity], w->jitted);
+    // we won't try to call the JIT until the trampoline is ready
+    if (mtx_trylock(&jit.trampoline_lock) == thrd_success) {
+        JIT_Trampoline t = jit__get_trampoline(arity, w->type.out_count);
+        mtx_unlock(&jit.trampoline_lock);
+
+        CUIK_TIMED_BLOCK("trace") {
+            JIT_Caller c = tb_jit_get_code_ptr(t.f);
+            c(env, &env->stack[env->head - arity], w->jitted);
+        }
+
+        return INTERP_OK;
+    } else {
+        return INTERP_NO_JIT;
+    }
 }
 
-static JIT_Caller jit__get_trampoline(size_t arity) {
-    if (arity == 0) {
-        return jit__caller_0ary;
-    }
-
-    // if the caller is not ready, make sure to initialize it now.
-    // since it can be called on multiple threads, once one of the
-    // threads grabs hold, it'll compile while the others wait, this
-    // is a really tiny compilation so it's ok.
+////////////////////////////////
+// Trampolines
+////////////////////////////////
+static JIT_Trampoline jit__get_trampoline(size_t arity, size_t outs) {
+    // it should be rare enough where we don't mind locking, code
+    // can still run while we're getting trampolines just can't
+    // get new trampolines.
     cuikperf_region_start("get trampoline", NULL);
-    uintptr_t sign_bit = ~(UINTPTR_MAX >> 1);
-    uintptr_t key = jit__thread_key();
+    uint64_t key = ((uint64_t) outs << 32ull) | (uint64_t) arity;
 
-    _Atomic(uintptr_t)* caller = &jit.callers[arity];
-    uintptr_t p;
-    retry: {
-        p = atomic_load(caller);
-
-        // check if someone is already working on it
-        if (p & sign_bit) {
-            assert(p != key && "somehow we've already started compiling the caller on this thread?");
-            goto retry;
+    ptrdiff_t search = nl_map_get(jit.trampolines, key);
+    if (search < 0) {
+        // compile trampoline
+        // make prototype
+        TB_PrototypeParam params[17];
+        params[0] = (TB_PrototypeParam){ TB_TYPE_PTR }; // Env*
+        for (size_t i = 0; i < arity; i++) {
+            params[i + 1] = (TB_PrototypeParam){ TB_TYPE_I64 };
         }
 
-        if (p == 0) {
-            // try lock?
-            if (!atomic_compare_exchange_strong(caller, &(uintptr_t){ 0 }, key)) {
-                goto retry;
-            }
+        TB_PrototypeParam ret = { outs > 0 ? TB_TYPE_I64 : TB_TYPE_VOID };
+        TB_FunctionPrototype* proto = tb_prototype_create(jit.mod, TB_STDCALL, arity + 1, params, 1, &ret, false);
 
-            // make prototype
-            TB_PrototypeParam params[17];
-            params[0] = (TB_PrototypeParam){ TB_TYPE_PTR }; // Env*
-            for (size_t i = 0; i < arity; i++) {
-                params[i + 1] = (TB_PrototypeParam){ TB_TYPE_I64 };
-            }
+        // compile caller
+        //   ins = POP
+        //   tos = CALL ins
+        //   PUSH tos
+        char name[32];
+        snprintf(name, 32, "jit_caller_%zuary", arity);
 
-            TB_PrototypeParam ret = { TB_TYPE_I32 };
-            TB_FunctionPrototype* proto = tb_prototype_create(jit.mod, TB_STDCALL, arity + 1, params, 1, &ret, false);
-            jit.internal_protos[arity] = proto;
+        // generate caller
+        TB_Function* f = tb_function_create(jit.mod, -1, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
+        tb_function_set_prototype(f, jit.proto, NULL);
 
-            // compile caller
-            p = (uintptr_t) jit__compile_trampoline(proto, arity);
+        // top of the stack is gonna be loaded into params
+        TB_Node* tos = tb_inst_param(f, 1);
 
-            // unlock
-            atomic_store(caller, p);
+        TB_Node* args[17];
+        args[0] = tb_inst_param(f, 0);
+        for (size_t i = 0; i < arity; i++) {
+            size_t offset = i*sizeof(Value) + offsetof(Value, i);
+
+            TB_Node* ptr = tb_inst_member_access(f, tos, offset);
+            args[i + 1] = tb_inst_load(f, TB_TYPE_I64, ptr, _Alignof(size_t), false);
         }
+
+        TB_MultiOutput o = tb_inst_call(f, proto, tb_inst_param(f, 2), arity + 1, args);
+        tb_inst_ret(f, 1, &o.single);
+
+        // JIT & export
+        TB_Passes* p = tb_pass_enter(f, tb_function_get_arena(f));
+        tb_pass_codegen(p, false);
+        tb_pass_exit(p);
+
+        // we can throw away the function IR now
+        tb_arena_clear(tb_function_get_arena(f));
+        CUIK_TIMED_BLOCK("apply") tb_jit_place_function(jit.jit, f);
+
+        // write out entry
+        nl_map_puti(jit.trampolines, key, search);
+        jit.trampolines[search].v = (JIT_Trampoline){ f, proto };
     }
 
-    // it's ready
+    // copy out to avoid resizing problems
+    JIT_Trampoline t = jit.trampolines[search].v;
     cuikperf_region_end();
-    return (JIT_Caller) p;
-}
 
-static void* jit__compile_trampoline(TB_FunctionPrototype* proto, int arity) {
-    char name[32];
-    snprintf(name, 32, "jit_caller_%dary", arity);
-
-    // generate caller
-    TB_Function* f = tb_function_create(jit.mod, -1, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
-    tb_function_set_prototype(f, jit.proto, NULL);
-
-    // top of the stack is gonna be loaded into params
-    TB_Node* tos = tb_inst_param(f, 1);
-
-    TB_Node* args[17];
-    args[0] = tb_inst_param(f, 0);
-    for (size_t i = 0; i < arity; i++) {
-        size_t offset = i*sizeof(Value) + offsetof(Value, i);
-
-        TB_Node* ptr = tb_inst_member_access(f, tos, offset);
-        args[i + 1] = tb_inst_load(f, TB_TYPE_I64, ptr, _Alignof(size_t), false);
-    }
-
-    TB_MultiOutput o = tb_inst_call(f, proto, tb_inst_param(f, 2), arity + 1, args);
-    tb_inst_ret(f, 1, &o.single);
-
-    // JIT & export
-    TB_Passes* p = tb_pass_enter(f, tb_function_get_arena(f));
-    tb_pass_codegen(p, false);
-    tb_pass_exit(p);
-
-    // we can throw away the function IR now
-    tb_arena_clear(tb_function_get_arena(f));
-
-    void* fn;
-    CUIK_TIMED_BLOCK("apply") {
-        fn = tb_jit_place_function(jit.jit, f);
-    }
-    return fn;
+    return t;
 }
 
 ////////////////////////////////
@@ -346,21 +319,20 @@ static int jit_thread_routine(void* arg) {
         TB_PrototypeParam ret = { TB_TYPE_I32 };
         jit.proto = tb_prototype_create(jit.mod, TB_STDCALL, 3, params, 1, &ret, false);
 
-        jit.internal_protos[0] = tb_prototype_create(
-            jit.mod, TB_STDCALL,
-            1, &(TB_PrototypeParam){ TB_TYPE_PTR },
-            1, &(TB_PrototypeParam){ TB_TYPE_I32 },
-            false
-        );
-
         JIT__BIND(INTERP,  interp,      TB_TYPE_I32,  TB_TYPE_PTR, TB_TYPE_PTR);
         JIT__BIND(PUTCHAR, putchar,     TB_TYPE_I32,  TB_TYPE_I32);
         JIT__BIND(PUTNUM,  jit__putnum, TB_TYPE_VOID, TB_TYPE_I64);
         JIT__BIND(GETCHAR, getchar,     TB_TYPE_I32);
         JIT__BIND(RECT,    jit__rect,   TB_TYPE_VOID, TB_TYPE_I32, TB_TYPE_I32, TB_TYPE_I32, TB_TYPE_I32);
 
+        jit.poll_site_global = tb_global_create(jit.mod, -1, "poll_site", NULL, TB_LINKAGE_PUBLIC);
+        tb_global_set_storage(jit.mod, tb_module_get_data(jit.mod), jit.poll_site_global, 4096, 4096, 0);
+        poll_site = tb_jit_place_global(jit.jit, jit.poll_site_global);
+
         jit.running = true;
     }
+
+    mtx_init(&jit.trampoline_lock, mtx_plain);
 
     // Compile words which were submitted
     while (jit.running) {
@@ -452,6 +424,12 @@ static TB_Node* jit__spill_stack(TB_Function* f, TB_Node* env, TB_Node** stack, 
     return tos;
 }
 
+static void jit__safepoint(JIT_Builder* ctx, Word* w) {
+    // insert safepoint at blob entry
+    TB_Node* poll_site_addr = tb_inst_get_symbol_address(ctx->f, (TB_Symbol*) jit.poll_site_global);
+    tb_inst_safepoint_poll(ctx->f, poll_site_addr, 1, &ctx->env);
+}
+
 static void jit__compile_word(JIT_Builder* ctx, Word* w) {
     TB_Function* f = ctx->f;
     TB_Node* env = ctx->env;
@@ -497,6 +475,8 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
             int arity = w->type.in_count;
             head -= arity;
             TB_Node** args = &stack[head];
+
+            jit__safepoint(ctx, w);
 
             TB_Node* region = tb_get_parent_region(tb_inst_get_control(f));
             tb_inst_goto(f, loop_body);
@@ -548,10 +528,12 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
                     // log_debug("jit %s: calling separate jit function %s (%p)", w->name.data, new_w->name.data, jitted);
 
                     // make sure the caller & proto are ready
-                    jit__get_trampoline(new_w->type.in_count);
+                    mtx_lock(&jit.trampoline_lock);
+                    JIT_Trampoline t = jit__get_trampoline(new_w->type.in_count, new_w->type.out_count);
+                    mtx_unlock(&jit.trampoline_lock);
 
                     TB_Node* target = tb_inst_uint(f, TB_TYPE_PTR, (uintptr_t) jitted);
-                    tb_inst_call(f, jit.internal_protos[new_w->type.in_count], target, 1 + new_w->type.in_count, args);
+                    tb_inst_call(f, t.proto, target, 1 + new_w->type.in_count, args);
                 }
 
                 // pop returns off the stack
@@ -692,17 +674,21 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
 
     // we should be able to safely read the internal_protos now that we've guarenteed it's
     // created... no weird threading issues i think
-    jit__get_trampoline(w->type.in_count);
-    TB_FunctionPrototype* proto = atomic_load_explicit(&jit.internal_protos[w->type.in_count], memory_order_relaxed);
+    mtx_lock(&jit.trampoline_lock);
+    JIT_Trampoline t = jit__get_trampoline(w->type.in_count, w->type.out_count);
+    mtx_unlock(&jit.trampoline_lock);
 
     TB_Function* f = builder.f = tb_function_create(jit.mod, -1, name, TB_LINKAGE_PUBLIC, TB_COMDAT_NONE);
-    tb_function_set_prototype(f, proto, &jit.arena);
+    tb_function_set_prototype(f, t.proto, &jit.arena);
 
-    // FLOAT INT 1 + +
     CUIK_TIMED_BLOCK("IR") {
+        builder.head = 0;
+        builder.env = tb_inst_param(f, 0);
+
+        jit__safepoint(&builder, w);
+
         // fill parameter into the stack
         builder.head = w->type.in_count;
-        builder.env = tb_inst_param(f, 0);
         for (size_t i = builder.head; i--;) {
             builder.stack[i] = tb_inst_param(f, i + 1);
 
@@ -743,8 +729,8 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
         // tb_function_print(f, tb_default_print_callback, stdout);
 
         // compile
-        TB_FunctionOutput* out = tb_pass_codegen(p, false);
-        // tb_output_print_asm(out, stdout);
+        TB_FunctionOutput* out = tb_pass_codegen(p, true);
+        tb_output_print_asm(out, stdout);
     }
     tb_pass_exit(p);
 

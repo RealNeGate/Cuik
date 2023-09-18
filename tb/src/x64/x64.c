@@ -215,7 +215,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
                 i->operands[1] = src;
                 i->operands[2] = RSP;
             } else {
-                i->mem_slot = 2;
+                i->mem_slot = 1;
                 i->operands[1] = RSP;
             }
         } else {
@@ -370,9 +370,9 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
             SUBMIT(inst_op_rr_no_dst(FP_UCOMI, cmp_dt, lhs, rhs));
 
             switch (n->type) {
-                case TB_CMP_EQ:  cc = E; break;
+                case TB_CMP_EQ:  cc = E;  break;
                 case TB_CMP_NE:  cc = NE; break;
-                case TB_CMP_FLT: cc = B; break;
+                case TB_CMP_FLT: cc = B;  break;
                 case TB_CMP_FLE: cc = BE; break;
                 default: tb_unreachable();
             }
@@ -575,6 +575,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
 
         case TB_SELECT: {
+            assert(n->dt.type != TB_FLOAT);
             int lhs = input_reg(ctx, n->inputs[2]);
             int rhs = input_reg(ctx, n->inputs[3]);
 
@@ -856,9 +857,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
         // pointer arithmatic
         case TB_LOCAL:
-        SUBMIT(isel_addr(ctx, n, dst, -1, -1));
-        break;
-
         case TB_VA_START:
         case TB_MEMBER_ACCESS:
         case TB_ARRAY_ACCESS: {
@@ -1441,8 +1439,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                     InstType i = n->dt.type == TB_FLOAT ? FP_MOV : MOV;
                     SUBMIT(inst_op_rm(i, n->dt, dst, RBP, GPR_NONE, SCALE_X1, 16 + index*8));
                 }
-            } else if (n->inputs[0]->type == TB_CALL || n->inputs[0]->type == TB_SYSCALL) {
-                // do nothing, be happy
             }
             break;
         }

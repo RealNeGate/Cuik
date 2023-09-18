@@ -101,6 +101,7 @@ static int interp(Env* env, Word* w) {
         }
     }
 
+    cuikperf_region_start("interp", NULL);
     while (env->control_head > 0) recover: {
         // peek the top control
         uint64_t ip = env->control[env->control_head - 1];
@@ -214,6 +215,7 @@ static int interp(Env* env, Word* w) {
             if (env->single_step) {
                 // interpreter savepoint
                 env->control[env->control_head - 1] = ((w - words.entries) << 32ull) | i;
+                cuikperf_region_end();
                 return INTERP_STEP;
             }
         }
@@ -239,9 +241,11 @@ static int interp(Env* env, Word* w) {
         // pop
         env->control_head -= 1;
         if (env->single_step) {
+            cuikperf_region_end();
             return INTERP_STEP;
         }
     }
+    cuikperf_region_end();
 
     return INTERP_OK;
 }

@@ -34,9 +34,9 @@ typedef struct {
 // Helper macros
 #define EMITA(e, fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
 #define EMIT1(e, b) (*((uint8_t*)  tb_cgemit_reserve(e, 1)) = (b), (e)->count += 1)
-#define EMIT2(e, b) do { uint32_t _b = (b); memcpy(tb_cgemit_reserve(e, 2), &_b, 2); (e)->count += 2; } while (0)
+#define EMIT2(e, b) do { uint16_t _b = (b); memcpy(tb_cgemit_reserve(e, 2), &_b, 2); (e)->count += 2; } while (0)
 #define EMIT4(e, b) do { uint32_t _b = (b); memcpy(tb_cgemit_reserve(e, 4), &_b, 4); (e)->count += 4; } while (0)
-#define EMIT8(e, b) do { uint32_t _b = (b); memcpy(tb_cgemit_reserve(e, 8), &_b, 8); (e)->count += 8; } while (0)
+#define EMIT8(e, b) do { uint64_t _b = (b); memcpy(tb_cgemit_reserve(e, 8), &_b, 8); (e)->count += 8; } while (0)
 #define RELOC4(e, p, b) do {  void *_ptr = &(e)->data[p];           \
                               uint32_t _b = (b), _temp;             \
                               memcpy(&_temp, _ptr, 4);              \

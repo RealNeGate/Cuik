@@ -36,6 +36,7 @@ size_t get_large_pages(void) {
     return large_page_size;
 }
 
+#if NTDDI_VERSION >= NTDDI_WIN10_RS4
 void* tb_jit_create_stack(size_t* out_size) {
     size_t size = get_large_pages();
 
@@ -52,3 +53,5 @@ void* tb_jit_create_stack(size_t* out_size) {
     *out_size = size;
     return VirtualAlloc2(GetCurrentProcess(), NULL, size, MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE, &param, 1);
 }
+#endif
+

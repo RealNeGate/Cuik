@@ -113,6 +113,7 @@ typedef struct {
 static _Thread_local bool is_main_thread;
 
 static TB_Arena young_gen;
+static volatile char* poll_site;
 
 #include "forth_dict.h"
 
