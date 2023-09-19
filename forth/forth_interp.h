@@ -1,3 +1,5 @@
+#include <setjmp.h>
+
 ////////////////////////////////
 // Interpreter
 ////////////////////////////////
@@ -13,67 +15,160 @@ typedef struct {
 #define VALUE_IS_OBJ(v) ((v).dict != NULL)
 
 enum {
-    // no errors
-    INTERP_OK = 0,
-
-    // no errors except the function didn't have JITting ready
-    INTERP_NO_JIT,
-
-    // not enough elements on the stack
-    INTERP_UNDERFLOW,
-
-    // expected to pop correct type
-    INTERP_BAD_TYPE,
-
-    // if env->single_step is on this is what we return
-    INTERP_STEP,
+    VM_STACK_SIZE = 16384,
+    VM_COOKIE = 0xDAADF00D,
 };
 
-typedef struct Env {
-    // data stack
-    size_t head;
-    Value stack[64];
+typedef enum {
+    // no errors
+    VM_STATUS_OK = 0,
 
-    // control stack
-    size_t control_head;
-    uint64_t control[32];
+    // no errors except the function didn't have JITting ready
+    VM_STATUS_NO_JIT,
+
+    // not enough elements on the stack
+    VM_STATUS_UNDERFLOW,
+
+    // expected to pop correct type
+    VM_STATUS_BAD_TYPE,
+
+    // hit some breakpoint, even single stepping
+    VM_STATUS_BREAK,
+} VM_Status;
+
+typedef struct VM_Thread VM_Thread;
+struct VM_Thread {
+    uint32_t cookie;
+
+    // locked when running
+    mtx_t lock;
+
+    // scheduling
+    VM_Thread* next;
 
     // debugging
+    VM_Status status;
     bool single_step;
-} Env;
+
+    // interpreter state
+    size_t head;
+    size_t control_head;
+
+    Value stack[64];
+    uint64_t control[32];
+
+    // used by pause exception to safely leave
+    jmp_buf early_exit;
+
+    // thread-local poll site is used to manage the pause state.
+    // it may be converted into a guard page to force a segfault.
+    _Alignas(4096) volatile char poll_site[4096];
+
+    // this struct is just the stack base
+    char jit_stack[];
+};
+
+static void vm_interp(VM_Thread* env, Word* w);
+
+// allocates thread state but doesn't run
+static VM_Thread* vm_thread_new(void) {
+    VM_Thread* t = VirtualAlloc(NULL, VM_STACK_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    t->cookie = VM_COOKIE;
+    mtx_init(&t->lock, mtx_plain);
+    t->next = NULL;
+    t->single_step = false;
+    return t;
+}
+
+static LONG its_so_over(EXCEPTION_POINTERS* e) {
+    // read from PAUSE_ADDR means we hit a safepoint during a pause
+    if (e->ExceptionRecord->ExceptionCode == EXCEPTION_GUARD_PAGE) {
+        // get thread from stack pointer
+        VM_Thread* t = (VM_Thread*) (e->ContextRecord->Rsp & -VM_STACK_SIZE);
+        if (t->cookie == VM_COOKIE) {
+            // crawl stack, we need to convert any stack frames into VM frames.
+            __debugbreak();
+
+            // early out from resume site
+            longjmp(t->early_exit, 1);
+        }
+    }
+
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// takes a paused thread (potentially just initialized) and
+// allows it to run.
+//
+// if w is non-NULL, we're forcing this to intercept the call stack
+static void vm_thread_resume(VM_Thread* t, Word* w, int count, ...) {
+    // we're now able to modify the interpreter state,
+    // this is unlocked either by the end of this call
+    // or safepoint.
+    mtx_lock(&t->lock);
+    if (setjmp(t->early_exit) == 0) {
+        assert(t->head + count < 64);
+
+        // extract varargs
+        va_list ap;
+        va_start(ap, count);
+        for (size_t i = 0; i < count; i++) {
+            int64_t x = va_arg(ap, int64_t);
+            t->stack[t->head++] = (Value){ .i = x };
+        }
+        va_end(ap);
+
+        // run
+        vm_interp(t, w);
+    }
+    mtx_unlock(&t->lock);
+}
+
+static void vm_thread_pause(VM_Thread* t, Word* w) {
+    // forces the JIT code to stop at the nearest safepoint
+    DWORD old;
+    if (!VirtualProtect((void*) &t->poll_site[0], 4096, PAGE_GUARD | PAGE_READONLY, &old)) {
+        fprintf(stderr, "error: could not reset guard page!\n");
+        abort();
+    }
+
+    // steal the lock
+    mtx_lock(&t->lock);
+    mtx_unlock(&t->lock);
+}
 
 #define PEEK()  (env->stack[env->head - 1])
 #define POP()   (env->stack[--env->head])
 #define PUSH(x) (env->stack[env->head++] = (x))
 
-static int jit_try_call(Env* env, Word* w);
+static int jit_try_call(VM_Thread* env, Word* w);
 
-static void pusho(Env* env, Dictionary* dict, Obj* o) {
+static void pusho(VM_Thread* env, Dictionary* dict, Obj* o) {
     assert(env->head < 64);
     env->stack[env->head++] = (Value){ dict, .o = o };
 }
 
-static void push(Env* env, int64_t x) {
+static void push(VM_Thread* env, int64_t x) {
     assert(env->head < 64);
     env->stack[env->head++] = (Value){ .i = x };
 }
 
-static uint64_t pop(Env* env) {
+static uint64_t pop(VM_Thread* env) {
     assert(env->head > 0 && env->stack[env->head - 1].dict == NULL);
     return env->stack[--env->head].i;
 }
 
-static Obj* popo(Env* env) {
+static Obj* popo(VM_Thread* env) {
     assert(env->head > 0 && env->stack[env->head - 1].dict != NULL);
     return env->stack[--env->head].o;
 }
 
-static uint64_t peek(Env* env) {
+static uint64_t peek(VM_Thread* env) {
     assert(env->head > 0 && env->stack[env->head - 1].dict == NULL);
     return env->stack[env->head - 1].i;
 }
 
-static void dump(Env* env) {
+static void dump(VM_Thread* env) {
     printf("[ ");
     for (size_t i = env->head; i--;) {
         if (env->stack[i].dict) {
@@ -87,17 +182,17 @@ static void dump(Env* env) {
 
 // written as a non-recursive style to accomodate pausing and resuming
 // because the JIT will do those sorts of things.
-static int interp(Env* env, Word* w) {
+static void vm_interp(VM_Thread* env, Word* w) {
     // this is used to initialize the control flow easily
     if (w != NULL) {
         // if the JIT is ready, we'll just use this, ideally
         // we switch to directly calling the JIT soon
         int r = jit_try_call(env, w);
-        if (r != INTERP_NO_JIT) {
-            return r;
+        if (r != VM_STATUS_NO_JIT) {
+            env->status = r;
+            return;
         } else {
-            env->control_head = 1;
-            env->control[0] = (w - words.entries) << 32ull;
+            env->control[env->control_head++] = (w - words.entries) << 32ull;
         }
     }
 
@@ -115,8 +210,8 @@ static int interp(Env* env, Word* w) {
             if (x >= 0) { // trivial literals
                 push(env, w->ops[i]), i += 1;
             } else if (x == OP_TAIL) {
-                int r = env->single_step ? INTERP_NO_JIT : jit_try_call(env, w);
-                if (r != INTERP_NO_JIT) {
+                int r = env->single_step ? VM_STATUS_NO_JIT : jit_try_call(env, w);
+                if (r != VM_STATUS_NO_JIT) {
                     // once the JIT finishes with a tail call, we just return
                     break;
                 } else {
@@ -125,8 +220,8 @@ static int interp(Env* env, Word* w) {
             } else if (x <= -1000) {
                 Word* new_w = &words.entries[-x - 1000];
 
-                int r = env->single_step ? INTERP_NO_JIT : jit_try_call(env, new_w);
-                if (r != INTERP_NO_JIT) {
+                int r = env->single_step ? VM_STATUS_NO_JIT : jit_try_call(env, new_w);
+                if (r != VM_STATUS_NO_JIT) {
                     i += 1;
                 } else {
                     // save return continuation
@@ -215,14 +310,15 @@ static int interp(Env* env, Word* w) {
             if (env->single_step) {
                 // interpreter savepoint
                 env->control[env->control_head - 1] = ((w - words.entries) << 32ull) | i;
-                cuikperf_region_end();
-                return INTERP_STEP;
+                env->status = VM_STATUS_BREAK;
+                goto done;
             }
         }
 
         // construct object here
         if (w->tag == WORD_TYPE) {
-            Dictionary* dict = w->as_type;
+            assert(0);
+            /*Dictionary* dict = w->as_type;
             assert(dict != NULL);
 
             Obj* o = tb_arena_alloc(&young_gen, sizeof(Obj) + dict->data_size);
@@ -235,18 +331,19 @@ static int interp(Env* env, Word* w) {
                 memcpy(o->data + f->offset, &v, sizeof(v));
             }
 
-            push(env, (uintptr_t) o);
+            push(env, (uintptr_t) o);*/
         }
 
-        // pop
+        // exit word
         env->control_head -= 1;
         if (env->single_step) {
-            cuikperf_region_end();
-            return INTERP_STEP;
+            env->status = VM_STATUS_BREAK;
+            goto done;
         }
     }
+
+    env->status = VM_STATUS_OK;
+
+    done:
     cuikperf_region_end();
-
-    return INTERP_OK;
 }
-

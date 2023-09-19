@@ -111,9 +111,7 @@ typedef struct {
 } Obj;
 
 static _Thread_local bool is_main_thread;
-
 static TB_Arena young_gen;
-static volatile char* poll_site;
 
 #include "forth_dict.h"
 
@@ -910,7 +908,9 @@ int main(int argc, const char** argv) {
         fclose(f);
     }
 
-    Env env;
+    AddVectoredExceptionHandler(1, its_so_over);
+
+    VM_Thread* env = vm_thread_new();
     while (jit.running) CUIK_TIMED_BLOCK("main loop") {
         // Win32 message pump
         MSG message;
@@ -936,15 +936,13 @@ int main(int argc, const char** argv) {
                 dict_free(&sandbox[old]);
 
                 // run init code (maybe we shouldn't do this multiple times?)
-                env.head = 0;
-                env.single_step = false;
-                interp(&env, &words.entries[-1000 - root_word]);
+                vm_thread_resume(env, &words.entries[-1000 - root_word], 0);
             }
         }
 
         RECT rect;
         GetWindowRect(wnd, &rect);
-        int w = rect.right - rect.left, h = rect.bottom - rect.top;
+        int64_t w = rect.right - rect.left, h = rect.bottom - rect.top;
 
         glViewport(0, 0, w, h);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -958,10 +956,9 @@ int main(int argc, const char** argv) {
         // per frame logic
         WordIndex update_word = dict_get(&sandbox[curr], -1, "update");
         if (update_word < 0) {
-            push(&env, w);
-            push(&env, h);
-            interp(&env, &words.entries[-1000 - update_word]);
-            assert(env.head == 0 && "stack \"leak\"?");
+            Word* w = &words.entries[-1000 - update_word];
+            vm_thread_resume(env, w, 2, w, h);
+            assert(env->head == 0 && "stack \"leak\"?");
         }
 
         /*Rect window = { 0, 0, w, h };

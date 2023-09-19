@@ -22,7 +22,7 @@
 13,12,11,10,9,8,7,6,5,4,3,2,1,0
 
 // depends on the forth interpreter
-static int interp(Env* env, Word* w);
+static void vm_interp(VM_Thread* env, Word* w);
 
 enum {
     FOREIGN_INTERP,
@@ -44,7 +44,7 @@ typedef struct {
     TB_FunctionPrototype* proto;
 } JIT_Trampoline;
 
-typedef int (*JIT_Caller)(Env* env, Value* args, void* fn);
+typedef int (*JIT_Caller)(VM_Thread* env, Value* args, void* fn);
 
 // for now it's 1 jit thread, N forths
 static struct {
@@ -53,8 +53,6 @@ static struct {
     TB_Arena arena;
     TB_Module* mod;
     TB_JIT* jit;
-
-    TB_Global* poll_site_global;
 
     // this is how we call from the interpreter
     TB_FunctionPrototype* proto;
@@ -84,9 +82,9 @@ static JIT_Trampoline jit__get_trampoline(size_t arity, size_t outs);
 static void jit__queue_push(uint32_t exp, _Atomic uint32_t* queue, void** elems, void* val);
 static void* jit__queue_pop(uint32_t exp, _Atomic uint32_t* queue, void** elems);
 
-int jit_try_call(Env* env, Word* w) {
+int jit_try_call(VM_Thread* env, Word* w) {
     if (w->tag == WORD_TYPE) {
-        return INTERP_NO_JIT;
+        return VM_STATUS_NO_JIT;
     }
 
     void* fn = atomic_load(&w->jitted);
@@ -110,7 +108,7 @@ int jit_try_call(Env* env, Word* w) {
 
                     // if it's so good to inline, then we should expect it has
                     // been even if it's "best" can't be compiled :)
-                    return INTERP_NO_JIT;
+                    return VM_STATUS_NO_JIT;
                 }
             }
 
@@ -122,12 +120,12 @@ int jit_try_call(Env* env, Word* w) {
             }
         }
 
-        return INTERP_NO_JIT;
+        return VM_STATUS_NO_JIT;
     }
 
     size_t arity = w->type.in_count;
     if (env->head < arity) {
-        return INTERP_UNDERFLOW;
+        return VM_STATUS_UNDERFLOW;
     }
 
     // we won't try to call the JIT until the trampoline is ready
@@ -140,9 +138,9 @@ int jit_try_call(Env* env, Word* w) {
             c(env, &env->stack[env->head - arity], w->jitted);
         }
 
-        return INTERP_OK;
+        return VM_STATUS_OK;
     } else {
-        return INTERP_NO_JIT;
+        return VM_STATUS_NO_JIT;
     }
 }
 
@@ -161,7 +159,7 @@ static JIT_Trampoline jit__get_trampoline(size_t arity, size_t outs) {
         // compile trampoline
         // make prototype
         TB_PrototypeParam params[17];
-        params[0] = (TB_PrototypeParam){ TB_TYPE_PTR }; // Env*
+        params[0] = (TB_PrototypeParam){ TB_TYPE_PTR }; // VM_Thread*
         for (size_t i = 0; i < arity; i++) {
             params[i + 1] = (TB_PrototypeParam){ TB_TYPE_I64 };
         }
@@ -273,7 +271,7 @@ static void* jit__queue_pop(uint32_t exp, _Atomic uint32_t* queue, void** elems)
 ////////////////////////////////
 // Compiler thread
 ////////////////////////////////
-static void jit__compile_blob(Env* env, Word* w, const char* name);
+static void jit__compile_blob(VM_Thread* env, Word* w, const char* name);
 
 // used by jitted code, needs to be bound on startup
 static void jit__putnum(int64_t num) { printf("%lld", num); }
@@ -306,7 +304,7 @@ static int jit_thread_routine(void* arg) {
     ////////////////////////////////
     spallperf__start_thread();
 
-    Env* env = arg;
+    VM_Thread* env = arg;
     CUIK_TIMED_BLOCK("init") {
         tb_arena_create(&jit.arena, TB_ARENA_LARGE_CHUNK_SIZE);
 
@@ -319,15 +317,11 @@ static int jit_thread_routine(void* arg) {
         TB_PrototypeParam ret = { TB_TYPE_I32 };
         jit.proto = tb_prototype_create(jit.mod, TB_STDCALL, 3, params, 1, &ret, false);
 
-        JIT__BIND(INTERP,  interp,      TB_TYPE_I32,  TB_TYPE_PTR, TB_TYPE_PTR);
+        JIT__BIND(INTERP,  vm_interp,   TB_TYPE_VOID, TB_TYPE_PTR, TB_TYPE_PTR);
         JIT__BIND(PUTCHAR, putchar,     TB_TYPE_I32,  TB_TYPE_I32);
         JIT__BIND(PUTNUM,  jit__putnum, TB_TYPE_VOID, TB_TYPE_I64);
         JIT__BIND(GETCHAR, getchar,     TB_TYPE_I32);
         JIT__BIND(RECT,    jit__rect,   TB_TYPE_VOID, TB_TYPE_I32, TB_TYPE_I32, TB_TYPE_I32, TB_TYPE_I32);
-
-        jit.poll_site_global = tb_global_create(jit.mod, -1, "poll_site", NULL, TB_LINKAGE_PUBLIC);
-        tb_global_set_storage(jit.mod, tb_module_get_data(jit.mod), jit.poll_site_global, 4096, 4096, 0);
-        poll_site = tb_jit_place_global(jit.jit, jit.poll_site_global);
 
         jit.running = true;
     }
@@ -392,7 +386,7 @@ static TB_Node* jit__call_builtin(JIT_Builder* ctx, size_t id, size_t count, TB_
 }
 
 static TB_Node* jit__shift_head(TB_Function* f, TB_Node* env, int delta, bool post) {
-    TB_Node* head_ptr = tb_inst_member_access(f, env, offsetof(Env, head));
+    TB_Node* head_ptr = tb_inst_member_access(f, env, offsetof(VM_Thread, head));
     TB_Node* ld_head = tb_inst_load(f, TB_TYPE_I64, head_ptr, _Alignof(size_t), false);
 
     // writeback new head
@@ -413,7 +407,7 @@ static TB_Node* jit__shift_head(TB_Function* f, TB_Node* env, int delta, bool po
 
 static TB_Node* jit__spill_stack(TB_Function* f, TB_Node* env, TB_Node** stack, TB_Node* ld_head, int count) {
     // dump stack (args is the top of the stack)
-    TB_Node* tos = tb_inst_member_access(f, env, offsetof(Env, stack));
+    TB_Node* tos = tb_inst_member_access(f, env, offsetof(VM_Thread, stack));
     tos = tb_inst_array_access(f, tos, ld_head, sizeof(Value));
 
     for (size_t i = 0; i < count; i++) {
@@ -426,7 +420,7 @@ static TB_Node* jit__spill_stack(TB_Function* f, TB_Node* env, TB_Node** stack, 
 
 static void jit__safepoint(JIT_Builder* ctx, Word* w) {
     // insert safepoint at blob entry
-    TB_Node* poll_site_addr = tb_inst_get_symbol_address(ctx->f, (TB_Symbol*) jit.poll_site_global);
+    TB_Node* poll_site_addr = tb_inst_member_access(ctx->f, tb_inst_param(ctx->f, 0), offsetof(VM_Thread, poll_site));
     tb_inst_safepoint_poll(ctx->f, poll_site_addr, 1, &ctx->env);
 }
 
@@ -512,7 +506,6 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
                         jit__spill_stack(f, env, stack, ld_head, new_w->type.in_count);
                     }
 
-                    // this is kinda hacky but we're JITting it's fine
                     TB_Node* new_w_node = tb_inst_uint(f, TB_TYPE_PTR, (uintptr_t) new_w);
 
                     TB_Node* args[2] = { env, new_w_node };
@@ -542,7 +535,7 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
                     TB_Node* ld_head = jit__shift_head(f, env, -outputs, true);
 
                     // dump stack (args is the top of the stack)
-                    TB_Node* tos = tb_inst_member_access(f, env, offsetof(Env, stack));
+                    TB_Node* tos = tb_inst_member_access(f, env, offsetof(VM_Thread, stack));
                     tos = tb_inst_array_access(f, tos, ld_head, sizeof(size_t));
 
                     for (size_t i = 0; i < outputs; i++) {
@@ -663,7 +656,7 @@ static void jit__compile_word(JIT_Builder* ctx, Word* w) {
 
 // blob refers to a set of words, we start with the root but
 // we will end up inlining early if things are small.
-static void jit__compile_blob(Env* env, Word* w, const char* name) {
+static void jit__compile_blob(VM_Thread* env, Word* w, const char* name) {
     JIT_Builder builder;
     builder.accum_words = 0;
     builder.cs.head = 0;
@@ -714,7 +707,7 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
                 }
             }
 
-            TB_Node* ret = tb_inst_uint(f, TB_TYPE_I32, INTERP_OK);
+            TB_Node* ret = tb_inst_uint(f, TB_TYPE_I32, VM_STATUS_OK);
             tb_inst_ret(f, 1, &ret);
         }
     }
@@ -729,8 +722,8 @@ static void jit__compile_blob(Env* env, Word* w, const char* name) {
         // tb_function_print(f, tb_default_print_callback, stdout);
 
         // compile
-        TB_FunctionOutput* out = tb_pass_codegen(p, true);
-        tb_output_print_asm(out, stdout);
+        TB_FunctionOutput* out = tb_pass_codegen(p, false);
+        // tb_output_print_asm(out, stdout);
     }
     tb_pass_exit(p);
 

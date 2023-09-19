@@ -8,7 +8,7 @@ var: y ;
 \ rectangles
 \ record: rect var: x y w h ; ;
 
-: sprite x@ swap 50 50 draw-rect ;
+: sprite  x@ swap 50 50 draw-rect ;
 : sprites dup if{ 1 - dup 75 * sprite tail }else{ drop } ;
 
 \ ( w h -- )
