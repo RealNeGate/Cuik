@@ -591,8 +591,8 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
                 symbol_chain_start = NULL;
 
                 Cuik_Atom name = sym->stmt->decl.name;
-                if (name == va_arg_fp) parser.tu->sysv_abi.va_arg_fp  = sym->stmt;
-                else if (name == va_arg_gp) parser.tu->sysv_abi.va_arg_gp  = sym->stmt;
+                if (name == va_arg_fp) parser.tu->sysv_abi.va_arg_fp = sym->stmt;
+                else if (name == va_arg_gp) parser.tu->sysv_abi.va_arg_gp = sym->stmt;
                 else if (name == va_arg_mem) parser.tu->sysv_abi.va_arg_mem = sym->stmt;
 
                 // Some sanity checks in case a local symbol is acting funny.

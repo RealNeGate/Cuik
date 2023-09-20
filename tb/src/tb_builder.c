@@ -420,17 +420,6 @@ TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
     return n;
 }
 
-TB_Node* tb_inst_safepoint(TB_Function* f, TB_Node* poke_site, size_t param_count, TB_Node** params) {
-    tb_todo();
-    /*TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_CONTROL, 1 + param_count, sizeof(TB_NodeSafepoint));
-    n->inputs[0] = f->active_control_node;
-    memcpy(n->inputs + 1, params, param_count * sizeof(TB_Node*));
-    TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = f->safepoint_count++);
-
-    f->active_control_node = n;
-    return n;*/
-}
-
 TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
     TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*[3]));
     n->inputs[0] = f->active_control_node;

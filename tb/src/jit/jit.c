@@ -64,7 +64,7 @@ static void* push_region(TB_JITHeap* c, size_t size) {
     return ptr;
 }
 
-static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t size) {
+static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t size, size_t align) {
     size = (size + ALLOC_GRANULARITY - 1) & ~(ALLOC_GRANULARITY - 1);
 
     AllocRegion* r = c->region;
@@ -129,6 +129,7 @@ static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t size) {
 
     done:
     log_debug("jit heap %s: alloc %-4zu => [ %-4zu - %-4zu ]", prot_names[c->prot], size, offset, offset + size);
+    assert((offset & ~(align - 1)) == 0);
     return &r->data[offset];
 }
 
@@ -183,7 +184,7 @@ void* tb_jit_place_function(TB_JIT* jit, TB_Function* f) {
     }
 
     // copy machine code
-    char* dst = tb_jitheap_alloc_region(&jit->rx_heap, func_out->code_size);
+    char* dst = tb_jitheap_alloc_region(&jit->rx_heap, func_out->code_size, 16);
     memcpy(dst, func_out->code, func_out->code_size);
     f->compiled_pos = dst;
 
@@ -218,7 +219,7 @@ void* tb_jit_place_function(TB_JIT* jit, TB_Function* f) {
                 memcpy(dst + actual_pos, &rel32, sizeof(int32_t));
             } else {
                 // generate thunk to make far call
-                char* thunk = tb_jitheap_alloc_region(&jit->rx_heap, 6 + sizeof(void*));
+                char* thunk = tb_jitheap_alloc_region(&jit->rx_heap, 6 + sizeof(void*), 1);
                 thunk[0] = 0xFF; // jmp qword [rip]
                 thunk[1] = 0x25;
                 thunk[2] = 0x00;
@@ -253,9 +254,10 @@ void* tb_jit_place_global(TB_JIT* jit, TB_Global* g) {
         return g->address;
     }
 
-    log_debug("jit: apply global %s", g->super.name ? g->super.name : "<unnamed>");
-    char* data = tb_jitheap_alloc_region(&jit->rw_heap, g->size);
+    char* data = tb_jitheap_alloc_region(&jit->rw_heap, g->size, g->align);
     g->address = data;
+
+    log_debug("jit: apply global %s (%p)", g->super.name ? g->super.name : "<unnamed>", data);
 
     memset(data, 0, g->size);
     FOREACH_N(k, 0, g->obj_count) {

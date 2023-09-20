@@ -125,12 +125,6 @@ typedef struct TB_FeatureSet {
     TB_FeatureSet_X64 x64;
 } TB_FeatureSet;
 
-typedef enum TB_BranchHint {
-    TB_BRANCH_HINT_NONE,
-    TB_BRANCH_HINT_LIKELY,
-    TB_BRANCH_HINT_UNLIKELY
-} TB_BranchHint;
-
 typedef enum TB_Linkage {
     TB_LINKAGE_PUBLIC,
     TB_LINKAGE_PRIVATE
@@ -150,12 +144,6 @@ typedef enum TB_MemoryOrder {
     TB_MEM_ORDER_ACQ_REL,
     TB_MEM_ORDER_SEQ_CST,
 } TB_MemoryOrder;
-
-typedef enum TB_ISelMode {
-    // FastISel
-    TB_ISEL_FAST,
-    TB_ISEL_COMPLEX
-} TB_ISelMode;
 
 typedef enum TB_DataTypeEnum {
     // Integers, note void is an i0 and bool is an i1

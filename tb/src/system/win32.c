@@ -54,4 +54,3 @@ void* tb_jit_create_stack(size_t* out_size) {
     return VirtualAlloc2(GetCurrentProcess(), NULL, size, MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE, &param, 1);
 }
 #endif
-

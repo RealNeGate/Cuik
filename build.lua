@@ -66,7 +66,7 @@ if options.driver then
 end
 
 if options.gcc then
-	cflags = cflags.." -Wno-enum-compare -Wno-array-bounds"
+	cflags = cflags.." -Wno-enum-compare -Wno-array-bounds -Wno-unknown-pragmas"
 end
 
 local cc = options.gcc and "gcc" or "clang"
