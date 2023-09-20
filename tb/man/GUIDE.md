@@ -57,43 +57,4 @@ If instead you need to output a buffer in memory:
 	tb_exporter_free_buffer(buffer);
 ```
 
-If you wish to override the default file IO of `tb_exporter_to_file` you'll have to implement
-the exporter message pump yourself:
-
-```c
-	FILE* my_file_handle = ...;
-	TB_ModuleExporter* e = tb_make_exporter(module, TB_FLAVOR_OBJECT);
-
-	// this will hold the temporary buffer that the module exporter needs
-    char* tmp_memory = NULL;
-
-	// the packet is used to communicate the buffers you must export.
-	// this is done to avoid callbacks while still allowing control of
-	// the final output's location (be it files, network, archive, etc).
-	// the coroutine will clean itself up during the last iteration.
-	TB_ModuleExportPacket packet;
-	while (tb_exporter_next(module, e, &packet)) {
-		switch (packet.type) {
-			// this is where the exporter derives temporary memory (it
-			// only lasts until after the next call to tb_exporter_next
-			// which means you can recycle the same memory buffer)
-			case TB_EXPORT_PACKET_ALLOC: {
-				// you may want a smarter system than this but it works
-				// when getting started.
-            	tmp_memory = realloc(tmp_memory, packet.alloc.request_size);
-
-				// return the pointer via the packet
-				packet.alloc.memory = tmp_memory;
-				break;
-			}
-
-			// this message just tells us to output to our final stream and advance
-            case TB_EXPORT_PACKET_WRITE:
-            fwrite(packet.write.data, packet.write.length, 1, my_file_handle);
-            break;
-		}
-	}
-
-	free(tmp_memory);
-	fclose(my_file_handle);
-```
+# Builder API
