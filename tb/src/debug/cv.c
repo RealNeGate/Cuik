@@ -1,4 +1,4 @@
-#include "../../tb_internal.h"
+#include "../tb_internal.h"
 #include "cv.h"
 
 #include "cv_type_builder.c"
@@ -6,9 +6,6 @@
 // constant sized "hash map" which is used to
 // deduplicate types in the codeview
 #define MAX_TYPE_ENTRY_LOOKUP_SIZE 1024
-
-// leftrotate function definition
-#define LEFTROTATE(x, c) (((x) << (c)) | ((x) >> (32 - (c))))
 
 static void md5sum_file(uint8_t out_bytes[16], const char* filepath) {
     FILE* file = fopen(filepath, "rb");
@@ -191,12 +188,6 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
         static const char creator_str[] = "Bitch";
         uint32_t creator_length = 2 + 4 + 2 + (3 * 2) + (3 * 2) + sizeof(creator_str) + 2;
 
-        /*sym_length = (cv8_state.num_syms[SYMTYPE_CODE] * 7)
-                + (cv8_state.num_syms[SYMTYPE_PROC]  * 7)
-                + (cv8_state.num_syms[SYMTYPE_LDATA] * 10)
-                + (cv8_state.num_syms[SYMTYPE_GDATA] * 10)
-                + (cv8_state.symbol_lengths);*/
-
         static const char dummy_path[] = "fallback.o";
         tb_out4b(&debugs_out, 0x00000004);
 
@@ -260,7 +251,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
         CUIK_TIMED_BLOCK("write line info") {
             TB_FOR_FUNCTIONS(f, m) {
                 TB_FunctionOutput* out_f = f->output;
-                if (!out_f) continue;
+                if (out_f == NULL) continue;
 
                 // Layout crap
                 DynArray(TB_Location) lines = out_f->locations;

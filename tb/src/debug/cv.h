@@ -1,5 +1,5 @@
 #pragma once
-#include "../../objects/coff.h"
+#include "../objects/coff.h"
 
 typedef uint32_t CV_TypeIndex;
 

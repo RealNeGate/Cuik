@@ -71,7 +71,6 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len) {
         uint32_t i;
         for (i = 0; i < 64; i++) {
             uint32_t f, g;
-
             if (i < 16) {
                 f = (b & c) | ((~b) & d);
                 g = i;
@@ -90,7 +89,8 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len) {
             d = c;
             c = b;
 
-            b = b + LEFTROTATE((a + f + k[i] + w[g]), r[i]);
+            uint32_t x = a + f + k[i] + w[g];
+            b += (x << r[i]) | (x >> (32 - r[i]));
             a = temp;
         }
 
@@ -102,30 +102,10 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len) {
     }
 
     // TODO(NeGate): refactor this bullshit
-    uint8_t* p;
-    p = (uint8_t*)&h0;
-    out_bytes[0] = p[0];
-    out_bytes[1] = p[1];
-    out_bytes[2] = p[2];
-    out_bytes[3] = p[3];
-
-    p = (uint8_t*)&h1;
-    out_bytes[4] = p[0];
-    out_bytes[5] = p[1];
-    out_bytes[6] = p[2];
-    out_bytes[7] = p[3];
-
-    p = (uint8_t*)&h2;
-    out_bytes[8]  = p[0];
-    out_bytes[9]  = p[1];
-    out_bytes[10] = p[2];
-    out_bytes[11] = p[3];
-
-    p = (uint8_t*)&h3;
-    out_bytes[12] = p[0];
-    out_bytes[13] = p[1];
-    out_bytes[14] = p[2];
-    out_bytes[15] = p[3];
+    memcpy(out_bytes,    &h0, 4);
+    memcpy(out_bytes+4,  &h1, 4);
+    memcpy(out_bytes+8,  &h2, 4);
+    memcpy(out_bytes+12, &h3, 4);
 
     // cleanup
     free(msg);

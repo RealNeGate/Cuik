@@ -1,9 +1,5 @@
-#include "../tb_internal.h"
-#include "../host.h"
-
-size_t tb_helper_write_text_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
-size_t tb_helper_write_data_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
-size_t tb_helper_write_rodata_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
+#include "tb_internal.h"
+#include "host.h"
 
 enum {
     ALLOC_GRANULARITY = 16,
