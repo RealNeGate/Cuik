@@ -76,23 +76,27 @@ static int stbi__mul2sizes_valid(int a, int b)
     return a <= INT_MAX/b;
 }
 
-static void array_ops(size_t n, int* arr) {
+void array_ops(size_t n, int* arr) {
     for (size_t i = 0; i < n; i++) {
         arr[i] |= 1;
     }
 }
 
-void max_array(size_t n, float* restrict x, float* y) {
+float max_elem(size_t i, float* x, float* y) {
+    return x[i] > y[i] ? x[i] : y[i];
+}
+
+void max_array(size_t n, float* x, float* y) {
     for (size_t i = 0; i < n; i++) {
         x[i] = x[i] > y[i] ? x[i] : y[i];
     }
 }
 
-static uint32_t div_tricks(uint32_t n) {
+uint32_t div_tricks(uint32_t n) {
     return n / 3;
 }
 
-/*int bar(int n) {
+int bar(int n) {
     int arr[2];
     arr[0] = n;
     arr[1] = 1;
@@ -103,17 +107,17 @@ static uint32_t div_tricks(uint32_t n) {
     }
 
     return arr[1];
-}*/
+}
 
 static int folding(void) {
     return 42+1 & 3 * 16;
 }
 
-static int bitcast(float x) {
+int bitcast(float x) {
     return *(int*) &x;
 }
 
-static float Q_rsqrt(float number) {
+float Q_rsqrt(float number) {
     long i;
     float x2, y;
     const float threehalfs = 1.5F;
@@ -128,7 +132,15 @@ static float Q_rsqrt(float number) {
     return y;
 }
 
-#if 0
+void shl_test(int* sizelist, int num) {
+    int j = 16;
+
+    for (int i=0; i < num; ++i) {
+        int s = sizelist[i];
+        j += (1 << s);
+    }
+}
+
 int store_elim(int* a) {
     *a = 16;
     *a = 5;
@@ -153,13 +165,12 @@ uint64_t foo(uint64_t x, uint64_t y) {
     if ((x * 2) / 2) return x;
     else             return y;
 }
-#endif
 
-static int select_opt(int a, int b) {
+int select_opt(int a, int b) {
     return a > 10 && !(b > 10);
 }
 
-static short mul(void) {
+short mul(void) {
     return (short)5 * (short)9;
 }
 
@@ -167,11 +178,22 @@ static void syscall_test(void) {
     __builtin_syscall(1, 69);
 }
 
-static int phi_test(int color) {
+int phi_test(int color) {
     return (color & 2 ? 3 : 1) + (color & 4 ? 1 : 0);
 }
 
-static uint32_t murmur3_32(const void* key, size_t len) {
+int bounds_checks(size_t n, int* arr) {
+    int sum = 0;
+    // memset(&sum, 0, sizeof(sum));
+
+    for (size_t i = 0; i < n; i++) {
+        // if (i >= n) return -1; // bounds check
+        sum += arr[i];
+    }
+    return sum;
+}
+
+uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time
@@ -286,17 +308,6 @@ int tiling(int* a, size_t i) {
 
 void simple(int* a, int* n, int b) {
     a[(*n)++] = b;
-}
-
-int bounds_checks(size_t n, int* arr) {
-    int sum = 0;
-    // memset(&sum, 0, sizeof(sum));
-
-    for (size_t i = 0; i < n; i++) {
-        // if (i >= n) return -1; // bounds check
-        sum += arr[i];
-    }
-    return sum;
 }
 
 // int bar(int x, int y);
