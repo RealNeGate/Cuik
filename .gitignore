@@ -64,6 +64,7 @@ inspector/SDL2/
 *.flint
 *.ttf
 cuik
+tb_unittests
 
 tests/the_fuzzer/
 tests/stb_image.c
