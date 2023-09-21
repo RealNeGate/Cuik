@@ -36,7 +36,11 @@ local options = {
 -- Cuik/TB are broken down into several pieces
 local modules = {
 	common = { srcs={"common/common.c", "common/perf.c"} },
+
+	-- libraries:
+	--   CuikC frontend
 	cuik   = { srcs={"libCuik/lib/libcuik.c", "libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c"}, flags="-I libCuik/include", deps={"common"} },
+	--   TildeBackend
 	tb     = { srcs={"tb/src/libtb.c", "tb/src/x64/x64.c"}, flags="-I tb/include -DCUIK_USE_TB", deps={"common"} },
 
 	-- executables:
@@ -45,7 +49,7 @@ local modules = {
 	--   forth
 	forth        = { is_exe=true, srcs={"forth/forth.c"}, deps={"common", "tb"}, flags="-I libCuik/include" },
 	--   TB unittests
-	tb_unittests = { is_exe=true, srcs={"tb/unittests/tb_unittests.c"}, flags="-I tb/include -DCUIK_USE_TB", deps={"tb", "common"} },
+	tb_unittests = { is_exe=true, srcs={"tb/unittests/tb_unittests.c"}, deps={"tb", "common"} },
 
 	-- external dependencies
 	mimalloc = { srcs={"mimalloc/src/static.c"} }
@@ -228,8 +232,8 @@ rule("run", {
 })
 
 -- lexer metaprogram
-command("bin/lexgen"..exe_ext, "libCuik/meta/lexgen.c", cc.." $in -O1 -o $out")
-command("libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h", "bin/lexgen"..exe_ext, "bin/lexgen"..exe_ext)
+command("bin/objs/lexgen"..exe_ext, "libCuik/meta/lexgen.c", cc.." $in -O1 -o $out")
+command("libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
 
 -- package freestanding headers into C file
 local x = {}
@@ -248,17 +252,17 @@ else
 end
 local freestanding_headers = table.concat(x, " ")
 
-command("bin/hexembed"..exe_ext, "libCuik/meta/hexembed.c", cc.." $in -O1 -o $out")
-command("bin/freestanding.c", freestanding_headers, "bin/hexembed"..exe_ext.." $in", "bin/hexembed"..exe_ext)
+command("bin/objs/hexembed"..exe_ext, "libCuik/meta/hexembed.c", cc.." $in -O1 -o $out")
+command("bin/objs/freestanding.c", freestanding_headers, "bin/objs/hexembed"..exe_ext.." $in", "bin/objs/hexembed"..exe_ext)
 
-src[#src + 1] = "bin/freestanding.c"
+src[#src + 1] = "bin/objs/freestanding.c"
 
 -- normal C files
 local objs = {}
 for i, f in ipairs(src) do
-	local out = "bin/"..filename(f)..".o"
+	local out = "bin/objs/"..filename(f)..".o"
 	ninja:write("build "..out..": cc "..f)
-	if out == "bin/libcuik.o" then
+	if out == "bin/objs/libcuik.o" then
 		ninja:write(" | libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h\n")
 	else
 		ninja:write("\n")
@@ -272,6 +276,9 @@ local exe_name = "cuik"
 if options.tb           then exe_name = "tb" end
 if options.tb_unittests then exe_name = "tb_unittests" end
 if options.forth        then exe_name = "forth" end
+
+-- placing executables into bin/
+exe_name = "bin/"..exe_name
 
 -- link or archive
 if options.shared then
