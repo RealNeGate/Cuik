@@ -387,7 +387,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
     tb_compute_dominators(f, c.block_count, p->worklist.items);
 
-    TB_DominanceFrontiers df = tb_get_dominance_frontiers(f, c.block_count, c.blocks);
+    TB_DominanceFrontiers* df = tb_get_dominance_frontiers(f, c.block_count, c.blocks);
 
     ////////////////////////////////
     // Phase 1: Insert phi functions
@@ -445,15 +445,14 @@ bool tb_pass_mem2reg(TB_Passes* p) {
                 TB_Node* value = nl_map_get_checked(c.defs[var], bb);
                 TB_DataType dt = value->dt;
 
-                ptrdiff_t search = nl_map_get(df, bb);
-                if (search < 0) continue;
-
-                TB_FrontierSet* frontier = &df[search].v;
-                nl_hashset_for(it, frontier) {
-                    TB_Node* l = *it;
+                // for all DFs of BB, insert PHI
+                int bb_id = TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->postorder_id;
+                uint64_t* frontier = &df->arr[bb_id * df->stride];
+                FOREACH_N(j, 0, df->stride) FOREACH_BIT(k, j*64, frontier[j]) {
+                    TB_Node* l = c.blocks[k];
                     if (!nl_hashset_put(&has_already, l)) continue;
 
-                    search = nl_map_get(c.defs[var], l);
+                    ptrdiff_t search = nl_map_get(c.defs[var], l);
 
                     TB_Node* phi_reg = NULL;
                     if (search < 0) {
@@ -480,6 +479,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
             }
         }
     }
+    tb_platform_heap_free(df);
     tb_tls_restore(tls, phi_p);
 
     ////////////////////////////////
@@ -497,11 +497,6 @@ bool tb_pass_mem2reg(TB_Passes* p) {
         tb_pass_kill_node(c.p, c.to_promote[var]);
     }
 
-    // annoying nested hash map freeing
-    nl_map_for(i, df) {
-        nl_hashset_free(df[i].v);
-    }
-    nl_map_free(df);
     tb_tls_restore(tls, to_promote);
 
     cuikperf_region_end();

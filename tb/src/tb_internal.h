@@ -47,6 +47,9 @@ for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
 #define FOREACH_REVERSE_N(it, start, end) \
 for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 
+#define FOREACH_BIT(it, start, bits) \
+for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bits_ & 1)
+
 #define TB_MIN(x, y) ((x) < (y) ? (x) : (y))
 #define TB_MAX(x, y) ((x) > (y) ? (x) : (y))
 

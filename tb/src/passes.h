@@ -1,7 +1,7 @@
 #pragma once
 #include "tb_internal.h"
 
-#define TB_OPTDEBUG_STATS 0
+#define TB_OPTDEBUG_STATS 1
 
 #define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
@@ -12,8 +12,20 @@
 #define DO_IF_0(...)
 #define DO_IF_1(...) __VA_ARGS__
 
-typedef NL_HashSet TB_FrontierSet;
-typedef NL_Map(TB_Node*, TB_FrontierSet) TB_DominanceFrontiers;
+typedef struct {
+    size_t stride;
+    uint64_t arr[];
+} TB_DominanceFrontiers;
+
+static void tb_dommy_fronts_put(TB_DominanceFrontiers* df, size_t i, size_t j) {
+    size_t word_i = j / 64;
+    df->arr[i * df->stride + word_i] |= 1ull << (j % 64);
+}
+
+static bool tb_dommy_fronts_get(TB_DominanceFrontiers* df, size_t i, size_t j) {
+    size_t word_i = j / 64;
+    return df->arr[i * df->stride + word_i] & (1ull << (j % 64));
+}
 
 typedef struct User User;
 struct User {

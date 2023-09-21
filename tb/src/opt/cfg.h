@@ -51,11 +51,18 @@ static int resolve_dom_depth(TB_Node* bb) {
     return parent + 1;
 }
 
-TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, size_t count, TB_Node** blocks) {
-    TB_DominanceFrontiers df = NULL;
+TB_DominanceFrontiers* tb_get_dominance_frontiers(TB_Function* f, size_t count, TB_Node** blocks) {
+    size_t stride = (count + 63) / 64;
+    size_t elems = stride * count;
+    size_t size = sizeof(TB_DominanceFrontiers) + sizeof(uint64_t)*elems;
+
+    TB_DominanceFrontiers* df = tb_platform_heap_alloc(size);
+    memset(df, 0, size);
+    df->stride = stride;
 
     FOREACH_REVERSE_N(i, 0, count) {
         TB_Node* bb = blocks[i];
+        assert(TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->postorder_id == i);
 
         if (bb->input_count >= 2) {
             FOREACH_N(k, 0, bb->input_count) {
@@ -63,14 +70,9 @@ TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, size_t count, T
 
                 while (runner->input_count > 0 && runner != idom(bb)) {
                     // add to frontier set
-                    ptrdiff_t search = nl_map_get(df, runner);
-                    TB_FrontierSet* set = NULL;
-                    if (search < 0) {
-                        nl_map_puti(df, runner, search);
-                        df[search].v = nl_hashset_alloc(2); // these won't be big
-                    }
+                    TB_NodeRegion* r = TB_NODE_GET_EXTRA(runner);
+                    tb_dommy_fronts_put(df, r->postorder_id, i);
 
-                    nl_hashset_put(&df[search].v, bb);
                     runner = idom(runner);
                 }
             }
@@ -80,11 +82,8 @@ TB_DominanceFrontiers tb_get_dominance_frontiers(TB_Function* f, size_t count, T
     return df;
 }
 
-TB_API void tb_free_dominance_frontiers(TB_Function* f, TB_DominanceFrontiers frontiers) {
-    nl_map_for(i, frontiers) {
-        nl_hashset_free(frontiers[i].v);
-    }
-    nl_map_free(frontiers);
+TB_API void tb_free_dominance_frontiers(TB_DominanceFrontiers* df) {
+    tb_platform_heap_free(df);
 }
 
 // https://www.cs.rice.edu/~keith/EMBED/dom.pdf
