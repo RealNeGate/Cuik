@@ -18,7 +18,7 @@
 local is_windows = package.config:sub(1,1) == "\\"
 
 local options = {
-	log           = true,
+	log           = false,
 	debug         = false,
 	cuik          = false,
 	tb            = false,
