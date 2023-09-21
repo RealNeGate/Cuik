@@ -41,6 +41,9 @@ static const struct ParamDescriptor {
 
 #include "../codegen/generic_cg.h"
 
+static size_t emit_prologue(Ctx* restrict ctx);
+static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop);
+
 // initialize register allocator state
 static void init_regalloc(Ctx* restrict ctx) {
     // Generate intervals for physical registers
@@ -451,7 +454,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int used_gpr = 0, used_xmm = 0;
             TB_Node** params = ctx->f->params;
             FOREACH_N(i, 0, ctx->f->param_count) {
-                TB_Node* proj = params[2 + i];
+                TB_Node* proj = params[3 + i];
                 bool is_float = proj->dt.type == TB_FLOAT;
 
                 // copy from parameter
@@ -1339,13 +1342,13 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
 
         case TB_END: {
-            if (n->input_count > 2) {
-                assert(n->input_count <= 3 && "We don't support multiple returns here");
+            if (n->input_count > 3) {
+                assert(n->input_count <= 4 && "We don't support multiple returns here");
 
-                int src = input_reg(ctx, n->inputs[2]);
+                int src = input_reg(ctx, n->inputs[3]);
 
                 // copy to return register
-                TB_DataType dt = n->inputs[2]->dt;
+                TB_DataType dt = n->inputs[3]->dt;
                 if (dt.type == TB_FLOAT) {
                     hint_reg(ctx, src, FIRST_XMM + XMM0);
                     SUBMIT(inst_move(dt, FIRST_XMM + XMM0, src));
@@ -1798,7 +1801,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         }
     }
 
-    func_out->epilogue_length = emit_epilogue(ctx);
+    func_out->epilogue_length = emit_epilogue(ctx, ctx->f->stop_node);
 }
 
 static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage) {
@@ -1883,7 +1886,7 @@ static size_t emit_prologue(Ctx* restrict ctx) {
     return e->count;
 }
 
-static size_t emit_epilogue(Ctx* restrict ctx) {
+static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop) {
     uint64_t saved = ctx->regs_to_save, stack_usage = ctx->stack_usage;
     TB_CGEmitter* e = &ctx->emit;
 
@@ -1917,8 +1920,13 @@ static size_t emit_epilogue(Ctx* restrict ctx) {
         EMIT1(&ctx->emit, 0x58 + RBP);
     }
 
-    EMITA(e, "  ret\n");
-    EMIT1(&ctx->emit, 0xC3);
+    // ret
+    TB_Node* rpc = stop->inputs[2];
+    if (rpc->type == TB_PROJ && rpc->inputs[0]->type == TB_START && TB_NODE_GET_EXTRA_T(rpc, TB_NodeProj)->index == 2) {
+        EMITA(e, "  ret\n");
+        EMIT1(&ctx->emit, 0xC3);
+    }
+
     return ctx->emit.count - start;
 }
 

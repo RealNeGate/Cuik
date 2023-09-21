@@ -412,8 +412,6 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
             insert_phis(&c, c.blocks[i], latest_mem);
         }
-
-        assert(latest_mem->type);
         TB_NODE_GET_EXTRA_T(c.blocks[i], TB_NodeRegion)->mem_out = latest_mem;
     }
 

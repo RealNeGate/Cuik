@@ -36,6 +36,10 @@ static void print_type(TB_DataType dt) {
             printf("memory");
             break;
         }
+        case TB_CONT: {
+            printf("cont");
+            break;
+        }
         default: tb_todo();
     }
 }

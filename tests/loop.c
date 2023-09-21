@@ -184,10 +184,8 @@ int phi_test(int color) {
 
 int bounds_checks(size_t n, int* arr) {
     int sum = 0;
-    // memset(&sum, 0, sizeof(sum));
-
     for (size_t i = 0; i < n; i++) {
-        // if (i >= n) return -1; // bounds check
+        if (i >= n) return -1; // bounds check
         sum += arr[i];
     }
     return sum;

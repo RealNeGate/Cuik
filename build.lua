@@ -18,11 +18,11 @@
 local is_windows = package.config:sub(1,1) == "\\"
 
 local options = {
-	log           = false,
+	log           = true,
 	debug         = false,
 	cuik          = false,
 	tb            = false,
-  tb_unittests  = false,
+	tb_unittests  = false,
 	driver        = false,
 	shared        = false,
 	test          = false,
@@ -44,7 +44,7 @@ local modules = {
 	driver       = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik", "tb"} },
 	--   forth
 	forth        = { is_exe=true, srcs={"forth/forth.c"}, deps={"common", "tb"}, flags="-I libCuik/include" },
-  --   TB unittests
+	--   TB unittests
 	tb_unittests = { is_exe=true, srcs={"tb/unittests/tb_unittests.c"}, flags="-I tb/include -DCUIK_USE_TB", deps={"tb", "common"} },
 
 	-- external dependencies

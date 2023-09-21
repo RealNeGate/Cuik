@@ -162,7 +162,7 @@ void tb_compute_dominators(TB_Function* f, size_t count, TB_Node** blocks) {
     }
 }
 
-TB_API TB_Node* tb_get_parent_region(TB_Node* n) {
+TB_Node* tb_get_parent_region(TB_Node* n) {
     while (n->type != TB_REGION && n->type != TB_START) {
         tb_assert(n->inputs[0], "node has no have a control edge");
         n = n->inputs[0];
@@ -171,7 +171,7 @@ TB_API TB_Node* tb_get_parent_region(TB_Node* n) {
     return n;
 }
 
-TB_API bool tb_is_dominated_by(TB_Node* expected_dom, TB_Node* bb) {
+bool tb_is_dominated_by(TB_Node* expected_dom, TB_Node* bb) {
     while (expected_dom != bb) {
         TB_Node* new_bb = idom(bb);
         if (bb == new_bb) {

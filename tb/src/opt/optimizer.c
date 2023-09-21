@@ -36,7 +36,7 @@ TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt);
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
-static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
+static bool remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
 
 ////////////////////////////////
 // Worklist
@@ -281,7 +281,7 @@ static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size
 }
 
 // src -//-> dst
-static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst) {
+static bool remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst) {
     FOREACH_N(i, 0, dst->input_count) {
         if (tb_get_parent_region(dst->inputs[i]) == src) {
             remove_input(p, f, dst, i);
@@ -295,9 +295,11 @@ static void remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_
 
             tb_pass_mark(p, dst);
             tb_pass_mark_users(p, dst);
-            return;
+            return true;
         }
     }
+
+    return false;
 }
 
 void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
@@ -767,11 +769,11 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     worklist_alloc(&p->worklist, f->node_count);
 
     // generate early doms
-    /*CUIK_TIMED_BLOCK("doms") {
+    CUIK_TIMED_BLOCK("doms") {
         size_t block_count = tb_push_postorder(f, &p->worklist);
         tb_compute_dominators(f, block_count, p->worklist.items);
         worklist_clear(&p->worklist);
-    }*/
+    }
 
     // generate work list (put everything)
     CUIK_TIMED_BLOCK("gen worklist") {

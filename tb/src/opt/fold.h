@@ -87,19 +87,55 @@ static bool is_zero(TB_Node* n) {
     return n->type == TB_INTEGER_CONST && i->value == 0;
 }
 
+static bool inverted_cmp(TB_Node* n, TB_Node* n2) {
+    switch (n->type) {
+        case TB_CMP_EQ: return n2->type == TB_CMP_NE && n2->inputs[1] == n->inputs[1] && n2->inputs[2] == n->inputs[2];
+        case TB_CMP_NE: return n2->type == TB_CMP_EQ && n2->inputs[1] == n->inputs[1] && n2->inputs[2] == n->inputs[2];
+        // flipped inputs
+        case TB_CMP_SLE: return n2->type == TB_CMP_SLT && n2->inputs[2] == n->inputs[1] && n2->inputs[1] == n->inputs[2];
+        case TB_CMP_ULE: return n2->type == TB_CMP_ULT && n2->inputs[2] == n->inputs[1] && n2->inputs[1] == n->inputs[2];
+        case TB_CMP_SLT: return n2->type == TB_CMP_SLE && n2->inputs[2] == n->inputs[1] && n2->inputs[1] == n->inputs[2];
+        case TB_CMP_ULT: return n2->type == TB_CMP_ULE && n2->inputs[2] == n->inputs[1] && n2->inputs[1] == n->inputs[2];
+        default: return false;
+    }
+}
+
 static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
+
+    // select(y <= x, a, b) => select(x < y, b, a) flipped conditions
+    if (src->type == TB_CMP_SLE || src->type == TB_CMP_ULE) {
+        TB_Node* new_cmp = tb_alloc_node(f, src->type == TB_CMP_SLE ? TB_CMP_SLT : TB_CMP_ULT, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+        set_input(opt, new_cmp, src->inputs[2], 1);
+        set_input(opt, new_cmp, src->inputs[1], 2);
+        TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(src, TB_NodeCompare)->cmp_dt);
+
+        set_input(opt, n, new_cmp, 1);
+        tb_pass_mark(opt, new_cmp);
+        return n;
+    }
 
     // T(some_bool ? 1 : 0) => movzx(T, some_bool)
     if (src->dt.type == TB_INT && src->dt.data == 1) {
         uint64_t on_true, on_false;
-        if (get_int_const(n->inputs[2], &on_true) && get_int_const(n->inputs[3], &on_false)) {
-            if (on_true == 1 && on_false == 0) {
-                TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
-                set_input(opt, ext_node, src, 1);
-                tb_pass_mark(opt, ext_node);
-                return ext_node;
-            }
+        bool true_imm = get_int_const(n->inputs[2], &on_true);
+        bool false_imm = get_int_const(n->inputs[3], &on_false);
+
+        // A ? A : 0 => A (booleans)
+        if (src == n->inputs[2] && false_imm && on_false == 0) {
+            return src;
+        }
+
+        // A ? 0 : !A => A (booleans)
+        if (inverted_cmp(src, n->inputs[3]) && true_imm && on_true == 0) {
+            return src;
+        }
+
+        if (true_imm && false_imm && on_true == 1 && on_false == 0) {
+            TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
+            set_input(opt, ext_node, src, 1);
+            tb_pass_mark(opt, ext_node);
+            return ext_node;
         }
     }
 
@@ -390,8 +426,12 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
 
         a &= (1ull << bits) - 1;
 
+        // extend x
+        TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, big_dt, 2, 0);
+        set_input(opt, ext_node, x, 1);
+
         TB_Node* mul_node = tb_alloc_node(f, TB_MUL, big_dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(opt, mul_node, x, 1);
+        set_input(opt, mul_node, ext_node, 1);
         set_input(opt, mul_node, make_int_node(f, opt, big_dt, a), 2);
         TB_NODE_SET_EXTRA(mul_node, TB_NodeBinopInt, .ab = 0);
 

@@ -1,3 +1,4 @@
+#include <hashes.h>
 
 // TODO(NeGate): implement dual? from there i can do join with
 //
@@ -39,12 +40,28 @@ typedef struct {
         LATTICE_FLOAT64,
         LATTICE_POINTER,
     } tag;
+    uint32_t pad;
     union {
         LatticeInt _int;
         LatticeFloat _float;
         LatticePointer _ptr;
     };
 } Lattice;
+
+// hash-consing because there's a lot of
+// redundant types we might construct.
+typedef struct {
+    NL_HashSet pool;
+} LatticeUniverse;
+
+static uint32_t lattice_hash(void* a) {
+    return tb__murmur3_32(a, sizeof(Lattice));
+}
+
+static bool lattice_cmp(void* a, void* b) {
+    Lattice *aa = a, *bb = b;
+    return aa->tag == bb->tag ? memcmp(aa, bb, sizeof(Lattice)) == 0 : false;
+}
 
 // maximal subset
 static Lattice lattice_top(TB_DataType dt) {

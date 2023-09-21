@@ -1,9 +1,9 @@
 #pragma once
 #include "tb_internal.h"
 
-#define TB_OPTDEBUG_STATS 1
+#define TB_OPTDEBUG_STATS 0
 
-#define TB_OPTDEBUG_PEEP 0
+#define TB_OPTDEBUG_PEEP 1
 #define TB_OPTDEBUG_LOOP 0
 #define TB_OPTDEBUG_MEM2REG 0
 #define TB_OPTDEBUG_CODEGEN 0
@@ -66,8 +66,6 @@ struct TB_Passes {
 
     // this is used to do CSE
     NL_HashSet cse_nodes;
-
-    TB_Node* merge_mem;
 
     // debug shit:
     TB_Node* error_n;

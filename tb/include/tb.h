@@ -160,6 +160,8 @@ typedef enum TB_DataTypeEnum {
     TB_CONTROL,
     // represents memory (and I/O)
     TB_MEMORY,
+    // continuation (usually just return addresses :p)
+    TB_CONT,
 } TB_DataTypeEnum;
 
 typedef enum TB_FloatFormat {
@@ -645,6 +647,7 @@ typedef struct {
 #define TB_TYPE_BOOL    TB_DataType{ { TB_INT,   0, 1 } }
 #define TB_TYPE_PTR     TB_DataType{ { TB_PTR,   0, 0 } }
 #define TB_TYPE_MEMORY  TB_DataType{ { TB_MEMORY,0, 0 } }
+#define TB_TYPE_CONT    TB_DataType{ { TB_CONT,  0, 0 } }
 #define TB_TYPE_INTN(N) TB_DataType{ { TB_INT,   0, (N) } }
 #define TB_TYPE_PTRN(N) TB_DataType{ { TB_PTR,   0, (N) } }
 
@@ -661,6 +664,7 @@ typedef struct {
 #define TB_TYPE_F64     (TB_DataType){ { TB_FLOAT, 0, TB_FLT_64 } }
 #define TB_TYPE_BOOL    (TB_DataType){ { TB_INT,   0, 1 } }
 #define TB_TYPE_PTR     (TB_DataType){ { TB_PTR,   0, 0 } }
+#define TB_TYPE_CONT    (TB_DataType){ { TB_CONT,  0, 0 } }
 #define TB_TYPE_MEMORY  (TB_DataType){ { TB_MEMORY,0, 0 } }
 #define TB_TYPE_INTN(N) (TB_DataType){ { TB_INT,   0, (N) } }
 #define TB_TYPE_PTRN(N) (TB_DataType){ { TB_PTR,   0, (N) } }
@@ -1211,6 +1215,8 @@ TB_API void tb_pass_mark_users(TB_Passes* opt, TB_Node* n);
 ////////////////////////////////
 // IR access
 ////////////////////////////////
+TB_API bool tb_is_dominated_by(TB_Node* expected_dom, TB_Node* bb);
+
 TB_API const char* tb_node_get_name(TB_Node* n);
 
 TB_API TB_Node* tb_get_parent_region(TB_Node* n);

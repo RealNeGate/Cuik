@@ -108,8 +108,6 @@ static bool fits_into_int32(uint64_t x) {
     return hi == 0 || hi == 0xFFFFFFFF;
 }
 
-static size_t emit_prologue(Ctx* restrict ctx);
-static size_t emit_epilogue(Ctx* restrict ctx);
 static ptrdiff_t alloc_free_reg(Ctx* restrict ctx, int reg_class);
 static void init_regalloc(Ctx* restrict ctx);
 

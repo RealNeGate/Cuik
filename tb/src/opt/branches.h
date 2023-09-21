@@ -22,18 +22,20 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
     // if a region is dead, dettach it's succesors
     if (n->input_count == 0 && r->end->type == TB_BRANCH) {
         TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
-        FOREACH_N(i, 0, br->succ_count) {
+        size_t i = 0;
+        while (i < br->succ_count) {
             TB_Node* succ = br->succ[i];
-            if (succ->input_count > 0) {
-                remove_pred(p, f, n, succ);
-
+            if (remove_pred(p, f, n, succ)) {
                 tb_pass_mark(p, succ);
                 tb_pass_mark_users(p, succ);
+
+                br->succ_count -= 1;
+            } else {
+                i += 1;
             }
         }
 
-        br->succ_count = 0;
-        return br->succ_count ? n : NULL;
+        assert(br->succ_count == 0);
     }
 
     return NULL;
@@ -49,27 +51,22 @@ static void transmute_goto(TB_Passes* restrict opt, TB_Function* f, TB_Node* br,
     // remove predecessor from other branches
     TB_Node* bb = unsafe_get_region(br);
     TB_NodeBranch* br_info = TB_NODE_GET_EXTRA(br);
-    FOREACH_N(i, 0, br_info->succ_count) {
-        remove_pred(opt, f, bb, br_info->succ[i]);
+
+    size_t i = 0;
+    while (i < br_info->succ_count) {
+        if (br_info->succ[i] != dst) {
+            if (remove_pred(opt, f, bb, br_info->succ[i])) {
+                br_info->succ_count -= 1;
+            }
+        } else {
+            i += 1;
+        }
     }
-    br_info->succ_count = 1;
-
-    // construct new projection for the branch
-    TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
-    set_input(opt, proj, br, 0);
-    TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = 0);
-
-    dst->input_count = 1;
-    set_input(opt, dst, proj, 0);
-
-    // set new successor
-    br_info->succ_count = 1;
-    br_info->succ[0] = dst;
+    assert(br_info->succ[0] == dst);
 
     // we need to mark the changes to that jump
     // threading can clean it up
     tb_pass_mark(opt, bb);
-    tb_pass_mark(opt, proj);
     tb_pass_mark(opt, dst);
     tb_pass_mark_users(opt, bb);
 }
@@ -179,12 +176,12 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                 if (bb->input_count == 1 && is_if_branch(pred_branch, &pred_falsey)) {
                     TB_NodeBranch* pred_br_info = TB_NODE_GET_EXTRA(pred_branch);
 
-                    bool bb_on_false = pred_br_info->succ[0] != bb;
+                    bool bb_on_false = pred_br_info->succ[0] == bb;
                     TB_Node* shared_edge = pred_br_info->succ[!bb_on_false];
 
                     int shared_i = -1;
-                    if (shared_edge == pred_br_info->succ[0]) shared_i = 0;
-                    if (shared_edge == pred_br_info->succ[1]) shared_i = 1;
+                    if (shared_edge == br->succ[0]) shared_i = 0;
+                    if (shared_edge == br->succ[1]) shared_i = 1;
 
                     if (shared_i >= 0) {
                         TB_Node* pred_cmp = pred_branch->inputs[1];
@@ -247,6 +244,31 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                     SWAP(TB_Node*, br->succ[0], br->succ[1]);
                 }
                 return n;
+            }
+
+            // check if we're dominated by a branch that already checked it
+            TB_Node* bb = unsafe_get_region(n->inputs[0]);
+            for (User* u = find_users(opt, cmp_node); u; u = u->next) {
+                if (u->n != n && u->slot == 1 && u->n->type == TB_BRANCH) {
+                    TB_NodeBranch* dom_branch = TB_NODE_GET_EXTRA(u->n);
+                    if (dom_branch->succ_count == 2 && dom_branch->keys[0] == 0) {
+                        // found another branch, check if we're dominated by one of it's successors
+                        // if so, then all our paths to 'br' can use info from the branch.
+                        ptrdiff_t match = -1;
+                        FOREACH_N(i, 0, dom_branch->succ_count) {
+                            TB_Node* target = dom_branch->succ[i];
+                            if (tb_is_dominated_by(target, bb)) {
+                                match = i;
+                                break;
+                            }
+                        }
+
+                        // we can now look for the condition to match
+                        if (match >= 0) {
+                            transmute_goto(opt, f, n, br->succ[match]);
+                        }
+                    }
+                }
             }
         }
     }

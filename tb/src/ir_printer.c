@@ -140,6 +140,10 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
             P("control");
             break;
         }
+        case TB_CONT: {
+            P("cont");
+            break;
+        }
         default: tb_todo();
     }
 }

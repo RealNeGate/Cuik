@@ -208,7 +208,7 @@ TB_Node* tb_inst_bitcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
 
 TB_Node* tb_inst_param(TB_Function* f, int param_id) {
     assert(param_id < f->param_count);
-    return f->params[2 + param_id];
+    return f->params[3 + param_id];
 }
 
 void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t* align) {
@@ -958,8 +958,9 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
     if (end == NULL) {
         TB_Node* region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
 
-        end = tb_alloc_node(f, TB_END, TB_TYPE_CONTROL, 2 + count, 0);
+        end = tb_alloc_node(f, TB_END, TB_TYPE_CONTROL, 3 + count, 0);
         end->inputs[0] = region;
+        end->inputs[2] = f->params[2];
 
         if (f->exit_attrib.loc.file != NULL) {
             end->attribs = dyn_array_create(TB_Attrib, 2);
@@ -977,20 +978,20 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
             phi->inputs[1] = values[i];
 
             // add phi to STOP
-            end->inputs[2 + i] = phi;
+            end->inputs[3 + i] = phi;
         }
 
         f->stop_node = end;
         TB_NODE_SET_EXTRA(region, TB_NodeRegion, .mem_in = mem_phi, .mem_out = mem_phi, .end = end, .tag = "ret");
     } else {
         // add to PHIs
-        assert(end->input_count >= 2 + count);
+        assert(end->input_count >= 3 + count);
         add_input_late(f, end->inputs[1], mem_state);
 
-        size_t i = 2;
-        for (; i < count + 2; i++) {
-            assert(end->inputs[i]->dt.raw == values[i - 2]->dt.raw && "datatype mismatch");
-            add_input_late(f, end->inputs[i], values[i - 2]);
+        size_t i = 3;
+        for (; i < count + 3; i++) {
+            assert(end->inputs[i]->dt.raw == values[i - 3]->dt.raw && "datatype mismatch");
+            add_input_late(f, end->inputs[i], values[i - 3]);
         }
 
         size_t phi_count = end->input_count;

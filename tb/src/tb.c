@@ -344,11 +344,12 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
     start->tag = f->super.name;
 
     f->param_count = param_count;
-    f->params = tb_arena_alloc(f->arena, (2+param_count) * sizeof(TB_Node*));
+    f->params = tb_arena_alloc(f->arena, (3+param_count) * sizeof(TB_Node*));
 
     // fill in acceleration structure
     f->params[0] = f->active_control_node = tb__make_proj(f, TB_TYPE_CONTROL, f->start_node, 0);
     f->params[1] = tb__make_proj(f, TB_TYPE_MEMORY, f->start_node, 1);
+    f->params[2] = tb__make_proj(f, TB_TYPE_CONT, f->start_node, 2);
 
     // mark the input memory as both mem_in and mem_out
     start->mem_in = start->mem_out = f->params[1];
@@ -357,7 +358,7 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);
     FOREACH_N(i, 0, param_count) {
         TB_DataType dt = p->params[i].dt;
-        f->params[2+i] = tb__make_proj(f, dt, f->start_node, 2+i);
+        f->params[3+i] = tb__make_proj(f, dt, f->start_node, 3+i);
     }
 
     f->prototype = p;

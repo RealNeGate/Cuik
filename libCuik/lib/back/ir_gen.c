@@ -1709,8 +1709,6 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
         case STMT_IF: {
             IRVal cond = irgen_expr(tu, func, s->if_.cond);
 
-            // if (strcmp(tb_symbol_get_name((TB_Symbol*) func), "stbi__parse_zlib") == 0) __debugbreak();
-
             TB_Node *if_true, *if_false, *exit;
             if (cond.value_type == RVALUE_PHI) {
                 exit = cond.phi.merger;
@@ -1723,8 +1721,10 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 // if there's no else case, then false is just exit
                 if_false = s->if_.next ? tb_inst_region(func) : exit;
 
+                #ifndef NDEBUG
                 tb_inst_set_region_name(func, if_true,  -1, "if.true");
                 tb_inst_set_region_name(func, if_false, -1, "if.false");
+                #endif
 
                 // Cast to bool
                 tb_inst_if(func, cvt2rval(tu, func, &cond), if_true, if_false);
@@ -1799,6 +1799,13 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             TB_Node* body = tb_inst_region(func);
             TB_Node* next = tb_inst_region(func);
             TB_Node* exit = tb_inst_region(func);
+
+            #ifndef NDEBUG
+            tb_inst_set_region_name(func, header,  -1, "for.header");
+            tb_inst_set_region_name(func, body,    -1, "for.body");
+            tb_inst_set_region_name(func, next,    -1, "for.next");
+            tb_inst_set_region_name(func, exit,    -1, "for.exit");
+            #endif
 
             s->backing.loop[0] = next;
             s->backing.loop[1] = exit;
