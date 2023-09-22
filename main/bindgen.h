@@ -5,6 +5,12 @@ static NL_Strmap(int) already_defined;
 static NL_Map(Cuik_Type*, Atom) typedefs;
 
 static void print_odin_type(Cuik_Type* type, int depth, bool top) {
+    if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
+        while (type != type->record.nominal) {
+            type = type->record.nominal;
+        }
+    }
+
     if (!top) {
         ptrdiff_t search = nl_map_get(typedefs, type);
         if (search >= 0) {
