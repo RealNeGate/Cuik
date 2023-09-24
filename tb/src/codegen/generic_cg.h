@@ -740,7 +740,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
 
                 isel(ctx, n, val->vreg);
 
-                if (n->type != TB_PROJ) {
+                if (n->inputs[0]->type == TB_START || n->type != TB_PROJ) {
                     if (prev_effect != NULL) {
                         isel_set_location(ctx, prev_effect);
                     }
@@ -773,6 +773,31 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb, TB_Node* end) {
                     printf("\n")
                 );
             }
+
+            Inst* seq_start = dummy.next;
+            Inst* seq_end   = ctx->head;
+            assert(seq_end->next == NULL);
+
+            if (seq_start != NULL) {
+                if (last == NULL) {
+                    last = seq_end;
+                    head->next = dummy.next;
+                } else {
+                    Inst* old_next = head->next;
+                    head->next = seq_start;
+                    seq_end->next = old_next;
+                }
+            }
+        }
+
+        // write location for the top effect
+        if (prev_effect != NULL) {
+            // attach to dummy list
+            Inst dummy;
+            dummy.next = NULL;
+            ctx->head = &dummy;
+
+            isel_set_location(ctx, prev_effect);
 
             Inst* seq_start = dummy.next;
             Inst* seq_end   = ctx->head;

@@ -1956,7 +1956,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
             if (rloc.file->filename[0] != '<') {
                 TB_SourceFile* f = tb_get_source_file(tu->ir_mod, rloc.file->filename);
-                tb_inst_set_location(func, f, rloc.line, rloc.column);
+                tb_inst_set_exit_location(func, f, rloc.line, rloc.column);
             }
         }
 
