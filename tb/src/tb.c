@@ -194,10 +194,19 @@ TB_FunctionOutput* tb_pass_codegen(TB_Passes* p, bool emit_asm) {
 }
 
 void tb_output_print_asm(TB_FunctionOutput* out, FILE* fp) {
+    if (fp == NULL) {
+        fp = stdout;
+    }
+
     TB_Assembly* a = tb_output_get_asm(out);
     for (; a; a = a->next) {
         fwrite(a->data, a->length, 1, fp);
     }
+}
+
+TB_API TB_Location* tb_output_get_locations(TB_FunctionOutput* out, size_t* out_count) {
+    *out_count = dyn_array_length(out->locations);
+    return &out->locations[0];
 }
 
 uint8_t* tb_output_get_code(TB_FunctionOutput* out, size_t* out_length) {

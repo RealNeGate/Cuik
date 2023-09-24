@@ -222,12 +222,6 @@ struct TB_DebugType {
     };
 };
 
-typedef struct TB_Location {
-    TB_SourceFile* file;
-    int line, column;
-    uint32_t pos;
-} TB_Location;
-
 #define TERMS(x) \
 (TB_Attrib, \
     x(TB_ATTRIB_VARIABLE, var,   TB_Node* parent; char* name; TB_DebugType* storage) \
@@ -267,7 +261,6 @@ typedef struct TB_FunctionOutput {
     TB_Linkage linkage;
 
     uint8_t prologue_length;
-    uint8_t epilogue_length;
 
     TB_Assembly* asm_out;
     uint64_t stack_usage;
@@ -321,6 +314,9 @@ struct TB_Function {
     TB_Node* active_control_node;
     TB_Attrib exit_attrib;
     TB_Attrib line_attrib;
+
+    // Attributes
+    NL_Map(uint64_t, DynArray(TB_Attrib)) attribs;
 
     // Compilation output
     union {

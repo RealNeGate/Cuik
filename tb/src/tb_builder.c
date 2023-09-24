@@ -6,6 +6,17 @@
 // the machine code output or later analysis stages.
 #include "tb_internal.h"
 
+static void append_attrib(TB_Function* f, TB_Node* n, TB_Attrib a) {
+    ptrdiff_t search = nl_map_get(f->attribs, n);
+    if (search < 0) {
+        DynArray(TB_Attrib) attribs = dyn_array_create(TB_Attrib, 2);
+        dyn_array_put(attribs, a);
+        nl_map_put(f->attribs, n, attribs);
+    } else {
+        dyn_array_put(f->attribs[search].v, a);
+    }
+}
+
 // adds memory effect to region
 static TB_Node* append_mem(TB_Function* f, TB_Node* new_mem) {
     TB_Node* bb = tb_get_parent_region(f->active_control_node);
@@ -44,30 +55,15 @@ bool tb_node_is_constant_zero(TB_Node* n) {
 }
 
 void tb_function_attrib_variable(TB_Function* f, TB_Node* n, TB_Node* parent, ptrdiff_t len, const char* name, TB_DebugType* type) {
-    if (n->attribs == NULL) {
-        n->attribs = dyn_array_create(TB_Attrib, 4);
-    }
-
-    TB_Attrib a = { TB_ATTRIB_VARIABLE, .var = { parent, tb__tb_arena_strdup(f->super.module, len, name), type } };
-    dyn_array_put(n->attribs, a);
+    append_attrib(f, n, (TB_Attrib){ TB_ATTRIB_VARIABLE, .var = { parent, tb__tb_arena_strdup(f->super.module, len, name), type } });
 }
 
 void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent) {
-    if (n->attribs == NULL) {
-        n->attribs = dyn_array_create(TB_Attrib, 4);
-    }
-
-    TB_Attrib a = { TB_ATTRIB_VARIABLE, .scope = { parent } };
-    dyn_array_put(n->attribs, a);
+    append_attrib(f, n, (TB_Attrib){ TB_ATTRIB_SCOPE, .scope = { parent } });
 }
 
 void tb_function_attrib_location(TB_Function* f, TB_Node* n, TB_SourceFile* file, int line, int column) {
-    if (n->attribs == NULL) {
-        n->attribs = dyn_array_create(TB_Attrib, 4);
-    }
-
-    TB_Attrib a = { TB_ATTRIB_LOCATION, .loc = { file, line, column } };
-    dyn_array_put(n->attribs, a);
+    append_attrib(f, n, (TB_Attrib){ TB_ATTRIB_LOCATION, .loc = { file, line, column } });
 }
 
 void tb_inst_set_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
@@ -95,12 +91,15 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     n->dt = dt;
     n->gvn = f->node_count++;
     n->input_count = input_count;
-    n->attribs = NULL;
+    n->users = NULL;
 
     if (input_count > 0) {
         n->inputs = alloc_from_node_arena(f, input_count * sizeof(TB_Node*));
         memset(n->inputs, 0, input_count * sizeof(TB_Node*));
     } else {
+        // basically only true for START, maybe it's best
+        // we just give it a NULL slot to avoid certain awkward
+        // checks?
         n->inputs = NULL;
     }
 
@@ -108,13 +107,11 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
         memset(n->extra, 0, extra);
     }
 
-    // ignore REGION
-    if (f->line_attrib.loc.file != NULL && type != TB_REGION && type != TB_END) {
-        if (n->attribs == NULL) {
-            n->attribs = dyn_array_create(TB_Attrib, 2);
+    // give most side effect the location attrib
+    if (type != TB_REGION && type != TB_END) {
+        if (f->line_attrib.loc.file != NULL) {
+            append_attrib(f, n, f->line_attrib);
         }
-
-        dyn_array_put(n->attribs, f->line_attrib);
     }
 
     return n;
@@ -963,8 +960,7 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
         end->inputs[2] = f->params[2];
 
         if (f->exit_attrib.loc.file != NULL) {
-            end->attribs = dyn_array_create(TB_Attrib, 2);
-            dyn_array_put(end->attribs, f->line_attrib);
+            append_attrib(f, end, f->exit_attrib);
         }
 
         TB_Node* mem_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 2, 0);

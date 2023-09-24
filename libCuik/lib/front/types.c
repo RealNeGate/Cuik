@@ -207,6 +207,88 @@ bool type_equal(Cuik_Type* ty1, Cuik_Type* ty2) {
     return true;
 }
 
+char* str_append(char* dst, const char* src, size_t len) {
+    memcpy(dst, src, len);
+    return dst + len;
+}
+
+char* cuik_typedef_str(char* dst, Cuik_Type* type, const char* name) {
+    int depth = 0;
+    Cuik_Type* base = type;
+    while (base->kind == KIND_PTR) {
+        base = cuik_canonical_type(base->ptr_to);
+        depth++;
+    }
+
+    // write "unsigned"
+    if ((type->kind >= KIND_BOOL && type->kind <= KIND_LLONG) && type->is_unsigned) {
+        dst = str_append(dst, "unsigned ", sizeof("unsigned"));
+    }
+
+    if (type->kind == KIND_ARRAY) {
+
+    } else if (type->kind == KIND_FUNC) {
+
+    } else {
+        const char* str = NULL;
+        switch (type->kind) {
+            case KIND_VOID:  str = "void ";      break;
+            case KIND_BOOL:  str = "_Bool ";     break;
+            case KIND_CHAR:  str = "char ";      break;
+            case KIND_SHORT: str = "short ";     break;
+            case KIND_INT:   str = "int ";       break;
+            case KIND_LONG:  str = "long ";      break;
+            case KIND_LLONG: str = "long long "; break;
+            case KIND_FLOAT: str = "float ";     break;
+            case KIND_DOUBLE:str = "double ";    break;
+            case KIND_STRUCT:str = "struct ";    break;
+            case KIND_UNION: str = "union ";     break;
+            case KIND_ENUM:  str = "enum ";      break;
+            default: abort();
+        }
+
+        if (str) {
+            dst = str_append(dst, str, strlen(str));
+            *dst++ = ' ';
+        }
+
+        if (type->kind == KIND_ARRAY || type->kind == KIND_FUNC) {
+            *dst++ = '(';
+        }
+
+        while (depth--) {
+            *dst++ = '*';
+        }
+
+        if (name) {
+            dst = str_append(dst, name, strlen(name));
+        }
+
+        if (type->kind == KIND_ARRAY || type->kind == KIND_FUNC) {
+            *dst++ = ')';
+        }
+    }
+
+    if (type->kind == KIND_ARRAY) {
+        *dst++ = '[';
+        dst += snprintf(dst, 10, "%d", type->array.count);
+        *dst++ = ']';
+    } else if (type->kind == KIND_FUNC) {
+        Param* param_list = type->func.param_list;
+        size_t param_count = type->func.param_count;
+
+        *dst++ = '(';
+        for (size_t j = 0; j < param_count; j++) {
+            if (j) *dst++ = ',';
+
+            dst = cuik_typedef_str(dst, cuik_canonical_type(param_list[j].type), NULL);
+        }
+        *dst++ = ')';
+    }
+
+    return dst;
+}
+
 // returns the number of bytes written
 static size_t cstr_copy(size_t len, char* dst, const char* src) {
     size_t i = 0;

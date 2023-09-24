@@ -479,6 +479,13 @@ typedef struct TB_Symbol {
 } TB_Symbol;
 
 typedef struct TB_Node TB_Node;
+typedef struct User User;
+struct User {
+    User* next;
+    TB_Node* n;
+    int slot;
+};
+
 struct TB_Node {
     TB_NodeType type;
     uint16_t input_count; // number of node inputs.
@@ -487,7 +494,13 @@ struct TB_Node {
     // makes it easier to track in graph walks
     size_t gvn;
 
-    TB_Attrib* attribs;
+    // only value while inside of a TB_Passes,
+    // these are unordered and usually just
+    // help perform certain transformations or
+    // analysis (not necessarily semantics)
+    User* users;
+
+    // ordered def-use edges, jolly ol' semantics
     TB_Node** inputs;
 
     char extra[];
@@ -592,10 +605,6 @@ typedef struct {
     TB_Node* dom;
 
     // used for IR building only, stale after that.
-    //
-    // this represents the first and last memory values within a region,
-    // if a region ever has multiple predecessors we apply a join on these
-    // memory.
     TB_Node *mem_in, *mem_out;
 } TB_NodeRegion;
 
@@ -629,6 +638,12 @@ typedef struct {
     uint32_t count; // same as node->input_count
     int32_t values[];
 } TB_Safepoint;
+
+typedef struct TB_Location {
+    TB_SourceFile* file;
+    int line, column;
+    uint32_t pos;
+} TB_Location;
 
 // *******************************
 // Public macros
@@ -679,7 +694,8 @@ typedef struct TB_Arena TB_Arena;
 // 0 for default
 TB_API void tb_arena_create(TB_Arena* restrict arena, size_t chunk_size);
 TB_API void tb_arena_destroy(TB_Arena* restrict arena);
-TB_API bool tb_arena_is_empty(TB_Arena* arena);
+TB_API bool tb_arena_is_empty(TB_Arena* restrict arena);
+TB_API void tb_arena_clear(TB_Arena* restrict arena);
 
 ////////////////////////////////
 // Module management
@@ -725,6 +741,9 @@ typedef struct TB_FunctionOutput TB_FunctionOutput;
 TB_API void tb_output_print_asm(TB_FunctionOutput* out, FILE* fp);
 
 TB_API uint8_t* tb_output_get_code(TB_FunctionOutput* out, size_t* out_length);
+
+// returns NULL if there's no line info
+TB_API TB_Location* tb_output_get_locations(TB_FunctionOutput* out, size_t* out_count);
 
 // returns NULL if no assembly was generated
 TB_API TB_Assembly* tb_output_get_asm(TB_FunctionOutput* out);

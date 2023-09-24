@@ -125,14 +125,16 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
     }
 }
 
-static void print_location(TB_Node* n) {
-    dyn_array_for(i, n->attribs) {
-        TB_Attrib* a = &n->attribs[i];
-
-        // check if it's changed
-        if (a->tag == TB_ATTRIB_LOCATION) {
-            printf("  # location %s:%d\n", a->loc.file->path, a->loc.line);
-            return;
+static void print_location(TB_Function* f, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(f->attribs, n);
+    if (search >= 0) {
+        DynArray(TB_Attrib) attribs = f->attribs[search].v;
+        dyn_array_for(i, attribs) {
+            TB_Attrib* a = &attribs[i];
+            if (a->tag == TB_ATTRIB_LOCATION) {
+                printf("  # location %s:%d\n", a->loc.file->path, a->loc.line);
+                return;
+            }
         }
     }
 }
@@ -175,7 +177,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
         }
 
         if (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY) {
-            print_location(n);
+            print_location(ctx->f, n);
         }
 
         switch (n->type) {
@@ -375,7 +377,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
 
                     case TB_LOCAL: {
                         TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-                        printf("!size %u !align %u", l->size, l->align);
+                        printf("!size(%u) !align(%u)", l->size, l->align);
                         break;
                     }
 
@@ -385,10 +387,13 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb) {
             }
         }
 
-        dyn_array_for(i, n->attribs) {
-            TB_Attrib* a = &n->attribs[i];
-            if (a->tag == TB_ATTRIB_VARIABLE) {
-                printf(" !var(%s)", a->var.name);
+        ptrdiff_t search = nl_map_get(ctx->f->attribs, n);
+        if (search >= 0) {
+            DynArray(TB_Attrib) attribs = ctx->f->attribs[search].v;
+            dyn_array_for(i, attribs) {
+                if (attribs[i].tag == TB_ATTRIB_VARIABLE) {
+                    printf(" !var(%s)", attribs[i].var.name);
+                }
             }
         }
 

@@ -32,7 +32,7 @@ static const struct ParamDescriptor {
     GPR gprs[6];
 } param_descs[] = {
     // win64
-    { 4, 4, 6, WIN64_ABI_CALLER_SAVED,  { RCX, RDX, R8,  R9,  0,  0 } },
+    { 4, 4, 6, WIN64_ABI_CALLER_SAVED,   { RCX, RDX, R8,  R9,  0,  0 } },
     // system v
     { 6, 4, 5, SYSV_ABI_CALLER_SAVED,    { RDI, RSI, RDX, RCX, R8, R9 } },
     // syscall
@@ -1506,7 +1506,9 @@ static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) 
             if (v->target == NULL) {
                 EMITA(e, ".ret");
             } else {
-                EMITA(e, "L%p", (TB_Node*) v->target);
+                TB_Node* n = v->target;
+                assert(n->type == TB_START || n->type == TB_REGION);
+                EMITA(e, "L%d", TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->postorder_id);
             }
             break;
         }
@@ -1642,7 +1644,8 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
             tb_resolve_rel32(&ctx->emit, &nl_map_get_checked(ctx->emit.labels, bb), pos);
 
             if (bb != ctx->f->start_node) {
-                EMITA(e, "L%p:\n", bb);
+                assert(bb->type == TB_REGION);
+                EMITA(e, "L%d:\n", TB_NODE_GET_EXTRA_T(bb, TB_NodeRegion)->postorder_id);
             }
         } else if (inst->type == INST_INLINE) {
             TB_NodeMachineOp* mach = TB_NODE_GET_EXTRA(inst->n);
@@ -1801,7 +1804,30 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         }
     }
 
-    func_out->epilogue_length = emit_epilogue(ctx, ctx->f->stop_node);
+    emit_epilogue(ctx, ctx->f->stop_node);
+
+    // pad to 16bytes
+    static const uint8_t nops[8][8] = {
+        { 0x90 },
+        { 0x66, 0x90 },
+        { 0x0F, 0x1F, 0x00 },
+        { 0x0F, 0x1F, 0x40, 0x00 },
+        { 0x0F, 0x1F, 0x44, 0x00, 0x00 },
+        { 0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00 },
+        { 0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00 },
+        { 0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    };
+
+    size_t pad = 16 - (ctx->emit.count & 15);
+    uint8_t* dst = tb_cgemit_reserve(&ctx->emit, pad);
+    tb_cgemit_commit(&ctx->emit, pad);
+
+    if (pad > 8) {
+        size_t rem = pad - 8;
+        memset(dst, 0x66, rem);
+        pad -= rem, dst += rem;
+    }
+    memcpy(dst, nops[pad - 1], pad);
 }
 
 static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage) {

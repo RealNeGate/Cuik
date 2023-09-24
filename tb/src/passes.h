@@ -3,7 +3,7 @@
 
 #define TB_OPTDEBUG_STATS 0
 
-#define TB_OPTDEBUG_PEEP 1
+#define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
 #define TB_OPTDEBUG_MEM2REG 0
 #define TB_OPTDEBUG_CODEGEN 0
@@ -26,13 +26,6 @@ static bool tb_dommy_fronts_get(TB_DominanceFrontiers* df, size_t i, size_t j) {
     size_t word_i = j / 64;
     return df->arr[i * df->stride + word_i] & (1ull << (j % 64));
 }
-
-typedef struct User User;
-struct User {
-    User* next;
-    TB_Node* n;
-    int slot;
-};
 
 typedef struct {
     TB_Node *phi, *n;
@@ -57,10 +50,6 @@ struct TB_Passes {
 
     Worklist worklist;
 
-    // outgoing edges are incrementally updated every time we
-    // run a rewrite rule
-    NL_Map(TB_Node*, User*) users;
-
     // we wanna track locals because it's nice and easy
     DynArray(TB_Node*) locals;
 
@@ -71,13 +60,13 @@ struct TB_Passes {
     TB_Node* error_n;
 
     // nice stats
-    #if TB_OPTDEBUG_STATS
     struct {
+        #if TB_OPTDEBUG_STATS
         int initial;
         int cse_hit, cse_miss;
         int peeps, identities, rewrites;
+        #endif
     } stats;
-    #endif
 };
 
 // it's either START, REGION or control node with CONTROL PROJ predecessor
@@ -137,8 +126,11 @@ static int dom_depth(TB_Node* n) {
 extern thread_local TB_Arena* tmp_arena;
 
 void verify_tmp_arena(TB_Passes* p);
-User* find_users(TB_Passes* restrict p, TB_Node* n);
 void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot);
+
+static User* find_users(TB_Passes* restrict p, TB_Node* n) {
+    return n->users;
+}
 
 // CFG
 //   pushes postorder walk into worklist items, also modifies the visited set.

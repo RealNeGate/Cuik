@@ -316,7 +316,7 @@ void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
         n->inputs[i] = NULL;
     }
 
-    nl_map_remove(p->users, n);
+    n->users = NULL;
 
     n->input_count = 0;
     n->type = TB_NULL;
@@ -327,35 +327,24 @@ static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot) {
     if (n->inputs[slot] == NULL) return NULL;
 
     TB_Node* old = n->inputs[slot];
-    User* old_use = find_users(p, old);
+    User* old_use = old->users;
     if (old_use == NULL) return NULL;
 
-    // remove old user (this must pass unless our users go desync'd)
+    // remove old user (this must succeed unless our users go desync'd)
     for (User* prev = NULL; old_use; prev = old_use, old_use = old_use->next) {
         if (old_use->slot == slot && old_use->n == n) {
             // remove
-            if (prev) prev->next = old_use->next;
-            else if (old_use->next == NULL) {
-                nl_map_remove(p->users, old);
+            if (prev != NULL) {
+                prev->next = old_use->next;
             } else {
-                nl_map_put(p->users, old, old_use->next);
+                old->users = old_use->next;
             }
 
             return old_use;
         }
     }
 
-    log_error("Failed to remove non-existent user %p from %p (slot %d)", old, n, slot);
-    log_error("Users:");
-    nl_map_for(i, p->users) {
-        log_error("  %p %s", p->users[i].k, tb_node_get_name(p->users[i].k));
-        for (User* u = p->users[i].v; u; u = u->next) {
-            log_error("    %p %d", u->n, u->slot);
-        }
-    }
-
-    assert(0 && "we tried to remove something which didn't exist? (user list has desync'd)");
-    return NULL;
+    tb_panic("Failed to remove non-existent user %p from %p (slot %d)", old, n, slot);
 }
 
 void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot) {
@@ -368,34 +357,17 @@ void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot) {
     }
 }
 
+// we sometimes get the choice to recycle users because we just deleted something
 static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled) {
-    // just generate a new user list (if the slots don't match)
-    ptrdiff_t search = nl_map_get(p->users, in);
-    if (search < 0) {
-        User* use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
-        use->next = NULL;
-        use->n = n;
-        use->slot = slot;
-
-        nl_map_put(p->users, in, use);
-    } else {
-        User* old = p->users[search].v;
-
-        User* use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
-        use->next = old;
-        use->n = n;
-        use->slot = slot;
-        p->users[search].v = use;
-    }
-}
-
-User* find_users(TB_Passes* restrict p, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(p->users, n);
-    return search >= 0 ? p->users[search].v : NULL;
+    User* use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
+    use->next = in->users;
+    use->n = n;
+    use->slot = slot;
+    in->users = use;
 }
 
 static void tb_pass_mark_users_raw(TB_Passes* restrict p, TB_Node* n) {
-    for (User* use = find_users(p, n); use; use = use->next) {
+    for (User* use = n->users; use; use = use->next) {
         tb_pass_mark(p, use->n);
     }
 }
@@ -405,7 +377,7 @@ void tb_pass_mark(TB_Passes* opt, TB_Node* n) {
 }
 
 void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
-    for (User* use = find_users(p, n); use; use = use->next) {
+    for (User* use = n->users; use; use = use->next) {
         tb_pass_mark(p, use->n);
         TB_NodeTypeEnum type = use->n->type;
 
@@ -809,7 +781,7 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
     TB_Function* f = p->f;
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
-        while ((n = worklist_pop(&p->worklist))) CUIK_TIMED_BLOCK("iter") {
+        while ((n = worklist_pop(&p->worklist))) {
             if (peephole(p, f, n, flags)) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
             }
@@ -839,5 +811,4 @@ void tb_pass_exit(TB_Passes* p) {
     dyn_array_destroy(p->locals);
 
     tb_arena_clear(tmp_arena);
-    nl_map_free(p->users);
 }

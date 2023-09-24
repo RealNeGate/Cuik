@@ -164,9 +164,8 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
             // if (a && b) A else B => if (a ? b : 0) A else B
             //
             // TODO(NeGate): implement form which works on an arbitrary falsey
-            if (is_empty_bb(opt, n)) {
+            if (n->inputs[0]->type == TB_REGION && n->inputs[0]->input_count == 2 && is_empty_bb(opt, n)) {
                 TB_Node* bb = n->inputs[0];
-                assert(bb->type == TB_REGION || bb->type == TB_START);
 
                 uint64_t falsey = br->keys[0];
                 TB_Node* pred_branch = bb->inputs[0]->inputs[0];

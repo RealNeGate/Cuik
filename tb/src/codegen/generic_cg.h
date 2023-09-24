@@ -108,7 +108,6 @@ static bool fits_into_int32(uint64_t x) {
     return hi == 0 || hi == 0xFFFFFFFF;
 }
 
-static ptrdiff_t alloc_free_reg(Ctx* restrict ctx, int reg_class);
 static void init_regalloc(Ctx* restrict ctx);
 
 static TB_X86_DataType legalize(TB_DataType dt);
@@ -122,10 +121,16 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out);
 static void mark_callee_saved_constraints(Ctx* restrict ctx, uint64_t callee_saved[CG_REGISTER_CLASSES]);
 
 static void add_debug_local(Ctx* restrict ctx, TB_Node* n, int pos) {
-    // could be costly if you had more than like 2-3 attributes per stack slot... which you
+    ptrdiff_t search = nl_map_get(ctx->f->attribs, n);
+    if (search < 0) {
+        return;
+    }
+
+    // could be costly if you had more than like 50 attributes per stack slot... which you
     // wouldn't do right?
-    dyn_array_for(i, n->attribs) {
-        TB_Attrib* a = &n->attribs[i];
+    DynArray(TB_Attrib) attribs = ctx->f->attribs[search].v;
+    dyn_array_for(i, attribs) {
+        TB_Attrib* a = &attribs[i];
         if (a->tag == TB_ATTRIB_VARIABLE) {
             TB_StackSlot s = {
                 .position = pos,
@@ -611,12 +616,15 @@ static bool has_users(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static void isel_set_location(Ctx* restrict ctx, TB_Node* n) {
-    dyn_array_for(i, n->attribs) {
-        TB_Attrib* a = &n->attribs[i];
+    ptrdiff_t search = nl_map_get(ctx->f->attribs, n);
+    if (search < 0) {
+        return;
+    }
 
-        // check if it's changed
-        if (a->tag == TB_ATTRIB_LOCATION) {
-            SUBMIT(inst_line(a));
+    DynArray(TB_Attrib) attribs = ctx->f->attribs[search].v;
+    dyn_array_for(i, attribs) {
+        if (attribs[i].tag == TB_ATTRIB_LOCATION) {
+            SUBMIT(inst_line(&attribs[i]));
             return;
         }
     }

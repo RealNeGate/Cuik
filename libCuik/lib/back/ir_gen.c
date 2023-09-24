@@ -2067,7 +2067,7 @@ static void ir_alloc_task(void* task) {
     }
 }
 
-void cuikcg_allocate_ir(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool, TB_Module* m) {
+void cuikcg_allocate_ir(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool, TB_Module* m, bool debug) {
     // we actually fill the remaining count while we dispatch tasks, it's ok for it to hit 0
     // occasionally (very rare realistically).
     enum { BATCH_SIZE = 65536 };
@@ -2076,7 +2076,8 @@ void cuikcg_allocate_ir(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict
     Futex remaining = (count + (BATCH_SIZE - 1)) / BATCH_SIZE;
 
     Stmt** top_level = tu->top_level_stmts;
-    tu->ir_mod = m;
+    tu->ir_mod = tu->parent->ir_mod = m;
+    tu->has_tb_debug_info = debug;
 
     for (size_t i = 0; i < count; i += BATCH_SIZE) {
         size_t end = i + BATCH_SIZE;
@@ -2100,9 +2101,10 @@ void cuikcg_allocate_ir(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict
     if (thread_pool) futex_wait_eq(&remaining, 0);
 }
 
-void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m) {
+void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m, bool debug) {
     size_t count = dyn_array_length(tu->top_level_stmts);
-    tu->ir_mod = m;
+    tu->ir_mod = tu->parent->ir_mod = m;
+    tu->has_tb_debug_info = debug;
 
     IRAllocTask t = {
         .mod = m,

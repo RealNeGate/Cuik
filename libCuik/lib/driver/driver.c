@@ -258,17 +258,13 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     cuikdg_dump_to_file(tokens, stderr);
     mtx_unlock(info->mutex);
 
-    if (args->debug_info) {
-        tu->has_tb_debug_info = true;
-    }
-
     #ifdef CUIK_USE_TB
     TB_Module* mod = cu->ir_mod;
     CUIK_TIMED_BLOCK("Allocate IR") {
         if (s->tp) {
-            cuikcg_allocate_ir(tu, s->tp, mod);
+            cuikcg_allocate_ir(tu, s->tp, mod, args->debug_info);
         } else {
-            cuikcg_allocate_ir2(tu, mod);
+            cuikcg_allocate_ir2(tu, mod, args->debug_info);
         }
     }
 
