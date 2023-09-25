@@ -96,7 +96,7 @@ jobs:
 
       - name: Run TB unittests
         timeout-minutes: 5
-        run: ./tb_unittests
+        run: ./bin/tb_unittests
   release:
     runs-on: ubuntu-latest
     needs: [build_win, build_linux]
