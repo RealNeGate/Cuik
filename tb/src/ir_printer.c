@@ -311,19 +311,28 @@ static void tb_print_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback 
 }
 #endif
 
-static void print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
+static bool print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
     if (!nl_hashset_put(visited, n)) {
-        return;
+        return false;
     }
 
     bool is_effect = tb_has_effects(n);
+    if (is_effect) {
+        return false;
+    }
+
     const char* fillcolor = is_effect ? "lightgrey" : "antiquewhite1";
     P("  r%p [style=\"filled\"; ordering=in; shape=box; fillcolor=%s; label=\"", n, fillcolor);
+    P("%zu: %s", n->gvn, tb_node_get_name(n));
     P("\"];\n");
 
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
         TB_Node* in = n->inputs[i];
+        P("  r%p -> r%p\n", in, n);
+        print_graph_node(f, visited, callback, user_data, in);
     }
+
+    return true;
 }
 
 static void print_graph_bb(TB_Function* f, NL_HashSet* visited, TB_PrintCallback callback, void* user_data, TB_Node* restrict bb) {
@@ -343,7 +352,8 @@ static void print_graph_bb(TB_Function* f, NL_HashSet* visited, TB_PrintCallback
     P("  subgraph {\n", bb->gvn);
     TB_Node* curr = r->end;
     do {
-        P("    r%p [style=\"filled\"; shape=box; fillcolor=antiquewhite1; label=\"", curr);
+        nl_hashset_put(visited, curr);
+        P("    r%p [style=\"filled\"; shape=box; fillcolor=antiquewhite1; label=\"%zu: ", curr, curr->gvn);
         if (curr->type == TB_END) {
             P("END");
         } else {
@@ -354,7 +364,7 @@ static void print_graph_bb(TB_Function* f, NL_HashSet* visited, TB_PrintCallback
     } while (curr != bb);
 
     // basic block header
-    P("    r%p [style=\"filled\"; shape=box; fillcolor=antiquewhite1; label=\"%s\"]\n", bb, bb->type == TB_START ? "START" : "REGION");
+    P("    r%p [style=\"filled\"; shape=box; fillcolor=antiquewhite1; label=\"%zu: %s\"]\n", bb, bb->gvn, bb->type == TB_START ? "START" : "REGION");
     if (bb->type == TB_START) {
         P("    { rank=min; r%p }\n", bb);
     } else if (r->end->type == TB_END) {
@@ -376,8 +386,8 @@ static void print_graph_bb(TB_Function* f, NL_HashSet* visited, TB_PrintCallback
     curr = r->end;
     do {
         FOREACH_N(i, 1, curr->input_count) {
-            P("    r%p -> r%p\n", curr->inputs[i], curr);
             print_graph_node(f, visited, callback, user_data, curr->inputs[i]);
+            P("    r%p -> r%p\n", curr->inputs[i], curr);
         }
         curr = curr->inputs[0];
     } while (curr != bb);

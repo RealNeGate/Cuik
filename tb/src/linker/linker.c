@@ -136,20 +136,6 @@ size_t tb__get_symbol_pos(TB_Symbol* s) {
     }
 }
 
-// also finds the entrypoints (kill two birds amirite)
-size_t tb__layout_text_section(TB_Module* m) {
-    size_t size = 0;
-    TB_FOR_FUNCTIONS(f, m) {
-        TB_FunctionOutput* out_f = f->output;
-        if (out_f == NULL) continue;
-
-        out_f->code_pos = size;
-        size += out_f->code_size;
-    }
-
-    return size;
-}
-
 uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym) {
     if (sym->tag == TB_LINKER_SYMBOL_ABSOLUTE) {
         return 0;
@@ -181,18 +167,15 @@ uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym) {
 
 uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s) {
     if (s->tag == TB_SYMBOL_FUNCTION) {
-        ptrdiff_t search = nl_map_get_cstr(l->sections, ".text");
-        TB_LinkerSection* text = (search >= 0 ? l->sections[search].v : NULL);
-
         TB_Function* f = (TB_Function*) s;
         assert(f->output != NULL);
-        return text->address + m->text.piece->offset + f->output->code_pos;
-    } else if (s->tag == TB_SYMBOL_GLOBAL) {
-        ptrdiff_t search = nl_map_get_cstr(l->sections, ".data");
-        TB_LinkerSection* data = (search >= 0 ? l->sections[search].v : NULL);
 
+        TB_LinkerSectionPiece* piece = m->sections[f->section].piece;
+        return piece->parent->address + piece->offset + f->output->code_pos;
+    } else if (s->tag == TB_SYMBOL_GLOBAL) {
         TB_Global* g = (TB_Global*) s;
-        return data->address + m->data.piece->offset + g->pos;
+        TB_LinkerSectionPiece* piece = m->sections[g->parent].piece;
+        return piece->parent->address + piece->offset + g->pos;
     } else {
         tb_todo();
         return 0;
@@ -280,18 +263,23 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                     uint32_t* p_out32 = (uint32_t*) p_out;
                     TB_Module* m = in.module;
 
-                    uint32_t text_rva = text->address + m->text.piece->offset;
                     uint32_t rdata_rva = m->xdata->parent->address + m->xdata->offset;
 
-                    TB_FOR_FUNCTIONS(f, m) {
-                        TB_FunctionOutput* out_f = f->output;
-                        if (out_f != NULL) {
-                            // both into the text section
-                            *p_out32++ = text_rva + out_f->code_pos;
-                            *p_out32++ = text_rva + out_f->code_pos + out_f->code_size;
+                    dyn_array_for(i, m->sections) {
+                        DynArray(TB_FunctionOutput*) funcs = m->sections[i].funcs;
+                        TB_LinkerSectionPiece* piece = m->sections[i].piece;
+                        uint32_t rva = piece->parent->address + piece->offset;
 
-                            // refers to rdata section
-                            *p_out32++ = rdata_rva + out_f->unwind_info;
+                        dyn_array_for(j, funcs) {
+                            TB_FunctionOutput* out_f = funcs[j];
+                            if (out_f != NULL) {
+                                // both into the text section
+                                *p_out32++ = rva + out_f->code_pos;
+                                *p_out32++ = rva + out_f->code_pos + out_f->code_size;
+
+                                // refers to rdata section
+                                *p_out32++ = rdata_rva + out_f->unwind_info;
+                            }
                         }
                     }
                     break;
@@ -299,40 +287,46 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                 case PIECE_RELOC: {
                     TB_Module* m = in.module;
 
-                    // TODO(NeGate): currently windows only
-                    uint32_t data_rva  = data->address + m->data.piece->offset;
-                    uint32_t data_file = data->offset  + m->data.piece->offset;
+                    dyn_array_for(i, m->sections) {
+                        DynArray(TB_Global*) globals = m->sections[i].globals;
+                        TB_LinkerSectionPiece* piece = m->sections[i].piece;
 
-                    uint32_t last_page = 0xFFFFFFFF;
-                    uint32_t* last_block = NULL;
-                    TB_FOR_GLOBALS(g, m) {
-                        FOREACH_N(k, 0, g->obj_count) {
-                            size_t actual_pos  = g->pos + g->objects[k].offset;
-                            size_t actual_page = actual_pos & ~4095;
-                            size_t page_offset = actual_pos - actual_page;
+                        uint32_t data_rva = piece->parent->address + piece->offset;
+                        uint32_t data_file = piece->parent->offset + piece->offset;
 
-                            if (g->objects[k].type != TB_INIT_OBJ_RELOC) {
-                                continue;
+                        uint32_t last_page = 0xFFFFFFFF;
+                        uint32_t* last_block = NULL;
+
+                        dyn_array_for(j, globals) {
+                            TB_Global* g = globals[j];
+                            FOREACH_N(k, 0, g->obj_count) {
+                                size_t actual_pos  = g->pos + g->objects[k].offset;
+                                size_t actual_page = actual_pos & ~4095;
+                                size_t page_offset = actual_pos - actual_page;
+
+                                if (g->objects[k].type != TB_INIT_OBJ_RELOC) {
+                                    continue;
+                                }
+
+                                const TB_Symbol* s = g->objects[k].reloc;
+                                if (last_page != actual_page) {
+                                    last_page  = data_rva + actual_page;
+                                    last_block = (uint32_t*) p_out;
+
+                                    last_block[0] = data_rva + actual_page;
+                                    last_block[1] = 8; // block size field (includes RVA field and itself)
+                                    p_out += 8;
+                                }
+
+                                // compute RVA
+                                uint32_t file_pos = data_file + actual_pos;
+                                *((uint64_t*) &output[file_pos]) = tb__compute_rva(l, m, s) + image_base;
+
+                                // emit relocation
+                                uint16_t payload = (10 << 12) | page_offset; // (IMAGE_REL_BASED_DIR64 << 12) | offset
+                                *((uint16_t*) p_out) = payload, p_out += sizeof(uint16_t);
+                                last_block[1] += 2;
                             }
-
-                            const TB_Symbol* s = g->objects[k].reloc;
-                            if (last_page != actual_page) {
-                                last_page  = data_rva + actual_page;
-                                last_block = (uint32_t*) p_out;
-
-                                last_block[0] = data_rva + actual_page;
-                                last_block[1] = 8; // block size field (includes RVA field and itself)
-                                p_out += 8;
-                            }
-
-                            // compute RVA
-                            uint32_t file_pos = data_file + actual_pos;
-                            *((uint64_t*) &output[file_pos]) = tb__compute_rva(l, m, s) + image_base;
-
-                            // emit relocation
-                            uint16_t payload = (10 << 12) | page_offset; // (IMAGE_REL_BASED_DIR64 << 12) | offset
-                            *((uint16_t*) p_out) = payload, p_out += sizeof(uint16_t);
-                            last_block[1] += 2;
                         }
                     }
                     break;
@@ -551,59 +545,103 @@ TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name) {
     return d;
 }
 
-void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
-    TB_LinkerSection* text  = tb__find_section(l, ".text");
-    TB_LinkerSection* data  = tb__find_section(l, ".data");
-    // TB_LinkerSection* rdata = tb__find_section(l, ".rdata", IMAGE_SCN_MEM_READ  | IMAGE_SCN_CNT_INITIALIZED_DATA);
+static void tb__append_module_symbols(TB_Linker* l, TB_Module* m) {
+    DynArray(TB_ModuleSection) sections = m->sections;
 
-    uint64_t trampoline_rva = text->address + l->trampoline_pos;
-    uint64_t text_piece_rva = text->address + m->text.piece->offset;
-    uint64_t text_piece_file = text->offset + m->text.piece->offset;
+    CUIK_TIMED_BLOCK("apply symbols") {
+        static const TB_SymbolTag tags[] = { TB_SYMBOL_FUNCTION, TB_SYMBOL_GLOBAL };
+        TB_Slice obj_name = { sizeof("<tb module>")-1, (const uint8_t*) "<tb module>" };
 
-    TB_FOR_FUNCTIONS(f, m) {
-        TB_FunctionOutput* func_out = f->output;
-        if (func_out == NULL) continue;
+        dyn_array_for(i, sections) {
+            DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
+            DynArray(TB_Global*) globals = sections[i].globals;
+            TB_LinkerSectionPiece* piece = sections[i].piece;
 
-        for (TB_SymbolPatch* patch = func_out->last_patch; patch; patch = patch->prev) {
-            TB_FunctionOutput* out_f = patch->source->output;
-            _Atomic(int32_t)* dst = (_Atomic(int32_t)*) &output[text_piece_file + out_f->code_pos + patch->pos];
+            dyn_array_for(i, funcs) {
+                const char* name = funcs[i]->parent->super.name;
+                TB_LinkerSymbol ls = {
+                    .name = { strlen(name), (const uint8_t*) name },
+                    .tag = TB_LINKER_SYMBOL_TB,
+                    .object_name = obj_name,
+                    .tb = { piece, &funcs[i]->parent->super }
+                };
 
-            int32_t p = 0;
-            if (patch->target->tag == TB_SYMBOL_EXTERNAL) {
-                size_t actual_pos = text_piece_rva + out_f->code_pos + patch->pos + 4;
-
-                uintptr_t thunk_p = (uintptr_t) patch->target->address;
-                if (thunk_p & 1) {
-                    TB_LinkerSymbol* sym = (TB_LinkerSymbol*) (thunk_p & ~1);
-                    p = tb__get_symbol_rva(l, sym);
-                } else {
-                    ImportThunk* thunk = (ImportThunk*) thunk_p;
-                    assert(thunk != NULL);
-
-                    p = (trampoline_rva + (thunk->thunk_id * 6)) - actual_pos;
-                }
-            } else if (patch->target->tag == TB_SYMBOL_FUNCTION) {
-                // internal patching has already handled this
-            } else if (patch->target->tag == TB_SYMBOL_GLOBAL) {
-                size_t actual_pos = text_piece_rva + out_f->code_pos + patch->pos + 4;
-
-                TB_Global* global = (TB_Global*) patch->target;
-                assert(global->super.tag == TB_SYMBOL_GLOBAL);
-
-                TB_LinkerSectionPiece* piece = global->parent->piece;
-                uint32_t piece_rva = piece->parent->address + piece->offset;
-
-                int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + patch->pos];
-                if (global->parent->kind != TB_MODULE_SECTION_TLS) {
-                    p = (piece_rva + global->pos) - actual_pos;
-                } else {
-                    p = piece_rva + global->pos;
-                }
-            } else {
-                tb_todo();
+                tb__append_symbol(&l->symtab, &ls);
             }
 
-            atomic_fetch_add(dst, p);
+            dyn_array_for(i, globals) {
+                const char* name = globals[i]->super.name;
+                TB_LinkerSymbol ls = {
+                    .name = { strlen(name), (const uint8_t*) name },
+                    .tag = TB_LINKER_SYMBOL_TB,
+                    .object_name = obj_name,
+                    .tb = { piece, &globals[i]->super }
+                };
+
+                tb__append_symbol(&l->symtab, &ls);
+            }
+        }
+    }
+
+    dyn_array_put(l->ir_modules, m);
+}
+
+void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
+    TB_LinkerSection* text = tb__find_section(l, ".text");
+    if (text == NULL) {
+        return;
+    }
+
+    uint64_t trampoline_rva = text->address + l->trampoline_pos;
+
+    dyn_array_for(i, m->sections) {
+        DynArray(TB_FunctionOutput*) funcs = m->sections[i].funcs;
+        TB_LinkerSectionPiece* piece = m->sections[i].piece;
+
+        uint64_t text_piece_rva = piece->parent->address + piece->offset;
+        uint64_t text_piece_file = piece->parent->offset + piece->offset;
+
+        dyn_array_for(j, funcs) {
+            TB_FunctionOutput* out_f = funcs[j];
+            for (TB_SymbolPatch* patch = out_f->last_patch; patch; patch = patch->prev) {
+                int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + patch->pos];
+                size_t actual_pos = text_piece_rva + out_f->code_pos + patch->pos + 4;
+
+                int32_t p = 0;
+                if (patch->target->tag == TB_SYMBOL_EXTERNAL) {
+                    uintptr_t thunk_p = (uintptr_t) patch->target->address;
+                    if (thunk_p & 1) {
+                        TB_LinkerSymbol* sym = (TB_LinkerSymbol*) (thunk_p & ~1);
+                        p = tb__get_symbol_rva(l, sym);
+                    } else {
+                        ImportThunk* thunk = (ImportThunk*) thunk_p;
+                        assert(thunk != NULL);
+
+                        p = (trampoline_rva + (thunk->thunk_id * 6)) - actual_pos;
+                    }
+                } else if (patch->target->tag == TB_SYMBOL_FUNCTION) {
+                    // internal patching has already handled this
+                } else if (patch->target->tag == TB_SYMBOL_GLOBAL) {
+                    TB_Global* global = (TB_Global*) patch->target;
+                    assert(global->super.tag == TB_SYMBOL_GLOBAL);
+
+                    uint32_t flags = m->sections[global->parent].flags;
+                    TB_LinkerSectionPiece* piece = m->sections[global->parent].piece;
+                    uint32_t piece_rva = piece->parent->address + piece->offset;
+
+                    int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + patch->pos];
+                    if (flags & TB_MODULE_SECTION_TLS) {
+                        // section relative for TLS
+                        p = piece_rva + global->pos;
+                    } else {
+                        p = (piece_rva + global->pos) - actual_pos;
+                    }
+                } else {
+                    tb_todo();
+                }
+
+                *dst += p;
+            }
         }
     }
 }
@@ -752,10 +790,9 @@ static void gc_mark(TB_Linker* l, TB_LinkerSectionPiece* p) {
     if (l->inputs[p->input].tag == TB_LINKER_INPUT_MODULE) {
         TB_Module* m = l->inputs[p->input].module;
 
-        gc_mark(l, m->text.piece);
-        gc_mark(l, m->data.piece);
-        gc_mark(l, m->rdata.piece);
-        gc_mark(l, m->tls.piece);
+        dyn_array_for(i, m->sections) {
+            gc_mark(l, m->sections[i].piece);
+        }
     }
 
     // mark any kid symbols

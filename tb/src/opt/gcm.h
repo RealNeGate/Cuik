@@ -113,19 +113,6 @@ static void schedule_late(TB_Passes* passes, TB_Node* n) {
     set_input(passes, n, lca, 0);
 }
 
-// We'll be using this for late schedling
-static void postorder_all_nodes(NL_HashSet* visited, DynArray(TB_Node*)* worklist, TB_Node* n) {
-    if (!nl_hashset_put(visited, n)) {
-        return;
-    }
-
-    // walk successors first
-    FOREACH_N(i, 0, n->input_count) {
-        postorder_all_nodes(visited, worklist, n->inputs[i]);
-    }
-
-}
-
 void tb_pass_schedule(TB_Passes* p) {
     if (p->scheduled) {
         return;
@@ -135,17 +122,23 @@ void tb_pass_schedule(TB_Passes* p) {
         Worklist* restrict ws = &p->worklist;
         p->scheduled = true;
 
+        size_t block_count;
         CUIK_TIMED_BLOCK("dominators") {
             worklist_clear(ws);
 
-            size_t block_count = tb_push_postorder(p->f, ws);
-            TB_Node** blocks   = &ws->items[0];
-            tb_compute_dominators(p->f, block_count, blocks);
+            block_count = tb_push_postorder(p->f, ws);
+            tb_compute_dominators(p->f, block_count, &ws->items[0]);
         }
 
         CUIK_TIMED_BLOCK("early schedule") {
             worklist_clear_visited(ws);
-            schedule_early(p, p->f->stop_node);
+            FOREACH_N(i, 0, block_count) {
+                TB_Node* bb = ws->items[i];
+                assert(bb->type == TB_START || bb->type == TB_REGION);
+
+                TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
+                schedule_early(p, r->end);
+            }
         }
 
         // move nodes closer to their usage site

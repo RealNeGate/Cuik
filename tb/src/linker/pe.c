@@ -453,99 +453,85 @@ static void pe_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) 
 }
 
 static void pe_append_module(TB_Linker* l, TB_Module* m) {
+    // Also resolves internal call patches which is cool
+    ExportList exports;
     CUIK_TIMED_BLOCK("layout section") {
-        tb_module_layout_sections(m);
+        exports = tb_module_layout_sections(m);
     }
-
-    // Target specific: resolve internal call patches
-    tb__find_code_generator(m)->emit_call_patches(m);
 
     TB_LinkerInputHandle mod_index = tb__track_module(l, 0, m);
 
     // Convert module into sections which we can then append to the output
-    tb__append_module_section(l, mod_index, &m->text, ".text", IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_CNT_CODE);
-    tb__append_module_section(l, mod_index, &m->data, ".data", IMAGE_SCN_MEM_WRITE | IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-    tb__append_module_section(l, mod_index, &m->rdata, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+    DynArray(TB_ModuleSection) sections = m->sections;
+    dyn_array_for(i, sections) {
+        uint32_t flags = TB_COFF_SECTION_READ;
+        if (sections[i].flags & TB_MODULE_SECTION_WRITE) flags |= TB_COFF_SECTION_WRITE;
+        if (sections[i].flags & TB_MODULE_SECTION_EXEC)  flags |= TB_COFF_SECTION_EXECUTE | IMAGE_SCN_CNT_CODE;
+        if (sections[i].comdat.type != 0) flags |= TB_COFF_SECTION_COMDAT;
+
+        tb__append_module_section(l, mod_index, &sections[i], sections[i].name, flags);
+    }
 
     const ICodeGen* restrict code_gen = tb__find_code_generator(m);
     if (m->compiled_function_count > 0 && code_gen->emit_win64eh_unwind_info) {
-        TB_LinkerSection* rdata = m->rdata.piece ? m->rdata.piece->parent : NULL;
-        if (!rdata) {
-            rdata = tb__find_or_create_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-        }
+        TB_LinkerSection* rdata = tb__find_or_create_section(l, ".rdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
 
         CUIK_TIMED_BLOCK("generate xdata") {
             TB_Emitter xdata = { 0 };
 
-            TB_FOR_FUNCTIONS(f, m) {
-                TB_FunctionOutput* out_f = f->output;
-
-                if (out_f != NULL) {
+            dyn_array_for(i, sections) {
+                DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
+                dyn_array_for(j, funcs) {
+                    TB_FunctionOutput* out_f = funcs[j];
                     out_f->unwind_info = xdata.count;
                     code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->stack_usage);
                 }
             }
 
             TB_LinkerSectionPiece* x = tb__append_piece(rdata, PIECE_NORMAL, xdata.count, xdata.data, mod_index);
-            TB_FOR_FUNCTIONS(f, m) {
-                TB_FunctionOutput* out_f = f->output;
+            TB_LinkerSection* pdata = tb__find_or_create_section(l, ".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+            TB_LinkerSectionPiece* pdata_piece = tb__append_piece(pdata, PIECE_PDATA, m->compiled_function_count * 12, NULL, mod_index);
 
-                if (out_f != NULL) out_f->unwind_info += x->offset;
+            dyn_array_for(i, sections) {
+                DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
+                dyn_array_for(j, funcs) {
+                    funcs[j]->unwind_info += x->offset;
+                }
+
+                sections[i].piece->associate = pdata_piece;
             }
             m->xdata = x;
         }
-
-        TB_LinkerSection* pdata = tb__find_or_create_section(l, ".pdata", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-        m->text.piece->associate = tb__append_piece(pdata, PIECE_PDATA, m->compiled_function_count * 12, NULL, mod_index);
     }
 
-    if (m->data.total_size > 0) CUIK_TIMED_BLOCK(".reloc") {
+    CUIK_TIMED_BLOCK(".reloc") {
         uint32_t last_page = UINT32_MAX, reloc_size = 0;
-        TB_FOR_GLOBALS(g, m) {
-            FOREACH_N(k, 0, g->obj_count) {
-                size_t actual_page = g->pos + g->objects[k].offset;
+        dyn_array_for(i, m->sections) {
+            DynArray(TB_Global*) globals = m->sections[i].globals;
+            dyn_array_for(j, globals) {
+                TB_Global* g = globals[j];
+                FOREACH_N(k, 0, g->obj_count) {
+                    size_t actual_page = g->pos + g->objects[k].offset;
 
-                if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
-                    if (last_page != actual_page) {
-                        last_page = actual_page;
-                        reloc_size += 8;
+                    if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
+                        if (last_page != actual_page) {
+                            last_page = actual_page;
+                            reloc_size += 8;
+                        }
+
+                        reloc_size += 2;
                     }
-
-                    reloc_size += 2;
                 }
             }
-        }
 
-        if (reloc_size > 0) {
-            TB_LinkerSection* reloc = tb__find_or_create_section(l, ".reloc", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
-            m->data.piece->associate = tb__append_piece(reloc, PIECE_RELOC, reloc_size, NULL, mod_index);
-        }
-    }
-
-    CUIK_TIMED_BLOCK("apply symbols") {
-        static const enum TB_SymbolTag tags[] = { TB_SYMBOL_FUNCTION, TB_SYMBOL_GLOBAL };
-        TB_Slice obj_name = { sizeof("<tb module>")-1, (const uint8_t*) "<tb module>" };
-
-        FOREACH_N(i, 0, COUNTOF(tags)) {
-            enum TB_SymbolTag tag = tags[i];
-            TB_LinkerSectionPiece* piece = i ? m->data.piece : m->text.piece;
-
-            for (TB_Symbol* sym = m->first_symbol_of_tag[tag]; sym != NULL; sym = sym->next) {
-                if (sym->name == NULL) continue;
-
-                TB_LinkerSymbol ls = {
-                    .name = { strlen(sym->name), (const uint8_t*) sym->name },
-                    .tag = TB_LINKER_SYMBOL_TB,
-                    .object_name = obj_name,
-                    .tb = { piece, sym }
-                };
-
-                tb__append_symbol(&l->symtab, &ls);
+            if (reloc_size > 0) {
+                TB_LinkerSection* reloc = tb__find_or_create_section(l, ".reloc", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
+                sections[i].piece->associate = tb__append_piece(reloc, PIECE_RELOC, reloc_size, NULL, mod_index);
             }
         }
     }
 
-    dyn_array_put(l->ir_modules, m);
+    tb__append_module_symbols(l, m);
 }
 
 static void apply_external_relocs(TB_Linker* l, uint8_t* output, uint64_t image_base) {
@@ -719,8 +705,13 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
             TB_Module* m = l->ir_modules[j];
 
             // Find all the imports & place them into the right buckets
-            TB_FOR_EXTERNALS(ext, m) {
-                resolve_external(l, m, ext, j);
+            ExportList exports;
+            CUIK_TIMED_BLOCK("layout section") {
+                exports = tb_module_layout_sections(m);
+            }
+
+            FOREACH_N(i, 0, exports.count) {
+                resolve_external(l, m, exports.data[i], j);
             }
 
             if (m->chkstk_extern) {

@@ -42,32 +42,41 @@ static TB_Symbol* get_external(CompilationUnit* restrict cu, const char* name) {
     return result;
 }
 
-static TB_Global* place_external(CompilationUnit* restrict cu, Stmt* s, TB_DebugType* dbg_type, TB_Linkage linkage) {
-    if (s->flags & STMT_FLAGS_IS_EXPORTED) {
-        cuik_lock_compilation_unit(cu);
-        const char* name = s->decl.name;
+static TB_Global* place_external(CompilationUnit* restrict cu, TranslationUnit* tu, Stmt* stmt, TB_DebugType* dbg_type, TB_Linkage linkage) {
+    const char* name = stmt->decl.name;
+    if (stmt->flags & STMT_FLAGS_IS_EXPORTED) {
+        TB_Symbol* s;
 
-        TB_Global* result = NULL;
+        cuik_lock_compilation_unit(cu);
         ptrdiff_t search = nl_map_get_cstr(cu->export_table, name);
         if (search >= 0) {
-            // transmute
-            TB_Symbol* s = cu->export_table[search].v;
-            if (s->tag == TB_SYMBOL_GLOBAL) {
-                result = tb_extern_transmute((TB_External*) s, dbg_type, linkage);
-            } else {
-                assert(s->tag == TB_SYMBOL_EXTERNAL);
-                result = (TB_Global*) s;
-            }
+            s = cu->export_table[search].v;
         } else {
-            result = tb_global_create(cu->ir_mod, -1, name, dbg_type, linkage);
-            ((TB_Symbol*) result)->ordinal = s->decl.local_ordinal;
-            nl_map_put_cstr(cu->export_table, name, (TB_Symbol*) result);
+            // allocate new
+            s = (TB_Symbol*) tb_global_create(cu->ir_mod, -1, name, dbg_type, linkage);
+            s->ordinal = get_ir_ordinal(tu, stmt);
+            nl_map_put_cstr(cu->export_table, name, s);
+            cuik_unlock_compilation_unit(cu);
+            return (TB_Global*) s;
+        }
+        cuik_unlock_compilation_unit(cu);
+
+        // if we find a declaration, let's transmute our external
+        if (tb_extern_transmute((TB_External*) s, dbg_type, linkage)) {
+            // this works... i hope
+            s->ordinal = get_ir_ordinal(tu, stmt);
+        } else {
+            // we couldn't transmute because apparently someone already declared it?
+            // linker error time
+            fprintf(stderr, "internal compiler error: two decls, one link error\n");
+            abort();
         }
 
-        cuik_unlock_compilation_unit(cu);
-        return result;
+        return (TB_Global*) s;
     } else {
-        return tb_global_create(cu->ir_mod, -1, s->decl.name, dbg_type, linkage);
+        // local global, we don't need to worry about internal linking tricks and especially
+        // not about global locking.
+        return tb_global_create(tu->ir_mod, -1, name, dbg_type, linkage);
     }
 }
 
@@ -461,7 +470,7 @@ static void gen_local_initializer(TranslationUnit* tu, TB_Function* func, TB_Nod
     eval_local_initializer(tu, func, addr, root_node);
 }
 
-TB_ModuleSection* get_variable_storage(TB_Module* m, const Attribs* attrs, bool is_const) {
+TB_ModuleSectionHandle get_variable_storage(TB_Module* m, const Attribs* attrs, bool is_const) {
     if (attrs->is_tls) {
         return tb_module_get_tls(m);
     } else if (is_const) {
@@ -1594,10 +1603,10 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                     dbg_type = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(s->decl.type));
                 }
 
-                TB_Global* g = place_external(tu->parent, s, dbg_type, TB_LINKAGE_PRIVATE);
+                TB_Global* g = place_external(tu->parent, tu, s, dbg_type, TB_LINKAGE_PRIVATE);
                 tls_restore(name);
 
-                TB_ModuleSection* section = get_variable_storage(tu->ir_mod, &attrs, s->decl.type.raw & CUIK_QUAL_CONST);
+                TB_ModuleSectionHandle section = get_variable_storage(tu->ir_mod, &attrs, s->decl.type.raw & CUIK_QUAL_CONST);
 
                 int max_tb_objects = 0;
                 if (s->decl.initial != NULL) {
@@ -1940,8 +1949,14 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
         TB_DebugType* dbg_type = cuik__as_tb_debug_type(m, type);
         TB_DebugType** dbg_params = tb_debug_func_params(dbg_type);
 
+        TB_ModuleSectionHandle section = tb_module_get_text(m);
+        if (s->decl.attrs.is_inline) {
+            // make a comdat section
+            section = tb_module_create_section(m, -1, ".text", TB_MODULE_SECTION_EXEC, TB_COMDAT_MATCH_ANY);
+        }
+
         size_t param_count;
-        parameter_map = tb_function_set_prototype_from_dbg(func, dbg_type, arena, &param_count);
+        parameter_map = tb_function_set_prototype_from_dbg(func, section, dbg_type, arena, &param_count);
 
         if (cuik_canonical_type(type->func.return_type)->kind != KIND_VOID) {
             TB_DebugType* dbg_ret = tb_debug_func_returns(dbg_type)[0];
@@ -1981,13 +1996,13 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             }
         }
 
-        //tb_inst_set_scope(func, old_tb_scope);
+        // tb_inst_set_scope(func, old_tb_scope);
         return (TB_Symbol*) func;
     } else if (s->flags & STMT_FLAGS_HAS_IR_BACKING) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
         Subexpr* initial = get_root_subexpr(s->decl.initial);
 
-        TB_ModuleSection* section = get_variable_storage(tu->ir_mod, &s->decl.attrs, s->decl.type.raw & CUIK_QUAL_CONST);
+        TB_ModuleSectionHandle section = get_variable_storage(tu->ir_mod, &s->decl.attrs, s->decl.type.raw & CUIK_QUAL_CONST);
         int max_tb_objects;
         if (initial == NULL) {
             tb_global_set_storage(tu->ir_mod, section, (TB_Global*) s->backing.s, type->size, type->align, 0);
@@ -2032,8 +2047,7 @@ static void ir_alloc_task(void* task) {
 
             if (s->op == STMT_FUNC_DECL) {
                 TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-                TB_ComdatType comdat = s->decl.attrs.is_inline ? TB_COMDAT_MATCH_ANY : TB_COMDAT_NONE;
-                TB_Function* func = tb_function_create(t.tu->ir_mod, -1, s->decl.name, linkage, comdat);
+                TB_Function* func = tb_function_create(t.tu->ir_mod, -1, s->decl.name, linkage);
 
                 s->backing.f = func;
                 s->backing.s->ordinal = get_ir_ordinal(t.tu, s);
@@ -2055,8 +2069,7 @@ static void ir_alloc_task(void* task) {
                         dbg_type = cuik__as_tb_debug_type(t.tu->ir_mod, cuik_canonical_type(s->decl.type));
                     }
 
-                    s->backing.g = place_external(t.tu->parent, s, dbg_type, linkage);
-                    s->backing.s->ordinal = get_ir_ordinal(t.tu, s);
+                    s->backing.g = place_external(t.tu->parent, t.tu, s, dbg_type, linkage);
                 }
             }
         }

@@ -17,36 +17,15 @@ static void elf_append_module(TB_Linker* l, TB_Module* m) {
 
     TB_LinkerInputHandle mod_index = tb__track_module(l, 0, m);
 
-    tb__append_module_section(l, mod_index, &m->text, ".text", TB_PF_X | TB_PF_R);
-    tb__append_module_section(l, mod_index, &m->data, ".data", TB_PF_W | TB_PF_R);
-    tb__append_module_section(l, mod_index, &m->rdata, ".rdata", TB_PF_R);
-
-    CUIK_TIMED_BLOCK("apply symbols") {
-        static const enum TB_SymbolTag tags[] = { TB_SYMBOL_FUNCTION, TB_SYMBOL_GLOBAL };
-
-        TB_FOR_FUNCTIONS(f, m) {
-            const char* name = f->super.name;
-            TB_LinkerSymbol ls = {
-                .name = { strlen(name), (const uint8_t*) name },
-                .tag = TB_LINKER_SYMBOL_TB,
-                .tb = { m->text.piece, &f->super }
-            };
-            tb__append_symbol(&l->symtab, &ls);
-        }
-
-        // for globals
-        TB_FOR_GLOBALS(g, m) if (g->super.name) {
-            const char* name = g->super.name;
-            TB_LinkerSymbol ls = {
-                .name = { strlen(name), (const uint8_t*) name },
-                .tag = TB_LINKER_SYMBOL_TB,
-                .tb = { g->parent->piece, &g->super }
-            };
-            tb__append_symbol(&l->symtab, &ls);
-        }
+    DynArray(TB_ModuleSection) sections = m->sections;
+    dyn_array_for(i, sections) {
+        uint32_t flags = TB_PF_R;
+        if (sections[i].flags & TB_MODULE_SECTION_WRITE) flags |= TB_PF_W;
+        if (sections[i].flags & TB_MODULE_SECTION_EXEC)  flags |= TB_PF_X;
+        tb__append_module_section(l, mod_index, &sections[i], sections[i].name, flags);
     }
 
-    dyn_array_put(l->ir_modules, m);
+    tb__append_module_symbols(l, m);
 }
 
 static TB_LinkerSymbol* elf_resolve_sym(TB_Linker* l, TB_LinkerSymbol* sym, TB_Slice name, TB_Slice* alt, uint32_t reloc_i) {

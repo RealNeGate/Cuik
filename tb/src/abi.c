@@ -125,7 +125,7 @@ TB_PassingRule tb_get_passing_rule_from_dbg(TB_Module* mod, TB_DebugType* param_
     return classify_reg(mod->target_abi, param_type) == RG_MEMORY ? TB_PASSING_INDIRECT : TB_PASSING_DIRECT;
 }
 
-TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count) {
+TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count) {
     tb_assert(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
     tb_assert(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
 
@@ -133,7 +133,7 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, 
     TB_FunctionPrototype* p = tb_prototype_from_dbg(f->super.module, dbg);
 
     // apply prototype
-    tb_function_set_prototype(f, p, arena);
+    tb_function_set_prototype(f, section, p, arena);
 
     size_t param_count = dbg->func.param_count;
     TB_DebugType** param_list = dbg->func.params;

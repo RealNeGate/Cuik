@@ -1,24 +1,19 @@
 #ifdef CUIK_USE_TB
 typedef struct {
-    TB_Module* mod;
-    TB_Function* start;
     Futex* remaining;
 
-    int batch_size;
+    TB_Function* f;
+    void* arg;
 
-    void* ctx;
     CuikSched_PerFunction func;
 } PerFunction;
 
 static void per_func_task(void* arg) {
     PerFunction task = *((PerFunction*) arg);
-    TB_Function* f = task.start;
+    task.func(task.f, task.arg);
 
-    for (size_t i = 0; i < task.batch_size && f != NULL; i++) {
-        task.func(task.mod, f, task.ctx);
-        f = tb_next_function(f);
-    }
-    futex_dec(task.remaining);
+    atomic_fetch_sub(task.remaining, 1);
+    futex_signal(task.remaining);
 }
 
 static size_t good_batch_size(size_t n, size_t jobs) {
@@ -36,37 +31,28 @@ static size_t good_batch_size(size_t n, size_t jobs) {
     return 64;
 }
 
-void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_threads, TB_Module* mod, void* ctx, CuikSched_PerFunction func) {
+void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_threads, TB_Module* mod, void* arg, CuikSched_PerFunction func) {
+    TB_SymbolIter it = tb_symbol_iter(mod);
     if (thread_pool != NULL) {
-        #if CUIK_ALLOW_THREADS
-        size_t func_count = tb_module_get_function_count(mod);
+        Futex remaining = 0;
+        size_t count = 0;
 
-        size_t batch_size = good_batch_size(num_threads, func_count);
-        size_t capacity = (func_count + batch_size - 1) / batch_size;
-        Futex remaining = capacity;
+        PerFunction task = { .remaining = &remaining, .arg = arg, .func = func };
 
-        TB_Function* f = tb_first_function(mod);
-        while (f != NULL) {
-            PerFunction task = { .mod = mod, .start = f, .remaining = &remaining, .batch_size = batch_size, .ctx = ctx, .func = func };
+        TB_Symbol* sym;
+        while (sym = tb_symbol_iter_next(&it), sym) if (sym->tag == TB_SYMBOL_FUNCTION) {
+            task.f = (TB_Function*) sym;
             CUIK_CALL(thread_pool, submit, per_func_task, sizeof(task), &task);
-
-            // skip to the next batch, this is kinda slow but
-            // a submittion happened already so there's work
-            // being done elsewhere... ideally
-            for (size_t i = 0; f != NULL && i < batch_size; i++) {
-                f = tb_next_function(f);
-            }
+            count++;
         }
 
-        futex_wait_eq(&remaining, 0);
-        #else
-        fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
-        abort();
-        #endif /* CUIK_ALLOW_THREADS */
+        futex_wait_eq(&remaining, count);
     } else {
-        TB_FOR_FUNCTIONS(f, mod) {
-            func(mod, f, ctx);
+        TB_Symbol* sym;
+        while (sym = tb_symbol_iter_next(&it), sym) if (sym->tag == TB_SYMBOL_FUNCTION) {
+            func((TB_Function*) sym, arg);
         }
     }
 }
 #endif
+

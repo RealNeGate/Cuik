@@ -90,8 +90,8 @@ struct TB_LinkerSection {
 
     uint32_t name_pos;
 
-    size_t address; // usually a relative virtual address.
-    size_t offset;  // in the file.
+    uint64_t address; // usually a relative virtual address.
+    size_t offset;    // in the file.
 
     size_t piece_count;
     size_t total_size;

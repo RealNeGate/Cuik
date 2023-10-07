@@ -839,7 +839,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     tb_pass_schedule(p);
 
     #if 0
-    reg_alloc_log = strcmp(f->super.name, "array_ops") == 0;
+    reg_alloc_log = strcmp(f->super.name, "main_wnd_proc") == 0;
     if (reg_alloc_log) {
         printf("\n\n\n");
         tb_pass_print(p);
@@ -977,7 +977,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     dyn_array_destroy(ctx.phi_vals);
 
     if (dyn_array_length(ctx.locations)) {
-        ctx.locations[0].pos = 0;
+        ctx.locations[0].pos = 0; // func_out->prologue_length;
     }
 
     // we're done, clean up

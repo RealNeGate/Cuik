@@ -424,6 +424,10 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static bool should_rematerialize(TB_Node* n) {
+    if (n->type == TB_INT2PTR && n->inputs[0]->type == TB_INTEGER_CONST) {
+        return true;
+    }
+
     return (n->type == TB_PROJ && n->inputs[0]->type == TB_START) ||
         n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST ||
         n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS ||
@@ -500,7 +504,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             // walk the entry to find any parameter stack slots
             bool has_param_slots = false;
             FOREACH_N(i, 0, ctx->f->param_count) {
-                TB_Node* proj = params[2 + i];
+                TB_Node* proj = params[3 + i];
                 User* use = find_users(ctx->p, proj);
                 if (use == NULL || use->next != NULL || use->slot == 0) {
                     continue;
@@ -1211,9 +1215,10 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
 
-        case TB_DEBUGBREAK:
-        SUBMIT(alloc_inst(INT3, TB_TYPE_VOID, 0, 0, 0));
-        break;
+        case TB_DEBUGBREAK: {
+            SUBMIT(alloc_inst(INT3, TB_TYPE_VOID, 0, 0, 0));
+            break;
+        }
 
         case TB_UNREACHABLE:
         case TB_TRAP: {
@@ -1434,7 +1439,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
         case TB_PROJ: {
             if (n->inputs[0]->type == TB_START) {
-                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index - 2;
+                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index - 3;
                 int param_gpr_count = ctx->target_abi == TB_ABI_WIN64 ? 4 : 6;
 
                 // past the first register parameters, it's all stack
@@ -1819,15 +1824,17 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
     };
 
     size_t pad = 16 - (ctx->emit.count & 15);
-    uint8_t* dst = tb_cgemit_reserve(&ctx->emit, pad);
-    tb_cgemit_commit(&ctx->emit, pad);
+    if (pad < 16) {
+        uint8_t* dst = tb_cgemit_reserve(&ctx->emit, pad);
+        tb_cgemit_commit(&ctx->emit, pad);
 
-    if (pad > 8) {
-        size_t rem = pad - 8;
-        memset(dst, 0x66, rem);
-        pad -= rem, dst += rem;
+        if (pad > 8) {
+            size_t rem = pad - 8;
+            memset(dst, 0x66, rem);
+            pad -= rem, dst += rem;
+        }
+        memcpy(dst, nops[pad - 1], pad);
     }
-    memcpy(dst, nops[pad - 1], pad);
 }
 
 static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage) {
@@ -1956,37 +1963,33 @@ static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop) {
     return ctx->emit.count - start;
 }
 
-static size_t emit_call_patches(TB_Module* restrict m) {
+static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f) {
     size_t r = 0;
-    TB_FOR_FUNCTIONS(f, m) {
-        TB_FunctionOutput* func_out = f->output;
+    uint32_t src_section = out_f->section;
 
-        for (TB_SymbolPatch* patch = func_out->last_patch; patch; patch = patch->prev) {
-            if (patch->target->tag == TB_SYMBOL_FUNCTION) {
-                // you can't do relocations across COMDAT sections
-                if (&patch->source->super == patch->target || (!tb_symbol_is_comdat(&patch->source->super) && !tb_symbol_is_comdat(patch->target))) {
-                    TB_FunctionOutput* out_f = patch->source->output;
-                    assert(out_f && "Patch cannot be applied to function with no compiled output");
-                    assert(patch->pos < out_f->code_size);
+    for (TB_SymbolPatch* patch = out_f->last_patch; patch; patch = patch->prev) {
+        if (patch->target->tag == TB_SYMBOL_FUNCTION) {
+            uint32_t dst_section = ((TB_Function*) patch->target)->output->section;
 
-                    // x64 thinks of relative addresses as being relative
-                    // to the end of the instruction or in this case just
-                    // 4 bytes ahead hence the +4.
-                    size_t actual_pos = out_f->code_pos + patch->pos + 4;
+            // you can't do relocations across sections
+            if (src_section == dst_section) {
+                assert(patch->pos < out_f->code_size);
 
-                    uint32_t p = ((TB_Function*) patch->target)->output->code_pos - actual_pos;
-                    memcpy(&out_f->code[patch->pos], &p, sizeof(uint32_t));
+                // x64 thinks of relative addresses as being relative
+                // to the end of the instruction or in this case just
+                // 4 bytes ahead hence the +4.
+                size_t actual_pos = out_f->code_pos + patch->pos + 4;
 
-                    r += 1;
-                    patch->internal = true;
-                }
+                uint32_t p = ((TB_Function*) patch->target)->output->code_pos - actual_pos;
+                memcpy(&out_f->code[patch->pos], &p, sizeof(uint32_t));
+
+                r += 1;
+                patch->internal = true;
             }
         }
-
-        m->text.reloc_count += func_out->patch_count;
     }
 
-    return r;
+    return out_f->patch_count - r;
 }
 
 ICodeGen tb__x64_codegen = {

@@ -303,6 +303,9 @@ static bool remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_
 }
 
 void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
+    // remove from CSE if we're murdering it
+    nl_hashset_remove2(&p->cse_nodes, n, cse_hash, cse_compare);
+
     if (n->type == TB_LOCAL) {
         // remove from local list
         dyn_array_for(i, p->locals) if (p->locals[i] == n) {
@@ -410,13 +413,60 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
-static void push_all_nodes(Worklist* restrict ws, TB_Node* n) {
-    if (!worklist_test_n_set(ws, n)) {
+static void push_all_bb(Worklist* restrict ws, DynArray(TB_Node*)* stack_ptr, TB_Node* root) {
+    if (worklist_test_n_set(ws, root)) {
+        return;
+    }
+
+    // walk control edges (aka predecessors)
+    assert(root->type == TB_START || root->type == TB_REGION);
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(root);
+    TB_Node* end = r->end;
+
+    if (end->type == TB_BRANCH) {
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
+        FOREACH_REVERSE_N(i, 0, br->succ_count) {
+            push_all_bb(ws, stack_ptr, br->succ[i]);
+        }
+    }
+
+    DynArray(TB_Node*) stack = *stack_ptr;
+
+    // place endpoint, we'll construct the rest from there
+    worklist_test_n_set(ws, end);
+    dyn_array_put(stack, end);
+
+    while (dyn_array_length(stack)) {
+        TB_Node* n = dyn_array_pop(stack);
+
+        // place self first
         dyn_array_put(ws->items, n);
 
-        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-            push_all_nodes(ws, n->inputs[i]);
+        // push inputs
+        FOREACH_N(i, 0, n->input_count) {
+            TB_Node* in = n->inputs[i];
+            if (in && !worklist_test_n_set(ws, in)) {
+                dyn_array_put(stack, in);
+            }
         }
+    }
+
+    // push root inputs
+    FOREACH_N(i, 0, n->input_count) {
+        TB_Node* in = n->inputs[i];
+        if (in && !worklist_test_n_set(ws, in)) {
+            dyn_array_put(stack, in);
+        }
+    }
+
+    *stack_ptr = stack;
+}
+
+static void push_all_nodes(Worklist* restrict ws, TB_Node* root) {
+    CUIK_TIMED_BLOCK("push_all_nodes") {
+        DynArray(TB_Node*) stack = dyn_array_create(TB_Node*, 1024);
+        push_all_bb(ws, &stack, root);
+        dyn_array_destroy(stack);
     }
 }
 
@@ -749,7 +799,7 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 
     // generate work list (put everything)
     CUIK_TIMED_BLOCK("gen worklist") {
-        push_all_nodes(&p->worklist, f->stop_node);
+        push_all_nodes(&p->worklist, f->start_node);
         DO_IF(TB_OPTDEBUG_STATS)(p->stats.initial = worklist_popcount(&p->worklist));
     }
 
@@ -793,7 +843,7 @@ void tb_pass_exit(TB_Passes* p) {
     TB_Function* f = p->f;
 
     #if TB_OPTDEBUG_STATS
-    push_all_nodes(&p->worklist, f->stop_node);
+    push_all_nodes(&p->worklist, f->start_node);
     int final_count = worklist_popcount(&p->worklist);
 
     double factor = ((double) final_count / (double) p->stats.initial) * 100.0;

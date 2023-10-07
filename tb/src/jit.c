@@ -189,7 +189,7 @@ void* tb_jit_place_function(TB_JIT* jit, TB_Function* f) {
     // apply relocations, any leftovers are mapped to thunks
     for (TB_SymbolPatch* p = func_out->last_patch; p; p = p->prev) {
         size_t actual_pos = p->pos;
-        enum TB_SymbolTag tag = p->target->tag;
+        TB_SymbolTag tag = p->target->tag;
 
         int32_t* patch = (int32_t*) &dst[actual_pos];
         if (tag == TB_SYMBOL_FUNCTION) {

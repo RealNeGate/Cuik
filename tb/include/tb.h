@@ -436,31 +436,39 @@ typedef struct TB_DebugType         TB_DebugType;
 typedef struct TB_ModuleSection     TB_ModuleSection;
 typedef struct TB_FunctionPrototype TB_FunctionPrototype;
 
-typedef struct TB_Attrib            TB_Attrib;
+enum { TB_MODULE_SECTION_NONE = -1 };
+typedef int32_t TB_ModuleSectionHandle;
+typedef struct TB_Attrib TB_Attrib;
 
 // target-specific, just a unique ID for the registers
 typedef int TB_PhysicalReg;
+
+// Thread local module state
+typedef struct TB_ThreadInfo TB_ThreadInfo;
+
+typedef enum {
+    TB_SYMBOL_NONE,
+
+    // symbol is dead now
+    TB_SYMBOL_TOMBSTONE,
+
+    TB_SYMBOL_EXTERNAL,
+    TB_SYMBOL_GLOBAL,
+    TB_SYMBOL_FUNCTION,
+
+    TB_SYMBOL_MAX,
+} TB_SymbolTag;
 
 // Refers generically to objects within a module
 //
 // TB_Function, TB_Global, and TB_External are all subtypes of TB_Symbol
 // and thus are safely allowed to cast into a symbol for operations.
 typedef struct TB_Symbol {
-    enum TB_SymbolTag {
-        TB_SYMBOL_NONE,
+    _Atomic TB_SymbolTag tag;
 
-        // symbol is dead now
-        TB_SYMBOL_TOMBSTONE,
-
-        TB_SYMBOL_EXTERNAL,
-        TB_SYMBOL_GLOBAL,
-        TB_SYMBOL_FUNCTION,
-
-        TB_SYMBOL_MAX,
-    } tag;
-
-    // refers to the prev or next symbol with the same tag
-    struct TB_Symbol* next;
+    // which thread info it's tied to (we may need to remove it, this
+    // is used for that)
+    TB_ThreadInfo* info;
     char* name;
 
     // It's kinda a weird circular reference but yea
@@ -645,6 +653,12 @@ typedef struct TB_Location {
     uint32_t pos;
 } TB_Location;
 
+typedef enum {
+    TB_MODULE_SECTION_WRITE = 1,
+    TB_MODULE_SECTION_EXEC  = 2,
+    TB_MODULE_SECTION_TLS   = 4,
+} TB_ModuleSectionFlags;
+
 // *******************************
 // Public macros
 // *******************************
@@ -706,8 +720,6 @@ TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_Feature
 // Creates a module but defaults on the architecture and system based on the host machine
 TB_API TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool is_jit);
 
-TB_API size_t tb_module_get_function_count(TB_Module* m);
-
 // Frees all resources for the TB_Module and it's functions, globals and
 // compiled code.
 TB_API void tb_module_destroy(TB_Module* m);
@@ -717,9 +729,16 @@ TB_API void tb_module_destroy(TB_Module* m);
 // dont and the tls_index is used, it'll crash
 TB_API void tb_module_set_tls_index(TB_Module* m, ptrdiff_t len, const char* name);
 
-// You don't need to manually call this unless you want to resolve locations before
-// exporting.
-TB_API void tb_module_layout_sections(TB_Module* m);
+TB_API TB_ModuleSectionHandle tb_module_create_section(TB_Module* m, ptrdiff_t len, const char* name, TB_ModuleSectionFlags flags, TB_ComdatType comdat);
+
+typedef struct {
+    TB_ThreadInfo* info;
+    size_t i;
+} TB_SymbolIter;
+
+// Lovely iterator for all the symbols... it's probably not "fast"
+TB_SymbolIter tb_symbol_iter(TB_Module* mod);
+TB_Symbol* tb_symbol_iter_next(TB_SymbolIter* iter);
 
 ////////////////////////////////
 // Compiled code introspection
@@ -837,18 +856,7 @@ TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice co
 ////////////////////////////////
 // Symbols
 ////////////////////////////////
-#define TB_FOR_FUNCTIONS(it, module) for (TB_Function* it = tb_first_function(module); it != NULL; it = tb_next_function(it))
-TB_API TB_Function* tb_first_function(TB_Module* m);
-TB_API TB_Function* tb_next_function(TB_Function* f);
-
-#define TB_FOR_EXTERNALS(it, module) for (TB_External* it = tb_first_external(module); it != NULL; it = tb_next_external(it))
-TB_API TB_External* tb_first_external(TB_Module* m);
-TB_API TB_External* tb_next_external(TB_External* e);
-
-// this is used JIT scenarios to tell the compiler what externals map to
-TB_API TB_ExternalType tb_extern_get_type(TB_External* e);
 TB_API TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkage linkage);
-
 TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type);
 
 TB_API TB_SourceFile* tb_get_source_file(TB_Module* m, const char* path);
@@ -893,7 +901,7 @@ TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc
 // into the correct ABI and exposing sane looking nodes to the parameters.
 //
 // returns the parameters
-TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count);
+TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count);
 TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* dbg);
 
 // used for ABI parameter passing
@@ -916,7 +924,7 @@ TB_API TB_PassingRule tb_get_passing_rule_from_dbg(TB_Module* mod, TB_DebugType*
 TB_API TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage);
 
 // allocate space for the global
-TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* global, size_t size, size_t align, size_t max_objects);
+TB_API void tb_global_set_storage(TB_Module* m, TB_ModuleSectionHandle section, TB_Global* global, size_t size, size_t align, size_t max_objects);
 
 // returns a buffer which the user can fill to then have represented in the initializer
 TB_API void* tb_global_add_region(TB_Module* m, TB_Global* global, size_t offset, size_t size);
@@ -925,10 +933,10 @@ TB_API void* tb_global_add_region(TB_Module* m, TB_Global* global, size_t offset
 // depends on the pointer size
 TB_API void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* global, size_t offset, const TB_Symbol* symbol);
 
-TB_API TB_ModuleSection* tb_module_get_text(TB_Module* m);
-TB_API TB_ModuleSection* tb_module_get_rdata(TB_Module* m);
-TB_API TB_ModuleSection* tb_module_get_data(TB_Module* m);
-TB_API TB_ModuleSection* tb_module_get_tls(TB_Module* m);
+TB_API TB_ModuleSectionHandle tb_module_get_text(TB_Module* m);
+TB_API TB_ModuleSectionHandle tb_module_get_rdata(TB_Module* m);
+TB_API TB_ModuleSectionHandle tb_module_get_data(TB_Module* m);
+TB_API TB_ModuleSectionHandle tb_module_get_tls(TB_Module* m);
 
 ////////////////////////////////
 // Function Attributes
@@ -976,8 +984,6 @@ TB_API TB_DebugType** tb_debug_func_returns(TB_DebugType* type);
 ////////////////////////////////
 // Symbols
 ////////////////////////////////
-TB_API bool tb_symbol_is_comdat(const TB_Symbol* s);
-
 // returns NULL if the tag doesn't match
 TB_API TB_Function* tb_symbol_as_function(TB_Symbol* s);
 TB_API TB_External* tb_symbol_as_external(TB_Symbol* s);
@@ -1000,7 +1006,7 @@ TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int l
 TB_API bool tb_has_effects(TB_Node* n);
 
 // if section is NULL, default to .text
-TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat);
+TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage);
 
 TB_API TB_Arena* tb_function_get_arena(TB_Function* f);
 
@@ -1011,7 +1017,7 @@ TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr);
 TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 
 // if arena is NULL, defaults to module arena which is freed on tb_free_thread_resources
-TB_API void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena);
+TB_API void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p, TB_Arena* arena);
 TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
 TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);

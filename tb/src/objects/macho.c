@@ -12,12 +12,13 @@ TB_ExportBuffer tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
     }
 
     // segments
+    size_t text_size = 0;
     MO_Section64 sections[] = {
         {
             .sectname = { "__text" },
             .segname  = { "__TEXT" },
             .align    = 2,
-            .size     = m->text.total_size,
+            .size     = text_size,
             .flags    = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
         }
     };
@@ -35,14 +36,14 @@ TB_ExportBuffer tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
         },
         .segname = { "__TEXT" },
         .nsects = NUMBER_OF_SECTIONS,
-        .vmsize = m->text.total_size,
+        .vmsize = text_size,
         .fileoff = output_size,
-        .filesize = m->text.total_size
+        .filesize = text_size
     };
 
     // layout section data
     sections[0].offset = output_size;
-    output_size += m->text.total_size;
+    output_size += text_size;
 
     // generate symbol table
     MO_SymtabCmd symtab_cmd = {
@@ -102,7 +103,7 @@ TB_ExportBuffer tb_macho_write_output(TB_Module* m, const IDebugFormat* dbg) {
     WRITE(&segment_cmd, sizeof(segment_cmd));
     WRITE(&sections, sizeof(MO_Section64) * NUMBER_OF_SECTIONS);
 
-    write_pos = tb_helper_write_section(m, write_pos, &m->text, output, sections[0].offset);
+    // write_pos = tb_helper_write_section(m, write_pos, &m->text, output, sections[0].offset);
 
     // emit section contents
     FOREACH_N(i, 0, NUMBER_OF_SECTIONS) {

@@ -55,7 +55,7 @@ bool tb_node_is_constant_zero(TB_Node* n) {
 }
 
 void tb_function_attrib_variable(TB_Function* f, TB_Node* n, TB_Node* parent, ptrdiff_t len, const char* name, TB_DebugType* type) {
-    append_attrib(f, n, (TB_Attrib){ TB_ATTRIB_VARIABLE, .var = { parent, tb__tb_arena_strdup(f->super.module, len, name), type } });
+    append_attrib(f, n, (TB_Attrib){ TB_ATTRIB_VARIABLE, .var = { parent, tb__arena_strdup(f->super.module, len, name), type } });
 }
 
 void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent) {
@@ -108,7 +108,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
     }
 
     // give most side effect the location attrib
-    if (type != TB_REGION && type != TB_END) {
+    if (type != TB_REGION && type != TB_END && type != TB_PHI) {
         if (f->line_attrib.loc.file != NULL) {
             append_attrib(f, n, f->line_attrib);
         }
@@ -378,7 +378,7 @@ TB_Node* tb_inst_float64(TB_Function* f, double imm) {
 
 TB_Node* tb_inst_string(TB_Function* f, size_t len, const char* str) {
     TB_Global* dummy = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-    tb_global_set_storage(f->super.module, &f->super.module->rdata, dummy, len, 1, 1);
+    tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), dummy, len, 1, 1);
 
     char* dst = tb_global_add_region(f->super.module, dummy, 0, len);
     memcpy(dst, str, len);

@@ -8,6 +8,7 @@ typedef _Atomic int32_t Futex;
 typedef _Atomic int64_t Futex;
 #endif
 
+void futex_inc(Futex* f);
 void futex_dec(Futex* f);
 void futex_signal(Futex* f);
 void futex_broadcast(Futex* f);

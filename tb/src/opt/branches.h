@@ -6,6 +6,17 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
     if (n->input_count == 1 && n->inputs[0]->type == TB_PROJ &&
         n->inputs[0]->inputs[0]->type == TB_BRANCH &&
         n->inputs[0]->inputs[0]->input_count == 1) {
+        // check for any phi nodes
+        User* use = n->users;
+        while (use != NULL) {
+            User* next = use->next;
+            if (use->n->type == TB_PHI) {
+                assert(use->n->input_count == 2);
+                subsume_node(p, f, use->n, use->n->inputs[1]);
+            }
+            use = next;
+        }
+
         TB_Node* top_node = unsafe_get_region(n->inputs[0]);
         TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
 
@@ -135,7 +146,6 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
                         // attach the header and merge to each other
                         tb_pass_mark(opt, parent);
                         tb_pass_mark_users(opt, region);
-                        subsume_node(opt, f, region, parent);
                         subsume_node(opt, f, region, parent);
                     }
 

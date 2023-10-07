@@ -168,7 +168,7 @@ CUIK_API bool cuik_driver_does_codegen(const Cuik_DriverArgs* args);
 ////////////////////////////////
 // This is used to help users multithread their actions (optimizations, codegen, etc)
 #ifdef CUIK_USE_TB
-typedef void (*CuikSched_PerFunction)(TB_Module* m, TB_Function* f, void* ctx);
+typedef void (*CuikSched_PerFunction)(TB_Function* f, void* ctx);
 
 CUIK_API void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_threads, TB_Module* m, void* ctx, CuikSched_PerFunction func);
 #endif

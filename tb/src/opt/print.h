@@ -52,18 +52,8 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
 
         if (def) {
             printf("(");
-            size_t param_count = 0;
-            TB_Node* params[64];
-            for (User* use = find_users(ctx->opt, n); use; use = use->next) {
-                if (use->n->type == TB_PROJ) {
-                    int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
-                    if (index+1 > param_count) param_count = index+1;
-
-                    params[index] = use->n;
-                }
-            }
-
-            FOREACH_N(i, 1, param_count) {
+            TB_Node** params = ctx->f->params;
+            FOREACH_N(i, 1, 1 + ctx->f->param_count) {
                 if (i > 1) printf(", ");
 
                 if (params[i] == NULL) {

@@ -85,18 +85,6 @@ typedef struct TB_Emitter {
 
 #define TB_DATA_TYPE_EQUALS(a, b) ((a).raw == (b).raw)
 
-#undef TB_FOR_BASIC_BLOCK
-#define TB_FOR_BASIC_BLOCK(it, f) for (TB_Label it = 0; it < f->bb_count; it++)
-
-#undef TB_FOR_FUNCTIONS
-#define TB_FOR_FUNCTIONS(it, m) for (TB_Function* it = (TB_Function*) m->first_symbol_of_tag[TB_SYMBOL_FUNCTION]; it != NULL; it = (TB_Function*) it->super.next)
-
-#undef TB_FOR_GLOBALS
-#define TB_FOR_GLOBALS(it, m) for (TB_Global* it = (TB_Global*) m->first_symbol_of_tag[TB_SYMBOL_GLOBAL]; it != NULL; it = (TB_Global*) it->super.next)
-
-#undef TB_FOR_EXTERNALS
-#define TB_FOR_EXTERNALS(it, m) for (TB_External* it = (TB_External*) m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL]; it != NULL; it = (TB_External*) it->super.next)
-
 // i love my linked lists don't i?
 typedef struct TB_SymbolPatch TB_SymbolPatch;
 struct TB_SymbolPatch {
@@ -107,10 +95,6 @@ struct TB_SymbolPatch {
     bool internal; // handled already by the code gen's emit_call_patches
     const TB_Symbol* target;
 };
-
-typedef struct TB_File {
-    char* path;
-} TB_File;
 
 struct TB_External {
     TB_Symbol super;
@@ -138,8 +122,7 @@ typedef struct TB_InitObj {
 struct TB_Global {
     TB_Symbol super;
     TB_Linkage linkage;
-
-    TB_ModuleSection* parent;
+    TB_ModuleSectionHandle parent;
 
     // layout stuff
     void* address; // JIT-only
@@ -256,10 +239,15 @@ struct TB_CodeRegion {
     uint8_t data[];
 };
 
+typedef struct COFF_UnwindInfo COFF_UnwindInfo;
+
 typedef struct TB_FunctionOutput {
     TB_Function* parent;
+    TB_ModuleSectionHandle section;
+
     TB_Linkage linkage;
 
+    uint64_t ordinal;
     uint8_t prologue_length;
 
     TB_Assembly* asm_out;
@@ -275,9 +263,6 @@ typedef struct TB_FunctionOutput {
     uint32_t unwind_info;
     uint32_t unwind_size;
 
-    // windows COMDAT specific
-    uint32_t comdat_id;
-
     DynArray(TB_StackSlot) stack_slots;
 
     // Part of the debug info
@@ -291,11 +276,11 @@ typedef struct TB_FunctionOutput {
 
 struct TB_Function {
     TB_Symbol super;
+    TB_ModuleSectionHandle section;
     TB_Linkage linkage;
 
     TB_DebugType* dbg_type;
     TB_FunctionPrototype* prototype;
-    TB_Comdat comdat;
 
     // raw parameters
     size_t param_count;
@@ -327,9 +312,36 @@ struct TB_Function {
     TB_FunctionOutput* output;
 };
 
-// Thread local module state, only next_in_module is ever mutated
-// on multiple threads (when first attached)
-typedef struct TB_ThreadInfo TB_ThreadInfo;
+struct TB_ModuleSection {
+    char* name;
+    TB_LinkerSectionPiece* piece;
+
+    int section_num;
+    TB_ModuleSectionFlags flags;
+
+    TB_Comdat comdat;
+
+    // export-specific
+    uint32_t export_flags;
+    uint32_t name_pos;
+    COFF_UnwindInfo* unwind;
+
+    // this isn't computed until export time
+    uint32_t raw_data_pos;
+    uint32_t total_size;
+    uint32_t reloc_count;
+    uint32_t reloc_pos;
+
+    DynArray(TB_Global*) globals;
+    DynArray(TB_FunctionOutput*) funcs;
+};
+
+typedef struct {
+    int len;
+    char data[16];
+} SmallConst;
+
+// only next_in_module is ever mutated on multiple threads (when first attached)
 struct TB_ThreadInfo {
     TB_Module* owner;
     TB_ThreadInfo* next_in_module;
@@ -346,48 +358,17 @@ struct TB_ThreadInfo {
     TB_Arena perm_arena;
     TB_Arena tmp_arena;
 
+    // live symbols (globals, functions and externals)
+    //   we'll be iterating these during object/executable
+    //   export to get all the symbols compiled.
+    //
+    // low contention lock but we still need it when removing on different
+    // threads.
+    mtx_t symbol_lock;
+    NL_HashSet symbols;
+
     TB_CodeRegion* code; // compiled output
 };
-
-typedef enum {
-    // stores globals
-    TB_MODULE_SECTION_DATA,
-
-    // data but it's thread local
-    TB_MODULE_SECTION_TLS,
-
-    // holds all the code (no globals)
-    TB_MODULE_SECTION_TEXT,
-} TB_ModuleSectionKind;
-
-struct TB_ModuleSection {
-    char* name;
-    TB_LinkerSectionPiece* piece;
-
-    int section_num;
-    TB_ModuleSectionKind kind;
-
-    // export-specific
-    uint32_t flags;
-    uint32_t name_pos;
-
-    // this isn't computed until export time
-    uint32_t raw_data_pos;
-    uint32_t total_size;
-    uint32_t reloc_count;
-    uint32_t reloc_pos;
-
-    uint32_t total_comdat_relocs;
-    uint32_t total_comdat;
-
-    // this is all the globals within the section
-    DynArray(TB_Global*) globals;
-};
-
-typedef struct {
-    int len;
-    char data[16];
-} SmallConst;
 
 struct TB_Module {
     bool is_jit;
@@ -415,19 +396,14 @@ struct TB_Module {
     TB_Symbol* tls_index_extern;
     TB_Symbol* chkstk_extern;
 
-    size_t comdat_function_count; // compiled function count
-    _Atomic size_t compiled_function_count;
-
-    // symbol table
-    _Atomic size_t symbol_count[TB_SYMBOL_MAX];
-    _Atomic(TB_Symbol*) first_symbol_of_tag[TB_SYMBOL_MAX];
+    _Atomic uint32_t compiled_function_count;
+    _Atomic uint32_t symbol_count[TB_SYMBOL_MAX];
 
     // needs to be locked with 'TB_Module.lock'
     NL_Strmap(TB_SourceFile*) files;
 
-    // Common sections
-    // TODO(NeGate): custom sections
-    TB_ModuleSection text, data, rdata, tls;
+    // unused by the JIT
+    DynArray(TB_ModuleSection) sections;
 
     // windows specific lol
     TB_LinkerSectionPiece* xdata;
@@ -449,8 +425,8 @@ typedef struct {
 
     void (*get_data_type_size)(TB_DataType dt, size_t* out_size, size_t* out_align);
 
-    // return the number of patches resolved
-    size_t (*emit_call_patches)(TB_Module* restrict m);
+    // return the number of non-local patches
+    size_t (*emit_call_patches)(TB_Module* restrict m, TB_FunctionOutput* out_f);
 
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
@@ -591,14 +567,18 @@ inline static bool tb_is_power_of_two(uint64_t x) {
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
 TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int index);
 
+typedef struct {
+    size_t count;
+    TB_External** data;
+} ExportList;
+
+ExportList tb_module_layout_sections(TB_Module* m);
+
 ////////////////////////////////
 // EXPORTER HELPER
 ////////////////////////////////
-size_t tb_helper_write_text_section(size_t write_pos, TB_Module* m, uint8_t* output, uint32_t pos);
 size_t tb_helper_write_section(TB_Module* m, size_t write_pos, TB_ModuleSection* section, uint8_t* output, uint32_t pos);
-size_t tb_helper_get_text_section_layout(TB_Module* m, size_t symbol_id_start);
-
-size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection*) sections, const ICodeGen* restrict code_gen, size_t output_size, size_t reloc_size, bool sizing);
+size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection) sections, const ICodeGen* restrict code_gen, size_t output_size, size_t reloc_size);
 
 TB_ExportChunk* tb_export_make_chunk(size_t size);
 void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
@@ -608,7 +588,7 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 ////////////////////////////////
 void print_node_sexpr(TB_Node* n, int depth);
 
-TB_Symbol* tb_symbol_alloc(TB_Module* m, enum TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
+TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos);
@@ -619,7 +599,7 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);
 
 uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
-char* tb__tb_arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
+char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
 
 static bool is_same_location(TB_Attrib* a, TB_Attrib* b) {
     return a->loc.file == b->loc.file && a->loc.line == b->loc.line && a->loc.column == b->loc.column;

@@ -33,6 +33,8 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     tb_arena_create(&info->perm_arena, TB_ARENA_LARGE_CHUNK_SIZE);
     tb_arena_create(&info->tmp_arena, TB_ARENA_LARGE_CHUNK_SIZE);
 
+    mtx_init(&info->symbol_lock, mtx_plain);
+
     // thread local so it doesn't need to synchronize
     info->next = chain;
     if (chain != NULL) {
@@ -63,12 +65,8 @@ ICodeGen* tb__find_code_generator(TB_Module* m) {
     }
 }
 
-bool tb_symbol_is_comdat(const TB_Symbol* s) {
-    return s->tag == TB_SYMBOL_FUNCTION && ((const TB_Function*) s)->comdat.type != TB_COMDAT_NONE;
-}
-
 // we don't modify these strings
-char* tb__tb_arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
+char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
     if (len < 0) len = src ? strlen(src) : 0;
     if (len == 0) return (char*) "";
 
@@ -108,6 +106,19 @@ TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool is_jit)
     return tb_module_create(arch, sys, features, is_jit);
 }
 
+TB_ModuleSectionHandle tb_module_create_section(TB_Module* m, ptrdiff_t len, const char* name, TB_ModuleSectionFlags flags, TB_ComdatType comdat) {
+    size_t i = dyn_array_length(m->sections);
+    dyn_array_put_uninit(m->sections, 1);
+
+    TB_ModuleSection* sec = &m->sections[i];
+    *sec = (TB_ModuleSection){
+        .name = tb__arena_strdup(m, len, name),
+        .flags = flags,
+        .comdat = { comdat },
+    };
+    return i;
+}
+
 TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* features, bool is_jit) {
     TB_Module* m = tb_platform_heap_alloc(sizeof(TB_Module));
     if (m == NULL) {
@@ -129,15 +140,18 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* fe
 
     mtx_init(&m->lock, mtx_plain);
 
-    m->text.name  = tb__tb_arena_strdup(m, -1, ".text");
-    m->text.kind  = TB_MODULE_SECTION_TEXT;
-    m->data.name  = tb__tb_arena_strdup(m, -1, ".data");
-    m->rdata.name = tb__tb_arena_strdup(m, -1, sys == TB_SYSTEM_WINDOWS ? ".rdata" : ".rodata");
-    m->tls.name   = tb__tb_arena_strdup(m, -1, sys == TB_SYSTEM_WINDOWS ? ".tls$"  : ".tls");
-    m->tls.kind   = TB_MODULE_SECTION_TLS;
+    // AOT uses sections to know where to organize things in an executable file,
+    // JIT does placement on the fly.
+    if (!is_jit) {
+        bool win = sys == TB_SYSTEM_WINDOWS;
+        tb_module_create_section(m, -1, ".text",                    TB_MODULE_SECTION_EXEC,                          TB_COMDAT_NONE);
+        tb_module_create_section(m, -1, ".data",                    TB_MODULE_SECTION_WRITE,                         TB_COMDAT_NONE);
+        tb_module_create_section(m, -1, win ? ".rdata" : ".rodata", 0,                                               TB_COMDAT_NONE);
+        tb_module_create_section(m, -1, win ? ".tls$"  : ".tls",    TB_MODULE_SECTION_WRITE | TB_MODULE_SECTION_TLS, TB_COMDAT_NONE);
 
-    if (m->target_abi == TB_ABI_WIN64) {
-        m->chkstk_extern = (TB_Symbol*) tb_extern_create(m, -1, "__chkstk", TB_EXTERNAL_SO_LOCAL);
+        if (win) {
+            m->chkstk_extern = (TB_Symbol*) tb_extern_create(m, -1, "__chkstk", TB_EXTERNAL_SO_LOCAL);
+        }
     }
 
     return m;
@@ -170,7 +184,7 @@ TB_FunctionOutput* tb_pass_codegen(TB_Passes* p, bool emit_asm) {
     region->size += sizeof(TB_FunctionOutput);
 
     CUIK_TIMED_BLOCK_ARGS("compile", f->super.name) {
-        *func_out = (TB_FunctionOutput){ .parent = f, .linkage = f->linkage, .code_region = region };
+        *func_out = (TB_FunctionOutput){ .parent = f, .section = f->section, .linkage = f->linkage, .code_region = region };
 
         uint8_t* local_buffer = &region->data[region->size];
         size_t local_capacity = region->capacity - region->size;
@@ -204,7 +218,7 @@ void tb_output_print_asm(TB_FunctionOutput* out, FILE* fp) {
     }
 }
 
-TB_API TB_Location* tb_output_get_locations(TB_FunctionOutput* out, size_t* out_count) {
+TB_Location* tb_output_get_locations(TB_FunctionOutput* out, size_t* out_count) {
     *out_count = dyn_array_length(out->locations);
     return &out->locations[0];
 }
@@ -218,30 +232,19 @@ TB_Assembly* tb_output_get_asm(TB_FunctionOutput* out) {
     return out->asm_out;
 }
 
-TB_API TB_Arena* tb_function_get_arena(TB_Function* f) {
+TB_Arena* tb_function_get_arena(TB_Function* f) {
     return f->arena;
 }
 
-size_t tb_module_get_function_count(TB_Module* m) {
-    return m->symbol_count[TB_SYMBOL_FUNCTION];
-}
-
-void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
-    sym->tag = TB_SYMBOL_TOMBSTONE;
-}
-
 void tb_module_destroy(TB_Module* m) {
-    TB_Symbol* s = m->first_symbol_of_tag[TB_SYMBOL_FUNCTION];
-    while (s != NULL) {
-        TB_Symbol* next = s->next;
-        tb_module_kill_symbol(m, s);
-        s = next;
-    }
-
     // free thread info's arena
     TB_ThreadInfo* info = atomic_load(&m->first_info_in_module);
     while (info != NULL) {
         TB_ThreadInfo* next = info->next_in_module;
+
+        // free symbols
+        mtx_destroy(&info->symbol_lock);
+        nl_hashset_free(info->symbols);
 
         // free code region
         TB_CodeRegion* code = info->code;
@@ -315,22 +318,21 @@ TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_
     return p;
 }
 
-TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage, TB_ComdatType comdat) {
+TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage) {
     TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, len, name, sizeof(TB_Function));
     f->linkage = linkage;
-    f->comdat.type = comdat;
     return f;
 }
 
 void tb_symbol_set_name(TB_Symbol* s, ptrdiff_t len, const char* name) {
-    s->name = tb__tb_arena_strdup(s->module, len, name);
+    s->name = tb__arena_strdup(s->module, len, name);
 }
 
 const char* tb_symbol_get_name(TB_Symbol* s) {
     return s->name;
 }
 
-void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena* arena) {
+void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p, TB_Arena* arena) {
     assert(f->prototype == NULL);
     const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
@@ -344,6 +346,7 @@ void tb_function_set_prototype(TB_Function* f, TB_FunctionPrototype* p, TB_Arena
         f->arena = arena;
     }
 
+    f->section = section;
     f->node_count = 0;
     f->start_node = tb_alloc_node(f, TB_START, TB_TYPE_TUPLE, 0, extra_size);
 
@@ -403,7 +406,7 @@ TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_De
     *g = (TB_Global){
         .super = {
             .tag = TB_SYMBOL_GLOBAL,
-            .name = tb__tb_arena_strdup(m, len, name),
+            .name = tb__arena_strdup(m, len, name),
             .module = m,
         },
         .dbg_type = dbg_type,
@@ -414,7 +417,7 @@ TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_De
     return g;
 }
 
-void tb_global_set_storage(TB_Module* m, TB_ModuleSection* section, TB_Global* global, size_t size, size_t align, size_t max_objects) {
+void tb_global_set_storage(TB_Module* m, TB_ModuleSectionHandle section, TB_Global* global, size_t size, size_t align, size_t max_objects) {
     assert(size > 0 && align > 0 && tb_is_power_of_two(align));
     global->parent = section;
     global->pos = 0;
@@ -441,7 +444,7 @@ TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data) {
     } else {
         g = tb_global_create(m, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
         g->super.ordinal = *((uint64_t*) &c.data);
-        tb_global_set_storage(m, &m->rdata, g, len, len, 1);
+        tb_global_set_storage(m, tb_module_get_rdata(m), g, len, len, 1);
 
         char* buffer = tb_global_add_region(m, g, 0, len);
         memcpy(buffer, data, len);
@@ -468,21 +471,10 @@ TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
     return NULL;
 }
 
-TB_ModuleSection* tb_module_get_text(TB_Module* m) {
-    return &m->text;
-}
-
-TB_ModuleSection* tb_module_get_rdata(TB_Module* m) {
-    return &m->rdata;
-}
-
-TB_ModuleSection* tb_module_get_data(TB_Module* m) {
-    return &m->data;
-}
-
-TB_ModuleSection* tb_module_get_tls(TB_Module* m) {
-    return &m->tls;
-}
+TB_ModuleSectionHandle tb_module_get_text(TB_Module* m)  { return 0; }
+TB_ModuleSectionHandle tb_module_get_data(TB_Module* m)  { return 1; }
+TB_ModuleSectionHandle tb_module_get_rdata(TB_Module* m) { return 2; }
+TB_ModuleSectionHandle tb_module_get_tls(TB_Module* m)   { return 3; }
 
 void tb_module_set_tls_index(TB_Module* m, ptrdiff_t len, const char* name) {
     if (atomic_flag_test_and_set(&m->is_tls_defined)) {
@@ -505,29 +497,13 @@ TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_
     *e = (TB_External){
         .super = {
             .tag = TB_SYMBOL_EXTERNAL,
-            .name = tb__tb_arena_strdup(m, len, name),
+            .name = tb__arena_strdup(m, len, name),
             .module = m,
         },
         .type = type,
     };
     tb_symbol_append(m, (TB_Symbol*) e);
     return e;
-}
-
-TB_Function* tb_first_function(TB_Module* m) {
-    return (TB_Function*) m->first_symbol_of_tag[TB_SYMBOL_FUNCTION];
-}
-
-TB_Function* tb_next_function(TB_Function* f) {
-    return (TB_Function*) f->super.next;
-}
-
-TB_External* tb_first_external(TB_Module* m) {
-    return (TB_External*) m->first_symbol_of_tag[TB_SYMBOL_EXTERNAL];
-}
-
-TB_External* tb_next_external(TB_External* e) {
-    return (TB_External*) e->super.next;
 }
 
 //

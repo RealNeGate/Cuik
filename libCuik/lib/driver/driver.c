@@ -146,7 +146,7 @@ static void sys_invoke(BuildStepInfo* info) {
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
 // ctx is non-NULL when we print asm
-static void apply_func(TB_Module* m, TB_Function* f, void* arg) {
+static void apply_func(TB_Function* f, void* arg) {
     Cuik_DriverArgs* args = arg;
     bool print_asm = args->assembly;
 
@@ -339,6 +339,7 @@ static void ld_invoke(BuildStepInfo* info) {
     }
 
     if (args->run) {
+        #if 0
         TB_JIT* jit = tb_jit_begin(mod, 0);
 
         // put every function into the heap
@@ -359,6 +360,10 @@ static void ld_invoke(BuildStepInfo* info) {
 
         fprintf(stderr, "C JIT exit with %d\n", code);
         goto done;
+        #endif
+
+        fprintf(stderr, "C JIT not ready :(\n");
+        exit(1);
     }
 
     ////////////////////////////////

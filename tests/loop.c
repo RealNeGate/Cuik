@@ -93,7 +93,7 @@ void max_array(size_t n, float* x, float* y) {
 }
 
 uint32_t div_tricks(uint32_t n) {
-    return n / 3;
+    return n / 10;
 }
 
 int bar(int n) {
