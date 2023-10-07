@@ -451,14 +451,6 @@ static void push_all_bb(Worklist* restrict ws, DynArray(TB_Node*)* stack_ptr, TB
         }
     }
 
-    // push root inputs
-    FOREACH_N(i, 0, n->input_count) {
-        TB_Node* in = n->inputs[i];
-        if (in && !worklist_test_n_set(ws, in)) {
-            dyn_array_put(stack, in);
-        }
-    }
-
     *stack_ptr = stack;
 }
 
