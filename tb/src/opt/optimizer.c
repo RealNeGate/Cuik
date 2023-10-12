@@ -31,7 +31,6 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
 static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node);
 
 // node creation helpers
-TB_Node* make_dead(TB_Function* f, TB_Passes* restrict p);
 TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt);
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
@@ -66,6 +65,14 @@ void worklist_clear(Worklist* restrict ws) {
         memset(ws->visited, 0, ws->visited_cap * sizeof(uint64_t));
         dyn_array_clear(ws->items);
     }
+}
+
+void worklist_remove(Worklist* restrict ws, TB_Node* n) {
+    uint64_t gvn_word = n->gvn / 64; // which word this ID is at
+    if (gvn_word >= ws->visited_cap) return;
+
+    uint64_t gvn_mask = 1ull << (n->gvn % 64);
+    ws->visited[gvn_word] &= ~gvn_mask;
 }
 
 // checks if node is visited but doesn't push item
@@ -196,7 +203,7 @@ static bool is_same_align(TB_Node* a, TB_Node* b) {
 
 static bool is_empty_bb(TB_Passes* restrict p, TB_Node* end) {
     assert(end->type == TB_BRANCH || end->type == TB_UNREACHABLE);
-    if (!is_block_begin(end->inputs[0])) {
+    if (!cfg_is_bb_entry(end->inputs[0])) {
         return false;
     }
 
@@ -221,7 +228,7 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 // unity build with all the passes
 #include "lattice.h"
 #include "cfg.h"
-#include "cse.h"
+#include "gvn.h"
 #include "dce.h"
 #include "fold.h"
 #include "mem_opt.h"
@@ -235,7 +242,7 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 
 static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra) {
     // try CSE, if we succeed, just delete the node and use the old copy
-    TB_Node* k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
+    TB_Node* k = nl_hashset_put2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k != NULL) {
         // try free
         tb_arena_free(p->f->arena, n->inputs, sizeof(TB_Node*));
@@ -304,7 +311,7 @@ static bool remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_
 
 void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
     // remove from CSE if we're murdering it
-    nl_hashset_remove2(&p->cse_nodes, n, cse_hash, cse_compare);
+    nl_hashset_remove2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
 
     if (n->type == TB_LOCAL) {
         // remove from local list
@@ -389,76 +396,50 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
             tb_pass_mark_users(p, use->n);
         }
 
-        // if the store is changed, the users (potential loads) should be notified.
-        // (br (cmp ...))
-        if (type == TB_CMP_NE || type == TB_CMP_EQ || type == TB_STORE) {
+        // (br (cmp a b)) => ...
+        if (type >= TB_CMP_EQ && type <= TB_CMP_FLE) {
             tb_pass_mark_users_raw(p, use->n);
         }
+    }
+}
 
-        if (type == TB_REGION) {
-            tb_pass_mark_users_raw(p, use->n);
+static void push_all_nodes(TB_Passes* restrict p, Worklist* restrict ws, TB_Function* f) {
+    CUIK_TIMED_BLOCK("push_all_nodes") {
+        DynArray(TB_Node*) stack = p->stack;
+        if (stack == NULL) {
+            stack = dyn_array_create(TB_Node*, 1024);
+        }
 
-            TB_NodeRegion* r = TB_NODE_GET_EXTRA(use->n);
-            TB_Node* end = r->end;
-            if (end->type == TB_BRANCH) {
-                tb_pass_mark(p, end);
+        // push all nodes using the terminator list
+        DynArray(TB_Node*) terminators = f->terminators;
+        dyn_array_for(i, terminators) {
+            TB_Node* end = terminators[i];
 
-                // mark direct successors
-                TB_NodeBranch* br_info = TB_NODE_GET_EXTRA(end);
-                FOREACH_N(i, 0, br_info->succ_count) {
-                    tb_pass_mark(p, br_info->succ[i]);
+            // place endpoint, we'll construct the rest from there
+            if (worklist_test_n_set(ws, end)) {
+                // already processed
+                continue;
+            }
+
+            dyn_array_put(stack, end);
+
+            while (dyn_array_length(stack)) {
+                TB_Node* n = dyn_array_pop(stack);
+
+                // place self first
+                dyn_array_put(ws->items, n);
+
+                // push inputs
+                FOREACH_N(i, 0, n->input_count) {
+                    TB_Node* in = n->inputs[i];
+                    if (in && !worklist_test_n_set(ws, in)) {
+                        dyn_array_put(stack, in);
+                    }
                 }
             }
         }
-    }
-}
 
-static void push_all_bb(Worklist* restrict ws, DynArray(TB_Node*)* stack_ptr, TB_Node* root) {
-    if (worklist_test_n_set(ws, root)) {
-        return;
-    }
-
-    // walk control edges (aka predecessors)
-    assert(root->type == TB_START || root->type == TB_REGION);
-    TB_NodeRegion* r = TB_NODE_GET_EXTRA(root);
-    TB_Node* end = r->end;
-
-    if (end->type == TB_BRANCH) {
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
-        FOREACH_REVERSE_N(i, 0, br->succ_count) {
-            push_all_bb(ws, stack_ptr, br->succ[i]);
-        }
-    }
-
-    DynArray(TB_Node*) stack = *stack_ptr;
-
-    // place endpoint, we'll construct the rest from there
-    worklist_test_n_set(ws, end);
-    dyn_array_put(stack, end);
-
-    while (dyn_array_length(stack)) {
-        TB_Node* n = dyn_array_pop(stack);
-
-        // place self first
-        dyn_array_put(ws->items, n);
-
-        // push inputs
-        FOREACH_N(i, 0, n->input_count) {
-            TB_Node* in = n->inputs[i];
-            if (in && !worklist_test_n_set(ws, in)) {
-                dyn_array_put(stack, in);
-            }
-        }
-    }
-
-    *stack_ptr = stack;
-}
-
-static void push_all_nodes(Worklist* restrict ws, TB_Node* root) {
-    CUIK_TIMED_BLOCK("push_all_nodes") {
-        DynArray(TB_Node*) stack = dyn_array_create(TB_Node*, 1024);
-        push_all_bb(ws, &stack, root);
-        dyn_array_destroy(stack);
+        p->stack = stack;
     }
 }
 
@@ -491,13 +472,13 @@ void print_node_sexpr(TB_Node* n, int depth) {
             printf("sym%p", sym);
         }
     } else if (depth >= 1) {
-        printf("(v%zu: %s", n->gvn, tb_node_get_name(n));
+        printf("(v%u: %s", n->gvn, tb_node_get_name(n));
         cool_print_type(n);
         printf(" ...)");
     } else {
         depth -= (n->type == TB_PROJ);
 
-        printf("(%s", tb_node_get_name(n));
+        printf("(v%u: %s", n->gvn, tb_node_get_name(n));
         cool_print_type(n);
         FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
             if (i == 0) printf(" @");
@@ -676,6 +657,14 @@ static TB_Node* unsafe_get_region(TB_Node* n) {
     return n;
 }
 
+static void validate_node_users(TB_Node* n) {
+    if (n != NULL) {
+        for (User* use = n->users; use; use = use->next) {
+            tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
+        }
+    }
+}
+
 static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
     // must've dead sometime between getting scheduled and getting
     // here.
@@ -684,7 +673,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     }
 
     DO_IF(TB_OPTDEBUG_STATS)(p->stats.peeps++);
-    DO_IF(TB_OPTDEBUG_PEEP)(printf("peep v%zu? ", n->gvn), print_node_sexpr(n, 0));
+    DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", p->stats.time++), print_node_sexpr(n, 0));
 
     // idealize node (in a loop of course)
     TB_Node* k = idealize(p, f, n, flags);
@@ -698,7 +687,6 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
 
         // transfer users from n -> k
         if (n != k) {
-            tb_assert(!is_terminator(n), "can't peephole a branch into a new branch");
             subsume_node(p, f, n, k);
             n = k;
         }
@@ -720,7 +708,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     }
 
     // common subexpression elim
-    k = nl_hashset_put2(&p->cse_nodes, n, cse_hash, cse_compare);
+    k = nl_hashset_put2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k && (k != n)) {
         DO_IF(TB_OPTDEBUG_STATS)(p->stats.cse_hit++);
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[31mCSE\x1b[0m"));
@@ -739,7 +727,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
 }
 
 static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* new_n) {
-    User* use = find_users(p, n);
+    User* use = n->users;
     while (use != NULL) {
         tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
 
@@ -763,8 +751,8 @@ static void generate_use_lists(TB_Passes* restrict p, TB_Function* f) {
             dyn_array_put(p->locals, n);
         }
 
-        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-            add_user(p, n, n->inputs[i], i, NULL);
+        FOREACH_N(j, 0, n->input_count) if (n->inputs[j]) {
+            add_user(p, n, n->inputs[j], j, NULL);
         }
     }
 }
@@ -782,16 +770,9 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 
     worklist_alloc(&p->worklist, f->node_count);
 
-    // generate early doms
-    CUIK_TIMED_BLOCK("doms") {
-        size_t block_count = tb_push_postorder(f, &p->worklist);
-        tb_compute_dominators(f, block_count, p->worklist.items);
-        worklist_clear(&p->worklist);
-    }
-
     // generate work list (put everything)
     CUIK_TIMED_BLOCK("gen worklist") {
-        push_all_nodes(&p->worklist, f->start_node);
+        push_all_nodes(p, &p->worklist, f);
         DO_IF(TB_OPTDEBUG_STATS)(p->stats.initial = worklist_popcount(&p->worklist));
     }
 
@@ -802,6 +783,13 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
         generate_use_lists(p, f);
     }
 
+    // generate early doms
+    /*CUIK_TIMED_BLOCK("doms") {
+        p->cfg = tb_compute_rpo(f, p);
+        tb_compute_dominators(f, p, p->cfg);
+        worklist_clear(&p->worklist);
+    }*/
+
     return p;
 }
 
@@ -809,15 +797,15 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
     tb_pass_sroa(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
-    tb_pass_mem2reg(p);
+    // tb_pass_mem2reg(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 }
 
 void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
     verify_tmp_arena(p);
 
-    if (p->cse_nodes.data == NULL) {
-        p->cse_nodes = nl_hashset_alloc(p->f->node_count);
+    if (p->gvn_nodes.data == NULL) {
+        p->gvn_nodes = nl_hashset_alloc(p->f->node_count);
     }
 
     TB_Function* f = p->f;
@@ -832,24 +820,27 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
 }
 
 void tb_pass_exit(TB_Passes* p) {
+    verify_tmp_arena(p);
+
     TB_Function* f = p->f;
+    // tb_function_print(f, tb_default_print_callback, stdout);
 
     #if TB_OPTDEBUG_STATS
-    push_all_nodes(&p->worklist, f->start_node);
+    push_all_nodes(p, &p->worklist, f);
     int final_count = worklist_popcount(&p->worklist);
 
     double factor = ((double) final_count / (double) p->stats.initial) * 100.0;
 
     printf("%s: stats:\n", f->super.name);
     printf("  %4d   -> %4d nodes (%.2f%%)\n", p->stats.initial, final_count, factor);
-    printf("  %4d CSE hit    %4d CSE miss\n", p->stats.cse_hit, p->stats.cse_miss);
+    printf("  %4d GVN hit    %4d GVN miss\n", p->stats.gvn_hit, p->stats.gvn_miss);
     printf("  %4d peepholes  %4d rewrites    %4d identities\n", p->stats.peeps, p->stats.rewrites, p->stats.identities);
     #endif
 
-    verify_tmp_arena(p);
-
+    nl_map_free(p->scheduled);
     worklist_free(&p->worklist);
-    nl_hashset_free(p->cse_nodes);
+    nl_hashset_free(p->gvn_nodes);
+    dyn_array_destroy(p->stack);
     dyn_array_destroy(p->locals);
 
     tb_arena_clear(tmp_arena);

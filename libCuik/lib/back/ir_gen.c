@@ -253,13 +253,13 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
     } else if (src->kind == KIND_FLOAT && dst->kind == KIND_DOUBLE) {
         TB_DataType dt = reg->dt;
 
-        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0)) {
+        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_64)) {
             reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
         }
     } else if (src->kind == KIND_DOUBLE && dst->kind == KIND_FLOAT) {
         TB_DataType dt = reg->dt;
 
-        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_32 && dt.width == 0)) {
+        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_32)) {
             reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
         }
     } else if (cuik_type_is_float(src) && cuik_type_is_integer(dst)) {
@@ -1700,7 +1700,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                         r = v.reg;
                     } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                         assert(type->size <= 8);
-                        TB_DataType dt = { { TB_INT, 0, type->size * 8 } };
+                        TB_DataType dt = { { TB_INT, type->size * 8 } };
 
                         r = tb_inst_load(func, dt, v.reg, type->align, false);
                     }

@@ -96,7 +96,7 @@ uint32_t div_tricks(uint32_t n) {
     return n / 10;
 }
 
-int bar(int n) {
+static int bar(int n) {
     int arr[2];
     arr[0] = n;
     arr[1] = 1;
@@ -113,11 +113,11 @@ static int folding(void) {
     return 42+1 & 3 * 16;
 }
 
-int bitcast(float x) {
+static int bitcast(float x) {
     return *(int*) &x;
 }
 
-float Q_rsqrt(float number) {
+static float Q_rsqrt(float number) {
     long i;
     float x2, y;
     const float threehalfs = 1.5F;
@@ -132,7 +132,7 @@ float Q_rsqrt(float number) {
     return y;
 }
 
-void shl_test(int* sizelist, int num) {
+static void shl_test(int* sizelist, int num) {
     int j = 16;
 
     for (int i=0; i < num; ++i) {
@@ -141,7 +141,7 @@ void shl_test(int* sizelist, int num) {
     }
 }
 
-int store_elim(int* a) {
+static int store_elim(int* a) {
     *a = 16;
     *a = 5;
     return *a;
@@ -161,12 +161,12 @@ static int aliasing(int* restrict a, int* restrict b) {
     return *a;
 }
 
-uint64_t foo(uint64_t x, uint64_t y) {
+static uint64_t foo(uint64_t x, uint64_t y) {
     if ((x * 2) / 2) return x;
     else             return y;
 }
 
-int select_opt(int a, int b) {
+static int select_opt(int a, int b) {
     return a > 10 && !(b > 10);
 }
 
@@ -178,11 +178,11 @@ static void syscall_test(void) {
     __builtin_syscall(1, 69);
 }
 
-int phi_test(int color) {
+static int phi_test(int color) {
     return (color & 2 ? 3 : 1) + (color & 4 ? 1 : 0);
 }
 
-int bounds_checks(size_t n, int* arr) {
+static int bounds_checks(size_t n, int* arr) {
     int sum = 0;
     for (size_t i = 0; i < n; i++) {
         if (i >= n) return -1; // bounds check
@@ -191,7 +191,7 @@ int bounds_checks(size_t n, int* arr) {
     return sum;
 }
 
-uint32_t murmur3_32(const void* key, size_t len) {
+static uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time

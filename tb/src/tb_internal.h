@@ -295,6 +295,9 @@ struct TB_Function {
     // IR allocation
     TB_Arena* arena;
 
+    // used for CFG walk in TB_Passes
+    DynArray(TB_Node*) terminators;
+
     // IR building
     TB_Node* active_control_node;
     TB_Attrib exit_attrib;

@@ -643,7 +643,7 @@ static bool update_interval(LSRA* restrict ra, LiveInterval* restrict interval, 
     int ri = interval - ra->intervals;
 
     // get to the right range first
-    while (interval->ranges[interval->active_range].end <= time) {
+    while (interval->active_range > 0 && interval->ranges[interval->active_range].end <= time) {
         interval->active_range -= 1;
     }
 
@@ -694,7 +694,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
     MachineBBs mbbs = ctx->machine_bbs;
     size_t interval_count = dyn_array_length(ra.intervals);
     CUIK_TIMED_BLOCK("build intervals") {
-        FOREACH_N(i, 0, ctx->block_count) {
+        FOREACH_REVERSE_N(i, 0, ctx->cfg.block_count) {
             TB_Node* bb = ctx->worklist.items[i];
             MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
 
@@ -843,46 +843,42 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
     // move resolver
     CUIK_TIMED_BLOCK("move resolver") {
-        FOREACH_N(i, 0, ctx->block_count) {
+        FOREACH_N(i, 0, ctx->cfg.block_count) {
             TB_Node* bb = ctx->worklist.items[i];
-            assert(bb->type == TB_START || bb->type == TB_REGION);
 
             MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
-            TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
+            TB_Node* end = mbb->end_node;
 
-            if (r->end->type != TB_BRANCH) {
-                continue;
-            }
+            for (User* u = end->users; u; u = u->next) {
+                if (cfg_is_control(u->n)) {
+                    TB_Node* succ = cfg_next_region_control(u->n);
+                    MachineBB* target = &nl_map_get_checked(mbbs, succ);
 
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
-            FOREACH_REVERSE_N(i, 0, br->succ_count) {
-                TB_Node* bb = br->succ[i];
-                MachineBB* target = &nl_map_get_checked(mbbs, bb);
+                    // for all live-ins, we should check if we need to insert a move
+                    FOREACH_SET(i, target->live_in) {
+                        LiveInterval* interval = &ra.intervals[i];
 
-                // for all live-ins, we should check if we need to insert a move
-                FOREACH_SET(i, target->live_in) {
-                    LiveInterval* interval = &ra.intervals[i];
+                        // if the value changes across the edge, insert move
+                        LiveInterval* start = split_interval_at(&ra, interval, mbb->end);
+                        LiveInterval* end = split_interval_at(&ra, interval, target->start);
 
-                    // if the value changes across the edge, insert move
-                    LiveInterval* start = split_interval_at(&ra, interval, mbb->end);
-                    LiveInterval* end = split_interval_at(&ra, interval, target->start);
-
-                    if (start != end) {
-                        if (start->spill > 0) {
-                            assert(end->spill <= 0 && "TODO: both can't be spills yet");
-                            insert_split_move(&ra, target->start + 1, start - ra.intervals, end - ra.intervals);
-                        } else {
-                            insert_split_move(&ra, mbb->terminator - 1, start - ra.intervals, end - ra.intervals);
+                        if (start != end) {
+                            if (start->spill > 0) {
+                                assert(end->spill <= 0 && "TODO: both can't be spills yet");
+                                insert_split_move(&ra, target->start + 1, start - ra.intervals, end - ra.intervals);
+                            } else {
+                                insert_split_move(&ra, mbb->terminator - 1, start - ra.intervals, end - ra.intervals);
+                            }
                         }
                     }
+
+                    // the moves are inserted either at the end of block from or at the beginning of block to,
+                    // depending on the control flow
+                    // resolver.find_insert_position(from, to)
+
+                    // insert all moves in correct order (without overwriting registers that are used later)
+                    // resolver.resolve_mappings()
                 }
-
-                // the moves are inserted either at the end of block from or at the beginning of block to,
-                // depending on the control flow
-                // resolver.find_insert_position(from, to)
-
-                // insert all moves in correct order (without overwriting registers that are used later)
-                // resolver.resolve_mappings()
             }
         }
     }

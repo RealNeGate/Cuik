@@ -1,3 +1,4 @@
+#include <dyn_array.h>
 #include "tb_test_regressions.inc"
 #include "tb_test_exit_status.inc"
 #include "tb_test_int_arith.inc"
@@ -21,8 +22,22 @@
     fflush(stdout);                                        \
   } while (0)
 
+typedef struct {
+    const char* names;
+    void (*gen)(TB_Function*);
+    void (*check)(int);
+} TestCase;
+
+static TestCase tests[] = {
+    { "i8_add" }
+};
+enum { NUM_TESTS = sizeof(tests) / sizeof(tests[0]) };
+
 int main(int argc, char **argv) {
-  int failed = 0, total = 0;
+    int failed = 0;
+    for (int i = 0; i < NUM_TESTS; i++) {
+
+    }
 
   TEST(regression_module_arena);
   TEST(regression_link_global);
@@ -85,4 +100,3 @@ int main(int argc, char **argv) {
 
   return failed;
 }
-

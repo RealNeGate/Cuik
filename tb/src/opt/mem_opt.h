@@ -6,6 +6,16 @@ typedef struct {
     int64_t offset;
 } KnownPointer;
 
+static bool is_local_ptr(TB_Node* n) {
+    // skip past ptr arith
+    retry: {
+        if (n->type == TB_MEMBER_ACCESS) goto retry;
+        if (n->type == TB_ARRAY_ACCESS) goto retry;
+    }
+
+    return n->type == TB_LOCAL;
+}
+
 static KnownPointer known_pointer(TB_Node* n) {
     if (n->type == TB_MEMBER_ACCESS) {
         return (KnownPointer){ n->inputs[1], TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset };
@@ -160,6 +170,12 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 }
 
 static TB_Node* ideal_end(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    // remove dead local store
+    if (n->inputs[1]->type == TB_STORE && is_local_ptr(n->inputs[1]->inputs[2])) {
+        set_input(p, n, n->inputs[1]->inputs[1], 1);
+        return n;
+    }
+
     return NULL;
 }
 

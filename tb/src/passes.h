@@ -6,7 +6,7 @@
 #define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
 #define TB_OPTDEBUG_MEM2REG 0
-#define TB_OPTDEBUG_CODEGEN 0
+#define TB_OPTDEBUG_CODEGEN 1
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
 #define DO_IF_0(...)
@@ -40,51 +40,101 @@ typedef struct {
     uint64_t* visited;
 } Worklist;
 
+typedef struct TB_BasicBlock {
+    TB_Node* dom;
+    TB_Node* end;
+    int id, dom_depth;
+
+    // used by mem2reg
+    TB_Node* latest_mem;
+    NL_HashSet items;
+} TB_BasicBlock;
+
+typedef struct TB_CFG {
+    size_t block_count;
+    NL_Map(TB_Node*, TB_BasicBlock) node_to_block;
+} TB_CFG;
+
 struct TB_Passes {
     TB_Function* f;
-    bool scheduled;
+    NL_Map(TB_Node*, TB_BasicBlock*) scheduled;
 
     // we use this to verify that we're on the same thread
     // for the entire duration of the TB_Passes.
     TB_ThreadInfo* pinned_thread;
+
+    // control flow
+    TB_CFG cfg;
 
     Worklist worklist;
 
     // we wanna track locals because it's nice and easy
     DynArray(TB_Node*) locals;
 
-    // this is used to do CSE
-    NL_HashSet cse_nodes;
+    // sometimes we be using arrays of nodes, let's just keep one around for a bit
+    DynArray(TB_Node*) stack;
+
+    // this is used to do GVN
+    NL_HashSet gvn_nodes;
 
     // debug shit:
     TB_Node* error_n;
 
     // nice stats
     struct {
+        #if TB_OPTDEBUG_PEEP
+        int time;
+        #endif
+
         #if TB_OPTDEBUG_STATS
         int initial;
-        int cse_hit, cse_miss;
+        int gvn_hit, gvn_miss;
         int peeps, identities, rewrites;
         #endif
     } stats;
 };
 
-// it's either START, REGION or control node with CONTROL PROJ predecessor
-static bool is_block_begin(TB_Node* n) {
-    // regions also have a CONTROL PROJ so we
-    // don't need to check them explicitly.
-    return n->type == TB_REGION || (n->type == TB_PROJ && n->inputs[0]->type == TB_START);
+static bool cfg_is_terminator(TB_Node* n) {
+    return n->type == TB_BRANCH || n->type == TB_UNREACHABLE || n->type == TB_TRAP || n->type == TB_END;
 }
 
-static bool is_block_end(TB_Node* n) {
-    return n->type == TB_BRANCH;
+// includes tuples which have control flow
+static bool cfg_is_control(TB_Node* n) {
+    // easy case
+    if (n->dt.type == TB_CONTROL) return true;
+    if (n->dt.type != TB_TUPLE) return false;
+
+    // harder case is figuring out which tuples have control outputs (without manually
+    // checking which is annoying and slow)
+    //
+    //     branch, debugbreak, trap, unreachable, dead  OR  call, syscall, safepoint
+    return (n->type >= TB_BRANCH && n->type <= TB_DEAD) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_POLL);
+}
+
+static bool cfg_is_bb_entry(TB_Node* n) {
+    if (n->type == TB_REGION) {
+        return true;
+    } else if (n->type == TB_PROJ && (n->inputs[0]->type == TB_START || n->inputs[0]->type == TB_BRANCH)) {
+        // Start's control proj or a branch target
+        return true;
+    } else {
+        return false;
+    }
+}
+
+static TB_Node* cfg_get_fallthru(TB_Node* n) {
+    if (n->type == TB_PROJ && n->dt.type == TB_CONTROL) {
+        // if it's single user and that user is the terminator we can skip it in the fallthrough logic
+        return n->users->next == NULL ? n->users->n : NULL;
+    } else {
+        return NULL;
+    }
 }
 
 static bool is_mem_out_op(TB_Node* n) {
     return n->type == TB_END || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type == TB_PHI && n->dt.type == TB_MEMORY);
 }
 
-// schedule nodes below any of their pinned dependencies
 static bool is_pinned(TB_Node* n) {
     return (n->type >= TB_START && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ || n->type == TB_LOCAL;
 }
@@ -96,31 +146,46 @@ static bool is_mem_in_op(TB_Node* n) {
 ////////////////////////////////
 // CFG analysis
 ////////////////////////////////
+static TB_Node* cfg_next_region_control(TB_Node* n) {
+    if (n->type == TB_PROJ && n->dt.type == TB_CONTROL) {
+        // if it's single user and that user is the terminator we can skip it in the fallthrough logic
+        return n->users->next == NULL && n->users->n->type == TB_REGION && n->users->n->input_count == 1 ? n->users->n : n;
+    } else {
+        return n;
+    }
+}
+
+static TB_Node* cfg_next_control(TB_Node* n) {
+    for (User* u = n->users; u; u = u->next) {
+        if (cfg_is_control(u->n)) {
+            return u->n;
+        }
+    }
+
+    return NULL;
+}
+
 static TB_Node* get_block_begin(TB_Node* n) {
-    while (!is_block_begin(n)) {
+    while (!cfg_is_bb_entry(n)) {
         n = n->inputs[0];
     }
     return n;
 }
 
-// shorthand because we use it a lot
-static TB_Node* idom(TB_Node* n) {
-    if (n->type == TB_PROJ) n = n->inputs[0];
-
-    assert(n->type == TB_START || n->type == TB_REGION);
-    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom;
+static TB_BasicBlock* idom_bb(TB_Passes* p, TB_BasicBlock* bb) {
+    ptrdiff_t search = nl_map_get(p->scheduled, bb->dom);
+    return search >= 0 ? p->scheduled[search].v : NULL;
 }
 
-static int dom_depth(TB_Node* n) {
-    if (n == NULL) {
-        return 0;
-    }
+// shorthand because we use it a lot
+static TB_Node* idom(TB_CFG* cfg, TB_Node* n) {
+    if (cfg->node_to_block == NULL) return NULL;
+    ptrdiff_t search = nl_map_get(cfg->node_to_block, n);
+    return search >= 0 ? cfg->node_to_block[search].v.dom : NULL;
+}
 
-    while (n->type != TB_REGION && n->type != TB_START) {
-        n = n->inputs[0];
-    }
-
-    return TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->dom_depth;
+static int dom_depth(TB_CFG* cfg, TB_Node* n) {
+    return nl_map_get_checked(cfg->node_to_block, n).dom_depth;
 }
 
 extern thread_local TB_Arena* tmp_arena;
@@ -134,10 +199,9 @@ static User* find_users(TB_Passes* restrict p, TB_Node* n) {
 
 // CFG
 //   pushes postorder walk into worklist items, also modifies the visited set.
-//   some entries will not be START or REGION, instead you'll see
-size_t tb_push_postorder(TB_Function* f, Worklist* restrict ws);
+TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* restrict p);
 //   postorder walk -> dominators
-void tb_compute_dominators(TB_Function* f, size_t count, TB_Node** blocks);
+void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg);
 
 // Worklist API
 void worklist_alloc(Worklist* restrict ws, size_t initial_cap);
@@ -151,6 +215,8 @@ int worklist_popcount(Worklist* ws);
 TB_Node* worklist_pop(Worklist* ws);
 
 // Local scheduler
-void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_Node* bb, TB_Node* n);
+void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* n, bool is_end);
 
-static void push_all_nodes(Worklist* restrict ws, TB_Node* n);
+static void push_all_nodes(TB_Passes* restrict passes, Worklist* restrict ws, TB_Function* f);
+
+void tb_pass_schedule(TB_Passes* opt, TB_CFG cfg);

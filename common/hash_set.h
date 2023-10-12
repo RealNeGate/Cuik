@@ -31,7 +31,7 @@ void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_C
 void nl_hashset_remove2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_CompareFunc cmp);
 
 #define nl_hashset_capacity(hs) (1ull << (hs)->exp)
-#define nl_hashset_for(it, hs)  for (void **it = (hs)->data, **_end_ = &it[nl_hashset_capacity(hs)]; it != _end_; it++) if (*it != NULL)
+#define nl_hashset_for(it, hs)  for (void **it = (hs)->data, **_end_ = &it[nl_hashset_capacity(hs)]; it != _end_; it++) if (*it != NULL && *it != NL_HASHSET_TOMB)
 
 #endif /* NL_HASH_SET_H */
 

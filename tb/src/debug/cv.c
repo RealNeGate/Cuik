@@ -35,7 +35,6 @@ static void md5sum_file(uint8_t out_bytes[16], const char* filepath) {
 }
 
 static uint16_t get_codeview_type(TB_DataType dt) {
-    assert(dt.width == 0 && "TODO: implement vector types in CodeView output");
     switch (dt.type) {
         case TB_INT: {
             if (dt.data <= 0)  return 0x0003; // T_VOID

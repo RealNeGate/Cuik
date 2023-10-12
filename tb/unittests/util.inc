@@ -141,7 +141,7 @@ static void tb_test_link_library(TB_Linker  *linker,
       module, TB_CDECL, 0, NULL, 0, NULL, false);             \
                                                               \
   TB_Function *f_main = tb_function_create(                   \
-      module, -1, "main", TB_LINKAGE_PUBLIC, TB_COMDAT_NONE); \
+      module, -1, "main", TB_LINKAGE_PUBLIC);                 \
                                                               \
   tb_function_set_prototype(f_main, fp_main, NULL);           \
                                                               \

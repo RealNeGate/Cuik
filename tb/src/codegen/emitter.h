@@ -28,7 +28,6 @@ typedef struct {
     uint8_t* data;
 
     NL_Map(TB_Node*, uint32_t) labels;
-    uint32_t return_label;
 } TB_CGEmitter;
 
 // Helper macros

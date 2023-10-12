@@ -109,7 +109,7 @@ static size_t extra_bytes(TB_Node* n) {
     }
 }
 
-uint32_t cse_hash(void* a) {
+uint32_t gvn_hash(void* a) {
     TB_Node* n = a;
 
     size_t extra = extra_bytes(n);
@@ -130,7 +130,7 @@ uint32_t cse_hash(void* a) {
     return h;
 }
 
-bool cse_compare(void* a, void* b) {
+bool gvn_compare(void* a, void* b) {
     TB_Node *x = a, *y = b;
 
     // early outs

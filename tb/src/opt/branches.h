@@ -2,11 +2,9 @@
 static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
-    // if there's one predecessor and it's to an unconditional branch, merge them.
-    if (n->input_count == 1 && n->inputs[0]->type == TB_PROJ &&
-        n->inputs[0]->inputs[0]->type == TB_BRANCH &&
-        n->inputs[0]->inputs[0]->input_count == 1) {
-        // check for any phi nodes
+    // single entry regions are useless...
+    if (n->input_count == 1) {
+        // check for any phi nodes, because we're single entry they're all degens
         User* use = n->users;
         while (use != NULL) {
             User* next = use->next;
@@ -17,69 +15,17 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
             use = next;
         }
 
-        TB_Node* top_node = unsafe_get_region(n->inputs[0]);
-        TB_NodeRegion* top_region = TB_NODE_GET_EXTRA(top_node);
-
-        // set new terminator
-        top_region->end = r->end;
-        TB_Node* parent = n->inputs[0]->inputs[0]->inputs[0];
-
-        tb_pass_kill_node(p, n->inputs[0]->inputs[0]);
-        tb_pass_kill_node(p, n->inputs[0]);
-
-        return parent;
+        // we might want this as an identity
+        return n->inputs[0];
     }
 
-    // if a region is dead, dettach it's succesors
-    if (n->input_count == 0 && r->end->type == TB_BRANCH) {
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(r->end);
-        size_t i = 0;
-        while (i < br->succ_count) {
-            TB_Node* succ = br->succ[i];
-            if (remove_pred(p, f, n, succ)) {
-                tb_pass_mark(p, succ);
-                tb_pass_mark_users(p, succ);
-
-                br->succ_count -= 1;
-            } else {
-                i += 1;
-            }
-        }
-
-        assert(br->succ_count == 0);
+    // if a region is dead, start a violent death chain
+    if (n->input_count == 0) {
+        n->type = TB_DEAD;
+        return n;
     }
 
     return NULL;
-}
-
-static void transmute_goto(TB_Passes* restrict opt, TB_Function* f, TB_Node* br, TB_Node* dst) {
-    assert(br->type == TB_BRANCH && dst->input_count >= 1);
-
-    // convert to unconditional branch
-    set_input(opt, br, NULL, 1);
-    br->input_count = 1;
-
-    // remove predecessor from other branches
-    TB_Node* bb = unsafe_get_region(br);
-    TB_NodeBranch* br_info = TB_NODE_GET_EXTRA(br);
-
-    size_t i = 0;
-    while (i < br_info->succ_count) {
-        if (br_info->succ[i] != dst) {
-            if (remove_pred(opt, f, bb, br_info->succ[i])) {
-                br_info->succ_count -= 1;
-            }
-        } else {
-            i += 1;
-        }
-    }
-    assert(br_info->succ[0] == dst);
-
-    // we need to mark the changes to that jump
-    // threading can clean it up
-    tb_pass_mark(opt, bb);
-    tb_pass_mark(opt, dst);
-    tb_pass_mark_users(opt, bb);
 }
 
 static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
@@ -89,6 +35,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
         return make_poison(f, opt, n->dt);
     }
 
+    #if 0
     // if branch, both paths are empty => select(cond, t, f)
     TB_DataType dt = n->dt;
     TB_Node* region = n->inputs[0];
@@ -101,25 +48,22 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
             }
         }
 
-        // guarentee paths are effectless
-        if (!is_empty_bb(opt, region->inputs[0]->inputs[0])) { return NULL; }
-        if (!is_empty_bb(opt, region->inputs[1]->inputs[0])) { return NULL; }
-
-        // these don't have directions, i just need names
-        TB_Node* left  = region->inputs[0]->inputs[0]->inputs[0];
-        TB_Node* right = region->inputs[1]->inputs[0]->inputs[0];
-
-        // is it a proper if-diamond?
-        if (left->input_count == 1 && right->input_count == 1 &&
-            left->inputs[0]->type == TB_PROJ &&
-            left->inputs[0]->type == TB_PROJ &&
-            left->inputs[0]->inputs[0]->type == TB_BRANCH &&
-            left->inputs[0]->inputs[0] == right->inputs[0]->inputs[0]) {
-            TB_Node* branch = left->inputs[0]->inputs[0];
+        // guarentee paths are effectless (there's only one data phi and no control nodes)
+        //
+        //        If
+        //       /  \
+        // CProjT    CProjF          Region[0][0] == Region[1][0]
+        //       \  /
+        //      Region
+        //
+        TB_Node* left = region->inputs[0];
+        TB_Node* right = region->inputs[1];
+        if (left->inputs[0]->type == TB_BRANCH && left->inputs[0] == right->inputs[0]) {
+            TB_Node* branch = left->inputs[0];
             TB_NodeBranch* header_br = TB_NODE_GET_EXTRA(branch);
 
             if (header_br->succ_count == 2) {
-                assert(left->inputs[0]->inputs[0]->input_count == 2);
+                assert(branch->input_count == 2);
                 TB_Node* cond    = branch->inputs[1];
                 TB_Node* left_v  = n->inputs[1];
                 TB_Node* right_v = n->inputs[2];
@@ -130,9 +74,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
                 // TODO(NeGate): handle non-zero falseys
                 if (falsey == 0) {
                     // kill both successors, since they were unique we can properly murder em'
-                    tb_pass_kill_node(opt, left->inputs[0]);
                     tb_pass_kill_node(opt, left);
-                    tb_pass_kill_node(opt, right->inputs[0]);
                     tb_pass_kill_node(opt, right);
 
                     // header -> merge
@@ -140,8 +82,8 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
                         TB_Node* parent = branch->inputs[0];
                         tb_pass_kill_node(opt, branch);
 
-                        TB_NodeRegion* header = TB_NODE_GET_EXTRA(unsafe_get_region(parent));
-                        header->end = TB_NODE_GET_EXTRA_T(region, TB_NodeRegion)->end;
+                        // TB_NodeRegion* header = TB_NODE_GET_EXTRA(unsafe_get_region(parent));
+                        // header->end = TB_NODE_GET_EXTRA_T(region, TB_NodeRegion)->end;
 
                         // attach the header and merge to each other
                         tb_pass_mark(opt, parent);
@@ -158,6 +100,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
             }
         }
     }
+    #endif
 
     return NULL;
 }
@@ -174,7 +117,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
             // if (a && b) A else B => if (a ? b : 0) A else B
             //
             // TODO(NeGate): implement form which works on an arbitrary falsey
-            if (n->inputs[0]->type == TB_REGION && n->inputs[0]->input_count == 2 && is_empty_bb(opt, n)) {
+            /*if (n->inputs[0]->type == TB_REGION && n->inputs[0]->input_count == 2 && is_empty_bb(opt, n)) {
                 TB_Node* bb = n->inputs[0];
 
                 uint64_t falsey = br->keys[0];
@@ -227,7 +170,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                         return n;
                     }
                 }
-            }
+            }*/
 
             // br ((y <= x)) => br (x < y) flipped conditions
             if (cmp_type == TB_CMP_SLE || cmp_type == TB_CMP_ULE) {
@@ -236,7 +179,12 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                 set_input(opt, new_cmp, cmp_node->inputs[1], 2);
                 TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(cmp_node, TB_NodeCompare)->cmp_dt);
 
-                SWAP(TB_Node*, br->succ[0], br->succ[1]);
+                // flip
+                for (User* u = n->users; u; u = u->next) {
+                    TB_NodeProj* p = TB_NODE_GET_EXTRA(u->n);
+                    p->index = !p->index;
+                }
+
                 set_input(opt, n, new_cmp, 1);
                 tb_pass_mark(opt, new_cmp);
                 return n;
@@ -250,13 +198,17 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
 
                 // flip successors
                 if (cmp_type == TB_CMP_EQ) {
-                    SWAP(TB_Node*, br->succ[0], br->succ[1]);
+                    for (User* u = n->users; u; u = u->next) {
+                        TB_NodeProj* p = TB_NODE_GET_EXTRA(u->n);
+                        p->index = !p->index;
+                    }
                 }
+
                 return n;
             }
 
             // check if we're dominated by a branch that already checked it
-            TB_Node* bb = unsafe_get_region(n->inputs[0]);
+            /*TB_Node* bb = unsafe_get_region(n->inputs[0]);
             for (User* u = find_users(opt, cmp_node); u; u = u->next) {
                 if (u->n != n && u->slot == 1 && u->n->type == TB_BRANCH) {
                     TB_NodeBranch* dom_branch = TB_NODE_GET_EXTRA(u->n);
@@ -266,7 +218,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                         ptrdiff_t match = -1;
                         FOREACH_N(i, 0, dom_branch->succ_count) {
                             TB_Node* target = dom_branch->succ[i];
-                            if (tb_is_dominated_by(target, bb)) {
+                            if (tb_is_dominated_by(opt->cfg, target, bb)) {
                                 match = i;
                                 break;
                             }
@@ -278,7 +230,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                         }
                     }
                 }
-            }
+            }*/
         }
     }
 
