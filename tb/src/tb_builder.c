@@ -836,8 +836,9 @@ static void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
 
     size_t old_count = n->input_count;
     TB_Node** new_inputs = alloc_from_node_arena(f, (old_count + 1) * sizeof(TB_Node*));
-    if (n->inputs != NULL)
+    if (n->inputs != NULL) {
         memcpy(new_inputs, n->inputs, old_count * sizeof(TB_Node*));
+    }
     new_inputs[old_count] = in;
 
     n->inputs = new_inputs;
@@ -856,6 +857,7 @@ void tb_inst_goto(TB_Function* f, TB_Node* target) {
 
     // there's no need for a branch if the path isn't diverging.
     TB_Node* n = f->active_control_node;
+    dyn_array_put(f->terminators, n);
     f->active_control_node = NULL;
 
     // just add the edge directly.

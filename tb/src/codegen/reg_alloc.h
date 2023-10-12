@@ -488,8 +488,10 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             dyn_array_put(ra->intervals, it);
 
             // insert spill and reload
-            insert_split_move(ra, 0,            vreg, spill_slot);
-            insert_split_move(ra, ra->endpoint, spill_slot, vreg);
+            insert_split_move(ra, 0, vreg, spill_slot);
+            if (ra->endpoint) {
+                insert_split_move(ra, ra->endpoint, spill_slot, vreg);
+            }
 
             // adding to intervals might resized this
             interval = &ra->intervals[old_reg];

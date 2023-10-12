@@ -121,7 +121,7 @@ static int classify_reg_class(TB_DataType dt);
 static void isel(Ctx* restrict ctx, TB_Node* n, int dst);
 static bool should_rematerialize(TB_Node* n);
 
-static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out);
+static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, int end);
 static void mark_callee_saved_constraints(Ctx* restrict ctx, uint64_t callee_saved[CG_REGISTER_CLASSES]);
 
 static void add_debug_local(Ctx* restrict ctx, TB_Node* n, int pos) {
@@ -548,7 +548,6 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     dyn_array_set_length(ctx->worklist.items, ctx->cfg.block_count);
 
     ctx->machine_bbs = seq_bb;
-    assert(epilogue >= 0);
     return epilogue;
 }
 
@@ -628,7 +627,8 @@ static void isel_set_location(Ctx* restrict ctx, TB_Node* n) {
 
 static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end) {
     assert(dyn_array_length(ctx->worklist.items) == ctx->cfg.block_count);
-    TB_BasicBlock* bb = nl_map_get_checked(ctx->p->scheduled, bb_start);
+    TB_Scheduled scheduled = ctx->p->scheduled;
+    TB_BasicBlock* bb = nl_map_get_checked(scheduled, bb_start);
 
     // phase 1: logical schedule
     DynArray(PhiVal) phi_vals = ctx->phi_vals;
@@ -641,10 +641,10 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end) {
         FOREACH_REVERSE_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
             TB_Node* n = ctx->worklist.items[i];
 
-            // track use count
+            // track non-dead users
             size_t use_count = 0;
             for (User* use = find_users(ctx->p, n); use; use = use->next) {
-                if (use->n->inputs[0] != NULL) use_count++;
+                if (nl_map_get(scheduled, n) >= 0) use_count++;
             }
 
             // we don't have to worry about resizing here which is really nice
@@ -683,6 +683,10 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end) {
             }
         }
 
+        if (bb_start->type == TB_PROJ && bb_start->inputs[0]->type == TB_START) {
+            isel(ctx, bb_start->inputs[0], -1);
+        }
+
         isel(ctx, bb_start, -1);
     }
 
@@ -699,7 +703,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end) {
         TB_Node* prev_effect = NULL;
         FOREACH_REVERSE_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
             TB_Node* n = ctx->worklist.items[i];
-            if (n == bb_start) {
+            if (n->type == TB_START) {
                 continue;
             }
 
@@ -823,15 +827,6 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end) {
             }
         }
 
-        if (end->type != TB_END    && end->type != TB_TRAP &&
-            end->type != TB_BRANCH && end->type != TB_UNREACHABLE) {
-            // implicit goto
-            TB_Node* succ = cfg_next_control(end);
-            if (ctx->fallthrough != succ) {
-                append_inst(ctx, inst_jmp(succ));
-            }
-        }
-
         // restore the PHI value to normal
         FOREACH_N(i, our_phis, dyn_array_length(phi_vals)) {
             PhiVal* v = &phi_vals[i];
@@ -841,6 +836,15 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end) {
         dyn_array_clear(phi_vals);
         ctx->phi_vals = phi_vals;
         ctx->head = last ? last : head;
+
+        if (end->type != TB_END    && end->type != TB_TRAP &&
+            end->type != TB_BRANCH && end->type != TB_UNREACHABLE) {
+            // implicit goto
+            TB_Node* succ = cfg_next_control(end);
+            if (ctx->fallthrough != succ) {
+                SUBMIT(inst_jmp(succ));
+            }
+        }
     }
 
     dyn_array_set_length(ctx->worklist.items, ctx->cfg.block_count);
@@ -914,7 +918,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         bool has_stop = false;
         FOREACH_N(i, 0, ctx.cfg.block_count) {
             TB_Node* bb = ctx.worklist.items[i];
-            if (cfg_next_region_control(bb) != bb) {
+            if (cfg_get_fallthru(bb) != bb) {
                 continue;
             }
 
@@ -924,7 +928,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             ctx.fallthrough = NULL;
             for (size_t j = i + 1; j < ctx.cfg.block_count; j++) {
                 ctx.fallthrough = ctx.worklist.items[j];
-                if (cfg_next_region_control(ctx.fallthrough) == ctx.fallthrough) break;
+                if (cfg_get_fallthru(ctx.fallthrough) == ctx.fallthrough) {
+                    break;
+                }
             }
 
             Inst* label = inst_label(bb);
@@ -940,11 +946,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             if (end->type == TB_END) {
                 has_stop = true;
             }
-        }
-
-        // liveness expects one but we don't really have shit to put down there... it's never reached
-        if (!has_stop) {
-            append_inst(&ctx, alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
         }
     }
     p->worklist = ctx.worklist;
@@ -962,7 +963,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
         // Arch-specific: convert instruction buffer into actual instructions
         CUIK_TIMED_BLOCK("emit code") {
-            emit_code(&ctx, func_out);
+            emit_code(&ctx, func_out, end);
         }
     }
 

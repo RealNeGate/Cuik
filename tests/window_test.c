@@ -22,10 +22,11 @@ int main(int argc, char** argv, char** env) {
     wc.lpszClassName = name;
     RegisterClassA(&wc);
 
-    HWND window = CreateWindowExA(262144, name,
-        name, 0xCF0000,
+    HWND window = CreateWindowExA(
+        262144, name, name, 0xCF0000,
         400, 400, 1600, 900,
-        NULL, NULL, NULL, NULL);
+        NULL, NULL, NULL, NULL
+    );
 
     // Display the window
     ShowWindow(window, SW_SHOWDEFAULT);

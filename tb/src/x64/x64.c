@@ -413,7 +413,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static bool should_rematerialize(TB_Node* n) {
-    if (n->type == TB_INT2PTR && n->inputs[0]->type == TB_INTEGER_CONST) {
+    if (n->type == TB_INT2PTR && n->inputs[1]->type == TB_INTEGER_CONST) {
         return true;
     }
 
@@ -1140,7 +1140,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             for (User* u = n->users; u; u = u->next) {
                 if (u->n->type == TB_PROJ) {
                     int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                    succ[index] = cfg_next_region_control(u->n);
+                    succ[index] = cfg_next_control(u->n);
                 }
             }
 
@@ -1609,7 +1609,7 @@ static int resolve_interval(Ctx* restrict ctx, Inst* inst, int i, Val* val) {
     return 1;
 }
 
-static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
+static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, int end) {
     TB_CGEmitter* e = &ctx->emit;
 
     // resolve stack usage
@@ -1812,7 +1812,9 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
         }
     }
 
-    emit_epilogue(ctx, ctx->f->stop_node);
+    if (end >= 0) {
+        emit_epilogue(ctx, ctx->f->stop_node);
+    }
 
     // pad to 16bytes
     static const uint8_t nops[8][8] = {

@@ -68,7 +68,7 @@ static int stbi__parse_zlib_header(stbi__zbuf *a);
 
 // returns 1 if the product is valid, 0 on overflow.
 // negative factors are considered invalid.
-static int stbi__mul2sizes_valid(int a, int b)
+int stbi__mul2sizes_valid(int a, int b)
 {
     if (a < 0 || b < 0) return 0;
     if (b == 0) return 1; // mul-by-0 is always safe

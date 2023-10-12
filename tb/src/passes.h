@@ -6,7 +6,7 @@
 #define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
 #define TB_OPTDEBUG_MEM2REG 0
-#define TB_OPTDEBUG_CODEGEN 1
+#define TB_OPTDEBUG_CODEGEN 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
 #define DO_IF_0(...)
@@ -55,9 +55,11 @@ typedef struct TB_CFG {
     NL_Map(TB_Node*, TB_BasicBlock) node_to_block;
 } TB_CFG;
 
+typedef NL_Map(TB_Node*, TB_BasicBlock*) TB_Scheduled;
+
 struct TB_Passes {
     TB_Function* f;
-    NL_Map(TB_Node*, TB_BasicBlock*) scheduled;
+    TB_Scheduled scheduled;
 
     // we use this to verify that we're on the same thread
     // for the entire duration of the TB_Passes.
@@ -125,9 +127,9 @@ static bool cfg_is_bb_entry(TB_Node* n) {
 static TB_Node* cfg_get_fallthru(TB_Node* n) {
     if (n->type == TB_PROJ && n->dt.type == TB_CONTROL) {
         // if it's single user and that user is the terminator we can skip it in the fallthrough logic
-        return n->users->next == NULL ? n->users->n : NULL;
+        return n->users->next == NULL && n->users->n->type == TB_REGION ? n->users->n : n;
     } else {
-        return NULL;
+        return n;
     }
 }
 
@@ -147,12 +149,13 @@ static bool is_mem_in_op(TB_Node* n) {
 // CFG analysis
 ////////////////////////////////
 static TB_Node* cfg_next_region_control(TB_Node* n) {
-    if (n->type == TB_PROJ && n->dt.type == TB_CONTROL) {
-        // if it's single user and that user is the terminator we can skip it in the fallthrough logic
-        return n->users->next == NULL && n->users->n->type == TB_REGION && n->users->n->input_count == 1 ? n->users->n : n;
-    } else {
-        return n;
+    for (User* u = n->users; u; u = u->next) {
+        if (u->n->type == TB_REGION && u->n->input_count == 1) {
+            return u->n;
+        }
     }
+
+    return n;
 }
 
 static TB_Node* cfg_next_control(TB_Node* n) {

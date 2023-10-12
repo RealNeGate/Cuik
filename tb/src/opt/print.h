@@ -191,7 +191,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                 for (User* u = n->users; u; u = u->next) {
                     if (u->n->type == TB_PROJ) {
                         int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                        succ[index] = cfg_next_region_control(u->n);
+                        succ[index] = cfg_next_control(u->n);
                     }
                 }
 
@@ -428,6 +428,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 
 bool tb_pass_print(TB_Passes* opt) {
     TB_Function* f = opt->f;
+    worklist_clear(&opt->worklist);
 
     PrinterCtx ctx = { opt, f };
     ctx.cfg = tb_compute_rpo(f, opt);
