@@ -46,6 +46,8 @@ static TB_BasicBlock* schedule_early(TB_Passes* p, TB_Node* n) {
         }
     }
 
+    DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", p->f->super.name, n->gvn, best->id));
+
     nl_hashset_put(&best->items, n);
     nl_map_put(p->scheduled, n, best);
     return best;

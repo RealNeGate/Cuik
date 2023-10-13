@@ -1,11 +1,11 @@
 #pragma once
 #include "tb_internal.h"
 
-#define TB_OPTDEBUG_STATS 0
-
-#define TB_OPTDEBUG_PEEP 0
-#define TB_OPTDEBUG_LOOP 0
-#define TB_OPTDEBUG_MEM2REG 1
+#define TB_OPTDEBUG_STATS   0
+#define TB_OPTDEBUG_PEEP    0
+#define TB_OPTDEBUG_LOOP    0
+#define TB_OPTDEBUG_GCM     1
+#define TB_OPTDEBUG_MEM2REG 0
 #define TB_OPTDEBUG_CODEGEN 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
@@ -133,7 +133,7 @@ static TB_Node* cfg_get_fallthru(TB_Node* n) {
 }
 
 static bool is_mem_out_op(TB_Node* n) {
-    return n->dt.type == TB_MEMORY || n->type == TB_END || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_POLL);
+    return n->dt.type == TB_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_POLL);
 }
 
 static bool is_pinned(TB_Node* n) {

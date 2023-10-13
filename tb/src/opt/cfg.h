@@ -50,6 +50,8 @@ TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* restrict p) {
             if (bb.id == 0) {
                 bb.dom = entry;
                 bb.dom_depth = 0;
+            } else {
+                bb.dom_depth = -1;
             }
 
             bb.end = n;
@@ -182,7 +184,7 @@ void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg) {
 
     // generate depth values
     CUIK_TIMED_BLOCK("generate dom tree") {
-        FOREACH_N(i, 0, cfg.block_count - 1) {
+        FOREACH_REVERSE_N(i, 1, cfg.block_count) {
             resolve_dom_depth(&cfg, blocks[i]);
         }
     }

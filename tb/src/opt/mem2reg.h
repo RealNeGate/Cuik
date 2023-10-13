@@ -175,71 +175,73 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
 
     // go through all uses and replace their accessors
     TB_Node* n = bb_info->mem_in;
-    while (n != NULL && get_block_begin(n) == bb) {
-        DO_IF(TB_OPTDEBUG_MEM2REG)(
-            printf("  SIGMA %u: ", n->gvn),
-            print_node_sexpr(n, 0),
-            printf("\n")
-        );
+    if (n != NULL) {
+        do {
+            DO_IF(TB_OPTDEBUG_MEM2REG)(
+                printf("  SIGMA %u: ", n->gvn),
+                print_node_sexpr(n, 0),
+                printf("\n")
+            );
 
-        // if we spot a store, we push to the stack
-        bool kill = false;
-        if (n->type == TB_STORE) {
-            int var = get_variable_id(c, n->inputs[2]);
-            if (var >= 0) {
-                // push new store value onto the stack
-                dyn_array_put(stack[var], n->inputs[3]);
-                kill = true;
-            }
-        }
-
-        // check for any loads and replace them
-        for (User* u = n->users; u; u = u->next) {
-            TB_Node* use = u->n;
-
-            if (u->slot == 1 && use->type == TB_LOAD) {
-                int var = get_variable_id(c, use->inputs[2]);
+            // if we spot a store, we push to the stack
+            bool kill = false;
+            if (n->type == TB_STORE) {
+                int var = get_variable_id(c, n->inputs[2]);
                 if (var >= 0) {
-                    TB_Node* val;
-                    if (dyn_array_length(stack[var]) == 0) {
-                        // this is UB since it implies we've read before initializing the
-                        // stack slot.
-                        val = make_poison(f, p, use->dt);
-                        log_warn("v%u: found load-before-init in mem2reg, this is UB", use->gvn);
-                    } else {
-                        val = stack[var][dyn_array_length(stack[var]) - 1];
-                    }
-
-                    // make sure it's the right type
-                    if (use->dt.raw != val->dt.raw) {
-                        TB_Node* cast = tb_alloc_node(c->f, TB_BITCAST, use->dt, 2, 0);
-                        tb_pass_mark(c->p, cast);
-                        set_input(c->p, cast, val, 1);
-
-                        val = cast;
-                    }
-
-                    tb_pass_mark_users(p, use);
-                    set_input(p, use, NULL, 1); // unlink first
-                    subsume_node(p, f, use, val);
+                    // push new store value onto the stack
+                    dyn_array_put(stack[var], n->inputs[3]);
+                    kill = true;
                 }
             }
-        }
 
-        // next memory has to be decided before we kill the node since
-        // murder will dettach the users.
-        TB_Node* next = mem_user(p, n, 1);
+            // check for any loads and replace them
+            for (User* u = n->users; u; u = u->next) {
+                TB_Node* use = u->n;
 
-        // we can remove the effect now
-        if (kill) {
-            TB_Node* into = n->inputs[1];
-            tb_pass_mark(c->p, into);
-            tb_pass_mark(c->p, n);
-            set_input(p, n, NULL, 1);
-            subsume_node(p, c->f, n, into);
-        }
+                if (u->slot == 1 && use->type == TB_LOAD) {
+                    int var = get_variable_id(c, use->inputs[2]);
+                    if (var >= 0) {
+                        TB_Node* val;
+                        if (dyn_array_length(stack[var]) == 0) {
+                            // this is UB since it implies we've read before initializing the
+                            // stack slot.
+                            val = make_poison(f, p, use->dt);
+                            log_warn("v%u: found load-before-init in mem2reg, this is UB", use->gvn);
+                        } else {
+                            val = stack[var][dyn_array_length(stack[var]) - 1];
+                        }
 
-        n = next;
+                        // make sure it's the right type
+                        if (use->dt.raw != val->dt.raw) {
+                            TB_Node* cast = tb_alloc_node(c->f, TB_BITCAST, use->dt, 2, 0);
+                            tb_pass_mark(c->p, cast);
+                            set_input(c->p, cast, val, 1);
+
+                            val = cast;
+                        }
+
+                        tb_pass_mark_users(p, use);
+                        set_input(p, use, NULL, 1); // unlink first
+                        subsume_node(p, f, use, val);
+                    }
+                }
+            }
+
+            // next memory has to be decided before we kill the node since
+            // murder will dettach the users.
+            TB_Node* next = mem_user(p, n, 1);
+
+            // we can remove the effect now
+            if (kill) {
+                TB_Node* into = n->inputs[1];
+                tb_pass_mark(c->p, into);
+                tb_pass_mark(c->p, n);
+                set_input(p, n, NULL, 1);
+                subsume_node(p, c->f, n, into);
+            }
+
+            n = next;
+        } while (n != NULL && get_block_begin(n) == bb);
     }
 
     // replace phi arguments on successor
@@ -413,6 +415,14 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     FOREACH_N(i, 0, c.cfg.block_count) {
         TB_Node* bb = c.blocks[i];
         TB_BasicBlock* bb_info = &nl_map_get_checked(c.cfg.node_to_block, bb);
+
+        if (i == 0) {
+            // start block can use the input memory as the earliest point
+            insert_phis(&c, bb, f->params[1]);
+            bb_info->mem_in = f->params[1];
+            continue;
+        }
+
         TB_Node* end = bb_info->end;
 
         // find memory phi
@@ -427,7 +437,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
             }
 
             n = cfg_next_control(n);
-        } while (n != end);
+        } while (n != NULL && n != end);
 
         done:
         // find earliest memory in the BB:
@@ -437,10 +447,6 @@ bool tb_pass_mem2reg(TB_Passes* p) {
             while (mem->inputs[1]->inputs[0]->type != TB_START && get_block_begin(mem->inputs[1]->inputs[0]) == bb) {
                 mem = mem->inputs[1];
             }
-
-            /*if (mem->inputs[1]->type == TB_PROJ && mem->inputs[1]->inputs[0]->type == TB_START) {
-                mem = f->params[1];
-            }*/
 
             insert_phis(&c, bb, mem);
         }
