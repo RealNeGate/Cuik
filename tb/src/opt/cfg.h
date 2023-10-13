@@ -1,4 +1,11 @@
 
+void tb_free_cfg(TB_CFG* cfg) {
+    nl_map_for(i, cfg->node_to_block) {
+        nl_hashset_free(cfg->node_to_block[i].v.items);
+    }
+    nl_map_free(cfg->node_to_block);
+}
+
 TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* restrict p) {
     Worklist* ws = &p->worklist;
     assert(dyn_array_length(ws->items) == 0);

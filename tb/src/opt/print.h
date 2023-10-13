@@ -441,6 +441,7 @@ bool tb_pass_print(TB_Passes* opt) {
         print_bb(&ctx, opt->worklist.items[i]);
     }
 
+    tb_free_cfg(&ctx.cfg);
     ctx.opt->error_n = NULL;
     return false;
 }

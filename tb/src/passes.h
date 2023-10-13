@@ -64,9 +64,6 @@ struct TB_Passes {
     // for the entire duration of the TB_Passes.
     TB_ThreadInfo* pinned_thread;
 
-    // control flow
-    TB_CFG cfg;
-
     Worklist worklist;
 
     // we wanna track locals because it's nice and easy
@@ -202,6 +199,7 @@ static User* find_users(TB_Passes* restrict p, TB_Node* n) {
 // CFG
 //   pushes postorder walk into worklist items, also modifies the visited set.
 TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* restrict p);
+void tb_free_cfg(TB_CFG* cfg);
 //   postorder walk -> dominators
 void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg);
 

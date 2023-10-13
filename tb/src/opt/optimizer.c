@@ -179,7 +179,10 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 
 static TB_Node* mem_user(TB_Passes* restrict p, TB_Node* n, int slot) {
     for (User* u = find_users(p, n); u; u = u->next) {
-        if (u->slot == slot && is_mem_out_op(u->n)) return u->n;
+        if ((u->n->type == TB_PROJ && u->n->dt.type == TB_MEMORY) ||
+            (u->slot == slot && is_mem_out_op(u->n))) {
+            return u->n;
+        }
     }
 
     return NULL;
@@ -772,6 +775,10 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     // generate work list (put everything)
     CUIK_TIMED_BLOCK("gen worklist") {
         push_all_nodes(p, &p->worklist, f);
+
+        // terminators will be made obselete by the optimizer
+        dyn_array_destroy(f->terminators);
+
         DO_IF(TB_OPTDEBUG_STATS)(p->stats.initial = worklist_popcount(&p->worklist));
     }
 
@@ -843,4 +850,5 @@ void tb_pass_exit(TB_Passes* p) {
     dyn_array_destroy(p->locals);
 
     tb_arena_clear(tmp_arena);
+    tb_platform_heap_free(p);
 }

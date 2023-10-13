@@ -532,12 +532,13 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
     // don't need these anymore
     FOREACH_N(var, 0, c.to_promote_count) {
+        assert(c.to_promote[var]->users == NULL);
         tb_pass_kill_node(c.p, c.to_promote[var]);
     }
 
     tb_tls_restore(tls, to_promote);
 
-    p->cfg = c.cfg;
+    tb_free_cfg(&c.cfg);
     cuikperf_region_end();
     return true;
 
