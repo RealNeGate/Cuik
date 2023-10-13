@@ -326,8 +326,7 @@ void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
         n->inputs[i] = NULL;
     }
 
-    n->users = NULL;
-
+    // assert(n->users == NULL && "we can't kill nodes with users, that's fucking rude");
     n->input_count = 0;
     n->type = TB_NULL;
 }
@@ -710,8 +709,8 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     // common subexpression elim
     k = nl_hashset_put2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k && (k != n)) {
-        DO_IF(TB_OPTDEBUG_STATS)(p->stats.cse_hit++);
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[31mCSE\x1b[0m"));
+        DO_IF(TB_OPTDEBUG_STATS)(p->stats.gvn_hit++);
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[31mGVN\x1b[0m"));
 
         subsume_node(p, f, n, k);
 
@@ -720,7 +719,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
         tb_pass_mark_users(p, k);
         return k;
     } else {
-        DO_IF(TB_OPTDEBUG_STATS)(p->stats.cse_miss++);
+        DO_IF(TB_OPTDEBUG_STATS)(p->stats.gvn_miss++);
     }
 
     return n;
@@ -797,7 +796,7 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
     tb_pass_sroa(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
-    // tb_pass_mem2reg(p);
+    tb_pass_mem2reg(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 }
 

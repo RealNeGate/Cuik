@@ -90,7 +90,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         }
     } else if (n->type == TB_PROJ && n->dt.type == TB_CONTROL) {
         if (n->inputs[0]->type == TB_START) {
-            printf("%s", ctx->f->super.name);
+            print_ref_to_node(ctx, n->inputs[0], def);
         } else {
             ptrdiff_t i = try_find_traversal_index(&ctx->cfg, n);
             if (i >= 0) {
@@ -143,7 +143,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     printf(":");
 
     // print predecessors
-    if (bb_start->type == TB_REGION && bb_start->input_count > 0) {
+    if (!(bb_start->type == TB_PROJ && bb_start->inputs[0]->type == TB_START) && bb_start->input_count > 0) {
         printf(" # preds: ");
         FOREACH_N(j, 0, bb_start->input_count) {
             print_ref_to_node(ctx, get_block_begin(bb_start->inputs[j]), false);
@@ -170,7 +170,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
             n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
             n->type == TB_SIGN_EXT || n->type == TB_ZERO_EXT ||
             n->type == TB_PROJ || n->type == TB_START ||
-            n->type == TB_REGION) {
+            n->type == TB_REGION || n->type == TB_NULL) {
             continue;
         }
 
@@ -435,22 +435,10 @@ bool tb_pass_print(TB_Passes* opt) {
 
     // schedule nodes
     tb_pass_schedule(opt, ctx.cfg);
-
-    TB_Node* stop_bb = get_block_begin(f->stop_node);
     worklist_clear_visited(&opt->worklist);
 
-    bool has_stop = false;
     FOREACH_N(i, 0, ctx.cfg.block_count) {
-        TB_Node* bb = opt->worklist.items[i];
-        if (bb != stop_bb) {
-            print_bb(&ctx, bb);
-        } else {
-            has_stop = true;
-        }
-    }
-
-    if (has_stop) {
-        print_bb(&ctx, stop_bb);
+        print_bb(&ctx, opt->worklist.items[i]);
     }
 
     ctx.opt->error_n = NULL;

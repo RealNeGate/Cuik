@@ -2,8 +2,12 @@
 static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
-    // single entry regions are useless...
-    if (n->input_count == 1) {
+    // if a region is dead, start a violent death chain
+    if (n->input_count == 0) {
+        n->type = TB_DEAD;
+        return n;
+    } else if (n->input_count == 1) {
+        // single entry regions are useless...
         // check for any phi nodes, because we're single entry they're all degens
         User* use = n->users;
         while (use != NULL) {
@@ -17,12 +21,6 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
         // we might want this as an identity
         return n->inputs[0];
-    }
-
-    // if a region is dead, start a violent death chain
-    if (n->input_count == 0) {
-        n->type = TB_DEAD;
-        return n;
     }
 
     return NULL;

@@ -621,7 +621,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
     if (dyn_array_length(fix_interval->ranges)) {
         int p = range_intersect(interval->start, interval->end, &fix_interval->ranges[fix_interval->active_range]);
         if (p >= 0) {
-            split_intersecting(ra, interval->start, p, fix_interval, true);
+            split_intersecting(ra, interval->start, p, interval, true);
         }
     }
 
@@ -645,7 +645,7 @@ static bool update_interval(LSRA* restrict ra, LiveInterval* restrict interval, 
     int ri = interval - ra->intervals;
 
     // get to the right range first
-    while (interval->active_range > 0 && interval->ranges[interval->active_range].end <= time) {
+    while (interval->ranges[interval->active_range].end <= time) {
         interval->active_range -= 1;
     }
 

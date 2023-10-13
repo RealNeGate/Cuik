@@ -73,7 +73,7 @@ void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_
 
     dyn_array_put(ws->items, n);
 
-    if (is_mem_out_op(n) && n->type != TB_PHI) {
+    if (is_mem_out_op(n) && n->type != TB_PHI && n->type != TB_PROJ) {
         // memory effects have anti-dependencies, the previous loads
         // must finish before the next memory effect is applied.
         for (User* use = find_users(passes, n->inputs[1]); use; use = use->next) {

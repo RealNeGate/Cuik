@@ -108,7 +108,7 @@ TB_DominanceFrontiers* tb_get_dominance_frontiers(TB_Function* f, TB_Passes* res
             FOREACH_N(k, 0, bb->input_count) {
                 TB_Node* runner = get_block_begin(bb->inputs[k]);
 
-                while (runner->input_count > 0 && runner != idom(&cfg, bb)) {
+                while (!(runner->type == TB_PROJ && runner->inputs[0]->type == TB_START) && runner != idom(&cfg, bb)) {
                     // add to frontier set
                     int id = nl_map_get_checked(cfg.node_to_block, runner).id;
                     tb_dommy_fronts_put(df, id, i);

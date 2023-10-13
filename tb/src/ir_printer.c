@@ -11,6 +11,7 @@ TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...) {
 TB_API const char* tb_node_get_name(TB_Node* n) {
     switch (n->type) {
         case TB_NULL: return "BAD";
+        case TB_DEAD: return "dead";
 
         case TB_START:  return "start";
         case TB_END:    return "end";
@@ -153,6 +154,10 @@ static bool print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallba
 
     bool is_effect = tb_has_effects(n);
     const char* fillcolor = is_effect ? "lightgrey" : "antiquewhite1";
+    if (n->dt.type == TB_MEMORY) {
+        fillcolor = "lightblue";
+    }
+
     P("  r%p [style=\"filled\"; ordering=in; shape=box; fillcolor=%s; label=\"", n, fillcolor);
     P("%zu: %s", n->gvn, tb_node_get_name(n));
     P("\"];\n");

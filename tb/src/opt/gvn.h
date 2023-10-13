@@ -46,6 +46,8 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_TRUNCATE:
         case TB_INT2PTR:
         case TB_PTR2INT:
+        case TB_UINT2FLOAT:
+        case TB_FLOAT2UINT:
         case TB_INT2FLOAT:
         case TB_FLOAT2INT:
         case TB_FLOAT_EXT:
@@ -67,6 +69,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_POISON:
         case TB_SELECT:
         case TB_MERGEMEM:
+        case TB_DEAD:
         return 0;
 
         case TB_START:

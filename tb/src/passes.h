@@ -5,7 +5,7 @@
 
 #define TB_OPTDEBUG_PEEP 0
 #define TB_OPTDEBUG_LOOP 0
-#define TB_OPTDEBUG_MEM2REG 0
+#define TB_OPTDEBUG_MEM2REG 1
 #define TB_OPTDEBUG_CODEGEN 0
 
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
@@ -45,8 +45,7 @@ typedef struct TB_BasicBlock {
     TB_Node* end;
     int id, dom_depth;
 
-    // used by mem2reg
-    TB_Node* latest_mem;
+    TB_Node* mem_in;
     NL_HashSet items;
 } TB_BasicBlock;
 
@@ -134,7 +133,7 @@ static TB_Node* cfg_get_fallthru(TB_Node* n) {
 }
 
 static bool is_mem_out_op(TB_Node* n) {
-    return n->type == TB_END || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type == TB_PHI && n->dt.type == TB_MEMORY);
+    return n->dt.type == TB_MEMORY || n->type == TB_END || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_POLL);
 }
 
 static bool is_pinned(TB_Node* n) {

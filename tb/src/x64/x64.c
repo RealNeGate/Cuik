@@ -429,6 +429,13 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         case TB_PHI: break;
         case TB_REGION: break;
 
+        case TB_POISON: {
+            Inst* inst = alloc_inst(INST_INLINE, TB_TYPE_VOID, 1, 0, 0);
+            inst->operands[0] = dst;
+            append_inst(ctx, inst);
+            break;
+        }
+
         case TB_START: {
             TB_NodeRegion* start = TB_NODE_GET_EXTRA(n);
             const TB_FunctionPrototype* restrict proto = ctx->f->prototype;
@@ -1658,13 +1665,15 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
                 EMITA(e, ".bb%d:\n", id);
             }
         } else if (inst->type == INST_INLINE) {
-            TB_NodeMachineOp* mach = TB_NODE_GET_EXTRA(inst->n);
+            if (inst->n) {
+                TB_NodeMachineOp* mach = TB_NODE_GET_EXTRA(inst->n);
 
-            EMITA(&ctx->emit, "  INLINE MACHINE CODE:");
-            FOREACH_N(i, 0, mach->length) {
-                EMITA(&ctx->emit, " %#02x", mach->data[i]);
+                EMITA(&ctx->emit, "  INLINE MACHINE CODE:");
+                FOREACH_N(i, 0, mach->length) {
+                    EMITA(&ctx->emit, " %#02x", mach->data[i]);
+                }
+                EMITA(&ctx->emit, "\n");
             }
-            EMITA(&ctx->emit, "\n");
         } else if (inst->type == INST_EPILOGUE) {
             // just a marker for regalloc
         } else if (inst->type == INST_LINE) {
