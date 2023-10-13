@@ -21,6 +21,21 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
         // we might want this as an identity
         return n->inputs[0];
+    } else if (n->input_count == 1) {
+        // cannot have PHI effects, they might depend on the edges
+        for (User* use = find_users(p, n); use; use = use->next) {
+            if (use->n->type == TB_PHI) return NULL;
+        }
+
+        // same preds? just remove the branch
+        if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_BRANCH) {
+            TB_Node* same = n->inputs[0]->inputs[0];
+            FOREACH_N(i, 1, n->input_count) {
+                if (n->inputs[i]->inputs[0] != same) return NULL;
+            }
+
+            return same->inputs[0];
+        }
     }
 
     return NULL;

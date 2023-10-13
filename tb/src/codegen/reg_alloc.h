@@ -684,7 +684,7 @@ static bool update_interval(LSRA* restrict ra, LiveInterval* restrict interval, 
 }
 
 static void cuiksort_defs(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, RegIndex* arr);
-static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int end) {
+static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int end, int* bb_order, int bb_count) {
     LSRA ra = { .abi = f->super.module->target_abi, .first = ctx->first, .cache = ctx->first, .intervals = ctx->intervals, .stack_usage = stack_usage };
 
     FOREACH_N(i, 0, CG_REGISTER_CLASSES) {
@@ -696,8 +696,8 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
     MachineBBs mbbs = ctx->machine_bbs;
     size_t interval_count = dyn_array_length(ra.intervals);
     CUIK_TIMED_BLOCK("build intervals") {
-        FOREACH_REVERSE_N(i, 0, ctx->cfg.block_count) {
-            TB_Node* bb = ctx->worklist.items[i];
+        FOREACH_REVERSE_N(i, 0, bb_count) {
+            TB_Node* bb = ctx->worklist.items[bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
 
             int bb_start = mbb->start;

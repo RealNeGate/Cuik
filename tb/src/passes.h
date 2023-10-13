@@ -4,7 +4,7 @@
 #define TB_OPTDEBUG_STATS   0
 #define TB_OPTDEBUG_PEEP    0
 #define TB_OPTDEBUG_LOOP    0
-#define TB_OPTDEBUG_GCM     1
+#define TB_OPTDEBUG_GCM     0
 #define TB_OPTDEBUG_MEM2REG 0
 #define TB_OPTDEBUG_CODEGEN 0
 

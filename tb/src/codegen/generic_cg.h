@@ -625,7 +625,7 @@ static void isel_set_location(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
-static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end) {
+static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size_t rpo_index) {
     assert(dyn_array_length(ctx->worklist.items) == ctx->cfg.block_count);
     TB_Scheduled scheduled = ctx->p->scheduled;
     TB_BasicBlock* bb = nl_map_get_checked(scheduled, bb_start);
@@ -634,11 +634,21 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end) {
     DynArray(PhiVal) phi_vals = ctx->phi_vals;
     CUIK_TIMED_BLOCK("phase 1") {
         sched_walk(ctx->p, &ctx->worklist, &phi_vals, bb, end, true);
+
+        // schedule params
+        if (rpo_index == 0) {
+            for (User* use = ctx->f->start_node->users; use; use = use->next) {
+                TB_Node* use_n = use->n;
+                if (use_n->type == TB_PROJ && !worklist_test_n_set(&ctx->worklist, use_n)) {
+                    dyn_array_put(ctx->worklist.items, use_n);
+                }
+            }
+        }
     }
 
     // phase 2: define all the nodes in this BB
     CUIK_TIMED_BLOCK("phase 2") {
-        FOREACH_REVERSE_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
+        FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
             TB_Node* n = ctx->worklist.items[i];
 
             // track non-dead users
@@ -683,11 +693,9 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end) {
             }
         }
 
-        if (bb_start->type == TB_PROJ && bb_start->inputs[0]->type == TB_START) {
-            isel(ctx, bb_start->inputs[0], -1);
+        if (rpo_index == 0) {
+            isel(ctx, ctx->f->start_node, -1);
         }
-
-        isel(ctx, bb_start, -1);
     }
 
     // phase 4: walk all nodes (we're allowed to fold nodes into those which appear later)
@@ -898,10 +906,14 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
+    int bb_count = 0;
+    int* bb_order = tb_arena_alloc(tmp_arena, ctx.cfg.block_count * sizeof(int));
+
     CUIK_TIMED_BLOCK("isel") {
         assert(dyn_array_length(ctx.worklist.items) == ctx.cfg.block_count);
 
-        // define all PHIs early
+        // define all PHIs early and sort BB order
+        int stop_bb = -1;
         FOREACH_N(i, 0, ctx.cfg.block_count) {
             TB_Node* bb = ctx.worklist.items[i];
 
@@ -913,25 +925,34 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                     ctx.values[n->gvn].vreg = -1;
                 }
             }
+
+            TB_Node* end = nl_map_get_checked(ctx.cfg.node_to_block, bb).end;
+            if (end->type == TB_END) {
+                stop_bb = i;
+            } else {
+                // skip any completely fallthrough blocks (start doesn't count)
+                // if (i != 0 && i + 1 < ctx.cfg.block_count && cfg_get_fallthru(bb) == ctx.worklist.items[i + 1]) {
+                if (i != 0 && cfg_get_fallthru(bb) != bb) {
+                    continue;
+                }
+
+                bb_order[bb_count++] = i;
+            }
         }
 
-        bool has_stop = false;
-        FOREACH_N(i, 0, ctx.cfg.block_count) {
-            TB_Node* bb = ctx.worklist.items[i];
-            if (cfg_get_fallthru(bb) != bb) {
-                continue;
-            }
+        // enter END block at the... end
+        if (stop_bb >= 0) {
+            bb_order[bb_count++] = stop_bb;
+        }
+
+        TB_Node** bbs = ctx.worklist.items;
+        FOREACH_N(i, 0, bb_count) {
+            TB_Node* bb = ctx.worklist.items[bb_order[i]];
 
             nl_map_put(ctx.emit.labels, bb, 0);
 
             // find next BB
-            ctx.fallthrough = NULL;
-            for (size_t j = i + 1; j < ctx.cfg.block_count; j++) {
-                ctx.fallthrough = ctx.worklist.items[j];
-                if (cfg_get_fallthru(ctx.fallthrough) == ctx.fallthrough) {
-                    break;
-                }
-            }
+            ctx.fallthrough = i + 1 < bb_count ? bbs[bb_order[i + 1]] : NULL;
 
             Inst* label = inst_label(bb);
             if (ctx.first == NULL) {
@@ -941,11 +962,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             }
 
             TB_Node* end = nl_map_get_checked(ctx.cfg.node_to_block, bb).end;
-            isel_region(&ctx, bb, end);
-
-            if (end->type == TB_END) {
-                has_stop = true;
-            }
+            isel_region(&ctx, bb, end, i);
         }
     }
     p->worklist = ctx.worklist;
@@ -959,7 +976,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
         // we can in theory have other regalloc solutions and eventually will put
         // graph coloring here.
-        ctx.stack_usage = linear_scan(&ctx, f, ctx.stack_usage, end);
+        ctx.stack_usage = linear_scan(&ctx, f, ctx.stack_usage, end, bb_order, bb_count);
 
         // Arch-specific: convert instruction buffer into actual instructions
         CUIK_TIMED_BLOCK("emit code") {

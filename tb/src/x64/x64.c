@@ -1147,7 +1147,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             for (User* u = n->users; u; u = u->next) {
                 if (u->n->type == TB_PROJ) {
                     int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                    succ[index] = cfg_next_control(u->n);
+                    succ[index] = cfg_get_fallthru(u->n);
                 }
             }
 

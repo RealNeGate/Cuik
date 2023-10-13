@@ -145,12 +145,11 @@ static void sys_invoke(BuildStepInfo* info) {
 #ifdef CUIK_USE_TB
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
-// ctx is non-NULL when we print asm
 static void apply_func(TB_Function* f, void* arg) {
     Cuik_DriverArgs* args = arg;
     bool print_asm = args->assembly;
 
-    CUIK_TIMED_BLOCK("func opt") {
+    CUIK_TIMED_BLOCK("passes") {
         TB_Passes* p = tb_pass_enter(f, get_ir_arena());
 
         if (args->opt_level >= 1) {
