@@ -4,379 +4,483 @@
 // THIS IS EXPERIMENTAL, BUT VERY HANDY
 // *should* work on clang/msvc on Windows, Mac, and Linux
 
-#define SPALL_IS_WINDOWS 0
-#define SPALL_IS_MSVC    0
-#define SPALL_IS_DARWIN  0
-#define SPALL_IS_LINUX   0
-
-#if defined(_WIN32)
-#undef SPALL_IS_WINDOWS
-#define SPALL_IS_WINDOWS 1
-#if !defined(__clang__)
-#undef SPALL_IS_MSVC
-#define SPALL_IS_MSVC 1
-#endif
-#elif defined(__APPLE__)
-#undef SPALL_IS_DARWIN
-#define SPALL_IS_DARWIN 1
-#elif defined(__linux__)
-#undef SPALL_IS_LINUX
-#define SPALL_IS_LINUX 1
-#endif
-
 #ifdef __cplusplus
 extern "C" {
-    #endif
+#endif
 
-    #include <stdint.h>
-    #include <stddef.h>
-    #include <stdbool.h>
+#define _GNU_SOURCE
+#include <stdint.h>
+#include <stddef.h>
 
-    bool spall_auto_init(char *filename);
-    void spall_auto_quit(void);
-    bool spall_auto_thread_init(uint32_t thread_id, size_t buffer_size);
-    void spall_auto_thread_quit(void);
+typedef struct {
+    char *str;
+    int len;
+} Name;
 
-    #if SPALL_IS_MSVC
-    #ifndef _PROCESSTHREADSAPI_H_
-    extern __declspec(dllimport) int(__stdcall TlsSetValue)(unsigned long dwTlsIndex, void* lpTlsValue);
-    #endif
+typedef struct {
+    void *addr;
+    Name name;
+} SymEntry;
 
-    extern unsigned long spall_auto__tls_index; // DWORD
-    #define spall__thread_on() TlsSetValue(spall_auto__tls_index, (void *)1)
-    #define spall__thread_off() TlsSetValue(spall_auto__tls_index, (void *)0)
-    #define _Thread_local __declspec( thread )
-    #else
-    #define spall__thread_off() 0
-    #define spall__thread_on() 0
-    #endif
+typedef struct {
+    SymEntry *arr;
+    uint64_t len;
+    uint64_t cap;
+} SymArr;
 
-    #define spall_auto_thread_init(thread_id, buffer_size) (spall_auto_thread_init(thread_id, buffer_size), spall__thread_on())
-    #define spall_auto_thread_quit() (spall__thread_off(), spall_auto_thread_quit())
+typedef struct {
+    int64_t *arr;
+    uint64_t len;
+} HashArr;
 
-    #define SPALL_DEFAULT_BUFFER_SIZE (128 * 1024 * 1024)
+typedef struct {
+    SymArr  entries;
+    HashArr hashes;
+} AddrHash;
 
-    #ifdef __cplusplus
+void spall_auto_init(char *filename);
+void spall_auto_quit(void);
+void spall_auto_thread_init(uint32_t _tid, size_t buffer_size, int64_t symbol_cache_size);
+void spall_auto_thread_quit(void);
+#if _MSC_VER && !__clang__
+#ifndef _PROCESSTHREADSAPI_H_
+extern __declspec(dllimport) int(__stdcall TlsSetValue)(unsigned long dwTlsIndex, void* lpTlsValue);
+#endif
+extern unsigned long spall_auto__tls_index; // DWORD
+#define spall__thread_on() TlsSetValue(spall_auto__tls_index, (void *)1)
+#define spall__thread_off() TlsSetValue(spall_auto__tls_index, (void *)0)
+#define _Thread_local __declspec( thread )
+#else
+#define spall__thread_off() 0
+#define spall__thread_on() 0
+#endif
+#define spall_auto_thread_init(tid, buffer_size, symbol_cache_size) (spall_auto_thread_init(tid, buffer_size, symbol_cache_size), spall__thread_on())
+#define spall_auto_thread_quit() (spall__thread_off(), spall_auto_thread_quit())
+
+
+#define SPALL_DEFAULT_BUFFER_SIZE (64 * 1024 * 1024)
+#define SPALL_DEFAULT_SYMBOL_CACHE_SIZE (100000)
+
+#ifdef __cplusplus
 }
 #endif
-#endif // endif SPALL_AUTO_H
+#endif
 
 #ifdef SPALL_AUTO_IMPLEMENTATION
-#ifndef SPALL_AUTO_IMPLEMENTED_H
-#define SPALL_AUTO_IMPLEMENTED_H
+
+#ifndef SPALL_AUTO_IMPLEMENTED
+#define SPALL_AUTO_IMPLEMENTED
 
 #ifdef __cplusplus
 extern "C" {
-    #endif
+#endif
 
-    #include <stdint.h>
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <string.h>
-    #include <x86intrin.h>
+#include "spall.h"
 
-    #if !SPALL_IS_WINDOWS
-    #include <stdatomic.h>
-    #include <time.h>
-    #include <pthread.h>
-    #include <unistd.h>
-    #include <errno.h>
-    #elif SPALL_IS_MSVC
-    static DWORD spall_auto__tls_index = 0xFFFFFFFF;
-    #endif
+static SpallProfile spall_ctx;
+static AddrHash global_addr_map;
+static _Thread_local SpallBuffer spall_buffer;
+static _Thread_local AddrHash addr_map;
+static _Thread_local uint32_t tid;
+static _Thread_local bool spall_thread_running = false;
 
-    #if SPALL_IS_WINDOWS
-    #include <windows.h>
-    #include <process.h>
+#include <stdlib.h>
+#include <stdint.h>
+#if !_WIN32
+#include <dlfcn.h>
+#include <time.h>
+#include <pthread.h>
+#include <unistd.h>
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 
-    typedef ptrdiff_t ssize_t;
-    typedef HANDLE Spall_ThreadHandle;
-
-    #define spall_thread_start(t) ((t)->writer.thread = (HANDLE) _beginthread(spall_writer, 0, t))
-    #define spall_thread_end(t)   WaitForSingleObject((t)->writer.thread, INFINITE)
-    #else
-    typedef pthread_t Spall_ThreadHandle;
-    #define spall_thread_start(t) pthread_create(&(t)->writer.thread, NULL, spall_writer, (void *) (t))
-    #define spall_thread_end(t)   pthread_join((t)->writer.thread, NULL)
-    #endif
-
-    #if SPALL_IS_MSVC
-    #define _CRT_SECURE_NO_WARNINGS
-    #define SPALL_NOINSTRUMENT // Can't noinstrument on MSVC!
-    #define SPALL_FORCEINLINE __forceinline
-
-    #define Spall_Atomic volatile
-    #else
-    #define SPALL_NOINSTRUMENT __attribute__((no_instrument_function))
-    #define SPALL_FORCEINLINE __attribute__((always_inline))
-
-    #define Spall_Atomic _Atomic
-    #define __debugbreak() __builtin_trap()
-    #endif
-
-    #define SPALL_FN static inline SPALL_NOINSTRUMENT
-    #define SPALL_MIN(a, b) (((a) < (b)) ? (a) : (b))
-
-    #pragma pack(push, 1)
-
-    typedef struct SpallHeader {
-        uint64_t magic_header; // = 0xABADF00D
-        uint64_t version; // = 1
-        double   timestamp_unit;
-        uint64_t known_address; // Address for spall_auto_init, for skew-correction
-        uint16_t program_path_len;
-    } SpallHeader;
-
-    enum {
-        SpallEventType_Invalid    = 0,
-        SpallEventType_MicroBegin = 1,
-        SpallEventType_MicroEnd   = 2,
-    };
-
-    typedef struct SpallMicroBeginEvent {
-        uint64_t type_when;
-        uint64_t address;
-        uint64_t caller;
-    } SpallMicroBeginEvent;
-
-    typedef struct SpallMicroEndEvent {
-        uint64_t type_when;
-    } SpallMicroEndEvent;
-
-    typedef struct SpallBufferHeader {
-        uint32_t size;
-        uint32_t tid;
-    } SpallBufferHeader;
-
-    #pragma pack(pop)
-
-    typedef struct SpallProfile {
-        double stamp_scale;
-        FILE *file;
-    } SpallProfile;
-
-    typedef Spall_Atomic uint64_t Spall_Futex;
-    typedef struct SpallBuffer {
-        uint8_t *data;
-        size_t   length;
-
-        // if true, write to upper-half, else lower-half
-        size_t sub_length;
-        bool   write_half;
-
-        struct {
-            Spall_Atomic bool     is_running;
-            Spall_ThreadHandle    thread;
-            Spall_Atomic uint64_t ptr;
-            Spall_Atomic size_t   size;
-        } writer;
-
-        size_t   head;
-        uint32_t thread_id;
-    } SpallBuffer;
+static inline unsigned long __builtin_clzl(uint64_t x) { unsigned long result; _BitScanReverse64(&result, x); return result ^ 63; }
+static HANDLE process;
+#if _MSC_VER && !__clang__
+static DWORD spall_auto__tls_index = 0xFFFFFFFF;
+#endif
+#endif
 
 
-    // Cross-platform wrappers
-    #if SPALL_IS_LINUX
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <string.h>
-    #include <unistd.h>
-    #include <fcntl.h>
-    #include <sys/syscall.h>
-    #include <sys/mman.h>
-    #include <asm/unistd.h>
-    #include <linux/futex.h>
-    #include <linux/limits.h>
-    #include <linux/perf_event.h>
+// we're not checking overflow here...Don't do stupid things with input sizes
+SPALL_FN uint64_t next_pow2(uint64_t x) {
+    return 1ull << (64ull - __builtin_clzl(x - 1));
+}
 
-    SPALL_FN bool get_program_path(char **out_path) {
-        char path[PATH_MAX] = {0};
-        uint32_t size = sizeof(path);
+// This is not thread-safe... Use one per thread!
+SPALL_FN void ah_init(AddrHash *ah, int64_t size) {
+    ah->entries.cap = size;
+    ah->entries.arr = (SymEntry *)calloc(sizeof(SymEntry), size);
+    ah->entries.len = 0;
 
-        ssize_t buff_len = (ssize_t)readlink("/proc/self/exe", path, size - 1);
-        if (buff_len == -1) {
-            *out_path = NULL;
-            return false;
-        }
+    ah->hashes.len = next_pow2(size);
+    ah->hashes.arr = (int64_t *)malloc(sizeof(int64_t) * ah->hashes.len);
 
-        char *post_path = (char *)calloc(PATH_MAX, 1);
-        if (realpath(path, post_path) == NULL) {
-            free(post_path);
-            *out_path = NULL;
-            return false;
-        }
+    for (uint64_t i = 0; i < ah->hashes.len; i++) {
+        ah->hashes.arr[i] = -1;
+    }
+}
 
-        *out_path = post_path;
+SPALL_FN void ah_free(AddrHash *ah) {
+    free(ah->entries.arr);
+    free(ah->hashes.arr);
+    memset(ah, 0, sizeof(AddrHash));
+}
+
+// fibhash addresses
+SPALL_FN int ah_hash(void *addr) {
+    return (int)(((uint32_t)(uintptr_t)addr) * 2654435769);
+}
+
+#if !_WIN32
+// Replace me with your platform's addr->name resolver if needed
+SPALL_FN bool get_addr_name(void *addr, Name *name_ret) {
+    Dl_info info;
+    if (!dladdr(addr, &info)) {
+        return false;
+    }
+
+    if (info.dli_sname != NULL) {
+        char *str = (char *)info.dli_sname;
+        size_t len = strlen(str);
+        Name name;
+        name.str = str;
+        name.len = len;
+        *name_ret = name;
         return true;
     }
 
-    SPALL_FN uint64_t mul_u64_u32_shr(uint64_t cyc, uint32_t mult, uint32_t shift) {
-        __uint128_t x = cyc;
-        x *= mult;
-        x >>= shift;
-        return (uint64_t)x;
+    return false;
+}
+#else
+
+#define TokenStream FuckYouWindows
+#include <Dbghelp.h>
+#undef TokenStream
+
+#pragma comment(lib, "User32")
+#pragma comment(lib, "Dbghelp")
+#pragma comment(lib, "Synchronization")
+
+SPALL_FN bool get_addr_name(void *addr, Name *name_ret) {
+    bool result = false;
+    struct {
+        SYMBOL_INFO si;
+        char name[256];
+    } symbol = {{sizeof(symbol.si)}};
+    symbol.si.MaxNameLen = sizeof(symbol.name);
+    static LONG sym_lock = 0;
+    LONG locked = 1;
+    while (InterlockedCompareExchange(&sym_lock, locked, 0) != 0) {
+        WaitOnAddress(&sym_lock, &locked, sizeof(locked), INFINITE);
+    }
+    {
+        spall_buffer_flush(&spall_ctx, &spall_buffer);
+        spall_buffer_begin_args(&spall_ctx, &spall_buffer, "Symbol Resolve", sizeof("Symbol Resolve") - 1, symbol.si.Name, symbol.si.NameLen, (double)__rdtsc(), tid, 0);
+        if (SymFromAddr(process, (DWORD64)addr, NULL, &symbol.si)) {
+            char *str = symbol.si.Name;
+            size_t len = symbol.si.NameLen;
+            Name name;
+            name.str = (char *)memcpy(calloc(len + 1, 1), (void *)str, len);
+            name.len = (int)len;
+            *name_ret = name;
+            result = true;
+        }
+        spall_buffer_end_ex(&spall_ctx, &spall_buffer, (double)__rdtsc(), tid, 0);
+    }
+    InterlockedExchange(&sym_lock, 0);
+    WakeByAddressSingle(&sym_lock);
+    return result;
+}
+#endif
+
+SPALL_FN bool ah_insert(AddrHash *ah, void *addr, Name name) {
+    int addr_hash = ah_hash(addr);
+    uint64_t hv = ((uint64_t)addr_hash) & (ah->hashes.len - 1);
+    for (uint64_t i = 0; i < ah->hashes.len; i++) {
+        uint64_t idx = (hv + i) & (ah->hashes.len - 1);
+
+        int64_t e_idx = ah->hashes.arr[idx];
+        if (e_idx == -1) {
+            SymEntry entry = {.addr = addr, .name = name};
+            ah->hashes.arr[idx] = ah->entries.len;
+            ah->entries.arr[ah->entries.len] = entry;
+            ah->entries.len += 1;
+            return true;
+        }
+
+        if ((uint64_t)ah->entries.arr[e_idx].addr == (uint64_t)addr) {
+            return true;
+        }
     }
 
-    SPALL_FN long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu, int group_fd, unsigned long flags) {
-        return syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
+    // The symbol map is full, make the symbol map bigger!
+    return false;
+}
+
+SPALL_FN bool ah_get(AddrHash *ah, void *addr, Name *name_ret) {
+    int addr_hash = ah_hash(addr);
+    uint64_t hv = ((uint64_t)addr_hash) & (ah->hashes.len - 1);
+    for (uint64_t i = 0; i < ah->hashes.len; i++) {
+        uint64_t idx = (hv + i) & (ah->hashes.len - 1);
+
+        int64_t e_idx = ah->hashes.arr[idx];
+        if (e_idx == -1) {
+
+            Name name;
+            if (!get_addr_name(addr, &name)) {
+                // Failed to get a name for the address!
+                return false;
+            }
+
+            SymEntry entry = {.addr = addr, .name = name};
+            ah->hashes.arr[idx] = ah->entries.len;
+            ah->entries.arr[ah->entries.len] = entry;
+            ah->entries.len += 1;
+
+            *name_ret = name;
+            return true;
+        }
+
+        if ((uint64_t)ah->entries.arr[e_idx].addr == (uint64_t)addr) {
+            *name_ret = ah->entries.arr[e_idx].name;
+            return true;
+        }
     }
 
-    SPALL_FN double get_rdtsc_multiplier(void) {
-        struct perf_event_attr pe = {
-            .type = PERF_TYPE_HARDWARE,
-            .size = sizeof(struct perf_event_attr),
-            .config = PERF_COUNT_HW_INSTRUCTIONS,
-            .disabled = 1,
-            .exclude_kernel = 1,
-            .exclude_hv = 1
-        };
+    // The symbol map is full, make the symbol map bigger!
+    return false;
+}
 
-        int fd = (int)perf_event_open(&pe, 0, -1, -1, 0);
-        if (fd == -1) {
-            perror("perf_event_open failed");
-            return 1;
+#ifdef __linux__
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <linux/perf_event.h>
+#include <asm/unistd.h>
+#include <sys/mman.h>
+
+SPALL_FN uint64_t mul_u64_u32_shr(uint64_t cyc, uint32_t mult, uint32_t shift) {
+    __uint128_t x = cyc;
+    x *= mult;
+    x >>= shift;
+    return x;
+}
+
+SPALL_FN long perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
+    int cpu, int group_fd, unsigned long flags) {
+    return syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
+}
+
+SPALL_FN double get_rdtsc_multiplier() {
+    struct perf_event_attr pe = {
+        .type = PERF_TYPE_HARDWARE,
+        .size = sizeof(struct perf_event_attr),
+        .config = PERF_COUNT_HW_INSTRUCTIONS,
+        .disabled = 1,
+        .exclude_kernel = 1,
+        .exclude_hv = 1
+    };
+
+    int fd = perf_event_open(&pe, 0, -1, -1, 0);
+    if (fd == -1) {
+        perror("perf_event_open failed");
+        return 1;
+    }
+    void *addr = mmap(NULL, 4*1024, PROT_READ, MAP_SHARED, fd, 0);
+    if (!addr) {
+        perror("mmap failed");
+        return 1;
+    }
+    struct perf_event_mmap_page *pc = (struct perf_event_mmap_page *)addr;
+    if (pc->cap_user_time != 1) {
+        fprintf(stderr, "Perf system doesn't support user time\n");
+        return 1;
+    }
+    double nanos = (double)mul_u64_u32_shr(1000000, pc->time_mult, pc->time_shift);
+    return nanos / 1000000000;
+}
+
+
+#pragma pack(1)
+typedef struct {
+    uint8_t  ident[16];
+    uint16_t type;
+    uint16_t machine;
+    uint32_t version;
+    uint64_t entrypoint;
+    uint64_t program_hdr_offset;
+    uint64_t section_hdr_offset;
+    uint32_t flags;
+    uint16_t eh_size;
+    uint16_t program_hdr_entry_size;
+    uint16_t program_hdr_num;
+    uint16_t section_hdr_entry_size;
+    uint16_t section_hdr_num;
+    uint16_t section_hdr_str_idx;
+} ELF64_Header;
+
+typedef struct {
+    uint32_t name;
+    uint32_t type;
+    uint64_t flags;
+    uint64_t addr;
+    uint64_t offset;
+    uint64_t size;
+    uint32_t link;
+    uint32_t info;
+    uint64_t addr_align;
+    uint64_t entry_size;
+} ELF64_Section_Header;
+
+typedef struct {
+    uint32_t name;
+    uint8_t  info;
+    uint8_t  other;
+    uint16_t section_hdr_idx;
+    uint64_t value;
+    uint64_t size;
+} ELF64_Sym;
+#pragma pack()
+
+int load_self(AddrHash *ah) {
+    int fd = open("/proc/self/exe", O_RDONLY);
+    uint64_t length = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+
+    #define round_size(addr, size) (((addr) + (size)) - ((addr) % (size)))
+    uint64_t aligned_length = round_size(length, 0x1000);
+    uint8_t *self = (uint8_t *)mmap(NULL, aligned_length, PROT_READ, MAP_FILE | MAP_SHARED, fd, 0);
+    close(fd);
+
+    ELF64_Header *elf_hdr = (ELF64_Header *)self;
+    ELF64_Section_Header *section_hdr_table = (ELF64_Section_Header *)(self + elf_hdr->section_hdr_offset);
+    ELF64_Section_Header *section_strtable_hdr = &section_hdr_table[elf_hdr->section_hdr_str_idx];
+    char *strtable_ptr = (char *)self + section_strtable_hdr->offset;
+
+    size_t symtab_idx = 0;
+    size_t symstrtab_idx = 0;
+
+    int i = 0;
+    for (; i < elf_hdr->section_hdr_num; i += 1) {
+        ELF64_Section_Header *s_hdr = &section_hdr_table[i];
+
+        char *name = strtable_ptr + s_hdr->name;
+        if (strncmp(name, ".symtab", sizeof(".symtab")) == 0) {
+            symtab_idx = i;
+            symstrtab_idx = s_hdr->link;
+            break;
         }
-        void *addr = mmap(NULL, 4*1024, PROT_READ, MAP_SHARED, fd, 0);
-        if (!addr) {
-            perror("mmap failed");
-            return 1;
+    }
+    if (i == elf_hdr->section_hdr_num) return 0;
+
+    ELF64_Section_Header *symtab_section = (ELF64_Section_Header *)(
+        self + elf_hdr->section_hdr_offset + (symtab_idx * elf_hdr->section_hdr_entry_size)
+    );
+    ELF64_Section_Header *symtab_str_section = (ELF64_Section_Header *)(
+        self + elf_hdr->section_hdr_offset + (symstrtab_idx * elf_hdr->section_hdr_entry_size)
+    );
+
+    #define ELF64_ST_TYPE(info) ((info)&0xf)
+    #define STT_FUNC 2
+    for (size_t i = 0; i < symtab_section->size; i += symtab_section->entry_size) {
+        ELF64_Sym *sym = (ELF64_Sym *)(self + symtab_section->offset + i);
+
+        uint8_t type = ELF64_ST_TYPE(sym->info);
+        if (type != STT_FUNC) {
+            continue;
         }
-        struct perf_event_mmap_page *pc = (struct perf_event_mmap_page *)addr;
-        if (pc->cap_user_time != 1) {
-            fprintf(stderr, "Perf system doesn't support user time\n");
-            return 1;
+
+        char *name_str = (char *)&self[symtab_str_section->offset + sym->name];
+
+        // load global symbol cache!
+        Name name;
+        name.str = name_str;
+        name.len = strlen(name_str);
+
+        // if we're dealing with C++ BS, demangle symbols poorly
+        if (name.len > 3 && name.str[0] == '_' && name.str[1] == 'Z' && name.str[2] == 'L') {
+            uint64_t name_len = 0;
+            int j = 3;
+            for (; j < name.len; j++) {
+                char ch = name.str[j];
+                if (ch == '\0') {
+                    break;
+                }
+
+                if (ch < '0' || ch > '9' || name_len > ((uint32_t)-1)) {
+                    break;
+                }
+
+                name_len = (name_len * 10) + (uint32_t)(ch & 0xf);
+            }
+            name.str = name.str + j;
+            name.len = SPALL_MIN(name_len, 255);
         }
-        double nanos = (double)mul_u64_u32_shr(1000000000000000ull, pc->time_mult, pc->time_shift);
-        double multiplier = nanos / 1000000000000000.0;
+        ah_insert(ah, (void *)sym->value, name);
+    }
+
+    return 1;
+}
+#elif __APPLE__
+#include <sys/types.h>
+#include <sys/sysctl.h>
+
+int load_self(AddrHash *ah) {
+    return 1;
+}
+
+SPALL_FN double get_rdtsc_multiplier() {
+    uint64_t freq;
+    size_t size = sizeof(freq);
+
+    sysctlbyname("machdep.tsc.frequency", &freq, &size, NULL, 0);
+
+    return 1000000.0 / (double)freq;
+}
+#elif _WIN32
+
+SPALL_FN double get_rdtsc_multiplier(void) {
+
+    // Cache the answer so that multiple calls never take the slow path more than once
+    static double multiplier = 0;
+    if (multiplier) {
         return multiplier;
     }
 
+    uint64_t tsc_freq = 0;
 
-    SPALL_FN SPALL_FORCEINLINE void spall_signal(Spall_Futex *addr) {
-        long ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, NULL, NULL, 0);
-        if (ret == -1) {
-            perror("Futex wake");
-            __debugbreak();
-        }
-    }
+    // Fast path: Load kernel-mapped memory page
+    HMODULE ntdll = LoadLibraryA("ntdll.dll");
+    if (ntdll) {
 
-    SPALL_FN SPALL_FORCEINLINE void spall_wait(Spall_Futex *addr, Spall_Futex val) {
-        for (;;) {
-            long ret = syscall(SYS_futex, addr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, val, NULL, NULL, 0);
-            if (ret == -1) {
-                if (errno != EAGAIN) {
-                    perror("Futex wait");
-                    __debugbreak();
-                } else {
-                    return;
-                }
-            } else if (ret == 0) {
-                return;
+        int (*NtQuerySystemInformation)(int, void *, unsigned int, unsigned int *) =
+        (int (*)(int, void *, unsigned int, unsigned int *))GetProcAddress(ntdll, "NtQuerySystemInformation");
+        if (NtQuerySystemInformation) {
+
+            volatile uint64_t *hypervisor_shared_page = NULL;
+            unsigned int size = 0;
+
+            // SystemHypervisorSharedPageInformation == 0xc5
+            int result = (NtQuerySystemInformation)(0xc5, (void *)&hypervisor_shared_page, sizeof(hypervisor_shared_page), &size);
+
+            // success
+            if (size == sizeof(hypervisor_shared_page) && result >= 0) {
+                // docs say ReferenceTime = ((VirtualTsc * TscScale) >> 64)
+                //      set ReferenceTime = 10000000 = 1 second @ 10MHz, solve for VirtualTsc
+                //       =>    VirtualTsc = 10000000 / (TscScale >> 64)
+                tsc_freq = (10000000ull << 32) / (hypervisor_shared_page[1] >> 32);
+                // If your build configuration supports 128 bit arithmetic, do this:
+                // tsc_freq = ((unsigned __int128)10000000ull << (unsigned __int128)64ull) / hypervisor_shared_page[1];
             }
         }
+        FreeLibrary(ntdll);
     }
 
-    #elif SPALL_IS_DARWIN
-
-    #include <mach-o/dyld.h>
-    #include <sys/types.h>
-    #include <sys/sysctl.h>
-
-    SPALL_FN double get_rdtsc_multiplier(void) {
-        uint64_t freq;
-        size_t size = sizeof(freq);
-
-        sysctlbyname("machdep.tsc.frequency", &freq, &size, NULL, 0);
-        return 1000000000.0 / (double)freq;
-    }
-
-    SPALL_FN bool get_program_path(char **out_path) {
-        char pre_path[1025];
-        uint32_t size = sizeof(pre_path);
-        if (_NSGetExecutablePath(pre_path, &size) == -1) {
-            *out_path = NULL;
-            return false;
-        }
-
-        char *post_path = (char *)malloc(1025);
-        if (realpath(pre_path, post_path) == NULL) {
-            free(post_path);
-            *out_path = NULL;
-            return false;
-        }
-
-        *out_path = post_path;
-        return true;
-    }
-
-    #define UL_COMPARE_AND_WAIT 0x00000001
-    #define ULF_WAKE_ALL        0x00000100
-    #define ULF_NO_ERRNO        0x01000000
-
-    /* timeout is specified in microseconds */
-    int __ulock_wait(uint32_t operation, void *addr, uint64_t value, uint32_t timeout);
-    int __ulock_wake(uint32_t operation, void *addr, uint64_t wake_value);
-
-    SPALL_FN SPALL_FORCEINLINE void spall_signal(Spall_Futex *addr) {
-        for (;;) {
-            int ret = __ulock_wake(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO, addr, 0);
-            if (ret >= 0) {
-                return;
-            }
-            ret = -ret;
-            if (ret == EINTR || ret == EFAULT) {
-                continue;
-            }
-            if (ret == ENOENT) {
-                return;
-            }
-            printf("futex signal fail?\n");
-            __debugbreak();
-        }
-    }
-
-    SPALL_FN SPALL_FORCEINLINE void spall_wait(Spall_Futex *addr, Spall_Futex val) {
-        for (;;) {
-            int ret = __ulock_wait(UL_COMPARE_AND_WAIT | ULF_NO_ERRNO, addr, val, 0);
-            if (ret >= 0) {
-                return;
-            }
-            ret = -ret;
-            if (ret == EINTR || ret == EFAULT) {
-                continue;
-            }
-            if (ret == ENOENT) {
-                return;
-            }
-
-            printf("futex wait fail? %d\n", ret);
-            __debugbreak();
-        }
-    }
-
-    #elif SPALL_IS_WINDOWS
-
-    SPALL_FN bool get_program_path(char **out_path) {
-        char *post_path = (char *)calloc(MAX_PATH, 1);
-        if (GetModuleFileNameA(NULL, post_path, MAX_PATH) == 0) {
-            *out_path = NULL;
-            return false;
-        }
-
-        *out_path = post_path;
-        return true;
-    }
-
-    SPALL_FN SPALL_FORCEINLINE double get_rdtsc_multiplier(void) {
-
-        // Cache the answer so that multiple calls never take the slow path more than once
-        static double multiplier = 0;
-        if (multiplier) {
-            return multiplier;
-        }
-
-        uint64_t tsc_freq = 0;
+    // Slow path
+    if (!tsc_freq) {
 
         // Get time before sleep
         uint64_t qpc_begin = 0; QueryPerformanceCounter((LARGE_INTEGER *)&qpc_begin);
@@ -391,355 +495,247 @@ extern "C" {
         // Do the math to extrapolate the RDTSC ticks elapsed in 1 second
         uint64_t qpc_freq = 0; QueryPerformanceFrequency((LARGE_INTEGER *)&qpc_freq);
         tsc_freq = (tsc_end - tsc_begin) * qpc_freq / (qpc_end - qpc_begin);
-
-        multiplier = 1000000000.0 / (double)tsc_freq;
-        return multiplier;
     }
 
-    SPALL_FN SPALL_FORCEINLINE void spall_signal(Spall_Futex *addr) {
-        WakeByAddressSingle((void *)addr);
+    // Failure case
+    if (!tsc_freq) {
+        tsc_freq = 1000000000;
     }
 
-    SPALL_FN SPALL_FORCEINLINE void spall_wait(Spall_Futex *addr, Spall_Futex val) {
-        WaitOnAddress(addr, (void *)&val, sizeof(val), INFINITE);
+    multiplier = 1000000.0 / (double)tsc_freq;
+
+    return multiplier;
+}
+
+void load_self(AddrHash *map) {
+    (void)map;
+}
+
+#endif
+
+SPALL_NOINSTRUMENT SPALL_FORCEINLINE void (spall_auto_thread_init)(uint32_t _tid, size_t buffer_size, int64_t symbol_cache_size) {
+    uint8_t *buffer = (uint8_t *)malloc(buffer_size);
+    spall_buffer = (SpallBuffer){ 0 };
+    spall_buffer.data = buffer;
+    spall_buffer.length = buffer_size;
+
+    // removing initial page-fault bubbles to make the data a little more accurate, at the cost of thread spin-up time
+    memset(buffer, 1, buffer_size);
+
+    spall_buffer_init(&spall_ctx, &spall_buffer);
+
+    tid = _tid;
+    ah_init(&addr_map, symbol_cache_size);
+    spall_thread_running = true;
+}
+
+void (spall_auto_thread_quit)(void) {
+#if _MSC_VER && !__clang__
+    TlsSetValue(spall_auto__tls_index, (void *)0);
+#endif
+    spall_thread_running = false;
+    ah_free(&addr_map);
+    spall_buffer_quit(&spall_ctx, &spall_buffer);
+    free(spall_buffer.data);
+}
+
+void spall_auto_init(char *filename) {
+    spall_ctx = spall_init_file_ex(filename, get_rdtsc_multiplier(), false);
+    ah_init(&global_addr_map, 10000);
+    load_self(&global_addr_map);
+#if _WIN32
+    static bool sym_initted = false;
+    if (!sym_initted) {
+        process = GetCurrentProcess();
+        char temp_data[512];
+        SpallBuffer temp = { temp_data, sizeof(temp_data) };
+        spall_buffer_init(&spall_ctx, &temp);
+        spall_buffer_begin(&spall_ctx, &temp, "SymInitialize", sizeof("SymInitialize") - 1, (double)__rdtsc());
+        SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_DEFERRED_LOADS);
+        SymInitialize(process, NULL, TRUE);
+        spall_buffer_end(&spall_ctx, &temp, (double)__rdtsc());
+        spall_buffer_quit(&spall_ctx, &temp);
+    }
+#if _MSC_VER && !__clang__
+    if (spall_auto__tls_index == 0xFFFFFFFF) {
+        spall_auto__tls_index = TlsAlloc();
+    }
+#endif
+#endif
+}
+
+void spall_auto_quit(void) {
+#if _WIN32
+#if _MSC_VER && !__clang__
+    if (spall_auto__tls_index != 0xFFFFFFFF) {
+        TlsFree(spall_auto__tls_index);
+        spall_auto__tls_index = 0xFFFFFFFF;
+    }
+#endif
+#endif
+    spall_quit(&spall_ctx);
+}
+
+#define not_found "(unknown name)" // only a macro to avoid bogged codegen
+SPALL_NOINSTRUMENT void __cyg_profile_func_enter(void *fn, void *caller) {
+    if (!spall_thread_running) {
+        return;
+    }
+    spall_thread_running = false;
+
+#if _MSC_VER && !__clang__
+    fn = ((char*)fn - 5);
+#endif
+
+    Name name;
+    if (
+#if !_WIN32
+        !ah_get(&global_addr_map, fn, &name) &&
+#endif
+        !ah_get(&addr_map, fn, &name)) {
+      name = (Name){0};
+      name.str = (char *)not_found;
+      name.len = sizeof(not_found) - 1;
     }
 
-    #endif
+    // printf("Begin: \"%s\"\n", name.str);
+    spall_buffer_begin_ex(&spall_ctx, &spall_buffer, name.str, name.len, (double)__rdtsc(), tid, 0);
+    // spall_buffer_flush(&spall_ctx, &spall_buffer);
+    // spall_flush(&spall_ctx);
+    spall_thread_running = true;
+}
 
-    // Auto-tracing impl
-    static SpallProfile spall_ctx;
-    static _Thread_local SpallBuffer *spall_buffer = NULL;
-    static _Thread_local bool spall_thread_running = false;
+SPALL_NOINSTRUMENT void __cyg_profile_func_exit(void *fn, void *caller) {
+    if (!spall_thread_running) {
+        return;
+    }
+    spall_thread_running = false;
 
-    #if SPALL_IS_WINDOWS
-    SPALL_FN void spall_writer(void *arg) {
-        #else
-        SPALL_FN void *spall_writer(void *arg) {
-            #endif
+    // printf("End\n");
+    spall_buffer_end_ex(&spall_ctx, &spall_buffer, (double)__rdtsc(), tid, 0);
+    // spall_buffer_flush(&spall_ctx, &spall_buffer);
+    // spall_flush(&spall_ctx);
+    spall_thread_running = true;
+}
 
-            SpallBuffer *buffer = (SpallBuffer *)arg;
-            while (buffer->writer.is_running) {
-                spall_wait(&buffer->writer.ptr, 0);
-                if (!buffer->writer.is_running) { break; }
-                if (buffer->writer.ptr == 0) { continue; }
+#if _MSC_VER && !__clang__
 
-                size_t size = buffer->writer.size;
-                void *buffer_ptr = (void *)buffer->writer.ptr;
-                buffer->writer.ptr = 0;
+#define BE(_0,_1,_2,_3,_4,_5,_6,_7,NOTHING) \
+((uin ## NOTHING ## t64_t)(_7) << 56 | \
+    (uin ## NOTHING ## t64_t)(_6) << 48 | \
+    (uin ## NOTHING ## t64_t)(_5) << 40 | \
+    (uin ## NOTHING ## t64_t)(_4) << 32 | \
+    (uin ## NOTHING ## t64_t)(_3) << 24 | \
+    (uin ## NOTHING ## t64_t)(_2) << 16 | \
+    (uin ## NOTHING ## t64_t)(_1) <<  8 | \
+    (uin ## NOTHING ## t64_t)(_0) <<  0)
 
-                fwrite(buffer_ptr, size, 1, spall_ctx.file);
-            }
-
-            #if !SPALL_IS_WINDOWS
-            return NULL;
-            #endif
-        }
-
-        SPALL_FN SPALL_FORCEINLINE bool spall__file_write(void *p, size_t n) {
-            spall_buffer->writer.size = n;
-            spall_buffer->writer.ptr = (uint64_t)p;
-            spall_signal(&spall_buffer->writer.ptr);
-
-            while (spall_buffer->writer.ptr != 0) { _mm_pause(); }
-
-            return true;
-        }
-
-        SPALL_FN SPALL_FORCEINLINE bool spall_buffer_flush(void) {
-            if (!spall_buffer) return false;
-
-            size_t data_start = spall_buffer->write_half ? spall_buffer->sub_length : 0;
-
-            SpallBufferHeader *sbp = (SpallBufferHeader *)(spall_buffer->data + data_start);
-            if (spall_buffer->head > 0) {
-                sbp->size = (uint32_t)(spall_buffer->head - sizeof(SpallBufferHeader));
-                if (!spall__file_write(spall_buffer->data + data_start, spall_buffer->head)) return false;
-
-                spall_buffer->write_half = !spall_buffer->write_half;
-            }
-
-            data_start = spall_buffer->write_half ? spall_buffer->sub_length : 0;
-            sbp = (SpallBufferHeader *)(spall_buffer->data + data_start);
-            sbp->size = 0;
-            sbp->tid = spall_buffer->thread_id;
-
-            spall_buffer->head = sizeof(SpallBufferHeader);
-            return true;
-        }
-
-        SPALL_FN SPALL_FORCEINLINE bool spall_buffer_micro_begin(uint64_t addr, uint64_t caller) {
-            size_t ev_size = sizeof(SpallMicroBeginEvent);
-            if ((spall_buffer->head + ev_size) > spall_buffer->sub_length) {
-                if (!spall_buffer_flush()) {
-                    return false;
-                }
-            }
-
-            size_t data_start = spall_buffer->write_half ? spall_buffer->sub_length : 0;
-            SpallMicroBeginEvent *ev = (SpallMicroBeginEvent *)((spall_buffer->data + data_start) + spall_buffer->head);
-
-            uint64_t mask = ((uint64_t)0xFF) << (8 * 7);
-            uint64_t type_b = ((uint64_t)(uint8_t)SpallEventType_MicroBegin) << (8 * 7);
-            uint64_t when = __rdtsc();
-            ev->type_when = (~mask & when) | type_b;
-            ev->address = addr;
-            ev->caller = caller;
-
-            spall_buffer->head += ev_size;
-            return true;
-        }
-        SPALL_FN SPALL_FORCEINLINE bool spall_buffer_micro_end(void) {
-            uint64_t when = __rdtsc();
-
-            size_t ev_size = sizeof(SpallMicroEndEvent);
-            if ((spall_buffer->head + ev_size) > spall_buffer->sub_length) {
-                if (!spall_buffer_flush()) {
-                    return false;
-                }
-            }
-
-            size_t data_start = spall_buffer->write_half ? spall_buffer->sub_length : 0;
-            SpallMicroEndEvent *ev = (SpallMicroEndEvent *)(((char *)spall_buffer->data + data_start) + spall_buffer->head);
-
-            uint64_t mask = ((uint64_t)0xFF) << (8 * 7);
-            uint64_t type_b = ((uint64_t)(uint8_t)SpallEventType_MicroEnd) << (8 * 7);
-            ev->type_when = (~mask & when) | type_b;
-
-            spall_buffer->head += ev_size;
-            return true;
-        }
-
-
-        SPALL_NOINSTRUMENT SPALL_FORCEINLINE bool (spall_auto_thread_init)(uint32_t thread_id, size_t buffer_size) {
-            if (buffer_size < 512) { return false; }
-            if (spall_buffer != NULL) { return false; }
-
-            spall_buffer = (SpallBuffer *)calloc(sizeof(SpallBuffer), 1);
-            spall_buffer->data = (uint8_t *)malloc(buffer_size);
-            spall_buffer->length = buffer_size;
-            spall_buffer->thread_id = thread_id;
-            spall_buffer->sub_length = buffer_size / 2;
-
-            // removing initial page-fault bubbles to make the data a little more accurate, at the cost of thread spin-up time
-            memset(spall_buffer->data, 1, spall_buffer->length);
-
-            spall_buffer->writer.is_running = true;
-            spall_thread_start(spall_buffer);
-
-            spall_buffer_flush();
-            spall_thread_running = true;
-            return true;
-        }
-
-        void (spall_auto_thread_quit)(void) {
-            #if SPALL_IS_MSVC
-            TlsSetValue(spall_auto__tls_index, (void *)0);
-            #endif
-            spall_thread_running = false;
-            spall_buffer_flush();
-
-            spall_buffer->writer.is_running = false;
-            spall_buffer->writer.ptr = 1;
-            spall_signal(&spall_buffer->writer.ptr);
-            spall_thread_end(spall_buffer);
-
-            free(spall_buffer->data);
-            free(spall_buffer);
-            spall_buffer = NULL;
-        }
-
-        bool spall_auto_init(char *filename) {
-            if (!filename) return false;
-            memset(&spall_ctx, 0, sizeof(spall_ctx));
-
-            spall_ctx.file = fopen(filename, "wb"); // TODO: handle utf8 and long paths on windows
-            if (spall_ctx.file) { // basically freopen() but we don't want to force users to lug along another macro define
-                fclose(spall_ctx.file);
-                spall_ctx.file = fopen(filename, "ab");
-            }
-            if (!spall_ctx.file) { return false; }
-
-            spall_ctx.stamp_scale = get_rdtsc_multiplier();
-            SpallHeader header = {0};
-            header.magic_header = 0xABADF00D;
-            header.version = 1;
-            header.timestamp_unit = spall_ctx.stamp_scale;
-            header.known_address = (uint64_t)spall_auto_init;
-
-            char *program_path;
-            if (!get_program_path(&program_path)) { return false; }
-            uint16_t program_path_len = (uint16_t)strlen(program_path);
-
-            header.program_path_len = program_path_len;
-
-            size_t full_header_size = sizeof(SpallHeader) + (size_t)program_path_len;
-            uint8_t *full_header = (uint8_t *)malloc(full_header_size);
-            memcpy(full_header, &header, sizeof(SpallHeader));
-            memcpy(full_header + sizeof(SpallHeader), program_path, program_path_len);
-
-            size_t write_ret = fwrite(full_header, 1, full_header_size, spall_ctx.file);
-            if (write_ret < full_header_size) { return false; }
-
-            free(full_header);
-
-            #if SPALL_IS_MSVC
-            if (spall_auto__tls_index == 0xFFFFFFFF) {
-                spall_auto__tls_index = TlsAlloc();
-            }
-            #endif
-
-            return true;
-        }
-
-        void spall_auto_quit(void) {
-            #if SPALL_IS_MSVC
-            if (spall_auto__tls_index != 0xFFFFFFFF) {
-                TlsFree(spall_auto__tls_index);
-                spall_auto__tls_index = 0xFFFFFFFF;
-            }
-            #endif
-        }
-
-        SPALL_NOINSTRUMENT void __cyg_profile_func_enter(void *fn, void *caller) {
-            if (!spall_thread_running) {
-                return;
-            }
-            #if SPALL_IS_MSVC
-            fn = ((char*)fn - 5);
-            #endif
-
-            spall_thread_running = false;
-            spall_buffer_micro_begin((uint64_t)fn, (uint64_t)caller);
-            spall_thread_running = true;
-        }
-
-        SPALL_NOINSTRUMENT void __cyg_profile_func_exit(void *fn, void *caller) {
-            if (!spall_thread_running) {
-                return;
-            }
-
-            spall_thread_running = false;
-            spall_buffer_micro_end();
-            spall_thread_running = true;
-        }
-
-        #if SPALL_IS_MSVC
-        #define BE(_0,_1,_2,_3,_4,_5,_6,_7,NOTHING) \
-        ((uin ## NOTHING ## t64_t)(_7) << 56 | \
-            (uin ## NOTHING ## t64_t)(_6) << 48 | \
-            (uin ## NOTHING ## t64_t)(_5) << 40 | \
-            (uin ## NOTHING ## t64_t)(_4) << 32 | \
-            (uin ## NOTHING ## t64_t)(_3) << 24 | \
-            (uin ## NOTHING ## t64_t)(_2) << 16 | \
-            (uin ## NOTHING ## t64_t)(_1) <<  8 | \
-            (uin ## NOTHING ## t64_t)(_0) <<  0)
-
-        #define PHOOK_CAT__(a, b) a##b
-        #define PHOOK_CAT_(a, b) PHOOK_CAT__(a, b)
-        #define PHOOK_CAT(a, b) PHOOK_CAT_(a, b)
-        #define PHOOK_UNWRAP(...) __VA_ARGS__
-        #define PHOOK_IF_1(a, b) a
-        #define PHOOK_IF_0(a, b) b
-        #define PHOOK_IF(cond, a, b) PHOOK_CAT(PHOOK_IF_, cond)(PHOOK_UNWRAP a, PHOOK_UNWRAP b)
-        #define PHOOK(name, ENT, dest) \
-        __declspec(allocate(".text")) __declspec(dllexport) extern const uint64_t name[] = { \
+#define PHOOK_CAT__(a, b) a##b
+#define PHOOK_CAT_(a, b) PHOOK_CAT__(a, b)
+#define PHOOK_CAT(a, b) PHOOK_CAT_(a, b)
+#define PHOOK_UNWRAP(...) __VA_ARGS__
+#define PHOOK_IF_1(a, b) a
+#define PHOOK_IF_0(a, b) b
+#define PHOOK_IF(cond, a, b) PHOOK_CAT(PHOOK_IF_, cond)(PHOOK_UNWRAP a, PHOOK_UNWRAP b)
+#define PHOOK(name, ENT, dest) \
+__declspec(allocate(".text")) __declspec(dllexport) extern const uint64_t name[] = { \
+    BE( \
+        0x0F,0x1F,0x00,                                         /* nop */ \
+        0x9C,                                                   /* pushf */ \
+        0x50,                                                   /* push rax */ \
+        0x51,                                                   /* push rcx */ \
+        0x48,0xB8,                                              /* mov rax, spall_auto__tls_index */ \
+    ),(uint64_t)&spall_auto__tls_index,BE(                      /* abs64 relocation */ \
+        0x83,0x38,0xFF,                                         /* cmp qword ptr [rax], 0xFFFFFFFF */ \
+        0x75,0x04,                                              /* jne IS_PROFILING */ \
+        /* REENTRANT: */ \
+        0x59,                                                   /* pop rcx */ \
+        0x58,                                                   /* pop rax */ \
+        0x9D,                                                   /* popf */ \
+    ),BE( \
+        0xC3,                                                   /* ret */ \
+        /* IS_PROFILING: */ \
+        0x8B,0x08,                                              /* mov ecx, dword ptr [rax] */ \
+        /* check if we're already inside of penter, if so then don't call again */ \
+        0x65,0x48,0x8B,0x04,0x25,),BE(0x30,0x00,0x00,0x00,      /* mov rax, qword ptr gs:[0x30] */ \
+        0x48,0x8D,0x8C,0xC8,),BE(0x80,0x14,0x00,0x00,           /* lea rcx, [rax+rcx*8+0x1480] */ \
+        0x83,0x39,0x01,                                         /* cmp dword ptr [rcx], 1 */ \
+        0x75,),BE(0xE4,                                         /* jne REENTRANT */ \
+        0x49,0x50,                                              /* push r8 */ \
+        /* clone rsp into rdx and round down to 16 byte boundary to satisfy ABI */ \
+        0x52,                                                   /* push rdx */ \
+        0x48,0x89,0xE2,                                         /* mov rdx, rsp */ \
+        0x48,),BE(0x83,0xE4,0xF0,                               /* and rsp, 0xfffffffffffffff0 */ \
+        0xC6,0x01,0x00,                                         /* mov byte ptr [rcx], 0 */ \
+        0x48,0xB8,                                              /* mov rax, spall_auto_trace */ \
+    ),(uint64_t)dest,BE(                                        /* abs64 relocation */ \
+        0x52,                                                   /* push rdx */ \
+        0x49,0x51,                                              /* push r9 */ \
+        0x49,0x52,                                              /* push r10 */ \
+        0x49,0x53,                                              /* push r11 */ \
+        0x51,                                                   /* push rcx */ \
+    ),BE( \
+        0x48,0x81,0xEC,0x88,0x00,0x00,0x00,                     /* sub rsp, 0x88 */ \
+        0x0F,),BE(0x29,0x44,0x24,0x70,                          /* movaps xmmword ptr [rsp+0x70], xmm0 */ \
+        0x0F,0x29,0x4C,0x24,),BE(0x60,                          /* movaps xmmword ptr [rsp+0x60], xmm1 */ \
+        0x0F,0x29,0x54,0x24,0x50,                               /* movaps xmmword ptr [rsp+0x50], xmm2 */ \
+        0x0F,0x29,),BE(0x5C,0x24,0x40,                          /* movaps xmmword ptr [rsp+0x40], xmm3 */ \
+        0x0F,0x29,0x64,0x24,0x30,                               /* movaps xmmword ptr [rsp+0x30], xmm4 */ \
+    ), \
+    PHOOK_IF(ENT, (                                             /* if ENT */ \
             BE( \
-                0x0F,0x1F,0x00,                                         /* nop */ \
-                0x9C,                                                   /* pushf */ \
-                0x50,                                                   /* push rax */ \
-                0x51,                                                   /* push rcx */ \
-                0x48,0xB8,                                              /* mov rax, spall_auto__tls_index */ \
-            ),(uint64_t)&spall_auto__tls_index,BE(                      /* abs64 relocation */ \
-                0x83,0x38,0xFF,                                         /* cmp qword ptr [rax], 0xFFFFFFFF */ \
-                0x75,0x04,                                              /* jne IS_PROFILING */ \
-                /* REENTRANT: */ \
-                0x59,                                                   /* pop rcx */ \
-                0x58,                                                   /* pop rax */ \
-                0x9D,                                                   /* popf */ \
-            ),BE( \
-                0xC3,                                                   /* ret */ \
-                /* IS_PROFILING: */ \
-                0x8B,0x08,                                              /* mov ecx, dword ptr [rax] */ \
-                /* check if we're already inside of penter, if so then don't call again */ \
-                0x65,0x48,0x8B,0x04,0x25,),BE(0x30,0x00,0x00,0x00,      /* mov rax, qword ptr gs:[0x30] */ \
-                0x48,0x8D,0x8C,0xC8,),BE(0x80,0x14,0x00,0x00,           /* lea rcx, [rax+rcx*8+0x1480] */ \
-                0x83,0x39,0x01,                                         /* cmp dword ptr [rcx], 1 */ \
-                0x75,),BE(0xE4,                                         /* jne REENTRANT */ \
-                0x49,0x50,                                              /* push r8 */ \
-                /* clone rsp into rdx and round down to 16 byte boundary to satisfy ABI */ \
-                0x52,                                                   /* push rdx */ \
-                0x48,0x89,0xE2,                                         /* mov rdx, rsp */ \
-                0x48,),BE(0x83,0xE4,0xF0,                               /* and rsp, 0xfffffffffffffff0 */ \
-                0xC6,0x01,0x00,                                         /* mov byte ptr [rcx], 0 */ \
-                0x48,0xB8,                                              /* mov rax, spall_auto_trace */ \
-            ),(uint64_t)dest,BE(                                        /* abs64 relocation */ \
-                0x52,                                                   /* push rdx */ \
-                0x49,0x51,                                              /* push r9 */ \
-                0x49,0x52,                                              /* push r10 */ \
-                0x49,0x53,                                              /* push r11 */ \
-                0x51,                                                   /* push rcx */ \
-            ),BE( \
-                0x48,0x81,0xEC,0x88,0x00,0x00,0x00,                     /* sub rsp, 0x88 */ \
-                0x0F,),BE(0x29,0x44,0x24,0x70,                          /* movaps xmmword ptr [rsp+0x70], xmm0 */ \
-                0x0F,0x29,0x4C,0x24,),BE(0x60,                          /* movaps xmmword ptr [rsp+0x60], xmm1 */ \
-                0x0F,0x29,0x54,0x24,0x50,                               /* movaps xmmword ptr [rsp+0x50], xmm2 */ \
-                0x0F,0x29,),BE(0x5C,0x24,0x40,                          /* movaps xmmword ptr [rsp+0x40], xmm3 */ \
-                0x0F,0x29,0x64,0x24,0x30,                               /* movaps xmmword ptr [rsp+0x30], xmm4 */ \
-            ), \
-            PHOOK_IF(ENT, (                                             /* if ENT */ \
-                    BE( \
-                        0x0F,0x29,0x6C,0x24,0x20,                               /* movaps xmmword ptr [rsp+0x20], xmm5 */ \
-                        0x48,0x8B,0x4A,),BE(0x28,                               /* mov rcx, [rdx+0x28] */ \
-                        0xFF,0xD0,                                              /* call rax */ \
-                        0x0F,0x28,0x6C,0x24,0x20,                               /* movaps xmm3, xmmword ptr [rsp+0x20] */ \
-                    ) \
-                ),(                                                         /* else */ \
-                    BE( \
-                        0x0F,0x29,0x6C,0x24,0x20,                               /* movaps xmmword ptr [rsp+0x20], xmm5 */ \
-                        0x0F,0x1F,0x40,),BE(0x00,                               /* nop */ \
-                        0xFF,0xD0,                                              /* call rax */ \
-                        0x0F,0x28,0x6C,0x24,0x20,                               /* movaps xmm3, xmmword ptr [rsp+0x20] */ \
-                    ) \
-                )),                                                         /* endif */ \
+                0x0F,0x29,0x6C,0x24,0x20,                               /* movaps xmmword ptr [rsp+0x20], xmm5 */ \
+                0x48,0x8B,0x4A,),BE(0x28,                               /* mov rcx, [rdx+0x28] */ \
+                0xFF,0xD0,                                              /* call rax */ \
+                0x0F,0x28,0x6C,0x24,0x20,                               /* movaps xmm3, xmmword ptr [rsp+0x20] */ \
+            ) \
+        ),(                                                         /* else */ \
             BE( \
-                0x0F,0x28,0x64,0x24,0x30,                               /* movaps xmm3, xmmword ptr [rsp+0x30] */ \
-                0x0F,0x28,0x5C,),BE(0x24,0x40,                          /* movaps xmm3, xmmword ptr [rsp+0x40] */ \
-                0x0F,0x28,0x54,0x24,0x50,                               /* movaps xmm2, xmmword ptr [rsp+0x50] */ \
-                0x0F,),BE(0x28,0x4C,0x24,0x60,                          /* movaps xmm1, xmmword ptr [rsp+0x60] */ \
-                0x0F,0x28,0x44,0x24,),BE(0x70,                          /* movaps xmm0, xmmword ptr [rsp+0x70] */ \
-                0x48,0x81,0xC4,0x88,0x00,0x00,0x00,                     /* add rsp, 0x88 */ \
-            ),BE( \
-                0x59,                                                   /* pop rcx */ \
-                0xC6,0x01,0x01,                                         /* mov byte ptr [rcx], 1 */ \
-                0x49,0x5B,                                              /* pop r11 */ \
-                0x49,0x5A,                                              /* pop r10 */ \
-            ),BE( \
-                0x49,0x59,                                              /* pop r9 */ \
-                0x5C,                                                   /* pop rsp */ \
-                0x5A,                                                   /* pop rdx */ \
-                0x49,0x58,                                              /* pop r8 */ \
-                0x59,                                                   /* pop rcx */ \
-                0x58,                                                   /* pop rax */ \
-            ),BE( \
-                0x9D,                                                   /* popf */ \
-                0xC3,                                                   /* ret */ \
-                0xCC,                                                   /* int3 */ \
-                0xCC,                                                   /* int3 */ \
-                0xCC,                                                   /* int3 */ \
-                0xCC,                                                   /* int3 */ \
-                0xCC,                                                   /* int3 */ \
-                0xCC,                                                   /* int3 */ \
-            ), \
-        };
+                0x0F,0x29,0x6C,0x24,0x20,                               /* movaps xmmword ptr [rsp+0x20], xmm5 */ \
+                0x0F,0x1F,0x40,),BE(0x00,                               /* nop */ \
+                0xFF,0xD0,                                              /* call rax */ \
+                0x0F,0x28,0x6C,0x24,0x20,                               /* movaps xmm3, xmmword ptr [rsp+0x20] */ \
+            ) \
+        )),                                                         /* endif */ \
+    BE( \
+        0x0F,0x28,0x64,0x24,0x30,                               /* movaps xmm3, xmmword ptr [rsp+0x30] */ \
+        0x0F,0x28,0x5C,),BE(0x24,0x40,                          /* movaps xmm3, xmmword ptr [rsp+0x40] */ \
+        0x0F,0x28,0x54,0x24,0x50,                               /* movaps xmm2, xmmword ptr [rsp+0x50] */ \
+        0x0F,),BE(0x28,0x4C,0x24,0x60,                          /* movaps xmm1, xmmword ptr [rsp+0x60] */ \
+        0x0F,0x28,0x44,0x24,),BE(0x70,                          /* movaps xmm0, xmmword ptr [rsp+0x70] */ \
+        0x48,0x81,0xC4,0x88,0x00,0x00,0x00,                     /* add rsp, 0x88 */ \
+    ),BE( \
+        0x59,                                                   /* pop rcx */ \
+        0xC6,0x01,0x01,                                         /* mov byte ptr [rcx], 1 */ \
+        0x49,0x5B,                                              /* pop r11 */ \
+        0x49,0x5A,                                              /* pop r10 */ \
+    ),BE( \
+        0x49,0x59,                                              /* pop r9 */ \
+        0x5C,                                                   /* pop rsp */ \
+        0x5A,                                                   /* pop rdx */ \
+        0x49,0x58,                                              /* pop r8 */ \
+        0x59,                                                   /* pop rcx */ \
+        0x58,                                                   /* pop rax */ \
+    ),BE( \
+        0x9D,                                                   /* popf */ \
+        0xC3,                                                   /* ret */ \
+        0xCC,                                                   /* int3 */ \
+        0xCC,                                                   /* int3 */ \
+        0xCC,                                                   /* int3 */ \
+        0xCC,                                                   /* int3 */ \
+        0xCC,                                                   /* int3 */ \
+        0xCC,                                                   /* int3 */ \
+    ), \
+};
 
-        #pragma code_seg(".text")
-        PHOOK(_penter, 1, __cyg_profile_func_enter);
-        PHOOK(_pexit, 0, __cyg_profile_func_exit);
-        #endif
+#pragma code_seg(".text")
+PHOOK(_penter, 1, __cyg_profile_func_enter);
+PHOOK(_pexit, 0, __cyg_profile_func_exit);
+#endif
 
-        #ifdef __cplusplus
-    }
-    #endif
+#ifdef __cplusplus
+}
+#endif
 
-    #endif
-    #endif
+#endif
+#endif

@@ -2,7 +2,6 @@
 #include <cuik.h>
 #include <dyn_array.h>
 
-#include "spall_perf.h"
 #include "live.h"
 
 // hacky but i dont care
@@ -14,6 +13,7 @@
 #endif
 
 #include "bindgen.h"
+#include "spall_perf.h"
 
 #if CUIK_ALLOW_THREADS
 #include <threads.h>
@@ -98,7 +98,7 @@ static void test_diag(void) {
 int main(int argc, const char** argv) {
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_init("perf.spall");
-    spall_auto_thread_init(1, 1ull<<28ull);
+    spall_auto_thread_init(1, SPALL_DEFAULT_BUFFER_SIZE, SPALL_DEFAULT_SYMBOL_CACHE_SIZE);
     atexit(spall_die);
     #endif
 

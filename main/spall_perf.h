@@ -25,7 +25,7 @@ static _Thread_local SpallBuffer muh_buffer;
 
 void spallperf__start_thread(void) {
     #ifdef CUIK_USE_SPALL_AUTO
-    spall_auto_thread_init(1, 1ull<<28ull);
+    spall_auto_thread_init(1, SPALL_DEFAULT_BUFFER_SIZE, SPALL_DEFAULT_SYMBOL_CACHE_SIZE);
     #else
     if (cuikperf_is_active()) {
         size_t size = 4 * 1024 * 1024;
