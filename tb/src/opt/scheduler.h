@@ -27,6 +27,7 @@ void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_
     // if we're a branch, push our PHI nodes
     if (is_end) {
         for (User* u = n->users; u; u = u->next) {
+            if (!cfg_is_control(u->n)) continue;
             TB_Node* dst = cfg_next_region_control(u->n);
 
             // find predecessor index and do that edge

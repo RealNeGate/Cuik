@@ -8,6 +8,8 @@
 #define TB_OPTDEBUG_MEM2REG 0
 #define TB_OPTDEBUG_CODEGEN 0
 
+#define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
+
 #define DO_IF(cond) CONCAT(DO_IF_, cond)
 #define DO_IF_0(...)
 #define DO_IF_1(...) __VA_ARGS__
@@ -145,9 +147,11 @@ static bool is_mem_in_op(TB_Node* n) {
 // CFG analysis
 ////////////////////////////////
 static TB_Node* cfg_next_region_control(TB_Node* n) {
-    for (User* u = n->users; u; u = u->next) {
-        if (u->n->type == TB_REGION && u->n->input_count == 1) {
-            return u->n;
+    if (n->type != TB_REGION) {
+        for (User* u = n->users; u; u = u->next) {
+            if (u->n->type == TB_REGION && u->n->input_count == 1) {
+                return u->n;
+            }
         }
     }
 

@@ -120,6 +120,12 @@ static void schedule_late(TB_Passes* p, TB_Node* n) {
         lca = find_lca(p, lca, use_block);
     }
 
+    TB_OPTDEBUG(GCM)(
+        printf("  LATE v%u into .bb%d: ", n->gvn, lca->id),
+        print_node_sexpr(n, 0),
+        printf("\n")
+    );
+
     // tb_assert(lca, "missing least common ancestor");
     if (lca != NULL) {
         ptrdiff_t search = nl_map_get(p->scheduled, n);
@@ -133,6 +139,11 @@ static void schedule_late(TB_Passes* p, TB_Node* n) {
         }
 
         nl_hashset_put(&lca->items, n);
+    }
+
+    // schedule certain inputs later pl0x
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+        schedule_late(p, n->inputs[i]);
     }
 }
 

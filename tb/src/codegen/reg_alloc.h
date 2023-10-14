@@ -753,6 +753,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
             if (interval->ranges == NULL) continue;
 
             int time = interval->start;
+            assert(time != INT_MAX);
 
             int before_next_time = interval->start;
             if (dyn_array_length(ra.unhandled)) {

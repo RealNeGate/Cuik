@@ -704,7 +704,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
     // to reverse the instruction stream as we go, it's a linked list so it's not
     // hard.
     int bbid = nl_map_get_checked(ctx->cfg.node_to_block, bb_start).id;
-    DO_IF(TB_OPTDEBUG_CODEGEN)(printf("BB %d\n", bbid));
+    TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
 
     CUIK_TIMED_BLOCK("phase 4") {
         Inst *head = ctx->head, *last = NULL;
@@ -733,30 +733,12 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             ctx->head = &dummy;
 
             if (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY) {
-                if (n == end) {
-                    DO_IF(TB_OPTDEBUG_CODEGEN)(
-                        printf("  TERMINATOR %u: ", n->gvn),
-                        print_node_sexpr(n, 0),
-                        printf("\n")
-                    );
+                TB_OPTDEBUG(CODEGEN)(
+                    printf("  EFFECT %u: ", n->gvn),
+                    print_node_sexpr(n, 0),
+                    printf("\n")
+                );
 
-                    // writeback PHIs
-                    FOREACH_N(i, 0, our_phis) {
-                        PhiVal* v = &phi_vals[i];
-                        TB_DataType dt = v->phi->dt;
-
-                        int src = input_reg(ctx, v->n);
-
-                        hint_reg(ctx, v->dst, src);
-                        SUBMIT(inst_move(dt, v->dst, src));
-                    }
-                } else {
-                    DO_IF(TB_OPTDEBUG_CODEGEN)(
-                        printf("  EFFECT %u: ", n->gvn),
-                        print_node_sexpr(n, 0),
-                        printf("\n")
-                    );
-                }
 
                 isel(ctx, n, val->vreg);
 
@@ -779,7 +761,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                     val->vreg = DEF(n, n->dt);
                 }
 
-                DO_IF(TB_OPTDEBUG_CODEGEN)(
+                TB_OPTDEBUG(CODEGEN)(
                     printf("  DATA %u: ", n->gvn),
                     print_node_sexpr(n, 0),
                     printf("\n")
@@ -787,7 +769,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
                 isel(ctx, n, val->vreg);
             } else {
-                DO_IF(TB_OPTDEBUG_CODEGEN)(
+                TB_OPTDEBUG(CODEGEN)(
                     printf("  DEAD %u: ", n->gvn),
                     print_node_sexpr(n, 0),
                     printf("\n")
@@ -847,6 +829,23 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
         if (end->type != TB_END    && end->type != TB_TRAP &&
             end->type != TB_BRANCH && end->type != TB_UNREACHABLE) {
+            TB_OPTDEBUG(CODEGEN)(
+                printf("  TERMINATOR %u: ", n->gvn),
+                print_node_sexpr(n, 0),
+                printf("\n")
+            );
+
+            // writeback PHIs
+            FOREACH_N(i, 0, our_phis) {
+                PhiVal* v = &phi_vals[i];
+                TB_DataType dt = v->phi->dt;
+
+                int src = input_reg(ctx, v->n);
+
+                hint_reg(ctx, v->dst, src);
+                SUBMIT(inst_move(dt, v->dst, src));
+            }
+
             // implicit goto
             TB_Node* succ = cfg_next_control(end);
             if (ctx->fallthrough != succ) {
@@ -864,6 +863,11 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     TB_Function* restrict f = p->f;
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
+
+    if (!strcmp(f->super.name, "stbi__convert_format")) {
+        // reg_alloc_log = true;
+        tb_pass_print(p);
+    }
 
     Ctx ctx = {
         .module = f->super.module,
