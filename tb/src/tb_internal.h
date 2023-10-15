@@ -374,6 +374,11 @@ struct TB_ThreadInfo {
     TB_CodeRegion* code; // compiled output
 };
 
+typedef struct {
+    size_t count;
+    TB_External** data;
+} ExportList;
+
 struct TB_Module {
     bool is_jit;
 
@@ -394,6 +399,7 @@ struct TB_Module {
     TB_Arch target_arch;
     TB_System target_system;
     TB_FeatureSet features;
+    ExportList exports;
 
     // This is a hack for windows since they've got this idea
     // of a _tls_index
@@ -570,11 +576,6 @@ inline static bool tb_is_power_of_two(uint64_t x) {
 
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
 TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int index);
-
-typedef struct {
-    size_t count;
-    TB_External** data;
-} ExportList;
 
 ExportList tb_module_layout_sections(TB_Module* m);
 

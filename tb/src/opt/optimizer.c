@@ -261,11 +261,14 @@ TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
 }
 
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
+    uint64_t mask = tb__mask(dt.data);
+    x &= mask;
+
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->value = x;
 
-    Lattice* l = lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { x, x, ~x, x } });
+    Lattice* l = lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { x, x, ~x & mask, x } });
     lattice_universe_map(&p->universe, n, l);
 
     return gvn(p, n, sizeof(TB_NodeInt));
@@ -513,10 +516,6 @@ void print_node_sexpr(TB_Node* n, int depth) {
 // Returns NULL or a modified node (could be the same node, we can stitch it back into place)
 static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
     switch (n->type) {
-        case TB_NOT:
-        case TB_NEG:
-        return ideal_int_unary(p, f, n);
-
         // integer ops
         case TB_AND:
         case TB_OR:
@@ -561,9 +560,6 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         case TB_SIGN_EXT:
         case TB_ZERO_EXT:
         return ideal_extension(p, f, n);
-
-        case TB_INT2PTR:
-        return ideal_int2ptr(p, f, n);
 
         // truncate
         case TB_TRUNCATE:
@@ -659,11 +655,22 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
             return lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { num->value, num->value, ~num->value, num->value } });
         }
 
+        case TB_LOCAL:
+        case TB_SYMBOL:
+        return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = { LATTICE_KNOWN_NOT_NULL } });
+
         case TB_TRUNCATE:
         return dataflow_trunc(p, uni, n);
 
         case TB_ZERO_EXT:
         return dataflow_zext(p, uni, n);
+
+        case TB_SIGN_EXT:
+        return dataflow_sext(p, uni, n);
+
+        case TB_NEG:
+        case TB_NOT:
+        return dataflow_unary(p, uni, n);
 
         case TB_AND:
         case TB_OR:
@@ -678,6 +685,15 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         case TB_SHL:
         case TB_SHR:
         return dataflow_shift(p, uni, n);
+
+        // meet all inputs
+        case TB_PHI: {
+            Lattice* l = lattice_universe_get(uni, n->inputs[1]);
+            FOREACH_N(i, 2, n->input_count) {
+                l = lattice_meet(uni, l, lattice_universe_get(uni, n->inputs[i]));
+            }
+            return l;
+        }
 
         default: return NULL;
     }
@@ -748,6 +764,12 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         printf("]");
         break;
 
+        case LATTICE_POINTER: {
+            static const char* tri[] = { "unknown", "null", "~null" };
+            printf("[%s]", tri[l->_ptr.trifecta]);
+            break;
+        }
+
         default:
         break;
     }
@@ -806,7 +828,6 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
             // because certain optimizations apply when things are merged
             // we mark ALL users including the ones who didn't get changed.
             tb_pass_mark_users(p, k);
-            lattice_universe_map(&p->universe, k, new_type);
             return k;
         } else {
             lattice_universe_map(&p->universe, n, new_type);

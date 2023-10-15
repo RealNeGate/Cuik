@@ -68,6 +68,11 @@ int folding(void) {
     return 42+1 & 3 * 16;
 }
 
+int unary(int x) {
+    int mask = 16;
+    return x & -16;
+}
+
 short mul(void) {
     return (short)5 * (short)9;
 }
@@ -76,8 +81,17 @@ uint32_t bits(uint32_t x) {
     return (x << 2) & 1;
 }
 
-uint32_t gimme(uint32_t x) {
-    return (x >> 4) & 1;
+uint32_t gimme(uint32_t x, uint32_t y) {
+    return (x >> (y & 31)) & 1;
+}
+
+uint32_t jeans(int x) {
+    x &= 7;
+    return x & (1 << x);
+}
+
+int jake(int x) {
+    return x ? 5 : 2;
 }
 
 #if 0
