@@ -26,6 +26,8 @@ bool nl_hashset_remove(NL_HashSet* restrict hs, void* ptr);
 bool nl_hashset_put(NL_HashSet* restrict hs, void* ptr);
 size_t nl_hashset_lookup(NL_HashSet* restrict hs, void* ptr);
 
+void* nl_hashset_get2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_CompareFunc cmp);
+
 // this one takes a custom hash function
 void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_CompareFunc cmp);
 void nl_hashset_remove2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_CompareFunc cmp);
@@ -157,6 +159,27 @@ void nl_hashset_remove2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL
 
         i = (i + 1) & mask;
     } while (i != first);
+}
+
+void* nl_hashset_get2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_CompareFunc cmp) {
+    uint32_t h = hash(ptr);
+
+    size_t mask = (1 << hs->exp) - 1;
+    size_t first = h & mask, i = first;
+
+    do {
+        if (hs->data[i] == NULL) {
+            return NULL;
+        } else if (hs->data[i] == NL_HASHSET_TOMB) {
+            // go past it
+        } else if (hs->data[i] == ptr || cmp(hs->data[i], ptr)) {
+            return hs->data[i];
+        }
+
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    return NULL;
 }
 
 // returns old value

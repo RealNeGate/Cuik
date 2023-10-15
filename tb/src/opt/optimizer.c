@@ -264,6 +264,10 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->value = x;
+
+    Lattice* l = lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { x, x, ~x, x } });
+    lattice_universe_map(&p->universe, n, l);
+
     return gvn(p, n, sizeof(TB_NodeInt));
 }
 
@@ -647,6 +651,64 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
     }
 }
 
+// computes the type of a node based on it's inputs
+static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n) {
+    switch (n->type) {
+        case TB_INTEGER_CONST: {
+            TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
+            return lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { num->value, num->value, ~num->value, num->value } });
+        }
+
+        case TB_ZERO_EXT: return dataflow_zext(p, uni, n);
+
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        return dataflow_bits(p, uni, n);
+
+        case TB_ADD:
+        case TB_MUL:
+        return dataflow_arith(p, uni, n);
+
+        case TB_SUB:
+        return dataflow_sub(p, uni, n);
+
+        case TB_SHL:
+        case TB_SHR:
+        return dataflow_shift(p, uni, n);
+
+        default: return NULL;
+    }
+}
+
+// converts constant Lattice into constant node
+static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
+    // already a constant?
+    if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
+        return NULL;
+    }
+
+    switch (l->tag) {
+        case LATTICE_INT: {
+            // degenerate range
+            if (l->_int.min == l->_int.max) {
+                return make_int_node(p->f, p, n->dt, l->_int.max);
+            }
+
+            // all bits are known
+            uint64_t mask = tb__mask(n->dt.data);
+            if ((l->_int.known_zeros | l->_int.known_ones) == mask) {
+                uint64_t v = l->_int.known_ones & ~l->_int.known_zeros;
+                return make_int_node(p->f, p, n->dt, v);
+            }
+
+            return NULL;
+        }
+
+        default: return NULL;
+    }
+}
+
 static bool is_terminator(TB_Node* n) {
     return n->type == TB_BRANCH || n->type == TB_END || n->type == TB_TRAP || n->type == TB_UNREACHABLE;
 }
@@ -664,6 +726,26 @@ static void validate_node_users(TB_Node* n) {
         for (User* use = n->users; use; use = use->next) {
             tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
         }
+    }
+}
+
+static void print_lattice(Lattice* l) {
+    switch (l->tag) {
+        case LATTICE_INT:
+        printf("[%#"PRIx64, l->_int.min);
+        if (l->_int.min != l->_int.max) {
+            printf(" - %#"PRIx64, l->_int.max);
+        }
+
+        uint64_t known = l->_int.known_zeros | l->_int.known_ones;
+        if (known && known != UINT64_MAX) {
+            printf("; zeros=%#"PRIx64", ones=%#"PRIx64, l->_int.known_zeros, l->_int.known_ones);
+        }
+        printf("]");
+        break;
+
+        default:
+        break;
     }
 }
 
@@ -698,6 +780,35 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
         DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 10) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
 
+    // generate fancier type
+    if (n->dt.type >= TB_INT && n->dt.type <= TB_PTR) {
+        //   no type provided? just make a not-so-form fitting TOP
+        Lattice* new_type = dataflow(p, &p->universe, n);
+        if (new_type == NULL) {
+            new_type = lattice_top(&p->universe, n->dt);
+            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93mTOP\x1b[0m"));
+        } else {
+            // print fancy type
+            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m"));
+        }
+
+        // types that consist of one possible value are made into value constants.
+        k = try_as_const(p, n, new_type);
+        if (k != NULL) {
+            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
+
+            subsume_node(p, f, n, k);
+
+            // because certain optimizations apply when things are merged
+            // we mark ALL users including the ones who didn't get changed.
+            tb_pass_mark_users(p, k);
+            lattice_universe_map(&p->universe, k, new_type);
+            return k;
+        } else {
+            lattice_universe_map(&p->universe, n, new_type);
+        }
+    }
+
     // convert into matching identity
     k = identity(p, f, n, flags);
     if (n != k) {
@@ -709,7 +820,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
         return k;
     }
 
-    // common subexpression elim
+    // global value numbering
     k = nl_hashset_put2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k && (k != n)) {
         DO_IF(TB_OPTDEBUG_STATS)(p->stats.gvn_hit++);
@@ -811,6 +922,22 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
         p->gvn_nodes = nl_hashset_alloc(p->f->node_count);
     }
 
+    // make sure we have space for the lattice universe
+    if (p->universe.arena == NULL) {
+        TB_ThreadInfo* info = tb_thread_info(p->f->super.module);
+        if (info->type_arena.chunk_size == 0) {
+            // make new arena
+            tb_arena_create(&info->type_arena, TB_ARENA_LARGE_CHUNK_SIZE);
+        }
+
+        size_t count = p->f->node_count;
+        p->universe.arena = &info->type_arena;
+        p->universe.pool = nl_hashset_alloc(64);
+        p->universe.type_cap = count;
+        p->universe.types = tb_platform_heap_alloc(count * sizeof(Lattice*));
+        memset(p->universe.types, 0, count * sizeof(Lattice*));
+    }
+
     TB_Function* f = p->f;
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
@@ -849,6 +976,12 @@ void tb_pass_exit(TB_Passes* p) {
     nl_hashset_free(p->gvn_nodes);
     dyn_array_destroy(p->stack);
     dyn_array_destroy(p->locals);
+
+    if (p->universe.arena != NULL) {
+        tb_arena_clear(p->universe.arena);
+        nl_hashset_free(p->universe.pool);
+        tb_platform_heap_free(p->universe.types);
+    }
 
     tb_arena_clear(tmp_arena);
     tb_platform_heap_free(p);

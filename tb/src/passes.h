@@ -2,7 +2,7 @@
 #include "tb_internal.h"
 
 #define TB_OPTDEBUG_STATS   0
-#define TB_OPTDEBUG_PEEP    0
+#define TB_OPTDEBUG_PEEP    1
 #define TB_OPTDEBUG_LOOP    0
 #define TB_OPTDEBUG_GCM     0
 #define TB_OPTDEBUG_MEM2REG 0
@@ -14,6 +14,71 @@
 #define DO_IF_0(...)
 #define DO_IF_1(...) __VA_ARGS__
 
+////////////////////////////////
+// SCCP
+////////////////////////////////
+// TODO(NeGate): implement dual? from there i can do join with
+// dual(dual(x) ^ dual(y)) = join(x, y)
+typedef struct {
+    int64_t min, max;
+
+    // for known bit analysis
+    uint64_t known_zeros;
+    uint64_t known_ones;
+} LatticeInt;
+
+// a simplification of the set of all pointers (or floats)
+typedef enum {
+    LATTICE_UNKNOWN,        // top aka {nan, non-nan} or for pointers {null, non-null}
+
+    LATTICE_KNOWN_NAN = 1,  // {nan}
+    LATTICE_KNOWN_NOT_NAN,  // {non-nan}
+
+    LATTICE_KNOWN_NULL = 1, // {null}
+    LATTICE_KNOWN_NOT_NULL  // {non-null}
+} LatticeTrifecta;
+
+typedef struct {
+    LatticeTrifecta trifecta;
+} LatticeFloat;
+
+// TODO(NeGate): we might wanna store more info like aliasing, ownership and alignment.
+typedef struct {
+    LatticeTrifecta trifecta;
+} LatticePointer;
+
+// Represents the fancier type system within the optimizer, it's
+// all backed by my shitty understanding of lattice theory
+typedef struct {
+    enum {
+        LATTICE_INT,
+        LATTICE_FLOAT32,
+        LATTICE_FLOAT64,
+        LATTICE_POINTER,
+    } tag;
+    uint32_t pad;
+    union {
+        LatticeInt _int;
+        LatticeFloat _float;
+        LatticePointer _ptr;
+    };
+} Lattice;
+
+// hash-consing because there's a lot of
+// redundant types we might construct.
+typedef struct {
+    TB_Arena* arena;
+    NL_HashSet pool;
+
+    // track a lattice per node (basically all get one
+    // so a non-sparse array works)
+    size_t type_cap;
+    Lattice** types;
+} LatticeUniverse;
+
+////////////////////////////////
+// CFG
+////////////////////////////////
 typedef struct {
     size_t stride;
     uint64_t arr[];
@@ -34,14 +99,6 @@ typedef struct {
     int dst, src;
 } PhiVal;
 
-typedef struct {
-    DynArray(TB_Node*) items;
-
-    // uses gvn as key
-    size_t visited_cap; // in words
-    uint64_t* visited;
-} Worklist;
-
 typedef struct TB_BasicBlock {
     TB_Node* dom;
     TB_Node* end;
@@ -58,6 +115,17 @@ typedef struct TB_CFG {
 
 typedef NL_Map(TB_Node*, TB_BasicBlock*) TB_Scheduled;
 
+////////////////////////////////
+// Core optimizer
+////////////////////////////////
+typedef struct {
+    DynArray(TB_Node*) items;
+
+    // uses gvn as key
+    size_t visited_cap; // in words
+    uint64_t* visited;
+} Worklist;
+
 struct TB_Passes {
     TB_Function* f;
     TB_Scheduled scheduled;
@@ -73,6 +141,9 @@ struct TB_Passes {
 
     // sometimes we be using arrays of nodes, let's just keep one around for a bit
     DynArray(TB_Node*) stack;
+
+    // tracks the fancier type system
+    LatticeUniverse universe;
 
     // this is used to do GVN
     NL_HashSet gvn_nodes;

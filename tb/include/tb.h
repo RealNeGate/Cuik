@@ -8,6 +8,7 @@
 //   DSE  - dead store elimination
 //   GCM  - global code motion
 //   SROA - scalar replacement of aggregates
+//   SCCP - sparse conditional constant propagation
 //   RPO  - reverse postorder
 //   BB   - basic block
 #ifndef TB_CORE_H

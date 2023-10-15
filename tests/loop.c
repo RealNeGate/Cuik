@@ -64,8 +64,19 @@ typedef struct
     stbi_uc *img_buffer_original, *img_buffer_original_end;
 } stbi__context;
 
-static int stbi__parse_zlib_header(stbi__zbuf *a);
+int folding(void) {
+    return 42+1 & 3 * 16;
+}
 
+short mul(void) {
+    return (short)5 * (short)9;
+}
+
+uint32_t bits(uint32_t x) {
+    return (x << 2) & 1;
+}
+
+#if 0
 // returns 1 if the product is valid, 0 on overflow.
 // negative factors are considered invalid.
 int stbi__mul2sizes_valid(int a, int b)
@@ -107,10 +118,6 @@ static int bar(int n) {
     }
 
     return arr[1];
-}
-
-static int folding(void) {
-    return 42+1 & 3 * 16;
 }
 
 static int bitcast(float x) {
@@ -168,10 +175,6 @@ static uint64_t foo(uint64_t x, uint64_t y) {
 
 static int select_opt(int a, int b) {
     return a > 10 && !(b > 10);
-}
-
-short mul(void) {
-    return (short)5 * (short)9;
 }
 
 static void syscall_test(void) {
@@ -489,4 +492,4 @@ int main() {
     return 0;
 }
 #endif
-
+#endif
