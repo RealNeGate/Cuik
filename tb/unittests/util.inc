@@ -143,30 +143,32 @@ static void tb_test_link_library(TB_Linker  *linker,
   TB_Function *f_main = tb_function_create(                   \
       module, -1, "main", TB_LINKAGE_PUBLIC);                 \
                                                               \
-  tb_function_set_prototype(f_main, fp_main, NULL);           \
+  TB_ModuleSectionHandle text = tb_module_get_text(m);        \
+  tb_function_set_prototype(f_main, text, fp_main, NULL);     \
                                                               \
   if (f_main == NULL)                                         \
     ERROR("tb_function_create failed.");
 
 #define TB_TEST_MODULE_END_(name_, result_, print_asm_)          \
   {                                                              \
-    TB_Function *f = tb_first_function(module);                  \
-    while (f != NULL) {                                          \
-      TB_Passes *passes = tb_pass_enter(f, NULL);                \
+    TB_Symbol* sym;                                              \
+    while (sym = tb_symbol_iter_next(&it), sym) {                \
+      if (sym->tag == TB_SYMBOL_FUNCTION) {                      \
+        TB_Function *f = (TB_Function*) sym;                     \
+        TB_Passes *passes = tb_pass_enter(f, NULL);              \
                                                                  \
-      if (passes == NULL)                                        \
-        ERROR("tb_pass_enter failed.");                          \
+        if (passes == NULL)                                      \
+          ERROR("tb_pass_enter failed.");                        \
                                                                  \
-      TB_FunctionOutput *asm_out = tb_pass_codegen(passes, 1);   \
+        TB_FunctionOutput *asm_out = tb_pass_codegen(passes, 1); \
                                                                  \
-      if ((print_asm_) && asm_out != NULL) {                     \
-        printf("\n");                                            \
-        tb_output_print_asm(asm_out, stdout);                    \
+        if ((print_asm_) && asm_out != NULL) {                   \
+          printf("\n");                                          \
+          tb_output_print_asm(asm_out, stdout);                  \
+        }                                                        \
+                                                                 \
+        tb_pass_exit(passes);                                    \
       }                                                          \
-                                                                 \
-      tb_pass_exit(passes);                                      \
-                                                                 \
-      f = tb_next_function(f);                                   \
     }                                                            \
   }                                                              \
                                                                  \
