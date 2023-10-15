@@ -681,8 +681,6 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
     TB_Node* k = idealize(p, f, n, flags);
     DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
     while (k != NULL) {
-        print_step(p);
-
         DO_IF(TB_OPTDEBUG_STATS)(p->stats.rewrites++);
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
 
