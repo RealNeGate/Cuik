@@ -148,38 +148,111 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
 }
 
 static bool print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
-    if (!nl_hashset_put(visited, n)) {
-        return false;
-    }
+    do {
+        if (!nl_hashset_put(visited, n)) {
+            return false;
+        }
 
-    bool is_effect = tb_has_effects(n);
-    const char* fillcolor = is_effect ? "lightgrey" : "antiquewhite1";
-    if (n->dt.type == TB_MEMORY) {
-        fillcolor = "lightblue";
-    }
+        /*bool is_effect = tb_has_effects(n);
+        const char* fillcolor = is_effect ? "lightgrey" : "antiquewhite1";
+        if (n->dt.type == TB_MEMORY) {
+            fillcolor = "lightblue";
+        }*/
 
-    P("  r%p [style=\"filled\"; ordering=in; shape=box; fillcolor=%s; label=\"", n, fillcolor);
-    P("%zu: %s", n->gvn, tb_node_get_name(n));
-    P("\"];\n");
+        P("  r%u [ordering=in; shape=plaintext; label=", n->gvn);
+        switch (n->type) {
+            case TB_START: P("start"); break;
+            case TB_REGION: P("region"); break;
+            case TB_LOAD:  P("load"); break;
+            case TB_STORE: P("store"); break;
 
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-        TB_Node* in = n->inputs[i];
-        P("  r%p -> r%p\n", in, n);
-        print_graph_node(f, visited, callback, user_data, in);
-    }
+            case TB_INTEGER_CONST: {
+                TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
+                if (num->value < 0xFFFF) {
+                    P("%"PRId64, num->value);
+                } else {
+                    P("%#0"PRIx64, num->value);
+                }
+                break;
+            }
+
+            case TB_MEMBER_ACCESS: {
+                int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
+                P("\\\"+%td\\\"", offset);
+                break;
+            }
+
+            case TB_PROJ: {
+                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+                if (n->inputs[0]->type == TB_START) {
+                    if (index == 0) {
+                        P("ctrl");
+                    } else if (index == 1) {
+                        P("mem");
+                    } else if (index == 2) {
+                        P("rpc");
+                    } else {
+                        P("%c", 'a'+(index - 3));
+                    }
+                } else {
+                    P("%d", index);
+                }
+                break;
+            }
+
+            default:
+            P("%s", tb_node_get_name(n));
+            break;
+        }
+        P("]");
+
+        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+            TB_Node* in = n->inputs[i];
+
+            const char* color = "black";
+            TB_DataType dt = n->type == TB_PROJ ? n->dt : in->dt;
+
+            if (dt.type == TB_CONTROL) {
+                color = "red";
+            } else if (dt.type == TB_CONT) {
+                color = "purple";
+            } else if (dt.type == TB_MEMORY) {
+                color = "blue";
+            }
+
+            P("; r%u -> r%u [color=%s]", in->gvn, n->gvn, color);
+        }
+        P("\n");
+
+        // print all the inputs
+        FOREACH_N(i, 1, n->input_count) if (n->inputs[i]) {
+            print_graph_node(f, visited, callback, user_data, n->inputs[i]);
+        }
+
+        if (n->input_count == 0) break;
+        n = n->inputs[0];
+    } while (n != NULL);
 
     return true;
 }
 
-TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data) {
-    P("digraph %s {\n  rankdir=TB\n", f->super.name ? f->super.name : "unnamed");
+TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* user_data) {
+    TB_Function* f = opt->f;
+    P("digraph %s {\n", f->super.name ? f->super.name : "unnamed");
+
+    Worklist tmp_ws = { 0 };
+    worklist_alloc(&tmp_ws, f->node_count);
+
+    TB_CFG cfg = tb_compute_rpo2(f, &tmp_ws, &opt->stack);
 
     NL_HashSet visited = nl_hashset_alloc(f->node_count);
-    DynArray(TB_Node*) terminators = f->terminators;
-    dyn_array_for(i, terminators) {
-        print_graph_node(f, &visited, callback, user_data, terminators[i]);
+    FOREACH_N(i, 0, cfg.block_count) {
+        TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, tmp_ws.items[i]);
+        print_graph_node(f, &visited, callback, user_data, bb->end);
     }
     nl_hashset_free(visited);
+    worklist_free(&tmp_ws);
+    tb_free_cfg(&cfg);
 
-    P("}\n\n");
+    P("}\n");
 }

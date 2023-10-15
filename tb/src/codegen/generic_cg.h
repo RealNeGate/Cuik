@@ -864,10 +864,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_Function* restrict f = p->f;
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
-    if (!strcmp(f->super.name, "stbi__convert_format")) {
+    /*if (!strcmp(f->super.name, "stbi__convert_format")) {
         // reg_alloc_log = true;
         tb_pass_print(p);
-    }
+    }*/
 
     Ctx ctx = {
         .module = f->super.module,

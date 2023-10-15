@@ -81,20 +81,26 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     TB_Node* mem = n->inputs[1];
     TB_Node* addr = n->inputs[2];
     if (n->inputs[0] != NULL) {
-        TB_Node* base = addr;
-        while (base->type == TB_MEMBER_ACCESS || base->type == TB_ARRAY_ACCESS) {
-            base = base->inputs[1];
-        }
-
-        // loads based on LOCALs don't need control-dependence, it's actually kinda annoying
-        if (base->type == TB_LOCAL) {
+        // we've dependent on code which must always be run (START.mem)
+        if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_START) {
             set_input(p, n, NULL, 0);
             return n;
+        } else {
+            TB_Node* base = addr;
+            while (base->type == TB_MEMBER_ACCESS || base->type == TB_ARRAY_ACCESS) {
+                base = base->inputs[1];
+            }
+
+            // loads based on LOCALs don't need control-dependence, it's actually kinda annoying
+            if (base->type == TB_LOCAL) {
+                set_input(p, n, NULL, 0);
+                return n;
+            }
         }
     }
 
     // if LOAD has already been safely accessed we can relax our control dependency
-    if (n->inputs[0] != NULL && n->inputs[0]->type == TB_REGION && n->inputs[0]->input_count == 1) {
+    /*if (n->inputs[0] != NULL && n->inputs[0]->type == TB_REGION && n->inputs[0]->input_count == 1) {
         TB_Node* parent_bb = get_block_begin(n->inputs[0]->inputs[0]);
 
         for (User* u = find_users(p, parent_bb); u; u = u->next) {
@@ -106,7 +112,7 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
                 return n;
             }
         }
-    }
+    }*/
 
     return NULL;
 

@@ -6,12 +6,15 @@ void tb_free_cfg(TB_CFG* cfg) {
     nl_map_free(cfg->node_to_block);
 }
 
-TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* restrict p) {
-    Worklist* ws = &p->worklist;
+TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* p) {
+    return tb_compute_rpo2(f, &p->worklist, &p->stack);
+}
+
+TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_stack) {
     assert(dyn_array_length(ws->items) == 0);
 
     TB_CFG cfg = { 0 };
-    DynArray(TB_Node*) stack = p->stack;
+    DynArray(TB_Node*) stack = *tmp_stack;
     if (stack == NULL) {
         stack = dyn_array_create(TB_Node*, 1024);
     }
@@ -75,7 +78,7 @@ TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* restrict p) {
         }
     }
 
-    p->stack = stack;
+    *tmp_stack = stack;
     return cfg;
 }
 

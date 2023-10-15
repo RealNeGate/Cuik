@@ -501,7 +501,7 @@ struct User {
 
 struct TB_Node {
     TB_NodeType type;
-    uint16_t input_count; // number of node inputs.
+    uint16_t input_count;
     TB_DataType dt;
 
     // makes it easier to track in graph walks
@@ -1016,8 +1016,6 @@ TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 TB_API void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p, TB_Arena* arena);
 TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
-TB_API void tb_function_print(TB_Function* f, TB_PrintCallback callback, void* user_data);
-
 TB_API void tb_inst_set_control(TB_Function* f, TB_Node* control);
 TB_API TB_Node* tb_inst_get_control(TB_Function* f);
 
@@ -1223,6 +1221,8 @@ TB_API void tb_pass_optimize(TB_Passes* opt);
 // analysis
 //   print: prints IR in a flattened text form.
 TB_API bool tb_pass_print(TB_Passes* opt);
+//   print-dot: prints IR as DOT
+TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* user_data);
 
 // codegen
 TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, bool emit_asm);
