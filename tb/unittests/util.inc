@@ -143,7 +143,7 @@ static void tb_test_link_library(TB_Linker  *linker,
   TB_Function *f_main = tb_function_create(                   \
       module, -1, "main", TB_LINKAGE_PUBLIC);                 \
                                                               \
-  TB_ModuleSectionHandle text = tb_module_get_text(m);        \
+  TB_ModuleSectionHandle text = tb_module_get_text(module);   \
   tb_function_set_prototype(f_main, text, fp_main, NULL);     \
                                                               \
   if (f_main == NULL)                                         \
@@ -151,6 +151,7 @@ static void tb_test_link_library(TB_Linker  *linker,
 
 #define TB_TEST_MODULE_END_(name_, result_, print_asm_)          \
   {                                                              \
+    TB_SymbolIter it = tb_symbol_iter(module);                   \
     TB_Symbol* sym;                                              \
     while (sym = tb_symbol_iter_next(&it), sym) {                \
       if (sym->tag == TB_SYMBOL_FUNCTION) {                      \
