@@ -76,6 +76,10 @@ uint32_t bits(uint32_t x) {
     return (x << 2) & 1;
 }
 
+uint32_t gimme(uint32_t x) {
+    return (x >> 4) & 1;
+}
+
 #if 0
 // returns 1 if the product is valid, 0 on overflow.
 // negative factors are considered invalid.

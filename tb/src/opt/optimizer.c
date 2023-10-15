@@ -659,7 +659,11 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
             return lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { num->value, num->value, ~num->value, num->value } });
         }
 
-        case TB_ZERO_EXT: return dataflow_zext(p, uni, n);
+        case TB_TRUNCATE:
+        return dataflow_trunc(p, uni, n);
+
+        case TB_ZERO_EXT:
+        return dataflow_zext(p, uni, n);
 
         case TB_AND:
         case TB_OR:
@@ -667,11 +671,9 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         return dataflow_bits(p, uni, n);
 
         case TB_ADD:
+        case TB_SUB:
         case TB_MUL:
         return dataflow_arith(p, uni, n);
-
-        case TB_SUB:
-        return dataflow_sub(p, uni, n);
 
         case TB_SHL:
         case TB_SHR:
@@ -698,8 +700,7 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
             // all bits are known
             uint64_t mask = tb__mask(n->dt.data);
             if ((l->_int.known_zeros | l->_int.known_ones) == mask) {
-                uint64_t v = l->_int.known_ones & ~l->_int.known_zeros;
-                return make_int_node(p->f, p, n->dt, v);
+                return make_int_node(p->f, p, n->dt, l->_int.known_ones);
             }
 
             return NULL;
@@ -729,12 +730,15 @@ static void validate_node_users(TB_Node* n) {
     }
 }
 
-static void print_lattice(Lattice* l) {
+static void print_lattice(Lattice* l, TB_DataType dt) {
     switch (l->tag) {
         case LATTICE_INT:
-        printf("[%#"PRIx64, l->_int.min);
+        assert(dt.type == TB_INT);
+        printf("[%"PRId64, tb__sxt(l->_int.min, dt.data, 64));
+        // printf("[%#"PRIx64, l->_int.min);
         if (l->_int.min != l->_int.max) {
-            printf(" - %#"PRIx64, l->_int.max);
+            // printf(" - %#"PRIx64, l->_int.max);
+            printf(" - %"PRId64, tb__sxt(l->_int.max, dt.data, 64));
         }
 
         uint64_t known = l->_int.known_zeros | l->_int.known_ones;
@@ -789,7 +793,7 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
             DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93mTOP\x1b[0m"));
         } else {
             // print fancy type
-            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m"));
+            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type, n->dt), printf("\x1b[0m"));
         }
 
         // types that consist of one possible value are made into value constants.

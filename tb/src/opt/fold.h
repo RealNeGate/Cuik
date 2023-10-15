@@ -104,65 +104,78 @@ static Lattice* dataflow_zext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
     return lattice_universe_get(uni, n->inputs[1]);
 }
 
-static Lattice* dataflow_iarith(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
+static Lattice* dataflow_trunc(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
-    Lattice* b = lattice_universe_get(uni, n->inputs[2]);
-    assert(a && b);
 
-    uint64_t mask = tb__mask(n->dt.data);
-    uint64_t min, max;
-    switch (n->type) {
-        case TB_ADD:
-        min = a->_int.min + b->_int.min;
-        max = a->_int.max + b->_int.max;
-        break;
-
-        case TB_MUL:
-        min = a->_int.min * b->_int.min;
-        max = a->_int.max * b->_int.max;
-        break;
+    int64_t mask = tb__mask(n->dt.data);
+    int64_t min = a->_int.min & mask;
+    int64_t max = a->_int.max & mask;
+    if (min > max) {
+        min = lattice_int_min(n->dt.data);
+        max = lattice_int_max(n->dt.data);
     }
 
-    // truncate to the size of the raw DataType
-    min &= mask, max &= mask;
-
-    // overflow? cry
-    if ((a->_int.min > 0 && min < a->_int.min) ||
-        (b->_int.max > 0 && max < b->_int.max) ||
-        (min > max)) {
-        min = 0, max = mask;
-    }
-
-    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
+    uint64_t zeros = a->_int.known_zeros | ~mask;
+    uint64_t ones  = a->_int.known_ones  & mask;
+    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* dataflow_sub(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
+static int64_t wrapped_int_add(int64_t x, int64_t y) { return (uint64_t)x + (uint64_t)y; }
+static int64_t wrapped_int_sub(int64_t x, int64_t y) { return (uint64_t)x - (uint64_t)y; }
+static int64_t wrapped_int_mul(int64_t x, int64_t y) { return (uint64_t)x * (uint64_t)y; }
+
+static bool sub_overflow(uint64_t x, uint64_t y, uint64_t xy, int bits) {
+    uint64_t v = (x ^ y) & (xy ^ x);
+    // check the sign bit
+    return (v >> bits) & 1;
+}
+
+static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
     Lattice* b = lattice_universe_get(uni, n->inputs[2]);
-    assert(a && b);
+    assert(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
 
-    uint64_t mask = tb__mask(n->dt.data);
-    uint64_t min, max;
+    int64_t mask = tb__mask(n->dt.data);
+    int64_t min, max;
     switch (n->type) {
         case TB_ADD:
-        min = a->_int.min + b->_int.min;
-        max = a->_int.max + b->_int.max;
+        min = wrapped_int_add(a->_int.min, b->_int.min);
+        max = wrapped_int_add(a->_int.max, b->_int.max);
+        break;
+
+        case TB_SUB:
+        min = wrapped_int_sub(a->_int.min, b->_int.min);
+        max = wrapped_int_sub(a->_int.max, b->_int.max);
         break;
 
         case TB_MUL:
-        min = a->_int.min * b->_int.min;
-        max = a->_int.max * b->_int.max;
+        min = wrapped_int_mul(a->_int.min, b->_int.min);
+        max = wrapped_int_mul(a->_int.max, b->_int.max);
         break;
     }
 
     // truncate to the size of the raw DataType
     min &= mask, max &= mask;
 
-    // overflow? cry
-    if ((a->_int.min > 0 && min < a->_int.min) ||
-        (b->_int.max > 0 && max < b->_int.max) ||
-        (min > max)) {
-        min = 0, max = mask;
+    if (!lattice_is_const_int(a) || !lattice_is_const_int(b)) {
+        // if we overflow, default to the full range
+        if (n->type == TB_SUB) {
+            // subtraction does overflow check different from add or mul
+            if (sub_overflow(a->_int.min, b->_int.min, min, n->dt.data) ||
+                sub_overflow(a->_int.max, b->_int.max, max, n->dt.data)
+            ) {
+                min = lattice_int_min(n->dt.data);
+                max = lattice_int_max(n->dt.data);
+            }
+        } else {
+            if (((a->_int.min & b->_int.min) < 0 && min >= 0) ||
+                ((a->_int.max & b->_int.max) < 0 && max <  0) ||
+                (min > max)
+            ) {
+                min = lattice_int_min(n->dt.data);
+                max = lattice_int_max(n->dt.data);
+            }
+        }
     }
 
     return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
@@ -177,13 +190,13 @@ static Lattice* dataflow_bits(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
         case TB_AND:
         // 0 if either is zero, 1 if both are 1
         zeros = a->_int.known_zeros | b->_int.known_zeros;
-        ones  = b->_int.known_ones  & b->_int.known_ones;
+        ones  = a->_int.known_ones  & b->_int.known_ones;
         break;
 
         case TB_OR:
         // 0 if both are 0, 1 if either is 1
         zeros = a->_int.known_zeros & b->_int.known_zeros;
-        ones  = b->_int.known_ones  | b->_int.known_ones;
+        ones  = a->_int.known_ones  | b->_int.known_ones;
         break;
 
         case TB_XOR:
@@ -196,8 +209,8 @@ static Lattice* dataflow_bits(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
         default: tb_todo();
     }
 
-
-    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { 0, UINT64_MAX, zeros, ones } });
+    // we can deduce a min and max by assuming the unknown bits are either zeros or ones
+    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { ones, ~zeros, zeros, ones } });
 }
 
 static Lattice* dataflow_shift(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
@@ -237,7 +250,8 @@ static Lattice* dataflow_shift(TB_Passes* restrict opt, LatticeUniverse* uni, TB
 
         min &= mask, max &= mask;
         if (min > max) {
-            min = 0, max = mask;
+            min = lattice_int_min(n->dt.data);
+            max = lattice_int_max(n->dt.data);
         }
 
         return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });

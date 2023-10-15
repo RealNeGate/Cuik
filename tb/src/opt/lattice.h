@@ -11,6 +11,8 @@ static bool lattice_cmp(void* a, void* b) {
     return aa->tag == bb->tag ? memcmp(aa, bb, sizeof(Lattice)) == 0 : false;
 }
 
+static bool lattice_is_const_int(Lattice* l) { return l->_int.min == l->_int.max; }
+
 static void lattice_universe_map(LatticeUniverse* uni, TB_Node* n, Lattice* l) {
     // reserve cap, slow path :p
     if (UNLIKELY(n->gvn >= uni->type_cap)) {
@@ -62,13 +64,15 @@ static Lattice* lattice_intern(LatticeUniverse* uni, Lattice l) {
     return k;
 }
 
+static int64_t lattice_int_min(int bits) { return 1ll << (bits - 1); }
+static int64_t lattice_int_max(int bits) { return (1ll << (bits - 1)) - 1; }
+
 // maximal subset
 static Lattice* lattice_top(LatticeUniverse* uni, TB_DataType dt) {
     switch (dt.type) {
         case TB_INT: {
             assert(dt.data <= 64);
-            uint64_t max_bits = UINT64_MAX >> (64 - dt.data);
-            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { 0, max_bits } });
+            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(dt.data), lattice_int_max(dt.data) } });
         }
 
         case TB_FLOAT: {
