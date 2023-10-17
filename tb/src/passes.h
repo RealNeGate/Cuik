@@ -217,6 +217,13 @@ static bool is_mem_in_op(TB_Node* n) {
 ////////////////////////////////
 // CFG analysis
 ////////////////////////////////
+// if we see a branch projection, it may either be a BB itself
+// or if it enters a REGION directly, then that region is the BB.
+static TB_Node* cfg_next_bb_after_cproj(TB_Node* n) {
+    assert(n->type == TB_PROJ);
+    return n->users->n->type == TB_REGION ? n->users->n : n;
+}
+
 static TB_Node* cfg_next_region_control(TB_Node* n) {
     if (n->type != TB_REGION) {
         for (User* u = n->users; u; u = u->next) {
@@ -237,6 +244,24 @@ static TB_Node* cfg_next_control(TB_Node* n) {
     }
 
     return NULL;
+}
+
+static TB_Node* get_pred(TB_Node* n, int i) {
+    TB_Node* base = n;
+    n = n->inputs[i];
+
+    if (base->type == TB_REGION && n->type == TB_PROJ) {
+        TB_Node* parent = n->inputs[0];
+        if (parent->type == TB_START) {
+            return n;
+        }
+        n = parent;
+    }
+
+    while (!cfg_is_bb_entry(n)) {
+        n = n->inputs[0];
+    }
+    return n;
 }
 
 static TB_Node* get_block_begin(TB_Node* n) {

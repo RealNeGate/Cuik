@@ -10,6 +10,24 @@ TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* p) {
     return tb_compute_rpo2(f, &p->worklist, &p->stack);
 }
 
+static TB_Node* next_control(Worklist* ws, TB_Node* n) {
+    // unless it's a branch (aka a terminator), it'll have one successor
+    TB_Node* next = NULL;
+    for (User* u = n->users; u; u = u->next) {
+        TB_Node* succ = u->n;
+
+        // we can't treat regions in the chain
+        if (succ->type == TB_REGION) break;
+
+        // we've found the next step in control flow
+        if (cfg_is_control(succ) && !worklist_test_n_set(ws, succ)) {
+            return succ;
+        }
+    }
+
+    return NULL;
+}
+
 TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_stack) {
     assert(dyn_array_length(ws->items) == 0);
 
@@ -29,27 +47,21 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_sta
 
         // we've spotted a BB entry
         if (cfg_is_bb_entry(n)) {
-            TB_Node* entry = n;
-            TB_BasicBlock bb = { .id = cfg.block_count++ };
-
-            // walk until terminator
-            while (!cfg_is_terminator(n)) {
-                // unless it's a branch (aka a terminator), it'll have one successor
-                TB_Node* next = NULL;
-                for (User* u = n->users; u; u = u->next) {
-                    TB_Node* succ = u->n;
-
-                    // we can't treat regions in the chain
-                    if (succ->type == TB_REGION) break;
-
-                    // we've found the next step in control flow
-                    if (cfg_is_control(succ) && !worklist_test_n_set(ws, succ)) {
-                        next = succ;
-                        break;
-                    }
+            // proj BB's will prefer to be REGION BB's
+            if (n->inputs[0]->type != TB_START && n->type == TB_PROJ && n->users->n->type == TB_REGION) {
+                // we've already seen this BB, let's skip it
+                if (worklist_test_n_set(ws, n->users->n)) {
+                    continue;
                 }
 
-                // usually cased by "goto"
+                n = n->users->n;
+            }
+
+            // walk until terminator
+            TB_Node* entry = n;
+            TB_BasicBlock bb = { .id = cfg.block_count++ };
+            while (!cfg_is_terminator(n)) {
+                TB_Node* next = next_control(ws, n);
                 if (next == NULL) {
                     break;
                 }
@@ -70,10 +82,26 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_sta
         }
 
         // add successors (could be multi-way like a branch)
-        for (User* u = n->users; u; u = u->next) {
-            TB_Node* succ = u->n;
-            if (cfg_is_control(succ) && !worklist_test_n_set(ws, succ)) {
-                dyn_array_put(stack, succ);
+        if (n->type == TB_BRANCH) {
+            size_t succ_count = TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->succ_count;
+
+            dyn_array_put_uninit(stack, succ_count);
+            TB_Node** top = &stack[dyn_array_length(stack) - 1];
+
+            for (User* u = n->users; u; u = u->next) {
+                TB_Node* succ = u->n;
+                if (cfg_is_control(succ) && !worklist_test_n_set(ws, succ)) {
+                    assert(succ->type == TB_PROJ);
+                    int index = TB_NODE_GET_EXTRA_T(succ, TB_NodeProj)->index;
+                    top[-index] = succ;
+                }
+            }
+        } else {
+            for (User* u = n->users; u; u = u->next) {
+                TB_Node* succ = u->n;
+                if (cfg_is_control(succ) && !worklist_test_n_set(ws, succ)) {
+                    dyn_array_put(stack, succ);
+                }
             }
         }
     }
@@ -148,12 +176,12 @@ void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg) {
         // for all nodes, b, in reverse postorder (except start node)
         FOREACH_REVERSE_N(i, 1, cfg.block_count) {
             TB_Node* b = blocks[i];
-            TB_Node* new_idom = get_block_begin(b->inputs[0]);
+            TB_Node* new_idom = get_pred(b, 0);
 
             if (b->type == TB_REGION) {
                 // for all other predecessors, p, of b
                 FOREACH_N(j, 1, b->input_count) {
-                    TB_Node* p = get_block_begin(b->inputs[j]);
+                    TB_Node* p = get_pred(b, j);
 
                     // if doms[p] already calculated
                     TB_Node* idom_p = idom(&cfg, p);

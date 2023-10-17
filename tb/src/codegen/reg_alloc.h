@@ -192,8 +192,7 @@ static int interval_intersect(LiveInterval* a, LiveInterval* b) {
 }
 
 #define FOREACH_SET(it, set) \
-FOREACH_N(_i, 0, ((set).capacity + 63) / 64) \
-for (uint64_t bits = (set).data[_i], it = _i*64; bits; bits >>= 1, it++) if (bits & 1)
+FOREACH_N(_i, 0, ((set).capacity + 63) / 64) FOREACH_BIT(it, _i*64, (set).data[_i])
 
 static int next_use(LSRA* restrict ra, LiveInterval* interval, int time) {
     for (;;) {
@@ -207,9 +206,9 @@ static int next_use(LSRA* restrict ra, LiveInterval* interval, int time) {
             interval = &ra->intervals[interval->split_kid];
             continue;
         }
-    }
 
-    return INT_MAX;
+        return INT_MAX;
+    }
 }
 
 // if < 0, then it's -x - 1 where x is the nearest starting point
@@ -321,6 +320,7 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
     it.split_kid = -1;
     interval->end = pos;
 
+    assert(interval->split_kid < 0 && "cannot spill while spilled");
     int old_reg = interval - ra->intervals;
     int new_reg = dyn_array_length(ra->intervals);
     interval->split_kid = new_reg;
@@ -642,13 +642,17 @@ static void move_to_active(LSRA* restrict ra, LiveInterval* interval) {
 
 // update active range to match where the position is currently
 static bool update_interval(LSRA* restrict ra, LiveInterval* restrict interval, bool is_active, int time, int inactive_index) {
-    int ri = interval - ra->intervals;
+    while (interval->split_kid >= 0) {
+        interval = &ra->intervals[interval->split_kid];
+    }
 
     // get to the right range first
     while (interval->ranges[interval->active_range].end <= time) {
+        assert(interval->active_range > 0);
         interval->active_range -= 1;
     }
 
+    int ri = interval - ra->intervals;
     int hole_end = interval->ranges[interval->active_range].start;
     int active_end = interval->ranges[interval->active_range].end;
     bool is_now_active = time >= hole_end;
@@ -684,7 +688,7 @@ static bool update_interval(LSRA* restrict ra, LiveInterval* restrict interval, 
 }
 
 static void cuiksort_defs(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, RegIndex* arr);
-static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int end, int* bb_order, int bb_count) {
+static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int end) {
     LSRA ra = { .abi = f->super.module->target_abi, .first = ctx->first, .cache = ctx->first, .intervals = ctx->intervals, .stack_usage = stack_usage };
 
     FOREACH_N(i, 0, CG_REGISTER_CLASSES) {
@@ -696,8 +700,8 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
     MachineBBs mbbs = ctx->machine_bbs;
     size_t interval_count = dyn_array_length(ra.intervals);
     CUIK_TIMED_BLOCK("build intervals") {
-        FOREACH_REVERSE_N(i, 0, bb_count) {
-            TB_Node* bb = ctx->worklist.items[bb_order[i]];
+        FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+            TB_Node* bb = ctx->worklist.items[ctx->bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
 
             int bb_start = mbb->start;
@@ -846,20 +850,21 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
     // move resolver
     CUIK_TIMED_BLOCK("move resolver") {
-        FOREACH_N(i, 0, ctx->cfg.block_count) {
-            TB_Node* bb = ctx->worklist.items[i];
-
+        TB_Node** bbs = ctx->worklist.items;
+        int* bb_order = ctx->bb_order;
+        FOREACH_N(i, 0, ctx->bb_count) {
+            TB_Node* bb = bbs[bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
-            TB_Node* end = mbb->end_node;
+            TB_Node* end_node = mbb->end_node;
 
-            for (User* u = end->users; u; u = u->next) {
+            for (User* u = end_node->users; u; u = u->next) {
                 if (cfg_is_control(u->n)) {
-                    TB_Node* succ = cfg_next_region_control(u->n);
+                    TB_Node* succ = cfg_get_fallthru(u->n);
                     MachineBB* target = &nl_map_get_checked(mbbs, succ);
 
                     // for all live-ins, we should check if we need to insert a move
-                    FOREACH_SET(i, target->live_in) {
-                        LiveInterval* interval = &ra.intervals[i];
+                    FOREACH_SET(k, target->live_in) {
+                        LiveInterval* interval = &ra.intervals[k];
 
                         // if the value changes across the edge, insert move
                         LiveInterval* start = split_interval_at(&ra, interval, mbb->end);
@@ -874,13 +879,6 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
                             }
                         }
                     }
-
-                    // the moves are inserted either at the end of block from or at the beginning of block to,
-                    // depending on the control flow
-                    // resolver.find_insert_position(from, to)
-
-                    // insert all moves in correct order (without overwriting registers that are used later)
-                    // resolver.resolve_mappings()
                 }
             }
         }

@@ -395,7 +395,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule
                 TB_Node* temp_slot = tb_inst_local(func, size, align);
                 TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
-                assert(is_volatile);
+                assert(!is_volatile);
                 tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align);
 
                 out_param[0] = temp_slot;

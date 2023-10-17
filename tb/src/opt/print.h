@@ -146,7 +146,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     if (!(bb_start->type == TB_PROJ && bb_start->inputs[0]->type == TB_START) && bb_start->input_count > 0) {
         printf(" # preds: ");
         FOREACH_N(j, 0, bb_start->input_count) {
-            print_ref_to_node(ctx, get_block_begin(bb_start->inputs[j]), false);
+            print_ref_to_node(ctx, get_pred(bb_start, j), false);
             printf(" ");
         }
     }
@@ -191,7 +191,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                 for (User* u = n->users; u; u = u->next) {
                     if (u->n->type == TB_PROJ) {
                         int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                        succ[index] = cfg_next_control(u->n);
+                        succ[index] = cfg_next_bb_after_cproj(u->n);
                     }
                 }
 

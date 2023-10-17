@@ -32,6 +32,7 @@ void target_generic_fill_builtin_table(BuiltinTable* builtins) {
     X(__builtin_expect, "b b");
     X(__builtin_trap, "v v");
     X(__builtin_clz, "i i");
+    X(__builtin_clzll, "L i");
     X(__builtin_mul_overflow, ". v");
 
     X(__builtin_unreachable, " v");
@@ -182,6 +183,9 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         TB_Node* src = RVAL(1);
         return ZZZ(tb_inst_bswap(func, src));
     } else if (strcmp(name, "__builtin_clz") == 0) {
+        TB_Node* src = RVAL(1);
+        return ZZZ(tb_inst_clz(func, src));
+    } else if (strcmp(name, "__builtin_clzll") == 0) {
         TB_Node* src = RVAL(1);
         return ZZZ(tb_inst_clz(func, src));
     } else if (strcmp(name, "__c11_atomic_exchange") == 0) {

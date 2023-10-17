@@ -73,6 +73,38 @@ static TB_BasicBlock* find_lca(TB_Passes* p, TB_BasicBlock* a, TB_BasicBlock* b)
     return a;
 }
 
+static void place_in_block(TB_Passes* p, TB_Node* n, TB_BasicBlock* bb) {
+    ptrdiff_t search = nl_map_get(p->scheduled, n);
+    if (search >= 0) {
+        // replace old
+        TB_BasicBlock* old = p->scheduled[search].v;
+        p->scheduled[search].v = bb;
+        nl_hashset_remove(&old->items, n);
+    } else {
+        nl_map_put(p->scheduled, n, bb);
+    }
+
+    nl_hashset_put(&bb->items, n);
+}
+
+static void simple_schedule_late(TB_Passes* p, TB_Node* n, TB_BasicBlock* lca) {
+    // already visited
+    if (worklist_test_n_set(&p->worklist, n) || is_pinned(n)) {
+        return;
+    }
+
+    if (n->users->next == NULL) {
+        // if we're the sole user (usually with immediates and other
+        // simple values) we should just make them happen late.
+        place_in_block(p, n, lca);
+
+        // try with inputs
+        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+            simple_schedule_late(p, n->inputs[i], lca);
+        }
+    }
+}
+
 static void schedule_late(TB_Passes* p, TB_Node* n) {
     // already visited
     if (worklist_test_n_set(&p->worklist, n)) {
@@ -128,22 +160,11 @@ static void schedule_late(TB_Passes* p, TB_Node* n) {
 
     // tb_assert(lca, "missing least common ancestor");
     if (lca != NULL) {
-        ptrdiff_t search = nl_map_get(p->scheduled, n);
-        if (search >= 0) {
-            // replace old
-            TB_BasicBlock* old = p->scheduled[search].v;
-            p->scheduled[search].v = lca;
-            nl_hashset_remove(&old->items, n);
-        } else {
-            nl_map_put(p->scheduled, n, lca);
-        }
-
-        nl_hashset_put(&lca->items, n);
+        place_in_block(p, n, lca);
     }
 
-    // schedule certain inputs later pl0x
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-        schedule_late(p, n->inputs[i]);
+        simple_schedule_late(p, n->inputs[i], lca);
     }
 }
 

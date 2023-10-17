@@ -65,6 +65,8 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_END:
         case TB_PROJ:
         case TB_PHI:
+        case TB_CLZ:
+        case TB_CTZ:
         case TB_VA_START:
         case TB_POISON:
         case TB_SELECT:
@@ -225,6 +227,8 @@ bool gvn_compare(void* a, void* b) {
         case TB_FMUL:
         case TB_FDIV:
         case TB_PHI:
+        case TB_CLZ:
+        case TB_CTZ:
         case TB_MERGEMEM:
         return true;
 

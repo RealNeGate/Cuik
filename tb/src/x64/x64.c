@@ -665,6 +665,38 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
 
+        // bit magic
+        case TB_CTZ:
+        case TB_CLZ: {
+            int op = type == TB_CLZ ? BSR : BSF;
+            int lhs = input_reg(ctx, n->inputs[1]);
+            hint_reg(ctx, dst, lhs);
+
+            // we only wanna deal with 32 or 64 ops for
+            // this (16 is annoying and 8 is unavailable)
+            TB_DataType dt = n->dt;
+            if (dt.data < 64) {
+                // make sure the bits are zero'd above
+                if (dt.data < 32) {
+                    assert(type == TB_CLZ && "clz is different, and im stupid");
+                    SUBMIT(inst_op_zero(TB_TYPE_I32, dst));
+                }
+
+                dt.data = 32;
+            }
+
+            Inst* inst = inst_op_rr(op, dt, dst, lhs);
+            if (type == TB_CLZ) {
+                // the difference between bsf and tzcnt
+                inst->flags |= INST_REP;
+            }
+            SUBMIT(inst);
+
+            // flip bits to make CLZ instead of bitscanreverse
+            SUBMIT(inst_op_rri(XOR, dt, dst, dst, 63));
+            break;
+        }
+
         // bit shifts
         case TB_SHL:
         case TB_SHR:
@@ -1747,6 +1779,11 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
             if (inst->flags & INST_LOCK) {
                 EMITA(e, "  LOCK");
                 EMIT1(e, 0xF0);
+            }
+
+            if (inst->flags & INST_REP) {
+                EMITA(e, "  REP");
+                EMIT1(e, 0xF3);
             }
 
             // resolve output

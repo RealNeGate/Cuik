@@ -77,6 +77,9 @@ typedef struct {
 
     TB_Passes* p;
 
+    int bb_count;
+    int* bb_order;
+
     // Scheduling
     TB_CFG cfg;
     Worklist worklist; // reusing from TB_Passes.
@@ -419,10 +422,12 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
     // find BB boundaries in sequences
     MachineBBs seq_bb = NULL;
-    nl_map_create(seq_bb, ctx->cfg.block_count);
+    nl_map_create(seq_bb, ctx->bb_count);
 
-    FOREACH_N(i, 0, ctx->cfg.block_count) {
-        TB_Node* n = ctx->worklist.items[i];
+    TB_Node** bbs = ctx->worklist.items;
+    int* bb_order = ctx->bb_order;
+    FOREACH_N(i, 0, ctx->bb_count) {
+        TB_Node* n = bbs[bb_order[i]];
         TB_BasicBlock* bb = &nl_map_get_checked(ctx->cfg.node_to_block, n);
 
         MachineBB mbb = {
@@ -493,16 +498,14 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
     // generate global live sets
     size_t base = dyn_array_length(ctx->worklist.items);
-    assert(base == ctx->cfg.block_count);
 
     // all nodes go into the worklist
-    FOREACH_REVERSE_N(i, 0, ctx->cfg.block_count) {
-        TB_Node* bb = ctx->worklist.items[i];
-
-        dyn_array_put(ctx->worklist.items, bb);
+    FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+        TB_Node* n = bbs[bb_order[i]];
+        dyn_array_put(ctx->worklist.items, n);
 
         // in(bb) = use(bb)
-        MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
+        MachineBB* mbb = &nl_map_get_checked(seq_bb, n);
         set_copy(&mbb->live_in, &mbb->gen);
     }
 
@@ -519,7 +522,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         for (User* u = end->users; u; u = u->next) {
             if (cfg_is_control(u->n)) {
                 // union with successor's lives
-                TB_Node* succ = cfg_next_region_control(u->n);
+                TB_Node* succ = cfg_get_fallthru(u->n);
                 set_union(live_out, &nl_map_get_checked(seq_bb, succ).live_in);
             }
         }
@@ -545,7 +548,17 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
             }
         }
     }
-    dyn_array_set_length(ctx->worklist.items, ctx->cfg.block_count);
+
+    /*if (!strcmp(f->super.name, "WinMain")) {
+        FOREACH_N(i, 0, ctx->bb_count) {
+            TB_Node* n = bbs[bb_order[i]];
+            MachineBB* mbb = &nl_map_get_checked(seq_bb, n);
+
+            bool in = set_get(&mbb->live_in, 83);
+            bool out = set_get(&mbb->live_out, 83);
+            printf(".bb%d: %s %s\n", bb_order[i], in?"in":"", out?"out":"");
+        }
+    }*/
 
     ctx->machine_bbs = seq_bb;
     return epilogue;
@@ -864,10 +877,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_Function* restrict f = p->f;
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
-    /*if (!strcmp(f->super.name, "stbi__convert_format")) {
-        // reg_alloc_log = true;
-        tb_pass_print(p);
-    }*/
+    if (!strcmp(f->super.name, "WinMain")) {
+        reg_alloc_log = true;
+        // tb_pass_print(p);
+    }
 
     Ctx ctx = {
         .module = f->super.module,
@@ -910,8 +923,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     //   fixed and which need allocation. For now regalloc is handled
     //   immediately but in theory it could be delayed until all selection
     //   is done.
-    int bb_count = 0;
-    int* bb_order = tb_arena_alloc(tmp_arena, ctx.cfg.block_count * sizeof(int));
+    ctx.bb_count = 0;
+    int* bb_order = ctx.bb_order = tb_arena_alloc(tmp_arena, ctx.cfg.block_count * sizeof(int));
 
     CUIK_TIMED_BLOCK("isel") {
         assert(dyn_array_length(ctx.worklist.items) == ctx.cfg.block_count);
@@ -934,29 +947,23 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             if (end->type == TB_END) {
                 stop_bb = i;
             } else {
-                // skip any completely fallthrough blocks (start doesn't count)
-                // if (i != 0 && i + 1 < ctx.cfg.block_count && cfg_get_fallthru(bb) == ctx.worklist.items[i + 1]) {
-                if (i != 0 && cfg_get_fallthru(bb) != bb) {
-                    continue;
-                }
-
-                bb_order[bb_count++] = i;
+                bb_order[ctx.bb_count++] = i;
             }
         }
 
         // enter END block at the... end
         if (stop_bb >= 0) {
-            bb_order[bb_count++] = stop_bb;
+            bb_order[ctx.bb_count++] = stop_bb;
         }
 
         TB_Node** bbs = ctx.worklist.items;
-        FOREACH_N(i, 0, bb_count) {
-            TB_Node* bb = ctx.worklist.items[bb_order[i]];
+        FOREACH_N(i, 0, ctx.bb_count) {
+            TB_Node* bb = bbs[bb_order[i]];
 
             nl_map_put(ctx.emit.labels, bb, 0);
 
             // find next BB
-            ctx.fallthrough = i + 1 < bb_count ? bbs[bb_order[i + 1]] : NULL;
+            ctx.fallthrough = i + 1 < ctx.bb_count ? bbs[bb_order[i + 1]] : NULL;
 
             Inst* label = inst_label(bb);
             if (ctx.first == NULL) {
@@ -980,7 +987,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
         // we can in theory have other regalloc solutions and eventually will put
         // graph coloring here.
-        ctx.stack_usage = linear_scan(&ctx, f, ctx.stack_usage, end, bb_order, bb_count);
+        ctx.stack_usage = linear_scan(&ctx, f, ctx.stack_usage, end);
 
         // Arch-specific: convert instruction buffer into actual instructions
         CUIK_TIMED_BLOCK("emit code") {
