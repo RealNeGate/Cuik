@@ -33,7 +33,7 @@
 #include "linker/elf.c"
 
 // Platform layer
-#if defined(_POSIX_C_SOURCE)
+#if defined(_POSIX_C_SOURCE) && !defined(_WIN32)
 void* tb_platform_valloc(size_t size) {
     return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 }

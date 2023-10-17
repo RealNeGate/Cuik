@@ -26,7 +26,7 @@
 #include <threads.h>
 
 #ifdef _WIN32
-__declspec(dllimport) unsigned long GetCurrentThreadId(void);
+__declspec(dllimport) DWORD GetCurrentThreadId(void);
 #else
 #include <unistd.h>
 #endif

@@ -5,7 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 // Cuik currently uses mimalloc so we wrap those calls here
 #ifdef CUIK_USE_MIMALLOC
 #include <mimalloc.h>

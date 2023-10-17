@@ -3,7 +3,7 @@
 #include "../tb_internal.h"
 #include <sys/stat.h>
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(_POSIX_C_SOURCE)
 #define fileno _fileno
 #define fstat  _fstat
 #define stat   _stat
