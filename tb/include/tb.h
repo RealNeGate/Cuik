@@ -265,7 +265,7 @@ typedef enum TB_NodeTypeEnum {
     //   this is generated when a path becomes disconnected
     //   from the main IR, it'll be reduced by the monotonic
     //   rewrites.
-    TB_DEAD, // () -> (Control)
+    TB_DEAD,        // () -> (Control)
 
     ////////////////////////////////
     // CONTROL + MEMORY
@@ -284,17 +284,17 @@ typedef enum TB_NodeTypeEnum {
     ////////////////////////////////
     //   MERGEMEM will join multiple non-aliasing memory effects, because
     //   they don't alias there's no ordering guarentee.
-    TB_MERGEMEM,// (Memory...) -> Memory
+    TB_MERGEMEM,    // (Memory...) -> Memory
     //   LOAD and STORE are standard memory accesses, they can be folded away.
-    TB_LOAD,    // (Control?, Memory, Ptr)       -> Data
-    TB_STORE,   // (Control, Memory, Ptr, Data) -> Memory
+    TB_LOAD,        // (Control?, Memory, Ptr)       -> Data
+    TB_STORE,       // (Control, Memory, Ptr, Data) -> Memory
     //   bulk memory ops.
-    TB_MEMCPY,  // (Control, Memory, Ptr, Ptr, Size)  -> Memory
-    TB_MEMSET,  // (Control, Memory, Ptr, Int8, Size) -> Memory
+    TB_MEMCPY,      // (Control, Memory, Ptr, Ptr, Size)  -> Memory
+    TB_MEMSET,      // (Control, Memory, Ptr, Int8, Size) -> Memory
     //   these memory accesses represent "volatile" which means
     //   they may produce side effects and thus cannot be eliminated.
-    TB_READ,    // (Control, Memory, Ptr)       -> (Memory, Data)
-    TB_WRITE,   // (Control, Memory, Ptr, Data) -> (Memory, Data)
+    TB_READ,        // (Control, Memory, Ptr)       -> (Memory, Data)
+    TB_WRITE,       // (Control, Memory, Ptr, Data) -> (Memory, Data)
     //   atomics have multiple observers (if not they wouldn't need to
     //   be atomic) and thus produce side effects everywhere just like
     //   volatiles except they have synchronization guarentees. the atomic

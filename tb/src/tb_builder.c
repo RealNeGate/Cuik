@@ -221,28 +221,23 @@ TB_Node* tb_inst_get_control(TB_Function* f) {
 }
 
 void tb_inst_unreachable(TB_Function* f) {
-    TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_VOID, 1, 0);
+    TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 1, 0);
     n->inputs[0] = f->active_control_node;
     f->active_control_node = NULL;
     dyn_array_put(f->terminators, n);
 }
 
 void tb_inst_debugbreak(TB_Function* f) {
-    TB_Node* n = tb_alloc_node(f, TB_DEBUGBREAK, TB_TYPE_VOID, 1, 0);
+    TB_Node* n = tb_alloc_node(f, TB_DEBUGBREAK, TB_TYPE_CONTROL, 1, 0);
     n->inputs[0] = f->active_control_node;
     f->active_control_node = n;
 }
 
 void tb_inst_trap(TB_Function* f) {
-    TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_VOID, 1, 0);
+    TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_CONTROL, 1, 0);
     n->inputs[0] = f->active_control_node;
     f->active_control_node = NULL;
     dyn_array_put(f->terminators, n);
-}
-
-TB_Node* tb_inst_poison(TB_Function* f) {
-    TB_Node* n = tb_alloc_node(f, TB_POISON, TB_TYPE_VOID, 1, 0);
-    return n;
 }
 
 TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment) {

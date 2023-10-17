@@ -679,7 +679,7 @@ static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_N
 
         case TB_UDIV:
         case TB_SDIV:
-        return tb_inst_poison(f);
+        return make_poison(f, opt, n->dt);
 
         // (cmp.ne a 0) => a
         case TB_CMP_NE: {
