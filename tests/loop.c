@@ -91,10 +91,56 @@ uint32_t jeans(int x) {
 }
 
 int jake(int x) {
-    return x ? 5 : 2;
+    return !x ? 5 : 2;
+}
+
+uint32_t div_tricks(uint32_t n) {
+    return n / 3;
+}
+
+int main() {
+    printf("Hello, World! %d\n", div_tricks(27));
+}
+
+uint32_t dead_if(uint32_t n) {
+    if (n << 2 & 1) {
+        return 1;
+    }
+
+    div_tricks(n);
+    return 0;
 }
 
 #if 0
+int bounds_checks(size_t n, int* arr) {
+    int sum = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (i >= n) return -1; // bounds check
+        sum += arr[i];
+    }
+    return sum;
+}
+
+float max_elem(size_t i, float* x, float* y) {
+    return x[i] > y[i] ? x[i] : y[i];
+}
+
+void set_addr(size_t n, double* x, double** y) {
+    for (size_t i = 0; i < n; i++) {
+        y[i] = &x[i];
+    }
+}
+
+int phi_test(int a, int b) {
+    return (a & 2 ? 4 : 0) + (b ? 2 : 0);
+}
+
+void max_array(size_t n, float* x, float* y) {
+    for (size_t i = 0; i < n; i++) {
+        x[i] = x[i] > y[i] ? x[i] : y[i];
+    }
+}
+
 // returns 1 if the product is valid, 0 on overflow.
 // negative factors are considered invalid.
 int stbi__mul2sizes_valid(int a, int b)
@@ -109,20 +155,6 @@ void array_ops(size_t n, int* arr) {
     for (size_t i = 0; i < n; i++) {
         arr[i] |= 1;
     }
-}
-
-float max_elem(size_t i, float* x, float* y) {
-    return x[i] > y[i] ? x[i] : y[i];
-}
-
-void max_array(size_t n, float* x, float* y) {
-    for (size_t i = 0; i < n; i++) {
-        x[i] = x[i] > y[i] ? x[i] : y[i];
-    }
-}
-
-uint32_t div_tricks(uint32_t n) {
-    return n / 10;
 }
 
 static int bar(int n) {
@@ -197,19 +229,6 @@ static int select_opt(int a, int b) {
 
 static void syscall_test(void) {
     __builtin_syscall(1, 69);
-}
-
-static int phi_test(int color) {
-    return (color & 2 ? 3 : 1) + (color & 4 ? 1 : 0);
-}
-
-static int bounds_checks(size_t n, int* arr) {
-    int sum = 0;
-    for (size_t i = 0; i < n; i++) {
-        if (i >= n) return -1; // bounds check
-        sum += arr[i];
-    }
-    return sum;
 }
 
 static uint32_t murmur3_32(const void* key, size_t len) {

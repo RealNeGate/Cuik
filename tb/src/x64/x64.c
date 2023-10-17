@@ -127,7 +127,7 @@ static bool is_terminator(int t) {
 static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-        if (fits_into_int32(i->value)) {
+        if (i->value == (int32_t)i->value) {
             *out_x = i->value;
             return true;
         }
@@ -566,13 +566,16 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 x &= (1ull << bits_in_type) - 1;
             }
 
-            if (!fits_into_int32(x)) {
+            if (x == 0) {
+                SUBMIT(inst_op_zero(n->dt, dst));
+            } else if (x == (int32_t) x) {
+                SUBMIT(inst_op_imm(MOV, n->dt, dst, x));
+            } else if ((x >> 32ull) == UINT32_MAX) {
+                // mov but zero ext
+                SUBMIT(inst_op_imm(MOV, TB_TYPE_I32, dst, x));
+            } else {
                 // movabs reg, imm64
                 SUBMIT(inst_op_abs(MOVABS, n->dt, dst, x));
-            } else if (x == 0) {
-                SUBMIT(inst_op_zero(n->dt, dst));
-            } else {
-                SUBMIT(inst_op_imm(MOV, n->dt, dst, x));
             }
             break;
         }

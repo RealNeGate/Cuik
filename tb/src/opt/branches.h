@@ -21,21 +21,29 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
         // we might want this as an identity
         return n->inputs[0];
-    } else if (n->input_count == 1) {
-        // cannot have PHI effects, they might depend on the edges
-        for (User* use = find_users(p, n); use; use = use->next) {
-            if (use->n->type == TB_PHI) return NULL;
-        }
+    } else {
+        // remove dead predeccessors
+        bool changes = false;
 
-        // same preds? just remove the branch
-        if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_BRANCH) {
-            TB_Node* same = n->inputs[0]->inputs[0];
-            FOREACH_N(i, 1, n->input_count) {
-                if (n->inputs[i]->inputs[0] != same) return NULL;
+        size_t i = 0;
+        while (i < n->input_count) {
+            if (n->inputs[i]->type == TB_DEAD) {
+                changes = true;
+                remove_input(p, f, n, i);
+
+                // update PHIs
+                for (User* use = n->users; use; use = use->next) {
+                    if (use->n->type == TB_PHI && use->slot == 0) {
+                        remove_input(p, f, use->n, i + 1);
+                    }
+                }
+                continue;
             }
 
-            return same->inputs[0];
+            i += 1;
         }
+
+        return changes ? n : NULL;
     }
 
     return NULL;
@@ -48,8 +56,11 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
         return make_poison(f, opt, n->dt);
     }
 
-    #if 0
     // if branch, both paths are empty => select(cond, t, f)
+    //
+    // TODO(NeGate): we can make this diamond trick work for bigger
+    // branches, we should support a lookup instruction similar to
+    // "switch" logic for data.
     TB_DataType dt = n->dt;
     TB_Node* region = n->inputs[0];
     if (region->input_count == 2) {
@@ -77,26 +88,30 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
 
             if (header_br->succ_count == 2) {
                 assert(branch->input_count == 2);
-                TB_Node* cond    = branch->inputs[1];
-                TB_Node* left_v  = n->inputs[1];
-                TB_Node* right_v = n->inputs[2];
 
-                bool right_false = header_br->succ[0] == right;
+                TB_Node *values[2];
+                for (User* u = branch->users; u; u = u->next) {
+                    TB_Node* proj = u->n;
+                    if (proj->type == TB_PROJ) {
+                        int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
+                        // the projection needs to exclusively refer to the region
+                        assert(proj->users->next == NULL && proj->users->n == region);
+
+                        int phi_i = proj->users->slot;
+                        assert(phi_i + 1 < n->input_count);
+                        values[index] = n->inputs[1 + phi_i];
+                    }
+                }
+
                 uint64_t falsey = TB_NODE_GET_EXTRA_T(branch, TB_NodeBranch)->keys[0];
+                TB_Node* cond = branch->inputs[1];
 
                 // TODO(NeGate): handle non-zero falseys
                 if (falsey == 0) {
-                    // kill both successors, since they were unique we can properly murder em'
-                    tb_pass_kill_node(opt, left);
-                    tb_pass_kill_node(opt, right);
-
                     // header -> merge
                     {
                         TB_Node* parent = branch->inputs[0];
                         tb_pass_kill_node(opt, branch);
-
-                        // TB_NodeRegion* header = TB_NODE_GET_EXTRA(unsafe_get_region(parent));
-                        // header->end = TB_NODE_GET_EXTRA_T(region, TB_NodeRegion)->end;
 
                         // attach the header and merge to each other
                         tb_pass_mark(opt, parent);
@@ -106,14 +121,13 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
 
                     TB_Node* selector = tb_alloc_node(f, TB_SELECT, dt, 4, 0);
                     set_input(opt, selector, cond, 1);
-                    set_input(opt, selector, left_v, 2 + right_false);
-                    set_input(opt, selector, right_v, 2 + !right_false);
+                    set_input(opt, selector, values[0], 2);
+                    set_input(opt, selector, values[1], 3);
                     return selector;
                 }
             }
         }
     }
-    #endif
 
     return NULL;
 }
@@ -221,7 +235,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
             }
 
             // check if we're dominated by a branch that already checked it
-            /*TB_Node* bb = unsafe_get_region(n->inputs[0]);
+            /*TB_Node* bb = get_block_begin(n->inputs[0]);
             for (User* u = find_users(opt, cmp_node); u; u = u->next) {
                 if (u->n != n && u->slot == 1 && u->n->type == TB_BRANCH) {
                     TB_NodeBranch* dom_branch = TB_NODE_GET_EXTRA(u->n);
@@ -248,46 +262,63 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     }
 
     // constant fold branch
-    /*if (n->input_count == 2) {
-        uint64_t key;
-        if (get_int_const(n->inputs[1], &key)) {
+    if (n->input_count == 2) {
+        Lattice* key = lattice_universe_get(&opt->universe, n->inputs[1]);
+        if (key->_int.min == key->_int.max) {
+            int64_t key_const = key->_int.max;
+
             size_t taken = 0;
             FOREACH_N(i, 0, br->succ_count - 1) {
-                uint64_t case_key = br->keys[i];
-                if (key == case_key) { taken = i + 1; break; }
+                int64_t case_key = br->keys[i];
+                if (key_const == case_key) {
+                    taken = i + 1;
+                    break;
+                }
             }
 
-            TB_Node* dead = make_dead(f, opt);
+            TB_Node* dead = make_dead_node(f, opt);
 
             // convert dead projections into DEAD and convert live projection into index 0
-            for (User* use = find_users(opt, n); use; use = use->next) {
-                if (use->n->type == TB_PROJ) {
-                    int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
+            for (User* u = n->users; u; u = u->next) {
+                TB_Node* proj = u->n;
+                if (proj->type == TB_PROJ) {
+                    int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
                     if (index != taken) {
-                        subsume_node(opt, f, use->n, dead);
+                        subsume_node(opt, f, proj, dead);
                     } else {
-                        TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index = 0;
+                        TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index = 0;
 
-                        User* proj_use = find_users(opt, use->n);
-                        assert(proj_use->next == NULL && "control projection has conflicts?");
-                        assert(proj_use->n->type == TB_REGION);
+                        // if we folded away from a region, then we should subsume
+                        // the degen phis.
+                        assert(proj->users->next == NULL);
+                        TB_Node* succ = proj->users->n;
+                        if (succ->type == TB_REGION) {
+                            int phi_i = proj->users->slot;
 
-                        br->succ_count = 1;
-                        br->succ[0] = proj_use->n;
+                            User* u = succ->users;
+                            while (u != NULL) {
+                                User* next = u->next;
+                                if (u->n->type == TB_PHI) {
+                                    tb_pass_mark_users(opt, u->n);
+                                    subsume_node(opt, f, u->n, u->n->inputs[phi_i + 1]);
+                                }
+                                u = next;
+                            }
+                        }
+
+                        tb_pass_kill_node(opt, proj);
+                        set_input(opt, succ, n->inputs[0], 0);
                     }
                 }
             }
-            assert(br->succ_count == 1);
 
             // remove condition
-            set_input(opt, n, NULL, 1);
-            n->input_count = 1;
-            return n;
+            return dead;
         }
     }
 
     // check if it's a dead region
-    TB_Node* parent = unsafe_get_region(n);
+    /*TB_Node* parent = unsafe_get_region(n);
     if (parent->input_count == 0 && br->succ_count != 0) {
         // remove predecessor from successors
         TB_Node* dead = make_dead(f, opt);

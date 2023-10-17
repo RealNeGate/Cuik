@@ -8,7 +8,7 @@
 //   set_input(opt, n, in, slot)
 //     basically `n->inputs[slot] = in` except it correctly updates the user set
 //
-// # Implement peepholes
+// # How to implement peepholes
 //     TODO
 //
 #include "../passes.h"
@@ -33,6 +33,7 @@ static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* regio
 // node creation helpers
 TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt);
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x);
+TB_Node* make_dead_node(TB_Function* f, TB_Passes* restrict p);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
 static bool remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
@@ -260,6 +261,10 @@ TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
     return gvn(p, tb_alloc_node(f, TB_POISON, dt, 1, 0), 0);
 }
 
+TB_Node* make_dead_node(TB_Function* f, TB_Passes* restrict p) {
+    return gvn(p, tb_alloc_node(f, TB_DEAD, TB_TYPE_CONTROL, 1, 0), 0);
+}
+
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
     uint64_t mask = tb__mask(dt.data);
     x &= mask;
@@ -401,7 +406,7 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
         TB_NodeTypeEnum type = use->n->type;
 
         // tuples changing means their projections did too.
-        if (use->n->dt.type == TB_TUPLE || type == TB_PROJ) {
+        if (type == TB_PROJ || type == TB_DEAD) {
             tb_pass_mark_users(p, use->n);
         }
 
@@ -658,6 +663,9 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         case TB_LOCAL:
         case TB_SYMBOL:
         return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = { LATTICE_KNOWN_NOT_NULL } });
+
+        case TB_INT2PTR:
+        return dataflow_int2ptr(p, uni, n);
 
         case TB_TRUNCATE:
         return dataflow_trunc(p, uni, n);
