@@ -1,0 +1,5 @@
+* GNU extension where you name the varargs in the preprocessor:
+
+  #define FOO(A, B...)
+                 ^
+                 as opposed to __VA_ARGS__
