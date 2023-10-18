@@ -156,17 +156,16 @@ static void apply_func(TB_Function* f, void* arg) {
             tb_pass_optimize(p);
         }
 
-        // print IR
-        if (args->emit_ir) {
-            // tb_pass_print_dot(p, tb_default_print_callback, stdout);
+        if (args->emit_dot) {
+            tb_pass_print_dot(p, tb_default_print_callback, stdout);
+        } else if (args->emit_ir) {
             tb_pass_print(p);
-        }
-
-        // codegen
-        if (!args->emit_ir) CUIK_TIMED_BLOCK("CodeGen") {
-            TB_FunctionOutput* out = tb_pass_codegen(p, print_asm);
-            if (print_asm) {
-                tb_output_print_asm(out, stdout);
+        } else {
+            CUIK_TIMED_BLOCK("CodeGen") {
+                TB_FunctionOutput* out = tb_pass_codegen(p, print_asm);
+                if (print_asm) {
+                    tb_output_print_asm(out, stdout);
+                }
             }
         }
 
@@ -276,7 +275,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
             cuikpp_free(cpp);
         }
 
-        if (args->opt_level > 0 || args->assembly || args->emit_ir) {
+        if (args->opt_level > 0 || args->assembly || args->emit_ir || args->emit_dot) {
             // do parallel function passes
             cuiksched_per_function(s->tp, args->threads, mod, args, apply_func);
         }
@@ -589,7 +588,7 @@ void cuik_step_free(Cuik_BuildStep* s) {
 }
 
 bool cuik_driver_does_codegen(const Cuik_DriverArgs* args) {
-    return !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
+    return !args->emit_dot && !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
 }
 
 void cuikpp_dump_tokens(TokenStream* s) {

@@ -1,5 +1,7 @@
 // Scheduling: "Global Code Motion Global Value Numbering", Cliff Click 1995
 // https://courses.cs.washington.edu/courses/cse501/06wi/reading/click-pldi95.pdf
+static uint32_t node_hash(void* a) { return ((TB_Node*) a)->gvn; }
+static bool node_compare(void* a, void* b) { return a == b; }
 
 ////////////////////////////////
 // Early scheduling
@@ -48,7 +50,7 @@ static TB_BasicBlock* schedule_early(TB_Passes* p, TB_Node* n) {
 
     DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", p->f->super.name, n->gvn, best->id));
 
-    nl_hashset_put(&best->items, n);
+    nl_hashset_put2(&best->items, n, node_hash, node_compare);
     nl_map_put(p->scheduled, n, best);
     return best;
 }
@@ -79,12 +81,12 @@ static void place_in_block(TB_Passes* p, TB_Node* n, TB_BasicBlock* bb) {
         // replace old
         TB_BasicBlock* old = p->scheduled[search].v;
         p->scheduled[search].v = bb;
-        nl_hashset_remove(&old->items, n);
+        nl_hashset_remove2(&old->items, n, node_hash, node_compare);
     } else {
         nl_map_put(p->scheduled, n, bb);
     }
 
-    nl_hashset_put(&bb->items, n);
+    nl_hashset_put2(&bb->items, n, node_hash, node_compare);
 }
 
 static void simple_schedule_late(TB_Passes* p, TB_Node* n, TB_BasicBlock* lca) {
@@ -112,7 +114,7 @@ static void schedule_late(TB_Passes* p, TB_Node* n) {
     }
 
     // schedule all users first
-    for (User* use = find_users(p, n); use; use = use->next) {
+    for (User* use = n->users; use; use = use->next) {
         schedule_late(p, use->n);
     }
 
@@ -123,7 +125,7 @@ static void schedule_late(TB_Passes* p, TB_Node* n) {
 
     // we're gonna find the least common ancestor
     TB_BasicBlock* lca = NULL;
-    for (User* use = find_users(p, n); use; use = use->next) {
+    for (User* use = n->users; use; use = use->next) {
         TB_Node* y = use->n;
 
         ptrdiff_t search = nl_map_get(p->scheduled, y);
@@ -205,7 +207,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg) {
                     TB_Node* proj = use->n;
 
                     if (proj->type == TB_PROJ && !worklist_test_n_set(&p->worklist, proj)) {
-                        nl_hashset_put(&bb->items, proj);
+                        nl_hashset_put2(&bb->items, proj, node_hash, node_compare);
                         nl_map_put(p->scheduled, proj, bb);
                     }
                 }

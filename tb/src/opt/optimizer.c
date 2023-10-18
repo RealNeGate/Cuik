@@ -37,6 +37,7 @@ TB_Node* make_dead_node(TB_Function* f, TB_Passes* restrict p);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
 static bool remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
+static bool lattice_dommy(LatticeUniverse* uni, TB_Node* expected_dom, TB_Node* bb);
 
 ////////////////////////////////
 // Worklist
@@ -196,7 +197,7 @@ static TB_Node* single_user(TB_Passes* restrict p, TB_Node* n) {
 }
 
 static bool single_use(TB_Passes* restrict p, TB_Node* n) {
-    return find_users(p, n)->next == NULL;
+    return n->users->next == NULL;
 }
 
 static bool is_same_align(TB_Node* a, TB_Node* b) {
@@ -236,6 +237,7 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 #include "dce.h"
 #include "fold.h"
 #include "mem_opt.h"
+#include "sroa.h"
 #include "loop.h"
 #include "branches.h"
 #include "print.h"
@@ -243,6 +245,21 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 #include "gcm.h"
 #include "libcalls.h"
 #include "scheduler.h"
+
+static bool lattice_dommy(LatticeUniverse* uni, TB_Node* expected_dom, TB_Node* bb) {
+    while (bb != NULL && expected_dom != bb) {
+        Lattice* l = lattice_universe_get(uni, bb);
+        assert(l->tag == LATTICE_CONTROL);
+
+        TB_Node* new_bb = l->_ctrl.idom;
+        if (bb == new_bb) {
+            return false;
+        }
+        bb = new_bb;
+    }
+
+    return true;
+}
 
 static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra) {
     // try CSE, if we succeed, just delete the node and use the old copy
@@ -930,14 +947,24 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
         generate_use_lists(p, f);
     }
 
-    // generate early doms
-    /*CUIK_TIMED_BLOCK("doms") {
-        p->cfg = tb_compute_rpo(f, p);
-        tb_compute_dominators(f, p, p->cfg);
-        worklist_clear(&p->worklist);
-    }*/
-
     return p;
+}
+
+void tb_pass_sroa(TB_Passes* p) {
+    cuikperf_region_start("sroa", NULL);
+    verify_tmp_arena(p);
+
+    TB_Function* f = p->f;
+
+    int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
+    TB_Node* start = f->start_node;
+
+    size_t i = 0;
+    while (i < dyn_array_length(p->locals)) {
+        i += sroa_rewrite(p, pointer_size, start, p->locals[i]);
+    }
+
+    cuikperf_region_end();
 }
 
 void tb_pass_optimize(TB_Passes* p) {
@@ -969,6 +996,33 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
         p->universe.type_cap = count;
         p->universe.types = tb_platform_heap_alloc(count * sizeof(Lattice*));
         memset(p->universe.types, 0, count * sizeof(Lattice*));
+
+        // generate early doms
+        CUIK_TIMED_BLOCK("doms") {
+            TB_Function* f = p->f;
+
+            Worklist tmp_ws = { 0 };
+            worklist_alloc(&tmp_ws, (f->node_count / 4) + 4);
+
+            TB_CFG cfg = tb_compute_rpo2(f, &tmp_ws, &p->stack);
+            tb_compute_dominators2(f, &tmp_ws, cfg);
+
+            // mark IDOM for each "BB" node
+            FOREACH_N(i, 0, cfg.block_count) {
+                // entry block should be marked as dominated by NULL, to make it easy
+                // to end the iteration of a dom chain.
+                TB_Node* dom = NULL;
+                if (i != 0) {
+                    dom = nl_map_get_checked(cfg.node_to_block, tmp_ws.items[i]).dom;
+                }
+
+                Lattice* l = lattice_ctrl(&p->universe, dom);
+                lattice_universe_map(&p->universe, tmp_ws.items[i], l);
+            }
+
+            worklist_free(&tmp_ws);
+            tb_free_cfg(&cfg);
+        }
     }
 
     TB_Function* f = p->f;

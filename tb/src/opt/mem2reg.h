@@ -275,44 +275,6 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     tb_tls_restore(c->tls, old_len);
 }
 
-typedef struct {
-    TB_Node* old_n;
-
-    int64_t offset;
-    TB_CharUnits size;
-    TB_DataType dt;
-} AggregateConfig;
-
-static ptrdiff_t find_config(size_t config_count, AggregateConfig* configs, int64_t offset) {
-    FOREACH_N(i, 0, config_count) {
-        if (configs[i].offset == offset) return i;
-    }
-
-    tb_unreachable();
-    return -1;
-}
-
-// -1 is a bad match
-// -2 is no match, so we can add a new config
-static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* configs, int64_t offset, TB_CharUnits size, TB_DataType dt) {
-    int64_t max = offset + size;
-
-    FOREACH_N(i, 0, config_count) {
-        int64_t max2 = configs[i].offset + configs[i].size;
-
-        if (offset >= configs[i].offset && max <= max2) {
-            // they overlap... but is it a clean overlap?
-            if (offset == configs[i].offset && max == max2 && TB_DATA_TYPE_EQUALS(dt, configs[i].dt)) {
-                return i;
-            }
-
-            return -1;
-        }
-    }
-
-    return -2;
-}
-
 static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
     DO_IF(TB_OPTDEBUG_MEM2REG)(
         printf("  FORST %u: ", bb->gvn),
@@ -347,19 +309,17 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     // Decide which stack slots to promote
     ////////////////////////////////
     size_t to_promote_count = 0;
-    TB_Node** to_promote = tb_tls_push(tls, sizeof(TB_Node*) * dyn_array_length(p->locals));
+    TB_Node** to_promote = tb_tls_push(tls, sizeof(TB_Node*) * 1024);
 
-    dyn_array_for(i, p->locals) {
-        TB_Node* n = p->locals[i];
+    for (User* u = f->start_node->users; u; u = u->next) {
+        TB_Node* n = u->n;
 
         TB_DataType dt;
         Coherency coherence = tb_get_stack_slot_coherency(p, f, n, &dt);
 
         switch (coherence) {
             case COHERENCY_GOOD: {
-                tb_tls_push(tls, sizeof(TB_Node*));
                 to_promote[to_promote_count++] = n;
-
                 n->dt = dt;
 
                 DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: v%u promoting to IR register", f->super.name, n->gvn));
@@ -382,6 +342,11 @@ bool tb_pass_mem2reg(TB_Passes* p) {
                 break;
             }
             default: tb_todo();
+        }
+
+        if (to_promote_count == 1024) {
+            DO_IF(TB_OPTDEBUG_MEM2REG)(log_warn("%s: can't mem2reg more than 1024 locals...", f->super.name));
+            break;
         }
     }
 
@@ -545,96 +510,6 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     no_changes:
     cuikperf_region_end();
     return false;
-}
-
-// false means failure to SROA
-static bool add_configs(TB_Passes* p, TB_TemporaryStorage* tls, User* use, TB_Node* base_address, size_t base_offset, size_t* config_count, AggregateConfig* configs, int pointer_size) {
-    for (; use; use = use->next) {
-        TB_Node* n = use->n;
-
-        if (n->type == TB_MEMBER_ACCESS && use->slot == 1) {
-            // same rules, different offset
-            int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
-            if (!add_configs(p, tls, find_users(p, n), base_address, base_offset + offset, config_count, configs, pointer_size)) {
-                return false;
-            }
-            continue;
-        }
-
-        // we can only SROA if we know we're not using the
-        // address for anything but direct memory ops or TB_MEMBERs.
-        if (use->slot != 2) {
-            return false;
-        }
-
-        // find direct memory op
-        if (n->type != TB_LOAD && n->type != TB_STORE) {
-            return false;
-        }
-
-        TB_DataType dt = n->type == TB_LOAD ? n->dt : n->inputs[3]->dt;
-        TB_Node* address = n->inputs[2];
-        int size = (bits_in_data_type(pointer_size, dt) + 7) / 8;
-
-        // see if it's a compatible configuration
-        int match = compatible_with_configs(*config_count, configs, base_offset, size, dt);
-        if (match == -1) {
-            return false;
-        } else if (match == -2) {
-            // add new config
-            tb_tls_push(tls, sizeof(AggregateConfig));
-            configs[(*config_count)++] = (AggregateConfig){ address, base_offset, size, dt };
-        } else if (configs[match].old_n != address) {
-            log_warn("%s: v%u SROA config matches but reaches so via a different node, please idealize nodes before mem2reg", p->f->super.name, address->gvn);
-            return false;
-        }
-    }
-
-    return true;
-}
-
-void tb_pass_sroa(TB_Passes* p) {
-    cuikperf_region_start("sroa", NULL);
-    verify_tmp_arena(p);
-
-    TB_Function* f = p->f;
-    TB_TemporaryStorage* tls = tb_tls_steal();
-    int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
-
-    for (size_t i = dyn_array_length(p->locals); i--;) retry: {
-        TB_Node* address = p->locals[i];
-        void* mark = tb_tls_push(tls, 0);
-
-        size_t config_count = 0;
-        AggregateConfig* configs = tb_tls_push(tls, 0);
-        if (!add_configs(p, tls, find_users(p, address), address, 0, &config_count, configs, pointer_size)) {
-            TB_NODE_GET_EXTRA_T(address, TB_NodeLocal)->alias_index = 0;
-            continue;
-        }
-
-        // split allocation into pieces
-        if (config_count > 1) {
-            DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: v%u was able to SROA into %zu pieces", f->super.name, address->gvn, config_count));
-
-            uint32_t alignment = TB_NODE_GET_EXTRA_T(address, TB_NodeLocal)->align;
-            FOREACH_N(i, 0, config_count) {
-                TB_Node* new_n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
-                set_input(p, new_n, f->start_node, 0);
-                TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
-
-                // mark all users, there may be some fun new opts now
-                tb_pass_mark_users(p, configs[i].old_n);
-
-                // replace old pointer with new fancy
-                subsume_node(p, f, configs[i].old_n, new_n);
-                dyn_array_put(p->locals, new_n);
-            }
-            tb_tls_restore(tls, mark);
-            goto retry; // retry but don't go the next int
-        }
-    }
-
-    cuikperf_region_end();
 }
 
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share

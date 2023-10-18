@@ -146,7 +146,7 @@ TB_DominanceFrontiers* tb_get_dominance_frontiers(TB_Function* f, TB_Passes* res
 
         if (bb->type == TB_REGION && bb->input_count >= 2) {
             FOREACH_N(k, 0, bb->input_count) {
-                TB_Node* runner = get_block_begin(bb->inputs[k]);
+                TB_Node* runner = get_pred(bb, k);
 
                 while (!(runner->type == TB_PROJ && runner->inputs[0]->type == TB_START) && runner != idom(&cfg, bb)) {
                     // add to frontier set
@@ -168,7 +168,11 @@ TB_API void tb_free_dominance_frontiers(TB_DominanceFrontiers* df) {
 
 // https://www.cs.rice.edu/~keith/EMBED/dom.pdf
 void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg) {
-    TB_Node** blocks = p->worklist.items;
+    tb_compute_dominators2(f, &p->worklist, cfg);
+}
+
+void tb_compute_dominators2(TB_Function* f, Worklist* ws, TB_CFG cfg) {
+    TB_Node** blocks = ws->items;
     bool changed = true;
     while (changed) {
         changed = false;

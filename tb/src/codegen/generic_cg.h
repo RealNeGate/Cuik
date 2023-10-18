@@ -402,8 +402,11 @@ static int alloc_vreg(Ctx* restrict ctx, TB_Node* n, TB_DataType dt) {
     dyn_array_put(ctx->intervals, (LiveInterval){
             .reg_class = classify_reg_class(dt),
             .n = n, .reg = -1, .hint = -1, .assigned = -1,
-            .dt = legalize(dt), .start = INT_MAX, .split_kid = -1
+            .dt = legalize(dt), .split_kid = -1
         });
+
+    LiveRange r = { INT_MAX, INT_MAX };
+    dyn_array_put(ctx->intervals[i].ranges, r);
     return i;
 }
 
@@ -880,6 +883,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     if (!strcmp(f->super.name, "WinMain")) {
         reg_alloc_log = true;
         // tb_pass_print(p);
+    } else {
+        reg_alloc_log = false;
     }
 
     Ctx ctx = {

@@ -67,6 +67,11 @@ static Lattice* lattice_intern(LatticeUniverse* uni, Lattice l) {
 static int64_t lattice_int_min(int bits) { return 1ll << (bits - 1); }
 static int64_t lattice_int_max(int bits) { return (1ll << (bits - 1)) - 1; }
 
+// constructs a type for a CONTROL node
+static Lattice* lattice_ctrl(LatticeUniverse* uni, TB_Node* dom) {
+    return lattice_intern(uni, (Lattice){ LATTICE_CONTROL, ._ctrl = { dom } });
+}
+
 // maximal subset
 static Lattice* lattice_top(LatticeUniverse* uni, TB_DataType dt) {
     switch (dt.type) {

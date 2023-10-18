@@ -47,12 +47,19 @@ static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop);
 // initialize register allocator state
 static void init_regalloc(Ctx* restrict ctx) {
     // Generate intervals for physical registers
-    FOREACH_N(i, 0, 16) {
-        dyn_array_put(ctx->intervals, (LiveInterval){ .reg_class = REG_CLASS_GPR, .dt = TB_X86_TYPE_QWORD, .reg = i, .assigned = i, .hint = -1, .start = INT_MAX, .split_kid = -1 });
-    }
+    FOREACH_N(i, 0, 32) {
+        DynArray(LiveRange) ranges = dyn_array_create(LiveRange, 8);
+        dyn_array_put(ranges, (LiveRange){ INT_MAX, INT_MAX });
 
-    FOREACH_N(i, 0, 16) {
-        dyn_array_put(ctx->intervals, (LiveInterval){ .reg_class = REG_CLASS_XMM, .dt = TB_X86_TYPE_XMMWORD, .reg = i, .assigned = i, .hint = -1, .start = INT_MAX, .split_kid = -1 });
+        bool is_gpr = i < 16;
+        int reg = i % 16;
+
+        dyn_array_put(ctx->intervals, (LiveInterval){
+                .reg_class = is_gpr ? REG_CLASS_GPR : REG_CLASS_XMM,
+                .dt = is_gpr ? TB_X86_TYPE_QWORD : TB_X86_TYPE_XMMWORD,
+                .reg = reg, .assigned = reg, .hint = -1, .split_kid = -1,
+                .ranges = ranges
+            });
     }
 }
 

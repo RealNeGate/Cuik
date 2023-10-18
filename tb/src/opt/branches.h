@@ -94,8 +94,11 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
                     TB_Node* proj = u->n;
                     if (proj->type == TB_PROJ) {
                         int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
-                        // the projection needs to exclusively refer to the region
-                        assert(proj->users->next == NULL && proj->users->n == region);
+                        // the projection needs to exclusively refer to the region,
+                        // if not we can't elide those effects here.
+                        if (proj->users->next != NULL || proj->users->n != region) {
+                            return NULL;
+                        }
 
                         int phi_i = proj->users->slot;
                         assert(phi_i + 1 < n->input_count);
@@ -112,6 +115,8 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
                     {
                         TB_Node* parent = branch->inputs[0];
                         tb_pass_kill_node(opt, branch);
+                        tb_pass_kill_node(opt, left);
+                        tb_pass_kill_node(opt, right);
 
                         // attach the header and merge to each other
                         tb_pass_mark(opt, parent);

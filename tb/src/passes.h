@@ -4,6 +4,7 @@
 #define TB_OPTDEBUG_STATS   0
 #define TB_OPTDEBUG_PEEP    1
 #define TB_OPTDEBUG_LOOP    0
+#define TB_OPTDEBUG_SROA    0
 #define TB_OPTDEBUG_GCM     0
 #define TB_OPTDEBUG_MEM2REG 0
 #define TB_OPTDEBUG_CODEGEN 0
@@ -47,6 +48,10 @@ typedef struct {
     LatticeTrifecta trifecta;
 } LatticePointer;
 
+typedef struct {
+    TB_Node* idom;
+} LatticeControl;
+
 // Represents the fancier type system within the optimizer, it's
 // all backed by my shitty understanding of lattice theory
 typedef struct {
@@ -55,12 +60,14 @@ typedef struct {
         LATTICE_FLOAT32,
         LATTICE_FLOAT64,
         LATTICE_POINTER,
+        LATTICE_CONTROL,
     } tag;
     uint32_t pad;
     union {
         LatticeInt _int;
         LatticeFloat _float;
         LatticePointer _ptr;
+        LatticeControl _ctrl;
     };
 } Lattice;
 
@@ -136,11 +143,11 @@ struct TB_Passes {
 
     Worklist worklist;
 
-    // we wanna track locals because it's nice and easy
-    DynArray(TB_Node*) locals;
-
     // sometimes we be using arrays of nodes, let's just keep one around for a bit
     DynArray(TB_Node*) stack;
+
+    // we wanna track locals because it's nice and easy
+    DynArray(TB_Node*) locals;
 
     // tracks the fancier type system
     LatticeUniverse universe;
@@ -303,6 +310,7 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_sta
 void tb_free_cfg(TB_CFG* cfg);
 //   postorder walk -> dominators
 void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg);
+void tb_compute_dominators2(TB_Function* f, Worklist* ws, TB_CFG cfg);
 
 // Worklist API
 void worklist_alloc(Worklist* restrict ws, size_t initial_cap);

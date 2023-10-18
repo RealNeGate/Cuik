@@ -71,6 +71,8 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_ATOMIC_OR: return "atomic.or";
         case TB_ATOMIC_CAS: return "atomic.cas";
 
+        case TB_CLZ: return "clz";
+        case TB_CTZ: return "ctz";
         case TB_NEG: return "neg";
         case TB_NOT: return "not";
         case TB_AND: return "and";
@@ -159,7 +161,7 @@ static bool print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallba
             fillcolor = "lightblue";
         }*/
 
-        P("  r%u [ordering=in; shape=plaintext; label=", n->gvn);
+        P("  r%u [ordering=in; shape=plaintext; label=\"", n->gvn);
         switch (n->type) {
             case TB_START: P("start"); break;
             case TB_REGION: P("region"); break;
@@ -176,9 +178,15 @@ static bool print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallba
                 break;
             }
 
+            case TB_ARRAY_ACCESS: {
+                int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
+                P("*%td", stride);
+                break;
+            }
+
             case TB_MEMBER_ACCESS: {
                 int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
-                P("\\\"+%td\\\"", offset);
+                P("+%td", offset);
                 break;
             }
 
@@ -204,7 +212,7 @@ static bool print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallba
             P("%s", tb_node_get_name(n));
             break;
         }
-        P("]");
+        P("\"]");
 
         FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
             TB_Node* in = n->inputs[i];

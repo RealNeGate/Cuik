@@ -158,14 +158,14 @@ typedef enum TB_DataTypeEnum {
     TB_FLOAT,
     // Pointers
     TB_PTR,
-    // Tuples, these cannot be used in memory ops, just accessed via projections
-    TB_TUPLE,
     // represents control flow for REGION, BRANCH
     TB_CONTROL,
     // represents memory (and I/O)
     TB_MEMORY,
     // continuation (usually just return addresses :p)
     TB_CONT,
+    // Tuples, these cannot be used in memory ops, just accessed via projections
+    TB_TUPLE,
 } TB_DataTypeEnum;
 
 typedef enum TB_FloatFormat {
