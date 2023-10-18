@@ -140,7 +140,7 @@ TB_DominanceFrontiers* tb_get_dominance_frontiers(TB_Function* f, TB_Passes* res
     memset(df, 0, size);
     df->stride = stride;
 
-    FOREACH_REVERSE_N(i, 0, cfg.block_count) {
+    FOREACH_N(i, 0, cfg.block_count) {
         TB_Node* bb = blocks[i];
         assert(find_traversal_index(&cfg, bb) == i);
 

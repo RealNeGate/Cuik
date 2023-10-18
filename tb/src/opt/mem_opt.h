@@ -125,33 +125,6 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     }
 
     return NULL;
-
-    // loads based on PHIs may be reduced into data PHIs
-    /*if (n->inputs[1]->type == TB_PHI) {
-        return data_phi_from_memory_phi(p, f, n->dt, n->inputs[1], addr, NULL);
-    }*/
-
-    // if a load is control dependent on a store and it doesn't alias we can move the
-    // dependency up a bit.
-    /*if (n->inputs[1]->type != TB_STORE) return NULL;
-
-    KnownPointer ld_ptr = known_pointer(n->inputs[2]);
-    KnownPointer st_ptr = known_pointer(n->inputs[1]->inputs[2]);
-    if (ld_ptr.base != st_ptr.base) return NULL;
-
-    // it's probably not the fastest way to grab this value ngl...
-    ICodeGen* cg = tb__find_code_generator(f->super.module);
-    ld_ptr.offset *= cg->minimum_addressable_size;
-    st_ptr.offset *= cg->minimum_addressable_size;
-
-    size_t loaded_end = ld_ptr.offset + bits_in_data_type(cg->pointer_size, n->dt);
-    size_t stored_end = st_ptr.offset + bits_in_data_type(cg->pointer_size, n->inputs[0]->inputs[2]->dt);
-
-    // both bases match so if the effective ranges don't intersect, they don't alias.
-    if (ld_ptr.offset <= stored_end && st_ptr.offset <= loaded_end) return NULL;
-
-    set_input(p, n, n->inputs[1]->inputs[1], 1);
-    return n;*/
 }
 
 static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {

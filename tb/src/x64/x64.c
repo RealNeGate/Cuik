@@ -610,7 +610,16 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             hint_reg(ctx, dst, lhs);
 
             int32_t x;
-            if (try_for_imm32(ctx, n->inputs[2], &x)) {
+            if (n->inputs[2]->type == TB_LOAD && on_last_use(ctx, n->inputs[2])) {
+                use(ctx, n->inputs[2]);
+
+                SUBMIT(inst_move(n->dt, dst, lhs));
+
+                Inst* inst = isel_addr2(ctx, n->inputs[2]->inputs[2], dst, -1, dst);
+                inst->type = op;
+                inst->dt = legalize(n->dt);
+                SUBMIT(inst);
+            } else if (try_for_imm32(ctx, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
 
                 SUBMIT(inst_move(n->dt, dst, lhs));
@@ -857,7 +866,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             hint_reg(ctx, dst, lhs);
             SUBMIT(inst_move(n->dt, dst, lhs));
 
-            if (n->inputs[2]->type == TB_LOAD) {
+            if (n->inputs[2]->type == TB_LOAD && on_last_use(ctx, n->inputs[2])) {
                 use(ctx, n->inputs[2]);
 
                 Inst* inst = isel_addr2(ctx, n->inputs[2]->inputs[2], dst, -1, dst);

@@ -477,12 +477,26 @@ static TB_Node* identity_extension(TB_Passes* restrict opt, TB_Function* f, TB_N
     }
 }
 
+static int node_pos(TB_Node* n) {
+    switch (n->type) {
+        case TB_PHI:
+        return 1;
+
+        case TB_INTEGER_CONST:
+        case TB_FLOAT32_CONST:
+        case TB_FLOAT64_CONST:
+        return 2;
+
+        default:
+        return 3;
+    }
+}
+
 static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
     if (is_commutative(type)) {
         // if it's commutative: we wanna have a canonical form.
-        // lower types to the right (constants are basically the lowest things)
-        if (n->inputs[1]->type < n->inputs[2]->type) {
+        if (node_pos(n->inputs[1]) > node_pos(n->inputs[2])) {
             TB_Node* tmp = n->inputs[1];
             set_input(opt, n, n->inputs[2], 1);
             set_input(opt, n, tmp, 2);

@@ -803,7 +803,7 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
 static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
     // must've dead sometime between getting scheduled and getting
     // here.
-    if (n->type != TB_END && find_users(p, n) == NULL) {
+    if (n->type != TB_END && n->users == NULL) {
         return false;
     }
 

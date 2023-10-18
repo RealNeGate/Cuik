@@ -269,7 +269,11 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     // constant fold branch
     if (n->input_count == 2) {
         Lattice* key = lattice_universe_get(&opt->universe, n->inputs[1]);
-        if (key->_int.min == key->_int.max) {
+
+        // we can walk the dominator tree to see if the condition is already
+        // been checked.
+
+        if (key->tag == LATTICE_INT && key->_int.min == key->_int.max) {
             int64_t key_const = key->_int.max;
 
             size_t taken = 0;
@@ -321,21 +325,6 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
             return dead;
         }
     }
-
-    // check if it's a dead region
-    /*TB_Node* parent = unsafe_get_region(n);
-    if (parent->input_count == 0 && br->succ_count != 0) {
-        // remove predecessor from successors
-        TB_Node* dead = make_dead(f, opt);
-        for (User* use = find_users(opt, n); use; use = use->next) {
-            if (use->n->type == TB_PROJ) {
-                subsume_node(opt, f, use->n, dead);
-            }
-        }
-
-        br->succ_count = 0;
-        return n;
-    }*/
 
     return NULL;
 }

@@ -1,3 +1,4 @@
+#if 0
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -63,6 +64,70 @@ typedef struct
     stbi_uc *img_buffer, *img_buffer_end;
     stbi_uc *img_buffer_original, *img_buffer_original_end;
 } stbi__context;
+#endif
+
+#include <stddef.h>
+#include <stdint.h>
+
+int bounds_checks(size_t n, int* arr) {
+    int sum = 0;
+    for (size_t i = 0; i < n; i++) {
+        // if (i >= n) return -1; // bounds check
+        sum += arr[i];
+    }
+    return sum;
+}
+
+#if 0
+float max_elem(size_t i, float* x, float* y) {
+    return x[i] > y[i] ? x[i] : y[i];
+}
+
+uint32_t div_tricks(uint32_t n) {
+    return n / 3;
+}
+
+uint32_t dead_if(uint32_t n) {
+    if ((n << 2) & 1) {
+        return 1;
+    }
+
+    div_tricks(n);
+    return 0;
+}
+
+int jake(int x) {
+    return !x ? 5 : 2;
+}
+
+int phi_test(bool a, bool b) {
+    return (a ? 4 : 0) + (b ? 2 : 0);
+}
+
+int bar(int n) {
+    int arr[2];
+    arr[0] = n;
+    arr[1] = 1;
+
+    while (arr[0] < 10) {
+        arr[1] *= arr[0];
+        arr[0]++;
+    }
+
+    return arr[1];
+}
+
+void set_addr(size_t n, double* x, double** y) {
+    for (size_t i = 0; i < n; i++) {
+        y[i] = &x[i];
+    }
+}
+
+void max_array(size_t n, float* x, float* y) {
+    for (size_t i = 0; i < n; i++) {
+        x[i] = x[i] > y[i] ? x[i] : y[i];
+    }
+}
 
 int folding(void) {
     return 42+1 & 3 * 16;
@@ -90,55 +155,8 @@ uint32_t jeans(int x) {
     return x & (1 << x);
 }
 
-int jake(int x) {
-    return !x ? 5 : 2;
-}
-
-uint32_t div_tricks(uint32_t n) {
-    return n / 3;
-}
-
 int main() {
     printf("Hello, World! %d\n", div_tricks(27));
-}
-
-uint32_t dead_if(uint32_t n) {
-    if (n << 2 & 1) {
-        return 1;
-    }
-
-    div_tricks(n);
-    return 0;
-}
-
-#if 0
-int bounds_checks(size_t n, int* arr) {
-    int sum = 0;
-    for (size_t i = 0; i < n; i++) {
-        if (i >= n) return -1; // bounds check
-        sum += arr[i];
-    }
-    return sum;
-}
-
-float max_elem(size_t i, float* x, float* y) {
-    return x[i] > y[i] ? x[i] : y[i];
-}
-
-void set_addr(size_t n, double* x, double** y) {
-    for (size_t i = 0; i < n; i++) {
-        y[i] = &x[i];
-    }
-}
-
-int phi_test(int a, int b) {
-    return (a & 2 ? 4 : 0) + (b ? 2 : 0);
-}
-
-void max_array(size_t n, float* x, float* y) {
-    for (size_t i = 0; i < n; i++) {
-        x[i] = x[i] > y[i] ? x[i] : y[i];
-    }
 }
 
 // returns 1 if the product is valid, 0 on overflow.
@@ -155,19 +173,6 @@ void array_ops(size_t n, int* arr) {
     for (size_t i = 0; i < n; i++) {
         arr[i] |= 1;
     }
-}
-
-static int bar(int n) {
-    int arr[2];
-    arr[0] = n;
-    arr[1] = 1;
-
-    while (arr[0] < 10) {
-        arr[1] *= arr[0];
-        arr[0]++;
-    }
-
-    return arr[1];
 }
 
 static int bitcast(float x) {

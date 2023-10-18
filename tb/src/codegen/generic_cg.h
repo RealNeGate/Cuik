@@ -670,7 +670,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             // track non-dead users
             size_t use_count = 0;
             for (User* use = find_users(ctx->p, n); use; use = use->next) {
-                if (nl_map_get(scheduled, n) >= 0) use_count++;
+                if (nl_map_get(scheduled, use->n) >= 0) use_count++;
             }
 
             // we don't have to worry about resizing here which is really nice
@@ -846,8 +846,8 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
         if (end->type != TB_END    && end->type != TB_TRAP &&
             end->type != TB_BRANCH && end->type != TB_UNREACHABLE) {
             TB_OPTDEBUG(CODEGEN)(
-                printf("  TERMINATOR %u: ", n->gvn),
-                print_node_sexpr(n, 0),
+                printf("  TERMINATOR %u: ", end->gvn),
+                print_node_sexpr(end, 0),
                 printf("\n")
             );
 

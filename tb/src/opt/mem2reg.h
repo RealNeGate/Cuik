@@ -309,10 +309,9 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     // Decide which stack slots to promote
     ////////////////////////////////
     size_t to_promote_count = 0;
-    TB_Node** to_promote = tb_tls_push(tls, sizeof(TB_Node*) * 1024);
-
-    for (User* u = f->start_node->users; u; u = u->next) {
-        TB_Node* n = u->n;
+    TB_Node** to_promote = tb_tls_push(tls, sizeof(TB_Node*) * dyn_array_length(p->locals));
+    dyn_array_for(i, p->locals) {
+        TB_Node* n = p->locals[i];
 
         TB_DataType dt;
         Coherency coherence = tb_get_stack_slot_coherency(p, f, n, &dt);
@@ -342,11 +341,6 @@ bool tb_pass_mem2reg(TB_Passes* p) {
                 break;
             }
             default: tb_todo();
-        }
-
-        if (to_promote_count == 1024) {
-            DO_IF(TB_OPTDEBUG_MEM2REG)(log_warn("%s: can't mem2reg more than 1024 locals...", f->super.name));
-            break;
         }
     }
 
