@@ -165,8 +165,35 @@ static bool print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallba
         switch (n->type) {
             case TB_START: P("start"); break;
             case TB_REGION: P("region"); break;
-            case TB_LOAD:  P("load"); break;
-            case TB_STORE: P("store"); break;
+
+            case TB_LOAD: {
+                P("ld.");
+                tb_print_type(n->dt, callback, user_data);
+                break;
+            }
+            case TB_STORE: {
+                P("st.");
+                tb_print_type(n->inputs[2]->dt, callback, user_data);
+                break;
+            }
+
+            case TB_SYMBOL: {
+                TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+                if (sym->name[0]) {
+                    P("%s", sym->name);
+                } else {
+                    P("sym%p", sym);
+                }
+                break;
+            }
+
+            case TB_BITCAST: {
+                P("bitcast ");
+                tb_print_type(n->inputs[1]->dt, callback, user_data);
+                P(" -> ");
+                tb_print_type(n->dt, callback, user_data);
+                break;
+            }
 
             case TB_INTEGER_CONST: {
                 TB_NodeInt* num = TB_NODE_GET_EXTRA(n);

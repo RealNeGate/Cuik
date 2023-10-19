@@ -261,7 +261,7 @@ static TB_Node* get_pred(TB_Node* n, int i) {
         TB_Node* parent = n->inputs[0];
 
         // start or cprojs with multiple users (it's a BB) will just exit
-        if (parent->type == TB_START || n->users->next != NULL) {
+        if (parent->type == TB_START || (parent->type == TB_REGION && n->users->next == NULL)) {
             return n;
         }
         n = parent;

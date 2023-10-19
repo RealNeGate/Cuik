@@ -49,16 +49,16 @@ static bool get_int_const(TB_Node* n, uint64_t* imm) {
 ////////////////////////////////
 // Integer idealizations
 ////////////////////////////////
-static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_bitcast(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
-    if (src->type != TB_INTEGER_CONST || n->dt.type != TB_INT) {
-        return NULL;
+
+    // int -> smaller int means truncate
+    if (src->dt.type == TB_INT && n->dt.type == TB_INT && src->dt.data > n->dt.data) {
+        n->type = TB_TRUNCATE;
+        return n;
     }
 
-    TB_NodeInt* src_i = TB_NODE_GET_EXTRA(src);
-
-    uint64_t mask = n->dt.data == 64 ? UINT64_MAX : (1ull << n->dt.data) - 1;
-    return make_int_node(f, opt, n->dt, src_i->value & mask);
+    return NULL;
 }
 
 // cmp.slt(a, 0) => is_sign(a)

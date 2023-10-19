@@ -880,12 +880,14 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_Function* restrict f = p->f;
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
-    if (!strcmp(f->super.name, "WinMain")) {
+    #if 0
+    if (!strcmp(f->super.name, "stbi__parse_png_file")) {
         reg_alloc_log = true;
-        // tb_pass_print(p);
+        tb_pass_print(p);
     } else {
         reg_alloc_log = false;
     }
+    #endif
 
     Ctx ctx = {
         .module = f->super.module,
