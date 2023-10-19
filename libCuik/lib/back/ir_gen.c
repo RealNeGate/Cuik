@@ -309,7 +309,8 @@ static TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
                 src = dst;
                 reg = v->reg;
             } else {
-                reg = tb_inst_load(func, ctype_to_tbtype(src), v->reg, src->align, is_volatile);
+                TB_DataType dt = ctype_to_tbtype(src);
+                reg = tb_inst_load(func, dt, v->reg, src->align, is_volatile);
             }
             break;
         }
@@ -1069,11 +1070,24 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             r = tb_inst_ptr2int(func, r, TB_TYPE_I64);
 
             TB_Node* diff = tb_inst_sub(func, l, r, TB_ARITHMATIC_NSW | TB_ARITHMATIC_NUW);
-            TB_Node* diff_in_elems = tb_inst_div(func, diff, tb_inst_sint(func, diff->dt, stride), true);
+
+            // early opt because it's kinda annoying to see so many division ops,
+            // the optimizer can do this and more but we don't run it during -O0...
+            //
+            // wouldn't it be nice to just have an always on optimizer, one thats
+            // debuggable even in optimized form... yea crazy i know :p
+            uint64_t log2 = __builtin_ffsll(stride) - 1;
+            if (stride > 1) {
+                if (stride == 1ull << log2) {
+                    diff = tb_inst_shr(func, diff, tb_inst_uint(func, diff->dt, stride));
+                } else {
+                    diff = tb_inst_div(func, diff, tb_inst_sint(func, diff->dt, stride), true);
+                }
+            }
 
             return (IRVal){
                 .value_type = RVALUE,
-                .reg = diff_in_elems,
+                .reg = diff,
             };
         }
         case EXPR_COMMA: {
@@ -1206,7 +1220,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                     // pointer arithmatic
                     stride = tb_inst_uint(func, TB_TYPE_PTR, cuik_canonical_type(type->ptr_to)->size);
                 } else {
-                    stride = tb_inst_uint(func, ctype_to_tbtype(type), 1);
+                    stride = tb_inst_uint(func, dt, 1);
                 }
 
                 loaded = is_inc
