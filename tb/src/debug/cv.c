@@ -3,6 +3,15 @@
 
 #include "cv_type_builder.c"
 
+#include <sys/stat.h>
+
+#if defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define fileno _fileno
+#define fstat  _fstat
+#define stat   _stat
+#define strdup _strdup
+#endif
+
 // constant sized "hash map" which is used to
 // deduplicate types in the codeview
 #define MAX_TYPE_ENTRY_LOOKUP_SIZE 1024

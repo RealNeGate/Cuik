@@ -22,7 +22,7 @@ static int put_symbol(TB_Emitter* stab, uint32_t name, uint8_t sym_info, uint16_
         .size  = size
     };
     tb_outs(stab, sizeof(sym), (uint8_t*)&sym);
-    return stab->count / sizeof(TB_Elf64_Sym);
+    return (stab->count / sizeof(TB_Elf64_Sym)) - 1;
 }
 
 static void put_section_symbols(DynArray(TB_ModuleSection) sections, TB_Emitter* strtbl, TB_Emitter* stab, int t) {

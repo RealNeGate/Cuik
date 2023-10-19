@@ -67,7 +67,42 @@ typedef struct
 #endif
 
 #include <stddef.h>
-#include <stdint.h>
+#include <stdio.h>
+#include <windows.h>
+
+FILE *stbi__fopen(char const *filename, char const *mode)
+{
+    FILE *f;
+    wchar_t wMode[64];
+    wchar_t wFilename[1024];
+	if (0 == MultiByteToWideChar(65001 /* UTF8 */, 0, filename, -1, wFilename, sizeof(wFilename)))
+        return 0;
+
+	if (0 == MultiByteToWideChar(65001 /* UTF8 */, 0, mode, -1, wMode, sizeof(wMode)))
+        return 0;
+
+    f = fopen(filename, mode);
+    return f;
+}
+
+#if 0
+int stores(int* a, int* b) {
+    int c = *a;
+    *b = 2;
+    return *a + c;
+}
+
+float max_elem(size_t i, float* x, float* y) {
+    return x[i] > y[i] ? x[i] : y[i];
+}
+
+uint32_t div_tricks(uint32_t n) {
+    return n / 3;
+}
+
+int phi_test(bool a, bool b) {
+    return (a ? 4 : 0) + (b ? 2 : 0);
+}
 
 int bounds_checks(size_t n, int* arr) {
     int sum = 0;
@@ -76,15 +111,6 @@ int bounds_checks(size_t n, int* arr) {
         sum += arr[i];
     }
     return sum;
-}
-
-#if 0
-float max_elem(size_t i, float* x, float* y) {
-    return x[i] > y[i] ? x[i] : y[i];
-}
-
-uint32_t div_tricks(uint32_t n) {
-    return n / 3;
 }
 
 uint32_t dead_if(uint32_t n) {
@@ -98,10 +124,6 @@ uint32_t dead_if(uint32_t n) {
 
 int jake(int x) {
     return !x ? 5 : 2;
-}
-
-int phi_test(bool a, bool b) {
-    return (a ? 4 : 0) + (b ? 2 : 0);
 }
 
 int bar(int n) {
@@ -214,12 +236,6 @@ int branching_store(int* a) {
     if (*a) {
         *a = 6;
     }
-    return *a;
-}
-
-static int aliasing(int* restrict a, int* restrict b) {
-    *a = 1;
-    *b = 2;
     return *a;
 }
 
