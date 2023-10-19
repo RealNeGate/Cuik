@@ -156,11 +156,22 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg) {
 
         CUIK_TIMED_BLOCK("pinned schedule") {
             FOREACH_REVERSE_N(i, 0, cfg.block_count) {
-                TB_Node* start = ws->items[i];
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, start);
+                TB_Node* bb_node = ws->items[i];
+                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, bb_node);
+
+                if (i == 0) {
+                    // schedule START node
+                    TB_Node* start = p->f->start_node;
+                    nl_hashset_put2(&bb->items, start, node_hash, node_compare);
+                    nl_map_put(p->scheduled, start, bb);
+                }
+
+                // schedule top of BB
+                nl_hashset_put2(&bb->items, bb_node, node_hash, node_compare);
+                nl_map_put(p->scheduled, bb_node, bb);
 
                 TB_Node* n = bb->end;
-                while (n != start) {
+                while (n != bb_node) {
                     DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u pinned to .bb%d\n", p->f->super.name, n->gvn, bb->id));
                     nl_hashset_put2(&bb->items, n, node_hash, node_compare);
                     nl_map_put(p->scheduled, n, bb);

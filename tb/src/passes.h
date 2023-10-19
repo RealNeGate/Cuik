@@ -214,7 +214,7 @@ static bool is_mem_out_op(TB_Node* n) {
 }
 
 static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_START && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ || n->type == TB_LOCAL;
+    return (n->type >= TB_START && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ;
 }
 
 static bool is_mem_in_op(TB_Node* n) {

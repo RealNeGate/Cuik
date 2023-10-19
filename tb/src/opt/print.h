@@ -120,7 +120,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             printf("%#0"PRIx64, num->value);
         }
     } else {
-        printf("v%llu", (long long unsigned) n->gvn);
+        printf("v%u", n->gvn);
     }
 }
 
@@ -253,7 +253,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     TB_Node* projs[4];
                     for (size_t i = 0; i < 4; i++) projs[i] = NULL;
 
-                    for (User* use = find_users(ctx->opt, n); use; use = use->next) {
+                    for (User* use = n->users; use; use = use->next) {
                         if (use->n->type == TB_PROJ) {
                             int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
                             projs[index] = use->n;

@@ -406,6 +406,10 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule
         }
         case TB_PASSING_DIRECT: {
             if (arg_type->kind == KIND_STRUCT || arg_type->kind == KIND_UNION) {
+                TB_Node* addr = cvt2lval(tu, func, &arg);
+
+                TB_DataType dt = TB_TYPE_INTN(arg_type->size*8);
+                out_param[0] = tb_inst_load(func, dt, addr, arg_type->align, false);
                 return 1;
             } else {
                 TB_Node* n = cvt2rval(tu, func, &arg);

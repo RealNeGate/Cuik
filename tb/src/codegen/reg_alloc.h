@@ -259,13 +259,10 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
         int size = 8;
         ra->stack_usage = align_up(ra->stack_usage + size, size);
 
+        // remove from active set
+        set_remove(&ra->active_set[interval->reg_class], interval->assigned);
+
         REG_ALLOC_LOG printf("  \x1b[33m#   v%d: spill %s to [RBP - %d] at t=%d\x1b[0m\n", ri, reg_name(interval->reg_class, interval->assigned), ra->stack_usage, pos);
-        if (current_time >= pos && interval->assigned >= 0) {
-            if (set_get(&ra->active_set[interval->reg_class], interval->assigned) && ra->active[interval->reg_class][interval->assigned] == ri) {
-                REG_ALLOC_LOG printf("  \x1b[33m#   v%d: expired during split\x1b[0m\n", ri);
-                set_remove(&ra->active_set[interval->reg_class], interval->assigned);
-            }
-        }
     }
 
     // split lifetime
@@ -278,7 +275,7 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
     }
     it.assigned = it.reg = -1;
     it.uses = NULL;
-    it.ranges = NULL;
+    it.ranges = dyn_array_create(LiveRange, 4);
     it.n = NULL;
     it.split_kid = -1;
 
@@ -287,6 +284,7 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
     int new_reg = dyn_array_length(ra->intervals);
     interval->split_kid = new_reg;
 
+    dyn_array_put(it.ranges, (LiveRange){ INT_MAX, INT_MAX });
     dyn_array_put(ra->intervals, it);
     interval = &ra->intervals[old_reg];
 
@@ -322,7 +320,7 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
     }
 
     // split ranges
-    for (size_t i = 0; i < dyn_array_length(interval->ranges);) {
+    for (size_t i = 1; i < dyn_array_length(interval->ranges);) {
         LiveRange* range = &interval->ranges[i];
         if (range->start > pos) {
             dyn_array_put(it.ranges, *range);
@@ -334,6 +332,8 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
                 memmove(range, range + 1, shift * sizeof(LiveRange));
             }
             dyn_array_pop(interval->ranges);
+            interval->active_range -= 1;
+            continue;
         } else if (range->end > pos) {
             // intersects pos, we need to split the range
             LiveRange r = { pos, range->end };
@@ -540,7 +540,10 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
     }
 
     int pos = use_pos[highest];
-    int first_use = interval->uses[dyn_array_length(interval->uses) - 1].pos;
+    int first_use = INT_MAX;
+    if (dyn_array_length(interval->uses)) {
+        first_use = interval->uses[dyn_array_length(interval->uses) - 1].pos;
+    }
 
     bool spilled = false;
     if (first_use > pos) {
@@ -597,7 +600,7 @@ static void move_to_active(LSRA* restrict ra, LiveInterval* interval) {
     int ri = interval - ra->intervals;
 
     if (set_get(&ra->active_set[rc], reg)) {
-        tb_panic("intervals should never be forced out, we should've accomodated them in the first place");
+        tb_panic("v%d: interval v%d should never be forced out, we should've accomodated them in the first place", ri, ra->active[rc][reg]);
     }
 
     assert(reg < 16);

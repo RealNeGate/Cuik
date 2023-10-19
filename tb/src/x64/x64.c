@@ -420,7 +420,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static bool should_rematerialize(TB_Node* n) {
-    if (n->type == TB_INT2PTR && n->inputs[1]->type == TB_INTEGER_CONST) {
+    if ((n->type == TB_INT2FLOAT || n->type == TB_INT2PTR) && n->inputs[1]->type == TB_INTEGER_CONST) {
         return true;
     }
 
