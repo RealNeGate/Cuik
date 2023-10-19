@@ -6,65 +6,46 @@ static bool node_compare(void* a, void* b) { return a == b; }
 ////////////////////////////////
 // Early scheduling
 ////////////////////////////////
-static TB_BasicBlock* schedule_early(TB_Passes* p, TB_Node* n) {
+static void schedule_early(TB_Passes* p, TB_Node* n) {
     // already visited
     if (worklist_test_n_set(&p->worklist, n)) {
-        return NULL;
+        return;
     }
 
     // push node, late scheduling will process this list
     dyn_array_put(p->worklist.items, n);
-
-    // pinned needs earlier scheduling
-    TB_BasicBlock* best = NULL;
-    if (is_pinned(n) && n->input_count != 0) {
-        ptrdiff_t search = nl_map_get(p->scheduled, n->inputs[0]);
-        if (search >= 0) {
-            best = p->scheduled[search].v;
-        } else {
-            // default to entry
-            best = nl_map_get_checked(p->scheduled, p->worklist.items[0]);
-        }
-
-        DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u pinned to .bb%d\n", p->f->super.name, n->gvn, best->id));
-        nl_hashset_put2(&best->items, n, node_hash, node_compare);
-        nl_map_put(p->scheduled, n, best);
-    }
 
     // schedule inputs first
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
         schedule_early(p, n->inputs[i]);
     }
 
-    if (best != NULL) {
-        return best;
-    }
+    // schedule unpinned nodes
+    if (!is_pinned(n) || n->input_count == 0) {
+        // start at the entry point
+        TB_BasicBlock* best = nl_map_get_checked(p->scheduled, p->worklist.items[0]);
+        int best_depth = 0;
 
-    // start at the entry point
-    best = nl_map_get_checked(p->scheduled, p->worklist.items[0]);
-    int best_depth = 0;
+        // choose deepest block
+        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+            ptrdiff_t search = nl_map_get(p->scheduled, n->inputs[i]);
+            if (search < 0) {
+                // input has no scheduling... weird?
+                continue;
+            }
 
-    // choose deepest block
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-        ptrdiff_t search = nl_map_get(p->scheduled, n->inputs[i]);
-        TB_BasicBlock* bb;
-        if (search >= 0) {
-            bb = p->scheduled[search].v;
-        } else {
-            tb_todo();
+            TB_BasicBlock* bb = p->scheduled[search].v;
+            if (best_depth < bb->dom_depth) {
+                best_depth = bb->dom_depth;
+                best = bb;
+            }
         }
 
-        if (best_depth < bb->dom_depth) {
-            best_depth = bb->dom_depth;
-            best = bb;
-        }
+        DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", p->f->super.name, n->gvn, best->id));
+
+        nl_hashset_put2(&best->items, n, node_hash, node_compare);
+        nl_map_put(p->scheduled, n, best);
     }
-
-    DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", p->f->super.name, n->gvn, best->id));
-
-    nl_hashset_put2(&best->items, n, node_hash, node_compare);
-    nl_map_put(p->scheduled, n, best);
-    return best;
 }
 
 ////////////////////////////////
@@ -173,26 +154,41 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg) {
             }
         }
 
+        CUIK_TIMED_BLOCK("pinned schedule") {
+            FOREACH_REVERSE_N(i, 0, cfg.block_count) {
+                TB_Node* start = ws->items[i];
+                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, start);
+
+                TB_Node* n = bb->end;
+                while (n != start) {
+                    DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u pinned to .bb%d\n", p->f->super.name, n->gvn, bb->id));
+                    nl_hashset_put2(&bb->items, n, node_hash, node_compare);
+                    nl_map_put(p->scheduled, n, bb);
+
+                    // mark projections into the same block
+                    for (User* use = n->users; use; use = use->next) {
+                        TB_Node* proj = use->n;
+                        if (proj->type == TB_PROJ) {
+                            nl_hashset_put2(&bb->items, proj, node_hash, node_compare);
+                            nl_map_put(p->scheduled, proj, bb);
+                        }
+                    }
+
+                    n = n->inputs[0];
+                }
+            }
+        }
+
         CUIK_TIMED_BLOCK("early schedule") {
             FOREACH_REVERSE_N(i, 0, cfg.block_count) {
                 TB_Node* end = nl_map_get_checked(cfg.node_to_block, ws->items[i]).end;
                 schedule_early(p, end);
-
-                TB_BasicBlock* bb = nl_map_get_checked(p->scheduled, end);
-                for (User* use = end->users; use; use = use->next) {
-                    TB_Node* proj = use->n;
-
-                    if (proj->type == TB_PROJ && !worklist_test_n_set(&p->worklist, proj)) {
-                        nl_hashset_put2(&bb->items, proj, node_hash, node_compare);
-                        nl_map_put(p->scheduled, proj, bb);
-                    }
-                }
             }
         }
 
         // move nodes closer to their usage site
         CUIK_TIMED_BLOCK("late schedule") {
-            FOREACH_N(i, cfg.block_count, dyn_array_length(ws->items)) {
+            FOREACH_REVERSE_N(i, cfg.block_count, dyn_array_length(ws->items)) {
                 schedule_late(p, ws->items[i]);
             }
 
