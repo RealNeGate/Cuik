@@ -42,6 +42,12 @@ static void print_type(TB_DataType dt) {
     }
 }
 
+static void print_type2(TB_DataType dt) {
+    printf("\x1b[96m");
+    print_type(dt);
+    printf("\x1b[0m");
+}
+
 static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
     if (n == NULL) {
         printf("_");
@@ -58,7 +64,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                     printf("_");
                 } else {
                     printf("v%u: ", params[i]->gvn);
-                    print_type(params[i]->dt);
+                    print_type2(params[i]->dt);
                 }
             }
             printf(")");
@@ -88,7 +94,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                     }
 
                     printf("v%u: ", u->n->gvn);
-                    print_type(u->n->dt);
+                    print_type2(u->n->dt);
                 }
             }
             printf(")");
@@ -119,13 +125,13 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         }
     } else if (n->type == TB_ZERO_EXT) {
         printf("(zxt.");
-        print_type(n->dt);
+        print_type2(n->dt);
         printf(" ");
         print_ref_to_node(ctx, n->inputs[1], false);
         printf(")");
     } else if (n->type == TB_SIGN_EXT) {
         printf("(sxt.");
-        print_type(n->dt);
+        print_type2(n->dt);
         printf(" ");
         print_ref_to_node(ctx, n->inputs[1], false);
         printf(")");
@@ -324,7 +330,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     FOREACH_N(i, first, 4) {
                         if (projs[i] == NULL) break;
                         if (i > first) printf(", ");
-                        print_type(projs[i]->dt);
+                        print_type2(projs[i]->dt);
                     }
                     printf(")");
                 } else {
@@ -341,7 +347,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     } else if (n->type == TB_STORE) {
                         dt = n->inputs[3]->dt;
                     }
-                    print_type(dt);
+                    print_type2(dt);
                 }
                 printf(" ");
 
