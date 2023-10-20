@@ -301,7 +301,7 @@ static bool const_eval_addr_single(Cuik_Parser* restrict parser, Cuik_Expr* e, S
         }
 
         case EXPR_SUBSCRIPT: {
-            __debugbreak();
+            assert(0 && "todo");
             return true;
         }
 
