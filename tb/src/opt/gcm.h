@@ -143,14 +143,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg) {
             worklist_clear_visited(ws);
             FOREACH_N(i, 0, cfg.block_count) {
                 TB_BasicBlock* best = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
-                if (i == 0) {
-                    worklist_test_n_set(ws, p->f->start_node);
-                    nl_map_put(p->scheduled, p->f->start_node, best);
-                }
-
                 best->items = nl_hashset_alloc(32);
-                nl_map_put(p->scheduled, ws->items[i], best);
-                worklist_test_n_set(ws, ws->items[i]);
             }
         }
 
@@ -176,8 +169,11 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg) {
                     for (User* use = n->users; use; use = use->next) {
                         TB_Node* proj = use->n;
                         if (use->slot == 0 && (proj->type == TB_PROJ || proj->type == TB_PHI)) {
-                            nl_hashset_put2(&bb->items, proj, node_hash, node_compare);
-                            nl_map_put(p->scheduled, proj, bb);
+                            if (nl_map_get(p->scheduled, proj) < 0) {
+                                DO_IF(TB_OPTDEBUG_GCM)(printf("%s: proj v%u pinned to .bb%d\n", p->f->super.name, proj->gvn, bb->id));
+                                nl_hashset_put2(&bb->items, proj, node_hash, node_compare);
+                                nl_map_put(p->scheduled, proj, bb);
+                            }
                         }
                     }
 
