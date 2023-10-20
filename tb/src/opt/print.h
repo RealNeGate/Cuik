@@ -75,6 +75,24 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                 printf("*DEAD*");
             }
         }
+
+        if (def) {
+            bool first = true;
+            printf("(");
+            for (User* u = n->users; u; u = u->next) {
+                if (u->n->type == TB_PHI) {
+                    if (first) {
+                        first = false;
+                    } else {
+                        printf(", ");
+                    }
+
+                    printf("v%u: ", u->n->gvn);
+                    print_type(u->n->dt);
+                }
+            }
+            printf(")");
+        }
     } else if (n->type == TB_FLOAT32_CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
         printf("%f", f->value);
@@ -94,7 +112,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         } else {
             ptrdiff_t i = try_find_traversal_index(&ctx->cfg, n);
             if (i >= 0) {
-                printf(".bb%zu", i);
+                printf(".bb%zu%s", i, def?"()":"");
             } else {
                 printf("*DEAD*");
             }
@@ -124,6 +142,33 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
     }
 }
 
+// deals with printing BB params
+static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
+    TB_Node* target = fallthru ? cfg_next_control(n) : cfg_next_bb_after_cproj(n);
+    print_ref_to_node(ctx, target, false);
+
+    // print phi args
+    printf("(");
+    if (target->type == TB_REGION) {
+        assert(n->type == TB_PROJ && n->users->next == NULL);
+        int phi_i = 1 + n->users->slot;
+
+        bool first = true;
+        for (User* u = target->users; u; u = u->next) {
+            if (u->n->type == TB_PHI) {
+                if (first) {
+                    first = false;
+                } else {
+                    printf(", ");
+                }
+
+                printf("v%u", u->n->inputs[phi_i]->gvn);
+            }
+        }
+    }
+    printf(")");
+}
+
 static void print_location(TB_Function* f, TB_Node* n) {
     ptrdiff_t search = nl_map_get(f->attribs, n);
     if (search >= 0) {
@@ -143,13 +188,14 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     printf(":");
 
     // print predecessors
-    if (!(bb_start->type == TB_PROJ && bb_start->inputs[0]->type == TB_START) && bb_start->input_count > 0) {
-        printf(" # preds: ");
+    /*if (!(bb_start->type == TB_PROJ && bb_start->inputs[0]->type == TB_START) && bb_start->input_count > 0) {
+        printf(" \x1b[32m# preds: ");
         FOREACH_N(j, 0, bb_start->input_count) {
             print_ref_to_node(ctx, get_pred(bb_start, j), false);
             printf(" ");
         }
-    }
+        printf("\x1b[0m");
+    }*/
 
     if (ctx->opt->error_n == bb_start) {
         printf("\x1b[31m  <-- ERROR\x1b[0m");
@@ -158,6 +204,11 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 
     TB_BasicBlock* bb = nl_map_get_checked(ctx->opt->scheduled, bb_start);
     Worklist* ws = &ctx->opt->worklist;
+
+    #ifndef NDEBUG
+    TB_BasicBlock* expected = &nl_map_get_checked(ctx->cfg.node_to_block, bb_start);
+    assert(expected == bb);
+    #endif
 
     sched_walk(ctx->opt, ws, NULL, bb, bb->end, true);
 
@@ -170,7 +221,8 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
             n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
             n->type == TB_SIGN_EXT || n->type == TB_ZERO_EXT ||
             n->type == TB_PROJ || n->type == TB_START ||
-            n->type == TB_REGION || n->type == TB_NULL) {
+            n->type == TB_REGION || n->type == TB_NULL ||
+            n->type == TB_PHI) {
             continue;
         }
 
@@ -191,13 +243,13 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                 for (User* u = n->users; u; u = u->next) {
                     if (u->n->type == TB_PROJ) {
                         int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                        succ[index] = cfg_next_bb_after_cproj(u->n);
+                        succ[index] = u->n;
                     }
                 }
 
                 if (br->succ_count == 1) {
                     printf("  goto ");
-                    print_ref_to_node(ctx, succ[0], false);
+                    print_branch_edge(ctx, succ[0], false);
                 } else if (br->succ_count == 2) {
                     printf("  if ");
                     FOREACH_N(i, 1, n->input_count) {
@@ -209,9 +261,9 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     } else {
                         printf(" != %"PRId64" then ", br->keys[0]);
                     }
-                    print_ref_to_node(ctx, succ[0], false);
+                    print_branch_edge(ctx, succ[0], false);
                     printf(" else ");
-                    print_ref_to_node(ctx, succ[1], false);
+                    print_branch_edge(ctx, succ[1], false);
                 } else {
                     printf("  br ");
                     FOREACH_N(i, 1, n->input_count) {
@@ -224,7 +276,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                         if (i != 0) printf("    %"PRId64": ", br->keys[i - 1]);
                         else printf("    default: ");
 
-                        print_ref_to_node(ctx, succ[i], false);
+                        print_branch_edge(ctx, succ[i], false);
                         printf("\n");
                     }
                     printf("  }");
@@ -236,7 +288,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
             case TB_TRAP: {
                 printf("  trap");
                 break;
-    	    }
+            }
 
             case TB_END: {
                 printf("  end ");
@@ -421,7 +473,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
         bb->end->type != TB_BRANCH &&
         bb->end->type != TB_UNREACHABLE) {
         printf("  goto ");
-        print_ref_to_node(ctx, cfg_next_control(bb->end), false);
+        print_branch_edge(ctx, bb->end, true);
         printf("\n");
     }
 }
