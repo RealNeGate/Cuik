@@ -166,12 +166,8 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg) {
                     nl_map_put(p->scheduled, start, bb);
                 }
 
-                // schedule top of BB
-                nl_hashset_put2(&bb->items, bb_node, node_hash, node_compare);
-                nl_map_put(p->scheduled, bb_node, bb);
-
                 TB_Node* n = bb->end;
-                while (n != bb_node) {
+                for (;;) {
                     DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u pinned to .bb%d\n", p->f->super.name, n->gvn, bb->id));
                     nl_hashset_put2(&bb->items, n, node_hash, node_compare);
                     nl_map_put(p->scheduled, n, bb);
@@ -179,12 +175,13 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg) {
                     // mark projections into the same block
                     for (User* use = n->users; use; use = use->next) {
                         TB_Node* proj = use->n;
-                        if (proj->type == TB_PROJ) {
+                        if (use->slot == 0 && (proj->type == TB_PROJ || proj->type == TB_PHI)) {
                             nl_hashset_put2(&bb->items, proj, node_hash, node_compare);
                             nl_map_put(p->scheduled, proj, bb);
                         }
                     }
 
+                    if (n == bb_node) break;
                     n = n->inputs[0];
                 }
             }
