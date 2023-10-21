@@ -156,8 +156,13 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
     // print phi args
     printf("(");
     if (target->type == TB_REGION) {
-        assert(n->type == TB_PROJ && n->users->next == NULL);
-        int phi_i = 1 + n->users->slot;
+        int phi_i = -1;
+        for (User* u = n->users; u; u = u->next) {
+            if (u->n->type == TB_REGION) {
+                phi_i = 1 + u->slot;
+                break;
+            }
+        }
 
         bool first = true;
         for (User* u = target->users; u; u = u->next) {
@@ -168,6 +173,7 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
                     printf(", ");
                 }
 
+                assert(phi_i >= 0);
                 printf("v%u", u->n->inputs[phi_i]->gvn);
             }
         }
