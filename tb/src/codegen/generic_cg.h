@@ -66,6 +66,11 @@ typedef struct LiveInterval LiveInterval;
 typedef NL_Map(TB_Node*, MachineBB) MachineBBs;
 
 typedef struct {
+    uint32_t* pos;
+    TB_Node* target;
+} JumpTablePatch;
+
+typedef struct {
     TB_CGEmitter emit;
 
     TB_Module* module;
@@ -86,6 +91,7 @@ typedef struct {
     ValueDesc* values; // the indices match the GVN.
 
     DynArray(PhiVal) phi_vals;
+    DynArray(JumpTablePatch) jump_table_patches;
 
     // Regalloc
     DynArray(LiveInterval) intervals;
@@ -999,6 +1005,15 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         // Arch-specific: convert instruction buffer into actual instructions
         CUIK_TIMED_BLOCK("emit code") {
             emit_code(&ctx, func_out, end);
+        }
+
+        // Fill jump table entries
+        CUIK_TIMED_BLOCK("jump tables") {
+            dyn_array_for(i, ctx.jump_table_patches) {
+                uint32_t target = nl_map_get_checked(ctx.emit.labels, ctx.jump_table_patches[i].target);
+                assert((target & 0x80000000) && "target label wasn't resolved... what?");
+                *ctx.jump_table_patches[i].pos = target;
+            }
         }
     }
 

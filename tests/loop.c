@@ -67,6 +67,51 @@ typedef struct
 #endif
 
 #include <stddef.h>
+#include <stdint.h>
+
+void max_array(size_t n, float* x, float* y) {
+    for (size_t i = 0; i < n; i++) {
+        x[i] = x[i] > y[i] ? x[i] : y[i];
+    }
+}
+
+/*void bounds_checks(size_t n, int* arr) {
+    for (size_t i = 0; i < n; i++) {
+        arr[i] = i;
+    }
+}
+
+uint32_t dead_if(uint32_t n) {
+    if ((n << 2) & 1) {
+        return 1;
+    }
+
+    return div_tricks(n);
+}
+
+int foo(void) {
+    int sum = 0;
+    for (size_t i = 0; i < 10; i++) {
+        if (i >= 10) return -1;
+        sum += i;
+    }
+
+    return sum;
+}
+
+int fold() {
+    return 4 + 3;
+}
+
+float max_elem(size_t i, float* x, float* y) {
+    return x[i] > y[i] ? x[i] : y[i];
+}*/
+
+#if 0
+uint32_t div_tricks(uint32_t n) {
+    return n / 3;
+}
+
 #include <stdio.h>
 #include <windows.h>
 
@@ -85,15 +130,10 @@ FILE *stbi__fopen(char const *filename, char const *mode)
     return f;
 }
 
-#if 0
 int stores(int* a, int* b) {
     int c = *a;
     *b = 2;
     return *a + c;
-}
-
-float max_elem(size_t i, float* x, float* y) {
-    return x[i] > y[i] ? x[i] : y[i];
 }
 
 uint32_t div_tricks(uint32_t n) {
@@ -102,24 +142,6 @@ uint32_t div_tricks(uint32_t n) {
 
 int phi_test(bool a, bool b) {
     return (a ? 4 : 0) + (b ? 2 : 0);
-}
-
-int bounds_checks(size_t n, int* arr) {
-    int sum = 0;
-    for (size_t i = 0; i < n; i++) {
-        // if (i >= n) return -1; // bounds check
-        sum += arr[i];
-    }
-    return sum;
-}
-
-uint32_t dead_if(uint32_t n) {
-    if ((n << 2) & 1) {
-        return 1;
-    }
-
-    div_tricks(n);
-    return 0;
 }
 
 int jake(int x) {
@@ -142,12 +164,6 @@ int bar(int n) {
 void set_addr(size_t n, double* x, double** y) {
     for (size_t i = 0; i < n; i++) {
         y[i] = &x[i];
-    }
-}
-
-void max_array(size_t n, float* x, float* y) {
-    for (size_t i = 0; i < n; i++) {
-        x[i] = x[i] > y[i] ? x[i] : y[i];
     }
 }
 
