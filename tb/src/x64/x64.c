@@ -1300,9 +1300,12 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                     // Simple range check:
                     //   if ((key - min) >= (max - min)) goto default
                     int tmp = DEF(NULL, dt);
+                    hint_reg(ctx, tmp, key);
                     SUBMIT(inst_move(dt, tmp, key));
-                    if (succ[0]->type != TB_UNREACHABLE) {
-                        SUBMIT(inst_op_rri(SUB, dt, tmp, tmp, min));
+                    if (!cfg_is_unreachable(succ[0])) {
+                        if (min != 0) {
+                            SUBMIT(inst_op_rri(SUB, dt, tmp, tmp, min));
+                        }
                         SUBMIT(inst_op_ri(CMP, dt, tmp, range));
                         SUBMIT(inst_jcc(succ[0], NB));
                     }
