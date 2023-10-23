@@ -1020,6 +1020,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     tb_free_cfg(&ctx.cfg);
     nl_map_free(ctx.emit.labels);
     nl_map_free(ctx.machine_bbs);
+    dyn_array_destroy(ctx.jump_table_patches);
     dyn_array_destroy(ctx.intervals);
     dyn_array_destroy(ctx.phi_vals);
 
