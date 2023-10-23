@@ -253,13 +253,13 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
     } else if (src->kind == KIND_FLOAT && dst->kind == KIND_DOUBLE) {
         TB_DataType dt = reg->dt;
 
-        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_64 && dt.width == 0)) {
+        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_64)) {
             reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
         }
     } else if (src->kind == KIND_DOUBLE && dst->kind == KIND_FLOAT) {
         TB_DataType dt = reg->dt;
 
-        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_32 && dt.width == 0)) {
+        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_32)) {
             reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
         }
     } else if (cuik_type_is_float(src) && cuik_type_is_integer(dst)) {
@@ -309,7 +309,8 @@ static TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
                 src = dst;
                 reg = v->reg;
             } else {
-                reg = tb_inst_load(func, ctype_to_tbtype(src), v->reg, src->align, is_volatile);
+                TB_DataType dt = ctype_to_tbtype(src);
+                reg = tb_inst_load(func, dt, v->reg, src->align, is_volatile);
             }
             break;
         }
@@ -395,7 +396,7 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule
                 TB_Node* temp_slot = tb_inst_local(func, size, align);
                 TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, size);
 
-                assert(is_volatile);
+                assert(!is_volatile);
                 tb_inst_memcpy(func, temp_slot, arg_addr, size_reg, align);
 
                 out_param[0] = temp_slot;
@@ -405,6 +406,10 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule
         }
         case TB_PASSING_DIRECT: {
             if (arg_type->kind == KIND_STRUCT || arg_type->kind == KIND_UNION) {
+                TB_Node* addr = cvt2lval(tu, func, &arg);
+
+                TB_DataType dt = TB_TYPE_INTN(arg_type->size*8);
+                out_param[0] = tb_inst_load(func, dt, addr, arg_type->align, false);
                 return 1;
             } else {
                 TB_Node* n = cvt2rval(tu, func, &arg);
@@ -1069,11 +1074,24 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             r = tb_inst_ptr2int(func, r, TB_TYPE_I64);
 
             TB_Node* diff = tb_inst_sub(func, l, r, TB_ARITHMATIC_NSW | TB_ARITHMATIC_NUW);
-            TB_Node* diff_in_elems = tb_inst_div(func, diff, tb_inst_sint(func, diff->dt, stride), true);
+
+            // early opt because it's kinda annoying to see so many division ops,
+            // the optimizer can do this and more but we don't run it during -O0...
+            //
+            // wouldn't it be nice to just have an always on optimizer, one thats
+            // debuggable even in optimized form... yea crazy i know :p
+            uint64_t log2 = __builtin_ffsll(stride) - 1;
+            if (stride > 1) {
+                if (stride == 1ull << log2) {
+                    diff = tb_inst_shr(func, diff, tb_inst_uint(func, diff->dt, stride));
+                } else {
+                    diff = tb_inst_div(func, diff, tb_inst_sint(func, diff->dt, stride), true);
+                }
+            }
 
             return (IRVal){
                 .value_type = RVALUE,
-                .reg = diff_in_elems,
+                .reg = diff,
             };
         }
         case EXPR_COMMA: {
@@ -1206,7 +1224,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                     // pointer arithmatic
                     stride = tb_inst_uint(func, TB_TYPE_PTR, cuik_canonical_type(type->ptr_to)->size);
                 } else {
-                    stride = tb_inst_uint(func, ctype_to_tbtype(type), 1);
+                    stride = tb_inst_uint(func, dt, 1);
                 }
 
                 loaded = is_inc
@@ -1700,7 +1718,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                         r = v.reg;
                     } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                         assert(type->size <= 8);
-                        TB_DataType dt = { { TB_INT, 0, type->size * 8 } };
+                        TB_DataType dt = { { TB_INT, type->size * 8 } };
 
                         r = tb_inst_load(func, dt, v.reg, type->align, false);
                     }

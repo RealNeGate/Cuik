@@ -57,11 +57,6 @@
 #define LIKELY(x)      __builtin_expect(!!(x), 1)
 #define UNLIKELY(x)    __builtin_expect(!!(x), 0)
 
-#ifndef _MSC_VER
-#include <signal.h>
-#define __debugbreak() raise(5 /* SIGTRAP */)
-#endif
-
 #ifdef NDEBUG
 #define TODO() __builtin_unreachable()
 #else

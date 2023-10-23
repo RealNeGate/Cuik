@@ -973,18 +973,18 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
     Cuik_Type* t_type = NULL;
 
     // parameters (if there's a T we need to deduce it)
-    for (int i = 0; i < arg_count && *format != ' '; i++) {
+    for (int i = 1; i < arg_count && *format != ' '; i++) {
         char ch = *format++;
         if (ch == '.') {
             format -= 1;
-            SET_CAST(i + 1, GET_TYPE(i + 1));
+            SET_CAST(i, GET_TYPE(i));
             continue;
         } else if (ch == 'v' && *format == ' ') {
             break;
         }
 
-        Subexpr* arg = &GET_EXPR(i + 1);
-        Cuik_QualType arg_type = GET_TYPE(i + 1);
+        Subexpr* arg = &GET_EXPR(i);
+        Cuik_QualType arg_type = GET_TYPE(i);
 
         Cuik_Type* expected = builtin_char_type(target_signed_ints, ch);
 
@@ -1008,7 +1008,7 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
                     t_type = cuik_canonical_type(t_type->ptr_to);
                 }
 
-                SET_CAST(i + 1, GET_TYPE(i + 1));
+                SET_CAST(i, GET_TYPE(i));
                 continue;
             } else {
                 expected = t_type;
@@ -1020,7 +1020,7 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
                 return NULL;
             }
 
-            SET_CAST(i + 1, GET_TYPE(i + 1));
+            SET_CAST(i, GET_TYPE(i));
             continue;
         }
 
@@ -1033,18 +1033,18 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
                 return NULL;
             }
 
-            SET_CAST(i + 1, arg_type);
+            SET_CAST(i, arg_type);
         } else {
             if (expected->kind != KIND_VOID && !type_equal(base, expected)) {
                 diag_err(&tu->tokens, arg->loc, "pointer argument's base type doesn't match parameter's (got %!T, expected %!T)", base, expected);
                 return NULL;
             }
 
-            for (size_t i = 0; i < level; i++) {
+            for (size_t j = 0; j < level; j++) {
                 expected = cuik__new_pointer(&tu->types, cuik_uncanonical_type(expected));
             }
 
-            SET_CAST(i + 1, cuik_uncanonical_type(expected));
+            SET_CAST(i, cuik_uncanonical_type(expected));
         }
 
         if (level != expected_level) {

@@ -1,3 +1,4 @@
+
 static int parse_glsl_layout_attrib(TokenStream* restrict s, const SourceRange* r, Atom key, intmax_t value) {
     if (value < 0) {
         diag_err(s, *r, "layout '%s' cannot be negative or missing.", key);

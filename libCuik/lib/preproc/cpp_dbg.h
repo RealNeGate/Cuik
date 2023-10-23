@@ -28,7 +28,7 @@ static int cppdbg__break(void) {
                 break;
             }
         } else if (strcmp(line, "debugger") == 0) {
-            __debugbreak();
+            __builtin_debugtrap();
             break;
         } else if (strcmp(line, "args") == 0) {
             // printf("FUNCTION MACRO: %.*s    %.*s\n", (int)t.content.length, t.content.data, (int)def.length, def.data);

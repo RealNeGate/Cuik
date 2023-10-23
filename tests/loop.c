@@ -1,3 +1,4 @@
+#if 0
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -63,28 +64,10 @@ typedef struct
     stbi_uc *img_buffer, *img_buffer_end;
     stbi_uc *img_buffer_original, *img_buffer_original_end;
 } stbi__context;
+#endif
 
-static int stbi__parse_zlib_header(stbi__zbuf *a);
-
-// returns 1 if the product is valid, 0 on overflow.
-// negative factors are considered invalid.
-static int stbi__mul2sizes_valid(int a, int b)
-{
-    if (a < 0 || b < 0) return 0;
-    if (b == 0) return 1; // mul-by-0 is always safe
-    // portable way to check for no overflows in a*b
-    return a <= INT_MAX/b;
-}
-
-void array_ops(size_t n, int* arr) {
-    for (size_t i = 0; i < n; i++) {
-        arr[i] |= 1;
-    }
-}
-
-float max_elem(size_t i, float* x, float* y) {
-    return x[i] > y[i] ? x[i] : y[i];
-}
+#include <stddef.h>
+#include <stdint.h>
 
 void max_array(size_t n, float* x, float* y) {
     for (size_t i = 0; i < n; i++) {
@@ -92,8 +75,77 @@ void max_array(size_t n, float* x, float* y) {
     }
 }
 
+/*void bounds_checks(size_t n, int* arr) {
+    for (size_t i = 0; i < n; i++) {
+        arr[i] = i;
+    }
+}
+
+uint32_t dead_if(uint32_t n) {
+    if ((n << 2) & 1) {
+        return 1;
+    }
+
+    return div_tricks(n);
+}
+
+int foo(void) {
+    int sum = 0;
+    for (size_t i = 0; i < 10; i++) {
+        if (i >= 10) return -1;
+        sum += i;
+    }
+
+    return sum;
+}
+
+int fold() {
+    return 4 + 3;
+}
+
+float max_elem(size_t i, float* x, float* y) {
+    return x[i] > y[i] ? x[i] : y[i];
+}*/
+
+#if 0
 uint32_t div_tricks(uint32_t n) {
-    return n / 10;
+    return n / 3;
+}
+
+#include <stdio.h>
+#include <windows.h>
+
+FILE *stbi__fopen(char const *filename, char const *mode)
+{
+    FILE *f;
+    wchar_t wMode[64];
+    wchar_t wFilename[1024];
+	if (0 == MultiByteToWideChar(65001 /* UTF8 */, 0, filename, -1, wFilename, sizeof(wFilename)))
+        return 0;
+
+	if (0 == MultiByteToWideChar(65001 /* UTF8 */, 0, mode, -1, wMode, sizeof(wMode)))
+        return 0;
+
+    f = fopen(filename, mode);
+    return f;
+}
+
+int stores(int* a, int* b) {
+    int c = *a;
+    *b = 2;
+    return *a + c;
+}
+
+uint32_t div_tricks(uint32_t n) {
+    return n / 3;
+}
+
+int phi_test(bool a, bool b) {
+    return (a ? 4 : 0) + (b ? 2 : 0);
+}
+
+int jake(int x) {
+    return !x ? 5 : 2;
 }
 
 int bar(int n) {
@@ -109,11 +161,59 @@ int bar(int n) {
     return arr[1];
 }
 
-static int folding(void) {
+void set_addr(size_t n, double* x, double** y) {
+    for (size_t i = 0; i < n; i++) {
+        y[i] = &x[i];
+    }
+}
+
+int folding(void) {
     return 42+1 & 3 * 16;
 }
 
-int bitcast(float x) {
+int unary(int x) {
+    int mask = 16;
+    return x & -16;
+}
+
+short mul(void) {
+    return (short)5 * (short)9;
+}
+
+uint32_t bits(uint32_t x) {
+    return (x << 2) & 1;
+}
+
+uint32_t gimme(uint32_t x, uint32_t y) {
+    return (x >> (y & 31)) & 1;
+}
+
+uint32_t jeans(int x) {
+    x &= 7;
+    return x & (1 << x);
+}
+
+int main() {
+    printf("Hello, World! %d\n", div_tricks(27));
+}
+
+// returns 1 if the product is valid, 0 on overflow.
+// negative factors are considered invalid.
+int stbi__mul2sizes_valid(int a, int b)
+{
+    if (a < 0 || b < 0) return 0;
+    if (b == 0) return 1; // mul-by-0 is always safe
+    // portable way to check for no overflows in a*b
+    return a <= INT_MAX/b;
+}
+
+void array_ops(size_t n, int* arr) {
+    for (size_t i = 0; i < n; i++) {
+        arr[i] |= 1;
+    }
+}
+
+static int bitcast(float x) {
     return *(int*) &x;
 }
 
@@ -132,7 +232,7 @@ float Q_rsqrt(float number) {
     return y;
 }
 
-void shl_test(int* sizelist, int num) {
+static void shl_test(int* sizelist, int num) {
     int j = 16;
 
     for (int i=0; i < num; ++i) {
@@ -141,7 +241,7 @@ void shl_test(int* sizelist, int num) {
     }
 }
 
-int store_elim(int* a) {
+static int store_elim(int* a) {
     *a = 16;
     *a = 5;
     return *a;
@@ -155,43 +255,20 @@ int branching_store(int* a) {
     return *a;
 }
 
-static int aliasing(int* restrict a, int* restrict b) {
-    *a = 1;
-    *b = 2;
-    return *a;
-}
-
-uint64_t foo(uint64_t x, uint64_t y) {
+static uint64_t foo(uint64_t x, uint64_t y) {
     if ((x * 2) / 2) return x;
     else             return y;
 }
 
-int select_opt(int a, int b) {
+static int select_opt(int a, int b) {
     return a > 10 && !(b > 10);
-}
-
-short mul(void) {
-    return (short)5 * (short)9;
 }
 
 static void syscall_test(void) {
     __builtin_syscall(1, 69);
 }
 
-int phi_test(int color) {
-    return (color & 2 ? 3 : 1) + (color & 4 ? 1 : 0);
-}
-
-int bounds_checks(size_t n, int* arr) {
-    int sum = 0;
-    for (size_t i = 0; i < n; i++) {
-        if (i >= n) return -1; // bounds check
-        sum += arr[i];
-    }
-    return sum;
-}
-
-uint32_t murmur3_32(const void* key, size_t len) {
+static uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time
@@ -489,4 +566,4 @@ int main() {
     return 0;
 }
 #endif
-
+#endif

@@ -63,6 +63,7 @@ jobs:
       matrix:
         os: [ ubuntu-latest ]
     runs-on: ${{ matrix.os }}
+    if: github.ref == 'refs/heads/aaa'
     steps:
       - uses: actions/checkout@v3
 
