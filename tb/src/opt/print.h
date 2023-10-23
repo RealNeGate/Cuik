@@ -492,9 +492,13 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 
 bool tb_pass_print(TB_Passes* opt) {
     TB_Function* f = opt->f;
-    worklist_clear(&opt->worklist);
+
+    Worklist old = opt->worklist;
+    Worklist tmp_ws = { 0 };
+    worklist_alloc(&tmp_ws, f->node_count);
 
     PrinterCtx ctx = { opt, f };
+    opt->worklist = tmp_ws;
     ctx.cfg = tb_compute_rpo(f, opt);
 
     // schedule nodes
@@ -505,7 +509,9 @@ bool tb_pass_print(TB_Passes* opt) {
         print_bb(&ctx, opt->worklist.items[i]);
     }
 
+    worklist_free(&tmp_ws);
     tb_free_cfg(&ctx.cfg);
-    ctx.opt->error_n = NULL;
+    opt->worklist = old;
+    opt->error_n = NULL;
     return false;
 }
