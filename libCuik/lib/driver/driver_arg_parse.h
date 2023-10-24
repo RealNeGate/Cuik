@@ -186,6 +186,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
                 fprintf(stderr, "    %s\n", target_options[i].key);
             }
             fprintf(stderr, "\n");
+            return false;
         }
     }
 
@@ -249,6 +250,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
         else {
             fprintf(stderr, "unknown compiler version: %s\n", lang->value);
             fprintf(stderr, "supported languages: c11, c23, glsl\n");
+            return false;
         }
     }
 
@@ -260,6 +262,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
         else {
             fprintf(stderr, "unknown subsystem: %s\n", subsystem->value);
             fprintf(stderr, "supported: windows, console, efi\n");
+            return false;
         }
     }
 

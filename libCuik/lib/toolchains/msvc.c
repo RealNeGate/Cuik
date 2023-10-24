@@ -518,6 +518,13 @@ static void add_libraries(void* ctx, bool nocrt, Cuik_Linker* l) {
         cuiklink_add_libpathf(l, STR_FMT SLASH"um"SLASH"x64", t->windows_sdk_root);
         cuiklink_add_libpathf(l, STR_FMT SLASH"ucrt"SLASH"x64", t->windows_sdk_root);
     }
+
+    if (nocrt) {
+        cuiklink_add_input_file(l, "kernel32.lib");
+        cuiklink_add_input_file(l, "ucrt.lib");
+        cuiklink_add_input_file(l, "msvcrt.lib");
+        cuiklink_add_input_file(l, "vcruntime.lib");
+    }
 }
 
 static void print_verbose(void* ctx, bool nocrt) {

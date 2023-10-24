@@ -30,7 +30,7 @@ void target_generic_fill_builtin_table(BuiltinTable* builtins) {
 
     // gcc/clang
     X(__builtin_expect, "b b");
-    X(__builtin_trap, "v v");
+    X(__builtin_trap, " v");
     X(__builtin_clz, "i i");
     X(__builtin_clzll, "L i");
     X(__builtin_mul_overflow, ". v");
@@ -58,7 +58,7 @@ void target_generic_fill_builtin_table(BuiltinTable* builtins) {
 
     X(__noop, ". v");
     X(__assume, "b v");
-    X(__debugbreak, "v v");
+    X(__debugbreak, " v");
     X(__va_start, "c**T v");
     X(__va_arg, "c*T v");
     X(_umul128, "LLL* L");

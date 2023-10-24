@@ -117,15 +117,6 @@ static Cuik_Linker gimme_linker(Cuik_DriverArgs* restrict args) {
         cuiklink_add_input_file(&l, args->libraries[i]->data);
     }
 
-    if (!args->nocrt) {
-        #ifdef _WIN32
-        cuiklink_add_input_file(&l, "kernel32.lib");
-        cuiklink_add_input_file(&l, "ucrt.lib");
-        cuiklink_add_input_file(&l, "msvcrt.lib");
-        cuiklink_add_input_file(&l, "vcruntime.lib");
-        #endif
-    }
-
     return l;
 }
 
@@ -337,18 +328,21 @@ static void ld_invoke(BuildStepInfo* info) {
     }
 
     if (args->run) {
-        #if 0
         TB_JIT* jit = tb_jit_begin(mod, 0);
 
         // put every function into the heap
         int(*entry)(int, char**) = NULL;
-        TB_FOR_FUNCTIONS(f, mod) {
+
+        TB_Symbol* sym;
+        for (TB_SymbolIter it = tb_symbol_iter(mod); sym = tb_symbol_iter_next(&it), sym;) {
+            if (sym->tag != TB_SYMBOL_FUNCTION) continue;
+
+            TB_Function* f = (TB_Function*) sym;
             void* ptr = tb_jit_place_function(jit, f);
             if (strcmp(tb_symbol_get_name((TB_Symbol*) f), "main") == 0) {
                 entry = ptr;
             }
         }
-
         assert(entry != NULL);
 
         // run main()
@@ -358,10 +352,6 @@ static void ld_invoke(BuildStepInfo* info) {
 
         fprintf(stderr, "C JIT exit with %d\n", code);
         goto done;
-        #endif
-
-        fprintf(stderr, "C JIT not ready :(\n");
-        exit(1);
     }
 
     ////////////////////////////////
