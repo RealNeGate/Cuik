@@ -105,7 +105,7 @@ static Lattice* lattice_top(LatticeUniverse* uni, TB_DataType dt) {
 
 #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
 #define BEXTR(src,pos) (((src) >> (pos)) & 1)
-static uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
+uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
     uint64_t sign_bit = BEXTR(src, src_bits-1);
     uint64_t mask = MASK_UPTO(dst_bits) & ~MASK_UPTO(src_bits);
 
