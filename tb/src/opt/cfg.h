@@ -243,7 +243,7 @@ void tb_compute_dominators2(TB_Function* f, Worklist* ws, TB_CFG cfg) {
 
 TB_Node* tb_get_parent_region(TB_Node* n) {
     while (n->type != TB_REGION && n->type != TB_START) {
-        tb_assert(n->inputs[0], "node has no have a control edge");
+        tb_assert(n->inputs[0], "node doesn't have a control edge");
         n = n->inputs[0];
     }
 
