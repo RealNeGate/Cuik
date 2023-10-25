@@ -333,8 +333,14 @@ static TB_BasicBlock* idom_bb(TB_Passes* p, TB_BasicBlock* bb) {
 // shorthand because we use it a lot
 static TB_Node* idom(TB_CFG* cfg, TB_Node* n) {
     if (cfg->node_to_block == NULL) return NULL;
+
     ptrdiff_t search = nl_map_get(cfg->node_to_block, n);
-    return search >= 0 ? cfg->node_to_block[search].v.dom->start : NULL;
+    if (search < 0) {
+        return NULL;
+    }
+
+    TB_BasicBlock* dom = cfg->node_to_block[search].v.dom;
+    return dom ? dom->start : NULL;
 }
 
 static int dom_depth(TB_CFG* cfg, TB_Node* n) {
