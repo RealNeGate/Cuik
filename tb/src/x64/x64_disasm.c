@@ -136,6 +136,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         OP_MI8   = 0x40,
         OP_PLUSR = 0x50,
         OP_0ARY  = 0x60,
+        OP_REL8  = 0x70,
+        OP_REL32 = 0x80,
     };
 
     #define NORMIE_BINOP(op) [op+0] = OP_MR | OP_8BIT, [op+1] = OP_MR, [op+2] = OP_RM | OP_8BIT, [op+3] = OP_RM
@@ -146,6 +148,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         NORMIE_BINOP(0x28), // sub
         NORMIE_BINOP(0x30), // xor
         NORMIE_BINOP(0x38), // cmp
+        NORMIE_BINOP(0x88), // mov
 
         // OP r/m, imm32
         [0x81] = OP_MI | OP_FAKERX,
@@ -156,8 +159,12 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x50 ... 0x5F] = OP_PLUSR | OP_64BIT,
         // movsxd reg, r/m
         [0x63] = OP_RM | OP_2DT,
-        // mov r/m, reg
-        [0x88] = OP_MR | OP_8BIT, [0x89] = OP_MR, [0x8A] = OP_RM | OP_8BIT, [0x8B] = OP_RM,
+        // jcc rel8
+        [0x70 ... 0x7F] = OP_REL8,
+        // call rel32
+        [0xE8] = OP_REL32,
+        // jmp rel32
+        [0xE9] = OP_REL32,
         // nop
         [0x90] = OP_0ARY,
         // ret
@@ -173,6 +180,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x1F] = OP_RM,
         // imul reg, r/m
         [0xAF] = OP_RM,
+        // jcc rel32
+        [0x80 ... 0x8F] = OP_REL32,
     };
 
     inst->opcode = (ext ? 0x0F00 : 0) | op;
@@ -198,13 +207,24 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     }
 
     assert(enc != OP_BAD);
-    if (enc == OP_0ARY) {
+    if (enc == OP_REL32) {
+        inst->flags |= TB_X86_INSTR_USE_RIPMEM;
+        inst->flags |= TB_X86_INSTR_USE_MEMOP;
+
+        ABC(4);
+        int32_t imm = READ32LE(imm);
+        inst->disp = imm;
+        inst->length = current + 4;
+        return true;
+    } else if (enc == OP_0ARY) {
         inst->length = current;
+        return true;
     } else if (enc == OP_PLUSR) {
         // bottom 8bits of the opcode are the base reg
         inst->regs[0] = (rex & 1 ? 1 : 0) | (inst->opcode & 7);
         inst->opcode &= ~7;
         inst->length = current;
+        return true;
     } else {
         ////////////////////////////////
         // Parse ModRM
@@ -252,10 +272,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 
         // writes out RM reg (or base and index)
         inst->length = current;
-        x86_parse_memory_op(inst, length - current, &data[current], rm_slot, mod, rm, rex);
+        return x86_parse_memory_op(inst, length - current, &data[current], rm_slot, mod, rm, rex);
     }
-
-    return current > 0;
 }
 
 const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
@@ -266,6 +284,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x28 ... 0x2B: return "sub";
         case 0x30 ... 0x33: return "xor";
         case 0x38 ... 0x3B: return "cmp";
+        case 0x88 ... 0x8B: return "mov";
 
         case 0x830: return "add";
         case 0x831: return "or";
@@ -275,15 +294,34 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x837: return "cmp";
         case 0xC70: return "mov";
 
-        case 0x88: case 0x89: case 0x8A: case 0x8B: return "mov";
         case 0x90: return "nop";
         case 0xC3: return "ret";
         case 0x63: return "movsxd";
         case 0x50: return "push";
         case 0x58: return "pop";
 
+        case 0xE8: return "call";
+        case 0xE9: return "jmp";
+
         case 0x0F1F: return "nop";
         case 0x0FAF: return "imul";
+
+        case 0x0F80: case 0x70: return "jo";
+        case 0x0F81: case 0x71: return "jno";
+        case 0x0F82: case 0x72: return "jb";
+        case 0x0F83: case 0x73: return "jnb";
+        case 0x0F84: case 0x74: return "je";
+        case 0x0F85: case 0x75: return "jne";
+        case 0x0F86: case 0x76: return "jbe";
+        case 0x0F87: case 0x77: return "ja";
+        case 0x0F88: case 0x78: return "js";
+        case 0x0F89: case 0x79: return "jns";
+        case 0x0F8A: case 0x7A: return "jp";
+        case 0x0F8B: case 0x7B: return "jnp";
+        case 0x0F8C: case 0x7C: return "jl";
+        case 0x0F8D: case 0x7D: return "jge";
+        case 0x0F8E: case 0x7E: return "jle";
+        case 0x0F8F: case 0x7F: return "jg";
 
         default:   return "???";
     }

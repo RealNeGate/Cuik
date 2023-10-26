@@ -103,39 +103,71 @@ int run_objdump(int argc, const char** argv) {
         }
 
         const uint8_t* data = s->raw_data.data;
-        if (0 && (s->flags & TB_COFF_SECTION_CODE)) {
+        if (s->flags & TB_COFF_SECTION_CODE) {
             // dump assembly
-            size_t current = 0;
-            while (current < size) {
+            size_t pos = 0;
+            while (pos < size) {
                 TB_X86_Inst inst;
-                if (tb_x86_disasm(&inst, size - current, &data[current])) {
-                    // print instruction
-                    printf("  %02x ", inst.opcode);
-
-                    uint8_t flags = inst.flags;
-                    for (int i = 0; i < 4; i++) {
-                        int8_t reg = inst.regs[i];
-                        if (reg < 0) {
-                            if (flags & TB_X86_INSTR_USE_MEMOP) {
-                                flags &= ~TB_X86_INSTR_USE_MEMOP;
-                                assert(0 && "TODO");
-                            } else if (flags & TB_X86_INSTR_IMMEDIATE) {
-                                flags &= ~TB_X86_INSTR_IMMEDIATE;
-                                assert(0 && "TODO");
-                            } else {
-                                break;
-                            }
-                        } else {
-                            if (i) printf(", ");
-                            printf("%s", tb_x86_reg_name(reg, inst.data_type));
-                        }
-                    }
-
-                    printf("\n");
-                    current += inst.length;
-                } else {
-                    assert(0 && "TODO");
+                if (!tb_x86_disasm(&inst, size - pos, &data[pos])) {
+                    printf("  ERROR\n");
+                    pos += 1; // skip ahead once... cry
+                    continue;
                 }
+
+                const char* mnemonic = tb_x86_mnemonic(&inst);
+                printf("  %08zx: %s ", pos, mnemonic);
+
+                bool mem = true, imm = true;
+                for (int i = 0; i < 4; i++) {
+                    if (inst.regs[i] == -1) {
+                        if (mem && (inst.flags & TB_X86_INSTR_USE_MEMOP)) {
+                            if (i > 0) printf(", ");
+
+                            mem = false;
+                            if (inst.flags & TB_X86_INSTR_USE_RIPMEM) {
+                                printf("%d", inst.disp);
+                            } else {
+                                printf("%s [", tb_x86_type_name(inst.data_type));
+                                if (inst.base != 255) {
+                                    printf("%s", tb_x86_reg_name(inst.base, TB_X86_TYPE_QWORD));
+                                }
+
+                                if (inst.index != 255) {
+                                    printf(" + %s*%d", tb_x86_reg_name(inst.index, TB_X86_TYPE_QWORD), 1 << inst.scale);
+                                }
+
+                                if (inst.disp > 0) {
+                                    printf(" + %d", inst.disp);
+                                } else if (inst.disp < 0) {
+                                    printf(" - %d", -inst.disp);
+                                }
+
+                                printf("]");
+                            }
+                        } else if (imm && (inst.flags & (TB_X86_INSTR_IMMEDIATE | TB_X86_INSTR_ABSOLUTE))) {
+                            if (i > 0) printf(", ");
+
+                            imm = false;
+                            printf("%d", inst.imm);
+                        } else {
+                            break;
+                        }
+                    } else {
+                        if (i > 0) {
+                            printf(", ");
+
+                            // special case for certain ops with two data types
+                            if (inst.flags & TB_X86_INSTR_TWO_DATA_TYPES) {
+                                printf("%s", tb_x86_reg_name(inst.regs[i], inst.data_type2));
+                                continue;
+                            }
+                        }
+
+                        printf("%s", tb_x86_reg_name(inst.regs[i], inst.data_type));
+                    }
+                }
+                printf("\n");
+                pos += inst.length;
             }
         } else {
             // dump raw data

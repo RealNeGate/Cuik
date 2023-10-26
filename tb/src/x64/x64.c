@@ -2135,6 +2135,7 @@ static void disassemble(TB_CGEmitter* e, int bb, size_t pos, size_t end) {
         if (!tb_x86_disasm(&inst, end - pos, &e->data[pos])) {
             E("  ERROR\n");
             pos += 1; // skip ahead once... cry
+            continue;
         }
 
         const char* mnemonic = tb_x86_mnemonic(&inst);
