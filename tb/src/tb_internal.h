@@ -88,7 +88,7 @@ typedef struct TB_Emitter {
 // i love my linked lists don't i?
 typedef struct TB_SymbolPatch TB_SymbolPatch;
 struct TB_SymbolPatch {
-    TB_SymbolPatch* prev;
+    TB_SymbolPatch* next;
 
     TB_Function* source;
     uint32_t pos;  // relative to the start of the function body
@@ -271,6 +271,8 @@ typedef struct TB_FunctionOutput {
     // Relocations
     uint32_t patch_pos;
     uint32_t patch_count;
+
+    TB_SymbolPatch* first_patch;
     TB_SymbolPatch* last_patch;
 } TB_FunctionOutput;
 

@@ -4,7 +4,6 @@
 #include <log.h>
 
 static thread_local bool reg_alloc_log;
-static TB_CFG* muh_______cfg;
 
 enum {
     CG_VAL_UNRESOLVED = 0,
@@ -67,7 +66,7 @@ typedef NL_Map(TB_Node*, MachineBB) MachineBBs;
 
 typedef struct {
     uint32_t* pos;
-    TB_Node* target;
+    uint32_t target;
 } JumpTablePatch;
 
 typedef struct {
@@ -78,7 +77,7 @@ typedef struct {
     TB_ABI target_abi;
 
     int caller_usage;
-    TB_Node* fallthrough;
+    int fallthrough;
 
     TB_Passes* p;
 
@@ -128,7 +127,7 @@ static bool is_terminator(int type);
 static bool wont_spill_around(int type);
 static int classify_reg_class(TB_DataType dt);
 static void isel(Ctx* restrict ctx, TB_Node* n, int dst);
-static void disassemble(TB_CGEmitter* e, int id, size_t pos, size_t end);
+static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int bb, size_t pos, size_t end);
 static bool should_rematerialize(TB_Node* n);
 
 static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, int end);
@@ -196,6 +195,7 @@ struct Inst {
         TB_Symbol* s;
         TB_Node* n;
         TB_Attrib* a;
+        int l;
     };
 
     union {
@@ -218,7 +218,7 @@ struct Inst {
 };
 
 // generic instructions
-static Inst* inst_jmp(TB_Node* target);
+static Inst* inst_jmp(int target);
 
 static Inst* inst_label(TB_Node* n) {
     Inst* i = TB_ARENA_ALLOC(tmp_arena, Inst);
@@ -870,7 +870,8 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             }
 
             // implicit goto
-            TB_Node* succ = cfg_next_control(end);
+            TB_Node* succ_n = cfg_next_control(end);
+            int succ = nl_map_get_checked(ctx->cfg.node_to_block, succ_n).id;
             if (ctx->fallthrough != succ) {
                 SUBMIT(inst_jmp(succ));
             }
@@ -918,14 +919,15 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     // We need to generate a CFG
     ctx.cfg = tb_compute_rpo(f, p);
-    muh_______cfg = &ctx.cfg;
 
     // And perform global scheduling
     tb_pass_schedule(p, ctx.cfg);
     ctx.worklist = p->worklist;
 
     // allocate more stuff now that we've run stats on the IR
-    nl_map_create(ctx.emit.labels, ctx.cfg.block_count);
+    ctx.emit.label_count = ctx.cfg.block_count;
+    ctx.emit.labels = tb_arena_alloc(tmp_arena, ctx.cfg.block_count * sizeof(uint32_t));
+
     nl_map_create(ctx.stack_slots, 8);
     dyn_array_create(ctx.debug_stack_slots, 8);
 
@@ -973,10 +975,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         FOREACH_N(i, 0, ctx.bb_count) {
             TB_Node* bb = bbs[bb_order[i]];
 
-            nl_map_put(ctx.emit.labels, bb, 0);
-
-            // find next BB
-            ctx.fallthrough = i + 1 < ctx.bb_count ? bbs[bb_order[i + 1]] : NULL;
+            ctx.emit.labels[bb_order[i]] = 0;
+            ctx.fallthrough = i + 1 < ctx.bb_count ? bb_order[i + 1] : INT_MAX;
 
             Inst* label = inst_label(bb);
             if (ctx.first == NULL) {
@@ -1009,7 +1009,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         // Fill jump table entries
         CUIK_TIMED_BLOCK("jump tables") {
             dyn_array_for(i, ctx.jump_table_patches) {
-                uint32_t target = nl_map_get_checked(ctx.emit.labels, ctx.jump_table_patches[i].target);
+                uint32_t target = ctx.emit.labels[ctx.jump_table_patches[i].target];
                 assert((target & 0x80000000) && "target label wasn't resolved... what?");
                 *ctx.jump_table_patches[i].pos = target & ~0x80000000;
             }
@@ -1020,25 +1020,24 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         printf("%s:\n", f->super.name);
 
         // dump epilogue
-        disassemble(&ctx.emit, -1, 0, func_out->prologue_length);
+        disassemble(&ctx.emit, NULL, -1, 0, func_out->prologue_length);
 
+        TB_SymbolPatch* patch = func_out->first_patch;
         TB_Node** bbs = ctx.worklist.items;
         FOREACH_N(i, 0, ctx.bb_count) {
             TB_Node* bb = bbs[bb_order[i]];
 
-            uint32_t start = nl_map_get_checked(ctx.emit.labels, bb) & ~0x80000000;
+            uint32_t start = ctx.emit.labels[bb_order[i]] & ~0x80000000;
             uint32_t end   = ctx.emit.count;
             if (i + 1 < ctx.bb_count) {
-                TB_Node* next = bbs[bb_order[i + 1]];
-                end = nl_map_get_checked(ctx.emit.labels, next) & ~0x80000000;
+                end = ctx.emit.labels[bb_order[i + 1]] & ~0x80000000;
             }
 
-            disassemble(&ctx.emit, i, start, end);
+            patch = disassemble(&ctx.emit, patch, i, start, end);
         }
     }
 
     tb_free_cfg(&ctx.cfg);
-    nl_map_free(ctx.emit.labels);
     nl_map_free(ctx.machine_bbs);
     dyn_array_destroy(ctx.jump_table_patches);
     dyn_array_destroy(ctx.intervals);

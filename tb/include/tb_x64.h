@@ -27,7 +27,10 @@ typedef enum {
     TB_X86_INSTR_DIRECTION = (1u << 6u),
 
     // uses the second data type because the instruction is weird like MOVSX or MOVZX
-    TB_X86_INSTR_TWO_DATA_TYPES = (1u << 7u)
+    TB_X86_INSTR_TWO_DATA_TYPES = (1u << 7u),
+
+    // REP prefix is present
+    TB_X86_INSTR_REP = (1u << 8u),
 } TB_X86_InstFlags;
 
 typedef enum {
@@ -69,7 +72,7 @@ typedef struct {
 
     // registers (there's 4 max taking up 8bit slots each)
     int8_t regs[4];
-    uint8_t flags;
+    uint16_t flags;
 
     // bitpacking amirite
     TB_X86_DataType data_type  : 4;

@@ -212,7 +212,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, const IDebugFormat* dbg) 
             TB_FunctionOutput* func_out = funcs[j];
 
             size_t source_offset = func_out->code_pos;
-            for (TB_SymbolPatch* p = func_out->last_patch; p; p = p->prev) {
+            for (TB_SymbolPatch* p = func_out->first_patch; p; p = p->next) {
                 if (p->internal) continue;
 
                 size_t actual_pos = source_offset + p->pos;

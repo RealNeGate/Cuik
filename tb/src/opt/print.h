@@ -177,7 +177,7 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
                 }
 
                 assert(phi_i >= 0);
-                printf("v%u", u->n->inputs[phi_i]->gvn);
+                print_ref_to_node(ctx, u->n->inputs[phi_i], false);
             }
         }
     }

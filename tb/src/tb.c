@@ -590,8 +590,13 @@ void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, 
     TB_SymbolPatch* p = TB_ARENA_ALLOC(get_permanent_arena(m), TB_SymbolPatch);
 
     // function local, no need to synchronize
-    *p = (TB_SymbolPatch){ .prev = func_out->last_patch, .source = func_out->parent, .target = target, .pos = pos };
-    func_out->last_patch = p;
+    *p = (TB_SymbolPatch){ .next = NULL, .source = func_out->parent, .target = target, .pos = pos };
+    if (func_out->first_patch == NULL) {
+        func_out->first_patch = func_out->last_patch = p;
+    } else {
+        func_out->last_patch->next = p;
+        func_out->last_patch = p;
+    }
     func_out->patch_count += 1;
 }
 

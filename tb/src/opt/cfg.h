@@ -28,6 +28,12 @@ static TB_Node* mark_next_control(Worklist* ws, TB_Node* n) {
     return NULL;
 }
 
+// (Region (x: Proj))
+//         ^^^^^^^^^
+//         single use
+//
+// for the single use case, it might still be a BB if there's
+// phi nodes on the region.
 TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_stack) {
     assert(dyn_array_length(ws->items) == 0);
 
@@ -48,7 +54,7 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_sta
         // we've spotted a BB entry
         if (cfg_is_bb_entry(n)) {
             // proj BB's will prefer to be REGION BB's
-            if (n->inputs[0]->type != TB_START && n->type == TB_PROJ && n->users->next == NULL && n->users->n->type == TB_REGION) {
+            if (n->inputs[0]->type != TB_START && n->type == TB_PROJ && n->users->next == NULL && is_region_wit_no_phis(n->users->n)) {
                 // we've already seen this BB, let's skip it
                 if (worklist_test_n_set(ws, n->users->n)) {
                     continue;

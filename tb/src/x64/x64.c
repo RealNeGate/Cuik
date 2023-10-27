@@ -152,11 +152,10 @@ static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
-static Inst* inst_jmp(TB_Node* target) {
-    assert(target->type > 0);
+static Inst* inst_jmp(int target) {
     Inst* i = alloc_inst(JMP, TB_TYPE_VOID, 0, 0, 0);
     i->flags = INST_NODE;
-    i->n = target;
+    i->l = target;
     return i;
 }
 
@@ -166,10 +165,10 @@ static Inst* inst_jmp_reg(int target) {
     return i;
 }
 
-static Inst* inst_jcc(TB_Node* target, Cond cc) {
+static Inst* inst_jcc(int target, Cond cc) {
     Inst* i = alloc_inst(JO + cc, TB_TYPE_VOID, 0, 0, 0);
     i->flags = INST_NODE;
-    i->n = target;
+    i->l = target;
     return i;
 }
 
@@ -1198,13 +1197,19 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             // in the TB_Passes
             TB_Arena* arena = ctx->f->arena;
             TB_ArenaSavepoint sp = tb_arena_save(arena);
-            TB_Node** restrict succ = tb_arena_alloc(arena, br->succ_count * sizeof(TB_Node**));
+            int* succ = tb_arena_alloc(arena, br->succ_count * sizeof(TB_Node**));
 
             // fill successors
+            bool has_default = false;
             for (User* u = n->users; u; u = u->next) {
                 if (u->n->type == TB_PROJ) {
                     int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                    succ[index] = cfg_get_fallthru(u->n);
+                    TB_Node* succ_n = cfg_get_fallthru(u->n);
+
+                    if (index == 0) {
+                        has_default = !cfg_is_unreachable(succ_n);
+                    }
+                    succ[index] = nl_map_get_checked(ctx->cfg.node_to_block, succ_n).id;
                 }
             }
 
@@ -1221,7 +1226,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                     Cond cc = isel_cmp(ctx, n->inputs[1]);
 
                     // if flipping avoids a jmp, do that
-                    TB_Node *f = succ[0], *t = succ[1];
+                    int f = succ[0], t = succ[1];
                     if (ctx->fallthrough == f) {
                         SUBMIT(inst_jcc(t, cc ^ 1));
                     } else {
@@ -1245,93 +1250,169 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 int64_t last = br->keys[1];
                 int64_t min = last, max = last;
 
-                bool use_jump_table = true;
+                double dist_avg = 0;
+                double inv_succ_count = 1.0 / (br->succ_count - 1);
+
                 FOREACH_N(i, 1, br->succ_count) {
                     int64_t key = br->keys[i - 1];
                     min = (min > key) ? key : min;
                     max = (max > key) ? max : key;
 
-                    int64_t dist = key - last;
-                    if (dist > 2) {
-                        use_jump_table = false;
-                        break;
-                    }
+                    dist_avg += (key - last) * inv_succ_count;
                     last = key;
                 }
 
-                if (use_jump_table && fits_into_int32(min) && fits_into_int32(max)) {
-                    uint64_t range = (max - min) + 1;
+                enum {
+                    IF_ELSE_CHAIN,
+                    TWO_STAGE_TABLE,
+                    JUMP_TABLE,
+                } r = IF_ELSE_CHAIN;
 
-                    // make a jump table with 4 byte relative pointers for each target
-                    TB_Function* f = ctx->f;
-                    TB_Global* jump_table = tb_global_create(f->super.module, -1, "jumptbl", NULL, TB_LINKAGE_PRIVATE);
-                    tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), jump_table, range*4, 4, 1);
+                int64_t range = (max - min) + 1;
+                if (range > 6 && dist_avg < 2.0) {
+                    r = JUMP_TABLE;
+                }/* else if (range > 32 && dist_avg > 4.0) {
+                    r = TWO_STAGE_TABLE;
+                }*/
 
-                    // generate patches for later
-                    uint32_t* jump_entries = tb_global_add_region(f->super.module, jump_table, 0, range*4);
+                switch (r) {
+                    case IF_ELSE_CHAIN: {
+                        // Basic if-else chain
+                        FOREACH_N(i, 1, br->succ_count) {
+                            uint64_t curr_key = br->keys[i-1];
 
-                    Set entries_set = set_create_in_arena(arena, range);
-                    FOREACH_N(i, 1, br->succ_count) {
-                        uint64_t key_idx = br->keys[i - 1] - min;
-
-                        JumpTablePatch p;
-                        p.pos = &jump_entries[key_idx];
-                        p.target = succ[i];
-                        dyn_array_put(ctx->jump_table_patches, p);
-                        set_put(&entries_set, key_idx);
+                            if (fits_into_int32(curr_key)) {
+                                SUBMIT(inst_op_ri(CMP, dt, key, curr_key));
+                            } else {
+                                int tmp = DEF(n, dt);
+                                SUBMIT(inst_op_abs(MOVABS, dt, tmp, curr_key));
+                                SUBMIT(inst_op_rr(CMP, dt, key, tmp));
+                            }
+                            SUBMIT(inst_jcc(succ[i], E));
+                        }
+                        SUBMIT(inst_jmp(succ[0]));
+                        break;
                     }
 
-                    // handle default cases
-                    FOREACH_N(i, 0, range) {
-                        if (!set_get(&entries_set, i)) {
+                    case TWO_STAGE_TABLE: {
+                        enum {
+                            ITEMS_PER_CHUNK = 256,
+                            CHUNK_SIZE = sizeof(uint32_t) * ITEMS_PER_CHUNK,
+                        };
+
+                        int64_t chunk_count = range / ITEMS_PER_CHUNK;
+                        assert(range < 65536*ITEMS_PER_CHUNK);
+
+                        size_t stage1_size = ((chunk_count + 1) & ~1ull) * sizeof(uint16_t);
+                        // worst case size, for now we're not deduping so we're a bit fucked there
+                        size_t stage2_size = (chunk_count + 1) * CHUNK_SIZE;
+
+                        // make a jump table with 4 byte relative pointers for each target
+                        TB_Function* f = ctx->f;
+                        TB_Global* jump_table = tb_global_create(f->super.module, -1, "jumptbl", NULL, TB_LINKAGE_PRIVATE);
+                        tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), jump_table, stage1_size + stage2_size, 4, 1);
+
+                        // generate patches for later
+                        uint16_t* stage1 = tb_global_add_region(f->super.module, jump_table, 0,           stage1_size);
+                        uint32_t* stage2 = tb_global_add_region(f->super.module, jump_table, stage1_size, stage2_size);
+
+                        // first table is always an empty one, we'll default to this
+                        int tab_count = 1;
+                        FOREACH_N(i, 0, chunk_count) {
+                            stage1[i] = 0;
+                        }
+                        memset(stage2, 0, CHUNK_SIZE);
+
+                        // construct stage 1
+                        size_t i = 0, key_count = br->succ_count - 1;
+                        do {
+                            // parse until the chunk
+                            size_t stage1_idx = (br->keys[i] - min) / ITEMS_PER_CHUNK;
+                            size_t tab = tab_count++;
+
+                            // allocate table
+                            stage1[stage1_idx] = tab;
+
+                            // fill elements in table
+                            while (i < key_count) {
+                                int64_t key = br->keys[i - 1] - min;
+                                if ((key / ITEMS_PER_CHUNK) != stage1_idx) {
+                                    break;
+                                }
+
+                                /* JumpTablePatch p;
+                                p.pos = &stage2[i];
+                                p.target = succ[0];
+                                dyn_array_put(ctx->jump_table_patches, p); */
+
+                                stage2[tab*ITEMS_PER_CHUNK + i] = 0;
+                                i += 1;
+                            }
+                        } while (i < key_count);
+
+                        __debugbreak();
+                        break;
+                    }
+
+                    case JUMP_TABLE: {
+                        // make a jump table with 4 byte relative pointers for each target
+                        TB_Function* f = ctx->f;
+                        TB_Global* jump_table = tb_global_create(f->super.module, -1, "jumptbl", NULL, TB_LINKAGE_PRIVATE);
+                        tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), jump_table, range*4, 4, 1);
+
+                        // generate patches for later
+                        uint32_t* jump_entries = tb_global_add_region(f->super.module, jump_table, 0, range*4);
+
+                        Set entries_set = set_create_in_arena(arena, range);
+                        FOREACH_N(i, 1, br->succ_count) {
+                            uint64_t key_idx = br->keys[i - 1] - min;
+
                             JumpTablePatch p;
-                            p.pos = &jump_entries[i];
-                            p.target = succ[0];
+                            p.pos = &jump_entries[key_idx];
+                            p.target = succ[i];
                             dyn_array_put(ctx->jump_table_patches, p);
+                            set_put(&entries_set, key_idx);
                         }
-                    }
 
-                    // Simple range check:
-                    //   if ((key - min) >= (max - min)) goto default
-                    int tmp = DEF(NULL, dt);
-                    hint_reg(ctx, tmp, key);
-                    SUBMIT(inst_move(dt, tmp, key));
-                    if (!cfg_is_unreachable(succ[0])) {
-                        if (min != 0) {
-                            SUBMIT(inst_op_rri(SUB, dt, tmp, tmp, min));
+                        // handle default cases
+                        FOREACH_N(i, 0, range) {
+                            if (!set_get(&entries_set, i)) {
+                                JumpTablePatch p;
+                                p.pos = &jump_entries[i];
+                                p.target = succ[0];
+                                dyn_array_put(ctx->jump_table_patches, p);
+                            }
                         }
-                        SUBMIT(inst_op_ri(CMP, dt, tmp, range));
-                        SUBMIT(inst_jcc(succ[0], NB));
-                    }
-                    //   lea target, [rip + f]
-                    int target = DEF(NULL, TB_TYPE_I64);
-                    SUBMIT(inst_op_global(LEA, TB_TYPE_I64, target, (TB_Symbol*) f));
-                    //   lea table, [rip + JUMP_TABLE]
-                    int table = DEF(NULL, TB_TYPE_I64);
-                    SUBMIT(inst_op_global(LEA, TB_TYPE_I64, table, (TB_Symbol*) jump_table));
-                    //   movsxd table, [table + key*4]
-                    SUBMIT(inst_op_rm(MOVSXD, TB_TYPE_I64, table, table, tmp, SCALE_X4, 0));
-                    //   add target, table
-                    SUBMIT(inst_op_rrr(ADD, TB_TYPE_I64, target, target, table));
-                    //   jmp target
-                    SUBMIT(inst_jmp_reg(target));
-                } else {
-                    // Basic if-else chain
-                    FOREACH_N(i, 1, br->succ_count) {
-                        uint64_t curr_key = br->keys[i-1];
 
-                        if (fits_into_int32(curr_key)) {
-                            SUBMIT(inst_op_ri(CMP, dt, key, curr_key));
-                        } else {
-                            int tmp = DEF(n, dt);
-                            SUBMIT(inst_op_abs(MOVABS, dt, tmp, curr_key));
-                            SUBMIT(inst_op_rr(CMP, dt, key, tmp));
+                        // Simple range check:
+                        //   if ((key - min) >= (max - min)) goto default
+                        int tmp = DEF(NULL, dt);
+                        hint_reg(ctx, tmp, key);
+                        SUBMIT(inst_move(dt, tmp, key));
+                        if (has_default) {
+                            if (min != 0) {
+                                SUBMIT(inst_op_rri(SUB, dt, tmp, tmp, min));
+                            }
+                            SUBMIT(inst_op_ri(CMP, dt, tmp, range));
+                            SUBMIT(inst_jcc(succ[0], NB));
                         }
-                        SUBMIT(inst_jcc(succ[i], E));
+                        //   lea target, [rip + f]
+                        int target = DEF(NULL, TB_TYPE_I64);
+                        SUBMIT(inst_op_global(LEA, TB_TYPE_I64, target, (TB_Symbol*) f));
+                        //   lea table, [rip + JUMP_TABLE]
+                        int table = DEF(NULL, TB_TYPE_I64);
+                        SUBMIT(inst_op_global(LEA, TB_TYPE_I64, table, (TB_Symbol*) jump_table));
+                        //   movsxd table, [table + key*4]
+                        SUBMIT(inst_op_rm(MOVSXD, TB_TYPE_I64, table, table, tmp, SCALE_X4, 0));
+                        //   add target, table
+                        SUBMIT(inst_op_rrr(ADD, TB_TYPE_I64, target, target, table));
+                        //   jmp target
+                        SUBMIT(inst_jmp_reg(target));
+                        break;
                     }
-                    SUBMIT(inst_jmp(succ[0]));
                 }
             }
+
             tb_arena_restore(arena, sp);
             break;
         }
@@ -1629,14 +1710,7 @@ static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) 
             break;
         }
         case VAL_LABEL: {
-            if (v->target == NULL) {
-                EMITA(e, ".ret");
-            } else {
-                TB_Node* n = v->target;
-
-                int id = nl_map_get_checked(muh_______cfg->node_to_block, n).id;
-                EMITA(e, ".bb%d", id);
-            }
+            EMITA(e, ".bb%d", v->label);
             break;
         }
         default: tb_todo();
@@ -1644,41 +1718,11 @@ static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) 
 }
 
 static void inst2_print(TB_CGEmitter* restrict e, InstType type, Val* dst, Val* src, TB_X86_DataType dt) {
-    if (dt == TB_X86_TYPE_XMMWORD) {
-        dt = TB_X86_TYPE_SSE_PD;
-    }
-
-    /*if (e->emit_asm) {
-        EMITA(e, "  %s", inst_table[type].mnemonic);
-        if (inst_table[type].cat == INST_BINOP_EXT3) {
-            // movd/q
-            EMITA(e, "%c ", dt == TB_X86_TYPE_QWORD ? 'q' : 'd');
-        } else if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
-            static const char suffixes[4][3] = { "ss", "sd", "ps", "pd" };
-            EMITA(e, "%s ", suffixes[dt - TB_X86_TYPE_SSE_SS]);
-        } else {
-            EMITA(e, " ");
-        }
-        print_operand(e, dst, dt);
-        EMITA(e, ", ");
-        print_operand(e, src, dt);
-        EMITA(e, "\n");
-    }*/
-
     if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
         inst2sse(e, type, dst, src, dt);
     } else {
         inst2(e, type, dst, src, dt);
     }
-}
-
-static void inst1_print(TB_CGEmitter* restrict e, int type, Val* src, TB_X86_DataType dt) {
-    /*if (e->emit_asm) {
-        EMITA(e, "  %s ", inst_table[type].mnemonic);
-        print_operand(e, src, dt);
-        EMITA(e, "\n");
-    }*/
-    inst1(e, type, src, dt);
 }
 
 static int resolve_interval(Ctx* restrict ctx, Inst* inst, int i, Val* val) {
@@ -1769,9 +1813,10 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
         } else if (inst->type == INST_LABEL) {
             TB_Node* bb = inst->n;
             uint32_t pos = GET_CODE_POS(&ctx->emit);
-            tb_resolve_rel32(&ctx->emit, &nl_map_get_checked(ctx->emit.labels, bb), pos);
 
             int id = nl_map_get_checked(ctx->cfg.node_to_block, bb).id;
+            tb_resolve_rel32(&ctx->emit, &ctx->emit.labels[id], pos);
+
             if (id > 0) {
                 EMITA(e, ".bb%d:\n", id);
             }
@@ -1820,7 +1865,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
         } else if (inst->type >= JMP && inst->type <= JG) {
             Val target;
             if (inst->flags & INST_NODE) {
-                target = val_label(inst->n);
+                target = val_label(inst->l);
             } else if (inst->flags & INST_GLOBAL) {
                 target = val_global(inst->s);
             } else {
@@ -1828,7 +1873,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
                 resolve_interval(ctx, inst, in_base, &target);
             }
 
-            inst1_print(e, inst->type, &target, inst->dt);
+            inst1(e, inst->type, &target, inst->dt);
         } else if (inst->type == CALL) {
             Val target;
             size_t i = resolve_interval(ctx, inst, in_base, &target);
@@ -1847,20 +1892,23 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
                 EMITA(e, "\n");
                 inst1(e, CALL, &target, TB_X86_TYPE_QWORD);
             } else {
-                inst1_print(e, CALL, &target, TB_X86_TYPE_QWORD);
+                inst1(e, CALL, &target, TB_X86_TYPE_QWORD);
             }
         } else {
             int mov_op = inst->dt >= TB_X86_TYPE_PBYTE && inst->dt <= TB_X86_TYPE_XMMWORD ? FP_MOV : MOV;
 
             // prefix
             if (inst->flags & INST_LOCK) {
-                EMITA(e, "  LOCK");
                 EMIT1(e, 0xF0);
             }
 
             if (inst->flags & INST_REP) {
-                EMITA(e, "  REP");
                 EMIT1(e, 0xF3);
+            }
+
+            TB_X86_DataType dt = inst->dt;
+            if (dt == TB_X86_TYPE_XMMWORD) {
+                dt = TB_X86_TYPE_SSE_PD;
             }
 
             // resolve output
@@ -1882,15 +1930,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
                 ternary = (i < in_base + inst->in_count) || (inst->flags & (INST_IMM | INST_ABS));
                 if (ternary && inst->type == IMUL && (inst->flags & INST_IMM)) {
                     // there's a special case for ternary IMUL r64, r/m64, imm32
-                    /*if (e->emit_asm) {
-                        EMITA(e, "  imul ");
-                        print_operand(e, &out, inst->dt);
-                        EMITA(e, ", ");
-                        print_operand(e, &lhs, inst->dt);
-                        EMITA(e, ", %d\n", inst->imm);
-                    }*/
-
-                    inst2(e, IMUL3, &out, &lhs, inst->dt);
+                    inst2(e, IMUL3, &out, &lhs, dt);
                     if (inst->dt == TB_X86_TYPE_WORD) {
                         EMIT2(e, inst->imm);
                     } else {
@@ -1902,37 +1942,37 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
                 if (inst->out_count == 0) {
                     out = lhs;
                 } else if (inst->type == IDIV || inst->type == DIV) {
-                    inst1_print(e, inst->type, &lhs, inst->dt);
+                    inst1(e, inst->type, &lhs, dt);
                     continue;
                 } else {
                     if (ternary || inst->type == MOV || inst->type == FP_MOV) {
                         if (!is_value_match(&out, &lhs)) {
-                            inst2_print(e, mov_op, &out, &lhs, inst->dt);
+                            inst2_print(e, mov_op, &out, &lhs, dt);
                         }
                     } else {
-                        inst2_print(e, inst->type, &out, &lhs, inst->dt);
+                        inst2_print(e, inst->type, &out, &lhs, dt);
                     }
                 }
             }
 
             // unary ops
             if (cat == INST_UNARY || cat == INST_UNARY_EXT) {
-                inst1_print(e, inst->type, &out, inst->dt);
+                inst1(e, inst->type, &out, dt);
                 continue;
             }
 
             if (inst->flags & INST_IMM) {
                 Val rhs = val_imm(inst->imm);
-                inst2_print(e, inst->type, &out, &rhs, inst->dt);
+                inst2_print(e, inst->type, &out, &rhs, dt);
             } else if (inst->flags & INST_ABS) {
                 Val rhs = val_abs(inst->abs);
-                inst2_print(e, inst->type, &out, &rhs, inst->dt);
+                inst2_print(e, inst->type, &out, &rhs, dt);
             } else if (ternary) {
                 Val rhs;
                 i += resolve_interval(ctx, inst, i, &rhs);
 
                 if (inst->type != MOV || (inst->type == MOV && !is_value_match(&out, &rhs))) {
-                    inst2_print(e, inst->type, &out, &rhs, inst->dt);
+                    inst2_print(e, inst->type, &out, &rhs, dt);
                 }
             }
         }
@@ -2009,11 +2049,9 @@ static size_t emit_prologue(Ctx* restrict ctx) {
 
     // push rbp
     if (stack_usage > 0) {
-        EMITA(e, "  push RBP\n");
         EMIT1(e, 0x50 + RBP);
 
         // mov rbp, rsp
-        EMITA(e, "  mov RBP, RSP\n");
         EMIT1(e, rex(true, RSP, RBP, 0));
         EMIT1(e, 0x89);
         EMIT1(e, mod_rx_rm(MOD_DIRECT, RSP, RBP));
@@ -2028,10 +2066,9 @@ static size_t emit_prologue(Ctx* restrict ctx) {
         Val rsp = val_gpr(RSP);
 
         inst2_print(e, MOV, &rax, &imm, TB_X86_TYPE_DWORD);
-        inst1_print(e, CALL, &sym, TB_X86_TYPE_QWORD);
+        inst1(e, CALL, &sym, TB_X86_TYPE_QWORD);
         inst2_print(e, SUB, &rsp, &rax, TB_X86_TYPE_QWORD);
     } else if (stack_usage > 0) {
-        EMITA(e, "  sub RSP, %d\n", stack_usage);
         if (stack_usage == (int8_t)stack_usage) {
             // sub rsp, stack_usage
             EMIT1(e, rex(true, 0x00, RSP, 0));
@@ -2055,7 +2092,6 @@ static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop) {
     TB_CGEmitter* e = &ctx->emit;
 
     if (stack_usage <= 16) {
-        EMITA(e, "  ret\n");
         EMIT1(e, 0xC3);
         return 1;
     }
@@ -2064,7 +2100,6 @@ static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop) {
 
     // add rsp, N
     if (stack_usage > 0) {
-        EMITA(e, "  add RSP, %d\n", stack_usage);
         if (stack_usage == (int8_t)stack_usage) {
             EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
             EMIT1(&ctx->emit, 0x83);
@@ -2080,14 +2115,12 @@ static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop) {
 
     // pop rbp
     if (stack_usage > 0) {
-        EMITA(e, "  pop RBP\n");
         EMIT1(&ctx->emit, 0x58 + RBP);
     }
 
     // ret
     TB_Node* rpc = stop->inputs[2];
     if (rpc->type == TB_PROJ && rpc->inputs[0]->type == TB_START && TB_NODE_GET_EXTRA_T(rpc, TB_NodeProj)->index == 2) {
-        EMITA(e, "  ret\n");
         EMIT1(&ctx->emit, 0xC3);
     }
 
@@ -2098,7 +2131,7 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
     size_t r = 0;
     uint32_t src_section = out_f->section;
 
-    for (TB_SymbolPatch* patch = out_f->last_patch; patch; patch = patch->prev) {
+    for (TB_SymbolPatch* patch = out_f->first_patch; patch; patch = patch->next) {
         if (patch->target->tag == TB_SYMBOL_FUNCTION) {
             uint32_t dst_section = ((TB_Function*) patch->target)->output->section;
 
@@ -2124,8 +2157,8 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
 }
 
 #undef E
-#define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
-static void disassemble(TB_CGEmitter* e, int bb, size_t pos, size_t end) {
+#define E(fmt, ...) printf(fmt, ## __VA_ARGS__) // tb_asm_print(e, fmt, ## __VA_ARGS__)
+static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int bb, size_t pos, size_t end) {
     if (bb >= 0) {
         E(".bb%d:\n", bb);
     }
@@ -2139,7 +2172,11 @@ static void disassemble(TB_CGEmitter* e, int bb, size_t pos, size_t end) {
         }
 
         const char* mnemonic = tb_x86_mnemonic(&inst);
-        E("  %s ", mnemonic);
+        E("  ");
+        if (inst.flags & TB_X86_INSTR_REP) {
+            E("rep ");
+        }
+        E("%s ", mnemonic);
 
         bool mem = true, imm = true;
         for (int i = 0; i < 4; i++) {
@@ -2148,27 +2185,52 @@ static void disassemble(TB_CGEmitter* e, int bb, size_t pos, size_t end) {
                     if (i > 0) E(", ");
 
                     mem = false;
-                    E("%s [", tb_x86_type_name(inst.data_type));
-                    if (inst.base != 255) {
-                        E("%s", tb_x86_reg_name(inst.base, TB_X86_TYPE_QWORD));
-                    }
 
-                    if (inst.index != 255) {
-                        E(" + %s*%d", tb_x86_reg_name(inst.index, TB_X86_TYPE_QWORD), 1 << inst.scale);
-                    }
+                    if (inst.flags & TB_X86_INSTR_USE_RIPMEM) {
+                        bool is_label = inst.opcode == 0xE8 || inst.opcode == 0xE9;
+                        if (!is_label) E("[");
 
-                    if (inst.disp > 0) {
-                        E(" + %d", inst.disp);
-                    } else if (inst.disp < 0) {
-                        E(" - %d", -inst.disp);
-                    }
+                        if (patch && patch->pos == pos + inst.length - 4) {
+                            const TB_Symbol* target = patch->target;
 
-                    E("]");
+                            if (target->name[0] == 0) {
+                                printf("sym%p", target);
+                            } else {
+                                printf("%s", target->name);
+                            }
+                            patch = patch->next;
+                        } else {
+                            printf("%d", inst.disp);
+                        }
+
+                        if (!is_label) E("]");
+                    } else {
+                        E("%s [", tb_x86_type_name(inst.data_type));
+                        if (inst.base != 255) {
+                            E("%s", tb_x86_reg_name(inst.base, TB_X86_TYPE_QWORD));
+                        }
+
+                        if (inst.index != 255) {
+                            E(" + %s*%d", tb_x86_reg_name(inst.index, TB_X86_TYPE_QWORD), 1 << inst.scale);
+                        }
+
+                        if (inst.disp > 0) {
+                            E(" + %d", inst.disp);
+                        } else if (inst.disp < 0) {
+                            E(" - %d", -inst.disp);
+                        }
+
+                        E("]");
+                    }
                 } else if (imm && (inst.flags & (TB_X86_INSTR_IMMEDIATE | TB_X86_INSTR_ABSOLUTE))) {
                     if (i > 0) E(", ");
 
                     imm = false;
-                    E("%d", inst.imm);
+                    if (inst.flags & TB_X86_INSTR_ABSOLUTE) {
+                        E("%#llx", inst.abs);
+                    } else {
+                        E("%#x", inst.imm);
+                    }
                 } else {
                     break;
                 }
@@ -2190,6 +2252,8 @@ static void disassemble(TB_CGEmitter* e, int bb, size_t pos, size_t end) {
 
         pos += inst.length;
     }
+
+    return patch;
 }
 #undef E
 

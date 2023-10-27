@@ -228,6 +228,20 @@ static bool is_mem_in_op(TB_Node* n) {
     return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
 }
 
+static bool is_region_wit_no_phis(TB_Node* n) {
+    if (n->type != TB_REGION) {
+        return false;
+    }
+
+    for (User* use = n->users; use; use = use->next) {
+        if (use->n->type == TB_PHI && use->n->dt.type != TB_MEMORY) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 ////////////////////////////////
 // CFG analysis
 ////////////////////////////////
@@ -286,6 +300,10 @@ static TB_Node* get_pred(TB_Node* n, int i) {
 
     if (base->type == TB_REGION && n->type == TB_PROJ) {
         TB_Node* parent = n->inputs[0];
+
+        if (is_region_wit_no_phis(n)) {
+            return n;
+        }
 
         // start or cprojs with multiple users (it's a BB) will just exit
         if (parent->type == TB_START || (!ctrl_out_as_cproj_but_not_branch(parent) && n->users->next != NULL)) {

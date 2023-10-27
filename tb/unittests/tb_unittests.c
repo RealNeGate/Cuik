@@ -1,38 +1,56 @@
+#include <dyn_array.h>
+
+typedef struct {
+    TB_Module* m;
+    TB_JIT* jit;
+} RunTest;
+
+RunTest create_jit() {
+    TB_FeatureSet features = { 0 };
+    TB_Module* mod = tb_module_create_for_host(&features, true);
+    TB_JIT* jit = tb_jit_begin(mod, 0);
+
+    return (RunTest){ mod, jit };
+}
+
 #include "tb_test_regressions.inc"
 #include "tb_test_exit_status.inc"
 #include "tb_test_int_arith.inc"
 
-#define TEST(proc_)                                        \
-do {                                                       \
-    fflush(stdout);                                        \
-    printf("%s\r", #proc_);                                \
-    fflush(stdout);                                        \
-    int status_ = test_##proc_();                          \
-    fflush(stdout);                                        \
-    printf("%s%.*s ", #proc_, (int) (41 - sizeof(#proc_)), \
-        " ........................................");      \
-    if (status_)                                           \
-    printf("OK\n");                                        \
-    else {                                                 \
-        printf("FAILED\n");                                \
-        failed++;                                          \
-    }                                                      \
-    total++;                                               \
-    fflush(stdout);                                        \
-} while (0)
+typedef int (*TestFn)(void);
+
+static int failed = 0, total = 0;
+
+static void run_test(const char* name, TestFn fn) {
+    size_t len = strlen(name);
+
+    fflush(stdout);
+    printf("%s\r", #proc_);
+    fflush(stdout);
+    int status_ = test_##proc_();
+    fflush(stdout);
+
+    printf("%s%.*s ", #proc_, (int) (41 - sizeof(#proc_)),
+        " ........................................"
+    );
+
+    if (status_) {
+        printf("OK\n");
+    } else {
+        printf("FAILED\n");
+        failed++;
+    }
+    total++;
+    fflush(stdout);
+
+}
 
 int main(int argc, char **argv) {
-    int failed = 0, total = 0;
-
     TEST(regression_module_arena);
     TEST(regression_link_global);
     TEST(exit_status);
 
-    // TEST(regression_module_arena);
-    // TEST(regression_link_global);
-    TEST(exit_status);
-
-    /*TEST(i8_add);
+    TEST(i8_add);
     TEST(i8_sub);
     TEST(i8_mul);
     TEST(i8_div);
@@ -78,15 +96,15 @@ int main(int argc, char **argv) {
     TEST(u64_sub);
     TEST(u64_mul);
     TEST(u64_div);
-    TEST(u64_mod);*/
+    TEST(u64_mod);
 
     fflush(stdout);
-    if (failed > 0)
+    if (failed > 0) {
         printf("\n%d of %d tests failed.\n", failed, total);
-    else
+    } else {
         printf("\nAll %d tests succeeded.\n", total);
+    }
     fflush(stdout);
 
     return failed;
 }
-

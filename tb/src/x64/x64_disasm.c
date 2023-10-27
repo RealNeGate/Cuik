@@ -5,16 +5,17 @@
 #define UNPACK_233(a, b, c, src) \
 (a = (src >> 6), b = (src >> 3) & 7, c = (src & 7))
 
-#define THROW()  return false
-#define ABC(amt) if (current + (amt) > length) THROW()
-
 #define READ32(x)   (memcpy(&(x), &data[current], 4), current += 4, x)
-#define READ32LE(x) READ32(x)
+#define READ64(x)   (memcpy(&(x), &data[current], 8), current += 8, x)
 
-static bool x86_parse_memory_op(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data, int reg_slot, uint8_t mod, uint8_t rm, uint8_t rex) {
+#define READ32LE(x) READ32(x)
+#define READ64LE(x) READ64(x)
+
+#define ABC(amt) if (current + (amt) > length) return -1
+static ptrdiff_t x86_parse_memory_op(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data, int reg_slot, uint8_t mod, uint8_t rm, uint8_t rex) {
     if (mod == MOD_DIRECT) {
         inst->regs[reg_slot] = (rex&1 ? 8 : 0) | rm;
-        return true;
+        return 0;
     } else {
         size_t current = 0;
 
@@ -52,6 +53,8 @@ static bool x86_parse_memory_op(TB_X86_Inst* restrict inst, size_t length, const
                 int32_t disp = READ32LE(disp);
 
                 inst->flags |= TB_X86_INSTR_USE_RIPMEM;
+                inst->base = -1;
+                inst->index = -1;
                 inst->disp = disp;
             } else {
                 inst->base = (rex&1 ? 8 : 0) | rm;
@@ -71,12 +74,13 @@ static bool x86_parse_memory_op(TB_X86_Inst* restrict inst, size_t length, const
         }
 
         inst->regs[reg_slot] = -1;
-        inst->length += current;
-        return true;
+        return current;
     }
 }
+#undef ABC
 
 // INSTRUCTION ::= PREFIX* OPCODE[1-4] (MODRM SIB?)? IMMEDIATE? OFFSET?
+#define ABC(amt) if (current + (amt) > length) return false
 bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data) {
     *inst = (TB_X86_Inst){ 0 };
     for (int i = 0; i < 4; i++) inst->regs[i] = -1;
@@ -157,21 +161,38 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // push reg
         // pop reg
         [0x50 ... 0x5F] = OP_PLUSR | OP_64BIT,
+        // lea reg, r/m
+        [0x8D] = OP_RM,
         // movsxd reg, r/m
         [0x63] = OP_RM | OP_2DT,
+        // imul reg, r/m, imm32
+        [0x69] = OP_RM,
         // jcc rel8
         [0x70 ... 0x7F] = OP_REL8,
-        // call rel32
-        [0xE8] = OP_REL32,
-        // jmp rel32
-        [0xE9] = OP_REL32,
         // nop
         [0x90] = OP_0ARY,
         // ret
         [0xC3] = OP_0ARY,
+        // movabs
+        [0xB8 ... 0xBF] = OP_PLUSR | OP_64BIT,
         // mov r/m, imm
         [0xC6] = OP_MI | OP_FAKERX | OP_8BIT,
         [0xC7] = OP_MI | OP_FAKERX,
+        // movs
+        [0xA4 ... 0xA5] = OP_0ARY,
+        // stos
+        [0xAA ... 0xAB] = OP_0ARY,
+        // scas
+        [0xAE ... 0xAF] = OP_0ARY,
+        // sar r/m, imm8
+        // shl r/m, imm8
+        // shr r/m, imm8
+        [0xC0] = OP_MI8 | OP_FAKERX | OP_8BIT,
+        [0xC1] = OP_MI8 | OP_FAKERX,
+        // call rel32
+        [0xE8] = OP_REL32,
+        // jmp rel32
+        [0xE9] = OP_REL32,
     };
     #undef NORMIE_BINOP
 
@@ -206,15 +227,21 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         else if (addr16) inst->data_type = TB_X86_TYPE_WORD;
     }
 
+    if (rep) {
+        inst->flags |= TB_X86_INSTR_REP;
+    }
+
     assert(enc != OP_BAD);
     if (enc == OP_REL32) {
         inst->flags |= TB_X86_INSTR_USE_RIPMEM;
         inst->flags |= TB_X86_INSTR_USE_MEMOP;
+        inst->base = -1;
+        inst->index = -1;
 
         ABC(4);
         int32_t imm = READ32LE(imm);
         inst->disp = imm;
-        inst->length = current + 4;
+        inst->length = current;
         return true;
     } else if (enc == OP_0ARY) {
         inst->length = current;
@@ -223,6 +250,15 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // bottom 8bits of the opcode are the base reg
         inst->regs[0] = (rex & 1 ? 1 : 0) | (inst->opcode & 7);
         inst->opcode &= ~7;
+
+        if (op >= 0xB8 && op <= 0xBF) {
+            // movabs (pre-APX) is the only instruction with a 64bit immediate so i'm finna
+            // special case it.
+            ABC(8);
+            uint64_t imm = READ64LE(imm);
+            inst->flags |= TB_X86_INSTR_ABSOLUTE;
+            inst->abs = imm;
+    	}
         inst->length = current;
         return true;
     } else {
@@ -241,27 +277,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
             inst->data_type2 = TB_X86_TYPE_DWORD;
         }
 
-        // immediates might use RX for an extended opcode
-        if (uses_imm) {
-            if (flags & OP_FAKERX) {
-                inst->opcode <<= 4;
-                inst->opcode |= rx;
-            }
-
-            if (enc == OP_MI8) {
-                ABC(1);
-                int8_t imm = data[current++];
-                inst->flags |= TB_X86_INSTR_IMMEDIATE;
-                inst->imm = imm;
-            } else if (enc == OP_MI) {
-                ABC(4);
-                int32_t imm = READ32LE(imm);
-                inst->flags |= TB_X86_INSTR_IMMEDIATE;
-                inst->imm = imm;
-            } else {
-                return false;
-            }
-        } else {
+        if (!uses_imm) {
             int8_t real_rx = ((rex & 4 ? 8 : 0) | rx);
             if (rex == 0 && inst->data_type == TB_X86_TYPE_BYTE && real_rx >= 4) {
                 // use high registers
@@ -271,10 +287,40 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         }
 
         // writes out RM reg (or base and index)
+        ptrdiff_t delta = x86_parse_memory_op(inst, length - current, &data[current], rm_slot, mod, rm, rex);
+        if (delta < 0) {
+            return false;
+        }
+        current += delta;
+
+        // immediates might use RX for an extended opcode
+        // IMUL's ternary is a special case
+        if (uses_imm || op == 0x68 || op == 0x69) {
+            if (flags & OP_FAKERX) {
+                inst->opcode <<= 4;
+                inst->opcode |= rx;
+            }
+
+            if (enc == OP_MI8 || op == 0x68) {
+                ABC(1);
+                int8_t imm = data[current++];
+                inst->flags |= TB_X86_INSTR_IMMEDIATE;
+                inst->imm = imm;
+            } else if (enc == OP_MI || op == 0x69) {
+                ABC(4);
+                int32_t imm = READ32LE(imm);
+                inst->flags |= TB_X86_INSTR_IMMEDIATE;
+                inst->imm = imm;
+            } else {
+                return false;
+            }
+        }
+
         inst->length = current;
-        return x86_parse_memory_op(inst, length - current, &data[current], rm_slot, mod, rm, rex);
+        return true;
     }
 }
+#undef ABC
 
 const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
     switch (inst->opcode) {
@@ -286,6 +332,14 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x38 ... 0x3B: return "cmp";
         case 0x88 ... 0x8B: return "mov";
 
+        case 0xA4: case 0xA5: return "movs";
+        case 0xAA: case 0xAB: return "stos";
+        case 0xAE: case 0xAF: return "scas";
+
+        case 0xC04: case 0xC14: return "shl";
+        case 0xC05: case 0xC15: return "shr";
+        case 0xC07: case 0xC17: return "sar";
+
         case 0x830: return "add";
         case 0x831: return "or";
         case 0x834: return "and";
@@ -294,6 +348,9 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x837: return "cmp";
         case 0xC70: return "mov";
 
+        case 0xB8 ... 0xBF: return "mov";
+
+        case 0x8D: return "lea";
         case 0x90: return "nop";
         case 0xC3: return "ret";
         case 0x63: return "movsxd";
@@ -304,7 +361,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0xE9: return "jmp";
 
         case 0x0F1F: return "nop";
-        case 0x0FAF: return "imul";
+        case 0x0FAF: case 0x68: case 0x69: return "imul";
 
         case 0x0F80: case 0x70: return "jo";
         case 0x0F81: case 0x71: return "jno";

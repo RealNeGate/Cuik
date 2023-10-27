@@ -73,7 +73,7 @@ typedef struct Val {
         // for VAL_GLOBAL this is used as the base
         const TB_Symbol* symbol;
         // for VAL_LABEL
-        TB_Node* target;
+        int label;
     };
 } Val;
 
@@ -155,8 +155,8 @@ inline static Val val_abs(uint64_t abs) {
     return (Val) { .type = VAL_ABS, .abs = abs };
 }
 
-inline static Val val_label(TB_Node* target) {
-    return (Val) { .type = VAL_LABEL, .target = target };
+inline static Val val_label(int target) {
+    return (Val) { .type = VAL_LABEL, .label = target };
 }
 
 inline static Val val_stack(int s) {

@@ -192,7 +192,7 @@ void* tb_jit_place_function(TB_JIT* jit, TB_Function* f) {
     log_debug("jit: apply function %s (%p)", f->super.name, dst);
 
     // apply relocations, any leftovers are mapped to thunks
-    for (TB_SymbolPatch* p = func_out->last_patch; p; p = p->prev) {
+    for (TB_SymbolPatch* p = func_out->first_patch; p; p = p->next) {
         size_t actual_pos = p->pos;
         TB_SymbolTag tag = p->target->tag;
 

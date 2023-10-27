@@ -332,7 +332,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE previnstance, LPSTR cmdline, in
     {
         // checkerboard texture, with 50% transparency on black colors
         int width, height;
-        unsigned int* pixels = (unsigned int*) stbi_load("test2.png", &width, &height, NULL, 4);
+        unsigned int* pixels = (unsigned int*) stbi_load("../test.png", &width, &height, NULL, 4);
         Assert(pixels);
 
         /*unsigned int pixels[] =

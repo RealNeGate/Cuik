@@ -26,7 +26,8 @@ typedef struct {
     size_t count, capacity;
     uint8_t* data;
 
-    NL_Map(TB_Node*, uint32_t) labels;
+    size_t label_count;
+    uint32_t* labels;
 } TB_CGEmitter;
 
 // Helper macros

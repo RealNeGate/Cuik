@@ -213,7 +213,7 @@ static bool is_empty_bb(TB_Passes* restrict p, TB_Node* end) {
     }
 
     TB_Node* bb = end->inputs[0];
-    for (User* use = find_users(p, bb); use; use = use->next) {
+    for (User* use = bb->users; use; use = use->next) {
         TB_Node* n = use->n;
         if (use->n != end) return false;
     }

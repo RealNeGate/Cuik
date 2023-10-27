@@ -606,7 +606,7 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
 
         dyn_array_for(j, funcs) {
             TB_FunctionOutput* out_f = funcs[j];
-            for (TB_SymbolPatch* patch = out_f->last_patch; patch; patch = patch->prev) {
+            for (TB_SymbolPatch* patch = out_f->first_patch; patch; patch = patch->next) {
                 int32_t* dst = (int32_t*) &output[text_piece_file + out_f->code_pos + patch->pos];
                 size_t actual_pos = text_piece_rva + out_f->code_pos + patch->pos + 4;
 

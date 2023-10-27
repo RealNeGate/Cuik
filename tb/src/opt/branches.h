@@ -26,7 +26,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
         // remove dead predeccessors
         bool changes = false;
 
-        size_t i = 0;
+        size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
             if (n->inputs[i]->type == TB_DEAD) {
                 changes = true;
@@ -39,6 +39,61 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
                     }
                 }
                 continue;
+            } else if (n->inputs[i]->type == TB_REGION) {
+                // pure regions can be collapsed into direct edges
+                if (n->inputs[i]->users->next == NULL && n->inputs[i]->input_count > 0) {
+                    assert(n->inputs[i]->users->n == n);
+                    changes = true;
+
+                    TB_Node* pred = n->inputs[i];
+                    {
+                        size_t old_count = n->input_count;
+                        size_t new_count = old_count + (pred->input_count - 1);
+
+                        // convert pred-of-pred into direct pred
+                        set_input(p, n, pred->inputs[0], i);
+
+                        // append rest to the end (order really doesn't matter)
+                        //
+                        // NOTE(NeGate): we might waste quite a bit of space because of the arena
+                        // alloc and realloc
+                        TB_Node** new_inputs = alloc_from_node_arena(f, new_count * sizeof(TB_Node*));
+                        memcpy(new_inputs, n->inputs, old_count * sizeof(TB_Node*));
+                        n->inputs = new_inputs;
+                        n->input_count = new_count;
+
+                        FOREACH_N(j, 0, pred->input_count - 1) {
+                            new_inputs[old_count + j] = pred->inputs[j + 1];
+                            add_user(p, n, pred->inputs[j + 1], old_count + j, NULL);
+                        }
+                    }
+
+                    // update PHIs
+                    for (User* use = n->users; use; use = use->next) {
+                        if (use->n->type == TB_PHI && use->slot == 0) {
+                            // we don't replace the initial, just the rest
+                            TB_Node* phi = use->n;
+                            TB_Node* phi_val = phi->inputs[i + 1];
+
+                            // append more phi vals... lovely allocs
+                            size_t phi_ins = phi->input_count;
+                            size_t new_phi_ins = phi_ins + (pred->input_count - 1);
+
+                            TB_Node** new_inputs = alloc_from_node_arena(f, new_phi_ins * sizeof(TB_Node*));
+                            memcpy(new_inputs, phi->inputs, phi_ins * sizeof(TB_Node*));
+                            phi->inputs = new_inputs;
+                            phi->input_count = new_phi_ins;
+
+                            FOREACH_N(j, 0, pred->input_count - 1) {
+                                new_inputs[phi_ins + j] = phi_val;
+                                add_user(p, phi, phi_val, phi_ins + j, NULL);
+                            }
+                        }
+                    }
+
+                    extra_edges += 1;
+                    continue;
+                }
             }
 
             i += 1;

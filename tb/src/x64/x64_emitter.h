@@ -124,8 +124,8 @@ static void inst1(TB_CGEmitter* restrict e, InstType type, const Val* r, TB_X86_
         EMIT1(e, inst->op);
         EMIT4(e, 0);
 
-        assert(r->target != NULL);
-        tb_emit_rel32(e, &nl_map_get_checked(e->labels, r->target), GET_CODE_POS(e) - 4);
+        assert(r->label >= 0 && r->label < e->label_count);
+        tb_emit_rel32(e, &e->labels[r->label], GET_CODE_POS(e) - 4);
     } else {
         tb_unreachable();
     }
