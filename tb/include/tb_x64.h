@@ -31,6 +31,9 @@ typedef enum {
 
     // REP prefix is present
     TB_X86_INSTR_REP = (1u << 8u),
+
+    // REPNE prefix is present
+    TB_X86_INSTR_REPNE = (1u << 9u),
 } TB_X86_InstFlags;
 
 typedef enum {
@@ -75,8 +78,8 @@ typedef struct {
     uint16_t flags;
 
     // bitpacking amirite
-    TB_X86_DataType data_type  : 4;
-    TB_X86_DataType data_type2 : 4;
+    TB_X86_DataType data_type  : 8;
+    TB_X86_DataType data_type2 : 8;
     TB_X86_Segment segment     : 4;
     uint8_t length             : 4;
 

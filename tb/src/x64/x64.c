@@ -2157,7 +2157,12 @@ static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int b
         if (inst.flags & TB_X86_INSTR_LOCK) {
             E("lock ");
         }
-        E("%s ", mnemonic);
+        E("%s", mnemonic);
+        if (inst.data_type >= TB_X86_TYPE_SSE_SS && inst.data_type <= TB_X86_TYPE_SSE_PD) {
+            static const char* strs[] = { "ss", "sd", "ps", "pd" };
+            E(strs[inst.data_type - TB_X86_TYPE_SSE_SS]);
+        }
+        E(" ");
 
         bool mem = true, imm = true;
         for (int i = 0; i < 4; i++) {

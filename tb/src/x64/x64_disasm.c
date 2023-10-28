@@ -109,7 +109,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
             case 0x66: addr16 = true; break;
             case 0x67: addr32 = true; break;
             case 0xF3: inst->flags |= TB_X86_INSTR_REP; break;
-            case 0xF2: repne = true; break;
+            case 0xF2: inst->flags |= TB_X86_INSTR_REPNE; break;
             case 0x2E: inst->segment = TB_X86_SEGMENT_CS; break;
             case 0x36: inst->segment = TB_X86_SEGMENT_SS; break;
             case 0x3E: inst->segment = TB_X86_SEGMENT_DS; break;
@@ -129,25 +129,26 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         OP_64BIT  = 2,
         OP_FAKERX = 4,
         OP_2DT    = 8,
+        OP_SSE    = 16,
     };
 
     enum {
         // encoding
-        OP_BAD   = 0x00,
-        OP_MR    = 0x10,
-        OP_RM    = 0x20,
-        OP_M     = 0x30,
-        OP_MI    = 0x40,
-        OP_MI8   = 0x50,
-        OP_MC    = 0x60,
-        OP_PLUSR = 0x70,
-        OP_0ARY  = 0x80,
-        OP_REL8  = 0x90,
-        OP_REL32 = 0xA0,
+        OP_BAD   = 0x0000,
+        OP_MR    = 0x1000,
+        OP_RM    = 0x2000,
+        OP_M     = 0x3000,
+        OP_MI    = 0x4000,
+        OP_MI8   = 0x5000,
+        OP_MC    = 0x6000,
+        OP_PLUSR = 0x7000,
+        OP_0ARY  = 0x8000,
+        OP_REL8  = 0x9000,
+        OP_REL32 = 0xA000,
     };
 
     #define NORMIE_BINOP(op) [op+0] = OP_MR | OP_8BIT, [op+1] = OP_MR, [op+2] = OP_RM | OP_8BIT, [op+3] = OP_RM
-    static const uint8_t first_table[256] = {
+    static const uint16_t first_table[256] = {
         NORMIE_BINOP(0x00), // add
         NORMIE_BINOP(0x08), // or
         NORMIE_BINOP(0x20), // and
@@ -211,7 +212,11 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     };
     #undef NORMIE_BINOP
 
-    static const uint8_t ext_table[256] = {
+    static const uint16_t ext_table[256] = {
+        // SSE: movu
+        [0x10] = OP_RM | OP_SSE, [0x11] = OP_MR | OP_SSE,
+        // SSE: add, mul, sub, min, div, max
+        [0x51 ... 0x5F] = OP_RM | OP_SSE,
         // nop r/m
         [0x1F] = OP_RM,
         // imul reg, r/m
@@ -224,12 +229,12 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 
     inst->opcode = (ext ? 0x0F00 : 0) | op;
 
-    uint8_t first = ext ? ext_table[op] : first_table[op];
-    uint8_t flags = first & 0xF;
+    uint16_t first = ext ? ext_table[op] : first_table[op];
+    uint16_t flags = first & 0xFFF;
     assert(first != 0 && "unknown op");
 
     // info from table
-    uint8_t enc = first & 0xF0;
+    uint16_t enc = first & 0xF000;
     bool uses_imm = enc == OP_MI || enc == OP_MI8;
 
     // in the "default" "type" "system", REX.W is 64bit, certain ops
@@ -238,6 +243,22 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     if (flags & OP_64BIT) {
         // basically forced 64bit
         inst->data_type = TB_X86_TYPE_QWORD;
+    } else if (flags & OP_SSE) {
+        // ss     REP    OPCODE
+        // sd     REPNE  OPCODE
+        // ps     __     OPCODE
+        // pd     DATA16 OPCODE
+        if (inst->flags & TB_X86_INSTR_REPNE) {
+            inst->data_type = TB_X86_TYPE_SSE_SD;
+        } else if (inst->flags & TB_X86_INSTR_REP) {
+            inst->data_type = TB_X86_TYPE_SSE_SS;
+        } else if (addr16) {
+            inst->data_type = TB_X86_TYPE_SSE_SS;
+        } else {
+            inst->data_type = TB_X86_TYPE_SSE_PS;
+        }
+
+        inst->flags &= ~(TB_X86_INSTR_REP | TB_X86_INSTR_REPNE);
     } else {
         if (rex & 0x8) inst->data_type = TB_X86_TYPE_QWORD;
         else if (flags & OP_8BIT) inst->data_type = TB_X86_TYPE_BYTE;
@@ -374,6 +395,21 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x837: return "cmp";
         case 0xC60: case 0xC70: return "mov";
 
+        case 0x0F10: case 0x0F11: return "mov";
+        case 0x0F58: return "add";
+        case 0x0F59: return "mul";
+        case 0x0F5C: return "sub";
+        case 0x0F5D: return "min";
+        case 0x0F5E: return "div";
+        case 0x0F5F: return "max";
+        case 0x0FC2: return "cmp";
+        case 0x0F2E: return "ucomi";
+        case 0x0F51: return "sqrt";
+        case 0x0F52: return "rsqrt";
+        case 0x0F54: return "and";
+        case 0x0F56: return "or";
+        case 0x0F57: return "xor";
+
         case 0xB8 ... 0xBF: return "mov";
         case 0x0FB6: case 0x0FB7: return "movzx";
 
@@ -423,8 +459,18 @@ const char* tb_x86_reg_name(int8_t reg, TB_X86_DataType dt) {
         "ah", "ch", "dh", "bh"
     };
 
-    assert(dt >= TB_X86_TYPE_BYTE && dt <= TB_X86_TYPE_QWORD);
-    return X86__GPR_NAMES[dt - TB_X86_TYPE_BYTE][reg];
+    if (dt >= TB_X86_TYPE_BYTE && dt <= TB_X86_TYPE_QWORD) {
+        return X86__GPR_NAMES[dt - TB_X86_TYPE_BYTE][reg];
+    } else if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
+        static const char* X86__XMM_NAMES[] = {
+            "xmm0", "xmm1", "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
+            "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
+        };
+
+        return X86__XMM_NAMES[reg];
+    } else {
+        return "??";
+    }
 }
 
 const char* tb_x86_type_name(TB_X86_DataType dt) {
@@ -433,7 +479,11 @@ const char* tb_x86_type_name(TB_X86_DataType dt) {
         case TB_X86_TYPE_WORD:  return "word";
         case TB_X86_TYPE_DWORD: return "dword";
         case TB_X86_TYPE_QWORD: return "qword";
+        case TB_X86_TYPE_SSE_SS:return "dword";
+        case TB_X86_TYPE_SSE_SD:return "qword";
+        case TB_X86_TYPE_SSE_PS:return "xmmword";
+        case TB_X86_TYPE_SSE_PD:return "xmmword";
 
-        default: return "???";
+        default: return "??";
     }
 }
