@@ -325,7 +325,7 @@ void* tb_jit_get_code_ptr(TB_Function* f) {
 ////////////////////////////////
 // Debugger
 ////////////////////////////////
-#ifdef CUIK__IS_X64
+#if defined(CUIK__IS_X64) && defined(_WIN32)
 struct TB_CPUContext {
     // we'll need this to track breakpoints once we hit
     // them (not all INT3s are breakpoints, some are user
@@ -352,7 +352,6 @@ TB_CPUContext* tb_jit_thread_create(void* entry, void* arg) {
     return cpu;
 }
 
-#ifdef _WIN32
 static LONG except_handler(EXCEPTION_POINTERS* e) {
     // find breakpoints
     if (e->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT ||
@@ -366,7 +365,6 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
 
     return EXCEPTION_CONTINUE_SEARCH;
 }
-#endif
 
 void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
     // install exception handler, then we can run code
