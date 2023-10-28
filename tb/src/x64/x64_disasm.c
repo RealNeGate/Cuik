@@ -108,7 +108,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
             case 0x0F: ext = true; break;
             case 0x66: addr16 = true; break;
             case 0x67: addr32 = true; break;
-            case 0xF3: rep = true; break;
+            case 0xF3: inst->flags |= TB_X86_INSTR_REP; break;
             case 0xF2: repne = true; break;
             case 0x2E: inst->segment = TB_X86_SEGMENT_CS; break;
             case 0x36: inst->segment = TB_X86_SEGMENT_SS; break;
@@ -136,12 +136,14 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         OP_BAD   = 0x00,
         OP_MR    = 0x10,
         OP_RM    = 0x20,
-        OP_MI    = 0x30,
-        OP_MI8   = 0x40,
-        OP_PLUSR = 0x50,
-        OP_0ARY  = 0x60,
-        OP_REL8  = 0x70,
-        OP_REL32 = 0x80,
+        OP_M     = 0x30,
+        OP_MI    = 0x40,
+        OP_MI8   = 0x50,
+        OP_MC    = 0x60,
+        OP_PLUSR = 0x70,
+        OP_0ARY  = 0x80,
+        OP_REL8  = 0x90,
+        OP_REL32 = 0xA0,
     };
 
     #define NORMIE_BINOP(op) [op+0] = OP_MR | OP_8BIT, [op+1] = OP_MR, [op+2] = OP_RM | OP_8BIT, [op+3] = OP_RM
@@ -189,10 +191,19 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // shr r/m, imm8
         [0xC0] = OP_MI8 | OP_FAKERX | OP_8BIT,
         [0xC1] = OP_MI8 | OP_FAKERX,
+        // sar r/m, CL
+        // shl r/m, CL
+        // shr r/m, CL
+        [0xD2] = OP_MC | OP_FAKERX | OP_8BIT,
+        [0xD3] = OP_MC | OP_FAKERX,
         // call rel32
         [0xE8] = OP_REL32,
         // jmp rel32
         [0xE9] = OP_REL32,
+        // idiv r/m8
+        [0xF6] = OP_M | OP_FAKERX | OP_8BIT,
+        // idiv r/m
+        [0xF7] = OP_M | OP_FAKERX,
     };
     #undef NORMIE_BINOP
 
@@ -201,6 +212,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x1F] = OP_RM,
         // imul reg, r/m
         [0xAF] = OP_RM,
+        // movzx
+        [0xB6 ... 0xB7] = OP_RM | OP_2DT,
         // jcc rel32
         [0x80 ... 0x8F] = OP_REL32,
     };
@@ -225,10 +238,6 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         if (rex & 0x8) inst->data_type = TB_X86_TYPE_QWORD;
         else if (flags & OP_8BIT) inst->data_type = TB_X86_TYPE_BYTE;
         else if (addr16) inst->data_type = TB_X86_TYPE_WORD;
-    }
-
-    if (rep) {
-        inst->flags |= TB_X86_INSTR_REP;
     }
 
     assert(enc != OP_BAD);
@@ -272,18 +281,34 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         uint8_t mod, rx, rm, modrm = data[current++];
         UNPACK_233(mod, rx, rm, modrm);
 
-        if (flags & OP_2DT) {
-            inst->flags |= TB_X86_INSTR_TWO_DATA_TYPES;
-            inst->data_type2 = TB_X86_TYPE_DWORD;
+        if (flags & OP_FAKERX) {
+            inst->opcode <<= 4;
+            inst->opcode |= rx;
         }
 
-        if (!uses_imm) {
-            int8_t real_rx = ((rex & 4 ? 8 : 0) | rx);
-            if (rex == 0 && inst->data_type == TB_X86_TYPE_BYTE && real_rx >= 4) {
-                // use high registers
-                real_rx += 16;
+        if (flags & OP_2DT) {
+            if (inst->opcode == 0x0FB6 || inst->opcode == 0x0FB7) {
+                inst->flags |= TB_X86_INSTR_TWO_DATA_TYPES;
+                inst->data_type2 = inst->opcode == 0x0FB6 ? TB_X86_TYPE_BYTE : TB_X86_TYPE_WORD;
+            } else {
+                inst->flags |= TB_X86_INSTR_TWO_DATA_TYPES;
+                inst->data_type2 = TB_X86_TYPE_DWORD;
             }
-            inst->regs[rx_slot] = real_rx;
+        }
+
+        if (enc != OP_M && !uses_imm) {
+            if (enc == OP_MC) {
+                inst->flags |= TB_X86_INSTR_TWO_DATA_TYPES;
+                inst->data_type2 = TB_X86_TYPE_BYTE;
+                inst->regs[rx_slot] = RCX;
+            } else {
+                int8_t real_rx = ((rex & 4 ? 8 : 0) | rx);
+                if (rex == 0 && inst->data_type == TB_X86_TYPE_BYTE && real_rx >= 4) {
+                    // use high registers
+                    real_rx += 16;
+                }
+                inst->regs[rx_slot] = real_rx;
+            }
         }
 
         // writes out RM reg (or base and index)
@@ -296,11 +321,6 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // immediates might use RX for an extended opcode
         // IMUL's ternary is a special case
         if (uses_imm || op == 0x68 || op == 0x69) {
-            if (flags & OP_FAKERX) {
-                inst->opcode <<= 4;
-                inst->opcode |= rx;
-            }
-
             if (enc == OP_MI8 || op == 0x68) {
                 ABC(1);
                 int8_t imm = data[current++];
@@ -336,9 +356,11 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0xAA: case 0xAB: return "stos";
         case 0xAE: case 0xAF: return "scas";
 
-        case 0xC04: case 0xC14: return "shl";
-        case 0xC05: case 0xC15: return "shr";
-        case 0xC07: case 0xC17: return "sar";
+        case 0xC04: case 0xC14: case 0xD24: case 0xD34: return "shl";
+        case 0xC05: case 0xC15: case 0xD25: case 0xD35: return "shr";
+        case 0xC07: case 0xC17: case 0xD27: case 0xD37: return "sar";
+
+        case 0xF76: case 0xF77: return "idiv";
 
         case 0x830: return "add";
         case 0x831: return "or";
@@ -349,6 +371,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0xC70: return "mov";
 
         case 0xB8 ... 0xBF: return "mov";
+        case 0x0FB6: case 0x0FB7: return "movzx";
 
         case 0x8D: return "lea";
         case 0x90: return "nop";

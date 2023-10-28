@@ -1816,19 +1816,13 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
 
             int id = nl_map_get_checked(ctx->cfg.node_to_block, bb).id;
             tb_resolve_rel32(&ctx->emit, &ctx->emit.labels[id], pos);
-
-            if (id > 0) {
-                EMITA(e, ".bb%d:\n", id);
-            }
         } else if (inst->type == INST_INLINE) {
             if (inst->n) {
                 TB_NodeMachineOp* mach = TB_NODE_GET_EXTRA(inst->n);
 
-                EMITA(&ctx->emit, "  INLINE MACHINE CODE:");
-                FOREACH_N(i, 0, mach->length) {
-                    EMITA(&ctx->emit, " %#02x", mach->data[i]);
-                }
-                EMITA(&ctx->emit, "\n");
+                void* dst = tb_cgemit_reserve(&ctx->emit, mach->length);
+                memcpy(dst, mach->data, mach->length);
+                tb_cgemit_commit(&ctx->emit, mach->length);
             }
         } else if (inst->type == INST_EPILOGUE) {
             // just a marker for regalloc
@@ -1839,7 +1833,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
 
             size_t top = dyn_array_length(ctx->locations);
             if (prev_line == NULL || !is_same_location(prev_line->a, loc)) {
-                EMITA(e, "  \x1b[33m# loc %s %"PRIu64"\x1b[0m\n", loc->loc.file->path, loc->loc.line);
+                // EMITA(e, "  \x1b[33m# loc %s %"PRIu64"\x1b[0m\n", loc->loc.file->path, loc->loc.line);
 
                 TB_Location l = {
                     .file = loc->loc.file,
@@ -1854,7 +1848,6 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
         } else if (cat == INST_BYTE || cat == INST_BYTE_EXT) {
             if (inst->flags & INST_REP) EMIT1(e, 0xF3);
 
-            EMITA(e, "  %s\n", inst_table[inst->type].mnemonic);
             inst0(e, inst->type, inst->dt);
         } else if (inst->type == INST_ZERO) {
             Val dst;
@@ -1877,23 +1870,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
         } else if (inst->type == CALL) {
             Val target;
             size_t i = resolve_interval(ctx, inst, in_base, &target);
-            if (target.type == VAL_GLOBAL) {
-                EMITA(e, "  call ");
-
-                if (*target.symbol->name == 0) {
-                    EMITA(e, "sym%p", target.symbol);
-                } else {
-                    EMITA(e, "%s", target.symbol->name);
-                }
-
-                if (target.imm != 0) {
-                    EMITA(e, " + %d", target.imm);
-                }
-                EMITA(e, "\n");
-                inst1(e, CALL, &target, TB_X86_TYPE_QWORD);
-            } else {
-                inst1(e, CALL, &target, TB_X86_TYPE_QWORD);
-            }
+            inst1(e, CALL, &target, TB_X86_TYPE_QWORD);
         } else {
             int mov_op = inst->dt >= TB_X86_TYPE_PBYTE && inst->dt <= TB_X86_TYPE_XMMWORD ? FP_MOV : MOV;
 
@@ -2157,7 +2134,8 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
 }
 
 #undef E
-#define E(fmt, ...) printf(fmt, ## __VA_ARGS__) // tb_asm_print(e, fmt, ## __VA_ARGS__)
+// #define E(fmt, ...) printf(fmt, ## __VA_ARGS__)
+#define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
 static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int bb, size_t pos, size_t end) {
     if (bb >= 0) {
         E(".bb%d:\n", bb);
@@ -2175,6 +2153,9 @@ static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int b
         E("  ");
         if (inst.flags & TB_X86_INSTR_REP) {
             E("rep ");
+        }
+        if (inst.flags & TB_X86_INSTR_LOCK) {
+            E("lock ");
         }
         E("%s ", mnemonic);
 
@@ -2194,13 +2175,13 @@ static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int b
                             const TB_Symbol* target = patch->target;
 
                             if (target->name[0] == 0) {
-                                printf("sym%p", target);
+                                E("sym%p", target);
                             } else {
-                                printf("%s", target->name);
+                                E("%s", target->name);
                             }
                             patch = patch->next;
                         } else {
-                            printf("%d", inst.disp);
+                            E("%d", inst.disp);
                         }
 
                         if (!is_label) E("]");

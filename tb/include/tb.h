@@ -312,6 +312,9 @@ typedef enum TB_NodeTypeEnum {
     TB_ATOMIC_OR,   // (Control, Memory, Ptr, Data)  -> (Memory, Data)
     TB_ATOMIC_CAS,  // (Control, Memory, Data, Data) -> (Memory, Data, Bool)
 
+    //   Lookup from a table, similar to a multi-way branch except it doesn't
+    //   need to jump to a
+
     ////////////////////////////////
     // POINTERS
     ////////////////////////////////
@@ -773,6 +776,7 @@ TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip);
 // JIT compilation
 ////////////////////////////////
 typedef struct TB_JIT TB_JIT;
+typedef struct TB_CPUContext TB_CPUContext;
 
 // passing 0 to jit_heap_capacity will default to 4MiB
 TB_API TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity);
@@ -782,8 +786,30 @@ TB_API void tb_jit_end(TB_JIT* jit);
 
 TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 
-// Generates a 2MiB stack
-TB_API void* tb_jit_stack_create(size_t* out_size);
+typedef enum {
+    // just keeps running
+    TB_DBG_NONE,
+    // stops after one instruction
+    TB_DBG_INST,
+    // stops once the line changes
+    TB_DBG_LINE,
+} TB_DbgStep;
+
+// Debugger stuff
+//   creates a new context we can run JIT code in, you don't
+//   technically need this but it's a nice helper for writing
+//   JITs especially when it comes to breakpoints (and eventually
+//   safepoints)
+TB_CPUContext* tb_jit_thread_create(void* entry, void* arg);
+//   runs until it hits some exception/breakpoint.
+TB_API void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step);
+TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
+TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);
+
+////////////////////////////////
+// Disassembler
+////////////////////////////////
+TB_API ptrdiff_t tb_print_disassembly_inst(TB_Arch arch, size_t length, const void* ptr);
 
 ////////////////////////////////
 // Exporter

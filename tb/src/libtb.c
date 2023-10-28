@@ -1,4 +1,6 @@
 // This is the TB unity build
+void* tb_jit_stack_create(void);
+
 #include "tb.c"
 #include "hash.c"
 #include "abi.c"
@@ -7,6 +9,7 @@
 #include "ir_printer.c"
 #include "exporter.c"
 #include "symbols.c"
+#include "disasm.c"
 
 // JIT
 #include "jit.c"
@@ -58,46 +61,9 @@ bool tb_platform_vprotect(void* ptr, size_t size, TB_MemProtect prot) {
     return VirtualProtect(ptr, size, protect, &old_protect);
 }
 
-
-size_t get_large_pages(void) {
-    static bool init;
-    static size_t large_page_size;
-
-    if (!init) {
-        init = true;
-
-        unsigned long err = 0;
-        HANDLE token = NULL;
-        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
-            goto err;
-        }
-
-        TOKEN_PRIVILEGES tp;
-        if (!LookupPrivilegeValue(NULL, TEXT("SeLockMemoryPrivilege"), &tp.Privileges[0].Luid)) {
-            goto err;
-        }
-
-        tp.PrivilegeCount = 1;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-        if (!AdjustTokenPrivileges(token, FALSE, &tp, 0, (PTOKEN_PRIVILEGES)NULL, 0)) {
-            goto err;
-        }
-
-        large_page_size = GetLargePageMinimum();
-
-        err:
-        CloseHandle(token);
-    }
-
-    return large_page_size;
-}
-
 #if NTDDI_VERSION >= NTDDI_WIN10_RS4
-void* tb_jit_create_stack(size_t* out_size) {
-    size_t size = get_large_pages();
-
-    // TODO(NeGate): we don't support non-large page stacks
-    if (size == 0) tb_todo();
+void* tb_jit_stack_create(void) {
+    size_t size = 2*1024*1024;
 
     // natural alignment stack because it makes it easy to always find
     // the base.
@@ -106,8 +72,7 @@ void* tb_jit_create_stack(size_t* out_size) {
         .Pointer = &(MEM_ADDRESS_REQUIREMENTS){ .Alignment = size }
     };
 
-    *out_size = size;
-    return VirtualAlloc2(GetCurrentProcess(), NULL, size, MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE, &param, 1);
+    return VirtualAlloc2(GetCurrentProcess(), NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE, &param, 1);
 }
 #endif /* NTDDI_VERSION >= NTDDI_WIN10_RS4 */
 #elif defined(_POSIX_C_SOURCE)

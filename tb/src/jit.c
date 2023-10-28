@@ -1,5 +1,6 @@
 #include "tb_internal.h"
 #include "host.h"
+#include <setjmp.h>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -11,6 +12,8 @@ enum {
 
     ALLOC_COOKIE = 0xBAADF00D,
     ALLOC_IN_USE = 0x8000,
+
+    STACK_SIZE = 2*1024*1024
 };
 
 typedef struct AllocRegion AllocRegion;
@@ -37,11 +40,23 @@ typedef struct {
     AllocRegion* region;
 } TB_JITHeap;
 
+typedef struct {
+    uint8_t* pos;
+
+    // when we insert a breakpoint, we're
+    // replacing some byte with an INT3 (at
+    // least on x86), we need to restore it
+    // before continuing execution.
+    uint8_t prev_byte;
+} TB_Breakpoint;
+
 struct TB_JIT {
     NL_Strmap(void*) loaded_funcs;
 
     TB_JITHeap rx_heap;
     TB_JITHeap rw_heap;
+
+    DynArray(TB_Breakpoint) breakpoints;
 };
 
 static const char* prot_names[] = {
@@ -306,3 +321,97 @@ void tb_jit_end(TB_JIT* jit) {
 void* tb_jit_get_code_ptr(TB_Function* f) {
     return f->compiled_pos;
 }
+
+////////////////////////////////
+// Debugger
+////////////////////////////////
+#ifdef CUIK__IS_X64
+struct TB_CPUContext {
+    // we'll need this to track breakpoints once we hit
+    // them (not all INT3s are breakpoints, some are user
+    // made)
+    TB_JIT* jit;
+    volatile bool running;
+
+    CONTEXT cont;
+    CONTEXT state;
+};
+
+TB_CPUContext* tb_jit_thread_create(void* entry, void* arg) {
+    void* stack = tb_jit_stack_create();
+
+    CONTEXT base;
+    RtlCaptureContext(&base);
+
+    TB_CPUContext* cpu = stack;
+    cpu->state = base;
+    cpu->state.Rip = (uint64_t) entry;
+    // enough room for a retaddr and the shadow stack
+    cpu->state.Rsp = ((uint64_t) stack) + (STACK_SIZE - 40);
+    cpu->state.Rcx = (uint64_t) arg;
+    return cpu;
+}
+
+#ifdef _WIN32
+static LONG except_handler(EXCEPTION_POINTERS* e) {
+    // find breakpoints
+    if (e->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT ||
+        e->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP) {
+        TB_CPUContext* cpu = (TB_CPUContext*) (e->ContextRecord->Rsp & -(STACK_SIZE));
+        cpu->running = false;
+        cpu->state = *e->ContextRecord;
+        *e->ContextRecord = cpu->cont;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
+void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
+    // install exception handler, then we can run code
+    void* handle = AddVectoredExceptionHandler(1, except_handler);
+
+    // install breakpoints
+    const uint8_t* rip = (const uint8_t*) cpu->state.Rip;
+    dyn_array_for(i, jit->breakpoints) {
+        uint8_t* code = jit->breakpoints[i].pos;
+        if (code != rip) {
+            jit->breakpoints[i].prev_byte = *code;
+            *code = 0xCC;
+        }
+    }
+
+    // enable trap flag for single-stepping
+    if (step == TB_DBG_INST) {
+        cpu->state.EFlags |= 0x100;
+    } else {
+        cpu->state.EFlags &= ~0x100;
+    }
+
+    // save our precious restore point
+    cpu->running = true;
+    cpu->state.ContextFlags = 0x10000f;
+    RtlCaptureContext(&cpu->cont);
+    if (cpu->running) {
+        RtlRestoreContext(&cpu->state, NULL);
+    }
+
+    // uninstall breakpoints
+    dyn_array_for(i, jit->breakpoints) {
+        uint8_t* code = jit->breakpoints[i].pos;
+        *code = jit->breakpoints[i].prev_byte;
+    }
+
+    RemoveVectoredExceptionHandler(handle);
+}
+
+void* tb_jit_thread_pc(TB_CPUContext* cpu) {
+    return (void*) cpu->state.Rip;
+}
+
+void tb_jit_breakpoint(TB_JIT* jit, void* addr) {
+    TB_Breakpoint bp = { addr };
+    dyn_array_put(jit->breakpoints, bp);
+}
+#endif

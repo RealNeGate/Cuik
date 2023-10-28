@@ -1017,7 +1017,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     if (emit_asm) {
-        printf("%s:\n", f->super.name);
+        EMITA(&ctx.emit, "%s:\n", f->super.name);
 
         // dump epilogue
         disassemble(&ctx.emit, NULL, -1, 0, func_out->prologue_length);

@@ -156,6 +156,7 @@ static void apply_func(TB_Function* f, void* arg) {
                 TB_FunctionOutput* out = tb_pass_codegen(p, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
+                    printf("\n\n");
                 }
             }
         }
@@ -290,6 +291,11 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     done_no_cpp: step_done(s);
 }
 
+static void jit_entry(int fn(int, char**)) {
+    char* argv = (char[]){ "jit" };
+    fn(1, &argv);
+}
+
 static void ld_invoke(BuildStepInfo* info) {
     Cuik_BuildStep* s = info->step;
     Cuik_DriverArgs* args = s->ld.args;
@@ -345,12 +351,32 @@ static void ld_invoke(BuildStepInfo* info) {
         }
         assert(entry != NULL);
 
-        // run main()
-        char* argv = (char[]){ "jit" };
-        int code = entry(1, &argv);
+        TB_CPUContext* cpu = tb_jit_thread_create(jit_entry, entry);
+
+        tb_jit_breakpoint(jit, entry);
+        tb_jit_thread_resume(jit, cpu, TB_DBG_NONE);
+
+        for (int i = 0; i < 4; i++) {
+            printf("=== STEP ===\n");
+
+            // dump next 5 lines
+            const uint8_t* pc = tb_jit_thread_pc(cpu);
+            for (int j = 0; j < 5; j++) {
+                printf("  %p: ", pc);
+                ptrdiff_t delta = tb_print_disassembly_inst(TB_ARCH_X86_64, 16, pc);
+                if (delta < 0) {
+                    printf("ERROR\n");
+                    pc += 1;
+                } else {
+                    pc += delta;
+                }
+            }
+
+            tb_jit_thread_resume(jit, cpu, TB_DBG_INST);
+        }
         tb_jit_end(jit);
 
-        fprintf(stderr, "C JIT exit with %d\n", code);
+        fprintf(stderr, "C JIT exited\n");
         goto done;
     }
 
