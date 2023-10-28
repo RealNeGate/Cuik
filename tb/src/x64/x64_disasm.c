@@ -200,10 +200,14 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0xE8] = OP_REL32,
         // jmp rel32
         [0xE9] = OP_REL32,
+        // jmp rel8
+        [0xEB] = OP_REL8,
         // idiv r/m8
         [0xF6] = OP_M | OP_FAKERX | OP_8BIT,
         // idiv r/m
         [0xF7] = OP_M | OP_FAKERX,
+        // jmp r/m
+        [0xFF] = OP_M | OP_FAKERX,
     };
     #undef NORMIE_BINOP
 
@@ -381,7 +385,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x58: return "pop";
 
         case 0xE8: return "call";
-        case 0xE9: return "jmp";
+        case 0xEB: case 0xE9: case 0xFF4: return "jmp";
 
         case 0x0F1F: return "nop";
         case 0x0FAF: case 0x68: case 0x69: return "imul";
