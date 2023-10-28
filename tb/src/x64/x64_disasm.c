@@ -105,7 +105,6 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         switch (op) {
             case 0x40 ... 0x4F: rex = op; break;
             case 0xF0: inst->flags |= TB_X86_INSTR_LOCK; break;
-            case 0x0F: ext = true; break;
             case 0x66: addr16 = true; break;
             case 0x67: addr32 = true; break;
             case 0xF3: inst->flags |= TB_X86_INSTR_REP; break;
@@ -121,6 +120,11 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     }
 
     done_prefixing:;
+    if (op == 0x0F) {
+        ext = true;
+        op = data[current++];
+    }
+
     ////////////////////////////////
     // Parse opcode
     ////////////////////////////////
@@ -217,6 +221,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x10] = OP_RM | OP_SSE, [0x11] = OP_MR | OP_SSE,
         // SSE: add, mul, sub, min, div, max
         [0x51 ... 0x5F] = OP_RM | OP_SSE,
+        // SSE: ucomi
+        [0x2E] = OP_RM | OP_SSE,
         // nop r/m
         [0x1F] = OP_RM,
         // imul reg, r/m
@@ -387,12 +393,12 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
 
         case 0xF76: case 0xF77: return "idiv";
 
-        case 0x830: return "add";
-        case 0x831: return "or";
-        case 0x834: return "and";
-        case 0x835: return "sub";
-        case 0x836: return "xor";
-        case 0x837: return "cmp";
+        case 0x810: case 0x830: return "add";
+        case 0x811: case 0x831: return "or";
+        case 0x814: case 0x834: return "and";
+        case 0x815: case 0x835: return "sub";
+        case 0x816: case 0x836: return "xor";
+        case 0x817: case 0x837: return "cmp";
         case 0xC60: case 0xC70: return "mov";
 
         case 0x0F10: case 0x0F11: return "mov";
@@ -443,7 +449,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x0F8E: case 0x7E: return "jle";
         case 0x0F8F: case 0x7F: return "jg";
 
-        default:   return "???";
+        default: return "??";
     }
 }
 
