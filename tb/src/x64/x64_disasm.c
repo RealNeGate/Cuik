@@ -368,7 +368,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x835: return "sub";
         case 0x836: return "xor";
         case 0x837: return "cmp";
-        case 0xC70: return "mov";
+        case 0xC60: case 0xC70: return "mov";
 
         case 0xB8 ... 0xBF: return "mov";
         case 0x0FB6: case 0x0FB7: return "movzx";
