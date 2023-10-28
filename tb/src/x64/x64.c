@@ -1269,7 +1269,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 } r = IF_ELSE_CHAIN;
 
                 int64_t range = (max - min) + 1;
-                if (range > 6 && dist_avg < 2.0) {
+                if (range >= 4 && dist_avg < 2.0) {
                     r = JUMP_TABLE;
                 }/* else if (range > 32 && dist_avg > 4.0) {
                     r = TWO_STAGE_TABLE;
