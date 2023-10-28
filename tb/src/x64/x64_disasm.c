@@ -165,6 +165,9 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x81] = OP_MI | OP_FAKERX,
         // OP r/m, imm8
         [0x83] = OP_MI8 | OP_FAKERX,
+        // TEST r/m, reg
+        [0x84] = OP_MR | OP_8BIT,
+        [0x85] = OP_MR,
         // push reg
         // pop reg
         [0x50 ... 0x5F] = OP_PLUSR | OP_64BIT,
@@ -209,7 +212,6 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0xEB] = OP_REL8,
         // idiv r/m8
         [0xF6] = OP_M | OP_FAKERX | OP_8BIT,
-        // idiv r/m
         [0xF7] = OP_M | OP_FAKERX,
         // jmp r/m
         [0xFF] = OP_M | OP_FAKERX,
@@ -315,6 +317,12 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         if (flags & OP_FAKERX) {
             inst->opcode <<= 4;
             inst->opcode |= rx;
+
+            if (inst->opcode == 0xF60) {
+                flags = OP_MI8;
+            } else if (inst->opcode == 0xF70) {
+                flags = OP_MI;
+            }
         }
 
         if (flags & OP_2DT) {
@@ -391,7 +399,9 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0xC05: case 0xC15: case 0xD25: case 0xD35: return "shr";
         case 0xC07: case 0xC17: case 0xD27: case 0xD37: return "sar";
 
-        case 0xF76: case 0xF77: return "idiv";
+        case 0xF60: case 0xF70: return "test";
+        case 0xF66: case 0xF76: return "div";
+        case 0xF67: case 0xF77: return "idiv";
 
         case 0x810: case 0x830: return "add";
         case 0x811: case 0x831: return "or";
@@ -400,6 +410,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x816: case 0x836: return "xor";
         case 0x817: case 0x837: return "cmp";
         case 0xC60: case 0xC70: return "mov";
+        case 0x84: case 0x85: return "test";
 
         case 0x0F10: case 0x0F11: return "mov";
         case 0x0F58: return "add";

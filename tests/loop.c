@@ -71,6 +71,22 @@ typedef struct
 #include <string.h>
 #include <stdio.h>
 
+uint32_t dead_if(uint32_t n) {
+    if ((n << 2) & 1) {
+        return 1;
+    }
+
+    return div_tricks(n);
+}
+
+uint32_t div_tricks(uint32_t n) {
+    return n / 3;
+}
+
+float max_elem(size_t i, float* x, float* y) {
+    return x[i] > y[i] ? x[i] : y[i];
+}
+
 uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
@@ -128,14 +144,6 @@ void max_array(size_t n, float* x, float* y) {
     }
 }
 
-uint32_t dead_if(uint32_t n) {
-    if ((n << 2) & 1) {
-        return 1;
-    }
-
-    return div_tricks(n);
-}
-
 int foo(void) {
     int sum = 0;
     for (size_t i = 0; i < 10; i++) {
@@ -155,10 +163,6 @@ float max_elem(size_t i, float* x, float* y) {
 }*/
 
 #if 0
-uint32_t div_tricks(uint32_t n) {
-    return n / 3;
-}
-
 #include <stdio.h>
 #include <windows.h>
 
