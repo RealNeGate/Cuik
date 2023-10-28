@@ -2168,7 +2168,10 @@ static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int b
                     mem = false;
 
                     if (inst.flags & TB_X86_INSTR_USE_RIPMEM) {
-                        bool is_label = inst.opcode == 0xE8 || inst.opcode == 0xE9;
+                        bool is_label = inst.opcode == 0xE8 || inst.opcode == 0xE9
+                            || (inst.opcode >= 0x70   && inst.opcode <= 0x7F)
+                            || (inst.opcode >= 0x0F80 && inst.opcode <= 0x0F8F);
+
                         if (!is_label) E("[");
 
                         if (patch && patch->pos == pos + inst.length - 4) {
@@ -2181,7 +2184,9 @@ static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int b
                             }
                             patch = patch->next;
                         } else {
-                            E("%d", inst.disp);
+                            uint32_t target = pos + inst.length + inst.disp;
+                            int bb = tb_emit_get_label(e, target);
+                            E(".bb%d", bb);
                         }
 
                         if (!is_label) E("]");

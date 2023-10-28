@@ -50,6 +50,17 @@ static void tb_reloc4(TB_CGEmitter* restrict e, uint32_t p, uint32_t b) {
     memcpy(ptr, &tmp, 4);
 }
 
+static int tb_emit_get_label(TB_CGEmitter* restrict e, uint32_t pos) {
+    FOREACH_N(i, 0, e->label_count) {
+        assert(e->labels[i] & 0x80000000);
+        if ((e->labels[i] & ~0x80000000) == pos) {
+            return i;
+        }
+    }
+
+    return 0;
+}
+
 static void tb_asm_print(TB_CGEmitter* restrict e, const char* fmt, ...) {
     // make sure we have enough bytes for the operation
     TB_Assembly* new_head = e->tail_asm;
