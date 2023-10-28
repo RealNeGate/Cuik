@@ -1295,6 +1295,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                     }
 
                     case TWO_STAGE_TABLE: {
+                        tb_todo();
+
                         enum {
                             ITEMS_PER_CHUNK = 256,
                             CHUNK_SIZE = sizeof(uint32_t) * ITEMS_PER_CHUNK,
@@ -1349,8 +1351,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                                 i += 1;
                             }
                         } while (i < key_count);
-
-                        __debugbreak();
                         break;
                     }
 
