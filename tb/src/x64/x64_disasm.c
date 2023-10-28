@@ -30,7 +30,7 @@ static ptrdiff_t x86_parse_memory_op(TB_X86_Inst* restrict inst, size_t length, 
             uint8_t scale, index, base;
             UNPACK_233(scale, index, base, sib);
 
-            TB_X86_GPR base_gpr  = base != TB_X86_RBP  ? ((rex&1 ? 8 : 0) | base)  : -1;
+            TB_X86_GPR base_gpr  = base != TB_X86_RSP  ? ((rex&1 ? 8 : 0) | base)  : -1;
             TB_X86_GPR index_gpr = index != TB_X86_RSP ? ((rex&2 ? 8 : 0) | index) : -1;
 
             // odd rule but when mod=00,base=101,index=100
