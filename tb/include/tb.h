@@ -782,8 +782,15 @@ typedef struct TB_CPUContext TB_CPUContext;
 TB_API TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity);
 TB_API void* tb_jit_place_function(TB_JIT* jit, TB_Function* f);
 TB_API void* tb_jit_place_global(TB_JIT* jit, TB_Global* g);
+TB_API void tb_jit_dump_heap(TB_JIT* jit);
 TB_API void tb_jit_end(TB_JIT* jit);
 
+typedef struct {
+    TB_Symbol* base;
+    uint32_t offset;
+} TB_ResolvedAddr;
+
+TB_API TB_ResolvedAddr tb_jit_addr2sym(TB_JIT* jit, void* ptr);
 TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 
 typedef enum {

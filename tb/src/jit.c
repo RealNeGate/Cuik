@@ -8,37 +8,10 @@
 #endif
 
 enum {
-    ALLOC_GRANULARITY = 16,
-
     ALLOC_COOKIE = 0xBAADF00D,
-    ALLOC_IN_USE = 0x8000,
-
+    ALLOC_GRANULARITY = 16,
     STACK_SIZE = 2*1024*1024
 };
-
-typedef struct AllocRegion AllocRegion;
-struct AllocRegion {
-    AllocRegion *next;
-
-    // in bytes
-    uint32_t size;
-    uint8_t* data;
-
-    // each AllocRegion has offsets for each
-    // entry, this may grow as the region has
-    // more allocations.
-    uint32_t count, cap;
-    uint16_t offsets[];
-};
-
-typedef struct {
-    // linear allocator that backs our stuff
-    size_t capacity, used;
-    uint8_t* block;
-
-    TB_MemProtect prot;
-    AllocRegion* region;
-} TB_JITHeap;
 
 typedef struct {
     uint8_t* pos;
@@ -50,106 +23,172 @@ typedef struct {
     uint8_t prev_byte;
 } TB_Breakpoint;
 
+typedef struct {
+    uint32_t cookie;
+    uint32_t size; // if low bit is set, we're in use.
+    char data[];
+} FreeList;
+
+// addr -> symbol
+typedef struct {
+    uint32_t k;
+    void* v;
+} Tag;
+
 struct TB_JIT {
+    size_t capacity;
+    mtx_t lock;
     NL_Strmap(void*) loaded_funcs;
-
-    TB_JITHeap rx_heap;
-    TB_JITHeap rw_heap;
-
     DynArray(TB_Breakpoint) breakpoints;
+    DynArray(Tag) tags;
+
+    FreeList heap;
 };
 
 static const char* prot_names[] = {
-    "RO",
-    "RW",
-    "RX",
-    "RXW",
+    "RO", "RW", "RX", "RXW",
 };
 
-static TB_JITHeap tb_jitheap_create(TB_MemProtect prot, void* ptr, size_t size) {
-    return (TB_JITHeap){
-        .prot = prot,
-        .capacity = size,
-        .block = ptr,
-    };
+static void tb_jit_insert_sym(TB_JIT* jit, void* ptr, void* tag) {
+    assert(tag);
+    uint32_t offset = (char*) ptr - (char*) jit;
+
+    size_t i = 0, count = dyn_array_length(jit->tags);
+    for (; i < count; i++) {
+        if (offset < jit->tags[i].k) break;
+    }
+
+    // we know where to insert
+    dyn_array_put_uninit(jit->tags, 1);
+    memmove(&jit->tags[i + 1], &jit->tags[i], (count - i) * sizeof(Tag));
+    jit->tags[i] = (Tag){ offset, tag };
 }
 
-static void* push_region(TB_JITHeap* c, size_t size) {
-    void* ptr = &c->block[c->used];
-    c->used += size;
-    return ptr;
+TB_ResolvedAddr tb_jit_addr2sym(TB_JIT* jit, void* ptr) {
+    mtx_lock(&jit->lock);
+    uint32_t offset = (char*) ptr - (char*) jit;
+
+    size_t left = 0;
+    size_t right = dyn_array_length(jit->tags);
+    if (right == 0) goto bad;
+
+    Tag* tags = jit->tags;
+    while (left < right) {
+        size_t middle = (left + right) / 2;
+        if (tags[middle].k > offset) {
+            right = middle;
+        } else {
+            left = middle + 1;
+        }
+    }
+
+    size_t i = right - 1;
+    TB_Symbol* s = tags[i].v;
+    if (s->tag == TB_SYMBOL_FUNCTION) {
+        // check if we're in bounds for the leftmost option
+        TB_Function* f = (TB_Function*) s;
+        uint32_t end = tags[i].k + f->output->code_size;
+        if (offset >= end) goto bad;
+
+        mtx_unlock(&jit->lock);
+        return (TB_ResolvedAddr){ s, offset - tags[i].k };
+    }
+
+    bad:
+    mtx_unlock(&jit->lock);
+    return (TB_ResolvedAddr){ 0 };
 }
 
-static void* tb_jitheap_alloc_region(TB_JITHeap* c, size_t size, size_t align) {
+static void* tb_jit_alloc_obj(TB_JIT* jit, void* tag, size_t size, size_t align) {
+    mtx_lock(&jit->lock);
     size = (size + ALLOC_GRANULARITY - 1) & ~(ALLOC_GRANULARITY - 1);
 
-    AllocRegion* r = c->region;
-    size_t offset = 0;
+    FreeList* l = &jit->heap;
+    FreeList* end = (FreeList*) ((char*) jit + jit->capacity);
+    for (;;) {
+        assert(l->cookie == ALLOC_COOKIE);
 
-    while (r != NULL && r->size < size) {
-        // find free region
-        size_t count = r->count, total_size = r->size;
+        // free slot, let's see if it's big enough
+        if ((l->size & 1) == 0 && (l->size >> 1) >= size) {
+            // if the node is bigger than one alloc, we need to split it
+            size_t whole_size = l->size >> 1;
+            size_t split_size = sizeof(FreeList) + size;
+            if (whole_size > split_size) {
+                // split
+                l->size = (size << 1) | 1;
 
-        FOREACH_N(i, 0, count) {
-            size_t curr = r->offsets[i];
-            if (curr & ALLOC_IN_USE) continue;
-
-            curr &= ~ALLOC_IN_USE;
-            size_t next = i + 1 < count ? r->offsets[i + 1] : total_size;
-            size_t obj_size = (next & ~ALLOC_IN_USE) - curr;
-            if (obj_size >= size) {
-                // split free region, we need to move things which is slow...
-                assert(count + 1 < r->cap);
-
-                // moved the free space over
-                r->offsets[i] = (curr + size);
-                if (curr + size == total_size) {
-                    // remove free space, there's no more here
-                    r->count--;
-    	        }
-
-                offset = curr & ~ALLOC_IN_USE;
-                goto done;
+                // free leftovers
+                FreeList* rest = (FreeList*) &l->data[l->size >> 1];
+                rest->cookie = ALLOC_COOKIE;
+                rest->size = (whole_size - split_size) << 1;
+            } else {
+                // take entire piece
+                l->size |= 1;
             }
+
+            if (tag) {
+                tb_jit_insert_sym(jit, l->data, tag);
+            }
+
+            mtx_unlock(&jit->lock);
+            return l->data;
         }
 
-        r = r->next;
+        FreeList* next = (FreeList*) &l->data[l->size >> 1];
+        if (next == end) {
+            break;
+        }
+
+        // coalesce free regions when we see them here, it'll
+        // make later walks faster
+        while ((l->size & 1) == 0 && (next->size & 1) == 0) {
+            size_t new_size = (l->size >> 1) + sizeof(FreeList) + (next->size >> 1);
+            l->size = (new_size << 1);
+
+            next = (FreeList*) &l->data[new_size];
+        }
+
+        l = next;
     }
 
-    // allocate enough free pages
-    size_t rounded_size = tb_next_pow2(size);
-    if (rounded_size < 4096) {
-        rounded_size = 4096;
-    }
-
-    size_t entry_cap = (rounded_size + ALLOC_GRANULARITY - 1) / ALLOC_GRANULARITY;
-    assert(entry_cap >= 2);
-
-    r = tb_platform_heap_alloc(sizeof(AllocRegion) + sizeof(uint16_t)*entry_cap);
-    *r = (AllocRegion){
-        .size  = rounded_size,
-        .cap   = entry_cap,
-        .count = 1,
-        .data = push_region(c, rounded_size)
-    };
-
-    r->offsets[0] = ALLOC_IN_USE | 0;
-    if (size != rounded_size) {
-        // put leftovers into region
-        r->offsets[1] = size;
-        r->count++;
-    }
-
-    r->next = c->region;
-    c->region = r;
-
-    done:
-    log_debug("jit heap %s: alloc %-4zu => [ %-4zu - %-4zu ]", prot_names[c->prot], size, offset, offset + size);
-    assert((offset & ~(align - 1)) == 0);
-    return &r->data[offset];
+    mtx_unlock(&jit->lock);
+    return NULL;
 }
 
-void tb_jitheap_free_region(TB_JITHeap* c, void* ptr, size_t s) {
+void tb_jit_dump_heap(TB_JIT* jit) {
+    mtx_lock(&jit->lock);
+
+    FreeList* l = &jit->heap;
+    FreeList* next;
+    FreeList* end = (FreeList*) ((char*) jit + jit->capacity);
+
+    printf("HEAP:\n");
+    size_t tag = 0, tag_count = dyn_array_length(jit->tags);
+    char* base = (char*) jit;
+    for (;;) {
+        if (l->size & 1) {
+            printf("* ALLOC [%p %u", l->data, l->size >> 1);
+
+            // found the next tag here
+            if (tag < tag_count && l->data == &base[jit->tags[tag].k]) {
+                TB_Symbol* s = jit->tags[tag].v;
+                printf(" TAG=%s", s->name);
+                tag += 1;
+            }
+
+            printf("]\n");
+        }
+
+        next = (FreeList*) &l->data[l->size >> 1];
+        if (next == end) {
+            break;
+        }
+        l = next;
+    }
+    mtx_unlock(&jit->lock);
+}
+
+void tb_jit_free_obj(TB_JIT* jit, void* ptr, size_t s) {
     tb_todo();
 }
 
@@ -200,7 +239,7 @@ void* tb_jit_place_function(TB_JIT* jit, TB_Function* f) {
     }
 
     // copy machine code
-    char* dst = tb_jitheap_alloc_region(&jit->rx_heap, func_out->code_size, 16);
+    char* dst = tb_jit_alloc_obj(jit, f, func_out->code_size, 16);
     memcpy(dst, func_out->code, func_out->code_size);
     f->compiled_pos = dst;
 
@@ -235,7 +274,7 @@ void* tb_jit_place_function(TB_JIT* jit, TB_Function* f) {
                 memcpy(dst + actual_pos, &rel32, sizeof(int32_t));
             } else {
                 // generate thunk to make far call
-                char* thunk = tb_jitheap_alloc_region(&jit->rx_heap, 6 + sizeof(void*), 1);
+                char* thunk = tb_jit_alloc_obj(jit, NULL, 6 + sizeof(void*), 1);
                 thunk[0] = 0xFF; // jmp qword [rip]
                 thunk[1] = 0x25;
                 thunk[2] = 0x00;
@@ -270,7 +309,7 @@ void* tb_jit_place_global(TB_JIT* jit, TB_Global* g) {
         return g->address;
     }
 
-    char* data = tb_jitheap_alloc_region(&jit->rw_heap, g->size, g->align);
+    char* data = tb_jit_alloc_obj(jit, g, g->size, g->align);
     g->address = data;
 
     log_debug("jit: apply global %s (%p)", g->super.name ? g->super.name : "<unnamed>", data);
@@ -299,23 +338,20 @@ TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity) {
         jit_heap_capacity = 2*1024*1024;
     }
 
-    size_t semi_space = jit_heap_capacity / 2;
-    char* ptr = tb_platform_valloc(jit_heap_capacity);
-    tb_platform_vprotect(ptr, semi_space, TB_PAGE_RXW);
+    TB_JIT* jit = tb_platform_valloc(jit_heap_capacity);
+    mtx_init(&jit->lock, mtx_plain);
+    jit->capacity = jit_heap_capacity;
+    jit->heap.cookie = ALLOC_COOKIE;
+    jit->heap.size = (jit_heap_capacity - sizeof(TB_JIT)) << 1;
 
-    TB_JIT* jit = tb_platform_heap_alloc(sizeof(TB_JIT));
-    *jit = (TB_JIT){
-        .rx_heap = tb_jitheap_create(TB_PAGE_RX, ptr, semi_space),
-        .rw_heap = tb_jitheap_create(TB_PAGE_RW, &ptr[semi_space], semi_space)
-    };
-
+    // a lil unsafe... im sorry momma
+    tb_platform_vprotect(jit, jit_heap_capacity, TB_PAGE_RXW);
     return jit;
 }
 
 void tb_jit_end(TB_JIT* jit) {
-    tb_platform_vfree(jit->rx_heap.block, jit->rx_heap.capacity);
-    tb_platform_vfree(jit->rw_heap.block, jit->rw_heap.capacity);
-    tb_platform_heap_free(jit);
+    mtx_destroy(&jit->lock);
+    tb_platform_vfree(jit, jit->capacity);
 }
 
 void* tb_jit_get_code_ptr(TB_Function* f) {

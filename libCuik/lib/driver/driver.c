@@ -357,10 +357,19 @@ static void ld_invoke(BuildStepInfo* info) {
         tb_jit_thread_resume(jit, cpu, TB_DBG_NONE);
 
         for (int i = 0; i < 4; i++) {
-            printf("=== STEP ===\n");
+            uint8_t* pc = tb_jit_thread_pc(cpu);
+
+            printf("=== STEP ");
+            TB_ResolvedAddr addr = tb_jit_addr2sym(jit, pc);
+            if (addr.base) {
+                printf("%s", addr.base->name);
+                if (addr.offset) {
+                    printf(" + %d", addr.offset);
+                }
+            }
+            printf(" ===\n");
 
             // dump next 5 lines
-            const uint8_t* pc = tb_jit_thread_pc(cpu);
             for (int j = 0; j < 5; j++) {
                 printf("  %p: ", pc);
                 ptrdiff_t delta = tb_print_disassembly_inst(TB_ARCH_X86_64, 16, pc);

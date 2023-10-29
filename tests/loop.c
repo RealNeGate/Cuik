@@ -71,7 +71,19 @@ typedef struct
 #include <string.h>
 #include <stdio.h>
 
-uint32_t dead_if(uint32_t n) {
+int isalnum(int ch) {
+    switch (ch) {
+        case 'a' ... 'z':
+        case 'A' ... 'Z':
+        case '0' ... '9': 
+        return true;
+        
+        default:
+        return false;
+    }
+}
+
+/*uint32_t dead_if(uint32_t n) {
     if ((n << 2) & 1) {
         return 1;
     }
@@ -124,7 +136,7 @@ int main() {
     return 0;
 }
 
-/*int tiling(int* a, size_t i) {
+int tiling(int* a, size_t i) {
     return a[i*2] + a[i*2 + 1] + a[i*2 + 2];
 }
 
