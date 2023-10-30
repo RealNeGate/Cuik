@@ -140,7 +140,8 @@ static void apply_func(TB_Function* f, void* arg) {
     Cuik_DriverArgs* args = arg;
     bool print_asm = args->assembly;
 
-    CUIK_TIMED_BLOCK("passes") {
+    const char* name = ((TB_Symbol*) f)->name;
+    CUIK_TIMED_BLOCK_ARGS("passes", name) {
         TB_Passes* p = tb_pass_enter(f, get_ir_arena());
 
         if (args->opt_level >= 1) {
@@ -152,7 +153,7 @@ static void apply_func(TB_Function* f, void* arg) {
         } else if (args->emit_ir) {
             tb_pass_print(p);
         } else {
-            CUIK_TIMED_BLOCK("CodeGen") {
+            CUIK_TIMED_BLOCK("codegen") {
                 TB_FunctionOutput* out = tb_pass_codegen(p, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);

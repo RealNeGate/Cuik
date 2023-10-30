@@ -960,20 +960,19 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 }
 
 void tb_pass_sroa(TB_Passes* p) {
-    cuikperf_region_start("sroa", NULL);
-    verify_tmp_arena(p);
+    CUIK_TIMED_BLOCK("sroa") {
+        verify_tmp_arena(p);
 
-    TB_Function* f = p->f;
+        TB_Function* f = p->f;
 
-    int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
-    TB_Node* start = f->start_node;
+        int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
+        TB_Node* start = f->start_node;
 
-    size_t i = 0;
-    while (i < dyn_array_length(p->locals)) {
-        i += sroa_rewrite(p, pointer_size, start, p->locals[i]);
+        size_t i = 0;
+        while (i < dyn_array_length(p->locals)) {
+            i += sroa_rewrite(p, pointer_size, start, p->locals[i]);
+        }
     }
-
-    cuikperf_region_end();
 }
 
 void tb_pass_optimize(TB_Passes* p) {

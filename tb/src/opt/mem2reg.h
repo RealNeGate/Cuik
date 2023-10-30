@@ -298,6 +298,8 @@ static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
 }
 
 bool tb_pass_mem2reg(TB_Passes* p) {
+    cuikperf_region_start("mem2reg", NULL);
+
     TB_Function* f = p->f;
     TB_TemporaryStorage* tls = tb_tls_steal();
 
