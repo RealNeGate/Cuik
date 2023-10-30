@@ -1,6 +1,6 @@
 #include "tb_internal.h"
 #include "host.h"
-#include "passes.h"
+#include "opt/passes.h"
 
 TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     static thread_local TB_ThreadInfo* chain;

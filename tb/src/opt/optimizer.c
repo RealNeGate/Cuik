@@ -11,7 +11,7 @@
 // # How to implement peepholes
 //     TODO
 //
-#include "../passes.h"
+#include "passes.h"
 #include <log.h>
 
 thread_local TB_Arena* tmp_arena;

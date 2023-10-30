@@ -3,7 +3,7 @@
 // for better runtime performance this is included into the specific
 // files it's used in
 #pragma once
-#include "../tb_internal.h"
+#include "tb_internal.h"
 
 // We really only need the position where to patch
 // it since it's all internal and the target is implicit.

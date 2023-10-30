@@ -33,7 +33,7 @@ static const struct ParamDescriptor {
     { 6, 4, 5, SYSCALL_ABI_CALLER_SAVED, { RDI, RSI, RDX, R10, R8, R9 } },
 };
 
-#include "../codegen/generic_cg.h"
+#include "../generic_cg.h"
 
 static size_t emit_prologue(Ctx* restrict ctx);
 static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop);

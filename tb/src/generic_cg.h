@@ -1,5 +1,5 @@
-#include "../passes.h"
-#include "../codegen/emitter.h"
+#include "opt/passes.h"
+#include "emitter.h"
 #include <inttypes.h>
 #include <log.h>
 

@@ -33,7 +33,6 @@
 #include "tb_platform.h"
 #include "dyn_array.h"
 #include "builtins.h"
-#include "pool.h"
 
 #define NL_HASH_MAP_INLINE
 #include <hash_map.h>

@@ -1,5 +1,5 @@
 #pragma once
-#include "../codegen/emitter.h"
+#include "../emitter.h"
 #include "../tb_internal.h"
 #include <tb_x64.h>
 
