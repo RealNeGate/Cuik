@@ -263,6 +263,18 @@ static Inst* inst_op_global(int type, TB_DataType dt, RegIndex dst, TB_Symbol* s
     i->operands[0] = dst;
     i->operands[1] = RSP;
     i->s = s;
+    i->disp = 0;
+    return i;
+}
+
+static Inst* inst_op_global_disp(int type, TB_DataType dt, RegIndex dst, TB_Symbol* s, int32_t disp) {
+    Inst* i = alloc_inst(type, dt, 1, 1, 0);
+    i->flags = INST_GLOBAL;
+    i->mem_slot = 1;
+    i->operands[0] = dst;
+    i->operands[1] = RSP;
+    i->s = s;
+    i->disp = disp;
     return i;
 }
 

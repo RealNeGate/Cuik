@@ -40,6 +40,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
                 }
                 continue;
             } else if (n->inputs[i]->type == TB_REGION) {
+                #if 1
                 // pure regions can be collapsed into direct edges
                 if (n->inputs[i]->users->next == NULL && n->inputs[i]->input_count > 0) {
                     assert(n->inputs[i]->users->n == n);
@@ -94,6 +95,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
                     extra_edges += 1;
                     continue;
                 }
+                #endif
             }
 
             i += 1;
@@ -119,75 +121,134 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     // "switch" logic for data.
     TB_DataType dt = n->dt;
     TB_Node* region = n->inputs[0];
-    if (n->dt.type != TB_MEMORY && region->input_count == 2) {
-        // for now we'll leave multi-phi scenarios alone, we need
-        // to come up with a cost-model around this stuff.
-        for (User* use = find_users(opt, region); use; use = use->next) {
-            if (use->n->type == TB_PHI) {
-                if (use->n != n) return NULL;
+    if (n->dt.type != TB_MEMORY) {
+        if (region->input_count == 2) {
+            // for now we'll leave multi-phi scenarios alone, we need
+            // to come up with a cost-model around this stuff.
+            for (User* use = find_users(opt, region); use; use = use->next) {
+                if (use->n->type == TB_PHI) {
+                    if (use->n != n) return NULL;
+                }
+            }
+
+            // guarentee paths are effectless (there's only one data phi and no control nodes)
+            //
+            //        If
+            //       /  \
+            // CProjT    CProjF          Region[0][0] == Region[1][0]
+            //       \  /
+            //      Region
+            //
+            TB_Node* left = region->inputs[0];
+            TB_Node* right = region->inputs[1];
+            if (left->type == TB_PROJ && right->type == TB_PROJ &&
+                left->inputs[0]->type == TB_BRANCH && left->inputs[0] == right->inputs[0]) {
+                TB_Node* branch = left->inputs[0];
+                TB_NodeBranch* header_br = TB_NODE_GET_EXTRA(branch);
+
+                if (header_br->succ_count == 2) {
+                    assert(branch->input_count == 2);
+
+                    TB_Node *values[2];
+                    for (User* u = branch->users; u; u = u->next) {
+                        TB_Node* proj = u->n;
+                        if (proj->type == TB_PROJ) {
+                            int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
+                            // the projection needs to exclusively refer to the region,
+                            // if not we can't elide those effects here.
+                            if (proj->users->next != NULL || proj->users->n != region) {
+                                return NULL;
+                            }
+
+                            int phi_i = proj->users->slot;
+                            assert(phi_i + 1 < n->input_count);
+                            values[index] = n->inputs[1 + phi_i];
+                        }
+                    }
+
+                    uint64_t falsey = TB_NODE_GET_EXTRA_T(branch, TB_NodeBranch)->keys[0];
+                    TB_Node* cond = branch->inputs[1];
+
+                    // TODO(NeGate): handle non-zero falseys
+                    if (falsey == 0) {
+                        // header -> merge
+                        {
+                            TB_Node* parent = branch->inputs[0];
+                            tb_pass_kill_node(opt, branch);
+                            tb_pass_kill_node(opt, left);
+                            tb_pass_kill_node(opt, right);
+
+                            // attach the header and merge to each other
+                            tb_pass_mark(opt, parent);
+                            tb_pass_mark_users(opt, region);
+                            subsume_node(opt, f, region, parent);
+                        }
+
+                        TB_Node* selector = tb_alloc_node(f, TB_SELECT, dt, 4, 0);
+                        set_input(opt, selector, cond, 1);
+                        set_input(opt, selector, values[0], 2);
+                        set_input(opt, selector, values[1], 3);
+                        return selector;
+                    }
+                }
             }
         }
 
-        // guarentee paths are effectless (there's only one data phi and no control nodes)
-        //
-        //        If
-        //       /  \
-        // CProjT    CProjF          Region[0][0] == Region[1][0]
-        //       \  /
-        //      Region
-        //
-        TB_Node* left = region->inputs[0];
-        TB_Node* right = region->inputs[1];
-        if (left->type == TB_PROJ && right->type == TB_PROJ &&
-            left->inputs[0]->type == TB_BRANCH && left->inputs[0] == right->inputs[0]) {
-            TB_Node* branch = left->inputs[0];
-            TB_NodeBranch* header_br = TB_NODE_GET_EXTRA(branch);
-
-            if (header_br->succ_count == 2) {
-                assert(branch->input_count == 2);
-
-                TB_Node *values[2];
-                for (User* u = branch->users; u; u = u->next) {
-                    TB_Node* proj = u->n;
-                    if (proj->type == TB_PROJ) {
-                        int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
-                        // the projection needs to exclusively refer to the region,
-                        // if not we can't elide those effects here.
-                        if (proj->users->next != NULL || proj->users->n != region) {
-                            return NULL;
-                        }
-
-                        int phi_i = proj->users->slot;
-                        assert(phi_i + 1 < n->input_count);
-                        values[index] = n->inputs[1 + phi_i];
-                    }
-                }
-
-                uint64_t falsey = TB_NODE_GET_EXTRA_T(branch, TB_NodeBranch)->keys[0];
-                TB_Node* cond = branch->inputs[1];
-
-                // TODO(NeGate): handle non-zero falseys
-                if (falsey == 0) {
-                    // header -> merge
-                    {
-                        TB_Node* parent = branch->inputs[0];
-                        tb_pass_kill_node(opt, branch);
-                        tb_pass_kill_node(opt, left);
-                        tb_pass_kill_node(opt, right);
-
-                        // attach the header and merge to each other
-                        tb_pass_mark(opt, parent);
-                        tb_pass_mark_users(opt, region);
-                        subsume_node(opt, f, region, parent);
-                    }
-
-                    TB_Node* selector = tb_alloc_node(f, TB_SELECT, dt, 4, 0);
-                    set_input(opt, selector, cond, 1);
-                    set_input(opt, selector, values[0], 2);
-                    set_input(opt, selector, values[1], 3);
-                    return selector;
-                }
+        if (region->input_count > 2 && n->dt.type == TB_INT) {
+            if (region->inputs[0]->type != TB_PROJ || region->inputs[0]->inputs[0]->type != TB_BRANCH) {
+                return NULL;
             }
+
+            // try to make a multi-way lookup:
+            //
+            //      Branch
+            //       / | \
+            //    ... ... ...         each of these is a CProj
+            //       \ | /
+            //      Region
+            //            \
+            //             \ ... ...  each of these is a trivial value
+            //              \ | /
+            //               Phi
+            TB_Node* parent = region->inputs[0]->inputs[0];
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(parent);
+            if (parent->type != TB_BRANCH || br->succ_count != n->input_count - 1) {
+                return NULL;
+            }
+
+            // verify we have a really clean looking diamond shape
+            FOREACH_N(i, 0, n->input_count - 1) {
+                if (region->inputs[i]->type != TB_PROJ || region->inputs[i]->inputs[0] != parent) return NULL;
+                if (n->inputs[1 + i]->type != TB_INTEGER_CONST) return NULL;
+            }
+
+            // convert to lookup node
+            TB_Node* lookup = tb_alloc_node(f, TB_LOOKUP, n->dt, 2, sizeof(TB_NodeLookup) + (br->succ_count * sizeof(TB_LookupEntry)));
+            set_input(opt, lookup, parent->inputs[1], 1);
+
+            TB_NodeLookup* l = TB_NODE_GET_EXTRA(lookup);
+            l->entry_count = br->succ_count;
+            FOREACH_N(i, 0, n->input_count - 1) {
+                TB_Node* k = region->inputs[i];
+                int index = TB_NODE_GET_EXTRA_T(k, TB_NodeProj)->index;
+                assert(index < br->succ_count);
+
+                if (index == 0) {
+                    l->entries[index].key = 0; // default value, doesn't matter
+                } else {
+                    l->entries[index].key = br->keys[index - 1];
+                }
+
+                TB_NodeInt* v = TB_NODE_GET_EXTRA(n->inputs[1 + i]);
+                l->entries[index].val = v->value;
+            }
+
+            // kill branch, we don't really need it anymore
+            TB_Node* before = parent->inputs[0];
+            tb_pass_kill_node(opt, parent);
+            subsume_node(opt, f, region, before);
+
+            return lookup;
         }
     }
 

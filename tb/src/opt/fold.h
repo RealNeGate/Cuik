@@ -222,8 +222,8 @@ static Lattice* dataflow_unary(TB_Passes* restrict opt, LatticeUniverse* uni, TB
                 max = max_inc;
             }
         } else {
-            zeros = ~a->_int.known_zeros;
-            ones  = ~a->_int.known_ones;
+            zeros = a->_int.known_ones;
+            ones  = a->_int.known_zeros;
         }
 
         return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });

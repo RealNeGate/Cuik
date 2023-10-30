@@ -704,6 +704,21 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         return dataflow_shift(p, uni, n);
 
         // meet all inputs
+        case TB_LOOKUP: {
+            TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
+            TB_DataType dt = n->dt;
+            assert(dt.type == TB_INT);
+
+            LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
+            FOREACH_N(i, 1, n->input_count) {
+                LatticeInt b = { l->entries[i].val, l->entries[i].val, l->entries[i].val, ~l->entries[i].val };
+                lattice_meet_int(&a, &b, dt);
+            }
+
+            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = a });
+        }
+
+        // meet all inputs
         case TB_PHI: {
             Lattice* l = lattice_universe_get(uni, n->inputs[1]);
             TB_DataType dt = n->dt;

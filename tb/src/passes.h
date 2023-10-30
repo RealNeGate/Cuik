@@ -400,3 +400,5 @@ void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_
 static void push_all_nodes(TB_Passes* restrict passes, Worklist* restrict ws, TB_Function* f);
 
 void tb_pass_schedule(TB_Passes* opt, TB_CFG cfg);
+
+Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n);

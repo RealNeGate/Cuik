@@ -30,7 +30,7 @@ static ptrdiff_t x86_parse_memory_op(TB_X86_Inst* restrict inst, size_t length, 
             uint8_t scale, index, base;
             UNPACK_233(scale, index, base, sib);
 
-            TB_X86_GPR base_gpr  = base != TB_X86_RSP  ? ((rex&1 ? 8 : 0) | base)  : -1;
+            TB_X86_GPR base_gpr  = base != TB_X86_RBP  ? ((rex&1 ? 8 : 0) | base)  : -1;
             TB_X86_GPR index_gpr = index != TB_X86_RSP ? ((rex&2 ? 8 : 0) | index) : -1;
 
             // odd rule but when mod=00,base=101,index=100
@@ -223,6 +223,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x10] = OP_RM | OP_SSE, [0x11] = OP_MR | OP_SSE,
         // SSE: add, mul, sub, min, div, max
         [0x51 ... 0x5F] = OP_RM | OP_SSE,
+        // cmovcc
+        [0x40 ... 0x4F] = OP_RM,
         // SSE: ucomi
         [0x2E] = OP_RM | OP_SSE,
         // nop r/m
@@ -442,6 +444,23 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
 
         case 0x0F1F: return "nop";
         case 0x0FAF: case 0x68: case 0x69: return "imul";
+
+        case 0x0F40: return "cmovo";
+        case 0x0F41: return "cmovno";
+        case 0x0F42: return "cmovb";
+        case 0x0F43: return "cmovnb";
+        case 0x0F44: return "cmove";
+        case 0x0F45: return "cmovne";
+        case 0x0F46: return "cmovbe";
+        case 0x0F47: return "cmova";
+        case 0x0F48: return "cmovs";
+        case 0x0F49: return "cmovns";
+        case 0x0F4A: return "cmovp";
+        case 0x0F4B: return "cmovnp";
+        case 0x0F4C: return "cmovl";
+        case 0x0F4D: return "cmovge";
+        case 0x0F4E: return "cmovle";
+        case 0x0F4F: return "cmovg";
 
         case 0x0F80: case 0x70: return "jo";
         case 0x0F81: case 0x71: return "jno";

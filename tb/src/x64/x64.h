@@ -143,8 +143,8 @@ inline static Val val_flags(Cond c) {
     return (Val) { .type = VAL_FLAGS, .reg = c };
 }
 
-inline static Val val_global(const TB_Symbol* s) {
-    return (Val) { .type = VAL_GLOBAL, .symbol = s };
+inline static Val val_global(const TB_Symbol* s, int disp) {
+    return (Val) { .type = VAL_GLOBAL, .symbol = s, .imm = disp };
 }
 
 inline static Val val_imm(int32_t imm) {

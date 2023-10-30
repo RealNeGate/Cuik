@@ -458,6 +458,17 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                         break;
                     }
 
+                    case TB_LOOKUP: {
+                        TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
+
+                        printf(" { default: %"PRId64, l->entries[0].val);
+                        FOREACH_N(i, 1, l->entry_count) {
+                            printf(", %"PRId64": %"PRId64, l->entries[i].key, l->entries[i].val);
+                        }
+                        printf("}");
+                        break;
+                    }
+
                     default: tb_assert(extra_bytes(n) == 0, "TODO");
                 }
                 break;

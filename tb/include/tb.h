@@ -312,8 +312,8 @@ typedef enum TB_NodeTypeEnum {
     TB_ATOMIC_OR,   // (Control, Memory, Ptr, Data)  -> (Memory, Data)
     TB_ATOMIC_CAS,  // (Control, Memory, Data, Data) -> (Memory, Data, Bool)
 
-    //   Lookup from a table, similar to a multi-way branch except it doesn't
-    //   need to jump to a
+    // like a multi-way branch but without the control flow aspect, but for data.
+    TB_LOOKUP,
 
     ////////////////////////////////
     // POINTERS
@@ -617,6 +617,16 @@ typedef struct {
     // used for IR building only, stale after that.
     TB_Node *mem_in, *mem_out;
 } TB_NodeRegion;
+
+typedef struct {
+    int64_t key;
+    uint64_t val;
+} TB_LookupEntry;
+
+typedef struct {
+    size_t entry_count;
+    TB_LookupEntry entries[];
+} TB_NodeLookup;
 
 typedef struct TB_MultiOutput {
     size_t count;

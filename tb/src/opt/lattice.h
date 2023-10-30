@@ -31,7 +31,7 @@ static void lattice_universe_map(LatticeUniverse* uni, TB_Node* n, Lattice* l) {
     uni->types[n->gvn] = l;
 }
 
-static Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n) {
+Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n) {
     // reserve cap, slow path :p
     if (UNLIKELY(n->gvn >= uni->type_cap)) {
         size_t new_cap = tb_next_pow2(n->gvn + 16);
@@ -130,6 +130,18 @@ static int64_t wrapped_int_add(int64_t x, int64_t y) { return (uint64_t)x + (uin
 static int64_t wrapped_int_sub(int64_t x, int64_t y) { return (uint64_t)x - (uint64_t)y; }
 static int64_t wrapped_int_mul(int64_t x, int64_t y) { return (uint64_t)x * (uint64_t)y; }
 static bool wrapped_int_lt(int64_t x, int64_t y, int bits) { return (int64_t)tb__sxt(x, bits, 64) < (int64_t)tb__sxt(y, bits, 64); }
+
+static void lattice_meet_int(LatticeInt* a, LatticeInt* b, TB_DataType dt) {
+    // [amin, amax] ^ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
+    int bits = dt.data;
+    uint64_t mask = tb__mask(dt.data);
+
+    if (wrapped_int_lt(b->min, a->min, bits)) a->min = b->min;
+    if (wrapped_int_lt(a->max, b->max, bits)) a->max = b->max;
+
+    a->known_zeros &= b->known_zeros;
+    a->known_ones &= b->known_ones;
+}
 
 // generates the greatest lower bound between a and b
 static Lattice* lattice_meet(LatticeUniverse* uni, Lattice* a, Lattice* b, TB_DataType dt) {

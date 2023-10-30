@@ -1189,6 +1189,115 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
 
+        // table lookup constant -> constant
+        case TB_LOOKUP: {
+            TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
+
+            TB_LookupEntry* min = &l->entries[1];
+            TB_LookupEntry* max = &l->entries[l->entry_count - 1];
+
+            // "+ 2" because of the inclusive range + the default case
+            int64_t range = (max->key - min->key) + 2;
+
+            double dist_avg = 0;
+            double inv_key_count = 1.0 / (l->entry_count - 1);
+
+            int64_t last = l->entries[1].key;
+            FOREACH_N(i, 2, l->entry_count) {
+                int64_t key = l->entries[i].key;
+
+                dist_avg += (key - last) * inv_key_count;
+                last = key;
+            }
+
+            // we wanna figure out how many bits per table entry
+            assert(n->dt.type == TB_INT);
+            size_t bits = tb_next_pow2((n->dt.data + 7) / 8) * 8;
+            if (ctx->p->universe.arena != NULL) {
+                // lattice is the superior type, trust it over the
+                // TB_DataType, in this case if we see a 1bit value
+                // let's just do bitsets.
+                Lattice* l = lattice_universe_get(&ctx->p->universe, n);
+                if (l->tag == LATTICE_INT && l->_int.min == 0 && l->_int.max == 1) {
+                    bits = 1;
+                }
+            }
+
+            // in QWORDs
+            size_t table_size = ((range * bits) + 63) / 64;
+
+            // flat table from start to finish (first element is the default)
+            TB_Function* f = ctx->f;
+            TB_Global* table_sym = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+            tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), table_sym, table_size * sizeof(uint64_t), 8, 1);
+            uint64_t* table_data = tb_global_add_region(f->super.module, table_sym, 0, table_size * sizeof(uint64_t));
+
+            memset(table_data, 0, table_size * sizeof(uint64_t));
+
+            // encode every entry
+            int amt = tb_ffs(64 / bits) - 1;
+            FOREACH_N(i, 0, l->entry_count) {
+                uint64_t index = 0;
+                if (i > 0) {
+                    index = (l->entries[i].key - min->key) + 1;
+                }
+
+                uint64_t mask = (1ull << bits) - 1;
+                uint64_t shift = index & ((1ull << amt) - 1);
+                table_data[index >> amt] |= (l->entries[i].val & mask) << shift;
+            }
+
+            TB_DataType dt = n->dt;
+            int key = input_reg(ctx, n->inputs[1]);
+
+            int index = DEF(NULL, dt);
+            hint_reg(ctx, index, key);
+            SUBMIT(inst_move(dt, index, key));
+            // Simple range check:
+            //   if ((key - min) >= (max - min)) goto default
+            if (1) {
+                int zero = DEF(NULL, dt);
+                SUBMIT(inst_op_zero(dt, zero));
+
+                if (min != 0) {
+                    SUBMIT(inst_op_rri(SUB, dt, index, index, min->key - 1));
+                }
+                SUBMIT(inst_op_ri(CMP, dt, index, range));
+                SUBMIT(inst_op_rr(CMOVA, n->dt, index, zero));
+            }
+            //   lea table, [rip + TABLE]
+            int table = DEF(NULL, TB_TYPE_I64);
+            SUBMIT(inst_op_global(LEA, TB_TYPE_I64, table, (TB_Symbol*) table_sym));
+
+            // word_index = key
+            int word_index = DEF(NULL, dt);
+            hint_reg(ctx, word_index, index);
+            SUBMIT(inst_move(dt, word_index, index));
+            if (bits != 64) {
+                // word_index /= (64 / bits)
+                SUBMIT(inst_op_rri(SHR, TB_TYPE_I64, word_index, word_index, amt));
+            }
+            //   mov table, [table + index*8]
+            SUBMIT(inst_op_rm(MOV, TB_TYPE_I64, dst, table, word_index, SCALE_X8, 0));
+            // we need to extract bits
+            if (bits != 64) {
+                //   mov RCX, index
+                hint_reg(ctx, index, RCX);
+                SUBMIT(inst_move(dt, RCX, index));
+                //   and dst, amt_mask
+                uint64_t amt_mask = (1ull << amt) - 1;
+                if (amt_mask != 0x3F) {
+                    SUBMIT(inst_op_rri(AND, TB_TYPE_I64, RCX, RCX, amt_mask));
+                }
+                //   shr dst, RCX
+                SUBMIT(inst_op_rrr(SHR, TB_TYPE_I64, dst, dst, RCX));
+                //   and dst, mask
+                uint64_t mask = (1ull << bits) - 1;
+                SUBMIT(inst_op_rri(AND, TB_TYPE_I64, dst, dst, mask));
+            }
+            break;
+        }
+
         case TB_BRANCH: {
             TB_Node* bb = tb_get_parent_region(n);
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
@@ -1213,14 +1322,14 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 }
             }
 
+            TB_DataType dt = n->inputs[1]->dt;
+
             SUBMIT(alloc_inst(INST_TERMINATOR, TB_TYPE_VOID, 0, 0, 0));
             if (br->succ_count == 1) {
                 if (ctx->fallthrough != succ[0]) {
                     SUBMIT(inst_jmp(succ[0]));
                 }
             } else if (br->succ_count == 2) {
-                TB_DataType dt = n->inputs[1]->dt;
-
                 // if-like branch
                 if (br->keys[0] == 0) {
                     Cond cc = isel_cmp(ctx, n->inputs[1]);
@@ -1243,17 +1352,16 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                     SUBMIT(inst_jmp(succ[0]));
                 }
             } else {
-                TB_DataType dt = n->inputs[1]->dt;
                 int key = input_reg(ctx, n->inputs[1]);
 
                 // check if there's at most only one space between entries
-                int64_t last = br->keys[1];
+                int64_t last = br->keys[0];
                 int64_t min = last, max = last;
 
                 double dist_avg = 0;
-                double inv_succ_count = 1.0 / (br->succ_count - 1);
+                double inv_succ_count = 1.0 / (br->succ_count - 2);
 
-                FOREACH_N(i, 1, br->succ_count) {
+                FOREACH_N(i, 2, br->succ_count) {
                     int64_t key = br->keys[i - 1];
                     min = (min > key) ? key : min;
                     max = (max > key) ? max : key;
@@ -1311,7 +1419,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
                         // make a jump table with 4 byte relative pointers for each target
                         TB_Function* f = ctx->f;
-                        TB_Global* jump_table = tb_global_create(f->super.module, -1, "jumptbl", NULL, TB_LINKAGE_PRIVATE);
+                        TB_Global* jump_table = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
                         tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), jump_table, stage1_size + stage2_size, 4, 1);
 
                         // generate patches for later
@@ -1366,6 +1474,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                         Set entries_set = set_create_in_arena(arena, range);
                         FOREACH_N(i, 1, br->succ_count) {
                             uint64_t key_idx = br->keys[i - 1] - min;
+                            assert(key_idx < range);
 
                             JumpTablePatch p;
                             p.pos = &jump_entries[key_idx];
@@ -1384,11 +1493,11 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                             }
                         }
 
-                        // Simple range check:
-                        //   if ((key - min) >= (max - min)) goto default
                         int tmp = DEF(NULL, dt);
                         hint_reg(ctx, tmp, key);
                         SUBMIT(inst_move(dt, tmp, key));
+                        // Simple range check:
+                        //   if ((key - min) >= (max - min)) goto default
                         if (has_default) {
                             if (min != 0) {
                                 SUBMIT(inst_op_rri(SUB, dt, tmp, tmp, min));
@@ -1749,7 +1858,7 @@ static int resolve_interval(Ctx* restrict ctx, Inst* inst, int i, Val* val) {
                 return 1;
             }
         } else {
-            *val = val_global(inst->s);
+            *val = val_global(inst->s, inst->disp);
             return 1;
         }
     }
@@ -1860,7 +1969,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
             if (inst->flags & INST_NODE) {
                 target = val_label(inst->l);
             } else if (inst->flags & INST_GLOBAL) {
-                target = val_global(inst->s);
+                target = val_global(inst->s, inst->disp);
             } else {
                 assert(inst->in_count == 1);
                 resolve_interval(ctx, inst, in_base, &target);
@@ -2037,7 +2146,7 @@ static size_t emit_prologue(Ctx* restrict ctx) {
     // if there's more than 4096 bytes of stack, we need to insert a chkstk
     if (stack_usage >= 4096) {
         assert(ctx->f->super.module->chkstk_extern);
-        Val sym = val_global(ctx->f->super.module->chkstk_extern);
+        Val sym = val_global(ctx->f->super.module->chkstk_extern, 0);
         Val imm = val_imm(stack_usage);
         Val rax = val_gpr(RAX);
         Val rsp = val_gpr(RSP);

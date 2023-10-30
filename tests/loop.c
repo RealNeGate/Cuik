@@ -75,12 +75,19 @@ int isalnum(int ch) {
     switch (ch) {
         case 'a' ... 'z':
         case 'A' ... 'Z':
-        case '0' ... '9': 
+        case '0' ... '9':
         return true;
-        
+
         default:
         return false;
     }
+}
+
+int main() {
+    for (int i = 32; i <= 128; i++) {
+        printf("%c %d\n", i, isalnum(i));
+    }
+    return 0;
 }
 
 /*uint32_t dead_if(uint32_t n) {
