@@ -99,6 +99,36 @@ TB_ResolvedAddr tb_jit_addr2sym(TB_JIT* jit, void* ptr) {
     return (TB_ResolvedAddr){ 0 };
 }
 
+TB_ResolvedLine tb_jit_addr2line(TB_JIT* jit, void* ptr) {
+    TB_ResolvedAddr addr = tb_jit_addr2sym(jit, ptr);
+    if (addr.base->tag != TB_SYMBOL_FUNCTION) {
+        goto bad;
+    }
+
+    TB_Function* f = (TB_Function*) addr.base;
+    DynArray(TB_Location) locs = f->output->locations;
+    if (dyn_array_length(locs) == 0) {
+        goto bad;
+    }
+
+    // find cool line
+    size_t left = 0;
+    size_t right = dyn_array_length(locs);
+    while (left < right) {
+        size_t middle = (left + right) / 2;
+        if (locs[middle].pos > addr.offset) {
+            right = middle;
+        } else {
+            left = middle + 1;
+        }
+    }
+
+    return (TB_ResolvedLine){ f, &locs[right - 1], addr.offset - locs[right - 1].pos };
+
+    bad:
+    return (TB_ResolvedLine){ 0 };
+}
+
 static void* tb_jit_alloc_obj(TB_JIT* jit, void* tag, size_t size, size_t align) {
     mtx_lock(&jit->lock);
     size = (size + ALLOC_GRANULARITY - 1) & ~(ALLOC_GRANULARITY - 1);
@@ -402,10 +432,19 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
-    // install exception handler, then we can run code
-    void* handle = AddVectoredExceptionHandler(1, except_handler);
+static bool jit__same_line(TB_ResolvedLine* a, TB_ResolvedLine* b) {
+    return a->f == b->f && a->loc == b->loc;
+}
 
+static void jit__print_line(TB_ResolvedLine* a) {
+    if (a->loc) {
+        printf("LINE %s:%d\n", a->loc->file->path, a->loc->line);
+    } else {
+        printf("LINE ???\n");
+    }
+}
+
+static void jit__step(TB_JIT* jit, TB_CPUContext* cpu, bool step) {
     // install breakpoints
     const uint8_t* rip = (const uint8_t*) cpu->state.Rip;
     dyn_array_for(i, jit->breakpoints) {
@@ -417,7 +456,7 @@ void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
     }
 
     // enable trap flag for single-stepping
-    if (step == TB_DBG_INST) {
+    if (step) {
         cpu->state.EFlags |= 0x100;
     } else {
         cpu->state.EFlags &= ~0x100;
@@ -436,7 +475,26 @@ void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
         uint8_t* code = jit->breakpoints[i].pos;
         *code = jit->breakpoints[i].prev_byte;
     }
+}
 
+void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
+    // install exception handler, then we can run code
+    void* handle = AddVectoredExceptionHandler(1, except_handler);
+    if (step == TB_DBG_LINE) {
+        TB_ResolvedLine old_l = tb_jit_addr2line(jit, tb_jit_thread_pc(cpu));
+        for (;;) {
+            jit__step(jit, cpu, true);
+
+            // check if the line changed
+            TB_ResolvedLine new_l = tb_jit_addr2line(jit, tb_jit_thread_pc(cpu));
+            jit__print_line(&new_l);
+            if (!jit__same_line(&old_l, &new_l)) {
+                break;
+            }
+        }
+    } else {
+        jit__step(jit, cpu, step == TB_DBG_INST);
+    }
     RemoveVectoredExceptionHandler(handle);
 }
 
@@ -446,6 +504,12 @@ void* tb_jit_thread_pc(TB_CPUContext* cpu) {
 
 void tb_jit_breakpoint(TB_JIT* jit, void* addr) {
     TB_Breakpoint bp = { addr };
+    dyn_array_for(i, jit->breakpoints) {
+        if (jit->breakpoints[i].pos == addr) {
+            return;
+        }
+    }
+
     dyn_array_put(jit->breakpoints, bp);
 }
 #endif

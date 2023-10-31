@@ -357,7 +357,7 @@ static void ld_invoke(BuildStepInfo* info) {
         tb_jit_breakpoint(jit, entry);
         tb_jit_thread_resume(jit, cpu, TB_DBG_NONE);
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 3; i++) {
             uint8_t* pc = tb_jit_thread_pc(cpu);
 
             printf("=== STEP ");
@@ -382,7 +382,7 @@ static void ld_invoke(BuildStepInfo* info) {
                 }
             }
 
-            tb_jit_thread_resume(jit, cpu, TB_DBG_INST);
+            tb_jit_thread_resume(jit, cpu, TB_DBG_LINE);
         }
         tb_jit_end(jit);
 

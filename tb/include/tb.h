@@ -800,7 +800,14 @@ typedef struct {
     uint32_t offset;
 } TB_ResolvedAddr;
 
+typedef struct {
+    TB_Function* f;
+    TB_Location* loc;
+    uint32_t offset;
+} TB_ResolvedLine;
+
 TB_API TB_ResolvedAddr tb_jit_addr2sym(TB_JIT* jit, void* ptr);
+TB_API TB_ResolvedLine tb_jit_addr2line(TB_JIT* jit, void* ptr);
 TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 
 typedef enum {
