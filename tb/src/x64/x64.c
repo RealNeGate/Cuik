@@ -1106,7 +1106,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 SUBMIT(inst_move(target->dt, RAX, target_val));
             } else {
                 // the number of float parameters is written into AL
-                if (is_sysv) {
+                if (proto->has_varargs && is_sysv) {
                     SUBMIT(inst_op_imm(MOV, TB_TYPE_I8, RAX, xmms_used));
                     ins[in_count++] = FIRST_GPR + RAX;
                     caller_saved_gprs &= ~(1ull << RAX);
