@@ -282,7 +282,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
 
                 // we can't fit this into an LEA, might as well just do a shift
                 SUBMIT(inst_op_rri(SHL, TB_TYPE_I64, dst, index, scale));
-                index = dst, scale = 1;
+                index = dst, scale = 0;
             }
         } else {
             // needs a proper multiply (we may wanna invest in a few special patterns
