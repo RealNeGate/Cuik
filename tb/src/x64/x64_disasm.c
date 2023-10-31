@@ -149,6 +149,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         OP_0ARY  = 0x8000,
         OP_REL8  = 0x9000,
         OP_REL32 = 0xA000,
+        OP_IMM   = 0xB000,
     };
 
     #define NORMIE_BINOP(op) [op+0] = OP_MR | OP_8BIT, [op+1] = OP_MR, [op+2] = OP_RM | OP_8BIT, [op+3] = OP_RM
@@ -175,6 +176,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x8D] = OP_RM,
         // movsxd reg, r/m
         [0x63] = OP_RM | OP_2DT,
+        // push imm32
+        [0x68] = OP_IMM,
         // imul reg, r/m, imm32
         [0x69] = OP_RM,
         // jcc rel8
@@ -276,7 +279,14 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     }
 
     assert(enc != OP_BAD);
-    if (enc == OP_REL32) {
+    if (enc == OP_IMM) {
+        ABC(4);
+        int32_t imm = READ32LE(imm);
+        inst->flags |= TB_X86_INSTR_IMMEDIATE;
+        inst->imm = imm;
+        inst->length = current;
+        return true;
+    } else if (enc == OP_REL32) {
         inst->flags |= TB_X86_INSTR_USE_RIPMEM;
         inst->flags |= TB_X86_INSTR_USE_MEMOP;
         inst->base = -1;
@@ -443,7 +453,8 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0xEB: case 0xE9: case 0xFF4: return "jmp";
 
         case 0x0F1F: return "nop";
-        case 0x0FAF: case 0x68: case 0x69: return "imul";
+        case 0x68: return "push";
+        case 0x0FAF: case 0x69: case 0x6B: return "imul";
 
         case 0x0F40: return "cmovo";
         case 0x0F41: return "cmovno";

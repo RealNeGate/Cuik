@@ -97,7 +97,8 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                     print_type2(u->n->dt);
                 }
             }
-            printf(") // v%u", n->gvn);
+            printf(")");
+            // printf(") v%u", n->gvn);
         }
     } else if (n->type == TB_FLOAT32_CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
@@ -120,7 +121,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             if (i >= 0) {
                 printf(".bb%zu", i);
                 if (def) {
-                    printf("() // v%u", n->gvn);
+                    printf("()");
                 }
             } else {
                 printf("*DEAD*");

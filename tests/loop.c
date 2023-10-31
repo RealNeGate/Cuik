@@ -83,36 +83,18 @@ int isalnum(int ch) {
     }
 }
 
-int main() {
-    for (int i = 32; i <= 128; i++) {
-        printf("%c %d\n", i, isalnum(i));
-    }
-    return 0;
-}
-
-/*uint32_t dead_if(uint32_t n) {
-    if ((n << 2) & 1) {
-        return 1;
-    }
-
-    return div_tricks(n);
-}
-
-uint32_t div_tricks(uint32_t n) {
-    return n / 3;
-}
-
-float max_elem(size_t i, float* x, float* y) {
-    return x[i] > y[i] ? x[i] : y[i];
-}
+/*static int fib(int i) {
+    if (i < 2) return i;
+    return fib(i - 2) + fib(i - 1);
+}*/
 
 uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time
     for (size_t i=0;i<len/4;i++) {
-        uint32_t k;
-        memcpy(&k, &key[i * 4], sizeof(k));
+        uint32_t k = ((uint32_t*) key)[i];
+        // memcpy(&k, &key[i * 4], sizeof(k));
 
         k *= 0xcc9e2d51;
         k = ((k << 15) | (k >> 17))*0x1b873593;
@@ -135,6 +117,34 @@ uint32_t murmur3_32(const void* key, size_t len) {
     h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
     h = (h ^ (h >> 13))*0xc2b2ae35;
     return (h ^ (h >> 16));
+}
+
+int main() {
+    printf("Wack! %d\n", murmur3_32("Hello", 5));
+    printf("Wack! %d\n", murmur3_32("Why", 3));
+
+    /*for (int i = 32; i <= 128; i++) {
+        printf("%c %d\n", i, isalnum(i));
+    }*/
+
+    // printf("fib(10) = %d\n", fib(10));
+    return 0;
+}
+
+/*uint32_t dead_if(uint32_t n) {
+    if ((n << 2) & 1) {
+        return 1;
+    }
+
+    return div_tricks(n);
+}
+
+uint32_t div_tricks(uint32_t n) {
+    return n / 3;
+}
+
+float max_elem(size_t i, float* x, float* y) {
+    return x[i] > y[i] ? x[i] : y[i];
 }
 
 int main() {

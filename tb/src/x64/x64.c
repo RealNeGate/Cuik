@@ -1766,66 +1766,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
     }
 }
 
-static void print_operand(TB_CGEmitter* restrict e, Val* v, TB_X86_DataType dt) {
-    static const char* type_names[] = {
-        "ptr",
-        "byte",    "word",    "dword",   "qword",
-        "pbyte",   "pword",   "pdword",  "pqword",
-        "xmmword", "xmmword", "xmmword", "xmmword",
-        "xmmword"
-    };
-
-    switch (v->type) {
-        case VAL_GPR: {
-            assert(v->reg >= 0 && v->reg < 16);
-            EMITA(e, "%s", GPR_NAMES[v->reg]);
-            break;
-        }
-        case VAL_XMM: EMITA(e, "XMM%d", v->reg); break;
-        case VAL_IMM: EMITA(e, "%d", v->imm); break;
-        case VAL_ABS: EMITA(e, "%#"PRId64, v->abs); break;
-        case VAL_MEM: {
-            EMITA(e, "%s ", type_names[dt]);
-
-            if (v->index == -1) {
-                EMITA(e, "[%s", GPR_NAMES[v->reg]);
-            } else {
-                EMITA(e, "[%s + %s*%d", GPR_NAMES[v->reg], GPR_NAMES[v->index], 1u << v->scale);
-            }
-
-            if (v->imm != 0) {
-                EMITA(e, " + %d", v->imm);
-            }
-            EMITA(e, "]");
-            break;
-        }
-        case VAL_GLOBAL: {
-            const TB_Symbol* target = v->symbol;
-            EMITA(e, "%s ", type_names[dt]);
-
-            if (*target->name == 0) {
-                if (v->imm == 0) {
-                    EMITA(e, "[sym%p]", target);
-                } else {
-                    EMITA(e, "[sym%p + %d]", target, v->imm);
-                }
-            } else {
-                if (v->imm == 0) {
-                    EMITA(e, "[%s]", target->name);
-                } else {
-                    EMITA(e, "[%s + %d]", target->name, v->imm);
-                }
-            }
-            break;
-        }
-        case VAL_LABEL: {
-            EMITA(e, ".bb%d", v->label);
-            break;
-        }
-        default: tb_todo();
-    }
-}
-
 static void inst2_print(TB_CGEmitter* restrict e, InstType type, Val* dst, Val* src, TB_X86_DataType dt) {
     if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
         inst2sse(e, type, dst, src, dt);
@@ -1905,7 +1845,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
         size_t inst_table_size = sizeof(inst_table) / sizeof(*inst_table);
         InstCategory cat = inst->type >= inst_table_size ? INST_BINOP : inst_table[inst->type].cat;
 
-        if (0) {
+        /*if (0) {
             EMITA(e, "  \x1b[32m# %s t=%d { outs:", inst->type < inst_table_size ? inst_table[inst->type].mnemonic : "???", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
                 EMITA(e, " v%d", inst->operands[i]);
@@ -1915,7 +1855,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
                 EMITA(e, " v%d", inst->operands[i]);
             }
             EMITA(e, "}\x1b[0m\n");
-        }
+        }*/
 
         if (inst->type == INST_ENTRY || inst->type == INST_TERMINATOR) {
             // does nothing

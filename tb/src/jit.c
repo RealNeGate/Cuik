@@ -99,16 +99,11 @@ TB_ResolvedAddr tb_jit_addr2sym(TB_JIT* jit, void* ptr) {
     return (TB_ResolvedAddr){ 0 };
 }
 
-TB_ResolvedLine tb_jit_addr2line(TB_JIT* jit, void* ptr) {
-    TB_ResolvedAddr addr = tb_jit_addr2sym(jit, ptr);
-    if (addr.base->tag != TB_SYMBOL_FUNCTION) {
-        goto bad;
-    }
-
+static TB_ResolvedLine jit__addr2line(TB_JIT* jit, TB_ResolvedAddr addr) {
     TB_Function* f = (TB_Function*) addr.base;
     DynArray(TB_Location) locs = f->output->locations;
     if (dyn_array_length(locs) == 0) {
-        goto bad;
+        return (TB_ResolvedLine){ 0 };
     }
 
     // find cool line
@@ -123,10 +118,22 @@ TB_ResolvedLine tb_jit_addr2line(TB_JIT* jit, void* ptr) {
         }
     }
 
-    return (TB_ResolvedLine){ f, &locs[right - 1], addr.offset - locs[right - 1].pos };
+    uint32_t start = locs[right - 1].pos;
+    uint32_t end = f->output->code_size;
+    if (right < dyn_array_length(locs)) {
+        end = locs[right].pos;
+    }
 
-    bad:
-    return (TB_ResolvedLine){ 0 };
+    return (TB_ResolvedLine){ f, &locs[right - 1], start, end };
+}
+
+TB_ResolvedLine tb_jit_addr2line(TB_JIT* jit, void* ptr) {
+    TB_ResolvedAddr addr = tb_jit_addr2sym(jit, ptr);
+    if (addr.base->tag != TB_SYMBOL_FUNCTION) {
+        return (TB_ResolvedLine){ 0 };
+    }
+
+    return jit__addr2line(jit, addr);
 }
 
 static void* tb_jit_alloc_obj(TB_JIT* jit, void* tag, size_t size, size_t align) {
@@ -397,6 +404,7 @@ struct TB_CPUContext {
     // them (not all INT3s are breakpoints, some are user
     // made)
     TB_JIT* jit;
+    volatile bool done;
     volatile bool running;
 
     CONTEXT cont;
@@ -412,8 +420,9 @@ TB_CPUContext* tb_jit_thread_create(void* entry, void* arg) {
     TB_CPUContext* cpu = stack;
     cpu->state = base;
     cpu->state.Rip = (uint64_t) entry;
-    // enough room for a retaddr and the shadow stack
+    // enough room for a retaddr and the shadow space
     cpu->state.Rsp = ((uint64_t) stack) + (STACK_SIZE - 40);
+    cpu->state.Rbp = 0;
     cpu->state.Rcx = (uint64_t) arg;
     return cpu;
 }
@@ -421,8 +430,12 @@ TB_CPUContext* tb_jit_thread_create(void* entry, void* arg) {
 static LONG except_handler(EXCEPTION_POINTERS* e) {
     // find breakpoints
     if (e->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT ||
+        e->ExceptionRecord->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION ||
         e->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP) {
         TB_CPUContext* cpu = (TB_CPUContext*) (e->ContextRecord->Rsp & -(STACK_SIZE));
+        if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION) {
+            cpu->done = true;
+        }
         cpu->running = false;
         cpu->state = *e->ContextRecord;
         *e->ContextRecord = cpu->cont;
@@ -432,15 +445,59 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-static bool jit__same_line(TB_ResolvedLine* a, TB_ResolvedLine* b) {
-    return a->f == b->f && a->loc == b->loc;
+// I do love frame pointers
+typedef struct StackFrame StackFrame;
+struct StackFrame {
+    StackFrame* rbp;
+    void* rip;
+};
+
+static void tb_dump_stack_entry(TB_JIT* jit, TB_CPUContext* cpu, TB_ResolvedAddr addr, void* rpc) {
+    if (addr.base != NULL) {
+        assert(addr.base->tag == TB_SYMBOL_FUNCTION);
+
+        TB_ResolvedLine loc = jit__addr2line(jit, addr);
+        if (loc.loc) {
+            printf("* %s -- %s:%d", addr.base->name, loc.loc->file->path, loc.loc->line);
+        } else {
+            printf("* %s", addr.base->name);
+        }
+    } else {
+        printf("* UNKNOWN? %p", rpc);
+    }
+    printf("\n");
 }
 
-static void jit__print_line(TB_ResolvedLine* a) {
-    if (a->loc) {
-        printf("LINE %s:%d\n", a->loc->file->path, a->loc->line);
+void tb_jit_thread_dump_stack(TB_JIT* jit, TB_CPUContext* cpu) {
+    void* rpc = tb_jit_thread_pc(cpu);
+    TB_ResolvedAddr addr = tb_jit_addr2sym(jit, rpc);
+    if (addr.base == NULL) {
+        return;
+    }
+
+    assert(addr.base->tag == TB_SYMBOL_FUNCTION);
+
+    printf("== CALL STACK ==\n");
+    tb_dump_stack_entry(jit, cpu, addr, rpc);
+
+    // first stack frame might be mid-construction so we
+    // need to accomodate when reading the RPC or SP
+    TB_Function* f = (TB_Function*) addr.base;
+    StackFrame* stk = (StackFrame*) cpu->state.Rbp;
+    if (addr.offset < f->output->prologue_length) {
+        rpc = ((void**) cpu->state.Rsp)[0];
     } else {
-        printf("LINE ???\n");
+        rpc = stk->rip;
+        stk = stk->rbp;
+    }
+
+    while (stk) {
+        TB_ResolvedAddr addr = tb_jit_addr2sym(jit, rpc);
+        tb_dump_stack_entry(jit, cpu, addr, rpc);
+
+        // previous frame
+        rpc = stk->rip;
+        stk = stk->rbp;
     }
 }
 
@@ -477,18 +534,24 @@ static void jit__step(TB_JIT* jit, TB_CPUContext* cpu, bool step) {
     }
 }
 
-void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
+bool tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
     // install exception handler, then we can run code
     void* handle = AddVectoredExceptionHandler(1, except_handler);
     if (step == TB_DBG_LINE) {
-        TB_ResolvedLine old_l = tb_jit_addr2line(jit, tb_jit_thread_pc(cpu));
+        TB_ResolvedLine l = tb_jit_addr2line(jit, tb_jit_thread_pc(cpu));
+
+        uintptr_t start = ((uintptr_t) l.f->compiled_pos) + l.start;
+        uintptr_t range = l.end - l.start;
+
+        // keep stepping until we're out of the line
         for (;;) {
             jit__step(jit, cpu, true);
+            if (cpu->done) {
+                break;
+            }
 
-            // check if the line changed
-            TB_ResolvedLine new_l = tb_jit_addr2line(jit, tb_jit_thread_pc(cpu));
-            jit__print_line(&new_l);
-            if (!jit__same_line(&old_l, &new_l)) {
+            uintptr_t rip = (uintptr_t) tb_jit_thread_pc(cpu);
+            if (rip - start >= range) {
                 break;
             }
         }
@@ -496,6 +559,7 @@ void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
         jit__step(jit, cpu, step == TB_DBG_INST);
     }
     RemoveVectoredExceptionHandler(handle);
+    return !cpu->done;
 }
 
 void* tb_jit_thread_pc(TB_CPUContext* cpu) {

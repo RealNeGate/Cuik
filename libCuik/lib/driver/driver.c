@@ -295,6 +295,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 static void jit_entry(int fn(int, char**)) {
     char* argv = (char[]){ "jit" };
     fn(1, &argv);
+    __builtin_trap();
 }
 
 static void ld_invoke(BuildStepInfo* info) {
@@ -355,37 +356,44 @@ static void ld_invoke(BuildStepInfo* info) {
         TB_CPUContext* cpu = tb_jit_thread_create(jit_entry, entry);
 
         tb_jit_breakpoint(jit, entry);
-        tb_jit_thread_resume(jit, cpu, TB_DBG_NONE);
-
-        for (int i = 0; i < 3; i++) {
-            uint8_t* pc = tb_jit_thread_pc(cpu);
-
-            printf("=== STEP ");
-            TB_ResolvedAddr addr = tb_jit_addr2sym(jit, pc);
-            if (addr.base) {
-                printf("%s", addr.base->name);
-                if (addr.offset) {
-                    printf(" + %d", addr.offset);
+        if (tb_jit_thread_resume(jit, cpu, TB_DBG_NONE)) {
+            for (int i = 0; i < 10000; i++) {
+                uint8_t* pc = tb_jit_thread_pc(cpu);
+                if (pc == NULL) {
+                    break;
                 }
-            }
-            printf(" ===\n");
 
-            // dump next 5 lines
-            for (int j = 0; j < 5; j++) {
-                printf("  %p: ", pc);
-                ptrdiff_t delta = tb_print_disassembly_inst(TB_ARCH_X86_64, 16, pc);
-                if (delta < 0) {
-                    printf("ERROR\n");
-                    pc += 1;
-                } else {
-                    pc += delta;
+                printf("=== STEP %p", pc);
+                TB_ResolvedAddr addr = tb_jit_addr2sym(jit, pc);
+                if (addr.base) {
+                    printf(" %s", addr.base->name);
+                    if (addr.offset) {
+                        printf(" + %d", addr.offset);
+                    }
                 }
-            }
+                printf(" ===\n");
 
-            tb_jit_thread_resume(jit, cpu, TB_DBG_LINE);
+                // dump next 5 lines
+                for (int j = 0; j < 5; j++) {
+                    printf("  %p: ", pc);
+                    ptrdiff_t delta = tb_print_disassembly_inst(TB_ARCH_X86_64, 16, pc);
+                    if (delta < 0) {
+                        printf("ERROR\n");
+                        pc += 1;
+                    } else {
+                        pc += delta;
+                    }
+                }
+
+                if (!tb_jit_thread_resume(jit, cpu, TB_DBG_LINE)) {
+                    break;
+                }
+
+                tb_jit_thread_dump_stack(jit, cpu);
+            }
         }
-        tb_jit_end(jit);
 
+        tb_jit_end(jit);
         fprintf(stderr, "C JIT exited\n");
         goto done;
     }

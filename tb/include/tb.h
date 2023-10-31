@@ -803,7 +803,7 @@ typedef struct {
 typedef struct {
     TB_Function* f;
     TB_Location* loc;
-    uint32_t offset;
+    uint32_t start, end;
 } TB_ResolvedLine;
 
 TB_API TB_ResolvedAddr tb_jit_addr2sym(TB_JIT* jit, void* ptr);
@@ -824,11 +824,12 @@ typedef enum {
 //   technically need this but it's a nice helper for writing
 //   JITs especially when it comes to breakpoints (and eventually
 //   safepoints)
-TB_CPUContext* tb_jit_thread_create(void* entry, void* arg);
+TB_API TB_CPUContext* tb_jit_thread_create(void* entry, void* arg);
 //   runs until it hits some exception/breakpoint.
-TB_API void tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step);
+TB_API bool tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step);
 TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
 TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);
+TB_API void tb_jit_thread_dump_stack(TB_JIT* jit, TB_CPUContext* cpu);
 
 ////////////////////////////////
 // Disassembler
