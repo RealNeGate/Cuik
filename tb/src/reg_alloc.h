@@ -160,10 +160,12 @@ static int range_intersect(LiveRange* a, LiveRange* b) {
 }
 
 static int interval_intersect(LiveInterval* a, LiveInterval* b) {
-    FOREACH_N(i, 1, a->active_range+1) {
-        int t = range_intersect(&a->ranges[i], &b->ranges[b->active_range]);
-        if (t >= 0) {
-            return t;
+    FOREACH_REVERSE_N(i, 1, a->active_range+1) {
+        FOREACH_REVERSE_N(j, 1, b->active_range+1) {
+            int t = range_intersect(&a->ranges[i], &b->ranges[j]);
+            if (t >= 0) {
+                return t;
+            }
         }
     }
 

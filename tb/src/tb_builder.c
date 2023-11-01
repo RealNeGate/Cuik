@@ -481,6 +481,10 @@ void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* targ
     f->active_control_node = NULL;
 }
 
+TB_Node* tb_inst_poison(TB_Function* f, TB_DataType dt) {
+    return tb_alloc_node(f, TB_POISON, dt, 1, 0);
+}
+
 TB_Node* tb_inst_not(TB_Function* f, TB_Node* src) {
     TB_Node* n = tb_alloc_node(f, TB_NOT, src->dt, 2, 0);
     n->inputs[1] = src;

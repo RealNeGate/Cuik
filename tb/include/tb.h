@@ -475,7 +475,11 @@ typedef enum {
 // TB_Function, TB_Global, and TB_External are all subtypes of TB_Symbol
 // and thus are safely allowed to cast into a symbol for operations.
 typedef struct TB_Symbol {
+    #ifdef __cplusplus
+    TB_SymbolTag tag;
+    #else
     _Atomic TB_SymbolTag tag;
+    #endif
 
     // which thread info it's tied to (we may need to remove it, this
     // is used for that)
@@ -1081,7 +1085,7 @@ TB_API void tb_inst_set_region_name(TB_Function* f, TB_Node* n, ptrdiff_t len, c
 TB_API void tb_inst_unreachable(TB_Function* f);
 TB_API void tb_inst_debugbreak(TB_Function* f);
 TB_API void tb_inst_trap(TB_Function* f);
-TB_API TB_Node* tb_inst_poison(TB_Function* f);
+TB_API TB_Node* tb_inst_poison(TB_Function* f, TB_DataType dt);
 
 TB_API TB_Node* tb_inst_param(TB_Function* f, int param_id);
 

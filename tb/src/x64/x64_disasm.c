@@ -238,6 +238,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0xB6 ... 0xB7] = OP_RM | OP_2DT,
         // jcc rel32
         [0x80 ... 0x8F] = OP_REL32,
+        // setcc r/m
+        [0x90 ... 0x9F] = OP_M,
     };
 
     inst->opcode = (ext ? 0x0F00 : 0) | op;
@@ -472,6 +474,23 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x0F4D: return "cmovge";
         case 0x0F4E: return "cmovle";
         case 0x0F4F: return "cmovg";
+
+        case 0x0F90: return "seto";
+        case 0x0F91: return "setno";
+        case 0x0F92: return "setb";
+        case 0x0F93: return "setnb";
+        case 0x0F94: return "sete";
+        case 0x0F95: return "setne";
+        case 0x0F96: return "setbe";
+        case 0x0F97: return "seta";
+        case 0x0F98: return "sets";
+        case 0x0F99: return "setns";
+        case 0x0F9A: return "setp";
+        case 0x0F9B: return "setnp";
+        case 0x0F9C: return "setl";
+        case 0x0F9D: return "setge";
+        case 0x0F9E: return "setle";
+        case 0x0F9F: return "setg";
 
         case 0x0F80: case 0x70: return "jo";
         case 0x0F81: case 0x71: return "jno";

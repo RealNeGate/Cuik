@@ -1623,9 +1623,16 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
         case TB_MEMSET: {
             TB_DataType ptr_dt = TB_TYPE_I64;
-            SUBMIT(inst_move(ptr_dt,     RDI, input_reg(ctx, n->inputs[2])));
-            SUBMIT(inst_move(TB_TYPE_I8, RAX, input_reg(ctx, n->inputs[3])));
-            SUBMIT(inst_move(ptr_dt,     RCX, input_reg(ctx, n->inputs[4])));
+            int rdi = input_reg(ctx, n->inputs[2]);
+            int rax = input_reg(ctx, n->inputs[3]);
+            int rcx = input_reg(ctx, n->inputs[4]);
+
+            hint_reg(ctx, rdi, RDI);
+            hint_reg(ctx, rax, RAX);
+            hint_reg(ctx, rcx, RCX);
+            SUBMIT(inst_move(ptr_dt,     RDI, rdi));
+            SUBMIT(inst_move(TB_TYPE_I8, RAX, rax));
+            SUBMIT(inst_move(ptr_dt,     RCX, rcx));
 
             Inst* i = alloc_inst(STOSB, TB_TYPE_VOID, 0, 3, 0);
             i->flags |= INST_REP;
@@ -1845,17 +1852,17 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
         size_t inst_table_size = sizeof(inst_table) / sizeof(*inst_table);
         InstCategory cat = inst->type >= inst_table_size ? INST_BINOP : inst_table[inst->type].cat;
 
-        /*if (0) {
-            EMITA(e, "  \x1b[32m# %s t=%d { outs:", inst->type < inst_table_size ? inst_table[inst->type].mnemonic : "???", inst->time);
+        if (0) {
+            printf("  \x1b[32m# %s t=%d { outs:", inst->type < inst_table_size ? inst_table[inst->type].mnemonic : "???", inst->time);
             FOREACH_N(i, 0, inst->out_count) {
-                EMITA(e, " v%d", inst->operands[i]);
+                printf(" v%d", inst->operands[i]);
             }
-            EMITA(e, ", ins: ");
+            printf(", ins: ");
             FOREACH_N(i, inst->out_count, inst->out_count + inst->in_count) {
-                EMITA(e, " v%d", inst->operands[i]);
+                printf(" v%d", inst->operands[i]);
             }
-            EMITA(e, "}\x1b[0m\n");
-        }*/
+            printf("}\x1b[0m\n");
+        }
 
         if (inst->type == INST_ENTRY || inst->type == INST_TERMINATOR) {
             // does nothing
@@ -2004,7 +2011,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
         }
     }
 
-    if (end >= 0) {
+    if (end >= 0 && ctx->f->stop_node != NULL) {
         emit_epilogue(ctx, ctx->f->stop_node);
     }
 

@@ -930,7 +930,7 @@ static void generate_use_lists(TB_Passes* restrict p, TB_Function* f) {
 }
 
 TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
-    assert(f->stop_node && "missing return");
+    // assert(f->stop_node && "missing return");
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
     *p = (TB_Passes){ .f = f };
 
