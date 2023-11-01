@@ -30,13 +30,13 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: cuik-windows
-          path: cuik.exe
+          path: bin/cuik.exe
 
       - name: upload dll artifacts
         uses: actions/upload-artifact@v3
         with:
           name: cuik-windows
-          path: cuik.dll
+          path: bin/cuik.dll
   build_linux:
     runs-on: ubuntu-latest
     steps:
@@ -57,7 +57,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: cuik-linux
-          path: cuik
+          path: bin/cuik
   tb_unittests:
     strategy:
       matrix:
