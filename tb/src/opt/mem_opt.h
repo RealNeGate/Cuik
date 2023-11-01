@@ -167,6 +167,27 @@ static TB_Node* ideal_end(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
+static bool is_cool(uint64_t x) { return x == 1 || x == 2 || x == 4 || x == 8; }
+static TB_Node* ideal_memset(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    // convert small memsets into stores
+    uint64_t count, val;
+    if (get_int_const(n->inputs[4], &count) && get_int_const(n->inputs[3], &val) && is_cool(count)) {
+        // fill rest of the bytes
+        FOREACH_N(i, 1, count) {
+            val |= (val & 0xFF) << (i*8);
+        }
+
+        TB_DataType dt = TB_TYPE_INTN(count*8);
+        set_input(p, n, make_int_node(f, p, dt, val), 3);
+        set_input(p, n, NULL, 4);
+        n->input_count = 4;
+        n->type = TB_STORE;
+        return n;
+    }
+
+    return NULL;
+}
+
 static TB_Node* ideal_memcpy(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     return NULL;
 }

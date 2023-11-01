@@ -38,10 +38,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_SMOD:
         return sizeof(TB_NodeBinopInt);
 
-        case TB_ADDPAIR:
-        case TB_MULPAIR:
-        return sizeof(TB_NodeArithPair);
-
         case TB_MEMBER_ACCESS:
         return sizeof(TB_NodeMember);
 
@@ -80,6 +76,8 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_NULL:
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
+        case TB_ADDPAIR:
+        case TB_MULPAIR:
         return 0;
 
         case TB_START:

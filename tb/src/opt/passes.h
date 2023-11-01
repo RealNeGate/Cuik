@@ -301,10 +301,6 @@ static TB_Node* get_pred(TB_Node* n, int i) {
     if (base->type == TB_REGION && n->type == TB_PROJ) {
         TB_Node* parent = n->inputs[0];
 
-        if (is_region_wit_no_phis(n)) {
-            return n;
-        }
-
         // start or cprojs with multiple users (it's a BB) will just exit
         if (parent->type == TB_START || (!ctrl_out_as_cproj_but_not_branch(parent) && n->users->next != NULL)) {
             return n;
@@ -317,6 +313,15 @@ static TB_Node* get_pred(TB_Node* n, int i) {
     }
 
     return n;
+}
+
+static TB_Node* get_pred_cfg(TB_CFG* cfg, TB_Node* n, int i) {
+    ptrdiff_t search = nl_map_get(cfg->node_to_block, n->inputs[i]);
+    if (search >= 0) {
+        return n->inputs[i];
+    }
+
+    return get_pred(n, i);
 }
 
 static TB_Node* next_control(TB_Node* n) {

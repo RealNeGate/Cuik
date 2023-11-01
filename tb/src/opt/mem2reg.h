@@ -83,7 +83,7 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
 
     // the slot to fill is based on the predecessor list of the region
     FOREACH_N(i, 0, phi_region->input_count) {
-        TB_Node* pred = get_pred(phi_region, i);
+        TB_Node* pred = get_pred_cfg(&c->cfg, phi_region, i);
         if (pred == bb) {
             set_input(c->p, phi_node, node, i+1);
             break;
@@ -121,7 +121,7 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
 
         bool found = false;
         FOREACH_N(j, 0, dst->input_count) {
-            TB_Node* pred = get_pred(dst, j);
+            TB_Node* pred = get_pred_cfg(&c->cfg, dst, j);
             if (pred == bb) {
                 // try to replace
                 set_input(c->p, phi_reg, top, j + 1);
@@ -244,10 +244,14 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     if (end != NULL) {
         // fill successors
         for (User* u = end->users; u; u = u->next) {
-            if (cfg_is_control(u->n)) {
-                TB_Node* succ = cfg_get_fallthru(u->n);
-                ssa_replace_phi_arg(c, f, bb, succ, stack);
-            }
+            if (!cfg_is_control(u->n)) continue;
+
+            TB_Node* succ = cfg_get_fallthru(u->n);
+            if (succ->type != TB_REGION) continue;
+
+            // for p in succ's phis:
+            //   if p is a var v, replace edge with stack[v]
+            ssa_replace_phi_arg(c, f, bb, succ, stack);
         }
     }
 

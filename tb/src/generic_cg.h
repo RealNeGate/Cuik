@@ -571,14 +571,14 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         }
     }
 
-    /*if (!strcmp(f->super.name, "WinMain")) {
+    /*if (reg_alloc_log) {
         FOREACH_N(i, 0, ctx->bb_count) {
             TB_Node* n = bbs[bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(seq_bb, n);
 
-            bool in = set_get(&mbb->live_in, 83);
-            bool out = set_get(&mbb->live_out, 83);
-            printf(".bb%d: %s %s\n", bb_order[i], in?"in":"", out?"out":"");
+            bool in = set_get(&mbb->live_in, 33);
+            bool out = set_get(&mbb->live_out, 33);
+            printf(".bb%d [%d - %d]: %s %s\n", bb_order[i], mbb->start, mbb->end, in?"in":"", out?"out":"");
         }
     }*/
 
@@ -767,13 +767,12 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             dummy.next = NULL;
             ctx->head = &dummy;
 
-            if (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY) {
+            if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
                 TB_OPTDEBUG(CODEGEN)(
                     printf("  EFFECT %u: ", n->gvn),
                     print_node_sexpr(n, 0),
                     printf("\n")
                 );
-
 
                 isel(ctx, n, val->vreg);
 
@@ -782,14 +781,6 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                         isel_set_location(ctx, prev_effect);
                     }
                     prev_effect = n;
-
-                    // find next line
-                    /* FOREACH_N(j, i + 1, dyn_array_length(ctx->worklist.items)) {
-                        TB_Node* m = ctx->worklist.items[j];
-                        if (m->type != TB_PROJ && (m->dt.type == TB_TUPLE || m->dt.type == TB_CONTROL || m->dt.type == TB_MEMORY)) {
-                            break;
-                        }
-                    }*/
                 }
             } else if (val->uses > 0 || val->vreg >= 0) {
                 if (val->vreg < 0) {
@@ -901,9 +892,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
     #if 0
-    if (!strcmp(f->super.name, "load_jpeg_image")) {
+    if (!strcmp(f->super.name, "runtime@print_string")) {
         reg_alloc_log = true;
-        tb_pass_print(p);
+        // tb_pass_print(p);
     } else {
         reg_alloc_log = false;
     }

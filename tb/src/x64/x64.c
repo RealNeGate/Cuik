@@ -662,11 +662,18 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
         case TB_MULPAIR: {
             // returns into both lo and hi
-            TB_NodeArithPair* p = TB_NODE_GET_EXTRA(n);
-            TB_DataType dt = p->lo->dt;
+            TB_Node* projs[2] = { 0 };
+            for (User* u = n->users; u; u = u->next) {
+                if (u->n->type == TB_PROJ) {
+                    int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
+                    projs[index] = u->n;
+                }
+            }
 
-            int lo = input_reg(ctx, p->lo);
-            int hi = input_reg(ctx, p->hi);
+            // at least one needs to be alive
+            assert(projs[0] != NULL || projs[1] != NULL);
+
+            TB_DataType dt = projs[0] ? projs[0]->dt : projs[1]->dt;
             {
                 Inst* inst = alloc_inst(MUL, dt, 2, 2, 0);
                 inst->operands[0] = RAX;
@@ -675,8 +682,9 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 inst->operands[3] = RDX;
                 SUBMIT(inst);
             }
-            SUBMIT(inst_move(dt, lo, RAX));
-            SUBMIT(inst_move(dt, hi, RDX));
+
+            if (projs[0]) SUBMIT(inst_move(dt, input_reg(ctx, projs[0]), RAX));
+            if (projs[1]) SUBMIT(inst_move(dt, input_reg(ctx, projs[1]), RDX));
             break;
         }
 

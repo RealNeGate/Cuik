@@ -537,6 +537,17 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
         }
     }
 
+    if (type >= TB_CMP_EQ && type <= TB_CMP_ULE) {
+        // (Cmp Sxt(a) Sxt(b)) => (Cmp a b)
+        if (n->inputs[1]->type == TB_SIGN_EXT && n->inputs[2]->type == TB_SIGN_EXT) {
+            TB_DataType dt = n->inputs[1]->inputs[1]->dt;
+            set_input(opt, n, n->inputs[1]->inputs[1], 1);
+            set_input(opt, n, n->inputs[2]->inputs[1], 2);
+            TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = dt);
+            return n;
+        }
+    }
+
     return NULL;
 }
 
@@ -590,13 +601,12 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     //   x / y  => mulhi(x, a) >> sh
     int bits = dt.data;
     if (bits > 32) {
-        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, sizeof(TB_NodeArithPair));
+        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, 0);
         set_input(opt, mul_node, x, 1);
         set_input(opt, mul_node, make_int_node(f, opt, dt, a), 2);
 
-        TB_Node* lo = make_proj_node(f, opt, dt, mul_node, 1);
-        TB_Node* hi = make_proj_node(f, opt, dt, mul_node, 2);
-        TB_NODE_SET_EXTRA(mul_node, TB_NodeArithPair, .lo = lo, .hi = hi);
+        TB_Node* lo = make_proj_node(f, opt, dt, mul_node, 0);
+        TB_Node* hi = make_proj_node(f, opt, dt, mul_node, 1);
 
         TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
         set_input(opt, sh_node, hi, 1);

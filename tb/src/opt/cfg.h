@@ -157,7 +157,7 @@ TB_DominanceFrontiers* tb_get_dominance_frontiers(TB_Function* f, TB_Passes* res
 
         if (bb->type == TB_REGION && bb->input_count >= 2) {
             FOREACH_N(k, 0, bb->input_count) {
-                TB_Node* runner = get_pred(bb, k);
+                TB_Node* runner = get_pred_cfg(&cfg, bb, k);
 
                 while (!(runner->type == TB_PROJ && runner->inputs[0]->type == TB_START) && runner != idom(&cfg, bb)) {
                     // add to frontier set
@@ -195,12 +195,12 @@ void tb_compute_dominators2(TB_Function* f, Worklist* ws, TB_CFG cfg) {
         // for all nodes, b, in reverse postorder (except start node)
         FOREACH_REVERSE_N(i, 1, cfg.block_count) {
             TB_Node* b = blocks[i];
-            TB_Node* new_idom = get_pred(b, 0);
+            TB_Node* new_idom = get_pred_cfg(&cfg, b, 0);
 
             if (b->type == TB_REGION) {
                 // for all other predecessors, p, of b
                 FOREACH_N(j, 1, b->input_count) {
-                    TB_Node* p = get_pred(b, j);
+                    TB_Node* p = get_pred_cfg(&cfg, b, j);
 
                     // if doms[p] already calculated
                     TB_Node* idom_p = idom(&cfg, p);

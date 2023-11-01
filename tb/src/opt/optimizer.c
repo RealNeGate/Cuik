@@ -571,7 +571,10 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         return (flags & TB_PEEPHOLE_MEMORY) ? ideal_end(p, f, n) : NULL;
 
         case TB_MEMCPY:
-        return ideal_memcpy(p, f, n);
+        return (flags & TB_PEEPHOLE_MEMORY) ? ideal_memcpy(p, f, n) : NULL;
+
+        case TB_MEMSET:
+        return (flags & TB_PEEPHOLE_MEMORY) ? ideal_memset(p, f, n) : NULL;
 
         // division
         case TB_SDIV:

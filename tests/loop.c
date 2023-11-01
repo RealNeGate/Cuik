@@ -68,10 +68,24 @@ typedef struct
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
 
-int isalnum(int ch) {
+bool boog(char* x, char* y, ptrdiff_t n) {
+    if (n == 0) return true;
+    if (x == y) return true;
+
+    size_t length = n;
+    for (size_t i = 0; i < length; i++) {
+        if (x[i] != y[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int isalnum(int ch) {
     switch (ch) {
         case 'a' ... 'z':
         case 'A' ... 'Z':
@@ -88,7 +102,7 @@ int isalnum(int ch) {
     return fib(i - 2) + fib(i - 1);
 }*/
 
-uint32_t murmur3_32(const void* key, size_t len) {
+static uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time
@@ -119,7 +133,7 @@ uint32_t murmur3_32(const void* key, size_t len) {
     return (h ^ (h >> 16));
 }
 
-int main() {
+static int aaa() {
     printf("Wack! %d\n", murmur3_32("Hello", 5));
     printf("Wack! %d\n", murmur3_32("Why", 3));
 
@@ -200,10 +214,10 @@ FILE *stbi__fopen(char const *filename, char const *mode)
     FILE *f;
     wchar_t wMode[64];
     wchar_t wFilename[1024];
-	if (0 == MultiByteToWideChar(65001 /* UTF8 */, 0, filename, -1, wFilename, sizeof(wFilename)))
+    if (0 == MultiByteToWideChar(65001 /* UTF8 */, 0, filename, -1, wFilename, sizeof(wFilename)))
         return 0;
 
-	if (0 == MultiByteToWideChar(65001 /* UTF8 */, 0, mode, -1, wMode, sizeof(wMode)))
+    if (0 == MultiByteToWideChar(65001 /* UTF8 */, 0, mode, -1, wMode, sizeof(wMode)))
         return 0;
 
     f = fopen(filename, mode);

@@ -162,6 +162,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         NORMIE_BINOP(0x38), // cmp
         NORMIE_BINOP(0x88), // mov
 
+        // OP r/m8, imm8
+        [0x80] = OP_MI8 | OP_8BIT | OP_FAKERX,
         // OP r/m, imm32
         [0x81] = OP_MI | OP_FAKERX,
         // OP r/m, imm8
@@ -222,6 +224,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     #undef NORMIE_BINOP
 
     static const uint16_t ext_table[256] = {
+        // ud2
+        [0x0B] = OP_0ARY,
         // SSE: movu
         [0x10] = OP_RM | OP_SSE, [0x11] = OP_MR | OP_SSE,
         // SSE: add, mul, sub, min, div, max
@@ -374,7 +378,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // immediates might use RX for an extended opcode
         // IMUL's ternary is a special case
         if (uses_imm || op == 0x68 || op == 0x69) {
-            if (enc == OP_MI8 || op == 0x68) {
+            if ((enc == OP_MI && inst->data_type == TB_X86_TYPE_BYTE) || enc == OP_MI8 || op == 0x68) {
                 ABC(1);
                 int8_t imm = data[current++];
                 inst->flags |= TB_X86_INSTR_IMMEDIATE;
@@ -397,12 +401,15 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 
 const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
     switch (inst->opcode) {
+        case 0x0F0B: return "ud2";
+
         case 0x00 ... 0x03: return "add";
         case 0x08 ... 0x0B: return "or";
         case 0x20 ... 0x23: return "and";
         case 0x28 ... 0x2B: return "sub";
         case 0x30 ... 0x33: return "xor";
         case 0x38 ... 0x3B: return "cmp";
+        case 0x80 ... 0x83: return "cmp";
         case 0x88 ... 0x8B: return "mov";
 
         case 0xA4: case 0xA5: return "movs";
