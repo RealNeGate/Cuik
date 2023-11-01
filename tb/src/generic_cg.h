@@ -1036,7 +1036,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 end = ctx.emit.labels[bb_order[i + 1]] & ~0x80000000;
             }
 
-            patch = disassemble(&ctx.emit, patch, i, start, end);
+            patch = disassemble(&ctx.emit, patch, bb_order[i], start, end);
         }
     }
 
