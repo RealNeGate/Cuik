@@ -336,6 +336,8 @@ static void ld_invoke(BuildStepInfo* info) {
     }
 
     if (args->run) {
+        // TODO(NeGate): support more platforms with the JIT API
+        #ifdef _WIN32
         TB_JIT* jit = tb_jit_begin(mod, 0);
 
         // put every function into the heap
@@ -396,6 +398,10 @@ static void ld_invoke(BuildStepInfo* info) {
         tb_jit_end(jit);
         fprintf(stderr, "C JIT exited\n");
         goto done;
+        #else
+        fprintf(stderr, "C JIT unsupported here :(\n");
+        goto done;
+        #endif
     }
 
     ////////////////////////////////

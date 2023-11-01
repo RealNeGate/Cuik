@@ -819,8 +819,6 @@ typedef enum {
     TB_DBG_LINE,
 } TB_DbgStep;
 
-// TODO(NeGate): support more platforms with the JIT API
-#ifdef _WIN32
 // Debugger stuff
 //   creates a new context we can run JIT code in, you don't
 //   technically need this but it's a nice helper for writing
@@ -832,7 +830,6 @@ TB_API bool tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep ste
 TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
 TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);
 TB_API void tb_jit_thread_dump_stack(TB_JIT* jit, TB_CPUContext* cpu);
-#endif
 
 ////////////////////////////////
 // Disassembler
