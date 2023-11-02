@@ -228,14 +228,39 @@ static bool is_mem_in_op(TB_Node* n) {
     return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
 }
 
-static bool is_region_wit_no_phis(TB_Node* n) {
-    if (n->type != TB_REGION) {
+// We're trying to avoid not having a codepath to uniquely run phi logic
+static bool unique_targets_in_phi_terms(TB_Node* n, TB_Node* r) {
+    if (r->type != TB_REGION) {
         return false;
     }
 
-    for (User* use = n->users; use; use = use->next) {
-        if (use->n->type == TB_PHI && use->n->dt.type != TB_MEMORY) {
-            return false;
+    // test against the proj's parent
+    if (n->type == TB_PROJ) {
+        n = n->inputs[0];
+    }
+
+    bool has_phis = false;
+    for (User* u = r->users; u; u = u->next) {
+        if (u->n->type == TB_PHI) { has_phis = true; break; }
+    }
+
+    if (!has_phis) {
+        return true;
+    }
+
+    // if we have phis but all our edges are unique
+    int seen = 0;
+    FOREACH_N(i, 0, r->input_count) {
+        TB_Node* in = r->inputs[i];
+        if (in->type == TB_PROJ) {
+            in = in->inputs[0];
+        }
+
+        if (in == n) {
+            seen++;
+            if (seen == 2) {
+                return false;
+            }
         }
     }
 

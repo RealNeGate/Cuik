@@ -72,9 +72,17 @@ typedef struct
 #include <string.h>
 #include <stdio.h>
 
+static int eval(int m, int x, int b) {
+    return m*x + b;
+}
+
+static int foo(int x) {
+    return x ? 4 : 2;
+}
+
 bool boog(char* x, char* y, ptrdiff_t n) {
-    if (n == 0) return true;
-    if (x == y) return true;
+    // if (n == 0) return true;
+    // if (x == y) return true;
 
     size_t length = n;
     for (size_t i = 0; i < length; i++) {
@@ -85,7 +93,7 @@ bool boog(char* x, char* y, ptrdiff_t n) {
     return true;
 }
 
-static int isalnum(int ch) {
+/*static int isalnum(int ch) {
     switch (ch) {
         case 'a' ... 'z':
         case 'A' ... 'Z':
@@ -97,7 +105,7 @@ static int isalnum(int ch) {
     }
 }
 
-/*static int fib(int i) {
+static int fib(int i) {
     if (i < 2) return i;
     return fib(i - 2) + fib(i - 1);
 }*/

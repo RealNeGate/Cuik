@@ -825,7 +825,7 @@ typedef enum {
 //   JITs especially when it comes to breakpoints (and eventually
 //   safepoints)
 TB_API TB_CPUContext* tb_jit_thread_create(void* entry, void* arg);
-//   runs until it hits some exception/breakpoint.
+//   runs until TB_DbgStep condition is met
 TB_API bool tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step);
 TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
 TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);

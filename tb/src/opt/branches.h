@@ -205,9 +205,9 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
             //       / | \
             //    ... ... ...         each of these is a CProj
             //       \ | /
-            //      Region
+            //       Region
             //            \
-            //             \ ... ...  each of these is a trivial value
+            //             \ ... ...  each of these is a trivial value (int consts only for now)
             //              \ | /
             //               Phi
             TB_Node* parent = region->inputs[0]->inputs[0];
@@ -356,31 +356,6 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
 
                 return n;
             }
-
-            // check if we're dominated by a branch that already checked it
-            /*TB_Node* bb = get_block_begin(n->inputs[0]);
-            for (User* u = find_users(opt, cmp_node); u; u = u->next) {
-                if (u->n != n && u->slot == 1 && u->n->type == TB_BRANCH) {
-                    TB_NodeBranch* dom_branch = TB_NODE_GET_EXTRA(u->n);
-                    if (dom_branch->succ_count == 2 && dom_branch->keys[0] == 0) {
-                        // found another branch, check if we're dominated by one of it's successors
-                        // if so, then all our paths to 'br' can use info from the branch.
-                        ptrdiff_t match = -1;
-                        FOREACH_N(i, 0, dom_branch->succ_count) {
-                            TB_Node* target = dom_branch->succ[i];
-                            if (tb_is_dominated_by(opt->cfg, target, bb)) {
-                                match = i;
-                                break;
-                            }
-                        }
-
-                        // we can now look for the condition to match
-                        if (match >= 0) {
-                            transmute_goto(opt, f, n, br->succ[match]);
-                        }
-                    }
-                }
-            }*/
         }
     }
 

@@ -152,21 +152,67 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
     }
 }
 
-static bool print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallback callback, void* user_data, TB_Node* restrict n) {
-    do {
-        if (!nl_hashset_put(visited, n)) {
-            return false;
+static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, int index) {
+    switch (n->type) {
+        case TB_START: {
+            if (index == 0) {
+                P("ctrl");
+            } else if (index == 1) {
+                P("rpc");
+            } else if (index == 2) {
+                P("cont");
+            } else {
+                P("%c", 'a'+(index - 3));
+            }
+            break;
         }
 
-        /*bool is_effect = tb_has_effects(n);
-        const char* fillcolor = is_effect ? "lightgrey" : "antiquewhite1";
-        if (n->dt.type == TB_MEMORY) {
-            fillcolor = "lightblue";
-        }*/
+        case TB_BRANCH: {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+            if (br->succ_count == 2 && br->keys[0] == 0) {
+                P("%s", index ? "false" : "true");
+            } else if (index == 0) {
+                P("default");
+            } else {
+                P("%"PRId64, br->keys[index - 1]);
+            }
+            break;
+        }
 
+        default: tb_todo();
+    }
+}
+
+static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* user_data, size_t bb, TB_Node* restrict n) {
+    if (n->dt.type == TB_TUPLE) {
+        P("  r%u [ordering=in; shape=record; label=\"", n->gvn);
+
+        TB_Node* projs[128] = { 0 };
+        int limit = 0;
+        for (User* use = n->users; use; use = use->next) {
+            if (use->n->type == TB_PROJ) {
+                int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
+                if (limit < index+1) limit = index+1;
+
+                projs[index] = use->n;
+            }
+        }
+
+        P("{%s|{", tb_node_get_name(n));
+        int outs = 0;
+        for (int i = 0; i < limit; i++) {
+            if (projs[i] != NULL) {
+                if (outs) P("|");
+
+                P("<p%d>", i);
+                print_proj(callback, user_data, n, i);
+                outs++;
+            }
+        }
+        P("}}");
+    } else {
         P("  r%u [ordering=in; shape=plaintext; label=\"", n->gvn);
         switch (n->type) {
-            case TB_START: P("start"); break;
             case TB_REGION: P("region"); break;
 
             case TB_LOAD: {
@@ -220,77 +266,72 @@ static bool print_graph_node(TB_Function* f, NL_HashSet* visited, TB_PrintCallba
                 break;
             }
 
-            case TB_PROJ: {
-                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-                if (n->inputs[0]->type == TB_START) {
-                    if (index == 0) {
-                        P("ctrl");
-                    } else if (index == 1) {
-                        P("mem");
-                    } else if (index == 2) {
-                        P("rpc");
-                    } else {
-                        P("%c", 'a'+(index - 3));
-                    }
-                } else {
-                    P("%d", index);
-                }
-                break;
-            }
-
             default:
             P("%s", tb_node_get_name(n));
             break;
         }
-        P("\"]");
+    }
+    P("\"]");
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+        TB_Node* in = n->inputs[i];
 
-        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-            TB_Node* in = n->inputs[i];
+        const char* color = "black";
+        if (in->dt.type == TB_CONTROL) {
+            color = "red";
+        } else if (in->dt.type == TB_CONT) {
+            color = "purple";
+        } else if (in->dt.type == TB_MEMORY) {
+            color = "blue";
+        }
 
-            const char* color = "black";
-            TB_DataType dt = n->type == TB_PROJ ? n->dt : in->dt;
+        if (in->type == TB_PROJ) {
+            int index = TB_NODE_GET_EXTRA_T(in, TB_NodeProj)->index;
 
-            if (dt.type == TB_CONTROL) {
-                color = "red";
-            } else if (dt.type == TB_CONT) {
-                color = "purple";
-            } else if (dt.type == TB_MEMORY) {
-                color = "blue";
-            }
-
+            P("; r%u:p%d -> r%u [color=%s]", in->inputs[0]->gvn, index, n->gvn, color);
+        } else {
             P("; r%u -> r%u [color=%s]", in->gvn, n->gvn, color);
         }
-        P("\n");
-
-        // print all the inputs
-        FOREACH_N(i, 1, n->input_count) if (n->inputs[i]) {
-            print_graph_node(f, visited, callback, user_data, n->inputs[i]);
-        }
-
-        if (n->input_count == 0) break;
-        n = n->inputs[0];
-    } while (n != NULL);
-
-    return true;
+    }
+    P("\n");
 }
 
 TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* user_data) {
     TB_Function* f = opt->f;
-    P("digraph %s {\n", f->super.name ? f->super.name : "unnamed");
-
+    Worklist old = opt->worklist;
     Worklist tmp_ws = { 0 };
     worklist_alloc(&tmp_ws, f->node_count);
 
-    TB_CFG cfg = tb_compute_rpo2(f, &tmp_ws, &opt->stack);
+    P("digraph %s {\n", f->super.name ? f->super.name : "unnamed");
 
-    NL_HashSet visited = nl_hashset_alloc(f->node_count);
+    opt->worklist = tmp_ws;
+    TB_CFG cfg = tb_compute_rpo(f, opt);
+
+    // schedule nodes
+    tb_pass_schedule(opt, cfg);
+
+    Worklist* ws = &opt->worklist;
+    worklist_clear_visited(ws);
     FOREACH_N(i, 0, cfg.block_count) {
-        TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, tmp_ws.items[i]);
-        print_graph_node(f, &visited, callback, user_data, bb->end);
+        TB_Node* bb_start = opt->worklist.items[i];
+        TB_BasicBlock* bb = nl_map_get_checked(opt->scheduled, bb_start);
+
+        sched_walk(opt, ws, NULL, bb, bb->end, true);
+
+        FOREACH_REVERSE_N(j, cfg.block_count, dyn_array_length(ws->items)) {
+            if (ws->items[j]->type == TB_PROJ) {
+                // handled by the tuple nodes
+                continue;
+            }
+
+            print_graph_node(f, callback, user_data, i, ws->items[j]);
+        }
+
+        dyn_array_set_length(ws->items, cfg.block_count);
     }
-    nl_hashset_free(visited);
-    worklist_free(&tmp_ws);
+
+    worklist_free(ws);
     tb_free_cfg(&cfg);
+    opt->worklist = old;
 
     P("}\n");
 }

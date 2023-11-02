@@ -97,8 +97,8 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                     print_type2(u->n->dt);
                 }
             }
-            printf(")");
-            // printf(") v%u", n->gvn);
+            // printf(")");
+            printf(") // v%u", n->gvn);
         }
     } else if (n->type == TB_FLOAT32_CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
@@ -121,7 +121,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             if (i >= 0) {
                 printf(".bb%zu", i);
                 if (def) {
-                    printf("()");
+                    printf("() // v%u", n->gvn);
                 }
             } else {
                 printf("*DEAD*");
@@ -318,9 +318,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
             default: {
                 if (n->dt.type == TB_TUPLE) {
                     // print with multiple returns
-                    TB_Node* projs[4];
-                    for (size_t i = 0; i < 4; i++) projs[i] = NULL;
-
+                    TB_Node* projs[4] = { 0 };
                     for (User* use = n->users; use; use = use->next) {
                         if (use->n->type == TB_PROJ) {
                             int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
@@ -330,7 +328,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 
                     printf("  ");
 
-                    size_t first = projs[0]->dt.type == TB_CONTROL ? 1 : 0;
+                    size_t first = projs[0] && projs[0]->dt.type == TB_CONTROL ? 1 : 0;
                     FOREACH_N(i, first, 4) {
                         if (projs[i] == NULL) break;
                         if (i > first) printf(", ");
