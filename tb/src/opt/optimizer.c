@@ -17,7 +17,6 @@
 thread_local TB_Arena* tmp_arena;
 
 // helps us do some matching later
-static TB_Node* unsafe_get_region(TB_Node* n);
 static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled);
 static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot);
 static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size_t i);
@@ -766,14 +765,6 @@ static bool is_terminator(TB_Node* n) {
     return n->type == TB_BRANCH || n->type == TB_END || n->type == TB_TRAP || n->type == TB_UNREACHABLE;
 }
 
-static TB_Node* unsafe_get_region(TB_Node* n) {
-    while (n->type != TB_REGION && n->type != TB_START) {
-        n = n->inputs[0];
-    }
-
-    return n;
-}
-
 static void validate_node_users(TB_Node* n) {
     if (n != NULL) {
         for (User* use = n->users; use; use = use->next) {
@@ -810,6 +801,9 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
     }
 }
 
+// because certain optimizations apply when things are the same
+// we mark ALL users including the ones who didn't get changed
+// when subsuming.
 static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
     DO_IF(TB_OPTDEBUG_STATS)(p->stats.peeps++);
     DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", p->stats.time++), print_node_sexpr(n, 0));
@@ -861,9 +855,6 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
             DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
 
             subsume_node(p, f, n, k);
-
-            // because certain optimizations apply when things are merged
-            // we mark ALL users including the ones who didn't get changed.
             tb_pass_mark_users(p, k);
             return k;
         } else {
@@ -877,8 +868,8 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
         DO_IF(TB_OPTDEBUG_STATS)(p->stats.identities++);
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
 
-        tb_pass_mark_users(p, n);
         subsume_node(p, f, n, k);
+        tb_pass_mark_users(p, k);
         return k;
     }
 
@@ -889,9 +880,6 @@ static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Peeph
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[31mGVN\x1b[0m"));
 
         subsume_node(p, f, n, k);
-
-        // because certain optimizations apply when things are merged
-        // we mark ALL users including the ones who didn't get changed.
         tb_pass_mark_users(p, k);
         return k;
     } else {

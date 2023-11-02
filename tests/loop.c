@@ -76,13 +76,19 @@ static int eval(int m, int x, int b) {
     return m*x + b;
 }
 
-static int foo(int x) {
-    return x ? 4 : 2;
-}
+/*int stuff(int c, int* d, int* e) {
+    if (c) {
+        *d = 16;
+        return 16;
+    } else {
+        *e = 16;
+        return 24;
+    }
+}*/
 
 bool boog(char* x, char* y, ptrdiff_t n) {
-    // if (n == 0) return true;
-    // if (x == y) return true;
+    if (n == 0) return true;
+    if (x == y) return true;
 
     size_t length = n;
     for (size_t i = 0; i < length; i++) {

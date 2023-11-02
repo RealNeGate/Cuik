@@ -782,7 +782,13 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
                         int src = input_reg(ctx, v->n);
 
-                        hint_reg(ctx, v->dst, src);
+                        TB_OPTDEBUG(CODEGEN)(
+                            printf("  PHI %u: ", v->phi->gvn),
+                            print_node_sexpr(v->phi, 0),
+                            printf("\n")
+                        );
+
+                        hint_reg(ctx, src, v->dst);
                         SUBMIT(inst_move(dt, v->dst, src));
                     }
                 } else {
@@ -911,7 +917,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
     #if 0
-    if (!strcmp(f->super.name, "boog")) {
+    if (!strcmp(f->super.name, "stuff")) {
         reg_alloc_log = true;
         // tb_pass_print(p);
     } else {

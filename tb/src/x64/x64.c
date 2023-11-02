@@ -386,6 +386,13 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
                 } else {
                     SUBMIT(inst_op_ri(CMP, cmp_dt, lhs, x));
                 }
+            } else if (n->inputs[2]->type == TB_LOAD && on_last_use(ctx, n->inputs[2])) {
+                use(ctx, n->inputs[2]);
+
+                Inst* inst = isel_addr2(ctx, n->inputs[2]->inputs[2], lhs, -1, lhs);
+                inst->type = CMP;
+                inst->dt = legalize(n->dt);
+                SUBMIT(inst);
             } else {
                 int rhs = input_reg(ctx, n->inputs[2]);
                 SUBMIT(inst_op_rr_no_dst(CMP, cmp_dt, lhs, rhs));
@@ -621,8 +628,12 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             } else if (try_for_imm32(ctx, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
 
-                SUBMIT(inst_move(n->dt, dst, lhs));
-                SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
+                if (type == TB_ADD) {
+                    SUBMIT(inst_op_rm(LEA, TB_TYPE_PTR, dst, lhs, -1, SCALE_X1, x));
+                } else {
+                    SUBMIT(inst_move(n->dt, dst, lhs));
+                    SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
+                }
             } else {
                 int rhs = input_reg(ctx, n->inputs[2]);
 
@@ -1380,16 +1391,13 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
                 enum {
                     IF_ELSE_CHAIN,
-                    TWO_STAGE_TABLE,
                     JUMP_TABLE,
                 } r = IF_ELSE_CHAIN;
 
                 int64_t range = (max - min) + 1;
                 if (range >= 4 && dist_avg < 2.0) {
                     r = JUMP_TABLE;
-                }/* else if (range > 32 && dist_avg > 4.0) {
-                    r = TWO_STAGE_TABLE;
-                }*/
+                }
 
                 switch (r) {
                     case IF_ELSE_CHAIN: {
@@ -1407,66 +1415,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                             SUBMIT(inst_jcc(succ[i], E));
                         }
                         SUBMIT(inst_jmp(succ[0]));
-                        break;
-                    }
-
-                    case TWO_STAGE_TABLE: {
-                        tb_todo();
-
-                        enum {
-                            ITEMS_PER_CHUNK = 256,
-                            CHUNK_SIZE = sizeof(uint32_t) * ITEMS_PER_CHUNK,
-                        };
-
-                        int64_t chunk_count = range / ITEMS_PER_CHUNK;
-                        assert(range < 65536*ITEMS_PER_CHUNK);
-
-                        size_t stage1_size = ((chunk_count + 1) & ~1ull) * sizeof(uint16_t);
-                        // worst case size, for now we're not deduping so we're a bit fucked there
-                        size_t stage2_size = (chunk_count + 1) * CHUNK_SIZE;
-
-                        // make a jump table with 4 byte relative pointers for each target
-                        TB_Function* f = ctx->f;
-                        TB_Global* jump_table = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
-                        tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), jump_table, stage1_size + stage2_size, 4, 1);
-
-                        // generate patches for later
-                        uint16_t* stage1 = tb_global_add_region(f->super.module, jump_table, 0,           stage1_size);
-                        uint32_t* stage2 = tb_global_add_region(f->super.module, jump_table, stage1_size, stage2_size);
-
-                        // first table is always an empty one, we'll default to this
-                        int tab_count = 1;
-                        FOREACH_N(i, 0, chunk_count) {
-                            stage1[i] = 0;
-                        }
-                        memset(stage2, 0, CHUNK_SIZE);
-
-                        // construct stage 1
-                        size_t i = 0, key_count = br->succ_count - 1;
-                        do {
-                            // parse until the chunk
-                            size_t stage1_idx = (br->keys[i] - min) / ITEMS_PER_CHUNK;
-                            size_t tab = tab_count++;
-
-                            // allocate table
-                            stage1[stage1_idx] = tab;
-
-                            // fill elements in table
-                            while (i < key_count) {
-                                int64_t key = br->keys[i - 1] - min;
-                                if ((key / ITEMS_PER_CHUNK) != stage1_idx) {
-                                    break;
-                                }
-
-                                /* JumpTablePatch p;
-                                p.pos = &stage2[i];
-                                p.target = succ[0];
-                                dyn_array_put(ctx->jump_table_patches, p); */
-
-                                stage2[tab*ITEMS_PER_CHUNK + i] = 0;
-                                i += 1;
-                            }
-                        } while (i < key_count);
                         break;
                     }
 

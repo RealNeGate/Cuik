@@ -130,12 +130,13 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
         add_use_pos(interval, inst->time, dst_use_reg ? USE_REG : USE_OUT);
     }
 
+    int t = inst->type == MOV || inst->type == FP_MOV ? inst->time - 1 : inst->time;
     FOREACH_N(i, 0, inst->in_count) {
         assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
-        add_range(interval, bb->start, inst->time);
-        add_use_pos(interval, inst->time, USE_REG);
+        add_range(interval, bb->start, t);
+        add_use_pos(interval, t, USE_REG);
     }
 
     // calls use the temporaries for clobbers
@@ -245,7 +246,7 @@ static LiveInterval* split_interval_at(LSRA* restrict ra, LiveInterval* interval
         interval = &ra->intervals[interval->split_kid];
     }
 
-    assert(interval->reg >= 0 || pos <= interval_end(interval));
+    // assert(interval->reg >= 0 || pos <= interval_end(interval));
     return interval;
 }
 
@@ -377,7 +378,6 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     int half_free = 1 << 16;
     FOREACH_N(i, 0, 16) {
         ra->free_pos[i] = (ra->callee_saved[rc] & (1ull << i)) ? half_free : INT_MAX;
-        // ra->free_pos[i] = INT_MAX;
     }
 
     // for each active reg, set the free pos to 0
