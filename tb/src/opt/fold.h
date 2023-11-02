@@ -149,9 +149,14 @@ static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB
         break;
 
         case TB_MUL:
-        min = wrapped_int_mul(a->_int.min, b->_int.min);
-        max = wrapped_int_mul(a->_int.max, b->_int.max);
-        break;
+        // constant multiply is the easy case
+        if (lattice_is_const_int(a) && lattice_is_const_int(b)) {
+            min = max = wrapped_int_mul(a->_int.min, b->_int.min) & mask;
+        } else {
+            min = lattice_int_min(n->dt.data) & mask;
+            max = lattice_int_max(n->dt.data) & mask;
+        }
+        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
     }
 
     // truncate to the size of the raw DataType
