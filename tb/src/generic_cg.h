@@ -768,11 +768,30 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             ctx->head = &dummy;
 
             if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
-                TB_OPTDEBUG(CODEGEN)(
-                    printf("  EFFECT %u: ", n->gvn),
-                    print_node_sexpr(n, 0),
-                    printf("\n")
-                );
+                if (n->type == TB_BRANCH) {
+                    TB_OPTDEBUG(CODEGEN)(
+                        printf("  TERMINATOR %u: ", n->gvn),
+                        print_node_sexpr(n, 0),
+                        printf("\n")
+                    );
+
+                    // writeback PHIs
+                    FOREACH_N(i, 0, our_phis) {
+                        PhiVal* v = &phi_vals[i];
+                        TB_DataType dt = v->phi->dt;
+
+                        int src = input_reg(ctx, v->n);
+
+                        hint_reg(ctx, v->dst, src);
+                        SUBMIT(inst_move(dt, v->dst, src));
+                    }
+                } else {
+                    TB_OPTDEBUG(CODEGEN)(
+                        printf("  EFFECT %u: ", n->gvn),
+                        print_node_sexpr(n, 0),
+                        printf("\n")
+                    );
+                }
 
                 isel(ctx, n, val->vreg);
 
@@ -892,7 +911,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
     #if 0
-    if (!strcmp(f->super.name, "runtime@print_string")) {
+    if (!strcmp(f->super.name, "boog")) {
         reg_alloc_log = true;
         // tb_pass_print(p);
     } else {
