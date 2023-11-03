@@ -177,8 +177,8 @@ typedef enum {
     INST_ABS    = 512, // operand in abs
 
     // memory op
-    INST_INDEXED = 1024,
-    INST_SPILL   = 2048,
+    INST_INDEXED   = 1024,
+    INST_SPILL     = 2048,
 } InstFlags;
 
 struct Inst {
@@ -189,7 +189,10 @@ struct Inst {
     InstFlags flags;
 
     TB_X86_DataType dt;
-    int time, mem_slot;
+    int time;
+
+    short mem_slot;
+    uint8_t save_count;
 
     union {
         TB_Symbol* s;
@@ -213,6 +216,7 @@ struct Inst {
     //    RegIndex outs[out_count];
     //    RegIndex ins[in_count];
     //    RegIndex tmps[tmp_count];
+    //    RegIndex saves[save_count];
     //
     RegIndex operands[];
 };

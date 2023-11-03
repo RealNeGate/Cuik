@@ -342,6 +342,10 @@ bool tb_pass_mem2reg(TB_Passes* p) {
                 DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: v%u could not mem2reg (data type is too inconsistent)", f->super.name, n->gvn));
                 break;
             }
+            case COHERENCY_DEAD: {
+                DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: v%u could not mem2reg (dead)", f->super.name, n->gvn));
+                break;
+            }
             default: tb_todo();
         }
     }

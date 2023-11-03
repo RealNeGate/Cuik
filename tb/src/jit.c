@@ -129,7 +129,7 @@ static TB_ResolvedLine jit__addr2line(TB_JIT* jit, TB_ResolvedAddr addr) {
 
 TB_ResolvedLine tb_jit_addr2line(TB_JIT* jit, void* ptr) {
     TB_ResolvedAddr addr = tb_jit_addr2sym(jit, ptr);
-    if (addr.base->tag != TB_SYMBOL_FUNCTION) {
+    if (addr.base == NULL || addr.base->tag != TB_SYMBOL_FUNCTION) {
         return (TB_ResolvedLine){ 0 };
     }
 
@@ -540,15 +540,21 @@ bool tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
     if (step == TB_DBG_LINE) {
         TB_ResolvedLine l = tb_jit_addr2line(jit, tb_jit_thread_pc(cpu));
 
+        // make sure we skip all non-user code first, this is slow and annoying
+        while (l.f == NULL) {
+            jit__step(jit, cpu, true);
+            if (cpu->done) goto leave;
+
+            l = tb_jit_addr2line(jit, tb_jit_thread_pc(cpu));
+        }
+
         uintptr_t start = ((uintptr_t) l.f->compiled_pos) + l.start;
         uintptr_t range = l.end - l.start;
 
         // keep stepping until we're out of the line
         for (;;) {
             jit__step(jit, cpu, true);
-            if (cpu->done) {
-                break;
-            }
+            if (cpu->done) goto leave;
 
             uintptr_t rip = (uintptr_t) tb_jit_thread_pc(cpu);
             if (rip - start >= range) {
@@ -558,6 +564,8 @@ bool tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
     } else {
         jit__step(jit, cpu, step == TB_DBG_INST);
     }
+
+    leave:
     RemoveVectoredExceptionHandler(handle);
     return !cpu->done;
 }

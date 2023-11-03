@@ -23,7 +23,6 @@ TB_Symbol* tb_symbol_iter_next(TB_SymbolIter* iter) {
 }
 
 void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
-    sym->tag = TB_SYMBOL_TOMBSTONE;
 }
 
 void tb_symbol_append(TB_Module* m, TB_Symbol* s) {

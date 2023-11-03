@@ -459,14 +459,9 @@ typedef struct TB_ThreadInfo TB_ThreadInfo;
 
 typedef enum {
     TB_SYMBOL_NONE,
-
-    // symbol is dead now
-    TB_SYMBOL_TOMBSTONE,
-
     TB_SYMBOL_EXTERNAL,
     TB_SYMBOL_GLOBAL,
     TB_SYMBOL_FUNCTION,
-
     TB_SYMBOL_MAX,
 } TB_SymbolTag;
 
@@ -1218,7 +1213,6 @@ TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall
 TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params);
 TB_API void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params);
 
-// Managed
 TB_API TB_Node* tb_inst_safepoint(TB_Function* f, TB_Node* poke_site, size_t param_count, TB_Node** params);
 
 TB_API TB_Node* tb_inst_incomplete_phi(TB_Function* f, TB_DataType dt, TB_Node* region, size_t preds);

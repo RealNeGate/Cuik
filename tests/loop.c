@@ -76,7 +76,7 @@ static int eval(int m, int x, int b) {
     return m*x + b;
 }
 
-/*int stuff(int c, int* d, int* e) {
+static int stuff(int c, int* d, int* e) {
     if (c) {
         *d = 16;
         return 16;
@@ -84,9 +84,9 @@ static int eval(int m, int x, int b) {
         *e = 16;
         return 24;
     }
-}*/
+}
 
-bool boog(char* x, char* y, ptrdiff_t n) {
+static bool boog(char* x, char* y, ptrdiff_t n) {
     if (n == 0) return true;
     if (x == y) return true;
 
@@ -99,7 +99,7 @@ bool boog(char* x, char* y, ptrdiff_t n) {
     return true;
 }
 
-/*static int isalnum(int ch) {
+static int isalnum(int ch) {
     switch (ch) {
         case 'a' ... 'z':
         case 'A' ... 'Z':
@@ -114,7 +114,18 @@ bool boog(char* x, char* y, ptrdiff_t n) {
 static int fib(int i) {
     if (i < 2) return i;
     return fib(i - 2) + fib(i - 1);
-}*/
+}
+
+int main() {
+    printf("fib(10) = %d\n", fib(10));
+    printf("Wack! %d\n", murmur3_32("Hello", 5));
+    printf("Wack! %d\n", murmur3_32("Why", 3));
+
+    /*for (int i = 32; i <= 128; i++) {
+        printf("%c %d\n", i, isalnum(i));
+    }*/
+    return 0;
+}
 
 static uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
@@ -145,18 +156,6 @@ static uint32_t murmur3_32(const void* key, size_t len) {
     h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
     h = (h ^ (h >> 13))*0xc2b2ae35;
     return (h ^ (h >> 16));
-}
-
-static int aaa() {
-    printf("Wack! %d\n", murmur3_32("Hello", 5));
-    printf("Wack! %d\n", murmur3_32("Why", 3));
-
-    /*for (int i = 32; i <= 128; i++) {
-        printf("%c %d\n", i, isalnum(i));
-    }*/
-
-    // printf("fib(10) = %d\n", fib(10));
-    return 0;
 }
 
 /*uint32_t dead_if(uint32_t n) {

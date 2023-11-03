@@ -158,7 +158,7 @@ static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, i
             if (index == 0) {
                 P("ctrl");
             } else if (index == 1) {
-                P("rpc");
+                P("mem");
             } else if (index == 2) {
                 P("cont");
             } else {
@@ -179,14 +179,38 @@ static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, i
             break;
         }
 
+        case TB_CALL: {
+            if (index == 0) {
+                P("ctrl");
+            } else if (index == 1) {
+                P("mem");
+            } else if (index == 2) {
+                P("val");
+            }
+            break;
+        }
+
         default: tb_todo();
     }
 }
 
 static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* user_data, size_t bb, TB_Node* restrict n) {
-    if (n->dt.type == TB_TUPLE) {
-        P("  r%u [ordering=in; shape=record; label=\"", n->gvn);
+    P("  r%u [ordering=in; shape=record; label=\"{", n->gvn);
 
+    bool ins = false;
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+        if (!ins) P("{");
+        else P("|");
+
+        P("<i%zu> %zu", i, i);
+        ins = true;
+    }
+
+    if (ins) {
+        P("}|");
+    }
+
+    if (n->dt.type == TB_TUPLE) {
         TB_Node* projs[128] = { 0 };
         int limit = 0;
         for (User* use = n->users; use; use = use->next) {
@@ -198,20 +222,19 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
             }
         }
 
-        P("{%s|{", tb_node_get_name(n));
+        P("%s|{", tb_node_get_name(n));
         int outs = 0;
-        for (int i = 0; i < limit; i++) {
+        FOREACH_N(i, 0, limit) {
             if (projs[i] != NULL) {
                 if (outs) P("|");
 
-                P("<p%d>", i);
+                P("<p%zu>", i);
                 print_proj(callback, user_data, n, i);
                 outs++;
             }
         }
-        P("}}");
+        P("}}\"]");
     } else {
-        P("  r%u [ordering=in; shape=plaintext; label=\"", n->gvn);
         switch (n->type) {
             case TB_REGION: P("region"); break;
 
@@ -270,8 +293,9 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
             P("%s", tb_node_get_name(n));
             break;
         }
+        P("}\"]");
     }
-    P("\"]");
+
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
         TB_Node* in = n->inputs[i];
 
@@ -287,9 +311,9 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
         if (in->type == TB_PROJ) {
             int index = TB_NODE_GET_EXTRA_T(in, TB_NodeProj)->index;
 
-            P("; r%u:p%d -> r%u [color=%s]", in->inputs[0]->gvn, index, n->gvn, color);
+            P("; r%u:p%d -> r%u:i%zu [color=%s]", in->inputs[0]->gvn, index, n->gvn, i, color);
         } else {
-            P("; r%u -> r%u [color=%s]", in->gvn, n->gvn, color);
+            P("; r%u -> r%u:i%zu [color=%s]", in->gvn, n->gvn, i, color);
         }
     }
     P("\n");

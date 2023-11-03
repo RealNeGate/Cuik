@@ -757,6 +757,14 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
             return NULL;
         }
 
+        case LATTICE_POINTER: {
+            if (l->_ptr.trifecta == LATTICE_KNOWN_NULL) {
+                return make_int_node(p->f, p, n->dt, 0);
+            }
+
+            return NULL;
+        }
+
         default: return NULL;
     }
 }

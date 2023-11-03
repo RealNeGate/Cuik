@@ -1516,10 +1516,12 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         case TB_SAFEPOINT_POLL: {
             TB_Node* addr = n->inputs[2];
 
+            __debugbreak();
+
             // force uses of the inputs
-            FOREACH_N(i, 3, n->input_count) {
+            /*FOREACH_N(i, 3, n->input_count) {
                 input_reg(ctx, n->inputs[i]);
-            }
+            }*/
 
             // test tmp, dword [poll_site]
             int tmp = DEF(n, TB_TYPE_I32);

@@ -150,6 +150,15 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
             add_use_pos(interval, inst->time, USE_REG);
         }
     }
+
+    // safepoints don't care about memory or reg, it just needs to be available
+    FOREACH_N(i, 0, inst->save_count) {
+        assert(*ops >= 0);
+        LiveInterval* interval = &ra->intervals[*ops++];
+
+        add_range(interval, bb->start, t);
+        add_use_pos(interval, t, USE_MEM_OR_REG);
+    }
 }
 
 static int range_intersect(LiveRange* a, LiveRange* b) {
@@ -850,7 +859,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
             }
 
             int pos = inst->time;
-            FOREACH_N(i, 0, inst->out_count + inst->in_count + inst->tmp_count) {
+            FOREACH_N(i, 0, inst->out_count + inst->in_count + inst->tmp_count + inst->save_count) {
                 inst->operands[i] = split_interval_at(&ra, &ra.intervals[inst->operands[i]], pos) - ra.intervals;
             }
         }
