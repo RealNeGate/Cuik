@@ -226,6 +226,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     static const uint16_t ext_table[256] = {
         // ud2
         [0x0B] = OP_0ARY,
+        // prefetch r/m
+        [0x18] = OP_FAKERX,
         // SSE: movu
         [0x10] = OP_RM | OP_SSE, [0x11] = OP_MR | OP_SSE,
         // SSE: add, mul, sub, min, div, max
@@ -402,6 +404,11 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
     switch (inst->opcode) {
         case 0x0F0B: return "ud2";
+
+        case 0x0F180: return "prefetchnta";
+        case 0x0F181: return "prefetch0";
+        case 0x0F182: return "prefetch1";
+        case 0x0F183: return "prefetch2";
 
         case 0x00 ... 0x03: return "add";
         case 0x08 ... 0x0B: return "or";

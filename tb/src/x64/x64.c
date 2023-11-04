@@ -1696,6 +1696,24 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
 
+        case TB_PREFETCH: {
+            TB_NodePrefetch* p = TB_NODE_GET_EXTRA(n);
+
+            // we might wanna fold these into each other but yea
+            int addr = DEF(n, TB_TYPE_I64);
+            SUBMIT(isel_addr(ctx, n->inputs[2], addr, -1, -1));
+
+            // prefetch op
+            Inst* i = alloc_inst(PREFETCHNTA + p->level, TB_TYPE_I32, 0, 1, 0);
+            i->flags = INST_MEM;
+            i->mem_slot = 0;
+            i->operands[1] = addr;
+            i->disp = 0;
+            i->scale = SCALE_X1;
+            SUBMIT(i);
+            break;
+        }
+
         case TB_CYCLE_COUNTER: {
             // rdtsc
             Inst* inst = alloc_inst(RDTSC, TB_TYPE_I64, 2, 0, 0);

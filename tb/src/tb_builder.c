@@ -719,6 +719,13 @@ TB_Node* tb_inst_cycle_counter(TB_Function* f) {
     return n;
 }
 
+TB_Node* tb_inst_prefetch(TB_Function* f, TB_Node* addr, int level) {
+    TB_Node* n = tb_alloc_node(f, TB_PREFETCH, TB_TYPE_MEMORY, 2, sizeof(TB_NodePrefetch));
+    n->inputs[1] = addr;
+    TB_NODE_SET_EXTRA(n, TB_NodePrefetch, .level = level);
+    return n;
+}
+
 TB_Node* tb_inst_x86_stmxcsr(TB_Function* f) {
     return tb_alloc_node(f, TB_X86INTRIN_STMXCSR, TB_TYPE_I32, 1, 0);
 }

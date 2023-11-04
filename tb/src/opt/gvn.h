@@ -116,6 +116,9 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_CMP_FLE:
         return sizeof(TB_NodeCompare);
 
+        case TB_PREFETCH:
+        return sizeof(TB_NodePrefetch);
+
         default: tb_todo();
     }
 }
@@ -204,6 +207,12 @@ bool gvn_compare(void* a, void* b) {
             TB_NodeSymbol* aa = TB_NODE_GET_EXTRA(x);
             TB_NodeSymbol* bb = TB_NODE_GET_EXTRA(y);
             return aa->sym == bb->sym;
+        }
+
+        case TB_PREFETCH: {
+            TB_NodePrefetch* aa = TB_NODE_GET_EXTRA(x);
+            TB_NodePrefetch* bb = TB_NODE_GET_EXTRA(y);
+            return aa->level == bb->level;
         }
 
         case TB_CMP_EQ:

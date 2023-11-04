@@ -232,6 +232,11 @@ typedef enum TB_NodeTypeEnum {
     TB_MACHINE_OP,    // (Control, Memory) & Buffer -> (Control, Memory)
     // reads the TSC on x64
     TB_CYCLE_COUNTER, // (Control) -> Int64
+    // prefetches data for reading. The number next to the
+    //
+    //   0   is temporal
+    //   1-3 are just cache levels
+    TB_PREFETCH,      // (Memory, Ptr) & Int -> Memory
 
     ////////////////////////////////
     // CONTROL
@@ -554,6 +559,10 @@ typedef struct { // any integer binary operator
 typedef struct {
     TB_CharUnits align;
 } TB_NodeMemAccess;
+
+typedef struct {
+    int level;
+} TB_NodePrefetch;
 
 typedef struct {
     TB_CharUnits size, align;
@@ -1048,8 +1057,6 @@ TB_API void tb_inst_reset_location(TB_Function* f);
 // this is where the STOP will be
 TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int line, int column);
 
-TB_API bool tb_has_effects(TB_Node* n);
-
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage);
 
@@ -1201,6 +1208,7 @@ TB_API TB_Node* tb_inst_cmp_fge(TB_Function* f, TB_Node* a, TB_Node* b);
 // General intrinsics
 TB_API TB_Node* tb_inst_va_start(TB_Function* f, TB_Node* a);
 TB_API TB_Node* tb_inst_cycle_counter(TB_Function* f);
+TB_API TB_Node* tb_inst_prefetch(TB_Function* f, TB_Node* addr, int level);
 
 // x86 Intrinsics
 TB_API TB_Node* tb_inst_x86_ldmxcsr(TB_Function* f, TB_Node* a);

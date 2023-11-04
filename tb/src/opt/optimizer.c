@@ -35,7 +35,6 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
 TB_Node* make_dead_node(TB_Function* f, TB_Passes* restrict p);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
-static bool remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst);
 static bool lattice_dommy(LatticeUniverse* uni, TB_Node* expected_dom, TB_Node* bb);
 
 ////////////////////////////////
@@ -233,7 +232,6 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 #include "lattice.h"
 #include "cfg.h"
 #include "gvn.h"
-#include "dce.h"
 #include "fold.h"
 #include "mem_opt.h"
 #include "sroa.h"
@@ -316,28 +314,6 @@ static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size
         }
         set_input(p, n, NULL, n->input_count);
     }
-}
-
-// src -//-> dst
-static bool remove_pred(TB_Passes* restrict p, TB_Function* f, TB_Node* src, TB_Node* dst) {
-    FOREACH_N(i, 0, dst->input_count) {
-        if (tb_get_parent_region(dst->inputs[i]) == src) {
-            remove_input(p, f, dst, i);
-
-            // update PHIs
-            for (User* use = find_users(p, dst); use; use = use->next) {
-                if (use->n->type == TB_PHI && use->slot == 0) {
-                    remove_input(p, f, use->n, i + 1);
-                }
-            }
-
-            tb_pass_mark(p, dst);
-            tb_pass_mark_users(p, dst);
-            return true;
-        }
-    }
-
-    return false;
 }
 
 void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {

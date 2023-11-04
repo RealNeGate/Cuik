@@ -18,6 +18,12 @@ X(IDIV,      "idiv",        UNARY,      .op_i = 0xF7, 0x07)
 X(CALL,      "call",        UNARY,      0xE8,   0xFF, 0x02)
 X(JMP,       "jmp",         UNARY,      0xE9,   0xFF, 0x04)
 
+// prefetching
+X(PREFETCHNTA,"prefetchnta",UNARY_EXT,  .op_i = 0x18, 0)
+X(PREFETCH0,  "prefetch0",  UNARY_EXT,  .op_i = 0x18, 1)
+X(PREFETCH1,  "prefetch1",  UNARY_EXT,  .op_i = 0x18, 2)
+X(PREFETCH2,  "prefetch2",  UNARY_EXT,  .op_i = 0x18, 3)
+
 // Jcc
 X(JO,        "jo",          UNARY_EXT,  0x80)
 X(JNO,       "jno",         UNARY_EXT,  0x81)
