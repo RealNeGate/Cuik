@@ -470,6 +470,19 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
 
     TB_Node* a = n->inputs[1];
     TB_Node* b = n->inputs[2];
+
+    // (aa + ab) + b => aa + (ab + b)
+    if (is_associative(type) && a->type == type && b->type != type) {
+        TB_Node* abb = tb_alloc_node(f, type, n->dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(opt, abb, a->inputs[2], 1);
+        set_input(opt, abb, b, 2);
+        tb_pass_mark(opt, abb);
+
+        set_input(opt, n, a->inputs[1], 1);
+        set_input(opt, n, abb,          2);
+        return n;
+    }
+
     if (type == TB_OR) {
         assert(n->dt.type == TB_INT);
         int bits = n->dt.data;
