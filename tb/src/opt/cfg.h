@@ -204,6 +204,7 @@ void tb_compute_dominators2(TB_Function* f, Worklist* ws, TB_CFG cfg) {
                 TB_Node* p = get_pred(b, j);
                 if (idom(&cfg, p) != NULL) {
                     new_idom = p;
+                    break;
                 }
             }
 
