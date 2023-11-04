@@ -273,8 +273,12 @@ static bool unique_targets_in_phi_terms(TB_Node* n, TB_Node* r) {
 // if we see a branch projection, it may either be a BB itself
 // or if it enters a REGION directly, then that region is the BB.
 static TB_Node* cfg_next_bb_after_cproj(TB_Node* n) {
-    assert(n->type == TB_PROJ);
-    return n->users->n->type == TB_REGION ? n->users->n : n;
+    assert(n->type == TB_PROJ && n->inputs[0]->type == TB_BRANCH);
+    if (n->users->next == NULL && unique_targets_in_phi_terms(n, n->users->n)) {
+        return n->users->n;
+    } else {
+        return n;
+    }
 }
 
 static TB_Node* cfg_next_region_control(TB_Node* n) {

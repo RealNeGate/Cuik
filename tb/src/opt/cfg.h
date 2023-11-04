@@ -194,39 +194,48 @@ void tb_compute_dominators2(TB_Function* f, Worklist* ws, TB_CFG cfg) {
         changed = false;
 
         // for all nodes, b, in reverse postorder (except start node)
-        FOREACH_REVERSE_N(i, 1, cfg.block_count) {
+        FOREACH_N(i, 1, cfg.block_count) {
             TB_Node* b = blocks[i];
-            TB_Node* new_idom = get_pred_cfg(&cfg, b, 0);
+            TB_Node* new_idom = NULL;
 
-            if (b->type == TB_REGION) {
-                // for all other predecessors, p, of b
-                FOREACH_N(j, 1, b->input_count) {
-                    TB_Node* p = get_pred_cfg(&cfg, b, j);
+            // pick first "processed" pred
+            size_t j = 0, pred_count = b->input_count;
+            for (; j < pred_count; j++) {
+                TB_Node* p = get_pred(b, j);
+                if (idom(&cfg, p) != NULL) {
+                    new_idom = p;
+                }
+            }
 
-                    // if doms[p] already calculated
-                    TB_Node* idom_p = idom(&cfg, p);
-                    if (idom_p == NULL && p->input_count > 0) {
-                        int a = try_find_traversal_index(&cfg, p);
-                        if (a >= 0) {
-                            int b = find_traversal_index(&cfg, new_idom);
-                            while (a != b) {
-                                // while (finger1 > finger2)
-                                //   finger1 = doms[finger1]
-                                while (a > b) {
-                                    TB_Node* d = idom(&cfg, blocks[a]);
-                                    a = d ? find_traversal_index(&cfg, d) : 0;
-                                }
+            // for all other predecessors, p, of b
+            for (; j < pred_count; j++) {
+                TB_Node* p = get_pred(b, j);
 
-                                // while (finger2 > finger1)
-                                //   finger2 = doms[finger2]
-                                while (b > a) {
-                                    TB_Node* d = idom(&cfg, blocks[b]);
-                                    b = d ? find_traversal_index(&cfg, d) : 0;
-                                }
+                // if doms[p] already calculated
+                TB_Node* idom_p = idom(&cfg, p);
+                if (idom_p != NULL) {
+                    assert(p->input_count > 0);
+
+                    int a = try_find_traversal_index(&cfg, p);
+                    if (a >= 0) {
+                        int b = find_traversal_index(&cfg, new_idom);
+                        while (a != b) {
+                            // while (finger1 < finger2)
+                            //   finger1 = doms[finger1]
+                            while (a > b) {
+                                TB_Node* d = idom(&cfg, blocks[a]);
+                                a = d ? find_traversal_index(&cfg, d) : 0;
                             }
 
-                            new_idom = blocks[a];
+                            // while (finger2 < finger1)
+                            //   finger2 = doms[finger2]
+                            while (b > a) {
+                                TB_Node* d = idom(&cfg, blocks[b]);
+                                b = d ? find_traversal_index(&cfg, d) : 0;
+                            }
                         }
+
+                        new_idom = blocks[a];
                     }
                 }
             }
