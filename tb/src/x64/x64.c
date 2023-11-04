@@ -1516,7 +1516,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         case TB_SAFEPOINT_POLL: {
             TB_Node* addr = n->inputs[2];
 
-            __debugbreak();
+            tb_todo();
 
             // force uses of the inputs
             /*FOREACH_N(i, 3, n->input_count) {
