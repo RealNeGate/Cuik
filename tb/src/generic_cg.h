@@ -879,6 +879,8 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             // implicit goto
             TB_Node* succ_n = cfg_next_control(end);
 
+            SUBMIT(alloc_inst(INST_TERMINATOR, TB_TYPE_VOID, 0, 0, 0));
+
             // writeback phis
             FOREACH_N(i, 0, ctx->our_phis) {
                 PhiVal* v = &ctx->phi_vals[i];

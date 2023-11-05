@@ -465,7 +465,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x50: return "push";
         case 0x58: return "pop";
 
-        case 0xE8: return "call";
+        case 0xE8: case 0xFF2: return "call";
         case 0xEB: case 0xE9: case 0xFF4: return "jmp";
 
         case 0x0F1F: return "nop";
