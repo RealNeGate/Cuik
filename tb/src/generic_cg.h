@@ -494,8 +494,6 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
                     mbb = &nl_map_get_checked(seq_bb, bb);
                     mbb->first = inst->next;
                     mbb->start = timeline;
-
-                    timeline += 2; // reserved two extra spaces at the end of the BB
                 } else if (is_terminator(inst->type) && mbb->terminator == 0) {
                     mbb->terminator = timeline;
                 } else if (inst->type == INST_EPILOGUE) {
