@@ -1622,19 +1622,21 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
 
         case TB_END: {
-            if (n->input_count > 3) {
-                assert(n->input_count <= 4 && "We don't support multiple returns here");
+            assert(n->input_count <= 5 && "At most 2 return values :(");
+            static int ret_gprs[2] = { RAX, RDX };
 
-                int src = input_reg(ctx, n->inputs[3]);
+            int rets = n->input_count - 3;
+            FOREACH_N(i, 0, rets) {
+                int src = input_reg(ctx, n->inputs[3+i]);
 
                 // copy to return register
-                TB_DataType dt = n->inputs[3]->dt;
+                TB_DataType dt = n->inputs[3+i]->dt;
                 if (dt.type == TB_FLOAT) {
-                    hint_reg(ctx, src, FIRST_XMM + XMM0);
-                    SUBMIT(inst_move(dt, FIRST_XMM + XMM0, src));
+                    hint_reg(ctx, src, FIRST_XMM + i);
+                    SUBMIT(inst_move(dt, FIRST_XMM + i, src));
                 } else {
-                    hint_reg(ctx, src, RAX);
-                    SUBMIT(inst_move(dt, RAX, src));
+                    hint_reg(ctx, src, ret_gprs[i]);
+                    SUBMIT(inst_move(dt, ret_gprs[i], src));
                 }
             }
 
