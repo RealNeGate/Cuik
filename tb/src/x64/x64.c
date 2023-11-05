@@ -1015,23 +1015,43 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         case TB_TAILCALL:
         case TB_SYSCALL:
         case TB_CALL: {
+            static int ret_gprs[2] = { RAX, RDX };
+
             bool is_sysv = (ctx->target_abi == TB_ABI_SYSTEMV);
             const struct ParamDescriptor* restrict desc = &param_descs[is_sysv ? 1 : 0];
             if (type == TB_SYSCALL) {
                 desc = &param_descs[2];
             }
 
-            TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[2];
-            if (!has_users(ctx, ret_node)) {
-                ret_node = NULL;
+            uint32_t caller_saved_gprs = desc->caller_saved_gprs;
+            uint32_t caller_saved_xmms = ~0ull >> (64 - desc->caller_saved_xmms);
+
+            TB_FunctionPrototype* proto = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto;
+
+            TB_Node* ret_nodes[2];
+            int rets[2] = { -1, -1 };
+
+            assert(proto->return_count <= 2);
+            FOREACH_N(i, 0, proto->return_count) {
+                TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[2 + i];
+                if (!has_users(ctx, ret_node)) {
+                    ret_node = NULL;
+                }
+
+                if (ret_node != NULL) {
+                    ret_nodes[i] = ret_node;
+                    rets[i] = input_reg(ctx, ret_node);
+
+                    bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_node->dt);
+                    if (use_xmm_ret) {
+                        caller_saved_xmms &= ~(1ull << (XMM0 + i));
+                    } else {
+                        caller_saved_gprs &= ~(1ull << ret_gprs[i]);
+                    }
+                }
             }
 
-            TB_DataType ret_dt = ret_node ? ret_node->dt : TB_TYPE_VOID;
-
-            int ret_val = -1;
-            if (ret_node != NULL) {
-                ret_val = input_reg(ctx, ret_node);
-            }
+            TB_DataType ret_dt = ret_nodes[0] ? ret_nodes[0]->dt : TB_TYPE_VOID;
 
             // system calls don't count, we track this for ABI
             // and stack allocation purposes.
@@ -1039,15 +1059,11 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 ctx->caller_usage = n->input_count - 3;
             }
 
-            uint32_t caller_saved_gprs = desc->caller_saved_gprs;
-            uint32_t caller_saved_xmms = ~0ull >> (64 - desc->caller_saved_xmms);
-
             // parameter passing is separate from eval from regalloc reasons
             size_t in_count = 0;
             RegIndex ins[64];
             RegIndex param_srcs[64];
 
-            TB_FunctionPrototype* proto = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto;
             int vararg_cutoff = proto && proto->has_varargs ? proto->param_count : n->input_count-2;
 
             size_t xmms_used = 0, gprs_used = 0;
@@ -1132,15 +1148,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 }
             }
 
-            bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_dt);
-            if (ret_node != NULL) {
-                if (use_xmm_ret) {
-                    caller_saved_xmms &= ~(1ull << XMM0);
-                } else {
-                    caller_saved_gprs &= ~(1ull << RAX);
-                }
-            }
-
             // all these registers need to be spilled and reloaded if they're used across
             // the function call boundary... you might see why inlining could be nice to implement
             size_t clobber_count = tb_popcount(caller_saved_gprs) + tb_popcount(caller_saved_xmms);
@@ -1149,7 +1156,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             if (n->type == TB_CALL) op = CALL;
             if (n->type == TB_TAILCALL) op = JMP;
 
-            Inst* call_inst = alloc_inst(op, ret_dt, 1, 1 + in_count, clobber_count);
+            Inst* call_inst = alloc_inst(op, ret_dt, proto->return_count, 1 + in_count, clobber_count);
 
             // mark clobber list
             {
@@ -1164,13 +1171,20 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             // return value (either XMM0 or RAX)
-            call_inst->operands[0] = (use_xmm_ret ? FIRST_XMM : 0) + RAX;
+            FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
+                bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_nodes[i]->dt);
+                if (use_xmm_ret) {
+                    call_inst->operands[i] = FIRST_XMM + i;
+                } else {
+                    call_inst->operands[i] = ret_gprs[i];
+                }
+            }
 
             // write inputs
             RegIndex* dst_ins = &call_inst->operands[call_inst->out_count];
             if (static_call) {
                 call_inst->flags |= INST_GLOBAL;
-                call_inst->mem_slot = 1;
+                call_inst->mem_slot = call_inst->out_count;
                 call_inst->s = TB_NODE_GET_EXTRA_T(target, TB_NodeSymbol)->sym;
             }
 
@@ -1180,13 +1194,14 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             SUBMIT(call_inst);
 
             // copy out return
-            if (ret_node != NULL) {
+            FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
+                bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_nodes[i]->dt);
                 if (use_xmm_ret) {
-                    hint_reg(ctx, ret_val, FIRST_XMM + XMM0);
-                    SUBMIT(inst_move(ret_dt, ret_val, FIRST_XMM + XMM0));
+                    hint_reg(ctx, rets[i], FIRST_XMM + i);
+                    SUBMIT(inst_move(ret_dt, rets[i], FIRST_XMM + i));
                 } else {
-                    hint_reg(ctx, ret_val, RAX);
-                    SUBMIT(inst_move(ret_dt, ret_val, RAX));
+                    hint_reg(ctx, rets[i], ret_gprs[i]);
+                    SUBMIT(inst_move(ret_dt, rets[i], ret_gprs[i]));
                 }
             }
             break;
