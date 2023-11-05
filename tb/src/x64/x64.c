@@ -1028,7 +1028,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             TB_FunctionPrototype* proto = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto;
 
-            TB_Node* ret_nodes[2];
+            TB_Node* ret_nodes[2] = { 0 };
             int rets[2] = { -1, -1 };
 
             assert(proto->return_count <= 2);
@@ -1050,8 +1050,6 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                     }
                 }
             }
-
-            TB_DataType ret_dt = ret_nodes[0] ? ret_nodes[0]->dt : TB_TYPE_VOID;
 
             // system calls don't count, we track this for ABI
             // and stack allocation purposes.
@@ -1156,7 +1154,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             if (n->type == TB_CALL) op = CALL;
             if (n->type == TB_TAILCALL) op = JMP;
 
-            Inst* call_inst = alloc_inst(op, ret_dt, proto->return_count, 1 + in_count, clobber_count);
+            Inst* call_inst = alloc_inst(op, TB_TYPE_PTR, proto->return_count, 1 + in_count, clobber_count);
 
             // mark clobber list
             {
@@ -1195,13 +1193,15 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             // copy out return
             FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
-                bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_nodes[i]->dt);
+                assert(rets[i] >= 0);
+                TB_DataType dt = ret_nodes[i]->dt;
+                bool use_xmm_ret = TB_IS_FLOAT_TYPE(dt);
                 if (use_xmm_ret) {
                     hint_reg(ctx, rets[i], FIRST_XMM + i);
-                    SUBMIT(inst_move(ret_dt, rets[i], FIRST_XMM + i));
+                    SUBMIT(inst_move(dt, rets[i], FIRST_XMM + i));
                 } else {
                     hint_reg(ctx, rets[i], ret_gprs[i]);
-                    SUBMIT(inst_move(ret_dt, rets[i], ret_gprs[i]));
+                    SUBMIT(inst_move(dt, rets[i], ret_gprs[i]));
                 }
             }
             break;
