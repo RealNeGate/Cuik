@@ -487,13 +487,15 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
             for (; inst; inst = inst->next) {
                 if (inst->type == INST_LABEL) {
                     nl_map_get_checked(seq_bb, bb).end = timeline;
-                    timeline += 4; // reserved two extra spaces at the end of the BB
+                    timeline += 2;
 
                     tb_assert(inst->flags & INST_NODE, "label instruction has no TB_Node* for the region");
                     bb = inst->n;
                     mbb = &nl_map_get_checked(seq_bb, bb);
                     mbb->first = inst->next;
                     mbb->start = timeline;
+
+                    timeline += 2; // reserved two extra spaces at the end of the BB
                 } else if (is_terminator(inst->type) && mbb->terminator == 0) {
                     mbb->terminator = timeline;
                 } else if (inst->type == INST_EPILOGUE) {
