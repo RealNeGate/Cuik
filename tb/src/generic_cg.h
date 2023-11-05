@@ -89,6 +89,7 @@ typedef struct {
     Worklist worklist; // reusing from TB_Passes.
     ValueDesc* values; // the indices match the GVN.
 
+    size_t our_phis;
     DynArray(PhiVal) phi_vals;
     DynArray(JumpTablePatch) jump_table_patches;
 
@@ -486,7 +487,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
             for (; inst; inst = inst->next) {
                 if (inst->type == INST_LABEL) {
                     nl_map_get_checked(seq_bb, bb).end = timeline;
-                    timeline += 2; // reserved two extra spaces at the end of the BB
+                    timeline += 4; // reserved two extra spaces at the end of the BB
 
                     tb_assert(inst->flags & INST_NODE, "label instruction has no TB_Node* for the region");
                     bb = inst->n;
@@ -664,6 +665,37 @@ static void isel_set_location(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
+static bool isel_has_phi_edge(Ctx* restrict ctx, TB_Node* to) {
+    FOREACH_N(i, 0, ctx->our_phis) {
+        PhiVal* v = &ctx->phi_vals[i];
+        if (to == NULL || v->to == to) return true;
+    }
+
+    return false;
+}
+
+static void isel_phi_edge(Ctx* restrict ctx, TB_Node* to) {
+    // writeback phis
+    FOREACH_N(i, 0, ctx->our_phis) {
+        PhiVal* v = &ctx->phi_vals[i];
+        if (v->to != to) {
+            continue;
+        }
+
+        TB_DataType dt = v->phi->dt;
+        int src = input_reg(ctx, v->n);
+
+        TB_OPTDEBUG(CODEGEN)(
+            printf("  PHI %u: ", v->phi->gvn),
+            print_node_sexpr(v->phi, 0),
+            printf("\n")
+        );
+
+        hint_reg(ctx, v->dst, src);
+        SUBMIT(inst_move(dt, v->dst, src));
+    }
+}
+
 static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size_t rpo_index) {
     assert(dyn_array_length(ctx->worklist.items) == ctx->cfg.block_count);
     TB_Scheduled scheduled = ctx->p->scheduled;
@@ -704,7 +736,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
     // phase 3: within the BB, the phi nodes should view itself as the previous value
     // not the new one we're producing.
-    size_t our_phis = dyn_array_length(phi_vals);
+    size_t our_phis = ctx->our_phis = dyn_array_length(phi_vals);
     CUIK_TIMED_BLOCK("phase 3") {
         FOREACH_N(i, 0, our_phis) {
             PhiVal* v = &phi_vals[i];
@@ -748,6 +780,8 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
     CUIK_TIMED_BLOCK("phase 4") {
         Inst *head = ctx->head, *last = NULL;
         TB_Node* prev_effect = NULL;
+
+        ctx->phi_vals = phi_vals;
         FOREACH_REVERSE_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
             TB_Node* n = ctx->worklist.items[i];
             if (n->type == TB_START) {
@@ -772,36 +806,11 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             ctx->head = &dummy;
 
             if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
-                if (n->type == TB_BRANCH) {
-                    TB_OPTDEBUG(CODEGEN)(
-                        printf("  TERMINATOR %u: ", n->gvn),
-                        print_node_sexpr(n, 0),
-                        printf("\n")
-                    );
-
-                    // writeback PHIs
-                    FOREACH_N(i, 0, our_phis) {
-                        PhiVal* v = &phi_vals[i];
-                        TB_DataType dt = v->phi->dt;
-
-                        int src = input_reg(ctx, v->n);
-
-                        TB_OPTDEBUG(CODEGEN)(
-                            printf("  PHI %u: ", v->phi->gvn),
-                            print_node_sexpr(v->phi, 0),
-                            printf("\n")
-                        );
-
-                        hint_reg(ctx, src, v->dst);
-                        SUBMIT(inst_move(dt, v->dst, src));
-                    }
-                } else {
-                    TB_OPTDEBUG(CODEGEN)(
-                        printf("  EFFECT %u: ", n->gvn),
-                        print_node_sexpr(n, 0),
-                        printf("\n")
-                    );
-                }
+                TB_OPTDEBUG(CODEGEN)(
+                    printf("  EFFECT %u: ", n->gvn),
+                    print_node_sexpr(n, 0),
+                    printf("\n")
+                );
 
                 isel(ctx, n, val->vreg);
 
@@ -873,13 +882,13 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
         }
 
         // restore the PHI value to normal
+        phi_vals = ctx->phi_vals;
         FOREACH_N(i, our_phis, dyn_array_length(phi_vals)) {
             PhiVal* v = &phi_vals[i];
             lookup_val(ctx, v->phi)->vreg = v->dst;
         }
 
         dyn_array_clear(phi_vals);
-        ctx->phi_vals = phi_vals;
         ctx->head = last ? last : head;
 
         if (end->type != TB_END    && end->type != TB_TRAP &&
@@ -890,19 +899,12 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                 printf("\n")
             );
 
-            // writeback PHIs
-            FOREACH_N(i, 0, our_phis) {
-                PhiVal* v = &phi_vals[i];
-                TB_DataType dt = v->phi->dt;
-
-                int src = input_reg(ctx, v->n);
-
-                hint_reg(ctx, v->dst, src);
-                SUBMIT(inst_move(dt, v->dst, src));
-            }
-
             // implicit goto
             TB_Node* succ_n = cfg_next_control(end);
+
+            // writeback PHIs
+            isel_phi_edge(ctx, succ_n);
+
             int succ = nl_map_get_checked(ctx->cfg.node_to_block, succ_n).id;
             if (ctx->fallthrough != succ) {
                 SUBMIT(inst_jmp(succ));
@@ -921,7 +923,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
     #if 0
-    if (!strcmp(f->super.name, "stuff")) {
+    if (!strcmp(f->super.name, "iter")) {
         reg_alloc_log = true;
         // tb_pass_print(p);
     } else {

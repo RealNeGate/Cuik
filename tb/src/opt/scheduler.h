@@ -2,12 +2,13 @@
 // sort which is anti-dependency aware, a future TB could implement multiple schedulers.
 //
 // Once the worklist is filled, you can walk backwards and generate instructions accordingly.
-static void sched_walk_phi(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* phi, size_t phi_index) {
+static void sched_walk_phi(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* to, TB_Node* phi, size_t phi_index) {
     TB_Node* val = phi->inputs[1 + phi_index];
 
     // reserve PHI space
     if (phi_vals && phi->dt.type != TB_MEMORY) {
         PhiVal p;
+        p.to = to;
         p.phi = phi;
         p.n   = val;
         p.dst = -1;
@@ -46,7 +47,7 @@ void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_
             for (User* use = dst->users; use; use = use->next) {
                 TB_Node* phi = use->n;
                 if (phi->type == TB_PHI && phi->dt.type == TB_MEMORY) {
-                    sched_walk_phi(passes, ws, phi_vals, bb, phi, phi_index);
+                    sched_walk_phi(passes, ws, phi_vals, bb, dst, phi, phi_index);
                 }
             }
 
@@ -54,7 +55,7 @@ void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_
             for (User* use = dst->users; use; use = use->next) {
                 TB_Node* phi = use->n;
                 if (phi->type == TB_PHI && phi->dt.type != TB_MEMORY) {
-                    sched_walk_phi(passes, ws, phi_vals, bb, phi, phi_index);
+                    sched_walk_phi(passes, ws, phi_vals, bb, dst, phi, phi_index);
                 }
             }
         }

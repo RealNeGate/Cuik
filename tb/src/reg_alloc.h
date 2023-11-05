@@ -130,7 +130,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
         add_use_pos(interval, inst->time, dst_use_reg ? USE_REG : USE_OUT);
     }
 
-    int t = inst->type == MOV || inst->type == FP_MOV ? inst->time - 1 : inst->time;
+    int t = inst->time; // inst->type == MOV || inst->type == FP_MOV ? inst->time - 1 : inst->time;
     FOREACH_N(i, 0, inst->in_count) {
         assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];

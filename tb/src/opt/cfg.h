@@ -54,7 +54,7 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_sta
         // we've spotted a BB entry
         if (cfg_is_bb_entry(n)) {
             // proj BB's will prefer to be REGION BB's
-            if (n->inputs[0]->type != TB_START && n->type == TB_PROJ &&
+            if (n->inputs[0]->type == TB_BRANCH && n->type == TB_PROJ &&
                 n->users->next == NULL && unique_targets_in_phi_terms(n, n->users->n)) {
                 // we've already seen this BB, let's skip it
                 if (worklist_test_n_set(ws, n->users->n)) {

@@ -629,7 +629,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 use(ctx, n->inputs[2]);
 
                 if (type == TB_ADD) {
-                    SUBMIT(inst_op_rm(LEA, TB_TYPE_PTR, dst, lhs, -1, SCALE_X1, x));
+                    SUBMIT(inst_op_rm(LEA, TB_TYPE_I64, dst, lhs, -1, SCALE_X1, x));
                 } else {
                     SUBMIT(inst_move(n->dt, dst, lhs));
                     SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
@@ -1325,7 +1325,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             // in the TB_Passes
             TB_Arena* arena = ctx->f->arena;
             TB_ArenaSavepoint sp = tb_arena_save(arena);
-            int* succ = tb_arena_alloc(arena, br->succ_count * sizeof(TB_Node**));
+            int* succ = tb_arena_alloc(arena, br->succ_count * sizeof(int));
+            TB_Node** succ_nodes = tb_arena_alloc(arena, br->succ_count * sizeof(TB_Node*));
 
             // fill successors
             bool has_default = false;
@@ -1337,6 +1338,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                     if (index == 0) {
                         has_default = !cfg_is_unreachable(succ_n);
                     }
+
+                    succ_nodes[index] = succ_n;
                     succ[index] = nl_map_get_checked(ctx->cfg.node_to_block, succ_n).id;
                 }
             }
@@ -1344,33 +1347,50 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             TB_DataType dt = n->inputs[1]->dt;
 
             SUBMIT(alloc_inst(INST_TERMINATOR, TB_TYPE_VOID, 0, 0, 0));
+
             if (br->succ_count == 1) {
+                isel_phi_edge(ctx, succ_nodes[0]);
                 if (ctx->fallthrough != succ[0]) {
                     SUBMIT(inst_jmp(succ[0]));
                 }
             } else if (br->succ_count == 2) {
-                // if-like branch
+                int f = succ[1], t = succ[0];
+
+                Cond cc;
                 if (br->keys[0] == 0) {
-                    Cond cc = isel_cmp(ctx, n->inputs[1]);
-
-                    // if flipping avoids a jmp, do that
-                    int f = succ[0], t = succ[1];
-                    if (ctx->fallthrough == f) {
-                        SUBMIT(inst_jcc(t, cc ^ 1));
-                    } else {
-                        SUBMIT(inst_jcc(f, cc));
-
-                        if (ctx->fallthrough != t) {
-                            SUBMIT(inst_jmp(t));
-                        }
-                    }
+                    cc = isel_cmp(ctx, n->inputs[1]);
                 } else {
                     int key = input_reg(ctx, n->inputs[1]);
                     SUBMIT(inst_op_ri(CMP, dt, key, br->keys[0]));
-                    SUBMIT(inst_jcc(succ[1], E));
-                    SUBMIT(inst_jmp(succ[0]));
+                    cc = E;
+                }
+
+                // if flipping avoids a jmp, do that
+                if (isel_has_phi_edge(ctx, succ_nodes[1])) {
+                    assert(!isel_has_phi_edge(ctx, succ_nodes[0]) && "a BB can't handle two disjoint sets of phis at the same time");
+
+                    // if cond goto true_case
+                    //   false phi moves
+                    //   goto false_case
+                    SUBMIT(inst_jcc(t, cc));
+                    isel_phi_edge(ctx, succ_nodes[1]);
+
+                    if (ctx->fallthrough != f) {
+                        SUBMIT(inst_jmp(f));
+                    }
+                } else {
+                    // if !cond goto false_case
+                    //   true phi moves
+                    //   goto true_case
+                    SUBMIT(inst_jcc(f, cc ^ 1));
+                    isel_phi_edge(ctx, succ_nodes[0]);
+
+                    if (ctx->fallthrough != t) {
+                        SUBMIT(inst_jmp(t));
+                    }
                 }
             } else {
+                assert(!isel_has_phi_edge(ctx, NULL) && "switch cannot have phis here, they should've been split in the CFG");
                 int key = input_reg(ctx, n->inputs[1]);
 
                 // check if there's at most only one space between entries

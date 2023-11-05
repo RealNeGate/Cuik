@@ -2,7 +2,7 @@
 #include "../tb_internal.h"
 
 #define TB_OPTDEBUG_STATS   0
-#define TB_OPTDEBUG_PEEP    0
+#define TB_OPTDEBUG_PEEP    1
 #define TB_OPTDEBUG_LOOP    0
 #define TB_OPTDEBUG_SROA    0
 #define TB_OPTDEBUG_GCM     0
@@ -102,7 +102,7 @@ static bool tb_dommy_fronts_get(TB_DominanceFrontiers* df, size_t i, size_t j) {
 }
 
 typedef struct {
-    TB_Node *phi, *n;
+    TB_Node *phi, *n, *to;
     int dst, src;
 } PhiVal;
 

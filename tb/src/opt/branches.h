@@ -194,7 +194,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
             }
         }
 
-        if (region->input_count > 2 && n->dt.type == TB_INT) {
+        if (0 && region->input_count > 2 && n->dt.type == TB_INT) {
             if (region->inputs[0]->type != TB_PROJ || region->inputs[0]->inputs[0]->type != TB_BRANCH) {
                 return NULL;
             }
