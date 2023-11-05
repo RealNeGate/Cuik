@@ -259,7 +259,7 @@ static bool lattice_dommy(LatticeUniverse* uni, TB_Node* expected_dom, TB_Node* 
 }
 
 static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra) {
-    // try CSE, if we succeed, just delete the node and use the old copy
+    // try GVN, if we succeed, just delete the node and use the old copy
     TB_Node* k = nl_hashset_put2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k != NULL) {
         // try free

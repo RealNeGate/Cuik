@@ -1326,20 +1326,18 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             TB_Arena* arena = ctx->f->arena;
             TB_ArenaSavepoint sp = tb_arena_save(arena);
             int* succ = tb_arena_alloc(arena, br->succ_count * sizeof(int));
-            TB_Node** succ_nodes = tb_arena_alloc(arena, br->succ_count * sizeof(TB_Node*));
 
             // fill successors
             bool has_default = false;
             for (User* u = n->users; u; u = u->next) {
                 if (u->n->type == TB_PROJ) {
                     int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                    TB_Node* succ_n = cfg_get_fallthru(u->n);
+                    TB_Node* succ_n = cfg_next_bb_after_cproj(u->n);
 
                     if (index == 0) {
                         has_default = !cfg_is_unreachable(succ_n);
                     }
 
-                    succ_nodes[index] = succ_n;
                     succ[index] = nl_map_get_checked(ctx->cfg.node_to_block, succ_n).id;
                 }
             }
@@ -1349,10 +1347,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             SUBMIT(alloc_inst(INST_TERMINATOR, TB_TYPE_VOID, 0, 0, 0));
 
             if (br->succ_count == 1) {
-                isel_phi_edge(ctx, succ_nodes[0]);
-                if (ctx->fallthrough != succ[0]) {
-                    SUBMIT(inst_jmp(succ[0]));
-                }
+                assert(0 && "degenerate branch? that's odd");
             } else if (br->succ_count == 2) {
                 int f = succ[1], t = succ[0];
 
@@ -1366,31 +1361,15 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 }
 
                 // if flipping avoids a jmp, do that
-                if (isel_has_phi_edge(ctx, succ_nodes[1])) {
-                    assert(!isel_has_phi_edge(ctx, succ_nodes[0]) && "a BB can't handle two disjoint sets of phis at the same time");
-
-                    // if cond goto true_case
-                    //   false phi moves
-                    //   goto false_case
+                if (ctx->fallthrough == t) {
+                    SUBMIT(inst_jcc(f, cc ^ 1));
+                } else {
                     SUBMIT(inst_jcc(t, cc));
-                    isel_phi_edge(ctx, succ_nodes[1]);
-
                     if (ctx->fallthrough != f) {
                         SUBMIT(inst_jmp(f));
                     }
-                } else {
-                    // if !cond goto false_case
-                    //   true phi moves
-                    //   goto true_case
-                    SUBMIT(inst_jcc(f, cc ^ 1));
-                    isel_phi_edge(ctx, succ_nodes[0]);
-
-                    if (ctx->fallthrough != t) {
-                        SUBMIT(inst_jmp(t));
-                    }
                 }
             } else {
-                assert(!isel_has_phi_edge(ctx, NULL) && "switch cannot have phis here, they should've been split in the CFG");
                 int key = input_reg(ctx, n->inputs[1]);
 
                 // check if there's at most only one space between entries

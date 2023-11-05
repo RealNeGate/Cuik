@@ -538,20 +538,39 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
             return n;
         }
     } else if (type == TB_SHL || type == TB_SHR) {
-        // (a << b) >> c = a << (b - c)
-        // (a >> b) << c = a >> (b - c)
-        TB_NodeTypeEnum flipped = type == TB_SHL ? TB_SHR : TB_SHL;
+        // (a << b) >> c = (a << (b - c)) & (ALL >> b)
+        // (a >> b) << c = (a >> (b - c)) & ((1 << b) - 1)
+        uint64_t b, c;
+        if ((n->inputs[1]->type == TB_SHL || n->inputs[1]->type == TB_SHR) &&
+            get_int_const(n->inputs[2], &c) && get_int_const(n->inputs[1]->inputs[2], &b)) {
+            TB_NodeTypeEnum inner_shift = n->inputs[1]->type;
 
-        uint64_t a, b;
-        if (n->inputs[1]->type == flipped &&
-            get_int_const(n->inputs[1]->inputs[2], &a) &&
-            get_int_const(n->inputs[2], &b)) {
-            TB_Node* imm = make_int_node(f, opt, n->dt, a - b);
-            tb_pass_mark(opt, imm);
+            // track how far we're shifting (and how many bits need chopping)
+            int amt       = inner_shift == TB_SHL ? b               : -b;
+            uint64_t mask = inner_shift == TB_SHL ? UINT64_MAX << b : UINT64_MAX >> c;
 
-            set_input(opt, n, n->inputs[1]->inputs[1], 1);
-            set_input(opt, n, imm, 2);
-            return n;
+            // apply outer shift
+            amt  += type == TB_SHL ? c         : -c;
+            mask  = type == TB_SHL ? mask << b :  mask >> b;
+
+            TB_Node* shift = n->inputs[1]->inputs[1];
+            if (amt) {
+                TB_Node* imm = make_int_node(f, opt, n->dt, b - c);
+                tb_pass_mark(opt, imm);
+
+                // if we have a negative shift amount, that's a right shift
+                shift = tb_alloc_node(f, amt < 0 ? TB_SHR : TB_SHL, n->dt, 3, sizeof(TB_NodeBinopInt));
+                set_input(opt, shift, n->inputs[1]->inputs[1], 1);
+                set_input(opt, shift, imm, 2);
+
+                tb_pass_mark(opt, shift);
+            }
+
+            TB_Node* mask_node = make_int_node(f, opt, n->dt, mask);
+            TB_Node* and_node = tb_alloc_node(f, TB_AND, n->dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(opt, and_node, shift,     1);
+            set_input(opt, and_node, mask_node, 2);
+            return and_node;
         }
     }
 

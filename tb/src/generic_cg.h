@@ -546,12 +546,18 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
 
         // walk all successors
         TB_Node* end = mbb->end_node;
-        for (User* u = end->users; u; u = u->next) {
-            if (cfg_is_control(u->n)) {
-                // union with successor's lives
-                TB_Node* succ = cfg_get_fallthru(u->n);
-                set_union(live_out, &nl_map_get_checked(seq_bb, succ).live_in);
+        if (end->type == TB_BRANCH) {
+            for (User* u = end->users; u; u = u->next) {
+                if (cfg_is_control(u->n)) {
+                    // union with successor's lives
+                    TB_Node* succ = cfg_next_bb_after_cproj(u->n);
+                    set_union(live_out, &nl_map_get_checked(seq_bb, succ).live_in);
+                }
             }
+        } else if (end->type != TB_END && end->type != TB_UNREACHABLE) {
+            // union with successor's lives
+            TB_Node* succ = cfg_next_control(end);
+            set_union(live_out, &nl_map_get_checked(seq_bb, succ).live_in);
         }
 
         Set* restrict live_in = &mbb->live_in;
@@ -665,37 +671,6 @@ static void isel_set_location(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
-static bool isel_has_phi_edge(Ctx* restrict ctx, TB_Node* to) {
-    FOREACH_N(i, 0, ctx->our_phis) {
-        PhiVal* v = &ctx->phi_vals[i];
-        if (to == NULL || v->to == to) return true;
-    }
-
-    return false;
-}
-
-static void isel_phi_edge(Ctx* restrict ctx, TB_Node* to) {
-    // writeback phis
-    FOREACH_N(i, 0, ctx->our_phis) {
-        PhiVal* v = &ctx->phi_vals[i];
-        if (v->to != to) {
-            continue;
-        }
-
-        TB_DataType dt = v->phi->dt;
-        int src = input_reg(ctx, v->n);
-
-        TB_OPTDEBUG(CODEGEN)(
-            printf("  PHI %u: ", v->phi->gvn),
-            print_node_sexpr(v->phi, 0),
-            printf("\n")
-        );
-
-        hint_reg(ctx, v->dst, src);
-        SUBMIT(inst_move(dt, v->dst, src));
-    }
-}
-
 static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size_t rpo_index) {
     assert(dyn_array_length(ctx->worklist.items) == ctx->cfg.block_count);
     TB_Scheduled scheduled = ctx->p->scheduled;
@@ -780,8 +755,6 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
     CUIK_TIMED_BLOCK("phase 4") {
         Inst *head = ctx->head, *last = NULL;
         TB_Node* prev_effect = NULL;
-
-        ctx->phi_vals = phi_vals;
         FOREACH_REVERSE_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
             TB_Node* n = ctx->worklist.items[i];
             if (n->type == TB_START) {
@@ -811,6 +784,10 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                     print_node_sexpr(n, 0),
                     printf("\n")
                 );
+
+                if (n->type == TB_BRANCH) {
+                    assert(ctx->our_phis == 0 && "branches don't get phi edges, they should've been split");
+                }
 
                 isel(ctx, n, val->vreg);
 
@@ -882,13 +859,13 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
         }
 
         // restore the PHI value to normal
-        phi_vals = ctx->phi_vals;
         FOREACH_N(i, our_phis, dyn_array_length(phi_vals)) {
             PhiVal* v = &phi_vals[i];
             lookup_val(ctx, v->phi)->vreg = v->dst;
         }
 
         dyn_array_clear(phi_vals);
+        ctx->phi_vals = phi_vals;
         ctx->head = last ? last : head;
 
         if (end->type != TB_END    && end->type != TB_TRAP &&
@@ -902,8 +879,22 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             // implicit goto
             TB_Node* succ_n = cfg_next_control(end);
 
-            // writeback PHIs
-            isel_phi_edge(ctx, succ_n);
+            // writeback phis
+            FOREACH_N(i, 0, ctx->our_phis) {
+                PhiVal* v = &ctx->phi_vals[i];
+
+                TB_DataType dt = v->phi->dt;
+                int src = input_reg(ctx, v->n);
+
+                TB_OPTDEBUG(CODEGEN)(
+                    printf("  PHI %u: ", v->phi->gvn),
+                    print_node_sexpr(v->phi, 0),
+                    printf("\n")
+                );
+
+                hint_reg(ctx, v->dst, src);
+                SUBMIT(inst_move(dt, v->dst, src));
+            }
 
             int succ = nl_map_get_checked(ctx->cfg.node_to_block, succ_n).id;
             if (ctx->fallthrough != succ) {

@@ -102,7 +102,7 @@ static bool tb_dommy_fronts_get(TB_DominanceFrontiers* df, size_t i, size_t j) {
 }
 
 typedef struct {
-    TB_Node *phi, *n, *to;
+    TB_Node *phi, *n;
     int dst, src;
 } PhiVal;
 
@@ -228,43 +228,36 @@ static bool is_mem_in_op(TB_Node* n) {
     return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
 }
 
-// We're trying to avoid not having a codepath to uniquely run phi logic
-static bool unique_targets_in_phi_terms(TB_Node* n, TB_Node* r) {
-    if (r->type != TB_REGION) {
-        return false;
-    }
-
-    // test against the proj's parent
-    if (n->type == TB_PROJ) {
-        n = n->inputs[0];
-    }
-
-    bool has_phis = false;
-    for (User* u = r->users; u; u = u->next) {
-        if (u->n->type == TB_PHI) { has_phis = true; break; }
-    }
-
-    if (!has_phis) {
+static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {
+    assert(proj->type == TB_PROJ);
+    if (proj->users->next != NULL || proj->users->n->type != TB_REGION) {
         return true;
     }
 
-    // if we have phis but all our edges are unique
-    int seen = 0;
-    FOREACH_N(i, 0, r->input_count) {
-        TB_Node* in = r->inputs[i];
-        if (in->type == TB_PROJ) {
-            in = in->inputs[0];
-        }
+    assert(n->type == TB_BRANCH);
 
-        if (in == n) {
-            seen++;
-            if (seen == 2) {
-                return false;
+    TB_Node* phi_edge = NULL;
+    for (User* succ = n->users; succ; succ = succ->next) {
+        assert(succ->n->type == TB_PROJ);
+
+        TB_Node* r = succ->n;
+        if (r->type != TB_REGION) continue;
+
+        for (User* u = r->users; u; u = u->next) {
+            if (u->n->type != TB_PHI) continue;
+
+            // it becomes a critical edge once multiple
+            // paths want to execute PHI code.
+            if (phi_edge != NULL) {
+                return true;
             }
+
+            phi_edge = r;
+            break;
         }
     }
 
-    return true;
+    return phi_edge != proj->users->n;
 }
 
 ////////////////////////////////
@@ -274,7 +267,7 @@ static bool unique_targets_in_phi_terms(TB_Node* n, TB_Node* r) {
 // or if it enters a REGION directly, then that region is the BB.
 static TB_Node* cfg_next_bb_after_cproj(TB_Node* n) {
     assert(n->type == TB_PROJ && n->inputs[0]->type == TB_BRANCH);
-    if (n->users->next == NULL && unique_targets_in_phi_terms(n, n->users->n)) {
+    if (!cfg_critical_edge(n, n->inputs[0])) {
         return n->users->n;
     } else {
         return n;

@@ -145,14 +145,19 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // if a store has only one user in this chain it means it's only job was
     // to facilitate the creation of that user store... if we can detect that
     // user store is itself dead, everything in the middle is too.
-    /*while (mem->type == TB_STORE && single_use(p, mem)) {
-        if (mem->inputs[2] == addr && mem->inputs[3]->dt.raw == dt.raw && is_same_align(n, mem)) {
-            set_input(p, n, mem->inputs[1], 1);
-            return n;
-        }
+    if (mem->type == TB_STORE && single_use(p, mem) && mem->inputs[2] == addr && mem->inputs[3]->dt.raw == dt.raw) {
+        // choose the bigger alignment (we wanna keep this sort of info)
+        TB_NodeMemAccess* a = TB_NODE_GET_EXTRA(mem);
+        TB_NodeMemAccess* b = TB_NODE_GET_EXTRA(n);
+        if (a->align > b->align) b->align = a->align;
 
-        mem = mem->inputs[1];
-    }*/
+        // make sure to kill the stores to avoid problems
+        TB_Node* parent = mem->inputs[1];
+        tb_pass_kill_node(p, mem);
+
+        set_input(p, n, parent, 1);
+        return n;
+    }
 
     return NULL;
 }

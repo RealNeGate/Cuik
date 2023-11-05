@@ -72,6 +72,33 @@ typedef struct
 #include <string.h>
 #include <stdio.h>
 
+void bar(int i);
+
+static int iter(int i, int n) {
+    while (i < n) {
+        i++;
+    }
+
+    return i;
+}
+
+static int foo(int x) {
+    return (((x + 4) + 2) + 6) + 7;
+}
+
+#if 0
+int isalnum(int ch) {
+    switch (ch) {
+        case 'a' ... 'z':
+        case 'A' ... 'Z':
+        case '0' ... '9':
+        return true;
+
+        default:
+        return false;
+    }
+}
+
 static int eval(int m, int x, int b) {
     return m*x + b;
 }
@@ -98,18 +125,7 @@ static bool boog(char* x, char* y, ptrdiff_t n) {
     }
     return true;
 }
-
-static int isalnum(int ch) {
-    switch (ch) {
-        case 'a' ... 'z':
-        case 'A' ... 'Z':
-        case '0' ... '9':
-        return true;
-
-        default:
-        return false;
-    }
-}
+#endif
 
 static int fib(int i) {
     if (i < 2) return i;
@@ -117,7 +133,7 @@ static int fib(int i) {
 }
 
 int main() {
-    printf("fib(10) = %d\n", fib(10));
+    // printf("fib(10) = %d\n", fib(10));
     printf("Wack! %d\n", murmur3_32("Hello", 5));
     printf("Wack! %d\n", murmur3_32("Why", 3));
 
@@ -127,7 +143,7 @@ int main() {
     return 0;
 }
 
-static uint32_t murmur3_32(const void* key, size_t len) {
+uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time

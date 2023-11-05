@@ -91,7 +91,6 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
     }
 
     tb_pass_mark_users(c->p, phi_node);
-    // tb_unreachable();
 }
 
 static void write_variable(Mem2Reg_Ctx* c, int var, TB_Node* block, TB_Node* value) {
@@ -241,18 +240,21 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     }
 
     // replace phi arguments on successor
-    if (end != NULL) {
+    if (end->type == TB_BRANCH) {
         // fill successors
         for (User* u = end->users; u; u = u->next) {
             if (!cfg_is_control(u->n)) continue;
 
-            TB_Node* succ = cfg_get_fallthru(u->n);
+            TB_Node* succ = cfg_next_bb_after_cproj(u->n);
             if (succ->type != TB_REGION) continue;
 
             // for p in succ's phis:
             //   if p is a var v, replace edge with stack[v]
             ssa_replace_phi_arg(c, f, bb, succ, stack);
         }
+    } else if (end->type != TB_END && end->type != TB_UNREACHABLE) {
+        // fallthrough case
+        ssa_replace_phi_arg(c, f, bb, cfg_next_control(end), stack);
     }
 
     // for each successor s of the BB in the dominator
@@ -405,6 +407,8 @@ bool tb_pass_mem2reg(TB_Passes* p) {
                     goto done;
                 }
             }
+
+            if (n == end) break;
 
             n = cfg_next_control(n);
         } while (n != NULL && n != end);
