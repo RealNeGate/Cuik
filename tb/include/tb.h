@@ -1271,6 +1271,7 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 TB_API void tb_pass_peephole(TB_Passes* opt, TB_PeepholeFlags flags);
 TB_API void tb_pass_sroa(TB_Passes* opt);
 TB_API bool tb_pass_mem2reg(TB_Passes* opt);
+TB_API bool tb_pass_loop(TB_Passes* opt);
 
 // this just runs the optimizer in the default configuration
 TB_API void tb_pass_optimize(TB_Passes* opt);

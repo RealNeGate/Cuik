@@ -1,13 +1,5 @@
-#if 0
-TB_Attrib* get_debug_var(TB_Node* n) {
-    dyn_array_for(i, n->attribs) {
-        if (n->attribs[i].tag == TB_ATTRIB_VARIABLE) return &n->attribs[i];
-    }
 
-    return NULL;
-}
-
-static void add_region_pred_tracked(TB_Passes* opt, TB_Function* f, TB_Node* n, TB_Node* pred) {
+/*static void add_region_pred_tracked(TB_Passes* opt, TB_Function* f, TB_Node* n, TB_Node* pred) {
     // detach old predecessor list, make bigger one
     assert(n->type == TB_REGION);
 
@@ -20,11 +12,43 @@ static void add_region_pred_tracked(TB_Passes* opt, TB_Function* f, TB_Node* n, 
     n->input_count = old_count + 1;
 
     add_user(opt, n, pred, old_count, NULL);
-}
+}*/
 
-bool tb_passes_loop(TB_Passes* p) {
+bool tb_pass_loop(TB_Passes* p) {
     verify_tmp_arena(p);
 
+    size_t block_count = tb_pass_update_cfg(p, &p->worklist, true);
+    TB_Node** blocks = &p->worklist.items[0];
+
+    // tb_pass_print(p);
+
+    // find & canonicalize loops
+    DynArray(ptrdiff_t) backedges = NULL;
+    FOREACH_N(i, 0, block_count) {
+        TB_Node* header = blocks[i];
+        if (header->input_count != 2) {
+            continue;
+        }
+
+        // find backedges, we'll be unifying them soon
+        dyn_array_clear(backedges);
+        FOREACH_N(j, 0, header->input_count) {
+            TB_Node* pred = get_pred_cfg(&p->cfg, header, j);
+            if (lattice_dommy(&p->universe, header, pred)) {
+                dyn_array_put(backedges, j);
+            }
+        }
+
+        // not a loop :(
+        if (dyn_array_length(backedges) == 0) {
+            continue;
+        }
+    }
+
+    dyn_array_destroy(backedges);
+    return false;
+
+    #if 0
     TB_Function* f = p->f;
     TB_PostorderWalk order = p->order;
 
@@ -153,5 +177,5 @@ bool tb_passes_loop(TB_Passes* p) {
 
     tb_function_print(f, tb_default_print_callback, stdout);
     return false;
+    #endif
 }
-#endif

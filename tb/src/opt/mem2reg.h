@@ -22,8 +22,6 @@ typedef struct Mem2Reg_Ctx {
     TB_TemporaryStorage* tls;
     TB_Function* f;
     TB_Passes* p;
-
-    TB_CFG cfg;
     TB_Node** blocks;
 
     // Stack slots we're going to convert into
@@ -83,7 +81,7 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
 
     // the slot to fill is based on the predecessor list of the region
     FOREACH_N(i, 0, phi_region->input_count) {
-        TB_Node* pred = get_pred_cfg(&c->cfg, phi_region, i);
+        TB_Node* pred = get_pred_cfg(&c->p->cfg, phi_region, i);
         if (pred == bb) {
             set_input(c->p, phi_node, node, i+1);
             break;
@@ -120,7 +118,7 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
 
         bool found = false;
         FOREACH_N(j, 0, dst->input_count) {
-            TB_Node* pred = get_pred_cfg(&c->cfg, dst, j);
+            TB_Node* pred = get_pred_cfg(&c->p->cfg, dst, j);
             if (pred == bb) {
                 // try to replace
                 set_input(c->p, phi_reg, top, j + 1);
@@ -150,16 +148,16 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     // push phi nodes
     size_t* old_len = tb_tls_push(c->tls, sizeof(size_t) * c->to_promote_count);
     FOREACH_N(var, 0, c->to_promote_count) {
+        old_len[var] = dyn_array_length(stack[var]);
+
         ptrdiff_t search = nl_map_get(c->defs[var], bb);
         if (search >= 0 && c->defs[var][search].v->type == TB_PHI) {
             dyn_array_put(stack[var], c->defs[var][search].v);
         }
-
-        old_len[var] = dyn_array_length(stack[var]);
     }
 
     // rewrite operations
-    TB_BasicBlock* bb_info = &nl_map_get_checked(c->cfg.node_to_block, bb);
+    TB_BasicBlock* bb_info = &nl_map_get_checked(c->p->cfg.node_to_block, bb);
     TB_Node* end = bb_info->end;
 
     DO_IF(TB_OPTDEBUG_MEM2REG)(
@@ -183,6 +181,8 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
             if (n->type == TB_STORE) {
                 int var = get_variable_id(c, n->inputs[2]);
                 if (var >= 0) {
+                    DO_IF(TB_OPTDEBUG_MEM2REG)(printf("    ASSIGN %d -> %u\n", var, n->inputs[3]->gvn));
+
                     // push new store value onto the stack
                     dyn_array_put(stack[var], n->inputs[3]);
                     kill = true;
@@ -262,9 +262,9 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     //
     // TODO(NeGate): maybe we want a data structure for this because it'll
     // be "kinda" slow.
-    FOREACH_N(i, 0, c->cfg.block_count) {
+    FOREACH_N(i, 0, c->p->cfg.block_count) {
         TB_Node* k = c->blocks[i];
-        TB_Node* v = idom(&c->cfg, k);
+        TB_Node* v = idom(&c->p->cfg, k);
 
         if (v == bb && k != bb) {
             ssa_rename(c, f, k, stack);
@@ -368,21 +368,21 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     c.defs = tb_tls_push(c.tls, to_promote_count * sizeof(Mem2Reg_Def));
     memset(c.defs, 0, to_promote_count * sizeof(Mem2Reg_Def));
 
-    c.cfg = tb_compute_rpo(f, p);
+    tb_pass_update_cfg(p, &p->worklist, true);
     c.blocks = &p->worklist.items[0];
 
     worklist_clear_visited(&p->worklist);
-    tb_compute_dominators(f, p, c.cfg);
+    tb_compute_dominators(f, p, c.p->cfg);
 
-    TB_DominanceFrontiers* df = tb_get_dominance_frontiers(f, p, c.cfg, c.blocks);
+    TB_DominanceFrontiers* df = tb_get_dominance_frontiers(f, p, c.p->cfg, c.blocks);
 
     ////////////////////////////////
     // Phase 1: Insert phi functions
     ////////////////////////////////
     // Identify the final value of all the variables in the function per basic block
-    FOREACH_N(i, 0, c.cfg.block_count) {
+    FOREACH_N(i, 0, c.p->cfg.block_count) {
         TB_Node* bb = c.blocks[i];
-        TB_BasicBlock* bb_info = &nl_map_get_checked(c.cfg.node_to_block, bb);
+        TB_BasicBlock* bb_info = &nl_map_get_checked(c.p->cfg.node_to_block, bb);
 
         // mark into worklist
         worklist_test_n_set(&p->worklist, bb);
@@ -429,16 +429,16 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     }
 
     // for each global name we'll insert phi nodes
-    TB_Node** phi_p = tb_tls_push(tls, c.cfg.block_count * sizeof(TB_Node*));
+    TB_Node** phi_p = tb_tls_push(tls, c.p->cfg.block_count * sizeof(TB_Node*));
 
-    NL_HashSet ever_worked = nl_hashset_alloc(c.cfg.block_count);
-    NL_HashSet has_already = nl_hashset_alloc(c.cfg.block_count);
+    NL_HashSet ever_worked = nl_hashset_alloc(c.p->cfg.block_count);
+    NL_HashSet has_already = nl_hashset_alloc(c.p->cfg.block_count);
     FOREACH_N(var, 0, c.to_promote_count) {
         nl_hashset_clear(&ever_worked);
         nl_hashset_clear(&has_already);
 
         size_t p_count = 0;
-        FOREACH_N(i, 0, c.cfg.block_count) {
+        FOREACH_N(i, 0, c.p->cfg.block_count) {
             TB_Node* bb = c.blocks[i];
 
             ptrdiff_t search = nl_map_get(c.defs[var], bb);
@@ -457,7 +457,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
                 TB_DataType dt = value->dt;
 
                 // for all DFs of BB, insert PHI
-                int bb_id = nl_map_get_checked(c.cfg.node_to_block, bb).id;
+                int bb_id = nl_map_get_checked(c.p->cfg.node_to_block, bb).id;
                 uint64_t* frontier = &df->arr[bb_id * df->stride];
                 FOREACH_N(j, 0, df->stride) FOREACH_BIT(k, j*64, frontier[j]) {
                     TB_Node* l = c.blocks[k];
@@ -511,7 +511,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
     tb_tls_restore(tls, to_promote);
 
-    tb_free_cfg(&c.cfg);
+    tb_free_cfg(&p->cfg);
     cuikperf_region_end();
     return true;
 

@@ -306,14 +306,16 @@ TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_
     TB_FunctionPrototype* p = tb_arena_alloc(get_permanent_arena(m), size);
 
     p->call_conv = cc;
-    p->return_count = return_count;
     p->param_count = param_count;
     p->has_varargs = has_varargs;
     if (param_count > 0) {
         memcpy(p->params, params, param_count * sizeof(TB_PrototypeParam));
     }
-    if (return_count > 0) {
+    if (return_count > 0 && !TB_IS_VOID_TYPE(returns[0].dt)) {
         memcpy(p->params + param_count, returns, return_count * sizeof(TB_PrototypeParam));
+        p->return_count = return_count;
+    } else {
+        p->return_count = 0;
     }
     return p;
 }

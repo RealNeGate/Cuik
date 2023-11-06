@@ -132,17 +132,6 @@ static int fib(int i) {
     return fib(i - 2) + fib(i - 1);
 }
 
-int main() {
-    // printf("fib(10) = %d\n", fib(10));
-    printf("Wack! %d\n", murmur3_32("Hello", 5));
-    printf("Wack! %d\n", murmur3_32("Why", 3));
-
-    /*for (int i = 32; i <= 128; i++) {
-        printf("%c %d\n", i, isalnum(i));
-    }*/
-    return 0;
-}
-
 uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
@@ -172,6 +161,18 @@ uint32_t murmur3_32(const void* key, size_t len) {
     h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
     h = (h ^ (h >> 13))*0xc2b2ae35;
     return (h ^ (h >> 16));
+}
+
+int main() {
+    printf("fib(10) = %d\n", fib(10));
+    printf("iter(10) = %d\n", iter(0, 10));
+    printf("Wack! %d\n", murmur3_32("Hello", 5));
+    printf("Wack! %d\n", murmur3_32("Why", 3));
+
+    /*for (int i = 32; i <= 128; i++) {
+        printf("%c %d\n", i, isalnum(i));
+    }*/
+    return 0;
 }
 
 /*uint32_t dead_if(uint32_t n) {

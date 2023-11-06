@@ -36,6 +36,7 @@ TB_Node* make_dead_node(TB_Function* f, TB_Passes* restrict p);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
 static bool lattice_dommy(LatticeUniverse* uni, TB_Node* expected_dom, TB_Node* bb);
+static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve);
 
 ////////////////////////////////
 // Worklist
@@ -403,7 +404,8 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
         }
 
         // (br (cmp a b)) => ...
-        if (type >= TB_CMP_EQ && type <= TB_CMP_FLE) {
+        // (or (shl a 24) (shr a 40)) => ...
+        if ((type >= TB_CMP_EQ && type <= TB_CMP_FLE) || type == TB_SHL || type == TB_SHR) {
             tb_pass_mark_users_raw(p, use->n);
         }
     }
@@ -956,6 +958,34 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
     tb_pass_mem2reg(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
+    tb_pass_loop(p);
+    tb_pass_peephole(p, TB_PEEPHOLE_ALL);
+}
+
+static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve) {
+    TB_Function* f = p->f;
+
+    p->cfg = tb_compute_rpo2(f, ws, &p->stack);
+    tb_compute_dominators2(f, ws, p->cfg);
+
+    // mark IDOM for each "BB" node
+    FOREACH_N(i, 0, p->cfg.block_count) {
+        // entry block should be marked as dominated by NULL, to make it easy
+        // to end the iteration of a dom chain.
+        TB_Node* dom = NULL;
+        if (i != 0) {
+            dom = nl_map_get_checked(p->cfg.node_to_block, ws->items[i]).dom->start;
+        }
+
+        Lattice* l = lattice_ctrl(&p->universe, dom);
+        lattice_universe_map(&p->universe, ws->items[i], l);
+    }
+
+    if (!preserve) {
+        tb_free_cfg(&p->cfg);
+    }
+
+    return p->cfg.block_count;
 }
 
 void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
@@ -967,13 +997,14 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
 
     // make sure we have space for the lattice universe
     if (p->universe.arena == NULL) {
-        TB_ThreadInfo* info = tb_thread_info(p->f->super.module);
+        TB_Function* f = p->f;
+        TB_ThreadInfo* info = tb_thread_info(f->super.module);
         if (info->type_arena.chunk_size == 0) {
             // make new arena
             tb_arena_create(&info->type_arena, TB_ARENA_LARGE_CHUNK_SIZE);
         }
 
-        size_t count = p->f->node_count;
+        size_t count = f->node_count;
         p->universe.arena = &info->type_arena;
         p->universe.pool = nl_hashset_alloc(64);
         p->universe.type_cap = count;
@@ -982,29 +1013,12 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
 
         // generate early doms
         CUIK_TIMED_BLOCK("doms") {
-            TB_Function* f = p->f;
-
             Worklist tmp_ws = { 0 };
-            worklist_alloc(&tmp_ws, (f->node_count / 4) + 4);
+            worklist_alloc(&tmp_ws, (f->node_count / 8) + 4);
 
-            TB_CFG cfg = tb_compute_rpo2(f, &tmp_ws, &p->stack);
-            tb_compute_dominators2(f, &tmp_ws, cfg);
-
-            // mark IDOM for each "BB" node
-            FOREACH_N(i, 0, cfg.block_count) {
-                // entry block should be marked as dominated by NULL, to make it easy
-                // to end the iteration of a dom chain.
-                TB_Node* dom = NULL;
-                if (i != 0) {
-                    dom = nl_map_get_checked(cfg.node_to_block, tmp_ws.items[i]).dom->start;
-                }
-
-                Lattice* l = lattice_ctrl(&p->universe, dom);
-                lattice_universe_map(&p->universe, tmp_ws.items[i], l);
-            }
+            tb_pass_update_cfg(p, &tmp_ws, false);
 
             worklist_free(&tmp_ws);
-            tb_free_cfg(&cfg);
         }
     }
 
@@ -1027,16 +1041,13 @@ void tb_pass_exit(TB_Passes* p) {
     // terminators will be made obselete by the optimizer
     dyn_array_destroy(f->terminators);
 
-    // tb_function_print(f, tb_default_print_callback, stdout);
-
     #if TB_OPTDEBUG_STATS
-    push_all_nodes(p, &p->worklist, f);
+    /* push_all_nodes(p, &p->worklist, f);
     int final_count = worklist_popcount(&p->worklist);
-
-    double factor = ((double) final_count / (double) p->stats.initial) * 100.0;
+    double factor = ((double) final_count / (double) p->stats.initial) * 100.0;*/
 
     printf("%s: stats:\n", f->super.name);
-    printf("  %4d   -> %4d nodes (%.2f%%)\n", p->stats.initial, final_count, factor);
+    // printf("  %4d   -> %4d nodes (%.2f%%)\n", p->stats.initial, final_count, factor);
     printf("  %4d GVN hit    %4d GVN miss\n", p->stats.gvn_hit, p->stats.gvn_miss);
     printf("  %4d peepholes  %4d rewrites    %4d identities\n", p->stats.peeps, p->stats.rewrites, p->stats.identities);
     #endif

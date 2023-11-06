@@ -158,6 +158,9 @@ struct TB_Passes {
     // this is used to do GVN
     NL_HashSet gvn_nodes;
 
+    // might be out of date if you haven't called tb_pass_update_cfg
+    TB_CFG cfg;
+
     // debug shit:
     TB_Node* error_n;
 

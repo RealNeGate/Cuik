@@ -487,7 +487,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
             for (; inst; inst = inst->next) {
                 if (inst->type == INST_LABEL) {
                     nl_map_get_checked(seq_bb, bb).end = timeline;
-                    timeline += 2;
+                    timeline += 4;
 
                     tb_assert(inst->flags & INST_NODE, "label instruction has no TB_Node* for the region");
                     bb = inst->n;
@@ -527,7 +527,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t base = dyn_array_length(ctx->worklist.items);
 
     // all nodes go into the worklist
-    FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+    FOREACH_N(i, 0, ctx->bb_count) {
         TB_Node* n = bbs[bb_order[i]];
         dyn_array_put(ctx->worklist.items, n);
 
@@ -536,7 +536,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         set_copy(&mbb->live_in, &mbb->gen);
     }
 
-    while (dyn_array_length(ctx->worklist.items) > base) // CUIK_TIMED_BLOCK("global iter")
+    while (dyn_array_length(ctx->worklist.items) > base) CUIK_TIMED_BLOCK("global iter")
     {
         TB_Node* bb = dyn_array_pop(ctx->worklist.items);
         MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
@@ -548,7 +548,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         TB_Node* end = mbb->end_node;
         if (end->type == TB_BRANCH) {
             for (User* u = end->users; u; u = u->next) {
-                if (cfg_is_control(u->n)) {
+                if (u->n->type == TB_PROJ) {
                     // union with successor's lives
                     TB_Node* succ = cfg_next_bb_after_cproj(u->n);
                     set_union(live_out, &nl_map_get_checked(seq_bb, succ).live_in);
@@ -567,7 +567,6 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         // live_in = (live_out - live_kill) U live_gen
         bool changes = false;
         FOREACH_N(i, 0, (interval_count + 63) / 64) {
-            bool changes = false;
             uint64_t new_in = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
 
             changes |= (live_in->data[i] != new_in);
@@ -575,14 +574,15 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         }
 
         // if we have changes, mark the predeccesors
-        if (changes) {
+        if (changes && !(bb->type == TB_PROJ && bb->inputs[0]->type == TB_START)) {
             FOREACH_N(i, 0, bb->input_count) {
-                dyn_array_put(ctx->worklist.items, get_block_begin(bb->inputs[i]));
+                TB_Node* pred = get_pred_cfg(&ctx->cfg, bb, i);
+                dyn_array_put(ctx->worklist.items, pred);
             }
         }
     }
 
-    /*if (reg_alloc_log) {
+    /* if (reg_alloc_log) {
         FOREACH_N(i, 0, ctx->bb_count) {
             TB_Node* n = bbs[bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(seq_bb, n);
@@ -591,7 +591,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
             bool out = set_get(&mbb->live_out, 33);
             printf(".bb%d [%d - %d]: %s %s\n", bb_order[i], mbb->start, mbb->end, in?"in":"", out?"out":"");
         }
-    }*/
+    } */
 
     ctx->machine_bbs = seq_bb;
     return epilogue;
@@ -916,7 +916,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
     #if 0
-    if (!strcmp(f->super.name, "iter")) {
+    if (!strcmp(f->super.name, "murmur3_32")) {
         reg_alloc_log = true;
         // tb_pass_print(p);
     } else {

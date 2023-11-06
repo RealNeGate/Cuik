@@ -487,17 +487,17 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
         assert(n->dt.type == TB_INT);
         int bits = n->dt.data;
 
-        // (or (shr a 40) (shl a 24)) => (rol a 24)
-        if (a->type == TB_SHR && b->type == TB_SHL) {
+        // (or (shl a 24) (shr a 40)) => (rol a 24)
+        if (a->type == TB_SHL && b->type == TB_SHR) {
             uint64_t shl_amt, shr_amt;
             if (a->inputs[1] == b->inputs[1] &&
-                get_int_const(a->inputs[2], &shr_amt) &&
-                get_int_const(b->inputs[2], &shl_amt) &&
+                get_int_const(a->inputs[2], &shl_amt) &&
+                get_int_const(b->inputs[2], &shr_amt) &&
                 shl_amt == bits - shr_amt) {
                 // convert to rotate left
                 n->type = TB_ROL;
-                set_input(opt, n, b->inputs[1], 1);
-                set_input(opt, n, b->inputs[2], 2);
+                set_input(opt, n, a->inputs[1], 1);
+                set_input(opt, n, a->inputs[2], 2);
                 return n;
             }
         }
@@ -682,6 +682,7 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
 ////////////////////////////////
 // a + 0 => a
 // a - 0 => a
+// a ^ 0 => a
 // a * 0 => 0
 // a / 0 => poison
 static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
@@ -695,6 +696,7 @@ static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_N
         case TB_ADD:
         case TB_SUB:
         case TB_MUL:
+        case TB_XOR:
         return n->inputs[1];
 
         case TB_UDIV:

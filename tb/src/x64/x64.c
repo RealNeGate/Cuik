@@ -125,16 +125,22 @@ static bool is_terminator(int t) {
     return t == INST_TERMINATOR || t == INT3 || t == UD2;
 }
 
-static bool try_for_imm32(Ctx* restrict ctx, TB_Node* n, int32_t* out_x) {
-    if (n->type == TB_INTEGER_CONST) {
-        TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-        if (i->value == (int32_t)i->value) {
-            *out_x = i->value;
-            return true;
-        }
+static bool try_for_imm32(Ctx* restrict ctx, int bits, TB_Node* n, int32_t* out_x) {
+    if (n->type != TB_INTEGER_CONST) {
+        return false;
     }
 
-    return false;
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    if (i->value != (int32_t)i->value) {
+        return false;
+    }
+
+    if (bits > 32 && (i->value >> 31ull) != 0 && (i->value >> 32ull) == 0) {
+        return false;
+    }
+
+    *out_x = i->value;
+    return true;
 }
 
 static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
@@ -258,7 +264,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
         n = n->inputs[2];
 
         int32_t x;
-        if (n->type == TB_SHL && try_for_imm32(ctx, n->inputs[2], &x)) {
+        if (n->type == TB_SHL && try_for_imm32(ctx, 64, n->inputs[2], &x)) {
             use(ctx, n);
             use(ctx, n->inputs[2]);
 
@@ -378,7 +384,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
             bool invert = false;
             int32_t x;
             int lhs = input_reg(ctx, n->inputs[1]);
-            if (try_for_imm32(ctx, n->inputs[2], &x)) {
+            if (try_for_imm32(ctx, cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
 
                 if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
@@ -581,11 +587,11 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             if (x == 0) {
                 SUBMIT(inst_op_zero(n->dt, dst));
-            } else if (x == (int32_t) x) {
-                SUBMIT(inst_op_imm(MOV, n->dt, dst, x));
             } else if ((x >> 32ull) == UINT32_MAX) {
                 // mov but zero ext
                 SUBMIT(inst_op_imm(MOV, TB_TYPE_I32, dst, x));
+            } else if (bits_in_type <= 32 || (x >> 31ull) == 0) {
+                SUBMIT(inst_op_imm(MOV, n->dt, dst, x));
             } else {
                 // movabs reg, imm64
                 SUBMIT(inst_op_abs(MOVABS, n->dt, dst, x));
@@ -625,7 +631,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 inst->type = op;
                 inst->dt = legalize(n->dt);
                 SUBMIT(inst);
-            } else if (try_for_imm32(ctx, n->inputs[2], &x)) {
+            } else if (try_for_imm32(ctx, n->dt.data, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
 
                 if (type == TB_ADD) {
@@ -658,15 +664,15 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             int32_t x;
-            if (try_for_imm32(ctx, n->inputs[2], &x)) {
+            if (try_for_imm32(ctx, dt.data, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
 
-                SUBMIT(inst_move(n->dt, dst, lhs));
+                SUBMIT(inst_move(dt, dst, lhs));
                 SUBMIT(inst_op_rri(IMUL, dt, dst, dst, x));
             } else {
                 int rhs = input_reg(ctx, n->inputs[2]);
 
-                SUBMIT(inst_move(n->dt, dst, lhs));
+                SUBMIT(inst_move(dt, dst, lhs));
                 SUBMIT(inst_op_rrr(IMUL, dt, dst, dst, rhs));
             }
             break;
@@ -744,7 +750,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             hint_reg(ctx, dst, lhs);
 
             int32_t x;
-            if (try_for_imm32(ctx, n->inputs[2], &x) && x == (int8_t)x) {
+            if (try_for_imm32(ctx, n->inputs[2]->dt.data, n->inputs[2], &x) && x >= 0 && x < 64) {
                 use(ctx, n->inputs[2]);
                 SUBMIT(inst_move(n->dt, dst, lhs));
                 SUBMIT(inst_op_rri(op, n->dt, dst, dst, x));
@@ -977,7 +983,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
 
             int32_t imm;
-            if (try_for_imm32(ctx, src, &imm)) {
+            if (try_for_imm32(ctx, bits_in_type, src, &imm)) {
                 #define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
                 use(ctx, src);
 
@@ -1030,6 +1036,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             TB_Node* ret_nodes[2] = { 0 };
             int rets[2] = { -1, -1 };
+            int ret_count = 0;
 
             assert(proto->return_count <= 2);
             FOREACH_N(i, 0, proto->return_count) {
@@ -1041,6 +1048,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 if (ret_node != NULL) {
                     ret_nodes[i] = ret_node;
                     rets[i] = input_reg(ctx, ret_node);
+                    ret_count++;
 
                     bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_node->dt);
                     if (use_xmm_ret) {
@@ -1154,7 +1162,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             if (n->type == TB_CALL) op = CALL;
             if (n->type == TB_TAILCALL) op = JMP;
 
-            Inst* call_inst = alloc_inst(op, TB_TYPE_PTR, proto->return_count, 1 + in_count, clobber_count);
+            Inst* call_inst = alloc_inst(op, TB_TYPE_PTR, ret_count, 1 + in_count, clobber_count);
 
             // mark clobber list
             {
@@ -1169,17 +1177,17 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             // return value (either XMM0 or RAX)
+            RegIndex* dst_ins = call_inst->operands;
             FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
                 bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_nodes[i]->dt);
                 if (use_xmm_ret) {
-                    call_inst->operands[i] = FIRST_XMM + i;
+                    *dst_ins++ = FIRST_XMM + i;
                 } else {
-                    call_inst->operands[i] = ret_gprs[i];
+                    *dst_ins++ = ret_gprs[i];
                 }
             }
 
             // write inputs
-            RegIndex* dst_ins = &call_inst->operands[call_inst->out_count];
             if (static_call) {
                 call_inst->flags |= INST_GLOBAL;
                 call_inst->mem_slot = call_inst->out_count;
@@ -1571,7 +1579,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             int32_t imm;
-            if (try_for_imm32(ctx, src, &imm)) {
+            if (try_for_imm32(ctx, src->dt.data, src, &imm)) {
                 use(ctx, src);
 
                 Inst* st_inst = isel_addr2(ctx, addr, dst, store_op, -1);
