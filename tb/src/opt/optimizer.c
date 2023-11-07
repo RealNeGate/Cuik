@@ -571,6 +571,8 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         return ideal_extension(p, f, n);
         case TB_BITCAST:
         return ideal_bitcast(p, f, n);
+        case TB_TRUNCATE:
+        return ideal_truncate(p, f, n);
 
         case TB_CALL:
         return ideal_libcall(p, f, n);

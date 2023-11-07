@@ -413,6 +413,28 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     return NULL;
 }
 
+static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+    // Trunc(Mul(a, b: con)) => Mul(Trunc(a), b: con)
+    TB_Node* src = n->inputs[1];
+
+    if (src->type == TB_MUL && n->inputs[1]->inputs[2]->type == TB_INTEGER_CONST) {
+        // truncate constant
+        TB_Node* old_b = n->inputs[1]->inputs[2];
+        TB_Node* new_b = make_int_node(f, opt, n->dt, TB_NODE_GET_EXTRA_T(old_b, TB_NodeInt)->value);
+
+        TB_Node* ext_node = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
+        set_input(opt, ext_node, n->inputs[1]->inputs[1], 1);
+        tb_pass_mark(opt, ext_node);
+
+        TB_Node* mul_node = tb_alloc_node(f, TB_MUL, n->dt, 3, 0);
+        set_input(opt, mul_node, ext_node, 1);
+        set_input(opt, mul_node, new_b, 2);
+        return mul_node;
+    }
+
+    return NULL;
+}
+
 static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
@@ -472,7 +494,7 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
     TB_Node* b = n->inputs[2];
 
     // (aa + ab) + b => aa + (ab + b)
-    if (is_associative(type) && a->type == type && b->type != type) {
+    if (is_associative(type) && a->type == type && b->type != type && node_pos(a) < node_pos(b)) {
         TB_Node* abb = tb_alloc_node(f, type, n->dt, 3, sizeof(TB_NodeBinopInt));
         set_input(opt, abb, a->inputs[2], 1);
         set_input(opt, abb, b, 2);

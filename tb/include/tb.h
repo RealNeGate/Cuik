@@ -11,6 +11,7 @@
 //   SCCP - sparse conditional constant propagation
 //   RPO  - reverse postorder
 //   BB   - basic block
+//   ZTC  - zero trip count
 #ifndef TB_CORE_H
 #define TB_CORE_H
 
