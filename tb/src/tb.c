@@ -152,6 +152,14 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* fe
         if (win) {
             m->chkstk_extern = (TB_Symbol*) tb_extern_create(m, -1, "__chkstk", TB_EXTERNAL_SO_LOCAL);
         }
+    } else {
+        if (sys == TB_SYSTEM_WINDOWS) {
+            extern void __chkstk(void);
+
+            // fill it with whatever MSVC/Clang gave us
+            m->chkstk_extern = (TB_Symbol*) tb_extern_create(m, -1, "__chkstk", TB_EXTERNAL_SO_LOCAL);
+            m->chkstk_extern->address = __chkstk;
+        }
     }
 
     return m;
