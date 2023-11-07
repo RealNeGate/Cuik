@@ -154,11 +154,13 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* fe
         }
     } else {
         if (sys == TB_SYSTEM_WINDOWS) {
+            #ifdef _WIN32
             extern void __chkstk(void);
 
             // fill it with whatever MSVC/Clang gave us
             m->chkstk_extern = (TB_Symbol*) tb_extern_create(m, -1, "__chkstk", TB_EXTERNAL_SO_LOCAL);
             m->chkstk_extern->address = __chkstk;
+            #endif
         }
     }
 

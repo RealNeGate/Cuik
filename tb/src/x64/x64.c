@@ -2091,7 +2091,7 @@ static size_t emit_prologue(Ctx* restrict ctx) {
     }
 
     // if there's more than 4096 bytes of stack, we need to insert a chkstk
-    if (stack_usage >= 4096) {
+    if (ctx->target_abi == TB_ABI_WIN64 && stack_usage >= 4096) {
         assert(ctx->f->super.module->chkstk_extern);
         Val sym = val_global(ctx->f->super.module->chkstk_extern, 0);
         Val imm = val_imm(stack_usage);
