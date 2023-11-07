@@ -186,6 +186,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x70 ... 0x7F] = OP_REL8,
         // nop
         [0x90] = OP_0ARY,
+        // cwd/cdq/cqo
+        [0x99] = OP_0ARY,
         // ret
         [0xC3] = OP_0ARY,
         // movabs
@@ -404,6 +406,14 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 #undef ABC
 
 const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
+    // cwd/cdq/cqo
+    if (inst->opcode == 0x99) {
+        if (inst->data_type == TB_X86_TYPE_WORD)  return "cwd";
+        if (inst->data_type == TB_X86_TYPE_DWORD) return "cdq";
+        if (inst->data_type == TB_X86_TYPE_QWORD) return "cqo";
+        return "??";
+    }
+
     switch (inst->opcode) {
         case 0x0F0B: return "ud2";
 
