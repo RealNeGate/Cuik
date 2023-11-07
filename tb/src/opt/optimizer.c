@@ -288,7 +288,13 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->value = x;
 
-    Lattice* l = lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { x, x, ~x & mask, x } });
+    Lattice* l;
+    if (dt.type == TB_INT) {
+        l = lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { x, x, ~x & mask, x } });
+    } else {
+        LatticeTrifecta t = x ? LATTICE_KNOWN_NOT_NULL : LATTICE_KNOWN_NULL;
+        l = lattice_intern(&p->universe, (Lattice){ LATTICE_POINTER, ._ptr = { t } });
+    }
     lattice_universe_map(&p->universe, n, l);
 
     return gvn(p, n, sizeof(TB_NodeInt));
@@ -405,7 +411,8 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
 
         // (br (cmp a b)) => ...
         // (or (shl a 24) (shr a 40)) => ...
-        if ((type >= TB_CMP_EQ && type <= TB_CMP_FLE) || type == TB_SHL || type == TB_SHR) {
+        // (trunc (mul a b)) => ...
+        if ((type >= TB_CMP_EQ && type <= TB_CMP_FLE) || type == TB_SHL || type == TB_SHR || type == TB_MUL) {
             tb_pass_mark_users_raw(p, use->n);
         }
     }

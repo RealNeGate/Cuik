@@ -30,8 +30,8 @@ static ptrdiff_t x86_parse_memory_op(TB_X86_Inst* restrict inst, size_t length, 
             uint8_t scale, index, base;
             UNPACK_233(scale, index, base, sib);
 
-            TB_X86_GPR base_gpr  = base != TB_X86_RBP  ? ((rex&1 ? 8 : 0) | base)  : -1;
-            TB_X86_GPR index_gpr = index != TB_X86_RSP ? ((rex&2 ? 8 : 0) | index) : -1;
+            TB_X86_GPR base_gpr  = mod != MOD_INDIRECT || base != TB_X86_RBP  ? ((rex&1 ? 8 : 0) | base)  : -1;
+            TB_X86_GPR index_gpr = mod != MOD_INDIRECT || index != TB_X86_RSP ? ((rex&2 ? 8 : 0) | index) : -1;
 
             // odd rule but when mod=00,base=101,index=100
             // and using SIB, enable Disp32. this would technically
@@ -207,6 +207,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // sar r/m, CL
         // shl r/m, CL
         // shr r/m, CL
+        // rol r/m, CL
+        // ror r/m, CL
         [0xD2] = OP_MC | OP_FAKERX | OP_8BIT,
         [0xD3] = OP_MC | OP_FAKERX,
         // call rel32
@@ -423,6 +425,8 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0xAA: case 0xAB: return "stos";
         case 0xAE: case 0xAF: return "scas";
 
+        case 0xC00: case 0xC10: case 0xD20: case 0xD30: return "rol";
+        case 0xC01: case 0xC11: case 0xD21: case 0xD31: return "ror";
         case 0xC04: case 0xC14: case 0xD24: case 0xD34: return "shl";
         case 0xC05: case 0xC15: case 0xD25: case 0xD35: return "shr";
         case 0xC07: case 0xC17: case 0xD27: case 0xD37: return "sar";

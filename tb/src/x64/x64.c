@@ -1380,7 +1380,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 } else {
                     int key = input_reg(ctx, n->inputs[1]);
                     SUBMIT(inst_op_ri(CMP, dt, key, br->keys[0]));
-                    cc = E;
+                    cc = NE;
                 }
 
                 // if flipping avoids a jmp, do that

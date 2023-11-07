@@ -70,7 +70,39 @@ typedef struct
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
+#include <sys/stat.h>
+
+#ifdef _WIN32
+#define fileno _fileno
+#define fstat _fstat
+#define stat _stat
+#endif
+
+static char* read_entire_file(const char* filepath, size_t* out_length) {
+    FILE* file = fopen(filepath, "rb");
+    if (file == NULL) {
+        return NULL;
+    }
+    int descriptor = fileno(file);
+
+    struct stat file_stats;
+    if (fstat(descriptor, &file_stats) == -1) {
+        return NULL;
+    }
+
+    int length = file_stats.st_size;
+    char* data = malloc(length + 1);
+
+    fseek(file, 0, SEEK_SET);
+    size_t length_read = fread(data, 1, length, file);
+    data[length_read] = '\0';
+    fclose(file);
+
+    *out_length = length_read;
+    return data;
+}
 
 void bar(int i);
 
@@ -164,14 +196,14 @@ uint32_t murmur3_32(const void* key, size_t len) {
 }
 
 int main() {
-    printf("fib(10) = %d\n", fib(10));
-    printf("iter(10) = %d\n", iter(0, 10));
-    printf("Wack! %d\n", murmur3_32("Hello", 5));
-    printf("Wack! %d\n", murmur3_32("Why", 3));
+    // printf("fib(10) = %d\n", fib(10));
+    // printf("iter(10) = %d\n", iter(0, 10));
+    // printf("Wack! %d\n", murmur3_32("Why", 3));
 
-    /*for (int i = 32; i <= 128; i++) {
-        printf("%c %d\n", i, isalnum(i));
-    }*/
+    size_t len;
+    void* data = read_entire_file("test5.c", &len);
+
+    printf("Wack! %#x\n", murmur3_32(data, len));
     return 0;
 }
 
