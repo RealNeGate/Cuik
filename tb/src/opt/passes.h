@@ -233,34 +233,21 @@ static bool is_mem_in_op(TB_Node* n) {
 
 static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {
     assert(proj->type == TB_PROJ);
+
+    // multi-user proj, this means it's basically a BB
     if (proj->users->next != NULL || proj->users->n->type != TB_REGION) {
         return true;
     }
 
     assert(n->type == TB_BRANCH);
-
-    TB_Node* phi_edge = NULL;
-    for (User* succ = n->users; succ; succ = succ->next) {
-        assert(succ->n->type == TB_PROJ);
-
-        TB_Node* r = succ->n;
-        if (r->type != TB_REGION) continue;
-
+    TB_Node* r = proj->users->n;
+    if (r->type == TB_REGION && r->input_count > 1) {
         for (User* u = r->users; u; u = u->next) {
-            if (u->n->type != TB_PHI) continue;
-
-            // it becomes a critical edge once multiple
-            // paths want to execute PHI code.
-            if (phi_edge != NULL) {
-                return true;
-            }
-
-            phi_edge = r;
-            break;
+            if (u->n->type == TB_PHI) return true;
         }
     }
 
-    return phi_edge != proj->users->n;
+    return false;
 }
 
 ////////////////////////////////
@@ -297,6 +284,20 @@ static User* cfg_next_user(TB_Node* n) {
     }
 
     return NULL;
+}
+
+static bool cfg_has_phis(TB_Node* n) {
+    if (n->type != TB_REGION) {
+        return false;
+    }
+
+    for (User* u = n->users; u; u = u->next) {
+        if (u->n->type == TB_PHI) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static bool cfg_is_unreachable(TB_Node* n) {

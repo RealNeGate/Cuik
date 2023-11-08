@@ -26,8 +26,7 @@ TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType 
 
 static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* new_n);
 
-// *new_node is set to true if we make a new node, it won't set it false for you
-static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node);
+static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra);
 
 // node creation helpers
 TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt);

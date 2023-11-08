@@ -1031,12 +1031,6 @@ TB_API TB_DebugType** tb_debug_func_params(TB_DebugType* type);
 TB_API TB_DebugType** tb_debug_func_returns(TB_DebugType* type);
 
 ////////////////////////////////
-// IR access
-////////////////////////////////
-// it is an index to the input
-#define TB_FOR_INPUT_IN_NODE(it, parent) for (TB_Node **it = parent->inputs, **__end = it + (parent)->input_count; it != __end; it++)
-
-////////////////////////////////
 // Symbols
 ////////////////////////////////
 // returns NULL if the tag doesn't match
