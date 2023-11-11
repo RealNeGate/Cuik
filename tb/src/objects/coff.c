@@ -71,11 +71,9 @@ static void generate_unwind_info(COFF_UnwindInfo* restrict u, const ICodeGen* re
         out_f->unwind_size = xdata.count - out_f->unwind_info;
 
         // write pdata
-        uint32_t pos = out_f->code_pos;
-
         size_t j = i*3;
-        pdata[j+0] = pos;
-        pdata[j+1] = pos + out_f->code_size;
+        pdata[j+0] = 0;
+        pdata[j+1] = out_f->code_size;
         pdata[j+2] = out_f->unwind_info;
 
         // pdata has relocations
