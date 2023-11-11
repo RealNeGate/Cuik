@@ -397,7 +397,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 
                 Inst* inst = isel_addr2(ctx, n->inputs[2]->inputs[2], lhs, -1, lhs);
                 inst->type = CMP;
-                inst->dt = legalize(n->dt);
+                inst->dt = legalize(cmp_dt);
                 SUBMIT(inst);
             } else {
                 int rhs = input_reg(ctx, n->inputs[2]);
@@ -2045,7 +2045,7 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
     size_t patch_pos = e->count;
     UnwindInfo unwind = {
         .version = 1,
-        .flags = UNWIND_FLAG_EHANDLER,
+        .flags = 0, // UNWIND_FLAG_EHANDLER,
         .prolog_length = out_f->prologue_length,
         .code_count = 0,
         .frame_register = RBP,
@@ -2192,12 +2192,17 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
 #undef E
 // #define E(fmt, ...) printf(fmt, ## __VA_ARGS__)
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
-static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int bb, size_t pos, size_t end) {
+static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end) {
     if (bb >= 0) {
         E(".bb%d:\n", bb);
     }
 
     while (pos < end) {
+        if (d->loc != d->end && d->loc->pos == pos) {
+            E("  // %s : line %d\n", d->loc->file->path, d->loc->line);
+            d->loc++;
+        }
+
         TB_X86_Inst inst;
         if (!tb_x86_disasm(&inst, end - pos, &e->data[pos])) {
             E("  ERROR\n");
@@ -2235,15 +2240,15 @@ static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int b
 
                         if (!is_label) E("[");
 
-                        if (patch && patch->pos == pos + inst.length - 4) {
-                            const TB_Symbol* target = patch->target;
+                        if (d->patch && d->patch->pos == pos + inst.length - 4) {
+                            const TB_Symbol* target = d->patch->target;
 
                             if (target->name[0] == 0) {
                                 E("sym%p", target);
                             } else {
                                 E("%s", target->name);
                             }
-                            patch = patch->next;
+                            d->patch = d->patch->next;
                         } else {
                             uint32_t target = pos + inst.length + inst.disp;
                             int bb = tb_emit_get_label(e, target);
@@ -2299,8 +2304,6 @@ static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int b
 
         pos += inst.length;
     }
-
-    return patch;
 }
 #undef E
 

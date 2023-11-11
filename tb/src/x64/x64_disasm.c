@@ -130,10 +130,11 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     ////////////////////////////////
     enum {
         OP_8BIT   = 1,
-        OP_64BIT  = 2,
-        OP_FAKERX = 4,
-        OP_2DT    = 8,
-        OP_SSE    = 16,
+        OP_16BIT  = 2,
+        OP_64BIT  = 4,
+        OP_FAKERX = 8,
+        OP_2DT    = 16,
+        OP_SSE    = 32,
     };
 
     enum {
@@ -190,6 +191,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x99] = OP_0ARY,
         // ret
         [0xC3] = OP_0ARY,
+        // int3
+        [0xCC] = OP_0ARY,
         // movabs
         [0xB8 ... 0xBF] = OP_PLUSR | OP_64BIT,
         // mov r/m, imm
@@ -238,6 +241,9 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x51 ... 0x5F] = OP_RM | OP_SSE,
         // cmovcc
         [0x40 ... 0x4F] = OP_RM,
+        // SSE: cvtsi2sd
+        [0x2A] = OP_RM | OP_SSE,
+        [0x2C] = OP_RM | OP_SSE,
         // SSE: ucomi
         [0x2E] = OP_RM | OP_SSE,
         // nop r/m
@@ -246,6 +252,10 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0xAF] = OP_RM,
         // movzx
         [0xB6 ... 0xB7] = OP_RM | OP_2DT,
+        // movsx reg, r/m
+        [0xBE] = OP_RM | OP_2DT,
+        // movsx reg, r/m
+        [0xBF] = OP_RM | OP_2DT,
         // jcc rel32
         [0x80 ... 0x8F] = OP_REL32,
         // setcc r/m
@@ -350,9 +360,9 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         }
 
         if (flags & OP_2DT) {
-            if (inst->opcode == 0x0FB6 || inst->opcode == 0x0FB7) {
+            if (inst->opcode == 0x0FB6 || inst->opcode == 0x0FB7 || inst->opcode == 0x0FBE || inst->opcode == 0x0FBF) {
                 inst->flags |= TB_X86_INSTR_TWO_DATA_TYPES;
-                inst->data_type2 = inst->opcode == 0x0FB6 ? TB_X86_TYPE_BYTE : TB_X86_TYPE_WORD;
+                inst->data_type2 = (inst->opcode == 0x0FB6 || inst->opcode == 0x0FBE) ? TB_X86_TYPE_BYTE : TB_X86_TYPE_WORD;
             } else {
                 inst->flags |= TB_X86_INSTR_TWO_DATA_TYPES;
                 inst->data_type2 = TB_X86_TYPE_DWORD;
@@ -416,6 +426,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
 
     switch (inst->opcode) {
         case 0x0F0B: return "ud2";
+        case 0xCC: return "int3";
 
         case 0x0F180: return "prefetchnta";
         case 0x0F181: return "prefetch0";
@@ -471,6 +482,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
 
         case 0xB8 ... 0xBF: return "mov";
         case 0x0FB6: case 0x0FB7: return "movzx";
+        case 0x0FBE: case 0x0FBF: return "movsx";
 
         case 0x8D: return "lea";
         case 0x90: return "nop";

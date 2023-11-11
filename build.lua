@@ -100,6 +100,11 @@ if is_windows then
 	src[#src + 1] = "c11threads/threads_msvc.c"
 	cflags = cflags.." -I c11threads -D_CRT_SECURE_NO_WARNINGS"
 
+	if options.shared then
+		cflags = cflags.." -DCUIK_DLL -DTB_DLL"
+		ldflags = ldflags.." /dll"
+	end
+
 	if options.asan then
 		ld = "clang"
 		ldflags = ldflags.." -fsanitize=address -g -o "
@@ -111,12 +116,6 @@ if is_windows then
 		end
 
 		ldflags = ldflags.." /nologo /debug onecore.lib msvcrt.lib libcmt.lib"
-
-		if options.shared then
-			cflags = cflags.." -DCUIK_DLL -DTB_DLL"
-			ldflags = ldflags.." /dll"
-		end
-
 		ldflags = ldflags.." /defaultlib:libcmt /out:"
 	end
 

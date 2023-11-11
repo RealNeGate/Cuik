@@ -430,9 +430,16 @@ typedef uint32_t TB_CharUnits;
 typedef struct {
     // used by the debug info export
     int id;
+
     size_t len;
     uint8_t path[];
 } TB_SourceFile;
+
+typedef struct TB_Location {
+    TB_SourceFile* file;
+    int line, column;
+    uint32_t pos;
+} TB_Location;
 
 // SO refers to shared objects which mean either shared libraries (.so or .dll)
 // or executables (.exe or ELF executables)
@@ -663,12 +670,6 @@ typedef struct {
     uint32_t count; // same as node->input_count
     int32_t values[];
 } TB_Safepoint;
-
-typedef struct TB_Location {
-    TB_SourceFile* file;
-    int line, column;
-    uint32_t pos;
-} TB_Location;
 
 typedef enum {
     TB_MODULE_SECTION_WRITE = 1,

@@ -286,6 +286,20 @@ static User* cfg_next_user(TB_Node* n) {
     return NULL;
 }
 
+static bool cfg_basically_empty_only_mem_phis(TB_Node* n) {
+    if (n->type == TB_PROJ && n->users->next == NULL && n->users->n->type == TB_REGION) {
+        for (User* u = n->users; u; u = u->next) {
+            if (u->n->type == TB_PHI && u->n->dt.type != TB_MEMORY) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
 static bool cfg_has_phis(TB_Node* n) {
     if (n->type != TB_REGION) {
         return false;
@@ -308,6 +322,16 @@ static bool cfg_is_unreachable(TB_Node* n) {
     }
 
     return false;
+}
+
+static TB_Node* cfg_next_control0(TB_Node* n) {
+    for (User* u = n->users; u; u = u->next) {
+        if (u->slot == 0 && cfg_is_control(u->n)) {
+            return u->n;
+        }
+    }
+
+    return NULL;
 }
 
 static TB_Node* cfg_next_control(TB_Node* n) {
@@ -342,12 +366,15 @@ static TB_Node* get_pred(TB_Node* n, int i) {
 }
 
 static TB_Node* get_pred_cfg(TB_CFG* cfg, TB_Node* n, int i) {
-    ptrdiff_t search = nl_map_get(cfg->node_to_block, n->inputs[i]);
-    if (search >= 0) {
-        return n->inputs[i];
-    }
+    n = n->inputs[i];
+    for (;;) {
+        ptrdiff_t search = nl_map_get(cfg->node_to_block, n);
+        if (search >= 0 || n->type == TB_REGION) {
+            return n;
+        }
 
-    return get_pred(n, i);
+        n = n->inputs[0];
+    }
 }
 
 static TB_Node* next_control(TB_Node* n) {

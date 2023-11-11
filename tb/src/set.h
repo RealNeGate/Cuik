@@ -123,11 +123,13 @@ static bool set_first_time(Set* s, size_t index) {
 }
 
 static void set_put(Set* s, size_t index) {
-    lldiv_t d = lldiv(index, 64);
-    if (d.quot >= s->capacity) {
+    size_t quot = index / 64;
+    size_t rem  = index % 64;
+
+    if (quot >= s->capacity) {
         size_t old = s->capacity;
 
-        s->capacity = d.quot * 2;
+        s->capacity = quot * 2;
         s->data = realloc(s->data, s->capacity * sizeof(uint64_t));
         if (s->data == NULL) {
             fprintf(stderr, "TB error: Set out of memory!");
@@ -137,21 +139,23 @@ static void set_put(Set* s, size_t index) {
         memset(s->data + old, 0, (s->capacity - old) * sizeof(uint64_t));
     }
 
-    s->data[d.quot] |= (1ull << d.rem);
+    s->data[quot] |= (1ull << rem);
 }
 
 static void set_remove(Set* s, size_t index) {
-    lldiv_t d = lldiv(index, 64);
-    if (d.quot < s->capacity) {
-        s->data[d.quot] &= ~(1ull << d.rem);
+    size_t quot = index / 64;
+    size_t rem  = index % 64;
+    if (quot < s->capacity) {
+        s->data[quot] &= ~(1ull << rem);
     }
 }
 
 static bool set_get(Set* s, size_t index) {
-    lldiv_t d = lldiv(index, 64);
-    if (d.quot >= s->capacity) {
+    size_t quot = index / 64;
+    size_t rem  = index % 64;
+    if (quot >= s->capacity) {
         return false;
     }
 
-    return s->data[d.quot] & (1ull << d.rem);
+    return s->data[quot] & (1ull << rem);
 }

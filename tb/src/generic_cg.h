@@ -111,6 +111,12 @@ typedef struct {
     uint64_t regs_to_save;
 } Ctx;
 
+typedef struct {
+    TB_SymbolPatch* patch;
+    TB_Location* loc;
+    TB_Location* end;
+} Disasm;
+
 static bool fits_into_int8(uint64_t x) {
     int8_t y = x & 0xFF;
     return (int64_t)y == x;
@@ -128,7 +134,7 @@ static bool is_terminator(int type);
 static bool wont_spill_around(int type);
 static int classify_reg_class(TB_DataType dt);
 static void isel(Ctx* restrict ctx, TB_Node* n, int dst);
-static TB_SymbolPatch* disassemble(TB_CGEmitter* e, TB_SymbolPatch* patch, int bb, size_t pos, size_t end);
+static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
 static bool should_rematerialize(TB_Node* n);
 
 static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, int end);
@@ -536,10 +542,14 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         set_copy(&mbb->live_in, &mbb->gen);
     }
 
+    TB_ArenaSavepoint sp = tb_arena_save(arena);
+    Set visited = set_create_in_arena(arena, ctx->f->node_count);
     while (dyn_array_length(ctx->worklist.items) > base) CUIK_TIMED_BLOCK("global iter")
     {
         TB_Node* bb = dyn_array_pop(ctx->worklist.items);
         MachineBB* mbb = &nl_map_get_checked(seq_bb, bb);
+
+        set_remove(&visited, bb->gvn);
 
         Set* restrict live_out = &mbb->live_out;
         set_clear(live_out);
@@ -577,10 +587,14 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         if (changes && !(bb->type == TB_PROJ && bb->inputs[0]->type == TB_START)) {
             FOREACH_N(i, 0, bb->input_count) {
                 TB_Node* pred = get_pred_cfg(&ctx->cfg, bb, i);
-                dyn_array_put(ctx->worklist.items, pred);
+                if (pred->input_count > 0 && set_get(&visited, pred->gvn)) {
+                    set_put(&visited, pred->gvn);
+                    dyn_array_put(ctx->worklist.items, pred);
+                }
             }
         }
     }
+    tb_arena_restore(arena, sp);
 
     /* if (reg_alloc_log) {
         FOREACH_N(i, 0, ctx->bb_count) {
@@ -1003,7 +1017,14 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             TB_Node* bb = bbs[bb_order[i]];
 
             ctx.emit.labels[bb_order[i]] = 0;
-            ctx.fallthrough = i + 1 < ctx.bb_count ? bb_order[i + 1] : INT_MAX;
+            if (i + 1 < ctx.bb_count) {
+                ctx.fallthrough = bb_order[i + 1];
+                /*if (i + 2 < ctx.bb_count && cfg_basically_empty_only_mem_phis(bbs[ctx.fallthrough])) {
+                    ctx.fallthrough = bb_order[i + 2];
+                }*/
+            } else {
+                ctx.fallthrough = INT_MAX;
+            }
 
             Inst* label = inst_label(bb);
             if (ctx.first == NULL) {
@@ -1046,10 +1067,11 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     if (emit_asm) {
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 
-        // dump epilogue
-        disassemble(&ctx.emit, NULL, -1, 0, func_out->prologue_length);
+        Disasm d = { func_out->first_patch, ctx.locations, &ctx.locations[dyn_array_length(ctx.locations)] };
 
-        TB_SymbolPatch* patch = func_out->first_patch;
+        // dump prologue
+        disassemble(&ctx.emit, &d, -1, 0, func_out->prologue_length);
+
         TB_Node** bbs = ctx.worklist.items;
         FOREACH_N(i, 0, ctx.bb_count) {
             TB_Node* bb = bbs[bb_order[i]];
@@ -1060,7 +1082,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 end = ctx.emit.labels[bb_order[i + 1]] & ~0x80000000;
             }
 
-            patch = disassemble(&ctx.emit, patch, bb_order[i], start, end);
+            disassemble(&ctx.emit, &d, bb_order[i], start, end);
         }
     }
 

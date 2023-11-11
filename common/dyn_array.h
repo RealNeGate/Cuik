@@ -80,6 +80,7 @@ static void* dyn_array_internal_trim(void* ptr, size_t type_size) {
 #define dyn_array_create(T, cap) dyn_array_internal_create(sizeof(T), cap)
 #define dyn_array_destroy(arr) (dyn_array_internal_destroy(arr), (arr) = NULL)
 #define dyn_array_pop(arr) ((arr)[(((DynArrayHeader*)(arr)) - 1)->size -= 1])
+#define dyn_array_peek(arr) ((arr)[(((DynArrayHeader*)(arr)) - 1)->size - 1])
 
 #define dyn_array_put(arr, ...)                             \
 do {                                                        \

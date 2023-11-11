@@ -1,4 +1,12 @@
 
+typedef struct Block {
+    struct Block* parent;
+    TB_Node* bb;
+    TB_Node* end;
+    int succ_i;
+    TB_Node* succ[];
+} Block;
+
 void tb_free_cfg(TB_CFG* cfg) {
     nl_map_for(i, cfg->node_to_block) {
         nl_hashset_free(cfg->node_to_block[i].v.items);
@@ -10,106 +18,98 @@ TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* p) {
     return tb_compute_rpo2(f, &p->worklist, &p->stack);
 }
 
-static TB_Node* mark_next_control(Worklist* ws, TB_Node* n) {
-    // unless it's a branch (aka a terminator), it'll have one successor
-    TB_Node* next = NULL;
-    for (User* u = n->users; u; u = u->next) {
-        TB_Node* succ = u->n;
-
-        // we can't treat regions in the chain
-        if (succ->type == TB_REGION) break;
-
-        // we've found the next step in control flow
-        if (cfg_is_control(succ) && !worklist_test_n_set(ws, succ)) {
-            return succ;
+// walks until the terminator or other critical edge
+static TB_Node* end_of_bb(TB_Node* n) {
+    while (!cfg_is_terminator(n)) {
+        TB_Node* next = cfg_next_control0(n);
+        if (next == NULL || next->type == TB_REGION) {
+            break;
         }
+        n = next;
     }
 
-    return NULL;
+    return n;
+}
+
+static Block* create_block(TB_Arena* arena, TB_Node* bb) {
+    TB_Node* end = end_of_bb(bb);
+    size_t succ_count = end->type == TB_BRANCH ? TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count : 1;
+    if (end->type == TB_UNREACHABLE || end->type == TB_END) {
+        succ_count = 0;
+    }
+
+    Block* top = tb_arena_alloc(arena, sizeof(Block) + succ_count*sizeof(TB_Node*));
+    *top = (Block){
+        .bb  = bb,
+        .end = end,
+        .succ_i = succ_count,
+    };
+
+    if (end->type == TB_BRANCH) {
+        for (User* u = end->users; u; u = u->next) {
+            if (u->n->type == TB_PROJ) {
+                int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
+                top->succ[index] = cfg_next_bb_after_cproj(u->n);
+            }
+        }
+    } else if (end->type == TB_UNREACHABLE || end->type == TB_END) {
+        // no successors
+    } else {
+        top->succ[0] = cfg_next_user(end)->n;
+    }
+
+    return top;
 }
 
 TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_stack) {
+    cuikperf_region_start("RPO", NULL);
     assert(dyn_array_length(ws->items) == 0);
 
     TB_CFG cfg = { 0 };
-    DynArray(TB_Node*) stack = *tmp_stack;
-    if (stack == NULL) {
-        stack = dyn_array_create(TB_Node*, 1024);
-    }
+    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
 
-    dyn_array_put(stack, f->start_node);
-    worklist_test_n_set(ws, f->start_node);
+    // push initial block
+    Block* top = create_block(tmp_arena, f->params[0]);
+    worklist_test_n_set(ws, f->params[0]);
 
-    // depth-first search
-    int order = 0;
-    while (dyn_array_length(stack)) {
-        TB_Node* n = dyn_array_pop(stack);
-
-        // we've spotted a BB entry
-        if (cfg_is_bb_entry(n)) {
-            // a branch's projection that refers to a region would rather be
-            // coalesced but won't if it's a critical edge.
-            if (n->type == TB_PROJ && n->inputs[0]->type == TB_BRANCH &&
-                n->users->next == NULL && n->users->n->type == TB_REGION &&
-                !cfg_critical_edge(n, n->inputs[0])) {
-                // we've already seen this BB, let's skip it
-                if (worklist_test_n_set(ws, n->users->n)) {
-                    continue;
-                }
-
-                n = n->users->n;
-            }
-
-            // walk until terminator
-            TB_Node* entry = n;
-            TB_BasicBlock bb = { .id = cfg.block_count++ };
-            while (!cfg_is_terminator(n)) {
-                TB_Node* next = mark_next_control(ws, n);
-                if (next == NULL) {
-                    break;
-                }
-                n = next;
-            }
-
-            // the start node always has it's dom depth filled
-            if (bb.id == 0) {
-                bb.dom_depth = 0;
-            } else {
-                bb.dom_depth = -1;
-            }
-
-            bb.start = entry;
-            bb.end = n;
-            dyn_array_put(ws->items, entry);
-            nl_map_put(cfg.node_to_block, entry, bb);
-        }
-
-        // add successors (could be multi-way like a branch)
-        if (n->type == TB_BRANCH) {
-            size_t succ_count = TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->succ_count;
-
-            dyn_array_put_uninit(stack, succ_count);
-            TB_Node** top = &stack[dyn_array_length(stack) - 1];
-
-            for (User* u = n->users; u; u = u->next) {
-                TB_Node* succ = u->n;
-                if (cfg_is_control(succ) && !worklist_test_n_set(ws, succ)) {
-                    assert(succ->type == TB_PROJ);
-                    int index = TB_NODE_GET_EXTRA_T(succ, TB_NodeProj)->index;
-                    top[-index] = succ;
-                }
+    while (top != NULL) {
+        if (top->succ_i > 0) {
+            // push next unvisited succ
+            TB_Node* succ = top->succ[--top->succ_i];
+            if (!worklist_test_n_set(ws, succ)) {
+                Block* new_top = create_block(tmp_arena, succ);
+                new_top->parent = top;
+                top = new_top;
             }
         } else {
-            for (User* u = n->users; u; u = u->next) {
-                TB_Node* succ = u->n;
-                if (cfg_is_control(succ) && !worklist_test_n_set(ws, succ)) {
-                    dyn_array_put(stack, succ);
-                }
-            }
+            Block b = *top;
+
+            TB_BasicBlock bb = { .start = b.bb, .end = b.end, .dom_depth = -1 };
+            dyn_array_put(ws->items, b.bb);
+            nl_map_put(cfg.node_to_block, b.bb, bb);
+            cfg.block_count += 1;
+
+            // off to wherever we left off
+            top = b.parent;
         }
     }
 
-    *tmp_stack = stack;
+    // just reverse the items here... im too lazy to flip all my uses
+    size_t last = cfg.block_count - 1;
+    FOREACH_N(i, 0, cfg.block_count / 2) {
+        SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
+    }
+
+    FOREACH_N(i, 0, cfg.block_count) {
+        TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
+        if (i == 0) {
+            bb->dom_depth = 0;
+        }
+        bb->id = i;
+    }
+
+    tb_arena_restore(tmp_arena, sp);
+    cuikperf_region_end();
     return cfg;
 }
 
