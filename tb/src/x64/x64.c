@@ -131,12 +131,14 @@ static bool try_for_imm32(Ctx* restrict ctx, int bits, TB_Node* n, int32_t* out_
     }
 
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    if (i->value != (int32_t)i->value) {
-        return false;
-    }
+    if (bits > 32) {
+        bool sign = (i->value >> 31ull) & 1;
+        uint64_t top = i->value >> 32ull;
 
-    if (bits > 32 && (i->value >> 31ull) != 0 && (i->value >> 32ull) == 0) {
-        return false;
+        // if the sign matches the rest of the top bits, we can sign extend just fine
+        if (top != (sign ? 0xFFFFFFFF : 0)) {
+            return false;
+        }
     }
 
     *out_x = i->value;
@@ -634,7 +636,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             } else if (try_for_imm32(ctx, n->dt.data, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
 
-                if (type == TB_ADD) {
+                if (0 && type == TB_ADD) {
                     SUBMIT(inst_op_rm(LEA, TB_TYPE_I64, dst, lhs, -1, SCALE_X1, x));
                 } else {
                     SUBMIT(inst_move(n->dt, dst, lhs));
