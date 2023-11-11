@@ -88,9 +88,7 @@ typedef struct TB_Emitter {
 typedef struct TB_SymbolPatch TB_SymbolPatch;
 struct TB_SymbolPatch {
     TB_SymbolPatch* next;
-
-    TB_Function* source;
-    uint32_t pos;  // relative to the start of the function body
+    uint32_t pos;
     bool internal; // handled already by the code gen's emit_call_patches
     const TB_Symbol* target;
 };
