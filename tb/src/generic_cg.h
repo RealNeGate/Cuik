@@ -587,7 +587,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
         if (changes && !(bb->type == TB_PROJ && bb->inputs[0]->type == TB_START)) {
             FOREACH_N(i, 0, bb->input_count) {
                 TB_Node* pred = get_pred_cfg(&ctx->cfg, bb, i);
-                if (pred->input_count > 0 && set_get(&visited, pred->gvn)) {
+                if (pred->input_count > 0 && !set_get(&visited, pred->gvn)) {
                     set_put(&visited, pred->gvn);
                     dyn_array_put(ctx->worklist.items, pred);
                 }

@@ -973,7 +973,7 @@ void tb_pass_optimize(TB_Passes* p) {
 static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve) {
     TB_Function* f = p->f;
 
-    p->cfg = tb_compute_rpo2(f, ws, &p->stack);
+    p->cfg = tb_compute_rpo2(f, ws);
     tb_compute_dominators2(f, ws, p->cfg);
 
     // mark IDOM for each "BB" node

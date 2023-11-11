@@ -15,7 +15,7 @@ void tb_free_cfg(TB_CFG* cfg) {
 }
 
 TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* p) {
-    return tb_compute_rpo2(f, &p->worklist, &p->stack);
+    return tb_compute_rpo2(f, &p->worklist);
 }
 
 // walks until the terminator or other critical edge
@@ -61,7 +61,7 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
     return top;
 }
 
-TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws, DynArray(TB_Node*)* tmp_stack) {
+TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
     cuikperf_region_start("RPO", NULL);
     assert(dyn_array_length(ws->items) == 0);
 
