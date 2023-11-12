@@ -88,6 +88,7 @@ typedef struct {
     TB_CFG cfg;
     Worklist worklist; // reusing from TB_Passes.
     ValueDesc* values; // the indices match the GVN.
+    TB_Scheduler sched;
 
     size_t our_phis;
     DynArray(PhiVal) phi_vals;
@@ -693,7 +694,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
     // phase 1: logical schedule
     DynArray(PhiVal) phi_vals = ctx->phi_vals;
     CUIK_TIMED_BLOCK("phase 1") {
-        sched_walk(ctx->p, &ctx->worklist, &phi_vals, bb, end, true);
+        ctx->sched(ctx->p, &ctx->worklist, &phi_vals, bb, end);
 
         // schedule params
         if (rpo_index == 0) {
@@ -963,6 +964,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     // And perform global scheduling
     tb_pass_schedule(p, ctx.cfg);
+    ctx.sched = greedy_scheduler;
     ctx.worklist = p->worklist;
 
     // allocate more stuff now that we've run stats on the IR

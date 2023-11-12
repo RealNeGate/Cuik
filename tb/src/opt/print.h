@@ -3,6 +3,7 @@ typedef struct {
     TB_Passes* opt;
     TB_Function* f;
     TB_CFG cfg;
+    TB_Scheduler sched;
 } PrinterCtx;
 
 static void print_type(TB_DataType dt) {
@@ -226,7 +227,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     assert(expected == bb);
     #endif
 
-    sched_walk(ctx->opt, ws, NULL, bb, bb->end, true);
+    ctx->sched(ctx->opt, ws, NULL, bb, bb->end);
 
     TB_Node* prev_effect = NULL;
     FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
@@ -513,6 +514,9 @@ bool tb_pass_print(TB_Passes* opt) {
     PrinterCtx ctx = { opt, f };
     opt->worklist = tmp_ws;
     ctx.cfg = tb_compute_rpo(f, opt);
+
+    // does the IR printing need smart scheduling lol (yes... when we're testing things)
+    ctx.sched = greedy_scheduler;
 
     // schedule nodes
     tb_pass_schedule(opt, ctx.cfg);

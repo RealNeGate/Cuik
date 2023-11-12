@@ -1,96 +1,127 @@
-// Local instruction scheduling is handled here, the idea is just to do a topological
-// sort which is anti-dependency aware, a future TB could implement multiple schedulers.
-//
-// Once the worklist is filled, you can walk backwards and generate instructions accordingly.
-static void sched_walk_phi(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* phi, size_t phi_index) {
-    TB_Node* val = phi->inputs[1 + phi_index];
 
-    // reserve PHI space
-    if (phi_vals && phi->dt.type != TB_MEMORY) {
-        PhiVal p;
-        p.phi = phi;
-        p.n   = val;
-        p.dst = -1;
-        p.src = -1;
-        dyn_array_put(*phi_vals, p);
-    }
+typedef struct SchedNode SchedNode;
+struct SchedNode {
+    SchedNode* parent;
 
-    sched_walk(passes, ws, phi_vals, bb, val, false);
-}
+    TB_Node* n;
+    int index;
+    User* antis;
+};
 
-void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* n, bool is_end) {
-    ptrdiff_t search = nl_map_get(passes->scheduled, n);
-    if (search < 0 || passes->scheduled[search].v != bb || worklist_test_n_set(ws, n)) {
-        return;
-    }
-
-    // if we're a branch, push our PHI nodes
-    if (is_end) {
-        bool fallthru = n->type != TB_BRANCH;
-        for (User* u = n->users; u; u = u->next) {
-            if (!cfg_is_control(u->n)) continue;
-            TB_Node* dst = fallthru ? u->n : cfg_next_bb_after_cproj(u->n);
-
-            // find predecessor index and do that edge
-            ptrdiff_t phi_index = -1;
-            FOREACH_N(j, 0, dst->input_count) {
-                TB_BasicBlock* pred = nl_map_get_checked(passes->scheduled, dst->inputs[j]);
-
-                if (pred == bb) {
-                    phi_index = j;
-                    break;
-                }
-            }
-            if (phi_index < 0) continue;
-
-            // schedule memory PHIs
-            for (User* use = dst->users; use; use = use->next) {
-                TB_Node* phi = use->n;
-                if (phi->type == TB_PHI && phi->dt.type == TB_MEMORY) {
-                    sched_walk_phi(passes, ws, phi_vals, bb, phi, phi_index);
-                }
-            }
-
-            // schedule data PHIs, we schedule these afterwards because it's "generally" better
-            for (User* use = dst->users; use; use = use->next) {
-                TB_Node* phi = use->n;
-                if (phi->type == TB_PHI && phi->dt.type != TB_MEMORY) {
-                    sched_walk_phi(passes, ws, phi_vals, bb, phi, phi_index);
-                }
-            }
-        }
-    }
-
-    // push inputs
-    FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
-        sched_walk(passes, ws, phi_vals, bb, n->inputs[i], false);
-    }
-
-    // before the terminator we should eval leftovers that GCM linked here
-    if (is_end) {
-        nl_hashset_for(entry, &bb->items) {
-            sched_walk(passes, ws, phi_vals, bb, *entry, false);
-        }
-    }
-
-    dyn_array_put(ws->items, n);
+static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n) {
+    SchedNode* s = TB_ARENA_ALLOC(arena, SchedNode);
+    *s = (SchedNode){ .parent = parent, .n = n, .index = 0 };
 
     if (is_mem_out_op(n) && n->type != TB_PHI && n->type != TB_PROJ) {
-        // memory effects have anti-dependencies, the previous loads
-        // must finish before the next memory effect is applied.
-        for (User* use = find_users(passes, n->inputs[1]); use; use = use->next) {
-            if (use->slot == 1 && use->n != n) {
-                sched_walk(passes, ws, phi_vals, bb, use->n, false);
+        s->antis = n->inputs[1]->users;
+    }
+
+    return s;
+}
+
+static bool sched_in_bb(TB_Passes* passes, Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
+    ptrdiff_t search = nl_map_get(passes->scheduled, n);
+    return search >= 0 && passes->scheduled[search].v == bb && !worklist_test_n_set(ws, n);
+}
+
+// basically just topological sort, no fancy shit
+void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end) {
+    TB_Arena* arena = tmp_arena;
+
+    SchedNode* top = sched_make_node(arena, NULL, end);
+    worklist_test_n_set(ws, end);
+
+    // find phis
+    int phi_i = 0;
+    User* phis = NULL;
+    if (end->type != TB_BRANCH) {
+        for (User* u = end->users; u; u = u->next) {
+            if (u->slot == 0 && u->n->type == TB_REGION) {
+                phi_i = u->slot;
+                phis = u->n->users;
+                break;
             }
         }
     }
 
-    // push outputs (projections, if they apply)
-    if (n->dt.type == TB_TUPLE && n->type != TB_BRANCH) {
-        for (User* use = find_users(passes, n); use; use = use->next) {
-            TB_Node* use_n = use->n;
-            if (use_n->type == TB_PROJ) {
-                sched_walk(passes, ws, phi_vals, bb, use_n, false);
+    size_t leftovers = 0;
+    size_t leftover_count = 1ull << bb->items.exp;
+
+    while (top != NULL) {
+        TB_Node* n = top->n;
+
+        // resolve inputs first
+        if (top->index < n->input_count) {
+            TB_Node* in = n->inputs[top->index++];
+            if (in != NULL && sched_in_bb(passes, ws, bb, in)) {
+                top = sched_make_node(arena, top, in);
+            }
+            continue;
+        }
+
+        // skip non-memory edges
+        while (top->antis && (top->antis->slot != 1 || top->antis->n == n)) {
+            top->antis = top->antis->next;
+        }
+
+        // resolve anti-deps
+        if (top->antis != NULL && sched_in_bb(passes, ws, bb, top->antis->n)) {
+            assert(top->antis->slot == 1 && top->antis->n != n);
+
+            TB_Node* anti = top->antis->n;
+            top->antis = top->antis->next;
+
+            top = sched_make_node(arena, top, anti);
+            continue;
+        }
+
+        // resolve phi edges when we're at the endpoint
+        if (end == n) {
+            // skip non-phis
+            while (phis && phis->n->type != TB_PHI) {
+                phis = phis->next;
+            }
+
+            if (phis && sched_in_bb(passes, ws, bb, phis->n->inputs[1 + phi_i])) {
+                assert(phis->n->type == TB_PHI);
+                TB_Node* val = phis->n->inputs[1 + phi_i];
+
+                // reserve PHI space
+                if (phi_vals && val->dt.type != TB_MEMORY) {
+                    PhiVal p;
+                    p.phi = phis->n;
+                    p.n   = val;
+                    p.dst = -1;
+                    p.src = -1;
+                    dyn_array_put(*phi_vals, p);
+                }
+
+                top = sched_make_node(arena, top, val);
+                phis = phis->next;
+                continue;
+            }
+
+            // resolve leftover nodes placed here by GCM
+            while (leftovers < leftover_count && (bb->items.data[leftovers] == NULL || bb->items.data[leftovers] == NL_HASHSET_TOMB)) {
+                leftovers++;
+            }
+
+            if (leftovers < leftover_count && sched_in_bb(passes, ws, bb, bb->items.data[leftovers])) {
+                top = sched_make_node(arena, top, bb->items.data[leftovers]);
+                leftovers += 1;
+                continue;
+            }
+        }
+
+        dyn_array_put(ws->items, n);
+        top = top->parent;
+
+        // push outputs (projections, if they apply)
+        if (n->dt.type == TB_TUPLE && n->type != TB_BRANCH) {
+            for (User* use = n->users; use; use = use->next) {
+                if (use->n->type == TB_PROJ && !worklist_test_n_set(ws, use->n)) {
+                    dyn_array_put(ws->items, use->n);
+                }
             }
         }
     }

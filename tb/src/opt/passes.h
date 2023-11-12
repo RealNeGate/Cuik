@@ -136,6 +136,8 @@ typedef struct {
     uint64_t* visited;
 } Worklist;
 
+typedef void (*TB_Scheduler)(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
+
 struct TB_Passes {
     TB_Function* f;
     TB_Scheduled scheduled;
@@ -453,10 +455,7 @@ int worklist_popcount(Worklist* ws);
 TB_Node* worklist_pop(Worklist* ws);
 
 // Local scheduler
-void sched_walk(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* n, bool is_end);
-
-static void push_all_nodes(TB_Passes* restrict passes, Worklist* restrict ws, TB_Function* f);
-
+void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
 void tb_pass_schedule(TB_Passes* opt, TB_CFG cfg);
 
 Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n);
