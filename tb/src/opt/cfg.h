@@ -276,4 +276,3 @@ bool tb_is_dominated_by(TB_CFG cfg, TB_Node* expected_dom, TB_Node* n) {
 
     return true;
 }
-

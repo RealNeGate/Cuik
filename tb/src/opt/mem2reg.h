@@ -209,15 +209,17 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
                         // make sure it's the right type
                         if (use->dt.raw != val->dt.raw) {
                             TB_Node* cast = tb_alloc_node(c->f, TB_BITCAST, use->dt, 2, 0);
-                            tb_pass_mark(c->p, cast);
-                            set_input(c->p, cast, val, 1);
+                            tb_pass_mark(p, cast);
+                            set_input(p, cast, val, 1);
 
                             val = cast;
                         }
 
-                        tb_pass_mark_users(p, use);
                         set_input(p, use, NULL, 1); // unlink first
                         subsume_node(p, f, use, val);
+
+                        tb_pass_mark(p, val);
+                        tb_pass_mark_users(p, val);
                     }
                 }
             }
@@ -229,10 +231,10 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
             // we can remove the effect now
             if (kill) {
                 TB_Node* into = n->inputs[1];
-                tb_pass_mark(c->p, into);
-                tb_pass_mark_users(c->p, into);
-                set_input(p, n, NULL, 1);
                 subsume_node(p, c->f, n, into);
+
+                tb_pass_mark(c->p, into);
+                tb_pass_mark_users(p, into);
             }
 
             n = next;

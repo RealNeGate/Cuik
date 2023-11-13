@@ -36,7 +36,7 @@ void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_val
     User* phis = NULL;
     if (end->type != TB_BRANCH) {
         for (User* u = end->users; u; u = u->next) {
-            if (u->slot == 0 && u->n->type == TB_REGION) {
+            if (u->n->type == TB_REGION) {
                 phi_i = u->slot;
                 phis = u->n->users;
                 break;
@@ -47,11 +47,11 @@ void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_val
     size_t leftovers = 0;
     size_t leftover_count = 1ull << bb->items.exp;
 
-    while (top != NULL) {
+    while (top != NULL) retry: {
         TB_Node* n = top->n;
 
         // resolve inputs first
-        if (top->index < n->input_count) {
+        if (n->type != TB_PHI && top->index < n->input_count) {
             TB_Node* in = n->inputs[top->index++];
             if (in != NULL && sched_in_bb(passes, ws, bb, in)) {
                 top = sched_make_node(arena, top, in);
@@ -78,25 +78,27 @@ void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_val
         // resolve phi edges when we're at the endpoint
         if (end == n) {
             // skip non-phis
-            while (phis && phis->n->type != TB_PHI) {
-                phis = phis->next;
-            }
+            while (phis) {
+                if (phis->n->type == TB_PHI) {
+                    TB_Node* val = phis->n->inputs[1 + phi_i];
 
-            if (phis && sched_in_bb(passes, ws, bb, phis->n->inputs[1 + phi_i])) {
-                assert(phis->n->type == TB_PHI);
-                TB_Node* val = phis->n->inputs[1 + phi_i];
+                    // reserve PHI space
+                    if (phi_vals && val->dt.type != TB_MEMORY) {
+                        PhiVal p;
+                        p.phi = phis->n;
+                        p.n   = val;
+                        p.dst = -1;
+                        p.src = -1;
+                        dyn_array_put(*phi_vals, p);
+                    }
 
-                // reserve PHI space
-                if (phi_vals && val->dt.type != TB_MEMORY) {
-                    PhiVal p;
-                    p.phi = phis->n;
-                    p.n   = val;
-                    p.dst = -1;
-                    p.src = -1;
-                    dyn_array_put(*phi_vals, p);
+                    if (sched_in_bb(passes, ws, bb, phis->n->inputs[1 + phi_i])) {
+                        top = sched_make_node(arena, top, val);
+                        phis = phis->next;
+                        goto retry;
+                    }
                 }
 
-                top = sched_make_node(arena, top, val);
                 phis = phis->next;
                 continue;
             }

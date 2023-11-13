@@ -1848,7 +1848,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
     // emit prologue
     func_out->prologue_length = emit_prologue(ctx);
 
-    Inst* prev_line = NULL;
+    TB_NodeSafepoint* prev_line = NULL;
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
         size_t inst_table_size = sizeof(inst_table) / sizeof(*inst_table);
@@ -1886,21 +1886,19 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
             // just a marker for regalloc
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
-            TB_Attrib* loc = inst->a;
+            TB_NodeSafepoint* loc = TB_NODE_GET_EXTRA(inst->n);
             uint32_t pos = GET_CODE_POS(&ctx->emit);
 
             size_t top = dyn_array_length(ctx->locations);
-            if (prev_line == NULL || !is_same_location(prev_line->a, loc)) {
-                // EMITA(e, "  \x1b[33m# loc %s %"PRIu64"\x1b[0m\n", loc->loc.file->path, loc->loc.line);
-
+            if (prev_line == NULL || !is_same_location(prev_line, loc)) {
                 TB_Location l = {
-                    .file = loc->loc.file,
-                    .line = loc->loc.line,
-                    .column = loc->loc.column,
+                    .file = loc->file,
+                    .line = loc->line,
+                    .column = loc->column,
                     .pos = pos
                 };
                 dyn_array_put(ctx->locations, l);
-                prev_line = inst;
+                prev_line = loc;
             }
             continue;
         } else if (cat == INST_BYTE || cat == INST_BYTE_EXT) {

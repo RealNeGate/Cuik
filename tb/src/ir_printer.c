@@ -39,7 +39,8 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_PTR2INT: return "ptr2int";
         case TB_INT2PTR: return "int2ptr";
 
-        case TB_SAFEPOINT_POLL: return "safepoint";
+        case TB_SAFEPOINT_POLL: return "safepoint.poll";
+        case TB_SAFEPOINT_NOP: return "safepoint";
 
         case TB_MEMSET: return "memset";
         case TB_MEMCPY: return "memcpy";
@@ -252,9 +253,9 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
             case TB_SYMBOL: {
                 TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
                 if (sym->name[0]) {
-                    P("%s", sym->name);
+                    P("sym: %s", sym->name);
                 } else {
-                    P("sym%p", sym);
+                    P("sym: %p", sym);
                 }
                 break;
             }
@@ -270,9 +271,9 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
             case TB_INTEGER_CONST: {
                 TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
                 if (num->value < 0xFFFF) {
-                    P("%"PRId64, num->value);
+                    P("cst: %"PRId64, num->value);
                 } else {
-                    P("%#0"PRIx64, num->value);
+                    P("cst: %#0"PRIx64, num->value);
                 }
                 break;
             }

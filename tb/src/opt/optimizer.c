@@ -624,6 +624,16 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         case TB_LOAD:
         return (flags & TB_PEEPHOLE_MEMORY) ? identity_load(p, f, n) : n;
 
+        // redundant safepoints
+        case TB_SAFEPOINT_NOP:
+        case TB_SAFEPOINT_POLL:
+        if (n->inputs[0]->type == TB_SAFEPOINT_POLL || n->inputs[0]->type == TB_SAFEPOINT_NOP) {
+            // (safepoint (safepoint X)) => (safepoint X)
+            return n->inputs[0];
+        } else {
+            return n;
+        }
+
         // dumb phis
         case TB_PHI: if (flags & TB_PEEPHOLE_PHI) {
             TB_Node* same = NULL;
@@ -920,7 +930,7 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     *p = (TB_Passes){ .f = f };
 
     TB_Arena* old_arena = f->arena;
-    f->line_attrib.loc.file = NULL;
+    f->line_attrib.file = NULL;
     f->arena = arena;
 
     verify_tmp_arena(p);

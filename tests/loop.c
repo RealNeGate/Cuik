@@ -106,14 +106,6 @@ static char* read_entire_file(const char* filepath, size_t* out_length) {
 
 void bar(int i);
 
-static int iter(int i, int n) {
-    while (i < n) {
-        i++;
-    }
-
-    return i;
-}
-
 static int foo(int x) {
     return (((x + 4) + 2) + 6) + 7;
 }

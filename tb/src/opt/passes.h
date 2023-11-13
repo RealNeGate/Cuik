@@ -2,12 +2,12 @@
 #include "../tb_internal.h"
 
 #define TB_OPTDEBUG_STATS   0
-#define TB_OPTDEBUG_PEEP    0
+#define TB_OPTDEBUG_PEEP    1
 #define TB_OPTDEBUG_LOOP    0
 #define TB_OPTDEBUG_SROA    0
 #define TB_OPTDEBUG_GCM     0
 #define TB_OPTDEBUG_MEM2REG 0
-#define TB_OPTDEBUG_CODEGEN 0
+#define TB_OPTDEBUG_CODEGEN 1
 
 #define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
 
@@ -198,7 +198,7 @@ static bool cfg_is_control(TB_Node* n) {
     // checking which is annoying and slow)
     //
     //     branch, debugbreak, trap, unreachable, dead  OR  call, syscall, safepoint
-    return (n->type >= TB_BRANCH && n->type <= TB_DEAD) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_POLL);
+    return (n->type >= TB_BRANCH && n->type <= TB_DEAD) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_NOP);
 }
 
 static bool cfg_is_bb_entry(TB_Node* n) {
@@ -222,15 +222,15 @@ static TB_Node* cfg_get_fallthru(TB_Node* n) {
 }
 
 static bool is_mem_out_op(TB_Node* n) {
-    return n->dt.type == TB_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_POLL);
+    return n->dt.type == TB_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_TAILCALL);
 }
 
 static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_START && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ;
+    return (n->type >= TB_START && n->type <= TB_SAFEPOINT_NOP) || n->type == TB_PROJ;
 }
 
 static bool is_mem_in_op(TB_Node* n) {
-    return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
+    return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD || n->type == TB_SAFEPOINT_NOP;
 }
 
 static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {

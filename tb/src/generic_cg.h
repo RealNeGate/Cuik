@@ -180,9 +180,8 @@ typedef enum {
     INST_MEM    = 16,
     INST_GLOBAL = 32,  // operand to TB_Symbol*
     INST_NODE   = 64,  // operand to TB_Node*
-    INST_ATTRIB = 128, // operand to TB_Attrib*
-    INST_IMM    = 256, // operand in imm
-    INST_ABS    = 512, // operand in abs
+    INST_IMM    = 128, // operand in imm
+    INST_ABS    = 256, // operand in abs
 
     // memory op
     INST_INDEXED   = 1024,
@@ -238,9 +237,9 @@ static Inst* inst_label(TB_Node* n) {
     return i;
 }
 
-static Inst* inst_line(TB_Attrib* a) {
+static Inst* inst_line(TB_Node* n) {
     Inst* i = TB_ARENA_ALLOC(tmp_arena, Inst);
-    *i = (Inst){ .type = INST_LINE, .flags = INST_ATTRIB, .a = a };
+    *i = (Inst){ .type = INST_LINE, .flags = INST_NODE, .n = n };
     return i;
 }
 
@@ -597,16 +596,16 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     }
     tb_arena_restore(arena, sp);
 
-    /* if (reg_alloc_log) {
+    if (reg_alloc_log) {
         FOREACH_N(i, 0, ctx->bb_count) {
             TB_Node* n = bbs[bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(seq_bb, n);
 
-            bool in = set_get(&mbb->live_in, 33);
-            bool out = set_get(&mbb->live_out, 33);
+            bool in = set_get(&mbb->live_in, 34);
+            bool out = set_get(&mbb->live_out, 34);
             printf(".bb%d [%d - %d]: %s %s\n", bb_order[i], mbb->start, mbb->end, in?"in":"", out?"out":"");
         }
-    } */
+    }
 
     ctx->machine_bbs = seq_bb;
     return epilogue;
@@ -669,21 +668,6 @@ static bool has_users(Ctx* restrict ctx, TB_Node* n) {
         return v ? v->vreg >= 0 || v->uses > 0 : false;
     }
     return false;
-}
-
-static void isel_set_location(Ctx* restrict ctx, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(ctx->f->attribs, n);
-    if (search < 0) {
-        return;
-    }
-
-    DynArray(TB_Attrib) attribs = ctx->f->attribs[search].v;
-    dyn_array_for(i, attribs) {
-        if (attribs[i].tag == TB_ATTRIB_LOCATION) {
-            SUBMIT(inst_line(&attribs[i]));
-            return;
-        }
-    }
 }
 
 static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size_t rpo_index) {
@@ -768,8 +752,9 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
     TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
 
     CUIK_TIMED_BLOCK("phase 4") {
-        Inst *head = ctx->head, *last = NULL;
-        TB_Node* prev_effect = NULL;
+        Inst* head = ctx->head;
+        Inst* last = NULL;
+        TB_Node* prev_loc = NULL;
         FOREACH_REVERSE_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
             TB_Node* n = ctx->worklist.items[i];
             if (n->type == TB_START) {
@@ -777,6 +762,14 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             }
 
             ValueDesc* val = lookup_val(ctx, n);
+
+            if (n->type == TB_SAFEPOINT_NOP) {
+                if (prev_loc != NULL) {
+                    SUBMIT(inst_line(prev_loc));
+                }
+                prev_loc = n;
+                continue;
+            }
 
             // if the value hasn't been asked for yet and
             if (n != end && val->vreg < 0 && should_rematerialize(n)) {
@@ -805,13 +798,6 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                 }
 
                 isel(ctx, n, val->vreg);
-
-                if ((n->input_count > 0 && n->inputs[0]->type == TB_START) || n->type != TB_PROJ) {
-                    if (prev_effect != NULL) {
-                        isel_set_location(ctx, prev_effect);
-                    }
-                    prev_effect = n;
-                }
             } else if (val->uses > 0 || val->vreg >= 0) {
                 if (val->vreg < 0) {
                     val->vreg = DEF(n, n->dt);
@@ -849,13 +835,13 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
         }
 
         // write location for the top effect
-        if (prev_effect != NULL) {
+        if (prev_loc != NULL) {
             // attach to dummy list
             Inst dummy;
             dummy.next = NULL;
             ctx->head = &dummy;
 
-            isel_set_location(ctx, prev_effect);
+            SUBMIT(inst_line(prev_loc));
 
             Inst* seq_start = dummy.next;
             Inst* seq_end   = ctx->head;
@@ -930,10 +916,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_Function* restrict f = p->f;
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
-    #if 0
-    if (!strcmp(f->super.name, "murmur3_32")) {
+    #if 1
+    if (!strcmp(f->super.name, "dumb_loop")) {
         reg_alloc_log = true;
-        // tb_pass_print(p);
+        tb_pass_print(p);
     } else {
         reg_alloc_log = false;
     }

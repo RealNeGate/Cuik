@@ -131,6 +131,10 @@ bool tb_pass_loop(TB_Passes* p) {
                 continue;
             }
 
+            // update latch before killing it (we want it's current users to know shit's
+            // in motion)
+            tb_pass_mark_users(p, latch);
+
             // convert to rotated loops
             //
             //     header:                    latch:
@@ -149,6 +153,7 @@ bool tb_pass_loop(TB_Passes* p) {
                 TB_Node *bot_cloned = NULL, *top_cloned = NULL;
                 for (TB_Node* curr = latch; curr != header; curr = curr->inputs[0]) {
                     TB_Node* cloned = loop_clone_node(p, f, header, curr, 1 + init_edge);
+                    tb_pass_mark_users(p, cloned);
 
                     // attach control edge
                     if (top_cloned) {
@@ -164,15 +169,20 @@ bool tb_pass_loop(TB_Passes* p) {
                 TB_Node* proj0 = make_proj_node(f, p, TB_TYPE_CONTROL, bot_cloned, 0);
                 TB_Node* proj1 = make_proj_node(f, p, TB_TYPE_CONTROL, bot_cloned, 1);
 
+                tb_pass_mark(p, proj0);
+                tb_pass_mark(p, proj1);
+
                 // add zero trip count check
                 TB_Node* ztc_check = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 1, sizeof(TB_NodeRegion));
                 set_input(p, ztc_check, header->inputs[init_edge], 0);
+                tb_pass_mark(p, ztc_check);
 
                 // intercept the init path on the header
                 set_input(p, top_cloned, ztc_check, 0);
                 set_input(p, header, exit_proj_i ? proj0 : proj1, init_edge);
 
                 exit_region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
+                tb_pass_mark(p, exit_region);
                 set_input(p, exit_region, exit_proj_i ? proj1 : proj0, 0);
 
                 // connect exit projection to exit region, then connect the exit region to
@@ -207,6 +217,8 @@ bool tb_pass_loop(TB_Passes* p) {
                 assert(bot_cloned->type == TB_BRANCH);
                 TB_Node* proj0 = make_proj_node(f, p, TB_TYPE_CONTROL, bot_cloned, 0);
                 TB_Node* proj1 = make_proj_node(f, p, TB_TYPE_CONTROL, bot_cloned, 1);
+                tb_pass_mark(p, proj0);
+                tb_pass_mark(p, proj1);
 
                 set_input(p, top_cloned, header->inputs[single_backedge], 0);
                 set_input(p, header, exit_proj_i ? proj0 : proj1, single_backedge);

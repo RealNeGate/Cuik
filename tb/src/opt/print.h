@@ -186,20 +186,6 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
     printf(")");
 }
 
-static void print_location(TB_Function* f, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(f->attribs, n);
-    if (search >= 0) {
-        DynArray(TB_Attrib) attribs = f->attribs[search].v;
-        dyn_array_for(i, attribs) {
-            TB_Attrib* a = &attribs[i];
-            if (a->tag == TB_ATTRIB_LOCATION) {
-                printf("  # location %s:%d\n", a->loc.file->path, a->loc.line);
-                return;
-            }
-        }
-    }
-}
-
 static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     print_ref_to_node(ctx, bb_start, true);
     printf(":");
@@ -243,13 +229,15 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
             continue;
         }
 
-        if (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY) {
-            print_location(ctx->f, n);
-        }
-
         switch (n->type) {
             case TB_DEBUGBREAK: printf("  debugbreak"); break;
             case TB_UNREACHABLE: printf("  unreachable"); break;
+
+            case TB_SAFEPOINT_NOP: {
+                TB_NodeSafepoint* s = TB_NODE_GET_EXTRA(n);
+                printf("  # v%u: location %s:%d", n->gvn, s->file->path, s->line);
+                break;
+            }
 
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);

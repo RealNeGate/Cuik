@@ -62,20 +62,21 @@ void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent) {
     append_attrib(f, n, (TB_Attrib){ TB_ATTRIB_SCOPE, .scope = { parent } });
 }
 
-void tb_function_attrib_location(TB_Function* f, TB_Node* n, TB_SourceFile* file, int line, int column) {
-    append_attrib(f, n, (TB_Attrib){ TB_ATTRIB_LOCATION, .loc = { file, line, column } });
-}
-
-void tb_inst_set_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
-    f->line_attrib = (TB_Attrib){ TB_ATTRIB_LOCATION, .loc = { file, line, column } };
+void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
+    if (f->active_control_node->type == TB_SAFEPOINT_NOP) {
+        TB_NODE_SET_EXTRA(f->active_control_node, TB_NodeSafepoint, file, line, column);
+    } else {
+        // we don't need any other inputs just yet
+        TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_NOP, TB_TYPE_CONTROL, 2, sizeof(TB_NodeSafepoint));
+        n->inputs[0] = f->active_control_node;
+        n->inputs[1] = peek_mem(f, f->active_control_node);
+        TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, file, line, column);
+        f->active_control_node = n;
+    }
 }
 
 void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
-    f->exit_attrib = (TB_Attrib){ TB_ATTRIB_LOCATION, .loc = { file, line, column } };
-}
-
-void tb_inst_reset_location(TB_Function* f) {
-    f->line_attrib.loc.file = NULL;
+    f->exit_attrib = (TB_NodeSafepoint){ file, line, column };
 }
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
@@ -105,13 +106,6 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
 
     if (extra > 0) {
         memset(n->extra, 0, extra);
-    }
-
-    // give most side effect the location attrib
-    if (type != TB_REGION && type != TB_END && type != TB_PHI) {
-        if (f->line_attrib.loc.file != NULL) {
-            append_attrib(f, n, f->line_attrib);
-        }
     }
 
     return n;
@@ -940,17 +934,24 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
         TB_Node* region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
 
         end = tb_alloc_node(f, TB_END, TB_TYPE_CONTROL, 3 + count, 0);
-        end->inputs[0] = region;
         end->inputs[2] = f->params[2];
-
-        if (f->exit_attrib.loc.file != NULL) {
-            append_attrib(f, end, f->exit_attrib);
-        }
 
         TB_Node* mem_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 2, 0);
         mem_phi->inputs[0] = region;
         mem_phi->inputs[1] = mem_state;
         end->inputs[1] = mem_phi;
+
+        if (f->exit_attrib.file != NULL) {
+            // we don't need any other inputs just yet
+            TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_NOP, TB_TYPE_CONTROL, 2, sizeof(TB_NodeSafepoint));
+            n->inputs[0] = region;
+            n->inputs[1] = mem_phi;
+            TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, f->exit_attrib.file, f->exit_attrib.line, f->exit_attrib.column);
+
+            end->inputs[0] = n;
+        } else {
+            end->inputs[0] = region;
+        }
 
         FOREACH_N(i, 0, count) {
             TB_Node* phi = tb_alloc_node(f, TB_PHI, values[i]->dt, 2, 0);
@@ -989,5 +990,11 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
     // basically just tb_inst_goto without the memory PHI (we did it earlier)
     TB_Node* n = f->active_control_node;
     f->active_control_node = NULL;
-    add_input_late(f, end->inputs[0], n);
+
+    TB_Node* ctrl = end->inputs[0];
+    if (ctrl->type == TB_SAFEPOINT_NOP) {
+        ctrl = ctrl->inputs[0];
+    }
+
+    add_input_late(f, ctrl, n);
 }

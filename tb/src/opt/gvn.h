@@ -19,6 +19,7 @@ static size_t extra_bytes(TB_Node* n) {
         }
 
         case TB_SAFEPOINT_POLL:
+        case TB_SAFEPOINT_NOP:
         return sizeof(TB_NodeSafepoint);
 
         case TB_AND:

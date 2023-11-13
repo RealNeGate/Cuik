@@ -75,7 +75,7 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_TEMPORARY_STORAGE_SIZE (1 << 20)
 #endif
 
-#define CODE_REGION_BUFFER_SIZE (128 * 1024 * 1024)
+#define CODE_REGION_BUFFER_SIZE (32 * 1024 * 1024)
 
 typedef struct TB_Emitter {
     size_t capacity, count;
@@ -206,7 +206,6 @@ struct TB_DebugType {
 (TB_Attrib, \
     x(TB_ATTRIB_VARIABLE, var,   TB_Node* parent; char* name; TB_DebugType* storage) \
     x(TB_ATTRIB_SCOPE,    scope, TB_Node* parent) \
-    x(TB_ATTRIB_LOCATION, loc,   TB_SourceFile* file; int line, column) \
 )
 #include "tagged_union.h"
 
@@ -299,8 +298,8 @@ struct TB_Function {
 
     // IR building
     TB_Node* active_control_node;
-    TB_Attrib exit_attrib;
-    TB_Attrib line_attrib;
+    TB_NodeSafepoint exit_attrib;
+    TB_NodeSafepoint line_attrib;
 
     // Attributes
     NL_Map(uint64_t, DynArray(TB_Attrib)) attribs;
@@ -605,8 +604,8 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
 char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
 
-static bool is_same_location(TB_Attrib* a, TB_Attrib* b) {
-    return a->loc.file == b->loc.file && a->loc.line == b->loc.line && a->loc.column == b->loc.column;
+static bool is_same_location(TB_NodeSafepoint* a, TB_NodeSafepoint* b) {
+    return a->file == b->file && a->line == b->line && a->column == b->column;
 }
 
 static TB_Arena* get_temporary_arena(TB_Module* m) {

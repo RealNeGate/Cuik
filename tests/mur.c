@@ -5,12 +5,13 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 #include <sys/stat.h>
 
 #ifdef _WIN32
 #define fileno _fileno
-#define fstat _fstat
-#define stat _stat
+#define fstat _fstat64
+#define stat _stat64
 #endif
 
 static char* read_entire_file(const char* filepath, size_t* out_length) {
@@ -25,7 +26,7 @@ static char* read_entire_file(const char* filepath, size_t* out_length) {
         return NULL;
     }
 
-    int length = file_stats.st_size;
+    size_t length = file_stats.st_size;
     char* data = malloc(length + 1);
 
     fseek(file, 0, SEEK_SET);

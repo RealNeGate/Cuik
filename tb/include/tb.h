@@ -285,7 +285,10 @@ typedef enum TB_NodeTypeEnum {
     //   safepoint polls are the same except they only trigger if the poll site
     //   says to (platform specific but almost always just the page being made
     //   unmapped/guard), 3rd argument is the poll site.
-    TB_SAFEPOINT_POLL, // (Control, Memory, Ptr, Data...)  -> (Control)
+    TB_SAFEPOINT_POLL, // (Control, Memory, Ptr?, Data...) -> (Control)
+    //   this safepoint which doesn't emit any poll site, it's just
+    //   an address, this is used by AOT compiles to encode line info.
+    TB_SAFEPOINT_NOP,  // (Control, Memory, Ptr?, Data...) -> (Control)
 
     ////////////////////////////////
     // MEMORY
@@ -615,13 +618,15 @@ typedef struct {
 } TB_NodeAtomic;
 
 typedef struct {
+    // line info on safepoints
+    TB_SourceFile* file;
+    int line, column;
+} TB_NodeSafepoint;
+
+typedef struct {
     TB_FunctionPrototype* proto;
     TB_Node* projs[];
 } TB_NodeCall;
-
-typedef struct {
-    uint32_t id;
-} TB_NodeSafepoint;
 
 typedef struct {
     const char* tag;
@@ -1000,7 +1005,6 @@ TB_API TB_ModuleSectionHandle tb_module_get_tls(TB_Module* m);
 // These are parts of a function that describe metadata for instructions
 TB_API void tb_function_attrib_variable(TB_Function* f, TB_Node* n, TB_Node* parent, ptrdiff_t len, const char* name, TB_DebugType* type);
 TB_API void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent);
-TB_API void tb_function_attrib_location(TB_Function* f, TB_Node* n, TB_SourceFile* file, int line, int column);
 
 ////////////////////////////////
 // Debug info Generation
@@ -1047,8 +1051,7 @@ TB_API void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, 
 // the user_data is expected to be a valid FILE*
 TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...);
 
-TB_API void tb_inst_set_location(TB_Function* f, TB_SourceFile* file, int line, int column);
-TB_API void tb_inst_reset_location(TB_Function* f);
+TB_API void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column);
 
 // this is where the STOP will be
 TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int line, int column);
