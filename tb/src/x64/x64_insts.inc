@@ -3,6 +3,7 @@
 //           mnemonic       category    fields
 X(RET,       "ret",         BYTE,       0xC3)
 X(INT3,      "int3",        BYTE,       0xCC)
+X(NOP,       "nop",         BYTE,       0x90)
 X(STOSB,     "rep stosb",   BYTE,       0xAA)
 X(MOVSB,     "rep movsb",   BYTE,       0xA4)
 X(CAST,      "cvt",         BYTE,       0x99)

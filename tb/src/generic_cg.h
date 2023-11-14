@@ -596,7 +596,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     }
     tb_arena_restore(arena, sp);
 
-    if (reg_alloc_log) {
+    /* if (reg_alloc_log) {
         FOREACH_N(i, 0, ctx->bb_count) {
             TB_Node* n = bbs[bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(seq_bb, n);
@@ -605,7 +605,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
             bool out = set_get(&mbb->live_out, 34);
             printf(".bb%d [%d - %d]: %s %s\n", bb_order[i], mbb->start, mbb->end, in?"in":"", out?"out":"");
         }
-    }
+    } */
 
     ctx->machine_bbs = seq_bb;
     return epilogue;
@@ -913,8 +913,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_Function* restrict f = p->f;
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
-    #if 1
-    if (!strcmp(f->super.name, "dumb_loop")) {
+    #if 0
+    if (!strcmp(f->super.name, "_vfprintf_l")) {
         reg_alloc_log = true;
         tb_pass_print(p);
     } else {

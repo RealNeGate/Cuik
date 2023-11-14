@@ -1039,10 +1039,11 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             TB_Node* ret_nodes[2] = { 0 };
             int rets[2] = { -1, -1 };
             int ret_count = 0;
+            int proj_base = type == TB_TAILCALL ? 3 : 2;
 
             assert(proto->return_count <= 2);
             FOREACH_N(i, 0, proto->return_count) {
-                TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[2 + i];
+                TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[proj_base + i];
                 if (!has_users(ctx, ret_node)) {
                     ret_node = NULL;
                 }
@@ -1162,7 +1163,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             int op = SYSCALL;
             if (n->type == TB_CALL) op = CALL;
-            if (n->type == TB_TAILCALL) op = JMP;
+            if (n->type == TB_TAILCALL) op = NOP;
 
             Inst* call_inst = alloc_inst(op, TB_TYPE_PTR, ret_count, 1 + in_count, clobber_count);
 
@@ -1902,9 +1903,11 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
             }
             continue;
         } else if (cat == INST_BYTE || cat == INST_BYTE_EXT) {
-            if (inst->flags & INST_REP) EMIT1(e, 0xF3);
-
-            inst0(e, inst->type, inst->dt);
+            // we don't emit NOPs, just annotate for the regalloc
+            if (inst->type != NOP) {
+                if (inst->flags & INST_REP) EMIT1(e, 0xF3);
+                inst0(e, inst->type, inst->dt);
+            }
         } else if (inst->type == INST_ZERO) {
             Val dst;
             resolve_interval(ctx, inst, 0, &dst);

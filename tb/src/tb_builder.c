@@ -6,6 +6,8 @@
 // the machine code output or later analysis stages.
 #include "tb_internal.h"
 
+static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rpc);
+
 static void append_attrib(TB_Function* f, TB_Node* n, TB_Attrib a) {
     ptrdiff_t search = nl_map_get(f->attribs, n);
     if (search < 0) {
@@ -446,7 +448,7 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 
     // we'll slot a NULL so it's easy to tell when it's empty
     if (proto->return_count == 0) {
-        c->projs[1] = NULL;
+        c->projs[2] = NULL;
     }
 
     c->projs[0] = cproj;
@@ -463,7 +465,7 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
     size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
 
-    TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
+    TB_Node* n = tb_alloc_node(f, TB_TAILCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
     n->inputs[0] = f->active_control_node;
     n->inputs[2] = target;
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
@@ -471,8 +473,31 @@ void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* targ
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
     c->proto = proto;
 
-    dyn_array_put(f->terminators, n);
-    f->active_control_node = NULL;
+    // control proj
+    TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+
+    // memory proj
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
+    n->inputs[1] = append_mem(f, mproj);
+
+    // RPC proj
+    TB_Node* rproj = tb__make_proj(f, TB_TYPE_CONT, n, 2);
+
+    // create data projections
+    TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
+    FOREACH_N(i, 0, proto->return_count) {
+        c->projs[i + 3] = tb__make_proj(f, rets[i].dt, n, i + 3);
+    }
+
+    // we'll slot a NULL so it's easy to tell when it's empty
+    if (proto->return_count == 0) {
+        c->projs[3] = NULL;
+    }
+
+    c->projs[0] = cproj;
+    c->projs[1] = mproj;
+    c->projs[2] = rproj;
+    inst_ret(f, proto->return_count, c->projs + 3, rproj);
 }
 
 TB_Node* tb_inst_poison(TB_Function* f, TB_DataType dt) {
@@ -926,6 +951,10 @@ void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* defau
 }
 
 void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
+    inst_ret(f, count, values, NULL);
+}
+
+static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rpc) {
     TB_Node* mem_state = peek_mem(f, f->active_control_node);
 
     // allocate return node
@@ -970,6 +999,30 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
         // add to PHIs
         assert(end->input_count >= 3 + count);
         add_input_late(f, end->inputs[1], mem_state);
+
+        // append to RPC if we've got one (or if there's one already)
+        if (end->inputs[2]->type == TB_PHI) {
+            add_input_late(f, end->inputs[2], rpc ? rpc : f->params[2]);
+        } else if (rpc != NULL) {
+            TB_Node* region = end->inputs[0];
+            if (region->type != TB_REGION) {
+                // usually a safepoint NOP
+                region = region->inputs[0];
+                assert(region->type == TB_REGION);
+            }
+
+            // convert to RPC PHI
+            TB_Node* old_rpc = end->inputs[2];
+            TB_Node* rpc_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_CONT, 2 + region->input_count, 0);
+            rpc_phi->inputs[0] = region;
+            FOREACH_N(i, 0, region->input_count) {
+                rpc_phi->inputs[1 + i] = old_rpc;
+            }
+
+            // our latest edge is a special RPC
+            rpc_phi->inputs[1 + region->input_count] = rpc;
+            end->inputs[2] = rpc_phi;
+        }
 
         size_t i = 3;
         for (; i < count + 3; i++) {

@@ -131,12 +131,19 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
     }
 
     int t = inst->time; // inst->type == MOV || inst->type == FP_MOV ? inst->time - 1 : inst->time;
+    int use = USE_REG;
+
+    // reg<->reg ops can use one memory op, we'll prioritize that on the inputs side
+    if (inst->type == MOV && (inst->flags & (INST_MEM | INST_GLOBAL)) == 0) {
+        // use = USE_MEM_OR_REG;
+    }
+
     FOREACH_N(i, 0, inst->in_count) {
         assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
         add_range(interval, bb->start, t);
-        add_use_pos(interval, t, USE_REG);
+        add_use_pos(interval, t, use);
     }
 
     // calls use the temporaries for clobbers
@@ -419,10 +426,13 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     if (interval->hint >= 0) {
         LiveInterval* hint = &ra->intervals[interval->hint];
         assert(hint->reg_class == rc);
+
+        // it's better in the long run to aggressively split
         hint_reg = hint->assigned;
+        highest = hint_reg;
 
         if (interval_end(interval) <= ra->free_pos[hint_reg]) {
-            highest = hint_reg;
+            REG_ALLOC_LOG printf("  #   aggressive register splitting %s\n", reg_name(rc, hint_reg));
         }
     }
 
