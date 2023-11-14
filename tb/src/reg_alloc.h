@@ -135,7 +135,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
 
     // reg<->reg ops can use one memory op, we'll prioritize that on the inputs side
     if (inst->type == MOV && (inst->flags & (INST_MEM | INST_GLOBAL)) == 0) {
-        // use = USE_MEM_OR_REG;
+        use = USE_MEM_OR_REG;
     }
 
     FOREACH_N(i, 0, inst->in_count) {
