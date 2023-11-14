@@ -1163,8 +1163,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             size_t clobber_count = tb_popcount(caller_saved_gprs) + tb_popcount(caller_saved_xmms);
 
             int op = SYSCALL;
-            if (n->type == TB_CALL) op = CALL;
-            if (n->type == TB_TAILCALL) op = NOP;
+            if (type == TB_CALL) op = CALL;
+            if (type == TB_TAILCALL) op = NOP;
 
             Inst* call_inst = alloc_inst(op, TB_TYPE_PTR, ret_count, 1 + in_count, clobber_count);
 
@@ -1203,17 +1203,21 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             SUBMIT(call_inst);
 
-            // copy out return
-            FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
-                assert(rets[i] >= 0);
-                TB_DataType dt = ret_nodes[i]->dt;
-                bool use_xmm_ret = TB_IS_FLOAT_TYPE(dt);
-                if (use_xmm_ret) {
-                    hint_reg(ctx, rets[i], FIRST_XMM + i);
-                    SUBMIT(inst_move(dt, rets[i], FIRST_XMM + i));
-                } else {
-                    hint_reg(ctx, rets[i], ret_gprs[i]);
-                    SUBMIT(inst_move(dt, rets[i], ret_gprs[i]));
+            if (type == TB_TAILCALL) {
+                SUBMIT(inst_tail());
+            } else {
+                // copy out return
+                FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
+                    assert(rets[i] >= 0);
+                    TB_DataType dt = ret_nodes[i]->dt;
+                    bool use_xmm_ret = TB_IS_FLOAT_TYPE(dt);
+                    if (use_xmm_ret) {
+                        hint_reg(ctx, rets[i], FIRST_XMM + i);
+                        SUBMIT(inst_move(dt, rets[i], FIRST_XMM + i));
+                    } else {
+                        hint_reg(ctx, rets[i], ret_gprs[i]);
+                        SUBMIT(inst_move(dt, rets[i], ret_gprs[i]));
+                    }
                 }
             }
             break;
@@ -1866,6 +1870,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
     func_out->prologue_length = emit_prologue(ctx);
 
     Inst* prev_line = NULL;
+    uint32_t epilogue_pos = 0;
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
         size_t inst_table_size = sizeof(inst_table) / sizeof(*inst_table);
@@ -1885,6 +1890,12 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
 
         if (inst->type == INST_ENTRY || inst->type == INST_TERMINATOR) {
             // does nothing
+        } else if (inst->type == INST_TAIL) {
+            // JMP epilogue
+            EMIT1(e, 0xE9);
+            EMIT4(e, 0);
+
+            tb_emit_rel32(e, &epilogue_pos, GET_CODE_POS(e) - 4);
         } else if (inst->type == INST_LABEL) {
             TB_Node* bb = inst->n;
             uint32_t pos = GET_CODE_POS(&ctx->emit);
@@ -2035,6 +2046,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
     }
 
     if (end >= 0 && ctx->f->stop_node != NULL) {
+        tb_resolve_rel32(&ctx->emit, &epilogue_pos, GET_CODE_POS(&ctx->emit));
         emit_epilogue(ctx, ctx->f->stop_node);
     }
 

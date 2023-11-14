@@ -193,7 +193,7 @@ TB_FunctionOutput* tb_pass_codegen(TB_Passes* p, bool emit_asm) {
     TB_FunctionOutput* func_out = (TB_FunctionOutput*) &region->data[region->size];
     region->size += sizeof(TB_FunctionOutput);
 
-    CUIK_TIMED_BLOCK_ARGS("compile", f->super.name) {
+    {
         *func_out = (TB_FunctionOutput){ .parent = f, .section = f->section, .linkage = f->linkage, .code_region = region };
 
         uint8_t* local_buffer = &region->data[region->size];

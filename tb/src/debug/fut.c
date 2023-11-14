@@ -101,13 +101,8 @@ static FUT_TypeIndex fut_get_type_from_dt(TB_DataType dt) {
     }
 }
 
-static bool fut_supported_target(TB_Module* m) {
-    return true;
-}
-
-static int fut_number_of_debug_sections(TB_Module* m) {
-    return 1;
-}
+static bool fut_supported_target(TB_Module* m)        { return true; }
+static int fut_number_of_debug_sections(TB_Module* m) { return 1; }
 
 // there's quite a few places that mark the next field for symbols
 #define MARK_NEXT(patch_pos) (((FUT_SymbolHeader*) tb_out_get(&symtab, mod_length_patch))->next = symtab.count)

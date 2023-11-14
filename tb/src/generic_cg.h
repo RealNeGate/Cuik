@@ -15,6 +15,9 @@ enum {
     INST_LABEL = 1024,
     INST_LINE,
 
+    // jumps to the epilogue, used by tailcalls
+    INST_TAIL,
+
     // inline machine code
     INST_INLINE,
 
@@ -253,6 +256,12 @@ static Inst* alloc_inst(int type, TB_DataType dt, int outs, int ins, int tmps) {
     int total = outs + ins + tmps;
     Inst* i = tb_arena_alloc(tmp_arena, sizeof(Inst) + (total * sizeof(RegIndex)));
     *i = (Inst){ .type = type, .dt = legalize(dt), .out_count = outs, ins, tmps };
+    return i;
+}
+
+static Inst* inst_tail(void) {
+    Inst* i = tb_arena_alloc(tmp_arena, sizeof(Inst));
+    *i = (Inst){ .type = INST_TAIL };
     return i;
 }
 
@@ -1030,7 +1039,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         }
     }
 
-    if (emit_asm) {
+    if (emit_asm) CUIK_TIMED_BLOCK("dissassembly") {
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 
         Disasm d = { func_out->first_patch, ctx.locations, &ctx.locations[dyn_array_length(ctx.locations)] };
