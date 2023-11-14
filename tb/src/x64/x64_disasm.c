@@ -458,12 +458,12 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0xF66: case 0xF76: return "div";
         case 0xF67: case 0xF77: return "idiv";
 
-        case 0x810: case 0x830: return "add";
-        case 0x811: case 0x831: return "or";
-        case 0x814: case 0x834: return "and";
-        case 0x815: case 0x835: return "sub";
-        case 0x816: case 0x836: return "xor";
-        case 0x817: case 0x837: return "cmp";
+        case 0x810: case 0x800: case 0x830: return "add";
+        case 0x811: case 0x801: case 0x831: return "or";
+        case 0x814: case 0x804: case 0x834: return "and";
+        case 0x815: case 0x805: case 0x835: return "sub";
+        case 0x816: case 0x806: case 0x836: return "xor";
+        case 0x817: case 0x807: case 0x837: return "cmp";
         case 0xC60: case 0xC70: return "mov";
         case 0x84: case 0x85: return "test";
 

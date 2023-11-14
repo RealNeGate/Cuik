@@ -136,7 +136,7 @@ typedef struct {
     uint64_t* visited;
 } Worklist;
 
-typedef void (*TB_Scheduler)(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
+typedef void (*TB_Scheduler)(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
 
 struct TB_Passes {
     TB_Function* f;
@@ -249,7 +249,7 @@ static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {
     TB_Node* r = proj->users->n;
     if (r->type == TB_REGION) {
         for (User* u = r->users; u; u = u->next) {
-            if (u->n->type == TB_PHI) return true;
+            if (u->n->type == TB_PHI && u->n->dt.type != TB_MEMORY) return true;
         }
     }
 
@@ -459,7 +459,7 @@ int worklist_popcount(Worklist* ws);
 TB_Node* worklist_pop(Worklist* ws);
 
 // Local scheduler
-void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
+void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
 void tb_pass_schedule(TB_Passes* opt, TB_CFG cfg);
 
 Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n);

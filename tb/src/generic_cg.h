@@ -678,7 +678,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
     // phase 1: logical schedule
     DynArray(PhiVal) phi_vals = ctx->phi_vals;
     CUIK_TIMED_BLOCK("phase 1") {
-        ctx->sched(ctx->p, &ctx->worklist, &phi_vals, bb, end);
+        ctx->sched(ctx->p, &ctx->cfg, &ctx->worklist, &phi_vals, bb, end);
 
         // schedule params
         if (rpo_index == 0) {
@@ -698,7 +698,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
             // track non-dead users
             size_t use_count = 0;
-            for (User* use = find_users(ctx->p, n); use; use = use->next) {
+            for (User* use = n->users; use; use = use->next) {
                 if (nl_map_get(scheduled, use->n) >= 0) use_count++;
             }
 

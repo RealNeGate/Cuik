@@ -525,7 +525,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share
 // the same type and alignment along with not needing any address usage.
 static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_Node* address, TB_DataType* out_dt) {
-    User* use = find_users(p, address);
+    User* use = address->users;
     if (use == NULL) {
         return COHERENCY_DEAD;
     }

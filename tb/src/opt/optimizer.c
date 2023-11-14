@@ -26,6 +26,7 @@ TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType 
 
 static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* new_n);
 
+static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags);
 static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra);
 
 // node creation helpers
@@ -808,17 +809,9 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
 // because certain optimizations apply when things are the same
 // we mark ALL users including the ones who didn't get changed
 // when subsuming.
-static bool peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
+static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
     DO_IF(TB_OPTDEBUG_STATS)(p->stats.peeps++);
     DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", p->stats.time++), print_node_sexpr(n, 0));
-
-    // must've dead sometime between getting scheduled and getting
-    // here.
-    if (n->type != TB_END && n->type != TB_UNREACHABLE && n->users == NULL) {
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m"));
-        tb_pass_kill_node(p, n);
-        return true;
-    }
 
     // idealize node (in a loop of course)
     TB_Node* k = idealize(p, f, n, flags);
@@ -1044,6 +1037,13 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
         while ((n = worklist_pop(&p->worklist))) {
+            // must've dead sometime between getting scheduled and getting here.
+            if (n->type != TB_END && n->type != TB_UNREACHABLE && n->users == NULL) {
+                DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m"));
+                tb_pass_kill_node(p, n);
+                continue;
+            }
+
             if (peephole(p, f, n, flags)) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
             }

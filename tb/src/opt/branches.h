@@ -424,14 +424,16 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
 
                         // if we folded away from a region, then we should subsume
                         // the degen phis.
-                        User* succ = cfg_next_user(proj);
-                        tb_pass_kill_node(opt, proj);
-                        set_input(opt, succ->n, n->inputs[0], succ->slot);
+                        subsume_node(opt, f, proj, n->inputs[0]);
                     }
                 }
             }
 
-            // remove condition
+            // remove condition (shouldn't have any users at thi point)
+            assert(n->users == NULL);
+            tb_pass_mark_users(opt, n->inputs[0]);
+            tb_pass_mark_users(opt, dead);
+
             return dead;
         }
     }

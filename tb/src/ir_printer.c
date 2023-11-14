@@ -340,7 +340,7 @@ TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* u
         TB_Node* bb_start = opt->worklist.items[i];
         TB_BasicBlock* bb = nl_map_get_checked(opt->scheduled, bb_start);
 
-        greedy_scheduler(opt, ws, NULL, bb, bb->end);
+        greedy_scheduler(opt, &cfg, ws, NULL, bb, bb->end);
 
         FOREACH_REVERSE_N(j, cfg.block_count, dyn_array_length(ws->items)) {
             if (ws->items[j]->type == TB_PROJ) {

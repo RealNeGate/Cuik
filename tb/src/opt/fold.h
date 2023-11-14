@@ -414,23 +414,38 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     return NULL;
 }
 
+static bool nice_ass_trunc(TB_NodeTypeEnum t) { return t == TB_ADD || t == TB_AND || t == TB_XOR || t == TB_OR || t == TB_MUL || t == TB_SHL || t == TB_SHR; }
 static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
-    // Trunc(Mul(a, b: con)) => Mul(Trunc(a), b: con)
     TB_Node* src = n->inputs[1];
 
-    if (src->type == TB_MUL && n->inputs[1]->inputs[2]->type == TB_INTEGER_CONST) {
-        // truncate constant
-        TB_Node* old_b = n->inputs[1]->inputs[2];
-        TB_Node* new_b = make_int_node(f, opt, n->dt, TB_NODE_GET_EXTRA_T(old_b, TB_NodeInt)->value);
+    if (src->type == TB_ZERO_EXT && src->inputs[1]->dt.type == TB_INT && n->dt.type == TB_INT) {
+        int now = n->dt.data;
+        int before = src->inputs[1]->dt.data;
 
-        TB_Node* ext_node = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
-        set_input(opt, ext_node, n->inputs[1]->inputs[1], 1);
-        tb_pass_mark(opt, ext_node);
+        if (now != before) {
+            // we're extending the original value
+            TB_Node* ext = tb_alloc_node(f, now < before ? TB_TRUNCATE : src->type, n->dt, 2, 0);
+            set_input(opt, ext, src->inputs[1], 1);
+            return ext;
+        } else {
+            return src->inputs[1];
+        }
+    }
 
-        TB_Node* mul_node = tb_alloc_node(f, TB_MUL, n->dt, 3, 0);
-        set_input(opt, mul_node, ext_node, 1);
-        set_input(opt, mul_node, new_b, 2);
-        return mul_node;
+    // Trunc(NiceAssBinop(a, b)) => NiceAssBinop(Trunc(a), Trunc(b))
+    if (nice_ass_trunc(src->type)) {
+        TB_Node* left = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
+        set_input(opt, left, src->inputs[1], 1);
+        tb_pass_mark(opt, left);
+
+        TB_Node* right = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
+        set_input(opt, right, src->inputs[2], 1);
+        tb_pass_mark(opt, right);
+
+        TB_Node* new_binop = tb_alloc_node(f, src->type, n->dt, 3, 0);
+        set_input(opt, new_binop, left, 1);
+        set_input(opt, new_binop, right, 2);
+        return new_binop;
     }
 
     return NULL;
@@ -546,6 +561,8 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
         if (get_int_const(n->inputs[2], &rhs) && rhs == 0) {
             // !(a <  b) is (b <= a)
             switch (cmp->type) {
+                case TB_CMP_EQ: n->type = TB_CMP_EQ; break;
+                case TB_CMP_NE: n->type = TB_CMP_NE; break;
                 case TB_CMP_SLT: n->type = TB_CMP_SLE; break;
                 case TB_CMP_SLE: n->type = TB_CMP_SLT; break;
                 case TB_CMP_ULT: n->type = TB_CMP_ULE; break;

@@ -8,6 +8,11 @@ struct SchedNode {
     User* antis;
 };
 
+typedef struct {
+    TB_Node* phi;
+    TB_Node* n;
+} SchedPhi;
+
 static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n) {
     SchedNode* s = TB_ARENA_ALLOC(arena, SchedNode);
     *s = (SchedNode){ .parent = parent, .n = n, .index = 0 };
@@ -24,25 +29,59 @@ static bool sched_in_bb(TB_Passes* passes, Worklist* ws, TB_BasicBlock* bb, TB_N
     return search >= 0 && passes->scheduled[search].v == bb && !worklist_test_n_set(ws, n);
 }
 
+typedef struct {
+    int cap, count;
+    SchedPhi* arr;
+} Phis;
+
+static void fill_phis(TB_Arena* arena, Phis* phis, TB_Node* succ, int phi_i) {
+    for (User* u = succ->users; u; u = u->next) {
+        if (u->n->type != TB_PHI) continue;
+
+        // ensure cap (not very effective since it moves each time, that's ok it's rare)
+        if (phis->count == phis->cap) {
+            phis->cap *= 2;
+
+            SchedPhi* new_phis = tb_arena_alloc(arena, phis->cap * sizeof(SchedPhi));
+            memcpy(new_phis, phis->arr, phis->count * sizeof(SchedPhi));
+            phis->arr = new_phis;
+        }
+
+        phis->arr[phis->count++] = (SchedPhi){ .phi = u->n, .n = u->n->inputs[1 + phi_i] };
+    }
+}
+
 // basically just topological sort, no fancy shit
-void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end) {
+void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end) {
     TB_Arena* arena = tmp_arena;
+    TB_ArenaSavepoint sp = tb_arena_save(arena);
+
+    // find phis
+    int phi_curr = 0;
+    Phis phis = { .cap = 256, .arr = tb_arena_alloc(arena, 256 * sizeof(SchedPhi)) };
+
+    if (end->type == TB_BRANCH) {
+        for (User* u = end->users; u; u = u->next) {
+            if (u->n->type != TB_PROJ) continue;
+
+            // we might have some memory phis over here if the projections aren't bbs
+            ptrdiff_t search = nl_map_get(cfg->node_to_block, u->n);
+            if (search >= 0) continue;
+
+            User* succ = cfg_next_user(end);
+            if (succ->n->type == TB_REGION) {
+                fill_phis(arena, &phis, succ->n, succ->slot);
+            }
+        }
+    } else if (end->type != TB_END && end->type != TB_UNREACHABLE) {
+        User* succ = cfg_next_user(end);
+        if (succ->n->type == TB_REGION) {
+            fill_phis(arena, &phis, succ->n, succ->slot);
+        }
+    }
 
     SchedNode* top = sched_make_node(arena, NULL, end);
     worklist_test_n_set(ws, end);
-
-    // find phis
-    int phi_i = 0;
-    User* phis = NULL;
-    if (end->type != TB_BRANCH) {
-        for (User* u = end->users; u; u = u->next) {
-            if (u->n->type == TB_REGION) {
-                phi_i = u->slot;
-                phis = u->n->users;
-                break;
-            }
-        }
-    }
 
     size_t leftovers = 0;
     size_t leftover_count = 1ull << bb->items.exp;
@@ -75,31 +114,27 @@ void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_val
             continue;
         }
 
-        // resolve phi edges when we're at the endpoint
+        // resolve phi edges & leftovers when we're at the endpoint
         if (end == n) {
             // skip non-phis
-            while (phis) {
-                if (phis->n->type == TB_PHI) {
-                    TB_Node* val = phis->n->inputs[1 + phi_i];
+            if (phi_curr < phis.count) {
+                TB_Node* phi = phis.arr[phi_curr].phi;
+                TB_Node* val = phis.arr[phi_curr].n;
+                phi_curr += 1;
 
-                    // reserve PHI space
-                    if (phi_vals && val->dt.type != TB_MEMORY) {
-                        PhiVal p;
-                        p.phi = phis->n;
-                        p.n   = val;
-                        p.dst = -1;
-                        p.src = -1;
-                        dyn_array_put(*phi_vals, p);
-                    }
-
-                    if (sched_in_bb(passes, ws, bb, phis->n->inputs[1 + phi_i])) {
-                        top = sched_make_node(arena, top, val);
-                        phis = phis->next;
-                        goto retry;
-                    }
+                // reserve PHI space
+                if (phi_vals && val->dt.type != TB_MEMORY) {
+                    PhiVal p;
+                    p.phi = phi;
+                    p.n   = val;
+                    p.dst = -1;
+                    p.src = -1;
+                    dyn_array_put(*phi_vals, p);
                 }
 
-                phis = phis->next;
+                if (sched_in_bb(passes, ws, bb, val)) {
+                    top = sched_make_node(arena, top, val);
+                }
                 continue;
             }
 
@@ -129,4 +164,6 @@ void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_val
             }
         }
     }
+
+    tb_arena_restore(arena, sp);
 }

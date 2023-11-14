@@ -44,9 +44,13 @@ static void print_type(TB_DataType dt) {
 }
 
 static void print_type2(TB_DataType dt) {
+    #if 0
     printf("\x1b[96m");
     print_type(dt);
     printf("\x1b[0m");
+    #else
+    print_type(dt);
+    #endif
 }
 
 static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
@@ -213,7 +217,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     assert(expected == bb);
     #endif
 
-    ctx->sched(ctx->opt, ws, NULL, bb, bb->end);
+    ctx->sched(ctx->opt, &ctx->cfg, ws, NULL, bb, bb->end);
 
     TB_Node* prev_effect = NULL;
     FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
