@@ -1488,6 +1488,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                 tb_inst_goto(func, exit);
             }
             tb_inst_set_control(func, exit);
+            emit_location(tu, func, e->loc.start);
 
             return (IRVal){
                 .value_type = RVALUE,

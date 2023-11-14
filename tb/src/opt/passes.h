@@ -185,7 +185,7 @@ static bool cfg_is_terminator(TB_Node* n) {
 }
 
 static bool ctrl_out_as_cproj_but_not_branch(TB_Node* n) {
-    return n->type == TB_CALL || n->type == TB_SYSCALL || n->type == TB_READ || n->type == TB_WRITE;
+    return n->type == TB_CALL || n->type == TB_TAILCALL || n->type == TB_SYSCALL || n->type == TB_READ || n->type == TB_WRITE;
 }
 
 // includes tuples which have control flow

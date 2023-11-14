@@ -859,7 +859,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             if (n->dt.type != TB_FLOAT) {
                 int src = input_reg(ctx, n->inputs[1]);
 
-                SUBMIT(inst_op_rr(type == TB_NOT ? NOT : NEG, n->dt, dst, src));
+                SUBMIT(inst_move(n->dt, dst, src));
+                SUBMIT(inst_op_rr(type == TB_NOT ? NOT : NEG, n->dt, dst, dst));
             } else {
                 if (type == TB_NEG) {
                     TB_Global* g = NULL;
@@ -1849,7 +1850,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
     // emit prologue
     func_out->prologue_length = emit_prologue(ctx);
 
-    TB_NodeSafepoint* prev_line = NULL;
+    Inst* prev_line = NULL;
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
         size_t inst_table_size = sizeof(inst_table) / sizeof(*inst_table);
@@ -1891,7 +1892,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
             uint32_t pos = GET_CODE_POS(&ctx->emit);
 
             size_t top = dyn_array_length(ctx->locations);
-            if (prev_line == NULL || !is_same_location(prev_line, loc)) {
+            if (prev_line == NULL || (prev_line->next != inst && !is_same_location(TB_NODE_GET_EXTRA(prev_line->n), loc))) {
                 TB_Location l = {
                     .file = loc->file,
                     .line = loc->line,
@@ -1899,7 +1900,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
                     .pos = pos
                 };
                 dyn_array_put(ctx->locations, l);
-                prev_line = loc;
+                prev_line = inst;
             }
             continue;
         } else if (cat == INST_BYTE || cat == INST_BYTE_EXT) {
@@ -1980,6 +1981,10 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, i
                 } else if (inst->type == IDIV || inst->type == DIV) {
                     inst1(e, inst->type, &lhs, dt);
                     continue;
+                }  else if (cat == INST_UNARY || cat == INST_UNARY_EXT) {
+                    if (!is_value_match(&out, &lhs)) {
+                        inst2_print(e, MOV, &out, &lhs, dt);
+                    }
                 } else {
                     if (ternary || inst->type == MOV || inst->type == FP_MOV) {
                         if (!is_value_match(&out, &lhs)) {
@@ -2201,7 +2206,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
     }
 
     while (pos < end) {
-        if (d->loc != d->end && d->loc->pos == pos) {
+        while (d->loc != d->end && d->loc->pos == pos) {
             E("  // %s : line %d\n", d->loc->file->path, d->loc->line);
             d->loc++;
         }

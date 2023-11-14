@@ -778,11 +778,13 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             ctx->head = &dummy;
 
             if (n->type == TB_SAFEPOINT_NOP) {
-                if (prev_loc != NULL) {
-                    SUBMIT(inst_line(prev_loc));
-                }
-                prev_loc = n;
-                continue;
+                TB_OPTDEBUG(CODEGEN)(
+                    printf("  LINE %u: ", n->gvn),
+                    print_node_sexpr(n, 0),
+                    printf("\n")
+                );
+
+                SUBMIT(inst_line(n));
             } else if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
                 TB_OPTDEBUG(CODEGEN)(
                     printf("  EFFECT %u: ", n->gvn),
@@ -831,31 +833,6 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             }
         }
 
-        // write location for the top effect
-        if (prev_loc != NULL) {
-            // attach to dummy list
-            Inst dummy;
-            dummy.next = NULL;
-            ctx->head = &dummy;
-
-            SUBMIT(inst_line(prev_loc));
-
-            Inst* seq_start = dummy.next;
-            Inst* seq_end   = ctx->head;
-            assert(seq_end->next == NULL);
-
-            if (seq_start != NULL) {
-                if (last == NULL) {
-                    last = seq_end;
-                    head->next = dummy.next;
-                } else {
-                    Inst* old_next = head->next;
-                    head->next = seq_start;
-                    seq_end->next = old_next;
-                }
-            }
-        }
-
         // restore the PHI value to normal
         FOREACH_N(i, our_phis, dyn_array_length(phi_vals)) {
             PhiVal* v = &phi_vals[i];
@@ -873,6 +850,10 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                 print_node_sexpr(end, 0),
                 printf("\n")
             );
+
+            if (end->type == TB_SAFEPOINT_NOP) {
+                SUBMIT(inst_line(end));
+            }
 
             // implicit goto
             TB_Node* succ_n = cfg_next_control(end);
