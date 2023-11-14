@@ -1477,7 +1477,22 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
                         int tmp = DEF(NULL, dt);
                         hint_reg(ctx, tmp, key);
-                        SUBMIT(inst_move(dt, tmp, key));
+                        if (dt.data >= 32) {
+                            SUBMIT(inst_move(dt, tmp, key));
+                        } else if (dt.data == 16) {
+                            dt = TB_TYPE_I32;
+                            SUBMIT(inst_op_rr(MOVZXW, dt, tmp, key));
+                        } else if (dt.data == 8) {
+                            dt = TB_TYPE_I32;
+                            SUBMIT(inst_op_rr(MOVZXB, dt, tmp, key));
+                        } else {
+                            dt = TB_TYPE_I32;
+                            uint64_t mask = tb__mask(dt.data);
+
+                            SUBMIT(inst_move(dt, tmp, key));
+                            SUBMIT(inst_op_rri(AND, dt, tmp, tmp, mask));
+                        }
+
                         // Simple range check:
                         //   if ((key - min) >= (max - min)) goto default
                         if (has_default) {

@@ -1749,7 +1749,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 // if there's no else case, then false is just exit
                 if_false = s->if_.next ? tb_inst_region(func) : exit;
 
-                #ifndef NDEBUG
+                #if 0 // #ifndef NDEBUG
                 tb_inst_set_region_name(func, if_true,  -1, "if.true");
                 tb_inst_set_region_name(func, if_false, -1, "if.false");
                 #endif
@@ -1986,8 +1986,8 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             func_return_rule = TB_PASSING_DIRECT;
         }
 
-        // mark where the return site is
         if (tu->has_tb_debug_info) {
+            // mark where the return site is
             SourceLoc loc = s->decl.initial_as_stmt->loc.end;
             ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
             if (rloc.file->filename[0] != '<') {

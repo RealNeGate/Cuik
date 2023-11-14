@@ -1058,9 +1058,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     dyn_array_destroy(ctx.intervals);
     dyn_array_destroy(ctx.phi_vals);
 
-    if (dyn_array_length(ctx.locations)) {
-        ctx.locations[0].pos = 0; // func_out->prologue_length;
-    }
+    /* if (dyn_array_length(ctx.locations)) {
+        ctx.locations[0].pos = func_out->prologue_length;
+    } */
 
     // we're done, clean up
     func_out->asm_out = ctx.emit.head_asm;

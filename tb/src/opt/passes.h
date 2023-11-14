@@ -180,6 +180,10 @@ struct TB_Passes {
     } stats;
 };
 
+static uint64_t tb__mask(uint64_t bits) {
+    return ~UINT64_C(0) >> (64 - bits);
+}
+
 static bool cfg_is_terminator(TB_Node* n) {
     return n->type == TB_BRANCH || n->type == TB_UNREACHABLE || n->type == TB_TRAP || n->type == TB_END;
 }
@@ -243,7 +247,7 @@ static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {
 
     assert(n->type == TB_BRANCH);
     TB_Node* r = proj->users->n;
-    if (r->type == TB_REGION && r->input_count > 1) {
+    if (r->type == TB_REGION) {
         for (User* u = r->users; u; u = u->next) {
             if (u->n->type == TB_PHI) return true;
         }

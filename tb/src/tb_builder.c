@@ -65,13 +65,14 @@ void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent) {
 }
 
 void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
-    if (f->active_control_node->type == TB_SAFEPOINT_NOP) {
+    TB_Node* m = peek_mem(f, f->active_control_node);
+    if (f->active_control_node->type == TB_SAFEPOINT_NOP && f->active_control_node->inputs[1] == m) {
         TB_NODE_SET_EXTRA(f->active_control_node, TB_NodeSafepoint, file, line, column);
     } else {
         // we don't need any other inputs just yet
         TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_NOP, TB_TYPE_CONTROL, 2, sizeof(TB_NodeSafepoint));
         n->inputs[0] = f->active_control_node;
-        n->inputs[1] = peek_mem(f, f->active_control_node);
+        n->inputs[1] = m;
         TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, file, line, column);
         f->active_control_node = n;
     }

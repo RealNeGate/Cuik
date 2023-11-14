@@ -108,8 +108,10 @@ void greedy_scheduler(TB_Passes* passes, Worklist* ws, DynArray(PhiVal)* phi_val
                 leftovers++;
             }
 
-            if (leftovers < leftover_count && sched_in_bb(passes, ws, bb, bb->items.data[leftovers])) {
-                top = sched_make_node(arena, top, bb->items.data[leftovers]);
+            if (leftovers < leftover_count) {
+                if (!worklist_test_n_set(ws, bb->items.data[leftovers])) {
+                    top = sched_make_node(arena, top, bb->items.data[leftovers]);
+                }
                 leftovers += 1;
                 continue;
             }

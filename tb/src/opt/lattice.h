@@ -113,10 +113,6 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
     return dst | (sign_bit ? mask : 0);
 }
 
-static uint64_t tb__mask(uint64_t bits) {
-    return ~UINT64_C(0) >> (64 - bits);
-}
-
 static LatticeTrifecta lattice_trifecta_join(LatticeTrifecta a, LatticeTrifecta b) {
     if ((a == LATTICE_KNOWN_NOT_NULL && b == LATTICE_KNOWN_NULL) ||
         (a == LATTICE_KNOWN_NULL && b == LATTICE_KNOWN_NOT_NULL)) {
