@@ -15,6 +15,7 @@ static bool is_commutative(TB_NodeTypeEnum type) {
         case TB_ADD: case TB_MUL:
         case TB_AND: case TB_XOR: case TB_OR:
         case TB_CMP_NE: case TB_CMP_EQ:
+        case TB_FADD: case TB_FMUL:
         return true;
 
         default:
@@ -221,7 +222,7 @@ static Lattice* dataflow_unary(TB_Passes* restrict opt, LatticeUniverse* uni, TB
 
             if (min_inc < min || max_inc < min) {
                 min = lattice_int_min(n->dt.data);
-                max = lattice_int_min(n->dt.data);
+                max = lattice_int_max(n->dt.data);
             } else {
                 min = min_inc;
                 max = max_inc;

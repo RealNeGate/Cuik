@@ -2,12 +2,12 @@
 #include "../tb_internal.h"
 
 #define TB_OPTDEBUG_STATS   0
-#define TB_OPTDEBUG_PEEP    1
+#define TB_OPTDEBUG_PEEP    0
 #define TB_OPTDEBUG_LOOP    0
 #define TB_OPTDEBUG_SROA    0
 #define TB_OPTDEBUG_GCM     0
 #define TB_OPTDEBUG_MEM2REG 0
-#define TB_OPTDEBUG_CODEGEN 1
+#define TB_OPTDEBUG_CODEGEN 0
 
 #define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
 

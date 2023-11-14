@@ -763,15 +763,6 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
             ValueDesc* val = lookup_val(ctx, n);
 
-            if (n->type == TB_SAFEPOINT_NOP) {
-                if (prev_loc != NULL) {
-                    SUBMIT(inst_line(prev_loc));
-                }
-                prev_loc = n;
-                continue;
-            }
-
-            // if the value hasn't been asked for yet and
             if (n != end && val->vreg < 0 && should_rematerialize(n)) {
                 DO_IF(TB_OPTDEBUG_CODEGEN)(
                     printf("  DISCARD %u: ", n->gvn),
@@ -786,7 +777,13 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             dummy.next = NULL;
             ctx->head = &dummy;
 
-            if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
+            if (n->type == TB_SAFEPOINT_NOP) {
+                if (prev_loc != NULL) {
+                    SUBMIT(inst_line(prev_loc));
+                }
+                prev_loc = n;
+                continue;
+            } else if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
                 TB_OPTDEBUG(CODEGEN)(
                     printf("  EFFECT %u: ", n->gvn),
                     print_node_sexpr(n, 0),

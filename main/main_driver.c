@@ -57,7 +57,6 @@ static void test_diag(void) {
 
     int selected = 0;
     for (;;) {
-
         int line_count = 0;
         printf("\x1b[31mERROR\x1b[0m: ");
         for (int i = 0; i < 2; i++) {

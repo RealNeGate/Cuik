@@ -1560,9 +1560,8 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
     if (s->op != STMT_COMPOUND && s->op != STMT_CASE && s->op != STMT_DEFAULT && s->op != STMT_LABEL) {
         insert_label(func);
+        emit_location(tu, func, s->loc.start);
     }
-
-    emit_location(tu, func, s->loc.start);
 
     switch (s->op) {
         case STMT_NONE: {
@@ -1571,6 +1570,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
         case STMT_LABEL: {
             if (s->backing.r == 0) {
                 s->backing.r = tb_inst_region(func);
+                emit_location(tu, func, s->loc.start);
             }
 
             fallthrough_label(func, s->backing.r);
@@ -1877,6 +1877,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
         }
         case STMT_DEFAULT: {
             fallthrough_label(func, s->backing.r);
+            emit_location(tu, func, s->loc.start);
             irgen_stmt(tu, func, s->default_.body);
             break;
         }
@@ -1888,6 +1889,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             }
 
             fallthrough_label(func, s->backing.r);
+            emit_location(tu, func, s->loc.start);
             irgen_stmt(tu, func, s->case_.body);
             break;
         }
