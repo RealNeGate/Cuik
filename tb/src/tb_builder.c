@@ -597,6 +597,15 @@ TB_Node* tb_inst_mul(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavi
 }
 
 TB_Node* tb_inst_div(TB_Function* f, TB_Node* a, TB_Node* b, bool signedness) {
+    TB_Node* peek = b->type == TB_SIGN_EXT ? b->inputs[1] : b;
+    if (peek->type == TB_INTEGER_CONST) {
+        TB_NodeInt* i = TB_NODE_GET_EXTRA(peek);
+        uint64_t log2 = tb_ffs(i->value) - 1;
+        if (i->value == UINT64_C(1) << log2) {
+            return tb_bin_arith(f, TB_SHR, 0, a, tb_inst_uint(f, a->dt, log2));
+        }
+    }
+
     // division can't wrap or overflow
     return tb_bin_arith(f, signedness ? TB_SDIV : TB_UDIV, 0, a, b);
 }

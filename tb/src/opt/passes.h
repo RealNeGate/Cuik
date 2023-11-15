@@ -258,7 +258,8 @@ static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {
     TB_Node* r = proj->users->n;
     if (r->type == TB_REGION) {
         for (User* u = r->users; u; u = u->next) {
-            if (u->n->type == TB_PHI && u->n->dt.type != TB_MEMORY) return true;
+            //  && u->n->dt.type != TB_MEMORY
+            if (u->n->type == TB_PHI) return true;
         }
     }
 

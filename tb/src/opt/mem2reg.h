@@ -110,6 +110,8 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
             top = stack[var][dyn_array_length(stack[var]) - 1];
         }
 
+        DO_IF(TB_OPTDEBUG_MEM2REG)(printf("v%u: replace v%u to PHI\n", phi_reg->gvn, top->gvn));
+
         bool found = false;
         FOREACH_N(j, 0, dst->input_count) {
             TB_Node* pred = get_pred_cfg(&c->p->cfg, dst, j);
