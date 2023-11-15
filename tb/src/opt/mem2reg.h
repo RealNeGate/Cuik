@@ -235,7 +235,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
             }
 
             n = next;
-        } while (n != NULL && cfg_underneath(&c->p->cfg, n, bb_info));
+        } while (n != NULL && n->type != TB_PHI && cfg_underneath(&c->p->cfg, n, bb_info));
     }
 
     // replace phi arguments on successor
@@ -299,7 +299,7 @@ static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n, TB_B
 
         // next memory
         n = mem_user(ctx->p, n, 1);
-    } while (n != NULL && cfg_underneath(&ctx->p->cfg, n, bb_info));
+    } while (n != NULL && n->type != TB_PHI && cfg_underneath(&ctx->p->cfg, n, bb_info));
 }
 
 bool tb_pass_mem2reg(TB_Passes* p) {
@@ -417,7 +417,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
         //   note this doesn't account for multiple memory streams
         //   but that's fine for now...
         if (mem) {
-            while (cfg_underneath(&c.p->cfg, mem->inputs[1], bb_info)) {
+            while (mem->type != TB_PHI && cfg_underneath(&c.p->cfg, mem->inputs[1], bb_info)) {
                 mem = mem->inputs[1];
             }
 
