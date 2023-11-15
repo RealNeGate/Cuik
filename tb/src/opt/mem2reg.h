@@ -12,12 +12,6 @@ typedef enum {
 // Region -> Value
 typedef NL_Map(TB_Node*, TB_Node*) Mem2Reg_Def;
 
-typedef struct Promotion Promotion;
-struct Promotion {
-    Promotion* next;
-    TB_Node* n;
-};
-
 typedef struct Mem2Reg_Ctx {
     TB_TemporaryStorage* tls;
     TB_Function* f;
@@ -136,6 +130,7 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
 static bool is_effect_tuple(TB_Node* n) {
     return n->type == TB_CALL ||
         n->type == TB_SYSCALL ||
+        n->type == TB_TAILCALL||
         n->type == TB_READ    ||
         n->type == TB_WRITE   ||
         n->type == TB_MACHINE_OP;
@@ -238,7 +233,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
             }
 
             n = next;
-        } while (n != NULL && get_block_begin(n) == bb);
+        } while (n != NULL && cfg_underneath(n, bb));
     }
 
     // replace phi arguments on successor
@@ -302,7 +297,7 @@ static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
 
         // next memory
         n = mem_user(ctx->p, n, 1);
-    } while (n != NULL && get_block_begin(n) == bb);
+    } while (n != NULL && cfg_underneath(n, bb));
 }
 
 bool tb_pass_mem2reg(TB_Passes* p) {
@@ -420,7 +415,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
         //   note this doesn't account for multiple memory streams
         //   but that's fine for now...
         if (mem) {
-            while (mem->inputs[1]->inputs[0]->type != TB_START && get_block_begin(mem->inputs[1]->inputs[0]) == bb) {
+            while (cfg_underneath(mem->inputs[1], bb)) {
                 mem = mem->inputs[1];
             }
 

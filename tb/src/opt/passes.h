@@ -216,6 +216,15 @@ static bool cfg_is_bb_entry(TB_Node* n) {
     }
 }
 
+static bool cfg_underneath(TB_Node* a, TB_Node* b) {
+    // follow until we hit a terminator
+    do {
+        a = a->inputs[0];
+    } while (!cfg_is_bb_entry(a));
+
+    return a == b;
+}
+
 static TB_Node* cfg_get_fallthru(TB_Node* n) {
     if (n->type == TB_PROJ && n->dt.type == TB_CONTROL && n->inputs[0]->type != TB_START) {
         // if it's single user and that user is the terminator we can skip it in the fallthrough logic
