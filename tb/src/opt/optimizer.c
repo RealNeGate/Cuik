@@ -969,8 +969,8 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
     tb_pass_mem2reg(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
-    tb_pass_loop(p);
-    tb_pass_peephole(p, TB_PEEPHOLE_ALL);
+    // tb_pass_loop(p);
+    // tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 }
 
 static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve) {
