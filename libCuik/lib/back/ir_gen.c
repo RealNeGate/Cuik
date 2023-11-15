@@ -1987,6 +1987,8 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
         }
 
         if (tu->has_tb_debug_info) {
+            emit_location(tu, func, s->decl.initial_as_stmt->loc.start);
+
             // mark where the return site is
             SourceLoc loc = s->decl.initial_as_stmt->loc.end;
             ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);

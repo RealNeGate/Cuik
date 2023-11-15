@@ -904,7 +904,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
     #if 0
-    if (!strcmp(f->super.name, "_vfprintf_l")) {
+    if (!strcmp(f->super.name, "offset_momentum")) {
         reg_alloc_log = true;
         tb_pass_print(p);
     } else {
@@ -1067,9 +1067,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     dyn_array_destroy(ctx.intervals);
     dyn_array_destroy(ctx.phi_vals);
 
-    /* if (dyn_array_length(ctx.locations)) {
-        ctx.locations[0].pos = func_out->prologue_length;
-    } */
+    if (dyn_array_length(ctx.locations)) {
+        ctx.locations[0].pos = 0;
+    }
 
     // we're done, clean up
     func_out->asm_out = ctx.emit.head_asm;

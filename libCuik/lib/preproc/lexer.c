@@ -328,6 +328,7 @@ static Token lexer_read_inline(Lexer* restrict l) {
                     current += 1;
                     t.type = TOKEN_FLOAT;
                 } else if ((a == 'e' || a == 'E' || a == 'p' || a == 'P') && (current[1] == '+' || current[1] == '-')) {
+                    t.type = TOKEN_FLOAT;
                     current += 2;
                 } else if ((a >= '0' && a <= '9') || (a >= 'a' && a <= 'z') || (a >= 'A' && a <= 'Z')) {
                     current += 1;
