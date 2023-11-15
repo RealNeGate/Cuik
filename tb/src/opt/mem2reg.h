@@ -104,7 +104,7 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
         TB_Node* top;
         if (dyn_array_length(stack[var]) == 0) {
             // this is UB land, insert poison
-            top = make_poison(f, c->p, TB_TYPE_VOID);
+            top = make_poison(f, c->p, phi_reg->dt);
             log_warn("%s: v%u: generated poison due to read of uninitialized local", f->super.name, top->gvn);
         } else {
             top = stack[var][dyn_array_length(stack[var]) - 1];
