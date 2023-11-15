@@ -216,13 +216,16 @@ static bool cfg_is_bb_entry(TB_Node* n) {
     }
 }
 
-static bool cfg_underneath(TB_Node* a, TB_Node* b) {
+static bool cfg_underneath(TB_CFG* cfg, TB_Node* a, TB_BasicBlock* bb) {
     // follow until we hit a terminator
-    do {
+    for (;;) {
         a = a->inputs[0];
-    } while (!cfg_is_bb_entry(a));
 
-    return a == b;
+        ptrdiff_t search = nl_map_get(cfg->node_to_block, a);
+        if (search >= 0) {
+            return &cfg->node_to_block[search].v == bb;
+        }
+    }
 }
 
 static TB_Node* cfg_get_fallthru(TB_Node* n) {
