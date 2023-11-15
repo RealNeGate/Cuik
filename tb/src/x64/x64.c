@@ -284,7 +284,6 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
             scale = tb_ffs(stride) - 1;
 
             if (scale > 3) {
-                assert(store_op >= 0);
                 addr = DEF(NULL, TB_TYPE_I64);
 
                 // we can't fit this into an LEA, might as well just do a shift
@@ -1597,7 +1596,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             int32_t imm;
-            if (try_for_imm32(ctx, src->dt.data, src, &imm)) {
+            if (try_for_imm32(ctx, src->dt.type == TB_PTR ? 64 : src->dt.data, src, &imm)) {
                 use(ctx, src);
 
                 Inst* st_inst = isel_addr2(ctx, addr, dst, store_op, -1);
