@@ -155,7 +155,7 @@ static void schedule_late(TB_Passes* p, TB_Node* n) {
             nl_hashset_remove2(&old->items, n, node_hash, node_compare);
 
             // walk back up the dom tree if the block is colder above by a decent margin
-            if (lca != old && lca->dom != NULL) {
+            if (0 && lca != old && lca->dom != NULL) {
                 assert(lca->freq >= BB_LOW_FREQ && "blocks should never have 0 frequency");
                 float win = lca->dom->freq / lca->freq;
                 if (win > node_cost(n)) {

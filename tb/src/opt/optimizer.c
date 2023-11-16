@@ -565,6 +565,11 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         case TB_UDIV:
         return ideal_int_div(p, f, n);
 
+        // modulo
+        case TB_SMOD:
+        case TB_UMOD:
+        return ideal_int_mod(p, f, n);
+
         // casting
         case TB_SIGN_EXT:
         case TB_ZERO_EXT:
@@ -1038,7 +1043,7 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
             DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", p->stats.time++), print_node_sexpr(n, 0));
 
             // must've dead sometime between getting scheduled and getting here.
-            if (n->type != TB_END && n->type != TB_UNREACHABLE && n->users == NULL) {
+            if (n->type != TB_END && n->type != TB_UNREACHABLE && n->type != TB_PROJ && n->users == NULL) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_pass_kill_node(p, n);
                 continue;

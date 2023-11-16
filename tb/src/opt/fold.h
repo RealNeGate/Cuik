@@ -414,7 +414,7 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     return NULL;
 }
 
-static bool nice_ass_trunc(TB_NodeTypeEnum t) { return t == TB_ADD || t == TB_AND || t == TB_XOR || t == TB_OR || t == TB_MUL || t == TB_SHL || t == TB_SHR; }
+static bool nice_ass_trunc(TB_NodeTypeEnum t) { return t == TB_ADD || t == TB_AND || t == TB_XOR || t == TB_OR || t == TB_MUL || t == TB_SHL || t == TB_SHR || t == TB_SMOD || t == TB_UMOD; }
 static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
@@ -623,6 +623,24 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
             TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = dt);
             return n;
         }
+    }
+
+    return NULL;
+}
+
+static TB_Node* ideal_int_mod(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+    bool is_signed = n->type == TB_SMOD;
+
+    TB_DataType dt = n->dt;
+    TB_Node* x = n->inputs[1];
+
+    uint64_t y = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
+    uint64_t log2 = tb_ffs(y) - 1;
+    if (!is_signed && y == (UINT64_C(1) << log2)) {
+        TB_Node* and_node = tb_alloc_node(f, TB_AND, dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(opt, and_node, x, 1);
+        set_input(opt, and_node, make_int_node(f, opt, dt, y - 1), 2);
+        return and_node;
     }
 
     return NULL;
