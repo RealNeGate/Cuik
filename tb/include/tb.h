@@ -632,6 +632,9 @@ typedef struct {
 typedef struct {
     const char* tag;
 
+    // magic factor for hot-code, higher means run more often
+    float freq;
+
     // used for IR building only, stale after that.
     TB_Node *mem_in, *mem_out;
 } TB_NodeRegion;

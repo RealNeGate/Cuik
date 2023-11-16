@@ -597,6 +597,15 @@ TB_Node* tb_inst_mul(TB_Function* f, TB_Node* a, TB_Node* b, TB_ArithmeticBehavi
 }
 
 TB_Node* tb_inst_div(TB_Function* f, TB_Node* a, TB_Node* b, bool signedness) {
+    TB_Node* peek = b->type == TB_SIGN_EXT ? b->inputs[1] : b;
+    if (peek->type == TB_INTEGER_CONST) {
+        TB_NodeInt* i = TB_NODE_GET_EXTRA(peek);
+        uint64_t log2 = tb_ffs(i->value) - 1;
+        if (i->value == UINT64_C(1) << log2) {
+            return tb_bin_arith(f, TB_SHR, 0, a, tb_inst_uint(f, a->dt, log2));
+        }
+    }
+
     // division can't wrap or overflow
     return tb_bin_arith(f, signedness ? TB_SDIV : TB_UDIV, 0, a, b);
 }
@@ -847,6 +856,7 @@ TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b) {
 TB_Node* tb_inst_region(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+    r->freq = 1.0f;
 
     TB_Node* phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 1, 0);
     phi->inputs[0] = n;
@@ -993,7 +1003,7 @@ static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rp
         }
 
         f->stop_node = end;
-        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .mem_in = mem_phi, .mem_out = mem_phi, .tag = "ret");
+        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .freq = 1.0f, .mem_in = mem_phi, .mem_out = mem_phi, .tag = "ret");
 
         dyn_array_put(f->terminators, end);
     } else {

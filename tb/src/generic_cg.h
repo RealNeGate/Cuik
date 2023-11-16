@@ -542,7 +542,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t base = dyn_array_length(ctx->worklist.items);
 
     // all nodes go into the worklist
-    FOREACH_N(i, 0, ctx->bb_count) {
+    FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
         TB_Node* n = bbs[bb_order[i]];
         dyn_array_put(ctx->worklist.items, n);
 
@@ -605,16 +605,16 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     }
     tb_arena_restore(arena, sp);
 
-    /* if (reg_alloc_log) {
+    /*if (reg_alloc_log) {
         FOREACH_N(i, 0, ctx->bb_count) {
             TB_Node* n = bbs[bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(seq_bb, n);
 
-            bool in = set_get(&mbb->live_in, 34);
-            bool out = set_get(&mbb->live_out, 34);
+            bool in = set_get(&mbb->live_in, 33);
+            bool out = set_get(&mbb->live_out, 33);
             printf(".bb%d [%d - %d]: %s %s\n", bb_order[i], mbb->start, mbb->end, in?"in":"", out?"out":"");
         }
-    } */
+    }*/
 
     ctx->machine_bbs = seq_bb;
     return epilogue;
@@ -814,7 +814,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                 TB_OPTDEBUG(CODEGEN)(
                     printf("  DATA %u: ", n->gvn),
                     print_node_sexpr(n, 0),
-                    printf("\n")
+                    printf(" (write v%u)\n", val->vreg)
                 );
 
                 isel(ctx, n, val->vreg);
@@ -848,8 +848,6 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             lookup_val(ctx, v->phi)->vreg = v->dst;
         }
 
-        dyn_array_clear(phi_vals);
-        ctx->phi_vals = phi_vals;
         ctx->head = last ? last : head;
 
         if (end->type != TB_END    && end->type != TB_TRAP &&
@@ -871,7 +869,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
             // writeback phis
             FOREACH_N(i, 0, ctx->our_phis) {
-                PhiVal* v = &ctx->phi_vals[i];
+                PhiVal* v = &phi_vals[i];
 
                 TB_DataType dt = v->phi->dt;
                 int src = input_reg(ctx, v->n);
@@ -879,7 +877,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                 TB_OPTDEBUG(CODEGEN)(
                     printf("  PHI %u: ", v->phi->gvn),
                     print_node_sexpr(v->phi, 0),
-                    printf("\n")
+                    printf(" (write v%u)\n", v->dst)
                 );
 
                 hint_reg(ctx, v->dst, src);
@@ -891,6 +889,9 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                 SUBMIT(inst_jmp(succ));
             }
         }
+
+        dyn_array_clear(phi_vals);
+        ctx->phi_vals = phi_vals;
     }
 
     dyn_array_set_length(ctx->worklist.items, ctx->cfg.block_count);
@@ -904,7 +905,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
     #if 0
-    if (!strcmp(f->super.name, "_vfprintf_l")) {
+    if (!strcmp(f->super.name, "foo")) {
         reg_alloc_log = true;
         tb_pass_print(p);
     } else {
@@ -1067,9 +1068,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     dyn_array_destroy(ctx.intervals);
     dyn_array_destroy(ctx.phi_vals);
 
-    /* if (dyn_array_length(ctx.locations)) {
-        ctx.locations[0].pos = func_out->prologue_length;
-    } */
+    if (dyn_array_length(ctx.locations)) {
+        ctx.locations[0].pos = 0;
+    }
 
     // we're done, clean up
     func_out->asm_out = ctx.emit.head_asm;

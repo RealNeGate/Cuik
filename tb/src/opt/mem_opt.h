@@ -99,7 +99,7 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     }
 
     // if LOAD has already been safely accessed we can relax our control dependency
-    if (n->inputs[0] != NULL && n->inputs[0]->type != TB_DEAD) {
+    /*if (n->inputs[0] != NULL && n->inputs[0]->type != TB_DEAD) {
         TB_Node* parent_bb = get_block_begin(n->inputs[0]);
         for (User* u = addr->users; u; u = u->next) {
             TB_Node* use = u->n;
@@ -121,7 +121,7 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
                 }
             }
         }
-    }
+    }*/
 
     return NULL;
 }

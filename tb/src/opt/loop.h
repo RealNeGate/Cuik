@@ -70,7 +70,10 @@ bool tb_pass_loop(TB_Passes* p) {
         // found a loop :)
         if (dyn_array_length(backedges) > 0) {
             TB_OPTDEBUG(LOOP)(printf("found loop on .bb%zu with %zu backedges\n", i, dyn_array_length(backedges)));
+            TB_NODE_GET_EXTRA_T(header, TB_NodeRegion)->freq = 10.0f;
+        }
 
+        if (0) {
             ptrdiff_t single_backedge = backedges[0];
 
             // as part of loop simplification we convert backedges into one, this
@@ -175,6 +178,7 @@ bool tb_pass_loop(TB_Passes* p) {
                 // add zero trip count check
                 TB_Node* ztc_check = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 1, sizeof(TB_NodeRegion));
                 set_input(p, ztc_check, header->inputs[init_edge], 0);
+                TB_NODE_GET_EXTRA_T(ztc_check, TB_NodeRegion)->freq = 1.0f;
                 tb_pass_mark(p, ztc_check);
 
                 // intercept the init path on the header
@@ -182,6 +186,7 @@ bool tb_pass_loop(TB_Passes* p) {
                 set_input(p, header, exit_proj_i ? proj0 : proj1, init_edge);
 
                 exit_region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
+                TB_NODE_GET_EXTRA_T(exit_region, TB_NodeRegion)->freq = 1.0f;
                 tb_pass_mark(p, exit_region);
                 set_input(p, exit_region, exit_proj_i ? proj1 : proj0, 0);
 

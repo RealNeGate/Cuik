@@ -275,6 +275,7 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
         }
 
         index = input_reg(ctx, n);
+        int addr = index;
 
         // compute index
         if (stride == 1) {
@@ -283,14 +284,11 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
             scale = tb_ffs(stride) - 1;
 
             if (scale > 3) {
-                if (dst < 0) {
-                    assert(store_op >= 0);
-                    dst = DEF(NULL, TB_TYPE_I64);
-                }
+                addr = DEF(NULL, TB_TYPE_I64);
 
                 // we can't fit this into an LEA, might as well just do a shift
-                SUBMIT(inst_op_rri(SHL, TB_TYPE_I64, dst, index, scale));
-                index = dst, scale = 0;
+                SUBMIT(inst_op_rri(SHL, TB_TYPE_I64, addr, index, scale));
+                index = addr, scale = 0;
             }
         } else {
             // needs a proper multiply (we may wanna invest in a few special patterns
@@ -303,13 +301,9 @@ static Inst* isel_addr(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, int
             //
             //   LEA b,   [a * 8]
             //   LEA dst, [b * 2 + b]
-            if (dst < 0) {
-                assert(store_op >= 0);
-                dst = DEF(NULL, TB_TYPE_I64);
-            }
-
-            SUBMIT(inst_op_rri(IMUL, TB_TYPE_I64, dst, index, stride));
-            index = dst;
+            addr = DEF(NULL, TB_TYPE_I64);
+            SUBMIT(inst_op_rri(IMUL, TB_TYPE_I64, addr, index, stride));
+            index = addr;
         }
 
         n = base;
@@ -1602,7 +1596,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             int32_t imm;
-            if (try_for_imm32(ctx, src->dt.data, src, &imm)) {
+            if (try_for_imm32(ctx, src->dt.type == TB_PTR ? 64 : src->dt.data, src, &imm)) {
                 use(ctx, src);
 
                 Inst* st_inst = isel_addr2(ctx, addr, dst, store_op, -1);

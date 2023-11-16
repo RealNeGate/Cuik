@@ -7,7 +7,7 @@ static bool const_eval(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstVal
 enum { CONST_ERROR = -2 };
 
 // -1 for error
-static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Subexpr* exprs, ptrdiff_t i, Cuik_ConstVal* res) {
+static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType* types, Subexpr* exprs, ptrdiff_t i, Cuik_ConstVal* res) {
     assert(i >= 0);
     Subexpr* s = &exprs[i];
 
@@ -21,11 +21,11 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Subexpr* exprs
             return i - 1;
         }
         case EXPR_FLOAT32: {
-            *res = (Cuik_ConstVal){ CUIK_CONST_FLOAT, .i = s->float_lit };
+            *res = (Cuik_ConstVal){ CUIK_CONST_FLOAT, .f = s->float_lit };
             return i - 1;
         }
         case EXPR_FLOAT64: {
-            *res = (Cuik_ConstVal){ CUIK_CONST_FLOAT, .i = s->float_lit };
+            *res = (Cuik_ConstVal){ CUIK_CONST_FLOAT, .f = s->float_lit };
             return i - 1;
         }
         case EXPR_SIZEOF_T: {
@@ -54,7 +54,7 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Subexpr* exprs
         case EXPR_CAST: {
             Cuik_ConstVal src;
 
-            i = const_eval_subexpr(parser, exprs, i - 1, &src);
+            i = const_eval_subexpr(parser, types, exprs, i - 1, &src);
             if (i == CONST_ERROR) return i;
 
             assert(src.tag == CUIK_CONST_INT);
@@ -143,56 +143,93 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Subexpr* exprs
     if (s->op == EXPR_NOT || s->op == EXPR_NEGATE) {
         Cuik_ConstVal src;
 
-        i = const_eval_subexpr(parser, exprs, i - 1, &src);
+        i = const_eval_subexpr(parser, types, exprs, i - 1, &src);
         if (i == CONST_ERROR) return i;
 
-        uint64_t result = ~src.i;
-        if (s->op == EXPR_NEGATE) {
-            result += 1;
-        }
+        Cuik_Type* ty = types ? cuik_canonical_type(types[i]) : NULL;
+        if (ty && cuik_type_is_float(ty)) {
+            assert(s->op == EXPR_NEGATE && "expected negate");
 
-        *res = (Cuik_ConstVal){ CUIK_CONST_INT, .i = result };
-        return i;
+            // implicit cast
+            if (src.tag == CUIK_CONST_INT) { src.tag = CUIK_CONST_FLOAT; src.f = src.i; }
+
+            *res = (Cuik_ConstVal){ CUIK_CONST_FLOAT, .f = -src.f };
+            return i;
+        } else {
+            uint64_t result = ~src.i;
+            if (s->op == EXPR_NEGATE) {
+                result += 1;
+            }
+
+            *res = (Cuik_ConstVal){ CUIK_CONST_INT, .i = result };
+            return i;
+        }
     }
 
     // try binary operators
     if (s->op >= EXPR_PLUS && s->op <= EXPR_CMPLT) {
         Cuik_ConstVal rhs, lhs;
 
-        i = const_eval_subexpr(parser, exprs, i - 1, &rhs);
+        i = const_eval_subexpr(parser, types, exprs, i - 1, &rhs);
         if (i == CONST_ERROR) return i;
-        i = const_eval_subexpr(parser, exprs, i, &lhs);
+        i = const_eval_subexpr(parser, types, exprs, i, &lhs);
         if (i == CONST_ERROR) return i;
 
-        uint64_t result = 0;
-        switch (s->op) {
-            // operators
-            case EXPR_PLUS:    result = lhs.i +  rhs.i; break;
-            case EXPR_MINUS:   result = lhs.i -  rhs.i; break;
-            case EXPR_TIMES:   result = lhs.i *  rhs.i; break;
-            case EXPR_SLASH:   result = lhs.i /  rhs.i; break;
-            case EXPR_PERCENT: result = lhs.i %  rhs.i; break;
-            case EXPR_SHL:     result = lhs.i << rhs.i; break;
-            case EXPR_SHR:     result = lhs.i >> rhs.i; break;
-            case EXPR_AND:     result = lhs.i &  rhs.i; break;
-            case EXPR_OR:      result = lhs.i |  rhs.i; break;
-            // comparisons
-            case EXPR_CMPEQ:   result = lhs.i == rhs.i; break;
-            case EXPR_CMPNE:   result = lhs.i != rhs.i; break;
-            case EXPR_CMPGE:   result = lhs.i >= rhs.i; break;
-            case EXPR_CMPLE:   result = lhs.i <= rhs.i; break;
-            case EXPR_CMPGT:   result = lhs.i >  rhs.i; break;
-            case EXPR_CMPLT:   result = lhs.i <  rhs.i; break;
-            default: assert(0 && "todo");
+        Cuik_Type* ty = types ? cuik_canonical_type(types[i]) : NULL;
+        if (ty && cuik_type_is_float(ty)) {
+            if (lhs.tag == CUIK_CONST_INT) { lhs.tag = CUIK_CONST_FLOAT; lhs.f = lhs.i; }
+            if (rhs.tag == CUIK_CONST_INT) { rhs.tag = CUIK_CONST_FLOAT; rhs.f = rhs.i; }
+
+            double result = 0;
+            switch (s->op) {
+                // operators
+                case EXPR_PLUS:    result = lhs.f +  rhs.f; break;
+                case EXPR_MINUS:   result = lhs.f -  rhs.f; break;
+                case EXPR_TIMES:   result = lhs.f *  rhs.f; break;
+                case EXPR_SLASH:   result = lhs.f /  rhs.f; break;
+                // comparisons
+                case EXPR_CMPEQ:   result = lhs.f == rhs.f; break;
+                case EXPR_CMPNE:   result = lhs.f != rhs.f; break;
+                case EXPR_CMPGE:   result = lhs.f >= rhs.f; break;
+                case EXPR_CMPLE:   result = lhs.f <= rhs.f; break;
+                case EXPR_CMPGT:   result = lhs.f >  rhs.f; break;
+                case EXPR_CMPLT:   result = lhs.f <  rhs.f; break;
+                default: assert(0 && "todo");
+            }
+
+            *res = (Cuik_ConstVal){ CUIK_CONST_FLOAT, .f = result };
+            return i;
+        } else {
+            uint64_t result = 0;
+            switch (s->op) {
+                // operators
+                case EXPR_PLUS:    result = lhs.i +  rhs.i; break;
+                case EXPR_MINUS:   result = lhs.i -  rhs.i; break;
+                case EXPR_TIMES:   result = lhs.i *  rhs.i; break;
+                case EXPR_SLASH:   result = lhs.i /  rhs.i; break;
+                case EXPR_PERCENT: result = lhs.i %  rhs.i; break;
+                case EXPR_SHL:     result = lhs.i << rhs.i; break;
+                case EXPR_SHR:     result = lhs.i >> rhs.i; break;
+                case EXPR_AND:     result = lhs.i &  rhs.i; break;
+                case EXPR_OR:      result = lhs.i |  rhs.i; break;
+                // comparisons
+                case EXPR_CMPEQ:   result = lhs.i == rhs.i; break;
+                case EXPR_CMPNE:   result = lhs.i != rhs.i; break;
+                case EXPR_CMPGE:   result = lhs.i >= rhs.i; break;
+                case EXPR_CMPLE:   result = lhs.i <= rhs.i; break;
+                case EXPR_CMPGT:   result = lhs.i >  rhs.i; break;
+                case EXPR_CMPLT:   result = lhs.i <  rhs.i; break;
+                default: assert(0 && "todo");
+            }
+
+            *res = (Cuik_ConstVal){ CUIK_CONST_INT, .i = result };
+            return i;
         }
-
-        *res = (Cuik_ConstVal){ CUIK_CONST_INT, .i = result };
-        return i;
     }
 
     if (s->op == EXPR_TERNARY) {
         Cuik_ConstVal src;
-        i = const_eval_subexpr(parser, exprs, i - 1, &src);
+        i = const_eval_subexpr(parser, types, exprs, i - 1, &src);
         if (i == CONST_ERROR) return i;
 
         if (src.tag != CUIK_CONST_INT) {
@@ -209,48 +246,6 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Subexpr* exprs
         *res = v;
         return i;
     }
-
-    #if 0
-    switch (s->op) {
-        case EXPR_NOT: *result = ~args[0].i; break;
-        case EXPR_CHAR: *result = s->char_lit; break;
-
-        case EXPR_INT: *result = s->int_lit.lit; break;
-        case EXPR_NEGATE:*result = -args[0].i; break;
-
-        case EXPR_CAST: {
-            Cuik_Type* t = cuik_canonical_type(s->cast.type);
-
-            if (!cuik_type_is_integer(t)) {
-                diag_err(&parser->tokens, s->loc, "Cannot perform constant cast to %!T", cuik_canonical_type(s->cast.type));
-                return false;
-            }
-
-            // TODO(NeGate): Perform masking
-            *result = args[0].i;
-            break;
-        }
-
-        // misc
-        case EXPR_TERNARY: {
-            Cuik_ConstVal v;
-            if (!const_eval(parser, args[0].i ? s->ternary.left : s->ternary.right, &v)) {
-                diag_err(&parser->tokens, s->loc, "Cannot fold ternary");
-                return 0;
-            }
-
-            if (v.tag != CUIK_CONST_INT) {
-                diag_err(&parser->tokens, s->loc, "Ternary folded into non-integer");
-                return 0;
-            }
-
-            *result = v.i;
-            break;
-        }
-
-        default:
-    }
-    #endif
 
     diag_err(parser ? &parser->tokens : NULL, s->loc, "could not parse subexpression '%s' as constant.", cuik_get_expr_name(s));
     return CONST_ERROR;
@@ -314,7 +309,7 @@ static bool const_eval_addr_single(Cuik_Parser* restrict parser, Cuik_Expr* e, S
 
 // does constant eval on integer values, if it ever fails it'll exit with false
 static bool const_eval(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstVal* out_val) {
-    return const_eval_subexpr(parser, e->exprs, e->count - 1, out_val) != CONST_ERROR;
+    return const_eval_subexpr(parser, e->types, e->exprs, e->count - 1, out_val) != CONST_ERROR;
 
     #if 0
     size_t top = 0;

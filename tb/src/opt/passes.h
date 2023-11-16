@@ -15,6 +15,8 @@
 #define DO_IF_0(...)
 #define DO_IF_1(...) __VA_ARGS__
 
+#define BB_LOW_FREQ 1e-4
+
 ////////////////////////////////
 // SCCP
 ////////////////////////////////
@@ -109,6 +111,9 @@ typedef struct {
 typedef struct TB_BasicBlock TB_BasicBlock;
 struct TB_BasicBlock {
     TB_BasicBlock* dom;
+
+    // whatever regions say, everything else gets 1
+    float freq;
 
     TB_Node* start;
     TB_Node* end;
@@ -212,13 +217,16 @@ static bool cfg_is_bb_entry(TB_Node* n) {
     }
 }
 
-static bool cfg_underneath(TB_Node* a, TB_Node* b) {
+static bool cfg_underneath(TB_CFG* cfg, TB_Node* a, TB_BasicBlock* bb) {
     // follow until we hit a terminator
-    do {
+    for (;;) {
         a = a->inputs[0];
-    } while (!cfg_is_bb_entry(a));
 
-    return a == b;
+        ptrdiff_t search = nl_map_get(cfg->node_to_block, a);
+        if (search >= 0) {
+            return &cfg->node_to_block[search].v == bb;
+        }
+    }
 }
 
 static TB_Node* cfg_get_fallthru(TB_Node* n) {
@@ -254,7 +262,7 @@ static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {
     TB_Node* r = proj->users->n;
     if (r->type == TB_REGION) {
         for (User* u = r->users; u; u = u->next) {
-            if (u->n->type == TB_PHI && u->n->dt.type != TB_MEMORY) return true;
+            if (u->n->type == TB_PHI) return true;
         }
     }
 

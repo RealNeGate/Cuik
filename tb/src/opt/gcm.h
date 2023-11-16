@@ -3,6 +3,37 @@
 static uint32_t node_hash(void* a) { return ((TB_Node*) a)->gvn; }
 static bool node_compare(void* a, void* b) { return a == b; }
 
+static float node_cost(TB_Node* n) {
+    switch (n->type) {
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_MUL:
+        case TB_SHL:
+        case TB_SHR:
+        case TB_SAR:
+        case TB_CMP_EQ:
+        case TB_CMP_NE:
+        case TB_CMP_SLT:
+        case TB_CMP_SLE:
+        case TB_CMP_ULT:
+        case TB_CMP_ULE:
+        case TB_MEMBER_ACCESS:
+        case TB_ARRAY_ACCESS:
+        return 1.0f;
+
+        // we'd rather hoist loads
+        case TB_LOAD:
+        return 2.0f;
+
+        // we don't wanna just hoist things we haven't thought about
+        default:
+        return 100.0f;
+    }
+}
+
 ////////////////////////////////
 // Early scheduling
 ////////////////////////////////
@@ -108,19 +139,29 @@ static void schedule_late(TB_Passes* p, TB_Node* n) {
         // tb_assert(lca, "missing least common ancestor");
         if (lca != NULL) {
             TB_OPTDEBUG(GCM)(
-                printf("  LATE v%u into .bb%d: ", n->gvn, lca->id),
+                printf("  LATE  v%u into .bb%d: ", n->gvn, lca->id),
                 print_node_sexpr(n, 0),
                 printf("\n")
             );
 
             ptrdiff_t search = nl_map_get(p->scheduled, n);
-            if (search >= 0) {
-                // replace old
-                TB_BasicBlock* old = p->scheduled[search].v;
-                p->scheduled[search].v = lca;
-                nl_hashset_remove2(&old->items, n, node_hash, node_compare);
-            } else {
-                nl_map_put(p->scheduled, n, lca);
+            // i dont think it should be possible to schedule something here
+            // which didn't already get scheduled in EARLY
+            assert(search >= 0 && "huh?");
+
+            // replace old
+            TB_BasicBlock* old = p->scheduled[search].v;
+            p->scheduled[search].v = lca;
+            nl_hashset_remove2(&old->items, n, node_hash, node_compare);
+
+            // walk back up the dom tree if the block is colder above by a decent margin
+            if (0 && lca != old && lca->dom != NULL) {
+                assert(lca->freq >= BB_LOW_FREQ && "blocks should never have 0 frequency");
+                float win = lca->dom->freq / lca->freq;
+                if (win > node_cost(n)) {
+                    lca = lca->dom;
+                    TB_OPTDEBUG(GCM)(printf("  HOIST because it's dominator wins %f over the %f hoisting cost, we moved up to .bb%d\n", win, node_cost(n), lca->id));
+                }
             }
 
             nl_hashset_put2(&lca->items, n, node_hash, node_compare);

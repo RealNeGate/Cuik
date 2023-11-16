@@ -104,11 +104,13 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
         TB_Node* top;
         if (dyn_array_length(stack[var]) == 0) {
             // this is UB land, insert poison
-            top = make_poison(f, c->p, TB_TYPE_VOID);
+            top = make_poison(f, c->p, phi_reg->dt);
             log_warn("%s: v%u: generated poison due to read of uninitialized local", f->super.name, top->gvn);
         } else {
             top = stack[var][dyn_array_length(stack[var]) - 1];
         }
+
+        DO_IF(TB_OPTDEBUG_MEM2REG)(printf("v%u: replace v%u to PHI\n", phi_reg->gvn, top->gvn));
 
         bool found = false;
         FOREACH_N(j, 0, dst->input_count) {
@@ -224,7 +226,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
             }
 
             n = next;
-        } while (n != NULL && cfg_underneath(n, bb));
+        } while (n != NULL && n->type != TB_PHI && cfg_underneath(&c->p->cfg, n, bb_info));
     }
 
     // replace phi arguments on successor
@@ -265,7 +267,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     tb_tls_restore(c->tls, old_len);
 }
 
-static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
+static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n, TB_BasicBlock* bb_info) {
     DO_IF(TB_OPTDEBUG_MEM2REG)(
         printf("  FORST %u: ", bb->gvn),
         print_node_sexpr(bb, 0),
@@ -288,7 +290,7 @@ static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n) {
 
         // next memory
         n = mem_user(ctx->p, n, 1);
-    } while (n != NULL && cfg_underneath(n, bb));
+    } while (n != NULL && n->type != TB_PHI && cfg_underneath(&ctx->p->cfg, n, bb_info));
 }
 
 bool tb_pass_mem2reg(TB_Passes* p) {
@@ -378,7 +380,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
 
         if (i == 0) {
             // start block can use the input memory as the earliest point
-            insert_phis(&c, bb, f->params[1]);
+            insert_phis(&c, bb, f->params[1], bb_info);
             bb_info->mem_in = f->params[1];
             continue;
         }
@@ -406,11 +408,11 @@ bool tb_pass_mem2reg(TB_Passes* p) {
         //   note this doesn't account for multiple memory streams
         //   but that's fine for now...
         if (mem) {
-            while (cfg_underneath(mem->inputs[1], bb)) {
+            while (mem->type != TB_PHI && cfg_underneath(&c.p->cfg, mem->inputs[1], bb_info)) {
                 mem = mem->inputs[1];
             }
 
-            insert_phis(&c, bb, mem);
+            insert_phis(&c, bb, mem, bb_info);
         }
 
         bb_info->mem_in = mem;
