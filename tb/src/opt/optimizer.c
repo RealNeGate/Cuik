@@ -810,9 +810,6 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
 // we mark ALL users including the ones who didn't get changed
 // when subsuming.
 static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
-    DO_IF(TB_OPTDEBUG_STATS)(p->stats.peeps++);
-    DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", p->stats.time++), print_node_sexpr(n, 0));
-
     // idealize node (in a loop of course)
     TB_Node* k = idealize(p, f, n, flags);
     DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
@@ -969,8 +966,8 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
     tb_pass_mem2reg(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
-    // tb_pass_loop(p);
-    // tb_pass_peephole(p, TB_PEEPHOLE_ALL);
+    tb_pass_loop(p);
+    tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 }
 
 static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve) {
@@ -1037,9 +1034,12 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
         while ((n = worklist_pop(&p->worklist))) {
+            DO_IF(TB_OPTDEBUG_STATS)(p->stats.peeps++);
+            DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", p->stats.time++), print_node_sexpr(n, 0));
+
             // must've dead sometime between getting scheduled and getting here.
             if (n->type != TB_END && n->type != TB_UNREACHABLE && n->users == NULL) {
-                DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m"));
+                DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_pass_kill_node(p, n);
                 continue;
             }

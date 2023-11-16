@@ -15,6 +15,8 @@
 #define DO_IF_0(...)
 #define DO_IF_1(...) __VA_ARGS__
 
+#define BB_LOW_FREQ 1e-4
+
 ////////////////////////////////
 // SCCP
 ////////////////////////////////
@@ -109,6 +111,9 @@ typedef struct {
 typedef struct TB_BasicBlock TB_BasicBlock;
 struct TB_BasicBlock {
     TB_BasicBlock* dom;
+
+    // whatever regions say, everything else gets 1
+    float freq;
 
     TB_Node* start;
     TB_Node* end;
@@ -261,7 +266,6 @@ static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {
     TB_Node* r = proj->users->n;
     if (r->type == TB_REGION) {
         for (User* u = r->users; u; u = u->next) {
-            //  && u->n->dt.type != TB_MEMORY
             if (u->n->type == TB_PHI) return true;
         }
     }

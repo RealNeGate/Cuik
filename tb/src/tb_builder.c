@@ -856,6 +856,7 @@ TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b) {
 TB_Node* tb_inst_region(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+    r->freq = 1.0f;
 
     TB_Node* phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 1, 0);
     phi->inputs[0] = n;
@@ -1002,7 +1003,7 @@ static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rp
         }
 
         f->stop_node = end;
-        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .mem_in = mem_phi, .mem_out = mem_phi, .tag = "ret");
+        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .freq = 1.0f, .mem_in = mem_phi, .mem_out = mem_phi, .tag = "ret");
 
         dyn_array_put(f->terminators, end);
     } else {

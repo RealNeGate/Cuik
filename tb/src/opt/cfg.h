@@ -85,6 +85,13 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
             Block b = *top;
 
             TB_BasicBlock bb = { .start = b.bb, .end = b.end, .dom_depth = -1 };
+            if (b.bb->type == TB_REGION) {
+                bb.freq = TB_NODE_GET_EXTRA_T(b.bb, TB_NodeRegion)->freq;
+                assert(bb.freq >= BB_LOW_FREQ);
+            } else {
+                bb.freq = 1.0;
+            }
+
             dyn_array_put(ws->items, b.bb);
             nl_map_put(cfg.node_to_block, b.bb, bb);
             cfg.block_count += 1;

@@ -130,7 +130,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
         add_use_pos(interval, inst->time, dst_use_reg ? USE_REG : USE_OUT);
     }
 
-    int t = inst->time; // inst->type == MOV || inst->type == FP_MOV ? inst->time - 1 : inst->time;
+    int t = inst->type == MOV || inst->type == FP_MOV ? inst->time - 1 : inst->time;
     int use = USE_REG;
 
     // reg<->reg ops can use one memory op, we'll prioritize that on the inputs side
@@ -429,11 +429,14 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
 
         // it's better in the long run to aggressively split
         hint_reg = hint->assigned;
-        highest = hint_reg;
 
-        if (interval_end(interval) <= ra->free_pos[hint_reg]) {
-            REG_ALLOC_LOG printf("  #   aggressive register splitting %s\n", reg_name(rc, hint_reg));
+        if (interval_end(interval) < ra->free_pos[hint_reg]) {
+            highest = hint_reg;
         }
+        /* else if (interval_start(interval) + 10 >= ra->free_pos[hint_reg]) {
+            REG_ALLOC_LOG printf("  #   aggressive register splitting %s\n", reg_name(rc, hint_reg));
+            highest = hint_reg;
+        }*/
     }
 
     // pick highest free pos
