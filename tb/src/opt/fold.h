@@ -1,28 +1,4 @@
 
-static bool is_associative(TB_NodeTypeEnum type) {
-    switch (type) {
-        case TB_ADD: case TB_MUL:
-        case TB_AND: case TB_XOR: case TB_OR:
-        return true;
-
-        default:
-        return false;
-    }
-}
-
-static bool is_commutative(TB_NodeTypeEnum type) {
-    switch (type) {
-        case TB_ADD: case TB_MUL:
-        case TB_AND: case TB_XOR: case TB_OR:
-        case TB_CMP_NE: case TB_CMP_EQ:
-        case TB_FADD: case TB_FMUL:
-        return true;
-
-        default:
-        return false;
-    }
-}
-
 static bool get_int_const(TB_Node* n, uint64_t* imm) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);

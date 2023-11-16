@@ -73,9 +73,9 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
                 fill_phis(arena, &phis, succ->n, succ->slot);
             }
         }
-    } else if (end->type != TB_END && end->type != TB_UNREACHABLE) {
+    } else {
         User* succ = cfg_next_user(end);
-        if (succ->n->type == TB_REGION) {
+        if (succ && succ->n->type == TB_REGION) {
             fill_phis(arena, &phis, succ->n, succ->slot);
         }
     }

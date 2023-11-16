@@ -127,15 +127,6 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
     }
 }
 
-static bool is_effect_tuple(TB_Node* n) {
-    return n->type == TB_CALL ||
-        n->type == TB_SYSCALL ||
-        n->type == TB_TAILCALL||
-        n->type == TB_READ    ||
-        n->type == TB_WRITE   ||
-        n->type == TB_MACHINE_OP;
-}
-
 static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_Node*)* stack) {
     assert(bb);
     TB_Passes* p = c->p;
