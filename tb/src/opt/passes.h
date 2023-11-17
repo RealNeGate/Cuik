@@ -229,15 +229,6 @@ static bool cfg_underneath(TB_CFG* cfg, TB_Node* a, TB_BasicBlock* bb) {
     }
 }
 
-static TB_Node* cfg_get_fallthru(TB_Node* n) {
-    if (n->type == TB_PROJ && n->dt.type == TB_CONTROL && n->inputs[0]->type != TB_START) {
-        // if it's single user and that user is the terminator we can skip it in the fallthrough logic
-        return n->users->next == NULL && n->users->n->type == TB_REGION ? n->users->n : n;
-    } else {
-        return n;
-    }
-}
-
 static bool is_mem_out_op(TB_Node* n) {
     return n->dt.type == TB_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_TAILCALL);
 }

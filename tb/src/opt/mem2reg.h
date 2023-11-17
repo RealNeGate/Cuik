@@ -390,7 +390,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
         // find memory phi
         TB_Node* n = bb;
         TB_Node* mem = NULL;
-        do {
+        while (n != NULL) {
             for (User* u = n->users; u; u = u->next) {
                 if (is_mem_out_op(u->n)) {
                     mem = u->n;
@@ -399,9 +399,8 @@ bool tb_pass_mem2reg(TB_Passes* p) {
             }
 
             if (n == end) break;
-
             n = cfg_next_control(n);
-        } while (n != NULL && n != end);
+        }
 
         done:
         // find earliest memory in the BB:

@@ -360,13 +360,14 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
     }
 
     // split ranges
-    FOREACH_REVERSE_N(i, 1, interval->range_count) {
+    size_t end = interval->range_count;
+    FOREACH_REVERSE_N(i, 1, end) {
         LiveRange* range = &interval->ranges[i];
         if (range->end > pos) {
-            size_t bias = range->start > pos ? 1 : 0;
-            size_t split_count = (interval->range_count - (i + bias)) + 1;
+            size_t bias = range->start > pos ? 0 : 1;
+            size_t split_count = (interval->range_count - i) + bias;
 
-            it.range_count = it.range_cap = i + bias;
+            it.range_count = it.range_cap = bias + i;
             it.active_range = it.range_count - 1;
             it.ranges = interval->ranges;
 
@@ -375,11 +376,12 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
             interval->range_count = interval->range_cap = split_count;
             interval->active_range -= i + bias - 1;
             interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
-            if (range->start > pos) {
+            if (range->start <= pos) {
                 interval->ranges[1] = (LiveRange){ pos, range->end };
                 it.ranges[it.range_count - 1].end = pos;
             }
-            if (split_count > 0) {
+            if (i != end - 1) {
+                __debugbreak();
                 memcpy(interval->ranges + 1 + bias, it.ranges + i + bias, (split_count - 1) * sizeof(LiveRange));
             }
             break;
@@ -759,7 +761,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
     SpillSlot* slots = tb_arena_alloc(tmp_arena, (interval_count - fixed_count) * sizeof(SpillSlot));
     FOREACH_N(i, 0, interval_count) {
-        if (fixed_count) {
+        if (i >= fixed_count) {
             slots[i - fixed_count].pos = 0;
             ra.intervals[i].spill = &slots[i - fixed_count];
         }
@@ -874,7 +876,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
             for (User* u = end_node->users; u; u = u->next) {
                 if (cfg_is_control(u->n)) {
-                    TB_Node* succ = cfg_get_fallthru(u->n);
+                    TB_Node* succ = end_node->type == TB_BRANCH ? cfg_next_bb_after_cproj(u->n) : u->n;
                     MachineBB* target = &nl_map_get_checked(mbbs, succ);
 
                     // for all live-ins, we should check if we need to insert a move
