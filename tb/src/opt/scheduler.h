@@ -104,13 +104,16 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
         }
 
         // resolve anti-deps
-        if (top->antis != NULL && sched_in_bb(passes, ws, bb, top->antis->n)) {
+        if (top->antis != NULL) {
             assert(top->antis->slot == 1 && top->antis->n != n);
+            User* next = top->antis->next;
 
-            TB_Node* anti = top->antis->n;
-            top->antis = top->antis->next;
+            if (sched_in_bb(passes, ws, bb, top->antis->n)) {
+                TB_Node* anti = top->antis->n;
+                top = sched_make_node(arena, top, anti);
+            }
 
-            top = sched_make_node(arena, top, anti);
+            top->antis = next;
             continue;
         }
 
