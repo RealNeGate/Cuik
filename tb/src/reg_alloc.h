@@ -54,8 +54,6 @@ struct LiveInterval {
 typedef DynArray(RegIndex) IntervalList;
 
 typedef struct {
-    TB_ABI abi;
-
     DynArray(LiveInterval) intervals;
     DynArray(RegIndex) inactive;
     IntervalList unhandled;
@@ -134,7 +132,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
     int use = USE_REG;
 
     // reg<->reg ops can use one memory op, we'll prioritize that on the inputs side
-    if (inst->type == MOV && (inst->flags & (INST_MEM | INST_GLOBAL)) == 0) {
+    if (!dst_use_reg && inst->type == MOV && (inst->flags & (INST_MEM | INST_GLOBAL)) == 0) {
         use = USE_MEM_OR_REG;
     }
 
@@ -681,7 +679,7 @@ static bool update_interval(LSRA* restrict ra, LiveInterval* restrict interval, 
 
 static void cuiksort_defs(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, RegIndex* arr);
 static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int end) {
-    LSRA ra = { .abi = f->super.module->target_abi, .first = ctx->first, .cache = ctx->first, .intervals = ctx->intervals, .stack_usage = stack_usage };
+    LSRA ra = { .first = ctx->first, .cache = ctx->first, .intervals = ctx->intervals, .stack_usage = stack_usage };
 
     FOREACH_N(i, 0, CG_REGISTER_CLASSES) {
         ra.active_set[i] = set_create_in_arena(tmp_arena, 16);

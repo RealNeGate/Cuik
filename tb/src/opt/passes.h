@@ -189,10 +189,6 @@ static uint64_t tb__mask(uint64_t bits) {
     return ~UINT64_C(0) >> (64 - bits);
 }
 
-static bool cfg_is_terminator(TB_Node* n) {
-    return n->type == TB_BRANCH || n->type == TB_UNREACHABLE || n->type == TB_TRAP || n->type == TB_END;
-}
-
 static bool ctrl_out_as_cproj_but_not_branch(TB_Node* n) {
     return n->type == TB_CALL || n->type == TB_TAILCALL || n->type == TB_SYSCALL || n->type == TB_READ || n->type == TB_WRITE;
 }

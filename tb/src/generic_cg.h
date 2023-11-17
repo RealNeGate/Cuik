@@ -573,10 +573,10 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
                     set_union(live_out, &nl_map_get_checked(seq_bb, succ).live_in);
                 }
             }
-        } else if (end->type != TB_END && end->type != TB_UNREACHABLE) {
+        } else {
             // union with successor's lives
             TB_Node* succ = cfg_next_control(end);
-            set_union(live_out, &nl_map_get_checked(seq_bb, succ).live_in);
+            if (succ) set_union(live_out, &nl_map_get_checked(seq_bb, succ).live_in);
         }
 
         Set* restrict live_in = &mbb->live_in;

@@ -230,6 +230,7 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 }
 
 // unity build with all the passes
+#include "properties.h"
 #include "lattice.h"
 #include "cfg.h"
 #include "gvn.h"
