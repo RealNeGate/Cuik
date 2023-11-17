@@ -42,9 +42,6 @@ static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop);
 static void init_regalloc(Ctx* restrict ctx) {
     // Generate intervals for physical registers
     FOREACH_N(i, 0, 32) {
-        DynArray(LiveRange) ranges = dyn_array_create(LiveRange, 8);
-        dyn_array_put(ranges, (LiveRange){ INT_MAX, INT_MAX });
-
         bool is_gpr = i < 16;
         int reg = i % 16;
 
@@ -52,8 +49,13 @@ static void init_regalloc(Ctx* restrict ctx) {
                 .reg_class = is_gpr ? REG_CLASS_GPR : REG_CLASS_XMM,
                 .dt = is_gpr ? TB_X86_TYPE_QWORD : TB_X86_TYPE_XMMWORD,
                 .reg = reg, .assigned = reg, .hint = -1, .split_kid = -1,
-                .ranges = ranges
             });
+
+        LiveInterval* it = &ctx->intervals[i];
+        it->ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange));
+        it->range_count = 1;
+        it->range_cap = 4;
+        it->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
     }
 }
 
@@ -1802,7 +1804,7 @@ static int resolve_interval(Ctx* restrict ctx, Inst* inst, int i, Val* val) {
     LiveInterval* interval = &ctx->intervals[inst->operands[i]];
 
     if ((inst->flags & (INST_MEM | INST_GLOBAL)) && i == inst->mem_slot) {
-        tb_assert(interval->spill <= 0, "cannot use spilled value for memory operand");
+        tb_assert(!interval->is_spill, "cannot use spilled value for memory operand");
         if (inst->flags & INST_MEM) {
             *val = (Val){
                 .type = VAL_MEM,
@@ -1814,7 +1816,7 @@ static int resolve_interval(Ctx* restrict ctx, Inst* inst, int i, Val* val) {
 
             if (inst->flags & INST_INDEXED) {
                 interval = &ctx->intervals[inst->operands[i + 1]];
-                tb_assert(interval->spill <= 0, "cannot use spilled value for memory operand");
+                tb_assert(!interval->is_spill, "cannot use spilled value for memory operand");
 
                 val->index = interval->assigned;
                 return 2;
@@ -1827,12 +1829,12 @@ static int resolve_interval(Ctx* restrict ctx, Inst* inst, int i, Val* val) {
         }
     }
 
-    if (interval->spill > 0) {
+    if (interval->is_spill) {
         *val = (Val){
             .type = VAL_MEM,
             .reg = RBP,
             .index = GPR_NONE,
-            .imm = -interval->spill,
+            .imm = -interval->spill->pos,
         };
     } else {
         *val = (Val){

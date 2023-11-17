@@ -444,8 +444,11 @@ static int alloc_vreg(Ctx* restrict ctx, TB_Node* n, TB_DataType dt) {
             .dt = legalize(dt), .split_kid = -1
         });
 
-    LiveRange r = { INT_MAX, INT_MAX };
-    dyn_array_put(ctx->intervals[i].ranges, r);
+    LiveInterval* it = &ctx->intervals[i];
+    it->ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange));
+    it->range_count = 1;
+    it->range_cap = 4;
+    it->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
     return i;
 }
 
@@ -905,7 +908,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting codegen with %d nodes", f->super.name, f->node_count));
 
     #if 0
-    if (!strcmp(f->super.name, "foo")) {
+    if (!strcmp(f->super.name, "SDL_main")) {
         reg_alloc_log = true;
         tb_pass_print(p);
     } else {

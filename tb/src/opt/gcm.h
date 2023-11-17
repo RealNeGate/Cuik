@@ -27,7 +27,7 @@ static float node_cost(TB_Node* n) {
 
         // we don't wanna just hoist things we haven't thought about
         default:
-        return 100000.0f;
+        return 0.0f;
     }
 }
 
@@ -146,20 +146,8 @@ static void schedule_late(TB_Passes* p, TB_Node* n) {
             // which didn't already get scheduled in EARLY
             assert(search >= 0 && "huh?");
 
-            TB_BasicBlock* old = p->scheduled[search].v;
-
-            // walk back up the dom tree if the block is colder above by a decent margin
-            if (lca != old && lca->dom != NULL) {
-                assert(lca->freq >= BB_LOW_FREQ && "blocks should never have 0 frequency");
-                float win = lca->dom->freq / lca->freq;
-                if (win < node_cost(n)) {
-                    lca = lca->dom;
-
-                    TB_OPTDEBUG(GCM)(printf("  HOIST v%u into .bb%d (%f < %f)\n", n->gvn, lca->id, win, node_cost(n)));
-                }
-            }
-
             // replace old BB entry
+            TB_BasicBlock* old = p->scheduled[search].v;
             if (old != lca) {
                 p->scheduled[search].v = lca;
                 nl_hashset_remove2(&old->items, n, node_hash, node_compare);

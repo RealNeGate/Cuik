@@ -1,4 +1,5 @@
-// https://ssw.jku.at/Research/Papers/Wimmer04Master/Wimmer04Master.pdf
+// This is just linear scan mostly inspired by:
+//   https://ssw.jku.at/Research/Papers/Wimmer04Master/Wimmer04Master.pdf
 #ifdef NDEBUG
 #define REG_ALLOC_LOG if (0)
 #else
@@ -28,6 +29,10 @@ typedef struct {
     } kind;
 } UsePos;
 
+typedef struct {
+    int pos; // 0 means not ready
+} SpillSlot;
+
 struct LiveInterval {
     int reg_class;
 
@@ -40,15 +45,21 @@ struct LiveInterval {
     // register num, -1 if the interval isn't a physical reg
     int reg, hint;
 
-    // spill point, -1 if there's none
-    int spill, split_kid;
+    // each live interval reserves a spill slot in case they'll need it, it's
+    // shared across all splits of the interval (since the interval can't self
+    // intersect the reg is unique)
+    bool is_spill;
+    int split_kid;
+    SpillSlot* spill;
 
     // help speed up some of the main allocation loop
     int active_range;
 
     // we're gonna have so much memory to clean up...
-    DynArray(LiveRange) ranges;
     DynArray(UsePos) uses;
+
+    int range_cap, range_count;
+    LiveRange* ranges;
 };
 
 typedef DynArray(RegIndex) IntervalList;
@@ -88,16 +99,21 @@ static void add_use_pos(LiveInterval* interval, int t, int kind) {
 
 static void add_range(LiveInterval* interval, int start, int end) {
     assert(start <= end);
-    size_t count = dyn_array_length(interval->ranges);
-    if (count > 0 && interval->ranges[count - 1].start <= end) {
-        LiveRange* top = &interval->ranges[count - 1];
+    assert(interval->range_count > 0);
+
+    if (interval->ranges[interval->range_count - 1].start <= end) {
+        LiveRange* top = &interval->ranges[interval->range_count - 1];
 
         // coalesce
         top->start = TB_MIN(top->start, start);
         top->end   = TB_MAX(top->end,   end);
     } else {
-        LiveRange r = { start, end };
-        dyn_array_put(interval->ranges, r);
+        if (interval->range_cap == interval->range_count) {
+            interval->range_cap *= 2;
+            interval->ranges = tb_platform_heap_realloc(interval->ranges, interval->range_cap * sizeof(LiveRange));
+        }
+
+        interval->ranges[interval->range_count++] = (LiveRange){ start, end };
     }
 }
 
@@ -119,10 +135,10 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
         assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
-        if (dyn_array_length(interval->ranges) == 1) {
+        if (interval->range_count == 1) {
             add_range(interval, inst->time, inst->time);
         } else {
-            interval->ranges[dyn_array_length(interval->ranges) - 1].start = inst->time;
+            interval->ranges[interval->range_count - 1].start = inst->time;
         }
 
         add_use_pos(interval, inst->time, dst_use_reg ? USE_REG : USE_OUT);
@@ -251,7 +267,7 @@ static void insert_split_move(LSRA* restrict ra, int t, int old_reg, int new_reg
     prev->next = new_inst;
 }
 
-static int interval_start(LiveInterval* interval) { return interval->ranges[dyn_array_length(interval->ranges) - 1].start; }
+static int interval_start(LiveInterval* interval) { return interval->ranges[interval->range_count - 1].start; }
 static int interval_end(LiveInterval* interval)   { return interval->ranges[1].end; }
 
 static LiveInterval* split_interval_at(LSRA* restrict ra, LiveInterval* interval, int pos) {
@@ -264,44 +280,51 @@ static LiveInterval* split_interval_at(LSRA* restrict ra, LiveInterval* interval
     return interval;
 }
 
+static void allocate_spill_slot(LSRA* restrict ra, LiveInterval* interval) {
+    SpillSlot* spill = interval->spill;
+    assert(spill && "how do we not have a spill slot... we a fixed interval?");
+
+    if (spill->pos == 0) {
+        // allocate stack slot
+        int size = 8;
+        spill->pos = ra->stack_usage = align_up(ra->stack_usage + size, size);
+    } else {
+        spill->pos = 0;
+    }
+}
+
 // any uses after `pos` after put into the new interval
 static int split_intersecting(LSRA* restrict ra, int current_time, int pos, LiveInterval* interval, bool is_spill) {
     assert(interval->reg < 0);
+    cuikperf_region_start("split_intersecting", NULL);
 
     int ri = interval - ra->intervals;
-    if (interval->spill > 0) {
-        REG_ALLOC_LOG printf("  \x1b[33m#   v%d: reload [RBP - %d] at t=%d\x1b[0m\n", ri, interval->spill, pos);
+    LiveInterval it = *interval;
+
+    assert(is_spill != interval->is_spill);
+    it.is_spill = is_spill;
+
+    if (is_spill) {
+        allocate_spill_slot(ra, interval);
+
+        int sp_offset = interval->spill->pos;
+        REG_ALLOC_LOG printf("  \x1b[33m#   v%d: spill %s to [RBP - %d] at t=%d\x1b[0m\n", ri, reg_name(interval->reg_class, interval->assigned), sp_offset, pos);
     } else {
-        // allocate stack slot
-        int size = 8;
-        ra->stack_usage = align_up(ra->stack_usage + size, size);
-
-        // remove from active set
-        set_remove(&ra->active_set[interval->reg_class], interval->assigned);
-
-        REG_ALLOC_LOG printf("  \x1b[33m#   v%d: spill %s to [RBP - %d] at t=%d\x1b[0m\n", ri, reg_name(interval->reg_class, interval->assigned), ra->stack_usage, pos);
+        int sp_offset = interval->spill->pos;
+        REG_ALLOC_LOG printf("  \x1b[33m#   v%d: reload [RBP - %d] at t=%d\x1b[0m\n", ri, sp_offset, pos);
     }
 
     // split lifetime
-    LiveInterval it = *interval;
-    if (is_spill) {
-        it.spill = ra->stack_usage;
-    } else {
-        it.spill = -1;
-        it.reg = -1;
-    }
     it.assigned = it.reg = -1;
     it.uses = NULL;
-    it.ranges = dyn_array_create(LiveRange, 4);
-    it.n = NULL;
     it.split_kid = -1;
+    it.range_count = 0;
 
     assert(interval->split_kid < 0 && "cannot spill while spilled");
     int old_reg = interval - ra->intervals;
     int new_reg = dyn_array_length(ra->intervals);
     interval->split_kid = new_reg;
 
-    dyn_array_put(it.ranges, (LiveRange){ INT_MAX, INT_MAX });
     dyn_array_put(ra->intervals, it);
     interval = &ra->intervals[old_reg];
 
@@ -337,31 +360,38 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
     }
 
     // split ranges
-    for (size_t i = 1; i < dyn_array_length(interval->ranges);) {
+    FOREACH_REVERSE_N(i, 1, interval->range_count) {
         LiveRange* range = &interval->ranges[i];
-        if (range->start > pos) {
-            dyn_array_put(it.ranges, *range);
-            interval = &ra->intervals[old_reg];
+        if (range->end > pos) {
+            size_t bias = range->start > pos ? 1 : 0;
+            size_t split_count = (interval->range_count - (i + bias)) + 1;
 
-            // remove-shift
-            size_t shift = dyn_array_length(interval->ranges) - (i + 1);
-            if (shift > 0) {
-                memmove(range, range + 1, shift * sizeof(LiveRange));
+            it.range_count = it.range_cap = i + bias;
+            it.active_range = it.range_count - 1;
+            it.ranges = interval->ranges;
+
+            // move interval up, also insert INT_MAX and potentially
+            interval->ranges = tb_platform_heap_alloc(split_count * sizeof(LiveRange));
+            interval->range_count = interval->range_cap = split_count;
+            interval->active_range -= i + bias - 1;
+            interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
+            if (range->start > pos) {
+                interval->ranges[1] = (LiveRange){ pos, range->end };
+                it.ranges[it.range_count - 1].end = pos;
             }
-            dyn_array_pop(interval->ranges);
-            interval->active_range -= 1;
-            continue;
-        } else if (range->end > pos) {
-            // intersects pos, we need to split the range
-            LiveRange r = { pos, range->end };
-            range->end = pos;
-            dyn_array_put(it.ranges, r);
-
-            interval = &ra->intervals[old_reg];
-            continue;
+            if (split_count > 0) {
+                memcpy(interval->ranges + 1 + bias, it.ranges + i + bias, (split_count - 1) * sizeof(LiveRange));
+            }
+            break;
         }
+    }
 
-        i++;
+    // no ranges... weird but sure
+    if (it.range_count == 0) {
+        it.ranges = tb_platform_heap_alloc(1 * sizeof(LiveRange));
+        it.range_count = 1;
+        it.range_cap = 1;
+        it.ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
     }
 
     ra->intervals[new_reg] = it;
@@ -380,6 +410,7 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
         }
     }
 
+    cuikperf_region_end();
     return new_reg;
 }
 
@@ -459,8 +490,12 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             int vreg = (rc ? FIRST_XMM : FIRST_GPR) + highest;
             ra->stack_usage = align_up(ra->stack_usage + size, size);
 
+            SpillSlot* s = TB_ARENA_ALLOC(tmp_arena, SpillSlot);
+            s->pos = ra->stack_usage;
+
             LiveInterval it = {
-                .spill = ra->stack_usage,
+                .is_spill = true,
+                .spill = s,
                 .dt = ra->intervals[vreg].dt,
                 .assigned = -1,
                 .reg = -1,
@@ -569,11 +604,9 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
 
     bool spilled = false;
     if (first_use > pos) {
-        int size = 8;
-
         // spill interval
-        ra->stack_usage = align_up(ra->stack_usage + size, size);
-        interval->spill = ra->stack_usage;
+        allocate_spill_slot(ra, interval);
+        interval->is_spill = true;
 
         // split at optimal spot before first use that requires a register
         FOREACH_REVERSE_N(i, 0, dyn_array_length(interval->uses)) {
@@ -632,10 +665,6 @@ static void move_to_active(LSRA* restrict ra, LiveInterval* interval) {
 
 // update active range to match where the position is currently
 static bool update_interval(LSRA* restrict ra, LiveInterval* restrict interval, bool is_active, int time, int inactive_index) {
-    /*while (interval->split_kid >= 0) {
-        interval = &ra->intervals[interval->split_kid];
-    }*/
-
     // get to the right range first
     while (interval->ranges[interval->active_range].end <= time) {
         assert(interval->active_range > 0);
@@ -717,7 +746,8 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
     // we use every fixed interval at the very start to force them into
     // the inactive set.
-    FOREACH_N(i, 0, 32) {
+    int fixed_count = 32;
+    FOREACH_N(i, 0, fixed_count) {
         add_range(&ra.intervals[i], 0, 1);
     }
 
@@ -726,8 +756,15 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
     // generate unhandled interval list (sorted by starting point)
     ra.unhandled = dyn_array_create(LiveInterval*, (interval_count * 4) / 3);
+
+    SpillSlot* slots = tb_arena_alloc(tmp_arena, (interval_count - fixed_count) * sizeof(SpillSlot));
     FOREACH_N(i, 0, interval_count) {
-        ra.intervals[i].active_range = dyn_array_length(ra.intervals[i].ranges) - 1;
+        if (fixed_count) {
+            slots[i - fixed_count].pos = 0;
+            ra.intervals[i].spill = &slots[i - fixed_count];
+        }
+
+        ra.intervals[i].active_range = ra.intervals[i].range_count - 1;
         dyn_array_put(ra.unhandled, i);
     }
     cuiksort_defs(ra.intervals, 0, interval_count - 1, ra.unhandled);
@@ -748,9 +785,9 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
             int end = interval_end(interval);
             if (interval->reg >= 0) {
                 REG_ALLOC_LOG printf("  # %-5s t=[%-4d - %4d)\n", reg_name(interval->reg_class, interval->reg), time, end);
-            } else if (interval->spill > 0) {
+            } else if (interval->is_spill) {
                 REG_ALLOC_LOG {
-                    printf("  # v%-4d t=[%-4d - %4d) SPILLED [RBP - %d]\n", ri, time, end, interval->spill);
+                    printf("  # v%-4d t=[%-4d - %4d) SPILLED [RBP - %d]\n", ri, time, end, interval->spill->pos);
                 }
                 continue;
             } else {
@@ -850,7 +887,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
                         if (start != end) {
                             if (start->spill > 0) {
-                                assert(end->spill <= 0 && "TODO: both can't be spills yet");
+                                assert(end->spill == start->spill && "TODO: both can't be spills yet");
                                 insert_split_move(&ra, target->start + 1, start - ra.intervals, end - ra.intervals);
                             } else {
                                 insert_split_move(&ra, mbb->terminator - 1, start - ra.intervals, end - ra.intervals);
@@ -878,7 +915,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
 
     CUIK_TIMED_BLOCK("free intervals") {
         dyn_array_for(i, ra.intervals) {
-            dyn_array_destroy(ra.intervals[i].ranges);
+            tb_platform_heap_free(ra.intervals[i].ranges);
             dyn_array_destroy(ra.intervals[i].uses);
         }
     }
