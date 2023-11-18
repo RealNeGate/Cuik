@@ -631,10 +631,12 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         case TB_LOAD:
         return (flags & TB_PEEPHOLE_MEMORY) ? identity_load(p, f, n) : n;
 
-        // redundant safepoints
         case TB_SAFEPOINT_NOP:
         case TB_SAFEPOINT_POLL:
-        if (n->inputs[0]->type == TB_SAFEPOINT_POLL || n->inputs[0]->type == TB_SAFEPOINT_NOP) {
+        if (n->inputs[0]->type == TB_DEAD) {
+            // dead control? dead node
+            return n->inputs[0];
+        } if (n->inputs[0]->type == TB_SAFEPOINT_POLL || n->inputs[0]->type == TB_SAFEPOINT_NOP) {
             // (safepoint (safepoint X)) => (safepoint X)
             return n->inputs[0];
         } else {

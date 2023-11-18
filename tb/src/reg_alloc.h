@@ -55,6 +55,11 @@ struct LiveInterval {
     // help speed up some of the main allocation loop
     int active_range;
 
+    // base interval tells us where to get our spill slot, we don't wanna
+    // make two separate spill slots.
+    int expected_spill;
+    LiveInterval* base;
+
     // we're gonna have so much memory to clean up...
     DynArray(UsePos) uses;
 
@@ -364,25 +369,23 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
     FOREACH_REVERSE_N(i, 1, end) {
         LiveRange* range = &interval->ranges[i];
         if (range->end > pos) {
-            size_t bias = range->start > pos ? 0 : 1;
-            size_t split_count = (interval->range_count - i) + bias;
+            bool clean_split = pos < range->start;
 
-            it.range_count = it.range_cap = bias + i;
+            it.range_count = it.range_cap = i + !clean_split;
             it.active_range = it.range_count - 1;
             it.ranges = interval->ranges;
 
             // move interval up, also insert INT_MAX and potentially
-            interval->ranges = tb_platform_heap_alloc(split_count * sizeof(LiveRange));
-            interval->range_count = interval->range_cap = split_count;
-            interval->active_range -= i + bias - 1;
+            interval->range_count = interval->range_cap = (end - i) + !clean_split;
+            interval->ranges = tb_platform_heap_alloc(interval->range_count * sizeof(LiveRange));
+            interval->active_range -= i - !clean_split;
             interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
-            if (range->start <= pos) {
-                interval->ranges[1] = (LiveRange){ pos, range->end };
-                it.ranges[it.range_count - 1].end = pos;
-            }
             if (i != end - 1) {
-                __debugbreak();
-                memcpy(interval->ranges + 1 + bias, it.ranges + i + bias, (split_count - 1) * sizeof(LiveRange));
+                memcpy(interval->ranges + 1, it.ranges + it.range_count - !clean_split, (interval->range_count - 1) * sizeof(LiveRange));
+            }
+            if (range->start <= pos) {
+                interval->ranges[1].start = pos;
+                it.ranges[it.range_count - 1].end = pos;
             }
             break;
         }

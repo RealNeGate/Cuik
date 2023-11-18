@@ -89,15 +89,6 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
     while (top != NULL) retry: {
         TB_Node* n = top->n;
 
-        // resolve inputs first
-        if (n->type != TB_PHI && top->index < n->input_count) {
-            TB_Node* in = n->inputs[top->index++];
-            if (in != NULL && sched_in_bb(passes, ws, bb, in)) {
-                top = sched_make_node(arena, top, in);
-            }
-            continue;
-        }
-
         // skip non-memory edges
         while (top->antis && (top->antis->slot != 1 || top->antis->n == n)) {
             top->antis = top->antis->next;
@@ -114,6 +105,15 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
             }
 
             top->antis = next;
+            continue;
+        }
+
+        // resolve inputs first
+        if (n->type != TB_PHI && top->index < n->input_count) {
+            TB_Node* in = n->inputs[top->index++];
+            if (in != NULL && sched_in_bb(passes, ws, bb, in)) {
+                top = sched_make_node(arena, top, in);
+            }
             continue;
         }
 
