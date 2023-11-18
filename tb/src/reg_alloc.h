@@ -293,13 +293,11 @@ static void allocate_spill_slot(LSRA* restrict ra, LiveInterval* interval) {
         // allocate stack slot
         int size = 8;
         spill->pos = ra->stack_usage = align_up(ra->stack_usage + size, size);
-    } else {
-        spill->pos = 0;
     }
 }
 
 // any uses after `pos` after put into the new interval
-static int split_intersecting(LSRA* restrict ra, int current_time, int pos, LiveInterval* interval, bool is_spill) {
+static int split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, bool is_spill) {
     assert(interval->reg < 0);
     cuikperf_region_start("split_intersecting", NULL);
 
@@ -371,21 +369,31 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
         if (range->end > pos) {
             bool clean_split = pos < range->start;
 
-            it.range_count = it.range_cap = i + !clean_split;
+            LiveRange old = interval->ranges[interval->active_range];
+
+            it.range_count = it.range_cap = i + 1;
             it.active_range = it.range_count - 1;
             it.ranges = interval->ranges;
 
             // move interval up, also insert INT_MAX and potentially
-            interval->range_count = interval->range_cap = (end - i) + !clean_split;
+            size_t start = it.range_count - !clean_split;
+
+            interval->range_count = interval->range_cap = (end - start) + 1;
             interval->ranges = tb_platform_heap_alloc(interval->range_count * sizeof(LiveRange));
-            interval->active_range -= i - !clean_split;
+            interval->active_range -= start - 1;
             interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
-            if (i != end - 1) {
-                memcpy(interval->ranges + 1, it.ranges + it.range_count - !clean_split, (interval->range_count - 1) * sizeof(LiveRange));
+
+            FOREACH_N(j, start, end) {
+                assert(j - start + 1 < interval->range_count);
+                interval->ranges[j - start + 1] = it.ranges[j];
             }
+
+            assert(interval->ranges[interval->active_range].start == old.start);
+            assert(interval->ranges[interval->active_range].end == old.end);
+
             if (range->start <= pos) {
-                interval->ranges[1].start = pos;
-                it.ranges[it.range_count - 1].end = pos;
+                interval->ranges[1].end = pos;
+                it.ranges[it.range_count - 1].start = pos;
             }
             break;
         }
@@ -409,7 +417,7 @@ static int split_intersecting(LSRA* restrict ra, int current_time, int pos, Live
         FOREACH_REVERSE_N(i, 0, dyn_array_length(it.uses)) {
             if (it.uses[i].kind == USE_REG) {
                 // new split
-                split_intersecting(ra, current_time, it.uses[i].pos - 1, &ra->intervals[new_reg], false);
+                split_intersecting(ra, it.uses[i].pos - 1, &ra->intervals[new_reg], false);
                 break;
             }
         }
@@ -537,7 +545,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
         } else {
             // TODO(NeGate): split current at optimal position before current
             interval->assigned = highest;
-            split_intersecting(ra, interval_start(interval), pos - 1, interval, true);
+            split_intersecting(ra, pos - 1, interval, true);
         }
 
         return highest;
@@ -616,7 +624,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
         // split at optimal spot before first use that requires a register
         FOREACH_REVERSE_N(i, 0, dyn_array_length(interval->uses)) {
             if (interval->uses[i].pos >= pos && interval->uses[i].kind == USE_REG) {
-                split_intersecting(ra, start, interval->uses[i].pos - 1, interval, false);
+                split_intersecting(ra, interval->uses[i].pos - 1, interval, false);
                 break;
             }
         }
@@ -629,7 +637,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
         // split active or inactive interval reg
         LiveInterval* to_split = get_active(ra, rc, highest);
         if (to_split != NULL) {
-            split_intersecting(ra, start, split_pos, to_split, true);
+            split_intersecting(ra, split_pos, to_split, true);
         }
 
         // split any inactive interval for reg at the end of it's lifetime hole
@@ -638,7 +646,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
             LiveRange* r = &it->ranges[it->active_range];
 
             if (it->reg_class == rc && it->assigned == highest && r->start <= pos+1 && pos <= r->end) {
-                split_intersecting(ra, start, split_pos, it, true);
+                split_intersecting(ra, split_pos, it, true);
             }
         }
     }
@@ -648,7 +656,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
     if (dyn_array_length(fix_interval->ranges)) {
         int p = interval_intersect(interval, fix_interval);
         if (p >= 0) {
-            split_intersecting(ra, start, p, interval, true);
+            split_intersecting(ra, p, interval, true);
         }
     }
 
