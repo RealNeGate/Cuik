@@ -1144,8 +1144,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             if (type == TB_TAILCALL) {
-                // MOV [RBP], target ; this is the return address
-                SUBMIT(inst_op_mr(MOV, TB_TYPE_I64, RBP, GPR_NONE, SCALE_X1, 8, target_val));
+                hint_reg(ctx, target_val, RAX);
+                SUBMIT(inst_move(TB_TYPE_I64, RAX, target_val));
             } else if (type == TB_SYSCALL) {
                 ins[in_count++] = FIRST_GPR + RAX;
                 hint_reg(ctx, target_val, RAX);
@@ -1206,7 +1206,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             if (type == TB_TAILCALL) {
                 SUBMIT(alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
-                SUBMIT(inst_jmp_reg(target_val));
+                SUBMIT(inst_jmp_reg(RAX));
             } else {
                 // copy out return
                 FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
