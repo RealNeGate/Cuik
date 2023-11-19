@@ -466,7 +466,7 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 }
 
 void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
-    size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
+    size_t proj_count = 3 + (proto->return_count > 1 ? proto->return_count : 1);
 
     TB_Node* n = tb_alloc_node(f, TB_TAILCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
     n->inputs[0] = f->active_control_node;
