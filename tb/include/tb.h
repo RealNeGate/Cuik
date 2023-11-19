@@ -626,6 +626,7 @@ typedef struct {
 
 typedef struct {
     TB_FunctionPrototype* proto;
+    int proj_count;
     TB_Node* projs[];
 } TB_NodeCall;
 

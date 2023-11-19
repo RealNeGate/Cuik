@@ -416,6 +416,7 @@ TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, s
     TB_Node* dproj = tb__make_proj(f, dt, n, 2);
 
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+    c->proj_count = 3;
     c->proto = NULL;
     c->projs[0] = cproj;
     c->projs[1] = mproj;
@@ -432,6 +433,7 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+    c->proj_count = proj_count;
     c->proto = proto;
 
     // control proj
@@ -472,6 +474,7 @@ void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* targ
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+    c->proj_count = proj_count;
     c->proto = proto;
 
     // control proj
