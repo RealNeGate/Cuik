@@ -36,7 +36,7 @@ static const struct ParamDescriptor {
 #include "../generic_cg.h"
 
 static size_t emit_prologue(Ctx* restrict ctx);
-static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop);
+static size_t emit_epilogue(Ctx* restrict ctx);
 
 // initialize register allocator state
 static void init_regalloc(Ctx* restrict ctx) {
@@ -1872,7 +1872,7 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, D
     func_out->prologue_length = emit_prologue(ctx);
 
     Inst* prev_line = NULL;
-    uint32_t epilogue_pos = 0;
+    int end_i = 0;
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
         size_t inst_table_size = sizeof(inst_table) / sizeof(*inst_table);
@@ -1890,14 +1890,14 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, D
             printf("}\x1b[0m\n");
         }
 
+        // insert copy of the epilogue now
+        if (end_i < dyn_array_length(end) && inst->time == end[end_i]) {
+            end_i += 1;
+            emit_epilogue(ctx);
+        }
+
         if (inst->type == INST_ENTRY || inst->type == INST_TERMINATOR) {
             // does nothing
-        } else if (inst->type == INST_TAIL) {
-            // JMP epilogue
-            EMIT1(e, 0xE9);
-            EMIT4(e, 0);
-
-            tb_emit_rel32(e, &epilogue_pos, GET_CODE_POS(e) - 4);
         } else if (inst->type == INST_LABEL) {
             TB_Node* bb = inst->n;
             uint32_t pos = GET_CODE_POS(&ctx->emit);
@@ -2047,9 +2047,12 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, D
         }
     }
 
-    if (end >= 0 && ctx->f->stop_node != NULL) {
-        tb_resolve_rel32(&ctx->emit, &epilogue_pos, GET_CODE_POS(&ctx->emit));
-        emit_epilogue(ctx, ctx->f->stop_node);
+    // there's a leftover epilogue now
+    if (end_i < dyn_array_length(end)) {
+        emit_epilogue(ctx);
+
+        // ret
+        EMIT1(&ctx->emit, 0xC3);
     }
 
     // pad to 16bytes
@@ -2157,7 +2160,7 @@ static size_t emit_prologue(Ctx* restrict ctx) {
     return e->count;
 }
 
-static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop) {
+static size_t emit_epilogue(Ctx* restrict ctx) {
     uint64_t saved = ctx->regs_to_save, stack_usage = ctx->stack_usage;
     TB_CGEmitter* e = &ctx->emit;
 
@@ -2187,9 +2190,6 @@ static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop) {
     if (stack_usage > 0) {
         EMIT1(&ctx->emit, 0x58 + RBP);
     }
-
-    // ret
-    EMIT1(&ctx->emit, 0xC3);
 
     return ctx->emit.count - start;
 }
