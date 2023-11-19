@@ -138,7 +138,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, int dst);
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
 static bool should_rematerialize(TB_Node* n);
 
-static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, DynArray(int) end);
+static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out);
 static void mark_callee_saved_constraints(Ctx* restrict ctx, uint64_t callee_saved[CG_REGISTER_CLASSES]);
 
 static void add_debug_local(Ctx* restrict ctx, TB_Node* n, int pos) {
@@ -186,6 +186,9 @@ typedef enum {
     // memory op
     INST_INDEXED   = 1024,
     INST_SPILL     = 2048,
+
+    // epilogue
+    INST_RET       = 4096,
 } InstFlags;
 
 struct Inst {
@@ -846,7 +849,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
         ctx->head = last ? last : head;
 
-        if (!cfg_is_endpoint(end)) {
+        if (!cfg_is_terminator(end)) {
             TB_OPTDEBUG(CODEGEN)(
                 printf("  TERMINATOR %u: ", end->gvn),
                 print_node_sexpr(end, 0),
@@ -1022,7 +1025,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
         // Arch-specific: convert instruction buffer into actual instructions
         CUIK_TIMED_BLOCK("emit code") {
-            emit_code(&ctx, func_out, end);
+            emit_code(&ctx, func_out);
         }
 
         // Fill jump table entries

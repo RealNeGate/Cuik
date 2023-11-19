@@ -36,7 +36,7 @@ static const struct ParamDescriptor {
 #include "../generic_cg.h"
 
 static size_t emit_prologue(Ctx* restrict ctx);
-static size_t emit_epilogue(Ctx* restrict ctx);
+static void emit_epilogue(Ctx* restrict ctx);
 
 // initialize register allocator state
 static void init_regalloc(Ctx* restrict ctx) {
@@ -1205,7 +1205,9 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             SUBMIT(call_inst);
 
             if (type == TB_TAILCALL) {
-                SUBMIT(alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
+                Inst* i = alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0);
+                append_inst(ctx, i);
+
                 SUBMIT(inst_jmp_reg(RAX));
             } else {
                 // copy out return
@@ -1691,7 +1693,9 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             // we don't really need a fence if we're about to exit but we do
             // need to mark that it's the epilogue to tell regalloc where callee
             // regs need to get restored.
-            append_inst(ctx, alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
+            Inst* i = alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0);
+            i->flags |= INST_RET;
+            append_inst(ctx, i);
             break;
         }
 
@@ -1852,7 +1856,7 @@ static int resolve_interval(Ctx* restrict ctx, Inst* inst, int i, Val* val) {
     return 1;
 }
 
-static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, DynArray(int) end) {
+static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
     TB_CGEmitter* e = &ctx->emit;
 
     // resolve stack usage
@@ -1872,7 +1876,6 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, D
     func_out->prologue_length = emit_prologue(ctx);
 
     Inst* prev_line = NULL;
-    int end_i = 0;
     for (Inst* restrict inst = ctx->first; inst; inst = inst->next) {
         size_t in_base = inst->out_count;
         size_t inst_table_size = sizeof(inst_table) / sizeof(*inst_table);
@@ -1888,12 +1891,6 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, D
                 printf(" v%d", inst->operands[i]);
             }
             printf("}\x1b[0m\n");
-        }
-
-        // insert copy of the epilogue now
-        if (end_i < dyn_array_length(end) && inst->time == end[end_i]) {
-            end_i += 1;
-            emit_epilogue(ctx);
         }
 
         if (inst->type == INST_ENTRY || inst->type == INST_TERMINATOR) {
@@ -1914,6 +1911,12 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, D
             }
         } else if (inst->type == INST_EPILOGUE) {
             // just a marker for regalloc
+            emit_epilogue(ctx);
+
+            if (inst->flags & INST_RET) {
+                // ret
+                EMIT1(&ctx->emit, 0xC3);
+            }
         } else if (inst->type == INST_LINE) {
             TB_Function* f = ctx->f;
             TB_NodeSafepoint* loc = TB_NODE_GET_EXTRA(inst->n);
@@ -2047,14 +2050,6 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, D
         }
     }
 
-    // there's a leftover epilogue now
-    if (end_i < dyn_array_length(end)) {
-        emit_epilogue(ctx);
-
-        // ret
-        EMIT1(&ctx->emit, 0xC3);
-    }
-
     // pad to 16bytes
     static const uint8_t nops[8][8] = {
         { 0x90 },
@@ -2160,13 +2155,12 @@ static size_t emit_prologue(Ctx* restrict ctx) {
     return e->count;
 }
 
-static size_t emit_epilogue(Ctx* restrict ctx) {
+static void emit_epilogue(Ctx* restrict ctx) {
     uint64_t saved = ctx->regs_to_save, stack_usage = ctx->stack_usage;
     TB_CGEmitter* e = &ctx->emit;
 
     if (stack_usage <= 16) {
-        EMIT1(e, 0xC3);
-        return 1;
+        return;
     }
 
     size_t start = e->count;
@@ -2190,8 +2184,6 @@ static size_t emit_epilogue(Ctx* restrict ctx) {
     if (stack_usage > 0) {
         EMIT1(&ctx->emit, 0x58 + RBP);
     }
-
-    return ctx->emit.count - start;
 }
 
 static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f) {
@@ -2286,7 +2278,13 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
                         } else {
                             uint32_t target = pos + inst.length + inst.disp;
                             int bb = tb_emit_get_label(e, target);
-                            E(".bb%d", bb);
+                            uint32_t landed = e->labels[bb] & 0x80000000;
+
+                            if (landed != target) {
+                                E(".bb%d + %d", bb, (int)target - (int)landed);
+                            } else {
+                                E(".bb%d", bb);
+                            }
                         }
 
                         if (!is_label) E("]");

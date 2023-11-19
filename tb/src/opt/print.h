@@ -487,7 +487,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 
     dyn_array_set_length(ws->items, ctx->cfg.block_count);
 
-    if (!cfg_is_endpoint(bb->end)) {
+    if (!cfg_is_terminator(bb->end)) {
         printf("  goto ");
         print_branch_edge(ctx, bb->end, true);
         printf("\n");
