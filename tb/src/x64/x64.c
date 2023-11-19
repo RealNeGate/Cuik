@@ -2186,10 +2186,7 @@ static size_t emit_epilogue(Ctx* restrict ctx, TB_Node* stop) {
     }
 
     // ret
-    TB_Node* rpc = stop->inputs[2];
-    if (rpc->type == TB_PROJ && rpc->inputs[0]->type == TB_START && TB_NODE_GET_EXTRA_T(rpc, TB_NodeProj)->index == 2) {
-        EMIT1(&ctx->emit, 0xC3);
-    }
+    EMIT1(&ctx->emit, 0xC3);
 
     return ctx->emit.count - start;
 }
