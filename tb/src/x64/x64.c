@@ -1038,23 +1038,25 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int ret_count = 0;
             int proj_base = type == TB_TAILCALL ? 3 : 2;
 
-            assert(proto->return_count <= 2);
-            FOREACH_N(i, 0, proto->return_count) {
-                TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[proj_base + i];
-                if (!has_users(ctx, ret_node)) {
-                    ret_node = NULL;
-                }
+            if (n->type != TB_TAILCALL) {
+                assert(proto->return_count <= 2);
+                FOREACH_N(i, 0, proto->return_count) {
+                    TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[proj_base + i];
+                    if (!has_users(ctx, ret_node)) {
+                        ret_node = NULL;
+                    }
 
-                if (ret_node != NULL) {
-                    ret_nodes[i] = ret_node;
-                    rets[i] = input_reg(ctx, ret_node);
-                    ret_count++;
+                    if (ret_node != NULL) {
+                        ret_nodes[i] = ret_node;
+                        rets[i] = input_reg(ctx, ret_node);
+                        ret_count++;
 
-                    bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_node->dt);
-                    if (use_xmm_ret) {
-                        caller_saved_xmms &= ~(1ull << (XMM0 + i));
-                    } else {
-                        caller_saved_gprs &= ~(1ull << ret_gprs[i]);
+                        bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_node->dt);
+                        if (use_xmm_ret) {
+                            caller_saved_xmms &= ~(1ull << (XMM0 + i));
+                        } else {
+                            caller_saved_gprs &= ~(1ull << ret_gprs[i]);
+                        }
                     }
                 }
             }

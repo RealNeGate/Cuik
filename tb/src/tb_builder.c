@@ -466,15 +466,13 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 }
 
 void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
-    size_t proj_count = 3 + (proto->return_count > 1 ? proto->return_count : 1);
-
-    TB_Node* n = tb_alloc_node(f, TB_TAILCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
+    TB_Node* n = tb_alloc_node(f, TB_TAILCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*[3]));
     n->inputs[0] = f->active_control_node;
     n->inputs[2] = target;
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
-    c->proj_count = proj_count;
+    c->proj_count = 3;
     c->proto = proto;
 
     // control proj
@@ -486,17 +484,6 @@ void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* targ
 
     // RPC proj
     TB_Node* rproj = tb__make_proj(f, TB_TYPE_CONT, n, 2);
-
-    // create data projections
-    TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
-    FOREACH_N(i, 0, proto->return_count) {
-        c->projs[i + 3] = tb__make_proj(f, rets[i].dt, n, i + 3);
-    }
-
-    // we'll slot a NULL so it's easy to tell when it's empty
-    if (proto->return_count == 0) {
-        c->projs[3] = NULL;
-    }
 
     c->projs[0] = cproj;
     c->projs[1] = mproj;
