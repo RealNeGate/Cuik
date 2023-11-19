@@ -81,7 +81,7 @@ typedef struct {
     int* free_pos;
     int* block_pos;
 
-    int endpoint;
+    DynArray(int) epilogues;
     uint64_t callee_saved[CG_REGISTER_CLASSES];
 
     Set active_set[CG_REGISTER_CLASSES];
@@ -521,8 +521,8 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
 
             // insert spill and reload
             insert_split_move(ra, 0, vreg, spill_slot);
-            if (ra->endpoint) {
-                insert_split_move(ra, ra->endpoint, spill_slot, vreg);
+            dyn_array_for(i, ra->epilogues) {
+                insert_split_move(ra, ra->epilogues[i], spill_slot, vreg);
             }
 
             // adding to intervals might resized this
@@ -720,8 +720,8 @@ static bool update_interval(LSRA* restrict ra, LiveInterval* restrict interval, 
 }
 
 static void cuiksort_defs(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, RegIndex* arr);
-static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int end) {
-    LSRA ra = { .first = ctx->first, .cache = ctx->first, .intervals = ctx->intervals, .stack_usage = stack_usage };
+static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynArray(int) epilogues) {
+    LSRA ra = { .first = ctx->first, .cache = ctx->first, .intervals = ctx->intervals, .epilogues = epilogues, .stack_usage = stack_usage };
 
     FOREACH_N(i, 0, CG_REGISTER_CLASSES) {
         ra.active_set[i] = set_create_in_arena(tmp_arena, 16);
@@ -764,7 +764,6 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, int e
         add_range(&ra.intervals[i], 0, 1);
     }
 
-    ra.endpoint = end;
     mark_callee_saved_constraints(ctx, ra.callee_saved);
 
     // generate unhandled interval list (sorted by starting point)

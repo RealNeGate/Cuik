@@ -631,6 +631,10 @@ typedef struct {
 } TB_NodeCall;
 
 typedef struct {
+    TB_FunctionPrototype* proto;
+} TB_NodeTailcall;
+
+typedef struct {
     const char* tag;
 
     // magic factor for hot-code, higher means run more often

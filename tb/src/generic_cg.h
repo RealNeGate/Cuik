@@ -141,7 +141,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, int dst);
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
 static bool should_rematerialize(TB_Node* n);
 
-static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, int end);
+static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, DynArray(int) end);
 static void mark_callee_saved_constraints(Ctx* restrict ctx, uint64_t callee_saved[CG_REGISTER_CLASSES]);
 
 static void add_debug_local(Ctx* restrict ctx, TB_Node* n, int pos) {
@@ -461,7 +461,7 @@ static void hint_reg(Ctx* restrict ctx, int i, int j) {
 ////////////////////////////////
 // Data flow analysis
 ////////////////////////////////
-static int liveness(Ctx* restrict ctx, TB_Function* f) {
+static DynArray(int) liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t interval_count = dyn_array_length(ctx->intervals);
     TB_Arena* arena = tmp_arena;
 
@@ -487,7 +487,9 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     }
 
     // generate local live sets
-    int timeline = 4, epilogue = -1;
+    int timeline = 4;
+    DynArray(int) epilogues = NULL;
+
     // CUIK_TIMED_BLOCK("local liveness")
     {
         if (ctx->first) {
@@ -515,7 +517,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
                 } else if (is_terminator(inst->type) && mbb->terminator == 0) {
                     mbb->terminator = timeline;
                 } else if (inst->type == INST_EPILOGUE) {
-                    epilogue = timeline;
+                    dyn_array_put(epilogues, timeline);
                 }
 
                 Set* restrict gen = &mbb->gen;
@@ -620,7 +622,7 @@ static int liveness(Ctx* restrict ctx, TB_Function* f) {
     }*/
 
     ctx->machine_bbs = seq_bb;
-    return epilogue;
+    return epilogues;
 }
 
 static ValueDesc* lookup_val(Ctx* restrict ctx, TB_Node* n) {
@@ -853,8 +855,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
         ctx->head = last ? last : head;
 
-        if (end->type != TB_END    && end->type != TB_TRAP &&
-            end->type != TB_BRANCH && end->type != TB_UNREACHABLE) {
+        if (!cfg_is_endpoint(end)) {
             TB_OPTDEBUG(CODEGEN)(
                 printf("  TERMINATOR %u: ", end->gvn),
                 print_node_sexpr(end, 0),
@@ -1019,7 +1020,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     p->worklist = ctx.worklist;
 
     {
-        int end;
+        DynArray(int) end;
         CUIK_TIMED_BLOCK("data flow") {
             end = liveness(&ctx, f);
         }

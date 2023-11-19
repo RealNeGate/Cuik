@@ -86,11 +86,13 @@ static size_t extra_bytes(TB_Node* n) {
         return sizeof(TB_NodeRegion);
 
         case TB_CALL:
-        case TB_SYSCALL:
-        case TB_TAILCALL: {
+        case TB_SYSCALL: {
             TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
             return sizeof(TB_NodeCall) + (sizeof(TB_Node*) * c->proj_count);
         }
+
+        case TB_TAILCALL:
+        return sizeof(TB_NodeTailcall);
 
         case TB_LOAD:
         case TB_STORE:

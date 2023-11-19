@@ -1205,7 +1205,8 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             SUBMIT(call_inst);
 
             if (type == TB_TAILCALL) {
-                SUBMIT(inst_tail());
+                SUBMIT(alloc_inst(INST_EPILOGUE, TB_TYPE_VOID, 0, 0, 0));
+                SUBMIT(inst_jmp_reg(target_val));
             } else {
                 // copy out return
                 FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
@@ -1851,7 +1852,7 @@ static int resolve_interval(Ctx* restrict ctx, Inst* inst, int i, Val* val) {
     return 1;
 }
 
-static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, int end) {
+static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out, DynArray(int) end) {
     TB_CGEmitter* e = &ctx->emit;
 
     // resolve stack usage

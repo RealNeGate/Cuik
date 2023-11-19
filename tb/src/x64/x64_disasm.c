@@ -228,7 +228,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0xF6] = OP_M | OP_FAKERX | OP_8BIT,
         [0xF7] = OP_M | OP_FAKERX,
         // jmp r/m
-        [0xFF] = OP_M | OP_FAKERX,
+        [0xFF] = OP_M | OP_FAKERX | OP_64BIT,
     };
     #undef NORMIE_BINOP
 

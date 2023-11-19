@@ -466,31 +466,17 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 }
 
 void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_node(f, TB_TAILCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*[3]));
+    TB_Node* n = tb_alloc_node(f, TB_TAILCALL, TB_TYPE_CONTROL, 3 + param_count, sizeof(TB_NodeTailcall));
     n->inputs[0] = f->active_control_node;
+    n->inputs[1] = peek_mem(f, f->active_control_node);
     n->inputs[2] = target;
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
-    TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
-    c->proj_count = 3;
+    TB_NodeTailcall* c = TB_NODE_GET_EXTRA(n);
     c->proto = proto;
 
-    // control proj
-    TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
-
-    // memory proj
-    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
-    n->inputs[1] = append_mem(f, mproj);
-
-    // RPC proj
-    TB_Node* rproj = tb__make_proj(f, TB_TYPE_CONT, n, 2);
-
-    c->projs[0] = cproj;
-    c->projs[1] = mproj;
-    c->projs[2] = rproj;
-
-    f->active_control_node = cproj;
-    inst_ret(f, 0, NULL, rproj);
+    f->active_control_node = NULL;
+    dyn_array_put(f->terminators, n);
 }
 
 TB_Node* tb_inst_poison(TB_Function* f, TB_DataType dt) {

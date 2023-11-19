@@ -1,5 +1,6 @@
 #pragma once
 #include "../tb_internal.h"
+#include "properties.h"
 
 #define TB_OPTDEBUG_STATS   0
 #define TB_OPTDEBUG_PEEP    0

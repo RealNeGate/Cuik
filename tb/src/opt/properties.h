@@ -44,6 +44,7 @@ static bool cfg_is_endpoint(TB_Node* n) {
         case TB_UNREACHABLE:
         case TB_TRAP:
         case TB_END:
+        case TB_TAILCALL:
         return true;
 
         default:
@@ -57,6 +58,7 @@ static bool cfg_is_terminator(TB_Node* n) {
         case TB_UNREACHABLE:
         case TB_TRAP:
         case TB_END:
+        case TB_TAILCALL:
         return true;
 
         default:

@@ -230,7 +230,6 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 }
 
 // unity build with all the passes
-#include "properties.h"
 #include "lattice.h"
 #include "cfg.h"
 #include "gvn.h"
@@ -1046,7 +1045,7 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
             DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", p->stats.time++), print_node_sexpr(n, 0));
 
             // must've dead sometime between getting scheduled and getting here.
-            if (n->type != TB_END && n->type != TB_UNREACHABLE && n->type != TB_PROJ && n->users == NULL) {
+            if (!cfg_is_endpoint(n) && n->type != TB_PROJ && n->users == NULL) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_pass_kill_node(p, n);
                 continue;
