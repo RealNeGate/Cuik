@@ -490,7 +490,7 @@ void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* targ
     c->projs[2] = rproj;
 
     f->active_control_node = cproj;
-    inst_ret(f, proto->return_count, c->projs + 3, rproj);
+    inst_ret(f, 0, NULL, rproj);
 }
 
 TB_Node* tb_inst_poison(TB_Function* f, TB_DataType dt) {
