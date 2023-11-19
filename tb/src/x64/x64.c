@@ -1134,14 +1134,17 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             // compute the target (unless it's a symbol) before the
             // registers all need to be forcibly shuffled
             TB_Node* target = n->inputs[2];
-            bool static_call = n->type != TB_SYSCALL && target->type == TB_SYMBOL;
+            bool static_call = n->type == TB_CALL && target->type == TB_SYMBOL;
 
             int target_val = RSP; // placeholder really
             if (!static_call) {
                 target_val = input_reg(ctx, target);
             }
 
-            if (type == TB_SYSCALL) {
+            if (type == TB_TAILCALL) {
+                // MOV [RBP], target ; this is the return address
+                SUBMIT(inst_op_mr(MOV, TB_TYPE_I64, RBP, GPR_NONE, SCALE_X1, 8, target_val));
+            } else if (type == TB_SYSCALL) {
                 ins[in_count++] = FIRST_GPR + RAX;
                 hint_reg(ctx, target_val, RAX);
                 SUBMIT(inst_move(target->dt, RAX, target_val));
