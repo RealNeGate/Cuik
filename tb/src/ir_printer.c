@@ -180,17 +180,27 @@ static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, i
             break;
         }
 
-        case TB_CALL:
-        case TB_TAILCALL: {
-            if (index == 0) {
-                P("ctrl");
-            } else if (index == 1) {
-                P("mem");
-            } else if (index == 2) {
-                P("val");
-            }
-            break;
+        case TB_TAILCALL:
+        if (index == 0) {
+            P("ctrl");
+        } else if (index == 1) {
+            P("mem");
+        } else if (index == 2) {
+            P("rpc");
+        } else {
+            P("val");
         }
+        break;
+
+        case TB_CALL:
+        if (index == 0) {
+            P("ctrl");
+        } else if (index == 1) {
+            P("mem");
+        } else {
+            P("val");
+        }
+        break;
 
         default: tb_todo();
     }

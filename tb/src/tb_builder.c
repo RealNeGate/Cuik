@@ -501,6 +501,8 @@ void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* targ
     c->projs[0] = cproj;
     c->projs[1] = mproj;
     c->projs[2] = rproj;
+
+    f->active_control_node = cproj;
     inst_ret(f, proto->return_count, c->projs + 3, rproj);
 }
 
@@ -977,7 +979,7 @@ static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rp
         TB_Node* region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
 
         end = tb_alloc_node(f, TB_END, TB_TYPE_CONTROL, 3 + count, 0);
-        end->inputs[2] = f->params[2];
+        end->inputs[2] = rpc ? rpc : f->params[2];
 
         TB_Node* mem_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 2, 0);
         mem_phi->inputs[0] = region;

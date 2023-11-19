@@ -434,7 +434,7 @@ static bool should_rematerialize(TB_Node* n) {
         return true;
     }
 
-    return (n->type == TB_PROJ && n->inputs[0]->type == TB_START) ||
+    return (n->type == TB_PROJ && (n->dt.type == TB_CONT || n->inputs[0]->type == TB_START)) ||
         n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST ||
         n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS ||
         n->type == TB_LOCAL || n->type == TB_SYMBOL;
