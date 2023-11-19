@@ -180,7 +180,8 @@ static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, i
             break;
         }
 
-        case TB_CALL: {
+        case TB_CALL:
+        case TB_TAILCALL: {
             if (index == 0) {
                 P("ctrl");
             } else if (index == 1) {
