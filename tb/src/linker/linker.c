@@ -6,6 +6,45 @@
 
 #include <stdatomic.h>
 
+TB_LinkerThreadInfo* linker_thread_info(TB_Linker* l) {
+    static thread_local TB_LinkerThreadInfo* chain;
+
+    // almost always refers to one TB_ThreadInfo, but
+    // we can't assume the user has merely on TB_Module
+    // per thread.
+    TB_LinkerThreadInfo* info = chain;
+    while (info != NULL) {
+        if (info->owner == l) {
+            goto done;
+        }
+        info = info->next;
+    }
+
+    info = tb_platform_heap_alloc(sizeof(TB_LinkerThreadInfo));
+    *info = (TB_LinkerThreadInfo){ .owner = l };
+
+    // allocate memory for it
+    tb_arena_create(&info->perm_arena, TB_ARENA_LARGE_CHUNK_SIZE);
+    tb_arena_create(&info->tmp_arena, TB_ARENA_LARGE_CHUNK_SIZE);
+
+    // thread local so it doesn't need to synchronize
+    info->next = chain;
+    if (chain != NULL) {
+        chain->prev = info;
+    }
+    chain = info;
+
+    // link to the TB_Module* (we need to this to free later)
+    TB_LinkerThreadInfo* old_top;
+    do {
+        old_top = atomic_load(&l->first_thread_info);
+        info->next_in_link = old_top;
+    } while (!atomic_compare_exchange_strong(&l->first_thread_info, &old_top, info));
+
+    done:
+    return info;
+}
+
 extern TB_LinkerVtbl tb__linker_pe, tb__linker_elf;
 
 TB_API TB_ExecutableType tb_system_executable_format(TB_System s) {
@@ -99,15 +138,24 @@ TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name) {
 }
 
 TB_API void tb_linker_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
-    l->vtbl.append_object(l, obj_name, content);
+    CUIK_TIMED_BLOCK("append_object") {
+        TB_LinkerThreadInfo* info = linker_thread_info(l);
+        l->vtbl.append_object(l, info, obj_name, content);
+    }
 }
 
 TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
-    l->vtbl.append_module(l, m);
+    CUIK_TIMED_BLOCK("append_module") {
+        TB_LinkerThreadInfo* info = linker_thread_info(l);
+        l->vtbl.append_module(l, info, m);
+    }
 }
 
 TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
-    l->vtbl.append_library(l, ar_name, ar_file);
+    CUIK_TIMED_BLOCK("append_library") {
+        TB_LinkerThreadInfo* info = linker_thread_info(l);
+        l->vtbl.append_library(l, info, ar_name, ar_file);
+    }
 }
 
 TB_API TB_ExportBuffer tb_linker_export(TB_Linker* l) {
@@ -268,8 +316,11 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                     dyn_array_for(i, m->sections) {
                         DynArray(TB_FunctionOutput*) funcs = m->sections[i].funcs;
                         TB_LinkerSectionPiece* piece = m->sections[i].piece;
-                        uint32_t rva = piece->parent->address + piece->offset;
+                        if (piece == NULL) {
+                            continue;
+                        }
 
+                        uint32_t rva = piece->parent->address + piece->offset;
                         dyn_array_for(j, funcs) {
                             TB_FunctionOutput* out_f = funcs[j];
                             if (out_f != NULL) {
@@ -483,45 +534,46 @@ TB_LinkerSymbol* tb__find_symbol_cstr(TB_SymbolTable* restrict symtab, const cha
 TB_LinkerSymbol* tb__find_symbol(TB_SymbolTable* restrict symtab, TB_Slice name) {
     uint32_t mask = (1u << symtab->exp) - 1;
     uint32_t hash = murmur(name.data, name.length);
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t step = (hash >> (32 - symtab->exp)) | 1;
-        i = (i + step) & mask;
-
+    uint32_t first = hash & mask, i = first;
+    do {
         if (symtab->ht[i].name.length == 0) {
             return NULL;
         } else if (name.length == symtab->ht[i].name.length && memcmp(name.data, symtab->ht[i].name.data, name.length) == 0) {
             return &symtab->ht[i];
         }
-    }
+
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    return NULL;
 }
 
 TB_LinkerSymbol* tb__append_symbol(TB_SymbolTable* restrict symtab, const TB_LinkerSymbol* sym) {
+    cuikperf_region_start("append sym", NULL);
     TB_Slice name = sym->name;
 
     uint32_t mask = (1u << symtab->exp) - 1;
     uint32_t hash = murmur(name.data, name.length);
-    for (size_t i = hash;;) {
-        // hash table lookup
-        uint32_t step = (hash >> (32 - symtab->exp)) | 1;
-        i = (i + step) & mask;
-
+    uint32_t first = hash & mask, i = first;
+    do {
         if (symtab->ht[i].name.length == 0) {
             // empty slot
-            if (symtab->len > mask) {
-                printf("Symbol table: out of memory!\n");
-                abort();
-            }
-
             symtab->len++;
             memcpy(&symtab->ht[i], sym, sizeof(TB_LinkerSymbol));
+            cuikperf_region_end();
             return &symtab->ht[i];
         } else if (name.length == symtab->ht[i].name.length && memcmp(name.data, symtab->ht[i].name.data, name.length) == 0) {
             // proper collision... this is a linker should we throw warnings?
             // memcpy(&symtab->ht[i], sym, sizeof(TB_LinkerSymbol));
+            cuikperf_region_end();
             return &symtab->ht[i];
         }
-    }
+
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    printf("Symbol table: out of memory!\n");
+    abort();
 }
 
 TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name) {

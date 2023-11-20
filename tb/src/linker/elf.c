@@ -2,15 +2,15 @@
 #include "linker.h"
 #include <tb_elf.h>
 
-static void elf_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
+static void elf_append_object(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name, TB_Slice content) {
     // implement this
 }
 
-static void elf_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
+static void elf_append_library(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice ar_name, TB_Slice ar_file) {
     // implement this
 }
 
-static void elf_append_module(TB_Linker* l, TB_Module* m) {
+static void elf_append_module(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Module* m) {
     CUIK_TIMED_BLOCK("layout section") {
         tb_module_layout_sections(m);
     }

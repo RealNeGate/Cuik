@@ -225,12 +225,14 @@ typedef struct {
 } TB_LinkerCmd;
 
 struct TB_LinkerThreadInfo {
-    TB_Linker* parent;
+    TB_Linker* owner;
+    TB_LinkerThreadInfo* next_in_link;
 
-    // this refers to a separate TB_Linker's thread info
-    TB_LinkerThreadInfo* next_in_thread;
-    // this is the next thread info for the same TB_Linker
+    TB_LinkerThreadInfo* prev;
     TB_LinkerThreadInfo* next;
+
+    TB_Arena perm_arena;
+    TB_Arena tmp_arena;
 
     // commands
     //   these are generated in object files and such but won't get
@@ -248,9 +250,9 @@ struct TB_LinkerThreadInfo {
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
-    void (*append_object)(TB_Linker* l, TB_Slice obj_name, TB_Slice content);
-    void (*append_library)(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file);
-    void (*append_module)(TB_Linker* l, TB_Module* m);
+    void (*append_object)(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name, TB_Slice content);
+    void (*append_library)(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice ar_name, TB_Slice ar_file);
+    void (*append_module)(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Module* m);
     TB_ExportBuffer (*export)(TB_Linker* l);
 } TB_LinkerVtbl;
 
@@ -282,7 +284,7 @@ typedef struct TB_Linker {
     DynArray(TB_LinkerInput) inputs;
 
     // for relocations
-    TB_LinkerThreadInfo* first_thread_info;
+    _Atomic(TB_LinkerThreadInfo*) first_thread_info;
 
     DynArray(TB_Module*) ir_modules;
     TB_SymbolTable symtab;
@@ -315,6 +317,8 @@ typedef struct TB_Linker {
 } TB_Linker;
 
 void tb_linker_send_msg(TB_Linker* l, TB_LinkerMsg* msg);
+
+TB_LinkerThreadInfo* linker_thread_info(TB_Linker* l);
 
 // Error handling
 TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name);

@@ -60,51 +60,9 @@ static bool strprefix(const char* str, const char* pre, size_t len) {
     return string_case_cmp(pre, str, len < prelen ? len : prelen) == 0;
 }
 
-static TB_LinkerThreadInfo* get_thread_info(TB_Linker* l) {
-    if (tb__linker_thread_info == NULL) {
-        TB_LinkerThreadInfo* new_t = tb_platform_heap_alloc(sizeof(TB_LinkerThreadInfo));
-        *new_t = (TB_LinkerThreadInfo){ .parent = l };
-
-        if (l->first_thread_info == NULL) {
-            l->first_thread_info = new_t;
-        } else {
-            l->first_thread_info->next = new_t;
-            l->first_thread_info = new_t;
-        }
-
-        return (tb__linker_thread_info = new_t);
-    }
-
-    TB_LinkerThreadInfo* info = tb__linker_thread_info;
-    for (;;) {
-        // we hit our match
-        if (info->parent == l) return info;
-
-        // we didn't find a match, make a new element in the chain
-        if (info->next_in_thread == NULL) {
-            TB_LinkerThreadInfo* new_t = tb_platform_heap_alloc(sizeof(TB_LinkerThreadInfo));
-            *new_t = (TB_LinkerThreadInfo){ .parent = l };
-
-            if (l->first_thread_info == NULL) {
-                l->first_thread_info = new_t;
-            } else {
-                l->first_thread_info->next = new_t;
-                l->first_thread_info = new_t;
-            }
-
-            tb__linker_thread_info->next = new_t;
-            tb__linker_thread_info = new_t;
-            return new_t;
-        }
-        info = info->next_in_thread;
-    }
-}
-
-void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
+void pe_append_object(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name, TB_Slice content) {
     TB_COFF_Parser parser = { obj_name, content };
     tb_coff_parse_init(&parser);
-
-    TB_LinkerThreadInfo* info = get_thread_info(l);
 
     // insert into object files (TODO: mark archive as parent)
     TB_LinkerInputHandle obj_file = tb__track_object(l, 0, obj_name);
@@ -158,7 +116,6 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
                         };
                         dyn_array_put(info->merges, cmd);
                     }
-
                 } else if (strprefix((const char*) curr, "/defaultlib:", end - curr)) {
                     curr += sizeof("/defaultlib:")-1;
 
@@ -226,8 +183,10 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
     }
 
     // Append all symbols
+    TB_ArenaSavepoint sp = tb_arena_save(&info->tmp_arena);
+
     size_t sym_count = 0;
-    TB_ObjectSymbol* syms = tb_platform_heap_alloc(sizeof(TB_ObjectSymbol) * parser.symbol_count);
+    TB_ObjectSymbol* syms = tb_arena_alloc(&info->tmp_arena, sizeof(TB_ObjectSymbol) * parser.symbol_count);
 
     COFF_AuxSectionSymbol* comdat_aux = NULL;
     CUIK_TIMED_BLOCK("apply symbols") {
@@ -376,11 +335,11 @@ void pe_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content) {
         }
     }
 
+    tb_arena_restore(&info->tmp_arena, sp);
     tb_platform_heap_free(sections);
-    tb_platform_heap_free(syms);
 }
 
-static void pe_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) {
+static void pe_append_library(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice ar_name, TB_Slice ar_file) {
     log_debug("linking against %.*s", (int) ar_name.length, ar_name.data);
 
     TB_ArchiveFileParser ar_parser = { 0 };
@@ -388,7 +347,11 @@ static void pe_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) 
         return;
     }
 
-    TB_ArchiveEntry* restrict entries = tb_platform_heap_alloc(ar_parser.member_count * sizeof(TB_ArchiveEntry));
+    TB_Arena* perm_arena = &info->perm_arena;
+    TB_Arena* arena = &info->tmp_arena;
+    TB_ArenaSavepoint sp = tb_arena_save(arena);
+
+    TB_ArchiveEntry* entries = tb_arena_alloc(arena, ar_parser.member_count * sizeof(TB_ArchiveEntry));
     size_t new_count;
     CUIK_TIMED_BLOCK("parse_entries") {
         new_count = tb_archive_parse_entries(&ar_parser, 0, ar_parser.member_count, entries);
@@ -424,39 +387,41 @@ static void pe_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice ar_file) 
 
             // make __imp_ form which refers to raw address
             size_t newlen = e->import_name.length + sizeof("__imp_") - 1;
-            uint8_t* newstr = tb_platform_heap_alloc(newlen);
+            uint8_t* newstr = tb_arena_alloc(perm_arena, newlen);
             memcpy(newstr, "__imp_", sizeof("__imp_"));
             memcpy(newstr + sizeof("__imp_") - 1, e->import_name.data, e->import_name.length);
+            newstr[newlen] = 0;
 
-            TB_LinkerSymbol sym = {
-                .name = { newlen, newstr },
-                .tag = TB_LINKER_SYMBOL_IMPORT,
-                // .object_name = obj_name,
-                .import = { import_index, e->ordinal }
-            };
-            TB_LinkerSymbol* import_sym = tb__append_symbol(&l->symtab, &sym);
+            CUIK_TIMED_BLOCK_ARGS("archive", (char*) newstr) {
+                TB_LinkerSymbol sym = {
+                    .name = { newlen, newstr },
+                    .tag = TB_LINKER_SYMBOL_IMPORT,
+                    // .object_name = obj_name,
+                    .import = { import_index, e->ordinal }
+                };
+                TB_LinkerSymbol* import_sym = tb__append_symbol(&l->symtab, &sym);
 
-            // make the thunk-like symbol
-            sym.name = e->import_name;
-            sym.tag = TB_LINKER_SYMBOL_THUNK;
-            sym.thunk.import_sym = import_sym;
-            tb__append_symbol(&l->symtab, &sym);
+                // make the thunk-like symbol
+                sym.name = e->import_name;
+                sym.tag = TB_LINKER_SYMBOL_THUNK;
+                sym.thunk.import_sym = import_sym;
+                tb__append_symbol(&l->symtab, &sym);
+            }
         } else {
-            // fprintf(stderr, "%.*s\n", (int) e->name.length, e->name.data);
             CUIK_TIMED_BLOCK("append object file") {
-                pe_append_object(l, e->name, e->content);
+                pe_append_object(l, info, e->name, e->content);
             }
         }
     }
 
-    tb_platform_heap_free(entries);
+    tb_arena_restore(arena, sp);
 }
 
-static void pe_append_module(TB_Linker* l, TB_Module* m) {
+static void pe_append_module(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Module* m) {
     // Also resolves internal call patches which is cool
     ExportList exports;
     CUIK_TIMED_BLOCK("layout section") {
-        exports = tb_module_layout_sections(m);
+        m->exports = tb_module_layout_sections(m);
     }
 
     TB_LinkerInputHandle mod_index = tb__track_module(l, 0, m);
@@ -498,7 +463,9 @@ static void pe_append_module(TB_Linker* l, TB_Module* m) {
                     funcs[j]->unwind_info += x->offset;
                 }
 
-                sections[i].piece->associate = pdata_piece;
+                if (sections[i].piece) {
+                    sections[i].piece->associate = pdata_piece;
+                }
             }
             m->xdata = x;
         }
@@ -705,13 +672,8 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
             TB_Module* m = l->ir_modules[j];
 
             // Find all the imports & place them into the right buckets
-            ExportList exports;
-            CUIK_TIMED_BLOCK("layout section") {
-                exports = tb_module_layout_sections(m);
-            }
-
-            FOREACH_N(i, 0, exports.count) {
-                resolve_external(l, m, exports.data[i], j);
+            FOREACH_N(i, 0, m->exports.count) {
+                resolve_external(l, m, m->exports.data[i], j);
             }
 
             if (m->chkstk_extern) {
