@@ -522,7 +522,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             // insert spill and reload
             insert_split_move(ra, 0, vreg, spill_slot);
             dyn_array_for(i, ra->epilogues) {
-                insert_split_move(ra, ra->epilogues[i], spill_slot, vreg);
+                insert_split_move(ra, ra->epilogues[i] - 1, spill_slot, vreg);
             }
 
             // adding to intervals might resized this
