@@ -309,8 +309,8 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 }
 
 static void jit_entry(int fn(int, char**)) {
-    char* argv = (char[]){ "jit" };
-    fn(1, &argv);
+    char* argv[] = { "jit", "10" };
+    fn(2, argv);
     __builtin_trap();
 }
 
@@ -370,6 +370,7 @@ static void ld_invoke(BuildStepInfo* info) {
             }
         }
         assert(entry != NULL);
+        tb_jit_dump_heap(jit);
 
         TB_CPUContext* cpu = tb_jit_thread_create(jit_entry, entry);
 

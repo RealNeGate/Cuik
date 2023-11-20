@@ -9,7 +9,12 @@ ptrdiff_t tb_print_disassembly_inst(TB_Arch arch, size_t length, const void* ptr
             }
 
             const char* mnemonic = tb_x86_mnemonic(&inst);
-            printf("%s ", mnemonic);
+            printf("%s", mnemonic);
+            if (inst.data_type >= TB_X86_TYPE_SSE_SS && inst.data_type <= TB_X86_TYPE_SSE_PD) {
+                static const char* strs[] = { "ss", "sd", "ps", "pd" };
+                printf("%s", strs[inst.data_type - TB_X86_TYPE_SSE_SS]);
+            }
+            printf(" ");
 
             bool mem = true, imm = true;
             for (int i = 0; i < 4; i++) {

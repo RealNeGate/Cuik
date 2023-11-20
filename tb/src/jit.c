@@ -207,8 +207,9 @@ void tb_jit_dump_heap(TB_JIT* jit) {
             printf("* ALLOC [%p %u", l->data, l->size >> 1);
 
             // found the next tag here
+            TB_Symbol* s = NULL;
             if (tag < tag_count && l->data == &base[jit->tags[tag].k]) {
-                TB_Symbol* s = jit->tags[tag].v;
+                s = jit->tags[tag].v;
                 printf(" TAG=%s", s->name);
                 tag += 1;
             }

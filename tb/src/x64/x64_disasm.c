@@ -268,7 +268,12 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 
     uint16_t first = ext ? ext_table[op] : first_table[op];
     uint16_t flags = first & 0xFFF;
+
+    #if 1
+    if (first == 0) return false;
+    #else
     assert(first != 0 && "unknown op");
+    #endif
 
     // info from table
     uint16_t enc = first & 0xF000;
