@@ -2278,7 +2278,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
                         } else {
                             uint32_t target = pos + inst.length + inst.disp;
                             int bb = tb_emit_get_label(e, target);
-                            uint32_t landed = e->labels[bb] & 0x80000000;
+                            uint32_t landed = e->labels[bb] & 0x7FFFFFFF;
 
                             if (landed != target) {
                                 E(".bb%d + %d", bb, (int)target - (int)landed);
