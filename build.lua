@@ -22,7 +22,7 @@ local options = {
 	debug         = false,
 	cuik          = false,
 	tb            = false,
-	tb_unittests  = false,
+	tests         = false,
 	driver        = false,
 	shared        = false,
 	test          = false,
@@ -49,7 +49,7 @@ local modules = {
 	--   forth
 	forth        = { is_exe=true, srcs={"forth/forth.c"}, deps={"common", "tb"}, flags="-I libCuik/include" },
 	--   TB unittests
-	tb_unittests = { is_exe=true, srcs={"tb/unittests/tb_unittests.c"}, deps={"tb", "common"} },
+	tests        = { is_exe=true, srcs={"tb/tests/cg_test.c"}, deps={"tb", "common"} },
 
 	-- external dependencies
 	mimalloc = { srcs={"mimalloc/src/static.c"} }
@@ -272,9 +272,9 @@ end
 local obj_names = table.concat(objs, " ")
 
 local exe_name = "cuik"
-if options.tb           then exe_name = "tb" end
-if options.tb_unittests then exe_name = "tb_unittests" end
-if options.forth        then exe_name = "forth" end
+if options.tb    then exe_name = "tb" end
+if options.tests then exe_name = "tests" end
+if options.forth then exe_name = "forth" end
 
 -- placing executables into bin/
 exe_name = "bin/"..exe_name
@@ -292,6 +292,3 @@ ninja:close()
 
 local _0, _1, res = os.execute("ninja")
 if res ~= 0 then os.exit(res) end
-if options.test then
-	dofile("tests.lua")
-end
