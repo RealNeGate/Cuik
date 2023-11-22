@@ -622,8 +622,7 @@ static TB_Arena* get_permanent_arena(TB_Module* m) {
 
 // NOTE(NeGate): Place all the codegen interfaces down here
 extern ICodeGen tb__x64_codegen;
-extern ICodeGen tb__aarch64_codegen;
-extern ICodeGen tb__wasm32_codegen;
+extern ICodeGen tb__null_codegen;
 
 // And all debug formats here
 //extern IDebugFormat dwarf_debug_format;

@@ -41,7 +41,7 @@ local modules = {
 	--   CuikC frontend
 	cuik   = { srcs={"libCuik/lib/libcuik.c", "libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c"}, flags="-I libCuik/include", deps={"common"} },
 	--   TildeBackend
-	tb     = { srcs={"tb/src/libtb.c", "tb/src/x64/x64.c"}, flags="-I tb/include -DCUIK_USE_TB", deps={"common"} },
+	tb     = { srcs={"tb/src/libtb.c", "tb/src/x64/x64_target.c"}, flags="-I tb/include -DCUIK_USE_TB", deps={"common"} },
 
 	-- executables:
 	--   Cuik command line

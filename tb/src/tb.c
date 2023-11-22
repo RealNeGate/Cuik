@@ -59,8 +59,6 @@ static thread_local uint8_t* tb_thread_storage;
 ICodeGen* tb__find_code_generator(TB_Module* m) {
     switch (m->target_arch) {
         case TB_ARCH_X86_64: return &tb__x64_codegen;
-        // case TB_ARCH_AARCH64: return &tb__aarch64_codegen;
-        // case TB_ARCH_WASM32: return &tb__wasm32_codegen;
         default: return NULL;
     }
 }

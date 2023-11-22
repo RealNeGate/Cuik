@@ -17,6 +17,9 @@ void* tb_jit_stack_create(void);
 // Optimizer
 #include "opt/optimizer.c"
 
+// Regalloc
+#include "lsra.c"
+
 // Parsers
 #define TB_COFF_IMPL
 #include <tb_coff.h>
