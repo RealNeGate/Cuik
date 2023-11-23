@@ -48,13 +48,30 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
 
 static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     switch (n->type) {
-        // no fancy tiling, will just be emitted later into a register
+        // no inputs (...and projections)
         case TB_START:
-        case TB_END:
-        case TB_CALL:
         case TB_SYMBOL:
         case TB_PROJ:
+        break;
+
+        // binary ops
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_MUL:
+        tile_set_ins(ctx, dst, n, 1, n->input_count);
+        break;
+
         case TB_LOAD:
+        case TB_STORE:
+        tile_set_ins(ctx, dst, n, 2, n->input_count);
+        break;
+
+        case TB_CALL:
+        case TB_END:
+        tile_set_ins(ctx, dst, n, 3, n->input_count);
         break;
 
         default: tb_todo();

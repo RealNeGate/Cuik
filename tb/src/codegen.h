@@ -16,13 +16,12 @@
 //
 //   * Local sched: handled by ctx.sched, it's just a function you can replace with your
 //     own based on whatever you wanna achieve, for now i've only got the topo sort greedy
-//     sched (TODO implement a latency-based list sched will be a thing)
+//     sched (TODO implement a latency-based list scheduler)
 //
 //   * Tiling: handled by isel_node, by default we walk the BB backwards building one tile
-//     per node, you can grow a tile to multiple nodes by tagging it differently and to disable
-//     the codegen of a node by itself later you can call fold_node(ctx, n) on it.
+//     per node.
 //
-//   * Regalloc: TODO
+//   * Regalloc: handled by ctx.regalloc (TODO implement more register allocators)
 //
 //   * Emit: handled by emit_tile, writes out the bytes now that we've completed regalloc.
 //
@@ -73,7 +72,7 @@ typedef struct {
 typedef enum {
     // single node tile
     TILE_NORMAL,
-    // SoN doesn't need explicit
+    // SoN doesn't have a jump op, this serves that purpose
     TILE_GOTO,
     // used by regalloc to spill/reload
     TILE_SPILL_MOVE,
@@ -83,8 +82,15 @@ typedef enum {
     //   ...
 } TileTag;
 
+typedef struct Tile Tile;
+
+typedef struct {
+    Tile* tile;
+    RegMask mask;
+} TileInput;
+
 // represents a pattern of instructions
-typedef struct Tile {
+struct Tile {
     struct Tile* prev;
     struct Tile* next;
 
@@ -97,6 +103,8 @@ typedef struct Tile {
     int8_t reg;
 
     RegMask mask;
+
+    int use_count;
     int id; // used by live sets
 
     TB_Node* n;
@@ -115,14 +123,16 @@ typedef struct Tile {
 
         // spill info
         struct Tile* og; // initial tile
-        int spill;
 
         DynArray(UsePos) uses;
 
         int range_cap, range_count;
         LiveRange* ranges;
     };
-} Tile;
+
+    int in_count;
+    TileInput* ins;
+};
 
 typedef struct {
     int id;
@@ -180,9 +190,11 @@ struct Ctx {
 
     // Values
     Set folded;
-    Tile** values; // values[n->gvn]
+    Tile** values;  // values[n.gvn]
+    Tile** id2tile; // id2tile[tile.id]
 
     // Regalloc
+    int tile_count;
     int stack_usage;
     int num_classes;
     int num_regs[MAX_REG_CLASSES];

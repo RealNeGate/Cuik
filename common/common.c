@@ -118,6 +118,20 @@ void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
     }
 }
 
+TB_API void* tb_arena_realloc(TB_Arena* restrict arena, void* old, size_t size) {
+    char* p = old;
+    if (p + size == arena->watermark) {
+        // try to resize
+        arena->watermark = old;
+    }
+
+    char* dst = tb_arena_unaligned_alloc(arena, size);
+    if (dst != p) {
+        memcpy(dst, old, size);
+    }
+    return dst;
+}
+
 void tb_arena_pop(TB_Arena* restrict arena, void* ptr, size_t size) {
     char* p = ptr;
     assert(p + size == arena->watermark); // cannot pop from arena if it's not at the top

@@ -52,6 +52,32 @@ static void node_to_bb_put(Ctx* restrict ctx, TB_Node* n, MachineBB* bb) {
     abort();
 }
 
+static Tile* get_tile(Ctx* restrict ctx, TB_Node* n) {
+    if (ctx->values[n->gvn] == NULL) {
+        Tile* tile = TB_ARENA_ALLOC(tmp_arena, Tile);
+        *tile = (Tile){
+            .tag = TILE_NORMAL, .id = ctx->tile_count++,
+            .reg = -1, .hint = -1, .assigned = -1, .n = n,
+            .range_cap = 4, .range_count = 1,
+            .ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange))
+        };
+        tile->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
+        ctx->values[n->gvn] = tile;
+        return tile;
+    } else {
+        return ctx->values[n->gvn];
+    }
+}
+
+static void tile_set_ins(Ctx* restrict ctx, Tile* t, TB_Node* n, int start, int end) {
+    t->ins = tb_arena_alloc(tmp_arena, (end - start) * sizeof(Tile*));
+    t->in_count = end - start;
+    FOREACH_N(i, start, end) {
+        t->ins[i - start].tile = get_tile(ctx, n->inputs[i]);
+        t->ins[i - start].mask = in_reg_mask(ctx, t, n, i);
+    }
+}
+
 static void fold_node(Ctx* restrict ctx, TB_Node* n) { set_put(&ctx->folded, n->gvn); }
 static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm) {
     verify_tmp_arena(p);
@@ -82,9 +108,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     ctx.values = tb_arena_alloc(arena, f->node_count * sizeof(Tile*));
     memset(ctx.values, 0, f->node_count * sizeof(Tile*));
 
-    // set when a node is folded into a larger pattern and thus never tiled by itself
-    ctx.folded = set_create_in_arena(arena, f->node_count);
-
     // We need to generate a CFG
     TB_CFG cfg = tb_compute_rpo(f, p);
     // And perform global scheduling
@@ -96,7 +119,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     memset(ctx.emit.labels, 0, cfg.block_count * sizeof(uint32_t));
 
     int bb_count = 0;
-    int tile_count = 0;
     MachineBB* restrict machine_bbs = tb_arena_alloc(arena, cfg.block_count * sizeof(MachineBB));
     TB_Node** bbs = ws->items;
 
@@ -157,8 +179,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                     } else {
                         TB_OPTDEBUG(CODEGEN)(printf("  TILE "), print_node_sexpr(n, 0), printf("\n"));
 
-                        Tile* tile = TB_ARENA_ALLOC(arena, Tile);
-                        *tile = (Tile){ .next = top, .tag = TILE_NORMAL, .id = tile_count++, .reg = -1, .hint = -1, .assigned = -1, .n = n };
+                        tb_arena_realign(arena);
+
+                        Tile* tile = get_tile(&ctx, n);
+                        tile->next = top;
 
                         // attach to list
                         if (top) top->prev = tile;
@@ -182,7 +206,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 if (!cfg_is_terminator(end)) {
                     TB_OPTDEBUG(CODEGEN)(printf("  TERMINATOR %u: ", end->gvn), print_node_sexpr(end, 0), printf("\n"));
 
-                    tile_count++;
                     Tile* tile = TB_ARENA_ALLOC(arena, Tile);
                     TB_Node* succ_n = cfg_next_control(end);
 
@@ -191,7 +214,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         PhiVal* v = &phi_vals[i];
                     }*/
 
-                    *tile = (Tile){ .prev = bot, .tag = TILE_GOTO, .id = tile_count++, .reg = -1, .hint = -1, .assigned = -1, .n = end, .succ = succ_n };
+                    *tile = (Tile){ .prev = bot, .tag = TILE_GOTO, .id = ctx.tile_count++, .reg = -1, .hint = -1, .assigned = -1, .n = end, .succ = succ_n };
                     bot->next = tile;
                     bot = tile;
                 }
@@ -205,6 +228,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     CUIK_TIMED_BLOCK("liveness") {
+        int tile_count = ctx.tile_count;
+        ctx.id2tile = tb_arena_alloc(arena, tile_count * sizeof(Tile*));
+
         // local liveness (along with placing tiles on a timeline)
         FOREACH_N(i, 0, bb_count) {
             MachineBB* mbb = &machine_bbs[i];
@@ -212,6 +238,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             mbb->live_out = set_create_in_arena(arena, tile_count);
         }
 
+        // we don't need to keep the GEN and KILL sets, this doesn't save us
+        // much memory but it would potentially mean not using new cachelines
+        // in a few of the later stages.
         TB_ArenaSavepoint sp = tb_arena_save(arena);
         CUIK_TIMED_BLOCK("local") {
             int timeline = 2;
@@ -238,20 +267,14 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                             if (!set_get(kill, in_def->id)) {
                                 set_put(gen, in_def->id);
                             }
-
-                            // constrain inputs based on in_reg_mask
-                            RegMask in_mask = in_reg_mask(&ctx, t, n, j);
-                            if (in_mask.mask) {
-                                in_def->mask.mask &= in_mask.mask;
-                                assert(in_def->mask.mask && "in regmask shouldn't lead to an unassignable register");
-
-                                TB_OPTDEBUG(CODEGEN)(printf("  INPUT "), print_node_sexpr(n, 0), printf(" %zu (%#04llx)\n", j, in_def->mask.mask));
-                            }
                         }
                     }
 
                     set_put(kill, t->id);
+                    ctx.id2tile[t->id] = t;
                 }
+
+                timeline += 2;
             }
         }
 
@@ -321,6 +344,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                     }
                 }
             }
+            dyn_array_set_length(ws->items, base);
         }
         tb_arena_restore(arena, sp);
 
