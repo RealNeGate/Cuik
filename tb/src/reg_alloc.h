@@ -23,7 +23,6 @@ typedef struct {
     //
     //   add r0, r1, [sp - 24]
     enum {
-        USE_OUT,
         USE_REG,
         USE_MEM_OR_REG,
     } kind;

@@ -198,6 +198,7 @@ struct Ctx {
     int stack_usage;
     int num_classes;
     int num_regs[MAX_REG_CLASSES];
+    uint64_t callee_saved[MAX_REG_CLASSES];
 
     // Line info
     DynArray(TB_Location) locations;

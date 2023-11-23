@@ -33,6 +33,45 @@ enum {
     ALL_GPRS = 0xFFFF & ~((1 << RBP) | (1 << RSP)),
 };
 
+// *out_mask of 0 means no mask
+static TB_X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
+    assert(dt.type == TB_INT || dt.type == TB_PTR);
+    if (dt.type == TB_PTR) return *out_mask = 0, TB_X86_TYPE_QWORD;
+
+    TB_X86_DataType t = TB_X86_TYPE_NONE;
+    int bits = 0;
+
+    if (dt.data <= 8) bits = 8, t = TB_X86_TYPE_BYTE;
+    else if (dt.data <= 16) bits = 16, t = TB_X86_TYPE_WORD;
+    else if (dt.data <= 32) bits = 32, t = TB_X86_TYPE_DWORD;
+    else if (dt.data <= 64) bits = 64, t = TB_X86_TYPE_QWORD;
+
+    assert(bits != 0 && "TODO: large int support");
+    uint64_t mask = dt.data == 0 ? 0 :  ~UINT64_C(0) >> (64 - dt.data);
+
+    *out_mask = (dt.data == bits) ? 0 : mask;
+    return t;
+}
+
+static TB_X86_DataType legalize_int2(TB_DataType dt) {
+    uint64_t m;
+    return legalize_int(dt, &m);
+}
+
+static TB_X86_DataType legalize_float(TB_DataType dt) {
+    assert(dt.type == TB_FLOAT);
+    return (dt.data == TB_FLT_64 ? TB_X86_TYPE_SSE_SD : TB_X86_TYPE_SSE_SS);
+}
+
+static TB_X86_DataType legalize(TB_DataType dt) {
+    if (dt.type == TB_FLOAT) {
+        return legalize_float(dt);
+    } else {
+        uint64_t m;
+        return legalize_int(dt, &m);
+    }
+}
+
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
     ctx->regalloc = tb__lsra;
@@ -44,6 +83,18 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     // 32 GPRs.
     ctx->num_regs[0] = 16;
     ctx->num_regs[1] = 16;
+
+    // don't include RBP and RSP, those are special cases
+    uint32_t callee_saved_gprs = ~param_descs[ctx->abi_index].caller_saved_gprs;
+    callee_saved_gprs &= ~(1u << RBP);
+    callee_saved_gprs &= ~(1u << RSP);
+    ctx->callee_saved[0] = callee_saved_gprs;
+
+    // mark XMM callees
+    ctx->callee_saved[1] = 0;
+    FOREACH_N(i, param_descs[ctx->abi_index].caller_saved_xmms, 16) {
+        ctx->callee_saved[1] |= (1ull << i);
+    }
 }
 
 static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
@@ -158,7 +209,15 @@ static Val val_at(Tile* t) {
 }
 
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
-    if (t->tag == TILE_NORMAL || t->tag == TILE_GOTO) {
+    if (t->tag == TILE_SPILL_MOVE) {
+        TB_X86_DataType dt = TB_X86_TYPE_QWORD;
+
+        Val dst = val_at(t);
+        Val src = val_at(t->ins[0].tile);
+        if (!is_value_match(&dst, &src)) {
+            inst2(e, MOV, &dst, &src, dt);
+        }
+    } else if (t->tag == TILE_NORMAL || t->tag == TILE_GOTO) {
         TB_Node* n = t->n;
         switch (n->type) {
             // prologue
