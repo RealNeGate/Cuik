@@ -75,6 +75,7 @@ static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
     }
 }
 
+TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v);
 int count_max_tb_init_objects(InitNode* root_node);
 TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t);
 

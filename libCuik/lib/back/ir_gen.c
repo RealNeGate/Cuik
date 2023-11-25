@@ -272,7 +272,7 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
     return reg;
 }
 
-static TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
+TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
     Cuik_Type* dst = cuik_canonical_type(v->cast_type);
     Cuik_Type* src = cuik_canonical_type(v->type);
     bool is_volatile = CUIK_QUAL_TYPE_HAS(v->type, CUIK_QUAL_VOLATILE);

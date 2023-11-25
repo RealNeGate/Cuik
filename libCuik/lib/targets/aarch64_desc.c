@@ -4,15 +4,12 @@
 static void set_defines(const Cuik_Target* target, Cuik_CPP* cpp) {
     target_generic_set_defines(cpp, target->system, true, true);
 
-    cuikpp_define_cstr(cpp, "__x86_64",   "1");
-    cuikpp_define_cstr(cpp, "__x86_64__", "1");
-    cuikpp_define_cstr(cpp, "__amd64",    "1");
-    cuikpp_define_cstr(cpp, "__amd64__",  "1");
+    cuikpp_define_cstr(cpp, "__arm",          "1");
+    cuikpp_define_cstr(cpp, "__arm__",        "1");
+    cuikpp_define_cstr(cpp, "__ARM_ARCH_8__", "1");
 
     if (target->system == CUIK_SYSTEM_WINDOWS) {
-        cuikpp_define_cstr(cpp, "_M_X64", "100");
-        cuikpp_define_cstr(cpp, "_AMD64_", "100");
-        cuikpp_define_cstr(cpp, "_M_AMD64", "100");
+        cuikpp_define_cstr(cpp, "_M_ARM64", "1");
     }
 }
 
@@ -33,39 +30,23 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
 
 static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, IRVal* args) {
     BuiltinResult r = target_generic_compile_builtin(tu, func, name, arg_count, args);
-    if (!r.failure) {
-        return r.r;
-    }
-
-    // x64 specific builtins
-    if (strcmp(name, "_mm_setcsr") == 0) {
-        return tb_inst_x86_ldmxcsr(func, cvt2rval(tu, func, &args[1]));
-    } else if (strcmp(name, "_mm_getcsr") == 0) {
-        return tb_inst_x86_stmxcsr(func);
-    } else if (strcmp(name, "__rdtsc") == 0) {
-        return tb_inst_cycle_counter(func);
-    } else if (strcmp(name, "__readgsqword") == 0) {
-        // TODO(NeGate): implement readgs/writegs with all the type variants
-        return tb_inst_uint(func, TB_TYPE_I16, 0);
-    } else {
+    if (r.failure) {
         assert(0 && "unimplemented builtin!");
         return 0;
+    } else {
+        return r.r;
     }
 }
 #endif /* CUIK_USE_TB */
 
-Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
+Cuik_Target* cuik_target_aarch64(Cuik_System system, Cuik_Environment env) {
     BuiltinTable builtins;
     nl_map_create(builtins, 128);
 
     target_generic_fill_builtin_table(&builtins);
 
-    #define X(name, format) nl_map_put_cstr(builtins, #name, format);
-    X("_mm_getcsr",    "v i");
-    X("_mm_setcsr",    "i v");
-    X("__readgsqword", " s");
-    X("__rdtsc",       " L");
-    #undef X
+    // #define X(name, format) nl_map_put_cstr(builtins, #name, format);
+    // #undef X
 
     Cuik_Target* t = cuik_malloc(sizeof(Cuik_Target));
     *t = (Cuik_Target){
@@ -76,7 +57,7 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
         .pointer_byte_size = 8,
 
         #ifdef CUIK_USE_TB
-        .arch = TB_ARCH_X86_64,
+        .arch = TB_ARCH_AARCH64,
         #endif
 
         .builtin_func_map = builtins,

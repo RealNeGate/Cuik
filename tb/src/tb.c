@@ -5,9 +5,11 @@
 ICodeGen* tb__find_code_generator(TB_Module* m) {
     // Place all the codegen interfaces down here
     extern ICodeGen tb__x64_codegen;
+    extern ICodeGen tb__aarch64_codegen;
 
     switch (m->target_arch) {
         case TB_ARCH_X86_64:  return &tb__x64_codegen;
+        case TB_ARCH_AARCH64: return &tb__aarch64_codegen;
         default: return NULL;
     }
 }

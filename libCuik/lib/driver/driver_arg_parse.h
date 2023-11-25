@@ -38,6 +38,7 @@ static TargetOption target_options[] = {
     { "x64_windows_msvc",         cuik_target_x64,       CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC, cuik_toolchain_msvc   },
     { "x64_macos_gnu",            cuik_target_x64,       CUIK_SYSTEM_MACOS,       CUIK_ENV_GNU,  cuik_toolchain_darwin },
     { "x64_linux_gnu",            cuik_target_x64,       CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
+    { "aarch64_windows_msvc",     cuik_target_aarch64,   CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC, cuik_toolchain_msvc   },
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
@@ -180,7 +181,9 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
         }
 
         if (!success) {
-            fprintf(stderr, "unknown target: %s\n", target->value);
+            if (target->value != arg_is_set) {
+                fprintf(stderr, "unknown target: %s\n", target->value);
+            }
             fprintf(stderr, "Supported targets:\n");
             for (size_t i = 0; i < TARGET_OPTION_COUNT; i++) {
                 fprintf(stderr, "    %s\n", target_options[i].key);

@@ -1,4 +1,28 @@
 
+// Xn refers to the 64bit variants of the registers,
+// usually the 32bit aliases are Wn (we don't have enums
+// for them because it's not that important, they're equal)
+typedef enum {
+    X0,  X1,   X2,  X3,  X4,  X5,  X6,  X7,
+    X8,  X9,  X10, X11, X12, X13, X14, X15,
+    X16, X17, X18, X19, X20, X21, X22, X23,
+    X24, X25, X26, X27, X28, X29, X30,
+
+    // It's context specific because ARM lmao
+    ZR = 0x1F, SP = 0x1F,
+
+    // not a real gpr
+    GPR_NONE = -1,
+} GPR;
+
+// refers to the data processing immediate operand.
+// Aarch64 has a bunch of weird immediate fields so
+// we might wanna rename this later.
+typedef struct {
+    uint16_t imm;
+    uint8_t shift;
+} Immediate;
+
 typedef enum {
     AND,
     ADD,

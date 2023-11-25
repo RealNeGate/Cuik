@@ -41,7 +41,6 @@
 
 // Targets
 #include "targets/target_generic.c"
-#include "targets/x64_desc.c"
 
 // Compilation units
 #include "compilation_unit.c"

@@ -105,11 +105,9 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->num_regs[0] = 16;
     ctx->num_regs[1] = 16;
 
-    // don't include RBP and RSP, those are special cases
-    uint32_t callee_saved_gprs = ~param_descs[ctx->abi_index].caller_saved_gprs;
-    callee_saved_gprs &= ~(1u << RBP);
-    callee_saved_gprs &= ~(1u << RSP);
-    ctx->callee_saved[0] = callee_saved_gprs;
+    // mark GPR callees (technically includes RSP but since it's
+    // never conventionally allocated we should never run into issues)
+    ctx->callee_saved[0] = ~param_descs[ctx->abi_index].caller_saved_gprs;
 
     // mark XMM callees
     ctx->callee_saved[1] = 0;
