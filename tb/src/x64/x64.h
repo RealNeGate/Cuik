@@ -160,9 +160,7 @@ inline static Val val_label(int target) {
 }
 
 inline static Val val_stack(int s) {
-    return (Val) {
-        .type = VAL_MEM, .reg = RBP, .index = GPR_NONE, .scale = SCALE_X1, .imm = s
-    };
+    return (Val) { .type = VAL_MEM, .reg = RSP, .index = GPR_NONE, .scale = SCALE_X1, .imm = s };
 }
 
 inline static Val val_base_disp(GPR b, int d) {

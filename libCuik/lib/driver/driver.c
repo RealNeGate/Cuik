@@ -158,7 +158,7 @@ static void apply_func(TB_Function* f, void* arg) {
             tb_pass_print(p);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
-                TB_FunctionOutput* out = tb_pass_codegen(p, print_asm);
+                TB_FunctionOutput* out = tb_pass_codegen(p, NULL, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");
@@ -565,9 +565,8 @@ Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cuik_BuildS
     s->ld.args = args;
 
     #ifdef CUIK_USE_TB
-    TB_FeatureSet features = { 0 };
     s->ld.cu->ir_mod = tb_module_create(
-        args->target->arch, (TB_System) cuik_get_target_system(args->target), &features, args->run
+        args->target->arch, (TB_System) cuik_get_target_system(args->target), args->run
     );
     #endif
 
@@ -834,7 +833,7 @@ static void irgen_job(void* arg) {
         if (do_compiles_immediately && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
             CUIK_TIMED_BLOCK("codegen") {
                 TB_Passes* p = tb_pass_enter((TB_Function*) s, allocator);
-                tb_pass_codegen(p, false);
+                tb_pass_codegen(p, NULL, false);
                 tb_pass_exit(p);
 
                 log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);

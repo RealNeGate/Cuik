@@ -2,6 +2,16 @@
 #include "host.h"
 #include "opt/passes.h"
 
+ICodeGen* tb__find_code_generator(TB_Module* m) {
+    // Place all the codegen interfaces down here
+    extern ICodeGen tb__x64_codegen;
+
+    switch (m->target_arch) {
+        case TB_ARCH_X86_64:  return &tb__x64_codegen;
+        default: return NULL;
+    }
+}
+
 TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     static thread_local TB_ThreadInfo* chain;
     static thread_local mtx_t lock;
@@ -56,13 +66,6 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
 
 static thread_local uint8_t* tb_thread_storage;
 
-ICodeGen* tb__find_code_generator(TB_Module* m) {
-    switch (m->target_arch) {
-        case TB_ARCH_X86_64: return &tb__x64_codegen;
-        default: return NULL;
-    }
-}
-
 // we don't modify these strings
 char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
     if (len < 0) len = src ? strlen(src) : 0;
@@ -83,7 +86,7 @@ static TB_CodeRegion* get_or_allocate_code_region(TB_ThreadInfo* info) {
     return info->code;
 }
 
-TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool is_jit) {
+TB_Module* tb_module_create_for_host(bool is_jit) {
     #if defined(TB_HOST_X86_64)
     TB_Arch arch = TB_ARCH_X86_64;
     #else
@@ -101,7 +104,7 @@ TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool is_jit)
     tb_panic("tb_module_create_for_host: cannot detect host platform");
     #endif
 
-    return tb_module_create(arch, sys, features, is_jit);
+    return tb_module_create(arch, sys, is_jit);
 }
 
 TB_ModuleSectionHandle tb_module_create_section(TB_Module* m, ptrdiff_t len, const char* name, TB_ModuleSectionFlags flags, TB_ComdatType comdat) {
@@ -117,7 +120,7 @@ TB_ModuleSectionHandle tb_module_create_section(TB_Module* m, ptrdiff_t len, con
     return i;
 }
 
-TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* features, bool is_jit) {
+TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     TB_Module* m = tb_platform_heap_alloc(sizeof(TB_Module));
     if (m == NULL) {
         fprintf(stderr, "tb_module_create: Out of memory!\n");
@@ -130,11 +133,6 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* fe
     m->target_abi = (sys == TB_SYSTEM_WINDOWS) ? TB_ABI_WIN64 : TB_ABI_SYSTEMV;
     m->target_arch = arch;
     m->target_system = sys;
-    if (features == NULL) {
-        m->features = (TB_FeatureSet){ 0 };
-    } else {
-        m->features = *features;
-    }
 
     mtx_init(&m->lock, mtx_plain);
 
@@ -165,7 +163,7 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* fe
     return m;
 }
 
-TB_FunctionOutput* tb_pass_codegen(TB_Passes* p, bool emit_asm) {
+TB_FunctionOutput* tb_pass_codegen(TB_Passes* p, const TB_FeatureSet* features, bool emit_asm) {
     TB_Function* f = p->f;
     TB_Module* m = f->super.module;
     ICodeGen* restrict code_gen = tb__find_code_generator(m);
@@ -197,7 +195,7 @@ TB_FunctionOutput* tb_pass_codegen(TB_Passes* p, bool emit_asm) {
         uint8_t* local_buffer = &region->data[region->size];
         size_t local_capacity = region->capacity - region->size;
 
-        code_gen->compile_function(p, func_out, &m->features, local_buffer, local_capacity, emit_asm);
+        code_gen->compile_function(p, func_out, features, local_buffer, local_capacity, emit_asm);
 
         // if the func_out is placed into a different region, let's abide by that
         if (func_out->code_region != region) {

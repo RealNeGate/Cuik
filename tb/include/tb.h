@@ -110,25 +110,31 @@ typedef enum TB_CallingConv {
 } TB_CallingConv;
 
 typedef enum TB_FeatureSet_X64 {
-    TB_FEATURE_X64_SSE3   = (1u << 0u),
-    TB_FEATURE_X64_SSE41  = (1u << 1u),
-    TB_FEATURE_X64_SSE42  = (1u << 2u),
+    TB_FEATURE_X64_SSE2   = (1u << 0u),
+    TB_FEATURE_X64_SSE3   = (1u << 1u),
+    TB_FEATURE_X64_SSE41  = (1u << 2u),
+    TB_FEATURE_X64_SSE42  = (1u << 3u),
 
-    TB_FEATURE_X64_POPCNT = (1u << 3u),
-    TB_FEATURE_X64_LZCNT  = (1u << 4u),
+    TB_FEATURE_X64_POPCNT = (1u << 4u),
+    TB_FEATURE_X64_LZCNT  = (1u << 5u),
 
-    TB_FEATURE_X64_CLMUL  = (1u << 5u),
-    TB_FEATURE_X64_F16C   = (1u << 6u),
+    TB_FEATURE_X64_CLMUL  = (1u << 6u),
+    TB_FEATURE_X64_F16C   = (1u << 7u),
 
-    TB_FEATURE_X64_BMI1   = (1u << 7u),
-    TB_FEATURE_X64_BMI2   = (1u << 8u),
+    TB_FEATURE_X64_BMI1   = (1u << 8u),
+    TB_FEATURE_X64_BMI2   = (1u << 9u),
 
-    TB_FEATURE_X64_AVX    = (1u << 9u),
-    TB_FEATURE_X64_AVX2   = (1u << 10u),
+    TB_FEATURE_X64_AVX    = (1u << 10u),
+    TB_FEATURE_X64_AVX2   = (1u << 11u),
 } TB_FeatureSet_X64;
 
+typedef enum TB_FeatureSet_Generic {
+    TB_FEATURE_FRAME_PTR  = (1u << 0u),
+} TB_FeatureSet_Generic;
+
 typedef struct TB_FeatureSet {
-    TB_FeatureSet_X64 x64;
+    TB_FeatureSet_Generic gen;
+    TB_FeatureSet_X64     x64;
 } TB_FeatureSet;
 
 typedef enum TB_Linkage {
@@ -747,10 +753,10 @@ TB_API void tb_arena_clear(TB_Arena* restrict arena);
 // Module management
 ////////////////////////////////
 // Creates a module with the correct target and settings
-TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, const TB_FeatureSet* features, bool is_jit);
+TB_API TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit);
 
 // Creates a module but defaults on the architecture and system based on the host machine
-TB_API TB_Module* tb_module_create_for_host(const TB_FeatureSet* features, bool is_jit);
+TB_API TB_Module* tb_module_create_for_host(bool is_jit);
 
 // Frees all resources for the TB_Module and it's functions, globals and
 // compiled code.
@@ -1291,7 +1297,7 @@ TB_API bool tb_pass_print(TB_Passes* opt);
 TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* user_data);
 
 // codegen
-TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, bool emit_asm);
+TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, const TB_FeatureSet* features, bool emit_asm);
 
 TB_API void tb_pass_kill_node(TB_Passes* opt, TB_Node* n);
 TB_API void tb_pass_mark(TB_Passes* opt, TB_Node* n);

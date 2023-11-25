@@ -170,6 +170,7 @@ struct Ctx {
 
     TB_Module* module;
     TB_Function* f;
+    TB_FeatureSet features;
 
     // user-provided details
     TB_Scheduler sched;

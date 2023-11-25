@@ -258,15 +258,15 @@ static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
         }
     }
 
-    // pop rbp
-    if (stack_usage > 0) {
+    // pop rbp (if we even used the frameptr)
+    if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
         EMIT1(&ctx->emit, 0x58 + RBP);
     }
 }
 
 static Val val_at(Ctx* ctx, LiveInterval* l) {
     if (l->is_spill) {
-        return val_stack(-ctx->spills[l->id]);
+        return val_stack(ctx->stack_usage - ctx->spills[l->id]);
     } else {
         return val_gpr(l->assigned);
     }
@@ -305,8 +305,8 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_START: {
                 int stack_usage = ctx->stack_usage;
 
-                // push rbp
-                if (stack_usage > 0) {
+                // save frame pointer (if applies)
+                if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
                     EMIT1(e, 0x50 + RBP);
 
                     // mov rbp, rsp

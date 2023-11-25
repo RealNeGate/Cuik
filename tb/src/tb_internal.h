@@ -619,11 +619,3 @@ static TB_Arena* get_type_arena(TB_Module* m) {
 static TB_Arena* get_permanent_arena(TB_Module* m) {
     return &tb_thread_info(m)->perm_arena;
 }
-
-// NOTE(NeGate): Place all the codegen interfaces down here
-extern ICodeGen tb__x64_codegen;
-extern ICodeGen tb__null_codegen;
-
-// And all debug formats here
-//extern IDebugFormat dwarf_debug_format;
-extern IDebugFormat tb__codeview_debug_format;

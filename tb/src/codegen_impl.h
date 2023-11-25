@@ -117,6 +117,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             .capacity = out_capacity,
         }
     };
+
+    if (features == NULL) {
+        ctx.features = (TB_FeatureSet){ 0 };
+    } else {
+        ctx.features = *features;
+    }
+
     init_ctx(&ctx, f->super.module->target_abi);
 
     Worklist* restrict ws = &p->worklist;

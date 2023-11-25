@@ -6,8 +6,10 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* restrict m, const IDebugForm
 TB_ExportBuffer tb_wasm_write_output(TB_Module* restrict m, const IDebugFormat* dbg);
 
 static const IDebugFormat* find_debug_format(TB_DebugFormat debug_fmt) {
+    // Place all debug formats here
+    extern IDebugFormat tb__codeview_debug_format;
+
     switch (debug_fmt) {
-        // case TB_DEBUGFMT_DWARF: return &tb__dwarf_debug_format;
         case TB_DEBUGFMT_CODEVIEW: return &tb__codeview_debug_format;
         default: return NULL;
     }
@@ -21,7 +23,6 @@ TB_API TB_ExportBuffer tb_module_object_export(TB_Module* m, TB_DebugFormat debu
         [TB_SYSTEM_WINDOWS] = tb_coff_write_output,
         [TB_SYSTEM_MACOS]   = tb_macho_write_output,
         [TB_SYSTEM_LINUX]   = tb_elf64obj_write_output,
-        // [TB_SYSTEM_WEB]     = tb_wasm_write_output,
     };
 
     assert(fn[m->target_system] != NULL && "TODO");
