@@ -2089,9 +2089,7 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
     tb_outs(e, sizeof(UnwindInfo), &unwind);
 
     size_t code_count = 0;
-    if (stack_usage == 8) {
-        // no real prologue
-    } else {
+    if (stack_usage > 0) {
         UnwindCode codes[] = {
             // sub rsp, stack_usage
             { .code_offset = 8, .unwind_op = UNWIND_OP_ALLOC_SMALL, .op_info = (stack_usage / 8) - 1 },

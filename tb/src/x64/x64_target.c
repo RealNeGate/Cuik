@@ -30,7 +30,8 @@ static const struct ParamDesc {
 };
 
 enum {
-    ALL_GPRS = 0xFFFF & ~((1 << RBP) | (1 << RSP)),
+    ALL_GPRS            = 0xFFFF & ~((1 << RBP) | (1 << RSP)),
+    ALL_GPRS_NO_RAX_RDX = 0xFFFF & ~((1 << RBP) | (1 << RSP) | (1 << RAX) | (1 << RDX)),
 };
 
 // *out_mask of 0 means no mask
@@ -72,6 +73,26 @@ static TB_X86_DataType legalize(TB_DataType dt) {
     }
 }
 
+static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
+    if (n->type != TB_INTEGER_CONST) {
+        return false;
+    }
+
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    if (bits > 32) {
+        bool sign = (i->value >> 31ull) & 1;
+        uint64_t top = i->value >> 32ull;
+
+        // if the sign matches the rest of the top bits, we can sign extend just fine
+        if (top != (sign ? 0xFFFFFFFF : 0)) {
+            return false;
+        }
+    }
+
+    *out_x = i->value;
+    return true;
+}
+
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
     ctx->regalloc = tb__lsra;
@@ -97,13 +118,29 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     }
 }
 
-static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
+static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     switch (n->type) {
-        // no inputs (...and projections)
+        // no inputs
         case TB_START:
-        case TB_SYMBOL:
+        return REGEMPTY;
+
+        case TB_END:
+        tile_set_ins(ctx, dst, n, 3, n->input_count);
+        return REGEMPTY;
+
         case TB_PROJ:
-        break;
+        int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+        if (n->inputs[0]->type == TB_START) {
+            // function params are ABI crap
+            const struct ParamDesc* params = &param_descs[ctx->abi_index];
+            return REGMASK(GPR, i >= 3 ? (1u << params->gprs[i - 3]) : 0);
+        } else if (n->inputs[0]->type == TB_CALL) {
+            if (i == 2) return REGMASK(GPR, 1 << RAX);
+            else if (i == 3) return REGMASK(GPR, 1 << RDX);
+            else return REGEMPTY;
+        } else {
+            tb_todo();
+        }
 
         // binary ops
         case TB_AND:
@@ -111,52 +148,52 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_XOR:
         case TB_ADD:
         case TB_SUB:
-        case TB_MUL:
-        tile_set_ins(ctx, dst, n, 1, n->input_count);
-        break;
-
-        case TB_LOAD:
-        case TB_STORE:
-        tile_set_ins(ctx, dst, n, 2, n->input_count);
-        break;
-
-        case TB_CALL:
-        case TB_END:
-        tile_set_ins(ctx, dst, n, 3, n->input_count);
-        break;
-
-        default: tb_todo();
-    }
-}
-
-static RegMask out_reg_mask(Ctx* restrict ctx, TB_Node* n) {
-    switch (n->type) {
-        case TB_PROJ: {
-            int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-            if (n->inputs[0]->type == TB_START) {
-                // function params are ABI crap
-                const struct ParamDesc* params = &param_descs[ctx->abi_index];
-                return REGMASK(GPR, i >= 3 ? (1u << params->gprs[i - 3]) : 0);
-            } else if (n->inputs[0]->type == TB_CALL) {
-                if (i == 2) return REGMASK(GPR, 1 << RAX);
-                else if (i == 3) return REGMASK(GPR, 1 << RDX);
-                else return REGEMPTY;
+        case TB_MUL: {
+            int32_t x;
+            if (try_for_imm32(n->dt.data, n->inputs[2], &x)) {
+                fold_node(ctx, n->inputs[2]);
+                tile_set_ins(ctx, dst, n, 1, 2);
+                dst->tag = TILE_FOLDED_IMM;
             } else {
-                tb_todo();
+                tile_set_ins(ctx, dst, n, 1, n->input_count);
             }
-            break;
+            return REGMASK(GPR, ALL_GPRS);
         }
 
-        case TB_START:
-        case TB_END:
-        case TB_CALL:
-        return REGEMPTY;
+        case TB_UDIV:
+        case TB_SDIV:
+        tile_set_ins(ctx, dst, n, 2, 3);
+        return REGMASK(GPR, 1 << RAX);
 
-        case TB_SYMBOL:
+        case TB_UMOD:
+        case TB_SMOD:
+        tile_set_ins(ctx, dst, n, 2, 3);
+        return REGMASK(GPR, 1 << RDX);
+
         case TB_LOAD:
         return REGMASK(GPR, ALL_GPRS);
 
-        default: tb_todo();
+        case TB_STORE:
+        tile_set_ins(ctx, dst, n, 2, n->input_count);
+        return REGEMPTY;
+
+        case TB_CALL: {
+            int end_of_reg_params = n->input_count > 7 ? 7 : n->input_count;
+
+            if (n->inputs[2]->type == TB_SYMBOL) {
+                // CALL symbol
+                fold_node(ctx, n->inputs[2]);
+                tile_set_ins(ctx, dst, n, 3, end_of_reg_params);
+            } else {
+                // CALL r/m
+                tile_set_ins(ctx, dst, n, 2, end_of_reg_params);
+            }
+            return REGEMPTY;
+        }
+
+        default:
+        tb_todo();
+        return REGEMPTY;
     }
 }
 
@@ -172,11 +209,34 @@ static RegMask in_reg_mask(Ctx* restrict ctx, Tile* tile, TB_Node* n, int i) {
             if (i >= 3) {
                 // function parameters
                 const struct ParamDesc* params = &param_descs[ctx->abi_index];
-                return REGMASK(GPR, 1u << params->gprs[i - 3]);
+                int j = i - 3;
+
+                if (j < 4) {
+                    return REGMASK(GPR, 1u << params->gprs[j]);
+                } else {
+                    return REGMASK(GPR, ALL_GPRS);
+                }
             } else {
                 return REGEMPTY;
             }
         }
+
+        case TB_LOAD:
+        return REGMASK(GPR, ALL_GPRS);
+
+        case TB_UDIV:
+        case TB_SDIV:
+        case TB_UMOD:
+        case TB_SMOD:
+        return REGMASK(GPR, i == 1 ? (1 << RAX) : ALL_GPRS_NO_RAX_RDX);
+
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_MUL:
+        return REGMASK(GPR, ALL_GPRS);
 
         default: tb_todo();
     }
@@ -204,20 +264,41 @@ static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
     }
 }
 
-static Val val_at(Tile* t) {
-    return val_gpr(t->assigned);
+static Val val_at(Ctx* ctx, LiveInterval* l) {
+    if (l->is_spill) {
+        return val_stack(-ctx->spills[l->id]);
+    } else {
+        return val_gpr(l->assigned);
+    }
+}
+
+static Val val_indirect_at(LiveInterval* l) {
+    assert(!l->is_spill);
+    return val_base_disp(l->assigned, 0);
+}
+
+static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASSES]) {
+    if (t->n) switch (t->n->type) {
+        case TB_UDIV:
+        case TB_SDIV:
+        case TB_UMOD:
+        case TB_SMOD:
+        clobbers[0] = 1u << RDX;
+        clobbers[1] = 0;
+        return true;
+    }
+
+    return false;
 }
 
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
     if (t->tag == TILE_SPILL_MOVE) {
-        TB_X86_DataType dt = TB_X86_TYPE_QWORD;
-
-        Val dst = val_at(t);
-        Val src = val_at(t->ins[0].tile);
+        Val dst = val_at(ctx, t->interval);
+        Val src = val_at(ctx, t->ins[0].src);
         if (!is_value_match(&dst, &src)) {
-            inst2(e, MOV, &dst, &src, dt);
+            inst2(e, MOV, &dst, &src, TB_X86_TYPE_QWORD);
         }
-    } else if (t->tag == TILE_NORMAL || t->tag == TILE_GOTO) {
+    } else if (t->tag == TILE_NORMAL || t->tag == TILE_GOTO || t->tag >= TILE_FOLDED_IMM) {
         TB_Node* n = t->n;
         switch (n->type) {
             // prologue
@@ -276,9 +357,90 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_SYMBOL: {
                 TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
 
-                Val dst = val_at(t);
+                Val dst = val_at(ctx, t->interval);
                 Val src = val_global(sym, 0);
                 inst2(e, LEA, &dst, &src, TB_X86_TYPE_QWORD);
+                break;
+            }
+            case TB_LOAD: {
+                TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+
+                Val dst = val_at(ctx, t->interval);
+                Val src = val_indirect_at(t->ins[0].src);
+                inst2(e, MOV, &dst, &src, legalize_int2(n->dt));
+                break;
+            }
+            case TB_AND:
+            case TB_OR:
+            case TB_XOR:
+            case TB_ADD:
+            case TB_SUB: {
+                const static InstType ops[] = { AND, OR, XOR, ADD, SUB };
+                InstType op = ops[n->type - TB_AND];
+                TB_X86_DataType dt = legalize_int2(n->dt);
+
+                Val dst = val_at(ctx, t->interval);
+                Val lhs = val_at(ctx, t->ins[0].src);
+                if (!is_value_match(&dst, &lhs)) {
+                    inst2(e, MOV, &dst, &lhs, dt);
+                }
+
+                if (t->tag == TILE_FOLDED_IMM) {
+                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
+                    TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
+
+                    Val rhs = val_imm(i->value);
+                    inst2(e, op, &dst, &rhs, dt);
+                } else {
+                    Val rhs = val_at(ctx, t->ins[1].src);
+                    inst2(e, op, &dst, &rhs, dt);
+                }
+                break;
+            }
+            case TB_UDIV:
+            case TB_SDIV:
+            case TB_UMOD:
+            case TB_SMOD: {
+                bool is_signed = (n->type == TB_SDIV || n->type == TB_SMOD);
+                bool is_div    = (n->type == TB_UDIV || n->type == TB_SDIV);
+
+                TB_DataType dt = n->dt;
+
+                // if signed:
+                //   cqo/cdq (sign extend RAX into RDX)
+                // else:
+                //   xor rdx, rdx
+                if (is_signed) {
+                    if (n->dt.data > 32) {
+                        EMIT1(e, 0x48);
+                    }
+                    EMIT1(e, 0x99);
+                } else {
+                    Val rdx = val_gpr(RDX);
+                    inst2(e, XOR, &rdx, &rdx, TB_X86_TYPE_DWORD);
+                }
+
+                Val rhs = val_at(ctx, t->ins[0].src);
+                inst1(e, is_signed ? IDIV : DIV, &rhs, TB_X86_TYPE_DWORD);
+                break;
+            }
+            case TB_CALL: {
+                // we've already placed the register params in their slots, now we're missing
+                // stack params which go into [rsp + 0x20 + (i-4)*8] where i is the param index.
+                int start = n->inputs[2]->type == TB_SYMBOL ? 1 : 0;
+                FOREACH_N(i, start + 4, t->in_count) {
+                    __debugbreak();
+                }
+
+                if (n->inputs[2]->type == TB_SYMBOL) {
+                    TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeSymbol)->sym;
+
+                    Val target = val_global(sym, 0);
+                    inst1(e, CALL, &target, TB_X86_TYPE_QWORD);
+                } else {
+                    Val target = val_at(ctx, t->ins[0].src);
+                    inst1(e, CALL, &target, TB_X86_TYPE_QWORD);
+                }
                 break;
             }
 
@@ -292,6 +454,35 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
     } else {
         tb_todo();
     }
+}
+
+static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage) {
+    size_t patch_pos = e->count;
+    UnwindInfo unwind = {
+        .version = 1,
+        .flags = 0, // UNWIND_FLAG_EHANDLER,
+        .prolog_length = out_f->prologue_length,
+        .code_count = 0,
+        .frame_register = RBP,
+        .frame_offset = 0,
+    };
+    tb_outs(e, sizeof(UnwindInfo), &unwind);
+
+    size_t code_count = 0;
+    if (stack_usage > 0) {
+        UnwindCode codes[] = {
+            // sub rsp, stack_usage
+            { .code_offset = 8, .unwind_op = UNWIND_OP_ALLOC_SMALL, .op_info = (stack_usage / 8) - 1 },
+            // mov rbp, rsp
+            { .code_offset = 4, .unwind_op = UNWIND_OP_SET_FPREG, .op_info = 0 },
+            // push rbp
+            { .code_offset = 1, .unwind_op = UNWIND_OP_PUSH_NONVOL, .op_info = RBP },
+        };
+        tb_outs(e, sizeof(codes), codes);
+        code_count += 3;
+    }
+
+    tb_patch1b(e, patch_pos + offsetof(UnwindInfo, code_count), code_count);
 }
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
@@ -416,11 +607,40 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
 }
 #undef E
 
+static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f) {
+    size_t r = 0;
+    uint32_t src_section = out_f->section;
+
+    for (TB_SymbolPatch* patch = out_f->first_patch; patch; patch = patch->next) {
+        if (patch->target->tag == TB_SYMBOL_FUNCTION) {
+            uint32_t dst_section = ((TB_Function*) patch->target)->output->section;
+
+            // you can't do relocations across sections
+            if (src_section == dst_section) {
+                assert(patch->pos < out_f->code_size);
+
+                // x64 thinks of relative addresses as being relative
+                // to the end of the instruction or in this case just
+                // 4 bytes ahead hence the +4.
+                size_t actual_pos = out_f->code_pos + patch->pos + 4;
+
+                uint32_t p = ((TB_Function*) patch->target)->output->code_pos - actual_pos;
+                memcpy(&out_f->code[patch->pos], &p, sizeof(uint32_t));
+
+                r += 1;
+                patch->internal = true;
+            }
+        }
+    }
+
+    return out_f->patch_count - r;
+}
+
 ICodeGen tb__x64_codegen = {
     .minimum_addressable_size = 8,
     .pointer_size = 64,
-    .emit_win64eh_unwind_info = NULL,
-    .emit_call_patches  = NULL,
+    .emit_win64eh_unwind_info = emit_win64eh_unwind_info,
+    .emit_call_patches  = emit_call_patches,
     .get_data_type_size = get_data_type_size,
     .compile_function   = compile_function,
 };

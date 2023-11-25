@@ -19,7 +19,9 @@
 //     sched (TODO implement a latency-based list scheduler)
 //
 //   * Tiling: handled by isel_node, by default we walk the BB backwards building one tile
-//     per node.
+//     per node, we can call fold_node to say we expended a use of a value, this way if we
+//     we've folded all uses of a value we don't materialize it alone. isel_node has to fill
+//     in the register constraints, it'll return the output mask and construct input masks.
 //
 //   * Regalloc: handled by ctx.regalloc (TODO implement more register allocators)
 //
@@ -79,35 +81,47 @@ typedef enum {
     // used by regalloc to rematerialize immediates
     TILE_RELOAD_IMM,
     // place all target-dependent tiles here:
-    //   ...
+    //   OP reg, imm
+    TILE_FOLDED_IMM,
 } TileTag;
 
 typedef struct Tile Tile;
+typedef struct LiveInterval LiveInterval;
 
 typedef struct {
-    Tile* tile;
+    LiveInterval* src;
     RegMask mask;
 } TileInput;
+
+struct LiveInterval {
+    int id; // used by live sets
+    int active_range;
+
+    RegMask mask;
+    TB_Node* n;
+
+    int8_t reg;
+    int8_t assigned;
+    int8_t hint;
+    bool is_spill;
+
+    LiveInterval* split_kid;
+    DynArray(UsePos) uses;
+
+    int range_cap, range_count;
+    LiveRange* ranges;
+};
 
 // represents a pattern of instructions
 struct Tile {
     struct Tile* prev;
     struct Tile* next;
 
-    uint8_t tag;
-
-    // regalloc concerns
-    int8_t assigned;
-    int8_t hint;
-    // register num, -1 if the interval isn't a physical reg
-    int8_t reg;
-
-    RegMask mask;
-
-    int use_count;
-    int id; // used by live sets
+    TileTag tag;
+    int time;
 
     TB_Node* n;
+    LiveInterval* interval;
 
     union {
         // tag = TILE_GOTO, this is the successor
@@ -115,19 +129,6 @@ struct Tile {
 
         // tag = TILE_SPILL_MOVE, this is the tile we're copying from.
         struct Tile* src;
-    };
-
-    struct {
-        int time;
-        int active_range;
-
-        // spill info
-        struct Tile* og; // initial tile
-
-        DynArray(UsePos) uses;
-
-        int range_cap, range_count;
-        LiveRange* ranges;
     };
 
     int in_count;
@@ -161,6 +162,7 @@ typedef struct {
 
 typedef struct Ctx Ctx;
 typedef void (*TB_RegAlloc)(Ctx* restrict ctx, TB_Arena* arena);
+typedef bool (*TB_Clobbers)(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASSES]);
 
 struct Ctx {
     TB_Passes* p;
@@ -172,6 +174,7 @@ struct Ctx {
     // user-provided details
     TB_Scheduler sched;
     TB_RegAlloc regalloc;
+    TB_Clobbers clobbers;
 
     // target-dependent index
     int abi_index;
@@ -189,19 +192,22 @@ struct Ctx {
     MachineBB* machine_bbs;
 
     // Values
-    Set folded;
-    Tile** values;  // values[n.gvn]
-    Tile** id2tile; // id2tile[tile.id]
+    int* use_count;
+    Tile** values; // [n.gvn]
+    LiveInterval** id2interval; // [tile.id]
 
     // Regalloc
-    int tile_count;
+    int interval_count;
     int stack_usage;
     int num_classes;
     int num_regs[MAX_REG_CLASSES];
     uint64_t callee_saved[MAX_REG_CLASSES];
+    int* spills;
 
     // Line info
     DynArray(TB_Location) locations;
 };
 
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena);
+
+static int fixed_reg_mask(uint64_t mask) { return tb_popcount64(mask) == 1 ? 63 - tb_clz64(mask) : -1; }

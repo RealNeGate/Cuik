@@ -44,7 +44,7 @@ static void print_type(TB_DataType dt) {
 }
 
 static void print_type2(TB_DataType dt) {
-    #if 0
+    #if 1
     printf("\x1b[96m");
     print_type(dt);
     printf("\x1b[0m");

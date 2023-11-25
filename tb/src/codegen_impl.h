@@ -2,14 +2,15 @@
 // will include this to define their own copy of the codegen.
 //
 // Your job is to implement:
-//   isel_node, out_reg_mask, in_reg_mask, init_ctx, emit_tile, disassemble.
+//   isel_node, in_reg_mask, init_ctx, emit_tile, disassemble.
 //
 #include "codegen.h"
 
-static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n);
-static RegMask out_reg_mask(Ctx* restrict ctx, TB_Node* n);
+static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n);
 static RegMask in_reg_mask(Ctx* restrict ctx, Tile* tile, TB_Node* n, int i);
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
+
+static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASSES]);
 
 // This is where we do the byte emitting phase
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t);
@@ -52,16 +53,13 @@ static void node_to_bb_put(Ctx* restrict ctx, TB_Node* n, MachineBB* bb) {
     abort();
 }
 
-static Tile* get_tile(Ctx* restrict ctx, TB_Node* n) {
+static Tile* get_tile(Ctx* restrict ctx, TB_Node* n, bool alloc_interval) {
     if (ctx->values[n->gvn] == NULL) {
         Tile* tile = TB_ARENA_ALLOC(tmp_arena, Tile);
-        *tile = (Tile){
-            .tag = TILE_NORMAL, .id = ctx->tile_count++,
-            .reg = -1, .hint = -1, .assigned = -1, .n = n,
-            .range_cap = 4, .range_count = 1,
-            .ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange))
-        };
-        tile->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
+        *tile = (Tile){ .tag = TILE_NORMAL, .n = n };
+        if (alloc_interval) {
+            tile->interval = TB_ARENA_ALLOC(tmp_arena, LiveInterval);
+        }
         ctx->values[n->gvn] = tile;
         return tile;
     } else {
@@ -70,15 +68,33 @@ static Tile* get_tile(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static void tile_set_ins(Ctx* restrict ctx, Tile* t, TB_Node* n, int start, int end) {
-    t->ins = tb_arena_alloc(tmp_arena, (end - start) * sizeof(Tile*));
+    t->ins = tb_arena_alloc(tmp_arena, (end - start) * sizeof(TileInput));
     t->in_count = end - start;
     FOREACH_N(i, start, end) {
-        t->ins[i - start].tile = get_tile(ctx, n->inputs[i]);
+        t->ins[i - start].src  = get_tile(ctx, n->inputs[i], true)->interval;
         t->ins[i - start].mask = in_reg_mask(ctx, t, n, i);
+
+        TB_OPTDEBUG(CODEGEN)(printf("    IN[%zu] = %#04llx\n", i, t->ins[i - start].mask.mask));
     }
 }
 
-static void fold_node(Ctx* restrict ctx, TB_Node* n) { set_put(&ctx->folded, n->gvn); }
+static int* use_count(Ctx* restrict ctx, TB_Node* n) {
+    if (ctx->use_count[n->gvn] < 0) {
+        int count = 0;
+        for (User* u = n->users; u; u = u->next) count++;
+        ctx->use_count[n->gvn] = count;
+    }
+
+    return &ctx->use_count[n->gvn];
+}
+
+static void fold_node(Ctx* restrict ctx, TB_Node* n) {
+    int* u = use_count(ctx, n);
+
+    assert(*u > 0);
+    *u -= 1;
+}
+
 static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm) {
     verify_tmp_arena(p);
 
@@ -93,6 +109,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         .f = f,
         .p = p,
         .num_classes = REG_CLASS_COUNT,
+        .clobbers = clobbers,
         .emit = {
             .f = f,
             .output = func_out,
@@ -108,10 +125,16 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     ctx.values = tb_arena_alloc(arena, f->node_count * sizeof(Tile*));
     memset(ctx.values, 0, f->node_count * sizeof(Tile*));
 
-    // We need to generate a CFG
-    TB_CFG cfg = tb_compute_rpo(f, p);
-    // And perform global scheduling
-    tb_pass_schedule(p, cfg);
+    ctx.use_count = tb_arena_alloc(arena, f->node_count * sizeof(int));
+    memset(ctx.use_count, 0xFF, f->node_count * sizeof(int));
+
+    TB_CFG cfg;
+    CUIK_TIMED_BLOCK("global sched") {
+        // We need to generate a CFG
+        cfg = tb_compute_rpo(f, p);
+        // And perform global scheduling
+        tb_pass_schedule(p, cfg);
+    }
 
     // allocate more stuff now that we've run stats on the IR
     ctx.emit.label_count = cfg.block_count;
@@ -174,30 +197,46 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 Tile* bot = NULL;
                 FOREACH_REVERSE_N(i, cfg.block_count, dyn_array_length(ws->items)) {
                     TB_Node* n = ws->items[i];
-                    if (set_get(&ctx.folded, n->gvn)) {
-                        TB_OPTDEBUG(CODEGEN)(printf("  FOLDED "), print_node_sexpr(n, 0), printf("\n"));
-                    } else {
-                        TB_OPTDEBUG(CODEGEN)(printf("  TILE "), print_node_sexpr(n, 0), printf("\n"));
-
-                        tb_arena_realign(arena);
-
-                        Tile* tile = get_tile(&ctx, n);
-                        tile->next = top;
-
-                        // attach to list
-                        if (top) top->prev = tile;
-                        if (!bot) bot = tile;
-                        top = tile;
-
-                        ctx.values[n->gvn] = tile;
-                        isel_node(&ctx, tile, n);
-
-                        tile->mask = out_reg_mask(&ctx, n);
-                        if (tile->mask.mask != 0) {
-                            TB_OPTDEBUG(CODEGEN)(printf("    [%#04llx]\n", tile->mask.mask));
-                        } else {
-                            TB_OPTDEBUG(CODEGEN)(printf("    no def\n"));
+                    if (n->type != TB_START && n->inputs[0] == NULL) {
+                        int* u = use_count(&ctx, n);
+                        if (*u == 0) {
+                            TB_OPTDEBUG(CODEGEN)(printf("  FOLDED "), print_node_sexpr(n, 0), printf("\n"));
+                            continue;
                         }
+                    }
+
+                    TB_OPTDEBUG(CODEGEN)(printf("  TILE "), print_node_sexpr(n, 0), printf("\n"));
+
+                    Tile* tile = get_tile(&ctx, n, false);
+                    tile->next = top;
+
+                    // attach to list
+                    if (top) top->prev = tile;
+                    if (!bot) bot = tile;
+                    top = tile;
+
+                    RegMask mask = isel_node(&ctx, tile, n);
+                    if (mask.mask != 0) {
+                        TB_OPTDEBUG(CODEGEN)(printf("    [%#04llx]\n", mask.mask));
+
+                        // construct live interval
+                        LiveInterval* interval = tile->interval;
+                        if (interval == NULL) {
+                            interval = tile->interval = TB_ARENA_ALLOC(arena, LiveInterval);
+                        }
+                        *interval = (LiveInterval){
+                            .id = ctx.interval_count++,
+                            .mask = mask,
+                            .reg = -1,
+                            .assigned = -1,
+                            .range_cap = 4, .range_count = 1,
+                            .ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange))
+                        };
+                        interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
+                        tile->interval = interval;
+                    } else {
+                        assert(tile->interval == NULL && "shouldn't have allocated an interval... tf");
+                        TB_OPTDEBUG(CODEGEN)(printf("    no def\n"));
                     }
                 }
 
@@ -214,7 +253,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         PhiVal* v = &phi_vals[i];
                     }*/
 
-                    *tile = (Tile){ .prev = bot, .tag = TILE_GOTO, .id = ctx.tile_count++, .reg = -1, .hint = -1, .assigned = -1, .n = end, .succ = succ_n };
+                    *tile = (Tile){ .prev = bot, .tag = TILE_GOTO, .n = end, .succ = succ_n };
                     bot->next = tile;
                     bot = tile;
                 }
@@ -228,14 +267,14 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     CUIK_TIMED_BLOCK("liveness") {
-        int tile_count = ctx.tile_count;
-        ctx.id2tile = tb_arena_alloc(arena, tile_count * sizeof(Tile*));
+        int interval_count = ctx.interval_count;
+        ctx.id2interval = tb_arena_alloc(arena, interval_count * sizeof(Tile*));
 
         // local liveness (along with placing tiles on a timeline)
         FOREACH_N(i, 0, bb_count) {
             MachineBB* mbb = &machine_bbs[i];
-            mbb->live_in = set_create_in_arena(arena, tile_count);
-            mbb->live_out = set_create_in_arena(arena, tile_count);
+            mbb->live_in = set_create_in_arena(arena, interval_count);
+            mbb->live_out = set_create_in_arena(arena, interval_count);
         }
 
         // we don't need to keep the GEN and KILL sets, this doesn't save us
@@ -243,14 +282,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         // in a few of the later stages.
         TB_ArenaSavepoint sp = tb_arena_save(arena);
         CUIK_TIMED_BLOCK("local") {
-            int timeline = 2;
+            int timeline = 4;
             FOREACH_N(i, 0, bb_count) {
                 MachineBB* mbb = &machine_bbs[i];
                 int bbid = mbb->id;
-                Tile* t = mbb->start;
 
-                mbb->gen = set_create_in_arena(arena, tile_count);
-                mbb->kill = set_create_in_arena(arena, tile_count);
+                mbb->gen = set_create_in_arena(arena, interval_count);
+                mbb->kill = set_create_in_arena(arena, interval_count);
 
                 Set* gen = &mbb->gen;
                 Set* kill = &mbb->kill;
@@ -258,20 +296,21 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                     t->time = timeline;
                     timeline += 2;
 
-                    // fill local live sets
-                    TB_Node* n = t->n;
-                    FOREACH_N(j, 1, n->input_count) if (n->inputs[j]) {
-                        TB_Node* in = n->inputs[j];
-                        Tile* in_def = ctx.values[in->gvn];
-                        if (in_def) {
-                            if (!set_get(kill, in_def->id)) {
-                                set_put(gen, in_def->id);
+                    LiveInterval* interval = t->interval;
+                    if (interval) {
+                        // fill local live sets
+                        TB_Node* n = t->n;
+                        FOREACH_N(j, 1, n->input_count) if (n->inputs[j]) {
+                            TB_Node* in = n->inputs[j];
+                            Tile* in_def = ctx.values[in->gvn];
+                            if (in_def && !set_get(kill, in_def->interval->id)) {
+                                set_put(gen, in_def->interval->id);
                             }
                         }
-                    }
 
-                    set_put(kill, t->id);
-                    ctx.id2tile[t->id] = t;
+                        set_put(kill, interval->id);
+                        ctx.id2interval[interval->id] = interval;
+                    }
                 }
 
                 timeline += 2;
@@ -323,7 +362,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
                 // live_in = (live_out - live_kill) U live_gen
                 bool changes = false;
-                FOREACH_N(i, 0, (tile_count + 63) / 64) {
+                FOREACH_N(i, 0, (interval_count + 63) / 64) {
                     uint64_t new_in = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
 
                     changes |= (live_in->data[i] != new_in);
@@ -354,11 +393,11 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             MachineBB* mbb = &machine_bbs[i];
 
             printf("BB%d:\n  live-ins:", mbb->id);
-            FOREACH_N(j, 0, tile_count) if (set_get(&mbb->live_in, j)) {
+            FOREACH_N(j, 0, interval_count) if (set_get(&mbb->live_in, j)) {
                 printf(" v%zu", j);
             }
             printf("\n  live-outs:");
-            FOREACH_N(j, 0, tile_count) if (set_get(&mbb->live_out, j)) {
+            FOREACH_N(j, 0, interval_count) if (set_get(&mbb->live_out, j)) {
                 printf(" v%zu", j);
             }
             printf("\n");
