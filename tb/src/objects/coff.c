@@ -142,13 +142,16 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
 
     int dbg_section_count = (dbg ? dbg->number_of_debug_sections(m) : 0);
     int section_count = dyn_array_length(sections) + dbg_section_count;
+    const ICodeGen* restrict code_gen = tb__find_code_generator(m);
 
     // mark each with a unique id
     size_t unique_id_counter = section_count * 2;
     CUIK_TIMED_BLOCK("alloc symbol IDs") {
         dyn_array_for(i, sections) {
             // unwind info
-            if (sections[i].funcs) unique_id_counter += 4;
+            if (code_gen->emit_win64eh_unwind_info && sections[i].funcs) {
+                unique_id_counter += 4;
+            }
         }
 
         dyn_array_for(i, sections) {
@@ -169,16 +172,11 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
         }
     }
 
-    const ICodeGen* restrict code_gen = tb__find_code_generator(m);
-    if (code_gen->emit_win64eh_unwind_info == NULL) {
-        tb_panic("write_xdata_section: emit_win64eh_unwind_info is required.");
-    }
-
     dyn_array_for(i, sections) {
         sections[i].section_num = 1 + i;
 
         // make unwind info for each section with functions
-        if (sections[i].funcs) {
+        if (code_gen->emit_win64eh_unwind_info && sections[i].funcs) {
             COFF_UnwindInfo* u = tb_arena_alloc(arena, sizeof(COFF_UnwindInfo));
             generate_unwind_info(u, code_gen, section_count, &sections[i]);
 

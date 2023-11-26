@@ -8,8 +8,12 @@ typedef enum {
     X16, X17, X18, X19, X20, X21, X22, X23,
     X24, X25, X26, X27, X28, X29, X30,
 
+    // frame pointer
+    FP = 29,
+    // link register is basically just the RPC
+    LR = 30,
     // It's context specific because ARM lmao
-    ZR = 0x1F, SP = 0x1F,
+    ZR = 31, SP = 31,
 
     // not a real gpr
     GPR_NONE = -1,
@@ -24,11 +28,10 @@ typedef struct {
 } Immediate;
 
 typedef enum {
-    AND,
     ADD,
-    ADDS,
     SUB,
-    SUBS,
+    UDIV,
+    SDIV,
 } DPOpcode;
 
 enum {
@@ -39,16 +42,41 @@ enum {
 };
 
 typedef struct {
-    uint16_t r, i;
+    uint32_t r, i;
 } DPInst;
 
+// op0  30-29
+// op1  28
+// 101  27-25
+// op2  24-21
+// op3  15-10
+#define DPR(op0, op1, op2, op3) ((op0 << 29u) | (op1 << 28) | (0b101 << 25) | (op2 << 21) | (op3 << 10))
+// op   30
+// 100  28-26
+// op0  25-23
+#define DPI(op, op0) ((op << 30u) | (0b100 << 26u) | (op0 << 23u))
 static const DPInst inst_table[] = {
-    [AND]  = { .r = 0b00001010, .i = 0b00010010 },
-    [ADD]  = { .r = 0b00001011, .i = 0b00010001 },
-    [ADDS] = { .r = 0b00101011, .i = 0b00110001 },
-    [SUB]  = { .r = 0b01010001, .i = 0b01010001 },
-    [SUBS] = { .r = 0b01101011, .i = 0b01110001 },
+    //         register                     immediate
+    [ADD]  = { DPR(0, 0, 0b1000, 0),        DPI(0, 0b010) },
+    [SUB]  = { DPR(2, 0, 0b1000, 0),        DPI(1, 0b010) },
+
+    [UDIV] = { DPR(0, 1, 0b0110, 0b000010) },
+    [SDIV] = { DPR(0, 1, 0b0110, 0b000011) },
 };
+
+enum {
+    UBFM = DPI(0, 0b110) | (0b10 << 29u)
+};
+
+static void emit_ret(TB_CGEmitter* restrict e, GPR rn) {
+    // 1101 0110 0101 1111 0000 00NN NNN0 0000
+    //
+    // 'ret rn' just does 'mov pc, rn', although in practice
+    // we only pass the link reg to it.
+    uint32_t inst = 0b11010110010111110000000000000000;
+    inst |= (rn & 0b11111) << 5u;
+    EMIT4(e, inst);
+}
 
 // data processing instruction
 //   OP dst, src, imm
@@ -63,21 +91,28 @@ static const DPInst inst_table[] = {
 // N - source
 // D - destination
 static void emit_dp_imm(TB_CGEmitter* restrict e, DPOpcode op, GPR dst, GPR src, uint16_t imm, uint8_t shift, bool _64bit) {
-    uint32_t inst = _64bit ? (1u << 31u) : 0;
-
-    inst |= ((inst_table[op].i & 0xFF) << 24u);
+    uint32_t inst = inst_table[op].i | (_64bit ? (1u << 31u) : 0);
 
     if (op == ADD || op == SUB) {
-        if (shift == 12) inst |= (shift << 22u);
-        else if (shift == 0) {}
-        else {
-            tb_panic("emit_dp_imm: shift amount cannot be %d (only 0 or 12)", shift);
-        }
+        assert(shift == 0 || shift == 12);
+        inst |= (1 << 22u);
+    } else if (op == UBFM) {
+        inst |= (1 << 22u);
     }
 
     inst |= (imm & 0xFFF) << 10u;
     inst |= (src & 0b11111) << 5u;
     inst |= (dst & 0b11111) << 0u;
+    EMIT4(e, inst);
+}
+
+// bitfield
+static void emit_bitfield(TB_CGEmitter* restrict e, uint32_t op, GPR dst, GPR src, uint8_t immr, uint8_t imms, bool _64bit) {
+    uint32_t inst = op | (_64bit ? (1u << 31u) : 0);
+    inst |= (immr & 0b111111) << 16u;
+    inst |= (imms & 0b111111) << 10u;
+    inst |= (src  & 0b11111) << 5u;
+    inst |= (dst  & 0b11111) << 0u;
     EMIT4(e, inst);
 }
 
@@ -88,16 +123,13 @@ static void emit_dp_imm(TB_CGEmitter* restrict e, DPOpcode op, GPR dst, GPR src,
 // AOOO OOOO SS_M MMMM IIII IINN NNND DDDD
 // x101 1110 xx1m mmmm x000 01nn nnnd dddd  -  add Sd Sn Sm
 static void emit_dp_r(TB_CGEmitter* restrict e, DPOpcode op, GPR dst, GPR a, GPR b, uint16_t imm, uint8_t shift, bool _64bit) {
-    uint32_t inst = _64bit ? (1u << 31u) : 0;
-
-    inst |= ((inst_table[op].r & 0x7F) << 24u);
+    uint32_t inst = inst_table[op].r | (_64bit ? (1u << 31u) : 0);
 
     if (op == ADD || op == SUB) {
-        if (shift == 12) inst |= (shift << 22u);
-        else if (shift == 0) {}
-        else {
-            tb_panic("emit_dp_r: shift amount cannot be %d (only 0 or 12)", shift);
-        }
+        assert(shift == 0 || shift == 12);
+        inst |= (1 << 22u);
+    } else if (op == UBFM) {
+        if (shift) inst |= (1 << 22u);
     }
 
     inst |= (b & 0b11111) << 16u;
@@ -117,22 +149,18 @@ static void emit_mov(TB_CGEmitter* restrict e, uint8_t dst, uint8_t src, bool _6
     EMIT4(e, inst);
 }
 
-static void emit_movz(TB_CGEmitter* restrict e, uint8_t dst, uint16_t imm, uint8_t shift, bool _64bit) {
+// clear means movz, else movk
+static void emit_movimm(TB_CGEmitter* restrict e, uint8_t dst, uint16_t imm, uint8_t shift, bool _64bit, bool clear) {
     uint32_t inst = (_64bit ? (1 << 31u) : 0);
 
-    inst |= (0b010100101 << 23u);
+    if (clear) {
+        inst |= (0b010100101 << 23u);
+    } else {
+        inst |= (0b011100101 << 23u);
+    }
     inst |= shift << 21u;
     inst |= imm << 5u;
     inst |= (dst & 0b11111) << 0u;
     EMIT4(e, inst);
 }
 
-static void emit_movk(TB_CGEmitter* restrict e, uint8_t dst, uint16_t imm, uint8_t shift, bool _64bit) {
-    uint32_t inst = (_64bit ? (1 << 31u) : 0);
-
-    inst |= (0b011100101 << 23u);
-    inst |= shift << 21u;
-    inst |= imm << 5u;
-    inst |= (dst & 0b11111) << 0u;
-    EMIT4(e, inst);
-}

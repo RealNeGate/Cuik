@@ -9,7 +9,31 @@ enum {
     REG_CLASS_COUNT,
 };
 
+enum {
+    ALL_GPRS = 0xFFFFFFFF & ~((1 << SP) | (1 << LR)),
+};
+
 #include "../codegen_impl.h"
+
+static bool try_for_imm12(int bits, TB_Node* n, int32_t* out_x) {
+    if (n->type != TB_INTEGER_CONST) {
+        return false;
+    }
+
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    if (bits > 12) {
+        bool sign = (i->value >> 11ull) & 1;
+        uint64_t top = i->value >> 12ull;
+
+        // if the sign matches the rest of the top bits, we can sign extend just fine
+        if (top != (sign ? 0xFFFFFFFFFFFFF : 0)) {
+            return false;
+        }
+    }
+
+    *out_x = i->value;
+    return true;
+}
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
@@ -19,34 +43,351 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
 }
 
 static RegMask in_reg_mask(Ctx* restrict ctx, Tile* tile, TB_Node* n, int i) {
-    tb_todo();
+    switch (n->type) {
+        case TB_END: {
+            if (i == 3)      return REGMASK(GPR, 1 << X0);
+            else if (i == 4) return REGMASK(GPR, 1 << X1);
+            else return REGEMPTY;
+        }
+
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_MUL:
+        case TB_SHL:
+        case TB_SHR:
+        case TB_SAR:
+        case TB_UDIV:
+        case TB_SDIV:
+        return REGMASK(GPR, ALL_GPRS);
+
+        default:
+        tb_todo();
+    }
 }
 
 static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
-    tb_todo();
+    switch (n->type) {
+        // no inputs
+        case TB_START:
+        return REGEMPTY;
+
+        case TB_END:
+        tile_set_ins(ctx, dst, n, 3, n->input_count);
+        return REGEMPTY;
+
+        case TB_PROJ:
+        int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+        if (n->inputs[0]->type == TB_START) {
+            return REGMASK(GPR, i >= 3 ? (1u << (i - 3)) : 0);
+        } else if (n->inputs[0]->type == TB_CALL) {
+            if (i == 2)      return REGMASK(GPR, 1 << X0);
+            else if (i == 3) return REGMASK(GPR, 1 << X1);
+            else return REGEMPTY;
+        } else {
+            tb_todo();
+        }
+
+        case TB_INTEGER_CONST:
+        return REGMASK(GPR, ALL_GPRS);
+
+        case TB_UDIV:
+        case TB_SDIV:
+        tile_set_ins(ctx, dst, n, 1, n->input_count);
+        return REGMASK(GPR, ALL_GPRS);
+
+        // binary ops
+        case TB_SHL:
+        case TB_SHR:
+        case TB_ADD:
+        case TB_SUB: {
+            int32_t x;
+            if (try_for_imm12(n->dt.data, n->inputs[2], &x)) {
+                fold_node(ctx, n->inputs[2]);
+                tile_set_ins(ctx, dst, n, 1, 2);
+                dst->tag = TILE_FOLDED_IMM;
+            } else {
+                tile_set_ins(ctx, dst, n, 1, n->input_count);
+            }
+            return REGMASK(GPR, ALL_GPRS);
+        }
+
+        default:
+        tb_todo();
+    }
 }
 
 static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASSES]) {
     return false;
 }
 
+static GPR gpr_at(LiveInterval* l) { return l->assigned; }
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
-    tb_todo();
+    if (t->tag == TILE_SPILL_MOVE) {
+        tb_todo();
+    } else if (t->tag == TILE_NORMAL || t->tag == TILE_GOTO || t->tag >= TILE_FOLDED_IMM) {
+        TB_Node* n = t->n;
+        switch (n->type) {
+            // projections don't manage their own work, that's the
+            // TUPLE node's job.
+            case TB_PROJ: break;
+
+            case TB_START: {
+                // TODO(NeGate): optionally preserve the frame pointer
+                // TODO(NeGate): stack allocation
+                ctx->prologue_length = ctx->emit.count;
+                break;
+            }
+
+            case TB_END: {
+                emit_ret(e, LR);
+                break;
+            }
+
+            case TB_INTEGER_CONST: {
+                bool is_64bit = false;
+                GPR dst = gpr_at(t->interval);
+                uint64_t imm = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
+
+                int shift = 0;
+                bool first = true;
+                while (imm) {
+                    if (imm & 0xFFFF) {
+                        emit_movimm(e, dst, imm & 0xFFFF, shift / 16, is_64bit, first);
+                        first = false;
+                    }
+                    imm >>= 16, shift += 16;
+                }
+                break;
+            }
+
+            case TB_SDIV: {
+                bool is_64bit = false;
+                GPR dst = gpr_at(t->interval);
+                GPR lhs = gpr_at(t->ins[0].src);
+                GPR rhs = gpr_at(t->ins[1].src);
+                emit_dp_r(e, SDIV, dst, lhs, rhs, 0, 0, is_64bit);
+                break;
+            }
+
+            case TB_SHL:
+            case TB_SHR:
+            case TB_SAR: {
+                bool is_64bit = false;
+                GPR dst = gpr_at(t->interval);
+                GPR lhs = gpr_at(t->ins[0].src);
+                if (t->tag == TILE_FOLDED_IMM) {
+                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
+                    TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
+
+                    int amt = 31 - i->value;
+                    emit_bitfield(e, UBFM, dst, lhs, amt + 1, amt, is_64bit);
+                } else {
+                    // GPR rhs = gpr_at(t->ins[1].src);
+                    tb_todo();
+                }
+                break;
+            }
+
+            case TB_ADD:
+            case TB_SUB: {
+                bool is_64bit = false;
+                GPR dst = gpr_at(t->interval);
+                GPR lhs = gpr_at(t->ins[0].src);
+                int op = n->type == TB_ADD ? ADD : SUB;
+
+                if (t->tag == TILE_FOLDED_IMM) {
+                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
+                    TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
+                    emit_dp_imm(e, op, dst, lhs, i->value, 0, is_64bit);
+                } else {
+                    GPR rhs = gpr_at(t->ins[1].src);
+                    emit_dp_r(e, op, dst, lhs, rhs, 0, 0, is_64bit);
+                }
+                break;
+            }
+
+            default: tb_todo();
+        }
+    }
 }
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
+static void print_gpr(TB_CGEmitter* e, int i, bool is_64bit) {
+    if (i == LR) {
+        E("lr");
+    } else {
+        E("%c%d", is_64bit["wx"], i);
+    }
+}
+
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end) {
     if (bb >= 0) {
         E(".bb%d:\n", bb);
     }
+
+    static const char* dp_strs[] = { "add", "adds", "sub", "subs" };
+    static const char* sh_strs[] = { "lsl", "lsr", "asr", "ror" };
+
+    while (pos < end) {
+        uint32_t inst = *((uint32_t*) &e->data[pos]);
+        pos += 4;
+
+        bool is_64bit = inst >> 31u;
+        uint32_t family = (inst >> 25u) & 0xF;
+        switch (family) {
+            // Data processing (immediate)
+            case 0b1000:
+            case 0b1001: {
+                uint32_t op1 = (inst >> 23u) & 0b111;
+                uint32_t opc = (inst >> 29u) & 0b11;
+
+                if (op1 == 2) {
+                    uint32_t imm  = (inst >> 10u) & 0xFFF;
+                    uint32_t rn   = (inst >> 5u) & 0x1F;
+                    uint32_t rd   = (inst >> 0u) & 0x1F;
+
+                    E("  %s ", dp_strs[opc]);
+                    print_gpr(e, rd, is_64bit);
+                    E(", ");
+                    print_gpr(e, rn, is_64bit);
+                    E(", #%#x", imm);
+                } else if (op1 == 5) {
+                    // Move wide
+                    if (opc == 1) {
+                        E("  ERROR ");
+                    } else {
+                        const char* str = "n_zk";
+                        uint32_t hw  = (inst >> 21u) & 3;
+                        uint32_t imm = (inst >> 5u) & 0xFFFF;
+                        uint32_t rn  = inst & 0x1F;
+
+                        E("  mov%c ", str[opc]);
+                        print_gpr(e, rn, is_64bit);
+                        E(", #%#x", imm);
+                        if (hw) {
+                            E(", lsl #%d", hw*16);
+                        }
+                    }
+                } else if (op1 == 6) {
+                    // Bitfield
+                    static const char* strs[] = { "sbfm", "bfm", "ubfm", "error" };
+                    uint32_t immr = (inst >> 16u) & 0b111111;
+                    uint32_t imms = (inst >> 10u) & 0b111111;
+                    uint32_t rn   = (inst >> 5u) & 0x1F;
+                    uint32_t rd   = (inst >> 0u) & 0x1F;
+
+                    if (opc == 2 && immr == imms + 1) {
+                        // lsl
+                        int amt = (is_64bit ? 63 : 31) - imms;
+                        E("  lsl ");
+                        print_gpr(e, rd, is_64bit);
+                        E(", #%#x", amt);
+                    } else {
+                        E("  %s ", strs[opc]);
+                        print_gpr(e, rd, is_64bit);
+                        E(", ");
+                        print_gpr(e, rn, is_64bit);
+                        E(", #%#x, #%#x", immr, imms);
+                    }
+                } else {
+                    E("  DATA IMM ");
+                }
+                break;
+            }
+
+            // Data processing (register)
+            case 0b0101:
+            case 0b1101: {
+                uint32_t op0 = (inst >> 30u) & 1;
+                uint32_t op1 = (inst >> 28u) & 1;
+                uint32_t op2 = (inst >> 21u) & 0xF;
+                uint32_t rm   = (inst >> 16u) & 0x1F;
+                uint32_t rn   = (inst >> 5u) & 0x1F;
+                uint32_t rd   = (inst >> 0u) & 0x1F;
+
+                if (op0 == 0 && op1 == 1 && op2 == 0b0110) {
+                    // uint32_t S = (inst >> 29u) & 1;
+                    uint32_t opc  = (inst >> 10u) & 0x3F;
+
+                    if (opc == 2) {
+                        E("  udiv ");
+                    } else if (opc == 3) {
+                        E("  sdiv ");
+                    } else {
+                        E("ERROR ");
+                    }
+                    print_gpr(e, rd, is_64bit);
+                    E(", ");
+                    print_gpr(e, rn, is_64bit);
+                    E(", ");
+                    print_gpr(e, rm, is_64bit);
+                } else if (op1 == 0 && (op2 & 0b1001) == 0b1000) {
+                    uint32_t opc  = (inst >> 29u) & 3;
+                    uint32_t imm  = (inst >> 10u) & 0x3F;
+                    uint32_t sh   = (inst >> 22u) & 3;
+
+                    E("  %s ", dp_strs[opc]);
+                    print_gpr(e, rd, is_64bit);
+                    E(", ");
+                    print_gpr(e, rn, is_64bit);
+                    E(", ");
+                    print_gpr(e, rm, is_64bit);
+                    if (imm) {
+                        E(", %s #%#x", sh_strs[sh], imm);
+                    }
+                } else {
+                    E("  DATA REG ");
+                }
+                break;
+            }
+
+            // Branches, Exceptions, Syscalls
+            case 0b1010:
+            case 0b1011: {
+                uint32_t op0 = (inst >> 29u) & 0b111;
+                uint32_t op1 = (inst >> 12u) & 0b11111111111111;
+
+                if (op0 == 0b110 && op1 >> 13u) {
+                    // Unconditional
+                    //
+                    //    opc   op2    op3   op4
+                    //   0010 11111 000000 00000  RET
+                    uint32_t opc = (inst >> 21u) & 0xF;
+                    uint32_t op2 = (inst >> 16u) & 0x1F;
+                    uint32_t op3 = (inst >> 10u) & 0x1F;
+                    uint32_t rn  = (inst >>  5u) & 0x1F;
+                    uint32_t op4 = (inst >>  0u) & 0x1F;
+                    if (opc == 2 && op2 == 0x1F && op3 == 0 && op4 == 0) {
+                        if (rn == LR) { E("  ret"); }
+                        else  { E("  ret v%d", rn); }
+                    } else {
+                        tb_todo();
+                    }
+                } else {
+                    E("  BRANCH(op1=%#x) ", op1);
+                }
+                break;
+            }
+
+            default: tb_todo();
+        }
+        E("\n");
+    }
 }
 #undef E
+
+static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f) {
+    return 0;
+}
 
 ICodeGen tb__aarch64_codegen = {
     .minimum_addressable_size = 8,
     .pointer_size = 64,
     .emit_win64eh_unwind_info = NULL,
-    .emit_call_patches  = NULL,
+    .emit_call_patches  = emit_call_patches,
     .get_data_type_size = get_data_type_size,
     .compile_function   = compile_function,
 };
