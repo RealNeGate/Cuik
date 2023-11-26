@@ -55,6 +55,9 @@ typedef struct {
 // 100  28-26
 // op0  25-23
 #define DPI(op, op0) ((op << 30u) | (0b100 << 26u) | (op0 << 23u))
+
+#define DP3(op0, op1, op2) ((op0 << 30u) | (op1 << 28u) | (0b101 << 25u) | (op2 << 21u))
+
 static const DPInst inst_table[] = {
     //         register                     immediate
     [ADD]  = { DPR(0, 0, 0b1000, 0),        DPI(0, 0b010) },
@@ -65,7 +68,12 @@ static const DPInst inst_table[] = {
 };
 
 enum {
-    UBFM = DPI(0, 0b110) | (0b10 << 29u)
+    UBFM = DPI(0, 0b110) | (0b10 << 29u),
+
+    //                       op0
+    //                       V
+    MADD = 0b00011011000000000000000000000000,
+    MSUB = 0b00011011000000001000000000000000,
 };
 
 static void emit_ret(TB_CGEmitter* restrict e, GPR rn) {
@@ -75,6 +83,16 @@ static void emit_ret(TB_CGEmitter* restrict e, GPR rn) {
     // we only pass the link reg to it.
     uint32_t inst = 0b11010110010111110000000000000000;
     inst |= (rn & 0b11111) << 5u;
+    EMIT4(e, inst);
+}
+
+// OP Rd, Rn, Rm, Ra
+static void emit_dp3(TB_CGEmitter* restrict e, uint32_t inst, GPR d, GPR n, GPR m, GPR a, bool _64bit) {
+    inst |= (_64bit ? (1u << 31u) : 0);
+    inst |= (m & 0x1F) << 16u;
+    inst |= (a & 0x1F) << 10u;
+    inst |= (n & 0x1F) << 5u;
+    inst |= (d & 0x1F) << 0u;
     EMIT4(e, inst);
 }
 
@@ -101,8 +119,8 @@ static void emit_dp_imm(TB_CGEmitter* restrict e, DPOpcode op, GPR dst, GPR src,
     }
 
     inst |= (imm & 0xFFF) << 10u;
-    inst |= (src & 0b11111) << 5u;
-    inst |= (dst & 0b11111) << 0u;
+    inst |= (src & 0x1F) << 5u;
+    inst |= (dst & 0x1F) << 0u;
     EMIT4(e, inst);
 }
 

@@ -15,6 +15,9 @@ enum {
 
 #include "../codegen_impl.h"
 
+// true for 64bit
+static bool legalize_int(TB_DataType dt) { return dt.type == TB_PTR || (dt.type == TB_INT && dt.data > 32); }
+
 static bool try_for_imm12(int bits, TB_Node* n, int32_t* out_x) {
     if (n->type != TB_INTEGER_CONST) {
         return false;
@@ -40,6 +43,9 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->regalloc = tb__lsra;
 
     ctx->num_regs[0] = 32;
+
+    // x19 - x29 are callee saved
+    ctx->callee_saved[0] = ((1u << 10u) - 1) << 19u;
 }
 
 static RegMask in_reg_mask(Ctx* restrict ctx, Tile* tile, TB_Node* n, int i) {
@@ -93,6 +99,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_INTEGER_CONST:
         return REGMASK(GPR, ALL_GPRS);
 
+        case TB_MUL:
         case TB_UDIV:
         case TB_SDIV:
         tile_set_ins(ctx, dst, n, 1, n->input_count);
@@ -164,7 +171,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             }
 
             case TB_SDIV: {
-                bool is_64bit = false;
+                bool is_64bit = legalize_int(n->dt);
                 GPR dst = gpr_at(t->interval);
                 GPR lhs = gpr_at(t->ins[0].src);
                 GPR rhs = gpr_at(t->ins[1].src);
@@ -175,7 +182,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_SHL:
             case TB_SHR:
             case TB_SAR: {
-                bool is_64bit = false;
+                bool is_64bit = legalize_int(n->dt);
                 GPR dst = gpr_at(t->interval);
                 GPR lhs = gpr_at(t->ins[0].src);
                 if (t->tag == TILE_FOLDED_IMM) {
@@ -193,7 +200,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
 
             case TB_ADD:
             case TB_SUB: {
-                bool is_64bit = false;
+                bool is_64bit = legalize_int(n->dt);
                 GPR dst = gpr_at(t->interval);
                 GPR lhs = gpr_at(t->ins[0].src);
                 int op = n->type == TB_ADD ? ADD : SUB;
@@ -209,14 +216,35 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 break;
             }
 
+            case TB_MUL: {
+                GPR dst = gpr_at(t->interval);
+                GPR lhs = gpr_at(t->ins[0].src);
+                GPR rhs = gpr_at(t->ins[1].src);
+
+                emit_dp3(e, MADD, dst, lhs, rhs, ZR, legalize_int(n->dt));
+                break;
+            }
+
             default: tb_todo();
         }
     }
 }
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
+static void print_gpr_sp(TB_CGEmitter* e, int i, bool is_64bit) {
+    if (i == ZR) {
+        E("sp");
+    } else if (i == LR) {
+        E("lr");
+    } else {
+        E("%c%d", is_64bit["wx"], i);
+    }
+}
+
 static void print_gpr(TB_CGEmitter* e, int i, bool is_64bit) {
-    if (i == LR) {
+    if (i == ZR) {
+        E("zr");
+    } else if (i == LR) {
         E("lr");
     } else {
         E("%c%d", is_64bit["wx"], i);
@@ -304,9 +332,9 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
                 uint32_t op0 = (inst >> 30u) & 1;
                 uint32_t op1 = (inst >> 28u) & 1;
                 uint32_t op2 = (inst >> 21u) & 0xF;
-                uint32_t rm   = (inst >> 16u) & 0x1F;
-                uint32_t rn   = (inst >> 5u) & 0x1F;
-                uint32_t rd   = (inst >> 0u) & 0x1F;
+                uint32_t rm  = (inst >> 16u) & 0x1F;
+                uint32_t rn  = (inst >> 5u) & 0x1F;
+                uint32_t rd  = (inst >> 0u) & 0x1F;
 
                 if (op0 == 0 && op1 == 1 && op2 == 0b0110) {
                     // uint32_t S = (inst >> 29u) & 1;
@@ -338,6 +366,27 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
                     if (imm) {
                         E(", %s #%#x", sh_strs[sh], imm);
                     }
+                } else if (op1 == 1 && op2 >> 3) {
+                    // Data processing (3 source)
+                    uint32_t ra = (inst >> 10u) & 0x1F;
+
+                    if ((inst >> 29u) & 3) {
+                        E("ERROR");
+                    } else {
+                        uint32_t opc = (((inst >> 21u) & 7) << 1) | ((inst >> 15u) & 1);
+                        switch (opc) {
+                            case 0b0000: E("  madd "); break;
+                            case 0b0001: E("  msub "); break;
+                            default: tb_todo();
+                        }
+                    }
+                    print_gpr(e, rd, is_64bit);
+                    E(", ");
+                    print_gpr(e, rn, is_64bit);
+                    E(", ");
+                    print_gpr(e, rm, is_64bit);
+                    E(", ");
+                    print_gpr(e, ra, is_64bit);
                 } else {
                     E("  DATA REG ");
                 }
