@@ -202,10 +202,19 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_SHL:
         case TB_SHR:
         case TB_SAR: {
-            TileInput* ins = tile_set_ins(ctx, dst, n, 1, 3);
-            ins[0].mask = REGMASK(GPR, ALL_GPRS_NO_RCX);
-            ins[1].mask = REGMASK(GPR, 1 << RCX);
-            return REGMASK(GPR, ALL_GPRS);
+            int32_t x;
+            if (try_for_imm32(n->inputs[2]->dt.data, n->inputs[2], &x) && x >= 0 && x < 64) {
+                fold_node(ctx, n->inputs[2]);
+
+                tile_broadcast_ins(ctx, dst, n, 1, 2, REGMASK(GPR, ALL_GPRS));
+                dst->tag = TILE_FOLDED_IMM;
+                return REGMASK(GPR, ALL_GPRS);
+            } else {
+                TileInput* ins = tile_set_ins(ctx, dst, n, 1, 3);
+                ins[0].mask = REGMASK(GPR, ALL_GPRS_NO_RCX);
+                ins[1].mask = REGMASK(GPR, 1 << RCX);
+                return REGMASK(GPR, ALL_GPRS);
+            }
         }
 
         case TB_UDIV:
@@ -484,8 +493,16 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     default: tb_todo();
                 }
 
-                Val rcx = val_gpr(RCX);
-                inst2(e, op, &dst, &rcx, TB_X86_TYPE_DWORD);
+                if (t->tag == TILE_FOLDED_IMM) {
+                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
+                    TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
+
+                    Val rhs = val_imm(i->value);
+                    inst2(e, op, &dst, &rhs, dt);
+                } else {
+                    Val rcx = val_gpr(RCX);
+                    inst2(e, op, &dst, &rcx, TB_X86_TYPE_DWORD);
+                }
                 break;
             }
             case TB_UDIV:
