@@ -45,7 +45,10 @@ static void move_to_active(LSRA* restrict ra, LiveInterval* interval);
 
 static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
 static const char* XMM_NAMES[] = { "XMM0", "XMM1", "XMM2", "XMM3", "XMM4", "XMM5", "XMM6", "XMM7", "XMM8",  "XMM9", "XMM10", "XMM11", "XMM12", "XMM13", "XMM14", "XMM15" };
+
+// static const char* GPR_NAMES[] = { "X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8",  "X9", "X10", "X11", "X12", "X13", "X14", "X15" };
 static const char* reg_name(int rg, int num) {
+    // return GPR_NAMES[num];
     return (rg == 1 ? XMM_NAMES : GPR_NAMES)[num];
 }
 
@@ -107,6 +110,7 @@ LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* 
     *interval = (LiveInterval){
         .id = ctx->interval_count++,
         .mask = mask,
+        .hint = -1,
         .reg = -1,
         .assigned = -1,
         .range_cap = 2, .range_count = 1,
@@ -116,11 +120,31 @@ LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* 
     return interval;
 }
 
+static Tile* tile_at_time(LSRA* restrict ra, int t) {
+    // find which BB
+    MachineBB* mbb = NULL;
+    FOREACH_N(i, 0, ra->ctx->bb_count) {
+        mbb = &ra->ctx->machine_bbs[i];
+        if (t <= mbb->end->time) break;
+    }
+
+    Tile* curr = mbb->start;
+    while (curr != NULL) {
+        if (curr->time > t) {
+            return curr;
+        }
+        curr = curr->next;
+    }
+
+    return NULL;
+}
+
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     LSRA ra = { .ctx = ctx, .arena = arena };
 
     // build intervals from dataflow
     CUIK_TIMED_BLOCK("build intervals") {
+        Set visited = set_create_in_arena(arena, ctx->interval_count);
         FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
             MachineBB* mbb = &ctx->machine_bbs[i];
 
@@ -141,27 +165,31 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             for (Tile* t = mbb->end; t; t = t->prev) {
                 LiveInterval* interval = t->interval;
-                if (interval == NULL) {
-                    continue;
-                }
 
                 int time = t->time;
-                interval->n = t->n;
+                if (interval != NULL) {
+                    // mark output
+                    if (interval->mask.mask) {
+                        int class = interval->mask.class;
+                        int reg = fixed_reg_mask(interval->mask.mask);
 
-                // mark output
-                if (interval->mask.mask) {
-                    int class = interval->mask.class;
-                    int reg = fixed_reg_mask(interval->mask.mask);
-                    dyn_array_put(ra.unhandled, interval);
+                        if (!set_get(&visited, interval->id)) {
+                            set_put(&visited, interval->id);
+                            dyn_array_put(ra.unhandled, interval);
+                        }
 
-                    if (interval->range_count == 1) {
-                        add_range(interval, time, time);
-                    } else {
-                        interval->ranges[interval->range_count - 1].start = time;
+                        if (interval->range_count == 1) {
+                            add_range(interval, time, time);
+                        } else {
+                            interval->ranges[interval->range_count - 1].start = time;
+                        }
                     }
                 }
 
+                int use_time = time;
+
                 // mark inputs
+                int space = 0;
                 FOREACH_N(j, 0, t->in_count) {
                     LiveInterval* in_def = t->ins[j].src;
                     RegMask in_def_mask = in_def->mask;
@@ -173,7 +201,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     // if the use mask is more constrained than the def, we'll make a temporary
                     if ((in_def_mask.mask & in_mask.mask) != in_def->mask.mask) {
                         assert(in_def->mask.class == in_mask.class);
-                        printf("  TEMP v%d (%#04llx) -> v%d (%#04llx)\n", interval->id, in_def_mask.mask, in_def->id, in_mask.mask);
+                        printf("  TEMP %#04llx -> v%d (%#04llx)\n", in_def_mask.mask, in_def->id, in_mask.mask);
 
                         // construct copy (either to a fixed interval or a new masked interval)
                         Tile* tmp = TB_ARENA_ALLOC(arena, Tile);
@@ -181,7 +209,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                             .prev = t->prev,
                             .next = t,
                             .tag = TILE_SPILL_MOVE,
-                            .time = t->time - 1,
+                            .time = time,
                         };
                         tmp->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
                         tmp->in_count = 1;
@@ -194,11 +222,11 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         tmp->interval = gimme_interval_for_mask(ctx, arena, &ra, in_mask);
                         t->ins[j].src = tmp->interval;
 
-                        add_range(tmp->interval, bb_start, time);
-                        add_use_pos(tmp->interval, time, USE_REG);
+                        add_range(tmp->interval, bb_start, use_time);
+                        add_use_pos(tmp->interval, use_time, USE_REG);
                     } else {
-                        add_range(in_def, bb_start, time);
-                        add_use_pos(in_def, time, USE_REG);
+                        add_range(in_def, bb_start, use_time);
+                        add_use_pos(in_def, use_time, USE_REG);
                     }
                 }
 
@@ -263,8 +291,8 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             assert(time != INT_MAX);
             REG_ALLOC_LOG {
                 printf("  # v%-4d t=[%-4d - %4d) [%#04llx]    ", interval->id, time, end, interval->mask.mask);
-                if (interval->n) {
-                    print_node_sexpr(interval->n, 0);
+                if (interval->tile && interval->tile->n) {
+                    print_node_sexpr(interval->tile->n, 0);
                 }
                 printf("\n");
             }
@@ -342,7 +370,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     // for each inactive which intersects current
     dyn_array_for(i, ra->inactive) {
         LiveInterval* other = ra->inactive[i];
-        int fp = ra->free_pos[interval->assigned];
+        int fp = ra->free_pos[other->assigned];
         if (fp > 0) {
             int p = interval_intersect(interval, other);
             if (p >= 0 && p < fp) {
@@ -371,11 +399,11 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
         // alloc failure, split
         int reg = fixed_reg_mask(interval->mask.mask);
         if (reg >= 0) {
-            // split whatever is using the interval right now
             assert(set_get(&ra->active_set[interval->mask.class], reg));
             LiveInterval* active_user = ra->active[interval->mask.class][reg];
-
             set_remove(&ra->active_set[interval->mask.class], reg);
+
+            // split whatever is using the interval right now
             split_intersecting(ra, interval_start(interval) - 1, active_user, true);
             return reg;
         } else {
@@ -447,7 +475,7 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
     MachineBB* mbb = NULL;
     FOREACH_N(i, 0, ra->ctx->bb_count) {
         mbb = &ra->ctx->machine_bbs[i];
-        if (t > mbb->start->time) break;
+        if (t <= mbb->end->time) break;
     }
 
     Tile *prev = NULL, *curr = mbb->start;
@@ -470,8 +498,13 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
     move->in_count = 1;
     move->ins[0].src  = old_it;
     move->ins[0].mask = old_it->mask;
-    prev->next->prev = move;
-    prev->next = move;
+    if (prev->next == NULL) {
+        prev->next = move;
+        mbb->end = move;
+    } else {
+        prev->next->prev = move;
+        prev->next = move;
+    }
 }
 
 static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, bool is_spill) {
@@ -491,10 +524,10 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
             ra->spills[interval->id] = sp_offset = ra->stack_usage;
         }
 
-        REG_ALLOC_LOG printf("  \x1b[33m#   v%d: spill %s to [SP - %d] at t=%d\x1b[0m\n", interval->id, reg_name(rc, interval->assigned), sp_offset, pos);
+        REG_ALLOC_LOG printf("  \x1b[33m#   v%d: spill %s to [SP + %d] at t=%d\x1b[0m\n", interval->id, reg_name(rc, interval->assigned), sp_offset, pos);
     } else {
         assert(sp_offset != 0);
-        REG_ALLOC_LOG printf("  \x1b[33m#   v%d: reload [SP - %d] at t=%d\x1b[0m\n", interval->id, sp_offset, pos);
+        REG_ALLOC_LOG printf("  \x1b[33m#   v%d: reload [SP + %d] at t=%d\x1b[0m\n", interval->id, sp_offset, pos);
     }
 
     // split lifetime

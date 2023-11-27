@@ -81,8 +81,7 @@ typedef enum {
     // used by regalloc to rematerialize immediates
     TILE_RELOAD_IMM,
     // place all target-dependent tiles here:
-    //   OP reg, imm
-    TILE_FOLDED_IMM,
+    TILE_TARGET_DEP,
 } TileTag;
 
 typedef struct Tile Tile;
@@ -98,7 +97,7 @@ struct LiveInterval {
     int active_range;
 
     RegMask mask;
-    TB_Node* n;
+    Tile* tile;
 
     int8_t reg;
     int8_t assigned;

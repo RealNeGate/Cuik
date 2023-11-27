@@ -39,6 +39,7 @@ static TargetOption target_options[] = {
     { "x64_macos_gnu",            cuik_target_x64,       CUIK_SYSTEM_MACOS,       CUIK_ENV_GNU,  cuik_toolchain_darwin },
     { "x64_linux_gnu",            cuik_target_x64,       CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
     { "aarch64_windows_msvc",     cuik_target_aarch64,   CUIK_SYSTEM_WINDOWS,     CUIK_ENV_MSVC, cuik_toolchain_msvc   },
+    { "aarch64_linux_gnu",        cuik_target_aarch64,   CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 

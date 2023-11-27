@@ -99,29 +99,18 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     }
 
     // if LOAD has already been safely accessed we can relax our control dependency
-    /*if (n->inputs[0] != NULL && n->inputs[0]->type != TB_DEAD) {
-        TB_Node* parent_bb = get_block_begin(n->inputs[0]);
-        for (User* u = addr->users; u; u = u->next) {
-            TB_Node* use = u->n;
-            if (use != n && use->type == TB_LOAD && u->slot == 2) {
-                // if the other load has no control deps we don't need any
-                // either... if they're the same type (really it just needs
-                // to read the same bytes or less)
-                if (use->dt.raw == n->dt.raw) {
-                    set_input(p, n, NULL, 0);
-                    return n;
-                }
+    if (n->inputs[0] != NULL) {
+        TB_Node* ctrl = n->inputs[0];
 
-                // if we're dominated by some previous load then we can inherit
-                // it's control dep.
-                TB_Node* bb = get_block_begin(use->inputs[0]);
-                if (lattice_dommy(&p->universe, bb, parent_bb)) {
-                    set_input(p, n, use->inputs[0], 0);
-                    return n;
-                }
-            }
+        // hacky but we'll remove the control edge to see if there's a variant like that around
+        n->inputs[0] = NULL;
+        TB_Node* k = nl_hashset_get2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
+        n->inputs[0] = ctrl;
+
+        if (k && k != n) {
+            return k;
         }
-    }*/
+    }
 
     return NULL;
 }

@@ -2,16 +2,16 @@
 #include <common.h>
 #include <log.h>
 
-static int dummy;
-
 static void add_libraries(void* ctx, bool nocrt, Cuik_Linker* l) {
 }
 
 static void set_preprocessor(void* ctx, bool nocrt, Cuik_CPP* cpp) {
-    cuikpp_add_include_directory(cpp, true, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
-    cuikpp_add_include_directory(cpp, true, "/usr/include/x86_64-linux-gnu/");
-    cuikpp_add_include_directory(cpp, true, "/usr/local/include/");
-    cuikpp_add_include_directory(cpp, true, "/usr/include/");
+    if (!nocrt) {
+        cuikpp_add_include_directory(cpp, true, "/usr/lib/gcc/x86_64-linux-gnu/9/include/");
+        cuikpp_add_include_directory(cpp, true, "/usr/include/x86_64-linux-gnu/");
+        cuikpp_add_include_directory(cpp, true, "/usr/local/include/");
+        cuikpp_add_include_directory(cpp, true, "/usr/include/");
+    }
 
     // things we don't handle yet so we just remove them
     cuikpp_define_empty_cstr(cpp, "__THROWNL");
@@ -39,8 +39,6 @@ static void set_preprocessor(void* ctx, bool nocrt, Cuik_CPP* cpp) {
     cuikpp_define_cstr(cpp, "__STDC_VERSION__", "201112L");
     cuikpp_define_cstr(cpp, "__STDC__", "1");
     cuikpp_define_cstr(cpp, "__alignof__", "_Alignof");
-    cuikpp_define_cstr(cpp, "__amd64", "1");
-    cuikpp_define_cstr(cpp, "__amd64__", "1");
     cuikpp_define_cstr(cpp, "__const__", "const");
     cuikpp_define_cstr(cpp, "__gnu_linux__", "1");
     cuikpp_define_cstr(cpp, "__inline__", "inline");

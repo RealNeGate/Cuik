@@ -15,6 +15,11 @@ enum {
 
 #include "../codegen_impl.h"
 
+enum {
+    //   OP reg, imm
+    TILE_FOLDED_IMM = TILE_TARGET_DEP
+};
+
 // true for 64bit
 static bool legalize_int(TB_DataType dt) { return dt.type == TB_PTR || (dt.type == TB_INT && dt.data > 32); }
 
@@ -48,41 +53,22 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->callee_saved[0] = ((1u << 10u) - 1) << 19u;
 }
 
-static RegMask in_reg_mask(Ctx* restrict ctx, Tile* tile, TB_Node* n, int i) {
-    switch (n->type) {
-        case TB_END: {
-            if (i == 3)      return REGMASK(GPR, 1 << X0);
-            else if (i == 4) return REGMASK(GPR, 1 << X1);
-            else return REGEMPTY;
-        }
-
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
-        case TB_MUL:
-        case TB_SHL:
-        case TB_SHR:
-        case TB_SAR:
-        case TB_UDIV:
-        case TB_SDIV:
-        return REGMASK(GPR, ALL_GPRS);
-
-        default:
-        tb_todo();
-    }
-}
-
 static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     switch (n->type) {
         // no inputs
         case TB_START:
         return REGEMPTY;
 
-        case TB_END:
-        tile_set_ins(ctx, dst, n, 3, n->input_count);
-        return REGEMPTY;
+        case TB_END: {
+            TileInput* ins = tile_set_ins(ctx, dst, n, 3, n->input_count);
+            int rets = n->input_count - 3;
+
+            assert(rets <= 2 && "At most 2 return values :(");
+            FOREACH_N(i, 0, rets) {
+                ins[i].mask = REGMASK(GPR, 1 << i);
+            }
+            return REGEMPTY;
+        }
 
         case TB_PROJ:
         int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
@@ -102,7 +88,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_MUL:
         case TB_UDIV:
         case TB_SDIV:
-        tile_set_ins(ctx, dst, n, 1, n->input_count);
+        tile_broadcast_ins(ctx, dst, n, 1, n->input_count, REGMASK(GPR, ALL_GPRS));
         return REGMASK(GPR, ALL_GPRS);
 
         // binary ops
@@ -113,10 +99,10 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             int32_t x;
             if (try_for_imm12(n->dt.data, n->inputs[2], &x)) {
                 fold_node(ctx, n->inputs[2]);
-                tile_set_ins(ctx, dst, n, 1, 2);
+                tile_broadcast_ins(ctx, dst, n, 1, 2, REGMASK(GPR, ALL_GPRS));
                 dst->tag = TILE_FOLDED_IMM;
             } else {
-                tile_set_ins(ctx, dst, n, 1, n->input_count);
+                tile_broadcast_ins(ctx, dst, n, 1, n->input_count, REGMASK(GPR, ALL_GPRS));
             }
             return REGMASK(GPR, ALL_GPRS);
         }
@@ -130,10 +116,14 @@ static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASS
     return false;
 }
 
-static GPR gpr_at(LiveInterval* l) { return l->assigned; }
+static GPR gpr_at(LiveInterval* l) { assert(!l->is_spill); return l->assigned; }
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
     if (t->tag == TILE_SPILL_MOVE) {
-        tb_todo();
+        GPR dst = gpr_at(t->interval);
+        GPR src = gpr_at(t->ins[0].src);
+        if (dst != src) {
+            emit_mov(e, dst, src, true);
+        }
     } else if (t->tag == TILE_NORMAL || t->tag == TILE_GOTO || t->tag >= TILE_FOLDED_IMM) {
         TB_Node* n = t->n;
         switch (n->type) {
@@ -228,6 +218,9 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             default: tb_todo();
         }
     }
+}
+
+static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
 }
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
