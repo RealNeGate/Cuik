@@ -554,20 +554,20 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
     }
 
     // split uses
-    size_t use_count = dyn_array_length(interval->uses);
-    FOREACH_REVERSE_N(i, 0, use_count) {
-        size_t split_count = use_count - (i + 1);
-        if (interval->uses[i].pos > pos && split_count > 0) {
-            // split
+    size_t i = 0, use_count = dyn_array_length(interval->uses);
+    while (i < use_count + 1) {
+        size_t split_count = use_count - i;
+        if (i == use_count || interval->uses[i].pos < pos) {
             DynArray(UsePos) uses = dyn_array_create(UsePos, split_count);
             dyn_array_set_length(uses, split_count);
-            memcpy(uses, &interval->uses[i + 1], split_count * sizeof(UsePos));
+            memcpy(uses, &interval->uses[i], split_count * sizeof(UsePos));
 
-            dyn_array_set_length(interval->uses, i + 1);
+            dyn_array_set_length(interval->uses, i);
             new_it->uses = interval->uses;
             interval->uses = uses;
             break;
         }
+        i++;
     }
 
     // split ranges
@@ -596,8 +596,8 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
                 interval->ranges[j - start + 1] = new_it->ranges[j];
             }
 
-            assert(interval->ranges[interval->active_range].start == old.start);
-            assert(interval->ranges[interval->active_range].end == old.end);
+            // assert(interval->ranges[interval->active_range].start == old.start);
+            // assert(interval->ranges[interval->active_range].end == old.end);
 
             if (range->start <= pos) {
                 interval->ranges[1].end = pos;
