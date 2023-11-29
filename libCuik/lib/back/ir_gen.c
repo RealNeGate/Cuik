@@ -1737,51 +1737,59 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
         case STMT_IF: {
             IRVal cond = irgen_expr(tu, func, s->if_.cond);
 
-            TB_Node *if_true, *if_false, *exit;
+            TB_Trace merge;
+            TB_Node* paths[2]; // 0=true, 1=false
             if (cond.value_type == RVALUE_PHI) {
-                exit = cond.phi.merger;
-                if_true = cond.phi.if_true;
-                if_false = cond.phi.if_false;
+                merge = tb_inst_trace_from_region(func, cond.phi.merger);
+                paths[0] = cond.phi.if_true;
+                paths[1] = cond.phi.if_false;
             } else {
-                exit = tb_inst_region(func);
-                if_true = tb_inst_region(func);
-
-                // if there's no else case, then false is just exit
-                if_false = s->if_.next ? tb_inst_region(func) : exit;
-
-                #if 0 // #ifndef NDEBUG
-                tb_inst_set_region_name(func, if_true,  -1, "if.true");
-                tb_inst_set_region_name(func, if_false, -1, "if.false");
-                #endif
-
-                // Cast to bool
-                tb_inst_if(func, cvt2rval(tu, func, &cond), if_true, if_false);
+                merge = tb_inst_new_trace(func);
+                tb_inst_if2(func, cvt2rval(tu, func, &cond), paths);
             }
 
-            tb_inst_set_control(func, if_true);
-            irgen_stmt(tu, func, s->if_.body);
+            TB_Trace split = tb_inst_get_trace(func);
 
-            if (s->if_.next) {
-                if (tb_inst_get_control(func) != NULL) {
-                    tb_inst_goto(func, exit);
+            // true path
+            {
+                split.bot_ctrl = paths[0];
+                if (cond.value_type == RVALUE_PHI) {
+                    assert(paths[0]->type == TB_REGION);
+                    split.mem = tb_inst_region_mem_in(func, paths[0]);
                 }
+                tb_inst_set_trace(func, split);
 
-                tb_inst_set_control(func, if_false);
-                irgen_stmt(tu, func, s->if_.next);
-
-                // if there's no control here, then we can't fallthrough
+                irgen_stmt(tu, func, s->if_.body);
                 if (tb_inst_get_control(func) != NULL) {
-                    tb_inst_goto(func, exit);
+                    tb_inst_goto(func, merge.top_ctrl);
                 }
-            } else if (exit != if_false) {
-                fallthrough_label(func, if_false);
             }
-            fallthrough_label(func, exit);
+
+            // false path
+            {
+                split.bot_ctrl = paths[1];
+                if (cond.value_type == RVALUE_PHI) {
+                    assert(paths[1]->type == TB_REGION);
+                    split.mem = tb_inst_region_mem_in(func, paths[1]);
+                }
+                tb_inst_set_trace(func, split);
+
+                if (s->if_.next) {
+                    irgen_stmt(tu, func, s->if_.next);
+                }
+
+                if (tb_inst_get_control(func) != NULL) {
+                    tb_inst_goto(func, merge.top_ctrl);
+                }
+            }
+
+            if (merge.top_ctrl->input_count > 0) {
+                tb_inst_set_trace(func, merge);
+            }
             break;
         }
         case STMT_WHILE: {
             TB_Node* header = tb_inst_region(func);
-            TB_Node* body = tb_inst_region(func);
             TB_Node* exit = tb_inst_region(func);
 
             s->backing.loop[0] = header;
@@ -1790,15 +1798,31 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
             emit_location(tu, func, get_root_subexpr(s->while_.cond)->loc.start);
             TB_Node* cond = irgen_as_rvalue(tu, func, s->while_.cond);
-            tb_inst_if(func, cond, body, exit);
 
-            tb_inst_set_control(func, body);
-            if (s->while_.body) {
-                emit_location(tu, func, s->while_.body->loc.start);
-                irgen_stmt(tu, func, s->while_.body);
+            TB_Node* paths[2];
+            tb_inst_if2(func, cond, paths);
+
+            TB_Trace trace = tb_inst_get_trace(func);
+
+            // compile body
+            {
+                trace.bot_ctrl = paths[0];
+                tb_inst_set_trace(func, trace);
+                if (s->while_.body) {
+                    emit_location(tu, func, s->while_.body->loc.start);
+                    irgen_stmt(tu, func, s->while_.body);
+                }
+
+                // continue edge
+                if (tb_inst_get_control(func) != NULL) {
+                    tb_inst_goto(func, header);
+                }
             }
 
-            fallthrough_label(func, header);
+            trace.bot_ctrl = paths[1];
+            tb_inst_set_trace(func, trace);
+            tb_inst_goto(func, exit);
+
             tb_inst_set_control(func, exit);
             break;
         }

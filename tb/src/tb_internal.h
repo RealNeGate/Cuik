@@ -297,7 +297,8 @@ struct TB_Function {
     DynArray(TB_Node*) terminators;
 
     // IR building
-    TB_Node* active_control_node;
+    TB_Trace trace;
+
     TB_NodeSafepoint exit_attrib;
     TB_NodeSafepoint line_attrib;
 

@@ -126,6 +126,26 @@ static LiveInterval* tile_make_interval(Ctx* restrict ctx, TB_Arena* arena, Live
     return interval;
 }
 
+static int try_init_stack_slot(Ctx* restrict ctx, TB_Node* n) {
+    if (n->type == TB_LOCAL) {
+        TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
+        ptrdiff_t search = nl_map_get(ctx->stack_slots, n);
+        if (search >= 0) {
+            return ctx->stack_slots[search].v;
+        } else {
+            ctx->stack_usage = align_up(ctx->stack_usage + local->size, local->align);
+            nl_map_put(ctx->stack_slots, n, ctx->stack_usage);
+            return ctx->stack_usage;
+        }
+    } else {
+        return 0;
+    }
+}
+
+static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
+    return nl_map_get_checked(ctx->stack_slots, n);
+}
+
 static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm) {
     verify_tmp_arena(p);
 

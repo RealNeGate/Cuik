@@ -113,7 +113,7 @@ LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* 
         .hint = -1,
         .reg = -1,
         .assigned = -1,
-        .range_cap = 2, .range_count = 1,
+        .range_cap = 4, .range_count = 1,
         .ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange))
     };
     interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
@@ -140,7 +140,7 @@ static Tile* tile_at_time(LSRA* restrict ra, int t) {
 }
 
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
-    LSRA ra = { .ctx = ctx, .arena = arena };
+    LSRA ra = { .ctx = ctx, .arena = arena, .stack_usage = ctx->stack_usage };
 
     // build intervals from dataflow
     CUIK_TIMED_BLOCK("build intervals") {
@@ -269,7 +269,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         ra.block_pos = TB_ARENA_ARR_ALLOC(tmp_arena, max_regs_in_class, int);
     }
 
-    ra.spills = TB_ARENA_ALLOC(arena, ctx->interval_count * sizeof(int));
+    ra.spills = tb_arena_alloc(arena, ctx->interval_count * sizeof(int));
     FOREACH_N(i, 0, ctx->interval_count) {
         ra.spills[i] = 0;
     }

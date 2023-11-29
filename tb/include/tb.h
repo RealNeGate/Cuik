@@ -646,8 +646,8 @@ typedef struct {
     // magic factor for hot-code, higher means run more often
     float freq;
 
-    // used for IR building only, stale after that.
-    TB_Node *mem_in, *mem_out;
+    // used for IR building
+    TB_Node *mem_in;
 } TB_NodeRegion;
 
 typedef struct {
@@ -1086,17 +1086,9 @@ TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 TB_API void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p, TB_Arena* arena);
 TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
-TB_API void tb_inst_set_control(TB_Function* f, TB_Node* control);
-TB_API TB_Node* tb_inst_get_control(TB_Function* f);
-
-TB_API TB_Node* tb_inst_region(TB_Function* f);
-
 // if len is -1, it's null terminated
 TB_API void tb_inst_set_region_name(TB_Function* f, TB_Node* n, ptrdiff_t len, const char* name);
 
-TB_API void tb_inst_unreachable(TB_Function* f);
-TB_API void tb_inst_debugbreak(TB_Function* f);
-TB_API void tb_inst_trap(TB_Function* f);
 TB_API TB_Node* tb_inst_poison(TB_Function* f, TB_DataType dt);
 
 TB_API TB_Node* tb_inst_param(TB_Function* f, int param_id);
@@ -1231,6 +1223,33 @@ TB_API TB_Node* tb_inst_x86_sqrt(TB_Function* f, TB_Node* a);
 TB_API TB_Node* tb_inst_x86_rsqrt(TB_Function* f, TB_Node* a);
 
 // Control flow
+//   trace is a single-entry piece of IR.
+typedef struct {
+    TB_Node* top_ctrl;
+    TB_Node* bot_ctrl;
+
+    // latest memory effect, for now there's
+    // only one stream going at a time but that'll
+    // have to change for some of the interesting
+    // langs later.
+    TB_Node* mem;
+} TB_Trace;
+
+// Old-style uses regions for all control flow similar to how people use basic blocks
+TB_API TB_Node* tb_inst_region(TB_Function* f);
+TB_API void tb_inst_set_control(TB_Function* f, TB_Node* region);
+TB_API TB_Node* tb_inst_get_control(TB_Function* f);
+
+// But since regions aren't basic blocks (they only guarentee single entry, not single exit)
+// the new-style is built for that.
+TB_API TB_Trace tb_inst_new_trace(TB_Function* f);
+TB_API void tb_inst_set_trace(TB_Function* f, TB_Trace trace);
+TB_API TB_Trace tb_inst_get_trace(TB_Function* f);
+
+// only works on regions which haven't been constructed yet
+TB_API TB_Trace tb_inst_trace_from_region(TB_Function* f, TB_Node* region);
+TB_API TB_Node* tb_inst_region_mem_in(TB_Function* f, TB_Node* region);
+
 TB_API TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params);
 TB_API TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params);
 TB_API void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params);
@@ -1244,6 +1263,13 @@ TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Nod
 TB_API void tb_inst_goto(TB_Function* f, TB_Node* target);
 TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* true_case, TB_Node* false_case);
 TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_case, size_t entry_count, const TB_SwitchEntry* keys);
+TB_API void tb_inst_unreachable(TB_Function* f);
+TB_API void tb_inst_debugbreak(TB_Function* f);
+TB_API void tb_inst_trap(TB_Function* f);
+
+// revised API for if, this one returns the control projections such that a target is not necessary while building
+//   projs[0] is the true case, projs[1] is false.
+TB_API void tb_inst_if2(TB_Function* f, TB_Node* cond, TB_Node* projs[2]);
 
 TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 

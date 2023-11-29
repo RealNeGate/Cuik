@@ -17,7 +17,7 @@ enum {
 
 enum {
     //   OP reg, imm
-    TILE_FOLDED_IMM = TILE_TARGET_DEP
+    TILE_HAS_IMM = 1
 };
 
 // true for 64bit
@@ -100,7 +100,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             if (try_for_imm12(n->dt.data, n->inputs[2], &x)) {
                 fold_node(ctx, n->inputs[2]);
                 tile_broadcast_ins(ctx, dst, n, 1, 2, REGMASK(GPR, ALL_GPRS));
-                dst->tag = TILE_FOLDED_IMM;
+                dst->flags |= TILE_HAS_IMM;
             } else {
                 tile_broadcast_ins(ctx, dst, n, 1, n->input_count, REGMASK(GPR, ALL_GPRS));
             }
@@ -124,7 +124,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
         if (dst != src) {
             emit_mov(e, dst, src, true);
         }
-    } else if (t->tag == TILE_NORMAL || t->tag == TILE_GOTO || t->tag >= TILE_FOLDED_IMM) {
+    } else {
         TB_Node* n = t->n;
         switch (n->type) {
             // projections don't manage their own work, that's the
@@ -175,7 +175,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 bool is_64bit = legalize_int(n->dt);
                 GPR dst = gpr_at(t->interval);
                 GPR lhs = gpr_at(t->ins[0].src);
-                if (t->tag == TILE_FOLDED_IMM) {
+                if (t->flags & TILE_HAS_IMM) {
                     assert(n->inputs[2]->type == TB_INTEGER_CONST);
                     TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
 
@@ -195,7 +195,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 GPR lhs = gpr_at(t->ins[0].src);
                 int op = n->type == TB_ADD ? ADD : SUB;
 
-                if (t->tag == TILE_FOLDED_IMM) {
+                if (t->flags & TILE_HAS_IMM) {
                     assert(n->inputs[2]->type == TB_INTEGER_CONST);
                     TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
                     emit_dp_imm(e, op, dst, lhs, i->value, 0, is_64bit);

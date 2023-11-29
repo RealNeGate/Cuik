@@ -6,6 +6,33 @@
 // the machine code output or later analysis stages.
 #include "tb_internal.h"
 
+TB_API void tb_inst_set_trace(TB_Function* f, TB_Trace trace) { f->trace = trace; }
+TB_API TB_Trace tb_inst_get_trace(TB_Function* f) { return f->trace; }
+TB_Node* tb_inst_get_control(TB_Function* f) { return f->trace.bot_ctrl; }
+
+TB_Node* transfer_ctrl(TB_Function* f, TB_Node* n) {
+    TB_Node* prev = f->trace.bot_ctrl;
+    f->trace.bot_ctrl = n;
+    return prev;
+}
+
+void tb_inst_set_control(TB_Function* f, TB_Node* control) {
+    assert(control->type == TB_REGION);
+    f->trace.top_ctrl = control;
+    f->trace.bot_ctrl = control;
+    f->trace.mem = TB_NODE_GET_EXTRA_T(control, TB_NodeRegion)->mem_in;
+}
+
+TB_Node* tb_inst_region_mem_in(TB_Function* f, TB_Node* region) {
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(region);
+    return r->mem_in;
+}
+
+TB_Trace tb_inst_trace_from_region(TB_Function* f, TB_Node* region) {
+    TB_NodeRegion* r = TB_NODE_GET_EXTRA(region);
+    return (TB_Trace){ region, region, r->mem_in };
+}
+
 static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rpc);
 
 static void append_attrib(TB_Function* f, TB_Node* n, TB_Attrib a) {
@@ -19,21 +46,13 @@ static void append_attrib(TB_Function* f, TB_Node* n, TB_Attrib a) {
     }
 }
 
+static TB_Node* peek_mem(TB_Function* f) { return f->trace.mem; }
+
 // adds memory effect to region
 static TB_Node* append_mem(TB_Function* f, TB_Node* new_mem) {
-    TB_Node* bb = tb_get_parent_region(f->active_control_node);
-    TB_NodeRegion* r = TB_NODE_GET_EXTRA(bb);
-
-    TB_Node* old_mem = r->mem_out;
-    assert(old_mem != NULL && "how?");
-
-    r->mem_out = new_mem;
-    return old_mem;
-}
-
-static TB_Node* peek_mem(TB_Function* f, TB_Node* ctrl) {
-    TB_NodeRegion* r = TB_NODE_GET_EXTRA(tb_get_parent_region(ctrl));
-    return r->mem_out;
+    TB_Node* old = f->trace.mem;
+    f->trace.mem = new_mem;
+    return old;
 }
 
 TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int index) {
@@ -65,16 +84,15 @@ void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent) {
 }
 
 void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
-    TB_Node* m = peek_mem(f, f->active_control_node);
-    if (f->active_control_node->type == TB_SAFEPOINT_NOP && f->active_control_node->inputs[1] == m) {
-        TB_NODE_SET_EXTRA(f->active_control_node, TB_NodeSafepoint, file, line, column);
+    TB_Node* m = peek_mem(f);
+    if (f->trace.bot_ctrl->type == TB_SAFEPOINT_NOP && f->trace.bot_ctrl->inputs[1] == m) {
+        TB_NODE_SET_EXTRA(f->trace.bot_ctrl, TB_NodeSafepoint, file, line, column);
     } else {
         // we don't need any other inputs just yet
         TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_NOP, TB_TYPE_CONTROL, 2, sizeof(TB_NodeSafepoint));
-        n->inputs[0] = f->active_control_node;
+        n->inputs[0] = transfer_ctrl(f, n);
         n->inputs[1] = m;
         TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, file, line, column);
-        f->active_control_node = n;
     }
 }
 
@@ -209,31 +227,20 @@ void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t*
     code_gen->get_data_type_size(dt, size, align);
 }
 
-void tb_inst_set_control(TB_Function* f, TB_Node* control) {
-    f->active_control_node = control;
-}
-
-TB_Node* tb_inst_get_control(TB_Function* f) {
-    return f->active_control_node;
-}
-
 void tb_inst_unreachable(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 1, 0);
-    n->inputs[0] = f->active_control_node;
-    f->active_control_node = NULL;
+    n->inputs[0] = transfer_ctrl(f, n);
     dyn_array_put(f->terminators, n);
 }
 
 void tb_inst_debugbreak(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_DEBUGBREAK, TB_TYPE_CONTROL, 1, 0);
-    n->inputs[0] = f->active_control_node;
-    f->active_control_node = n;
+    n->inputs[0] = transfer_ctrl(f, n);
 }
 
 void tb_inst_trap(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_CONTROL, 1, 0);
-    n->inputs[0] = f->active_control_node;
-    f->active_control_node = NULL;
+    n->inputs[0] = transfer_ctrl(f, NULL);
     dyn_array_put(f->terminators, n);
 }
 
@@ -243,29 +250,27 @@ TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment
 
     // insert in the entry block
     TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
-    n->inputs[0] = f->start_node; // pin to START
     TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = alignment);
     return n;
 }
 
 void tb_inst_safepoint_poll(TB_Function* f, TB_Node* addr, int input_count, TB_Node** inputs) {
     TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_POLL, TB_TYPE_CONTROL, 3 + input_count, sizeof(TB_NodeSafepoint));
-    n->inputs[0] = f->active_control_node;
-    n->inputs[1] = peek_mem(f, f->active_control_node);
+    n->inputs[0] = transfer_ctrl(f, n);
+    n->inputs[1] = peek_mem(f);
     n->inputs[2] = addr;
     if (input_count > 0) {
         memcpy(n->inputs + 3, inputs, input_count * sizeof(TB_Node*));
     }
     TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, 0);
-    f->active_control_node = n;
 }
 
 TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnits alignment, bool is_volatile) {
     assert(addr);
 
     TB_Node* n = tb_alloc_node(f, is_volatile ? TB_READ : TB_LOAD, is_volatile ? TB_TYPE_TUPLE : dt, 3, sizeof(TB_NodeMemAccess));
-    n->inputs[0] = f->active_control_node;
-    n->inputs[1] = peek_mem(f, f->active_control_node);
+    n->inputs[0] = f->trace.bot_ctrl;
+    n->inputs[1] = peek_mem(f);
     n->inputs[2] = addr;
     TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = alignment);
 
@@ -281,7 +286,7 @@ void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, 
     assert(TB_DATA_TYPE_EQUALS(dt, val->dt));
 
     TB_Node* n = tb_alloc_node(f, is_volatile ? TB_WRITE : TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
-    n->inputs[0] = f->active_control_node;
+    n->inputs[0] = f->trace.bot_ctrl;
     n->inputs[1] = append_mem(f, n);
     n->inputs[2] = addr;
     n->inputs[3] = val;
@@ -293,7 +298,7 @@ void tb_inst_memset(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, T
     assert(TB_IS_INTEGER_TYPE(val->dt) && val->dt.data == 8);
 
     TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
-    n->inputs[0] = f->active_control_node;
+    n->inputs[0] = f->trace.bot_ctrl;
     n->inputs[1] = append_mem(f, n);
     n->inputs[2] = dst;
     n->inputs[3] = val;
@@ -306,7 +311,7 @@ void tb_inst_memcpy(TB_Function* f, TB_Node* dst, TB_Node* val, TB_Node* size, T
     assert(TB_IS_POINTER_TYPE(val->dt));
 
     TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
-    n->inputs[0] = f->active_control_node;
+    n->inputs[0] = f->trace.bot_ctrl;
     n->inputs[1] = append_mem(f, n);
     n->inputs[2] = dst;
     n->inputs[3] = val;
@@ -400,13 +405,12 @@ TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
 
 TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
     TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*[3]));
-    n->inputs[0] = f->active_control_node;
     n->inputs[2] = syscall_num;
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
     // control proj
     TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
-    f->active_control_node = cproj;
+    n->inputs[0] = transfer_ctrl(f, cproj);
 
     // memory proj
     TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
@@ -428,7 +432,6 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
     size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
 
     TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
-    n->inputs[0] = f->active_control_node;
     n->inputs[2] = target;
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
@@ -438,6 +441,7 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 
     // control proj
     TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+    n->inputs[0] = transfer_ctrl(f, cproj);
 
     // memory proj
     TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
@@ -456,7 +460,6 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 
     c->projs[0] = cproj;
     c->projs[1] = mproj;
-    f->active_control_node = cproj;
 
     if (proto->return_count == 1) {
         return (TB_MultiOutput){ .count = proto->return_count, .single = c->projs[2] };
@@ -467,15 +470,14 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 
 void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
     TB_Node* n = tb_alloc_node(f, TB_TAILCALL, TB_TYPE_CONTROL, 3 + param_count, sizeof(TB_NodeTailcall));
-    n->inputs[0] = f->active_control_node;
-    n->inputs[1] = peek_mem(f, f->active_control_node);
+    n->inputs[0] = transfer_ctrl(f, NULL);
+    n->inputs[1] = peek_mem(f);
     n->inputs[2] = target;
     memcpy(n->inputs + 3, params, param_count * sizeof(TB_Node*));
 
     TB_NodeTailcall* c = TB_NODE_GET_EXTRA(n);
     c->proto = proto;
 
-    f->active_control_node = NULL;
     dyn_array_put(f->terminators, n);
 }
 
@@ -610,7 +612,7 @@ TB_Node* tb_inst_ror(TB_Function* f, TB_Node* a, TB_Node* b) {
 ////////////////////////////////
 static TB_Node* atomic_op(TB_Function* f, int op, TB_DataType dt, TB_Node* addr, TB_Node* src, TB_MemoryOrder order) {
     TB_Node* n = tb_alloc_node(f, op, TB_TYPE_TUPLE, src ? 4 : 3, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
+    n->inputs[0] = f->trace.bot_ctrl;
     n->inputs[2] = addr;
     if (src) n->inputs[3] = src;
 
@@ -662,7 +664,7 @@ TB_Node* tb_inst_atomic_cmpxchg(TB_Function* f, TB_Node* addr, TB_Node* expected
     TB_DataType dt = desired->dt;
 
     TB_Node* n = tb_alloc_node(f, TB_ATOMIC_CAS, TB_TYPE_TUPLE, 5, sizeof(TB_NodeAtomic));
-    n->inputs[0] = f->active_control_node; // control edge
+    n->inputs[0] = f->trace.bot_ctrl;
     n->inputs[2] = addr;
     n->inputs[3] = expected;
     n->inputs[4] = desired;
@@ -722,7 +724,7 @@ TB_Node* tb_inst_x86_ldmxcsr(TB_Function* f, TB_Node* a) {
 
 TB_Node* tb_inst_cycle_counter(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_CYCLE_COUNTER, TB_TYPE_I64, 1, 0);
-    n->inputs[0] = f->active_control_node;
+    n->inputs[0] = f->trace.bot_ctrl;
     return n;
 }
 
@@ -804,7 +806,6 @@ TB_Node* tb_inst_incomplete_phi(TB_Function* f, TB_DataType dt, TB_Node* region,
 
 bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* region, TB_Node* val) {
     region = tb_get_parent_region(region);
-
     TB_Node* phi_region = phi->inputs[0];
 
     // the slot to fill is based on the predecessor list of the region
@@ -831,15 +832,19 @@ TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b) {
     return n;
 }
 
-TB_Node* tb_inst_region(TB_Function* f) {
+TB_API TB_Node* tb_inst_region(TB_Function* f) {
+    return tb_inst_new_trace(f).top_ctrl;
+}
+
+TB_API TB_Trace tb_inst_new_trace(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
     r->freq = 1.0f;
 
     TB_Node* phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 1, 0);
     phi->inputs[0] = n;
-    r->mem_in = r->mem_out = phi;
-    return n;
+    r->mem_in = phi;
+    return (TB_Trace){ n, n, phi };
 }
 
 void tb_inst_set_region_name(TB_Function* f, TB_Node* n, ptrdiff_t len, const char* name) {
@@ -876,12 +881,12 @@ static void add_memory_edge(TB_Function* f, TB_Node* n, TB_Node* mem_state, TB_N
 }
 
 void tb_inst_goto(TB_Function* f, TB_Node* target) {
-    TB_Node* mem_state = peek_mem(f, f->active_control_node);
+    TB_Node* mem_state = peek_mem(f);
 
     // there's no need for a branch if the path isn't diverging.
-    TB_Node* n = f->active_control_node;
+    TB_Node* n = f->trace.bot_ctrl;
     dyn_array_put(f->terminators, n);
-    f->active_control_node = NULL;
+    f->trace.bot_ctrl = NULL;
 
     // just add the edge directly.
     assert(n->dt.type == TB_CONTROL);
@@ -890,11 +895,11 @@ void tb_inst_goto(TB_Function* f, TB_Node* target) {
 }
 
 void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_false) {
-    TB_Node* mem_state = peek_mem(f, f->active_control_node);
+    TB_Node* mem_state = peek_mem(f);
 
     // generate control projections
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(int64_t));
-    n->inputs[0] = f->active_control_node; // control edge
+    n->inputs[0] = transfer_ctrl(f, NULL);
     n->inputs[1] = cond;
 
     FOREACH_N(i, 0, 2) {
@@ -910,15 +915,33 @@ void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_fal
     br->keys[0] = 0;
 
     dyn_array_put(f->terminators, n);
-    f->active_control_node = NULL;
+}
+
+void tb_inst_if2(TB_Function* f, TB_Node* cond, TB_Node* projs[2]) {
+    TB_Node* mem_state = peek_mem(f);
+
+    // generate control projections
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(int64_t));
+    n->inputs[0] = transfer_ctrl(f, NULL);
+    n->inputs[1] = cond;
+
+    FOREACH_N(i, 0, 2) {
+        projs[i] = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
+    }
+
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    br->succ_count = 2;
+    br->keys[0] = 0;
+
+    dyn_array_put(f->terminators, n);
 }
 
 void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_label, size_t entry_count, const TB_SwitchEntry* entries) {
-    TB_Node* mem_state = peek_mem(f, f->active_control_node);
+    TB_Node* mem_state = peek_mem(f);
 
     // generate control projections
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + (sizeof(int64_t) * entry_count));
-    n->inputs[0] = f->active_control_node; // control edge
+    n->inputs[0] = transfer_ctrl(f, NULL);
     n->inputs[1] = key;
 
     FOREACH_N(i, 0, 1 + entry_count) {
@@ -936,7 +959,6 @@ void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* defau
     }
 
     dyn_array_put(f->terminators, n);
-    f->active_control_node = NULL;
 }
 
 void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
@@ -944,7 +966,7 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
 }
 
 static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rpc) {
-    TB_Node* mem_state = peek_mem(f, f->active_control_node);
+    TB_Node* mem_state = peek_mem(f);
 
     // allocate return node
     TB_Node* end = f->stop_node;
@@ -981,7 +1003,7 @@ static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rp
         }
 
         f->stop_node = end;
-        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .freq = 1.0f, .mem_in = mem_phi, .mem_out = mem_phi, .tag = "ret");
+        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .freq = 1.0f, .mem_in = mem_phi, .tag = "ret");
 
         dyn_array_put(f->terminators, end);
     } else {
@@ -1030,8 +1052,8 @@ static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rp
     }
 
     // basically just tb_inst_goto without the memory PHI (we did it earlier)
-    TB_Node* n = f->active_control_node;
-    f->active_control_node = NULL;
+    TB_Node* n = f->trace.bot_ctrl;
+    f->trace.bot_ctrl = NULL;
 
     TB_Node* ctrl = end->inputs[0];
     if (ctrl->type == TB_SAFEPOINT_NOP) {

@@ -207,7 +207,7 @@ static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, i
 }
 
 static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* user_data, size_t bb, TB_Node* restrict n) {
-    P("  r%u [ordering=in; shape=record; label=\"{", n->gvn);
+    P("  r%u [label=\"{", n->gvn);
 
     bool ins = false;
     FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
@@ -337,7 +337,7 @@ TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* u
     Worklist tmp_ws = { 0 };
     worklist_alloc(&tmp_ws, f->node_count);
 
-    P("digraph %s {\n", f->super.name ? f->super.name : "unnamed");
+    P("digraph %s {\n  node [ordering=in; shape=record];\n", f->super.name ? f->super.name : "unnamed");
 
     opt->worklist = tmp_ws;
     TB_CFG cfg = tb_compute_rpo(f, opt);

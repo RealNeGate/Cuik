@@ -78,10 +78,6 @@ typedef enum {
     TILE_GOTO,
     // used by regalloc to spill/reload
     TILE_SPILL_MOVE,
-    // used by regalloc to rematerialize immediates
-    TILE_RELOAD_IMM,
-    // place all target-dependent tiles here:
-    TILE_TARGET_DEP,
 } TileTag;
 
 typedef struct Tile Tile;
@@ -116,7 +112,9 @@ struct Tile {
     struct Tile* prev;
     struct Tile* next;
 
-    TileTag tag;
+    TileTag tag : 8;
+    uint32_t flags : 24;
+
     int time;
 
     TB_Node* n;
@@ -203,6 +201,8 @@ struct Ctx {
     int num_regs[MAX_REG_CLASSES];
     uint64_t callee_saved[MAX_REG_CLASSES];
     int* spills;
+
+    NL_Map(TB_Node*, int) stack_slots;
 
     // Line info
     DynArray(TB_Location) locations;
