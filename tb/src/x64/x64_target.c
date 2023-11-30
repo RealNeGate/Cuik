@@ -145,6 +145,9 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         // no inputs
         case TB_START:
         case TB_REGION:
+        case TB_TRAP:
+        case TB_UNREACHABLE:
+        case TB_DEBUGBREAK:
         case TB_SAFEPOINT_NOP:
         return REGEMPTY;
 
@@ -468,11 +471,21 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 EMIT1(&ctx->emit, 0xC3);
                 break;
             }
+            case TB_TRAP: {
+                EMIT1(&ctx->emit, 0x0F);
+                EMIT1(&ctx->emit, 0x0B);
+                break;
+            }
+            case TB_DEBUGBREAK: {
+                EMIT1(&ctx->emit, 0xCC);
+                break;
+            }
             // projections don't manage their own work, that's the
             // TUPLE node's job.
             case TB_PROJ: break;
             case TB_REGION: break;
             case TB_PHI: break;
+            case TB_UNREACHABLE: break;
 
             case TB_SAFEPOINT_NOP: {
                 TB_NodeSafepoint* loc = TB_NODE_GET_EXTRA(n);
