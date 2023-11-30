@@ -388,17 +388,24 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                     if (p->internal) continue;
 
                     size_t actual_pos = source_offset + p->pos;
-                    size_t symbol_id = p->target->symbol_id;
+
+                    TB_Symbol* target = p->target;
+                    if (target->tag == TB_SYMBOL_EXTERNAL) {
+                        TB_Symbol* resolved = atomic_load_explicit(&((TB_External*) target)->resolved, memory_order_relaxed);
+                        if (resolved) target = resolved;
+                    }
+
+                    size_t symbol_id = target->symbol_id;
                     assert(symbol_id != 0);
 
-                    if (p->target->tag == TB_SYMBOL_FUNCTION || p->target->tag == TB_SYMBOL_EXTERNAL) {
+                    if (target->tag == TB_SYMBOL_FUNCTION || target->tag == TB_SYMBOL_EXTERNAL) {
                         *relocs++ = (COFF_ImageReloc){
                             .Type = IMAGE_REL_AMD64_REL32,
                             .SymbolTableIndex = symbol_id,
                             .VirtualAddress = actual_pos
                         };
-                    } else if (p->target->tag == TB_SYMBOL_GLOBAL) {
-                        TB_Global* target_global = (TB_Global*) p->target;
+                    } else if (target->tag == TB_SYMBOL_GLOBAL) {
+                        TB_Global* target_global = (TB_Global*) target;
                         bool is_tls = sections[target_global->parent].flags & TB_MODULE_SECTION_TLS;
                         *relocs++ = (COFF_ImageReloc){
                             .Type = is_tls ? IMAGE_REL_AMD64_SECREL : IMAGE_REL_AMD64_REL32,

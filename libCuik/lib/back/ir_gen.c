@@ -36,48 +36,11 @@ static TB_Symbol* get_external(CompilationUnit* restrict cu, const char* name) {
     } else {
         // Always creates a real external... for now
         result = (TB_Symbol*) tb_extern_create(cu->ir_mod, -1, name, TB_EXTERNAL_SO_LOCAL);
+        nl_map_put_cstr(cu->export_table, name, result);
     }
 
     cuik_unlock_compilation_unit(cu);
     return result;
-}
-
-static TB_Global* place_external(CompilationUnit* restrict cu, TranslationUnit* tu, Stmt* stmt, TB_DebugType* dbg_type, TB_Linkage linkage) {
-    const char* name = stmt->decl.name;
-    if (stmt->flags & STMT_FLAGS_IS_EXPORTED) {
-        TB_Symbol* s;
-
-        cuik_lock_compilation_unit(cu);
-        ptrdiff_t search = nl_map_get_cstr(cu->export_table, name);
-        if (search >= 0) {
-            s = cu->export_table[search].v;
-        } else {
-            // allocate new
-            s = (TB_Symbol*) tb_global_create(cu->ir_mod, -1, name, dbg_type, linkage);
-            s->ordinal = get_ir_ordinal(tu, stmt);
-            nl_map_put_cstr(cu->export_table, name, s);
-            cuik_unlock_compilation_unit(cu);
-            return (TB_Global*) s;
-        }
-        cuik_unlock_compilation_unit(cu);
-
-        // if we find a declaration, let's transmute our external
-        if (tb_extern_transmute((TB_External*) s, dbg_type, linkage)) {
-            // this works... i hope
-            s->ordinal = get_ir_ordinal(tu, stmt);
-        } else {
-            // we couldn't transmute because apparently someone already declared it?
-            // linker error time
-            fprintf(stderr, "internal compiler error: two decls, one link error\n");
-            abort();
-        }
-
-        return (TB_Global*) s;
-    } else {
-        // local global, we don't need to worry about internal linking tricks and especially
-        // not about global locking.
-        return tb_global_create(tu->ir_mod, -1, name, dbg_type, linkage);
-    }
 }
 
 static void fallthrough_label(TB_Function* func, TB_Node* target) {
@@ -1622,7 +1585,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                     dbg_type = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(s->decl.type));
                 }
 
-                TB_Global* g = place_external(tu->parent, tu, s, dbg_type, TB_LINKAGE_PRIVATE);
+                TB_Global* g = tb_global_create(tu->ir_mod, -1, s->decl.name, dbg_type, TB_LINKAGE_PRIVATE);
                 tls_restore(name);
 
                 TB_ModuleSectionHandle section = get_variable_storage(tu->ir_mod, &attrs, s->decl.type.raw & CUIK_QUAL_CONST);
@@ -1976,11 +1939,8 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 }
 
 TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena* arena, Stmt* restrict s) {
+    assert(s->flags & STMT_FLAGS_HAS_IR_BACKING);
     if (s->op == STMT_FUNC_DECL) {
-        if ((s->decl.attrs.is_static || s->decl.attrs.is_inline) && !s->decl.attrs.is_used) {
-            return NULL;
-        }
-
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
         assert(type->kind == KIND_FUNC);
 
@@ -2087,37 +2047,52 @@ typedef struct {
 static void ir_alloc_task(void* task) {
     CUIK_TIMED_BLOCK("ir_alloc_task") {
         IRAllocTask t = *(IRAllocTask*) task;
+        CompilationUnit* cu = t.tu->parent;
 
         for (size_t i = 0; i < t.count; i++) {
             Stmt* s = t.stmts[i];
             if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) == 0) continue;
+            if (!s->decl.attrs.is_used) continue;
 
+            TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+            TB_SymbolTag tag   = s->op == STMT_FUNC_DECL ? TB_SYMBOL_FUNCTION : TB_SYMBOL_GLOBAL;
+
+            const char* name = s->decl.name;
             if (s->op == STMT_FUNC_DECL) {
-                TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-                TB_Function* func = tb_function_create(t.tu->ir_mod, -1, s->decl.name, linkage);
-
+                TB_Function* func = tb_function_create(t.tu->ir_mod, -1, name, linkage);
                 s->backing.f = func;
-                s->backing.s->ordinal = get_ir_ordinal(t.tu, s);
-            } else if (s->decl.attrs.is_used && !s->decl.attrs.is_typedef) {
+            } else {
                 Cuik_Type* type = cuik_canonical_type(s->decl.type);
-                bool is_external_sym = (type->kind == KIND_FUNC && s->decl.initial_as_stmt == NULL);
-                if (s->decl.attrs.is_extern) is_external_sym = true;
 
-                const char* name = s->decl.name;
-                if (!is_external_sym) {
-                    // if we have a TB module, fill it up with declarations
-                    if (s->decl.attrs.is_tls) {
-                        tb_module_set_tls_index(t.tu->ir_mod, -1, "_tls_index");
-                    }
-
-                    TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
-                    TB_DebugType* dbg_type = NULL;
-                    if (t.tu->has_tb_debug_info) {
-                        dbg_type = cuik__as_tb_debug_type(t.tu->ir_mod, cuik_canonical_type(s->decl.type));
-                    }
-
-                    s->backing.g = place_external(t.tu->parent, t.tu, s, dbg_type, linkage);
+                // if we have a TB module, fill it up with declarations
+                if (s->decl.attrs.is_tls) {
+                    tb_module_set_tls_index(t.tu->ir_mod, -1, "_tls_index");
                 }
+
+                TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
+                TB_DebugType* dbg_type = NULL;
+                if (t.tu->has_tb_debug_info) {
+                    dbg_type = cuik__as_tb_debug_type(t.tu->ir_mod, cuik_canonical_type(s->decl.type));
+                }
+
+                // allocate new
+                s->backing.g = tb_global_create(cu->ir_mod, -1, name, dbg_type, linkage);
+            }
+            s->backing.s->ordinal = get_ir_ordinal(t.tu, s);
+
+            // an exported symbol that's already defined
+            if (s->flags & STMT_FLAGS_IS_EXPORTED) {
+                mtx_lock(&cu->lock);
+                ptrdiff_t search = nl_map_get_cstr(cu->export_table, name);
+                if (search >= 0) {
+                    // defined already as an external, let's just resolve it late
+                    TB_External* e = (TB_External*) cu->export_table[search].v;
+                    tb_extern_resolve(e, s->backing.s);
+                } else {
+                    // we've defined it before uses, yay
+                    nl_map_put_cstr(cu->export_table, name, s->backing.s);
+                }
+                mtx_unlock(&cu->lock);
             }
         }
 

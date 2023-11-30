@@ -193,6 +193,7 @@ struct Ctx {
     int* use_count;
     Tile** values; // [n.gvn]
     LiveInterval** id2interval; // [tile.id]
+    LiveInterval* fixed[MAX_REG_CLASSES];
 
     // Regalloc
     int interval_count;
@@ -200,6 +201,10 @@ struct Ctx {
     int num_classes;
     int num_regs[MAX_REG_CLASSES];
     uint64_t callee_saved[MAX_REG_CLASSES];
+
+    // where scratch registers can go, a mask is used to avoid
+    // allocating special regiters.
+    RegMask normie_mask[MAX_REG_CLASSES];
     int* spills;
 
     NL_Map(TB_Node*, int) stack_slots;

@@ -729,12 +729,16 @@ static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_N
         case TB_SHR:
         case TB_ADD:
         case TB_SUB:
-        case TB_MUL:
         case TB_XOR:
         return n->inputs[1];
 
+        case TB_MUL:
+        return n->inputs[0];
+
         case TB_UDIV:
         case TB_SDIV:
+        case TB_UMOD:
+        case TB_SMOD:
         return make_poison(f, opt, n->dt);
 
         // (cmp.ne a 0) => a

@@ -90,7 +90,7 @@ struct TB_SymbolPatch {
     TB_SymbolPatch* next;
     uint32_t pos;
     bool internal; // handled already by the code gen's emit_call_patches
-    const TB_Symbol* target;
+    TB_Symbol* target;
 };
 
 struct TB_External {
@@ -98,6 +98,9 @@ struct TB_External {
     TB_ExternalType type;
 
     void* thunk; // JIT will cache a thunk here because it's helpful
+
+    // if non-NULL, the external was resolved
+    _Atomic(TB_Symbol*) resolved;
 };
 
 typedef struct TB_InitObj {
@@ -112,7 +115,7 @@ typedef struct TB_InitObj {
             const void* ptr;
         } region;
 
-        const TB_Symbol* reloc;
+        TB_Symbol* reloc;
     };
 } TB_InitObj;
 
@@ -595,7 +598,7 @@ void print_node_sexpr(TB_Node* n, int depth);
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
-void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos);
+void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos);
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data);
 
 // out_bytes needs at least 16 bytes

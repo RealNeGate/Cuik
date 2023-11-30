@@ -274,10 +274,6 @@ static void cc_invoke(BuildStepInfo* restrict info) {
                 cuikpp_free(cpp);
             }
         }
-
-        CUIK_TIMED_BLOCK("Backend") {
-            cuiksched_per_function(s->tp, args->threads, mod, args, apply_func);
-        }
     } else {
         CUIK_TIMED_BLOCK("Backend") {
             irgen(s->tp, args, cu, mod);
@@ -328,6 +324,10 @@ static void ld_invoke(BuildStepInfo* info) {
     // Without the backend, we can't link... it's basically just stubbed out
     #ifdef CUIK_USE_TB
     TB_Module* mod = s->ld.cu->ir_mod;
+
+    CUIK_TIMED_BLOCK("Backend") {
+        cuiksched_per_function(s->tp, args->threads, mod, args, apply_func);
+    }
 
     // Once the frontend is complete we don't need this... unless we wanna keep it
     if (!args->preserve_ast) {
@@ -819,8 +819,7 @@ static void irgen_job(void* arg) {
     TB_Arena* allocator = get_ir_arena();
 
     for (size_t i = 0; i < task.count; i++) {
-        // skip all the typedefs
-        if (task.stmts[i]->decl.attrs.is_typedef || !task.stmts[i]->decl.attrs.is_used) {
+        if ((task.stmts[i]->flags & STMT_FLAGS_HAS_IR_BACKING) == 0) {
             continue;
         }
 

@@ -106,18 +106,23 @@ static void add_range(LiveInterval* interval, int start, int end) {
 
 LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* restrict ra, RegMask mask) {
     // not so fixed interval? we need a unique interval then
-    LiveInterval* interval = TB_ARENA_ALLOC(arena, LiveInterval);
-    *interval = (LiveInterval){
-        .id = ctx->interval_count++,
-        .mask = mask,
-        .hint = -1,
-        .reg = -1,
-        .assigned = -1,
-        .range_cap = 4, .range_count = 1,
-        .ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange))
-    };
-    interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
-    return interval;
+    int reg = fixed_reg_mask(mask.mask);
+    if (reg >= 0) {
+        return &ctx->fixed[mask.class][reg];
+    } else {
+        LiveInterval* interval = tb_arena_alloc(arena, sizeof(LiveInterval));
+        *interval = (LiveInterval){
+            .id = ctx->interval_count++,
+            .mask = mask,
+            .hint = -1,
+            .reg = -1,
+            .assigned = -1,
+            .range_cap = 4, .range_count = 1,
+            .ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange))
+        };
+        interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
+        return interval;
+    }
 }
 
 static Tile* tile_at_time(LSRA* restrict ra, int t) {
@@ -167,26 +172,59 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 LiveInterval* interval = t->interval;
 
                 int time = t->time;
-                if (interval != NULL) {
-                    // mark output
-                    if (interval->mask.mask) {
-                        int class = interval->mask.class;
-                        int reg = fixed_reg_mask(interval->mask.mask);
 
-                        if (!set_get(&visited, interval->id)) {
-                            set_put(&visited, interval->id);
+                // mark output
+                if (interval != NULL && interval->mask.mask) {
+                    if (!set_get(&visited, interval->id)) {
+                        set_put(&visited, interval->id);
+                        if (interval->reg < 0) {
                             dyn_array_put(ra.unhandled, interval);
                         }
+                    }
 
-                        if (interval->range_count == 1) {
-                            add_range(interval, time, time);
-                        } else {
-                            interval->ranges[interval->range_count - 1].start = time;
-                        }
+                    // if we're writing to a fixed interval, insert copy
+                    // such that we only guarentee a fixed location at the
+                    // def site.
+                    int reg = fixed_reg_mask(interval->mask.mask);
+                    if (reg >= 0 && t->tag != TILE_SPILL_MOVE) {
+                        // interval: FIXED(t) => NORMIE_MASK
+                        RegMask rm = interval->mask;
+                        interval->mask = ctx->normie_mask[rm.class];
+                        interval->hint = reg;
+
+                        LiveInterval* fixed = &ctx->fixed[rm.class][reg];
+
+                        // insert copy such that the def site is the only piece which "requires"
+                        // the fixed range.
+                        Tile* tmp = tb_arena_alloc(arena, sizeof(Tile));
+                        *tmp = (Tile){
+                            .prev = t,
+                            .next = t->next,
+                            .tag = TILE_SPILL_MOVE,
+                            .time = time,
+                        };
+                        tmp->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
+                        tmp->in_count = 1;
+                        tmp->ins[0].src  = fixed;
+                        tmp->ins[0].mask = rm;
+                        t->next->prev = tmp;
+                        t->next = tmp;
+
+                        // replace def site with fixed interval
+                        tmp->interval = interval;
+                        t->interval = fixed;
+
+                        // add def range & use range
+                        add_range(fixed, time, time);
+                        add_use_pos(fixed, time, USE_REG);
+                    }
+
+                    if (interval->range_count == 1) {
+                        add_range(interval, time, time);
+                    } else {
+                        interval->ranges[interval->range_count - 1].start = time;
                     }
                 }
-
-                int use_time = time;
 
                 // mark inputs
                 int space = 0;
@@ -196,7 +234,9 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     RegMask in_mask = t->ins[j].mask;
 
                     int hint = fixed_reg_mask(in_mask.mask);
-                    in_def->hint = hint;
+                    if (hint >= 0) {
+                        in_def->hint = hint;
+                    }
 
                     // if the use mask is more constrained than the def, we'll make a temporary
                     if ((in_def_mask.mask & in_mask.mask) != in_def->mask.mask) {
@@ -204,7 +244,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         printf("  TEMP %#04llx -> v%d (%#04llx)\n", in_def_mask.mask, in_def->id, in_mask.mask);
 
                         // construct copy (either to a fixed interval or a new masked interval)
-                        Tile* tmp = TB_ARENA_ALLOC(arena, Tile);
+                        Tile* tmp = tb_arena_alloc(arena, sizeof(Tile));
                         *tmp = (Tile){
                             .prev = t->prev,
                             .next = t,
@@ -222,12 +262,13 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         tmp->interval = gimme_interval_for_mask(ctx, arena, &ra, in_mask);
                         t->ins[j].src = tmp->interval;
 
-                        add_range(tmp->interval, bb_start, use_time);
-                        add_use_pos(tmp->interval, use_time, USE_REG);
-                    } else {
-                        add_range(in_def, bb_start, use_time);
-                        add_use_pos(in_def, use_time, USE_REG);
+                        // insert fixed interval use site, def site will be set later
+                        add_range(tmp->interval, bb_start, time);
+                        add_use_pos(tmp->interval, bb_start, USE_REG);
                     }
+
+                    add_range(in_def, bb_start, time);
+                    add_use_pos(in_def, time, USE_REG);
                 }
 
                 // this is how we place ranges even if the value isn't being inputted from anywhere.
@@ -237,9 +278,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         size_t j = 0;
                         for (uint64_t bits = clobbers[i]; bits; bits >>= 1, j += 1) {
                             if (bits & 1) {
-                                LiveInterval* dummy = gimme_interval_for_mask(ctx, arena, &ra, (RegMask){ i, 1 << j });
-                                add_range(dummy, time, time + 1);
-                                dyn_array_put(ra.unhandled, dummy);
+                                add_range(&ctx->fixed[i][j], time, time + 1);
                             }
                         }
                     }
@@ -257,6 +296,12 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         FOREACH_N(i, 0, ctx->num_classes) {
             if (max_regs_in_class < ctx->num_regs[i]) {
                 max_regs_in_class = ctx->num_regs[i];
+            }
+
+            // add range at beginning such that all fixed intervals are "awake"
+            FOREACH_N(j, 0, ctx->num_regs[i]) if (ctx->fixed[i][j].range_count > 1) {
+                add_range(&ctx->fixed[i][j], 0, 1);
+                dyn_array_put(ra.unhandled, &ctx->fixed[i][j]);
             }
 
             ra.active_set[i] = set_create_in_arena(arena, ctx->num_regs[i]);
@@ -382,8 +427,8 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     // it's better in the long run to aggressively split
     int hint_reg = interval->hint;
     int highest = -1;
-    if (hint_reg >= 0 && interval_end(interval) >= ra->free_pos[hint_reg]) {
-        highest = -1;
+    if (hint_reg >= 0 && interval_end(interval) <= ra->free_pos[hint_reg]) {
+        highest = hint_reg;
     }
 
     // pick highest free pos
@@ -396,20 +441,22 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
 
     int pos = ra->free_pos[highest];
     if (UNLIKELY(pos == 0)) {
-        // alloc failure, split
-        int reg = fixed_reg_mask(interval->mask.mask);
-        if (reg >= 0) {
-            assert(set_get(&ra->active_set[interval->mask.class], reg));
-            LiveInterval* active_user = ra->active[interval->mask.class][reg];
-            set_remove(&ra->active_set[interval->mask.class], reg);
-
-            // split whatever is using the interval right now
-            split_intersecting(ra, interval_start(interval) - 1, active_user, true);
-            return reg;
-        } else {
-            tb_todo();
-            return -1;
+        int reg = -1;
+        FOREACH_N(i, 0, ra->num_regs[rc]) {
+            if (set_get(&ra->active_set[rc], i) && ra->active[rc][i]->reg < 0) {
+                reg = i;
+                break;
+            }
         }
+        assert(reg >= 0 && "no way they're all in fixed-use lmao");
+
+        // alloc failure, split any
+        LiveInterval* active_user = ra->active[rc][reg];
+        set_remove(&ra->active_set[rc], reg);
+
+        // split whatever is using the interval right now
+        split_intersecting(ra, interval_start(interval) - 1, active_user, true);
+        return reg;
     } else {
         if (UNLIKELY(ra->callee_saved[rc] & (1ull << highest))) {
             ra->callee_saved[rc] &= ~(1ull << highest);
@@ -486,7 +533,7 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
         prev = curr, curr = curr->next;
     }
 
-    Tile* move = TB_ARENA_ALLOC(ra->arena, Tile);
+    Tile* move = tb_arena_alloc(ra->arena, sizeof(Tile));
     *move = (Tile){
         .prev = prev,
         .next = prev->next,
@@ -629,7 +676,7 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
 // update active range to match where the position is currently
 static bool update_interval(LSRA* restrict ra, LiveInterval* interval, bool is_active, int time, int inactive_index) {
     // get to the right range first
-    while (interval->ranges[interval->active_range].end <= time) {
+    while (time >= interval->ranges[interval->active_range].end) {
         assert(interval->active_range > 0);
         interval->active_range -= 1;
     }

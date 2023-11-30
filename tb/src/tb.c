@@ -9,7 +9,7 @@ ICodeGen* tb__find_code_generator(TB_Module* m) {
 
     switch (m->target_arch) {
         case TB_ARCH_X86_64:  return &tb__x64_codegen;
-        case TB_ARCH_AARCH64: return &tb__aarch64_codegen;
+        // case TB_ARCH_AARCH64: return &tb__aarch64_codegen;
         default: return NULL;
     }
 }
@@ -405,7 +405,7 @@ void* tb_global_add_region(TB_Module* m, TB_Global* g, size_t offset, size_t siz
     return ptr;
 }
 
-void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, const TB_Symbol* symbol) {
+void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, TB_Symbol* symbol) {
     assert(offset == (uint32_t) offset);
     assert(g->obj_count + 1 <= g->obj_capacity);
     assert(symbol != NULL);
@@ -598,7 +598,7 @@ void tb_tls_restore(TB_TemporaryStorage* store, void* ptr) {
     store->used = i;
 }
 
-void tb_emit_symbol_patch(TB_FunctionOutput* func_out, const TB_Symbol* target, size_t pos) {
+void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos) {
     TB_Module* m = func_out->parent->super.module;
     TB_SymbolPatch* p = TB_ARENA_ALLOC(get_permanent_arena(m), TB_SymbolPatch);
 

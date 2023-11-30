@@ -932,7 +932,7 @@ TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice co
 ////////////////////////////////
 // Symbols
 ////////////////////////////////
-TB_API TB_Global* tb_extern_transmute(TB_External* e, TB_DebugType* dbg_type, TB_Linkage linkage);
+TB_API bool tb_extern_resolve(TB_External* e, TB_Symbol* sym);
 TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type);
 
 TB_API TB_SourceFile* tb_get_source_file(TB_Module* m, const char* path);
@@ -1007,7 +1007,7 @@ TB_API void* tb_global_add_region(TB_Module* m, TB_Global* global, size_t offset
 
 // places a relocation for a global at offset, the size of the relocation
 // depends on the pointer size
-TB_API void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* global, size_t offset, const TB_Symbol* symbol);
+TB_API void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* global, size_t offset, TB_Symbol* symbol);
 
 TB_API TB_ModuleSectionHandle tb_module_get_text(TB_Module* m);
 TB_API TB_ModuleSectionHandle tb_module_get_rdata(TB_Module* m);

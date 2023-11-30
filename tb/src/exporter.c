@@ -131,7 +131,11 @@ ExportList tb_module_layout_sections(TB_Module* m) {
                     break;
                 }
                 case TB_SYMBOL_EXTERNAL: {
-                    externals[external_count++] = (TB_External*) s;
+                    // resolved externals are just globals or functions, we don't add them here
+                    TB_External* e = (TB_External*) s;
+                    if (atomic_load_explicit(&e->resolved, memory_order_relaxed) == NULL) {
+                        externals[external_count++] = e;
+                    }
                     break;
                 }
                 default: break;

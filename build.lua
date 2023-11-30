@@ -39,7 +39,7 @@ local modules = {
 
 	-- libraries:
 	--   CuikC frontend
-	cuik   = { srcs={
+	cuik = { srcs={
 			"libCuik/lib/libcuik.c",
 			-- toolchain support
 			"libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c",
@@ -48,8 +48,11 @@ local modules = {
 		}, flags="-I libCuik/include", deps={"common"}
 	},
 	--   TildeBackend
-	tb     = { srcs={"tb/src/libtb.c", "tb/src/x64/x64_target.c", "tb/src/aarch64/aarch64_target.c"}, flags="-I tb/include -DCUIK_USE_TB", deps={"common"} },
-
+	tb = { srcs={
+			"tb/src/libtb.c",
+			"tb/src/x64/x64_target.c" --, "tb/src/aarch64/aarch64_target.c"
+		}, flags="-I tb/include -DCUIK_USE_TB", deps={"common"}
+	},
 	-- executables:
 	--   Cuik command line
 	driver       = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik", "tb"} },
@@ -122,7 +125,7 @@ if is_windows then
 			ld = "link"
 		end
 
-		ldflags = ldflags.." /nologo /debug onecore.lib msvcrt.lib libcmt.lib"
+		ldflags = ldflags.." /nologo /incremental:no /debug onecore.lib msvcrt.lib libcmt.lib"
 		ldflags = ldflags.." /defaultlib:libcmt /out:"
 	end
 

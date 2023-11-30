@@ -71,7 +71,7 @@ typedef struct Val {
         // for VAL_ABS this is used
         uint64_t abs;
         // for VAL_GLOBAL this is used as the base
-        const TB_Symbol* symbol;
+        TB_Symbol* symbol;
         // for VAL_LABEL
         int label;
     };
@@ -143,7 +143,7 @@ inline static Val val_flags(Cond c) {
     return (Val) { .type = VAL_FLAGS, .reg = c };
 }
 
-inline static Val val_global(const TB_Symbol* s, int disp) {
+inline static Val val_global(TB_Symbol* s, int disp) {
     return (Val) { .type = VAL_GLOBAL, .symbol = s, .imm = disp };
 }
 
