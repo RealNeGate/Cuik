@@ -8,8 +8,10 @@ TB_ExportBuffer tb_wasm_write_output(TB_Module* restrict m, const IDebugFormat* 
 static const IDebugFormat* find_debug_format(TB_DebugFormat debug_fmt) {
     // Place all debug formats here
     extern IDebugFormat tb__codeview_debug_format;
+    extern IDebugFormat tb__sdg_debug_format;
 
     switch (debug_fmt) {
+        case TB_DEBUGFMT_SDG: return &tb__sdg_debug_format;
         case TB_DEBUGFMT_CODEVIEW: return &tb__codeview_debug_format;
         default: return NULL;
     }

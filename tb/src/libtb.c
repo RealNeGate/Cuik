@@ -26,7 +26,7 @@ void* tb_jit_stack_create(void);
 
 // Debug
 #include "debug/cv.c"
-#include "debug/fut.c"
+#include "debug/sdg.c"
 
 // Objects
 #include "objects/coff.c"

@@ -60,7 +60,7 @@ typedef enum TB_DebugFormat {
     TB_DEBUGFMT_DWARF,
     TB_DEBUGFMT_CODEVIEW,
 
-    TB_DEBUGFMT_COLINPILLED
+    TB_DEBUGFMT_SDG,
 } TB_DebugFormat;
 
 typedef enum TB_Arch {
