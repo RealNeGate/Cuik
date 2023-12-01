@@ -68,11 +68,14 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
     TB_CFG cfg = { 0 };
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
 
+    nl_map_create(cfg.node_to_block, (f->node_count / 16) + 4);
+
     // push initial block
     Block* top = create_block(tmp_arena, f->params[0]);
     worklist_test_n_set(ws, f->params[0]);
 
     while (top != NULL) {
+        cuikperf_region_start("rpo_iter", NULL);
         if (top->succ_i > 0) {
             // push next unvisited succ
             TB_Node* succ = top->succ[--top->succ_i];
@@ -99,20 +102,25 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
             // off to wherever we left off
             top = b.parent;
         }
+        cuikperf_region_end();
     }
 
     // just reverse the items here... im too lazy to flip all my uses
-    size_t last = cfg.block_count - 1;
-    FOREACH_N(i, 0, cfg.block_count / 2) {
-        SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
+    CUIK_TIMED_BLOCK("reversing") {
+        size_t last = cfg.block_count - 1;
+        FOREACH_N(i, 0, cfg.block_count / 2) {
+            SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
+        }
     }
 
-    FOREACH_N(i, 0, cfg.block_count) {
-        TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
-        if (i == 0) {
-            bb->dom_depth = 0;
+    CUIK_TIMED_BLOCK("dom depths") {
+        FOREACH_N(i, 0, cfg.block_count) {
+            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
+            if (i == 0) {
+                bb->dom_depth = 0;
+            }
+            bb->id = i;
         }
-        bb->id = i;
     }
 
     tb_arena_restore(tmp_arena, sp);

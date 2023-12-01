@@ -45,7 +45,7 @@ static TB_Node* new_phi(Mem2Reg_Ctx* restrict c, TB_Function* f, int var, TB_Nod
     TB_Node* n = tb_alloc_node(f, TB_PHI, dt, 1 + block->input_count, 0);
     FOREACH_N(i, 0, 1 + block->input_count) n->inputs[i] = NULL;
 
-    set_input(c->p, n, block, 0);
+    set_input(n, block, 0);
 
     // append variable attrib
     /*for (TB_Attrib* a = c->to_promote[var]->first_attrib; a; a = a->next) if (a->type == TB_ATTRIB_VARIABLE) {
@@ -77,7 +77,7 @@ static void add_phi_operand(Mem2Reg_Ctx* restrict c, TB_Function* f, TB_Node* ph
     FOREACH_N(i, 0, phi_region->input_count) {
         TB_Node* pred = get_pred_cfg(&c->p->cfg, phi_region, i);
         if (pred == bb) {
-            set_input(c->p, phi_node, node, i+1);
+            set_input(phi_node, node, i+1);
             break;
         }
     }
@@ -117,7 +117,7 @@ static void ssa_replace_phi_arg(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, TB_
             TB_Node* pred = get_pred_cfg(&c->p->cfg, dst, j);
             if (pred == bb) {
                 // try to replace
-                set_input(c->p, phi_reg, top, j + 1);
+                set_input(phi_reg, top, j + 1);
                 found = true;
                 break;
             }
@@ -198,12 +198,12 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
                         if (use->dt.raw != val->dt.raw) {
                             TB_Node* cast = tb_alloc_node(c->f, TB_BITCAST, use->dt, 2, 0);
                             tb_pass_mark(p, cast);
-                            set_input(p, cast, val, 1);
+                            set_input(cast, val, 1);
 
                             val = cast;
                         }
 
-                        set_input(p, use, NULL, 1); // unlink first
+                        set_input(use, NULL, 1); // unlink first
                         subsume_node(p, f, use, val);
 
                         tb_pass_mark(p, val);
@@ -362,8 +362,6 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     c.blocks = &p->worklist.items[0];
 
     worklist_clear_visited(&p->worklist);
-    tb_compute_dominators(f, p, c.p->cfg);
-
     TB_DominanceFrontiers* df = tb_get_dominance_frontiers(f, p, c.p->cfg, c.blocks);
 
     ////////////////////////////////

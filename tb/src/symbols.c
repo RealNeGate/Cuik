@@ -6,7 +6,8 @@ TB_SymbolIter tb_symbol_iter(TB_Module* mod) {
 }
 
 TB_Symbol* tb_symbol_iter_next(TB_SymbolIter* iter) {
-    for (TB_ThreadInfo* info = iter->info; info != NULL; info = info->next_in_module) {
+    TB_ThreadInfo* info = iter->info;
+    while (info) {
         size_t cap = 1ull << info->symbols.exp;
         for (size_t i = iter->i; i < cap; i++) {
             void* ptr = info->symbols.data[i];
@@ -17,6 +18,8 @@ TB_Symbol* tb_symbol_iter_next(TB_SymbolIter* iter) {
             iter->info = info;
             return (TB_Symbol*) ptr;
         }
+
+        info = atomic_load_explicit(&info->next_in_module, memory_order_relaxed);
     }
 
     return NULL;

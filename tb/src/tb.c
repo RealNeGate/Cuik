@@ -38,28 +38,30 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
         info = info->next;
     }
 
-    info = tb_platform_heap_alloc(sizeof(TB_ThreadInfo));
-    *info = (TB_ThreadInfo){ .owner = m, .chain = &chain, .lock = &lock };
+    CUIK_TIMED_BLOCK("alloc thread info") {
+        info = tb_platform_heap_alloc(sizeof(TB_ThreadInfo));
+        *info = (TB_ThreadInfo){ .owner = m, .chain = &chain, .lock = &lock };
 
-    // allocate memory for it
-    tb_arena_create(&info->perm_arena, TB_ARENA_LARGE_CHUNK_SIZE);
-    tb_arena_create(&info->tmp_arena, TB_ARENA_LARGE_CHUNK_SIZE);
+        // allocate memory for it
+        tb_arena_create(&info->perm_arena, TB_ARENA_LARGE_CHUNK_SIZE);
+        tb_arena_create(&info->tmp_arena, TB_ARENA_LARGE_CHUNK_SIZE);
 
-    mtx_init(&info->symbol_lock, mtx_plain);
+        mtx_init(&info->symbol_lock, mtx_plain);
 
-    // thread local so it doesn't need to synchronize
-    info->next = chain;
-    if (chain != NULL) {
-        chain->prev = info;
+        // thread local so it doesn't need to synchronize
+        info->next = chain;
+        if (chain != NULL) {
+            chain->prev = info;
+        }
+        chain = info;
+
+        // link to the TB_Module* (we need to this to free later)
+        TB_ThreadInfo* old_top;
+        do {
+            old_top = atomic_load(&m->first_info_in_module);
+            info->next_in_module = old_top;
+        } while (!atomic_compare_exchange_strong(&m->first_info_in_module, &old_top, info));
     }
-    chain = info;
-
-    // link to the TB_Module* (we need to this to free later)
-    TB_ThreadInfo* old_top;
-    do {
-        old_top = atomic_load(&m->first_info_in_module);
-        info->next_in_module = old_top;
-    } while (!atomic_compare_exchange_strong(&m->first_info_in_module, &old_top, info));
 
     done:
     mtx_unlock(&lock);

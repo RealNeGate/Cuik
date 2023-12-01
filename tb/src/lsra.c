@@ -5,7 +5,7 @@
 #ifdef NDEBUG
 #define REG_ALLOC_LOG if (0)
 #else
-#define REG_ALLOC_LOG if (1)
+#define REG_ALLOC_LOG if (0)
 #endif
 
 #define FOREACH_SET(it, set) \
@@ -241,7 +241,9 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     // if the use mask is more constrained than the def, we'll make a temporary
                     if ((in_def_mask.mask & in_mask.mask) != in_def->mask.mask) {
                         assert(in_def->mask.class == in_mask.class);
-                        printf("  TEMP %#04llx -> v%d (%#04llx)\n", in_def_mask.mask, in_def->id, in_mask.mask);
+                        REG_ALLOC_LOG {
+                            printf("  TEMP %#04llx -> v%d (%#04llx)\n", in_def_mask.mask, in_def->id, in_mask.mask);
+                        }
 
                         // construct copy (either to a fixed interval or a new masked interval)
                         Tile* tmp = tb_arena_alloc(arena, sizeof(Tile));

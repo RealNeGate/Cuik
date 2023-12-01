@@ -132,7 +132,15 @@ struct CompilationUnit {
 
     #ifdef CUIK_USE_TB
     TB_Module* ir_mod;
+
+    // tracks which exported symbols exist, if one's not
+    // found while building up the IR, it'll just use a
+    // external which may or may not get resolved by a later
+    // TU.
     NL_Strmap(TB_Symbol*) export_table;
+
+    // da works, locked resource
+    DynArray(TB_Function*) worklist;
     #endif
 
     // linked list of all TUs referenced

@@ -101,7 +101,7 @@ static size_t sroa_rewrite(TB_Passes* restrict p, int pointer_size, TB_Node* sta
         uint32_t alignment = TB_NODE_GET_EXTRA_T(n, TB_NodeLocal)->align;
         FOREACH_N(i, 0, config_count) {
             TB_Node* new_n = tb_alloc_node(p->f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
-            set_input(p, new_n, start, 0);
+            set_input(new_n, start, 0);
             TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
 
             // mark all users, there may be some fun new opts now

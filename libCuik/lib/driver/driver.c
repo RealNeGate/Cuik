@@ -146,7 +146,8 @@ static void apply_func(TB_Function* f, void* arg) {
 
     const char* name = ((TB_Symbol*) f)->name;
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
-        TB_Passes* p = tb_pass_enter(f, get_ir_arena());
+        TB_Arena* arena = get_ir_arena();
+        TB_Passes* p = tb_pass_enter(f, arena);
 
         if (args->opt_level >= 1) {
             tb_pass_optimize(p);
@@ -167,6 +168,7 @@ static void apply_func(TB_Function* f, void* arg) {
         }
 
         tb_pass_exit(p);
+        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(arena) / 1024.0f);
     }
 }
 #endif
@@ -326,7 +328,7 @@ static void ld_invoke(BuildStepInfo* info) {
     TB_Module* mod = s->ld.cu->ir_mod;
 
     CUIK_TIMED_BLOCK("Backend") {
-        cuiksched_per_function(s->tp, args->threads, mod, args, apply_func);
+        cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, apply_func);
     }
 
     // Once the frontend is complete we don't need this... unless we wanna keep it
@@ -813,10 +815,8 @@ static void irgen_job(void* arg) {
     IRGenTask task = *((IRGenTask*) arg);
     TB_Module* mod = task.mod;
 
-    // unoptimized builds can just compile functions without
-    // the rest of the functions being ready.
-    bool do_compiles_immediately = !do_delayed_compile(task.args);
-    TB_Arena* allocator = get_ir_arena();
+    CompilationUnit* cu = task.tu->parent;
+    TB_Arena* arena = get_ir_arena();
 
     for (size_t i = 0; i < task.count; i++) {
         if ((task.stmts[i]->flags & STMT_FLAGS_HAS_IR_BACKING) == 0) {
@@ -826,18 +826,13 @@ static void irgen_job(void* arg) {
         const char* name = task.stmts[i]->decl.name;
         TB_Symbol* s;
         CUIK_TIMED_BLOCK_ARGS("irgen", name) {
-            s = cuikcg_top_level(task.tu, mod, allocator, task.stmts[i]);
+            s = cuikcg_top_level(task.tu, mod, arena, task.stmts[i]);
         }
 
-        if (do_compiles_immediately && s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
-            CUIK_TIMED_BLOCK("codegen") {
-                TB_Passes* p = tb_pass_enter((TB_Function*) s, allocator);
-                tb_pass_codegen(p, NULL, false);
-                tb_pass_exit(p);
-
-                log_debug("%s: clearing IR arena %.1f KiB", name, tb_arena_current_size(allocator) / 1024.0f);
-                tb_arena_clear(allocator);
-            }
+        if (s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
+            cuik_lock_compilation_unit(cu);
+            dyn_array_put(cu->worklist, (TB_Function*) s);
+            cuik_unlock_compilation_unit(cu);
         }
     }
 

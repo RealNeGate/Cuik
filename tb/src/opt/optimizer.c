@@ -17,8 +17,8 @@
 thread_local TB_Arena* tmp_arena;
 
 // helps us do some matching later
-static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled);
-static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot);
+static void add_user(TB_Node* n, TB_Node* in, int slot, User* recycled);
+static User* remove_user(TB_Node* n, int slot);
 static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size_t i);
 
 // transmutations let us generate new nodes from old ones
@@ -35,7 +35,6 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
 TB_Node* make_dead_node(TB_Function* f, TB_Passes* restrict p);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
-static bool lattice_dommy(LatticeUniverse* uni, TB_Node* expected_dom, TB_Node* bb);
 static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve);
 
 ////////////////////////////////
@@ -229,6 +228,41 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
     return false;
 }
 
+// incremental dominators, plays nice with peepholes and has
+// a limited walk of 20 steps.
+enum { FAST_IDOM_LIMIT = 20 };
+static TB_Node* fast_idom(TB_Node* bb) {
+    int steps = 0;
+    while (steps < FAST_IDOM_LIMIT && bb->type != TB_REGION) {
+        bb = bb->inputs[0];
+        steps++;
+    }
+
+    return bb;
+}
+
+static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
+    int steps = 0;
+    while (steps < FAST_IDOM_LIMIT && bb != expected_dom && bb->type != TB_REGION) {
+        bb = bb->inputs[0];
+        steps++;
+    }
+
+    return bb == expected_dom;
+}
+
+static bool slow_dommy(TB_CFG* cfg, TB_Node* expected_dom, TB_Node* bb) {
+    while (bb != NULL && expected_dom != bb) {
+        TB_Node* new_bb = idom(cfg, bb);
+        if (new_bb == NULL || new_bb == bb) {
+            return false;
+        }
+        bb = new_bb;
+    }
+
+    return true;
+}
+
 // unity build with all the passes
 #include "lattice.h"
 #include "cfg.h"
@@ -243,21 +277,6 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 #include "gcm.h"
 #include "libcalls.h"
 #include "scheduler.h"
-
-static bool lattice_dommy(LatticeUniverse* uni, TB_Node* expected_dom, TB_Node* bb) {
-    while (bb != NULL && expected_dom != bb) {
-        Lattice* l = lattice_universe_get(uni, bb);
-        assert(l->tag == LATTICE_CONTROL);
-
-        TB_Node* new_bb = l->_ctrl.idom;
-        if (new_bb == NULL) {
-            return false;
-        }
-        bb = new_bb;
-    }
-
-    return true;
-}
 
 static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra) {
     // try GVN, if we succeed, just delete the node and use the old copy
@@ -302,7 +321,7 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
 
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i) {
     TB_Node* n = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
-    set_input(p, n, src, 0);
+    set_input(n, src, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = i);
     return n;
 }
@@ -317,9 +336,9 @@ static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size
     n->input_count--;
     if (n->input_count > 0) {
         if (n->input_count != i) {
-            set_input(p, n, n->inputs[n->input_count], i);
+            set_input(n, n->inputs[n->input_count], i);
         }
-        set_input(p, n, NULL, n->input_count);
+        set_input(n, NULL, n->input_count);
     }
 }
 
@@ -336,7 +355,7 @@ void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
     }
 
     FOREACH_N(i, 0, n->input_count) {
-        remove_user(p, n, i);
+        remove_user(n, i);
         n->inputs[i] = NULL;
     }
 
@@ -345,7 +364,7 @@ void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
     n->type = TB_NULL;
 }
 
-static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot) {
+static User* remove_user(TB_Node* n, int slot) {
     // early out: there was no previous input
     if (n->inputs[slot] == NULL) return NULL;
 
@@ -370,18 +389,18 @@ static User* remove_user(TB_Passes* restrict p, TB_Node* n, int slot) {
     tb_panic("Failed to remove non-existent user %p from %p (slot %d)", old, n, slot);
 }
 
-void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot) {
+void set_input(TB_Node* n, TB_Node* in, int slot) {
     // recycle the user
-    User* old_use = remove_user(p, n, slot);
+    User* old_use = remove_user(n, slot);
 
     n->inputs[slot] = in;
     if (in != NULL) {
-        add_user(p, n, in, slot, old_use);
+        add_user(n, in, slot, old_use);
     }
 }
 
 // we sometimes get the choice to recycle users because we just deleted something
-static void add_user(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot, User* recycled) {
+static void add_user(TB_Node* n, TB_Node* in, int slot, User* recycled) {
     User* use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
     use->next = in->users;
     use->n = n;
@@ -899,7 +918,7 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
         TB_Node* use_n = use->n;
         User* next = use->next;
 
-        set_input(p, use->n, new_n, use->slot);
+        set_input(use->n, new_n, use->slot);
         use = next;
     }
 
@@ -916,7 +935,7 @@ static void generate_use_lists(TB_Passes* restrict p, TB_Function* f) {
         }
 
         FOREACH_N(j, 0, n->input_count) if (n->inputs[j]) {
-            add_user(p, n, n->inputs[j], j, NULL);
+            add_user(n, n->inputs[j], j, NULL);
         }
     }
 }
@@ -983,19 +1002,6 @@ static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve) {
     p->cfg = tb_compute_rpo2(f, ws);
     tb_compute_dominators2(f, ws, p->cfg);
 
-    // mark IDOM for each "BB" node
-    FOREACH_N(i, 0, p->cfg.block_count) {
-        // entry block should be marked as dominated by NULL, to make it easy
-        // to end the iteration of a dom chain.
-        TB_Node* dom = NULL;
-        if (i != 0) {
-            dom = nl_map_get_checked(p->cfg.node_to_block, ws->items[i]).dom->start;
-        }
-
-        Lattice* l = lattice_ctrl(&p->universe, dom);
-        lattice_universe_map(&p->universe, ws->items[i], l);
-    }
-
     if (!preserve) {
         tb_free_cfg(&p->cfg);
     }
@@ -1007,33 +1013,28 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
     verify_tmp_arena(p);
 
     if (p->gvn_nodes.data == NULL) {
-        p->gvn_nodes = nl_hashset_alloc(p->f->node_count);
+        CUIK_TIMED_BLOCK("allocate GVN table") {
+            p->gvn_nodes = nl_hashset_alloc(p->f->node_count);
+        }
     }
 
     // make sure we have space for the lattice universe
     if (p->universe.arena == NULL) {
         TB_Function* f = p->f;
         TB_ThreadInfo* info = tb_thread_info(f->super.module);
-        if (info->type_arena.chunk_size == 0) {
-            // make new arena
-            tb_arena_create(&info->type_arena, TB_ARENA_LARGE_CHUNK_SIZE);
-        }
 
-        size_t count = f->node_count;
-        p->universe.arena = &info->type_arena;
-        p->universe.pool = nl_hashset_alloc(64);
-        p->universe.type_cap = count;
-        p->universe.types = tb_platform_heap_alloc(count * sizeof(Lattice*));
-        memset(p->universe.types, 0, count * sizeof(Lattice*));
+        CUIK_TIMED_BLOCK("allocate type array") {
+            if (info->type_arena.chunk_size == 0) {
+                // make new arena
+                tb_arena_create(&info->type_arena, TB_ARENA_LARGE_CHUNK_SIZE);
+            }
 
-        // generate early doms
-        CUIK_TIMED_BLOCK("doms") {
-            Worklist tmp_ws = { 0 };
-            worklist_alloc(&tmp_ws, (f->node_count / 8) + 4);
-
-            tb_pass_update_cfg(p, &tmp_ws, false);
-
-            worklist_free(&tmp_ws);
+            size_t count = (f->node_count + 63ull) & ~63ull;
+            p->universe.arena = &info->type_arena;
+            p->universe.pool = nl_hashset_alloc(64);
+            p->universe.type_cap = count;
+            p->universe.types = tb_platform_heap_alloc(count * sizeof(Lattice*));
+            memset(p->universe.types, 0, count * sizeof(Lattice*));
         }
     }
 
@@ -1051,7 +1052,8 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
                 continue;
             }
 
-            if (peephole(p, f, n, flags)) {
+            TB_Node* k = peephole(p, f, n, flags);
+            if (k) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
             }
         }

@@ -22,7 +22,7 @@ static TB_Node* loop_clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* 
             TB_Node* in = loop_clone_node(p, f, region, n->inputs[i], phi_index);
 
             cloned->inputs[i] = in;
-            add_user(p, cloned, in, i, NULL);
+            add_user(cloned, in, i, NULL);
         }
 
         cloned = gvn(p, cloned, extra);
@@ -62,7 +62,7 @@ bool tb_pass_loop(TB_Passes* p) {
         dyn_array_clear(backedges);
         FOREACH_N(j, 0, header->input_count) {
             TB_Node* pred = get_pred_cfg(&p->cfg, header, j);
-            if (lattice_dommy(&p->universe, header, pred)) {
+            if (slow_dommy(&p->cfg, header, pred)) {
                 dyn_array_put(backedges, j);
             }
         }
@@ -111,7 +111,7 @@ bool tb_pass_loop(TB_Passes* p) {
                     int proj_i = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
                     projs[proj_i] = u->n;
 
-                    if (!lattice_dommy(&p->universe, succ, backedge_bb)) {
+                    if (!fast_dommy(succ, backedge_bb)) {
                         // if we have multiple exit latches... just leave
                         if (exit_proj_i >= 0) {
                             exit_proj_i = -1;
@@ -160,7 +160,7 @@ bool tb_pass_loop(TB_Passes* p) {
 
                     // attach control edge
                     if (top_cloned) {
-                        set_input(p, top_cloned, cloned, 0);
+                        set_input(top_cloned, cloned, 0);
                     } else {
                         bot_cloned = cloned;
                     }
@@ -177,26 +177,26 @@ bool tb_pass_loop(TB_Passes* p) {
 
                 // add zero trip count check
                 TB_Node* ztc_check = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 1, sizeof(TB_NodeRegion));
-                set_input(p, ztc_check, header->inputs[init_edge], 0);
+                set_input(ztc_check, header->inputs[init_edge], 0);
                 TB_NODE_GET_EXTRA_T(ztc_check, TB_NodeRegion)->freq = 1.0f;
                 tb_pass_mark(p, ztc_check);
 
                 // intercept the init path on the header
-                set_input(p, top_cloned, ztc_check, 0);
-                set_input(p, header, exit_proj_i ? proj0 : proj1, init_edge);
+                set_input(top_cloned, ztc_check, 0);
+                set_input(header, exit_proj_i ? proj0 : proj1, init_edge);
 
                 exit_region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
                 TB_NODE_GET_EXTRA_T(exit_region, TB_NodeRegion)->freq = 1.0f;
                 tb_pass_mark(p, exit_region);
-                set_input(p, exit_region, exit_proj_i ? proj1 : proj0, 0);
+                set_input(exit_region, exit_proj_i ? proj1 : proj0, 0);
 
                 // connect exit projection to exit region, then connect the exit region to
                 // what the exit successor wanted
                 User* after_exit = cfg_next_user(projs[exit_proj_i]);
                 assert(after_exit != NULL && "no successors after exit?");
 
-                set_input(p, exit_region, projs[exit_proj_i], 1);
-                set_input(p, after_exit->n, exit_region, after_exit->slot);
+                set_input(exit_region, projs[exit_proj_i], 1);
+                set_input(after_exit->n, exit_region, after_exit->slot);
 
                 DO_IF(TB_OPTDEBUG_LOOP)(TB_NODE_GET_EXTRA_T(ztc_check, TB_NodeRegion)->tag = lil_name(f, "loop.ztc.%d", i));
                 DO_IF(TB_OPTDEBUG_LOOP)(TB_NODE_GET_EXTRA_T(exit_region, TB_NodeRegion)->tag = lil_name(f, "loop.exit.%d", i));
@@ -211,7 +211,7 @@ bool tb_pass_loop(TB_Passes* p) {
 
                     // attach control edge
                     if (top_cloned) {
-                        set_input(p, top_cloned, cloned, 0);
+                        set_input(top_cloned, cloned, 0);
                     } else {
                         bot_cloned = cloned;
                     }
@@ -225,16 +225,16 @@ bool tb_pass_loop(TB_Passes* p) {
                 tb_pass_mark(p, proj0);
                 tb_pass_mark(p, proj1);
 
-                set_input(p, top_cloned, header->inputs[single_backedge], 0);
-                set_input(p, header, exit_proj_i ? proj0 : proj1, single_backedge);
+                set_input(top_cloned, header->inputs[single_backedge], 0);
+                set_input(header, exit_proj_i ? proj0 : proj1, single_backedge);
 
                 // remove initial latch now
                 User* after_next = cfg_next_user(projs[1 - exit_proj_i]);
                 assert(after_next != NULL && "no successors after next?");
                 assert(after_next->slot == 0 && "pretty sure it should've been passed through in[0]");
 
-                set_input(p, exit_region, exit_proj_i ? proj1 : proj0, 1);
-                set_input(p, after_next->n, latch->inputs[0], after_next->slot);
+                set_input(exit_region, exit_proj_i ? proj1 : proj0, 1);
+                set_input(after_next->n, latch->inputs[0], after_next->slot);
 
                 tb_pass_kill_node(p, projs[exit_proj_i]);
                 tb_pass_kill_node(p, projs[1 - exit_proj_i]);

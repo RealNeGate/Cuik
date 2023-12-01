@@ -1,8 +1,11 @@
+
 #ifdef CUIK_USE_TB
 typedef struct {
     Futex* remaining;
 
-    TB_Function* f;
+    size_t count;
+    TB_Function** arr;
+
     void* arg;
 
     CuikSched_PerFunction func;
@@ -10,9 +13,11 @@ typedef struct {
 
 static void per_func_task(void* arg) {
     PerFunction task = *((PerFunction*) arg);
-    task.func(task.f, task.arg);
+    for (size_t i = 0; i < task.count; i++) {
+        task.func(task.arr[i], task.arg);
+    }
 
-    atomic_fetch_sub(task.remaining, 1);
+    atomic_fetch_add(task.remaining, 1);
     futex_signal(task.remaining);
 }
 
@@ -31,26 +36,33 @@ static size_t good_batch_size(size_t n, size_t jobs) {
     return 64;
 }
 
-void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_threads, TB_Module* mod, void* arg, CuikSched_PerFunction func) {
+void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_threads, CompilationUnit* cu, TB_Module* mod, void* arg, CuikSched_PerFunction func) {
     TB_SymbolIter it = tb_symbol_iter(mod);
     if (thread_pool != NULL) {
         Futex remaining = 0;
         size_t count = 0;
 
         PerFunction task = { .remaining = &remaining, .arg = arg, .func = func };
+        size_t func_count = dyn_array_length(cu->worklist);
 
-        TB_Symbol* sym;
-        while (sym = tb_symbol_iter_next(&it), sym) if (sym->tag == TB_SYMBOL_FUNCTION) {
-            task.f = (TB_Function*) sym;
+        size_t batch_size = 1;
+        for (size_t i = 0; i < func_count; i += batch_size) {
+            size_t end = i + batch_size;
+            if (end >= func_count) end = func_count;
+
+            // btw the struct gets copied by the thread pool
+            task.count = end - i;
+            task.arr = &cu->worklist[i];
+
             CUIK_CALL(thread_pool, submit, per_func_task, sizeof(task), &task);
             count++;
         }
 
         futex_wait_eq(&remaining, count);
     } else {
-        TB_Symbol* sym;
-        while (sym = tb_symbol_iter_next(&it), sym) if (sym->tag == TB_SYMBOL_FUNCTION) {
-            func((TB_Function*) sym, arg);
+        size_t func_count = dyn_array_length(cu->worklist);
+        for (size_t i = 0; i < func_count; i++) {
+            func(cu->worklist[i], arg);
         }
     }
 }

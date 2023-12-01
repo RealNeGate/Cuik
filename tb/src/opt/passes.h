@@ -8,7 +8,7 @@
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
-#define TB_OPTDEBUG_CODEGEN  1
+#define TB_OPTDEBUG_CODEGEN  0
 #define TB_OPTDEBUG_DATAFLOW 0
 
 #define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
@@ -52,10 +52,6 @@ typedef struct {
     LatticeTrifecta trifecta;
 } LatticePointer;
 
-typedef struct {
-    TB_Node* idom;
-} LatticeControl;
-
 // Represents the fancier type system within the optimizer, it's
 // all backed by my shitty understanding of lattice theory
 typedef struct {
@@ -64,14 +60,12 @@ typedef struct {
         LATTICE_FLOAT32,
         LATTICE_FLOAT64,
         LATTICE_POINTER,
-        LATTICE_CONTROL,
     } tag;
     uint32_t pad;
     union {
         LatticeInt _int;
         LatticeFloat _float;
         LatticePointer _ptr;
-        LatticeControl _ctrl;
     };
 } Lattice;
 
@@ -438,7 +432,7 @@ static int dom_depth(TB_CFG* cfg, TB_Node* n) {
 extern thread_local TB_Arena* tmp_arena;
 
 void verify_tmp_arena(TB_Passes* p);
-void set_input(TB_Passes* restrict p, TB_Node* n, TB_Node* in, int slot);
+void set_input(TB_Node* n, TB_Node* in, int slot);
 
 static User* find_users(TB_Passes* restrict p, TB_Node* n) {
     return n->users;

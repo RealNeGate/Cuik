@@ -349,7 +349,7 @@ typedef struct {
 // only next_in_module is ever mutated on multiple threads (when first attached)
 struct TB_ThreadInfo {
     TB_Module* owner;
-    TB_ThreadInfo* next_in_module;
+    _Atomic(TB_ThreadInfo*) next_in_module;
 
     TB_ThreadInfo* prev;
     TB_ThreadInfo* next;
