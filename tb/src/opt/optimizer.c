@@ -1024,13 +1024,8 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
         TB_ThreadInfo* info = tb_thread_info(f->super.module);
 
         CUIK_TIMED_BLOCK("allocate type array") {
-            if (info->type_arena.chunk_size == 0) {
-                // make new arena
-                tb_arena_create(&info->type_arena, TB_ARENA_LARGE_CHUNK_SIZE);
-            }
-
             size_t count = (f->node_count + 63ull) & ~63ull;
-            p->universe.arena = &info->type_arena;
+            p->universe.arena = &info->tmp_arena;
             p->universe.pool = nl_hashset_alloc(64);
             p->universe.type_cap = count;
             p->universe.types = tb_platform_heap_alloc(count * sizeof(Lattice*));
@@ -1086,7 +1081,6 @@ void tb_pass_exit(TB_Passes* p) {
     dyn_array_destroy(p->locals);
 
     if (p->universe.arena != NULL) {
-        tb_arena_clear(p->universe.arena);
         nl_hashset_free(p->universe.pool);
         tb_platform_heap_free(p->universe.types);
     }

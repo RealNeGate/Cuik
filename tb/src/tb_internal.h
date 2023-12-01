@@ -362,7 +362,6 @@ struct TB_ThreadInfo {
 
     TB_Arena perm_arena;
     TB_Arena tmp_arena;
-    TB_Arena type_arena;
 
     // live symbols (globals, functions and externals)
     //   we'll be iterating these during object/executable
@@ -614,10 +613,6 @@ static bool is_same_location(TB_NodeSafepoint* a, TB_NodeSafepoint* b) {
 
 static TB_Arena* get_temporary_arena(TB_Module* m) {
     return &tb_thread_info(m)->tmp_arena;
-}
-
-static TB_Arena* get_type_arena(TB_Module* m) {
-    return &tb_thread_info(m)->type_arena;
 }
 
 static TB_Arena* get_permanent_arena(TB_Module* m) {
