@@ -651,7 +651,8 @@ void* tb_out_grab(TB_Emitter* o, size_t count) {
 }
 
 void* tb_out_get(TB_Emitter* o, size_t pos) {
-    return &o->data[o->count];
+    assert(pos < o->count);
+    return &o->data[pos];
 }
 
 size_t tb_out_grab_i(TB_Emitter* o, size_t count) {
@@ -747,15 +748,6 @@ size_t tb_outstr_nul_UNSAFE(TB_Emitter* o, const char* str) {
     }
 
     o->data[o->count++] = 0;
-    return start;
-}
-
-size_t tb_outstr_nul(TB_Emitter* o, const char* str) {
-    size_t start = o->count;
-    size_t len = strlen(str) + 1;
-    tb_out_reserve(o, len);
-
-    memcpy(&o->data[o->count], str, len);
     return start;
 }
 

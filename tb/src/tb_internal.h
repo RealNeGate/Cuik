@@ -164,8 +164,8 @@ struct TB_DebugType {
     // debug-info target specific data
     union {
         struct {
-            uint16_t cv_type_id;
-            uint16_t cv_type_id_fwd; // used by records to manage forward decls
+            uint16_t type_id;
+            uint16_t type_id_fwd; // used by records to manage forward decls
         };
     };
 
@@ -530,7 +530,6 @@ size_t tb_out_get_pos(TB_Emitter* o, void* p);
 
 // Adds null terminator onto the end and returns the starting position of the string
 size_t tb_outstr_nul_UNSAFE(TB_Emitter* o, const char* str);
-size_t tb_outstr_nul(TB_Emitter* o, const char* str);
 
 void tb_out1b_UNSAFE(TB_Emitter* o, uint8_t i);
 void tb_out4b_UNSAFE(TB_Emitter* o, uint32_t i);

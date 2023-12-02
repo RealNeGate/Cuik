@@ -453,6 +453,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, const IDebugFormat* dbg) {
                 switch (in_reloc->type) {
                     case TB_OBJECT_RELOC_SECREL:  type = IMAGE_REL_AMD64_SECREL; break;
                     case TB_OBJECT_RELOC_SECTION: type = IMAGE_REL_AMD64_SECTION; break;
+                    case TB_OBJECT_RELOC_ADDR32NB:type = IMAGE_REL_AMD64_ADDR32NB; break;
                     default: tb_todo();
                 }
 
