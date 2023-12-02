@@ -40,42 +40,36 @@ typedef enum {
 } SDG_SymbolTag;
 
 typedef struct {
-    uint32_t tag  : 8;
-    // 0 if doesn't have one
-    uint32_t next : 24;
-} SDG_SymbolHeader;
-
-typedef struct {
-    uint8_t tag;
+    uint32_t tag;
     // number of bytes to skip to reach the first element in the body of the symbol.
     // this only applies for procedures because they have nested elements.
     uint8_t content_ptr;
     // 0 if doesn't have one
     uint32_t next;
-    // size in memory
-    uint32_t storage_size;
+} SDG_Symbol;
+
+typedef struct {
+    SDG_Symbol super;
     // type
     SDG_TypeIndex type;
-    // next
-    uint32_t rva;
+    // in program's memory
+    uint32_t rva, size;
     char name[];
 } SDG_NormalSymbol;
 
 typedef struct {
-    uint8_t tag;
-    // 0 if doesn't have one
-    uint32_t next;
+    SDG_Symbol super;
+    // used to track changes
+    uint32_t last_write;
     char name[];
 } SDG_File;
 
 typedef struct {
-    uint8_t tag;
-    // 0 if doesn't have one
-    uint32_t next;
+    SDG_Symbol super;
     char name[];
 } SDG_Module;
 
-static SDG_TypeIndex fut_get_type_from_dt(TB_DataType dt) {
+static SDG_TypeIndex sdg_get_type_from_dt(TB_DataType dt) {
     // assert(dt.width == 0 && "TODO: implement vector types in CodeView output");
     switch (dt.type) {
         case TB_INT: {
@@ -100,32 +94,33 @@ static SDG_TypeIndex fut_get_type_from_dt(TB_DataType dt) {
     }
 }
 
-static bool fut_supported_target(TB_Module* m)        { return true; }
-static int fut_number_of_debug_sections(TB_Module* m) { return 1; }
+static bool sdg_supported_target(TB_Module* m)        { return true; }
+static int sdg_number_of_debug_sections(TB_Module* m) { return 1; }
 
 // there's quite a few places that mark the next field for symbols
-#define MARK_NEXT(patch_pos) (((SDG_SymbolHeader*) tb_out_get(&symtab, mod_length_patch))->next = symtab.count)
-static TB_SectionGroup fut_generate_debug_info(TB_Module* m, TB_TemporaryStorage* tls) {
+#define MARK_NEXT(patch_pos) (((SDG_Symbol*) tb_out_get(&symtab, mod_length_patch))->next = symtab.count)
+static TB_SectionGroup sdg_generate_debug_info(TB_Module* m, TB_TemporaryStorage* tls) {
     TB_ObjectSection* sections = tb_platform_heap_alloc(1 * sizeof(TB_ObjectSection));
-    sections[0] = (TB_ObjectSection){ gimme_cstr_as_slice(".debug") };
+    sections[0] = (TB_ObjectSection){ gimme_cstr_as_slice(".sdg$S") };
 
     TB_Emitter symtab = { 0 };
 
     // we only store one module so we never fill the next
-    SDG_Module mod = { SDG_SYMBOL_MODULE };
+    SDG_Module mod = { { SDG_SYMBOL_MODULE } };
     size_t mod_length_patch = tb_outs(&symtab, sizeof(mod), &mod);
     tb_outstr_nul(&symtab, "fallback.o");
 
     // emit file table into symbol table.
     // skip the NULL file entry
     size_t file_count = dyn_array_length(m->files);
-    FOREACH_N(i, 1, file_count) {
-        size_t len = strlen(m->files[i].path->data);
+    FOREACH_N(i, 0, file_count) {
+        size_t len = m->files[i].length;
+        const char* data = strlen(m->files[i].data);
 
         SDG_File file = { SDG_SYMBOL_FILE };
         size_t field_length_patch = tb_outs(&symtab, sizeof(file), &file);
 
-        tb_outstr_nul(&symtab, m->files[i].path);
+        tb_outstr_nul(&symtab, m->files[i].data);
         MARK_NEXT(file_length_patch);
     }
 
@@ -139,10 +134,11 @@ static TB_SectionGroup fut_generate_debug_info(TB_Module* m, TB_TemporaryStorage
         tb_outstr_nul(&symtab, f->super.name);
 
         // fill RVA
-        size_t func_id = f->super.symbol_id;
-        add_reloc(&sections[0], &(TB_ObjectReloc){
-                TB_OBJECT_RELOC_ADDR32NB, func_id, sym_next_patch + offsetof(SDG_NormalSymbol, rva)
-            });
+        TB_ObjectReloc r = {
+            TB_OBJECT_RELOC_ADDR32NB, f->super.symbol_id,
+            sym_next_patch + offsetof(SDG_NormalSymbol, rva)
+        };
+        add_reloc(&sections[0], &r, );
 
         MARK_NEXT(sym_next_patch);
     }

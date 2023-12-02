@@ -29,20 +29,15 @@ void tb_module_kill_symbol(TB_Module* m, TB_Symbol* sym) {
 }
 
 void tb_symbol_append(TB_Module* m, TB_Symbol* s) {
-    atomic_fetch_add(&m->symbol_count[s->tag], 1);
-
     // append to thread's symbol table
     TB_ThreadInfo* info = tb_thread_info(m);
-    {
-        mtx_lock(&info->symbol_lock);
-        if (info->symbols.data == NULL) {
-            info->symbols = nl_hashset_alloc(256);
-        }
-
-        s->info = info;
-        nl_hashset_put(&info->symbols, s);
-        mtx_unlock(&info->symbol_lock);
+    if (info->symbols.data == NULL) {
+        info->symbols = nl_hashset_alloc(256);
     }
+
+    s->info = info;
+    nl_hashset_put(&info->symbols, s);
+    atomic_fetch_add(&m->symbol_count[s->tag], 1);
 }
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size) {
