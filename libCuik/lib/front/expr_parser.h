@@ -312,13 +312,17 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
         SourceLoc start_loc = tokens_get_location(s);
         tokens_next(s);
 
-        parse_expr(parser, s);
-        expect_closing_paren(s, start_loc);
+        if (tokens_get(s)->type == '{') {
+            diag_err(s, get_token_range(t), "GNU statement expressions are unsupported rn");
+        } else {
+            parse_expr(parser, s);
+            expect_closing_paren(s, start_loc);
 
-        Subexpr* e = peek_expr(parser);
-        e->has_parens = true;
-        e->loc.start = start_loc;
-        e->loc.end = tokens_get_last_location(s);
+            Subexpr* e = peek_expr(parser);
+            e->has_parens = true;
+            e->loc.start = start_loc;
+            e->loc.end = tokens_get_last_location(s);
+        }
         return;
     }
 

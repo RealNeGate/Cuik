@@ -691,12 +691,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                     .value_type = LVALUE_LABEL,
                     .reg = stmt->backing.r,
                 };
-            } else if (stmt->op == STMT_FUNC_DECL) {
-                return (IRVal){
-                    .value_type = LVALUE,
-                    .reg = tb_inst_get_symbol_address(func, stmt->backing.s),
-                };
-            } else if (type->kind == KIND_FUNC || stmt->op == STMT_GLOBAL_DECL || (stmt->op == STMT_DECL && stmt->decl.attrs.is_static)) {
+            } else if (stmt->op == STMT_FUNC_DECL || type->kind == KIND_FUNC || stmt->op == STMT_GLOBAL_DECL || (stmt->op == STMT_DECL && stmt->decl.attrs.is_static)) {
                 if (stmt->backing.s == NULL) {
                     // check if it's defined by another TU
                     // functions are external by default
@@ -2054,10 +2049,23 @@ static void ir_alloc_task(void* task) {
             if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) == 0) continue;
             if (!s->decl.attrs.is_used) continue;
 
+            const char* name = s->decl.name;
+            if (s->decl.attrs.is_inline) {
+                mtx_lock(&cu->lock);
+                ptrdiff_t search = nl_map_get_cstr(cu->export_table, name);
+                if (search >= 0 && cu->export_table[search].v->tag == TB_SYMBOL_FUNCTION) {
+                    assert((s->flags & STMT_FLAGS_HAS_IR_BACKING) && "inline funcs should have IR backing... right?");
+                    s->flags &= ~STMT_FLAGS_HAS_IR_BACKING;
+                    mtx_unlock(&cu->lock);
+                    continue;
+                } else {
+                    mtx_unlock(&cu->lock);
+                }
+            }
+
             TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
             TB_SymbolTag tag   = s->op == STMT_FUNC_DECL ? TB_SYMBOL_FUNCTION : TB_SYMBOL_GLOBAL;
 
-            const char* name = s->decl.name;
             if (s->op == STMT_FUNC_DECL) {
                 TB_Function* func = tb_function_create(t.tu->ir_mod, -1, name, linkage);
                 s->backing.f = func;
@@ -2081,13 +2089,18 @@ static void ir_alloc_task(void* task) {
             s->backing.s->ordinal = get_ir_ordinal(t.tu, s);
 
             // an exported symbol that's already defined
-            if (s->flags & STMT_FLAGS_IS_EXPORTED) {
+            if (s->decl.attrs.is_inline || (s->flags & STMT_FLAGS_IS_EXPORTED)) {
                 mtx_lock(&cu->lock);
                 ptrdiff_t search = nl_map_get_cstr(cu->export_table, name);
                 if (search >= 0) {
-                    // defined already as an external, let's just resolve it late
-                    TB_External* e = (TB_External*) cu->export_table[search].v;
-                    tb_extern_resolve(e, s->backing.s);
+                    if (cu->export_table[search].v->tag == TB_SYMBOL_EXTERNAL) {
+                        // defined already as an external, let's just resolve it late
+                        TB_External* e = (TB_External*) cu->export_table[search].v;
+                        tb_extern_resolve(e, s->backing.s);
+                    } else if (s->decl.attrs.is_inline) {
+                        assert((s->flags & STMT_FLAGS_HAS_IR_BACKING) && "inline funcs should have IR backing... right?");
+                        s->flags &= ~STMT_FLAGS_HAS_IR_BACKING;
+                    }
                 } else {
                     // we've defined it before uses, yay
                     nl_map_put_cstr(cu->export_table, name, s->backing.s);

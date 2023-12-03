@@ -8,6 +8,7 @@
 CompilationUnit* cuik_create_compilation_unit(void) {
     CompilationUnit* cu = cuik_calloc(1, sizeof(CompilationUnit));
     mtx_init(&cu->lock, mtx_plain);
+    nl_map_create(cu->export_table, 1024);
     return cu;
 }
 
