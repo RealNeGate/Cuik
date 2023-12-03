@@ -1,86 +1,5 @@
 #include "../tb_internal.h"
-
-// builtin primitives (the custom types start at 0x100)
-//
-// if the top bit is set, we're using a pointer to these
-// types rather than a direct type.
-typedef enum {
-    SDG_PRIM_VOID,
-
-    // builtin bools
-    SDG_PRIM_BOOL8, SDG_PRIM_BOOL16, SDG_PRIM_BOOL32, SDG_PRIM_BOOL64,
-
-    // builtin char
-    SDG_PRIM_CHAR8, SDG_PRIM_CHAR16, SDG_PRIM_CHAR32,
-
-    // builtin integers
-    SDG_PRIM_INT8,  SDG_PRIM_UINT8,
-    SDG_PRIM_INT16, SDG_PRIM_UINT16,
-    SDG_PRIM_INT32, SDG_PRIM_UINT32,
-    SDG_PRIM_INT64, SDG_PRIM_UINT64,
-
-    // builtin floats
-    SDG_PRIM_FLOAT, SDG_PRIM_DOUBLE, SDG_PRIM_LONG_DOUBLE,
-
-    // NOTE(NeGate): if set, the type is now a pointer to the described type.
-    SDG_PRIM_POINTER = 0x80,
-
-    CUSTOM_TYPE_START = 0x100,
-} SDG_TypeIndex;
-
-typedef struct {
-    enum {
-        SDG_TYPE_PTR,
-        SDG_TYPE_FUNC,
-    } tag;
-
-    int arg_count;
-    SDG_TypeIndex base;
-    SDG_TypeIndex args[];
-} SDG_Type;
-
-// symbol table
-typedef enum {
-    // normal symbols
-    SDG_SYMBOL_PROC,
-    SDG_SYMBOL_GLOBAL,
-
-    // magic symbols
-    SDG_SYMBOL_FILE,
-    SDG_SYMBOL_MODULE,
-} SDG_SymbolTag;
-
-typedef struct {
-    uint32_t tag;
-    // number of bytes to skip to reach the first element in the body of the symbol.
-    // this only applies for procedures because they have nested elements.
-    uint8_t content_ptr;
-    // 0 if doesn't have one
-    uint32_t next;
-} SDG_Symbol;
-
-typedef struct {
-    SDG_Symbol super;
-    // type
-    SDG_TypeIndex type;
-    // in program's memory
-    uint32_t rva, size;
-    char name[];
-} SDG_NormalSymbol;
-
-typedef struct {
-    SDG_Symbol super;
-    // used to track changes
-    uint32_t last_write;
-    char name[];
-} SDG_File;
-
-typedef struct {
-    SDG_Symbol super;
-    uint32_t type_table;
-    uint32_t type_count;
-    char name[];
-} SDG_Module;
+#include <sdg.h>
 
 typedef struct {
     TB_Emitter e;
@@ -164,11 +83,15 @@ static SDG_TypeIndex sdg_get_type_from_dt(TB_DataType dt) {
 static bool sdg_supported_target(TB_Module* m)        { return true; }
 static int sdg_number_of_debug_sections(TB_Module* m) { return 2; }
 
-static size_t write_normie_sym(TB_Emitter* e, TB_ObjectSection* section, int tag, const char* name, size_t sym_id, size_t code_size) {
-    SDG_NormalSymbol sym = { { tag }, .size = code_size };
+static size_t write_normie_sym(TB_Emitter* e, TB_ObjectSection* section, int tag, const char* name, SDG_TypeIndex ty, size_t sym_id, size_t code_size) {
+    size_t len = strlen(name);
+    SDG_NormalSymbol sym = {
+        { .tag = tag, .content_ptr = sizeof(SDG_NormalSymbol) + len + 1 },
+        .type = ty, .size = code_size
+    };
 
     size_t sym_next_patch = tb_outs(e, sizeof(sym), &sym);
-    tb_outs(e, strlen(name) + 1, name);
+    tb_outs(e, len + 1, name);
 
     // fill RVA
     section->relocations[section->relocation_count++] = (TB_ObjectReloc){
@@ -180,6 +103,7 @@ static size_t write_normie_sym(TB_Emitter* e, TB_ObjectSection* section, int tag
 
 // there's quite a few places that mark the next field for symbols
 #define MARK_NEXT(patch_pos) (((SDG_Symbol*) tb_out_get(&symtab, patch_pos))->next = symtab.count)
+#define MARK_KIDS(patch_pos, c) (((SDG_Symbol*) tb_out_get(&symtab, patch_pos))->kid_count = c)
 static TB_SectionGroup sdg_generate_debug_info(TB_Module* m, TB_TemporaryStorage* tls) {
     TB_ObjectSection* sections = tb_platform_heap_alloc(1 * sizeof(TB_ObjectSection));
     sections[0] = (TB_ObjectSection){ gimme_cstr_as_slice(".sdg$S") };
@@ -192,7 +116,7 @@ static TB_SectionGroup sdg_generate_debug_info(TB_Module* m, TB_TemporaryStorage
     SDG_Types types = { 0 };
 
     // we only store one module so we never fill the next
-    SDG_Module mod = { { SDG_SYMBOL_MODULE } };
+    SDG_Module mod = { { SDG_SYMBOL_MODULE, sizeof(SDG_Module)+sizeof("fallback.o") } };
     size_t type_table_patch = tb_outs(&symtab, sizeof(mod), &mod);
 
     tb_outs(&symtab, sizeof("fallback.o"), "fallback.o");
@@ -200,17 +124,21 @@ static TB_SectionGroup sdg_generate_debug_info(TB_Module* m, TB_TemporaryStorage
     // emit file table into symbol table.
     // skip the NULL file entry
     size_t file_count = nl_map__get_header(m->files)->count;
+    size_t next_patch = 0;
+
+    size_t mod_kids = 0;
     nl_map_for_str(i, m->files) {
         size_t len = m->files[i].v->len;
         const uint8_t* data = m->files[i].v->path;
 
         SDG_File file = { { SDG_SYMBOL_FILE } };
-        size_t file_length_patch = tb_outs(&symtab, sizeof(file), &file);
+        next_patch = tb_outs(&symtab, sizeof(file), &file);
 
         tb_outs(&symtab, len, data);
         tb_out1b(&symtab, 0);
 
-        MARK_NEXT(file_length_patch);
+        MARK_NEXT(next_patch);
+        mod_kids++;
     }
 
     // functions
@@ -246,8 +174,9 @@ static TB_SectionGroup sdg_generate_debug_info(TB_Module* m, TB_TemporaryStorage
                 }
             }
 
-            size_t sym_next_patch = write_normie_sym(&symtab, &sections[0], SDG_SYMBOL_PROC, name, func_id, out_f->code_size);
-            MARK_NEXT(sym_next_patch);
+            next_patch = write_normie_sym(&symtab, &sections[0], SDG_SYMBOL_PROC, name, ty, func_id, out_f->code_size);
+            MARK_NEXT(next_patch);
+            mod_kids++;
         }
 
         DynArray(TB_Global*) globals = m->sections[i].globals;
@@ -257,10 +186,19 @@ static TB_SectionGroup sdg_generate_debug_info(TB_Module* m, TB_TemporaryStorage
                 continue;
             }
 
-            size_t sym_next_patch = write_normie_sym(&symtab, &sections[0], SDG_SYMBOL_GLOBAL, g->super.name, g->super.symbol_id, g->size);
-            MARK_NEXT(sym_next_patch);
+            SDG_TypeIndex ty = g->dbg_type ? sdg_get_type(&types, g->dbg_type) : SDG_PRIM_VOID;
+
+            next_patch = write_normie_sym(&symtab, &sections[0], SDG_SYMBOL_GLOBAL, g->super.name, ty, g->super.symbol_id, g->size);
+            MARK_NEXT(next_patch);
+            mod_kids++;
         }
+
+        align_up_emitter(&symtab, 4);
     }
+
+    // clear next field
+    MARK_KIDS(0, mod_kids);
+    ((SDG_Symbol*) &symtab.data[next_patch])->next = 0;
 
     // write type table patch (it'll just follow immediately after the symbols)
     ((SDG_Module*) &symtab.data[0])->type_table = symtab.count;
