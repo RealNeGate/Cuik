@@ -157,6 +157,20 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             return REGMASK(GPR, ALL_GPRS);
         }
 
+        case TB_VA_START: {
+            assert(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
+
+            // on Win64 va_start just means whatever is one parameter away from
+            // the parameter you give it (plus in Win64 the parameters in the stack
+            // are 8bytes, no fanciness like in SysV):
+            // void printf(const char* fmt, ...) {
+            //     va_list args;
+            //     va_start(args, fmt); // args = ((char*) &fmt) + 8;
+            //     ...
+            // }
+            return REGMASK(GPR, ALL_GPRS);
+        }
+
         case TB_POISON:
         case TB_INT2PTR:
         case TB_PTR2INT:
@@ -486,6 +500,17 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_REGION: break;
             case TB_PHI: break;
             case TB_UNREACHABLE: break;
+
+            case TB_VA_START: {
+                TB_FunctionPrototype* proto = ctx->f->prototype;
+                size_t gpr_count = param_descs[ctx->abi_index].gpr_count;
+                size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
+
+                Val dst = val_at(ctx, t->interval);
+                Val ea = val_stack(ctx->stack_usage - (16 + extra_param_count*8));
+                inst2(e, LEA, &dst, &ea, TB_X86_TYPE_QWORD);
+                break;
+            }
 
             case TB_SAFEPOINT_NOP: {
                 TB_NodeSafepoint* loc = TB_NODE_GET_EXTRA(n);
