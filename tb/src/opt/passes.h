@@ -2,6 +2,10 @@
 #include "../tb_internal.h"
 #include "properties.h"
 
+enum {
+    FAST_IDOM_LIMIT = 20
+};
+
 #define TB_OPTDEBUG_STATS    0
 #define TB_OPTDEBUG_PEEP     0
 #define TB_OPTDEBUG_LOOP     0

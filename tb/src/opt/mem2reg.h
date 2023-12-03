@@ -515,7 +515,7 @@ static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_No
         return COHERENCY_DEAD;
     }
 
-    ICodeGen* cg = tb__find_code_generator(f->super.module);
+    ICodeGen* cg = f->super.module->codegen;
     int pointer_size = cg->pointer_size;
     int char_size = cg->minimum_addressable_size;
 

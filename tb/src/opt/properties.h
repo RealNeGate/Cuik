@@ -23,6 +23,19 @@ static bool is_commutative(TB_NodeTypeEnum type) {
     }
 }
 
+static bool is_mem_access(TB_Node* n) {
+    switch (n->type) {
+        case TB_LOAD:
+        case TB_STORE:
+        case TB_MEMCPY:
+        case TB_MEMSET:
+        return true;
+
+        default:
+        return false;
+    }
+}
+
 static bool is_effect_tuple(TB_Node* n) {
     switch (n->type) {
         case TB_CALL:

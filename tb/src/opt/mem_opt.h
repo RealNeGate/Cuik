@@ -77,9 +77,10 @@ static TB_Node* data_phi_from_memory_phi(TB_Passes* restrict p, TB_Function* f, 
 }
 
 static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    TB_Node* ctrl = n->inputs[0];
     TB_Node* mem = n->inputs[1];
     TB_Node* addr = n->inputs[2];
-    if (n->inputs[0] != NULL) {
+    if (ctrl != NULL) {
         // we've dependent on code which must always be run (START.mem)
         if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_START) {
             set_input(n, NULL, 0);
@@ -96,19 +97,26 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
                 return n;
             }
         }
-    }
 
-    // if LOAD has already been safely accessed we can relax our control dependency
-    if (n->inputs[0] != NULL) {
-        TB_Node* ctrl = n->inputs[0];
+        // if all paths are dominated by a load of some address then it's safe
+        // to relax ctrl deps.
+        ICodeGen* cg = f->super.module->codegen;
+        int bits_read = bits_in_data_type(cg->pointer_size, n->dt);
 
-        // hacky but we'll remove the control edge to see if there's a variant like that around
-        n->inputs[0] = NULL;
-        TB_Node* k = nl_hashset_get2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
-        n->inputs[0] = ctrl;
-
-        if (k && k != n) {
-            return k;
+        for (User* u = addr->users; u; u = u->next) {
+            // find other users of the address which read the same size (or more)
+            TB_NodeTypeEnum type = 0;
+            if (u->n != n && u->slot == 2 && u->n->type == TB_LOAD) {
+                TB_DataType mem_dt = n->type == TB_LOAD ? n->dt : n->inputs[3]->dt;
+                int other_bits_read = bits_in_data_type(cg->pointer_size, mem_dt);
+                if (bits_read <= other_bits_read) {
+                    TB_Node* other_ctrl = u->n->inputs[0];
+                    if (other_ctrl == NULL || (fast_dommy(other_ctrl, ctrl) && other_ctrl != ctrl)) {
+                        set_input(n, other_ctrl, 0);
+                        return n;
+                    }
+                }
+            }
         }
     }
 

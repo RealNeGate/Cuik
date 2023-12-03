@@ -2,7 +2,7 @@
 #include "host.h"
 #include "opt/passes.h"
 
-ICodeGen* tb__find_code_generator(TB_Module* m) {
+static ICodeGen* tb__find_code_generator(TB_Module* m) {
     // Place all the codegen interfaces down here
     extern ICodeGen tb__x64_codegen;
     extern ICodeGen tb__aarch64_codegen;
@@ -137,6 +137,7 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     m->target_abi = (sys == TB_SYSTEM_WINDOWS) ? TB_ABI_WIN64 : TB_ABI_SYSTEMV;
     m->target_arch = arch;
     m->target_system = sys;
+    m->codegen = tb__find_code_generator(m);
 
     mtx_init(&m->lock, mtx_plain);
 
@@ -170,7 +171,7 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
 TB_FunctionOutput* tb_pass_codegen(TB_Passes* p, const TB_FeatureSet* features, bool emit_asm) {
     TB_Function* f = p->f;
     TB_Module* m = f->super.module;
-    ICodeGen* restrict code_gen = tb__find_code_generator(m);
+    ICodeGen* restrict code_gen = m->codegen;
 
     // Machine code gen
     TB_ThreadInfo* info = tb_thread_info(m);
@@ -346,7 +347,6 @@ const char* tb_symbol_get_name(TB_Symbol* s) {
 
 void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p, TB_Arena* arena) {
     assert(f->prototype == NULL);
-    const ICodeGen* restrict code_gen = tb__find_code_generator(f->super.module);
 
     size_t param_count = p->param_count;
     size_t extra_size = sizeof(TB_NodeRegion) + (param_count * sizeof(TB_Node*));

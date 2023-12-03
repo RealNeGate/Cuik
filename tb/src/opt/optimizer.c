@@ -230,7 +230,6 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 
 // incremental dominators, plays nice with peepholes and has
 // a limited walk of 20 steps.
-enum { FAST_IDOM_LIMIT = 20 };
 static TB_Node* fast_idom(TB_Node* bb) {
     int steps = 0;
     while (steps < FAST_IDOM_LIMIT && bb->type != TB_REGION) {

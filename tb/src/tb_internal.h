@@ -239,6 +239,7 @@ struct TB_CodeRegion {
 };
 
 typedef struct COFF_UnwindInfo COFF_UnwindInfo;
+typedef struct ICodeGen ICodeGen;
 
 typedef struct TB_FunctionOutput {
     TB_Function* parent;
@@ -382,6 +383,7 @@ typedef struct {
 
 struct TB_Module {
     bool is_jit;
+    ICodeGen* codegen;
 
     atomic_flag is_tls_defined;
 
@@ -430,7 +432,7 @@ typedef struct {
     uint8_t data[];
 } TB_TemporaryStorage;
 
-typedef struct {
+struct ICodeGen {
     // what does CHAR_BIT mean on said platform
     int minimum_addressable_size, pointer_size;
 
@@ -443,7 +445,7 @@ typedef struct {
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
 
     void (*compile_function)(TB_Passes* p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm);
-} ICodeGen;
+};
 
 // All debug formats i know of boil down to adding some extra sections to the object file
 typedef struct {
@@ -517,8 +519,6 @@ void tb_tls_restore(TB_TemporaryStorage* store, void* ptr);
 void* tb_tls_pop(TB_TemporaryStorage* store, size_t size);
 void* tb_tls_peek(TB_TemporaryStorage* store, size_t distance);
 bool tb_tls_can_fit(TB_TemporaryStorage* store, size_t size);
-
-ICodeGen* tb__find_code_generator(TB_Module* m);
 
 void* tb_out_reserve(TB_Emitter* o, size_t count);
 void tb_out_commit(TB_Emitter* o, size_t count);
