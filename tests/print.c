@@ -1,7 +1,5 @@
 #include <stdio.h>
 
-//int bar(int, int);
-
 int bar() {
     return 4 + 3 * 2 + 10;
 }
@@ -12,12 +10,13 @@ int mul3(unsigned x) { return x * 3; }
 int bits(int x) { return x << 2; }
 
 int foo(int x, int y) {
+    printf("H");
     int z = (x + 2) / y;
     z += y;
     return z;
 }
 
-int loop(int* arr, int n) {
+/*int loop(int* arr, int n) {
     int i = 0, a = 0;
     while (i < n) {
         if (i >= n) return -1;
@@ -26,7 +25,7 @@ int loop(int* arr, int n) {
     }
 
     return a;
-}
+}*/
 
 int ctrl(int* x) {
     if (*x) {

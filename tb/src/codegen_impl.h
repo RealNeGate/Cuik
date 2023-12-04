@@ -14,6 +14,9 @@ static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASS
 // This is where we do the byte emitting phase
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t);
 
+// Used for post-processing after regalloc
+static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e);
+
 // Write bytes after every tile's emitted, used by x86 for NOP padding
 static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e);
 
@@ -256,8 +259,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             machine_bbs[bb_count++] = (MachineBB){ stop_bb };
         }
 
+        // build blocks in reverse
         DynArray(PhiVal) phi_vals = NULL;
-        FOREACH_N(i, 0, bb_count) {
+        FOREACH_REVERSE_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
             TB_Node* bb_start = bbs[bbid];
             TB_BasicBlock* bb = nl_map_get_checked(p->scheduled, bb_start);
@@ -352,7 +356,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
                     Tile* tile = TB_ARENA_ALLOC(arena, Tile);
                     TB_Node* succ_n = cfg_next_control(end);
-                    *tile = (Tile){ .prev = bot, .tag = TILE_GOTO, .n = end, .succ = succ_n };
+                    *tile = (Tile){ .prev = bot, .tag = TILE_GOTO, .succ = succ_n };
                     bot->next = tile;
                     bot = tile;
                 }
@@ -360,6 +364,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
                 machine_bbs[bbid].start = top;
                 machine_bbs[bbid].end = bot;
+                machine_bbs[bbid].n = bb_start;
                 machine_bbs[bbid].end_n = end;
             }
         }
@@ -519,6 +524,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     CUIK_TIMED_BLOCK("emit") {
         TB_CGEmitter* e = &ctx.emit;
+        pre_emit(&ctx, e);
+
         FOREACH_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
             Tile* t = machine_bbs[i].start;
@@ -528,6 +535,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             } else {
                 ctx.fallthrough = INT_MAX;
             }
+            ctx.current_emit_bb = &machine_bbs[i];
+            ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
             // mark label
             tb_resolve_rel32(e, &e->labels[bbid], e->count);

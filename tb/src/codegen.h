@@ -135,6 +135,7 @@ struct Tile {
 typedef struct {
     int id;
 
+    TB_Node* n;
     TB_Node* end_n;
 
     Tile* start;
@@ -198,6 +199,7 @@ struct Ctx {
     // Regalloc
     int interval_count;
     int stack_usage;
+    int caller_usage;
     int num_classes;
     int num_regs[MAX_REG_CLASSES];
     uint64_t callee_saved[MAX_REG_CLASSES];
@@ -210,6 +212,9 @@ struct Ctx {
     NL_Map(TB_Node*, int) stack_slots;
 
     // Line info
+    MachineBB* current_emit_bb;
+    int current_emit_bb_pos;
+
     DynArray(TB_Location) locations;
 };
 

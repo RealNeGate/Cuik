@@ -178,6 +178,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_FLOAT2INT:
         case TB_UINT2FLOAT:
         case TB_FLOAT2UINT:
+        tile_broadcast_ins(ctx, dst, n, 1, 2, normie_mask(ctx, n->inputs[1]->dt));
         return normie_mask(ctx, n->dt);
 
         case TB_SYMBOL:
@@ -330,6 +331,13 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_CALL: {
             int end_of_reg_params = n->input_count > 7 ? 7 : n->input_count;
 
+            // system calls don't count, we track this for ABI
+            // and stack allocation purposes.
+            int param_count = n->input_count - 3;
+            if (ctx->caller_usage < param_count) {
+                ctx->caller_usage = param_count;
+            }
+
             TileInput* ins;
             if (n->inputs[2]->type == TB_SYMBOL) {
                 // CALL symbol
@@ -342,7 +350,6 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 ins += 1;
             }
 
-            int param_count = n->input_count - 3;
             const struct ParamDesc* abi = &param_descs[ctx->abi_index];
             FOREACH_N(i, 0, param_count) {
                 if (i < 4) {
@@ -426,12 +433,33 @@ static Val parse_memory_op(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t, TB_Node*
     return ptr;
 }
 
+static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
+    size_t caller_usage = 0;
+    if (ctx->abi_index == 0) {
+        caller_usage = ctx->caller_usage;
+        if (caller_usage > 0 && caller_usage < 4) {
+            caller_usage = 4;
+        }
+    }
+
+    size_t usage = ctx->stack_usage + (caller_usage * 8);
+
+    // Align stack usage to 16bytes + 8 to accommodate for the RIP being pushed by CALL
+    ctx->stack_usage = align_up(usage, 16);
+}
+
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
     if (t->tag == TILE_SPILL_MOVE) {
         Val dst = val_at(ctx, t->interval);
         Val src = val_at(ctx, t->ins[0].src);
         if (!is_value_match(&dst, &src)) {
             inst2(e, MOV, &dst, &src, TB_X86_TYPE_QWORD);
+        }
+    } else if (t->tag == TILE_GOTO) {
+        MachineBB* mbb = node_to_bb(ctx, t->succ);
+        if (ctx->fallthrough != mbb->id) {
+            EMIT1(e, 0xE9); EMIT4(e, 0);
+            tb_emit_rel32(e, &e->labels[mbb->id], GET_CODE_POS(e) - 4);
         }
     } else {
         TB_Node* n = t->n;
@@ -507,7 +535,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
 
                 Val dst = val_at(ctx, t->interval);
-                Val ea = val_stack(ctx->stack_usage - (16 + extra_param_count*8));
+                Val ea = val_stack(ctx->stack_usage - (8 + 16 + extra_param_count*8));
                 inst2(e, LEA, &dst, &ea, TB_X86_TYPE_QWORD);
                 break;
             }
@@ -520,6 +548,12 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     .column = loc->column,
                     .pos = GET_CODE_POS(e)
                 };
+
+                if (ctx->current_emit_bb->n == n->inputs[0]) {
+                    l.pos = ctx->current_emit_bb_pos;
+                }
+
+                // size_t top = dyn_array_length(ctx->locations);
                 dyn_array_put(ctx->locations, l);
                 break;
             }
@@ -538,7 +572,17 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 }
                 break;
             }
+            case TB_ZERO_EXT:
+            case TB_INT2PTR: {
+                TB_X86_DataType dt = legalize_int2(n->dt);
 
+                Val dst = val_at(ctx, t->interval);
+                Val lhs = val_at(ctx, t->ins[0].src);
+                if (!is_value_match(&dst, &lhs)) {
+                    inst2(e, MOV, &dst, &lhs, dt);
+                }
+                break;
+            }
             case TB_SYMBOL: {
                 TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
 
@@ -708,9 +752,13 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_CALL: {
                 // we've already placed the register params in their slots, now we're missing
                 // stack params which go into [rsp + 0x20 + (i-4)*8] where i is the param index.
-                int start = n->inputs[2]->type == TB_SYMBOL ? 1 : 0;
-                FOREACH_N(i, start + 4, t->in_count) {
-                    __debugbreak();
+                int stack_params = (n->inputs[2]->type == TB_SYMBOL ? 0 : 1) + param_descs[ctx->abi_index].gpr_count;
+                FOREACH_N(i, stack_params, t->in_count) {
+                    TB_X86_DataType dt = TB_X86_TYPE_QWORD; // legalize_int2(t->ins[i].);
+
+                    Val dst = val_stack(0x20 + (i - 4) * 8);
+                    Val src = val_at(ctx, t->ins[i].src);
+                    inst2(e, MOV, &dst, &src, dt);
                 }
 
                 if (n->inputs[2]->type == TB_SYMBOL) {
@@ -814,16 +862,6 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             }
 
             default: tb_todo();
-        }
-
-        // if we were a TILE_GOTO this is the point where we jump
-        if (t->tag == TILE_GOTO) {
-            MachineBB* mbb = node_to_bb(ctx, t->succ);
-
-            if (ctx->fallthrough != mbb->id) {
-                EMIT1(e, 0xE9); EMIT4(e, 0);
-                tb_emit_rel32(e, &e->labels[mbb->id], GET_CODE_POS(e) - 4);
-            }
         }
     }
 }

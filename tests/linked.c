@@ -1,6 +1,6 @@
-/*#include <stdio.h>
+#include <stdio.h>
 
-int bits(int x);
+/*#int bits(int x);
 
 int main() {
     // printf("%d\n", bits(27));
@@ -11,6 +11,7 @@ int main() {
 int bar(void);
 int foo(int x, int y);
 int main() {
-    return bar(); // foo(16, 4);
+    printf("Hello! %d\n", bar());
+    return 0; // foo(16, 4);
 }
 
