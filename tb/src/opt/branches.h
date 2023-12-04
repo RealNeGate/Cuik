@@ -29,12 +29,12 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
         while (i < n->input_count) {
             if (n->inputs[i]->type == TB_DEAD) {
                 changes = true;
-                remove_input(p, f, n, i);
+                remove_input(f, n, i);
 
                 // update PHIs
                 for (User* use = n->users; use; use = use->next) {
                     if (use->n->type == TB_PHI && use->slot == 0) {
-                        remove_input(p, f, use->n, i + 1);
+                        remove_input(f, use->n, i + 1);
                     }
                 }
                 continue;
@@ -51,7 +51,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
                         size_t new_count = old_count + (pred->input_count - 1);
 
                         // convert pred-of-pred into direct pred
-                        set_input(n, pred->inputs[0], i);
+                        set_input(f, n, pred->inputs[0], i);
 
                         // append rest to the end (order really doesn't matter)
                         //
@@ -64,7 +64,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
                         FOREACH_N(j, 0, pred->input_count - 1) {
                             new_inputs[old_count + j] = pred->inputs[j + 1];
-                            add_user(n, pred->inputs[j + 1], old_count + j, NULL);
+                            add_user(f, n, pred->inputs[j + 1], old_count + j, NULL);
                         }
                     }
 
@@ -86,7 +86,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
                             FOREACH_N(j, 0, pred->input_count - 1) {
                                 new_inputs[phi_ins + j] = phi_val;
-                                add_user(phi, phi_val, phi_ins + j, NULL);
+                                add_user(f, phi, phi_val, phi_ins + j, NULL);
                             }
                         }
                     }
@@ -124,7 +124,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
         if (region->input_count == 2) {
             // for now we'll leave multi-phi scenarios alone, we need
             // to come up with a cost-model around this stuff.
-            for (User* use = find_users(opt, region); use; use = use->next) {
+            for (User* use = region->users; use; use = use->next) {
                 if (use->n->type == TB_PHI) {
                     if (use->n != n) return NULL;
                 }
@@ -184,9 +184,9 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
                         }
 
                         TB_Node* selector = tb_alloc_node(f, TB_SELECT, dt, 4, 0);
-                        set_input(selector, cond, 1);
-                        set_input(selector, values[0], 2);
-                        set_input(selector, values[1], 3);
+                        set_input(f, selector, cond, 1);
+                        set_input(f, selector, values[0], 2);
+                        set_input(f, selector, values[1], 3);
                         return selector;
                     }
                 }
@@ -223,7 +223,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
 
             // convert to lookup node
             TB_Node* lookup = tb_alloc_node(f, TB_LOOKUP, n->dt, 2, sizeof(TB_NodeLookup) + (br->succ_count * sizeof(TB_LookupEntry)));
-            set_input(lookup, parent->inputs[1], 1);
+            set_input(f, lookup, parent->inputs[1], 1);
 
             TB_NodeLookup* l = TB_NODE_GET_EXTRA(lookup);
             l->entry_count = br->succ_count;
@@ -297,8 +297,8 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                             tb_pass_mark(opt, imm);
 
                             TB_Node* new_node = tb_alloc_node(f, TB_CMP_NE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
-                            set_input(new_node, pred_cmp, 1);
-                            set_input(new_node, imm, 2);
+                            set_input(f, new_node, pred_cmp, 1);
+                            set_input(f, new_node, imm, 2);
                             TB_NODE_SET_EXTRA(new_node, TB_NodeCompare, .cmp_dt = pred_cmp->dt);
 
                             tb_pass_mark(opt, new_node);
@@ -310,11 +310,11 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
 
                         // a ? b : 0
                         TB_Node* selector = tb_alloc_node(f, TB_SELECT, n->inputs[1]->dt, 4, 0);
-                        set_input(selector, pred_cmp, 1);
-                        set_input(selector, n->inputs[1], 2 + bb_on_false);
-                        set_input(selector, false_node, 2 + !bb_on_false);
+                        set_input(f, selector, pred_cmp, 1);
+                        set_input(f, selector, n->inputs[1], 2 + bb_on_false);
+                        set_input(f, selector, false_node, 2 + !bb_on_false);
 
-                        set_input(n, selector, 1);
+                        set_input(f, n, selector, 1);
                         tb_pass_mark(opt, selector);
                         return n;
                     }
@@ -324,8 +324,8 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
             // br ((y <= x)) => br (x < y) flipped conditions
             if (cmp_type == TB_CMP_SLE || cmp_type == TB_CMP_ULE) {
                 TB_Node* new_cmp = tb_alloc_node(f, cmp_type == TB_CMP_SLE ? TB_CMP_SLT : TB_CMP_ULT, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
-                set_input(new_cmp, cmp_node->inputs[2], 1);
-                set_input(new_cmp, cmp_node->inputs[1], 2);
+                set_input(f, new_cmp, cmp_node->inputs[2], 1);
+                set_input(f, new_cmp, cmp_node->inputs[1], 2);
                 TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(cmp_node, TB_NodeCompare)->cmp_dt);
 
                 // flip
@@ -334,7 +334,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                     p->index = !p->index;
                 }
 
-                set_input(n, new_cmp, 1);
+                set_input(f, n, new_cmp, 1);
                 tb_pass_mark(opt, new_cmp);
                 return n;
             }
@@ -342,7 +342,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
             // br ((x != y) != 0) => br (x != y)
             if ((cmp_type == TB_CMP_NE || cmp_type == TB_CMP_EQ) && cmp_node->inputs[2]->type == TB_INTEGER_CONST) {
                 uint64_t imm = TB_NODE_GET_EXTRA_T(cmp_node->inputs[2], TB_NodeInt)->value;
-                set_input(n, cmp_node->inputs[1], 1);
+                set_input(f, n, cmp_node->inputs[1], 1);
                 br->keys[0] = imm;
 
                 // flip successors

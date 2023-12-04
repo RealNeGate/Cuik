@@ -332,11 +332,11 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     // select(y <= x, a, b) => select(x < y, b, a) flipped conditions
     if (src->type == TB_CMP_SLE || src->type == TB_CMP_ULE) {
         TB_Node* new_cmp = tb_alloc_node(f, src->type == TB_CMP_SLE ? TB_CMP_SLT : TB_CMP_ULT, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
-        set_input(new_cmp, src->inputs[2], 1);
-        set_input(new_cmp, src->inputs[1], 2);
+        set_input(f, new_cmp, src->inputs[2], 1);
+        set_input(f, new_cmp, src->inputs[1], 2);
         TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(src, TB_NodeCompare)->cmp_dt);
 
-        set_input(n, new_cmp, 1);
+        set_input(f, n, new_cmp, 1);
         tb_pass_mark(opt, new_cmp);
         return n;
     }
@@ -359,7 +359,7 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
 
         if (true_imm && false_imm && on_true == 1 && on_false == 0) {
             TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
-            set_input(ext_node, src, 1);
+            set_input(f, ext_node, src, 1);
             tb_pass_mark(opt, ext_node);
             return ext_node;
         }
@@ -373,16 +373,16 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
         // (select (lt A B) A B) => (min A B)
         if (n->inputs[2] == a && n->inputs[3] == b) {
             TB_Node* new_node = tb_alloc_node(f, TB_FMIN, n->dt, 3, 0);
-            set_input(new_node, a, 1);
-            set_input(new_node, b, 2);
+            set_input(f, new_node, a, 1);
+            set_input(f, new_node, b, 2);
             return new_node;
         }
 
         // (select (lt A B) B A) => (max A B)
         if (n->inputs[2] == b && n->inputs[3] == a) {
             TB_Node* new_node = tb_alloc_node(f, TB_FMAX, n->dt, 3, 0);
-            set_input(new_node, a, 1);
-            set_input(new_node, b, 2);
+            set_input(f, new_node, a, 1);
+            set_input(f, new_node, b, 2);
             return new_node;
         }
     }
@@ -401,7 +401,7 @@ static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node*
         if (now != before) {
             // we're extending the original value
             TB_Node* ext = tb_alloc_node(f, now < before ? TB_TRUNCATE : src->type, n->dt, 2, 0);
-            set_input(ext, src->inputs[1], 1);
+            set_input(f, ext, src->inputs[1], 1);
             return ext;
         } else {
             return src->inputs[1];
@@ -411,16 +411,16 @@ static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node*
     // Trunc(NiceAssBinop(a, b)) => NiceAssBinop(Trunc(a), Trunc(b))
     if (nice_ass_trunc(src->type)) {
         TB_Node* left = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
-        set_input(left, src->inputs[1], 1);
+        set_input(f, left, src->inputs[1], 1);
         tb_pass_mark(opt, left);
 
         TB_Node* right = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
-        set_input(right, src->inputs[2], 1);
+        set_input(f, right, src->inputs[2], 1);
         tb_pass_mark(opt, right);
 
         TB_Node* new_binop = tb_alloc_node(f, src->type, n->dt, 3, 0);
-        set_input(new_binop, left, 1);
-        set_input(new_binop, right, 2);
+        set_input(f, new_binop, left, 1);
+        set_input(f, new_binop, right, 2);
         return new_binop;
     }
 
@@ -443,8 +443,8 @@ static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node
             assert(src->inputs[i]->type == TB_INTEGER_CONST);
 
             TB_Node* ext_node = tb_alloc_node(f, ext_type, dt, 2, 0);
-            set_input(ext_node, src->inputs[i], 1);
-            set_input(src, ext_node, i);
+            set_input(f, ext_node, src->inputs[i], 1);
+            set_input(f, src, ext_node, i);
             tb_pass_mark(opt, ext_node);
         }
 
@@ -476,8 +476,8 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
         // if it's commutative: we wanna have a canonical form.
         if (node_pos(n->inputs[1]) < node_pos(n->inputs[2])) {
             TB_Node* tmp = n->inputs[1];
-            set_input(n, n->inputs[2], 1);
-            set_input(n, tmp, 2);
+            set_input(f, n, n->inputs[2], 1);
+            set_input(f, n, tmp, 2);
             return n;
         }
     }
@@ -488,12 +488,12 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
     // (aa + ab) + b => aa + (ab + b)
     if (is_associative(type) && a->type == type && b->type != type && node_pos(a) < node_pos(b)) {
         TB_Node* abb = tb_alloc_node(f, type, n->dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(abb, a->inputs[2], 1);
-        set_input(abb, b, 2);
+        set_input(f, abb, a->inputs[2], 1);
+        set_input(f, abb, b, 2);
         tb_pass_mark(opt, abb);
 
-        set_input(n, a->inputs[1], 1);
-        set_input(n, abb,          2);
+        set_input(f, n, a->inputs[1], 1);
+        set_input(f, n, abb,          2);
         return n;
     }
 
@@ -510,8 +510,8 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
                 shl_amt == bits - shr_amt) {
                 // convert to rotate left
                 n->type = TB_ROL;
-                set_input(n, a->inputs[1], 1);
-                set_input(n, a->inputs[2], 2);
+                set_input(f, n, a->inputs[1], 1);
+                set_input(f, n, a->inputs[2], 2);
                 return n;
             }
         }
@@ -521,8 +521,8 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
             uint64_t log2 = tb_ffs(rhs) - 1;
             if (rhs == (UINT64_C(1) << log2)) {
                 TB_Node* shl_node = tb_alloc_node(f, TB_SHL, n->dt, 3, sizeof(TB_NodeBinopInt));
-                set_input(shl_node, a, 1);
-                set_input(shl_node, make_int_node(f, opt, n->dt, log2), 2);
+                set_input(f, shl_node, a, 1);
+                set_input(f, shl_node, make_int_node(f, opt, n->dt, log2), 2);
 
                 tb_pass_mark(opt, shl_node->inputs[1]);
                 tb_pass_mark(opt, shl_node->inputs[2]);
@@ -549,8 +549,8 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
             TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cmp, TB_NodeCompare)->cmp_dt;
             TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = cmp_dt);
 
-            set_input(n, cmp->inputs[2], 1);
-            set_input(n, cmp->inputs[1], 2);
+            set_input(f, n, cmp->inputs[2], 1);
+            set_input(f, n, cmp->inputs[1], 2);
             return n;
         }
     } else if (type == TB_SHL || type == TB_SHR) {
@@ -576,16 +576,16 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
 
                 // if we have a negative shift amount, that's a right shift
                 shift = tb_alloc_node(f, amt < 0 ? TB_SHR : TB_SHL, n->dt, 3, sizeof(TB_NodeBinopInt));
-                set_input(shift, n->inputs[1]->inputs[1], 1);
-                set_input(shift, imm, 2);
+                set_input(f, shift, n->inputs[1]->inputs[1], 1);
+                set_input(f, shift, imm, 2);
 
                 tb_pass_mark(opt, shift);
             }
 
             TB_Node* mask_node = make_int_node(f, opt, n->dt, mask);
             TB_Node* and_node = tb_alloc_node(f, TB_AND, n->dt, 3, sizeof(TB_NodeBinopInt));
-            set_input(and_node, shift,     1);
-            set_input(and_node, mask_node, 2);
+            set_input(f, and_node, shift,     1);
+            set_input(f, and_node, mask_node, 2);
             return and_node;
         }
     }
@@ -594,8 +594,8 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node
         // (Cmp Sxt(a) Sxt(b)) => (Cmp a b)
         if (n->inputs[1]->type == TB_SIGN_EXT && n->inputs[2]->type == TB_SIGN_EXT) {
             TB_DataType dt = n->inputs[1]->inputs[1]->dt;
-            set_input(n, n->inputs[1]->inputs[1], 1);
-            set_input(n, n->inputs[2]->inputs[1], 2);
+            set_input(f, n, n->inputs[1]->inputs[1], 1);
+            set_input(f, n, n->inputs[2]->inputs[1], 2);
             TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = dt);
             return n;
         }
@@ -614,8 +614,8 @@ static TB_Node* ideal_int_mod(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     uint64_t log2 = tb_ffs(y) - 1;
     if (!is_signed && y == (UINT64_C(1) << log2)) {
         TB_Node* and_node = tb_alloc_node(f, TB_AND, dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(and_node, x, 1);
-        set_input(and_node, make_int_node(f, opt, dt, y - 1), 2);
+        set_input(f, and_node, x, 1);
+        set_input(f, and_node, make_int_node(f, opt, dt, y - 1), 2);
         return and_node;
     }
 
@@ -646,8 +646,8 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
         uint64_t log2 = tb_ffs(y) - 1;
         if (!is_signed && y == (UINT64_C(1) << log2)) {
             TB_Node* shr_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
-            set_input(shr_node, x, 1);
-            set_input(shr_node, make_int_node(f, opt, dt, log2), 2);
+            set_input(f, shr_node, x, 1);
+            set_input(f, shr_node, make_int_node(f, opt, dt, log2), 2);
             return shr_node;
         }
     }
@@ -673,15 +673,15 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     int bits = dt.data;
     if (bits > 32) {
         TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, 0);
-        set_input(mul_node, x, 1);
-        set_input(mul_node, make_int_node(f, opt, dt, a), 2);
+        set_input(f, mul_node, x, 1);
+        set_input(f, mul_node, make_int_node(f, opt, dt, a), 2);
 
         TB_Node* lo = make_proj_node(f, opt, dt, mul_node, 0);
         TB_Node* hi = make_proj_node(f, opt, dt, mul_node, 1);
 
         TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(sh_node, hi, 1);
-        set_input(sh_node, make_int_node(f, opt, dt, sh), 2);
+        set_input(f, sh_node, hi, 1);
+        set_input(f, sh_node, make_int_node(f, opt, dt, sh), 2);
         TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
 
         return sh_node;
@@ -693,20 +693,20 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
 
         // extend x
         TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, big_dt, 2, 0);
-        set_input(ext_node, x, 1);
+        set_input(f, ext_node, x, 1);
 
         TB_Node* mul_node = tb_alloc_node(f, TB_MUL, big_dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(mul_node, ext_node, 1);
-        set_input(mul_node, make_int_node(f, opt, big_dt, a), 2);
+        set_input(f, mul_node, ext_node, 1);
+        set_input(f, mul_node, make_int_node(f, opt, big_dt, a), 2);
         TB_NODE_SET_EXTRA(mul_node, TB_NodeBinopInt, .ab = 0);
 
         TB_Node* sh_node = tb_alloc_node(f, TB_SHR, big_dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(sh_node, mul_node, 1);
-        set_input(sh_node, make_int_node(f, opt, big_dt, sh), 2);
+        set_input(f, sh_node, mul_node, 1);
+        set_input(f, sh_node, make_int_node(f, opt, big_dt, sh), 2);
         TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
 
         TB_Node* trunc_node = tb_alloc_node(f, TB_TRUNCATE, dt, 2, 0);
-        set_input(trunc_node, sh_node, 1);
+        set_input(f, trunc_node, sh_node, 1);
         return trunc_node;
     }
 }
@@ -772,7 +772,7 @@ static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node
 
         int64_t offset = src_i * stride;
         TB_Node* new_n = tb_alloc_node(f, TB_MEMBER_ACCESS, n->dt, 2, sizeof(TB_NodeMember));
-        set_input(new_n, base, 1);
+        set_input(f, new_n, base, 1);
         TB_NODE_SET_EXTRA(new_n, TB_NodeMember, .offset = offset);
         return new_n;
     }
@@ -787,12 +787,12 @@ static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node
             offset *= stride;
 
             TB_Node* new_n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 3, sizeof(TB_NodeArray));
-            set_input(new_n, base, 1);
-            set_input(new_n, new_index, 2);
+            set_input(f, new_n, base, 1);
+            set_input(f, new_n, new_index, 2);
             TB_NODE_SET_EXTRA(new_n, TB_NodeArray, .stride = stride);
 
             TB_Node* new_member = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
-            set_input(new_member, new_n, 1);
+            set_input(f, new_member, new_n, 1);
             TB_NODE_SET_EXTRA(new_member, TB_NodeMember, .offset = offset);
 
             tb_pass_mark(opt, new_n);

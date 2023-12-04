@@ -14,6 +14,25 @@ static bool lattice_cmp(void* a, void* b) {
 static bool lattice_is_const_int(Lattice* l) { return l->_int.min == l->_int.max; }
 static bool lattice_is_const(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
 
+static bool lattice_universe_map_progress(LatticeUniverse* uni, TB_Node* n, Lattice* l) {
+    // reserve cap, slow path :p
+    if (UNLIKELY(n->gvn >= uni->type_cap)) {
+        size_t new_cap = tb_next_pow2(n->gvn + 16);
+        uni->types = tb_platform_heap_realloc(uni->types, new_cap * sizeof(Lattice*));
+
+        // clear new space
+        FOREACH_N(i, uni->type_cap, new_cap) {
+            uni->types[i] = NULL;
+        }
+
+        uni->type_cap = new_cap;
+    }
+
+    Lattice* old = uni->types[n->gvn];
+    uni->types[n->gvn] = l;
+    return old != l;
+}
+
 static void lattice_universe_map(LatticeUniverse* uni, TB_Node* n, Lattice* l) {
     // reserve cap, slow path :p
     if (UNLIKELY(n->gvn >= uni->type_cap)) {

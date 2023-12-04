@@ -46,7 +46,7 @@ static bool add_configs(TB_Passes* p, TB_TemporaryStorage* tls, User* use, TB_No
         if (n->type == TB_MEMBER_ACCESS && use->slot == 1) {
             // same rules, different offset
             int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
-            if (!add_configs(p, tls, find_users(p, n), base_address, base_offset + offset, config_count, configs, pointer_size)) {
+            if (!add_configs(p, tls, n->users, base_address, base_offset + offset, config_count, configs, pointer_size)) {
                 return false;
             }
             continue;
@@ -101,7 +101,7 @@ static size_t sroa_rewrite(TB_Passes* restrict p, int pointer_size, TB_Node* sta
         uint32_t alignment = TB_NODE_GET_EXTRA_T(n, TB_NodeLocal)->align;
         FOREACH_N(i, 0, config_count) {
             TB_Node* new_n = tb_alloc_node(p->f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
-            set_input(new_n, start, 0);
+            set_input(p->f, new_n, start, 0);
             TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
 
             // mark all users, there may be some fun new opts now

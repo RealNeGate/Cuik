@@ -5,7 +5,7 @@
 //   performed incrementally which means that certain mutations must go through
 //   functions to guarentee they update correctly. Let's go over those:
 //
-//   set_input(opt, n, in, slot)
+//   set_input(f, n, in, slot)
 //     basically `n->inputs[slot] = in` except it correctly updates the user set
 //
 // # How to implement peepholes
@@ -17,9 +17,8 @@
 thread_local TB_Arena* tmp_arena;
 
 // helps us do some matching later
-static void add_user(TB_Node* n, TB_Node* in, int slot, User* recycled);
 static User* remove_user(TB_Node* n, int slot);
-static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size_t i);
+static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 
 // transmutations let us generate new nodes from old ones
 TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, int num_words);
@@ -178,7 +177,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 }
 
 static TB_Node* mem_user(TB_Passes* restrict p, TB_Node* n, int slot) {
-    for (User* u = find_users(p, n); u; u = u->next) {
+    for (User* u = n->users; u; u = u->next) {
         if ((u->n->type == TB_PROJ && u->n->dt.type == TB_MEMORY) ||
             (u->slot == slot && is_mem_out_op(u->n))) {
             return u->n;
@@ -186,12 +185,6 @@ static TB_Node* mem_user(TB_Passes* restrict p, TB_Node* n, int slot) {
     }
 
     return NULL;
-}
-
-static TB_Node* single_user(TB_Passes* restrict p, TB_Node* n) {
-    User* u = find_users(p, n);
-    assert(u && u->next == NULL);
-    return u->n;
 }
 
 static bool single_use(TB_Passes* restrict p, TB_Node* n) {
@@ -232,7 +225,7 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 // a limited walk of 20 steps.
 static TB_Node* fast_idom(TB_Node* bb) {
     int steps = 0;
-    while (steps < FAST_IDOM_LIMIT && bb->type != TB_REGION) {
+    while (steps < FAST_IDOM_LIMIT && bb->type != TB_REGION && bb->type != TB_START) {
         bb = bb->inputs[0];
         steps++;
     }
@@ -242,7 +235,7 @@ static TB_Node* fast_idom(TB_Node* bb) {
 
 static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
     int steps = 0;
-    while (steps < FAST_IDOM_LIMIT && bb != expected_dom && bb->type != TB_REGION) {
+    while (steps < FAST_IDOM_LIMIT && bb != expected_dom && bb->type != TB_REGION && bb->type != TB_START) {
         bb = bb->inputs[0];
         steps++;
     }
@@ -320,7 +313,7 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
 
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i) {
     TB_Node* n = tb_alloc_node(f, TB_PROJ, dt, 1, sizeof(TB_NodeProj));
-    set_input(n, src, 0);
+    set_input(f, n, src, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = i);
     return n;
 }
@@ -330,14 +323,14 @@ static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* regio
     return NULL;
 }
 
-static void remove_input(TB_Passes* restrict p, TB_Function* f, TB_Node* n, size_t i) {
+static void remove_input(TB_Function* f, TB_Node* n, size_t i) {
     // remove swap
     n->input_count--;
     if (n->input_count > 0) {
         if (n->input_count != i) {
-            set_input(n, n->inputs[n->input_count], i);
+            set_input(f, n, n->inputs[n->input_count], i);
         }
-        set_input(n, NULL, n->input_count);
+        set_input(f, n, NULL, n->input_count);
     }
 }
 
@@ -388,19 +381,19 @@ static User* remove_user(TB_Node* n, int slot) {
     tb_panic("Failed to remove non-existent user %p from %p (slot %d)", old, n, slot);
 }
 
-void set_input(TB_Node* n, TB_Node* in, int slot) {
+void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
     // recycle the user
     User* old_use = remove_user(n, slot);
 
     n->inputs[slot] = in;
     if (in != NULL) {
-        add_user(n, in, slot, old_use);
+        add_user(f, n, in, slot, old_use);
     }
 }
 
 // we sometimes get the choice to recycle users because we just deleted something
-static void add_user(TB_Node* n, TB_Node* in, int slot, User* recycled) {
-    User* use = recycled ? recycled : TB_ARENA_ALLOC(tmp_arena, User);
+static void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot, User* recycled) {
+    User* use = recycled ? recycled : TB_ARENA_ALLOC(f->arena, User);
     use->next = in->users;
     use->n = n;
     use->slot = slot;
@@ -438,41 +431,26 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
 
 static void push_all_nodes(TB_Passes* restrict p, Worklist* restrict ws, TB_Function* f) {
     CUIK_TIMED_BLOCK("push_all_nodes") {
-        DynArray(TB_Node*) stack = p->stack;
-        if (stack == NULL) {
-            stack = dyn_array_create(TB_Node*, 1024);
-        }
+        worklist_test_n_set(ws, f->start_node);
+        dyn_array_put(ws->items, f->start_node);
 
-        // push all nodes using the terminator list
-        DynArray(TB_Node*) terminators = f->terminators;
-        dyn_array_for(i, terminators) {
-            TB_Node* end = terminators[i];
+        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+            TB_Node* n = ws->items[i];
 
-            // place endpoint, we'll construct the rest from there
-            if (worklist_test_n_set(ws, end)) {
-                // already processed
-                continue;
+            FOREACH_N(i, 0, n->input_count) {
+                TB_Node* in = n->inputs[i];
+                if (in && !worklist_test_n_set(ws, in)) {
+                    dyn_array_put(ws->items, in);
+                }
             }
 
-            dyn_array_put(stack, end);
-
-            while (dyn_array_length(stack)) {
-                TB_Node* n = dyn_array_pop(stack);
-
-                // place self first
-                dyn_array_put(ws->items, n);
-
-                // push inputs
-                FOREACH_N(i, 0, n->input_count) {
-                    TB_Node* in = n->inputs[i];
-                    if (in && !worklist_test_n_set(ws, in)) {
-                        dyn_array_put(stack, in);
-                    }
+            for (User* u = n->users; u; u = u->next) {
+                TB_Node* out = u->n;
+                if (!worklist_test_n_set(ws, out)) {
+                    dyn_array_put(ws->items, out);
                 }
             }
         }
-
-        p->stack = stack;
     }
 }
 
@@ -877,7 +855,9 @@ static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
             tb_pass_mark_users(p, k);
             return k;
         } else {
-            lattice_universe_map(&p->universe, n, new_type);
+            if (lattice_universe_map_progress(&p->universe, n, new_type)) {
+                tb_pass_mark_users(p, n);
+            }
         }
     }
 
@@ -917,26 +897,11 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
         TB_Node* use_n = use->n;
         User* next = use->next;
 
-        set_input(use->n, new_n, use->slot);
+        set_input(f, use->n, new_n, use->slot);
         use = next;
     }
 
     tb_pass_kill_node(p, n);
-}
-
-static void generate_use_lists(TB_Passes* restrict p, TB_Function* f) {
-    dyn_array_for(i, p->worklist.items) {
-        TB_Node* n = p->worklist.items[i];
-
-        if (n->type == TB_LOCAL) {
-            // we don't need to check for duplicates here, the worklist is uniques
-            dyn_array_put(p->locals, n);
-        }
-
-        FOREACH_N(j, 0, n->input_count) if (n->inputs[j]) {
-            add_user(n, n->inputs[j], j, NULL);
-        }
-    }
 }
 
 TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
@@ -961,9 +926,13 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting passes with %d nodes", f->super.name, f->node_count));
 
-    // find all outgoing edges
-    CUIK_TIMED_BLOCK("gen users") {
-        generate_use_lists(p, f);
+    CUIK_TIMED_BLOCK("find locals") {
+        dyn_array_for(i, p->worklist.items) {
+            TB_Node* n = p->worklist.items[i];
+            if (n->type == TB_LOCAL) {
+                dyn_array_put(p->locals, n);
+            }
+        }
     }
 
     return p;
@@ -1060,9 +1029,6 @@ void tb_pass_exit(TB_Passes* p) {
 
         TB_Function* f = p->f;
 
-        // terminators will be made obselete by the optimizer
-        dyn_array_destroy(f->terminators);
-
         #if TB_OPTDEBUG_STATS
         /* push_all_nodes(p, &p->worklist, f);
         int final_count = worklist_popcount(&p->worklist);
@@ -1077,7 +1043,6 @@ void tb_pass_exit(TB_Passes* p) {
         nl_map_free(p->scheduled);
         worklist_free(&p->worklist);
         nl_hashset_free(p->gvn_nodes);
-        dyn_array_destroy(p->stack);
         dyn_array_destroy(p->locals);
 
         if (p->universe.arena != NULL) {

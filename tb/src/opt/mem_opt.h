@@ -67,9 +67,9 @@ static TB_Node* data_phi_from_memory_phi(TB_Passes* restrict p, TB_Function* f, 
 
     // convert to PHI
     TB_Node* phi = tb_alloc_node(f, TB_PHI, dt, 1 + path_count, 0);
-    set_input(phi, phi_ins[0], 0);
+    set_input(f, phi, phi_ins[0], 0);
     FOREACH_N(i, 0, path_count) {
-        set_input(phi, paths[i], 1+i);
+        set_input(f, phi, paths[i], 1+i);
     }
 
     if (out_align) *out_align = align;
@@ -83,7 +83,7 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     if (ctrl != NULL) {
         // we've dependent on code which must always be run (START.mem)
         if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_START) {
-            set_input(n, NULL, 0);
+            set_input(f, n, NULL, 0);
             return n;
         } else {
             TB_Node* base = addr;
@@ -93,7 +93,7 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 
             // loads based on LOCALs don't need control-dependence, it's actually kinda annoying
             if (base->type == TB_LOCAL) {
-                set_input(n, NULL, 0);
+                set_input(f, n, NULL, 0);
                 return n;
             }
         }
@@ -112,7 +112,7 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
                 if (bits_read <= other_bits_read) {
                     TB_Node* other_ctrl = u->n->inputs[0];
                     if (other_ctrl == NULL || (fast_dommy(other_ctrl, ctrl) && other_ctrl != ctrl)) {
-                        set_input(n, other_ctrl, 0);
+                        set_input(f, n, other_ctrl, 0);
                         return n;
                     }
                 }
@@ -152,7 +152,7 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         TB_Node* parent = mem->inputs[1];
         tb_pass_kill_node(p, mem);
 
-        set_input(n, parent, 1);
+        set_input(f, n, parent, 1);
         return n;
     }
 
@@ -162,7 +162,7 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 static TB_Node* ideal_end(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // remove dead local store
     if (n->inputs[1]->type == TB_STORE && is_local_ptr(n->inputs[1]->inputs[2])) {
-        set_input(n, n->inputs[1]->inputs[1], 1);
+        set_input(f, n, n->inputs[1]->inputs[1], 1);
         return n;
     }
 
@@ -180,8 +180,8 @@ static TB_Node* ideal_memset(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
         }
 
         TB_DataType dt = TB_TYPE_INTN(count*8);
-        set_input(n, make_int_node(f, p, dt, val), 3);
-        set_input(n, NULL, 4);
+        set_input(f, n, make_int_node(f, p, dt, val), 3);
+        set_input(f, n, NULL, 4);
         n->input_count = 4;
         n->type = TB_STORE;
         return n;

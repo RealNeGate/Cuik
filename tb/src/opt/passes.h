@@ -153,9 +153,6 @@ struct TB_Passes {
 
     Worklist worklist;
 
-    // sometimes we be using arrays of nodes, let's just keep one around for a bit
-    DynArray(TB_Node*) stack;
-
     // we wanna track locals because it's nice and easy
     DynArray(TB_Node*) locals;
 
@@ -436,11 +433,6 @@ static int dom_depth(TB_CFG* cfg, TB_Node* n) {
 extern thread_local TB_Arena* tmp_arena;
 
 void verify_tmp_arena(TB_Passes* p);
-void set_input(TB_Node* n, TB_Node* in, int slot);
-
-static User* find_users(TB_Passes* restrict p, TB_Node* n) {
-    return n->users;
-}
 
 // CFG
 //   pushes postorder walk into worklist items, also modifies the visited set.

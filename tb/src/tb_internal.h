@@ -297,9 +297,6 @@ struct TB_Function {
     // IR allocation
     TB_Arena* arena;
 
-    // used for CFG walk in TB_Passes
-    DynArray(TB_Node*) terminators;
-
     // IR building
     TB_Trace trace;
 
@@ -591,6 +588,8 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 ////////////////////////////////
 // ANALYSIS
 ////////////////////////////////
+void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot);
+void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot, User* recycled);
 void print_node_sexpr(TB_Node* n, int depth);
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
