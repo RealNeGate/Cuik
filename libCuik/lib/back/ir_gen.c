@@ -1489,23 +1489,23 @@ static IRVal irgen_expr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e) {
     return stack[0];
 }
 
+// TODO(NeGate): Fix this up later!!!
+static thread_local TB_SourceFile* cached_file;
+static thread_local const char* cached_filepath;
+
 static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc) {
     if (!tu->has_tb_debug_info) {
         return;
     }
 
-    // TODO(NeGate): Fix this up later!!!
-    static thread_local TB_SourceFile* last_file;
-    static thread_local const char* last_filepath;
-
     ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
     if (rloc.file->filename[0] != '<') {
-        if (rloc.file->filename != last_filepath) {
-            last_filepath = rloc.file->filename;
-            last_file = tb_get_source_file(tu->ir_mod, rloc.file->filename);
+        if (rloc.file->filename != cached_filepath) {
+            cached_filepath = rloc.file->filename;
+            cached_file = tb_get_source_file(tu->ir_mod, rloc.file->filename);
         }
 
-        tb_inst_location(func, last_file, rloc.line, rloc.column);
+        tb_inst_location(func, cached_file, rloc.line, rloc.column);
     }
 }
 
@@ -1938,6 +1938,9 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
     if (s->op == STMT_FUNC_DECL) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
         assert(type->kind == KIND_FUNC);
+
+        cached_file = NULL;
+        cached_filepath = NULL;
 
         // Clear temporary storage
         tls_init();

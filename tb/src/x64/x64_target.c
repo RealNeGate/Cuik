@@ -549,12 +549,10 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     .pos = GET_CODE_POS(e)
                 };
 
-                if (ctx->current_emit_bb->n == n->inputs[0]) {
-                    l.pos = ctx->current_emit_bb_pos;
+                size_t top = dyn_array_length(ctx->locations);
+                if (top == 0 || (ctx->locations[top - 1].pos != l.pos && !is_same_location(&l, &ctx->locations[top - 1]))) {
+                    dyn_array_put(ctx->locations, l);
                 }
-
-                // size_t top = dyn_array_length(ctx->locations);
-                dyn_array_put(ctx->locations, l);
                 break;
             }
 

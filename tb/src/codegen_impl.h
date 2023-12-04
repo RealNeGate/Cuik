@@ -575,6 +575,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     func_out->asm_out = ctx.emit.head_asm;
     func_out->code = ctx.emit.data;
     func_out->code_size = ctx.emit.count;
+    func_out->locations = ctx.locations;
     func_out->stack_usage = ctx.stack_usage;
     func_out->prologue_length = ctx.prologue_length;
 }

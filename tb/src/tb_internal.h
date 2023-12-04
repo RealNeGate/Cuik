@@ -606,7 +606,7 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
 char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
 
-static bool is_same_location(TB_NodeSafepoint* a, TB_NodeSafepoint* b) {
+static bool is_same_location(TB_Location* a, TB_Location* b) {
     return a->file == b->file && a->line == b->line && a->column == b->column;
 }
 

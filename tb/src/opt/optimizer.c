@@ -1055,35 +1055,37 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
 }
 
 void tb_pass_exit(TB_Passes* p) {
-    verify_tmp_arena(p);
+    CUIK_TIMED_BLOCK("exit") {
+        verify_tmp_arena(p);
 
-    TB_Function* f = p->f;
+        TB_Function* f = p->f;
 
-    // terminators will be made obselete by the optimizer
-    dyn_array_destroy(f->terminators);
+        // terminators will be made obselete by the optimizer
+        dyn_array_destroy(f->terminators);
 
-    #if TB_OPTDEBUG_STATS
-    /* push_all_nodes(p, &p->worklist, f);
-    int final_count = worklist_popcount(&p->worklist);
-    double factor = ((double) final_count / (double) p->stats.initial) * 100.0;*/
+        #if TB_OPTDEBUG_STATS
+        /* push_all_nodes(p, &p->worklist, f);
+        int final_count = worklist_popcount(&p->worklist);
+        double factor = ((double) final_count / (double) p->stats.initial) * 100.0;*/
 
-    printf("%s: stats:\n", f->super.name);
-    // printf("  %4d   -> %4d nodes (%.2f%%)\n", p->stats.initial, final_count, factor);
-    printf("  %4d GVN hit    %4d GVN miss\n", p->stats.gvn_hit, p->stats.gvn_miss);
-    printf("  %4d peepholes  %4d rewrites    %4d identities\n", p->stats.peeps, p->stats.rewrites, p->stats.identities);
-    #endif
+        printf("%s: stats:\n", f->super.name);
+        // printf("  %4d   -> %4d nodes (%.2f%%)\n", p->stats.initial, final_count, factor);
+        printf("  %4d GVN hit    %4d GVN miss\n", p->stats.gvn_hit, p->stats.gvn_miss);
+        printf("  %4d peepholes  %4d rewrites    %4d identities\n", p->stats.peeps, p->stats.rewrites, p->stats.identities);
+        #endif
 
-    nl_map_free(p->scheduled);
-    worklist_free(&p->worklist);
-    nl_hashset_free(p->gvn_nodes);
-    dyn_array_destroy(p->stack);
-    dyn_array_destroy(p->locals);
+        nl_map_free(p->scheduled);
+        worklist_free(&p->worklist);
+        nl_hashset_free(p->gvn_nodes);
+        dyn_array_destroy(p->stack);
+        dyn_array_destroy(p->locals);
 
-    if (p->universe.arena != NULL) {
-        nl_hashset_free(p->universe.pool);
-        tb_platform_heap_free(p->universe.types);
+        if (p->universe.arena != NULL) {
+            nl_hashset_free(p->universe.pool);
+            tb_platform_heap_free(p->universe.types);
+        }
+
+        tb_arena_clear(tmp_arena);
+        tb_platform_heap_free(p);
     }
-
-    tb_arena_clear(tmp_arena);
-    tb_platform_heap_free(p);
 }
