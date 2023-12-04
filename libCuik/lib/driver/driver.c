@@ -136,10 +136,6 @@ static void sys_invoke(BuildStepInfo* info) {
 #ifdef CUIK_USE_TB
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
-static bool do_delayed_compile(const Cuik_DriverArgs* args) {
-    return args->opt_level > 0 || args->assembly || args->emit_ir || args->emit_dot;
-}
-
 static void apply_func(TB_Function* f, void* arg) {
     Cuik_DriverArgs* args = arg;
     bool print_asm = args->assembly;
@@ -258,33 +254,21 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     #ifdef CUIK_USE_TB
     TB_Module* mod = cu->ir_mod;
     CUIK_TIMED_BLOCK("Allocate IR") {
-        if (s->tp) {
+        cuikcg_allocate_ir2(tu, mod, args->debug_info);
+        /*if (s->tp) {
             cuikcg_allocate_ir(tu, s->tp, mod, args->debug_info);
         } else {
             cuikcg_allocate_ir2(tu, mod, args->debug_info);
-        }
+        }*/
     }
 
-    bool delayed = do_delayed_compile(args);
-    if (delayed) {
-        CUIK_TIMED_BLOCK("IR Gen") {
-            irgen(s->tp, args, cu, mod);
+    CUIK_TIMED_BLOCK("IR Gen") {
+        irgen(s->tp, args, cu, mod);
 
-            // once we've complete debug info and diagnostics we don't need line info
-            CUIK_TIMED_BLOCK("Free CPP") {
-                cuiklex_free_tokens(tokens);
-                cuikpp_free(cpp);
-            }
-        }
-    } else {
-        CUIK_TIMED_BLOCK("Backend") {
-            irgen(s->tp, args, cu, mod);
-
-            // once we've complete debug info and diagnostics we don't need line info
-            CUIK_TIMED_BLOCK("Free CPP") {
-                cuiklex_free_tokens(tokens);
-                cuikpp_free(cpp);
-            }
+        // once we've complete debug info and diagnostics we don't need line info
+        CUIK_TIMED_BLOCK("Free CPP") {
+            cuiklex_free_tokens(tokens);
+            cuikpp_free(cpp);
         }
     }
     #endif
@@ -601,8 +585,10 @@ static void step_submit(Cuik_BuildStep* s, Cuik_IThreadpool* tp, mtx_t* mutex, b
             step_submit(s->deps[i], tp, mutex, dep_count > 1);
         }
 
-        // once dependencies are complete, we can invoke the step
-        futex_wait_eq(&s->remaining, 0);
+        if (tp) {
+            // once dependencies are complete, we can invoke the step
+            while (s->remaining > 0) { CUIK_CALL(tp, work_one_job); }
+        }
 
         // we can't run the step with broken deps, forward the error and early out
         if (s->errors != 0) {
@@ -882,7 +868,7 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
         }
 
         // wait for the threads to finish
-        futex_wait_eq(&remaining, 0);
+        while (remaining > 0) { CUIK_CALL(thread_pool, work_one_job); }
         #else
         fprintf(stderr, "Please compile with -DCUIK_ALLOW_THREADS if you wanna spin up threads");
         abort();

@@ -78,12 +78,20 @@ static int interval_intersect(LiveInterval* a, LiveInterval* b) {
     return -1;
 }
 
-static void add_use_pos(LiveInterval* interval, int t, int kind) {
-    UsePos u = { t, kind };
-    dyn_array_put(interval->uses, u);
+static void add_use_pos(LSRA* restrict ra, LiveInterval* interval, int t, int kind) {
+    if (interval->use_cap == interval->use_count) {
+        if (interval->use_cap == 0) {
+            interval->use_cap = 4;
+        } else {
+            interval->use_cap *= 2;
+        }
+        interval->uses = tb_arena_realloc(ra->arena, interval->uses, interval->use_cap * sizeof(UsePos));
+    }
+
+    interval->uses[interval->use_count++] = (UsePos){ t, kind };
 }
 
-static void add_range(LiveInterval* interval, int start, int end) {
+static void add_range(LSRA* restrict ra, LiveInterval* interval, int start, int end) {
     assert(start <= end);
     assert(interval->range_count > 0);
 
@@ -96,7 +104,7 @@ static void add_range(LiveInterval* interval, int start, int end) {
     } else {
         if (interval->range_cap == interval->range_count) {
             interval->range_cap *= 2;
-            interval->ranges = tb_platform_heap_realloc(interval->ranges, interval->range_cap * sizeof(LiveRange));
+            interval->ranges = tb_arena_realloc(ra->arena, interval->ranges, interval->range_cap * sizeof(LiveRange));
         }
 
         interval->active_range = interval->range_count;
@@ -118,7 +126,7 @@ LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* 
             .reg = -1,
             .assigned = -1,
             .range_cap = 4, .range_count = 1,
-            .ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange))
+            .ranges = tb_arena_alloc(arena, 4 * sizeof(LiveRange))
         };
         interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
         return interval;
@@ -164,7 +172,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 if (bits == 0) continue;
 
                 FOREACH_N(k, 0, 64) if (bits & (1ull << k)) {
-                    add_range(ctx->id2interval[j*64 + k], bb_start, bb_end);
+                    add_range(&ra, ctx->id2interval[j*64 + k], bb_start, bb_end);
                 }
             }
 
@@ -215,12 +223,12 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         t->interval = fixed;
 
                         // add def range & use range
-                        add_range(fixed, time, time);
-                        add_use_pos(fixed, time, USE_REG);
+                        add_range(&ra, fixed, time, time);
+                        add_use_pos(&ra, fixed, time, USE_REG);
                     }
 
                     if (interval->range_count == 1) {
-                        add_range(interval, time, time);
+                        add_range(&ra, interval, time, time);
                     } else {
                         interval->ranges[interval->range_count - 1].start = time;
                     }
@@ -265,12 +273,12 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         t->ins[j].src = tmp->interval;
 
                         // insert fixed interval use site, def site will be set later
-                        add_range(tmp->interval, bb_start, time);
-                        add_use_pos(tmp->interval, bb_start, USE_REG);
+                        add_range(&ra, tmp->interval, bb_start, time);
+                        add_use_pos(&ra, tmp->interval, bb_start, USE_REG);
                     }
 
-                    add_range(in_def, bb_start, time);
-                    add_use_pos(in_def, time, USE_REG);
+                    add_range(&ra, in_def, bb_start, time);
+                    add_use_pos(&ra, in_def, time, USE_REG);
                 }
 
                 // this is how we place ranges even if the value isn't being inputted from anywhere.
@@ -280,7 +288,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         size_t j = 0;
                         for (uint64_t bits = clobbers[i]; bits; bits >>= 1, j += 1) {
                             if (bits & 1) {
-                                add_range(&ctx->fixed[i][j], time, time + 1);
+                                add_range(&ra, &ctx->fixed[i][j], time, time + 1);
                             }
                         }
                     }
@@ -302,7 +310,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             // add range at beginning such that all fixed intervals are "awake"
             FOREACH_N(j, 0, ctx->num_regs[i]) if (ctx->fixed[i][j].range_count > 1) {
-                add_range(&ctx->fixed[i][j], 0, 1);
+                add_range(&ra, &ctx->fixed[i][j], 0, 1);
                 dyn_array_put(ra.unhandled, &ctx->fixed[i][j]);
             }
 
@@ -636,7 +644,7 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
             size_t start = new_it->range_count - !clean_split;
 
             interval->range_count = interval->range_cap = (end - start) + 1;
-            interval->ranges = tb_platform_heap_alloc(interval->range_count * sizeof(LiveRange));
+            interval->ranges = tb_arena_alloc(ra->arena, interval->range_count * sizeof(LiveRange));
             interval->active_range -= start - 1;
             interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
 

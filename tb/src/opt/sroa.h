@@ -104,12 +104,12 @@ static size_t sroa_rewrite(TB_Passes* restrict p, int pointer_size, TB_Node* sta
             set_input(p->f, new_n, start, 0);
             TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
 
-            // mark all users, there may be some fun new opts now
-            tb_pass_mark_users(p, configs[i].old_n);
-
             // replace old pointer with new fancy
             subsume_node(p, p->f, configs[i].old_n, new_n);
-            dyn_array_put(p->locals, new_n);
+
+            // mark all users, there may be some fun new opts now
+            tb_pass_mark(p, new_n);
+            tb_pass_mark_users(p, new_n);
         }
 
         // we marked the changes else where which is cheating the peephole

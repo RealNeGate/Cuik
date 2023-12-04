@@ -46,8 +46,6 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
         tb_arena_create(&info->perm_arena, TB_ARENA_LARGE_CHUNK_SIZE);
         tb_arena_create(&info->tmp_arena, TB_ARENA_LARGE_CHUNK_SIZE);
 
-        mtx_init(&info->symbol_lock, mtx_plain);
-
         // thread local so it doesn't need to synchronize
         info->next = chain;
         if (chain != NULL) {
@@ -186,6 +184,7 @@ TB_FunctionOutput* tb_pass_codegen(TB_Passes* p, const TB_FeatureSet* features, 
 
         new_region->capacity = CODE_REGION_BUFFER_SIZE - sizeof(TB_CodeRegion);
         new_region->prev = region;
+        info->code = region = new_region;
     } else {
         region->size = next_size;
     }
@@ -254,7 +253,6 @@ void tb_module_destroy(TB_Module* m) {
         TB_ThreadInfo* next = info->next_in_module;
 
         // free symbols
-        mtx_destroy(&info->symbol_lock);
         nl_hashset_free(info->symbols);
 
         // free code region

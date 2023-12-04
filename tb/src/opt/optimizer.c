@@ -338,14 +338,6 @@ void tb_pass_kill_node(TB_Passes* restrict p, TB_Node* n) {
     // remove from CSE if we're murdering it
     nl_hashset_remove2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
 
-    if (n->type == TB_LOCAL) {
-        // remove from local list
-        dyn_array_for(i, p->locals) if (p->locals[i] == n) {
-            dyn_array_remove(p->locals, i);
-            break;
-        }
-    }
-
     FOREACH_N(i, 0, n->input_count) {
         remove_user(n, i);
         n->inputs[i] = NULL;
@@ -926,15 +918,6 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
 
     DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: starting passes with %d nodes", f->super.name, f->node_count));
 
-    CUIK_TIMED_BLOCK("find locals") {
-        dyn_array_for(i, p->worklist.items) {
-            TB_Node* n = p->worklist.items[i];
-            if (n->type == TB_LOCAL) {
-                dyn_array_put(p->locals, n);
-            }
-        }
-    }
-
     return p;
 }
 
@@ -943,13 +926,23 @@ void tb_pass_sroa(TB_Passes* p) {
         verify_tmp_arena(p);
 
         TB_Function* f = p->f;
+        Worklist* ws = &p->worklist;
 
-        int pointer_size = tb__find_code_generator(f->super.module)->pointer_size;
+        int pointer_size = f->super.module->codegen->pointer_size;
         TB_Node* start = f->start_node;
 
-        size_t i = 0;
-        while (i < dyn_array_length(p->locals)) {
-            i += sroa_rewrite(p, pointer_size, start, p->locals[i]);
+        // write initial locals
+        for (User* u = start->users; u; u = u->next) {
+            if (u->n->type == TB_LOCAL) {
+                worklist_push(&p->worklist, u->n);
+            }
+        }
+
+        // i think the SROA'd pieces can't themselves split more? that should something we check
+        size_t local_count = dyn_array_length(ws->items);
+        for (size_t i = 0; i < local_count; i++) {
+            assert(ws->items[i]->type == TB_LOCAL);
+            sroa_rewrite(p, pointer_size, start, ws->items[i]);
         }
     }
 }
@@ -1043,7 +1036,6 @@ void tb_pass_exit(TB_Passes* p) {
         nl_map_free(p->scheduled);
         worklist_free(&p->worklist);
         nl_hashset_free(p->gvn_nodes);
-        dyn_array_destroy(p->locals);
 
         if (p->universe.arena != NULL) {
             nl_hashset_free(p->universe.pool);

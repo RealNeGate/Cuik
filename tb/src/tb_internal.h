@@ -364,10 +364,6 @@ struct TB_ThreadInfo {
     // live symbols (globals, functions and externals)
     //   we'll be iterating these during object/executable
     //   export to get all the symbols compiled.
-    //
-    // low contention lock but we still need it when removing on different
-    // threads.
-    mtx_t symbol_lock;
     NL_HashSet symbols;
 
     TB_CodeRegion* code; // compiled output

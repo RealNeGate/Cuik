@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdatomic.h>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -9,7 +10,7 @@
 #define SPALL_BUFFER_PROFILING
 #define SPALL_BUFFER_PROFILING_GET_TIME() __rdtsc()
 #define SPALL_AUTO_IMPLEMENTATION
-#include "spall_auto.h"
+#include "spall_native_auto.h"
 #else
 #define SPALL_BUFFER_PROFILING
 #define SPALL_BUFFER_PROFILING_GET_TIME() cuik_time_in_nanos()
@@ -24,8 +25,14 @@ static SpallProfile ctx;
 static _Thread_local SpallBuffer muh_buffer;
 
 void spallperf__start_thread(void) {
+    #if _WIN32
+    uint32_t tid = GetCurrentThreadId();
+    #else
+    uint32_t tid = pthread_self();
+    #endif
+
     #ifdef CUIK_USE_SPALL_AUTO
-    spall_auto_thread_init(1, SPALL_DEFAULT_BUFFER_SIZE, SPALL_DEFAULT_SYMBOL_CACHE_SIZE);
+    spall_auto_thread_init(tid, SPALL_DEFAULT_BUFFER_SIZE);
     #else
     if (cuikperf_is_active()) {
         size_t size = 4 * 1024 * 1024;

@@ -13,7 +13,6 @@ typedef enum {
 typedef NL_Map(TB_Node*, TB_Node*) Mem2Reg_Def;
 
 typedef struct Mem2Reg_Ctx {
-    TB_TemporaryStorage* tls;
     TB_Function* f;
     TB_Passes* p;
     TB_Node** blocks;
@@ -33,7 +32,7 @@ static Coherency tb_get_stack_slot_coherency(TB_Passes* p, TB_Function* f, TB_No
 static int get_variable_id(Mem2Reg_Ctx* restrict c, TB_Node* r) {
     // TODO(NeGate): Maybe we speed this up... maybe it doesn't matter :P
     FOREACH_N(i, 0, c->to_promote_count) {
-        if (c->to_promote[i] == r) return (int)i;
+        if (c->to_promote[i] == r) return i;
     }
 
     return -1;
@@ -132,7 +131,8 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     TB_Passes* p = c->p;
 
     // push phi nodes
-    size_t* old_len = tb_tls_push(c->tls, sizeof(size_t) * c->to_promote_count);
+    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+    size_t* old_len = tb_arena_alloc(tmp_arena, sizeof(size_t) * c->to_promote_count);
     FOREACH_N(var, 0, c->to_promote_count) {
         old_len[var] = dyn_array_length(stack[var]);
 
@@ -262,7 +262,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     FOREACH_N(var, 0, c->to_promote_count) {
         dyn_array_set_length(stack[var], old_len[var]);
     }
-    tb_tls_restore(c->tls, old_len);
+    tb_arena_restore(tmp_arena, sp);
 }
 
 static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n, TB_BasicBlock* bb_info) {
@@ -295,22 +295,20 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     cuikperf_region_start("mem2reg", NULL);
 
     TB_Function* f = p->f;
-    TB_TemporaryStorage* tls = tb_tls_steal();
 
     ////////////////////////////////
     // Decide which stack slots to promote
     ////////////////////////////////
-    size_t to_promote_count = 0;
-    TB_Node** to_promote = tb_tls_push(tls, sizeof(TB_Node*) * dyn_array_length(p->locals));
-    dyn_array_for(i, p->locals) {
-        TB_Node* n = p->locals[i];
+    for (User* u = f->start_node->users; u; u = u->next) {
+        if (u->n->type != TB_LOCAL) continue;
+        TB_Node* n = u->n;
 
         TB_DataType dt;
         Coherency coherence = tb_get_stack_slot_coherency(p, f, n, &dt);
 
         switch (coherence) {
             case COHERENCY_GOOD: {
-                to_promote[to_promote_count++] = n;
+                dyn_array_put(p->worklist.items, n);
                 n->dt = dt;
 
                 DO_IF(TB_OPTDEBUG_MEM2REG)(log_debug("%s: v%u promoting to IR register", f->super.name, n->gvn));
@@ -340,20 +338,25 @@ bool tb_pass_mem2reg(TB_Passes* p) {
         }
     }
 
+    size_t to_promote_count = dyn_array_length(p->worklist.items);
     if (to_promote_count == 0) {
         // doesn't need to mem2reg
         goto no_changes;
     }
 
-    Mem2Reg_Ctx c = { 0 };
-    c.tls = tls;
-    c.f = f;
-    c.p = p;
+    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
 
-    c.to_promote_count = to_promote_count;
-    c.to_promote = to_promote;
+    Mem2Reg_Ctx c = {
+        .f = f,
+        .p = p,
+        .to_promote_count = to_promote_count,
+        .to_promote = tb_arena_alloc(tmp_arena, to_promote_count * sizeof(TB_Node*)),
+    };
 
-    c.defs = tb_tls_push(c.tls, to_promote_count * sizeof(Mem2Reg_Def));
+    memcpy(c.to_promote, p->worklist.items, to_promote_count * sizeof(TB_Node*));
+    dyn_array_clear(p->worklist.items);
+
+    c.defs = tb_arena_alloc(tmp_arena, to_promote_count * sizeof(Mem2Reg_Def));
     memset(c.defs, 0, to_promote_count * sizeof(Mem2Reg_Def));
 
     tb_pass_update_cfg(p, &p->worklist, true);
@@ -414,7 +417,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     }
 
     // for each global name we'll insert phi nodes
-    TB_Node** phi_p = tb_tls_push(tls, c.p->cfg.block_count * sizeof(TB_Node*));
+    TB_Node** phi_p = tb_arena_alloc(tmp_arena, c.p->cfg.block_count * sizeof(TB_Node*));
 
     NL_HashSet ever_worked = nl_hashset_alloc(c.p->cfg.block_count);
     NL_HashSet has_already = nl_hashset_alloc(c.p->cfg.block_count);
@@ -476,12 +479,11 @@ bool tb_pass_mem2reg(TB_Passes* p) {
         }
     }
     tb_platform_heap_free(df);
-    tb_tls_restore(tls, phi_p);
 
     ////////////////////////////////
     // Phase 2: Rename loads and stores
     ////////////////////////////////
-    DynArray(TB_Node*)* stack = tb_tls_push(tls, c.to_promote_count * sizeof(DynArray(TB_Node*)));
+    DynArray(TB_Node*)* stack = tb_arena_alloc(tmp_arena, c.to_promote_count * sizeof(DynArray(TB_Node*)));
     FOREACH_N(var, 0, c.to_promote_count) {
         stack[var] = dyn_array_create(TB_Node*, 16);
     }
@@ -493,9 +495,7 @@ bool tb_pass_mem2reg(TB_Passes* p) {
         assert(c.to_promote[var]->users == NULL);
         tb_pass_kill_node(c.p, c.to_promote[var]);
     }
-
-    tb_tls_restore(tls, to_promote);
-
+    tb_arena_restore(tmp_arena, sp);
     tb_free_cfg(&p->cfg);
     cuikperf_region_end();
     return true;

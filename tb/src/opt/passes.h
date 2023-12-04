@@ -153,9 +153,6 @@ struct TB_Passes {
 
     Worklist worklist;
 
-    // we wanna track locals because it's nice and easy
-    DynArray(TB_Node*) locals;
-
     // tracks the fancier type system
     LatticeUniverse universe;
 

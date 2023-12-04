@@ -97,7 +97,7 @@ static void test_diag(void) {
 int main(int argc, const char** argv) {
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_init("perf.spall");
-    spall_auto_thread_init(1, SPALL_DEFAULT_BUFFER_SIZE, SPALL_DEFAULT_SYMBOL_CACHE_SIZE);
+    spall_auto_thread_init(1, SPALL_DEFAULT_BUFFER_SIZE);
     atexit(spall_die);
     #endif
 

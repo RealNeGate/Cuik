@@ -101,7 +101,9 @@ struct LiveInterval {
     bool is_spill;
 
     LiveInterval* split_kid;
-    DynArray(UsePos) uses;
+
+    int use_cap, use_count;
+    UsePos* uses;
 
     int range_cap, range_count;
     LiveRange* ranges;

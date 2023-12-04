@@ -222,6 +222,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     ctx.node_to_bb.entries = tb_arena_alloc(arena, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
     memset(ctx.node_to_bb.entries, 0, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
 
+    nl_map_create(ctx.stack_slots, 4);
+
     CUIK_TIMED_BLOCK("create physical intervals") {
         FOREACH_N(i, 0, ctx.num_classes) {
             LiveInterval* intervals = tb_arena_alloc(arena, ctx.num_regs[i] * sizeof(LiveInterval));
@@ -568,6 +570,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     // cleanup memory
+    nl_map_free(ctx.stack_slots);
     tb_free_cfg(&cfg);
     tb_arena_restore(arena, sp);
 
