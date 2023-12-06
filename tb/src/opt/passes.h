@@ -7,7 +7,7 @@ enum {
 };
 
 #define TB_OPTDEBUG_STATS    0
-#define TB_OPTDEBUG_PEEP     0
+#define TB_OPTDEBUG_PEEP     1
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
@@ -38,13 +38,16 @@ typedef struct {
 
 // a simplification of the set of all pointers (or floats)
 typedef enum {
-    LATTICE_UNKNOWN,        // top aka {nan, non-nan} or for pointers {null, non-null}
+    LATTICE_UNKNOWN,         // top aka {nan, non-nan} or for pointers {null, non-null}
 
-    LATTICE_KNOWN_NAN = 1,  // {nan}
-    LATTICE_KNOWN_NOT_NAN,  // {non-nan}
+    LATTICE_KNOWN_NAN = 1,   // {nan}
+    LATTICE_KNOWN_NOT_NAN,   // {non-nan}
 
-    LATTICE_KNOWN_NULL = 1, // {null}
-    LATTICE_KNOWN_NOT_NULL  // {non-null}
+    LATTICE_KNOWN_NULL = 1,  // {null}
+    LATTICE_KNOWN_NOT_NULL,  // {non-null}
+
+    LATTICE_KNOWN_FALSE = 1, // {false}
+    LATTICE_KNOWN_TRUE,      // {true}
 } LatticeTrifecta;
 
 typedef struct {
@@ -456,3 +459,4 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
 void tb_pass_schedule(TB_Passes* opt, TB_CFG cfg);
 
 Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n);
+LatticeTrifecta lattice_truthy(Lattice* l);

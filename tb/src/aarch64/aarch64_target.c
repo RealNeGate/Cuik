@@ -49,6 +49,12 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
 
     ctx->num_regs[0] = 32;
 
+    uint32_t all_gprs = UINT32_MAX & ~(1u << SP);
+    if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
+        all_gprs &= ~(1u << FP);
+    }
+    ctx->normie_mask[0] = REGMASK(GPR, all_gprs);
+
     // x19 - x29 are callee saved
     ctx->callee_saved[0] = ((1u << 10u) - 1) << 19u;
 }
@@ -82,6 +88,10 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             tb_todo();
         }
 
+        case TB_ARRAY_ACCESS:
+        tile_broadcast_ins(ctx, dst, n, 1, n->input_count, REGMASK(GPR, ALL_GPRS));
+        return REGMASK(GPR, ALL_GPRS);
+
         case TB_INTEGER_CONST:
         return REGMASK(GPR, ALL_GPRS);
 
@@ -98,7 +108,6 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_SUB: {
             int32_t x;
             if (try_for_imm12(n->dt.data, n->inputs[2], &x)) {
-                fold_node(ctx, n->inputs[2]);
                 tile_broadcast_ins(ctx, dst, n, 1, 2, REGMASK(GPR, ALL_GPRS));
                 dst->flags |= TILE_HAS_IMM;
             } else {
@@ -114,6 +123,10 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
 static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASSES]) {
     return false;
+}
+
+static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
+
 }
 
 static GPR gpr_at(LiveInterval* l) { assert(!l->is_spill); return l->assigned; }

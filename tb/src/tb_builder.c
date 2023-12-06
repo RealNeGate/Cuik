@@ -324,6 +324,7 @@ void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* count, TB_CharUnits 
 
 TB_Node* tb_inst_bool(TB_Function* f, bool imm) {
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, TB_TYPE_BOOL, 1, sizeof(TB_NodeInt));
+    set_input(f, n, f->start_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = imm);
     return n;
 }
@@ -337,6 +338,7 @@ TB_Node* tb_inst_uint(TB_Function* f, TB_DataType dt, uint64_t imm) {
     }
 
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
+    set_input(f, n, f->start_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = imm);
     return n;
 }
@@ -345,18 +347,21 @@ TB_Node* tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm) {
     assert(TB_IS_POINTER_TYPE(dt) || (TB_IS_INTEGER_TYPE(dt) && (dt.data <= 64)));
 
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
+    set_input(f, n, f->start_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = imm);
     return n;
 }
 
 TB_Node* tb_inst_float32(TB_Function* f, float imm) {
     TB_Node* n = tb_alloc_node(f, TB_FLOAT32_CONST, TB_TYPE_F32, 1, sizeof(TB_NodeFloat32));
+    set_input(f, n, f->start_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeFloat32, .value = imm);
     return n;
 }
 
 TB_Node* tb_inst_float64(TB_Function* f, double imm) {
     TB_Node* n = tb_alloc_node(f, TB_FLOAT64_CONST, TB_TYPE_F64, 1, sizeof(TB_NodeFloat64));
+    set_input(f, n, f->start_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeFloat64, .value = imm);
     return n;
 }
@@ -398,6 +403,7 @@ TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
     assert(target != NULL);
 
     TB_Node* n = tb_alloc_node(f, TB_SYMBOL, TB_TYPE_PTR, 1, sizeof(TB_NodeSymbol));
+    set_input(f, n, f->start_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeSymbol, .sym = target);
     return n;
 }
@@ -740,7 +746,9 @@ TB_Node* tb_inst_prefetch(TB_Function* f, TB_Node* addr, int level) {
 }
 
 TB_Node* tb_inst_x86_stmxcsr(TB_Function* f) {
-    return tb_alloc_node(f, TB_X86INTRIN_STMXCSR, TB_TYPE_I32, 1, 0);
+    TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_STMXCSR, TB_TYPE_I32, 1, 0);
+    set_input(f, n, f->trace.bot_ctrl, 0);
+    return n;
 }
 
 TB_Node* tb_inst_x86_sqrt(TB_Function* f, TB_Node* a) {

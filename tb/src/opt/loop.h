@@ -68,25 +68,34 @@ bool tb_pass_loop(TB_Passes* p) {
         }
 
         // found a loop :)
-        if (dyn_array_length(backedges) > 0) {
-            TB_OPTDEBUG(LOOP)(printf("found loop on .bb%zu with %zu backedges\n", i, dyn_array_length(backedges)));
-            TB_NODE_GET_EXTRA_T(header, TB_NodeRegion)->freq = 10.0f;
+        if (dyn_array_length(backedges) == 0) {
+            continue;
+        }
+
+        TB_OPTDEBUG(LOOP)(printf("found loop on .bb%zu with %zu backedges\n", i, dyn_array_length(backedges)));
+        TB_NODE_GET_EXTRA_T(header, TB_NodeRegion)->freq = 10.0f;
+        ptrdiff_t single_backedge = backedges[0];
+
+        // as part of loop simplification we convert backedges into one, this
+        // makes it easier to analyze the exit condition.
+        if (dyn_array_length(backedges) > 1) {
+            tb_todo();
+        }
+
+        // somehow we couldn't simplify the loop? welp
+        if (single_backedge < 0 || header->input_count != 2) {
+            continue;
+        }
+
+        // canonicalize loop
+        TB_NodeRegion* r = TB_NODE_GET_EXTRA(header);
+        r->natty = true;
+        if (single_backedge == 0) {
+            SWAP(TB_Node*, header->inputs[0], header->inputs[1]);
+            single_backedge = 1;
         }
 
         if (0) {
-            ptrdiff_t single_backedge = backedges[0];
-
-            // as part of loop simplification we convert backedges into one, this
-            // makes it easier to analyze the exit condition.
-            if (dyn_array_length(backedges) > 1) {
-                tb_todo();
-            }
-
-            // somehow we couldn't simplify the loop? welp
-            if (single_backedge < 0 || header->input_count != 2) {
-                continue;
-            }
-
             // if it's already rotated don't do it again
             if (header->inputs[single_backedge]->type == TB_PROJ && header->inputs[single_backedge]->inputs[0]->type == TB_BRANCH) {
                 continue;

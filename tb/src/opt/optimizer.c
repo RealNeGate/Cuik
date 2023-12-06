@@ -284,11 +284,15 @@ static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra) {
 }
 
 TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
-    return gvn(p, tb_alloc_node(f, TB_POISON, dt, 1, 0), 0);
+    TB_Node* n = tb_alloc_node(f, TB_POISON, dt, 1, 0);
+    set_input(f, n, f->start_node, 0);
+    return gvn(p, n, 0);
 }
 
 TB_Node* make_dead_node(TB_Function* f, TB_Passes* restrict p) {
-    return gvn(p, tb_alloc_node(f, TB_DEAD, TB_TYPE_CONTROL, 1, 0), 0);
+    TB_Node* n = tb_alloc_node(f, TB_DEAD, TB_TYPE_CONTROL, 1, 0);
+    set_input(f, n, f->start_node, 0);
+    return gvn(p, n, 0);
 }
 
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
@@ -298,6 +302,8 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->value = x;
+
+    set_input(f, n, f->start_node, 0);
 
     Lattice* l;
     if (dt.type == TB_INT) {
@@ -316,11 +322,6 @@ TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, T
     set_input(f, n, src, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeProj, .index = i);
     return n;
-}
-
-static TB_Node* clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* region, TB_Node* n, bool* new_node) {
-    assert(0 && "TODO");
-    return NULL;
 }
 
 static void remove_input(TB_Function* f, TB_Node* n, size_t i) {
@@ -429,18 +430,18 @@ static void push_all_nodes(TB_Passes* restrict p, Worklist* restrict ws, TB_Func
         for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
             TB_Node* n = ws->items[i];
 
-            FOREACH_N(i, 0, n->input_count) {
-                TB_Node* in = n->inputs[i];
-                if (in && !worklist_test_n_set(ws, in)) {
-                    dyn_array_put(ws->items, in);
-                }
-            }
-
             for (User* u = n->users; u; u = u->next) {
                 TB_Node* out = u->n;
                 if (!worklist_test_n_set(ws, out)) {
                     dyn_array_put(ws->items, out);
                 }
+            }
+        }
+
+        CUIK_TIMED_BLOCK("reversing") {
+            size_t last = dyn_array_length(ws->items) - 1;
+            FOREACH_N(i, 0, dyn_array_length(ws->items) / 2) {
+                SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
             }
         }
     }
@@ -697,6 +698,14 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         case TB_SHR:
         return dataflow_shift(p, uni, n);
 
+        case TB_CMP_EQ:
+        case TB_CMP_NE:
+        case TB_CMP_SLT:
+        case TB_CMP_SLE:
+        case TB_CMP_ULT:
+        case TB_CMP_ULE:
+        return dataflow_cmp(p, uni, n);
+
         // meet all inputs
         case TB_LOOKUP: {
             TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
@@ -791,7 +800,7 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         }
 
         case LATTICE_POINTER: {
-            static const char* tri[] = { "unknown", "null", "~null" };
+            static const char* tri[] = { "any-ptr", "null", "~null" };
             printf("[%s]", tri[l->_ptr.trifecta]);
             break;
         }
@@ -832,11 +841,10 @@ static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         Lattice* new_type = dataflow(p, &p->universe, n);
         if (new_type == NULL) {
             new_type = lattice_top(&p->universe, n->dt);
-            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93mTOP\x1b[0m"));
-        } else {
-            // print fancy type
-            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type, n->dt), printf("\x1b[0m"));
+            // DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93mTOP\x1b[0m"));
         }
+        // print fancy type
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type, n->dt), printf("\x1b[0m"));
 
         // types that consist of one possible value are made into value constants.
         k = try_as_const(p, n, new_type);

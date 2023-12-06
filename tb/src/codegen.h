@@ -128,6 +128,10 @@ struct Tile {
 
         // tag = TILE_SPILL_MOVE, this is the tile we're copying from.
         struct Tile* src;
+
+        struct {
+            int payload[2];
+        };
     };
 
     int in_count;
@@ -159,6 +163,16 @@ typedef struct {
     TB_Node* k;
     MachineBB* v;
 } NodeToBB;
+
+typedef struct {
+    // number of times we asked for it
+    // to materialize, only certain nodes
+    // can be rematerialized several times
+    // like constants.
+    int mat_count;
+    int use_count;
+    Tile* tile;
+} ValueDesc;
 
 typedef struct Ctx Ctx;
 typedef void (*TB_RegAlloc)(Ctx* restrict ctx, TB_Arena* arena);
@@ -193,8 +207,7 @@ struct Ctx {
     MachineBB* machine_bbs;
 
     // Values
-    int* use_count;
-    Tile** values; // [n.gvn]
+    ValueDesc* values; // [n.gvn]
     LiveInterval** id2interval; // [tile.id]
     LiveInterval* fixed[MAX_REG_CLASSES];
 

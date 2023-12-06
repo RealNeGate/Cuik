@@ -283,6 +283,9 @@ typedef enum TB_NodeTypeEnum {
     ////////////////////////////////
     // CONTROL + MEMORY
     ////////////////////////////////
+    //   this special op tracks calls such that we can produce our cool call graph, there's
+    //   one call graph node per function that never moves.
+    TB_CALLGRAPH,
     //   nothing special, it's just a function call, 3rd argument here is the
     //   target pointer (or syscall number) and the rest are just data args.
     TB_CALL,           // (Control, Memory, Data, Data...) -> (Control, Memory, Data)
@@ -642,6 +645,11 @@ typedef struct {
 
 typedef struct {
     const char* tag;
+
+    // natural loops here will have in[0] has entry and in[1] as the backedge,
+    // the nice bit is that it means we know the dominator and can take advantage
+    // of that later.
+    bool natty;
 
     // magic factor for hot-code, higher means run more often
     float freq;

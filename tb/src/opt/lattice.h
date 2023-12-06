@@ -84,6 +84,26 @@ static Lattice* lattice_intern(LatticeUniverse* uni, Lattice l) {
     return k;
 }
 
+LatticeTrifecta lattice_truthy(Lattice* l) {
+    switch (l->tag) {
+        case LATTICE_INT:
+        if (l->_int.min == l->_int.max) {
+            return l->_int.min ? LATTICE_KNOWN_TRUE : LATTICE_KNOWN_FALSE;
+        }
+        return LATTICE_UNKNOWN;
+
+        case LATTICE_FLOAT32:
+        case LATTICE_FLOAT64:
+        return LATTICE_UNKNOWN;
+
+        case LATTICE_POINTER:
+        return l->_ptr.trifecta;
+
+        default:
+        tb_todo();
+    }
+}
+
 static int64_t lattice_int_min(int bits) { return 1ll << (bits - 1); }
 static int64_t lattice_int_max(int bits) { return (1ll << (bits - 1)) - 1; }
 
@@ -178,42 +198,6 @@ static Lattice* lattice_meet(LatticeUniverse* uni, Lattice* a, Lattice* b, TB_Da
 
         case LATTICE_POINTER: {
             LatticePointer p = { .trifecta = TRIFECTA_MEET(a->_ptr, b->_ptr) };
-            return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = p });
-        }
-
-        default: tb_todo();
-    }
-}
-
-// generates the lowest upper bound between a and b
-static Lattice* lattice_join(LatticeUniverse* uni, Lattice* a, Lattice* b, TB_DataType dt) {
-    assert(a->tag == b->tag);
-    switch (a->tag) {
-        case LATTICE_INT: {
-            // [amin, amax] ^ [bmin, bmax] => [max(amin, bmin), min(amax, bmax)]
-            LatticeInt aa = a->_int;
-            LatticeInt bb = b->_int;
-
-            int bits = dt.data;
-            uint64_t mask = tb__mask(dt.data);
-
-            LatticeInt i = { aa.min, aa.max };
-            if (wrapped_int_lt(i.min, bb.min, bits)) i.min = bb.min;
-            if (wrapped_int_lt(bb.max, i.max, bits)) i.max = bb.max;
-
-            i.known_zeros = aa.known_zeros | bb.known_zeros;
-            i.known_ones = aa.known_ones | bb.known_ones;
-            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = i });
-        }
-
-        case LATTICE_FLOAT32:
-        case LATTICE_FLOAT64: {
-            LatticeFloat f = { .trifecta = lattice_trifecta_join(a->_float.trifecta, b->_float.trifecta) };
-            return lattice_intern(uni, (Lattice){ a->tag, ._float = f });
-        }
-
-        case LATTICE_POINTER: {
-            LatticePointer p = { .trifecta = lattice_trifecta_join(a->_ptr.trifecta, b->_ptr.trifecta) };
             return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = p });
         }
 

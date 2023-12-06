@@ -126,13 +126,8 @@ static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB
         break;
 
         case TB_MUL:
-        // constant multiply is the easy case
-        if (lattice_is_const_int(a) && lattice_is_const_int(b)) {
-            min = max = wrapped_int_mul(a->_int.min, b->_int.min) & mask;
-        } else {
-            min = lattice_int_min(n->dt.data) & mask;
-            max = lattice_int_max(n->dt.data) & mask;
-        }
+        min = wrapped_int_mul(a->_int.min, b->_int.min) & mask;
+        max = (wrapped_int_mul(a->_int.max, b->_int.max) + 1) & mask;
         return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
     }
 
@@ -326,8 +321,56 @@ static Lattice* dataflow_shift(TB_Passes* restrict opt, LatticeUniverse* uni, TB
     }
 }
 
+static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
+    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+    Lattice* b = lattice_universe_get(uni, n->inputs[2]);
+    TB_DataType dt = n->inputs[1]->dt;
+
+    if (dt.type == TB_INT) {
+        uint64_t mask = tb__mask(dt.data);
+        bool a_cst = a->_int.min == a->_int.max;
+        bool b_cst = b->_int.min == b->_int.max;
+
+        int cmp = 2; // 0 or 1 (2 for TOP)
+        switch (n->type) {
+            case TB_CMP_EQ:
+            if (a_cst && b_cst) cmp = a->_int.min == b->_int.min;
+            break;
+
+            case TB_CMP_NE:
+            if (a_cst && b_cst) cmp = a->_int.min == b->_int.min;
+            break;
+
+            case TB_CMP_SLE:
+            case TB_CMP_SLT:
+            // always less
+            if (wrapped_int_lt(a->_int.max, b->_int.min, dt.data)) cmp = 1;
+            break;
+
+            case TB_CMP_ULT:
+            case TB_CMP_ULE:
+            // always less
+            if ((a->_int.max & mask) < (b->_int.min & mask)) cmp = 1;
+            break;
+        }
+
+        if (cmp != 2) {
+            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { cmp, cmp, ~cmp, cmp } });
+        }
+    }
+
+    return NULL;
+}
+
 static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
+
+    LatticeTrifecta key_truthy = lattice_truthy(lattice_universe_get(&opt->universe, src));
+    if (key_truthy == LATTICE_KNOWN_TRUE) {
+        return n->inputs[2];
+    } else if (key_truthy == LATTICE_KNOWN_FALSE) {
+        return n->inputs[3];
+    }
 
     // select(y <= x, a, b) => select(x < y, b, a) flipped conditions
     if (src->type == TB_CMP_SLE || src->type == TB_CMP_ULE) {
@@ -428,6 +471,7 @@ static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node*
 }
 
 static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+    TB_NodeTypeEnum ext_type = n->type;
     TB_Node* src = n->inputs[1];
 
     // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))
@@ -437,7 +481,6 @@ static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node
         }
 
         // generate extension nodes
-        TB_NodeTypeEnum ext_type = n->type;
         TB_DataType dt = n->dt;
         FOREACH_N(i, 1, src->input_count) {
             assert(src->inputs[i]->type == TB_INTEGER_CONST);
@@ -452,6 +495,22 @@ static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node
         return src;
     }
 
+    // Cast(NiceAssBinop(a, b)) => NiceAssBinop(Cast(a), Cast(b))
+    if (nice_ass_trunc(src->type)) {
+        TB_Node* left = tb_alloc_node(f, ext_type, n->dt, 2, 0);
+        set_input(f, left, src->inputs[1], 1);
+        tb_pass_mark(opt, left);
+
+        TB_Node* right = tb_alloc_node(f, ext_type, n->dt, 2, 0);
+        set_input(f, right, src->inputs[2], 1);
+        tb_pass_mark(opt, right);
+
+        TB_Node* new_binop = tb_alloc_node(f, src->type, n->dt, 3, 0);
+        set_input(f, new_binop, left, 1);
+        set_input(f, new_binop, right, 2);
+        return new_binop;
+    }
+
     return NULL;
 }
 
@@ -462,10 +521,10 @@ static int node_pos(TB_Node* n) {
         case TB_FLOAT64_CONST:
         return 1;
 
-        case TB_PHI:
+        default:
         return 2;
 
-        default:
+        case TB_PHI:
         return 3;
     }
 }
@@ -775,6 +834,22 @@ static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node
         set_input(f, new_n, base, 1);
         TB_NODE_SET_EXTRA(new_n, TB_NodeMember, .offset = offset);
         return new_n;
+    }
+
+    // (array A (shl B C) D) => (array A B C<<D)
+    if (index->type == TB_SHL && index->inputs[2]->type == TB_INTEGER_CONST) {
+        uint64_t scale = TB_NODE_GET_EXTRA_T(index->inputs[2], TB_NodeInt)->value;
+        set_input(f, n, index->inputs[1], 2);
+        TB_NODE_SET_EXTRA(n, TB_NodeArray, .stride = stride << scale);
+        return n;
+    }
+
+    // (array A (mul B C) D) => (array A B C*D)
+    if (index->type == TB_MUL && index->inputs[2]->type == TB_INTEGER_CONST) {
+        uint64_t factor = TB_NODE_GET_EXTRA_T(index->inputs[2], TB_NodeInt)->value;
+        set_input(f, n, index->inputs[1], 2);
+        TB_NODE_SET_EXTRA(n, TB_NodeArray, .stride = stride * factor);
+        return n;
     }
 
     // (array A (add B C) D) => (member (array A B D) C*D)

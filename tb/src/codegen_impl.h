@@ -58,37 +58,28 @@ static void node_to_bb_put(Ctx* restrict ctx, TB_Node* n, MachineBB* bb) {
     abort();
 }
 
-static int* use_count(Ctx* restrict ctx, TB_Node* n) {
-    if (ctx->use_count[n->gvn] < 0) {
+static ValueDesc* val_at(Ctx* restrict ctx, TB_Node* n) {
+    if (ctx->values[n->gvn].use_count < 0) {
         int count = 0;
         for (User* u = n->users; u; u = u->next) count++;
-        ctx->use_count[n->gvn] = count;
+        ctx->values[n->gvn].use_count = count;
     }
 
-    return &ctx->use_count[n->gvn];
-}
-
-static void fold_node(Ctx* restrict ctx, TB_Node* n) {
-    int* u = use_count(ctx, n);
-
-    assert(*u > 0);
-    *u -= 1;
-
-    TB_OPTDEBUG(CODEGEN)(printf("    USE "), print_node_sexpr(n, 0), printf("\n"));
+    return &ctx->values[n->gvn];
 }
 
 static Tile* get_tile(Ctx* restrict ctx, TB_Node* n, bool alloc_interval) {
-    if (ctx->values[n->gvn] == NULL) {
+    ValueDesc* val = val_at(ctx, n);
+    if (val->tile == NULL) {
         Tile* tile = TB_ARENA_ALLOC(tmp_arena, Tile);
         *tile = (Tile){ .tag = TILE_NORMAL, .n = n };
         if (alloc_interval) {
             tile->interval = TB_ARENA_ALLOC(tmp_arena, LiveInterval);
         }
-        ctx->values[n->gvn] = tile;
-        return tile;
-    } else {
-        return ctx->values[n->gvn];
+        val->tile = tile;
     }
+
+    return val->tile;
 }
 
 // you're expected to set the masks in the returned array
@@ -96,7 +87,6 @@ static TileInput* tile_set_ins(Ctx* restrict ctx, Tile* t, TB_Node* n, int start
     t->ins = tb_arena_alloc(tmp_arena, (end - start) * sizeof(TileInput));
     t->in_count = end - start;
     FOREACH_N(i, start, end) {
-        fold_node(ctx, n->inputs[i]);
         t->ins[i - start].src = get_tile(ctx, n->inputs[i], true)->interval;
     }
     return t->ins;
@@ -107,7 +97,6 @@ static TileInput* tile_broadcast_ins(Ctx* restrict ctx, Tile* t, TB_Node* n, int
     t->ins = tb_arena_alloc(tmp_arena, (end - start) * sizeof(TileInput));
     t->in_count = end - start;
     FOREACH_N(i, start, end) {
-        fold_node(ctx, n->inputs[i]);
         t->ins[i - start].src = get_tile(ctx, n->inputs[i], true)->interval;
         t->ins[i - start].mask = rm;
     }
@@ -197,8 +186,12 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     ctx.values = tb_arena_alloc(arena, f->node_count * sizeof(Tile*));
     memset(ctx.values, 0, f->node_count * sizeof(Tile*));
 
-    ctx.use_count = tb_arena_alloc(arena, f->node_count * sizeof(int));
-    memset(ctx.use_count, 0xFF, f->node_count * sizeof(int));
+    ctx.values = tb_arena_alloc(arena, f->node_count * sizeof(ValueDesc));
+    FOREACH_N(i, 0, f->node_count) {
+        ctx.values[i].use_count = -1;
+        ctx.values[i].mat_count = 0;
+        ctx.values[i].tile = NULL;
+    }
 
     TB_CFG cfg;
     CUIK_TIMED_BLOCK("global sched") {
@@ -281,15 +274,22 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             CUIK_TIMED_BLOCK("phase 2") {
                 TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
 
+                // force materialization of phi ins
+                FOREACH_N(i, 0, dyn_array_length(phi_vals)) {
+                    PhiVal* v = &phi_vals[i];
+                    get_tile(&ctx, v->n, true);
+                }
+
                 Tile* top = NULL;
                 Tile* bot = NULL;
                 FOREACH_REVERSE_N(i, cfg.block_count, dyn_array_length(ws->items)) {
                     TB_Node* n = ws->items[i];
                     if (n->type == TB_PHI) {
                         continue;
-                    } else if (ctx.values[n->gvn] == NULL && n->type != TB_START && n->inputs[0] == NULL) {
-                        int* u = use_count(&ctx, n);
-                        if (*u == 0) {
+                    } else if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
+                        // these are always run because they're cool effect nodes
+                    } else {
+                        if (ctx.values[n->gvn].tile == NULL) {
                             TB_OPTDEBUG(CODEGEN)(printf("  FOLDED "), print_node_sexpr(n, 0), printf("\n"));
                             continue;
                         }

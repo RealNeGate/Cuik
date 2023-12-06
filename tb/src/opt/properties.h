@@ -51,6 +51,10 @@ static bool is_effect_tuple(TB_Node* n) {
     }
 }
 
+static bool cfg_is_loop(TB_Node* n) {
+    return n->type == TB_REGION && TB_NODE_GET_EXTRA_T(n, TB_NodeRegion)->natty;
+}
+
 // terminator without successors
 static bool cfg_is_endpoint(TB_Node* n) {
     switch (n->type) {
