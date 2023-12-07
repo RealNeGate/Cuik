@@ -194,14 +194,12 @@ typedef struct SpallBufferHeader {
 
 #pragma pack(pop)
 
-uint8_t spall_squash_1[] = {1, 1, 2, 4, 4, 8, 8, 8, 8};
-uint8_t spall_squash_2[] = {0, 0, 1, 2, 2, 3, 3, 3, 3};
-
 SPALL_FN SPALL_FORCEINLINE uint64_t spall_delta_to_size(uint64_t dt) {
-    dt = SPALL_MAX(1, dt);
-    uint64_t set_bits = 64 - __builtin_clzll(dt);
-    uint64_t set_bytes = (set_bits + 7) >> 3;
-    return spall_squash_1[set_bytes];
+    int cnt = 0;
+    cnt += (dt >= 0x100);
+    cnt += (dt >= 0x10000);
+    cnt += (dt >= 0x100000000);
+    return cnt;
 }
 
 typedef struct SpallProfile {
@@ -570,12 +568,16 @@ SPALL_FN SPALL_FORCEINLINE bool spall_buffer_micro_begin(uint64_t addr, uint64_t
     uint64_t d_addr   = addr   ^ spall_buffer->previous_addr;
     uint64_t d_caller = caller ^ spall_buffer->previous_caller;
 
-    uint64_t dt_size     = spall_delta_to_size(dt);
-    uint64_t addr_size   = spall_delta_to_size(d_addr);
-    uint64_t caller_size = spall_delta_to_size(d_caller);
+    uint64_t dt_bits     = spall_delta_to_size(dt);
+    uint64_t addr_bits   = spall_delta_to_size(d_addr);
+    uint64_t caller_bits = spall_delta_to_size(d_caller);
+
+    uint64_t dt_size     = 1ull << dt_bits;
+    uint64_t addr_size   = 1ull << addr_bits;
+    uint64_t caller_size = 1ull << caller_bits;
 
     // [begin event tag | size of ts | size of addr | size of caller]
-    uint8_t type_byte = (0 << 6) | (spall_squash_2[dt_size] << 4) | (spall_squash_2[addr_size] << 2) | spall_squash_2[caller_size];
+    uint8_t type_byte = (0 << 6) | (dt_bits << 4) | (addr_bits << 2) | caller_bits;
 
     int i = 0;
     *(ev_buffer + i) = type_byte; i += 1;
@@ -609,10 +611,11 @@ SPALL_FN SPALL_FORCEINLINE bool spall_buffer_micro_end(void) {
     uint8_t *ev_buffer = (spall_buffer->data + data_start) + spall_buffer->head;
 
     uint64_t dt = now - spall_buffer->previous_ts;
-    uint64_t dt_size = spall_delta_to_size(dt);
+    uint64_t dt_bits = spall_delta_to_size(dt);
+    uint64_t dt_size = 1ull << dt_bits;
 
     // [end event tag | size of ts]
-    uint8_t type_byte = (1 << 6) | (spall_squash_2[dt_size] << 4);
+    uint8_t type_byte = (1 << 6) | (dt_bits << 4);
 
     int i = 0;
     *(ev_buffer + i) = type_byte; i += 1;
@@ -646,11 +649,12 @@ SPALL_NOINSTRUMENT SPALL_FORCEINLINE bool spall_auto_buffer_begin(const char *na
         spall_buffer->previous_ts = now;
     }
     uint64_t dt = now - spall_buffer->previous_ts;
-    uint64_t dt_size = spall_delta_to_size(dt);
+    uint64_t dt_bits = spall_delta_to_size(dt);
+    uint64_t dt_size = 1ull << dt_bits;
 
     // [extended tag | begin type | delta size | field lengths]
 	uint8_t name_args_lens = ((name_len_size >> 1) << 1) | (args_len_size >> 1);
-    uint8_t type_byte = (2 << 6) | (SpallAutoEventType_Begin << 4) | (spall_squash_2[dt_size] << 2) | name_args_lens;
+    uint8_t type_byte = (2 << 6) | (SpallAutoEventType_Begin << 4) | (dt_bits << 2) | name_args_lens;
 
     int i = 0;
     *(ev_buffer + i) = type_byte;              i += 1;

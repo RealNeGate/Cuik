@@ -313,7 +313,6 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
         l = lattice_intern(&p->universe, (Lattice){ LATTICE_POINTER, ._ptr = { t } });
     }
     lattice_universe_map(&p->universe, n, l);
-
     return gvn(p, n, sizeof(TB_NodeInt));
 }
 
@@ -467,7 +466,11 @@ static void cool_print_type(TB_Node* n) {
 void print_node_sexpr(TB_Node* n, int depth) {
     if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
-        printf("%"PRId64, num->value);
+        if (n->dt.type == TB_PTR) {
+            printf("%#"PRIx64, num->value);
+        } else {
+            printf("%"PRId64, tb__sxt(num->value, n->dt.data, 64));
+        }
     } else if (n->type == TB_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
         if (sym->name[0]) {
@@ -715,7 +718,7 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
             LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
             FOREACH_N(i, 1, n->input_count) {
                 LatticeInt b = { l->entries[i].val, l->entries[i].val, l->entries[i].val, ~l->entries[i].val };
-                lattice_meet_int(&a, &b, dt);
+                a = lattice_meet_int(a, b, dt);
             }
 
             return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = a });
@@ -784,11 +787,17 @@ static void validate_node_users(TB_Node* n) {
 
 static void print_lattice(Lattice* l, TB_DataType dt) {
     switch (l->tag) {
+        case LATTICE_BOT: printf("[bot]"); break;
+        case LATTICE_TOP: printf("[top]"); break;
+
         case LATTICE_INT: {
             assert(dt.type == TB_INT);
-            printf("[%"PRId64, tb__sxt(l->_int.min, dt.data, 64));
-            if (l->_int.min != l->_int.max) {
-                printf(",%"PRId64, tb__sxt(l->_int.max, dt.data, 64));
+            if (l->_int.min == l->_int.max) {
+                printf("[%"PRId64, tb__sxt(l->_int.min, dt.data, 64));
+            } else if (l->_int.min > l->_int.max) {
+                printf("[%"PRId64",%"PRId64, tb__sxt(l->_int.min, dt.data, 64), tb__sxt(l->_int.max, dt.data, 64));
+            } else {
+                printf("[%"PRIu64",%"PRIu64, l->_int.min, l->_int.max);
             }
 
             uint64_t known = l->_int.known_zeros | l->_int.known_ones;
@@ -840,9 +849,9 @@ static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         //   no type provided? just make a not-so-form fitting TOP
         Lattice* new_type = dataflow(p, &p->universe, n);
         if (new_type == NULL) {
-            new_type = lattice_top(&p->universe, n->dt);
-            // DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93mTOP\x1b[0m"));
+            new_type = lattice_from_dt(&p->universe, n->dt);
         }
+
         // print fancy type
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type, n->dt), printf("\x1b[0m"));
 
@@ -998,7 +1007,12 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
             p->universe.pool = nl_hashset_alloc(64);
             p->universe.type_cap = count;
             p->universe.types = tb_platform_heap_alloc(count * sizeof(Lattice*));
-            memset(p->universe.types, 0, count * sizeof(Lattice*));
+            FOREACH_N(i, 0, count) {
+                p->universe.types[i] = &TOP_IN_THE_SKY;
+            }
+
+            nl_hashset_put2(&p->universe.pool, &BOT_IN_THE_SKY, lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &TOP_IN_THE_SKY, lattice_hash, lattice_cmp);
         }
     }
 

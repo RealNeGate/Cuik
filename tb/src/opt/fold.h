@@ -55,15 +55,28 @@ static bool inverted_cmp(TB_Node* n, TB_Node* n2) {
 
 static Lattice* dataflow_sext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
     int old_bits = n->inputs[1]->dt.data;
 
-    int64_t min = tb__sxt(a->_int.min, old_bits, n->dt.data);
-    int64_t max = tb__sxt(a->_int.max, old_bits, n->dt.data);
+    uint64_t sign_range = 1 << (old_bits - 1);
+    uint64_t mask = tb__mask(n->dt.data) & ~tb__mask(old_bits);
+
+    int64_t min, max;
+    if (a->_int.min >= a->_int.max || a->_int.max < sign_range) {
+        min = tb__sxt(a->_int.min, old_bits, n->dt.data);
+        max = tb__sxt(a->_int.max, old_bits, n->dt.data);
+    } else {
+        min = lattice_int_min(old_bits) | mask;
+        max = lattice_int_max(old_bits);
+    }
+
     uint64_t zeros = a->_int.known_zeros;
     uint64_t ones  = a->_int.known_ones;
 
     // if we know the sign bit then we can know what the extended bits look like
-    uint64_t mask = tb__mask(n->dt.data) & ~tb__mask(old_bits);
     if (zeros >> (old_bits - 1)) {
         zeros |= mask;
     } else if (ones >> (old_bits - 1)) {
@@ -75,6 +88,10 @@ static Lattice* dataflow_sext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
 
 static Lattice* dataflow_zext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
     uint64_t mask = tb__mask(n->dt.data) & ~tb__mask(n->inputs[1]->dt.data);
 
     int64_t min = a->_int.min;
@@ -87,6 +104,9 @@ static Lattice* dataflow_zext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
 
 static Lattice* dataflow_trunc(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
 
     int64_t mask = tb__mask(n->dt.data);
     int64_t min = a->_int.min & mask;
@@ -110,25 +130,32 @@ static bool sub_overflow(uint64_t x, uint64_t y, uint64_t xy, int bits) {
 static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
     Lattice* b = lattice_universe_get(uni, n->inputs[2]);
-    assert(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
+    if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
 
-    int64_t mask = tb__mask(n->dt.data);
-    int64_t min, max;
+    assert(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
+    uint64_t mask = tb__mask(n->dt.data);
+    uint64_t min, max;
     switch (n->type) {
         case TB_ADD:
-        min = wrapped_int_add(a->_int.min, b->_int.min);
-        max = wrapped_int_add(a->_int.max, b->_int.max);
+        min = a->_int.min + b->_int.min;
+        max = a->_int.max + b->_int.max;
         break;
 
         case TB_SUB:
-        min = wrapped_int_sub(a->_int.min, b->_int.min);
-        max = wrapped_int_sub(a->_int.max, b->_int.max);
+        min = a->_int.min - b->_int.min;
+        max = a->_int.max - b->_int.max;
         break;
 
         case TB_MUL:
-        min = wrapped_int_mul(a->_int.min, b->_int.min) & mask;
-        max = (wrapped_int_mul(a->_int.max, b->_int.max) + 1) & mask;
-        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
+        min = a->_int.min * b->_int.min;
+        if (lattice_is_const_int(a) && lattice_is_const_int(b)) {
+            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
+        } else {
+            max = a->_int.max * b->_int.max;
+        }
+        break;
     }
 
     // truncate to the size of the raw DataType
@@ -141,16 +168,16 @@ static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB
             if (sub_overflow(a->_int.min, b->_int.min, min, n->dt.data) ||
                 sub_overflow(a->_int.max, b->_int.max, max, n->dt.data)
             ) {
-                min = lattice_int_min(n->dt.data);
-                max = lattice_int_max(n->dt.data);
+                min = 0;
+                max = lattice_uint_max(n->dt.data);
             }
         } else {
             if (((a->_int.min & b->_int.min) < 0 && min >= 0) ||
                 (~(a->_int.max | b->_int.max) < 0 && max < 0) ||
                 wrapped_int_lt(max, min, n->dt.data)
             ) {
-                min = lattice_int_min(n->dt.data);
-                max = lattice_int_max(n->dt.data);
+                min = 0;
+                max = lattice_uint_max(n->dt.data);
             }
         }
     }
@@ -160,8 +187,11 @@ static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB
 
 static Lattice* dataflow_int2ptr(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
-    assert(a->tag == LATTICE_INT);
+    if (a == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
 
+    assert(a->tag == LATTICE_INT);
     if (a->_int.min == a->_int.max) {
         // int2ptr with a constant leads to fun cool stuff (usually we get constant
         // zeros)
@@ -174,6 +204,10 @@ static Lattice* dataflow_int2ptr(TB_Passes* restrict opt, LatticeUniverse* uni, 
 
 static Lattice* dataflow_unary(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
     if (a->tag == LATTICE_INT) {
         uint64_t mask = tb__mask(n->dt.data);
         uint64_t min = ~a->_int.min & mask;
@@ -212,6 +246,9 @@ static Lattice* dataflow_unary(TB_Passes* restrict opt, LatticeUniverse* uni, TB
 static Lattice* dataflow_bits(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
     Lattice* b = lattice_universe_get(uni, n->inputs[2]);
+    if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
 
     uint64_t zeros, ones;
     switch (n->type) {
@@ -254,6 +291,9 @@ static Lattice* dataflow_bits(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
 static Lattice* dataflow_shift(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
     Lattice* b = lattice_universe_get(uni, n->inputs[2]);
+    if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
 
     uint64_t bits = n->dt.data;
     uint64_t mask = tb__mask(n->dt.data);
@@ -324,8 +364,11 @@ static Lattice* dataflow_shift(TB_Passes* restrict opt, LatticeUniverse* uni, TB
 static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
     Lattice* b = lattice_universe_get(uni, n->inputs[2]);
-    TB_DataType dt = n->inputs[1]->dt;
+    if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
 
+    TB_DataType dt = n->inputs[1]->dt;
     if (dt.type == TB_INT) {
         uint64_t mask = tb__mask(dt.data);
         bool a_cst = a->_int.min == a->_int.max;
@@ -345,6 +388,7 @@ static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_N
             case TB_CMP_SLT:
             // always less
             if (wrapped_int_lt(a->_int.max, b->_int.min, dt.data)) cmp = 1;
+            if (wrapped_int_lt(b->_int.max, a->_int.min, dt.data)) cmp = 0;
             break;
 
             case TB_CMP_ULT:

@@ -50,8 +50,9 @@ local modules = {
 	--   TildeBackend
 	tb = { srcs={
 			"tb/src/libtb.c",
-			"tb/src/x64/x64_target.c" --, "tb/src/aarch64/aarch64_target.c"
-		}, flags="-I tb/include -DCUIK_USE_TB", deps={"common"}
+			"tb/src/x64/x64_target.c",
+			"tb/src/aarch64/aarch64_target.c"
+		}, flags="-I tb/include -DCUIK_USE_TB -DTB_HAS_X64 -DTB_HAS_AARCH64", deps={"common"}
 	},
 	-- executables:
 	--   Cuik command line
@@ -96,7 +97,6 @@ if not options.debug then
 	cflags = cflags.." -O2 -DNDEBUG"
 	if not options.gcc and options.lld then
 		cflags = cflags.." -flto"
-		ldflags = ldflags.." -flto"
 	end
 end
 

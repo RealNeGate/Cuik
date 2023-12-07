@@ -29,7 +29,7 @@ enum {
 // TODO(NeGate): implement dual? from there i can do join with
 // dual(dual(x) ^ dual(y)) = join(x, y)
 typedef struct {
-    int64_t min, max;
+    uint64_t min, max;
 
     // for known bit analysis
     uint64_t known_zeros;
@@ -63,10 +63,16 @@ typedef struct {
 // all backed by my shitty understanding of lattice theory
 typedef struct {
     enum {
+        LATTICE_BOT, // bot ^ x = bot
+        LATTICE_TOP, // top ^ x = x
+
         LATTICE_INT,
         LATTICE_FLOAT32,
         LATTICE_FLOAT64,
         LATTICE_POINTER,
+
+        LATTICE_CTRL,
+        LATTICE_XCTRL,
     } tag;
     uint32_t pad;
     union {

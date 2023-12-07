@@ -1,6 +1,9 @@
 #include <hashes.h>
 
-static Lattice* lattice_top(LatticeUniverse* uni, TB_DataType dt);
+static Lattice TOP_IN_THE_SKY = { LATTICE_TOP };
+static Lattice BOT_IN_THE_SKY = { LATTICE_BOT };
+
+static Lattice* lattice_from_dt(LatticeUniverse* uni, TB_DataType dt);
 
 static uint32_t lattice_hash(void* a) {
     return tb__murmur3_32(a, sizeof(Lattice));
@@ -41,7 +44,7 @@ static void lattice_universe_map(LatticeUniverse* uni, TB_Node* n, Lattice* l) {
 
         // clear new space
         FOREACH_N(i, uni->type_cap, new_cap) {
-            uni->types[i] = NULL;
+            uni->types[i] = &TOP_IN_THE_SKY;
         }
 
         uni->type_cap = new_cap;
@@ -58,17 +61,14 @@ Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n) {
 
         // clear new space
         FOREACH_N(i, uni->type_cap, new_cap) {
-            uni->types[i] = NULL;
+            uni->types[i] = &TOP_IN_THE_SKY;
         }
 
         uni->type_cap = new_cap;
     }
 
-    if (uni->types[n->gvn] == NULL) {
-        return uni->types[n->gvn] = lattice_top(uni, n->dt);
-    } else {
-        return uni->types[n->gvn];
-    }
+    assert(uni->types[n->gvn] != NULL);
+    return uni->types[n->gvn];
 }
 
 static Lattice* lattice_intern(LatticeUniverse* uni, Lattice l) {
@@ -100,19 +100,19 @@ LatticeTrifecta lattice_truthy(Lattice* l) {
         return l->_ptr.trifecta;
 
         default:
-        tb_todo();
+        return LATTICE_UNKNOWN;
     }
 }
 
 static int64_t lattice_int_min(int bits) { return 1ll << (bits - 1); }
 static int64_t lattice_int_max(int bits) { return (1ll << (bits - 1)) - 1; }
+static uint64_t lattice_uint_max(int bits) { return UINT64_MAX >> (64 - bits); }
 
-// maximal subset
-static Lattice* lattice_top(LatticeUniverse* uni, TB_DataType dt) {
+static Lattice* lattice_from_dt(LatticeUniverse* uni, TB_DataType dt) {
     switch (dt.type) {
         case TB_INT: {
             assert(dt.data <= 64);
-            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(dt.data), lattice_int_max(dt.data) } });
+            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { 0, lattice_uint_max(dt.data) } });
         }
 
         case TB_FLOAT: {
@@ -143,13 +143,21 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
     return dst | (sign_bit ? mask : 0);
 }
 
-static LatticeTrifecta lattice_trifecta_join(LatticeTrifecta a, LatticeTrifecta b) {
-    if ((a == LATTICE_KNOWN_NOT_NULL && b == LATTICE_KNOWN_NULL) ||
-        (a == LATTICE_KNOWN_NULL && b == LATTICE_KNOWN_NOT_NULL)) {
-        tb_panic("trying to join to disjoint sets :(");
-    }
+static bool lattice_signed(LatticeInt* l) { return l->min > l->max; }
 
-    return a == LATTICE_UNKNOWN ? b : a;
+static LatticeInt lattice_into_unsigned(LatticeInt i) {
+    if (i.min > i.max) { SWAP(uint64_t, i.min, i.max); }
+    return i;
+}
+
+static Lattice* lattice_gimme_int(LatticeUniverse* uni, int64_t min, int64_t max) {
+    assert(min <= max);
+    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
+}
+
+static Lattice* lattice_gimme_uint(LatticeUniverse* uni, uint64_t min, uint64_t max) {
+    assert(min <= max);
+    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
 }
 
 static int64_t wrapped_int_add(int64_t x, int64_t y) { return (uint64_t)x + (uint64_t)y; }
@@ -157,46 +165,66 @@ static int64_t wrapped_int_sub(int64_t x, int64_t y) { return (uint64_t)x - (uin
 static int64_t wrapped_int_mul(int64_t x, int64_t y) { return (uint64_t)x * (uint64_t)y; }
 static bool wrapped_int_lt(int64_t x, int64_t y, int bits) { return (int64_t)tb__sxt(x, bits, 64) < (int64_t)tb__sxt(y, bits, 64); }
 
-static void lattice_meet_int(LatticeInt* a, LatticeInt* b, TB_DataType dt) {
+static LatticeInt lattice_meet_int(LatticeInt a, LatticeInt b, TB_DataType dt) {
     // [amin, amax] ^ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
     int bits = dt.data;
     uint64_t mask = tb__mask(dt.data);
 
-    if (wrapped_int_lt(b->min, a->min, bits)) a->min = b->min;
-    if (wrapped_int_lt(a->max, b->max, bits)) a->max = b->max;
+    bool aas = a.min > a.max;
+    bool bbs = b.min > b.max;
+    if (aas && bbs) {
+        if (wrapped_int_lt(b.min, a.min, bits)) a.min = b.min;
+        if (wrapped_int_lt(a.max, b.max, bits)) a.max = b.max;
+    } else {
+        if (!aas && !bbs) {
+            a = lattice_into_unsigned(a);
+            b = lattice_into_unsigned(b);
+        }
 
-    a->known_zeros &= b->known_zeros;
-    a->known_ones &= b->known_ones;
+        if (b.min < a.min) a.min = b.min;
+        if (a.max < b.max) a.max = b.max;
+    }
+
+    a.known_zeros &= b.known_zeros;
+    a.known_ones &= b.known_ones;
+    return a;
 }
 
 // generates the greatest lower bound between a and b
 static Lattice* lattice_meet(LatticeUniverse* uni, Lattice* a, Lattice* b, TB_DataType dt) {
-    assert(a->tag == b->tag);
+    // it's commutative, so let's simplify later code this way
+    if (a->tag > b->tag) {
+        SWAP(Lattice*, a, b);
+    }
+
     switch (a->tag) {
+        case LATTICE_BOT: return &BOT_IN_THE_SKY;
+        case LATTICE_TOP: return &TOP_IN_THE_SKY;
+
         case LATTICE_INT: {
-            // [amin, amax] ^ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
-            LatticeInt aa = a->_int;
-            LatticeInt bb = b->_int;
+            if (b->tag != LATTICE_INT) {
+                return &BOT_IN_THE_SKY;
+            }
 
-            int bits = dt.data;
-            uint64_t mask = tb__mask(dt.data);
-
-            LatticeInt i = { aa.min, aa.max };
-            if (wrapped_int_lt(bb.min, i.min, bits)) i.min = bb.min;
-            if (wrapped_int_lt(i.max, bb.max, bits)) i.max = bb.max;
-
-            i.known_zeros = aa.known_zeros & bb.known_zeros;
-            i.known_ones = aa.known_ones & bb.known_ones;
+            LatticeInt i = lattice_meet_int(a->_int, b->_int, dt);
             return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = i });
         }
 
         case LATTICE_FLOAT32:
         case LATTICE_FLOAT64: {
+            if (b->tag != a->tag) {
+                return &BOT_IN_THE_SKY;
+            }
+
             LatticeFloat f = { .trifecta = TRIFECTA_MEET(a->_float, b->_float) };
             return lattice_intern(uni, (Lattice){ a->tag, ._float = f });
         }
 
         case LATTICE_POINTER: {
+            if (b->tag != LATTICE_INT) {
+                return &BOT_IN_THE_SKY;
+            }
+
             LatticePointer p = { .trifecta = TRIFECTA_MEET(a->_ptr, b->_ptr) };
             return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = p });
         }
