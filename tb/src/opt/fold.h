@@ -61,7 +61,7 @@ static Lattice* dataflow_sext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
 
     int old_bits = n->inputs[1]->dt.data;
 
-    uint64_t sign_range = 1 << (old_bits - 1);
+    uint64_t sign_range = (1 << (old_bits - 1)) - 1;
     uint64_t mask = tb__mask(n->dt.data) & ~tb__mask(old_bits);
 
     int64_t min, max;
@@ -371,6 +371,8 @@ static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_N
     TB_DataType dt = n->inputs[1]->dt;
     if (dt.type == TB_INT) {
         uint64_t mask = tb__mask(dt.data);
+        uint64_t sign_range = (1 << (dt.data - 1)) - 1;
+
         bool a_cst = a->_int.min == a->_int.max;
         bool b_cst = b->_int.min == b->_int.max;
 
@@ -386,15 +388,18 @@ static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_N
 
             case TB_CMP_SLE:
             case TB_CMP_SLT:
-            // always less
-            if (wrapped_int_lt(a->_int.max, b->_int.min, dt.data)) cmp = 1;
-            if (wrapped_int_lt(b->_int.max, a->_int.min, dt.data)) cmp = 0;
+            if (a->_int.max < sign_range && b->_int.max < sign_range) {
+                if (wrapped_int_lt(a->_int.max, b->_int.min, dt.data)) cmp = 1;
+                if (wrapped_int_lt(b->_int.max, a->_int.min, dt.data)) cmp = 0;
+            }
             break;
 
             case TB_CMP_ULT:
             case TB_CMP_ULE:
-            // always less
-            if ((a->_int.max & mask) < (b->_int.min & mask)) cmp = 1;
+            if (a->_int.min <= a->_int.max && b->_int.min <= b->_int.max) {
+                if ((a->_int.max & mask) < (b->_int.min & mask)) cmp = 1;
+                if ((b->_int.max & mask) < (a->_int.min & mask)) cmp = 0;
+            }
             break;
         }
 
