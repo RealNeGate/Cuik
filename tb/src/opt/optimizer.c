@@ -964,6 +964,210 @@ void tb_pass_sroa(TB_Passes* p) {
     }
 }
 
+typedef union {
+    uint64_t i;
+    User* ctrl;
+} Value;
+
+typedef struct {
+    Worklist* ws;
+    Value* vals;
+    bool* ready;
+    int phi_i;
+} Interp;
+
+static Value* in_val(Interp* vm, TB_Node* n, int i) { return &vm->vals[n->inputs[i]->gvn]; }
+static Value eval(Interp* vm, TB_Node* n) {
+    printf("  EVAL v%u\n", n->gvn);
+    switch (n->type) {
+        case TB_INTEGER_CONST: return (Value){ .i = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value };
+
+        case TB_ADD: {
+            uint64_t a = in_val(vm, n, 1)->i;
+            uint64_t b = in_val(vm, n, 2)->i;
+            return (Value){ .i = a + b };
+        }
+
+        case TB_CMP_SLT: {
+            uint64_t a = in_val(vm, n, 1)->i;
+            uint64_t b = in_val(vm, n, 2)->i;
+            return (Value){ .i = a < b };
+        }
+
+        case TB_BRANCH: {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+            uint64_t key = in_val(vm, n, 1)->i;
+            int index = 0;
+
+            FOREACH_N(i, 0, br->succ_count - 1) {
+                if (key == br->keys[i]) {
+                    index = i + 1;
+                    break;
+                }
+            }
+
+            User* ctrl = proj_with_index(n, index);
+            return (Value){ .ctrl = ctrl };
+        }
+
+        case TB_REGION:
+        return (Value){ .ctrl = cfg_next_user(n) };
+
+        case TB_PROJ:
+        if (n->dt.type == TB_MEMORY || n->dt.type == TB_CONT) {
+            return (Value){ .i = 0 };
+        } else if (n->dt.type == TB_CONTROL) {
+            return (Value){ .ctrl = cfg_next_user(n) };
+        } else {
+            tb_todo();
+        }
+
+        // control nodes
+        case TB_END: {
+            uint64_t v = in_val(vm, n, 3)->i;
+
+            printf("END %"PRIu64"\n", v);
+            return (Value){ .ctrl = NULL };
+        }
+
+        default: tb_todo();
+    }
+}
+
+static bool is_ready(Interp* vm, TB_Node* n) {
+    FOREACH_N(i, 1, n->input_count) {
+        if (!vm->ready[n->inputs[i]->gvn]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void dirty_deps(Interp* vm, TB_Node* n) {
+    printf("    DIRTY v%u\n", n->gvn);
+    vm->ready[n->gvn] = false;
+
+    FOR_USERS(u, n) {
+        if (u->n->type != TB_PHI && vm->ready[u->n->gvn]) {
+            dirty_deps(vm, u->n);
+        }
+    }
+}
+
+void dummy_interp(TB_Passes* p) {
+    TB_Function* f = p->f;
+    TB_Arena* arena = get_temporary_arena(f->super.module);
+
+    TB_Node* ip = cfg_next_control(f->start_node);
+
+    // We need to generate a CFG
+    TB_CFG cfg = tb_compute_rpo(f, p);
+    // And perform global scheduling
+    tb_pass_schedule(p, cfg);
+
+    Interp vm = {
+        .ws = &p->worklist,
+        .vals = tb_arena_alloc(arena, f->node_count * sizeof(Value)),
+        .ready = tb_arena_alloc(arena, f->node_count * sizeof(bool))
+    };
+
+    int last_edge = 0;
+    while (ip) {
+        printf("IP = v%u\n", ip->gvn);
+
+        worklist_clear(&p->worklist);
+
+        // push all direct users of the parent's users (our antideps)
+        FOR_USERS(u, ip->inputs[last_edge]) {
+            if (is_ready(&vm, u->n)) {
+                worklist_push(&p->worklist, u->n);
+            }
+        }
+
+        if (ip->type != TB_REGION) {
+            FOREACH_N(i, 1, ip->input_count) {
+                worklist_push(&p->worklist, ip->inputs[i]);
+            }
+        }
+
+        if (is_ready(&vm, ip)) {
+            worklist_push(&p->worklist, ip);
+        }
+
+        size_t i = 0;
+        for (; i < dyn_array_length(p->worklist.items); i++) {
+            TB_Node* n = p->worklist.items[i];
+            if (n->type == TB_PHI) continue;
+
+            vm.vals[n->gvn] = eval(&vm, n);
+            vm.ready[n->gvn] = true;
+
+            FOR_USERS(u, n) {
+                if (is_ready(&vm, u->n)) {
+                    worklist_push(&p->worklist, u->n);
+                }
+            }
+
+            // advance now
+            if (n == ip) {
+                dyn_array_set_length(p->worklist.items, i + 1);
+                break;
+            }
+        }
+
+        if (ip->type == TB_REGION) {
+            vm.vals[ip->gvn] = eval(&vm, ip);
+            vm.ready[ip->gvn] = true;
+        } else {
+            assert(is_ready(&vm, ip));
+        }
+
+        User* succ = vm.vals[ip->gvn].ctrl;
+        if (succ == NULL) {
+            break;
+        }
+
+        last_edge = succ->slot;
+        ip = succ->n;
+
+        if (ip->type == TB_REGION) {
+            FOR_USERS(u, ip) {
+                TB_Node* phi = u->n;
+                if (phi->type == TB_PHI) {
+                    TB_Node* in = phi->inputs[1 + last_edge];
+                    if (is_ready(&vm, in)) {
+                        worklist_push(&p->worklist, in);
+                    }
+                }
+            }
+
+            for (; i < dyn_array_length(p->worklist.items); i++) {
+                TB_Node* n = p->worklist.items[i];
+                if (n->type == TB_PHI) continue;
+
+                vm.vals[n->gvn] = eval(&vm, n);
+                vm.ready[n->gvn] = true;
+            }
+
+            FOR_USERS(u, ip) {
+                TB_Node* phi = u->n;
+                if (phi->type == TB_PHI) {
+                    printf("  PHI = v%u (v%u)\n", phi->gvn, phi->inputs[1 + last_edge]->gvn);
+
+                    Value* v = &vm.vals[phi->inputs[1 + last_edge]->gvn];
+                    vm.vals[phi->gvn] = *v;
+
+                    dirty_deps(&vm, phi);
+                    vm.ready[phi->gvn] = true;
+                }
+            }
+        }
+    }
+
+    __debugbreak();
+}
+
 void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
     tb_pass_sroa(p);
@@ -972,6 +1176,9 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
     tb_pass_loop(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
+
+    tb_pass_print(p);
+    dummy_interp(p);
 }
 
 static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve) {

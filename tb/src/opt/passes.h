@@ -7,7 +7,7 @@ enum {
 };
 
 #define TB_OPTDEBUG_STATS    0
-#define TB_OPTDEBUG_PEEP     1
+#define TB_OPTDEBUG_PEEP     0
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
@@ -22,6 +22,8 @@ enum {
 #define DO_IF_1(...) __VA_ARGS__
 
 #define BB_LOW_FREQ 1e-4
+
+#define FOR_USERS(u, n) for (User* u = n->users; u; u = u->next)
 
 ////////////////////////////////
 // SCCP
@@ -287,6 +289,17 @@ static TB_Node* cfg_next_region_control(TB_Node* n) {
     }
 
     return n;
+}
+
+static User* proj_with_index(TB_Node* n, int i) {
+    for (User* u = n->users; u; u = u->next) {
+        TB_NodeProj* p = TB_NODE_GET_EXTRA(u->n);
+        if (p->index == i) {
+            return u;
+        }
+    }
+
+    return NULL;
 }
 
 static User* cfg_next_user(TB_Node* n) {

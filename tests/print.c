@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdint.h>
 
 #if 0
 struct s { int x, y, z; };
@@ -19,9 +20,9 @@ int mul3(unsigned x) { return x * 3; }
 int bits(int x) { return x << 2; }
 #endif
 
-int sccp(int x) {
-    int y = x & 63;
-    return y < 64 ? 1 << y : 0;
+/*int cmp(char* x) {
+    int n = *x;
+    return n > 255;
 }
 
 int foo(int x, int y) {
@@ -30,10 +31,43 @@ int foo(int x, int y) {
     return z;
 }
 
+enum { NUM_STATES = 10 };
+uint8_t table[NUM_STATES][256];
+
+uint8_t normie_dfa(const uint8_t *start, const uint8_t *end, uint8_t state) {
+    for (const uint8_t *s = start; s != end; s++) {
+        state = table[state][*s];
+    }
+
+    return state;
+}
+
+short big_nums_gcp(void) {
+    return (short)32767 + (short)3;
+}
+
+int sccp(int x) {
+    int y = x & 63;
+    return y < 64 ? 1 << y : 0;
+}
+
 int bar() {
     return 4 + 3 * 2 + 10;
 }
 
+int small_mul(char a, char b) {
+    return a * b;
+}*/
+
+int loop() {
+    int a = 1;
+    while (a < 10) {
+        a = a + 3;
+    }
+    return a;
+}
+
+#if 0
 int* tile1(int* x, int i) { return &x[i]; }
 int* tile2(int* x, int i) { return &x[i + 2]; }
 int  tile3(int* x, int i) { return x[i*4]; }
@@ -59,7 +93,7 @@ int msvc_crap(int a, int b) {
 
 // const char* info() { return "hello"; }
 
-/*int loop(int* arr, int n) {
+int loop(int* arr, int n) {
     size_t i = 0;
     int a = 0;
     while (i < n) {
@@ -69,9 +103,8 @@ int msvc_crap(int a, int b) {
     }
 
     return a;
-}*/
+}
 
-#if 0
 int ctrl(int* x) {
     if (*x) {
         return 0;
@@ -79,14 +112,6 @@ int ctrl(int* x) {
         *x -= 1;
         return 1;
     }
-}
-
-int loop() {
-    int a = 1;
-    while (a < 10) {
-        a = a + 3;
-    }
-    return a;
 }
 
 int single_if(int x, int y) {

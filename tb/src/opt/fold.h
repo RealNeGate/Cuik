@@ -151,6 +151,7 @@ static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB
         case TB_MUL:
         min = a->_int.min * b->_int.min;
         if (lattice_is_const_int(a) && lattice_is_const_int(b)) {
+            min &= mask;
             return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
         } else {
             max = a->_int.max * b->_int.max;

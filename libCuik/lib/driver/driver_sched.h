@@ -33,7 +33,7 @@ static size_t good_batch_size(size_t n, size_t jobs) {
     // next power of two
     return 1ull << (64ull - __builtin_clzll(batch_size - 1ull));*/
 
-    return 64;
+    return 8192;
 }
 
 void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_threads, CompilationUnit* cu, TB_Module* mod, void* arg, CuikSched_PerFunction func) {
@@ -45,7 +45,7 @@ void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_thre
         PerFunction task = { .remaining = &remaining, .arg = arg, .func = func };
         size_t func_count = dyn_array_length(cu->worklist);
 
-        size_t batch_size = 1;
+        size_t batch_size = 10000;
         for (size_t i = 0; i < func_count; i += batch_size) {
             size_t end = i + batch_size;
             if (end >= func_count) end = func_count;
