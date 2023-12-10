@@ -278,7 +278,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
 
                     tb_out4b(&debugs_out, 0); // SECREL  | .text
                     tb_out4b(&debugs_out, 0); // SECTION | .text
-                    tb_out4b(&debugs_out, out_f->code_size);
+                    tb_out4b(&debugs_out, out_f->code_size - out_f->nop_pads);
 
                     // when we make new file line regions
                     // we backpatch the line count for the
@@ -452,9 +452,9 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                         function_type = tb_codeview_builder_add_function_id(&builder, proc, name);
                     }
 
-                    tb_out4b(&debugs_out, out_f->code_size); // procedure length
+                    tb_out4b(&debugs_out, out_f->code_size - out_f->nop_pads); // procedure length
                     tb_out4b(&debugs_out, 0);                // debug start offset
-                    tb_out4b(&debugs_out, out_f->code_size); // debug end offset
+                    tb_out4b(&debugs_out, 0);                // debug end offset
                     tb_out4b(&debugs_out, function_type);    // type index
 
                     // we save this location because there's two relocations
@@ -472,7 +472,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                     tb_out2b(&debugs_out, 0); // segment
 
                     // the 1 means we have a frame pointer present
-                    tb_out1b(&debugs_out, 1); // flags
+                    tb_out1b(&debugs_out, 0); // flags
 
                     tb_out_reserve(&debugs_out, name_len);
                     tb_outs_UNSAFE(&debugs_out, name_len, (const uint8_t*)name);
@@ -495,7 +495,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                         tb_out4b(&debugs_out, 0); // count of bytes of callee save registers
                         tb_out4b(&debugs_out, 0); // offset of exception handler
                         tb_out2b(&debugs_out, 0); // section id of exception handler
-                        tb_out4b(&debugs_out, 0x00114200); // flags
+                        tb_out4b(&debugs_out, 0x00014000); // flags
 
                         tb_patch2b(&debugs_out, frameproc_baseline, (debugs_out.count - frameproc_baseline) - 2);
 
@@ -513,10 +513,10 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                             CV_RegRel32 l = {
                                 .reclen = sizeof(CV_RegRel32) + (var_name_len + 1) - 2,
                                 .rectyp = S_REGREL32,
-                                .off = stack_pos,
+                                .off = out_f->stack_usage - stack_pos,
                                 .typind = type_index,
                                 // AMD64_RBP is 334, AMD64_RSP is 335
-                                .reg = 334,
+                                .reg = 335,
                             };
                             tb_outs(&debugs_out, sizeof(CV_RegRel32), &l);
                             tb_outs(&debugs_out, var_name_len + 1, (const uint8_t*) var_name);

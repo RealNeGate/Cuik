@@ -129,9 +129,8 @@ struct Tile {
         // tag = TILE_SPILL_MOVE, this is the tile we're copying from.
         struct Tile* src;
 
-        struct {
-            int payload[2];
-        };
+        // tag = TILE_NORMAL
+        void* aux;
     };
 
     int in_count;
@@ -194,7 +193,10 @@ struct Ctx {
     // target-dependent index
     int abi_index;
     int fallthrough;
-    int prologue_length;
+
+    uint8_t prologue_length;
+    uint8_t epilogue_length;
+    uint8_t nop_pads;
 
     // TB_Node* -> MachineBB*
     struct {

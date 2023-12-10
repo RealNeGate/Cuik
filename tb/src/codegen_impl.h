@@ -551,6 +551,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         post_emit(&ctx, e);
     }
 
+    if (ctx.locations) {
+        ctx.locations[0].pos = 0;
+    }
+
     if (emit_asm) CUIK_TIMED_BLOCK("dissassembly") {
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 
@@ -581,6 +585,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     func_out->locations = ctx.locations;
     func_out->stack_usage = ctx.stack_usage;
     func_out->prologue_length = ctx.prologue_length;
+    func_out->epilogue_length = ctx.epilogue_length;
+    func_out->nop_pads = ctx.nop_pads;
 }
 
 static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_align) {

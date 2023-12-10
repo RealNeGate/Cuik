@@ -249,6 +249,8 @@ typedef struct TB_FunctionOutput {
 
     uint64_t ordinal;
     uint8_t prologue_length;
+    uint8_t epilogue_length;
+    uint8_t nop_pads;
 
     TB_Assembly* asm_out;
     uint64_t stack_usage;
