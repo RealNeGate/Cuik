@@ -160,10 +160,24 @@ static Lattice* lattice_gimme_uint(LatticeUniverse* uni, uint64_t min, uint64_t 
     return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
 }
 
-static int64_t wrapped_int_add(int64_t x, int64_t y) { return (uint64_t)x + (uint64_t)y; }
-static int64_t wrapped_int_sub(int64_t x, int64_t y) { return (uint64_t)x - (uint64_t)y; }
-static int64_t wrapped_int_mul(int64_t x, int64_t y) { return (uint64_t)x * (uint64_t)y; }
-static bool wrapped_int_lt(int64_t x, int64_t y, int bits) { return (int64_t)tb__sxt(x, bits, 64) < (int64_t)tb__sxt(y, bits, 64); }
+static bool l_add_overflow(uint64_t x, uint64_t y, uint64_t mask, uint64_t* out) {
+    *out = (x + y) & mask;
+    return x && *out < x;
+}
+
+static bool l_mul_overflow(uint64_t x, uint64_t y, uint64_t mask, uint64_t* out) {
+    *out = (x * y) & mask;
+    return x && *out < x;
+}
+
+static bool l_sub_overflow(uint64_t x, uint64_t y, uint64_t mask, uint64_t* out) {
+    *out = (x - y) & mask;
+    return x && *out > x;
+}
+
+static bool wrapped_int_lt(int64_t x, int64_t y, int bits) {
+    return (int64_t)tb__sxt(x, bits, 64) < (int64_t)tb__sxt(y, bits, 64);
+}
 
 static LatticeInt lattice_meet_int(LatticeInt a, LatticeInt b, TB_DataType dt) {
     // [amin, amax] ^ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]

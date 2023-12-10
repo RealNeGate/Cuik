@@ -137,53 +137,34 @@ static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB
     assert(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
     uint64_t mask = tb__mask(n->dt.data);
     uint64_t min, max;
+    bool overflow = false;
     switch (n->type) {
         case TB_ADD:
-        min = a->_int.min + b->_int.min;
-        max = a->_int.max + b->_int.max;
+        overflow |= l_add_overflow(a->_int.min, b->_int.min, mask, &min);
+        overflow |= l_add_overflow(a->_int.max, b->_int.max, mask, &max);
         break;
 
         case TB_SUB:
-        min = a->_int.min - b->_int.min;
-        max = a->_int.max - b->_int.max;
+        overflow |= l_sub_overflow(a->_int.min, b->_int.min, mask, &min);
+        overflow |= l_sub_overflow(a->_int.max, b->_int.max, mask, &max);
         break;
 
         case TB_MUL:
-        min = a->_int.min * b->_int.min;
-        if (lattice_is_const_int(a) && lattice_is_const_int(b)) {
-            min &= mask;
-            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
-        } else {
-            max = a->_int.max * b->_int.max;
-        }
+        overflow |= l_mul_overflow(a->_int.min, b->_int.min, mask, &min);
+        overflow |= l_mul_overflow(a->_int.max, b->_int.max, mask, &max);
         break;
     }
 
     // truncate to the size of the raw DataType
     min &= mask, max &= mask;
 
-    if (!lattice_is_const_int(a) || !lattice_is_const_int(b)) {
-        // if we overflow, default to the full range
-        if (n->type == TB_SUB) {
-            // subtraction does overflow check different from add or mul
-            if (sub_overflow(a->_int.min, b->_int.min, min, n->dt.data) ||
-                sub_overflow(a->_int.max, b->_int.max, max, n->dt.data)
-            ) {
-                min = 0;
-                max = lattice_uint_max(n->dt.data);
-            }
-        } else {
-            if (((a->_int.min & b->_int.min) < 0 && min >= 0) ||
-                (~(a->_int.max | b->_int.max) < 0 && max < 0) ||
-                wrapped_int_lt(max, min, n->dt.data)
-            ) {
-                min = 0;
-                max = lattice_uint_max(n->dt.data);
-            }
-        }
+    if (min == max) {
+        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
+    } else if (overflow) {
+        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { 0, mask } });
+    } else {
+        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
     }
-
-    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
 }
 
 static Lattice* dataflow_int2ptr(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {

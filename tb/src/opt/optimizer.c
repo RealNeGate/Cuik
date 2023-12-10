@@ -725,6 +725,13 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         }
 
         // meet all inputs
+        case TB_SELECT: {
+            Lattice* a = lattice_universe_get(uni, n->inputs[2]);
+            Lattice* b = lattice_universe_get(uni, n->inputs[3]);
+            return lattice_meet(uni, a, b, n->dt);
+        }
+
+        // meet all inputs
         case TB_PHI: {
             Lattice* l = lattice_universe_get(uni, n->inputs[1]);
             TB_DataType dt = n->dt;
@@ -1177,8 +1184,8 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_loop(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 
-    tb_pass_print(p);
-    dummy_interp(p);
+    // tb_pass_print(p);
+    // dummy_interp(p);
 }
 
 static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve) {
