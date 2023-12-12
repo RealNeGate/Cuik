@@ -275,10 +275,8 @@ typedef enum TB_NodeTypeEnum {
     TB_TRAP,        // (Control) -> (Control)
     //   unreachable means it won't trap or be continuable.
     TB_UNREACHABLE, // (Control) -> ()
-    //   this is generated when a path becomes disconnected
-    //   from the main IR, it'll be reduced by the monotonic
-    //   rewrites.
-    TB_DEAD,        // () -> (Control)
+    //   all dead paths are stitched here
+    TB_DEAD,        // (Control) -> (Control)
 
     ////////////////////////////////
     // CONTROL + MEMORY

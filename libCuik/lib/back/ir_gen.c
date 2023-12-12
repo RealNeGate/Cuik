@@ -2003,7 +2003,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
 
         // tb_inst_set_scope(func, old_tb_scope);
         return (TB_Symbol*) func;
-    } else if (s->flags & STMT_FLAGS_HAS_IR_BACKING) {
+    } else if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) && s->backing.s) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
         Subexpr* initial = get_root_subexpr(s->decl.initial);
 

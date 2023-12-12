@@ -4,8 +4,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
     // if a region is dead, start a violent death chain
     if (n->input_count == 0) {
-        n->type = TB_DEAD;
-        return n;
+        return NULL;
     } else if (n->input_count == 1) {
         // single entry regions are useless...
         // check for any phi nodes, because we're single entry they're all degens
@@ -27,7 +26,8 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
         size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
-            if (n->inputs[i]->type == TB_DEAD) {
+            Lattice* pred_ty = lattice_universe_get(&p->universe, n->inputs[i]);
+            if (pred_ty == &XCTRL_IN_THE_SKY) {
                 changes = true;
                 remove_input(f, n, i);
 
@@ -100,7 +100,9 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
             i += 1;
         }
 
-        return changes ? n : NULL;
+        if (changes) {
+            return n->input_count == 1 ? n->inputs[0] : n;
+        }
     }
 
     return NULL;
@@ -358,84 +360,79 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
         }
     }
 
+    return NULL;
+}
+
+static Lattice* dataflow_branch(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
+    Lattice* before = lattice_universe_get(uni, n->inputs[0]);
+    if (before == &TOP_IN_THE_SKY || before == &XCTRL_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
+
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+
     // constant fold branch
-    if (n->input_count == 2) {
-        Lattice* key = lattice_universe_get(&opt->universe, n->inputs[1]);
+    assert(n->input_count == 2);
+    Lattice* key = lattice_universe_get(&opt->universe, n->inputs[1]);
 
-        ptrdiff_t taken = -1;
-        if (key->tag == LATTICE_INT && key->_int.min == key->_int.max) {
-            int64_t key_const = key->_int.max;
-            taken = 0;
+    ptrdiff_t taken = -1;
+    if (key->tag == LATTICE_INT && key->_int.min == key->_int.max) {
+        int64_t key_const = key->_int.max;
+        taken = 0;
 
-            FOREACH_N(i, 0, br->succ_count - 1) {
-                int64_t case_key = br->keys[i];
-                if (key_const == case_key) {
-                    taken = i + 1;
-                    break;
-                }
-            }
-        } else if (br->succ_count == 2) {
-            // TODO(NeGate): extend this to JOIN redundant checks to ideally
-            // narrow on more complex checks.
-            int64_t* primary_keys = br->keys;
-
-            // check for redundant conditions in the doms.
-            TB_Node* initial_bb = get_block_begin(n->inputs[0]);
-            for (User* u = n->inputs[1]->users; u; u = u->next) {
-                if (u->n->type != TB_BRANCH || u->slot != 1 || u->n == n) {
-                    continue;
-                }
-
-                TB_Node* end = u->n;
-                int64_t* keys = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->keys;
-                if (TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count != 2 && keys[0] != primary_keys[0]) {
-                    continue;
-                }
-
-                for (User* succ_user = end->users; succ_user; succ_user = succ_user->next) {
-                    assert(succ_user->n->type == TB_PROJ);
-                    int index = TB_NODE_GET_EXTRA_T(succ_user->n, TB_NodeProj)->index;
-                    TB_Node* succ = cfg_next_bb_after_cproj(succ_user->n);
-
-                    // we must be dominating for this to work
-                    if (!fast_dommy(succ, initial_bb)) {
-                        continue;
-                    }
-
-                    taken = index;
-                    goto match;
-                }
+        FOREACH_N(i, 0, br->succ_count - 1) {
+            int64_t case_key = br->keys[i];
+            if (key_const == case_key) {
+                taken = i + 1;
+                break;
             }
         }
+    } else if (br->succ_count == 2) {
+        // TODO(NeGate): extend this to MEET redundant checks to ideally
+        // narrow on more complex checks.
+        int64_t* primary_keys = br->keys;
 
-        if (taken >= 0) match: {
-            TB_Node* dead = make_dead_node(f, opt);
-
-            // convert dead projections into DEAD and convert live projection into index 0
-            for (User* u = n->users; u; u = u->next) {
-                TB_Node* proj = u->n;
-                if (proj->type == TB_PROJ) {
-                    int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
-                    if (index != taken) {
-                        subsume_node(opt, f, proj, dead);
-                    } else {
-                        TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index = 0;
-
-                        // if we folded away from a region, then we should subsume
-                        // the degen phis.
-                        subsume_node(opt, f, proj, n->inputs[0]);
-                    }
-                }
+        // check for redundant conditions in the doms.
+        TB_Node* initial_bb = get_block_begin(n->inputs[0]);
+        for (User* u = n->inputs[1]->users; u; u = u->next) {
+            if (u->n->type != TB_BRANCH || u->slot != 1 || u->n == n) {
+                continue;
             }
 
-            // remove condition (shouldn't have any users at thi point)
-            assert(n->users == NULL);
-            tb_pass_mark_users(opt, n->inputs[0]);
-            tb_pass_mark_users(opt, dead);
+            TB_Node* end = u->n;
+            int64_t* keys = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->keys;
+            if (TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count != 2 && keys[0] != primary_keys[0]) {
+                continue;
+            }
 
-            return dead;
+            for (User* succ_user = end->users; succ_user; succ_user = succ_user->next) {
+                assert(succ_user->n->type == TB_PROJ);
+                int index = TB_NODE_GET_EXTRA_T(succ_user->n, TB_NodeProj)->index;
+                TB_Node* succ = cfg_next_bb_after_cproj(succ_user->n);
+
+                // we must be dominating for this to work
+                if (!fast_dommy(succ, initial_bb)) {
+                    continue;
+                }
+
+                taken = index;
+                goto match;
+            }
         }
     }
 
-    return NULL;
+    // give all the projections types
+    match:
+    for (User* u = n->users; u; u = u->next) {
+        TB_Node* proj = u->n;
+        if (proj->type != TB_PROJ) continue;
+
+        int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
+
+        // make proj's type either dead or live
+        Lattice* l = taken < 0 || index == taken ? &CTRL_IN_THE_SKY : &XCTRL_IN_THE_SKY;
+        lattice_universe_map(&opt->universe, proj, l);
+    }
+
+    return &TUP_IN_THE_SKY;
 }

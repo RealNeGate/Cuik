@@ -11,7 +11,6 @@ TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...) {
 TB_API const char* tb_node_get_name(TB_Node* n) {
     switch (n->type) {
         case TB_NULL: return "BAD";
-        case TB_DEAD: return "dead";
         case TB_UNREACHABLE: return "unreachable";
 
         case TB_START:  return "start";
@@ -25,6 +24,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_DEBUGBREAK: return "dbgbrk";
 
         case TB_POISON: return "poison";
+        case TB_DEAD: return "dead";
         case TB_INTEGER_CONST: return "int";
         case TB_FLOAT32_CONST: return "float32";
         case TB_FLOAT64_CONST: return "float64";
@@ -350,7 +350,9 @@ TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* u
     for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
         TB_Node* n = ws->items[i];
 
-        print_graph_node(f, callback, user_data, i, n);
+        if (n->type != TB_PROJ) {
+            print_graph_node(f, callback, user_data, i, n);
+        }
 
         for (User* u = n->users; u; u = u->next) {
             TB_Node* out = u->n;

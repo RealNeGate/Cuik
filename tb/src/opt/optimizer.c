@@ -30,8 +30,8 @@ static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra);
 
 // node creation helpers
 TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt);
+TB_Node* dead_node(TB_Function* f, TB_Passes* restrict p);
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x);
-TB_Node* make_dead_node(TB_Function* f, TB_Passes* restrict p);
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i);
 
 static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve);
@@ -289,12 +289,6 @@ TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
     return gvn(p, n, 0);
 }
 
-TB_Node* make_dead_node(TB_Function* f, TB_Passes* restrict p) {
-    TB_Node* n = tb_alloc_node(f, TB_DEAD, TB_TYPE_CONTROL, 1, 0);
-    set_input(f, n, f->start_node, 0);
-    return gvn(p, n, 0);
-}
-
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
     uint64_t mask = tb__mask(dt.data);
     x &= mask;
@@ -314,6 +308,13 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
     }
     lattice_universe_map(&p->universe, n, l);
     return gvn(p, n, sizeof(TB_NodeInt));
+}
+
+TB_Node* dead_node(TB_Function* f, TB_Passes* restrict p) {
+    TB_Node* n = tb_alloc_node(f, TB_DEAD, TB_TYPE_CONTROL, 1, 0);
+    set_input(f, n, f->start_node, 0);
+    lattice_universe_map(&p->universe, n, &XCTRL_IN_THE_SKY);
+    return gvn(p, n, 0);
 }
 
 TB_Node* make_proj_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, TB_Node* src, int i) {
@@ -408,7 +409,7 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
         TB_NodeTypeEnum type = use->n->type;
 
         // tuples changing means their projections did too.
-        if (type == TB_PROJ || type == TB_DEAD) {
+        if (type == TB_PROJ) {
             tb_pass_mark_users(p, use->n);
         }
 
@@ -511,8 +512,48 @@ void print_node_sexpr(TB_Node* n, int depth) {
     }
 }
 
+static bool is_if_a_goto(TB_Passes* restrict p, TB_Node* proj, TB_Node* n) {
+    FOR_USERS(u, n) {
+        if (u->n == proj || u->n->type != TB_PROJ) continue;
+
+        Lattice* ty = lattice_universe_get(&p->universe, u->n);
+        if (ty != &XCTRL_IN_THE_SKY) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // Returns NULL or a modified node (could be the same node, we can stitch it back into place)
 static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
+    switch (n->type) {
+        case TB_CALL:
+        case TB_TAILCALL:
+        case TB_SYSCALL:
+        case TB_DEBUGBREAK:
+        case TB_TRAP:
+        case TB_UNREACHABLE:
+        case TB_SAFEPOINT_NOP:
+        case TB_SAFEPOINT_POLL:
+        case TB_REGION: {
+            TB_Node* ctrl = n->inputs[0];
+
+            // remove an if
+            if (ctrl->type == TB_PROJ && ctrl->inputs[0]->type == TB_BRANCH) {
+                Lattice* ctrl_ty = lattice_universe_get(&p->universe, ctrl);
+                if (ctrl_ty == &CTRL_IN_THE_SKY && is_if_a_goto(p, ctrl, ctrl->inputs[0])) {
+                    TB_Node* pre_branch = ctrl->inputs[0]->inputs[0];
+                    tb_pass_kill_node(p, ctrl->inputs[0]);
+                    return pre_branch;
+                }
+            }
+            break;
+        }
+
+        default: break;
+    }
+
     switch (n->type) {
         // integer ops
         case TB_AND:
@@ -622,16 +663,27 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         case TB_LOAD:
         return (flags & TB_PEEPHOLE_MEMORY) ? identity_load(p, f, n) : n;
 
+        case TB_CALL:
+        case TB_TAILCALL:
+        case TB_SYSCALL:
+        case TB_DEBUGBREAK:
+        case TB_TRAP:
+        case TB_UNREACHABLE: {
+            // Dead node? kill
+            Lattice* ctrl = lattice_universe_get(&p->universe, n->inputs[0]);
+            return ctrl == &XCTRL_IN_THE_SKY ? dead_node(f, p) : n;
+        }
+
         case TB_SAFEPOINT_NOP:
-        case TB_SAFEPOINT_POLL:
-        if (n->inputs[0]->type == TB_DEAD) {
-            // dead control? dead node
-            return n->inputs[0];
-        } if (n->inputs[0]->type == TB_SAFEPOINT_POLL || n->inputs[0]->type == TB_SAFEPOINT_NOP) {
-            // (safepoint (safepoint X)) => (safepoint X)
-            return n->inputs[0];
-        } else {
-            return n;
+        case TB_SAFEPOINT_POLL: {
+            // Dead node? kill
+            Lattice* ctrl = lattice_universe_get(&p->universe, n->inputs[0]);
+            if (ctrl == &XCTRL_IN_THE_SKY || n->inputs[0]->type == TB_SAFEPOINT_POLL || n->inputs[0]->type == TB_SAFEPOINT_NOP) {
+                // (safepoint (safepoint X)) => (safepoint X)
+                return n->inputs[0];
+            } else {
+                return n;
+            }
         }
 
         // dumb phis
@@ -666,6 +718,28 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
                 return lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { num->value, num->value, ~num->value, num->value } });
             }
         }
+
+        case TB_PROJ: {
+            if (n->dt.type == TB_CONTROL) {
+                return lattice_universe_get(uni, n);
+            } else {
+                return NULL;
+            }
+        }
+
+        case TB_BRANCH:
+        return dataflow_branch(p, uni, n);
+
+        // control nodes just inherit their liveness
+        case TB_SAFEPOINT_NOP:
+        case TB_SAFEPOINT_POLL:
+        case TB_CALL:
+        case TB_TAILCALL:
+        case TB_SYSCALL:
+        case TB_DEBUGBREAK:
+        case TB_TRAP:
+        case TB_UNREACHABLE:
+        return lattice_universe_get(uni, n->inputs[0]);
 
         case TB_LOCAL:
         case TB_SYMBOL:
@@ -724,11 +798,19 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
             return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = a });
         }
 
-        // meet all inputs
         case TB_SELECT: {
             Lattice* a = lattice_universe_get(uni, n->inputs[2]);
             Lattice* b = lattice_universe_get(uni, n->inputs[3]);
             return lattice_meet(uni, a, b, n->dt);
+        }
+
+        // meet all inputs
+        case TB_REGION: {
+            Lattice* l = lattice_universe_get(uni, n->inputs[0]);
+            FOREACH_N(i, 1, n->input_count) {
+                l = lattice_meet(uni, l, lattice_universe_get(uni, n->inputs[i]), TB_TYPE_CONTROL);
+            }
+            return l;
         }
 
         // meet all inputs
@@ -797,6 +879,10 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_BOT: printf("[bot]"); break;
         case LATTICE_TOP: printf("[top]"); break;
 
+        case LATTICE_TUPLE: printf("[tuple]"); break;
+        case LATTICE_CTRL:  printf("[ctrl]"); break;
+        case LATTICE_XCTRL: printf("[~ctrl]"); break;
+
         case LATTICE_INT: {
             assert(dt.type == TB_INT);
             if (l->_int.min == l->_int.max) {
@@ -848,11 +934,11 @@ static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
 
         // try again, maybe we get another transformation
         k = idealize(p, f, n, flags);
-        DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 10) { log_warn("%p: we looping a lil too much dawg...", n); });
+        DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 5) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
 
     // generate fancier type
-    if (n->dt.type >= TB_INT && n->dt.type <= TB_PTR) {
+    if (n->dt.type != TB_CONT && n->dt.type != TB_MEMORY) {
         //   no type provided? just make a not-so-form fitting TOP
         Lattice* new_type = dataflow(p, &p->universe, n);
         if (new_type == NULL) {
@@ -1203,16 +1289,10 @@ static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve) {
 
 void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
     verify_tmp_arena(p);
-
-    if (p->gvn_nodes.data == NULL) {
-        CUIK_TIMED_BLOCK("allocate GVN table") {
-            p->gvn_nodes = nl_hashset_alloc(p->f->node_count);
-        }
-    }
+    TB_Function* f = p->f;
 
     // make sure we have space for the lattice universe
     if (p->universe.arena == NULL) {
-        TB_Function* f = p->f;
         TB_ThreadInfo* info = tb_thread_info(f->super.module);
 
         CUIK_TIMED_BLOCK("allocate type array") {
@@ -1225,12 +1305,31 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
                 p->universe.types[i] = &TOP_IN_THE_SKY;
             }
 
-            nl_hashset_put2(&p->universe.pool, &BOT_IN_THE_SKY, lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->universe.pool, &TOP_IN_THE_SKY, lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &BOT_IN_THE_SKY,   lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &TOP_IN_THE_SKY,   lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &CTRL_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &XCTRL_IN_THE_SKY, lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &TUP_IN_THE_SKY,   lattice_hash, lattice_cmp);
         }
     }
 
-    TB_Function* f = p->f;
+    if (p->gvn_nodes.data == NULL) {
+        CUIK_TIMED_BLOCK("allocate GVN table") {
+            p->gvn_nodes = nl_hashset_alloc(p->f->node_count);
+        }
+
+        // write initial types for start node
+        lattice_universe_map(&p->universe, f->start_node, &TUP_IN_THE_SKY);
+        FOR_USERS(u, f->start_node) {
+            TB_Node* proj = u->n;
+            if (proj->type == TB_PROJ) {
+                int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
+
+                lattice_universe_map(&p->universe, proj, lattice_from_dt(&p->universe, proj->dt));
+            }
+        }
+    }
+
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
         while ((n = worklist_pop(&p->worklist))) {

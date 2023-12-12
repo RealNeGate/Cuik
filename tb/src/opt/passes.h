@@ -28,6 +28,8 @@ enum {
 ////////////////////////////////
 // SCCP
 ////////////////////////////////
+typedef struct Lattice Lattice;
+
 // TODO(NeGate): implement dual? from there i can do join with
 // dual(dual(x) ^ dual(y)) = join(x, y)
 typedef struct {
@@ -61,9 +63,14 @@ typedef struct {
     LatticeTrifecta trifecta;
 } LatticePointer;
 
+typedef struct {
+    size_t count;
+    Lattice** arr;
+} LatticeTuple;
+
 // Represents the fancier type system within the optimizer, it's
 // all backed by my shitty understanding of lattice theory
-typedef struct {
+struct Lattice {
     enum {
         LATTICE_BOT, // bot ^ x = bot
         LATTICE_TOP, // top ^ x = x
@@ -72,6 +79,7 @@ typedef struct {
         LATTICE_FLOAT32,
         LATTICE_FLOAT64,
         LATTICE_POINTER,
+        LATTICE_TUPLE,
 
         LATTICE_CTRL,
         LATTICE_XCTRL,
@@ -81,8 +89,9 @@ typedef struct {
         LatticeInt _int;
         LatticeFloat _float;
         LatticePointer _ptr;
+        LatticeTuple _tuple;
     };
-} Lattice;
+};
 
 // hash-consing because there's a lot of
 // redundant types we might construct.

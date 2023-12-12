@@ -175,7 +175,6 @@ typedef struct {
 
 typedef struct Ctx Ctx;
 typedef void (*TB_RegAlloc)(Ctx* restrict ctx, TB_Arena* arena);
-typedef bool (*TB_Clobbers)(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASSES]);
 
 struct Ctx {
     TB_Passes* p;
@@ -188,7 +187,6 @@ struct Ctx {
     // user-provided details
     TB_Scheduler sched;
     TB_RegAlloc regalloc;
-    TB_Clobbers clobbers;
 
     // target-dependent index
     int abi_index;

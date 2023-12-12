@@ -505,6 +505,14 @@ static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node
     TB_NodeTypeEnum ext_type = n->type;
     TB_Node* src = n->inputs[1];
 
+    if (src->type == ext_type) {
+        do {
+            src = src->inputs[1];
+        } while (src->type == ext_type);
+        set_input(f, n, src, 1);
+        return n;
+    }
+
     // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))
     if (src->type == TB_PHI) {
         FOREACH_N(i, 1, src->input_count) {

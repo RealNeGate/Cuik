@@ -242,10 +242,17 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 int space = 0;
                 FOREACH_N(j, 0, t->in_count) {
                     LiveInterval* in_def = t->ins[j].src;
-                    RegMask in_def_mask = in_def->mask;
                     RegMask in_mask = t->ins[j].mask;
-
                     int hint = fixed_reg_mask(in_mask.mask);
+
+                    // clobber fixed input
+                    if (in_def == NULL) {
+                        assert(hint >= 0);
+                        add_range(&ra, &ctx->fixed[in_mask.class][hint], time, time + 1);
+                        continue;
+                    }
+
+                    RegMask in_def_mask = in_def->mask;
                     if (hint >= 0) {
                         in_def->hint = hint;
                     }
@@ -285,19 +292,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                     add_range(&ra, in_def, bb_start, use_time);
                     add_use_pos(&ra, in_def, use_time, USE_REG);
-                }
-
-                // this is how we place ranges even if the value isn't being inputted from anywhere.
-                uint64_t clobbers[MAX_REG_CLASSES];
-                if (ctx->clobbers(ctx, t, clobbers)) {
-                    FOREACH_N(i, 0, ctx->num_classes) {
-                        size_t j = 0;
-                        for (uint64_t bits = clobbers[i]; bits; bits >>= 1, j += 1) {
-                            if (bits & 1) {
-                                add_range(&ra, &ctx->fixed[i][j], time, time + 1);
-                            }
-                        }
-                    }
                 }
             }
         }

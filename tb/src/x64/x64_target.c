@@ -199,7 +199,7 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* og, TB_Node* n,
         stride = TB_NODE_GET_EXTRA_T(base, TB_NodeArray)->stride;
         int scale = tb_ffs(stride) - 1;
 
-        if (n == base || !addr_split_heuristic(val_at(ctx, base)->use_count, stride, scale)) {
+        if (og == base || !addr_split_heuristic(val_at(ctx, base)->use_count, stride, scale)) {
             index = base->inputs[2];
             base = base->inputs[1];
 
@@ -410,9 +410,15 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_SDIV:
         case TB_UMOD:
         case TB_SMOD: {
-            TileInput* ins = tile_set_ins(ctx, dst, n, 1, 3);
-            ins[0].mask = REGMASK(GPR, 1 << RAX);
-            ins[1].mask = ctx->normie_mask[0];
+            dst->ins = tb_arena_alloc(tmp_arena, 3 * sizeof(TileInput));
+            dst->in_count = 3;
+            dst->ins[0].mask = REGMASK(GPR, 1 << RAX);
+            dst->ins[1].mask = ctx->normie_mask[0];
+            dst->ins[2].mask = REGMASK(GPR, 1 << RDX);
+            dst->ins[0].src = get_tile(ctx, n->inputs[1], true)->interval;
+            dst->ins[1].src = get_tile(ctx, n->inputs[2], true)->interval;
+            dst->ins[2].src = NULL;
+
             if (n->type == TB_UDIV || n->type == TB_SDIV) {
                 return REGMASK(GPR, 1 << RAX);
             } else {
@@ -534,20 +540,6 @@ static GPR op_gpr_at(LiveInterval* l) {
 static Val op_indirect_at(LiveInterval* l) {
     assert(!l->is_spill);
     return val_base_disp(l->assigned, 0);
-}
-
-static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASSES]) {
-    if (t->n) switch (t->n->type) {
-        case TB_UDIV:
-        case TB_SDIV:
-        case TB_UMOD:
-        case TB_SMOD:
-        clobbers[0] = 1u << RDX;
-        clobbers[1] = 0;
-        return true;
-    }
-
-    return false;
 }
 
 static Val parse_memory_op(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t, TB_Node* addr) {

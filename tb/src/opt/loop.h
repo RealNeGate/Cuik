@@ -90,22 +90,38 @@ void tb_pass_loop(TB_Passes* p) {
         r->natty = true;
         if (single_backedge == 0) {
             SWAP(TB_Node*, header->inputs[0], header->inputs[1]);
+            FOR_USERS(phi, header) {
+                if (phi->n->type == TB_PHI) {
+                    SWAP(TB_Node*, phi->n->inputs[1], phi->n->inputs[2]);
+                }
+            }
             single_backedge = 1;
         }
 
+        // if it's already rotated don't do it again
+        if (header->inputs[single_backedge]->type == TB_PROJ && header->inputs[single_backedge]->inputs[0]->type == TB_BRANCH) {
+            continue;
+        }
+
+        // if we don't have the latch in the header BB... ngmi
+        TB_BasicBlock* header_info = &nl_map_get_checked(p->cfg.node_to_block, header);
+        TB_Node* latch = header_info->end;
+        if (latch->type != TB_BRANCH && TB_NODE_GET_EXTRA_T(latch, TB_NodeBranch)->succ_count != 2) {
+            break;
+        }
+
+        // detect induction var for affine loops (only valid if it's a phi on the header)
+        /*TB_Node* ind_var = NULL;
+        TB_Node* cond = latch->inputs[1];
+        if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE && cond->inputs[1]->type == TB_PHI) {
+            // affine loop's induction var should loop like:
+            //
+            //   i = phi(init, i + step) where step is constant.
+            TB_Node* phi = cond->inputs[1];
+            if ()
+        }*/
+
         if (0) {
-            // if it's already rotated don't do it again
-            if (header->inputs[single_backedge]->type == TB_PROJ && header->inputs[single_backedge]->inputs[0]->type == TB_BRANCH) {
-                continue;
-            }
-
-            // if we don't have the latch in the header BB... ngmi
-            TB_BasicBlock* header_info = &nl_map_get_checked(p->cfg.node_to_block, header);
-            TB_Node* latch = header_info->end;
-            if (latch->type != TB_BRANCH && TB_NODE_GET_EXTRA_T(latch, TB_NodeBranch)->succ_count != 2) {
-                break;
-            }
-
             TB_Node* backedge_bb = get_pred_cfg(&p->cfg, header, single_backedge);
 
             // check which paths lead to exitting the loop (don't dominate the single backedge)

@@ -163,7 +163,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         .f = f,
         .p = p,
         .num_classes = REG_CLASS_COUNT,
-        .clobbers = clobbers,
         .emit = {
             .f = f,
             .output = func_out,

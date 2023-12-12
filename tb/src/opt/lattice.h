@@ -1,7 +1,10 @@
 #include <hashes.h>
 
-static Lattice TOP_IN_THE_SKY = { LATTICE_TOP };
-static Lattice BOT_IN_THE_SKY = { LATTICE_BOT };
+static Lattice TOP_IN_THE_SKY   = { LATTICE_TOP };
+static Lattice BOT_IN_THE_SKY   = { LATTICE_BOT };
+static Lattice CTRL_IN_THE_SKY  = { LATTICE_CTRL };
+static Lattice XCTRL_IN_THE_SKY = { LATTICE_XCTRL };
+static Lattice TUP_IN_THE_SKY   = { LATTICE_TUPLE };
 
 static Lattice* lattice_from_dt(LatticeUniverse* uni, TB_DataType dt);
 
@@ -120,12 +123,10 @@ static Lattice* lattice_from_dt(LatticeUniverse* uni, TB_DataType dt) {
             return lattice_intern(uni, (Lattice){ dt.data == TB_FLT_64 ? LATTICE_FLOAT64 : LATTICE_FLOAT32, ._float = { LATTICE_UNKNOWN } });
         }
 
-        case TB_PTR: {
-            return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = { LATTICE_UNKNOWN } });
-        }
-
-        default:
-        tb_todo();
+        case TB_PTR: return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = { LATTICE_UNKNOWN } });
+        case TB_CONTROL: return &CTRL_IN_THE_SKY;
+        case TB_TUPLE: return &TUP_IN_THE_SKY;
+        default: return &BOT_IN_THE_SKY;
     }
 }
 
@@ -214,6 +215,14 @@ static Lattice* lattice_meet(LatticeUniverse* uni, Lattice* a, Lattice* b, TB_Da
     switch (a->tag) {
         case LATTICE_BOT: return &BOT_IN_THE_SKY;
         case LATTICE_TOP: return &TOP_IN_THE_SKY;
+
+        case LATTICE_CTRL:
+        case LATTICE_XCTRL: {
+            // ctrl  ^ ctrl   = ctrl
+            // ctrl  ^ xctrl  = bot
+            // xctrl ^ xctrl  = xctrl
+            return a == b ? a : &BOT_IN_THE_SKY;
+        }
 
         case LATTICE_INT: {
             if (b->tag != LATTICE_INT) {
