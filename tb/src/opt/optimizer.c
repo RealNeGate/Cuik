@@ -1257,8 +1257,6 @@ void dummy_interp(TB_Passes* p) {
             }
         }
     }
-
-    __debugbreak();
 }
 
 void tb_pass_optimize(TB_Passes* p) {
