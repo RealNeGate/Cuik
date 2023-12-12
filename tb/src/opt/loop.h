@@ -39,10 +39,8 @@ static TB_Node* loop_clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* 
     return cloned;
 }
 
-bool tb_pass_loop(TB_Passes* p) {
+void tb_pass_loop(TB_Passes* p) {
     cuikperf_region_start("loop rotate", NULL);
-
-    bool progress = false;
     verify_tmp_arena(p);
 
     size_t block_count = tb_pass_update_cfg(p, &p->worklist, true);
@@ -249,8 +247,6 @@ bool tb_pass_loop(TB_Passes* p) {
                 tb_pass_kill_node(p, projs[1 - exit_proj_i]);
                 tb_pass_kill_node(p, latch);
             }
-
-            progress = true;
         }
 
         skip:;
@@ -258,5 +254,4 @@ bool tb_pass_loop(TB_Passes* p) {
 
     dyn_array_destroy(backedges);
     cuikperf_region_end();
-    return progress;
 }

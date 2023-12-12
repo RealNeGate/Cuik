@@ -513,7 +513,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                             CV_RegRel32 l = {
                                 .reclen = sizeof(CV_RegRel32) + (var_name_len + 1) - 2,
                                 .rectyp = S_REGREL32,
-                                .off = out_f->stack_usage - stack_pos,
+                                .off = stack_pos,
                                 .typind = type_index,
                                 // AMD64_RBP is 334, AMD64_RSP is 335
                                 .reg = 335,

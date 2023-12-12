@@ -226,7 +226,9 @@ struct Ctx {
     RegMask normie_mask[MAX_REG_CLASSES];
     int* spills;
 
+    DynArray(LiveInterval*) callee_spills;
     NL_Map(TB_Node*, int) stack_slots;
+    DynArray(TB_StackSlot) debug_stack_slots;
 
     // Line info
     MachineBB* current_emit_bb;

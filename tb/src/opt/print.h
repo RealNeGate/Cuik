@@ -44,7 +44,7 @@ static void print_type(TB_DataType dt) {
 }
 
 static void print_type2(TB_DataType dt) {
-    #if 1
+    #if 0
     printf("\x1b[96m");
     print_type(dt);
     printf("\x1b[0m");
@@ -102,8 +102,8 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                     print_type2(u->n->dt);
                 }
             }
-            // printf(")");
-            printf(") // v%u", n->gvn);
+            printf(")");
+            //printf(") // v%u", n->gvn);
         }
     } else if (n->type == TB_FLOAT32_CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
@@ -126,7 +126,8 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             if (i >= 0) {
                 printf(".bb%zu", i);
                 if (def) {
-                    printf("() // v%u", n->gvn);
+                    printf("()");
+                    // printf("() // v%u", n->gvn);
                 }
             } else {
                 printf("*DEAD*");
@@ -494,8 +495,9 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     }
 }
 
-bool tb_pass_print(TB_Passes* opt) {
+void tb_pass_print(TB_Passes* opt) {
     TB_Function* f = opt->f;
+    cuikperf_region_start("print", NULL);
 
     Worklist old = opt->worklist;
     Worklist tmp_ws = { 0 };
@@ -509,7 +511,7 @@ bool tb_pass_print(TB_Passes* opt) {
     ctx.sched = greedy_scheduler;
 
     // schedule nodes
-    tb_pass_schedule(opt, ctx.cfg);
+    tb_pass_schedule(opt, ctx.cfg, false);
     worklist_clear_visited(&opt->worklist);
 
     TB_Node* end_bb = NULL;
@@ -531,5 +533,5 @@ bool tb_pass_print(TB_Passes* opt) {
     tb_free_cfg(&ctx.cfg);
     opt->worklist = old;
     opt->error_n = NULL;
-    return false;
+    cuikperf_region_end();
 }

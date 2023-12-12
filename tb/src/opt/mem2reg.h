@@ -291,7 +291,7 @@ static void insert_phis(Mem2Reg_Ctx* restrict ctx, TB_Node* bb, TB_Node* n, TB_B
     } while (n != NULL && n->type != TB_PHI && cfg_underneath(&ctx->p->cfg, n, bb_info));
 }
 
-bool tb_pass_mem2reg(TB_Passes* p) {
+void tb_pass_mem2reg(TB_Passes* p) {
     cuikperf_region_start("mem2reg", NULL);
 
     TB_Function* f = p->f;
@@ -341,7 +341,8 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     size_t to_promote_count = dyn_array_length(p->worklist.items);
     if (to_promote_count == 0) {
         // doesn't need to mem2reg
-        goto no_changes;
+        cuikperf_region_end();
+        return;
     }
 
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
@@ -498,11 +499,6 @@ bool tb_pass_mem2reg(TB_Passes* p) {
     tb_arena_restore(tmp_arena, sp);
     tb_free_cfg(&p->cfg);
     cuikperf_region_end();
-    return true;
-
-    no_changes:
-    cuikperf_region_end();
-    return false;
 }
 
 // NOTE(NeGate): a stack slot is coherent when all loads and stores share

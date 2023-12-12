@@ -475,7 +475,7 @@ TB_Node* worklist_pop(Worklist* ws);
 
 // Local scheduler
 void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
-void tb_pass_schedule(TB_Passes* opt, TB_CFG cfg);
+void tb_pass_schedule(TB_Passes* opt, TB_CFG cfg, bool renumber);
 
 Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n);
 LatticeTrifecta lattice_truthy(Lattice* l);

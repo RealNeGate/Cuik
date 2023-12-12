@@ -80,7 +80,6 @@ typedef struct {
     int* free_pos;
     int* block_pos;
 
-    DynArray(int) epilogues;
     uint64_t callee_saved[CG_REGISTER_CLASSES];
 
     Set active_set[CG_REGISTER_CLASSES];

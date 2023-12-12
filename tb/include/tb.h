@@ -1318,15 +1318,15 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 //     analysis later on.
 TB_API void tb_pass_peephole(TB_Passes* opt, TB_PeepholeFlags flags);
 TB_API void tb_pass_sroa(TB_Passes* opt);
-TB_API bool tb_pass_mem2reg(TB_Passes* opt);
-TB_API bool tb_pass_loop(TB_Passes* opt);
+TB_API void tb_pass_mem2reg(TB_Passes* opt);
+TB_API void tb_pass_loop(TB_Passes* opt);
 
 // this just runs the optimizer in the default configuration
 TB_API void tb_pass_optimize(TB_Passes* opt);
 
 // analysis
 //   print: prints IR in a flattened text form.
-TB_API bool tb_pass_print(TB_Passes* opt);
+TB_API void tb_pass_print(TB_Passes* opt);
 //   print-dot: prints IR as DOT
 TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* user_data);
 

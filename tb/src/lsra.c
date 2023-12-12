@@ -31,12 +31,16 @@ typedef struct {
     // waiting to get registers, sorted such that the top most item is the youngest
     DynArray(LiveInterval*) unhandled;
     DynArray(LiveInterval*) inactive;
+    DynArray(LiveInterval*) callee_spills;
+    RegMask* normie_mask;
 
     Set active_set[MAX_REG_CLASSES];
     LiveInterval** active[MAX_REG_CLASSES];
+    LiveInterval* fixed[MAX_REG_CLASSES];
 } LSRA;
 
 // Forward decls... yay
+static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, LiveInterval* new_it);
 static void cuiksort_defs(LiveInterval** intervals, ptrdiff_t lo, ptrdiff_t hi);
 static bool update_interval(LSRA* restrict ra, LiveInterval* interval, bool is_active, int time, int inactive_index);
 static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval);
@@ -246,6 +250,8 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         in_def->hint = hint;
                     }
 
+                    int use_time = time;
+
                     // if the use mask is more constrained than the def, we'll make a temporary
                     if ((in_def_mask.mask & in_mask.mask) != in_def->mask.mask) {
                         assert(in_def->mask.class == in_mask.class);
@@ -273,12 +279,12 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         t->ins[j].src = tmp->interval;
 
                         // insert fixed interval use site, def site will be set later
-                        add_range(&ra, tmp->interval, bb_start, time);
+                        add_range(&ra, tmp->interval, bb_start, use_time);
                         add_use_pos(&ra, tmp->interval, bb_start, USE_REG);
                     }
 
-                    add_range(&ra, in_def, bb_start, time);
-                    add_use_pos(&ra, in_def, time, USE_REG);
+                    add_range(&ra, in_def, bb_start, use_time);
+                    add_use_pos(&ra, in_def, use_time, USE_REG);
                 }
 
                 // this is how we place ranges even if the value isn't being inputted from anywhere.
@@ -301,6 +307,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     CUIK_TIMED_BLOCK("pre-pass on fixed intervals") {
         ra.num_classes = ctx->num_classes;
         ra.num_regs = ctx->num_regs;
+        ra.normie_mask = ctx->normie_mask;
         ra.callee_saved = ctx->callee_saved;
 
         FOREACH_N(i, 0, ctx->num_classes) {
@@ -309,13 +316,15 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             }
 
             // add range at beginning such that all fixed intervals are "awake"
-            FOREACH_N(j, 0, ctx->num_regs[i]) if (ctx->fixed[i][j].range_count > 1) {
+            FOREACH_N(j, 0, ctx->num_regs[i]) {
+                // if (ctx->fixed[i][j].range_count > 1)
                 add_range(&ra, &ctx->fixed[i][j], 0, 1);
                 dyn_array_put(ra.unhandled, &ctx->fixed[i][j]);
             }
 
             ra.active_set[i] = set_create_in_arena(arena, ctx->num_regs[i]);
             ra.active[i] = tb_arena_alloc(arena, ctx->num_regs[i] * sizeof(Tile*));
+            ra.fixed[i] = ctx->fixed[i];
             memset(ra.active[i], 0, ctx->num_regs[i] * sizeof(Tile*));
         }
 
@@ -398,6 +407,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     //   moves inserted.
     ctx->spills = ra.spills;
     ctx->stack_usage = ra.stack_usage;
+    ctx->callee_spills = ra.callee_spills;
 }
 
 // returns -1 if no registers are available
@@ -472,36 +482,13 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             ra->callee_saved[rc] &= ~(1ull << highest);
 
             REG_ALLOC_LOG printf("  #   spill callee saved register %s\n", reg_name(rc, highest));
-            tb_todo();
+            LiveInterval* fixed = &ra->fixed[rc][highest];
 
-            /*int size = rc ? 16 : 8;
-            int vreg = (rc ? FIRST_XMM : FIRST_GPR) + highest;
-            ra->stack_usage = align_up(ra->stack_usage + size, size);
+            ra->spills[fixed->id] = ra->stack_usage;
+            ra->stack_usage = align_up(ra->stack_usage + 8, 8);
 
-            SpillSlot* s = TB_ARENA_ALLOC(tmp_arena, SpillSlot);
-            s->pos = ra->stack_usage;
-
-            LiveInterval it = {
-                .is_spill = true,
-                .spill = s,
-                .dt = ra->intervals[vreg].dt,
-                .assigned = -1,
-                .reg = -1,
-                .split_kid = -1,
-            };
-
-            int old_reg = interval - ra->intervals;
-            int spill_slot = dyn_array_length(ra->intervals);
-            dyn_array_put(ra->intervals, it);
-
-            // insert spill and reload
-            insert_split_move(ra, 0, vreg, spill_slot);
-            dyn_array_for(i, ra->epilogues) {
-                insert_split_move(ra, ra->epilogues[i] - 1, spill_slot, vreg);
-            }
-
-            // adding to intervals might resized this
-            interval = &ra->intervals[old_reg];*/
+            // mark callee move
+            dyn_array_put(ra->callee_spills, fixed);
         }
 
         if (interval_end(interval) <= pos) {
@@ -686,14 +673,14 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
 // update active range to match where the position is currently
 static bool update_interval(LSRA* restrict ra, LiveInterval* interval, bool is_active, int time, int inactive_index) {
     // get to the right range first
-    while (time >= interval->ranges[interval->active_range].end) {
+    while (time > interval->ranges[interval->active_range].end) {
         assert(interval->active_range > 0);
         interval->active_range -= 1;
     }
 
     int hole_end = interval->ranges[interval->active_range].start;
     int active_end = interval->ranges[interval->active_range].end;
-    bool is_now_active = time >= hole_end;
+    bool is_now_active = time > hole_end;
 
     int rc = interval_class(interval);
     int reg = interval->assigned;

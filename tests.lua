@@ -1,57 +1,23 @@
-function test(file)
-	local f = io.open(file, "rb")
+local tally = 0
+local succ  = 0
 
-	-- find expected list
-	local expected = {}
-	for l in f:lines() do
-		local comment = l:match('//#(.*)')
-		if comment ~= nil then
-			expected[#expected + 1] = comment
-		end
-	end
+function test(path)
+    tally = tally + 1
 
-	f:close()
+    if not os.execute(string.format("cuik tests/collection/%s -g -o tests/collection/foo.exe", path)) then
+        print("NAY COMPILE "..path)
+        return
+    end
 
-	-- run compiler
-	local cmd = "cuik "..file.." -o test/a.out 2>&1"
-	print(cmd)
-
-	local compiler_result = io.popen(cmd)
-	local got = {}
-	for l in compiler_result:lines() do
-		got[#got + 1] = l
-	end
-
-	local exit = compiler_result:close()
-	if exit ~= 0 then
-		print("Failed to compile "..file)
-		print("Output:")
-		for i, l in ipairs(got) do
-			print(l)
-		end
-		os.exit(1)
-	end
-
-	local correct = true
-	for i, l in ipairs(got) do
-		if not supress then
-			if i <= #expected then
-				-- not enough expected
-				print("output is too short!")
-			elseif expected[i] ~= l then
-				print("line "..i.." is incorrect:")
-				print("  expected: '"..expected[i].."'")
-				print("  got:      '"..l.."'")
-				correct = false
-			end
-		end
-	end
-
-	if not correct then
-		os.exit(1)
-	end
+    os.execute("tests\\collection\\foo.exe > tests/collection/foo.txt", path)
+    local exit = os.execute(string.format("git diff -b --no-index tests/collection/foo.txt tests/collection/%s.gold", path))
+    if exit ~= 0 then
+        print("NAY "..path)
+    else
+        print("Yay "..path)
+        succ = succ + 1
+    end
 end
 
-test("tests/hello_world.c")
-
-print("Hello")
+print(test("hello.c"))
+print(string.format("run %d / %d", succ, tally))

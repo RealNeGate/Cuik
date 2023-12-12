@@ -340,33 +340,27 @@ TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* u
     P("digraph %s {\n  node [ordering=in; shape=record];\n", f->super.name ? f->super.name : "unnamed");
 
     opt->worklist = tmp_ws;
-    TB_CFG cfg = tb_compute_rpo(f, opt);
-
-    // schedule nodes
-    tb_pass_schedule(opt, cfg);
 
     Worklist* ws = &opt->worklist;
     worklist_clear_visited(ws);
-    FOREACH_N(i, 0, cfg.block_count) {
-        TB_Node* bb_start = opt->worklist.items[i];
-        TB_BasicBlock* bb = nl_map_get_checked(opt->scheduled, bb_start);
 
-        greedy_scheduler(opt, &cfg, ws, NULL, bb, bb->end);
+    worklist_test_n_set(ws, f->start_node);
+    dyn_array_put(ws->items, f->start_node);
 
-        FOREACH_REVERSE_N(j, cfg.block_count, dyn_array_length(ws->items)) {
-            if (ws->items[j]->type == TB_PROJ) {
-                // handled by the tuple nodes
-                continue;
+    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+        TB_Node* n = ws->items[i];
+
+        print_graph_node(f, callback, user_data, i, n);
+
+        for (User* u = n->users; u; u = u->next) {
+            TB_Node* out = u->n;
+            if (!worklist_test_n_set(ws, out)) {
+                dyn_array_put(ws->items, out);
             }
-
-            print_graph_node(f, callback, user_data, i, ws->items[j]);
         }
-
-        dyn_array_set_length(ws->items, cfg.block_count);
     }
 
     worklist_free(ws);
-    tb_free_cfg(&cfg);
     opt->worklist = old;
 
     P("}\n");

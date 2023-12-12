@@ -1,6 +1,7 @@
 
 typedef struct Block {
     struct Block* parent;
+    TB_ArenaSavepoint sp;
     TB_Node* bb;
     TB_Node* end;
     int succ_i;
@@ -32,6 +33,8 @@ static TB_Node* end_of_bb(TB_Node* n) {
 }
 
 static Block* create_block(TB_Arena* arena, TB_Node* bb) {
+    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+
     TB_Node* end = end_of_bb(bb);
     size_t succ_count = end->type == TB_BRANCH ? TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count : 1;
     if (cfg_is_endpoint(end)) {
@@ -40,6 +43,7 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
 
     Block* top = tb_arena_alloc(arena, sizeof(Block) + succ_count*sizeof(TB_Node*));
     *top = (Block){
+        .sp  = sp,
         .bb  = bb,
         .end = end,
         .succ_i = succ_count,
@@ -66,8 +70,6 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
     assert(dyn_array_length(ws->items) == 0);
 
     TB_CFG cfg = { 0 };
-    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-
     nl_map_create(cfg.node_to_block, (f->node_count / 16) + 4);
 
     // push initial block
@@ -99,8 +101,8 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
             nl_map_put(cfg.node_to_block, b.bb, bb);
             cfg.block_count += 1;
 
-            // off to wherever we left off
-            top = b.parent;
+            tb_arena_restore(tmp_arena, top->sp);
+            top = b.parent; // off to wherever we left off
         }
         cuikperf_region_end();
     }
@@ -123,7 +125,6 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
         }
     }
 
-    tb_arena_restore(tmp_arena, sp);
     cuikperf_region_end();
     return cfg;
 }

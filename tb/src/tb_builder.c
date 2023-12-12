@@ -230,6 +230,7 @@ void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t*
 void tb_inst_unreachable(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 1, 0);
     set_input(f, n, transfer_ctrl(f, n), 0);
+    inst_ret(f, 0, NULL, NULL);
 }
 
 void tb_inst_debugbreak(TB_Function* f) {
@@ -239,7 +240,8 @@ void tb_inst_debugbreak(TB_Function* f) {
 
 void tb_inst_trap(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_CONTROL, 1, 0);
-    set_input(f, n, transfer_ctrl(f, NULL), 0);
+    set_input(f, n, transfer_ctrl(f, n), 0);
+    inst_ret(f, 0, NULL, NULL);
 }
 
 TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment) {

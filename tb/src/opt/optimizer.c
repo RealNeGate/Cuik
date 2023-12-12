@@ -1071,7 +1071,7 @@ void dummy_interp(TB_Passes* p) {
     // We need to generate a CFG
     TB_CFG cfg = tb_compute_rpo(f, p);
     // And perform global scheduling
-    tb_pass_schedule(p, cfg);
+    tb_pass_schedule(p, cfg, false);
 
     Interp vm = {
         .ws = &p->worklist,

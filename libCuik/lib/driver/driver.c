@@ -94,8 +94,8 @@ static void step_done(Cuik_BuildStep* s) {
 
 static bool has_file_ext(const char* path) {
     for (; *path; path++) {
-        if (*path == '/')  return false;
-        if (*path == '\\') return false;
+        // if (*path == '/')  return false;
+        // if (*path == '\\') return false;
         if (*path == '.')  return true;
     }
 
@@ -356,10 +356,11 @@ static void ld_invoke(BuildStepInfo* info) {
             }
         }
         assert(entry != NULL);
-        tb_jit_dump_heap(jit);
 
         TB_CPUContext* cpu = tb_jit_thread_create(jit_entry, entry);
+        tb_jit_thread_resume(jit, cpu, TB_DBG_NONE);
 
+        #if 0
         tb_jit_breakpoint(jit, entry);
         if (tb_jit_thread_resume(jit, cpu, TB_DBG_NONE)) {
             for (int i = 0; i < 10000; i++) {
@@ -397,9 +398,9 @@ static void ld_invoke(BuildStepInfo* info) {
                 tb_jit_thread_dump_stack(jit, cpu);
             }
         }
+        #endif
 
         tb_jit_end(jit);
-        fprintf(stderr, "C JIT exited\n");
         goto done;
         #else
         fprintf(stderr, "C JIT unsupported here :(\n");

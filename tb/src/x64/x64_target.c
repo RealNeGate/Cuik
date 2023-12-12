@@ -145,12 +145,15 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     }
 
     TB_FunctionPrototype* proto = ctx->f->prototype;
+    ctx->stack_usage += 8 + (proto->param_count * 8);
+
     if (proto->has_varargs) {
         const GPR* parameter_gprs = param_descs[ctx->abi_index].gprs;
 
         // spill the rest of the parameters (assumes they're all in the GPRs)
         size_t gpr_count = param_descs[ctx->abi_index].gpr_count;
         size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
+
         ctx->stack_usage += (extra_param_count * 8);
     }
 }
@@ -159,11 +162,27 @@ static RegMask normie_mask(Ctx* restrict ctx, TB_DataType dt) {
     return ctx->normie_mask[dt.type == TB_FLOAT];
 }
 
+// returns true if it should split
+static bool addr_split_heuristic(int arr_uses, int stride, int scale) {
+    // doesn't matter if we do *1 *2 *4 *8, all
+    // basically just an LEA. once we leave LEA
+    // levels we need to do explicit ops with regs
+    // which increases pressure.
+    int cost = 0;
+    if (stride != 1 << scale || scale >= 4) {
+        cost = 3;
+    } else {
+        cost = 1;
+    }
+
+    return cost*arr_uses > 10;
+}
+
 // x86 can do a lot of fancy address computation crap in one operand so we'll
 // track that tiling here.
 //
 // in_count is all the inputs that go alongside this operand
-static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* n, int extra_cnt) {
+static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* og, TB_Node* n, int extra_cnt) {
     int32_t offset = 0;
     TB_Node* base = n;
     TB_Node* index = NULL;
@@ -175,38 +194,43 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* n, int extra_cn
         base = base->inputs[1];
     }
 
+    // we don't wanna
     if (base->type == TB_ARRAY_ACCESS) {
         stride = TB_NODE_GET_EXTRA_T(base, TB_NodeArray)->stride;
-        index = base->inputs[2];
-        base = base->inputs[1];
+        int scale = tb_ffs(stride) - 1;
 
-        if (stride == 1) {
-            // no scaling required
-        } else if (tb_is_power_of_two(stride)) {
-            int scale = tb_ffs(stride) - 1;
+        if (n == base || !addr_split_heuristic(val_at(ctx, base)->use_count, stride, scale)) {
+            index = base->inputs[2];
+            base = base->inputs[1];
 
-            // we can only fit a 2bit shift amount in an LEA, after
-            // that we just defer to an explicit shift op.
-            if (scale > 3) {
+            if (stride == 1) {
+                // no scaling required
+            } else if (stride == 1u << scale) {
+                // we can only fit a 2bit shift amount in an LEA, after
+                // that we just defer to an explicit shift op.
+                if (scale > 3) {
+                    has_tmp = true;
+                }
+            } else {
+                // needs a proper multiply (we may wanna invest in a few special patterns
+                // for reducing simple multiplies into shifts)
+                //
+                //   a * 24 => (a * 8) * 3
+                //                b    * 3 => b<<1 + b
+                //
+                // thus
+                //
+                //   LEA b,   [a * 8]
+                //   LEA dst, [b * 2 + b]
                 has_tmp = true;
             }
         } else {
-            // needs a proper multiply (we may wanna invest in a few special patterns
-            // for reducing simple multiplies into shifts)
-            //
-            //   a * 24 => (a * 8) * 3
-            //                b    * 3 => b<<1 + b
-            //
-            // thus
-            //
-            //   LEA b,   [a * 8]
-            //   LEA dst, [b * 2 + b]
-            has_tmp = true;
+            stride = 0;
         }
     }
 
     int in_cap = extra_cnt + (index?1:0);
-    if (base->type != TB_LOCAL && base->type != TB_SYMBOL) {
+    if (!(base->type == TB_LOCAL || (base->type == TB_SYMBOL && index == NULL))) {
         in_cap += 1;
     }
 
@@ -218,7 +242,7 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* n, int extra_cn
     if (base->type == TB_LOCAL) {
         try_init_stack_slot(ctx, base);
         t->flags |= TILE_FOLDED_BASE;
-    } else if (base->type == TB_SYMBOL) {
+    } else if (base->type == TB_SYMBOL && index == NULL) {
         t->flags |= TILE_FOLDED_BASE;
     } else {
         t->ins[in_count].src = get_tile(ctx, base, true)->interval;
@@ -274,11 +298,11 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         }
 
         case TB_LOAD:
-        isel_addr(ctx, dst, n->inputs[2], 0);
+        isel_addr(ctx, dst, n, n->inputs[2], 0);
         return ctx->normie_mask[0];
 
         case TB_STORE: {
-            TileInput* ins = isel_addr(ctx, dst, n->inputs[2], 1);
+            TileInput* ins = isel_addr(ctx, dst, n, n->inputs[2], 1);
             ins[0].src = get_tile(ctx, n->inputs[3], true)->interval;
             ins[0].mask = normie_mask(ctx, n->inputs[3]->dt);
             return REGEMPTY;
@@ -286,7 +310,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
         case TB_ARRAY_ACCESS:
         case TB_MEMBER_ACCESS:
-        isel_addr(ctx, dst, n, 0);
+        isel_addr(ctx, dst, n, n, 0);
         return ctx->normie_mask[0];
 
         case TB_POISON:
@@ -343,6 +367,11 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 tb_todo();
             }
         }
+
+        // unary ops
+        case TB_NOT:
+        tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[0]);
+        return ctx->normie_mask[0];
 
         // binary ops
         case TB_AND:
@@ -456,6 +485,17 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 }
 
 static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
+    FOREACH_REVERSE_N(i, 0, dyn_array_length(ctx->callee_spills)) {
+        int pos = ctx->spills[ctx->callee_spills[i]->id];
+        int rc = ctx->callee_spills[i]->mask.class;
+
+        Val reg = val_gpr(ctx->callee_spills[i]->reg);
+        reg.type = VAL_GPR + rc;
+
+        Val spill = val_base_disp(RSP, stack_usage - pos);
+        inst2(e, MOV, &spill, &reg, TB_X86_TYPE_QWORD);
+    }
+
     // add rsp, N
     if (stack_usage > 0) {
         if (stack_usage == (int8_t)stack_usage) {
@@ -537,7 +577,33 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
     size_t usage = ctx->stack_usage + (caller_usage * 8);
 
     // Align stack usage to 16bytes + 8 to accommodate for the RIP being pushed by CALL
-    ctx->stack_usage = align_up(usage, 16) + 8;
+    ctx->stack_usage = usage = align_up(usage, 16) + 8;
+
+    FOR_USERS(u, ctx->f->start_node) {
+        TB_Node* n = u->n;
+        if (n->type != TB_LOCAL) continue;
+
+        ptrdiff_t search = nl_map_get(ctx->f->attribs, n);
+        if (search < 0) continue;
+
+        // could be costly if you had more than like 50 attributes per stack slot... which you
+        // wouldn't do right?
+        DynArray(TB_Attrib) attribs = ctx->f->attribs[search].v;
+        dyn_array_for(i, attribs) {
+            TB_Attrib* a = &attribs[i];
+            if (a->tag == TB_ATTRIB_VARIABLE) {
+                int pos = get_stack_slot(ctx, n);
+
+                TB_StackSlot s = {
+                    .position = usage - pos,
+                    .storage_type = a->var.storage,
+                    .name = a->var.name,
+                };
+                dyn_array_put(ctx->debug_stack_slots, s);
+                break;
+            }
+        }
+    }
 }
 
 // compute effective address operand
@@ -575,6 +641,8 @@ static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 Val imm = val_imm(scale);
                 inst2(e, SHL, &dst_op, &imm, TB_X86_TYPE_QWORD);
                 index = dst;
+            } else {
+                ea.scale = scale;
             }
         } else {
             __debugbreak();
@@ -653,17 +721,29 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     size_t gpr_count = param_descs[ctx->abi_index].gpr_count;
                     size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
 
-                    FOREACH_N(i, 0, extra_param_count) {
-                        size_t param_num = proto->param_count + i;
+                    FOREACH_N(i, proto->param_count, gpr_count) {
+                        int dst_pos = 8 + (i * 8);
+                        Val src = val_gpr(parameter_gprs[i]);
 
-                        int dst_pos = 16 + (param_num * 8);
-                        Val src = val_gpr(parameter_gprs[param_num]);
-
-                        Val dst = val_base_disp(RSP, ctx->stack_usage - dst_pos);
+                        Val dst = val_base_disp(RSP, stack_usage + dst_pos);
                         inst2(e, MOV, &dst, &src, TB_X86_TYPE_QWORD);
                     }
                 }
+
                 ctx->prologue_length = e->count;
+
+                // we don't want this considered in the prologue because then i'd have to encode shit
+                // for Win64EH.
+                FOREACH_N(i, 0, dyn_array_length(ctx->callee_spills)) {
+                    int pos = ctx->spills[ctx->callee_spills[i]->id];
+                    int rc = ctx->callee_spills[i]->mask.class;
+
+                    Val reg = val_gpr(ctx->callee_spills[i]->reg);
+                    reg.type = VAL_GPR + rc;
+
+                    Val spill = val_base_disp(RSP, stack_usage - pos);
+                    inst2(e, MOV, &spill, &reg, TB_X86_TYPE_QWORD);
+                }
                 break;
             }
             // epilogue
@@ -720,10 +800,9 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             }
             case TB_VA_START: {
                 TB_FunctionPrototype* proto = ctx->f->prototype;
-                size_t gpr_count = param_descs[ctx->abi_index].gpr_count;
 
                 Val dst = op_at(ctx, t->interval);
-                Val ea = val_stack(ctx->stack_usage - (16 + proto->param_count*8));
+                Val ea = val_stack(ctx->stack_usage + 8 + proto->param_count*8);
                 inst2(e, LEA, &dst, &ea, TB_X86_TYPE_QWORD);
                 break;
             }
@@ -816,6 +895,17 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 Val dst = op_at(ctx, t->interval);
                 Val src = val_global(sym, 0);
                 inst2(e, LEA, &dst, &src, TB_X86_TYPE_QWORD);
+                break;
+            }
+            case TB_NOT: {
+                TB_X86_DataType dt = legalize_int2(n->dt);
+                Val dst = op_at(ctx, t->interval);
+                Val src = op_at(ctx, t->ins[0].src);
+                if (!is_value_match(&dst, &src)) {
+                    inst2(e, MOV, &dst, &src, dt);
+                }
+
+                inst1(e, NOT, &dst, dt);
                 break;
             }
             case TB_AND:
@@ -1208,7 +1298,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
                     if (inst.flags & TB_X86_INSTR_ABSOLUTE) {
                         E("%#llx", inst.abs);
                     } else {
-                        E("%#x", inst.imm);
+                        E("%d", inst.imm);
                     }
                 } else {
                     break;

@@ -156,7 +156,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Function* restrict f = p->f;
-    // tb_pass_print(p);
+    tb_pass_print(p);
 
     Ctx ctx = {
         .module = f->super.module,
@@ -178,10 +178,18 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         ctx.features = *features;
     }
 
-    init_ctx(&ctx, f->super.module->target_abi);
-
     Worklist* restrict ws = &p->worklist;
     worklist_clear(ws);
+
+    TB_CFG cfg;
+    CUIK_TIMED_BLOCK("global sched") {
+        // We need to generate a CFG
+        cfg = tb_compute_rpo(f, p);
+        // And perform global scheduling
+        tb_pass_schedule(p, cfg, false);
+    }
+
+    init_ctx(&ctx, f->super.module->target_abi);
 
     ctx.values = tb_arena_alloc(arena, f->node_count * sizeof(Tile*));
     memset(ctx.values, 0, f->node_count * sizeof(Tile*));
@@ -191,14 +199,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         ctx.values[i].use_count = -1;
         ctx.values[i].mat_count = 0;
         ctx.values[i].tile = NULL;
-    }
-
-    TB_CFG cfg;
-    CUIK_TIMED_BLOCK("global sched") {
-        // We need to generate a CFG
-        cfg = tb_compute_rpo(f, p);
-        // And perform global scheduling
-        tb_pass_schedule(p, cfg);
     }
 
     // allocate more stuff now that we've run stats on the IR
@@ -282,9 +282,26 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
                 Tile* top = NULL;
                 Tile* bot = NULL;
+                TB_Node* last_loc = NULL;
                 FOREACH_REVERSE_N(i, cfg.block_count, dyn_array_length(ws->items)) {
                     TB_Node* n = ws->items[i];
                     if (n->type == TB_PHI) {
+                        continue;
+                    } else if (n->type == TB_SAFEPOINT_NOP) {
+                        if (last_loc) {
+                            TB_OPTDEBUG(CODEGEN)(printf("  TILE "), print_node_sexpr(last_loc, 0), printf("\n"));
+
+                            Tile* tile = get_tile(&ctx, last_loc, false);
+                            tile->next = top;
+
+                            // attach to list
+                            if (top) top->prev = tile;
+                            if (!bot) bot = tile;
+                            top = tile;
+
+                            isel_node(&ctx, tile, last_loc);
+                        }
+                        last_loc = n;
                         continue;
                     } else if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
                         // these are always run because they're cool effect nodes
@@ -321,6 +338,20 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                     FOREACH_N(j, 0, tile->in_count) {
                         TB_OPTDEBUG(CODEGEN)(printf("    IN[%zu] = %#04llx\n", j, tile->ins[j].mask.mask));
                     }
+                }
+
+                if (last_loc) {
+                    TB_OPTDEBUG(CODEGEN)(printf("  TILE "), print_node_sexpr(last_loc, 0), printf("\n"));
+
+                    Tile* tile = get_tile(&ctx, last_loc, false);
+                    tile->next = top;
+
+                    // attach to list
+                    if (top) top->prev = tile;
+                    if (!bot) bot = tile;
+                    top = tile;
+
+                    isel_node(&ctx, tile, last_loc);
                 }
 
                 // if the endpoint is a not a terminator, we've hit some implicit GOTO edge
@@ -556,6 +587,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     if (emit_asm) CUIK_TIMED_BLOCK("dissassembly") {
+        dyn_array_for(i, ctx.debug_stack_slots) {
+            TB_StackSlot* s = &ctx.debug_stack_slots[i];
+            EMITA(&ctx.emit, "// %s = [rsp + %d]\n", s->name, s->position);
+        }
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 
         Disasm d = { func_out->first_patch, ctx.locations, &ctx.locations[dyn_array_length(ctx.locations)] };
@@ -583,6 +618,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     func_out->code = ctx.emit.data;
     func_out->code_size = ctx.emit.count;
     func_out->locations = ctx.locations;
+    func_out->stack_slots = ctx.debug_stack_slots;
     func_out->stack_usage = ctx.stack_usage;
     func_out->prologue_length = ctx.prologue_length;
     func_out->epilogue_length = ctx.epilogue_length;
