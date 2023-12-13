@@ -454,6 +454,10 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_CALL: {
             int end_of_reg_params = n->input_count > 7 ? 7 : n->input_count;
 
+            const struct ParamDesc* abi = &param_descs[ctx->abi_index];
+            uint32_t caller_saved_gprs = abi->caller_saved_gprs;
+            uint32_t caller_saved_xmms = ~0ull >> (64 - abi->caller_saved_xmms);
+
             // system calls don't count, we track this for ABI
             // and stack allocation purposes.
             int param_count = n->input_count - 3;
@@ -461,19 +465,30 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 ctx->caller_usage = param_count;
             }
 
+            FOREACH_N(i, 0, param_count > 4 ? 4 : param_count) {
+                caller_saved_gprs &= ~(1u << abi->gprs[i]);
+            }
+
+            size_t clobber_count = tb_popcount(caller_saved_gprs);
+            size_t input_start = n->inputs[2]->type == TB_SYMBOL ? 3 : 2;
+            size_t input_count = (n->input_count - input_start) + clobber_count;
+
             TileInput* ins;
             if (n->inputs[2]->type == TB_SYMBOL) {
                 // CALL symbol
-                ins = tile_set_ins(ctx, dst, n, 3, n->input_count);
+                ins = dst->ins = tb_arena_alloc(tmp_arena, input_count * sizeof(TileInput));
+                dst->in_count = input_count;
             } else {
                 // CALL r/m
-                ins = tile_set_ins(ctx, dst, n, 2, n->input_count);
+                ins = dst->ins = tb_arena_alloc(tmp_arena, input_count * sizeof(TileInput));
+                dst->in_count = input_count;
                 ins[0].mask = ctx->normie_mask[0];
                 ins += 1;
             }
 
-            const struct ParamDesc* abi = &param_descs[ctx->abi_index];
             FOREACH_N(i, 0, param_count) {
+                ins[i].src = get_tile(ctx, n->inputs[i + input_start], true)->interval;
+
                 if (i < 4) {
                     ins[i].mask = REGMASK(GPR, 1u << abi->gprs[i]);
                 } else {
@@ -481,6 +496,16 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 }
             }
 
+            int j = param_count;
+            FOREACH_N(i, 0, 16) {
+                if (caller_saved_gprs & (1u << i)) {
+                    ins[j].src = NULL;
+                    ins[j].mask = REGMASK(GPR, 1u << i);
+                    j++;
+                }
+            }
+
+            assert(j == input_count);
             return REGEMPTY;
         }
 
@@ -499,7 +524,7 @@ static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
         reg.type = VAL_GPR + rc;
 
         Val spill = val_base_disp(RSP, stack_usage - pos);
-        inst2(e, MOV, &spill, &reg, TB_X86_TYPE_QWORD);
+        inst2(e, MOV, &reg, &spill, TB_X86_TYPE_QWORD);
     }
 
     // add rsp, N
@@ -704,6 +729,19 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     }
                 }
 
+                // we don't want this considered in the prologue because then i'd have to encode shit
+                // for Win64EH.
+                FOREACH_N(i, 0, dyn_array_length(ctx->callee_spills)) {
+                    int pos = ctx->spills[ctx->callee_spills[i]->id];
+                    int rc = ctx->callee_spills[i]->mask.class;
+
+                    Val reg = val_gpr(ctx->callee_spills[i]->reg);
+                    reg.type = VAL_GPR + rc;
+
+                    Val spill = val_base_disp(RSP, stack_usage - pos);
+                    inst2(e, MOV, &spill, &reg, TB_X86_TYPE_QWORD);
+                }
+
                 // handle unknown parameters (if we have varargs)
                 TB_FunctionPrototype* proto = ctx->f->prototype;
                 if (proto->has_varargs) {
@@ -723,19 +761,6 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 }
 
                 ctx->prologue_length = e->count;
-
-                // we don't want this considered in the prologue because then i'd have to encode shit
-                // for Win64EH.
-                FOREACH_N(i, 0, dyn_array_length(ctx->callee_spills)) {
-                    int pos = ctx->spills[ctx->callee_spills[i]->id];
-                    int rc = ctx->callee_spills[i]->mask.class;
-
-                    Val reg = val_gpr(ctx->callee_spills[i]->reg);
-                    reg.type = VAL_GPR + rc;
-
-                    Val spill = val_base_disp(RSP, stack_usage - pos);
-                    inst2(e, MOV, &spill, &reg, TB_X86_TYPE_QWORD);
-                }
                 break;
             }
             // epilogue
@@ -1029,7 +1054,9 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 // we've already placed the register params in their slots, now we're missing
                 // stack params which go into [rsp + 0x20 + (i-4)*8] where i is the param index.
                 int stack_params = (n->inputs[2]->type == TB_SYMBOL ? 0 : 1) + param_descs[ctx->abi_index].gpr_count;
-                FOREACH_N(i, stack_params, t->in_count) {
+                int param_count = n->input_count - 3;
+
+                FOREACH_N(i, stack_params, param_count) {
                     TB_X86_DataType dt = TB_X86_TYPE_QWORD; // legalize_int2(t->ins[i].);
 
                     Val dst = val_stack(0x20 + (i - 4) * 8);

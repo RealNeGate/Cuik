@@ -478,8 +478,8 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             REG_ALLOC_LOG printf("  #   spill callee saved register %s\n", reg_name(rc, highest));
             LiveInterval* fixed = &ra->fixed[rc][highest];
 
-            ra->spills[fixed->id] = ra->stack_usage;
             ra->stack_usage = align_up(ra->stack_usage + 8, 8);
+            ra->spills[fixed->id] = ra->stack_usage;
 
             // mark callee move
             dyn_array_put(ra->callee_spills, fixed);

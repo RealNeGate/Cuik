@@ -28,7 +28,7 @@ static bool lattice_universe_map_progress(LatticeUniverse* uni, TB_Node* n, Latt
 
         // clear new space
         FOREACH_N(i, uni->type_cap, new_cap) {
-            uni->types[i] = NULL;
+            uni->types[i] = &TOP_IN_THE_SKY;
         }
 
         uni->type_cap = new_cap;
