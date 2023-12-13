@@ -1,5 +1,6 @@
-/*##include <stdio.h>
+#include <stdio.h>
 
+/*
 int bits(int x);
 
 int main() {
@@ -8,10 +9,12 @@ int main() {
     return 0;
 }*/
 
-int bar(void);
-int foo(int x, int y);
+int bar(void) {
+    return 4 + 3 * 2 + 10;
+}
+
 int main() {
-    // printf("Hello! %d\n", bar());
+    printf("Hello! %d\n", 20);
     return 0; // foo(16, 4);
 }
 

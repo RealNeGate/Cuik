@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #if 0
 struct s { int x, y, z; };
@@ -19,6 +20,20 @@ int mul3(unsigned x) { return x * 3; }
 
 int bits(int x) { return x << 2; }
 #endif
+
+void foo(int) { printf("H\n"); }
+int loop2(int n) {
+    int i = 0;
+    while (i < n) {
+        foo(i);
+        i += 1;
+    }
+    return i;
+}
+
+int bar() {
+    return 4 + 3 * 2 + 10;
+}
 
 /*int cmp(char* x) {
     int n = *x;
@@ -51,26 +66,9 @@ int sccp(int x) {
     return y < 64 ? 1 << y : 0;
 }
 
-int bar() {
-    return 4 + 3 * 2 + 10;
-}
-
 int small_mul(char a, char b) {
     return a * b;
 }*/
-
-int loop() {
-    int a = 1;
-    while (a < 10) {
-        a = a + 3;
-    }
-    return a;
-}
-
-#if 0
-int* tile1(int* x, int i) { return &x[i]; }
-int* tile2(int* x, int i) { return &x[i + 2]; }
-int  tile3(int* x, int i) { return x[i*4]; }
 
 int msvc_crap(int a, int b) {
     int x, y, z;
@@ -90,6 +88,19 @@ int msvc_crap(int a, int b) {
     int q = z & 0xF;
     return p >= 16 && q == 0;
 }
+
+int loop() {
+    int a = 1;
+    while (a < 10) {
+        a = a + 3;
+    }
+    return a;
+}
+
+#if 0
+int* tile1(int* x, int i) { return &x[i]; }
+int* tile2(int* x, int i) { return &x[i + 2]; }
+int  tile3(int* x, int i) { return x[i*4]; }
 
 // const char* info() { return "hello"; }
 

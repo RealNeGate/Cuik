@@ -39,6 +39,10 @@ static TB_Node* loop_clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* 
     return cloned;
 }
 
+static uint64_t* iconst(TB_Node* n) {
+    return n->type == TB_INTEGER_CONST ? &TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value : NULL;
+}
+
 void tb_pass_loop(TB_Passes* p) {
     cuikperf_region_start("loop rotate", NULL);
     verify_tmp_arena(p);
@@ -111,15 +115,78 @@ void tb_pass_loop(TB_Passes* p) {
         }
 
         // detect induction var for affine loops (only valid if it's a phi on the header)
-        /*TB_Node* ind_var = NULL;
+        TB_Node* ind_var = NULL;
         TB_Node* cond = latch->inputs[1];
         if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE && cond->inputs[1]->type == TB_PHI) {
             // affine loop's induction var should loop like:
             //
             //   i = phi(init, i + step) where step is constant.
             TB_Node* phi = cond->inputs[1];
-            if ()
-        }*/
+            if (phi->inputs[0] == header && phi->dt.type == TB_INT) {
+                TB_Node* op = phi->inputs[2];
+                if ((op->type == TB_ADD || op->type == TB_SUB) && op->inputs[2]->type == TB_INTEGER_CONST) {
+                    int64_t step = TB_NODE_GET_EXTRA_T(op->inputs[2], TB_NodeInt)->value;
+                    if (phi->inputs[2]->type == TB_SUB) {
+                        step = -step;
+                    }
+
+                    uint64_t* init = iconst(phi->inputs[1]);
+                    if (init) {
+                        TB_OPTDEBUG(LOOP)(printf("  affine loop: v%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init));
+                    } else {
+                        TB_OPTDEBUG(LOOP)(printf("  affine loop: v%u = %"PRId64"*x + v%u\n", phi->gvn, step, phi->inputs[1]->gvn));
+                    }
+
+                    // track the kinds of casts/ops users do and then see who's the winner
+                    int cnt = 0;
+                    bool legal_scale = false;
+
+                    int keys[4] = { -1, -1, -1, -1 };
+                    int uses[4];
+
+                    FOR_USERS(u, phi) {
+                        if (u->n == op) continue;
+                        if (u->n == cond) continue;
+
+                        ptrdiff_t stride = 0;
+                        if (u->n->type == TB_ARRAY_ACCESS) {
+                            stride = TB_NODE_GET_EXTRA_T(u->n, TB_NodeArray)->stride;
+                        } else {
+                            legal_scale = false;
+                            break;
+                        }
+
+                        int node_uses = 0;
+                        FOR_USERS(u2, u->n) node_uses += 1;
+
+                        TB_OPTDEBUG(LOOP)(printf("  * scaled by %tu (with %d uses)\n", stride, node_uses));
+
+                        // track uses of ARRAY
+                        int i = 0;
+                        for (; i < cnt; i++) {
+                            if (keys[i] == stride) break;
+                        }
+
+                        if (i == cnt) {
+                            if (cnt == 4) break;
+                            keys[cnt++] = 0;
+                        }
+                        uses[i] += node_uses;
+                    }
+
+                    if (cnt > 0) {
+                        // choose high use step to scale by
+                        int biggest = 0, big_use = uses[0];
+                        FOREACH_N(i, 1, cnt) if (uses[i] > big_use) {
+                            big_use = uses[i];
+                            biggest = i;
+                        }
+
+                        // __debugbreak();
+                    }
+                }
+            }
+        }
 
         if (0) {
             TB_Node* backedge_bb = get_pred_cfg(&p->cfg, header, single_backedge);
