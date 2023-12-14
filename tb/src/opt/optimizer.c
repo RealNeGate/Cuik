@@ -991,16 +991,18 @@ static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
 }
 
 static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* new_n) {
-    User* use = n->users;
-    while (use != NULL) {
-        tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
+    CUIK_TIMED_BLOCK("subsume") {
+        User* use = n->users;
+        while (use != NULL) {
+            tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
 
-        // set_input will delete 'use' so we can't use it afterwards
-        TB_Node* use_n = use->n;
-        User* next = use->next;
+            // set_input will delete 'use' so we can't use it afterwards
+            TB_Node* use_n = use->n;
+            User* next = use->next;
 
-        set_input(f, use->n, new_n, use->slot);
-        use = next;
+            set_input(f, use->n, new_n, use->slot);
+            use = next;
+        }
     }
 
     tb_pass_kill_node(p, n);

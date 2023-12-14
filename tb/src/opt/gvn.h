@@ -130,21 +130,23 @@ static size_t extra_bytes(TB_Node* n) {
 }
 
 uint32_t gvn_hash(void* a) {
-    TB_Node* n = a;
+    uint32_t h;
+    CUIK_TIMED_BLOCK("hash") {
+        TB_Node* n = a;
+        size_t extra = extra_bytes(n);
+        h = n->type + n->dt.raw + n->input_count + extra;
 
-    size_t extra = extra_bytes(n);
-    uint32_t h = n->type + n->dt.raw + n->input_count + extra;
+        // fib hashing amirite
+        h = ((uint64_t) h * 11400714819323198485llu) >> 32llu;
 
-    // fib hashing amirite
-    h = ((uint64_t) h * 11400714819323198485llu) >> 32llu;
+        FOREACH_N(i, 0, n->input_count) {
+            h ^= ((uintptr_t) n->inputs[i] * 11400714819323198485llu) >> 32llu;
+        }
 
-    FOREACH_N(i, 0, n->input_count) {
-        h ^= ((uintptr_t) n->inputs[i] * 11400714819323198485llu) >> 32llu;
-    }
-
-    // fnv1a the extra space
-    FOREACH_N(i, 0, extra) {
-        h = (n->extra[i] ^ h) * 0x01000193;
+        // fnv1a the extra space
+        FOREACH_N(i, 0, extra) {
+            h = (n->extra[i] ^ h) * 0x01000193;
+        }
     }
 
     return h;

@@ -290,11 +290,15 @@ void tb_module_destroy(TB_Module* m) {
     tb_platform_heap_free(m);
 }
 
-TB_SourceFile* tb_get_source_file(TB_Module* m, const char* path) {
+TB_SourceFile* tb_get_source_file(TB_Module* m, ptrdiff_t len, const char* path) {
     mtx_lock(&m->lock);
 
+    if (len <= 0) {
+        len = path ? strlen(path) : 0;
+    }
+
     NL_Slice key = {
-        .length = strlen(path),
+        .length = len,
         .data = (const uint8_t*) path,
     };
 

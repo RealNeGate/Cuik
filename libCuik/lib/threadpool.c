@@ -17,11 +17,6 @@
 // HACK(NeGate): i wanna call tb_free_thread_resources on thread exit...
 extern void tb_free_thread_resources(void);
 
-#ifdef CUIK_USE_CUIK
-extern void spallperf__start_thread(void);
-extern void spallperf__stop_thread(void);
-#endif
-
 // 1 << QEXP is the size of the queue per pool
 #define QEXP 7
 
@@ -89,7 +84,7 @@ static int thread_func(void* arg) {
     threadpool_t* threadpool = arg;
 
     #ifdef CUIK_USE_CUIK
-    spallperf__start_thread();
+    cuikperf_thread_start();
     #endif
 
     while (threadpool->running) {
@@ -103,7 +98,7 @@ static int thread_func(void* arg) {
     }
 
     #ifdef CUIK_USE_CUIK
-    spallperf__stop_thread();
+    cuikperf_thread_stop();
     // tb_free_thread_resources();
     // cuik_free_thread_resources();
     #endif

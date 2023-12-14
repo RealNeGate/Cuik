@@ -14,6 +14,10 @@ void atoms_free(void) {
     }
 }
 
+size_t atoms_len(Atom str) {
+    return *(uint32_t*) &str[-4];
+}
+
 Atom atoms_put(size_t len, const unsigned char* str) {
     if (interner == NULL) {
         CUIK_TIMED_BLOCK("alloc atoms") {
@@ -29,13 +33,15 @@ Atom atoms_put(size_t len, const unsigned char* str) {
     do {
         // linear probe
         if (LIKELY(interner[i] == NULL)) {
-            Atom newstr = tb_arena_unaligned_alloc(&atoms_arena, len + 1);
-            memcpy(newstr, str, len);
-            newstr[len] = 0;
+            Atom newstr = tb_arena_unaligned_alloc(&atoms_arena, len + 5);
+            uint32_t len32 = len;
+            memcpy(newstr, &len32, 4);
+            memcpy(newstr + 4, str, len);
+            newstr[len + 4] = 0;
 
-            interner[i] = newstr;
-            return newstr;
-        } else if (len == strlen(interner[i]) && memcmp(str, interner[i], len) == 0) {
+            interner[i] = newstr + 4;
+            return &newstr[4];
+        } else if (len == atoms_len(interner[i]) && memcmp(str, interner[i], len) == 0) {
             return interner[i];
         }
 

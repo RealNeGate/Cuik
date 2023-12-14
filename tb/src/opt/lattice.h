@@ -20,18 +20,22 @@ static bool lattice_cmp(void* a, void* b) {
 static bool lattice_is_const_int(Lattice* l) { return l->_int.min == l->_int.max; }
 static bool lattice_is_const(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
 
+static void lattice_universe_grow(LatticeUniverse* uni, size_t top) {
+    size_t new_cap = tb_next_pow2(top + 16);
+    uni->types = tb_platform_heap_realloc(uni->types, new_cap * sizeof(Lattice*));
+
+    // clear new space
+    FOREACH_N(i, uni->type_cap, new_cap) {
+        uni->types[i] = &TOP_IN_THE_SKY;
+    }
+
+    uni->type_cap = new_cap;
+}
+
 static bool lattice_universe_map_progress(LatticeUniverse* uni, TB_Node* n, Lattice* l) {
     // reserve cap, slow path :p
     if (UNLIKELY(n->gvn >= uni->type_cap)) {
-        size_t new_cap = tb_next_pow2(n->gvn + 16);
-        uni->types = tb_platform_heap_realloc(uni->types, new_cap * sizeof(Lattice*));
-
-        // clear new space
-        FOREACH_N(i, uni->type_cap, new_cap) {
-            uni->types[i] = &TOP_IN_THE_SKY;
-        }
-
-        uni->type_cap = new_cap;
+        lattice_universe_grow(uni, n->gvn);
     }
 
     Lattice* old = uni->types[n->gvn];
@@ -42,15 +46,7 @@ static bool lattice_universe_map_progress(LatticeUniverse* uni, TB_Node* n, Latt
 static void lattice_universe_map(LatticeUniverse* uni, TB_Node* n, Lattice* l) {
     // reserve cap, slow path :p
     if (UNLIKELY(n->gvn >= uni->type_cap)) {
-        size_t new_cap = tb_next_pow2(n->gvn + 16);
-        uni->types = tb_platform_heap_realloc(uni->types, new_cap * sizeof(Lattice*));
-
-        // clear new space
-        FOREACH_N(i, uni->type_cap, new_cap) {
-            uni->types[i] = &TOP_IN_THE_SKY;
-        }
-
-        uni->type_cap = new_cap;
+        lattice_universe_grow(uni, n->gvn);
     }
 
     uni->types[n->gvn] = l;
@@ -59,15 +55,7 @@ static void lattice_universe_map(LatticeUniverse* uni, TB_Node* n, Lattice* l) {
 Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n) {
     // reserve cap, slow path :p
     if (UNLIKELY(n->gvn >= uni->type_cap)) {
-        size_t new_cap = tb_next_pow2(n->gvn + 16);
-        uni->types = tb_platform_heap_realloc(uni->types, new_cap * sizeof(Lattice*));
-
-        // clear new space
-        FOREACH_N(i, uni->type_cap, new_cap) {
-            uni->types[i] = &TOP_IN_THE_SKY;
-        }
-
-        uni->type_cap = new_cap;
+        lattice_universe_grow(uni, n->gvn);
     }
 
     assert(uni->types[n->gvn] != NULL);

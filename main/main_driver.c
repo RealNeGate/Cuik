@@ -13,7 +13,6 @@
 #endif
 
 #include "bindgen.h"
-#include "spall_perf.h"
 
 #if CUIK_ALLOW_THREADS
 #include <threads.h>
@@ -181,7 +180,7 @@ int main(int argc, const char** argv) {
         char* perf_output_path = cuik_malloc(FILENAME_MAX);
         snprintf(perf_output_path, FILENAME_MAX, "%s.spall", args.output_name ? args.output_name : args.sources[0]->data);
 
-        cuikperf_start(perf_output_path, &spall_profiler, false);
+        cuikperf_start(perf_output_path);
         cuik_free(perf_output_path);
     }
 

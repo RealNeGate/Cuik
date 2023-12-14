@@ -941,7 +941,7 @@ TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice co
 TB_API bool tb_extern_resolve(TB_External* e, TB_Symbol* sym);
 TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type);
 
-TB_API TB_SourceFile* tb_get_source_file(TB_Module* m, const char* path);
+TB_API TB_SourceFile* tb_get_source_file(TB_Module* m, ptrdiff_t len, const char* path);
 
 // Called once you're done with TB operations on a thread (or i guess when it's
 // about to be killed :p), not calling it can only result in leaks on that thread

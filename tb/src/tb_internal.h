@@ -179,15 +179,18 @@ struct TB_DebugType {
             size_t count;
         } array;
         struct {
+            size_t len;
             char* name;
             TB_DebugType* type;
         } alias;
         struct {
+            size_t len;
             char* name;
             TB_CharUnits offset;
             TB_DebugType* type;
         } field;
         struct TB_DebugTypeRecord {
+            size_t len;
             char* tag;
             TB_CharUnits size, align;
 
