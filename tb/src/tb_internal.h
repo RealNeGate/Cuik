@@ -293,16 +293,11 @@ struct TB_Function {
     size_t param_count;
     TB_Node** params;
 
-    TB_Node* start_node;
-    TB_Node* stop_node;
-
-    // for GVN
-    size_t node_count;
-
     // IR allocation
     TB_Arena* arena;
+    size_t node_count;
 
-    // IR building
+    TB_Node* root_node;
     TB_Trace trace;
 
     TB_NodeSafepoint exit_attrib;

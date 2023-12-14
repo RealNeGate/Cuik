@@ -240,7 +240,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
             //   if p is a var v, replace edge with stack[v]
             ssa_replace_phi_arg(c, f, bb, succ, stack);
         }
-    } else if (end->type != TB_END && end->type != TB_UNREACHABLE) {
+    } else if (end->type != TB_ROOT && end->type != TB_UNREACHABLE) {
         // fallthrough case
         ssa_replace_phi_arg(c, f, bb, cfg_next_control(end), stack);
     }
@@ -299,7 +299,7 @@ void tb_pass_mem2reg(TB_Passes* p) {
     ////////////////////////////////
     // Decide which stack slots to promote
     ////////////////////////////////
-    for (User* u = f->start_node->users; u; u = u->next) {
+    FOR_USERS(u, f->root_node) {
         if (u->n->type != TB_LOCAL) continue;
         TB_Node* n = u->n;
 
@@ -406,7 +406,7 @@ void tb_pass_mem2reg(TB_Passes* p) {
         // find earliest memory in the BB:
         //   note this doesn't account for multiple memory streams
         //   but that's fine for now...
-        if (mem) {
+        if (mem && !(mem->type == TB_PROJ && mem->inputs[0]->type == TB_ROOT)) {
             while (mem->type != TB_PHI && cfg_underneath(&c.p->cfg, mem->inputs[1], bb_info)) {
                 mem = mem->inputs[1];
             }

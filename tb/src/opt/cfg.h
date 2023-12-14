@@ -172,7 +172,7 @@ TB_DominanceFrontiers* tb_get_dominance_frontiers(TB_Function* f, TB_Passes* res
             FOREACH_N(k, 0, bb->input_count) {
                 TB_Node* runner = get_pred_cfg(&cfg, bb, k);
 
-                while (!(runner->type == TB_PROJ && runner->inputs[0]->type == TB_START) && runner != idom(&cfg, bb)) {
+                while (!(runner->type == TB_PROJ && runner->inputs[0]->type == TB_ROOT) && runner != idom(&cfg, bb)) {
                     // add to frontier set
                     int id = nl_map_get_checked(cfg.node_to_block, runner).id;
                     tb_dommy_fronts_put(df, id, i);
@@ -268,15 +268,6 @@ void tb_compute_dominators2(TB_Function* f, Worklist* ws, TB_CFG cfg) {
             resolve_dom_depth(&cfg, blocks[i]);
         }
     }
-}
-
-TB_Node* tb_get_parent_region(TB_Node* n) {
-    while (n->type != TB_REGION && n->type != TB_START) {
-        tb_assert(n->inputs[0], "node doesn't have a control edge");
-        n = n->inputs[0];
-    }
-
-    return n;
 }
 
 bool tb_is_dominated_by(TB_CFG cfg, TB_Node* expected_dom, TB_Node* n) {

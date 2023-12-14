@@ -33,8 +33,6 @@ TB_Trace tb_inst_trace_from_region(TB_Function* f, TB_Node* region) {
     return (TB_Trace){ region, region, r->mem_in };
 }
 
-static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rpc);
-
 static void append_attrib(TB_Function* f, TB_Node* n, TB_Attrib a) {
     ptrdiff_t search = nl_map_get(f->attribs, n);
     if (search < 0) {
@@ -97,7 +95,13 @@ void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column)
 }
 
 void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
-    f->exit_attrib = (TB_NodeSafepoint){ file, line, column };
+    // we don't need any other inputs just yet
+    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_NOP, TB_TYPE_CONTROL, 2, sizeof(TB_NodeSafepoint));
+    set_input(f, n, f->root_node->inputs[0], 0);
+    set_input(f, n, f->root_node->inputs[1], 1);
+    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, file, line, column);
+
+    set_input(f, f->root_node, n, 0);
 }
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
@@ -230,7 +234,7 @@ void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t*
 void tb_inst_unreachable(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 1, 0);
     set_input(f, n, transfer_ctrl(f, n), 0);
-    inst_ret(f, 0, NULL, NULL);
+    tb_inst_ret(f, 0, NULL);
 }
 
 void tb_inst_debugbreak(TB_Function* f) {
@@ -241,7 +245,7 @@ void tb_inst_debugbreak(TB_Function* f) {
 void tb_inst_trap(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_CONTROL, 1, 0);
     set_input(f, n, transfer_ctrl(f, n), 0);
-    inst_ret(f, 0, NULL, NULL);
+    tb_inst_ret(f, 0, NULL);
 }
 
 TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment) {
@@ -250,7 +254,7 @@ TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment
 
     // insert in the entry block
     TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = alignment);
     return n;
 }
@@ -326,7 +330,7 @@ void tb_inst_memzero(TB_Function* f, TB_Node* dst, TB_Node* count, TB_CharUnits 
 
 TB_Node* tb_inst_bool(TB_Function* f, bool imm) {
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, TB_TYPE_BOOL, 1, sizeof(TB_NodeInt));
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = imm);
     return n;
 }
@@ -340,7 +344,7 @@ TB_Node* tb_inst_uint(TB_Function* f, TB_DataType dt, uint64_t imm) {
     }
 
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = imm);
     return n;
 }
@@ -349,21 +353,21 @@ TB_Node* tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm) {
     assert(TB_IS_POINTER_TYPE(dt) || (TB_IS_INTEGER_TYPE(dt) && (dt.data <= 64)));
 
     TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = imm);
     return n;
 }
 
 TB_Node* tb_inst_float32(TB_Function* f, float imm) {
     TB_Node* n = tb_alloc_node(f, TB_FLOAT32_CONST, TB_TYPE_F32, 1, sizeof(TB_NodeFloat32));
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeFloat32, .value = imm);
     return n;
 }
 
 TB_Node* tb_inst_float64(TB_Function* f, double imm) {
     TB_Node* n = tb_alloc_node(f, TB_FLOAT64_CONST, TB_TYPE_F64, 1, sizeof(TB_NodeFloat64));
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeFloat64, .value = imm);
     return n;
 }
@@ -405,7 +409,7 @@ TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
     assert(target != NULL);
 
     TB_Node* n = tb_alloc_node(f, TB_SYMBOL, TB_TYPE_PTR, 1, sizeof(TB_NodeSymbol));
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeSymbol, .sym = target);
     return n;
 }
@@ -824,7 +828,7 @@ bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* region, TB_N
     // the slot to fill is based on the predecessor list of the region
     FOREACH_N(i, 0, phi_region->input_count) {
         TB_Node* pred = phi_region->inputs[i];
-        while (pred->type != TB_REGION && pred->type != TB_START) pred = pred->inputs[0];
+        while (pred->type != TB_REGION) pred = pred->inputs[0];
 
         if (pred == region) {
             set_input(f, phi, val, i + 1);
@@ -970,101 +974,38 @@ void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* defau
 }
 
 void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
-    inst_ret(f, count, values, NULL);
-}
-
-static void inst_ret(TB_Function* f, size_t count, TB_Node** values, TB_Node* rpc) {
     TB_Node* mem_state = peek_mem(f);
 
     // allocate return node
-    TB_Node* end = f->stop_node;
-    if (end == NULL) {
-        TB_Node* region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 0, sizeof(TB_NodeRegion));
+    TB_Node* root = f->root_node;
+    TB_Node* ctrl = root->inputs[0];
+    if (ctrl->type == TB_SAFEPOINT_NOP) {
+        ctrl = ctrl->inputs[0];
+    }
+    assert(ctrl->type == TB_REGION);
 
-        end = tb_alloc_node(f, TB_END, TB_TYPE_CONTROL, 3 + count, 0);
-        set_input(f, end, rpc ? rpc : f->params[2], 2);
+    // add to PHIs
+    assert(root->input_count >= 3 + count);
+    add_input_late(f, root->inputs[1], mem_state);
 
-        TB_Node* mem_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, 2, 0);
-        set_input(f, mem_phi, region, 0);
-        set_input(f, mem_phi, mem_state, 1);
-        set_input(f, end, mem_phi, 1);
+    size_t i = 3;
+    for (; i < count + 3; i++) {
+        assert(root->inputs[i]->dt.raw == values[i - 3]->dt.raw && "datatype mismatch");
+        add_input_late(f, root->inputs[i], values[i - 3]);
+    }
 
-        if (f->exit_attrib.file != NULL) {
-            // we don't need any other inputs just yet
-            TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_NOP, TB_TYPE_CONTROL, 2, sizeof(TB_NodeSafepoint));
-            set_input(f, n, region, 0);
-            set_input(f, n, mem_phi, 1);
-            TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, f->exit_attrib.file, f->exit_attrib.line, f->exit_attrib.column);
+    size_t phi_count = root->input_count;
+    for (; i < phi_count; i++) {
+        // put poison in the leftovers?
+        log_warn("%s: ir: generated poison due to inconsistent number of returned values", f->super.name);
 
-            set_input(f, end, n, 0);
-        } else {
-            set_input(f, end, region, 0);
-        }
-
-        FOREACH_N(i, 0, count) {
-            TB_Node* phi = tb_alloc_node(f, TB_PHI, values[i]->dt, 2, 0);
-            set_input(f, phi, region, 0);
-            set_input(f, phi, values[i], 1);
-
-            // add phi to END
-            set_input(f, end, phi, i + 3);
-        }
-
-        f->stop_node = end;
-        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .freq = 1.0f, .mem_in = mem_phi, .tag = "ret");
-    } else {
-        // add to PHIs
-        assert(end->input_count >= 3 + count);
-        add_input_late(f, end->inputs[1], mem_state);
-
-        // append to RPC if we've got one (or if there's one already)
-        if (end->inputs[2]->type == TB_PHI) {
-            add_input_late(f, end->inputs[2], rpc ? rpc : f->params[2]);
-        } else if (rpc != NULL) {
-            TB_Node* region = end->inputs[0];
-            if (region->type != TB_REGION) {
-                // usually a safepoint NOP
-                region = region->inputs[0];
-                assert(region->type == TB_REGION);
-            }
-
-            // convert to RPC PHI
-            TB_Node* old_rpc = end->inputs[2];
-            TB_Node* rpc_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_CONT, 2 + region->input_count, 0);
-            set_input(f, rpc_phi, region, 0);
-            FOREACH_N(i, 0, region->input_count) {
-                set_input(f, rpc_phi, old_rpc, 1 + i);
-            }
-
-            // our latest edge is a special RPC
-            set_input(f, rpc_phi, rpc, 1 + region->input_count);
-            set_input(f, end, rpc_phi, 2);
-        }
-
-        size_t i = 3;
-        for (; i < count + 3; i++) {
-            assert(end->inputs[i]->dt.raw == values[i - 3]->dt.raw && "datatype mismatch");
-            add_input_late(f, end->inputs[i], values[i - 3]);
-        }
-
-        size_t phi_count = end->input_count;
-        for (; i < phi_count; i++) {
-            // put poison in the leftovers?
-            log_warn("%s: ir: generated poison due to inconsistent number of returned values", f->super.name);
-
-            TB_Node* poison = tb_alloc_node(f, TB_POISON, end->inputs[i]->dt, 1, 0);
-            add_input_late(f, end->inputs[i], poison);
-        }
+        TB_Node* poison = tb_alloc_node(f, TB_POISON, root->inputs[i]->dt, 1, 0);
+        add_input_late(f, root->inputs[i], poison);
     }
 
     // basically just tb_inst_goto without the memory PHI (we did it earlier)
     TB_Node* n = f->trace.bot_ctrl;
     f->trace.bot_ctrl = NULL;
-
-    TB_Node* ctrl = end->inputs[0];
-    if (ctrl->type == TB_SAFEPOINT_NOP) {
-        ctrl = ctrl->inputs[0];
-    }
 
     add_input_late(f, ctrl, n);
 }

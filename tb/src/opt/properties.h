@@ -60,7 +60,7 @@ static bool cfg_is_endpoint(TB_Node* n) {
     switch (n->type) {
         case TB_UNREACHABLE:
         case TB_TRAP:
-        case TB_END:
+        case TB_ROOT:
         case TB_TAILCALL:
         return true;
 
@@ -74,7 +74,7 @@ static bool cfg_is_terminator(TB_Node* n) {
         case TB_BRANCH:
         case TB_UNREACHABLE:
         case TB_TRAP:
-        case TB_END:
+        case TB_ROOT:
         case TB_TAILCALL:
         return true;
 

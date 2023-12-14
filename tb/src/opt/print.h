@@ -56,7 +56,7 @@ static void print_type2(TB_DataType dt) {
 static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
     if (n == NULL) {
         printf("_");
-    } else if (n->type == TB_START) {
+    } else if (n->type == TB_ROOT) {
         printf("%s", ctx->f->super.name);
 
         if (def) {
@@ -119,7 +119,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             printf("sym%p", sym);
         }
     } else if (n->type == TB_PROJ && n->dt.type == TB_CONTROL) {
-        if (n->inputs[0]->type == TB_START) {
+        if (n->inputs[0]->type == TB_ROOT) {
             print_ref_to_node(ctx, n->inputs[0], def);
         } else {
             ptrdiff_t i = try_find_traversal_index(&ctx->cfg, n);
@@ -195,16 +195,6 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     print_ref_to_node(ctx, bb_start, true);
     printf(":");
 
-    // print predecessors
-    /*if (!(bb_start->type == TB_PROJ && bb_start->inputs[0]->type == TB_START) && bb_start->input_count > 0) {
-        printf(" \x1b[32m# preds: ");
-        FOREACH_N(j, 0, bb_start->input_count) {
-            print_ref_to_node(ctx, get_pred(bb_start, j), false);
-            printf(" ");
-        }
-        printf("\x1b[0m");
-    }*/
-
     if (ctx->opt->error_n == bb_start) {
         printf("\x1b[31m  <-- ERROR\x1b[0m");
     }
@@ -228,8 +218,8 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
         if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST ||
             n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
             n->type == TB_SIGN_EXT || n->type == TB_ZERO_EXT ||
-            n->type == TB_PROJ || n->type == TB_START ||
-            n->type == TB_REGION || n->type == TB_NULL ||
+            n->type == TB_PROJ || n->type == TB_REGION ||
+            n->type == TB_NULL ||
             n->type == TB_PHI) {
             continue;
         }
@@ -300,7 +290,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                 break;
             }
 
-            case TB_END: {
+            case TB_ROOT: {
                 printf("  end ");
                 FOREACH_N(i, 1, n->input_count) {
                     if (i != 1) printf(", ");
@@ -517,7 +507,7 @@ void tb_pass_print(TB_Passes* opt) {
     TB_Node* end_bb = NULL;
     FOREACH_N(i, 0, ctx.cfg.block_count) {
         TB_Node* end = nl_map_get_checked(ctx.cfg.node_to_block, opt->worklist.items[i]).end;
-        if (end == f->stop_node) {
+        if (end == f->root_node) {
             end_bb = opt->worklist.items[i];
             continue;
         }

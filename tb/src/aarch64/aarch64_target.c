@@ -1,5 +1,7 @@
-// NOTE(NeGate): THIS IS VERY INCOMPLETE
 #include "../tb_internal.h"
+
+#if 0
+// NOTE(NeGate): THIS IS VERY INCOMPLETE
 #include "../emitter.h"
 #include "aarch64_emitter.h"
 
@@ -61,11 +63,7 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
 
 static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     switch (n->type) {
-        // no inputs
-        case TB_START:
-        return REGEMPTY;
-
-        case TB_END: {
+        case TB_ROOT: {
             TileInput* ins = tile_set_ins(ctx, dst, n, 3, n->input_count);
             int rets = n->input_count - 3;
 
@@ -78,7 +76,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
         case TB_PROJ:
         int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-        if (n->inputs[0]->type == TB_START) {
+        if (n->inputs[0]->type == TB_ROOT) {
             return REGMASK(GPR, i >= 3 ? (1u << (i - 3)) : 0);
         } else if (n->inputs[0]->type == TB_CALL) {
             if (i == 2)      return REGMASK(GPR, 1 << X0);
@@ -125,8 +123,10 @@ static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASS
     return false;
 }
 
-static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
-
+static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
+    // TODO(NeGate): optionally preserve the frame pointer
+    // TODO(NeGate): stack allocation
+    ctx->prologue_length = ctx->emit.count;
 }
 
 static GPR gpr_at(LiveInterval* l) { assert(!l->is_spill); return l->assigned; }
@@ -144,14 +144,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             // TUPLE node's job.
             case TB_PROJ: break;
 
-            case TB_START: {
-                // TODO(NeGate): optionally preserve the frame pointer
-                // TODO(NeGate): stack allocation
-                ctx->prologue_length = ctx->emit.count;
-                break;
-            }
-
-            case TB_END: {
+            case TB_ROOT: {
                 emit_ret(e, LR);
                 break;
             }
@@ -446,3 +439,6 @@ ICodeGen tb__aarch64_codegen = {
     .get_data_type_size = get_data_type_size,
     .compile_function   = compile_function,
 };
+#else
+ICodeGen tb__aarch64_codegen;
+#endif

@@ -63,20 +63,13 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
         }
 
         Pin* head = NULL;
+        TB_BasicBlock* start_bb = nl_map_get_checked(p->scheduled, p->worklist.items[0]);
 
         CUIK_TIMED_BLOCK("pinned schedule") {
-            // schedule START node
+            // schedule root's users
             {
-                TB_Node* start = f->start_node;
-
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[0]);
-                nl_hashset_put(&bb->items, start);
-                nl_map_put(p->scheduled, start, bb);
-
-                worklist_test_n_set(ws, start);
-                dyn_array_put(ws->items, start);
-
-                for (User* u = start->users; u; u = u->next) {
+                TB_Node* root = f->root_node;
+                FOR_USERS(u, root) {
                     TB_Node* out = u->n;
                     if (!worklist_test_n_set(ws, out)) {
                         dyn_array_put(ws->items, out);
@@ -92,14 +85,19 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
                     // BB will refer to it's parent (who should've been scheduled
                     // by now)
                     TB_Node* curr = n;
-                    ptrdiff_t search;
-                    for (;;) {
-                        search = nl_map_get(p->scheduled, curr);
-                        if (search >= 0) { break; }
-                        curr = curr->inputs[0];
+                    TB_BasicBlock* bb = NULL;
+                    if (curr->type == TB_PROJ && curr->inputs[0]->type == TB_ROOT) {
+                        bb = start_bb;
+                    } else {
+                        ptrdiff_t search;
+                        for (;;) {
+                            search = nl_map_get(p->scheduled, curr);
+                            if (search >= 0) { break; }
+                            curr = curr->inputs[0];
+                        }
+                        bb = p->scheduled[search].v;
                     }
 
-                    TB_BasicBlock* bb = p->scheduled[search].v;
                     nl_hashset_put(&bb->items, n);
                     nl_map_put(p->scheduled, n, bb);
 
@@ -133,8 +131,6 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
         }
 
         CUIK_TIMED_BLOCK("early schedule") {
-            TB_BasicBlock* start_bb = nl_map_get_checked(p->scheduled, p->worklist.items[0]);
-
             // we're gonna use this space to store the DFS order, we'll walk it in reverse for
             // late sched
             worklist_clear_visited(ws);
@@ -176,6 +172,11 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
 
                         // choose deepest block
                         FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+                            if (n->inputs[i]->type == TB_ROOT) {
+                                DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ bb0\n", n->inputs[i]->gvn));
+                                continue;
+                            }
+
                             ptrdiff_t search = nl_map_get(p->scheduled, n->inputs[i]);
                             if (search < 0) {
                                 // input has no scheduling... weird?

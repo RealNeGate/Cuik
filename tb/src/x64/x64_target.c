@@ -269,7 +269,6 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* og, TB_Node* n,
 static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     switch (n->type) {
         // no inputs
-        case TB_START:
         case TB_REGION:
         case TB_TRAP:
         case TB_UNREACHABLE:
@@ -333,7 +332,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         if (n->dt.type == TB_MEMORY) return REGEMPTY;
         else return normie_mask(ctx, n->dt);
 
-        case TB_END: {
+        case TB_ROOT: {
             static int ret_gprs[2] = { RAX, RDX };
 
             int rets = n->input_count - 3;
@@ -353,7 +352,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
         case TB_PROJ: {
             int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-            if (n->inputs[0]->type == TB_START) {
+            if (n->inputs[0]->type == TB_ROOT) {
                 // function params are ABI crap
                 const struct ParamDesc* params = &param_descs[ctx->abi_index];
                 return REGMASK(GPR, i >= 3 ? (1u << params->gprs[i - 3]) : 0);
@@ -582,7 +581,7 @@ static Val parse_memory_op(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t, TB_Node*
     return ptr;
 }
 
-static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
+static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     size_t caller_usage = 0;
     if (ctx->abi_index == 0) {
         caller_usage = ctx->caller_usage;
@@ -591,12 +590,11 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
         }
     }
 
-    size_t usage = ctx->stack_usage + (caller_usage * 8);
-
     // Align stack usage to 16bytes + 8 to accommodate for the RIP being pushed by CALL
-    ctx->stack_usage = usage = align_up(usage, 16) + 8;
+    size_t stack_usage = align_up(ctx->stack_usage + (caller_usage * 8), 16) + 8;
+    ctx->stack_usage = stack_usage;
 
-    FOR_USERS(u, ctx->f->start_node) {
+    FOR_USERS(u, root) {
         TB_Node* n = u->n;
         if (n->type != TB_LOCAL) continue;
 
@@ -612,7 +610,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
                 int pos = get_stack_slot(ctx, n);
 
                 TB_StackSlot s = {
-                    .position = usage - pos,
+                    .position = stack_usage - pos,
                     .storage_type = a->var.storage,
                     .name = a->var.name,
                 };
@@ -621,6 +619,76 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
             }
         }
     }
+
+    // save frame pointer (if applies)
+    if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
+        EMIT1(e, 0x50 + RBP);
+
+        // mov rbp, rsp
+        EMIT1(e, rex(true, RSP, RBP, 0));
+        EMIT1(e, 0x89);
+        EMIT1(e, mod_rx_rm(MOD_DIRECT, RSP, RBP));
+    }
+
+    // inserts a chkstk call if we use too much stack
+    if (stack_usage >= param_descs[ctx->abi_index].chkstk_limit) {
+        assert(ctx->f->super.module->chkstk_extern);
+        Val sym = val_global(ctx->f->super.module->chkstk_extern, 0);
+        Val imm = val_imm(stack_usage);
+        Val rax = val_gpr(RAX);
+        Val rsp = val_gpr(RSP);
+
+        inst2(e, MOV, &rax, &imm, TB_X86_TYPE_DWORD);
+        inst1(e, CALL, &sym, TB_X86_TYPE_QWORD);
+        inst2(e, SUB, &rsp, &rax, TB_X86_TYPE_QWORD);
+    } else if (stack_usage > 0) {
+        if (stack_usage == (int8_t)stack_usage) {
+            // sub rsp, stack_usage
+            EMIT1(e, rex(true, 0x00, RSP, 0));
+            EMIT1(e, 0x83);
+            EMIT1(e, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
+            EMIT1(e, stack_usage);
+        } else {
+            // sub rsp, stack_usage
+            EMIT1(e, rex(true, 0x00, RSP, 0));
+            EMIT1(e, 0x81);
+            EMIT1(e, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
+            EMIT4(e, stack_usage);
+        }
+    }
+
+    // we don't want this considered in the prologue because then i'd have to encode shit
+    // for Win64EH.
+    FOREACH_N(i, 0, dyn_array_length(ctx->callee_spills)) {
+        int pos = ctx->spills[ctx->callee_spills[i]->id];
+        int rc = ctx->callee_spills[i]->mask.class;
+
+        Val reg = val_gpr(ctx->callee_spills[i]->reg);
+        reg.type = VAL_GPR + rc;
+
+        Val spill = val_base_disp(RSP, stack_usage - pos);
+        inst2(e, MOV, &spill, &reg, TB_X86_TYPE_QWORD);
+    }
+
+    // handle unknown parameters (if we have varargs)
+    TB_FunctionPrototype* proto = ctx->f->prototype;
+    if (proto->has_varargs) {
+        const GPR* parameter_gprs = param_descs[ctx->abi_index].gprs;
+
+        // spill the rest of the parameters (assumes they're all in the GPRs)
+        size_t gpr_count = param_descs[ctx->abi_index].gpr_count;
+        size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
+
+        FOREACH_N(i, proto->param_count, gpr_count) {
+            int dst_pos = 8 + (i * 8);
+            Val src = val_gpr(parameter_gprs[i]);
+
+            Val dst = val_base_disp(RSP, stack_usage + dst_pos);
+            inst2(e, MOV, &dst, &src, TB_X86_TYPE_QWORD);
+        }
+    }
+
+    ctx->prologue_length = e->count;
 }
 
 // compute effective address operand
@@ -688,83 +756,8 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
     } else {
         TB_Node* n = t->n;
         switch (n->type) {
-            // prologue
-            case TB_START: {
-                int stack_usage = ctx->stack_usage;
-
-                // save frame pointer (if applies)
-                if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
-                    EMIT1(e, 0x50 + RBP);
-
-                    // mov rbp, rsp
-                    EMIT1(e, rex(true, RSP, RBP, 0));
-                    EMIT1(e, 0x89);
-                    EMIT1(e, mod_rx_rm(MOD_DIRECT, RSP, RBP));
-                }
-
-                // inserts a chkstk call if we use too much stack
-                if (stack_usage >= param_descs[ctx->abi_index].chkstk_limit) {
-                    assert(ctx->f->super.module->chkstk_extern);
-                    Val sym = val_global(ctx->f->super.module->chkstk_extern, 0);
-                    Val imm = val_imm(stack_usage);
-                    Val rax = val_gpr(RAX);
-                    Val rsp = val_gpr(RSP);
-
-                    inst2(e, MOV, &rax, &imm, TB_X86_TYPE_DWORD);
-                    inst1(e, CALL, &sym, TB_X86_TYPE_QWORD);
-                    inst2(e, SUB, &rsp, &rax, TB_X86_TYPE_QWORD);
-                } else if (stack_usage > 0) {
-                    if (stack_usage == (int8_t)stack_usage) {
-                        // sub rsp, stack_usage
-                        EMIT1(e, rex(true, 0x00, RSP, 0));
-                        EMIT1(e, 0x83);
-                        EMIT1(e, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
-                        EMIT1(e, stack_usage);
-                    } else {
-                        // sub rsp, stack_usage
-                        EMIT1(e, rex(true, 0x00, RSP, 0));
-                        EMIT1(e, 0x81);
-                        EMIT1(e, mod_rx_rm(MOD_DIRECT, 0x05, RSP));
-                        EMIT4(e, stack_usage);
-                    }
-                }
-
-                // we don't want this considered in the prologue because then i'd have to encode shit
-                // for Win64EH.
-                FOREACH_N(i, 0, dyn_array_length(ctx->callee_spills)) {
-                    int pos = ctx->spills[ctx->callee_spills[i]->id];
-                    int rc = ctx->callee_spills[i]->mask.class;
-
-                    Val reg = val_gpr(ctx->callee_spills[i]->reg);
-                    reg.type = VAL_GPR + rc;
-
-                    Val spill = val_base_disp(RSP, stack_usage - pos);
-                    inst2(e, MOV, &spill, &reg, TB_X86_TYPE_QWORD);
-                }
-
-                // handle unknown parameters (if we have varargs)
-                TB_FunctionPrototype* proto = ctx->f->prototype;
-                if (proto->has_varargs) {
-                    const GPR* parameter_gprs = param_descs[ctx->abi_index].gprs;
-
-                    // spill the rest of the parameters (assumes they're all in the GPRs)
-                    size_t gpr_count = param_descs[ctx->abi_index].gpr_count;
-                    size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
-
-                    FOREACH_N(i, proto->param_count, gpr_count) {
-                        int dst_pos = 8 + (i * 8);
-                        Val src = val_gpr(parameter_gprs[i]);
-
-                        Val dst = val_base_disp(RSP, stack_usage + dst_pos);
-                        inst2(e, MOV, &dst, &src, TB_X86_TYPE_QWORD);
-                    }
-                }
-
-                ctx->prologue_length = e->count;
-                break;
-            }
             // epilogue
-            case TB_END: {
+            case TB_ROOT: {
                 size_t pos = e->count;
                 emit_epilogue(ctx, e, ctx->stack_usage);
                 EMIT1(&ctx->emit, 0xC3);

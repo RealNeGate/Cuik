@@ -217,13 +217,13 @@ static bool cfg_is_control(TB_Node* n) {
     // checking which is annoying and slow)
     //
     //     branch, debugbreak, trap, unreachable, dead  OR  call, syscall, safepoint
-    return (n->type >= TB_BRANCH && n->type <= TB_DEAD) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_NOP);
+    return n->type == TB_ROOT || (n->type >= TB_BRANCH && n->type <= TB_DEAD) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_NOP);
 }
 
 static bool cfg_is_bb_entry(TB_Node* n) {
     if (n->type == TB_REGION) {
         return true;
-    } else if (n->type == TB_PROJ && (n->inputs[0]->type == TB_START || n->inputs[0]->type == TB_BRANCH)) {
+    } else if (n->type == TB_PROJ && (n->inputs[0]->type == TB_ROOT || n->inputs[0]->type == TB_BRANCH)) {
         // Start's control proj or a branch target
         return true;
     } else {
@@ -248,7 +248,7 @@ static bool is_mem_out_op(TB_Node* n) {
 }
 
 static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_START && n->type <= TB_SAFEPOINT_NOP) || n->type == TB_PROJ;
+    return (n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_NOP) || n->type == TB_PROJ;
 }
 
 static bool is_mem_in_op(TB_Node* n) {
@@ -387,7 +387,7 @@ static TB_Node* get_pred(TB_Node* n, int i) {
         TB_Node* parent = n->inputs[0];
 
         // start or cprojs with multiple users (it's a BB) will just exit
-        if (parent->type == TB_START || (!ctrl_out_as_cproj_but_not_branch(parent) && n->users->next != NULL)) {
+        if (parent->type == TB_ROOT || (!ctrl_out_as_cproj_but_not_branch(parent) && n->users->next != NULL)) {
             return n;
         }
         n = parent;

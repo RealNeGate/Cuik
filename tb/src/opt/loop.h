@@ -5,7 +5,7 @@ static TB_Node* loop_clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* 
     if (n->type == TB_PHI && n->inputs[0] == region) {
         // replace OG with phi's edge
         cloned = n->inputs[phi_index];
-    } else if (n->type == TB_REGION || n->type == TB_START || (n->type == TB_PROJ && n->inputs[0]->type == TB_START)) {
+    } else if (n->type == TB_REGION || n->type == TB_ROOT || (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT)) {
         // doesn't clone
     } else {
         size_t extra = extra_bytes(n);

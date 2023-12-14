@@ -225,7 +225,7 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 // a limited walk of 20 steps.
 static TB_Node* fast_idom(TB_Node* bb) {
     int steps = 0;
-    while (steps < FAST_IDOM_LIMIT && bb->type != TB_REGION && bb->type != TB_START) {
+    while (steps < FAST_IDOM_LIMIT && bb->type != TB_REGION && bb->type != TB_ROOT) {
         bb = bb->inputs[0];
         steps++;
     }
@@ -235,7 +235,7 @@ static TB_Node* fast_idom(TB_Node* bb) {
 
 static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
     int steps = 0;
-    while (steps < FAST_IDOM_LIMIT && bb != expected_dom && bb->type != TB_REGION && bb->type != TB_START) {
+    while (steps < FAST_IDOM_LIMIT && bb != expected_dom && bb->type != TB_REGION && bb->type != TB_ROOT) {
         bb = bb->inputs[0];
         steps++;
     }
@@ -285,7 +285,7 @@ static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra) {
 
 TB_Node* make_poison(TB_Function* f, TB_Passes* restrict p, TB_DataType dt) {
     TB_Node* n = tb_alloc_node(f, TB_POISON, dt, 1, 0);
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
     return gvn(p, n, 0);
 }
 
@@ -297,7 +297,7 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->value = x;
 
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
 
     Lattice* l;
     if (dt.type == TB_INT) {
@@ -312,7 +312,7 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
 
 TB_Node* dead_node(TB_Function* f, TB_Passes* restrict p) {
     TB_Node* n = tb_alloc_node(f, TB_DEAD, TB_TYPE_CONTROL, 1, 0);
-    set_input(f, n, f->start_node, 0);
+    set_input(f, n, f->root_node, 0);
     lattice_universe_map(&p->universe, n, &XCTRL_IN_THE_SKY);
     return gvn(p, n, 0);
 }
@@ -424,8 +424,8 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
 
 static void push_all_nodes(TB_Passes* restrict p, Worklist* restrict ws, TB_Function* f) {
     CUIK_TIMED_BLOCK("push_all_nodes") {
-        worklist_test_n_set(ws, f->start_node);
-        dyn_array_put(ws->items, f->start_node);
+        worklist_test_n_set(ws, f->root_node);
+        dyn_array_put(ws->items, f->root_node);
 
         for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
             TB_Node* n = ws->items[i];
@@ -449,12 +449,12 @@ static void push_all_nodes(TB_Passes* restrict p, Worklist* restrict ws, TB_Func
 
 static void cool_print_type(TB_Node* n) {
     TB_DataType dt = n->dt;
-    if (n->type != TB_START && n->type != TB_REGION && !(n->type == TB_BRANCH && n->input_count == 1)) {
+    if (n->type != TB_ROOT && n->type != TB_REGION && !(n->type == TB_BRANCH && n->input_count == 1)) {
         if (n->type == TB_STORE) {
             dt = n->inputs[3]->dt;
         } else if (n->type == TB_BRANCH) {
             dt = n->inputs[1]->dt;
-        } else if (n->type == TB_END) {
+        } else if (n->type == TB_ROOT) {
             dt = n->input_count > 1 ? n->inputs[1]->dt : TB_TYPE_VOID;
         } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
             dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
@@ -584,8 +584,8 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         case TB_STORE:
         return (flags & TB_PEEPHOLE_MEMORY) ? ideal_store(p, f, n) : NULL;
 
-        case TB_END:
-        return (flags & TB_PEEPHOLE_MEMORY) ? ideal_end(p, f, n) : NULL;
+        case TB_ROOT:
+        return (flags & TB_PEEPHOLE_MEMORY) ? ideal_root(p, f, n) : NULL;
 
         case TB_MEMCPY:
         return (flags & TB_PEEPHOLE_MEMORY) ? ideal_memcpy(p, f, n) : NULL;
@@ -862,10 +862,6 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
     }
 }
 
-static bool is_terminator(TB_Node* n) {
-    return n->type == TB_BRANCH || n->type == TB_END || n->type == TB_TRAP || n->type == TB_UNREACHABLE;
-}
-
 static void validate_node_users(TB_Node* n) {
     if (n != NULL) {
         for (User* use = n->users; use; use = use->next) {
@@ -1041,10 +1037,10 @@ void tb_pass_sroa(TB_Passes* p) {
         Worklist* ws = &p->worklist;
 
         int pointer_size = f->super.module->codegen->pointer_size;
-        TB_Node* start = f->start_node;
+        TB_Node* root = f->root_node;
 
         // write initial locals
-        for (User* u = start->users; u; u = u->next) {
+        for (User* u = root->users; u; u = u->next) {
             if (u->n->type == TB_LOCAL) {
                 worklist_push(&p->worklist, u->n);
             }
@@ -1054,7 +1050,7 @@ void tb_pass_sroa(TB_Passes* p) {
         size_t local_count = dyn_array_length(ws->items);
         for (size_t i = 0; i < local_count; i++) {
             assert(ws->items[i]->type == TB_LOCAL);
-            sroa_rewrite(p, pointer_size, start, ws->items[i]);
+            sroa_rewrite(p, pointer_size, root, ws->items[i]);
         }
     }
 }
@@ -1118,7 +1114,7 @@ static Value eval(Interp* vm, TB_Node* n) {
         }
 
         // control nodes
-        case TB_END: {
+        case TB_ROOT: {
             uint64_t v = in_val(vm, n, 3)->i;
 
             printf("END %"PRIu64"\n", v);
@@ -1154,7 +1150,7 @@ void dummy_interp(TB_Passes* p) {
     TB_Function* f = p->f;
     TB_Arena* arena = get_temporary_arena(f->super.module);
 
-    TB_Node* ip = cfg_next_control(f->start_node);
+    TB_Node* ip = cfg_next_control(f->root_node);
 
     // We need to generate a CFG
     TB_CFG cfg = tb_compute_rpo(f, p);
@@ -1319,8 +1315,8 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
         }
 
         // write initial types for start node
-        lattice_universe_map(&p->universe, f->start_node, &TUP_IN_THE_SKY);
-        FOR_USERS(u, f->start_node) {
+        lattice_universe_map(&p->universe, f->root_node, &TUP_IN_THE_SKY);
+        FOR_USERS(u, f->root_node) {
             TB_Node* proj = u->n;
             if (proj->type == TB_PROJ) {
                 int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
@@ -1337,7 +1333,7 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
             DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", p->stats.time++), print_node_sexpr(n, 0));
 
             // must've dead sometime between getting scheduled and getting here.
-            if (!cfg_is_endpoint(n) && n->type != TB_PROJ && n->users == NULL) {
+            if (n->type != TB_PROJ && n->users == NULL) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_pass_kill_node(p, n);
                 continue;

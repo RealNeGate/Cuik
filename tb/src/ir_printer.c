@@ -13,8 +13,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_NULL: return "BAD";
         case TB_UNREACHABLE: return "unreachable";
 
-        case TB_START:  return "start";
-        case TB_END:    return "end";
+        case TB_ROOT:   return "root";
         case TB_PROJ:   return "proj";
         case TB_REGION: return "region";
 
@@ -155,7 +154,7 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
 
 static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, int index) {
     switch (n->type) {
-        case TB_START: {
+        case TB_ROOT: {
             if (index == 0) {
                 P("ctrl");
             } else if (index == 1) {
@@ -344,8 +343,8 @@ TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* u
     Worklist* ws = &opt->worklist;
     worklist_clear_visited(ws);
 
-    worklist_test_n_set(ws, f->start_node);
-    dyn_array_put(ws->items, f->start_node);
+    worklist_test_n_set(ws, f->root_node);
+    dyn_array_put(ws->items, f->root_node);
 
     for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
         TB_Node* n = ws->items[i];

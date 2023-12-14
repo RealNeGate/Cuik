@@ -83,6 +83,16 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
     SchedNode* top = sched_make_node(arena, NULL, end);
     worklist_test_n_set(ws, end);
 
+    // reserve projections for the top
+    TB_Node* start = bb->id == 0 ? passes->f->root_node : NULL;
+    if (start) {
+        FOR_USERS(use, start) {
+            if (use->n->type == TB_PROJ && !worklist_test_n_set(ws, use->n)) {
+                dyn_array_put(ws->items, use->n);
+            }
+        }
+    }
+
     size_t leftovers = 0;
     size_t leftover_count = 1ull << bb->items.exp;
 
@@ -153,7 +163,7 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
         top = top->parent;
 
         // push outputs (projections, if they apply)
-        if (n->dt.type == TB_TUPLE && n->type != TB_BRANCH) {
+        if (n->dt.type == TB_TUPLE && n->type != TB_BRANCH && n->type != TB_ROOT) {
             for (User* use = n->users; use; use = use->next) {
                 if (use->n->type == TB_PROJ && !worklist_test_n_set(ws, use->n)) {
                     dyn_array_put(ws->items, use->n);

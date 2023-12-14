@@ -249,9 +249,9 @@ typedef enum TB_NodeTypeEnum {
     ////////////////////////////////
     // CONTROL
     ////////////////////////////////
-    //   there's only one START and STOP per function
-    TB_START,      // () -> (Control, Memory, Data...)
-    TB_END,        // (Control, Memory, Data?) -> ()
+    //   there's only one ROOT per function, it's inputs are the return values, it's
+    //   outputs are the initial params.
+    TB_ROOT,       // (Control, Memory, Data?) -> (Control, Memory, Data...)
     //   regions are used to represent paths which have multiple entries.
     //   each input is a predecessor.
     TB_REGION,     // (Control...) -> (Control)
@@ -1340,7 +1340,6 @@ TB_API void tb_pass_mark_users(TB_Passes* opt, TB_Node* n);
 ////////////////////////////////
 TB_API const char* tb_node_get_name(TB_Node* n);
 
-TB_API TB_Node* tb_get_parent_region(TB_Node* n);
 TB_API bool tb_node_is_constant_non_zero(TB_Node* n);
 TB_API bool tb_node_is_constant_zero(TB_Node* n);
 

@@ -14,8 +14,8 @@ static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASS
 // This is where we do the byte emitting phase
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t);
 
-// Used for post-processing after regalloc
-static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e);
+// Used for post-processing after regalloc (prologue mostly)
+static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n);
 
 // Write bytes after every tile's emitted, used by x86 for NOP padding
 static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e);
@@ -241,7 +241,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         int stop_bb = -1;
         FOREACH_N(i, 0, cfg.block_count) {
             TB_Node* end = nl_map_get_checked(cfg.node_to_block, bbs[i]).end;
-            if (end->type == TB_END) {
+            if (end->type == TB_ROOT) {
                 stop_bb = i;
             } else {
                 machine_bbs[bb_count++] = (MachineBB){ i };
@@ -504,7 +504,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 }
 
                 // if we have changes, mark the predeccesors
-                if (changes && !(bb->type == TB_PROJ && bb->inputs[0]->type == TB_START)) {
+                if (changes && !(bb->type == TB_PROJ && bb->inputs[0]->type == TB_ROOT)) {
                     FOREACH_N(i, 0, bb->input_count) {
                         TB_Node* pred = get_pred_cfg(&cfg, bb, i);
                         if (pred->input_count > 0) {
@@ -556,7 +556,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     CUIK_TIMED_BLOCK("emit") {
         TB_CGEmitter* e = &ctx.emit;
-        pre_emit(&ctx, e);
+        pre_emit(&ctx, e, f->root_node);
 
         FOREACH_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
@@ -593,6 +593,11 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 
         Disasm d = { func_out->first_patch, ctx.locations, &ctx.locations[dyn_array_length(ctx.locations)] };
+
+        if (ctx.prologue_length) {
+            disassemble(&ctx.emit, &d, -1, 0, ctx.prologue_length);
+        }
+
         FOREACH_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
             TB_Node* bb = bbs[bbid];

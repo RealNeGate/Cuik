@@ -64,7 +64,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_FMIN:
         case TB_NEG:
         case TB_NOT:
-        case TB_END:
         case TB_PROJ:
         case TB_PHI:
         case TB_CLZ:
@@ -79,9 +78,9 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_DEBUGBREAK:
         case TB_ADDPAIR:
         case TB_MULPAIR:
+        case TB_ROOT:
         return 0;
 
-        case TB_START:
         case TB_REGION:
         return sizeof(TB_NodeRegion);
 
