@@ -61,7 +61,7 @@ static void node_to_bb_put(Ctx* restrict ctx, TB_Node* n, MachineBB* bb) {
 static ValueDesc* val_at(Ctx* restrict ctx, TB_Node* n) {
     if (ctx->values[n->gvn].use_count < 0) {
         int count = 0;
-        for (User* u = n->users; u; u = u->next) count++;
+        FOR_USERS(u, n) count++;
         ctx->values[n->gvn].use_count = count;
     }
 
@@ -477,7 +477,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 // walk all successors
                 TB_Node* end = mbb->end_n;
                 if (end->type == TB_BRANCH) {
-                    for (User* u = end->users; u; u = u->next) {
+                    FOR_USERS(u, end) {
                         if (u->n->type == TB_PROJ) {
                             // union with successor's lives
                             TB_Node* succ = cfg_next_bb_after_cproj(u->n);

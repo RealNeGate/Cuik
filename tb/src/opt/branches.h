@@ -32,7 +32,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
                 remove_input(f, n, i);
 
                 // update PHIs
-                for (User* use = n->users; use; use = use->next) {
+                FOR_USERS(use, n) {
                     if (use->n->type == TB_PHI && use->slot == 0) {
                         remove_input(f, use->n, i + 1);
                     }
@@ -69,7 +69,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
                     }
 
                     // update PHIs
-                    for (User* use = n->users; use; use = use->next) {
+                    FOR_USERS(use, n) {
                         if (use->n->type == TB_PHI && use->slot == 0) {
                             // we don't replace the initial, just the rest
                             TB_Node* phi = use->n;
@@ -126,7 +126,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
         if (region->input_count == 2) {
             // for now we'll leave multi-phi scenarios alone, we need
             // to come up with a cost-model around this stuff.
-            for (User* use = region->users; use; use = use->next) {
+            FOR_USERS(use, region) {
                 if (use->n->type == TB_PHI) {
                     if (use->n != n) return NULL;
                 }
@@ -151,7 +151,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
                     assert(branch->input_count == 2);
 
                     TB_Node *values[2];
-                    for (User* u = branch->users; u; u = u->next) {
+                    FOR_USERS(u, branch) {
                         TB_Node* proj = u->n;
                         if (proj->type == TB_PROJ) {
                             int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
@@ -331,7 +331,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                 TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(cmp_node, TB_NodeCompare)->cmp_dt);
 
                 // flip
-                for (User* u = n->users; u; u = u->next) {
+                FOR_USERS(u, n) {
                     TB_NodeProj* p = TB_NODE_GET_EXTRA(u->n);
                     p->index = !p->index;
                 }
@@ -349,7 +349,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
 
                 // flip successors
                 if (cmp_type == TB_CMP_EQ) {
-                    for (User* u = n->users; u; u = u->next) {
+                    FOR_USERS(u, n) {
                         TB_NodeProj* p = TB_NODE_GET_EXTRA(u->n);
                         p->index = !p->index;
                     }
@@ -394,7 +394,7 @@ static Lattice* dataflow_branch(TB_Passes* restrict opt, LatticeUniverse* uni, T
 
         // check for redundant conditions in the doms.
         TB_Node* initial_bb = get_block_begin(n->inputs[0]);
-        for (User* u = n->inputs[1]->users; u; u = u->next) {
+        FOR_USERS(u, n->inputs[1]) {
             if (u->n->type != TB_BRANCH || u->slot != 1 || u->n == n) {
                 continue;
             }
@@ -405,7 +405,7 @@ static Lattice* dataflow_branch(TB_Passes* restrict opt, LatticeUniverse* uni, T
                 continue;
             }
 
-            for (User* succ_user = end->users; succ_user; succ_user = succ_user->next) {
+            FOR_USERS(succ_user, end) {
                 assert(succ_user->n->type == TB_PROJ);
                 int index = TB_NODE_GET_EXTRA_T(succ_user->n, TB_NodeProj)->index;
                 TB_Node* succ = cfg_next_bb_after_cproj(succ_user->n);
@@ -423,7 +423,7 @@ static Lattice* dataflow_branch(TB_Passes* restrict opt, LatticeUniverse* uni, T
 
     // give all the projections types
     match:
-    for (User* u = n->users; u; u = u->next) {
+    FOR_USERS(u, n) {
         TB_Node* proj = u->n;
         if (proj->type != TB_PROJ) continue;
 

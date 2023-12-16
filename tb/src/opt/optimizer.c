@@ -174,7 +174,7 @@ static char* lil_name(TB_Function* f, const char* fmt, ...) {
 }
 
 static TB_Node* mem_user(TB_Passes* restrict p, TB_Node* n, int slot) {
-    for (User* u = n->users; u; u = u->next) {
+    FOR_USERS(u, n) {
         if ((u->n->type == TB_PROJ && u->n->dt.type == TB_MEMORY) ||
             (u->slot == slot && is_mem_out_op(u->n))) {
             return u->n;
@@ -201,7 +201,7 @@ static bool is_empty_bb(TB_Passes* restrict p, TB_Node* end) {
     }
 
     TB_Node* bb = end->inputs[0];
-    for (User* use = bb->users; use; use = use->next) {
+    FOR_USERS(use, bb) {
         TB_Node* n = use->n;
         if (use->n != end) return false;
     }
@@ -391,7 +391,7 @@ static void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot, User* re
 }
 
 static void tb_pass_mark_users_raw(TB_Passes* restrict p, TB_Node* n) {
-    for (User* use = n->users; use; use = use->next) {
+    FOR_USERS(use, n) {
         tb_pass_mark(p, use->n);
     }
 }
@@ -401,7 +401,7 @@ void tb_pass_mark(TB_Passes* opt, TB_Node* n) {
 }
 
 void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
-    for (User* use = n->users; use; use = use->next) {
+    FOR_USERS(use, n) {
         tb_pass_mark(p, use->n);
         TB_NodeTypeEnum type = use->n->type;
 
@@ -427,8 +427,8 @@ static void push_all_nodes(TB_Passes* restrict p, Worklist* restrict ws, TB_Func
         for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
             TB_Node* n = ws->items[i];
 
-            for (User* u = n->users; u; u = u->next) {
-                TB_Node* out = u->n;
+            FOR_USERS(use, n) {
+                TB_Node* out = use->n;
                 if (!worklist_test_n_set(ws, out)) {
                     dyn_array_put(ws->items, out);
                 }
@@ -861,7 +861,7 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
 
 static void validate_node_users(TB_Node* n) {
     if (n != NULL) {
-        for (User* use = n->users; use; use = use->next) {
+        FOR_USERS(use, n) {
             tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
         }
     }
@@ -1037,7 +1037,7 @@ void tb_pass_sroa(TB_Passes* p) {
         TB_Node* root = f->root_node;
 
         // write initial locals
-        for (User* u = root->users; u; u = u->next) {
+        FOR_USERS(u, root) {
             if (u->n->type == TB_LOCAL) {
                 worklist_push(&p->worklist, u->n);
             }

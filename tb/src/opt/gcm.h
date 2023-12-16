@@ -109,7 +109,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
                     DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u pinned to .bb%d\n", f->super.name, n->gvn, bb->id));
                 }
 
-                for (User* u = n->users; u; u = u->next) {
+                FOR_USERS(u, n) {
                     TB_Node* out = u->n;
                     if (!worklist_test_n_set(ws, out)) {
                         dyn_array_put(ws->items, out);
@@ -216,7 +216,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
 
                 // we're gonna find the least common ancestor
                 TB_BasicBlock* lca = NULL;
-                for (User* use = n->users; use; use = use->next) {
+                FOR_USERS(use, n) {
                     TB_Node* y = use->n;
 
                     ptrdiff_t search = nl_map_get(p->scheduled, y);

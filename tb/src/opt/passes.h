@@ -267,7 +267,7 @@ static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {
     assert(n->type == TB_BRANCH);
     TB_Node* r = proj->users->n;
     if (r->type == TB_REGION) {
-        for (User* u = r->users; u; u = u->next) {
+        FOR_USERS(u, r) {
             if (u->n->type == TB_PHI) return true;
         }
     }
@@ -291,7 +291,7 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* n) {
 
 static TB_Node* cfg_next_region_control(TB_Node* n) {
     if (n->type != TB_REGION) {
-        for (User* u = n->users; u; u = u->next) {
+        FOR_USERS(u, n) {
             if (u->n->type == TB_REGION && u->n->input_count == 1) {
                 return u->n;
             }
@@ -302,7 +302,7 @@ static TB_Node* cfg_next_region_control(TB_Node* n) {
 }
 
 static User* proj_with_index(TB_Node* n, int i) {
-    for (User* u = n->users; u; u = u->next) {
+    FOR_USERS(u, n) {
         TB_NodeProj* p = TB_NODE_GET_EXTRA(u->n);
         if (p->index == i) {
             return u;
@@ -313,7 +313,7 @@ static User* proj_with_index(TB_Node* n, int i) {
 }
 
 static User* cfg_next_user(TB_Node* n) {
-    for (User* u = n->users; u; u = u->next) {
+    FOR_USERS(u, n) {
         if (cfg_is_control(u->n)) {
             return u;
         }
@@ -324,7 +324,7 @@ static User* cfg_next_user(TB_Node* n) {
 
 static bool cfg_basically_empty_only_mem_phis(TB_Node* n) {
     if (n->type == TB_PROJ && n->users->next == NULL && n->users->n->type == TB_REGION) {
-        for (User* u = n->users; u; u = u->next) {
+        FOR_USERS(u, n) {
             if (u->n->type == TB_PHI && u->n->dt.type != TB_MEMORY) {
                 return false;
             }
@@ -341,7 +341,7 @@ static bool cfg_has_phis(TB_Node* n) {
         return false;
     }
 
-    for (User* u = n->users; u; u = u->next) {
+    FOR_USERS(u, n) {
         if (u->n->type == TB_PHI) {
             return true;
         }
@@ -351,7 +351,7 @@ static bool cfg_has_phis(TB_Node* n) {
 }
 
 static bool cfg_is_unreachable(TB_Node* n) {
-    for (User* u = n->users; u; u = u->next) {
+    FOR_USERS(u, n) {
         if (u->n->type == TB_UNREACHABLE) {
             return true;
         }
@@ -361,7 +361,7 @@ static bool cfg_is_unreachable(TB_Node* n) {
 }
 
 static TB_Node* cfg_next_control0(TB_Node* n) {
-    for (User* u = n->users; u; u = u->next) {
+    FOR_USERS(u, n) {
         if (u->slot == 0 && cfg_is_control(u->n)) {
             return u->n;
         }
@@ -371,7 +371,7 @@ static TB_Node* cfg_next_control0(TB_Node* n) {
 }
 
 static TB_Node* cfg_next_control(TB_Node* n) {
-    for (User* u = n->users; u; u = u->next) {
+    FOR_USERS(u, n) {
         if (cfg_is_control(u->n)) {
             return u->n;
         }
@@ -416,7 +416,7 @@ static TB_Node* get_pred_cfg(TB_CFG* cfg, TB_Node* n, int i) {
 static TB_Node* next_control(TB_Node* n) {
     // unless it's a branch (aka a terminator), it'll have one successor
     TB_Node* next = NULL;
-    for (User* u = n->users; u; u = u->next) {
+    FOR_USERS(u, n) {
         TB_Node* succ = u->n;
 
         // we can't treat regions in the chain

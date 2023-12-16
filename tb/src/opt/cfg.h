@@ -50,7 +50,7 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
     };
 
     if (end->type == TB_BRANCH) {
-        for (User* u = end->users; u; u = u->next) {
+        FOR_USERS(u, end) {
             if (u->n->type == TB_PROJ) {
                 int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
                 top->succ[index] = cfg_next_bb_after_cproj(u->n);

@@ -117,7 +117,7 @@ static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
-    ctx->regalloc = tb__chaitin; // tb__lsra;
+    ctx->regalloc = tb__lsra; // tb__chaitin;
 
     ctx->abi_index = abi == TB_ABI_SYSTEMV ? 1 : 0;
 
@@ -1080,7 +1080,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
 
                 // fill successors
                 bool has_default = false;
-                for (User* u = n->users; u; u = u->next) {
+                FOR_USERS(u, n) {
                     if (u->n->type == TB_PROJ) {
                         int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
                         TB_Node* succ_n = cfg_next_bb_after_cproj(u->n);

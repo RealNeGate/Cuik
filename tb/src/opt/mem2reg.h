@@ -176,7 +176,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
             }
 
             // check for any loads and replace them
-            for (User* u = n->users; u; u = u->next) {
+            FOR_USERS(u, n) {
                 TB_Node* use = u->n;
 
                 if (u->slot == 1 && use->type == TB_LOAD) {
@@ -230,7 +230,7 @@ static void ssa_rename(Mem2Reg_Ctx* c, TB_Function* f, TB_Node* bb, DynArray(TB_
     // replace phi arguments on successor
     if (end->type == TB_BRANCH) {
         // fill successors
-        for (User* u = end->users; u; u = u->next) {
+        FOR_USERS(u, end) {
             if (!cfg_is_control(u->n)) continue;
 
             TB_Node* succ = cfg_next_bb_after_cproj(u->n);
@@ -391,7 +391,7 @@ void tb_pass_mem2reg(TB_Passes* p) {
         TB_Node* n = bb;
         TB_Node* mem = NULL;
         while (n != NULL) {
-            for (User* u = n->users; u; u = u->next) {
+            FOR_USERS(u, n) {
                 if (is_mem_out_op(u->n)) {
                     mem = u->n;
                     goto done;

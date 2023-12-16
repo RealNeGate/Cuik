@@ -224,7 +224,7 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
     if (n->dt.type == TB_TUPLE) {
         TB_Node* projs[128] = { 0 };
         int limit = 0;
-        for (User* use = n->users; use; use = use->next) {
+        FOR_USERS(use, n) {
             if (use->n->type == TB_PROJ) {
                 int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
                 if (limit < index+1) limit = index+1;
@@ -353,7 +353,7 @@ TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* u
             print_graph_node(f, callback, user_data, i, n);
         }
 
-        for (User* u = n->users; u; u = u->next) {
+        FOR_USERS(u, n) {
             TB_Node* out = u->n;
             if (!worklist_test_n_set(ws, out)) {
                 dyn_array_put(ws->items, out);

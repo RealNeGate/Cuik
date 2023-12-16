@@ -90,7 +90,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         if (def) {
             bool first = true;
             printf("(");
-            for (User* u = n->users; u; u = u->next) {
+            FOR_USERS(u, n) {
                 if (u->n->type == TB_PHI) {
                     if (first) {
                         first = false;
@@ -167,7 +167,7 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
     printf("(");
     if (target->type == TB_REGION) {
         int phi_i = -1;
-        for (User* u = n->users; u; u = u->next) {
+        FOR_USERS(u, n) {
             if (u->n->type == TB_REGION) {
                 phi_i = 1 + u->slot;
                 break;
@@ -175,7 +175,7 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
         }
 
         bool first = true;
-        for (User* u = target->users; u; u = u->next) {
+        FOR_USERS(u, target) {
             if (u->n->type == TB_PHI) {
                 if (first) {
                     first = false;
@@ -240,7 +240,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                 TB_Node** restrict succ = tb_arena_alloc(tmp_arena, br->succ_count * sizeof(TB_Node**));
 
                 // fill successors
-                for (User* u = n->users; u; u = u->next) {
+                FOR_USERS(u, n) {
                     if (u->n->type == TB_PROJ) {
                         int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
                         succ[index] = u->n;
@@ -303,7 +303,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                 if (n->dt.type == TB_TUPLE) {
                     // print with multiple returns
                     TB_Node* projs[4] = { 0 };
-                    for (User* use = n->users; use; use = use->next) {
+                    FOR_USERS(use, n) {
                         if (use->n->type == TB_PROJ) {
                             int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
                             projs[index] = use->n;
