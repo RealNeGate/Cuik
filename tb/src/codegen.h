@@ -236,5 +236,6 @@ struct Ctx {
 };
 
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena);
+void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena);
 
 static int fixed_reg_mask(uint64_t mask) { return tb_popcount64(mask) == 1 ? 63 - tb_clz64(mask) : -1; }

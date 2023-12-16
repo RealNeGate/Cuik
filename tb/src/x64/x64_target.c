@@ -3,6 +3,7 @@
 #include "x64_emitter.h"
 #include "x64_disasm.c"
 
+#if 1
 enum {
     // register classes
     REG_CLASS_GPR,
@@ -116,7 +117,7 @@ static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
-    ctx->regalloc = tb__lsra;
+    ctx->regalloc = tb__chaitin; // tb__lsra;
 
     ctx->abi_index = abi == TB_ABI_SYSTEMV ? 1 : 0;
 
@@ -1215,6 +1216,90 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
 }
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
+static void disassemble_operands(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* inst, size_t pos, int start) {
+    bool mem = true, imm = true;
+    for (int i = start; i < 4; i++) {
+        if (inst->regs[i] == -1) {
+            if (mem && (inst->flags & TB_X86_INSTR_USE_MEMOP)) {
+                if (i > 0) E(", ");
+
+                mem = false;
+
+                if (inst->flags & TB_X86_INSTR_USE_RIPMEM) {
+                    bool is_label = inst->opcode == 0xE8 || inst->opcode == 0xE9
+                        || (inst->opcode >= 0x70   && inst->opcode <= 0x7F)
+                        || (inst->opcode >= 0x0F80 && inst->opcode <= 0x0F8F);
+
+                    if (!is_label) E("[");
+
+                    if (d->patch && d->patch->pos == pos + inst->length - 4) {
+                        const TB_Symbol* target = d->patch->target;
+
+                        if (target->name[0] == 0) {
+                            E("sym%p", target);
+                        } else {
+                            E("%s", target->name);
+                        }
+                        d->patch = d->patch->next;
+                    } else {
+                        uint32_t target = pos + inst->length + inst->disp;
+                        int bb = tb_emit_get_label(e, target);
+                        uint32_t landed = e->labels[bb] & 0x7FFFFFFF;
+
+                        if (landed != target) {
+                            E(".bb%d + %d", bb, (int)target - (int)landed);
+                        } else {
+                            E(".bb%d", bb);
+                        }
+                    }
+
+                    if (!is_label) E("]");
+                } else {
+                    E("%s [", tb_x86_type_name(inst->data_type));
+                    if (inst->base != 255) {
+                        E("%s", tb_x86_reg_name(inst->base, TB_X86_TYPE_QWORD));
+                    }
+
+                    if (inst->index != 255) {
+                        E(" + %s*%d", tb_x86_reg_name(inst->index, TB_X86_TYPE_QWORD), 1 << inst->scale);
+                    }
+
+                    if (inst->disp > 0) {
+                        E(" + %d", inst->disp);
+                    } else if (inst->disp < 0) {
+                        E(" - %d", -inst->disp);
+                    }
+
+                    E("]");
+                }
+            } else if (imm && (inst->flags & (TB_X86_INSTR_IMMEDIATE | TB_X86_INSTR_ABSOLUTE))) {
+                if (i > 0) E(", ");
+
+                imm = false;
+                if (inst->flags & TB_X86_INSTR_ABSOLUTE) {
+                    E("%#llx", inst->abs);
+                } else {
+                    E("%#x", inst->imm);
+                }
+            } else {
+                break;
+            }
+        } else {
+            if (i > 0) {
+                E(", ");
+
+                // special case for certain ops with two data types
+                if (inst->flags & TB_X86_INSTR_TWO_DATA_TYPES) {
+                    E("%s", tb_x86_reg_name(inst->regs[i], inst->data_type2));
+                    continue;
+                }
+            }
+
+            E("%s", tb_x86_reg_name(inst->regs[i], inst->data_type));
+        }
+    }
+}
+
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end) {
     if (bb >= 0) {
         E(".bb%d:\n", bb);
@@ -1233,6 +1318,57 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
             continue;
         }
 
+        // special syntax:
+        //   mov rax, rcx
+        //   add rax, rdx   INTO   add rax, rcx, rdx
+        #if 0
+        if (inst.opcode >= 0x88 && inst.opcode <= 0x8B && inst.regs[0] >= 0) {
+            size_t saved = pos;
+            size_t next = pos + inst.length;
+            pos = next;
+
+            // skip REX
+            if ((e->data[pos] & 0xF0) == 0x40) {
+                pos += 1;
+            }
+
+            // are we an x86 integer op
+            switch (e->data[pos]) {
+                case 0x00 ... 0x03:
+                case 0x08 ... 0x0B:
+                case 0x20 ... 0x23:
+                case 0x28 ... 0x2B:
+                case 0x30 ... 0x33:
+                case 0x38 ... 0x3B:
+                case 0x88 ... 0x8B:
+                break;
+
+                default:
+                pos = saved;
+                goto normie;
+            }
+
+            TB_X86_Inst inst2;
+            if (!tb_x86_disasm(&inst2, end - next, &e->data[next]) || inst2.regs[0] != inst.regs[0]) {
+                pos = saved;
+                goto normie;
+            }
+
+            const char* mnemonic = tb_x86_mnemonic(&inst2);
+
+            E("  %s ", mnemonic);
+            // print operands for mov instruction
+            disassemble_operands(e, d, &inst, pos, 0);
+            // print operands for data op without the destination
+            disassemble_operands(e, d, &inst2, next, 1);
+            E("\n");
+
+            pos = next + inst2.length;
+            continue;
+        }
+        #endif
+
+        normie:
         const char* mnemonic = tb_x86_mnemonic(&inst);
         E("  ");
         if (inst.flags & TB_X86_INSTR_REP) {
@@ -1247,88 +1383,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
             E(strs[inst.data_type - TB_X86_TYPE_SSE_SS]);
         }
         E(" ");
-
-        bool mem = true, imm = true;
-        for (int i = 0; i < 4; i++) {
-            if (inst.regs[i] == -1) {
-                if (mem && (inst.flags & TB_X86_INSTR_USE_MEMOP)) {
-                    if (i > 0) E(", ");
-
-                    mem = false;
-
-                    if (inst.flags & TB_X86_INSTR_USE_RIPMEM) {
-                        bool is_label = inst.opcode == 0xE8 || inst.opcode == 0xE9
-                            || (inst.opcode >= 0x70   && inst.opcode <= 0x7F)
-                            || (inst.opcode >= 0x0F80 && inst.opcode <= 0x0F8F);
-
-                        if (!is_label) E("[");
-
-                        if (d->patch && d->patch->pos == pos + inst.length - 4) {
-                            const TB_Symbol* target = d->patch->target;
-
-                            if (target->name[0] == 0) {
-                                E("sym%p", target);
-                            } else {
-                                E("%s", target->name);
-                            }
-                            d->patch = d->patch->next;
-                        } else {
-                            uint32_t target = pos + inst.length + inst.disp;
-                            int bb = tb_emit_get_label(e, target);
-                            uint32_t landed = e->labels[bb] & 0x7FFFFFFF;
-
-                            if (landed != target) {
-                                E(".bb%d + %d", bb, (int)target - (int)landed);
-                            } else {
-                                E(".bb%d", bb);
-                            }
-                        }
-
-                        if (!is_label) E("]");
-                    } else {
-                        E("%s [", tb_x86_type_name(inst.data_type));
-                        if (inst.base != 255) {
-                            E("%s", tb_x86_reg_name(inst.base, TB_X86_TYPE_QWORD));
-                        }
-
-                        if (inst.index != 255) {
-                            E(" + %s*%d", tb_x86_reg_name(inst.index, TB_X86_TYPE_QWORD), 1 << inst.scale);
-                        }
-
-                        if (inst.disp > 0) {
-                            E(" + %d", inst.disp);
-                        } else if (inst.disp < 0) {
-                            E(" - %d", -inst.disp);
-                        }
-
-                        E("]");
-                    }
-                } else if (imm && (inst.flags & (TB_X86_INSTR_IMMEDIATE | TB_X86_INSTR_ABSOLUTE))) {
-                    if (i > 0) E(", ");
-
-                    imm = false;
-                    if (inst.flags & TB_X86_INSTR_ABSOLUTE) {
-                        E("%#llx", inst.abs);
-                    } else {
-                        E("%d", inst.imm);
-                    }
-                } else {
-                    break;
-                }
-            } else {
-                if (i > 0) {
-                    E(", ");
-
-                    // special case for certain ops with two data types
-                    if (inst.flags & TB_X86_INSTR_TWO_DATA_TYPES) {
-                        E("%s", tb_x86_reg_name(inst.regs[i], inst.data_type2));
-                        continue;
-                    }
-                }
-
-                E("%s", tb_x86_reg_name(inst.regs[i], inst.data_type));
-            }
-        }
+        disassemble_operands(e, d, &inst, pos, 0);
         E("\n");
 
         pos += inst.length;
@@ -1373,3 +1428,6 @@ ICodeGen tb__x64_codegen = {
     .get_data_type_size = get_data_type_size,
     .compile_function   = compile_function,
 };
+#else
+ICodeGen tb__x64_codegen;
+#endif

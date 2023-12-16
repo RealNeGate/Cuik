@@ -19,6 +19,7 @@ void* tb_jit_stack_create(void);
 
 // Regalloc
 #include "lsra.c"
+#include "chaitin.c"
 
 // Parsers
 #define TB_COFF_IMPL

@@ -82,22 +82,24 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             if (i == 2)      return REGMASK(GPR, 1 << X0);
             else if (i == 3) return REGMASK(GPR, 1 << X1);
             else return REGEMPTY;
+        } else if (n->inputs[0]->type == TB_BRANCH) {
+            return REGEMPTY;
         } else {
             tb_todo();
         }
 
         case TB_ARRAY_ACCESS:
         tile_broadcast_ins(ctx, dst, n, 1, n->input_count, REGMASK(GPR, ALL_GPRS));
-        return REGMASK(GPR, ALL_GPRS);
+        return ctx->normie_mask[0];
 
         case TB_INTEGER_CONST:
-        return REGMASK(GPR, ALL_GPRS);
+        return ctx->normie_mask[0];
 
         case TB_MUL:
         case TB_UDIV:
         case TB_SDIV:
         tile_broadcast_ins(ctx, dst, n, 1, n->input_count, REGMASK(GPR, ALL_GPRS));
-        return REGMASK(GPR, ALL_GPRS);
+        return ctx->normie_mask[0];
 
         // binary ops
         case TB_SHL:
@@ -111,7 +113,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             } else {
                 tile_broadcast_ins(ctx, dst, n, 1, n->input_count, REGMASK(GPR, ALL_GPRS));
             }
-            return REGMASK(GPR, ALL_GPRS);
+            return ctx->normie_mask[0];
         }
 
         default:

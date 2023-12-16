@@ -20,9 +20,6 @@ thread_local TB_Arena* tmp_arena;
 static User* remove_user(TB_Node* n, int slot);
 static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 
-// transmutations let us generate new nodes from old ones
-TB_Node* tb_transmute_to_int(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, int num_words);
-
 static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* new_n);
 
 static TB_Node* peephole(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags);

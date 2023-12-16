@@ -298,6 +298,7 @@ struct TB_Function {
     size_t node_count;
 
     TB_Node* root_node;
+    TB_Node* callgraph;
     TB_Trace trace;
 
     TB_NodeSafepoint exit_attrib;

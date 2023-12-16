@@ -44,7 +44,7 @@ static uint64_t* iconst(TB_Node* n) {
 }
 
 void tb_pass_loop(TB_Passes* p) {
-    cuikperf_region_start("loop rotate", NULL);
+    cuikperf_region_start("loop", NULL);
     verify_tmp_arena(p);
 
     size_t block_count = tb_pass_update_cfg(p, &p->worklist, true);
@@ -117,72 +117,121 @@ void tb_pass_loop(TB_Passes* p) {
         // detect induction var for affine loops (only valid if it's a phi on the header)
         TB_Node* ind_var = NULL;
         TB_Node* cond = latch->inputs[1];
+        TB_Node* end_cond = NULL;
+        TB_Node* phi = NULL;
+
         if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE && cond->inputs[1]->type == TB_PHI) {
-            // affine loop's induction var should loop like:
-            //
-            //   i = phi(init, i + step) where step is constant.
-            TB_Node* phi = cond->inputs[1];
-            if (phi->inputs[0] == header && phi->dt.type == TB_INT) {
-                TB_Node* op = phi->inputs[2];
-                if ((op->type == TB_ADD || op->type == TB_SUB) && op->inputs[2]->type == TB_INTEGER_CONST) {
-                    int64_t step = TB_NODE_GET_EXTRA_T(op->inputs[2], TB_NodeInt)->value;
-                    if (phi->inputs[2]->type == TB_SUB) {
-                        step = -step;
-                    }
+            phi = cond->inputs[1];
+            end_cond = cond->inputs[2];
+        } else if (cond->type == TB_PHI) {
+            phi = cond;
+        }
 
-                    uint64_t* init = iconst(phi->inputs[1]);
-                    if (init) {
-                        TB_OPTDEBUG(LOOP)(printf("  affine loop: v%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init));
+        // affine loop's induction var should loop like:
+        //
+        //   i = phi(init, i + step) where step is constant.
+        if (phi->inputs[0] == header && phi->dt.type == TB_INT) {
+            TB_Node* op = phi->inputs[2];
+            if ((op->type == TB_ADD || op->type == TB_SUB) && op->inputs[2]->type == TB_INTEGER_CONST) {
+                int64_t step = TB_NODE_GET_EXTRA_T(op->inputs[2], TB_NodeInt)->value;
+                if (phi->inputs[2]->type == TB_SUB) {
+                    step = -step;
+                }
+
+                uint64_t* init = iconst(phi->inputs[1]);
+                if (init) {
+                    TB_OPTDEBUG(LOOP)(printf("  affine loop: v%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init));
+                } else {
+                    TB_OPTDEBUG(LOOP)(printf("  affine loop: v%u = %"PRId64"*x + v%u\n", phi->gvn, step, phi->inputs[1]->gvn));
+                }
+
+                // track the kinds of casts/ops users do and then see who's the winner
+                int cnt = 0;
+                bool legal_scale = true;
+
+                int keys[4] = { -1, -1, -1, -1 };
+                int uses[4];
+
+                FOR_USERS(u, phi) {
+                    if (u->n == op) continue;
+                    if (u->n == cond) continue;
+
+                    ptrdiff_t stride = 0;
+                    if (u->n->type == TB_ARRAY_ACCESS) {
+                        stride = TB_NODE_GET_EXTRA_T(u->n, TB_NodeArray)->stride;
                     } else {
-                        TB_OPTDEBUG(LOOP)(printf("  affine loop: v%u = %"PRId64"*x + v%u\n", phi->gvn, step, phi->inputs[1]->gvn));
+                        legal_scale = false;
+                        break;
                     }
 
-                    // track the kinds of casts/ops users do and then see who's the winner
-                    int cnt = 0;
-                    bool legal_scale = false;
+                    int node_uses = 0;
+                    FOR_USERS(u2, u->n) node_uses += 1;
 
-                    int keys[4] = { -1, -1, -1, -1 };
-                    int uses[4];
+                    TB_OPTDEBUG(LOOP)(printf("  * scaled by %tu (with %d uses)\n", stride, node_uses));
+
+                    // track uses of ARRAY
+                    int i = 0;
+                    for (; i < cnt; i++) {
+                        if (keys[i] == stride) break;
+                    }
+
+                    if (i == cnt) {
+                        if (cnt == 4) break;
+                        keys[cnt++] = stride;
+                    }
+                    uses[i] += node_uses;
+                }
+
+                // TODO(NeGate): support figuring out scaling when things
+                // get wacky (*2 vs *6, if we pick the larger number it might
+                // be more useful but also we'd need to div3 to make this work
+                // which isn't worth it)
+                if (legal_scale && cnt == 1) {
+                    // choose high use step to scale by
+                    int biggest = 0, big_use = uses[0];
+                    FOREACH_N(i, 1, cnt) if (uses[i] > big_use) {
+                        big_use = uses[i];
+                        biggest = i;
+                    }
+
+                    int best_stride = keys[biggest];
+
+                    // rescale the step
+                    TB_Node* scale_n = make_int_node(f, p, phi->dt, best_stride);
+                    set_input(f, op, scale_n, 2);
+                    tb_pass_mark(p, op);
+                    tb_pass_mark(p, scale_n);
+
+                    // rescale the limit
+                    if (cond->type != TB_PHI) {
+                        assert(cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE);
+                        assert(cond->inputs[1] == phi);
+
+                        TB_Node* limit_scaled = tb_alloc_node(f, TB_MUL, phi->dt, 3, sizeof(TB_NodeBinopInt));
+                        set_input(f, limit_scaled, cond->inputs[2], 1);
+                        set_input(f, limit_scaled, scale_n,         2);
+                        TB_NODE_GET_EXTRA_T(limit_scaled, TB_NodeBinopInt)->ab = 0;
+
+                        set_input(f, cond, limit_scaled, 2);
+
+                        tb_pass_mark(p, cond);
+                        tb_pass_mark(p, limit_scaled);
+                    }
 
                     FOR_USERS(u, phi) {
-                        if (u->n == op) continue;
-                        if (u->n == cond) continue;
+                        TB_Node* use = u->n;
 
-                        ptrdiff_t stride = 0;
-                        if (u->n->type == TB_ARRAY_ACCESS) {
-                            stride = TB_NODE_GET_EXTRA_T(u->n, TB_NodeArray)->stride;
-                        } else {
-                            legal_scale = false;
-                            break;
+                        // we'll just scale each stride down
+                        if (!worklist_test_n_set(&p->worklist, use)) {
+                            dyn_array_put(p->worklist.items, use);
+
+                            if (use->type == TB_ARRAY_ACCESS) {
+                                TB_NodeArray* arr = TB_NODE_GET_EXTRA(use);
+                                arr->stride /= best_stride;
+                            } else {
+                                tb_todo();
+                            }
                         }
-
-                        int node_uses = 0;
-                        FOR_USERS(u2, u->n) node_uses += 1;
-
-                        TB_OPTDEBUG(LOOP)(printf("  * scaled by %tu (with %d uses)\n", stride, node_uses));
-
-                        // track uses of ARRAY
-                        int i = 0;
-                        for (; i < cnt; i++) {
-                            if (keys[i] == stride) break;
-                        }
-
-                        if (i == cnt) {
-                            if (cnt == 4) break;
-                            keys[cnt++] = 0;
-                        }
-                        uses[i] += node_uses;
-                    }
-
-                    if (cnt > 0) {
-                        // choose high use step to scale by
-                        int biggest = 0, big_use = uses[0];
-                        FOREACH_N(i, 1, cnt) if (uses[i] > big_use) {
-                            big_use = uses[i];
-                            biggest = i;
-                        }
-
-                        // __debugbreak();
                     }
                 }
             }
