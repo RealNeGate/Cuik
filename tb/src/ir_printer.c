@@ -35,11 +35,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_ARRAY_ACCESS: return "array";
         case TB_MEMBER_ACCESS: return "member";
 
-        case TB_PTR2INT: return "ptr2int";
-        case TB_INT2PTR: return "int2ptr";
-
         case TB_SAFEPOINT_POLL: return "safepoint.poll";
-        case TB_SAFEPOINT_NOP: return "safepoint";
 
         case TB_MEMSET: return "memset";
         case TB_MEMCPY: return "memcpy";

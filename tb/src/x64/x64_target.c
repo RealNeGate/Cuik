@@ -28,10 +28,15 @@ enum {
 };
 
 typedef struct {
-    TB_Node *base;
+    TB_Node* base;
     int stride;
     int offset;
 } AuxAddress;
+
+typedef struct {
+    int64_t min, max;
+    bool if_chain;
+} AuxBranch;
 
 static const struct ParamDesc {
     int chkstk_limit;
@@ -95,6 +100,11 @@ static TB_X86_DataType legalize(TB_DataType dt) {
     }
 }
 
+static bool fits_into_int32(uint64_t x) {
+    uint32_t hi = x >> 32ull;
+    return hi == 0 || hi == 0xFFFFFFFF;
+}
+
 static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
     if (n->type != TB_INTEGER_CONST) {
         return false;
@@ -146,6 +156,34 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     }
 
     TB_FunctionPrototype* proto = ctx->f->prototype;
+    TB_Node** params = ctx->f->params;
+    TB_Node* root_ctrl = params[0];
+
+    FOREACH_N(i, 0, proto->param_count) {
+        TB_Node* proj = params[3 + i];
+        User* use = proj->users;
+        if (use == NULL || use->next != NULL || use->slot == 0) {
+            continue;
+        }
+
+        TB_Node* store_op = use->n;
+        if (store_op->type != TB_STORE || store_op->inputs[0] != root_ctrl) {
+            continue;
+        }
+
+        TB_Node* addr = store_op->inputs[2];
+        if (addr->type != TB_LOCAL) {
+            continue;
+        }
+
+        int pos = 8 + (i * 8);
+        nl_map_put(ctx->stack_slots, addr, -pos);
+
+        /*if (i >= 4 && ctx->abi_index == 0) {
+            // marks as visited (stores don't return so we can -1)
+
+        }*/
+    }
     ctx->stack_usage += 8 + (proto->param_count * 8);
 
     if (proto->has_varargs) {
@@ -274,12 +312,11 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_TRAP:
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
-        case TB_SAFEPOINT_NOP:
         return REGEMPTY;
 
         case TB_LOCAL: {
             TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
-            try_init_stack_slot(ctx, n);
+            isel_addr(ctx, dst, n, n, 0);
             return ctx->normie_mask[0];
         }
 
@@ -308,16 +345,22 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             return REGEMPTY;
         }
 
+        case TB_SIGN_EXT:
+        case TB_ZERO_EXT:
+        if (n->inputs[1]->type == TB_LOAD) {
+            isel_addr(ctx, dst, n, n->inputs[1]->inputs[2], 0);
+        } else {
+            tile_broadcast_ins(ctx, dst, n, 1, 2, normie_mask(ctx, n->inputs[1]->dt));
+        }
+        return normie_mask(ctx, n->dt);
+
         case TB_ARRAY_ACCESS:
         case TB_MEMBER_ACCESS:
         isel_addr(ctx, dst, n, n, 0);
         return ctx->normie_mask[0];
 
         case TB_POISON:
-        case TB_SIGN_EXT:
-        case TB_ZERO_EXT:
-        case TB_INT2PTR:
-        case TB_PTR2INT:
+        case TB_BITCAST:
         case TB_TRUNCATE:
         case TB_INT2FLOAT:
         case TB_FLOAT2INT:
@@ -392,6 +435,8 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
         case TB_SHL:
         case TB_SHR:
+        case TB_ROL:
+        case TB_ROR:
         case TB_SAR: {
             int32_t x;
             if (try_for_imm32(n->inputs[2]->dt.data, n->inputs[2], &x) && x >= 0 && x < 64) {
@@ -431,23 +476,105 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
         case TB_BRANCH: {
             TB_Node* cmp = n->inputs[1];
-            if (cmp->type >= TB_CMP_EQ && cmp->type <= TB_CMP_FLE) {
-                dst->flags |= TILE_CMP_JCC;
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
 
-                TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeCompare)->cmp_dt;
-                RegMask rm = normie_mask(ctx, cmp_dt);
+            AuxBranch* aux = NULL;
+            int ins = 1, tmps = 0;
+            if (br->succ_count > 2) {
+                // try for jump tables or if-chains
+                //
+                // check if there's at most only one space between entries
+                int64_t last = br->keys[0];
+                int64_t min = last, max = last;
 
-                int32_t x;
-                if (try_for_imm32(cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, cmp->inputs[2], &x)) {
-                    tile_broadcast_ins(ctx, dst, cmp, 1, 2, rm);
-                    dst->flags |= TILE_HAS_IMM;
+                double dist_avg = 0;
+                double inv_succ_count = 1.0 / (br->succ_count - 2);
+
+                bool large_num = false;
+                FOREACH_N(i, 2, br->succ_count) {
+                    int64_t key = br->keys[i - 1];
+                    if (!fits_into_int32(key)) {
+                        large_num = true;
+                    }
+
+                    min = (min > key) ? key : min;
+                    max = (max > key) ? max : key;
+
+                    dist_avg += (key - last) * inv_succ_count;
+                    last = key;
+                }
+
+                // if there's no default case we can skew heuristics around the lack of range check
+                bool has_default = false;
+                FOR_USERS(u, n) {
+                    if (u->n->type != TB_PROJ) continue;
+                    int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
+                    if (index == 0) {
+                        has_default = cfg_next_control(u->n)->type != TB_UNREACHABLE;
+                        break;
+                    }
+                }
+
+                int64_t range = (max - min) + 1;
+
+                // if we do if-else chains we'll do 1+2c ops (c is the number of cases).
+                int64_t if_chain_cost  = 1 + 2*range;
+                // if we do jump table it's 6 ops + a table that's got [max-min] entries but cost
+                // wise the issue is slots which are missed (go to fallthru).
+                int64_t jmp_table_cost = has_default ? 6 : 4;
+                jmp_table_cost += (range - (range / dist_avg));
+
+                aux = tb_arena_alloc(tmp_arena, sizeof(AuxBranch));
+                aux->min = min;
+                aux->max = max;
+                aux->if_chain = if_chain_cost < jmp_table_cost;
+
+                if (aux->if_chain) {
+                    // large numbers require a temporary to store the immediate
+                    tmps += large_num;
                 } else {
-                    tile_broadcast_ins(ctx, dst, cmp, 1, 3, rm);
+                    // we need tmp for the key (either offset or casted)
+                    tmps += 3;
                 }
             } else {
-                TileInput* ins = tile_set_ins(ctx, dst, n, 1, n->input_count);
-                ins[0].mask = normie_mask(ctx, n->inputs[1]->dt);
+                if (cmp->type >= TB_CMP_EQ && cmp->type <= TB_CMP_FLE) {
+                    TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeCompare)->cmp_dt;
+                    dst->flags |= TILE_CMP_JCC;
+
+                    int32_t x;
+                    if (!try_for_imm32(cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, cmp->inputs[2], &x)) {
+                        ins += 1;
+                    } else {
+                        dst->flags |= TILE_HAS_IMM;
+                    }
+                }
             }
+
+            dst->ins = tb_arena_alloc(tmp_arena, (ins+tmps) * sizeof(TileInput));
+            dst->in_count = ins+tmps;
+            dst->aux = aux;
+
+            if (dst->flags & TILE_CMP_JCC) {
+                TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cmp, TB_NodeCompare)->cmp_dt;
+
+                RegMask rm = normie_mask(ctx, cmp_dt);
+                dst->ins[0].src = get_tile(ctx, cmp->inputs[1], true)->interval;
+                dst->ins[0].mask = rm;
+
+                if ((dst->flags & TILE_HAS_IMM) == 0) {
+                    dst->ins[1].src = get_tile(ctx, cmp->inputs[2], true)->interval;
+                    dst->ins[1].mask = rm;
+                }
+            } else {
+                dst->ins[0].src = get_tile(ctx, cmp, true)->interval;
+                dst->ins[0].mask = normie_mask(ctx, cmp->dt);
+            }
+
+            FOREACH_N(i, ins, ins+tmps) {
+                dst->ins[i].src = NULL;
+                dst->ins[i].mask = ctx->normie_mask[0];
+            }
+
             return REGEMPTY;
         }
 
@@ -571,7 +698,7 @@ static Val parse_memory_op(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t, TB_Node*
     Val ptr;
     if (addr->type == TB_LOCAL) {
         int pos = get_stack_slot(ctx, addr);
-        ptr = val_stack(ctx->stack_usage - pos);
+        ptr = val_stack(pos);
     } else if (addr->type == TB_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(addr, TB_NodeSymbol)->sym;
         ptr = val_global(sym, 0);
@@ -599,26 +726,17 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         TB_Node* n = u->n;
         if (n->type != TB_LOCAL) continue;
 
-        ptrdiff_t search = nl_map_get(ctx->f->attribs, n);
-        if (search < 0) continue;
+        TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
+        if (l->type == NULL) continue;
 
-        // could be costly if you had more than like 50 attributes per stack slot... which you
-        // wouldn't do right?
-        DynArray(TB_Attrib) attribs = ctx->f->attribs[search].v;
-        dyn_array_for(i, attribs) {
-            TB_Attrib* a = &attribs[i];
-            if (a->tag == TB_ATTRIB_VARIABLE) {
-                int pos = get_stack_slot(ctx, n);
+        int pos = get_stack_slot(ctx, n);
 
-                TB_StackSlot s = {
-                    .position = stack_usage - pos,
-                    .storage_type = a->var.storage,
-                    .name = a->var.name,
-                };
-                dyn_array_put(ctx->debug_stack_slots, s);
-                break;
-            }
-        }
+        TB_StackSlot s = {
+            .name = l->name,
+            .type = l->type,
+            .storage = { pos },
+        };
+        dyn_array_put(ctx->debug_stack_slots, s);
     }
 
     // save frame pointer (if applies)
@@ -701,7 +819,7 @@ static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
         if (aux->base->type == TB_LOCAL) {
             int pos = get_stack_slot(ctx, aux->base);
             ea.reg = RSP;
-            ea.imm = ctx->stack_usage - pos;
+            ea.imm = pos;
         } else {
             tb_todo();
         }
@@ -788,17 +906,19 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 break;
             }
             case TB_STORE: {
+                TB_Node* val = n->inputs[3];
+
                 Val ea = emit_addr(ctx, e, t);
                 Val src;
                 if (t->flags & TILE_HAS_IMM) {
-                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
-                    TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
+                    assert(val->type == TB_INTEGER_CONST);
+                    TB_NodeInt* i = TB_NODE_GET_EXTRA(val);
                     src = val_imm(i->value);
                 } else {
                     src = op_at(ctx, t->ins[t->in_count - 1].src);
                 }
 
-                inst2(e, MOV, &ea, &src, legalize_int2(n->inputs[2]->dt));
+                inst2(e, MOV, &ea, &src, legalize_int2(val->dt));
                 break;
             }
             case TB_LOCAL:
@@ -818,22 +938,6 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 break;
             }
 
-            case TB_SAFEPOINT_NOP: {
-                TB_NodeSafepoint* loc = TB_NODE_GET_EXTRA(n);
-                TB_Location l = {
-                    .file = loc->file,
-                    .line = loc->line,
-                    .column = loc->column,
-                    .pos = GET_CODE_POS(e)
-                };
-
-                size_t top = dyn_array_length(ctx->locations);
-                if (top == 0 || (ctx->locations[top - 1].pos != l.pos && !is_same_location(&l, &ctx->locations[top - 1]))) {
-                    dyn_array_put(ctx->locations, l);
-                }
-                break;
-            }
-
             case TB_INTEGER_CONST: {
                 uint64_t x = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
                 TB_X86_DataType dt = legalize_int2(n->dt);
@@ -848,55 +952,71 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 }
                 break;
             }
-            case TB_SIGN_EXT: {
-                // unconventional sizes do:
-                //   SHL dst, x
-                //   SAR dst, x
-                //
-                // where x is 'reg_width - val_width'
+            case TB_SIGN_EXT:
+            case TB_ZERO_EXT: {
+                bool is_signed = n->type == TB_SIGN_EXT;
                 TB_DataType src_dt = n->inputs[1]->dt;
                 int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
 
-                TB_X86_DataType dt = legalize_int2(n->dt);
-                if (dt <= TB_X86_TYPE_DWORD) {
-                    dt = TB_X86_TYPE_DWORD;
-                }
-                int dst_bits = dt == TB_X86_TYPE_QWORD ? 64 : 32;
-
-                Val dst = op_at(ctx, t->interval);
-                Val src = op_at(ctx, t->ins[0].src);
-
                 int op = 0;
                 switch (bits_in_type) {
-                    case 8:  op = MOVSXB; break;
-                    case 16: op = MOVSXW; break;
-                    case 32: op = MOVSXD; break;
-                    default: {
-                        if (!is_value_match(&dst, &src)) {
-                            inst2(e, MOV, &dst, &src, dt);
-                        }
-
-                        Val imm = val_imm(dst_bits - bits_in_type);
-                        inst2(e, SHL, &dst, &imm, dt);
-                        inst2(e, SAR, &dst, &imm, dt);
-                        break;
-                    }
+                    case 8:  op = is_signed ? MOVSXB : MOVZXB; break;
+                    case 16: op = is_signed ? MOVSXB : MOVZXW; break;
+                    case 32: op = is_signed ? MOVSXD : MOV;    break;
+                    case 64: op = MOV;                         break;
                 }
 
-                if (op) {
-                    inst2(e, op, &dst, &src, dt);
+                Val dst = op_at(ctx, t->interval);
+                TB_X86_DataType dt = legalize_int2(n->dt);
+                if (is_signed && dt <= TB_X86_TYPE_DWORD) {
+                    dt = TB_X86_TYPE_DWORD;
+                }
+
+                if (n->inputs[1]->type == TB_LOAD) {
+                    Val ea = emit_addr(ctx, e, t);
+                    inst2(e, op ? op : MOV, &dst, &ea, dt);
+                } else {
+                    Val lhs = op_at(ctx, t->ins[0].src);
+                    inst2(e, op ? op : MOV, &dst, &lhs, dt);
+                }
+
+                if (op == 0) {
+                    // unconventional sizes do:
+                    //   SHL dst, x
+                    //   SAR dst, x (or SHR if zero ext)
+                    //
+                    // where x is 'reg_width - val_width'
+                    int dst_bits = dt == TB_X86_TYPE_QWORD ? 64 : 32;
+                    Val imm = val_imm(dst_bits - bits_in_type);
+                    inst2(e, SHL, &dst, &imm, dt);
+                    inst2(e, SHR, &dst, &imm, dt);
                 }
                 break;
             }
-            case TB_TRUNCATE:
-            case TB_ZERO_EXT:
-            case TB_INT2PTR: {
+            case TB_TRUNCATE: {
                 TB_X86_DataType dt = legalize_int2(n->dt);
 
                 Val dst = op_at(ctx, t->interval);
                 Val lhs = op_at(ctx, t->ins[0].src);
                 if (!is_value_match(&dst, &lhs)) {
                     inst2(e, MOV, &dst, &lhs, dt);
+                }
+                break;
+            }
+            case TB_BITCAST: {
+                TB_X86_DataType dst_dt = legalize_int2(n->dt);
+                TB_X86_DataType src_dt = legalize_int2(n->inputs[1]->dt);
+
+                Val dst = op_at(ctx, t->interval);
+                Val src = op_at(ctx, t->ins[0].src);
+
+                if (dst_dt >= TB_X86_TYPE_BYTE && dst_dt <= TB_X86_TYPE_QWORD &&
+                    src_dt >= TB_X86_TYPE_BYTE && src_dt <= TB_X86_TYPE_QWORD) {
+                    if (dst_dt != src_dt || !is_value_match(&dst, &src)) {
+                        inst2(e, MOV, &dst, &src, dst_dt);
+                    }
+                } else {
+                    tb_todo();
                 }
                 break;
             }
@@ -988,6 +1108,8 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             }
             case TB_SHL:
             case TB_SHR:
+            case TB_ROL:
+            case TB_ROR:
             case TB_SAR: {
                 TB_X86_DataType dt = legalize_int2(n->dt);
 
@@ -1001,6 +1123,8 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 switch (n->type) {
                     case TB_SHL: op = SHL; break;
                     case TB_SHR: op = SHR; break;
+                    case TB_ROL: op = ROL; break;
+                    case TB_ROR: op = ROR; break;
                     case TB_SAR: op = SAR; break;
                     default: tb_todo();
                 }
@@ -1138,20 +1262,161 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     // if flipping avoids a jmp, do that
                     if (ctx->fallthrough == yea) {
                         // jcc false
-                        EMIT1(e, 0x0F); EMIT1(e, 0x80 + (cc ^ 1)); EMIT4(e, 0);
-                        tb_emit_rel32(e, &e->labels[naw], GET_CODE_POS(e) - 4);
+                        jcc(e, cc ^ 1, naw);
                     } else {
-                        // jcc true
-                        EMIT1(e, 0x0F); EMIT1(e, 0x80 + cc); EMIT4(e, 0);
-                        tb_emit_rel32(e, &e->labels[yea], GET_CODE_POS(e) - 4);
+                        jcc(e, cc, yea);
                         if (ctx->fallthrough != naw) {
-                            // jmp false
-                            EMIT1(e, 0xE9); EMIT4(e, 0);
-                            tb_emit_rel32(e, &e->labels[naw], GET_CODE_POS(e) - 4);
+                            jmp(e, naw);
                         }
                     }
                 } else {
-                    tb_todo();
+                    AuxBranch* aux = t->aux;
+                    TB_X86_DataType cmp_dt = legalize_int2(dt);
+                    Val key = op_at(ctx, t->ins[0].src);
+
+                    if (aux->if_chain) {
+                        // Basic if-else chain
+                        FOREACH_N(i, 1, br->succ_count) {
+                            uint64_t curr_key = br->keys[i-1];
+
+                            if (fits_into_int32(curr_key)) {
+                                Val imm = val_imm(curr_key);
+                                inst2(e, CMP, &key, &imm, cmp_dt);
+                            } else {
+                                Val tmp = op_at(ctx, t->ins[1].src);
+                                Val imm = val_abs(curr_key);
+
+                                inst2(e, MOV, &key, &imm, cmp_dt);
+                                inst2(e, CMP, &key, &imm, cmp_dt);
+                            }
+                            jcc(e, E, succ[i]);
+                        }
+                        jmp(e, succ[0]);
+                    } else {
+                        int64_t min = aux->min;
+                        int64_t max = aux->max;
+                        int64_t range = (aux->max - aux->min) + 1;
+
+                        // make a jump table with 4 byte relative pointers for each target
+                        TB_Function* f = ctx->f;
+                        TB_Global* jump_table = tb_global_create(f->super.module, -1, "jumptbl", NULL, TB_LINKAGE_PRIVATE);
+                        tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), jump_table, range*4, 4, 1);
+
+                        // generate patches for later
+                        uint32_t* jump_entries = tb_global_add_region(f->super.module, jump_table, 0, range*4);
+
+                        Set entries_set = set_create_in_arena(arena, range);
+                        FOREACH_N(i, 1, br->succ_count) {
+                            uint64_t key_idx = br->keys[i - 1] - min;
+                            assert(key_idx < range);
+
+                            JumpTablePatch p;
+                            p.pos = &jump_entries[key_idx];
+                            p.target = succ[i];
+                            dyn_array_put(ctx->jump_table_patches, p);
+                            set_put(&entries_set, key_idx);
+                        }
+
+                        // handle default cases
+                        FOREACH_N(i, 0, range) {
+                            if (!set_get(&entries_set, i)) {
+                                JumpTablePatch p;
+                                p.pos = &jump_entries[i];
+                                p.target = succ[0];
+                                dyn_array_put(ctx->jump_table_patches, p);
+                            }
+                        }
+
+                        /*int tmp = DEF(NULL, dt);
+                        hint_reg(ctx, tmp, key);
+                        if (dt.data >= 32) {
+                            SUBMIT(inst_move(dt, tmp, key));
+                        } else if (dt.data == 16) {
+                            dt = TB_TYPE_I32;
+                            SUBMIT(inst_op_rr(MOVZXW, dt, tmp, key));
+                        } else if (dt.data == 8) {
+                            dt = TB_TYPE_I32;
+                            SUBMIT(inst_op_rr(MOVZXB, dt, tmp, key));
+                        } else {
+                            dt = TB_TYPE_I32;
+                            uint64_t mask = tb__mask(dt.data);
+
+                            SUBMIT(inst_move(dt, tmp, key));
+                            SUBMIT(inst_op_rri(AND, dt, tmp, tmp, mask));
+                        }*/
+
+                        // copy key into temporary
+                        {
+                            Val tmp = op_at(ctx, t->ins[1].src);
+                            inst2(e, MOV, &tmp, &key, TB_X86_TYPE_QWORD);
+                            key = tmp;
+                        }
+
+                        int ins = 1;
+                        Val target = op_at(ctx, t->ins[2].src);
+                        Val table = op_at(ctx, t->ins[3].src);
+
+                        // Simple range check:
+                        //   if ((key - min) >= (max - min)) goto default
+                        if (has_default) {
+                            if (min != 0) {
+                                Val imm = val_imm(min);
+                                inst2(e, SUB, &key, &imm, cmp_dt);
+                            }
+                            // cmp key, range
+                            Val imm = val_imm(range);
+                            inst2(e, CMP, &key, &imm, cmp_dt);
+                            // jnb fallthru
+                            jcc(e, NB, succ[0]);
+                        }
+                        //   lea target, [rip + f]
+                        Val fn_sym = val_global((TB_Symbol*) f, 0);
+                        inst2(e, LEA, &target, &fn_sym, TB_X86_TYPE_QWORD);
+                        //   lea table, [rip + JUMP_TABLE]
+                        Val table_sym = val_global((TB_Symbol*) jump_table, 0);
+                        inst2(e, LEA, &table, &table_sym, TB_X86_TYPE_QWORD);
+                        //   movsxd table, [table + key*4]
+                        Val addr = val_base_index_disp(table.reg, key.reg, SCALE_X4, 0);
+                        inst2(e, MOVSXD, &table, &addr, TB_X86_TYPE_QWORD);
+                        //   add target, table
+                        inst2(e, ADD, &target, &table, TB_X86_TYPE_QWORD);
+                        //   jmp target
+                        inst1(e, JMP, &target, TB_X86_TYPE_QWORD);
+                    }
+
+                    #if 0
+                    // try for jump tables or if-chains
+                    //
+                    // check if there's at most only one space between entries
+                    int64_t last = br->keys[0];
+                    int64_t min = last, max = last;
+
+                    double dist_avg = 0;
+                    double inv_succ_count = 1.0 / (br->succ_count - 2);
+
+                    FOREACH_N(i, 2, br->succ_count) {
+                        int64_t key = br->keys[i - 1];
+                        min = (min > key) ? key : min;
+                        max = (max > key) ? max : key;
+
+                        dist_avg += (key - last) * inv_succ_count;
+                        last = key;
+                    }
+
+                    int64_t range = (max - min) + 1;
+
+                    // if we do if-else chains we'll do 1+2c ops (c is the number of cases).
+                    int64_t if_chain_cost  = 1 + 2*range;
+                    // if we do jump table it's 6 ops + a table that's got [max-min] entries but cost
+                    // wise the issue is slots which are missed (go to fallthru).
+                    int64_t jmp_table_cost = 6 + (range / dist_avg);
+
+                    TB_X86_DataType cmp_dt = legalize_int2(dt);
+                    Val key = op_at(ctx, t->ins[0].src);
+                    if (jmp_table_cost > if_chain_cost) {
+                    } else {
+                    }
+                    #endif
                 }
 
                 tb_arena_restore(arena, sp);

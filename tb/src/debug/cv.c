@@ -500,11 +500,11 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_TemporarySt
                         tb_patch2b(&debugs_out, frameproc_baseline, (debugs_out.count - frameproc_baseline) - 2);
 
                         dyn_array_for(j, out_f->stack_slots) {
-                            int stack_pos = out_f->stack_slots[j].position;
-                            TB_DebugType* type = out_f->stack_slots[j].storage_type;
+                            int stack_pos = out_f->stack_slots[j].storage.offset;
+                            TB_DebugType* type = out_f->stack_slots[j].type;
 
                             const char* var_name = out_f->stack_slots[j].name;
-                            if (var_name == NULL) continue;
+                            assert(var_name);
 
                             size_t var_name_len = strlen(var_name);
                             uint32_t type_index = convert_to_codeview_type(&builder, type);

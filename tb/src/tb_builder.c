@@ -13,6 +13,9 @@ TB_Node* tb_inst_get_control(TB_Function* f) { return f->trace.bot_ctrl; }
 TB_Node* transfer_ctrl(TB_Function* f, TB_Node* n) {
     TB_Node* prev = f->trace.bot_ctrl;
     f->trace.bot_ctrl = n;
+    if (f->line_loc) {
+        nl_table_put(&f->locations, n, f->line_loc);
+    }
     return prev;
 }
 
@@ -33,23 +36,15 @@ TB_Trace tb_inst_trace_from_region(TB_Function* f, TB_Node* region) {
     return (TB_Trace){ region, region, r->mem_in };
 }
 
-static void append_attrib(TB_Function* f, TB_Node* n, TB_Attrib a) {
-    ptrdiff_t search = nl_map_get(f->attribs, n);
-    if (search < 0) {
-        DynArray(TB_Attrib) attribs = dyn_array_create(TB_Attrib, 2);
-        dyn_array_put(attribs, a);
-        nl_map_put(f->attribs, n, attribs);
-    } else {
-        dyn_array_put(f->attribs[search].v, a);
-    }
-}
-
 static TB_Node* peek_mem(TB_Function* f) { return f->trace.mem; }
 
 // adds memory effect to region
 static TB_Node* append_mem(TB_Function* f, TB_Node* new_mem) {
     TB_Node* old = f->trace.mem;
     f->trace.mem = new_mem;
+    if (f->line_loc) {
+        nl_table_put(&f->locations, new_mem, f->line_loc);
+    }
     return old;
 }
 
@@ -74,34 +69,28 @@ bool tb_node_is_constant_zero(TB_Node* n) {
 }
 
 void tb_function_attrib_variable(TB_Function* f, TB_Node* n, TB_Node* parent, ptrdiff_t len, const char* name, TB_DebugType* type) {
-    append_attrib(f, n, (TB_Attrib){ TB_ATTRIB_VARIABLE, .var = { parent, tb__arena_strdup(f->super.module, len, name), type } });
+    TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
+    l->name = tb__arena_strdup(f->super.module, len, name);
+    l->type = type;
 }
 
 void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent) {
-    append_attrib(f, n, (TB_Attrib){ TB_ATTRIB_SCOPE, .scope = { parent } });
 }
 
 void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
-    TB_Node* m = peek_mem(f);
-    if (f->trace.bot_ctrl->type == TB_SAFEPOINT_NOP && f->trace.bot_ctrl->inputs[1] == m) {
-        TB_NODE_SET_EXTRA(f->trace.bot_ctrl, TB_NodeSafepoint, file, line, column);
-    } else {
-        // we don't need any other inputs just yet
-        TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_NOP, TB_TYPE_CONTROL, 2, sizeof(TB_NodeSafepoint));
-        set_input(f, n, transfer_ctrl(f, n), 0);
-        set_input(f, n, m, 1);
-        TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, file, line, column);
-    }
+    TB_NodeLocation* loc = tb_arena_alloc(f->arena, sizeof(TB_NodeLocation));
+    loc->file = file;
+    loc->line = line;
+    loc->column = column;
+    f->line_loc = loc;
 }
 
 void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
-    // we don't need any other inputs just yet
-    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_NOP, TB_TYPE_CONTROL, 2, sizeof(TB_NodeSafepoint));
-    set_input(f, n, f->root_node->inputs[0], 0);
-    set_input(f, n, f->root_node->inputs[1], 1);
-    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, file, line, column);
-
-    set_input(f, f->root_node, n, 0);
+    TB_NodeLocation* loc = tb_arena_alloc(f->arena, sizeof(TB_NodeLocation));
+    loc->file = file;
+    loc->line = line;
+    loc->column = column;
+    nl_table_put(&f->locations, f->root_node->inputs[0], loc);
 }
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
@@ -166,11 +155,11 @@ TB_Node* tb_inst_trunc(TB_Function* f, TB_Node* src, TB_DataType dt) {
 }
 
 TB_Node* tb_inst_int2ptr(TB_Function* f, TB_Node* src) {
-    return tb_unary(f, TB_INT2PTR, TB_TYPE_PTR, src);
+    return tb_unary(f, TB_BITCAST, TB_TYPE_PTR, src);
 }
 
 TB_Node* tb_inst_ptr2int(TB_Function* f, TB_Node* src, TB_DataType dt) {
-    return tb_unary(f, TB_PTR2INT, dt, src);
+    return tb_unary(f, TB_BITCAST, dt, src);
 }
 
 TB_Node* tb_inst_int2float(TB_Function* f, TB_Node* src, TB_DataType dt, bool is_signed) {
@@ -210,10 +199,21 @@ TB_Node* tb_inst_fpxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
 }
 
 TB_Node* tb_inst_sxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
+    if (src->type == TB_INTEGER_CONST) {
+        uint64_t y = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
+        y = tb__sxt(y, src->dt.data, 64);
+        return tb_inst_uint(f, dt, y);
+    }
+
     return tb_unary(f, TB_SIGN_EXT, dt, src);
 }
 
 TB_Node* tb_inst_zxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
+    if (src->type == TB_INTEGER_CONST) {
+        uint64_t y = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
+        return tb_inst_uint(f, dt, y);
+    }
+
     return tb_unary(f, TB_ZERO_EXT, dt, src);
 }
 
@@ -259,15 +259,15 @@ TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment
     return n;
 }
 
-void tb_inst_safepoint_poll(TB_Function* f, TB_Node* addr, int input_count, TB_Node** inputs) {
+void tb_inst_safepoint_poll(TB_Function* f, void* tag, TB_Node* addr, int input_count, TB_Node** inputs) {
     TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_POLL, TB_TYPE_CONTROL, 3 + input_count, sizeof(TB_NodeSafepoint));
     set_input(f, n, transfer_ctrl(f, n), 0);
     set_input(f, n, peek_mem(f), 1);
     set_input(f, n, addr, 2);
-    if (input_count > 0) {
-        memcpy(n->inputs + 3, inputs, input_count * sizeof(TB_Node*));
+    FOREACH_N(i, 0, input_count) {
+        set_input(f, n, inputs[i], i + 3);
     }
-    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, 0);
+    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, tag);
 }
 
 TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnits alignment, bool is_volatile) {
@@ -979,9 +979,6 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
     // allocate return node
     TB_Node* root = f->root_node;
     TB_Node* ctrl = root->inputs[0];
-    if (ctrl->type == TB_SAFEPOINT_NOP) {
-        ctrl = ctrl->inputs[0];
-    }
     assert(ctrl->type == TB_REGION);
 
     // add to PHIs

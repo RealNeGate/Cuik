@@ -120,7 +120,7 @@ LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* 
         *interval = (LiveInterval){
             .id = ctx->interval_count++,
             .mask = mask,
-            .hint = -1,
+            .hint = NULL,
             .reg = -1,
             .assigned = -1,
             .range_cap = 4, .range_count = 1,
@@ -193,12 +193,12 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     // def site.
                     int reg = fixed_reg_mask(interval->mask.mask);
                     if (reg >= 0 && t->tag != TILE_SPILL_MOVE) {
-                        // interval: FIXED(t) => NORMIE_MASK
                         RegMask rm = interval->mask;
-                        interval->mask = ctx->normie_mask[rm.class];
-                        interval->hint = reg;
-
                         LiveInterval* fixed = &ctx->fixed[rm.class][reg];
+
+                        // interval: FIXED(t) => NORMIE_MASK
+                        interval->mask = ctx->normie_mask[rm.class];
+                        interval->hint = fixed;
 
                         // insert copy such that the def site is the only piece which "requires"
                         // the fixed range.
@@ -241,21 +241,34 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                     // clobber fixed input
                     if (in_def == NULL) {
-                        assert(hint >= 0);
-                        add_range(&ra, &ctx->fixed[in_mask.class][hint], time, time + 1);
+                        LiveInterval* tmp;
+                        if (hint >= 0) {
+                            tmp = &ctx->fixed[in_mask.class][hint];
+                        } else {
+                            tmp = gimme_interval_for_mask(ctx, arena, &ra, in_mask);
+                            dyn_array_put(ra.unhandled, tmp);
+                            t->ins[j].src = tmp;
+                        }
+
+                        add_range(&ra, tmp, time, time + 1);
                         continue;
                     }
 
                     RegMask in_def_mask = in_def->mask;
+                    assert(in_def_mask.class == in_mask.class);
+
                     if (hint >= 0) {
-                        in_def->hint = hint;
+                        in_def->hint = &ctx->fixed[in_mask.class][hint];
                     }
 
+                    // this is used to guarentee the first operand of a binary operator
+                    // can be coalesced with the destination, especially helpful for x86
+                    // where binops that don't coalesce require an extra mov.
+                    bool coalesceable = interval && t->in_count <= 2 && j == 0;
                     int use_time = time;
 
                     // if the use mask is more constrained than the def, we'll make a temporary
-                    if ((in_def_mask.mask & in_mask.mask) != in_def->mask.mask) {
-                        assert(in_def->mask.class == in_mask.class);
+                    if ((in_def_mask.mask & in_mask.mask) != in_def_mask.mask) {
                         TB_OPTDEBUG(REGALLOC)(printf("  TEMP %#04llx -> v%d (%#04llx)\n", in_def_mask.mask, in_def->id, in_mask.mask));
 
                         // construct copy (either to a fixed interval or a new masked interval)
@@ -280,6 +293,14 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         // insert fixed interval use site, def site will be set later
                         add_range(&ra, tmp->interval, bb_start, use_time);
                         add_use_pos(&ra, tmp->interval, bb_start, USE_REG);
+                    } else if (!coalesceable) {
+                        // extend
+                        use_time += 2;
+                    }
+
+                    // hint as copy
+                    if (coalesceable && interval->hint == NULL) {
+                        interval->hint = in_def;
                     }
 
                     add_range(&ra, in_def, bb_start, use_time);
@@ -303,7 +324,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             // add range at beginning such that all fixed intervals are "awake"
             FOREACH_N(j, 0, ctx->num_regs[i]) {
-                // if (ctx->fixed[i][j].range_count > 1)
                 add_range(&ra, &ctx->fixed[i][j], 0, 1);
                 dyn_array_put(ra.unhandled, &ctx->fixed[i][j]);
             }
@@ -431,9 +451,10 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
         }
     }
 
-    // it's better in the long run to aggressively split
-    int hint_reg = interval->hint;
     int highest = -1;
+    int hint_reg = interval->hint ? interval->hint->assigned : -1;
+
+    // it's better in the long run to aggressively split based on hints
     if (hint_reg >= 0 && interval_end(interval) <= ra->free_pos[hint_reg]) {
         highest = hint_reg;
     }
@@ -482,7 +503,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             // we can steal it completely
             TB_OPTDEBUG(REGALLOC)(printf("  #   assign to %s", reg_name(rc, highest)));
 
-            if (interval->hint >= 0) {
+            if (hint_reg >= 0) {
                 if (highest == hint_reg) {
                     TB_OPTDEBUG(REGALLOC)(printf(" (HINTED)\n"));
                 } else {
@@ -667,14 +688,14 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
 // update active range to match where the position is currently
 static bool update_interval(LSRA* restrict ra, LiveInterval* interval, bool is_active, int time, int inactive_index) {
     // get to the right range first
-    while (time > interval->ranges[interval->active_range].end) {
+    while (time >= interval->ranges[interval->active_range].end) {
         assert(interval->active_range > 0);
         interval->active_range -= 1;
     }
 
     int hole_end = interval->ranges[interval->active_range].start;
     int active_end = interval->ranges[interval->active_range].end;
-    bool is_now_active = time > hole_end;
+    bool is_now_active = time >= hole_end;
 
     int rc = interval_class(interval);
     int reg = interval->assigned;

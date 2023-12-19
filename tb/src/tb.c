@@ -364,6 +364,8 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
         f->arena = arena;
     }
 
+    f->locations = nl_table_alloc(16);
+
     f->section = section;
     f->node_count = 0;
     TB_Node* root = f->root_node = tb_alloc_node(f, TB_ROOT, TB_TYPE_TUPLE, 3 + p->return_count, 0);

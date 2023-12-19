@@ -224,15 +224,14 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
             continue;
         }
 
+        TB_NodeLocation* v;
+        if (v = nl_table_get(&ctx->f->locations, n), v) {
+            printf("  # location %s:%d\n", v->file->path, v->line);
+        }
+
         switch (n->type) {
             case TB_DEBUGBREAK: printf("  debugbreak"); break;
             case TB_UNREACHABLE: printf("  unreachable"); break;
-
-            case TB_SAFEPOINT_NOP: {
-                TB_NodeSafepoint* s = TB_NODE_GET_EXTRA(n);
-                printf("  # v%u: location %s:%d", n->gvn, s->file->path, s->line);
-                break;
-            }
 
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
@@ -439,6 +438,9 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     case TB_LOCAL: {
                         TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
                         printf("!size(%u) !align(%u)", l->size, l->align);
+                        if (l->type) {
+                            printf(" !var(%s)", l->name);
+                        }
                         break;
                     }
 
@@ -456,16 +458,6 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     default: tb_assert(extra_bytes(n) == 0, "TODO");
                 }
                 break;
-            }
-        }
-
-        ptrdiff_t search = nl_map_get(ctx->f->attribs, n);
-        if (search >= 0) {
-            DynArray(TB_Attrib) attribs = ctx->f->attribs[search].v;
-            dyn_array_for(i, attribs) {
-                if (attribs[i].tag == TB_ATTRIB_VARIABLE) {
-                    printf(" !var(%s)", attribs[i].var.name);
-                }
             }
         }
 

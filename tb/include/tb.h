@@ -294,9 +294,6 @@ typedef enum TB_NodeTypeEnum {
     //   says to (platform specific but almost always just the page being made
     //   unmapped/guard), 3rd argument is the poll site.
     TB_SAFEPOINT_POLL, // (Control, Memory, Ptr?, Data...) -> (Control)
-    //   this safepoint which doesn't emit any poll site, it's just
-    //   an address, this is used by AOT compiles to encode line info.
-    TB_SAFEPOINT_NOP,  // (Control, Memory, Ptr?, Data...) -> (Control)
 
     ////////////////////////////////
     // MEMORY
@@ -344,10 +341,6 @@ typedef enum TB_NodeTypeEnum {
     //   arguments represent base, index, and stride respectively
     //   and will perform `base + index*stride`
     TB_ARRAY_ACCESS,  // (Ptr, Int) & Int -> Ptr
-    //   converts an integer to a pointer
-    TB_INT2PTR,       // Int -> Ptr
-    //   converts a pointer to an integer
-    TB_PTR2INT,       // Ptr -> Int
 
     // Conversions
     TB_TRUNCATE,
@@ -520,6 +513,12 @@ typedef struct TB_Symbol {
     // after this point it's tag-specific storage
 } TB_Symbol;
 
+// associated to nodes for debug locations
+typedef struct {
+    TB_SourceFile* file;
+    int line, column;
+} TB_NodeLocation;
+
 typedef struct TB_Node TB_Node;
 typedef struct User User;
 struct User {
@@ -586,6 +585,10 @@ typedef struct {
 typedef struct {
     TB_CharUnits size, align;
     int alias_index; // 0 if local is used beyond direct memops, 1...n as a unique alias name
+
+    // dbg info
+    char* name;
+    TB_DebugType* type;
 } TB_NodeLocal;
 
 typedef struct {
@@ -626,12 +629,6 @@ typedef struct {
 } TB_NodeAtomic;
 
 typedef struct {
-    // line info on safepoints
-    TB_SourceFile* file;
-    int line, column;
-} TB_NodeSafepoint;
-
-typedef struct {
     TB_FunctionPrototype* proto;
     int proj_count;
     TB_Node* projs[];
@@ -640,6 +637,10 @@ typedef struct {
 typedef struct {
     TB_FunctionPrototype* proto;
 } TB_NodeTailcall;
+
+typedef struct {
+    void* tag;
+} TB_NodeSafepoint;
 
 typedef struct {
     const char* tag;
@@ -1114,7 +1115,7 @@ TB_API TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits al
 TB_API TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnits align, bool is_volatile);
 TB_API void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile);
 
-TB_API void tb_inst_safepoint_poll(TB_Function* f, TB_Node* addr, int input_count, TB_Node** inputs);
+TB_API void tb_inst_safepoint_poll(TB_Function* f, void* tag, TB_Node* addr, int input_count, TB_Node** inputs);
 
 TB_API TB_Node* tb_inst_bool(TB_Function* f, bool imm);
 TB_API TB_Node* tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm);

@@ -24,7 +24,6 @@
 #ifndef _WIN32
 // NOTE(NeGate): I love how we assume that if it's not windows
 // its just posix, these are the only options i guess
-#include <fcntl.h>
 #include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -36,8 +35,8 @@
 
 #define NL_HASH_MAP_INLINE
 #include <hash_map.h>
+#include <new_hash_map.h>
 
-#include <hash_set.h>
 #include <perf.h>
 
 #define FOREACH_N(it, start, end) \
@@ -208,19 +207,16 @@ struct TB_DebugType {
     };
 };
 
-#define TERMS(x) \
-(TB_Attrib, \
-    x(TB_ATTRIB_VARIABLE, var,   TB_Node* parent; char* name; TB_DebugType* storage) \
-    x(TB_ATTRIB_SCOPE,    scope, TB_Node* parent) \
-)
-#include "tagged_union.h"
+// TODO(NeGate): support complex variable descriptions
+// currently we only support stack relative
+typedef struct {
+    int32_t offset;
+} TB_DebugValue;
 
 typedef struct TB_StackSlot {
-    // TODO(NeGate): support complex variable descriptions
-    // currently we only support stack relative
-    int32_t position;
     const char* name;
-    TB_DebugType* storage_type;
+    TB_DebugType* type;
+    TB_DebugValue storage;
 } TB_StackSlot;
 
 typedef struct TB_Comdat {
@@ -301,11 +297,8 @@ struct TB_Function {
     TB_Node* callgraph;
     TB_Trace trace;
 
-    TB_NodeSafepoint exit_attrib;
-    TB_NodeSafepoint line_attrib;
-
-    // Attributes
-    NL_Map(uint64_t, DynArray(TB_Attrib)) attribs;
+    TB_NodeLocation* line_loc;
+    NL_Table locations; // TB_Node* -> TB_NodeLocation*
 
     // Compilation output
     union {

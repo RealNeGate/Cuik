@@ -167,16 +167,16 @@ static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB
     }
 }
 
-static Lattice* dataflow_int2ptr(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
+static Lattice* dataflow_bitcast(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
 
     assert(a->tag == LATTICE_INT);
-    if (a->_int.min == a->_int.max) {
-        // int2ptr with a constant leads to fun cool stuff (usually we get constant
-        // zeros)
+    if (a->_int.min == a->_int.max && n->dt.type == TB_PTR) {
+        // bitcast with a constant leads to fun cool stuff (usually we get constant zeros for
+        // NULL)
         LatticeTrifecta t = a->_int.min ? LATTICE_KNOWN_NOT_NULL : LATTICE_KNOWN_NULL;
         return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = { t } });
     }

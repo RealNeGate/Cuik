@@ -14,7 +14,7 @@
 #include <hash_map.h>
 
 #define NL_HASH_SET_IMPL
-#include <hash_set.h>
+#include <new_hash_map.h>
 
 #define LOG_USE_COLOR
 #include "log.c"

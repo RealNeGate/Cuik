@@ -1,30 +1,44 @@
-#include <stdint.h>
+#define _CRT_SECURE_NO_WARNINGS
 #include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <time.h>
+#include <sys/stat.h>
 
-int imm(void)   { return 69420; }
-int mul3(unsigned x) { return x * 3; }
-int bits(int x) { return x << 2; }
+#ifdef _WIN32
+#define fileno _fileno
+#define fstat _fstat64
+#define stat _stat64
+#endif
 
-/*int loop2(int n) {
-    int i = 0;
-    while (i < n) {
-        // bits(i);
-        i += 1;
+static char* read_entire_file(const char* filepath, size_t* out_length) {
+    FILE* file = fopen(filepath, "rb");
+    if (file == NULL) {
+        return NULL;
     }
-    return i;
-}*/
+    int descriptor = fileno(file);
 
-int foo(int x, int y) {
-    int z = (x + 2) / y;
-    z += y;
-    return z;
+    struct stat file_stats;
+    if (fstat(descriptor, &file_stats) == -1) {
+        return NULL;
+    }
+
+    size_t length = file_stats.st_size;
+    char* data = malloc(length + 1);
+
+    fseek(file, 0, SEEK_SET);
+    size_t length_read = fread(data, 1, length, file);
+    data[length_read] = '\0';
+    fclose(file);
+
+    *out_length = length_read;
+    return data;
 }
 
-int bar() {
-    return 4 + 3 * 2 + 10;
-}
-
-/*uint32_t murmur3_32(const void* key, size_t len) {
+uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
     // main body, work on 32-bit blocks at a time
@@ -53,4 +67,12 @@ int bar() {
     h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
     h = (h ^ (h >> 13))*0xc2b2ae35;
     return (h ^ (h >> 16));
-}*/
+}
+
+int main(int argc, char** argv) {
+    size_t len;
+    void* data = read_entire_file(argv[1], &len);
+
+    printf("Wack! %#x\n", murmur3_32(data, len));
+    return 0;
+}

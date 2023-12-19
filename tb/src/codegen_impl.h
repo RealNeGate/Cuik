@@ -137,7 +137,8 @@ static int try_init_stack_slot(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
-    return nl_map_get_checked(ctx->stack_slots, n);
+    int pos = nl_map_get_checked(ctx->stack_slots, n);
+    return ctx->stack_usage - pos;
 }
 
 static LiveInterval* canonical_interval(Ctx* restrict ctx, LiveInterval* interval, RegMask mask) {
@@ -156,7 +157,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Function* restrict f = p->f;
-    tb_pass_print(p);
+    // tb_pass_print(p);
 
     Ctx ctx = {
         .module = f->super.module,
@@ -188,6 +189,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         tb_pass_schedule(p, cfg, false);
     }
 
+    nl_map_create(ctx.stack_slots, 4);
     init_ctx(&ctx, f->super.module->target_abi);
 
     ctx.values = tb_arena_alloc(arena, f->node_count * sizeof(Tile*));
@@ -214,15 +216,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     ctx.node_to_bb.entries = tb_arena_alloc(arena, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
     memset(ctx.node_to_bb.entries, 0, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
 
-    nl_map_create(ctx.stack_slots, 4);
-
     CUIK_TIMED_BLOCK("create physical intervals") {
         FOREACH_N(i, 0, ctx.num_classes) {
             LiveInterval* intervals = tb_arena_alloc(arena, ctx.num_regs[i] * sizeof(LiveInterval));
             FOREACH_N(j, 0, ctx.num_regs[i]) {
                 intervals[j] = (LiveInterval){
                     .id = ctx.interval_count++,
-                    .assigned = -1, .hint = j, .reg = j,
+                    .assigned = -1, .hint = NULL, .reg = j,
                     .mask = { i, 1u << j },
                     .range_cap = 4,
                     .range_count = 1,
@@ -281,29 +281,29 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
                 Tile* top = NULL;
                 Tile* bot = NULL;
-                TB_Node* last_loc = NULL;
+                TB_NodeLocation* last_loc = NULL;
                 FOREACH_REVERSE_N(i, cfg.block_count, dyn_array_length(ws->items)) {
                     TB_Node* n = ws->items[i];
                     if (n->type == TB_PHI) {
                         continue;
-                    } else if (n->type == TB_SAFEPOINT_NOP) {
-                        if (last_loc) {
-                            TB_OPTDEBUG(CODEGEN)(printf("  TILE "), print_node_sexpr(last_loc, 0), printf("\n"));
-
-                            Tile* tile = get_tile(&ctx, last_loc, false);
-                            tile->next = top;
-
-                            // attach to list
-                            if (top) top->prev = tile;
-                            if (!bot) bot = tile;
-                            top = tile;
-
-                            isel_node(&ctx, tile, last_loc);
-                        }
-                        last_loc = n;
-                        continue;
                     } else if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
                         // these are always run because they're cool effect nodes
+                        TB_NodeLocation* v;
+                        if (v = nl_table_get(&f->locations, n), v) {
+                            if (last_loc) {
+                                TB_OPTDEBUG(CODEGEN)(printf("  LOCATION\n"));
+
+                                Tile* loc = TB_ARENA_ALLOC(arena, Tile);
+                                *loc = (Tile){ .tag = TILE_LOCATION, .loc = last_loc };
+                                loc->next = top;
+
+                                // attach to list
+                                if (top) top->prev = loc;
+                                if (!bot) bot = loc;
+                                top = loc;
+                            }
+                            last_loc = v;
+                        }
                     } else {
                         if (ctx.values[n->gvn].tile == NULL) {
                             TB_OPTDEBUG(CODEGEN)(printf("  FOLDED "), print_node_sexpr(n, 0), printf("\n"));
@@ -340,17 +340,16 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 }
 
                 if (last_loc) {
-                    TB_OPTDEBUG(CODEGEN)(printf("  TILE "), print_node_sexpr(last_loc, 0), printf("\n"));
+                    TB_OPTDEBUG(CODEGEN)(printf("  LOCATION\n"));
 
-                    Tile* tile = get_tile(&ctx, last_loc, false);
-                    tile->next = top;
+                    Tile* loc = TB_ARENA_ALLOC(arena, Tile);
+                    *loc = (Tile){ .tag = TILE_LOCATION, .loc = last_loc };
+                    loc->next = top;
 
                     // attach to list
-                    if (top) top->prev = tile;
-                    if (!bot) bot = tile;
-                    top = tile;
-
-                    isel_node(&ctx, tile, last_loc);
+                    if (top) top->prev = loc;
+                    if (!bot) bot = loc;
+                    top = loc;
                 }
 
                 // if the endpoint is a not a terminator, we've hit some implicit GOTO edge
@@ -431,7 +430,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 Set* kill = &mbb->kill;
                 for (Tile* t = mbb->start; t; t = t->next) {
                     t->time = timeline;
-                    timeline += 2;
+                    timeline += 4;
 
                     FOREACH_N(j, 0, t->in_count) {
                         LiveInterval* in_def = t->ins[j].src;
@@ -447,7 +446,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                     }
                 }
 
-                timeline += 4;
+                timeline += 6;
             }
         }
 
@@ -570,15 +569,41 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             ctx.current_emit_bb = &machine_bbs[i];
             ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
+            // line info is BB-local
+            TB_NodeLocation* last_loc = NULL;
+
             // mark label
             tb_resolve_rel32(e, &e->labels[bbid], e->count);
             while (t) {
-                emit_tile(&ctx, e, t);
+                if (t->tag == TILE_LOCATION) {
+                    TB_Location l = {
+                        .file = t->loc->file,
+                        .line = t->loc->line,
+                        .column = t->loc->column,
+                        .pos = GET_CODE_POS(e)
+                    };
+
+                    size_t top = dyn_array_length(ctx.locations);
+                    if (top == 0 || (ctx.locations[top - 1].pos != l.pos && !is_same_location(&l, &ctx.locations[top - 1]))) {
+                        dyn_array_put(ctx.locations, l);
+                    }
+                } else {
+                    emit_tile(&ctx, e, t);
+                }
                 t = t->next;
             }
         }
 
         post_emit(&ctx, e);
+
+        // Fill jump table entries
+        CUIK_TIMED_BLOCK("jump tables") {
+            dyn_array_for(i, ctx.jump_table_patches) {
+                uint32_t target = ctx.emit.labels[ctx.jump_table_patches[i].target];
+                assert((target & 0x80000000) && "target label wasn't resolved... what?");
+                *ctx.jump_table_patches[i].pos = target & ~0x80000000;
+            }
+        }
     }
 
     if (ctx.locations) {
@@ -588,7 +613,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     if (emit_asm) CUIK_TIMED_BLOCK("dissassembly") {
         dyn_array_for(i, ctx.debug_stack_slots) {
             TB_StackSlot* s = &ctx.debug_stack_slots[i];
-            EMITA(&ctx.emit, "// %s = [rsp + %d]\n", s->name, s->position);
+            EMITA(&ctx.emit, "// %s = [rsp + %d]\n", s->name, s->storage.offset);
         }
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 

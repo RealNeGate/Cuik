@@ -78,6 +78,8 @@ typedef enum {
     TILE_GOTO,
     // used by regalloc to spill/reload
     TILE_SPILL_MOVE,
+    // debug line
+    TILE_LOCATION,
 } TileTag;
 
 typedef struct Tile Tile;
@@ -97,9 +99,9 @@ struct LiveInterval {
 
     int8_t reg;
     int8_t assigned;
-    int8_t hint;
     bool is_spill;
 
+    LiveInterval* hint;
     LiveInterval* split_kid;
 
     int use_cap, use_count;
@@ -131,6 +133,9 @@ struct Tile {
 
         // tag = TILE_NORMAL
         void* aux;
+
+        // tag = TILE_LOCATION
+        TB_NodeLocation* loc;
     };
 
     int in_count;
@@ -175,6 +180,11 @@ typedef struct {
 
 typedef struct Ctx Ctx;
 typedef void (*TB_RegAlloc)(Ctx* restrict ctx, TB_Arena* arena);
+
+typedef struct {
+    uint32_t* pos;
+    uint32_t target;
+} JumpTablePatch;
 
 struct Ctx {
     TB_Passes* p;
@@ -227,6 +237,7 @@ struct Ctx {
     DynArray(LiveInterval*) callee_spills;
     NL_Map(TB_Node*, int) stack_slots;
     DynArray(TB_StackSlot) debug_stack_slots;
+    DynArray(JumpTablePatch) jump_table_patches;
 
     // Line info
     MachineBB* current_emit_bb;

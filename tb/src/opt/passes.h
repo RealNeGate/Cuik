@@ -218,7 +218,7 @@ static bool cfg_is_control(TB_Node* n) {
     // checking which is annoying and slow)
     //
     //     branch, debugbreak, trap, unreachable, dead  OR  call, syscall, safepoint
-    return n->type == TB_ROOT || (n->type >= TB_BRANCH && n->type <= TB_DEAD) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_NOP);
+    return n->type == TB_ROOT || (n->type >= TB_BRANCH && n->type <= TB_DEAD) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_POLL);
 }
 
 static bool cfg_is_bb_entry(TB_Node* n) {
@@ -249,11 +249,11 @@ static bool is_mem_out_op(TB_Node* n) {
 }
 
 static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_NOP) || n->type == TB_PROJ;
+    return (n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ;
 }
 
 static bool is_mem_in_op(TB_Node* n) {
-    return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD || n->type == TB_SAFEPOINT_NOP;
+    return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
 }
 
 static bool cfg_critical_edge(TB_Node* proj, TB_Node* n) {

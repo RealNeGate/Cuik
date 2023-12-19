@@ -1,4 +1,5 @@
-// TODO(NeGate): implement Chaitin-Briggs
+// TODO(NeGate): implement Chaitin-Briggs, if you wanna contribute this would be cool to work
+// with someone else on.
 #include "codegen.h"
 
 typedef struct {

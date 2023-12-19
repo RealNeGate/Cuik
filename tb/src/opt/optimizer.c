@@ -531,7 +531,6 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         case TB_DEBUGBREAK:
         case TB_TRAP:
         case TB_UNREACHABLE:
-        case TB_SAFEPOINT_NOP:
         case TB_SAFEPOINT_POLL:
         case TB_REGION: {
             TB_Node* ctrl = n->inputs[0];
@@ -671,11 +670,10 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
             return ctrl == &XCTRL_IN_THE_SKY ? dead_node(f, p) : n;
         }
 
-        case TB_SAFEPOINT_NOP:
         case TB_SAFEPOINT_POLL: {
             // Dead node? kill
             Lattice* ctrl = lattice_universe_get(&p->universe, n->inputs[0]);
-            if (ctrl == &XCTRL_IN_THE_SKY || n->inputs[0]->type == TB_SAFEPOINT_POLL || n->inputs[0]->type == TB_SAFEPOINT_NOP) {
+            if (ctrl == &XCTRL_IN_THE_SKY || n->inputs[0]->type == TB_SAFEPOINT_POLL) {
                 // (safepoint (safepoint X)) => (safepoint X)
                 return n->inputs[0];
             } else {
@@ -728,7 +726,6 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         return dataflow_branch(p, uni, n);
 
         // control nodes just inherit their liveness
-        case TB_SAFEPOINT_NOP:
         case TB_SAFEPOINT_POLL:
         case TB_CALL:
         case TB_TAILCALL:
@@ -742,8 +739,8 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         case TB_SYMBOL:
         return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = { LATTICE_KNOWN_NOT_NULL } });
 
-        case TB_INT2PTR:
-        return dataflow_int2ptr(p, uni, n);
+        case TB_BITCAST:
+        return dataflow_bitcast(p, uni, n);
 
         case TB_TRUNCATE:
         return dataflow_trunc(p, uni, n);
@@ -1007,7 +1004,6 @@ TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
     *p = (TB_Passes){ .f = f };
 
     TB_Arena* old_arena = f->arena;
-    f->line_attrib.file = NULL;
     f->arena = arena;
 
     verify_tmp_arena(p);
