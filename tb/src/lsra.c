@@ -269,7 +269,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                     // if the use mask is more constrained than the def, we'll make a temporary
                     if ((in_def_mask.mask & in_mask.mask) != in_def_mask.mask) {
-                        TB_OPTDEBUG(REGALLOC)(printf("  TEMP %#04llx -> v%d (%#04llx)\n", in_def_mask.mask, in_def->id, in_mask.mask));
+                        TB_OPTDEBUG(REGALLOC)(printf("  TEMP %#04llx -> v%d (%#08llx)\n", in_def_mask.mask, in_def->id, in_mask.mask));
 
                         // construct copy (either to a fixed interval or a new masked interval)
                         Tile* tmp = tb_arena_alloc(arena, sizeof(Tile));
@@ -361,7 +361,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             assert(time != INT_MAX);
 
             #if TB_OPTDEBUG_REGALLOC
-            printf("  # v%-4d t=[%-4d - %4d) [%#04llx]    ", interval->id, time, end, interval->mask.mask);
+            printf("  # v%-4d t=[%-4d - %4d) [%#08llx]    ", interval->id, time, end, interval->mask.mask);
             if (interval->tile && interval->tile->n) {
                 print_node_sexpr(interval->tile->n, 0);
             }

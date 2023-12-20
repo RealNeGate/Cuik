@@ -14,39 +14,16 @@ int f(struct s *b, int *c) {
     }
     return a;
 }
-
-int imm(void)   { return 69420; }
-int mul3(unsigned x) { return x * 3; }
-
-int bits(int x) { return x << 2; }
 #endif
 
 void foo(int) { printf("H\n"); }
-int loop2(int n) {
-    int i = 0;
-    while (i < n) {
-        foo(i);
-        i += 1;
-    }
-    return i;
-}
 
-int bar() {
-    return 4 + 3 * 2 + 10;
-}
-
-/*int cmp(char* x) {
+int cmp(char* x) {
     int n = *x;
     return n > 255;
 }
 
-int foo(int x, int y) {
-    int z = (x + 2) / y;
-    z += y;
-    return z;
-}
-
-enum { NUM_STATES = 10 };
+/*enum { NUM_STATES = 10 };
 uint8_t table[NUM_STATES][256];
 
 uint8_t normie_dfa(const uint8_t *start, const uint8_t *end, uint8_t state) {

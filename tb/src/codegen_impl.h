@@ -157,7 +157,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Function* restrict f = p->f;
-    // tb_pass_print(p);
+    tb_pass_print(p);
 
     Ctx ctx = {
         .module = f->super.module,
@@ -328,14 +328,14 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         tile->interval->tile = tile;
                         tile->interval->mask = mask;
 
-                        TB_OPTDEBUG(CODEGEN)(printf("    v%d [%#04llx]\n", tile->interval->id, mask.mask));
+                        TB_OPTDEBUG(CODEGEN)(printf("    v%d [%#08llx]\n", tile->interval->id, mask.mask));
                     } else {
                         assert(tile->interval == NULL && "shouldn't have allocated an interval... tf");
                         TB_OPTDEBUG(CODEGEN)(printf("    no def\n"));
                     }
 
                     FOREACH_N(j, 0, tile->in_count) {
-                        TB_OPTDEBUG(CODEGEN)(printf("    IN[%zu] = %#04llx\n", j, tile->ins[j].mask.mask));
+                        TB_OPTDEBUG(CODEGEN)(printf("    IN[%zu] = %#08llx\n", j, tile->ins[j].mask.mask));
                     }
                 }
 
@@ -369,10 +369,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         phi_tile->interval->tile = phi_tile;
                         phi_tile->interval->mask = isel_node(&ctx, phi_tile, v->phi);
 
-                        LiveInterval* src = get_tile(&ctx, v->n, false)->interval;
+                        LiveInterval* src = get_tile(&ctx, v->n, true)->interval;
 
                         TB_OPTDEBUG(CODEGEN)(printf("  PHI %u: ", v->phi->gvn), print_node_sexpr(v->phi, 0), printf("\n"));
-                        TB_OPTDEBUG(CODEGEN)(printf("    v%d [%#04llx]\n", phi_tile->interval->id, src->mask.mask));
+                        TB_OPTDEBUG(CODEGEN)(printf("    v%d [%#08llx]\n", phi_tile->interval->id, phi_tile->interval->mask.mask));
 
                         Tile* move = TB_ARENA_ALLOC(arena, Tile);
                         *move = (Tile){ .prev = bot, .tag = TILE_SPILL_MOVE, .interval = phi_tile->interval };
@@ -380,7 +380,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         move->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
                         move->in_count = 1;
                         move->ins[0].src  = src;
-                        move->ins[0].mask = src->mask;
+                        move->ins[0].mask = phi_tile->interval->mask;
                         bot->next = move;
                         bot = move;
                     }
