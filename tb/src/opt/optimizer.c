@@ -1306,9 +1306,6 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_loop(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 
-
-    tb_pass_print_dot(p, tb_default_print_callback, stdout);
-
     // tb_pass_print(p);
     // dummy_interp(p);
 }
@@ -1401,12 +1398,12 @@ void tb_pass_exit(TB_Passes* p) {
         TB_Function* f = p->f;
 
         #if TB_OPTDEBUG_STATS
-        /* push_all_nodes(p, &p->worklist, f);
+        push_all_nodes(p, &p->worklist, f);
         int final_count = worklist_popcount(&p->worklist);
-        double factor = ((double) final_count / (double) p->stats.initial) * 100.0;*/
+        double factor = ((double) final_count / (double) p->stats.initial) * 100.0;
 
         printf("%s: stats:\n", f->super.name);
-        // printf("  %4d   -> %4d nodes (%.2f%%)\n", p->stats.initial, final_count, factor);
+        printf("  %4d   -> %4d nodes (%.2f%%)\n", p->stats.initial, final_count, factor);
         printf("  %4d GVN hit    %4d GVN miss\n", p->stats.gvn_hit, p->stats.gvn_miss);
         printf("  %4d peepholes  %4d rewrites    %4d identities\n", p->stats.peeps, p->stats.rewrites, p->stats.identities);
         #endif

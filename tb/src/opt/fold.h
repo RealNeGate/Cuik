@@ -121,12 +121,6 @@ static Lattice* dataflow_trunc(TB_Passes* restrict opt, LatticeUniverse* uni, TB
     return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static bool sub_overflow(uint64_t x, uint64_t y, uint64_t xy, int bits) {
-    uint64_t v = (x ^ y) & (xy ^ x);
-    // check the sign bit
-    return (v >> (bits - 1)) & 1;
-}
-
 static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
     Lattice* a = lattice_universe_get(uni, n->inputs[1]);
     Lattice* b = lattice_universe_get(uni, n->inputs[2]);
