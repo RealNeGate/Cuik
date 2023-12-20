@@ -348,6 +348,10 @@ static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_N
         return &TOP_IN_THE_SKY;
     }
 
+    if (a == &BOT_IN_THE_SKY || b == &BOT_IN_THE_SKY) {
+        return &BOT_IN_THE_SKY;
+    }
+
     TB_DataType dt = n->inputs[1]->dt;
     if (dt.type == TB_INT) {
         uint64_t mask = tb__mask(dt.data);
@@ -356,7 +360,7 @@ static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_N
         bool a_cst = a->_int.min == a->_int.max;
         bool b_cst = b->_int.min == b->_int.max;
 
-        int cmp = 2; // 0 or 1 (2 for TOP)
+        int cmp = 2; // 0 or 1 (2 for BOT)
         switch (n->type) {
             case TB_CMP_EQ:
             if (a_cst && b_cst) cmp = a->_int.min == b->_int.min;
@@ -385,6 +389,15 @@ static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_N
 
         if (cmp != 2) {
             return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { cmp, cmp, ~cmp, cmp } });
+        }
+    } else if (dt.type == TB_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
+        a = lattice_meet(uni, a, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
+        b = lattice_meet(uni, b, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
+
+        if (n->type == TB_CMP_EQ) {
+            return a == b ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY;
+        } else {
+            return a != b ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY;
         }
     }
 

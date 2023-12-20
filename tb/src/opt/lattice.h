@@ -7,6 +7,8 @@ static Lattice XCTRL_IN_THE_SKY = { LATTICE_XCTRL };
 static Lattice TUP_IN_THE_SKY   = { LATTICE_TUPLE };
 static Lattice XNULL_IN_THE_SKY = { LATTICE_XNULL };
 static Lattice NULL_IN_THE_SKY  = { LATTICE_NULL  };
+static Lattice FALSE_IN_THE_SKY = { LATTICE_INT, ._int = { 0, 0, 1, 0 } };
+static Lattice TRUE_IN_THE_SKY  = { LATTICE_INT, ._int = { 1, 1, 0, 1 } };
 
 static Lattice* lattice_from_dt(LatticeUniverse* uni, TB_DataType dt);
 
@@ -75,6 +77,10 @@ static Lattice* lattice_intern(LatticeUniverse* uni, Lattice l) {
     memcpy(k, &l, sizeof(l));
     nl_hashset_put2(&uni->pool, k, lattice_hash, lattice_cmp);
     return k;
+}
+
+static bool lattice_top_or_bot(Lattice* l) {
+    return l->tag <= LATTICE_TOP;
 }
 
 LatticeTrifecta lattice_truthy(Lattice* l) {

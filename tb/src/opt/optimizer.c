@@ -1351,6 +1351,8 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
             nl_hashset_put2(&p->universe.pool, &NULL_IN_THE_SKY,  lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->universe.pool, &XNULL_IN_THE_SKY, lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->universe.pool, &TUP_IN_THE_SKY,   lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &FALSE_IN_THE_SKY, lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &TRUE_IN_THE_SKY,  lattice_hash, lattice_cmp);
         }
     }
 
