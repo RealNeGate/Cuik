@@ -18,7 +18,6 @@
 local is_windows = package.config:sub(1,1) == "\\"
 
 local options = {
-	log           = false,
 	debug         = false,
 	cuik          = false,
 	tb            = false,
@@ -50,7 +49,7 @@ local modules = {
 	--   TildeBackend
 	tb = { srcs={
 			"tb/src/libtb.c", "tb/src/x64/x64_target.c", "tb/src/aarch64/aarch64_target.c"
-		}, flags="-I tb/include -DCUIK_USE_TB -DTB_HAS_X64 -DTB_HAS_AARCH64", deps={"common"}
+		}, flags="-I tb/include -DCUIK_USE_TB", deps={"common"}
 	},
 	-- executables:
 	--   Cuik command line
@@ -97,10 +96,6 @@ if not options.debug then
 		options.lld = true
 		cflags = cflags.." -flto"
 	end
-end
-
-if not options.log then
-	cflags = cflags.." -DLOG_SUPPRESS"
 end
 
 if options.spall_auto then

@@ -30,6 +30,9 @@
 #define TB_VERSION_MINOR 3
 #define TB_VERSION_PATCH 0
 
+#define TB_HAS_X64
+#define TB_HAS_AARCH64
+
 #ifndef TB_API
 #  ifdef __cplusplus
 #    define TB_EXTERN extern "C"

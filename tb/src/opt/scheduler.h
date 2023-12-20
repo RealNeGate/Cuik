@@ -25,8 +25,7 @@ static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n
 }
 
 static bool sched_in_bb(TB_Passes* passes, Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
-    ptrdiff_t search = nl_map_get(passes->scheduled, n);
-    return search >= 0 && passes->scheduled[search].v == bb && !worklist_test_n_set(ws, n);
+    return passes->scheduled[n->gvn] == bb && !worklist_test_n_set(ws, n);
 }
 
 typedef struct {

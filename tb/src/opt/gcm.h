@@ -32,15 +32,17 @@ static TB_BasicBlock* find_lca(TB_Passes* p, TB_BasicBlock* a, TB_BasicBlock* b)
     return a;
 }
 
+// writes out to the p->scheduled array, it's at the top of the tmp_arena
 void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
-    if (p->scheduled != NULL) {
-        nl_map_free(p->scheduled);
-    }
+    assert(p->scheduled == NULL && "make sure when you're done with the schedule, you throw away the old one");
 
     CUIK_TIMED_BLOCK("schedule") {
         TB_Function* f = p->f;
         Worklist* restrict ws = &p->worklist;
-        nl_map_create(p->scheduled, 256);
+
+        // arraychads stay up
+        p->scheduled = tb_arena_alloc(tmp_arena, f->node_count * sizeof(TB_BasicBlock*));
+        memset(p->scheduled, 0, f->node_count * sizeof(TB_BasicBlock*));
 
         TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
         TB_Node** saved = tb_arena_alloc(tmp_arena, cfg.block_count * sizeof(TB_Node*));
@@ -56,14 +58,14 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
 
                 bb->items = nl_hashset_alloc(32);
                 nl_hashset_put(&bb->items, n);
-                nl_map_put(p->scheduled, n, bb);
+                p->scheduled[n->gvn] = bb;
             }
 
             worklist_clear_visited(ws);
         }
 
         Pin* head = NULL;
-        TB_BasicBlock* start_bb = nl_map_get_checked(p->scheduled, p->worklist.items[0]);
+        TB_BasicBlock* start_bb = p->scheduled[p->worklist.items[0]->gvn];
 
         CUIK_TIMED_BLOCK("pinned schedule") {
             // schedule root's users
@@ -84,22 +86,19 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
                     // a region might refer to itself, but a node within a
                     // BB will refer to it's parent (who should've been scheduled
                     // by now)
-                    TB_Node* curr = n;
                     TB_BasicBlock* bb = NULL;
-                    if (curr->type == TB_PROJ && curr->inputs[0]->type == TB_ROOT) {
+                    if (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT) {
                         bb = start_bb;
                     } else {
-                        ptrdiff_t search;
-                        for (;;) {
-                            search = nl_map_get(p->scheduled, curr);
-                            if (search >= 0) { break; }
+                        TB_Node* curr = n;
+                        do {
+                            bb = p->scheduled[curr->gvn];
                             curr = curr->inputs[0];
-                        }
-                        bb = p->scheduled[search].v;
+                        } while (!bb);
                     }
 
                     nl_hashset_put(&bb->items, n);
-                    nl_map_put(p->scheduled, n, bb);
+                    p->scheduled[n->gvn] = bb;
 
                     Pin* p = tb_arena_alloc(tmp_arena, sizeof(Pin));
                     p->last = head;
@@ -120,6 +119,9 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
             DO_IF(TB_OPTDEBUG_GCM)(printf("%s: scheduled %zu nodes (%zu recorded in the graph)\n", f->super.name, dyn_array_length(ws->items) - cfg.block_count, f->node_count));
 
             if (renumber) {
+                // TODO(NeGate): reorder lattice universe
+                tb_todo();
+
                 f->node_count = dyn_array_length(ws->items) - cfg.block_count;
 
                 FOREACH_N(i, cfg.block_count, dyn_array_length(ws->items)) {
@@ -177,16 +179,14 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
                                 continue;
                             }
 
-                            ptrdiff_t search = nl_map_get(p->scheduled, n->inputs[i]);
-                            if (search < 0) {
+                            TB_BasicBlock* bb = p->scheduled[n->inputs[i]->gvn];
+                            if (bb == NULL) {
                                 // input has no scheduling... weird?
                                 DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ dead\n", n->inputs[i]->gvn));
                                 continue;
                             }
 
-                            TB_BasicBlock* bb = p->scheduled[search].v;
                             DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ bb%d\n", n->inputs[i]->gvn, bb->id));
-
                             if (best_depth < bb->dom_depth) {
                                 best_depth = bb->dom_depth;
                                 best = bb;
@@ -195,8 +195,8 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
 
                         DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", p->f->super.name, n->gvn, best->id));
 
+                        p->scheduled[n->gvn] = best;
                         nl_hashset_put(&best->items, n);
-                        nl_map_put(p->scheduled, n, best);
                         dyn_array_put(ws->items, n);
                     }
 
@@ -218,13 +218,10 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
                 TB_BasicBlock* lca = NULL;
                 FOR_USERS(use, n) {
                     TB_Node* y = use->n;
+                    TB_BasicBlock* use_block = p->scheduled[y->gvn];
+                    if (use_block == NULL) { continue; } // dead
 
-                    ptrdiff_t search = nl_map_get(p->scheduled, y);
-                    if (search < 0) continue; // dead
-
-                    TB_BasicBlock* use_block = p->scheduled[search].v;
                     DO_IF(TB_OPTDEBUG_GCM)(printf("  user v%u @ bb%d\n", y->gvn, use_block->id));
-
                     if (y->type == TB_PHI) {
                         TB_Node* use_node = y->inputs[0];
                         assert(use_node->type == TB_REGION);
@@ -241,21 +238,20 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
                         }
                         assert(j >= 0);
 
-                        ptrdiff_t search = nl_map_get(p->scheduled, use_node->inputs[j - 1]);
-                        if (search >= 0) use_block = p->scheduled[search].v;
+                        TB_BasicBlock* bb = p->scheduled[use_node->inputs[j - 1]->gvn];
+                        if (bb) { use_block = bb; }
                     }
 
                     lca = find_lca(p, lca, use_block);
                 }
 
                 if (lca != NULL) {
-                    ptrdiff_t search = nl_map_get(p->scheduled, n);
+                    TB_BasicBlock* old = p->scheduled[n->gvn];
                     // i dont think it should be possible to schedule something here
                     // which didn't already get scheduled in EARLY
-                    assert(search >= 0 && "huh?");
+                    assert(old && "huh?");
 
                     // replace old BB entry
-                    TB_BasicBlock* old = p->scheduled[search].v;
                     if (old != lca && lca->dom_depth > old->dom_depth) {
                         TB_OPTDEBUG(GCM)(
                             printf("  LATE  v%u into .bb%d: ", n->gvn, lca->id),
@@ -263,7 +259,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
                             printf("\n")
                         );
 
-                        p->scheduled[search].v = lca;
+                        p->scheduled[n->gvn] = lca;
                         nl_hashset_remove(&old->items, n);
                         nl_hashset_put(&lca->items, n);
                     }

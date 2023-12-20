@@ -1046,15 +1046,14 @@ static void subsume_node(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_N
 }
 
 TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena) {
-    // assert(f->stop_node && "missing return");
+    assert(f->root_node && "missing root node");
+
     TB_Passes* p = tb_platform_heap_alloc(sizeof(TB_Passes));
     *p = (TB_Passes){ .f = f };
 
-    TB_Arena* old_arena = f->arena;
     f->arena = arena;
 
     verify_tmp_arena(p);
-
     worklist_alloc(&p->worklist, f->node_count);
 
     // generate work list (put everything)
@@ -1408,7 +1407,6 @@ void tb_pass_exit(TB_Passes* p) {
         printf("  %4d peepholes  %4d rewrites    %4d identities\n", p->stats.peeps, p->stats.rewrites, p->stats.identities);
         #endif
 
-        nl_map_free(p->scheduled);
         worklist_free(&p->worklist);
         nl_hashset_free(p->gvn_nodes);
 

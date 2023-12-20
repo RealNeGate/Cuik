@@ -157,7 +157,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Function* restrict f = p->f;
-    tb_pass_print(p);
+    // tb_pass_print(p);
 
     Ctx ctx = {
         .module = f->super.module,
@@ -258,7 +258,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         FOREACH_REVERSE_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
             TB_Node* bb_start = bbs[bbid];
-            TB_BasicBlock* bb = nl_map_get_checked(p->scheduled, bb_start);
+            TB_BasicBlock* bb = p->scheduled[bb_start->gvn];
 
             node_to_bb_put(&ctx, bb_start, &machine_bbs[i]);
             size_t base = dyn_array_length(ws->items);
@@ -640,7 +640,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // cleanup memory
     nl_map_free(ctx.stack_slots);
     tb_free_cfg(&cfg);
+
+    log_debug("%s: tmp arena size = %.1f KiB", f->super.name, tb_arena_current_size(tmp_arena) / 1024.0f);
     tb_arena_restore(arena, sp);
+    p->scheduled = NULL;
 
     // we're done, clean up
     func_out->asm_out = ctx.emit.head_asm;

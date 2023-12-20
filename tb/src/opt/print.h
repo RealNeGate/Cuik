@@ -200,7 +200,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     }
     printf("\n");
 
-    TB_BasicBlock* bb = nl_map_get_checked(ctx->opt->scheduled, bb_start);
+    TB_BasicBlock* bb = ctx->opt->scheduled[bb_start->gvn];
     Worklist* ws = &ctx->opt->worklist;
 
     #ifndef NDEBUG
@@ -492,6 +492,8 @@ void tb_pass_print(TB_Passes* opt) {
     // does the IR printing need smart scheduling lol (yes... when we're testing things)
     ctx.sched = greedy_scheduler;
 
+    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+
     // schedule nodes
     tb_pass_schedule(opt, ctx.cfg, false);
     worklist_clear_visited(&opt->worklist);
@@ -511,9 +513,11 @@ void tb_pass_print(TB_Passes* opt) {
         print_bb(&ctx, end_bb);
     }
 
+    tb_arena_restore(tmp_arena, sp);
     worklist_free(&opt->worklist);
     tb_free_cfg(&ctx.cfg);
     opt->worklist = old;
+    opt->scheduled = NULL;
     opt->error_n = NULL;
     cuikperf_region_end();
 }

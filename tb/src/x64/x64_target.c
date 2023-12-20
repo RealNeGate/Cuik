@@ -3,7 +3,7 @@
 #include "x64_emitter.h"
 #include "x64_disasm.c"
 
-#if 1
+#ifdef TB_HAS_X64
 enum {
     // register classes
     REG_CLASS_GPR,

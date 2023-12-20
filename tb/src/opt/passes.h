@@ -7,7 +7,7 @@ enum {
 };
 
 #define TB_OPTDEBUG_STATS    0
-#define TB_OPTDEBUG_PEEP     1
+#define TB_OPTDEBUG_PEEP     0
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
@@ -180,7 +180,6 @@ typedef void (*TB_Scheduler)(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynAr
 
 struct TB_Passes {
     TB_Function* f;
-    TB_Scheduled scheduled;
 
     // we use this to verify that we're on the same thread
     // for the entire duration of the TB_Passes.
@@ -196,6 +195,9 @@ struct TB_Passes {
 
     // might be out of date if you haven't called tb_pass_update_cfg
     TB_CFG cfg;
+
+    // value number -> TB_BasicBlock*
+    TB_BasicBlock** scheduled;
 
     // debug shit:
     TB_Node* error_n;

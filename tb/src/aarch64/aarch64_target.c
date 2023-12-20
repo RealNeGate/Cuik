@@ -1,6 +1,6 @@
 #include "../tb_internal.h"
 
-#if 0
+#ifdef TB_HAS_AARCH64
 // NOTE(NeGate): THIS IS VERY INCOMPLETE
 #include "../emitter.h"
 #include "aarch64_emitter.h"
