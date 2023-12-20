@@ -16,6 +16,9 @@
 #define NL_HASH_SET_IMPL
 #include <new_hash_map.h>
 
+#define NL_CHUNKED_ARRAY_IMPL
+#include <chunked_array.h>
+
 #define LOG_USE_COLOR
 #include "log.c"
 

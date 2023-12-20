@@ -1,3 +1,5 @@
+#include <chunked_array.h>
+
 // Scheduling: "Global Code Motion Global Value Numbering", Cliff Click 1995
 // https://courses.cs.washington.edu/courses/cse501/06wi/reading/click-pldi95.pdf
 typedef struct Elem {
@@ -6,11 +8,6 @@ typedef struct Elem {
     TB_Node* n;
     int i;
 } Elem;
-
-typedef struct Pin {
-    struct Pin* last;
-    TB_Node* n;
-} Pin;
 
 ////////////////////////////////
 // Late scheduling
@@ -64,8 +61,8 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
             worklist_clear_visited(ws);
         }
 
-        Pin* head = NULL;
         TB_BasicBlock* start_bb = p->scheduled[p->worklist.items[0]->gvn];
+        NL_ChunkedArr pins = nl_chunked_arr_alloc(tmp_arena);
 
         CUIK_TIMED_BLOCK("pinned schedule") {
             // schedule root's users
@@ -99,11 +96,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
 
                     nl_hashset_put(&bb->items, n);
                     p->scheduled[n->gvn] = bb;
-
-                    Pin* p = tb_arena_alloc(tmp_arena, sizeof(Pin));
-                    p->last = head;
-                    p->n = n;
-                    head = p;
+                    nl_chunked_arr_put(&pins, n);
 
                     DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u pinned to .bb%d\n", f->super.name, n->gvn, bb->id));
                 }
@@ -133,76 +126,82 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
         }
 
         CUIK_TIMED_BLOCK("early schedule") {
+            nl_chunked_arr_trim(&pins);
+
             // we're gonna use this space to store the DFS order, we'll walk it in reverse for
             // late sched
             worklist_clear_visited(ws);
             dyn_array_set_length(ws->items, cfg.block_count);
 
-            for (Pin* pin = head; pin; pin = pin->last) {
-                TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-                Elem* top = tb_arena_alloc(tmp_arena, sizeof(Elem));
-                top->parent = NULL;
-                top->sp = sp;
-                top->n = pin->n;
-                top->i = pin->n->input_count;
+            for (NL_ArrChunk* restrict chk = pins.first; chk; chk = chk->next) {
+                FOREACH_N(i, 0, chk->count) {
+                    TB_Node* pin_n = chk->elems[i];
 
-                // DFS nodes by inputs
-                while (top) {
-                    TB_Node* n = top->n;
+                    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+                    Elem* top = tb_arena_alloc(tmp_arena, sizeof(Elem));
+                    top->parent = NULL;
+                    top->sp = sp;
+                    top->n = pin_n;
+                    top->i = pin_n->input_count;
 
-                    if (top->i > 0) {
-                        // push next unvisited in
-                        TB_Node* in = n->inputs[--top->i];
+                    // DFS nodes by inputs
+                    while (top) {
+                        TB_Node* n = top->n;
 
-                        // pinned nodes can't be rescheduled
-                        if (in && !is_pinned(in) && !worklist_test_n_set(ws, in)) {
-                            TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-                            Elem* new_top = tb_arena_alloc(tmp_arena, sizeof(Elem));
-                            new_top->parent = top;
-                            new_top->sp = sp;
-                            new_top->n = in;
-                            new_top->i = in->input_count;
-                            top = new_top;
-                        }
-                        continue;
-                    }
+                        if (top->i > 0) {
+                            // push next unvisited in
+                            TB_Node* in = n->inputs[--top->i];
 
-                    if (n != pin->n) { // only pinned node in the stack
-                        // start at the entry point
-                        int best_depth = 0;
-                        TB_BasicBlock* best = start_bb;
-
-                        // choose deepest block
-                        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
-                            if (n->inputs[i]->type == TB_ROOT) {
-                                DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ bb0\n", n->inputs[i]->gvn));
-                                continue;
+                            // pinned nodes can't be rescheduled
+                            if (in && !is_pinned(in) && !worklist_test_n_set(ws, in)) {
+                                TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+                                Elem* new_top = tb_arena_alloc(tmp_arena, sizeof(Elem));
+                                new_top->parent = top;
+                                new_top->sp = sp;
+                                new_top->n = in;
+                                new_top->i = in->input_count;
+                                top = new_top;
                             }
-
-                            TB_BasicBlock* bb = p->scheduled[n->inputs[i]->gvn];
-                            if (bb == NULL) {
-                                // input has no scheduling... weird?
-                                DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ dead\n", n->inputs[i]->gvn));
-                                continue;
-                            }
-
-                            DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ bb%d\n", n->inputs[i]->gvn, bb->id));
-                            if (best_depth < bb->dom_depth) {
-                                best_depth = bb->dom_depth;
-                                best = bb;
-                            }
+                            continue;
                         }
 
-                        DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", p->f->super.name, n->gvn, best->id));
+                        if (n != pin_n) { // only pinned node in the stack
+                            // start at the entry point
+                            int best_depth = 0;
+                            TB_BasicBlock* best = start_bb;
 
-                        p->scheduled[n->gvn] = best;
-                        nl_hashset_put(&best->items, n);
-                        dyn_array_put(ws->items, n);
+                            // choose deepest block
+                            FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+                                if (n->inputs[i]->type == TB_ROOT) {
+                                    DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ bb0\n", n->inputs[i]->gvn));
+                                    continue;
+                                }
+
+                                TB_BasicBlock* bb = p->scheduled[n->inputs[i]->gvn];
+                                if (bb == NULL) {
+                                    // input has no scheduling... weird?
+                                    DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ dead\n", n->inputs[i]->gvn));
+                                    continue;
+                                }
+
+                                DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ bb%d\n", n->inputs[i]->gvn, bb->id));
+                                if (best_depth < bb->dom_depth) {
+                                    best_depth = bb->dom_depth;
+                                    best = bb;
+                                }
+                            }
+
+                            DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", p->f->super.name, n->gvn, best->id));
+
+                            p->scheduled[n->gvn] = best;
+                            nl_hashset_put(&best->items, n);
+                            dyn_array_put(ws->items, n);
+                        }
+
+                        struct Elem* parent = top->parent;
+                        tb_arena_restore(tmp_arena, top->sp);
+                        top = parent;
                     }
-
-                    struct Elem* parent = top->parent;
-                    tb_arena_restore(tmp_arena, top->sp);
-                    top = parent;
                 }
             }
         }

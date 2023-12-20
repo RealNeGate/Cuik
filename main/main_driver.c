@@ -19,6 +19,7 @@
 #endif
 
 #ifdef CUIK_USE_SPALL_AUTO
+#include <spall_native_auto.h>
 static void spall_die(void) {
     spall_auto_thread_quit();
     spall_auto_quit();
