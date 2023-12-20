@@ -26,6 +26,7 @@ static uint64_t timer_start;
 #else
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 #endif
 
 static _Atomic bool profiling;

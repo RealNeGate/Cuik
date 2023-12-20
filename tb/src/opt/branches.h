@@ -26,7 +26,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
         size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
-            Lattice* pred_ty = lattice_universe_get(&p->universe, n->inputs[i]);
+            Lattice* pred_ty = lattice_universe_get(p, n->inputs[i]);
             if (pred_ty == &XCTRL_IN_THE_SKY) {
                 changes = true;
                 remove_input(f, n, i);
@@ -363,8 +363,8 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     return NULL;
 }
 
-static Lattice* dataflow_branch(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* before = lattice_universe_get(uni, n->inputs[0]);
+static Lattice* dataflow_branch(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* before = lattice_universe_get(opt, n->inputs[0]);
     if (before == &TOP_IN_THE_SKY || before == &XCTRL_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -373,7 +373,7 @@ static Lattice* dataflow_branch(TB_Passes* restrict opt, LatticeUniverse* uni, T
 
     // constant fold branch
     assert(n->input_count == 2);
-    Lattice* key = lattice_universe_get(&opt->universe, n->inputs[1]);
+    Lattice* key = lattice_universe_get(opt, n->inputs[1]);
 
     ptrdiff_t taken = -1;
     if (key->tag == LATTICE_INT && key->_int.min == key->_int.max) {
@@ -431,7 +431,7 @@ static Lattice* dataflow_branch(TB_Passes* restrict opt, LatticeUniverse* uni, T
 
         // make proj's type either dead or live
         Lattice* l = taken < 0 || index == taken ? &CTRL_IN_THE_SKY : &XCTRL_IN_THE_SKY;
-        lattice_universe_map(&opt->universe, proj, l);
+        lattice_universe_map(opt, proj, l);
     }
 
     if (taken >= 0) {

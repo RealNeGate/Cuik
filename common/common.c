@@ -175,6 +175,7 @@ void tb_arena_restore(TB_Arena* arena, TB_ArenaSavepoint sp) {
     }
 
     arena->top = sp.top;
+    arena->top->next = NULL;
     arena->watermark = sp.watermark;
     arena->high_point = &sp.top->data[arena->chunk_size - sizeof(TB_ArenaChunk)];
 }

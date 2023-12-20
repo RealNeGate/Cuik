@@ -334,10 +334,15 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             return ctx->normie_mask[0];
         }
 
+        case TB_READ:
+        isel_addr(ctx, dst, n, n->inputs[2], 0);
+        return REGEMPTY;
+
         case TB_LOAD:
         isel_addr(ctx, dst, n, n->inputs[2], 0);
         return ctx->normie_mask[0];
 
+        case TB_WRITE:
         case TB_STORE: {
             TileInput* ins = isel_addr(ctx, dst, n, n->inputs[2], 1);
             ins[0].src = get_tile(ctx, n->inputs[3], true)->interval;
@@ -406,6 +411,8 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 else return REGEMPTY;
             } else if (n->inputs[0]->type == TB_BRANCH) {
                 return REGEMPTY;
+            } else if (n->inputs[0]->type == TB_READ) {
+                return i == 1 ? normie_mask(ctx, n->dt) : REGEMPTY;
             } else {
                 tb_todo();
             }
@@ -899,12 +906,22 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_PHI: break;
             case TB_UNREACHABLE: break;
 
+            case TB_READ: {
+                TB_Node* proj1 = proj_with_index(n, 1)->n;
+
+                Val dst = op_at(ctx, val_at(ctx, proj1)->tile->interval);
+                Val ea = emit_addr(ctx, e, t);
+                inst2(e, MOV, &dst, &ea, legalize_int2(proj1->dt));
+                break;
+            }
+
             case TB_LOAD: {
                 Val dst = op_at(ctx, t->interval);
                 Val ea = emit_addr(ctx, e, t);
                 inst2(e, MOV, &dst, &ea, legalize_int2(n->dt));
                 break;
             }
+            case TB_WRITE:
             case TB_STORE: {
                 TB_Node* val = n->inputs[3];
 

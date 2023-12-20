@@ -96,14 +96,16 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_FMAX: return "fmax";
         case TB_FMIN: return "fmin";
 
-        case TB_MULPAIR: return "mulpair";
-        case TB_LOAD: return "load";
-        case TB_STORE: return "store";
+        case TB_MULPAIR:  return "mulpair";
+        case TB_LOAD:     return "load";
+        case TB_STORE:    return "store";
+        case TB_READ:     return "read";
+        case TB_WRITE:    return "write";
         case TB_MERGEMEM: return "merge";
 
-        case TB_CALL: return "call";
-        case TB_SYSCALL: return "syscall";
-        case TB_BRANCH: return "branch";
+        case TB_CALL:     return "call";
+        case TB_SYSCALL:  return "syscall";
+        case TB_BRANCH:   return "branch";
         case TB_TAILCALL: return "tailcall";
 
         default: tb_todo();return "(unknown)";

@@ -75,6 +75,8 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_DEBUGBREAK:
         case TB_ADDPAIR:
         case TB_MULPAIR:
+        case TB_READ:
+        case TB_WRITE:
         case TB_ROOT:
         return 0;
 
@@ -94,8 +96,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_STORE:
         case TB_MEMCPY:
         case TB_MEMSET:
-        case TB_READ:
-        case TB_WRITE:
         return sizeof(TB_NodeMemAccess);
 
         case TB_ATOMIC_LOAD:

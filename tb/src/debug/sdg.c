@@ -35,7 +35,7 @@ static SDG_TypeIndex sdg_get_type(SDG_Types* types, TB_DebugType* type) {
         }
 
         case TB_DEBUG_TYPE_FUNCTION: {
-            __debugbreak();
+            tb_todo();
             return (type->type_id = 0);
         }
 

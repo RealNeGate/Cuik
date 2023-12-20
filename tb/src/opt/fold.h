@@ -53,8 +53,8 @@ static bool inverted_cmp(TB_Node* n, TB_Node* n2) {
     }
 }
 
-static Lattice* dataflow_sext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+static Lattice* dataflow_sext(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -83,11 +83,11 @@ static Lattice* dataflow_sext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
         ones |= mask;
     }
 
-    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* dataflow_zext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+static Lattice* dataflow_zext(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -99,11 +99,11 @@ static Lattice* dataflow_zext(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
     uint64_t zeros = a->_int.known_zeros | mask; // we know the top bits must be zero
     uint64_t ones  = a->_int.known_ones;
 
-    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* dataflow_trunc(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+static Lattice* dataflow_trunc(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -118,12 +118,12 @@ static Lattice* dataflow_trunc(TB_Passes* restrict opt, LatticeUniverse* uni, TB
 
     uint64_t zeros = a->_int.known_zeros | ~mask;
     uint64_t ones  = a->_int.known_ones  & mask;
-    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
-    Lattice* b = lattice_universe_get(uni, n->inputs[2]);
+static Lattice* dataflow_arith(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
+    Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -153,16 +153,16 @@ static Lattice* dataflow_arith(TB_Passes* restrict opt, LatticeUniverse* uni, TB
     min &= mask, max &= mask;
 
     if (min == max) {
-        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
+        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
     } else if (overflow) {
-        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { 0, mask } });
+        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { 0, mask } });
     } else {
-        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max } });
+        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max } });
     }
 }
 
-static Lattice* dataflow_bitcast(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+static Lattice* dataflow_bitcast(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -176,8 +176,8 @@ static Lattice* dataflow_bitcast(TB_Passes* restrict opt, LatticeUniverse* uni, 
     return NULL;
 }
 
-static Lattice* dataflow_unary(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
+static Lattice* dataflow_unary(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -211,15 +211,15 @@ static Lattice* dataflow_unary(TB_Passes* restrict opt, LatticeUniverse* uni, TB
             ones  = a->_int.known_zeros;
         }
 
-        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
     } else {
         return NULL;
     }
 }
 
-static Lattice* dataflow_bits(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
-    Lattice* b = lattice_universe_get(uni, n->inputs[2]);
+static Lattice* dataflow_bits(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
+    Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -259,12 +259,12 @@ static Lattice* dataflow_bits(TB_Passes* restrict opt, LatticeUniverse* uni, TB_
     }
     min &= mask, max &= mask;
 
-    return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* dataflow_shift(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
-    Lattice* b = lattice_universe_get(uni, n->inputs[2]);
+static Lattice* dataflow_shift(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
+    Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -329,15 +329,15 @@ static Lattice* dataflow_shift(TB_Passes* restrict opt, LatticeUniverse* uni, TB
             default: tb_todo();
         }
 
-        return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
     } else {
         return NULL;
     }
 }
 
-static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_Node* n) {
-    Lattice* a = lattice_universe_get(uni, n->inputs[1]);
-    Lattice* b = lattice_universe_get(uni, n->inputs[2]);
+static Lattice* dataflow_cmp(TB_Passes* restrict opt, TB_Node* n) {
+    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
+    Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -382,11 +382,11 @@ static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_N
         }
 
         if (cmp != 2) {
-            return lattice_intern(uni, (Lattice){ LATTICE_INT, ._int = { cmp, cmp, ~cmp, cmp } });
+            return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { cmp, cmp, ~cmp, cmp } });
         }
     } else if (dt.type == TB_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-        a = lattice_meet(uni, a, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
-        b = lattice_meet(uni, b, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
+        a = lattice_meet(opt, a, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
+        b = lattice_meet(opt, b, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
 
         if (n->type == TB_CMP_EQ) {
             return a == b ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY;
@@ -401,7 +401,7 @@ static Lattice* dataflow_cmp(TB_Passes* restrict opt, LatticeUniverse* uni, TB_N
 static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
-    LatticeTrifecta key_truthy = lattice_truthy(lattice_universe_get(&opt->universe, src));
+    LatticeTrifecta key_truthy = lattice_truthy(lattice_universe_get(opt, src));
     if (key_truthy == LATTICE_KNOWN_TRUE) {
         return n->inputs[2];
     } else if (key_truthy == LATTICE_KNOWN_FALSE) {

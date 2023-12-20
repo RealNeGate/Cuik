@@ -108,18 +108,6 @@ struct Lattice {
     };
 };
 
-// hash-consing because there's a lot of
-// redundant types we might construct.
-typedef struct {
-    TB_Arena* arena;
-    NL_HashSet pool;
-
-    // track a lattice per node (basically all get one
-    // so a non-sparse array works)
-    size_t type_cap;
-    Lattice** types;
-} LatticeUniverse;
-
 ////////////////////////////////
 // CFG
 ////////////////////////////////
@@ -163,8 +151,6 @@ typedef struct TB_CFG {
     NL_Map(TB_Node*, TB_BasicBlock) node_to_block;
 } TB_CFG;
 
-typedef NL_Map(TB_Node*, TB_BasicBlock*) TB_Scheduled;
-
 ////////////////////////////////
 // Core optimizer
 ////////////////////////////////
@@ -188,7 +174,15 @@ struct TB_Passes {
     Worklist worklist;
 
     // tracks the fancier type system
-    LatticeUniverse universe;
+    //   hash-consing because there's a lot of
+    //   redundant types we might construct.
+    struct {
+        NL_HashSet type_interner;
+
+        // track a lattice per node (basically all get one so a compact array works)
+        size_t type_cap;
+        Lattice** types;
+    };
 
     // this is used to do GVN
     NL_HashSet gvn_nodes;
@@ -503,5 +497,5 @@ TB_Node* worklist_pop(Worklist* ws);
 void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
 void tb_pass_schedule(TB_Passes* opt, TB_CFG cfg, bool renumber);
 
-Lattice* lattice_universe_get(LatticeUniverse* uni, TB_Node* n);
+Lattice* lattice_universe_get(TB_Passes* p, TB_Node* n);
 LatticeTrifecta lattice_truthy(Lattice* l);

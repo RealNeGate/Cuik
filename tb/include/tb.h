@@ -1286,25 +1286,19 @@ TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 ////////////////////////////////
 // Passes
 ////////////////////////////////
-typedef enum {
-    // allowed to remove PHIs nodes, this is
-    // helpful because the default IR building
-    // will produce tons of useless memory PHIs.
-    TB_PEEPHOLE_PHI = 1,
-
-    // it's allowed to fold memory operations (store or load elimination)
-    TB_PEEPHOLE_MEMORY = 2,
-
-    // just do every reduction rule i can provide you
-    TB_PEEPHOLE_ALL = 7,
-} TB_PeepholeFlags;
-
 // Function analysis, optimizations, and codegen are all part of this
 typedef struct TB_Passes TB_Passes;
 
 // the arena is used to allocate the nodes while passes are being done.
 TB_API TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena);
-TB_API void tb_pass_exit(TB_Passes* opt);
+TB_API void tb_pass_exit(TB_Passes* p);
+
+// allocates peephole datastructures, necessarily if you wanna run the peephole optimizer
+// during IR construction.
+TB_API void tb_pass_prep(TB_Passes* p);
+
+// this is the peephole optimizer in a form you can run during IR construction.
+TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n);
 
 // transformation passes:
 //   peephole: 99% of the optimizer, i'm sea of nodes pilled so i
@@ -1318,13 +1312,13 @@ TB_API void tb_pass_exit(TB_Passes* opt);
 //
 //   SROA: splits LOCALs into multiple to allow for more dataflow
 //     analysis later on.
-TB_API void tb_pass_peephole(TB_Passes* opt, TB_PeepholeFlags flags);
-TB_API void tb_pass_sroa(TB_Passes* opt);
-TB_API void tb_pass_mem2reg(TB_Passes* opt);
-TB_API void tb_pass_loop(TB_Passes* opt);
+TB_API void tb_pass_peephole(TB_Passes* p);
+TB_API void tb_pass_sroa(TB_Passes* p);
+TB_API void tb_pass_mem2reg(TB_Passes* p);
+TB_API void tb_pass_loop(TB_Passes* p);
 
 // this just runs the optimizer in the default configuration
-TB_API void tb_pass_optimize(TB_Passes* opt);
+TB_API void tb_pass_optimize(TB_Passes* p);
 
 // analysis
 //   print: prints IR in a flattened text form.
