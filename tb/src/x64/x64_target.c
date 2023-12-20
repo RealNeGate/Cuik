@@ -856,7 +856,7 @@ static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 ea.scale = scale;
             }
         } else {
-            __debugbreak();
+            tb_todo();
         }
 
         ea.index = index;
@@ -1650,7 +1650,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         }
         #endif
 
-        normie:
+        normie:;
         const char* mnemonic = tb_x86_mnemonic(&inst);
         E("  ");
         if (inst.flags & TB_X86_INSTR_REP) {

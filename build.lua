@@ -49,7 +49,7 @@ local modules = {
 	--   TildeBackend
 	tb = { srcs={
 			"tb/src/libtb.c", "tb/src/x64/x64_target.c", "tb/src/aarch64/aarch64_target.c"
-		}, flags="-I tb/include -DCUIK_USE_TB -DCUIK_HAS_X64 -DCUIK_HAS_AARCH64", deps={"common"}
+		}, flags="-I tb/include -DCUIK_USE_TB -DTB_HAS_X64 -DTB_HAS_AARCH64", deps={"common"}
 	},
 	-- executables:
 	--   Cuik command line
