@@ -434,5 +434,9 @@ static Lattice* dataflow_branch(TB_Passes* restrict opt, LatticeUniverse* uni, T
         lattice_universe_map(&opt->universe, proj, l);
     }
 
+    if (taken >= 0) {
+        tb_pass_mark_users(opt, n);
+    }
+
     return &TUP_IN_THE_SKY;
 }

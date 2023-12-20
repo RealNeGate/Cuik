@@ -300,8 +300,7 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
     if (dt.type == TB_INT) {
         l = lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { x, x, ~x & mask, x } });
     } else {
-        LatticeTrifecta t = x ? LATTICE_KNOWN_NOT_NULL : LATTICE_KNOWN_NULL;
-        l = lattice_intern(&p->universe, (Lattice){ LATTICE_POINTER, ._ptr = { t } });
+        l = x ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
     }
     lattice_universe_map(&p->universe, n, l);
     return gvn(p, n, sizeof(TB_NodeInt));
@@ -522,6 +521,20 @@ static bool is_if_a_goto(TB_Passes* restrict p, TB_Node* proj, TB_Node* n) {
     return true;
 }
 
+static TB_Node* fold_cproj(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* ctrl) {
+    // remove an if
+    if (ctrl->type == TB_PROJ && ctrl->inputs[0]->type == TB_BRANCH) {
+        Lattice* ctrl_ty = lattice_universe_get(&p->universe, ctrl);
+        if (ctrl_ty == &CTRL_IN_THE_SKY && is_if_a_goto(p, ctrl, ctrl->inputs[0])) {
+            TB_Node* pre_branch = ctrl->inputs[0]->inputs[0];
+            tb_pass_kill_node(p, ctrl->inputs[0]);
+            return pre_branch;
+        }
+    }
+
+    return NULL;
+}
+
 // Returns NULL or a modified node (could be the same node, we can stitch it back into place)
 static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_PeepholeFlags flags) {
     switch (n->type) {
@@ -530,20 +543,28 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
         case TB_SYSCALL:
         case TB_DEBUGBREAK:
         case TB_TRAP:
+        case TB_BRANCH:
         case TB_UNREACHABLE:
-        case TB_SAFEPOINT_POLL:
-        case TB_REGION: {
-            TB_Node* ctrl = n->inputs[0];
+        case TB_SAFEPOINT_POLL: {
+            TB_Node* k = fold_cproj(p, f, n, n->inputs[0]);
+            if (k) {
+                set_input(f, n, k, 0);
+                return n;
+            }
+            break;
+        }
 
-            // remove an if
-            if (ctrl->type == TB_PROJ && ctrl->inputs[0]->type == TB_BRANCH) {
-                Lattice* ctrl_ty = lattice_universe_get(&p->universe, ctrl);
-                if (ctrl_ty == &CTRL_IN_THE_SKY && is_if_a_goto(p, ctrl, ctrl->inputs[0])) {
-                    TB_Node* pre_branch = ctrl->inputs[0]->inputs[0];
-                    tb_pass_kill_node(p, ctrl->inputs[0]);
-                    return pre_branch;
+        case TB_REGION: {
+            bool progress = false;
+            FOREACH_N(i, 0, n->input_count) {
+                TB_Node* k = n->inputs[i];
+                if (k = fold_cproj(p, f, n, k), k) {
+                    set_input(f, n, k, i);
+                    progress = true;
                 }
             }
+
+            if (progress) return n;
             break;
         }
 
@@ -681,6 +702,33 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_P
             }
         }
 
+        case TB_REGION: {
+            // fold out diamond shaped patterns
+            TB_Node* same = n->inputs[0];
+            if (same->type == TB_PROJ && same->inputs[0]->type == TB_BRANCH) {
+                same = same->inputs[0];
+
+                // if it has phis... quit
+                FOR_USERS(u, n) {
+                    if (u->n->type == TB_PHI) {
+                        return n;
+                    }
+                }
+
+                FOREACH_N(i, 1, n->input_count) {
+                    if (n->inputs[i]->type != TB_PROJ || n->inputs[i]->inputs[0] != same) {
+                        return n;
+                    }
+                }
+
+                TB_Node* before = same->inputs[0];
+                tb_pass_kill_node(p, same);
+                return before;
+            }
+
+            return n;
+        }
+
         // dumb phis
         case TB_PHI: if (flags & TB_PEEPHOLE_PHI) {
             TB_Node* same = NULL;
@@ -708,7 +756,7 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         case TB_INTEGER_CONST: {
             TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
             if (n->dt.type == TB_PTR) {
-                return lattice_intern(&p->universe, (Lattice){ LATTICE_POINTER, ._ptr = { num->value ? LATTICE_KNOWN_NOT_NULL : LATTICE_KNOWN_NULL } });
+                return num->value ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
             } else {
                 return lattice_intern(&p->universe, (Lattice){ LATTICE_INT, ._int = { num->value, num->value, ~num->value, num->value } });
             }
@@ -736,8 +784,10 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
         return lattice_universe_get(uni, n->inputs[0]);
 
         case TB_LOCAL:
+        return &XNULL_IN_THE_SKY;
+
         case TB_SYMBOL:
-        return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = { LATTICE_KNOWN_NOT_NULL } });
+        return lattice_intern(uni, (Lattice){ LATTICE_PTR, ._ptr = { TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym } });
 
         case TB_BITCAST:
         return dataflow_bitcast(p, uni, n);
@@ -824,7 +874,7 @@ static Lattice* dataflow(TB_Passes* restrict p, LatticeUniverse* uni, TB_Node* n
 // converts constant Lattice into constant node
 static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
     // already a constant?
-    if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
+    if (n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
         return NULL;
     }
 
@@ -844,12 +894,11 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
             return NULL;
         }
 
-        case LATTICE_POINTER: {
-            if (l->_ptr.trifecta == LATTICE_KNOWN_NULL) {
-                return make_int_node(p->f, p, n->dt, 0);
-            }
+        case LATTICE_NULL:
+        return make_int_node(p->f, p, n->dt, 0);
 
-            return NULL;
+        case LATTICE_PTR: {
+            return make_int_node(p->f, p, n->dt, 0);
         }
 
         default: return NULL;
@@ -873,6 +922,10 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_CTRL:  printf("[ctrl]"); break;
         case LATTICE_XCTRL: printf("[~ctrl]"); break;
 
+        case LATTICE_NULL:  printf("[null]"); break;
+        case LATTICE_XNULL: printf("[~null]"); break;
+        case LATTICE_PTR:   printf("[%s]", l->_ptr.sym->name); break;
+
         case LATTICE_INT: {
             assert(dt.type == TB_INT);
             if (l->_int.min == l->_int.max) {
@@ -888,12 +941,6 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
                 printf("; zeros=%#"PRIx64", ones=%#"PRIx64, l->_int.known_zeros, l->_int.known_ones);
             }
             printf("]");
-            break;
-        }
-
-        case LATTICE_POINTER: {
-            static const char* tri[] = { "any-ptr", "null", "~null" };
-            printf("[%s]", tri[l->_ptr.trifecta]);
             break;
         }
 
@@ -1259,6 +1306,9 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_loop(p);
     tb_pass_peephole(p, TB_PEEPHOLE_ALL);
 
+
+    tb_pass_print_dot(p, tb_default_print_callback, stdout);
+
     // tb_pass_print(p);
     // dummy_interp(p);
 }
@@ -1298,6 +1348,8 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
             nl_hashset_put2(&p->universe.pool, &TOP_IN_THE_SKY,   lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->universe.pool, &CTRL_IN_THE_SKY,  lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->universe.pool, &XCTRL_IN_THE_SKY, lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &NULL_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->universe.pool, &XNULL_IN_THE_SKY, lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->universe.pool, &TUP_IN_THE_SKY,   lattice_hash, lattice_cmp);
         }
     }
@@ -1323,7 +1375,7 @@ void tb_pass_peephole(TB_Passes* p, TB_PeepholeFlags flags) {
         TB_Node* n;
         while ((n = worklist_pop(&p->worklist))) {
             DO_IF(TB_OPTDEBUG_STATS)(p->stats.peeps++);
-            DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", p->stats.time++), print_node_sexpr(n, 0));
+            DO_IF(TB_OPTDEBUG_PEEP)(printf("peep t=%d? ", ++p->stats.time), print_node_sexpr(n, 0));
 
             // must've dead sometime between getting scheduled and getting here.
             if (n->type != TB_PROJ && n->users == NULL) {

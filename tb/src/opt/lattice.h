@@ -1,10 +1,12 @@
 #include <hashes.h>
 
-static Lattice TOP_IN_THE_SKY   = { LATTICE_TOP };
-static Lattice BOT_IN_THE_SKY   = { LATTICE_BOT };
-static Lattice CTRL_IN_THE_SKY  = { LATTICE_CTRL };
+static Lattice TOP_IN_THE_SKY   = { LATTICE_TOP   };
+static Lattice BOT_IN_THE_SKY   = { LATTICE_BOT   };
+static Lattice CTRL_IN_THE_SKY  = { LATTICE_CTRL  };
 static Lattice XCTRL_IN_THE_SKY = { LATTICE_XCTRL };
 static Lattice TUP_IN_THE_SKY   = { LATTICE_TUPLE };
+static Lattice XNULL_IN_THE_SKY = { LATTICE_XNULL };
+static Lattice NULL_IN_THE_SKY  = { LATTICE_NULL  };
 
 static Lattice* lattice_from_dt(LatticeUniverse* uni, TB_DataType dt);
 
@@ -87,8 +89,8 @@ LatticeTrifecta lattice_truthy(Lattice* l) {
         case LATTICE_FLOAT64:
         return LATTICE_UNKNOWN;
 
-        case LATTICE_POINTER:
-        return l->_ptr.trifecta;
+        case LATTICE_NULL:  return false;
+        case LATTICE_XNULL: return true;
 
         default:
         return LATTICE_UNKNOWN;
@@ -111,7 +113,6 @@ static Lattice* lattice_from_dt(LatticeUniverse* uni, TB_DataType dt) {
             return lattice_intern(uni, (Lattice){ dt.data == TB_FLT_64 ? LATTICE_FLOAT64 : LATTICE_FLOAT32, ._float = { LATTICE_UNKNOWN } });
         }
 
-        case TB_PTR: return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = { LATTICE_UNKNOWN } });
         case TB_CONTROL: return &CTRL_IN_THE_SKY;
         case TB_TUPLE: return &TUP_IN_THE_SKY;
         default: return &BOT_IN_THE_SKY;
@@ -195,6 +196,9 @@ static LatticeInt lattice_meet_int(LatticeInt a, LatticeInt b, TB_DataType dt) {
 
 // generates the greatest lower bound between a and b
 static Lattice* lattice_meet(LatticeUniverse* uni, Lattice* a, Lattice* b, TB_DataType dt) {
+    // a ^ a = a
+    if (a == b) return a;
+
     // it's commutative, so let's simplify later code this way
     if (a->tag > b->tag) {
         SWAP(Lattice*, a, b);
@@ -231,13 +235,26 @@ static Lattice* lattice_meet(LatticeUniverse* uni, Lattice* a, Lattice* b, TB_Da
             return lattice_intern(uni, (Lattice){ a->tag, ._float = f });
         }
 
-        case LATTICE_POINTER: {
-            if (b->tag != LATTICE_INT) {
+        // all cases that reached down here are bottoms
+        case LATTICE_NULL: return &BOT_IN_THE_SKY;
+
+        // ~null ^ sym = ~null
+        case LATTICE_XNULL: {
+            if (b->tag == LATTICE_PTR) {
+                return a;
+            } else {
                 return &BOT_IN_THE_SKY;
             }
+        }
 
-            LatticePointer p = { .trifecta = TRIFECTA_MEET(a->_ptr, b->_ptr) };
-            return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = p });
+        // symA ^ symB = ~null
+        case LATTICE_PTR: {
+            if (b->tag == LATTICE_PTR) {
+                assert(a->_ptr.sym != b->_ptr.sym);
+                return &XNULL_IN_THE_SKY;
+            } else {
+                return &BOT_IN_THE_SKY;
+            }
         }
 
         default: tb_todo();

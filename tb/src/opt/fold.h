@@ -175,10 +175,8 @@ static Lattice* dataflow_bitcast(TB_Passes* restrict opt, LatticeUniverse* uni, 
 
     assert(a->tag == LATTICE_INT);
     if (a->_int.min == a->_int.max && n->dt.type == TB_PTR) {
-        // bitcast with a constant leads to fun cool stuff (usually we get constant zeros for
-        // NULL)
-        LatticeTrifecta t = a->_int.min ? LATTICE_KNOWN_NOT_NULL : LATTICE_KNOWN_NULL;
-        return lattice_intern(uni, (Lattice){ LATTICE_POINTER, ._ptr = { t } });
+        // bitcast with a constant leads to fun cool stuff (usually we get constant zeros for NULL)
+        return a->_int.min ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
     }
 
     return NULL;

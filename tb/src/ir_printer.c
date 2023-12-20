@@ -345,15 +345,17 @@ TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* u
     for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
         TB_Node* n = ws->items[i];
 
-        if (n->type != TB_PROJ) {
-            print_graph_node(f, callback, user_data, i, n);
-        }
-
+        bool has_users = false;
         FOR_USERS(u, n) {
             TB_Node* out = u->n;
             if (!worklist_test_n_set(ws, out)) {
                 dyn_array_put(ws->items, out);
             }
+            has_users = true;
+        }
+
+        if (has_users && n->type != TB_PROJ) {
+            print_graph_node(f, callback, user_data, i, n);
         }
     }
 

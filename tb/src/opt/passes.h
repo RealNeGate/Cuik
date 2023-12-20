@@ -7,7 +7,7 @@ enum {
 };
 
 #define TB_OPTDEBUG_STATS    0
-#define TB_OPTDEBUG_PEEP     0
+#define TB_OPTDEBUG_PEEP     1
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
@@ -59,10 +59,9 @@ typedef struct {
     LatticeTrifecta trifecta;
 } LatticeFloat;
 
-// TODO(NeGate): we might wanna store more info like aliasing, ownership and alignment.
 typedef struct {
-    LatticeTrifecta trifecta;
-} LatticePointer;
+    TB_Symbol* sym;
+} LatticePtrConst;
 
 typedef struct {
     size_t count;
@@ -79,9 +78,24 @@ struct Lattice {
         LATTICE_INT,
         LATTICE_FLOAT32,
         LATTICE_FLOAT64,
-        LATTICE_POINTER,
         LATTICE_TUPLE,
 
+        // pointers:
+        //      top
+        //      /  \
+        //     /    \
+        //    /    /|\
+        //    |   / | \
+        //    |  a  b  ...
+        //    |   \ | /
+        // null   ~null
+        //     \  /
+        //      bot
+        LATTICE_NULL,
+        LATTICE_XNULL,
+        LATTICE_PTR,
+
+        // control tokens
         LATTICE_CTRL,
         LATTICE_XCTRL,
     } tag;
@@ -89,7 +103,7 @@ struct Lattice {
     union {
         LatticeInt _int;
         LatticeFloat _float;
-        LatticePointer _ptr;
+        LatticePtrConst _ptr;
         LatticeTuple _tuple;
     };
 };
