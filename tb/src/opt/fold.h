@@ -111,9 +111,9 @@ static Lattice* dataflow_trunc(TB_Passes* restrict opt, TB_Node* n) {
     int64_t mask = tb__mask(n->dt.data);
     int64_t min = a->_int.min & mask;
     int64_t max = a->_int.max & mask;
-    if (wrapped_int_lt(max, min, n->dt.data)) {
-        min = lattice_int_min(n->dt.data);
-        max = lattice_int_max(n->dt.data);
+    if (min > max) {
+        min = 0;
+        max = mask;
     }
 
     uint64_t zeros = a->_int.known_zeros | ~mask;
@@ -167,8 +167,7 @@ static Lattice* dataflow_bitcast(TB_Passes* restrict opt, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    assert(a->tag == LATTICE_INT);
-    if (a->_int.min == a->_int.max && n->dt.type == TB_PTR) {
+    if (a->tag == LATTICE_INT && a->_int.min == a->_int.max && n->dt.type == TB_PTR) {
         // bitcast with a constant leads to fun cool stuff (usually we get constant zeros for NULL)
         return a->_int.min ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
     }
