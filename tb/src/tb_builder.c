@@ -502,6 +502,8 @@ void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* targ
 
     TB_NodeTailcall* c = TB_NODE_GET_EXTRA(n);
     c->proto = proto;
+
+    tb_inst_ret(f, 0, NULL);
 }
 
 TB_Node* tb_inst_poison(TB_Function* f, TB_DataType dt) {
