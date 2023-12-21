@@ -493,7 +493,7 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 
 void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
     TB_Node* n = tb_alloc_node(f, TB_TAILCALL, TB_TYPE_CONTROL, 3 + param_count, sizeof(TB_NodeTailcall));
-    set_input(f, n, transfer_ctrl(f, NULL), 0);
+    set_input(f, n, transfer_ctrl(f, n), 0);
     set_input(f, n, peek_mem(f), 1);
     set_input(f, n, target, 2);
     FOREACH_N(i, 0, param_count) {
