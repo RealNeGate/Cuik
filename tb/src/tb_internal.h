@@ -443,7 +443,7 @@ typedef struct {
 
     // functions are laid out linearly based on their function IDs and
     // thus function_sym_start tells you what the starting point is in the symbol table
-    TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_TemporaryStorage* tls);
+    TB_SectionGroup (*generate_debug_info)(TB_Module* m, TB_Arena* arena);
 } IDebugFormat;
 
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
@@ -496,16 +496,6 @@ do {                                      \
 #endif
 
 TB_ThreadInfo* tb_thread_info(TB_Module* m);
-
-// NOTE(NeGate): if you steal it you should restore the used amount back to what it was before
-TB_TemporaryStorage* tb_tls_steal(void);
-TB_TemporaryStorage* tb_tls_allocate(void);
-void* tb_tls_push(TB_TemporaryStorage* store, size_t size);
-void* tb_tls_try_push(TB_TemporaryStorage* store, size_t size);
-void tb_tls_restore(TB_TemporaryStorage* store, void* ptr);
-void* tb_tls_pop(TB_TemporaryStorage* store, size_t size);
-void* tb_tls_peek(TB_TemporaryStorage* store, size_t distance);
-bool tb_tls_can_fit(TB_TemporaryStorage* store, size_t size);
 
 void* tb_out_reserve(TB_Emitter* o, size_t count);
 void tb_out_commit(TB_Emitter* o, size_t count);
