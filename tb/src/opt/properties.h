@@ -61,7 +61,6 @@ static bool cfg_is_terminator(TB_Node* n) {
         case TB_UNREACHABLE:
         case TB_TRAP:
         case TB_ROOT:
-        case TB_TAILCALL:
         return true;
 
         default:
