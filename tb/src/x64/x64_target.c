@@ -488,6 +488,13 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_FLOAT64_CONST:
         return ctx->normie_mask[1];
 
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV:
+        tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[1]);
+        return ctx->normie_mask[1];
+
         case TB_BRANCH: {
             TB_Node* cmp = n->inputs[1];
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
@@ -988,6 +995,9 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 if (x == 0) {
                     // xor reg, reg
                     inst2(e, XOR, &dst, &dst, dt);
+                } else if (!fits_into_int32(x)) {
+                    Val src = val_abs(x);
+                    inst2(e, MOV, &dst, &src, dt);
                 } else {
                     Val src = val_imm(x);
                     inst2(e, MOV, &dst, &src, dt);
