@@ -997,7 +997,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     inst2(e, XOR, &dst, &dst, dt);
                 } else if (!fits_into_int32(x)) {
                     Val src = val_abs(x);
-                    inst2(e, MOV, &dst, &src, dt);
+                    inst2(e, MOVABS, &dst, &src, dt);
                 } else {
                     Val src = val_imm(x);
                     inst2(e, MOV, &dst, &src, dt);
