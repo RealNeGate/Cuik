@@ -71,12 +71,13 @@ struct Cuik_BuildStep {
 };
 
 static TB_Arena* get_ir_arena(void) {
-    static _Thread_local TB_Arena ir_arena;
-    if (tb_arena_is_empty(&ir_arena)) {
-        tb_arena_create(&ir_arena, TB_ARENA_LARGE_CHUNK_SIZE);
+    static _Thread_local TB_Arena ir_arena[2];
+    if (tb_arena_is_empty(&ir_arena[0])) {
+        tb_arena_create(&ir_arena[0], TB_ARENA_LARGE_CHUNK_SIZE);
+        tb_arena_create(&ir_arena[1], TB_ARENA_LARGE_CHUNK_SIZE);
     }
 
-    return &ir_arena;
+    return ir_arena;
 }
 
 static void step_error(Cuik_BuildStep* s) {
@@ -142,8 +143,8 @@ static void apply_func(TB_Function* f, void* arg) {
 
     const char* name = ((TB_Symbol*) f)->name;
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
-        TB_Arena* arena = get_ir_arena();
-        TB_Passes* p = tb_pass_enter(f, arena);
+        TB_Arena* arenas = get_ir_arena();
+        TB_Passes* p = tb_pass_enter(f, &arenas[0]);
 
         if (args->opt_level >= 1) {
             tb_pass_optimize(p);
@@ -155,7 +156,7 @@ static void apply_func(TB_Function* f, void* arg) {
             tb_pass_print(p);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
-                TB_FunctionOutput* out = tb_pass_codegen(p, arena, NULL, print_asm);
+                TB_FunctionOutput* out = tb_pass_codegen(p, &arenas[1], NULL, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");
@@ -164,7 +165,7 @@ static void apply_func(TB_Function* f, void* arg) {
         }
 
         tb_pass_exit(p);
-        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(arena) / 1024.0f);
+        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(&arenas[0]) / 1024.0f);
     }
 }
 #endif

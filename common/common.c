@@ -101,7 +101,7 @@ void tb_arena_destroy(TB_Arena* restrict arena) {
 }
 
 void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
-    if (LIKELY(arena->watermark + size < arena->high_point)) {
+    if (LIKELY(arena->watermark + size <= arena->high_point)) {
         char* ptr = arena->watermark;
         arena->watermark += size;
         return ptr;

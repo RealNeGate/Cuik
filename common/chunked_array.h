@@ -63,6 +63,11 @@ void nl_chunked_arr_put(NL_ChunkedArr* arr, void* v) {
     last->elems[last->count++] = v;
 }
 
+void* nl_chunked_arr_pop(NL_ChunkedArr* arr) {
+    NL_ArrChunk* last = arr->last;
+    return last->elems[--last->count];
+}
+
 void nl_chunked_arr_reset(NL_ChunkedArr* arr) {
     tb_arena_restore(arr->arena, arr->sp);
 }

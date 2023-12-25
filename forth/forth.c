@@ -14,33 +14,39 @@
 typedef uint64_t Val;
 
 typedef struct Env Env;
+typedef struct Type Type;
 typedef struct Words Words;
 typedef struct StackFrame StackFrame;
 
 typedef void Word(Env* env, uintptr_t arg);
 
+struct Type {
+    enum { TYPE_INT } tag;
+};
+
+static Type INT_IN_THE_SKY = { TYPE_INT };
+
 // set of words in a stream, each is a code pointer except if
 // the bottom bit is set you've got a argument following the ptr.
 struct Words {
     // atomics (should be separated from the rest of crap to avoid false-sharing)
-    _Alignas(64) struct {
-        // compile queue
-        _Atomic(Words*) next_compile;
-
-        // stats
-        int trips;
+    struct {
+        _Atomic(Words*) next_compile; // compile queue.
+        _Atomic(void*) jitted;        // machine code, NULL if stale or unavailable.
+        _Atomic uint32_t trips;       // stats.
     };
 
-    // compiler
-    _Atomic(void*) jitted;
+    _Alignas(64) struct {
+        // type
 
-    // dbg info
-    size_t name_len;
-    const char* name;
+        // dbg info
+        size_t name_len;
+        const char* name;
 
-    // code
-    int cap, len;
-    uintptr_t arr[];
+        // code
+        int cap, len;
+        uintptr_t arr[];
+    };
 };
 
 // two kinds of stack frames: JIT and interpreted, we
@@ -48,7 +54,7 @@ struct Words {
 // queried so just track the PC+SP (we can reconstruct
 // the rest later).
 struct StackFrame {
-    enum { STK_JIT_FRAME, STK_INTERP_FRAME } tag;
+    enum { STK_INTERP_FRAME, STK_JIT_FRAME } tag;
     struct StackFrame* prev;
     union {
         struct { void *pc, *sp; };    // JIT
@@ -62,7 +68,7 @@ struct Env {
 
     // data stack
     size_t top;
-    Val stk[1023];
+    Val stk[1022];
 };
 
 static void env_exit(int status) {
@@ -104,8 +110,8 @@ static void env_push(Env* env, Val v) {
 }
 
 static Words* words_create(void) {
-    Words* w = mi_aligned_alloc(64, sizeof(Words) + 64*sizeof(uintptr_t));
-    *w = (Words) { .cap = 64 };
+    Words* w = mi_aligned_alloc(64, sizeof(Words) + 32*sizeof(uintptr_t));
+    *w = (Words) { .cap = 32 };
     return w;
 }
 
@@ -134,12 +140,111 @@ static TB_Arena crap;
 static NL_Strmap(Words*) dict;
 
 ////////////////////////////////
+// Type check
+////////////////////////////////
+static void type_check(Words* restrict words) {
+    Type** res = tb_arena_alloc(&crap, words->len * sizeof(Type*));
+    TB_ArenaSavepoint sp = tb_arena_save(&crap);
+
+    size_t cnt = 0;
+    Type** stk = tb_arena_alloc(&crap, 1024*sizeof(Type*));
+
+    size_t i = 0, len = words->len;
+    while (i < len) {
+        // decode phase
+        uintptr_t ptr = words->arr[i++];
+        uintptr_t aux = 0;
+        if (ptr & 1) {
+            ptr >>= 1;
+            aux = words->arr[i++];
+        }
+
+        // infer
+        __debugbreak();
+    }
+    tb_arena_restore(&crap, sp);
+}
+
+////////////////////////////////
+// Interpreter
+////////////////////////////////
+static void push_to_compile(Words* w);
+
+// TODO(NeGate): do cooler stats
+static void inc_trip(Env* env, Words* restrict words) {
+    // saturated increment:
+    //   we don't wanna overflow, it'll probably fuck up stats
+    uint32_t old, res;
+    do {
+        old = atomic_load_explicit(&words->trips, memory_order_relaxed);
+        res = (old == UINT32_MAX) ? UINT32_MAX : old + 1;
+    } while (!atomic_compare_exchange_strong(&words->trips, &old, res));
+
+    if (old == 100) {
+        // enqueue
+        push_to_compile(words);
+    }
+}
+
+static void interp(Env* env, Words* restrict words) {
+    // don't interpret the word if we've got a JIT alternative (it's never stale
+    // if it were it would've been unlinked).
+    Word* code_ptr = atomic_load_explicit(&words->jitted, memory_order_relaxed);
+    if (code_ptr) {
+        inc_trip(env, words);
+        code_ptr(env, (uintptr_t) words);
+        return;
+    }
+
+    // push stack frame
+    TB_ArenaSavepoint sp = tb_arena_save(&crap);
+    StackFrame* frame = tb_arena_alloc(&crap, sizeof(StackFrame));
+    frame->tag  = STK_INTERP_FRAME;
+    frame->prev = env->ctrl;
+    frame->fn   = words;
+    frame->i    = 0;
+    env->ctrl   = frame;
+
+    inc_trip(env, words);
+
+    size_t i = 0, len = words->len;
+    while (i < len) {
+        // decode phase
+        uintptr_t ptr = words->arr[i++];
+        uintptr_t aux = 0;
+        if (ptr & 1) {
+            ptr >>= 1;
+            aux = words->arr[i++];
+        }
+        frame->i = i;
+
+        // execute phase
+        Word* fn = (Word*) ptr;
+        fn(env, aux);
+
+        assert(env->ctrl == frame && "we corrupted the stack i think?");
+        i = frame->i;
+    }
+
+    env->ctrl = frame->prev;
+    tb_arena_restore(&crap, sp);
+}
+
+static void push_num(Env* env, uintptr_t arg)    { env_push(env, arg); }
+static void self_invoke(Env* env, uintptr_t arg) { env->ctrl->i = 0;   }
+static void invoke(Env* env, uintptr_t arg)      { interp(env, (Words*) arg); }
+static void add_num(Env* env, uintptr_t arg)     { uint64_t a = env_pop(env); env_push(env, env_pop(env) + a); }
+static void print_num(Env* env, uintptr_t arg)   { uint64_t a = env_pop(env); printf("%"PRIu64, a); }
+static void emit_char(Env* env, uintptr_t arg)   { uint64_t a = env_pop(env); printf("%c", (char) a); }
+
+////////////////////////////////
 // Compile thread
 ////////////////////////////////
+#define TB_MEMBER(base, T, name) tb_inst_member_access(f, base, offsetof(T, name))
+
 static struct {
     _Atomic bool running;
 
-    TB_Arena arena;
     TB_Module* mod;
     TB_JIT* jit;
 
@@ -187,59 +292,15 @@ static Words* pop_to_compile(void) {
     return next;
 }
 
-static int jit_thread_routine(void* arg) {
-    tb_arena_create(&jit.arena, TB_ARENA_LARGE_CHUNK_SIZE);
+static void compile_word(Words* words, TB_Function* f, TB_Arena* arena) {
+    TB_ArenaSavepoint sp = tb_arena_save(arena);
 
-    jit.running = true;
-    jit.mod = tb_module_create_for_host(true);
-    jit.jit = tb_jit_begin(jit.mod, 0);
+    // fn(Env* env, uintptr_t arg) -> void
+    TB_Node* env_ptr = tb_inst_param(f, 0);
+    TB_Node* tos = TB_MEMBER(env_ptr, Env, stk);
 
-    // all words share a prototype
-    TB_PrototypeParam params[] = { { TB_TYPE_PTR }, { TB_TYPE_I64 } };
-    jit.proto = tb_prototype_create(jit.mod, TB_STDCALL, 2, params, 0, NULL, false);
-
-    while (atomic_load_explicit(&jit.running, memory_order_relaxed)) {
-        Words* w = pop_to_compile();
-        if (w == NULL) {
-            // might wanna place a semaphore or futex to wake it up
-            thrd_yield();
-            continue;
-        }
-
-        printf("compile %.*s\n", (int) w->name_len, w->name);
-    }
-
-    tb_module_destroy(jit.mod);
-    return 0;
-}
-
-////////////////////////////////
-// Interpreter
-////////////////////////////////
-static void interp(Env* env, Words* restrict words) {
-    // don't interpret the word if we've got a JIT alternative (it's never stale
-    // if it were it would've been unlinked).
-    Word* code_ptr = atomic_load_explicit(&words->jitted, memory_order_relaxed);
-    if (code_ptr) {
-        code_ptr(env, (uintptr_t) words);
-        words->trips += 1;
-        return;
-    }
-
-    // push stack frame
-    TB_ArenaSavepoint sp = tb_arena_save(&crap);
-    StackFrame* frame = tb_arena_alloc(&crap, sizeof(StackFrame));
-    frame->tag  = STK_INTERP_FRAME;
-    frame->prev = env->ctrl;
-    frame->fn   = words;
-    frame->i    = 0;
-    env->ctrl   = frame;
-
-    // TODO(NeGate): do cooler stats
-    if (++words->trips == 100) {
-        // enqueue
-        push_to_compile(words);
-    }
+    size_t cnt = 0;
+    TB_Node** stk = tb_arena_alloc(arena, 1024*sizeof(TB_Node*));
 
     size_t i = 0, len = words->len;
     while (i < len) {
@@ -250,52 +311,79 @@ static void interp(Env* env, Words* restrict words) {
             ptr >>= 1;
             aux = words->arr[i++];
         }
-        frame->i = i;
 
-        // execute phase
-        Word* fn = (Word*) ptr;
-        fn(env, aux);
-
-        assert(env->ctrl == frame && "we corrupted the stack i think?");
-        i = frame->i;
+        void* p = (void*) ptr;
+        if (p == &push_num) {
+            stk[cnt++] = tb_inst_uint(f, TB_TYPE_I64, aux);
+        } else if (p == &add_num) {
+            __debugbreak();
+        } else {
+            // failure to compile, interpret
+            __debugbreak();
+        }
     }
 
-    env->ctrl = frame->prev;
-    tb_arena_restore(&crap, sp);
+    tb_arena_restore(arena, sp);
+    tb_inst_ret(f, 0, NULL);
 }
 
-static void push_num(Env* env, uintptr_t arg) {
-    env_push(env, arg);
-}
+static int jit_thread_routine(void* arg) {
+    jit.running = true;
+    jit.mod = tb_module_create_for_host(true);
+    jit.jit = tb_jit_begin(jit.mod, 0);
 
-static void self_invoke(Env* env, uintptr_t arg) {
-    env->ctrl->i = 0;
-}
+    // all words share a prototype
+    TB_PrototypeParam params[] = { { TB_TYPE_PTR }, { TB_TYPE_I64 } };
+    jit.proto = tb_prototype_create(jit.mod, TB_STDCALL, 2, params, 0, NULL, false);
 
-static void invoke(Env* env, uintptr_t arg) {
-    interp(env, (Words*) arg);
-}
+    TB_Arena arena, arena2;
+    tb_arena_create(&arena, TB_ARENA_LARGE_CHUNK_SIZE);
+    tb_arena_create(&arena2, TB_ARENA_LARGE_CHUNK_SIZE);
 
-static void add_num(Env* env, uintptr_t arg) {
-    uint64_t tmp = env_pop(env);
-    env_push(env, env_pop(env) + tmp);
-}
+    while (atomic_load_explicit(&jit.running, memory_order_relaxed)) {
+        Words* w = pop_to_compile();
+        if (w == NULL) {
+            // might wanna place a semaphore or futex to wake it up
+            thrd_yield();
+            continue;
+        }
 
-static void print_num(Env* env, uintptr_t arg) {
-    uint64_t a = env_pop(env);
-    printf("%"PRIu64, a);
-}
+        printf("compile %.*s\n", (int) w->name_len, w->name);
 
-static void emit_char(Env* env, uintptr_t arg) {
-    uint64_t a = env_pop(env);
-    printf("%c", (char) a);
+        TB_ArenaSavepoint sp = tb_arena_save(&arena);
+        {
+            TB_Function* f = tb_function_create(jit.mod, w->name_len, w->name, TB_LINKAGE_PUBLIC);
+            tb_function_set_prototype(f, -1, jit.proto, &arena);
+
+            // build IR
+            compile_word(w, f, &arena2);
+
+            // opt & codegen
+            TB_Passes* p = tb_pass_enter(f, &arena);
+            tb_pass_print(p);
+            tb_pass_peephole(p);
+            tb_pass_codegen(p, &arena, NULL, false);
+            tb_pass_exit(p);
+
+            void* code_ptr = tb_jit_place_function(jit.jit, f);
+
+            // TODO(NeGate): might wanna write a code GC
+            atomic_exchange(&w->jitted, code_ptr);
+        }
+        // we don't need to keep the contents in the code arena after we copy to JIT
+        tb_arena_restore(&arena, sp);
+    }
+
+    tb_jit_end(jit.jit);
+    tb_module_destroy(jit.mod);
+    return 0;
 }
 
 ////////////////////////////////
 // Parser
 ////////////////////////////////
 static bool is_num(char ch)   { return ch >= '0' && ch <= '9'; }
-static bool is_ident(char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'); }
+static bool is_ident(char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' || ch == '-'; }
 
 static const char* skip_ws(const char* str) {
     while (*str == ' ' ||*str == '\n' || *str == '\r') str++;
@@ -376,6 +464,7 @@ static Words* parse(const char* str) {
         }
     }
 
+    type_check(words);
     return words;
 }
 
