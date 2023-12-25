@@ -155,7 +155,7 @@ static void apply_func(TB_Function* f, void* arg) {
             tb_pass_print(p);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
-                TB_FunctionOutput* out = tb_pass_codegen(p, NULL, print_asm);
+                TB_FunctionOutput* out = tb_pass_codegen(p, arena, NULL, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");

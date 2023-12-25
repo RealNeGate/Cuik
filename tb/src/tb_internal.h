@@ -229,14 +229,6 @@ typedef struct {
     TB_Safepoint* sp;
 } TB_SafepointKey;
 
-typedef struct TB_CodeRegion TB_CodeRegion;
-struct TB_CodeRegion {
-    size_t capacity, size;
-    TB_CodeRegion* prev;
-
-    uint8_t data[];
-};
-
 typedef struct COFF_UnwindInfo COFF_UnwindInfo;
 typedef struct ICodeGen ICodeGen;
 
@@ -254,9 +246,7 @@ typedef struct TB_FunctionOutput {
     TB_Assembly* asm_out;
     uint64_t stack_usage;
 
-    TB_CodeRegion* code_region;
     uint8_t* code;
-
     size_t code_pos; // relative to the export-specific text section
     size_t code_size;
 
@@ -359,8 +349,6 @@ struct TB_ThreadInfo {
     //   we'll be iterating these during object/executable
     //   export to get all the symbols compiled.
     NL_HashSet symbols;
-
-    TB_CodeRegion* code; // compiled output
 };
 
 typedef struct {
@@ -431,7 +419,7 @@ struct ICodeGen {
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
 
-    void (*compile_function)(TB_Passes* p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, uint8_t* out, size_t out_capacity, bool emit_asm);
+    void (*compile_function)(TB_Passes* p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* arena, bool emit_asm);
 };
 
 // All debug formats i know of boil down to adding some extra sections to the object file
