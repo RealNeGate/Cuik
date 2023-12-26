@@ -127,7 +127,8 @@ static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
-    ctx->regalloc = tb__lsra; // tb__chaitin;
+    // ctx->regalloc = tb__chaitin;
+    ctx->regalloc = tb__lsra;
 
     ctx->abi_index = abi == TB_ABI_SYSTEMV ? 1 : 0;
 
@@ -1013,6 +1014,25 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 } else {
                     tb_todo();
                 }
+                break;
+            }
+            case TB_FADD:
+            case TB_FSUB:
+            case TB_FMUL:
+            case TB_FDIV:
+            case TB_FMAX:
+            case TB_FMIN: {
+                const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV, FP_MAX, FP_MIN };
+                TB_X86_DataType dt = legalize_float(n->dt);
+
+                Val dst = op_at(ctx, t->interval);
+                Val lhs = op_at(ctx, t->ins[0].src);
+                if (!is_value_match(&dst, &lhs)) {
+                    inst2sse(e, FP_MOV, &dst, &lhs, dt);
+                }
+
+                Val rhs = op_at(ctx, t->ins[1].src);
+                inst2sse(e, ops[n->type - TB_FADD], &dst, &rhs, dt);
                 break;
             }
             case TB_SIGN_EXT:

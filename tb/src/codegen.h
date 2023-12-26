@@ -225,6 +225,7 @@ struct Ctx {
     int interval_count;
     int stack_usage;
     int caller_usage;
+    int num_fixed;
     int num_classes;
     int num_regs[MAX_REG_CLASSES];
     uint64_t callee_saved[MAX_REG_CLASSES];

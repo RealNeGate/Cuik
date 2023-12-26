@@ -157,7 +157,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Function* restrict f = p->f;
-    // tb_pass_print(p);
+    tb_pass_print(p);
 
     Ctx ctx = {
         .module = f->super.module,
@@ -233,6 +233,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 intervals[j].ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
             }
             ctx.fixed[i] = intervals;
+            ctx.num_fixed += ctx.num_regs[i];
         }
     }
 
@@ -402,6 +403,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             }
         }
         dyn_array_destroy(phi_vals);
+        log_debug("%s: tmp_arena=%.1f KiB (postISel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
     }
 
     CUIK_TIMED_BLOCK("liveness") {
@@ -546,13 +548,18 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         }
         #endif
 
+        log_debug("%s: tmp_arena=%.1f KiB (dataflow)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
         tb_arena_restore(arena, sp);
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
+        log_debug("%s: tmp_arena=%.1f KiB (preRA)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
+
         ctx.bb_count = bb_count;
         ctx.machine_bbs = machine_bbs;
         ctx.regalloc(&ctx, arena);
+
+        log_debug("%s: tmp_arena=%.1f KiB (postRA)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
     }
 
     CUIK_TIMED_BLOCK("emit") {
@@ -648,7 +655,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     nl_map_free(ctx.stack_slots);
     tb_free_cfg(&cfg);
 
-    log_debug("%s: arenas (tmp = %.1f KiB, code = %.1f KiB)", f->super.name, tb_arena_current_size(tmp_arena) / 1024.0f, tb_arena_current_size(code_arena) / 1024.0f);
+    log_debug("%s: code_arena=%.1f KiB", f->super.name, tb_arena_current_size(code_arena) / 1024.0f);
     tb_arena_restore(arena, sp);
     p->scheduled = NULL;
 
