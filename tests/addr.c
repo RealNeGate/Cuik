@@ -26,6 +26,6 @@ uint32_t mur(uint32_t h, uint32_t k) {
     return (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
 }
 
-float foo(void) {
-    return 0.0f + 1.0f;
+float foo(float* x, int i, int j) {
+    return x[i + j]*2.0f + 1.0f;
 }

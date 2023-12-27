@@ -110,7 +110,7 @@ static void add_range(LSRA* restrict ra, LiveInterval* interval, int start, int 
     }
 }
 
-LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* restrict ra, RegMask mask) {
+LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* restrict ra, RegMask mask, TB_DataType dt) {
     // not so fixed interval? we need a unique interval then
     int reg = fixed_reg_mask(mask.mask);
     if (reg >= 0) {
@@ -120,8 +120,9 @@ LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* 
         *interval = (LiveInterval){
             .id = ctx->interval_count++,
             .mask = mask,
+            .dt   = dt,
             .hint = NULL,
-            .reg = -1,
+            .reg  = -1,
             .assigned = -1,
             .range_cap = 4, .range_count = 1,
             .ranges = tb_arena_alloc(arena, 4 * sizeof(LiveRange))
@@ -245,7 +246,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         if (hint >= 0) {
                             tmp = &ctx->fixed[in_mask.class][hint];
                         } else {
-                            tmp = gimme_interval_for_mask(ctx, arena, &ra, in_mask);
+                            tmp = gimme_interval_for_mask(ctx, arena, &ra, in_mask, in_def->dt);
                             dyn_array_put(ra.unhandled, tmp);
                             t->ins[j].src = tmp;
                         }
@@ -287,7 +288,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         t->prev = tmp;
 
                         // replace use site with temporary that legalized the constraint
-                        tmp->interval = gimme_interval_for_mask(ctx, arena, &ra, in_mask);
+                        tmp->interval = gimme_interval_for_mask(ctx, arena, &ra, in_mask, in_def->dt);
                         t->ins[j].src = tmp->interval;
 
                         // insert fixed interval use site, def site will be set later

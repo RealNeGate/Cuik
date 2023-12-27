@@ -61,7 +61,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_FMIN:
         case TB_NEG:
         case TB_NOT:
-        case TB_PROJ:
         case TB_PHI:
         case TB_CLZ:
         case TB_CTZ:
@@ -120,6 +119,9 @@ static size_t extra_bytes(TB_Node* n) {
 
         case TB_PREFETCH:
         return sizeof(TB_NodePrefetch);
+
+        case TB_PROJ:
+        return sizeof(TB_NodeProj);
 
         default: tb_todo();
     }

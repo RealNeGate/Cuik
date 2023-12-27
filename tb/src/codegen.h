@@ -36,7 +36,6 @@ enum {
     // all we can fit into 3bits, but also... 8 classes is a lot.
     //
     // * x86 has two currently: GPR and Vector.
-    //
     MAX_REG_CLASSES = 8
 };
 
@@ -95,6 +94,8 @@ struct LiveInterval {
     int active_range;
 
     RegMask mask;
+    TB_DataType dt;
+
     Tile* tile;
 
     int8_t reg;
@@ -127,9 +128,6 @@ struct Tile {
     union {
         // tag = TILE_GOTO, this is the successor
         TB_Node* succ;
-
-        // tag = TILE_SPILL_MOVE, this is the tile we're copying from.
-        struct Tile* src;
 
         // tag = TILE_NORMAL
         void* aux;

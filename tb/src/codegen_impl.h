@@ -329,6 +329,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         // construct live interval
                         tile->interval = tile_make_interval(&ctx, arena, tile->interval);
                         tile->interval->tile = tile;
+                        tile->interval->dt = n->dt;
                         tile->interval->mask = mask;
 
                         TB_OPTDEBUG(CODEGEN)(printf("    v%d [%#08llx]\n", tile->interval->id, mask.mask));
@@ -370,6 +371,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         // post phi elimination we don't have "SSA" really.
                         phi_tile->interval = tile_make_interval(&ctx, arena, phi_tile->interval);
                         phi_tile->interval->tile = phi_tile;
+                        phi_tile->interval->dt = v->phi->dt;
                         phi_tile->interval->mask = isel_node(&ctx, phi_tile, v->phi);
 
                         LiveInterval* src = get_tile(&ctx, v->n, true)->interval;
