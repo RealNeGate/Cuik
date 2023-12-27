@@ -129,6 +129,9 @@ struct Tile {
         // tag = TILE_GOTO, this is the successor
         TB_Node* succ;
 
+        // tag = TILE_SPILL_MOVE
+        TB_DataType spill_dt;
+
         // tag = TILE_NORMAL
         void* aux;
 
@@ -178,6 +181,7 @@ typedef struct {
 
 typedef struct Ctx Ctx;
 typedef void (*TB_RegAlloc)(Ctx* restrict ctx, TB_Arena* arena);
+typedef bool (*TB_2Addr)(TB_Node* n);
 
 typedef struct {
     uint32_t* pos;
@@ -195,6 +199,7 @@ struct Ctx {
     // user-provided details
     TB_Scheduler sched;
     TB_RegAlloc regalloc;
+    TB_2Addr _2addr;
 
     // target-dependent index
     int abi_index;

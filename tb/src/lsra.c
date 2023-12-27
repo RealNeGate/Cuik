@@ -210,6 +210,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                             .tag = TILE_SPILL_MOVE,
                             .time = time,
                         };
+                        tmp->spill_dt = interval->dt;
                         tmp->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
                         tmp->in_count = 1;
                         tmp->ins[0].src  = fixed;
@@ -233,8 +234,11 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     }
                 }
 
+                // 2 address ops will interfere with their own inputs (except for
+                // shared dst/src)
+                bool _2addr = t->tag == TILE_SPILL_MOVE || (t->n && ctx->_2addr(t->n));
+
                 // mark inputs
-                int space = 0;
                 FOREACH_N(j, 0, t->in_count) {
                     LiveInterval* in_def = t->ins[j].src;
                     RegMask in_mask = t->ins[j].mask;
@@ -246,7 +250,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         if (hint >= 0) {
                             tmp = &ctx->fixed[in_mask.class][hint];
                         } else {
-                            tmp = gimme_interval_for_mask(ctx, arena, &ra, in_mask, in_def->dt);
+                            tmp = gimme_interval_for_mask(ctx, arena, &ra, in_mask, TB_TYPE_I64);
                             dyn_array_put(ra.unhandled, tmp);
                             t->ins[j].src = tmp;
                         }
@@ -262,14 +266,15 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         in_def->hint = &ctx->fixed[in_mask.class][hint];
                     }
 
-                    // this is used to guarentee the first operand of a binary operator
-                    // can be coalesced with the destination, especially helpful for x86
-                    // where binops that don't coalesce require an extra mov.
-                    bool coalesceable = interval && t->in_count <= 2 && j == 0;
                     int use_time = time;
 
-                    // if the use mask is more constrained than the def, we'll make a temporary
-                    if ((in_def_mask.mask & in_mask.mask) != in_def_mask.mask) {
+                    // if the use mask is more constrained than the def, we'll make a temporary (also if it's fixed to avoid stretching fixed constraints)
+                    bool both_fixed = hint >= 0 && in_def_mask.mask == in_mask.mask;
+                    if ((in_def_mask.mask & in_mask.mask) != in_def_mask.mask || both_fixed) {
+                        if (both_fixed) {
+                            in_def_mask = ctx->normie_mask[in_mask.class];
+                        }
+
                         TB_OPTDEBUG(REGALLOC)(printf("  TEMP %#04llx -> v%d (%#08llx)\n", in_def_mask.mask, in_def->id, in_mask.mask));
 
                         // construct copy (either to a fixed interval or a new masked interval)
@@ -280,6 +285,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                             .tag = TILE_SPILL_MOVE,
                             .time = time,
                         };
+                        tmp->spill_dt = in_def->dt;
                         tmp->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
                         tmp->in_count = 1;
                         tmp->ins[0].src  = in_def;
@@ -294,13 +300,13 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         // insert fixed interval use site, def site will be set later
                         add_range(&ra, tmp->interval, bb_start, use_time);
                         add_use_pos(&ra, tmp->interval, bb_start, USE_REG);
-                    } else if (!coalesceable) {
+                    } else if (_2addr && j != 0) {
                         // extend
                         use_time += 2;
                     }
 
                     // hint as copy
-                    if (coalesceable && interval->hint == NULL) {
+                    if (_2addr && j == 0 && interval->hint == NULL) {
                         interval->hint = in_def;
                     }
 
@@ -545,6 +551,7 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
         .tag = TILE_SPILL_MOVE,
         .interval = new_it
     };
+    move->spill_dt = old_it->dt;
     move->ins = tb_arena_alloc(ra->arena, sizeof(Tile*));
     move->in_count = 1;
     move->ins[0].src  = old_it;

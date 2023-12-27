@@ -61,10 +61,10 @@ Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env) {
     target_generic_fill_builtin_table(&builtins);
 
     #define X(name, format) nl_map_put_cstr(builtins, #name, format);
-    X("_mm_getcsr",    "v i");
-    X("_mm_setcsr",    "i v");
-    X("__readgsqword", " s");
-    X("__rdtsc",       " L");
+    X(_mm_getcsr,    "v i");
+    X(_mm_setcsr,    "i v");
+    X(__readgsqword, " s");
+    X(__rdtsc,       " L");
     #undef X
 
     Cuik_Target* t = cuik_malloc(sizeof(Cuik_Target));

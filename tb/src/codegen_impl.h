@@ -436,7 +436,13 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 Set* kill = &mbb->kill;
                 for (Tile* t = mbb->start; t; t = t->next) {
                     t->time = timeline;
-                    timeline += 4;
+
+                    // 2addr ops will reserve some space for the potential move
+                    if (t->n && t->n->type >= TB_AND && t->n->type <= TB_CMP_FLE) {
+                        timeline += 4;
+                    } else {
+                        timeline += 2;
+                    }
 
                     FOREACH_N(j, 0, t->in_count) {
                         LiveInterval* in_def = t->ins[j].src;
@@ -452,7 +458,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                     }
                 }
 
-                timeline += 6;
+                timeline += 4;
             }
         }
 

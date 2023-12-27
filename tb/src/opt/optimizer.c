@@ -921,6 +921,9 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_CTRL:  printf("[ctrl]"); break;
         case LATTICE_XCTRL: printf("[~ctrl]"); break;
 
+        case LATTICE_FLOAT32: printf("[f32]"); break;
+        case LATTICE_FLOAT64: printf("[f64]"); break;
+
         case LATTICE_NULL:  printf("[null]"); break;
         case LATTICE_XNULL: printf("[~null]"); break;
         case LATTICE_PTR:   printf("[%s]", l->_ptr.sym->name); break;

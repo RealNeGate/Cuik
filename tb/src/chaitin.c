@@ -104,7 +104,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
 
                     // 2 address ops will interfere with their own inputs (except for
                     // shared dst/src)
-                    if (t->n->type >= TB_AND && t->n->type <= TB_CMP_FLE) {
+                    if (t->n && ctx->_2addr(t->n)) {
                         FOREACH_N(j, 1, t->in_count) {
                             LiveInterval* in_def = t->ins[j].src;
                             if (in_def == NULL) continue;

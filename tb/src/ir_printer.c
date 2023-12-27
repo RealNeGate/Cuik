@@ -35,6 +35,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_ARRAY_ACCESS: return "array";
         case TB_MEMBER_ACCESS: return "member";
 
+        case TB_CYCLE_COUNTER: return "cyclecnt";
         case TB_SAFEPOINT_POLL: return "safepoint.poll";
 
         case TB_MEMSET: return "memset";

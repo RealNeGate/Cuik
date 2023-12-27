@@ -123,8 +123,13 @@ static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
     return true;
 }
 
+static bool _2addr(TB_Node* n) {
+    return n->type >= TB_AND && n->type <= TB_CMP_FLE;
+}
+
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
+    ctx->_2addr = _2addr;
     // ctx->regalloc = tb__chaitin;
     ctx->regalloc = tb__lsra;
 
@@ -248,7 +253,7 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* og, TB_Node* n,
                 // we can only fit a 2bit shift amount in an LEA, after
                 // that we just defer to an explicit shift op.
                 if (scale > 3) {
-                    has_tmp = true;
+                    has_tmp = og->type != TB_LOAD || og->dt.type == TB_FLOAT;
                 }
             } else {
                 // needs a proper multiply (we may wanna invest in a few special patterns
@@ -268,7 +273,7 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* og, TB_Node* n,
         }
     }
 
-    int in_cap = extra_cnt + (index?1:0);
+    int in_cap = extra_cnt + (index?1:0) + has_tmp;
     if (!(base->type == TB_LOCAL || (base->type == TB_SYMBOL && index == NULL))) {
         in_cap += 1;
     }
@@ -293,6 +298,12 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* og, TB_Node* n,
         t->ins[in_count].src = get_tile(ctx, index, true)->interval;
         t->ins[in_count].mask = ctx->normie_mask[0];
         t->flags |= TILE_INDEXED;
+        in_count++;
+    }
+
+    if (has_tmp) {
+        t->ins[in_count].src = NULL;
+        t->ins[in_count].mask = ctx->normie_mask[0];
         in_count++;
     }
 
@@ -341,6 +352,16 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_LOAD:
         isel_addr(ctx, dst, n, n->inputs[2], 0);
         return ctx->normie_mask[n->dt.type == TB_FLOAT ? 1 : 0];
+
+        case TB_CYCLE_COUNTER: {
+            dst->ins = tb_arena_alloc(tmp_arena, 2 * sizeof(TileInput));
+            dst->in_count = 2;
+            dst->ins[0].mask = REGMASK(GPR, 1 << RAX);
+            dst->ins[1].mask = REGMASK(GPR, 1 << RDX);
+            dst->ins[0].src = NULL;
+            dst->ins[1].src = NULL;
+            return REGMASK(GPR, 1 << RAX);
+        }
 
         case TB_WRITE:
         case TB_STORE: {
@@ -863,6 +884,8 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
 
 // compute effective address operand
 static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
+    bool flt_dst = t->interval->mask.class == REG_CLASS_XMM;
+
     int in_count = 0;
     Val ea = { .type = VAL_MEM, .index = GPR_NONE };
     AuxAddress* aux = t->aux;
@@ -886,16 +909,15 @@ static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
         if (tb_is_power_of_two(stride)) {
             int scale = tb_ffs(stride) - 1;
             if (scale > 3) {
-                int dst = op_gpr_at(t->interval);
-                Val dst_op = val_gpr(dst);
-                if (dst != index) {
+                Val tmp = val_gpr(op_gpr_at(flt_dst ? t->ins[in_count++].src : t->interval));
+                if (tmp.reg != index) {
                     Val index_op = val_gpr(index);
-                    inst2(e, MOV, &dst_op, &index_op, TB_X86_TYPE_QWORD);
+                    inst2(e, MOV, &tmp, &index_op, TB_X86_TYPE_QWORD);
                 }
 
                 Val imm = val_imm(scale);
-                inst2(e, SHL, &dst_op, &imm, TB_X86_TYPE_QWORD);
-                index = dst;
+                inst2(e, SHL, &tmp, &imm, TB_X86_TYPE_QWORD);
+                index = tmp.reg;
             } else {
                 ea.scale = scale;
             }
@@ -915,7 +937,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
         Val dst = op_at(ctx, t->interval);
         Val src = op_at(ctx, t->ins[0].src);
         if (!is_value_match(&dst, &src)) {
-            TB_DataType dt = t->ins[0].src->dt;
+            TB_DataType dt = t->spill_dt;
             if (dt.type == TB_FLOAT) {
                 inst2sse(e, FP_MOV, &dst, &src, legalize_float(dt));
             } else {
@@ -935,17 +957,17 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_ROOT: {
                 size_t pos = e->count;
                 emit_epilogue(ctx, e, ctx->stack_usage);
-                EMIT1(&ctx->emit, 0xC3);
+                EMIT1(e, 0xC3);
                 ctx->epilogue_length = e->count - pos;
                 break;
             }
             case TB_TRAP: {
-                EMIT1(&ctx->emit, 0x0F);
-                EMIT1(&ctx->emit, 0x0B);
+                EMIT1(e, 0x0F);
+                EMIT1(e, 0x0B);
                 break;
             }
             case TB_DEBUGBREAK: {
-                EMIT1(&ctx->emit, 0xCC);
+                EMIT1(e, 0xCC);
                 break;
             }
             // projections don't manage their own work, that's the
@@ -955,6 +977,19 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_PHI: break;
             case TB_POISON: break;
             case TB_UNREACHABLE: break;
+
+            // rdtsc
+            // shl rdx, 32
+            // or rax, rdx
+            case TB_CYCLE_COUNTER: {
+                Val rax = val_gpr(RAX);
+                Val rdx = val_gpr(RDX);
+                Val imm = val_imm(32);
+                EMIT1(e, 0x0F); EMIT1(e, 0x31);
+                inst2(e, SHL, &rdx, &imm, TB_X86_TYPE_QWORD);
+                inst2(e, OR,  &rax, &rdx, TB_X86_TYPE_QWORD);
+                break;
+            }
 
             case TB_READ: {
                 TB_Node* proj1 = proj_with_index(n, 1)->n;
@@ -981,15 +1016,20 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
 
                 Val ea = emit_addr(ctx, e, t);
                 Val src;
-                if (t->flags & TILE_HAS_IMM) {
-                    assert(val->type == TB_INTEGER_CONST);
-                    TB_NodeInt* i = TB_NODE_GET_EXTRA(val);
-                    src = val_imm(i->value);
-                } else {
+                if (val->dt.type == TB_FLOAT) {
                     src = op_at(ctx, t->ins[t->in_count - 1].src);
-                }
+                    inst2(e, MOV, &ea, &src, legalize_float(val->dt));
+                } else {
+                    if (t->flags & TILE_HAS_IMM) {
+                        assert(val->type == TB_INTEGER_CONST);
+                        TB_NodeInt* i = TB_NODE_GET_EXTRA(val);
+                        src = val_imm(i->value);
+                    } else {
+                        src = op_at(ctx, t->ins[t->in_count - 1].src);
+                    }
 
-                inst2(e, MOV, &ea, &src, legalize_int2(val->dt));
+                    inst2(e, MOV, &ea, &src, legalize_int2(val->dt));
+                }
                 break;
             }
             case TB_LOCAL:
@@ -1106,9 +1146,10 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     //
                     // where x is 'reg_width - val_width'
                     int dst_bits = dt == TB_X86_TYPE_QWORD ? 64 : 32;
+                    int ext = is_signed ? SAR : SHR;
                     Val imm = val_imm(dst_bits - bits_in_type);
                     inst2(e, SHL, &dst, &imm, dt);
-                    inst2(e, SHR, &dst, &imm, dt);
+                    inst2(e, ext, &dst, &imm, dt);
                 }
                 break;
             }

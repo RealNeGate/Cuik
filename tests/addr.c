@@ -26,6 +26,11 @@ uint32_t mur(uint32_t h, uint32_t k) {
     return (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
 }
 
-float foo(float* x, int i, int j) {
-    return x[i + j]*2.0f + 1.0f;
+float floats(float* x, int i, int j) {
+    return x[i*4]*2.0f + 1.0f;
 }
+
+uint64_t baz() { return __rdtsc(); }
+
+extern int bar(int x);
+int foo(int x) { return bar(x) + 16; }
