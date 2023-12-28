@@ -73,7 +73,8 @@ static TB_X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
     else if (dt.data <= 64) bits = 64, t = TB_X86_TYPE_QWORD;
 
     assert(bits != 0 && "TODO: large int support");
-    uint64_t mask = dt.data == 0 ? 0 :  ~UINT64_C(0) >> (64 - dt.data);
+    assert(dt.data != 0);
+    uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
 
     *out_mask = (dt.data == bits) ? 0 : mask;
     return t;

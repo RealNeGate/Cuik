@@ -216,6 +216,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                             .tag = TILE_SPILL_MOVE,
                             .time = time,
                         };
+                        assert(interval->dt.raw);
                         tmp->spill_dt = interval->dt;
                         tmp->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
                         tmp->in_count = 1;
@@ -292,6 +293,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                             .tag = TILE_SPILL_MOVE,
                             .time = time,
                         };
+                        assert(in_def->dt.raw);
                         tmp->spill_dt = in_def->dt;
                         tmp->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
                         tmp->in_count = 1;
@@ -413,16 +415,17 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             // display active set
             #if TB_OPTDEBUG_REGALLOC
-            printf("  \x1b[32m{ ");
+            static const char* classes[] = { "STK", "GPR", "VEC" };
             FOREACH_N(rc, 0, ctx->num_classes) {
+                printf("  \x1b[32m%s { ", classes[rc]);
                 FOREACH_SET(reg, ra.active_set[rc]) {
                     LiveInterval* l = ra.active[rc][reg];
                     printf("v%d:", l->id);
                     print_reg_name(rc, reg);
                     printf(" ");
                 }
+                printf("}\x1b[0m\n");
             }
-            printf("}\x1b[0m\n");
             #endif
         }
     }
@@ -568,6 +571,7 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
         .tag = TILE_SPILL_MOVE,
         .interval = new_it
     };
+    assert(old_it->dt.raw);
     move->spill_dt = old_it->dt;
     move->ins = tb_arena_alloc(ra->arena, sizeof(Tile*));
     move->in_count = 1;

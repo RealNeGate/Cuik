@@ -400,6 +400,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
                         Tile* move = TB_ARENA_ALLOC(arena, Tile);
                         *move = (Tile){ .prev = bot, .tag = TILE_SPILL_MOVE, .interval = phi_tile->interval };
+                        move->spill_dt = v->phi->dt;
                         move->n = v->phi;
                         move->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
                         move->in_count = 1;
