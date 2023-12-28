@@ -82,7 +82,7 @@ typedef enum {
     TILE_NORMAL,
     // SoN doesn't have a jump op, this serves that purpose
     TILE_GOTO,
-    // used by regalloc to spill/reload
+    // performs a move operation between two live intervals
     TILE_SPILL_MOVE,
     // debug line
     TILE_LOCATION,
@@ -105,9 +105,9 @@ struct LiveInterval {
 
     Tile* tile;
 
+    int8_t class;
     int8_t reg;
     int8_t assigned;
-    bool is_spill;
 
     LiveInterval* hint;
     LiveInterval* split_kid;
@@ -242,7 +242,6 @@ struct Ctx {
     // where scratch registers can go, a mask is used to avoid
     // allocating special regiters.
     RegMask normie_mask[MAX_REG_CLASSES];
-    int* spills;
 
     DynArray(LiveInterval*) callee_spills;
     NL_Map(TB_Node*, int) stack_slots;

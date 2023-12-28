@@ -436,6 +436,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                     .id = ctx.interval_count++,
                     .assigned = -1, .hint = NULL, .reg = j,
                     .mask = { i, 0, 1u << j },
+                    .class = i,
                     .range_cap = 4,
                     .range_count = 1,
                 };

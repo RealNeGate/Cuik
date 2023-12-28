@@ -711,18 +711,27 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     }
 }
 
+static int stk_offset(Ctx* ctx, int reg) {
+    int pos = reg*8;
+    if (reg >= ctx->num_regs[0]) {
+        return ctx->stack_usage - pos;
+    } else {
+        return pos;
+    }
+}
+
 static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
     TB_FunctionPrototype* proto = ctx->f->prototype;
     bool needs_stack = stack_usage > 8 + (proto->param_count * 8);
 
     FOREACH_REVERSE_N(i, 0, dyn_array_length(ctx->callee_spills)) {
-        int pos = ctx->spills[ctx->callee_spills[i]->id];
-        int rc = ctx->callee_spills[i]->mask.class;
+        int pos = stk_offset(ctx, ctx->callee_spills[i]->assigned);
+        int rc = ctx->callee_spills[i]->class;
 
         Val reg = val_gpr(ctx->callee_spills[i]->reg);
         reg.type = rc == REG_CLASS_XMM ? VAL_XMM : VAL_GPR;
 
-        Val spill = val_base_disp(RSP, stack_usage - pos);
+        Val spill = val_base_disp(RSP, pos);
         inst2(e, MOV, &reg, &spill, TB_X86_TYPE_QWORD);
     }
 
@@ -748,24 +757,17 @@ static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
 }
 
 static Val op_at(Ctx* ctx, LiveInterval* l) {
-    if (l->is_spill) {
-        return val_stack(ctx->stack_usage - ctx->spills[l->id]);
-    } else if (l->mask.class == REG_CLASS_STK) {
-        return val_stack(l->assigned * 8);
+    if (l->class == REG_CLASS_STK) {
+        return val_stack(stk_offset(ctx, l->assigned));
     } else {
         assert(l->assigned >= 0);
-        return (Val) { .type = l->mask.class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR, .reg = l->assigned };
+        return (Val) { .type = l->class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR, .reg = l->assigned };
     }
 }
 
 static GPR op_gpr_at(LiveInterval* l) {
-    assert(!l->is_spill && l->mask.class == REG_CLASS_GPR);
+    assert(l->class == REG_CLASS_GPR);
     return l->assigned;
-}
-
-static Val op_indirect_at(LiveInterval* l) {
-    assert(!l->is_spill);
-    return val_base_disp(l->assigned, 0);
 }
 
 static Val parse_memory_op(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t, TB_Node* addr) {
@@ -857,13 +859,13 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     // we don't want this considered in the prologue because then i'd have to encode shit
     // for Win64EH.
     FOREACH_N(i, 0, dyn_array_length(ctx->callee_spills)) {
-        int pos = ctx->spills[ctx->callee_spills[i]->id];
-        int rc = ctx->callee_spills[i]->mask.class;
+        int pos = stk_offset(ctx, ctx->callee_spills[i]->assigned);
+        int rc = ctx->callee_spills[i]->class;
 
         Val reg = val_gpr(ctx->callee_spills[i]->reg);
         reg.type = rc == REG_CLASS_GPR ? VAL_GPR : VAL_XMM;
 
-        Val spill = val_base_disp(RSP, stack_usage - pos);
+        Val spill = val_base_disp(RSP, pos);
         inst2(e, MOV, &spill, &reg, TB_X86_TYPE_QWORD);
     }
 

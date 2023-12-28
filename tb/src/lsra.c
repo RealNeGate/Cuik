@@ -9,7 +9,7 @@ typedef struct {
     Ctx* ctx;
     TB_Arena* arena;
 
-    int stack_usage;
+    int spills;
     int num_classes;
     int* num_regs;
     uint64_t* callee_saved;
@@ -17,10 +17,6 @@ typedef struct {
     // time when the physical registers will be free again
     int* free_pos;
     int* block_pos;
-
-    // spill slots will be used later, new intervals will alias spill slots
-    // with whatever they might've been spilled from.
-    int* spills;
 
     // waiting to get registers, sorted such that the top most item is the youngest
     DynArray(LiveInterval*) unhandled;
@@ -38,7 +34,7 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
 static void cuiksort_defs(LiveInterval** intervals, ptrdiff_t lo, ptrdiff_t hi);
 static bool update_interval(LSRA* restrict ra, LiveInterval* interval, bool is_active, int time, int inactive_index);
 static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval);
-static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, bool is_spill);
+static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, int new_class);
 static void move_to_active(LSRA* restrict ra, LiveInterval* interval);
 
 static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
@@ -158,7 +154,7 @@ static Tile* tile_at_time(LSRA* restrict ra, int t) {
 }
 
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
-    LSRA ra = { .ctx = ctx, .arena = arena, .stack_usage = ctx->stack_usage };
+    LSRA ra = { .ctx = ctx, .arena = arena };
 
     // build intervals from dataflow
     CUIK_TIMED_BLOCK("build intervals") {
@@ -272,6 +268,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     }
 
                     int use_time = time;
+                    int use_kind = in_mask.may_spill ? USE_MEM_OR_REG : USE_REG;
                     bool both_fixed = hint >= 0 && in_def_mask.mask == in_mask.mask;
 
                     // we resolve def-use conflicts with a spill move, either when:
@@ -308,7 +305,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                         // insert fixed interval use site, def site will be set later
                         add_range(&ra, tmp->interval, bb_start, use_time);
-                        add_use_pos(&ra, tmp->interval, bb_start, USE_REG);
+                        add_use_pos(&ra, tmp->interval, bb_start, use_kind);
                     } else if (_2addr && j != 0) {
                         // extend
                         use_time += 2;
@@ -320,7 +317,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     }
 
                     add_range(&ra, in_def, bb_start, use_time);
-                    add_use_pos(&ra, in_def, use_time, USE_REG);
+                    add_use_pos(&ra, in_def, use_time, use_kind);
                 }
             }
         }
@@ -353,11 +350,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         // only need enough to store for the biggest register class
         ra.free_pos  = TB_ARENA_ARR_ALLOC(tmp_arena, max_regs_in_class, int);
         ra.block_pos = TB_ARENA_ARR_ALLOC(tmp_arena, max_regs_in_class, int);
-    }
-
-    ra.spills = tb_arena_alloc(arena, ctx->interval_count * sizeof(int));
-    FOREACH_N(i, 0, ctx->interval_count) {
-        ra.spills[i] = 0;
     }
 
     // sort intervals:
@@ -401,16 +393,21 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 i++;
             }
 
-            ptrdiff_t reg = interval->reg;
-            if (reg < 0) {
-                reg = allocate_free_reg(&ra, interval);
-                assert(reg >= 0 && "despair");
-            }
+            if (interval->mask.class == REG_CLASS_STK) {
+                __debugbreak();
+            } else {
+                ptrdiff_t reg = interval->reg;
+                if (reg < 0) {
+                    reg = allocate_free_reg(&ra, interval);
+                    assert(reg >= 0 && "despair");
+                }
 
-            // add to active set
-            if (reg >= 0) {
-                interval->assigned = reg;
-                move_to_active(&ra, interval);
+                // add to active set
+                if (reg >= 0) {
+                    interval->class = interval->mask.class;
+                    interval->assigned = reg;
+                    move_to_active(&ra, interval);
+                }
             }
 
             // display active set
@@ -433,8 +430,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     // move resolver:
     //   when a split happens, all indirect paths that cross the split will have
     //   moves inserted.
-    ctx->spills = ra.spills;
-    ctx->stack_usage = ra.stack_usage;
+    ctx->stack_usage += ra.spills*8;
     ctx->callee_spills = ra.callee_spills;
 }
 
@@ -451,7 +447,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
 
     // callee saved will be biased to have nearer free positions to avoid incurring
     // a spill on them early.
-    int half_free = INT_MAX >> 1;
+    int half_free = 0;//interval_end(interval);
     FOREACH_N(i, 0, ra->num_regs[rc]) {
         int p = 0;
 
@@ -510,7 +506,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
         set_remove(&ra->active_set[rc], reg);
 
         // split whatever is using the interval right now
-        split_intersecting(ra, interval_start(interval) - 1, active_user, true);
+        split_intersecting(ra, interval_start(interval) - 1, active_user, REG_CLASS_STK);
         return reg;
     } else {
         if (UNLIKELY(ra->callee_saved[rc] & (1ull << highest))) {
@@ -519,8 +515,9 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             TB_OPTDEBUG(REGALLOC)(printf("  #   spill callee saved register "), print_reg_name(rc, highest), printf("\n"));
             LiveInterval* fixed = &ra->fixed[rc][highest];
 
-            ra->stack_usage = align_up(ra->stack_usage + 8, 8);
-            ra->spills[fixed->id] = ra->stack_usage;
+            tb_todo();
+            // ra->stack_usage = align_up(ra->stack_usage + 8, 8);
+            // ra->spills[fixed->id] = ra->stack_usage;
 
             // mark callee move
             dyn_array_put(ra->callee_spills, fixed);
@@ -541,8 +538,9 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             }
         } else {
             // TODO(NeGate): split at optimal position before current
+            interval->class = interval->mask.class;
             interval->assigned = highest;
-            split_intersecting(ra, pos - 1, interval, true);
+            split_intersecting(ra, pos - 1, interval, REG_CLASS_STK);
             TB_OPTDEBUG(REGALLOC)(printf("  #   stole "), print_reg_name(rc, highest), printf("\n"));
         }
 
@@ -596,29 +594,17 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
     }
 }
 
-static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, bool is_spill) {
+static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, int new_class) {
     cuikperf_region_start("split", NULL);
-    int rc = interval->mask.class;
+    int rc = interval->class;
 
     LiveInterval* restrict new_it = TB_ARENA_ALLOC(ra->arena, LiveInterval);
     *new_it = *interval;
 
-    assert(is_spill != interval->is_spill);
-    new_it->is_spill = is_spill;
+    assert(interval->class != new_class);
+    new_it->class = new_class;
 
-    int sp_offset = ra->spills[interval->id];
-    if (is_spill) {
-        if (sp_offset == 0) {
-            ra->stack_usage += 8;
-            ra->spills[interval->id] = sp_offset = ra->stack_usage;
-        }
-
-        assert(interval->assigned >= 0);
-        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: spill ", interval->id), print_reg_name(rc, interval->assigned), printf(" to [SP + %d] at t=%d\x1b[0m\n", sp_offset, pos));
-    } else {
-        assert(sp_offset != 0);
-        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: reload [SP + %d] at t=%d\x1b[0m\n", interval->id, sp_offset, pos));
-    }
+    TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: split ", interval->id), print_reg_name(rc, interval->assigned), printf(" at t=%d\x1b[0m\n", pos));
 
     // split lifetime
     new_it->assigned = new_it->reg = -1;
@@ -629,7 +615,7 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
     assert(interval->split_kid == NULL && "cannot spill while spilled");
     interval->split_kid = new_it;
 
-    if (!is_spill) {
+    {
         // since the split is starting at pos and pos is at the top of the
         // unhandled list... we can push this to the top wit no problem
         size_t i = 0, count = dyn_array_length(ra->unhandled);
@@ -699,12 +685,11 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
     // insert move (the control flow aware moves are inserted later)
     insert_split_move(ra, pos, interval, new_it);
 
-    // reload before next use
-    if (is_spill) {
+    // reload before next use that requires the original regclass
+    if (new_class == REG_CLASS_STK) {
         FOREACH_REVERSE_N(i, 0, new_it->use_count) {
             if (new_it->uses[i].kind == USE_REG) {
-                // new split
-                split_intersecting(ra, new_it->uses[i].pos - 1, new_it, false);
+                split_intersecting(ra, new_it->uses[i].pos - 1, new_it, interval->class);
                 break;
             }
         }

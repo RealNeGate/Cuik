@@ -22,6 +22,7 @@ int vol(volatile int* x) {
     return *x;
 }*/
 
+#if 0
 uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
@@ -52,6 +53,7 @@ uint32_t murmur3_32(const void* key, size_t len) {
     h = (h ^ (h >> 13))*0xc2b2ae35;
     return (h ^ (h >> 16));
 }
+#endif
 
 #if 0
 uint32_t mur(uint32_t h, uint32_t k) {
@@ -68,9 +70,10 @@ uint64_t baz() { return __rdtsc(); }
 
 extern int bar(int x);
 int foo(int x) { return bar(x) + 16; }
+
 #endif
 
 extern int bar(int, int, int, int, int);
-int foo(int x) {
-    return bar(x, 1, 2, 3, 4);
+int foo(int x, int y) {
+    return bar(x, 1, 2, 3, 4) + y;
 }
