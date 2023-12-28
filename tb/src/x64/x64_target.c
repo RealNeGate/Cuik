@@ -351,7 +351,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
         case TB_LOAD:
         isel_addr(ctx, dst, n, n->inputs[2], 0);
-        return ctx->normie_mask[n->dt.type == TB_FLOAT ? 1 : 0];
+        return ctx->normie_mask[n->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR];
 
         case TB_CYCLE_COUNTER: {
             dst->ins = tb_arena_alloc(tmp_arena, 2 * sizeof(TileInput));
