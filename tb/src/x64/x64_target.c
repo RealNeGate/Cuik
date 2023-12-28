@@ -321,6 +321,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         // no inputs
         case TB_REGION:
         case TB_TRAP:
+        case TB_CALLGRAPH:
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         return REGEMPTY;
@@ -407,12 +408,12 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_ROOT: {
             static int ret_gprs[2] = { RAX, RDX };
 
-            int rets = n->input_count - 3;
-            TileInput* ins = tile_set_ins(ctx, dst, n, 3, n->input_count);
+            int rets = n->input_count - 4;
+            TileInput* ins = tile_set_ins(ctx, dst, n, 4, n->input_count);
 
             assert(rets <= 2 && "At most 2 return values :(");
             FOREACH_N(i, 0, rets) {
-                TB_DataType dt = n->inputs[3+i]->dt;
+                TB_DataType dt = n->inputs[4+i]->dt;
                 if (dt.type == TB_FLOAT) {
                     ins[i].mask = REGMASK(XMM, 1 << i);
                 } else {
@@ -982,6 +983,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_PHI: break;
             case TB_POISON: break;
             case TB_UNREACHABLE: break;
+            case TB_CALLGRAPH: break;
 
             // rdtsc
             // shl rdx, 32

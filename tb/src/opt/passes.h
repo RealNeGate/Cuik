@@ -14,6 +14,7 @@ enum {
 #define TB_OPTDEBUG_MEM2REG  0
 #define TB_OPTDEBUG_CODEGEN  0
 #define TB_OPTDEBUG_DATAFLOW 0
+#define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
 
 #define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
@@ -43,13 +44,10 @@ typedef struct {
 
 // a simplification of the set of all pointers (or floats)
 typedef enum {
-    LATTICE_UNKNOWN,         // top aka {nan, non-nan} or for pointers {null, non-null}
+    LATTICE_UNKNOWN,         // bottom aka {nan, non-nan} or for pointers {null, non-null}
 
     LATTICE_KNOWN_NAN = 1,   // {nan}
     LATTICE_KNOWN_NOT_NAN,   // {non-nan}
-
-    LATTICE_KNOWN_NULL = 1,  // {null}
-    LATTICE_KNOWN_NOT_NULL,  // {non-null}
 
     LATTICE_KNOWN_FALSE = 1, // {false}
     LATTICE_KNOWN_TRUE,      // {true}

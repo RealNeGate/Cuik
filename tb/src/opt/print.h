@@ -35,10 +35,6 @@ static void print_type(TB_DataType dt) {
             printf("memory");
             break;
         }
-        case TB_CONT: {
-            printf("cont");
-            break;
-        }
         default: tb_todo();
     }
 }
@@ -326,11 +322,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     printf(")");
                 } else {
                     // print as normal instruction
-                    if (n->dt.type == TB_INT && n->dt.data == 0) {
-                        printf("  %s.", tb_node_get_name(n));
-                    } else {
-                        printf("  v%u = %s.", n->gvn, tb_node_get_name(n));
-                    }
+                    printf("  v%u = %s.", n->gvn, tb_node_get_name(n));
 
                     TB_DataType dt = n->dt;
                     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {

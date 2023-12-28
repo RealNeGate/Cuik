@@ -137,7 +137,7 @@ static void sys_invoke(BuildStepInfo* info) {
 #ifdef CUIK_USE_TB
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
-static void apply_func(TB_Function* f, void* arg) {
+static void local_opt_func(TB_Function* f, void* arg) {
     Cuik_DriverArgs* args = arg;
     bool print_asm = args->assembly;
 
@@ -146,9 +146,22 @@ static void apply_func(TB_Function* f, void* arg) {
         TB_Arena* arenas = get_ir_arena();
         TB_Passes* p = tb_pass_enter(f, &arenas[0]);
 
-        if (args->opt_level >= 1) {
-            tb_pass_optimize(p);
-        }
+        assert(args->opt_level >= 1);
+        tb_pass_optimize(p);
+
+        tb_pass_exit(p);
+        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(&arenas[0]) / 1024.0f);
+    }
+}
+
+static void apply_func(TB_Function* f, void* arg) {
+    Cuik_DriverArgs* args = arg;
+    bool print_asm = args->assembly;
+
+    const char* name = ((TB_Symbol*) f)->name;
+    CUIK_TIMED_BLOCK_ARGS("passes", name) {
+        TB_Arena* arenas = get_ir_arena();
+        TB_Passes* p = tb_pass_enter(f, &arenas[0]);
 
         if (args->emit_dot) {
             tb_pass_print_dot(p, tb_default_print_callback, stdout);
@@ -313,6 +326,14 @@ static void ld_invoke(BuildStepInfo* info) {
     TB_Module* mod = s->ld.cu->ir_mod;
 
     CUIK_TIMED_BLOCK("Backend") {
+        if (args->opt_level >= 1) {
+            tb_module_prepare_ipo(mod);
+
+            do {
+                cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, local_opt_func);
+            } while (tb_module_ipo(mod));
+        }
+
         cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, apply_func);
     }
 

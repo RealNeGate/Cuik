@@ -44,6 +44,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_ARRAY_ACCESS:
         return sizeof(TB_NodeArray);
 
+        case TB_CALLGRAPH:
         case TB_TRUNCATE:
         case TB_UINT2FLOAT:
         case TB_FLOAT2UINT:

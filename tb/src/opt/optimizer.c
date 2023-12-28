@@ -744,7 +744,7 @@ TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
     }
 
     // generate fancier type (SCCP)
-    if (n->dt.type != TB_CONT && n->dt.type != TB_MEMORY) {
+    if (n->dt.type != TB_MEMORY) {
         Lattice* new_type = sccp(p, n);
 
         // no type provided? just make a not-so-form fitting bottom type
@@ -913,7 +913,7 @@ static Value eval(Interp* vm, TB_Node* n) {
         return (Value){ .ctrl = cfg_next_user(n) };
 
         case TB_PROJ:
-        if (n->dt.type == TB_MEMORY || n->dt.type == TB_CONT) {
+        if (n->dt.type == TB_MEMORY) {
             return (Value){ .i = 0 };
         } else if (n->dt.type == TB_CONTROL) {
             return (Value){ .ctrl = cfg_next_user(n) };
@@ -1179,4 +1179,130 @@ void tb_pass_exit(TB_Passes* p) {
         tb_arena_clear(tmp_arena);
         tb_platform_heap_free(p);
     }
+}
+
+typedef struct {
+    bool on_stack;
+    int index, low_link;
+} SCCNode;
+
+typedef struct {
+    TB_Arena* arena;
+    size_t fn_count;
+    NL_Table nodes;
+
+    size_t stk_cnt;
+    TB_Function** stk;
+
+    size_t ws_cnt;
+    TB_Function** ws;
+
+    int index;
+} SCC;
+
+static TB_Function* static_call_site(TB_Node* n) {
+    // is this call site a static function call
+    assert(n->type == TB_CALL || n->type == TB_TAILCALL);
+    if (n->inputs[2]->type != TB_SYMBOL) return NULL;
+
+    TB_Symbol* target = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeSymbol)->sym;
+    if (atomic_load_explicit(&target->tag, memory_order_relaxed) != TB_SYMBOL_FUNCTION) return NULL;
+
+    return (TB_Function*) target;
+}
+
+static SCCNode* scc_walk(SCC* restrict scc, TB_Function* f) {
+    SCCNode* n = tb_arena_alloc(scc->arena, sizeof(SCCNode));
+    n->index = scc->index;
+    n->low_link = scc->index;
+    n->on_stack = true;
+    scc->index += 1;
+    nl_table_put(&scc->nodes, f, n);
+
+    scc->stk[scc->stk_cnt++] = f;
+
+    // consider the successors
+    TB_Node* callgraph = f->root_node->inputs[3];
+    FOREACH_N(i, 1, callgraph->input_count) {
+        TB_Node* call = callgraph->inputs[i];
+        TB_Function* target = static_call_site(call);
+        if (target != NULL) {
+            SCCNode* succ = nl_table_get(&scc->nodes, target);
+            if (succ == NULL) {
+                succ = scc_walk(scc, target);
+                if (n->low_link > succ->low_link) { n->low_link = succ->low_link; }
+            } else if (succ->on_stack) {
+                if (n->low_link > succ->index) { n->low_link = succ->index; }
+            }
+        }
+    }
+
+    // we're the root, construct an SCC
+    if (n->low_link == n->index) {
+        TB_Function* kid_f;
+        do {
+            assert(scc->stk_cnt > 0);
+            kid_f = scc->stk[--scc->stk_cnt];
+
+            SCCNode* kid_n = nl_table_get(&scc->nodes, kid_f);
+            kid_n->on_stack = false;
+            scc->ws[scc->ws_cnt++] = kid_f;
+        } while (kid_f != f);
+    }
+
+    return n;
+}
+
+void tb_module_prepare_ipo(TB_Module* m) {
+    SCC scc = { 0 };
+    scc.arena    = get_temporary_arena(m);
+    scc.fn_count = m->symbol_count[TB_SYMBOL_FUNCTION];
+    scc.ws       = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
+
+    CUIK_TIMED_BLOCK("build SCC") {
+        TB_ArenaSavepoint sp = tb_arena_save(scc.arena);
+        scc.stk      = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
+        scc.nodes    = nl_table_arena_alloc(scc.arena, scc.fn_count);
+
+        // build strongly connected components
+        TB_ThreadInfo* info = atomic_load_explicit(&m->first_info_in_module, memory_order_relaxed);
+        while (info != NULL) {
+            TB_Symbol** syms = (TB_Symbol**) info->symbols.data;
+            if (syms == NULL) continue;
+
+            FOREACH_N(i, 0, 1ull << info->symbols.exp) {
+                TB_Symbol* s = syms[i];
+                if (s == NULL || s == NL_HASHSET_TOMB) continue;
+                if (atomic_load_explicit(&s->tag, memory_order_relaxed) != TB_SYMBOL_FUNCTION) continue;
+
+                if (nl_table_get(&scc.nodes, s) == NULL) {
+                    scc_walk(&scc, (TB_Function*) s);
+                }
+            }
+
+            info = info->next_in_module;
+        }
+        tb_arena_restore(scc.arena, sp);
+    }
+
+    // we've got our bottom up ordering on the worklist... start trying to inline callsites
+    TB_OPTDEBUG(INLINE)(printf("BOTTOM-UP ORDER:\n"));
+    FOREACH_N(i, 0, scc.ws_cnt) {
+        TB_Function* f = scc.ws[i];
+
+        TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s\n", f->super.name));
+
+        TB_Node* callgraph = f->root_node->inputs[3];
+        FOREACH_N(i, 1, callgraph->input_count) {
+            TB_Node* call = callgraph->inputs[i];
+            TB_Function* target = static_call_site(call);
+            if (target != NULL) {
+                TB_OPTDEBUG(INLINE)(printf("  -> %s (from v%u)\n", target->super.name, call->gvn));
+            }
+        }
+    }
+}
+
+bool tb_module_ipo(TB_Module* m) {
+    return false;
 }
