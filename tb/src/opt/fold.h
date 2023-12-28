@@ -60,7 +60,7 @@ static bool inverted_cmp(TB_Node* n, TB_Node* n2) {
     }
 }
 
-static Lattice* dataflow_sext(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_sext(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -93,7 +93,7 @@ static Lattice* dataflow_sext(TB_Passes* restrict opt, TB_Node* n) {
     return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* dataflow_zext(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_zext(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -109,7 +109,7 @@ static Lattice* dataflow_zext(TB_Passes* restrict opt, TB_Node* n) {
     return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* dataflow_trunc(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_trunc(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -128,7 +128,7 @@ static Lattice* dataflow_trunc(TB_Passes* restrict opt, TB_Node* n) {
     return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* dataflow_arith(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_arith(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
@@ -168,7 +168,7 @@ static Lattice* dataflow_arith(TB_Passes* restrict opt, TB_Node* n) {
     }
 }
 
-static Lattice* dataflow_bitcast(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_bitcast(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -182,7 +182,7 @@ static Lattice* dataflow_bitcast(TB_Passes* restrict opt, TB_Node* n) {
     return NULL;
 }
 
-static Lattice* dataflow_unary(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_unary(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -223,7 +223,7 @@ static Lattice* dataflow_unary(TB_Passes* restrict opt, TB_Node* n) {
     }
 }
 
-static Lattice* dataflow_bits(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_bits(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
@@ -268,7 +268,7 @@ static Lattice* dataflow_bits(TB_Passes* restrict opt, TB_Node* n) {
     return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* dataflow_shift(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_shift(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
@@ -341,7 +341,7 @@ static Lattice* dataflow_shift(TB_Passes* restrict opt, TB_Node* n) {
     }
 }
 
-static Lattice* dataflow_cmp(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_cmp(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
@@ -868,6 +868,13 @@ static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_N
 ////////////////////////////////
 // Pointer idealizations
 ////////////////////////////////
+static TB_Node* identity_member_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+    if (TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset == 0) {
+        return n->inputs[1];
+    }
+    return n;
+}
+
 static TB_Node* ideal_member_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
     TB_Node* base  = n->inputs[1];

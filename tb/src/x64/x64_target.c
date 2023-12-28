@@ -6,7 +6,7 @@
 #ifdef TB_HAS_X64
 enum {
     // register classes
-    REG_CLASS_GPR,
+    REG_CLASS_GPR = 1,
     REG_CLASS_XMM,
     REG_CLASS_COUNT,
 };
@@ -138,25 +138,25 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     // currently only using 16 GPRs and 16 XMMs, AVX gives us
     // 32 YMMs (which double as XMMs) and later on APX will do
     // 32 GPRs.
-    ctx->num_regs[0] = 16;
-    ctx->num_regs[1] = 16;
+    ctx->num_regs[REG_CLASS_GPR] = 16;
+    ctx->num_regs[REG_CLASS_XMM] = 16;
 
     uint16_t all_gprs = 0xFFFF & ~(1 << RSP);
     if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
         all_gprs &= ~(1 << RBP);
     }
 
-    ctx->normie_mask[0] = REGMASK(GPR, all_gprs);
-    ctx->normie_mask[1] = REGMASK(XMM, (1u << 16) - 1);
+    ctx->normie_mask[REG_CLASS_GPR] = REGMASK(GPR, all_gprs);
+    ctx->normie_mask[REG_CLASS_XMM] = REGMASK(XMM, (1u << 16) - 1);
 
     // mark GPR callees (technically includes RSP but since it's
     // never conventionally allocated we should never run into issues)
-    ctx->callee_saved[0] = ~param_descs[ctx->abi_index].caller_saved_gprs;
+    ctx->callee_saved[REG_CLASS_GPR] = ~param_descs[ctx->abi_index].caller_saved_gprs;
 
     // mark XMM callees
-    ctx->callee_saved[1] = 0;
+    ctx->callee_saved[REG_CLASS_XMM] = 0;
     FOREACH_N(i, param_descs[ctx->abi_index].caller_saved_xmms, 16) {
-        ctx->callee_saved[1] |= (1ull << i);
+        ctx->callee_saved[REG_CLASS_XMM] |= (1ull << i);
     }
 
     TB_FunctionPrototype* proto = ctx->f->prototype;
@@ -203,7 +203,7 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
 }
 
 static RegMask normie_mask(Ctx* restrict ctx, TB_DataType dt) {
-    return ctx->normie_mask[dt.type == TB_FLOAT];
+    return ctx->normie_mask[dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR];
 }
 
 // returns true if it should split
@@ -290,20 +290,20 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* og, TB_Node* n,
         t->flags |= TILE_FOLDED_BASE;
     } else {
         t->ins[in_count].src = get_tile(ctx, base, true)->interval;
-        t->ins[in_count].mask = ctx->normie_mask[0];
+        t->ins[in_count].mask = ctx->normie_mask[REG_CLASS_GPR];
         in_count++;
     }
 
     if (index) {
         t->ins[in_count].src = get_tile(ctx, index, true)->interval;
-        t->ins[in_count].mask = ctx->normie_mask[0];
+        t->ins[in_count].mask = ctx->normie_mask[REG_CLASS_GPR];
         t->flags |= TILE_INDEXED;
         in_count++;
     }
 
     if (has_tmp) {
         t->ins[in_count].src = NULL;
-        t->ins[in_count].mask = ctx->normie_mask[0];
+        t->ins[in_count].mask = ctx->normie_mask[REG_CLASS_GPR];
         in_count++;
     }
 
@@ -328,7 +328,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_LOCAL: {
             TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
             isel_addr(ctx, dst, n, n, 0);
-            return ctx->normie_mask[0];
+            return ctx->normie_mask[REG_CLASS_GPR];
         }
 
         case TB_VA_START: {
@@ -342,7 +342,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             //     va_start(args, fmt); // args = ((char*) &fmt) + 8;
             //     ...
             // }
-            return ctx->normie_mask[0];
+            return ctx->normie_mask[REG_CLASS_GPR];
         }
 
         case TB_READ:
@@ -383,7 +383,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_ARRAY_ACCESS:
         case TB_MEMBER_ACCESS:
         isel_addr(ctx, dst, n, n, 0);
-        return ctx->normie_mask[0];
+        return ctx->normie_mask[REG_CLASS_GPR];
 
         case TB_POISON:
         return normie_mask(ctx, n->dt);
@@ -398,7 +398,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         return normie_mask(ctx, n->dt);
 
         case TB_SYMBOL:
-        return ctx->normie_mask[0];
+        return ctx->normie_mask[REG_CLASS_GPR];
 
         case TB_PHI:
         if (n->dt.type == TB_MEMORY) return REGEMPTY;
@@ -455,8 +455,8 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
         // unary ops
         case TB_NOT:
-        tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[0]);
-        return ctx->normie_mask[0];
+        tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[REG_CLASS_GPR]);
+        return ctx->normie_mask[REG_CLASS_GPR];
 
         // binary ops
         case TB_AND:
@@ -467,12 +467,12 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_MUL: {
             int32_t x;
             if (try_for_imm32(n->dt.data, n->inputs[2], &x)) {
-                tile_broadcast_ins(ctx, dst, n, 1, 2, ctx->normie_mask[0]);
+                tile_broadcast_ins(ctx, dst, n, 1, 2, ctx->normie_mask[REG_CLASS_GPR]);
                 dst->flags |= TILE_HAS_IMM;
             } else {
-                tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[0]);
+                tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[REG_CLASS_GPR]);
             }
-            return ctx->normie_mask[0];
+            return ctx->normie_mask[REG_CLASS_GPR];
         }
 
         case TB_SHL:
@@ -482,14 +482,14 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_SAR: {
             int32_t x;
             if (try_for_imm32(n->inputs[2]->dt.data, n->inputs[2], &x) && x >= 0 && x < 64) {
-                tile_broadcast_ins(ctx, dst, n, 1, 2, ctx->normie_mask[0]);
+                tile_broadcast_ins(ctx, dst, n, 1, 2, ctx->normie_mask[REG_CLASS_GPR]);
                 dst->flags |= TILE_HAS_IMM;
-                return ctx->normie_mask[0];
+                return ctx->normie_mask[REG_CLASS_GPR];
             } else {
                 TileInput* ins = tile_set_ins(ctx, dst, n, 1, 3);
-                ins[0].mask = REGMASK(GPR, ctx->normie_mask[0].mask & NO_RCX);
+                ins[0].mask = REGMASK(GPR, ctx->normie_mask[REG_CLASS_GPR].mask & NO_RCX);
                 ins[1].mask = REGMASK(GPR, 1 << RCX);
-                return ctx->normie_mask[0];
+                return ctx->normie_mask[REG_CLASS_GPR];
             }
         }
 
@@ -500,7 +500,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             dst->ins = tb_arena_alloc(tmp_arena, 3 * sizeof(TileInput));
             dst->in_count = 3;
             dst->ins[0].mask = REGMASK(GPR, 1 << RAX);
-            dst->ins[1].mask = ctx->normie_mask[0];
+            dst->ins[1].mask = ctx->normie_mask[REG_CLASS_GPR];
             dst->ins[2].mask = REGMASK(GPR, 1 << RDX);
             dst->ins[0].src = get_tile(ctx, n->inputs[1], true)->interval;
             dst->ins[1].src = get_tile(ctx, n->inputs[2], true)->interval;
@@ -514,11 +514,11 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         }
 
         case TB_INTEGER_CONST:
-        return ctx->normie_mask[0];
+        return ctx->normie_mask[REG_CLASS_GPR];
 
         case TB_FLOAT32_CONST:
         case TB_FLOAT64_CONST:
-        return ctx->normie_mask[1];
+        return ctx->normie_mask[REG_CLASS_XMM];
 
         case TB_FADD:
         case TB_FSUB:
@@ -526,8 +526,8 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_FDIV:
         case TB_FMAX:
         case TB_FMIN:
-        tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[1]);
-        return ctx->normie_mask[1];
+        tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[REG_CLASS_XMM]);
+        return ctx->normie_mask[REG_CLASS_XMM];
 
         case TB_BRANCH: {
             TB_Node* cmp = n->inputs[1];
@@ -627,7 +627,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
             FOREACH_N(i, ins, ins+tmps) {
                 dst->ins[i].src = NULL;
-                dst->ins[i].mask = ctx->normie_mask[0];
+                dst->ins[i].mask = ctx->normie_mask[REG_CLASS_GPR];
             }
 
             return REGEMPTY;
@@ -644,8 +644,8 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             // system calls don't count, we track this for ABI
             // and stack allocation purposes.
             int param_count = n->input_count - 3;
-            if (ctx->caller_usage < param_count) {
-                ctx->caller_usage = param_count;
+            if (ctx->num_regs[0] < param_count) {
+                ctx->num_regs[0] = param_count;
             }
 
             if (n->type == TB_TAILCALL) {
@@ -674,7 +674,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 if (n->type == TB_TAILCALL) {
                     ins[0].mask = REGMASK(GPR, 1u << RAX);
                 } else {
-                    ins[0].mask = ctx->normie_mask[0];
+                    ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
                 }
                 ins += 1;
             }
@@ -685,7 +685,8 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 if (i < 4) {
                     ins[i].mask = REGMASK(GPR, 1u << abi->gprs[i]);
                 } else {
-                    ins[i].mask = ctx->normie_mask[0];
+                    // stack slots go into [RSP + 8i]
+                    ins[i].mask = REGMASK(STK, i);
                 }
             }
 
@@ -717,7 +718,7 @@ static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
         int rc = ctx->callee_spills[i]->mask.class;
 
         Val reg = val_gpr(ctx->callee_spills[i]->reg);
-        reg.type = VAL_GPR + rc;
+        reg.type = rc == REG_CLASS_XMM ? VAL_XMM : VAL_GPR;
 
         Val spill = val_base_disp(RSP, stack_usage - pos);
         inst2(e, MOV, &reg, &spill, TB_X86_TYPE_QWORD);
@@ -747,14 +748,16 @@ static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
 static Val op_at(Ctx* ctx, LiveInterval* l) {
     if (l->is_spill) {
         return val_stack(ctx->stack_usage - ctx->spills[l->id]);
+    } else if (l->mask.class == REG_CLASS_STK) {
+        return val_stack(l->assigned * 8);
     } else {
         assert(l->assigned >= 0);
-        return (Val) { .type = l->mask.class ? VAL_XMM : VAL_GPR, .reg = l->assigned };
+        return (Val) { .type = l->mask.class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR, .reg = l->assigned };
     }
 }
 
 static GPR op_gpr_at(LiveInterval* l) {
-    assert(!l->is_spill);
+    assert(!l->is_spill && l->mask.class == REG_CLASS_GPR);
     return l->assigned;
 }
 
@@ -781,7 +784,7 @@ static Val parse_memory_op(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t, TB_Node*
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     size_t caller_usage = 0;
     if (ctx->abi_index == 0) {
-        caller_usage = ctx->caller_usage;
+        caller_usage = ctx->num_regs[0];
         if (caller_usage > 0 && caller_usage < 4) {
             caller_usage = 4;
         }
@@ -856,7 +859,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         int rc = ctx->callee_spills[i]->mask.class;
 
         Val reg = val_gpr(ctx->callee_spills[i]->reg);
-        reg.type = VAL_GPR + rc;
+        reg.type = rc == REG_CLASS_GPR ? VAL_GPR : VAL_XMM;
 
         Val spill = val_base_disp(RSP, stack_usage - pos);
         inst2(e, MOV, &spill, &reg, TB_X86_TYPE_QWORD);
@@ -884,7 +887,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
 
 // compute effective address operand
 static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
-    bool flt_dst = t->interval->mask.class == REG_CLASS_XMM;
+    bool use_tmp = t->interval == NULL || t->interval->mask.class == REG_CLASS_XMM;
 
     int in_count = 0;
     Val ea = { .type = VAL_MEM, .index = GPR_NONE };
@@ -909,7 +912,7 @@ static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
         if (tb_is_power_of_two(stride)) {
             int scale = tb_ffs(stride) - 1;
             if (scale > 3) {
-                Val tmp = val_gpr(op_gpr_at(flt_dst ? t->ins[in_count++].src : t->interval));
+                Val tmp = val_gpr(op_gpr_at(use_tmp ? t->ins[in_count++].src : t->interval));
                 if (tmp.reg != index) {
                     Val index_op = val_gpr(index);
                     inst2(e, MOV, &tmp, &index_op, TB_X86_TYPE_QWORD);
@@ -1335,18 +1338,9 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 int stack_params = (n->inputs[2]->type == TB_SYMBOL ? 0 : 1) + param_descs[ctx->abi_index].gpr_count;
                 int param_count = n->input_count - 3;
 
-                FOREACH_N(i, stack_params, param_count) {
-                    TB_X86_DataType dt = TB_X86_TYPE_QWORD; // legalize_int2(t->ins[i].);
-
-                    Val dst = val_stack(i * 8);
-                    Val src = op_at(ctx, t->ins[i].src);
-                    inst2(e, MOV, &dst, &src, dt);
-                }
-
                 int op = CALL;
                 if (n->type == TB_TAILCALL) {
                     op = JMP;
-
                     emit_epilogue(ctx, e, ctx->stack_usage);
                 }
 

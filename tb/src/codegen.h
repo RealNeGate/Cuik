@@ -35,16 +35,23 @@
 enum {
     // all we can fit into 3bits, but also... 8 classes is a lot.
     //
-    // * x86 has two currently: GPR and Vector.
-    MAX_REG_CLASSES = 8
+    // * x86 has 3 currently: GPR, Vector, and Stack.
+    MAX_REG_CLASSES = 8,
+
+    // every platform has a stack regclass, the mask is actually an offset
+    // on the stack (useful for parameter passing).
+    REG_CLASS_STK = 0,
 };
 
 // represents a set of registers, usually for register constraints
 typedef struct {
-    uint64_t class : 3;
-    uint64_t mask  : 61;
+    uint64_t class     : 3;
+    uint64_t may_spill : 1;
+    uint64_t mask      : 60;
 } RegMask;
-#define REGMASK(c, m) (RegMask){ REG_CLASS_ ## c, m }
+
+#define REGMASK(c, m)  (RegMask){ REG_CLASS_ ## c, 0, m }
+#define REGMASK2(c, m) (RegMask){ REG_CLASS_ ## c, 1, m }
 #define REGEMPTY (RegMask){ 0 }
 
 typedef struct {
@@ -227,7 +234,6 @@ struct Ctx {
     // Regalloc
     int interval_count;
     int stack_usage;
-    int caller_usage;
     int num_fixed;
     int num_classes;
     int num_regs[MAX_REG_CLASSES];
@@ -253,4 +259,12 @@ struct Ctx {
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena);
 void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena);
 
-static int fixed_reg_mask(uint64_t mask) { return tb_popcount64(mask) == 1 ? 63 - tb_clz64(mask) : -1; }
+void tb__print_regmask(RegMask mask);
+
+static int fixed_reg_mask(RegMask mask) {
+    if (mask.class == REG_CLASS_STK) {
+        return -1;
+    } else {
+        return tb_popcount64(mask.mask) == 1 ? 63 - tb_clz64(mask.mask) : -1;
+    }
+}

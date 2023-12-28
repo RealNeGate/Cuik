@@ -142,11 +142,49 @@ static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static LiveInterval* canonical_interval(Ctx* restrict ctx, LiveInterval* interval, RegMask mask) {
-    int reg = fixed_reg_mask(mask.mask);
+    int reg = fixed_reg_mask(mask);
     if (reg >= 0) {
         return &ctx->fixed[mask.class][reg];
     } else {
         return interval;
+    }
+}
+
+void tb__print_regmask(RegMask mask) {
+    if (mask.class == REG_CLASS_STK) {
+        printf("[SP + %"PRId64"]", mask.mask*8);
+    } else {
+        int i = 0;
+        bool comma = false;
+        uint64_t bits = mask.mask;
+
+        printf("[");
+        while (bits) {
+            // skip zeros
+            int skip = __builtin_ffs(bits) - 1;
+            i += skip, bits >>= skip;
+
+            if (!comma) {
+                comma = true;
+            } else {
+                printf(", ");
+            }
+
+            // find sequence of ones
+            int len = __builtin_ffs(~bits) - 1;
+            printf("R%d", i);
+            if (len > 1) {
+                printf(" .. R%d", i+len-1);
+            }
+
+            // skip ones
+            bits >>= len, i += len;
+        }
+
+        if (mask.may_spill) {
+            printf("| SPILL");
+        }
+        printf("]");
     }
 }
 
@@ -157,7 +195,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Function* restrict f = p->f;
-    // tb_pass_print(p);
+    tb_pass_print(p);
 
     Ctx ctx = {
         .module = f->super.module,
@@ -217,25 +255,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     ctx.node_to_bb.exp = 64 - __builtin_clzll((cap < 4 ? 4 : cap) - 1);
     ctx.node_to_bb.entries = tb_arena_alloc(arena, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
     memset(ctx.node_to_bb.entries, 0, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
-
-    CUIK_TIMED_BLOCK("create physical intervals") {
-        FOREACH_N(i, 0, ctx.num_classes) {
-            LiveInterval* intervals = tb_arena_alloc(arena, ctx.num_regs[i] * sizeof(LiveInterval));
-            FOREACH_N(j, 0, ctx.num_regs[i]) {
-                intervals[j] = (LiveInterval){
-                    .id = ctx.interval_count++,
-                    .assigned = -1, .hint = NULL, .reg = j,
-                    .mask = { i, 1u << j },
-                    .range_cap = 4,
-                    .range_count = 1,
-                };
-                intervals[j].ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange));
-                intervals[j].ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
-            }
-            ctx.fixed[i] = intervals;
-            ctx.num_fixed += ctx.num_regs[i];
-        }
-    }
 
     CUIK_TIMED_BLOCK("isel") {
         assert(dyn_array_length(ws->items) == cfg.block_count);
@@ -332,14 +351,14 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         tile->interval->dt = n->dt;
                         tile->interval->mask = mask;
 
-                        TB_OPTDEBUG(CODEGEN)(printf("    v%d [%#08llx]\n", tile->interval->id, mask.mask));
+                        TB_OPTDEBUG(CODEGEN)(printf("    v%d ", tile->interval->id), tb__print_regmask(mask), printf("\n"));
                     } else {
                         assert(tile->interval == NULL && "shouldn't have allocated an interval... tf");
                         TB_OPTDEBUG(CODEGEN)(printf("    no def\n"));
                     }
 
                     FOREACH_N(j, 0, tile->in_count) {
-                        TB_OPTDEBUG(CODEGEN)(printf("    IN[%zu] = %#08llx\n", j, tile->ins[j].mask.mask));
+                        TB_OPTDEBUG(CODEGEN)(printf("    IN[%zu] = ", j), tb__print_regmask(tile->ins[j].mask), printf("\n"));
                     }
                 }
 
@@ -406,6 +425,25 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         }
         dyn_array_destroy(phi_vals);
         log_debug("%s: tmp_arena=%.1f KiB (postISel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
+    }
+
+    CUIK_TIMED_BLOCK("create physical intervals") {
+        FOREACH_N(i, 0, ctx.num_classes) {
+            LiveInterval* intervals = tb_arena_alloc(arena, ctx.num_regs[i] * sizeof(LiveInterval));
+            FOREACH_N(j, 0, ctx.num_regs[i]) {
+                intervals[j] = (LiveInterval){
+                    .id = ctx.interval_count++,
+                    .assigned = -1, .hint = NULL, .reg = j,
+                    .mask = { i, 0, 1u << j },
+                    .range_cap = 4,
+                    .range_count = 1,
+                };
+                intervals[j].ranges = tb_arena_alloc(arena, 4 * sizeof(LiveRange));
+                intervals[j].ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
+            }
+            ctx.fixed[i] = intervals;
+            ctx.num_fixed += ctx.num_regs[i];
+        }
     }
 
     CUIK_TIMED_BLOCK("liveness") {

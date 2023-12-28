@@ -28,8 +28,7 @@ static bool ifg_test(Chaitin* ra, int i, int j) {
 }
 
 static void ifg_remove(Chaitin* ra, int i, int j) {
-    // printf("remove v%d -- v%d\n", i, j);
-
+    printf("remove v%d -- v%d\n", i, j);
     assert(ifg_test(ra, i, j));
     ra->ifg[i*ra->ifg_stride + j/64] &= ~(1ull << (j % 64));
 }
@@ -68,13 +67,19 @@ static bool ifg_empty(Chaitin* ra) {
     return true;
 }
 
+static bool reg_mask_intersect(RegMask a, RegMask b) {
+    return a.class == b.class && (a.mask & b.mask) != 0;
+}
+
 void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
     Chaitin ra = { .ctx = ctx, .arena = arena, .stack_usage = ctx->stack_usage };
 
     int k_colors[2] = { 16, 16 };
     CUIK_TIMED_BLOCK("build IFG") {
-        ra.ifg_stride = (ctx->interval_count + 63) / 64;
-        ra.ifg_len    = ctx->interval_count;
+        size_t normie_nodes = ctx->interval_count - ctx->num_fixed;
+
+        ra.ifg_stride = (normie_nodes + 63) / 64;
+        ra.ifg_len    = normie_nodes;
         ra.ifg        = tb_arena_alloc(arena, ra.ifg_len * ra.ifg_stride * sizeof(uint64_t));
         ra.degree     = tb_arena_alloc(arena, ra.ifg_len * sizeof(int));
 
@@ -95,11 +100,14 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
 
                     // interfere
                     FOREACH_N(j, 0, ra.ifg_len) {
-                        if (set_get(&live, j)) {
-                            // printf("v%d -- v%td\n", interval->id, j);
-                            ifg_edge(&ra, interval->id, j);
-                            ifg_edge(&ra, j, interval->id);
-                        }
+                        if (!set_get(&live, j)) continue;
+
+                        LiveInterval* other = ctx->id2interval[j];
+                        if (!reg_mask_intersect(interval->mask, other->mask)) continue;
+
+                        printf("v%d -- v%td\n", interval->id, j);
+                        ifg_edge(&ra, interval->id, j);
+                        ifg_edge(&ra, j, interval->id);
                     }
 
                     // 2 address ops will interfere with their own inputs (except for
@@ -108,8 +116,9 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                         FOREACH_N(j, 1, t->in_count) {
                             LiveInterval* in_def = t->ins[j].src;
                             if (in_def == NULL) continue;
+                            if (!reg_mask_intersect(interval->mask, in_def->mask)) continue;
 
-                            // printf("v%d -- v%d\n", interval->id, in_def->id);
+                            printf("v%d -- v%d\n", interval->id, in_def->id);
                             ifg_edge(&ra, interval->id, in_def->id);
                             ifg_edge(&ra, in_def->id, interval->id);
                         }
@@ -131,12 +140,12 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
         memcpy(deg_copy, ra.degree, ra.ifg_len * sizeof(int));
 
         // simplify/select stack
-        int cnt = 0, cap = ctx->interval_count;
-        LiveInterval** stk = tb_arena_alloc(arena, cap * sizeof(LiveInterval*));
+        int cnt = 0, cap = ra.ifg_len;
+        LiveInterval** stk = tb_arena_alloc(arena, ra.ifg_len * sizeof(LiveInterval*));
 
         // simplify phase:
         //   push all nodes with a degree < k
-        FOREACH_N(i, ctx->num_fixed, ra.ifg_len) {
+        FOREACH_N(i, 0, ra.ifg_len) {
             int class = ctx->id2interval[i]->mask.class;
             if (ra.degree[i] < k_colors[class]) {
                 assert(cnt < cap);
@@ -146,27 +155,36 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
         }
 
         // split phase
-        NL_ChunkedArr spills = nl_chunked_arr_alloc(tmp_arena);
-        while (!ifg_empty(&ra)) {
-            int spill = ctx->num_fixed;
+        if (!ifg_empty(&ra)) {
+            float* weights = tb_arena_alloc(arena, ra.ifg_len * sizeof(float));
+            NL_ChunkedArr spills = nl_chunked_arr_alloc(tmp_arena);
 
-            // TODO(NeGate): pick best spill slot
-            FOREACH_N(i, ctx->num_fixed + 1, ra.ifg_len) {
-                tb_todo();
+            // compute spill weights
+            FOREACH_N(i, 0, normie_nodes) {
+                weights[i] = deg_copy[i];
             }
 
-            nl_chunked_arr_put(&spills, ctx->id2interval[spill]);
-            ifg_remove_edges(&ra, spill);
-        }
+            do {
+                int spill = ctx->num_fixed;
 
-        // insert splitting code
-        for (NL_ArrChunk* restrict chk = spills.first; chk; chk = chk->next) {
-            FOREACH_N(i, 0, chk->count) {
-                LiveInterval* spill = chk->elems[i];
-                tb_todo();
+                // TODO(NeGate): pick best spill slot
+                FOREACH_N(i, ctx->num_fixed + 1, ra.ifg_len) {
+                    tb_todo();
+                }
+
+                nl_chunked_arr_put(&spills, ctx->id2interval[spill]);
+                ifg_remove_edges(&ra, spill);
+            } while (!ifg_empty(&ra));
+
+            // insert splitting code
+            for (NL_ArrChunk* restrict chk = spills.first; chk; chk = chk->next) {
+                FOREACH_N(i, 0, chk->count) {
+                    LiveInterval* spill = chk->elems[i];
+                    tb_todo();
+                }
             }
+            nl_chunked_arr_trim(&spills);
         }
-        nl_chunked_arr_trim(&spills);
 
         ra.ifg    = ifg_copy;
         ra.degree = deg_copy;
@@ -190,7 +208,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
 
             assert(mask != 0 && "couldn't select color :(");
             interval->assigned = tb_ffs64(mask) - 1;
-            // printf("v%d = R%d\n", i, interval->assigned);
+            printf("v%d = R%d\n", i, interval->assigned);
         }
     }
 

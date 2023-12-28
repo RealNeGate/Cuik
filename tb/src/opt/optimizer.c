@@ -265,6 +265,67 @@ static bool slow_dommy(TB_CFG* cfg, TB_Node* expected_dom, TB_Node* bb) {
 #include "libcalls.h"
 #include "scheduler.h"
 
+static Lattice* sccp_int(TB_Passes* restrict p, TB_Node* n) {
+    assert(n->type == TB_INTEGER_CONST);
+    TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
+    if (n->dt.type == TB_PTR) {
+        return num->value ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
+    } else {
+        return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = { num->value, num->value, ~num->value, num->value } });
+    }
+}
+
+static Lattice* sccp_proj(TB_Passes* restrict p, TB_Node* n) {
+    assert(n->type == TB_PROJ);
+    if (n->dt.type == TB_CONTROL) {
+        return lattice_universe_get(p, n);
+    } else {
+        return NULL;
+    }
+}
+
+static Lattice* sccp_ctrl(TB_Passes* restrict p, TB_Node* n) {
+    return lattice_universe_get(p, n->inputs[0]);
+}
+
+static Lattice* sccp_ptr_vals(TB_Passes* restrict p, TB_Node* n) {
+    if (n->type == TB_LOCAL) {
+        return &XNULL_IN_THE_SKY;
+    } else {
+        assert(n->type == TB_SYMBOL);
+        return lattice_intern(p, (Lattice){ LATTICE_PTR, ._ptr = { TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym } });
+    }
+}
+
+static Lattice* sccp_lookup(TB_Passes* restrict p, TB_Node* n) {
+    TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
+    TB_DataType dt = n->dt;
+    assert(dt.type == TB_INT);
+
+    LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
+    FOREACH_N(i, 1, n->input_count) {
+        LatticeInt b = { l->entries[i].val, l->entries[i].val, l->entries[i].val, ~l->entries[i].val };
+        a = lattice_meet_int(a, b, dt);
+    }
+
+    return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = a });
+}
+
+static Lattice* sccp_meetchads(TB_Passes* restrict p, TB_Node* n) {
+    assert(n->type == TB_REGION || n->type == TB_SELECT || n->type == TB_PHI);
+    int start = n->type == TB_REGION ? 0 : 1;
+    if (n->type == TB_SELECT) start = 2 ;
+
+    Lattice* l = lattice_universe_get(p, n->inputs[start]);
+    FOREACH_N(i, start+1, n->input_count) {
+        l = lattice_meet(p, l, lattice_universe_get(p, n->inputs[i]), n->dt);
+    }
+    return l;
+}
+
+// this is where the vtable goes for all peepholes
+#include "peeps.h"
+
 static TB_Node* gvn(TB_Passes* restrict p, TB_Node* n, size_t extra) {
     // try GVN, if we succeed, just delete the node and use the old copy
     TB_Node* k = nl_hashset_put2(&p->gvn_nodes, n, gvn_hash, gvn_compare);
@@ -569,305 +630,18 @@ static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
         default: break;
     }
 
-    switch (n->type) {
-        // integer ops
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
-        case TB_MUL:
-        case TB_SHL:
-        case TB_SHR:
-        case TB_SAR:
-        case TB_CMP_EQ:
-        case TB_CMP_NE:
-        case TB_CMP_SLT:
-        case TB_CMP_SLE:
-        case TB_CMP_ULT:
-        case TB_CMP_ULE:
-        return ideal_int_binop(p, f, n);
-
-        // pointer
-        case TB_MEMBER_ACCESS:
-        return ideal_member_ptr(p, f, n);
-
-        case TB_ARRAY_ACCESS:
-        return ideal_array_ptr(p, f, n);
-
-        // memory
-        case TB_LOAD:
-        return ideal_load(p, f, n);
-
-        case TB_STORE:
-        return ideal_store(p, f, n);
-
-        case TB_ROOT:
-        return ideal_root(p, f, n);
-
-        case TB_MEMCPY:
-        return ideal_memcpy(p, f, n);
-
-        case TB_MEMSET:
-        return ideal_memset(p, f, n);
-
-        // division
-        case TB_SDIV:
-        case TB_UDIV:
-        return ideal_int_div(p, f, n);
-
-        // modulo
-        case TB_SMOD:
-        case TB_UMOD:
-        return ideal_int_mod(p, f, n);
-
-        // casting
-        case TB_SIGN_EXT:
-        case TB_ZERO_EXT:
-        return ideal_extension(p, f, n);
-        case TB_BITCAST:
-        return ideal_bitcast(p, f, n);
-        case TB_TRUNCATE:
-        return ideal_truncate(p, f, n);
-
-        case TB_CALL:
-        return ideal_libcall(p, f, n);
-
-        case TB_SELECT:
-        return ideal_select(p, f, n);
-
-        // control flow
-        case TB_PHI:
-        return ideal_phi(p, f, n);
-
-        case TB_REGION:
-        return ideal_region(p, f, n);
-
-        case TB_BRANCH:
-        return ideal_branch(p, f, n);
-
-        default:
-        return NULL;
-    }
+    NodeIdealize ideal = vtables[n->type].idealize;
+    return ideal ? ideal(p, f, n) : NULL;
 }
 
-// May return one of the direct inputs
 static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
-    switch (n->type) {
-        // integer ops
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
-        case TB_MUL:
-        case TB_SHL:
-        case TB_SHR:
-        case TB_SAR:
-        case TB_CMP_EQ:
-        case TB_CMP_NE:
-        case TB_CMP_SLT:
-        case TB_CMP_SLE:
-        case TB_CMP_ULT:
-        case TB_CMP_ULE:
-        return identity_int_binop(p, f, n);
-
-        case TB_MEMBER_ACCESS:
-        if (TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset == 0) {
-            return n->inputs[1];
-        }
-        return n;
-
-        case TB_LOAD:
-        return identity_load(p, f, n);
-
-        case TB_CALL:
-        case TB_TAILCALL:
-        case TB_SYSCALL:
-        case TB_DEBUGBREAK:
-        case TB_TRAP:
-        case TB_UNREACHABLE: {
-            // Dead node? kill
-            Lattice* ctrl = lattice_universe_get(p, n->inputs[0]);
-            return ctrl == &XCTRL_IN_THE_SKY ? dead_node(f, p) : n;
-        }
-
-        case TB_SAFEPOINT_POLL: {
-            // Dead node? kill
-            Lattice* ctrl = lattice_universe_get(p, n->inputs[0]);
-            if (ctrl == &XCTRL_IN_THE_SKY || n->inputs[0]->type == TB_SAFEPOINT_POLL) {
-                // (safepoint (safepoint X)) => (safepoint X)
-                return n->inputs[0];
-            } else {
-                return n;
-            }
-        }
-
-        case TB_REGION: {
-            // fold out diamond shaped patterns
-            TB_Node* same = n->inputs[0];
-            if (same->type == TB_PROJ && same->inputs[0]->type == TB_BRANCH) {
-                same = same->inputs[0];
-
-                // if it has phis... quit
-                FOR_USERS(u, n) {
-                    if (u->n->type == TB_PHI) {
-                        return n;
-                    }
-                }
-
-                FOREACH_N(i, 1, n->input_count) {
-                    if (n->inputs[i]->type != TB_PROJ || n->inputs[i]->inputs[0] != same) {
-                        return n;
-                    }
-                }
-
-                TB_Node* before = same->inputs[0];
-                tb_pass_kill_node(p, same);
-                return before;
-            }
-
-            return n;
-        }
-
-        // dumb phis
-        case TB_PHI: {
-            TB_Node* same = NULL;
-            FOREACH_N(i, 1, n->input_count) {
-                if (n->inputs[i] == n) continue;
-                if (same && same != n->inputs[i]) return n;
-                same = n->inputs[i];
-            }
-
-            assert(same);
-            tb_pass_mark_users(p, n->inputs[0]);
-            return same;
-        }
-
-        default:
-        return n;
-    }
+    NodeIdentity identity = vtables[n->type].identity;
+    return identity ? identity(p, f, n) : n;
 }
 
-// computes the type of a node based on it's inputs
-static Lattice* dataflow(TB_Passes* restrict p, TB_Node* n) {
-    switch (n->type) {
-        case TB_INTEGER_CONST: {
-            TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
-            if (n->dt.type == TB_PTR) {
-                return num->value ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
-            } else {
-                return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = { num->value, num->value, ~num->value, num->value } });
-            }
-        }
-
-        case TB_PROJ: {
-            if (n->dt.type == TB_CONTROL) {
-                return lattice_universe_get(p, n);
-            } else {
-                return NULL;
-            }
-        }
-
-        case TB_BRANCH:
-        return dataflow_branch(p, n);
-
-        // control nodes just inherit their liveness
-        case TB_SAFEPOINT_POLL:
-        case TB_CALL:
-        case TB_TAILCALL:
-        case TB_SYSCALL:
-        case TB_DEBUGBREAK:
-        case TB_TRAP:
-        case TB_UNREACHABLE:
-        return lattice_universe_get(p, n->inputs[0]);
-
-        case TB_LOCAL:
-        return &XNULL_IN_THE_SKY;
-
-        case TB_SYMBOL:
-        return lattice_intern(p, (Lattice){ LATTICE_PTR, ._ptr = { TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym } });
-
-        case TB_BITCAST:
-        return dataflow_bitcast(p, n);
-
-        case TB_TRUNCATE:
-        return dataflow_trunc(p, n);
-
-        case TB_ZERO_EXT:
-        return dataflow_zext(p, n);
-
-        case TB_SIGN_EXT:
-        return dataflow_sext(p, n);
-
-        case TB_NEG:
-        case TB_NOT:
-        return dataflow_unary(p, n);
-
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        return dataflow_bits(p, n);
-
-        case TB_ADD:
-        case TB_SUB:
-        case TB_MUL:
-        return dataflow_arith(p, n);
-
-        case TB_SHL:
-        case TB_SHR:
-        return dataflow_shift(p, n);
-
-        case TB_CMP_EQ:
-        case TB_CMP_NE:
-        case TB_CMP_SLT:
-        case TB_CMP_SLE:
-        case TB_CMP_ULT:
-        case TB_CMP_ULE:
-        return dataflow_cmp(p, n);
-
-        // meet all inputs
-        case TB_LOOKUP: {
-            TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
-            TB_DataType dt = n->dt;
-            assert(dt.type == TB_INT);
-
-            LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
-            FOREACH_N(i, 1, n->input_count) {
-                LatticeInt b = { l->entries[i].val, l->entries[i].val, l->entries[i].val, ~l->entries[i].val };
-                a = lattice_meet_int(a, b, dt);
-            }
-
-            return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = a });
-        }
-
-        case TB_SELECT: {
-            Lattice* a = lattice_universe_get(p, n->inputs[2]);
-            Lattice* b = lattice_universe_get(p, n->inputs[3]);
-            return lattice_meet(p, a, b, n->dt);
-        }
-
-        // meet all inputs
-        case TB_REGION: {
-            Lattice* l = lattice_universe_get(p, n->inputs[0]);
-            FOREACH_N(i, 1, n->input_count) {
-                l = lattice_meet(p, l, lattice_universe_get(p, n->inputs[i]), TB_TYPE_CONTROL);
-            }
-            return l;
-        }
-
-        // meet all inputs
-        case TB_PHI: {
-            Lattice* l = lattice_universe_get(p, n->inputs[1]);
-            TB_DataType dt = n->dt;
-            FOREACH_N(i, 2, n->input_count) {
-                l = lattice_meet(p, l, lattice_universe_get(p, n->inputs[i]), dt);
-            }
-            return l;
-        }
-
-        default: return NULL;
-    }
+static Lattice* sccp(TB_Passes* restrict p, TB_Node* n) {
+    NodeConstprop constprop = vtables[n->type].constprop;
+    return constprop ? constprop(p, n) : NULL;
 }
 
 // converts constant Lattice into constant node
@@ -983,9 +757,9 @@ TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
         DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 5) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
 
-    // generate fancier type
+    // generate fancier type (SCCP)
     if (n->dt.type != TB_CONT && n->dt.type != TB_MEMORY) {
-        Lattice* new_type = dataflow(p, n);
+        Lattice* new_type = sccp(p, n);
 
         // no type provided? just make a not-so-form fitting bottom type
         if (new_type == NULL) {

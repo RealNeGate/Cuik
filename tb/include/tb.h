@@ -418,6 +418,8 @@ typedef enum TB_NodeTypeEnum {
     TB_X86INTRIN_STMXCSR,
     TB_X86INTRIN_SQRT,
     TB_X86INTRIN_RSQRT,
+
+    TB_NODE_TYPE_MAX,
 } TB_NodeTypeEnum;
 typedef uint8_t TB_NodeType;
 

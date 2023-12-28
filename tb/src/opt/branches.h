@@ -363,7 +363,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     return NULL;
 }
 
-static Lattice* dataflow_branch(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* sccp_branch(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* before = lattice_universe_get(opt, n->inputs[0]);
     if (before == &TOP_IN_THE_SKY || before == &XCTRL_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -439,4 +439,61 @@ static Lattice* dataflow_branch(TB_Passes* restrict opt, TB_Node* n) {
     }
 
     return &TUP_IN_THE_SKY;
+}
+
+static TB_Node* identity_ctrl(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    // Dead node? kill
+    Lattice* ctrl = lattice_universe_get(p, n->inputs[0]);
+    return ctrl == &XCTRL_IN_THE_SKY ? dead_node(f, p) : n;
+}
+
+static TB_Node* identity_safepoint(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    // Dead node? kill
+    Lattice* ctrl = lattice_universe_get(p, n->inputs[0]);
+    if (ctrl == &XCTRL_IN_THE_SKY || n->inputs[0]->type == TB_SAFEPOINT_POLL) {
+        // (safepoint (safepoint X)) => (safepoint X)
+        return n->inputs[0];
+    } else {
+        return n;
+    }
+}
+
+static TB_Node* identity_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    // fold out diamond shaped patterns
+    TB_Node* same = n->inputs[0];
+    if (same->type == TB_PROJ && same->inputs[0]->type == TB_BRANCH) {
+        same = same->inputs[0];
+
+        // if it has phis... quit
+        FOR_USERS(u, n) {
+            if (u->n->type == TB_PHI) {
+                return n;
+            }
+        }
+
+        FOREACH_N(i, 1, n->input_count) {
+            if (n->inputs[i]->type != TB_PROJ || n->inputs[i]->inputs[0] != same) {
+                return n;
+            }
+        }
+
+        TB_Node* before = same->inputs[0];
+        tb_pass_kill_node(p, same);
+        return before;
+    }
+
+    return n;
+}
+
+static TB_Node* identity_phi(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    TB_Node* same = NULL;
+    FOREACH_N(i, 1, n->input_count) {
+        if (n->inputs[i] == n) continue;
+        if (same && same != n->inputs[i]) return n;
+        same = n->inputs[i];
+    }
+
+    assert(same);
+    tb_pass_mark_users(p, n->inputs[0]);
+    return same;
 }

@@ -42,12 +42,18 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
 static void move_to_active(LSRA* restrict ra, LiveInterval* interval);
 
 static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
-static const char* XMM_NAMES[] = { "XMM0", "XMM1", "XMM2", "XMM3", "XMM4", "XMM5", "XMM6", "XMM7", "XMM8",  "XMM9", "XMM10", "XMM11", "XMM12", "XMM13", "XMM14", "XMM15" };
 
 // static const char* GPR_NAMES[] = { "X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8",  "X9", "X10", "X11", "X12", "X13", "X14", "X15" };
-static const char* reg_name(int rg, int num) {
-    // return GPR_NAMES[num];
-    return (rg == 1 ? XMM_NAMES : GPR_NAMES)[num];
+static void print_reg_name(int rg, int num) {
+    if (rg == 1) {
+        printf("%s", GPR_NAMES[num]);
+    } else if (rg == 2) {
+        printf("xmm%d", num);
+    } else if (rg == REG_CLASS_STK) {
+        printf("[sp + %d]", num*8);
+    } else {
+        tb_todo();
+    }
 }
 
 // Helpers
@@ -112,7 +118,7 @@ static void add_range(LSRA* restrict ra, LiveInterval* interval, int start, int 
 
 LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* restrict ra, RegMask mask, TB_DataType dt) {
     // not so fixed interval? we need a unique interval then
-    int reg = fixed_reg_mask(mask.mask);
+    int reg = fixed_reg_mask(mask);
     if (reg >= 0) {
         return &ctx->fixed[mask.class][reg];
     } else {
@@ -192,7 +198,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     // if we're writing to a fixed interval, insert copy
                     // such that we only guarentee a fixed location at the
                     // def site.
-                    int reg = fixed_reg_mask(interval->mask.mask);
+                    int reg = fixed_reg_mask(interval->mask);
                     if (reg >= 0 && t->tag != TILE_SPILL_MOVE) {
                         RegMask rm = interval->mask;
                         LiveInterval* fixed = &ctx->fixed[rm.class][reg];
@@ -242,7 +248,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 FOREACH_N(j, 0, t->in_count) {
                     LiveInterval* in_def = t->ins[j].src;
                     RegMask in_mask = t->ins[j].mask;
-                    int hint = fixed_reg_mask(in_mask.mask);
+                    int hint = fixed_reg_mask(in_mask);
 
                     // clobber fixed input
                     if (in_def == NULL) {
@@ -260,22 +266,23 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     }
 
                     RegMask in_def_mask = in_def->mask;
-                    assert(in_def_mask.class == in_mask.class);
-
                     if (hint >= 0) {
                         in_def->hint = &ctx->fixed[in_mask.class][hint];
                     }
 
                     int use_time = time;
-
-                    // if the use mask is more constrained than the def, we'll make a temporary (also if it's fixed to avoid stretching fixed constraints)
                     bool both_fixed = hint >= 0 && in_def_mask.mask == in_mask.mask;
-                    if ((in_def_mask.mask & in_mask.mask) != in_def_mask.mask || both_fixed) {
+
+                    // we resolve def-use conflicts with a spill move, either when:
+                    //   * the use and def classes don't match.
+                    //   * the use mask is more constrained than the def.
+                    //   * it's on both ends to avoid stretching fixed intervals.
+                    if (in_def_mask.class != in_mask.class || (in_def_mask.mask & in_mask.mask) != in_def_mask.mask || both_fixed) {
                         if (both_fixed) {
-                            in_def_mask = ctx->normie_mask[in_mask.class];
+                            in_def_mask = ctx->normie_mask[in_def_mask.class];
                         }
 
-                        TB_OPTDEBUG(REGALLOC)(printf("  TEMP %#04llx -> v%d (%#08llx)\n", in_def_mask.mask, in_def->id, in_mask.mask));
+                        TB_OPTDEBUG(REGALLOC)(printf("  TEMP "), tb__print_regmask(in_def_mask), printf(" -> "), tb__print_regmask(in_mask), printf("\n"));
 
                         // construct copy (either to a fixed interval or a new masked interval)
                         Tile* tmp = tb_arena_alloc(arena, sizeof(Tile));
@@ -368,7 +375,9 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             assert(time != INT_MAX);
 
             #if TB_OPTDEBUG_REGALLOC
-            printf("  # v%-4d t=[%-4d - %4d) [%#08llx]    ", interval->id, time, end, interval->mask.mask);
+            printf("  # v%-4d t=[%-4d - %4d) ", interval->id, time, end);
+            tb__print_regmask(interval->mask);
+            printf("    ");
             if (interval->tile && interval->tile->n) {
                 print_node_sexpr(interval->tile->n, 0);
             }
@@ -408,7 +417,9 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             FOREACH_N(rc, 0, ctx->num_classes) {
                 FOREACH_SET(reg, ra.active_set[rc]) {
                     LiveInterval* l = ra.active[rc][reg];
-                    printf("v%d:%s ", l->id, reg_name(rc, reg));
+                    printf("v%d:", l->id);
+                    print_reg_name(rc, reg);
+                    printf(" ");
                 }
             }
             printf("}\x1b[0m\n");
@@ -427,6 +438,12 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 // returns -1 if no registers are available
 static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     int rc = interval_class(interval);
+    if (rc == REG_CLASS_STK) {
+        // it's not a mask, it's a position in this case (and it's always fixed)
+        TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [SP + %"PRId64"]\n", interval->mask.mask*8));
+        return interval->mask.mask;
+    }
+
     uint64_t mask = interval->mask.mask;
 
     // callee saved will be biased to have nearer free positions to avoid incurring
@@ -496,7 +513,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
         if (UNLIKELY(ra->callee_saved[rc] & (1ull << highest))) {
             ra->callee_saved[rc] &= ~(1ull << highest);
 
-            TB_OPTDEBUG(REGALLOC)(printf("  #   spill callee saved register %s\n", reg_name(rc, highest)));
+            TB_OPTDEBUG(REGALLOC)(printf("  #   spill callee saved register "), print_reg_name(rc, highest), printf("\n"));
             LiveInterval* fixed = &ra->fixed[rc][highest];
 
             ra->stack_usage = align_up(ra->stack_usage + 8, 8);
@@ -508,22 +525,22 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
 
         if (interval_end(interval) <= pos) {
             // we can steal it completely
-            TB_OPTDEBUG(REGALLOC)(printf("  #   assign to %s", reg_name(rc, highest)));
+            TB_OPTDEBUG(REGALLOC)(printf("  #   assign to "), print_reg_name(rc, highest));
 
             if (hint_reg >= 0) {
                 if (highest == hint_reg) {
                     TB_OPTDEBUG(REGALLOC)(printf(" (HINTED)\n"));
                 } else {
-                    TB_OPTDEBUG(REGALLOC)(printf(" (FAILED HINT %s)\n", reg_name(rc, hint_reg)));
+                    TB_OPTDEBUG(REGALLOC)(printf(" (FAILED HINT "), print_reg_name(rc, hint_reg), printf(")\n"));
                 }
             } else {
                 TB_OPTDEBUG(REGALLOC)(printf("\n"));
             }
         } else {
-            // TODO(NeGate): split current at optimal position before current
+            // TODO(NeGate): split at optimal position before current
             interval->assigned = highest;
             split_intersecting(ra, pos - 1, interval, true);
-            TB_OPTDEBUG(REGALLOC)(printf("  #   stole %s", reg_name(rc, highest)));
+            TB_OPTDEBUG(REGALLOC)(printf("  #   stole "), print_reg_name(rc, highest), printf("\n"));
         }
 
         return highest;
@@ -593,7 +610,7 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
         }
 
         assert(interval->assigned >= 0);
-        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: spill %s to [SP + %d] at t=%d\x1b[0m\n", interval->id, reg_name(rc, interval->assigned), sp_offset, pos));
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: spill ", interval->id), print_reg_name(rc, interval->assigned), printf(" to [SP + %d] at t=%d\x1b[0m\n", sp_offset, pos));
     } else {
         assert(sp_offset != 0);
         TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: reload [SP + %d] at t=%d\x1b[0m\n", interval->id, sp_offset, pos));
@@ -710,22 +727,22 @@ static bool update_interval(LSRA* restrict ra, LiveInterval* interval, bool is_a
 
     if (interval->active_range == 0) { // expired
         if (is_active) {
-            TB_OPTDEBUG(REGALLOC)(printf("  #   active %s has expired at t=%d (v%d)\n", reg_name(rc, reg), interval_end(interval), interval->id));
+            TB_OPTDEBUG(REGALLOC)(printf("  #   active "), print_reg_name(rc, reg), printf(" has expired at t=%d (v%d)\n", interval_end(interval), interval->id));
             set_remove(&ra->active_set[rc], reg);
         } else {
-            TB_OPTDEBUG(REGALLOC)(printf("  #   inactive %s has expired at t=%d (v%d)\n", reg_name(rc, reg), interval_end(interval), interval->id));
+            TB_OPTDEBUG(REGALLOC)(printf("  #   inactive "), print_reg_name(rc, reg), printf(" has expired at t=%d (v%d)\n", interval_end(interval), interval->id));
             dyn_array_remove(ra->inactive, inactive_index);
             return true;
         }
     } else if (is_now_active != is_active) { // if we moved, change which list we're in
         if (is_now_active) { // inactive -> active
-            TB_OPTDEBUG(REGALLOC)(printf("  #   inactive %s is active again (until t=%d, v%d)\n", reg_name(rc, reg), active_end, interval->id));
+            TB_OPTDEBUG(REGALLOC)(printf("  #   inactive "), print_reg_name(rc, reg), printf(" is active again (until t=%d, v%d)\n", active_end, interval->id));
 
             move_to_active(ra, interval);
             dyn_array_remove(ra->inactive, inactive_index);
             return true;
         } else { // active -> inactive
-            TB_OPTDEBUG(REGALLOC)(printf("  #   active %s is going quiet for now (until t=%d, v%d)\n", reg_name(rc, reg), hole_end, interval->id));
+            TB_OPTDEBUG(REGALLOC)(printf("  #   active "), print_reg_name(rc, reg), printf(" is going quiet for now (until t=%d, v%d)\n", active_end, interval->id));
 
             set_remove(&ra->active_set[rc], reg);
             dyn_array_put(ra->inactive, interval);
