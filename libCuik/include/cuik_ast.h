@@ -136,6 +136,7 @@ typedef struct {
 
 typedef struct {
     Atom key;
+    bool init;
 
     // lexer_pos is non-zero if the enum value has it's compilation delayed
     int lexer_pos;

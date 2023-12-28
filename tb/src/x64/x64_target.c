@@ -898,7 +898,9 @@ static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             ea.reg = RSP;
             ea.imm = pos;
         } else {
-            tb_todo();
+            assert(aux->base->type == TB_SYMBOL);
+            ea.type = VAL_GLOBAL;
+            ea.symbol = TB_NODE_GET_EXTRA_T(aux->base, TB_NodeSymbol)->sym;
         }
     } else {
         ea.reg = op_at(ctx, t->ins[in_count].src).reg;

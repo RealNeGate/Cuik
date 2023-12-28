@@ -589,8 +589,10 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
                         tokens_next(s);
 
                         int lexer_pos = 0;
+                        bool init = false;
                         if (tokens_get(s)->type == '=') {
                             tokens_next(s);
+                            init = true;
 
                             if (parser->is_in_global_scope) {
                                 ptrdiff_t lexer_end;
@@ -607,7 +609,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
 
                         // Allocate into temporary buffer
                         tls_push(sizeof(EnumEntry));
-                        start[count] = (EnumEntry){ name, lexer_pos, cursor };
+                        start[count] = (EnumEntry){ name, init, lexer_pos, cursor };
 
                         Symbol sym = {
                             .name = name,

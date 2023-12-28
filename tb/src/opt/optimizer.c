@@ -750,7 +750,7 @@ TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
         // no type provided? just make a not-so-form fitting bottom type
         if (new_type == NULL) {
             Lattice* old_type = lattice_universe_get(p, n);
-            new_type = old_type ? old_type : lattice_from_dt(p, n->dt);
+            new_type = old_type != &TOP_IN_THE_SKY ? old_type : lattice_from_dt(p, n->dt);
         }
 
         // print fancy type

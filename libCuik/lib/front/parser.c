@@ -308,7 +308,6 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
         type->align = cuik_canonical_type(type->array.of)->align;
     } else if (type->kind == KIND_ENUM) {
         int cursor = 0;
-        // if (type->enumerator.name && strcmp(type->enumerator.name, "D3D_DRIVER_TYPE") == 0) __debugbreak();
 
         for (int i = 0; i < type->enumerator.count; i++) {
             // if the value is undecided, best time to figure it out is now
@@ -318,10 +317,16 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
                 mini_lex.list.current = type->enumerator.entries[i].lexer_pos;
 
                 cursor = parse_const_expr(parser, &mini_lex);
+                type->enumerator.entries[i].value = cursor;
                 type->enumerator.entries[i].lexer_pos = 0;
+                type->enumerator.entries[i].init = true;
             }
 
-            type->enumerator.entries[i].value = cursor;
+            if (type->enumerator.entries[i].init) {
+                cursor = type->enumerator.entries[i].value;
+            } else {
+                type->enumerator.entries[i].value = cursor;
+            }
             cursor += 1;
         }
 
