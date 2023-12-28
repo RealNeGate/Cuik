@@ -195,7 +195,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Function* restrict f = p->f;
-    tb_pass_print(p);
+    // tb_pass_print(p);
 
     Ctx ctx = {
         .module = f->super.module,
