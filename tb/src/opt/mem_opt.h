@@ -161,10 +161,10 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 
 static TB_Node* ideal_root(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // remove dead local store
-    if (n->inputs[1]->type == TB_STORE && is_local_ptr(n->inputs[1]->inputs[2])) {
+    /* if (n->inputs[1]->type == TB_STORE && is_local_ptr(n->inputs[1]->inputs[2])) {
         set_input(f, n, n->inputs[1]->inputs[1], 1);
         return n;
-    }
+    } */
 
     return NULL;
 }

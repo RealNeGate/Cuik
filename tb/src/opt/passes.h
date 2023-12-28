@@ -65,7 +65,6 @@ typedef struct {
 
 typedef struct {
     size_t count;
-    Lattice** arr;
 } LatticeTuple;
 
 // Represents the fancier type system within the optimizer, it's
@@ -106,6 +105,7 @@ struct Lattice {
         LatticePtrConst _ptr;
         LatticeTuple _tuple;
     };
+    Lattice* elems[];
 };
 
 ////////////////////////////////

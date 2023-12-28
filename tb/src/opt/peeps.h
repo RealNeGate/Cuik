@@ -71,15 +71,16 @@ static const NodeVtable vtables[TB_NODE_TYPE_MAX] = {
     [TB_SIGN_EXT]       = { ideal_extension,   NULL,               sccp_sext        },
     // misc
     [TB_LOOKUP]         = { NULL,              NULL,               sccp_lookup      },
+    [TB_PROJ]           = { NULL,              NULL,               sccp_proj        },
     [TB_SELECT]         = { ideal_select,      NULL,               sccp_meetchads   },
     [TB_PHI]            = { ideal_phi,         identity_phi,       sccp_meetchads   },
     // control flow
     [TB_REGION]         = { ideal_region,      identity_region,    sccp_meetchads   },
     [TB_BRANCH]         = { ideal_branch,      NULL,               sccp_branch      },
     [TB_SAFEPOINT_POLL] = { NULL,              identity_safepoint, sccp_ctrl        },
-    [TB_CALL]           = { ideal_libcall,     identity_ctrl,      sccp_ctrl        },
+    [TB_CALL]           = { ideal_libcall,     identity_ctrl,      sccp_call        },
     [TB_TAILCALL]       = { NULL,              identity_ctrl,      sccp_ctrl        },
-    [TB_SYSCALL]        = { NULL,              identity_ctrl,      sccp_ctrl        },
+    [TB_SYSCALL]        = { NULL,              identity_ctrl,      sccp_call        },
     [TB_DEBUGBREAK]     = { NULL,              identity_ctrl,      sccp_ctrl        },
     [TB_TRAP]           = { NULL,              identity_ctrl,      sccp_ctrl        },
     [TB_UNREACHABLE]    = { NULL,              identity_ctrl,      sccp_ctrl        },

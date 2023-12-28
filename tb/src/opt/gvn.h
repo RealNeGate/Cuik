@@ -135,6 +135,10 @@ uint32_t gvn_hash(void* a) {
         size_t extra = extra_bytes(n);
         h = n->type + n->dt.raw + n->input_count + extra;
 
+        if (n->type == TB_LOCAL) {
+            h += (uintptr_t) n->gvn;
+        }
+
         // fib hashing amirite
         h = ((uint64_t) h * 11400714819323198485llu) >> 32llu;
 
@@ -157,6 +161,11 @@ bool gvn_compare(void* a, void* b) {
     // early outs
     if (x->type != y->type || x->input_count != y->input_count || x->dt.raw != y->dt.raw) {
         return false;
+    }
+
+    // current exception to the GVN rule
+    if (x->type == TB_LOCAL) {
+        return x == y;
     }
 
     // match up inputs

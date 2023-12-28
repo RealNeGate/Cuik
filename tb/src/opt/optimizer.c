@@ -277,10 +277,15 @@ static Lattice* sccp_int(TB_Passes* restrict p, TB_Node* n) {
 
 static Lattice* sccp_proj(TB_Passes* restrict p, TB_Node* n) {
     assert(n->type == TB_PROJ);
-    if (n->dt.type == TB_CONTROL) {
-        return lattice_universe_get(p, n);
+    Lattice* l = lattice_universe_get(p, n->inputs[0]);
+    if (l == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    } else if (l == &BOT_IN_THE_SKY) {
+        return &BOT_IN_THE_SKY;
     } else {
-        return NULL;
+        assert(l->tag == LATTICE_TUPLE);
+        int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+        return l->elems[index];
     }
 }
 
@@ -567,69 +572,8 @@ void print_node_sexpr(TB_Node* n, int depth) {
     }
 }
 
-static bool is_if_a_goto(TB_Passes* restrict p, TB_Node* proj, TB_Node* n) {
-    FOR_USERS(u, n) {
-        if (u->n == proj || u->n->type != TB_PROJ) continue;
-
-        Lattice* ty = lattice_universe_get(p, u->n);
-        if (ty != &XCTRL_IN_THE_SKY) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static TB_Node* fold_cproj(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* ctrl) {
-    // remove an if
-    if (ctrl->type == TB_PROJ && ctrl->inputs[0]->type == TB_BRANCH) {
-        Lattice* ctrl_ty = lattice_universe_get(p, ctrl);
-        if (ctrl_ty == &CTRL_IN_THE_SKY && is_if_a_goto(p, ctrl, ctrl->inputs[0])) {
-            TB_Node* pre_branch = ctrl->inputs[0]->inputs[0];
-            tb_pass_kill_node(p, ctrl->inputs[0]);
-            return pre_branch;
-        }
-    }
-
-    return NULL;
-}
-
 // Returns NULL or a modified node (could be the same node, we can stitch it back into place)
 static TB_Node* idealize(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
-    switch (n->type) {
-        case TB_CALL:
-        case TB_TAILCALL:
-        case TB_SYSCALL:
-        case TB_DEBUGBREAK:
-        case TB_TRAP:
-        case TB_BRANCH:
-        case TB_UNREACHABLE:
-        case TB_SAFEPOINT_POLL: {
-            TB_Node* k = fold_cproj(p, f, n, n->inputs[0]);
-            if (k) {
-                set_input(f, n, k, 0);
-                return n;
-            }
-            break;
-        }
-
-        case TB_REGION: {
-            bool progress = false;
-            FOREACH_N(i, 0, n->input_count) {
-                TB_Node* k = n->inputs[i];
-                if (k = fold_cproj(p, f, n, k), k) {
-                    set_input(f, n, k, i);
-                    progress = true;
-                }
-            }
-
-            if (progress) return n;
-            break;
-        }
-
-        default: break;
-    }
-
     NodeIdealize ideal = vtables[n->type].idealize;
     return ideal ? ideal(p, f, n) : NULL;
 }
@@ -674,6 +618,40 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
             return make_int_node(p->f, p, n->dt, 0);
         }
 
+        case LATTICE_TUPLE: {
+            if (n->type != TB_BRANCH) return NULL;
+
+            // check if tuple is constant path
+            int trues = 0;
+            FOREACH_N(i, 0, l->_tuple.count) {
+                if (l->elems[i] == &CTRL_IN_THE_SKY) {
+                    trues++;
+                } else if (l->elems[i] != &XCTRL_IN_THE_SKY) {
+                    return NULL;
+                }
+            }
+
+            if (trues == 1) {
+                TB_Node* dead = dead_node(p->f, p);
+                TB_Node* ctrl = n->inputs[0];
+
+                FOR_USERS(u, n) {
+                    if (u->n->type == TB_PROJ) {
+                        int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+                        TB_Node* in = l->elems[index] == &CTRL_IN_THE_SKY ? ctrl : dead;
+                        subsume_node(p, p->f, u->n, ctrl);
+                    }
+                }
+
+                // no more projections, kill the branch
+                tb_pass_kill_node(p, n);
+                tb_pass_mark_users(p, dead);
+                return ctrl;
+            } else {
+                return NULL;
+            }
+        }
+
         default: return NULL;
     }
 }
@@ -691,7 +669,6 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_BOT: printf("[bot]"); break;
         case LATTICE_TOP: printf("[top]"); break;
 
-        case LATTICE_TUPLE: printf("[tuple]"); break;
         case LATTICE_CTRL:  printf("[ctrl]"); break;
         case LATTICE_XCTRL: printf("[~ctrl]"); break;
 
@@ -702,6 +679,15 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_XNULL: printf("[~null]"); break;
         case LATTICE_PTR:   printf("[%s]", l->_ptr.sym->name); break;
 
+        case LATTICE_TUPLE: {
+            printf("[");
+            FOREACH_N(i, 0, l->_tuple.count) {
+                if (i) printf(", ");
+                print_lattice(l->elems[i], TB_TYPE_I64);
+            }
+            printf("]");
+            break;
+        }
         case LATTICE_INT: {
             assert(dt.type == TB_INT);
             if (l->_int.min == l->_int.max) {
@@ -763,7 +749,8 @@ TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
 
         // no type provided? just make a not-so-form fitting bottom type
         if (new_type == NULL) {
-            new_type = lattice_from_dt(p, n->dt);
+            Lattice* old_type = lattice_universe_get(p, n);
+            new_type = old_type ? old_type : lattice_from_dt(p, n->dt);
         }
 
         // print fancy type
@@ -1125,7 +1112,6 @@ void tb_pass_prep(TB_Passes* p) {
             nl_hashset_put2(&p->type_interner, &XCTRL_IN_THE_SKY, lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &NULL_IN_THE_SKY,  lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &XNULL_IN_THE_SKY, lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->type_interner, &TUP_IN_THE_SKY,   lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &FALSE_IN_THE_SKY, lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &TRUE_IN_THE_SKY,  lattice_hash, lattice_cmp);
         }
@@ -1136,15 +1122,7 @@ void tb_pass_prep(TB_Passes* p) {
             p->gvn_nodes = nl_hashset_alloc(p->f->node_count);
         }
 
-        // write initial types for start node:
-        //   guarenteed to fit so we'll just write to the array directly)
-        p->types[f->root_node->gvn] = &TUP_IN_THE_SKY;
-        FOR_USERS(u, f->root_node) {
-            TB_Node* proj = u->n;
-            if (proj->type == TB_PROJ) {
-                p->types[proj->gvn] = lattice_from_dt(p, proj->dt);
-            }
-        }
+        p->types[f->root_node->gvn] = lattice_tuple_from_node(p, f->root_node);
     }
 }
 
@@ -1165,11 +1143,10 @@ void tb_pass_peephole(TB_Passes* p) {
             if (n->type != TB_PROJ && n->users == NULL) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_pass_kill_node(p, n);
-                continue;
+            } else {
+                tb_pass_peephole_node(p, n);
+                DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
             }
-
-            tb_pass_peephole_node(p, n);
-            DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
         }
     }
 }
