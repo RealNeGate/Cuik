@@ -472,7 +472,10 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 tile_broadcast_ins(ctx, dst, n, 1, 2, ctx->normie_mask[REG_CLASS_GPR]);
                 dst->flags |= TILE_HAS_IMM;
             } else {
-                tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[REG_CLASS_GPR]);
+                TileInput* ins = tile_set_ins(ctx, dst, n, 1, 3);
+                ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
+                ins[1].mask = ctx->normie_mask[REG_CLASS_GPR];
+                ins[1].mask.may_spill = true;
             }
             return ctx->normie_mask[REG_CLASS_GPR];
         }
@@ -714,7 +717,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 static int stk_offset(Ctx* ctx, int reg) {
     int pos = reg*8;
     if (reg >= ctx->num_regs[0]) {
-        return ctx->stack_usage - pos;
+        return ctx->stack_usage - (pos + 8);
     } else {
         return pos;
     }
@@ -725,10 +728,10 @@ static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
     bool needs_stack = stack_usage > 8 + (proto->param_count * 8);
 
     FOREACH_REVERSE_N(i, 0, dyn_array_length(ctx->callee_spills)) {
-        int pos = stk_offset(ctx, ctx->callee_spills[i]->assigned);
-        int rc = ctx->callee_spills[i]->class;
+        int pos = stk_offset(ctx, ctx->callee_spills[i].stk);
+        int rc = ctx->callee_spills[i].class;
 
-        Val reg = val_gpr(ctx->callee_spills[i]->reg);
+        Val reg = val_gpr(ctx->callee_spills[i].reg);
         reg.type = rc == REG_CLASS_XMM ? VAL_XMM : VAL_GPR;
 
         Val spill = val_base_disp(RSP, pos);
@@ -859,10 +862,10 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     // we don't want this considered in the prologue because then i'd have to encode shit
     // for Win64EH.
     FOREACH_N(i, 0, dyn_array_length(ctx->callee_spills)) {
-        int pos = stk_offset(ctx, ctx->callee_spills[i]->assigned);
-        int rc = ctx->callee_spills[i]->class;
+        int pos = stk_offset(ctx, ctx->callee_spills[i].stk);
+        int rc = ctx->callee_spills[i].class;
 
-        Val reg = val_gpr(ctx->callee_spills[i]->reg);
+        Val reg = val_gpr(ctx->callee_spills[i].reg);
         reg.type = rc == REG_CLASS_GPR ? VAL_GPR : VAL_XMM;
 
         Val spill = val_base_disp(RSP, pos);

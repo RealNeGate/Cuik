@@ -182,6 +182,11 @@ typedef struct {
     uint32_t target;
 } JumpTablePatch;
 
+typedef struct {
+    int class, reg;
+    int stk;
+} CalleeSpill;
+
 struct Ctx {
     TB_Passes* p;
     TB_CGEmitter emit;
@@ -230,7 +235,7 @@ struct Ctx {
     // allocating special regiters.
     RegMask normie_mask[MAX_REG_CLASSES];
 
-    DynArray(LiveInterval*) callee_spills;
+    DynArray(CalleeSpill) callee_spills;
     NL_Map(TB_Node*, int) stack_slots;
     DynArray(TB_StackSlot) debug_stack_slots;
     DynArray(JumpTablePatch) jump_table_patches;

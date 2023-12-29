@@ -184,10 +184,10 @@ static int ns(void) { return table_id_counter++; }
 #define RANGE(old, new, ...) range_pattern(old, new, sizeof((const char*[]){ __VA_ARGS__ }) / sizeof(const char*), (const char*[]){ __VA_ARGS__ })
 static uint64_t range_pattern(uint64_t old, uint64_t new, int c, const char* ranges[]) {
     if (new < old) {
-      fprintf(stderr, "error: our DFA can't travel backwards %llu -> %llu\n",
-          (long long unsigned) old,
-          (long long unsigned) new);
-      abort();
+        fprintf(stderr, "error: our DFA can't travel backwards %llu -> %llu\n",
+            (long long unsigned) old,
+            (long long unsigned) new);
+        abort();
     }
     assert(new - old < 15);
 
@@ -208,10 +208,10 @@ static uint64_t range_pattern(uint64_t old, uint64_t new, int c, const char* ran
 #define CHARS(old, new, ...) chars_pattern(old, new, __VA_ARGS__)
 static uint64_t chars_pattern(uint64_t old, uint64_t new, const char* str) {
     if (new < old) {
-      fprintf(stderr, "error: our DFA can't travel backwards %llu %llu\n",
-          (long long unsigned) old,
-          (long long unsigned) new);
-      abort();
+        fprintf(stderr, "error: our DFA can't travel backwards %llu %llu\n",
+            (long long unsigned) old,
+            (long long unsigned) new);
+        abort();
     }
     assert(new - old < 15);
 

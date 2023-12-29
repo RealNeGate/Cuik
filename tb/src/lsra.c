@@ -18,10 +18,12 @@ typedef struct {
     int* free_pos;
     int* block_pos;
 
+    size_t stack_slot_cap;
+
     // waiting to get registers, sorted such that the top most item is the youngest
     DynArray(LiveInterval*) unhandled;
     DynArray(LiveInterval*) inactive;
-    DynArray(LiveInterval*) callee_spills;
+    DynArray(CalleeSpill) callee_spills;
     RegMask* normie_mask;
 
     Set active_set[MAX_REG_CLASSES];
@@ -42,9 +44,10 @@ static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RS
 // static const char* GPR_NAMES[] = { "X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8",  "X9", "X10", "X11", "X12", "X13", "X14", "X15" };
 static void print_reg_name(int rg, int num) {
     if (rg == 1) {
-        printf("%s", GPR_NAMES[num]);
+        printf("W%d", num);
+        // printf("%s", GPR_NAMES[num]);
     } else if (rg == 2) {
-        printf("xmm%d", num);
+        printf("XMM%d", num);
     } else if (rg == REG_CLASS_STK) {
         printf("[sp + %d]", num*8);
     } else {
@@ -56,6 +59,20 @@ static void print_reg_name(int rg, int num) {
 static int interval_start(LiveInterval* l) { return l->ranges[l->range_count - 1].start; }
 static int interval_end(LiveInterval* l)   { return l->ranges[1].end; }
 static int interval_class(LiveInterval* l) { return l->mask.class; }
+
+static LiveInterval* split_interval_at(LiveInterval* interval, int pos) {
+    if (interval == NULL) {
+        return interval;
+    }
+
+    // skip past previous intervals
+    while (interval->split_kid && pos > interval_end(interval)) {
+        interval = interval->split_kid;
+    }
+
+    // assert(interval->reg >= 0 || pos <= interval_end(interval));
+    return interval;
+}
 
 static int range_intersect(LiveRange* a, LiveRange* b) {
     if (b->start <= a->end && a->start <= b->end) {
@@ -340,10 +357,19 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 dyn_array_put(ra.unhandled, &ctx->fixed[i][j]);
             }
 
-            ra.active_set[i] = set_create_in_arena(arena, ctx->num_regs[i]);
-            ra.active[i] = tb_arena_alloc(arena, ctx->num_regs[i] * sizeof(Tile*));
+            size_t cap = ctx->num_regs[i];
+            if (i == REG_CLASS_STK) {
+                // stack slots have infinite colors we so need to make sure we can resize things
+                if (cap < 128) cap = 128;
+                else cap = tb_next_pow2(cap + 1);
+
+                ra.stack_slot_cap = cap;
+            }
+
+            ra.active_set[i] = set_create_in_arena(arena, cap);
+            ra.active[i] = tb_arena_alloc(arena, cap * sizeof(LiveInterval*));
             ra.fixed[i] = ctx->fixed[i];
-            memset(ra.active[i], 0, ctx->num_regs[i] * sizeof(Tile*));
+            memset(ra.active[i], 0, ctx->num_regs[i] * sizeof(LiveInterval*));
         }
 
         // only need enough to store for the biggest register class
@@ -398,7 +424,26 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 if (interval->mask.class == REG_CLASS_STK) {
                     assert(interval->mask.mask == 0);
 
-                    reg = ra.spills++;
+                    // add new stack slot
+                    if (reg < 0) {
+                        if (ctx->num_regs[0] == ra.stack_slot_cap) {
+                            size_t old_cap = ra.stack_slot_cap;
+                            ra.stack_slot_cap *= 2;
+
+                            Set new_set = set_create_in_arena(arena, ra.stack_slot_cap);
+                            set_copy(&new_set, &ra.active_set[REG_CLASS_STK]);
+
+                            LiveInterval** new_active = tb_arena_alloc(arena, ra.stack_slot_cap * sizeof(LiveInterval*));
+                            memcpy(new_active, ra.active, ra.stack_slot_cap * sizeof(LiveInterval*));
+
+                            ra.active_set[REG_CLASS_STK] = new_set;
+                            ra.active[REG_CLASS_STK] = new_active;
+                            ra.active[REG_CLASS_STK][ra.spills] = NULL;
+                        }
+
+                        reg = ctx->num_regs[0]++;
+                    }
+
                     TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [SP + %"PRId64"]\n", reg*8));
                 } else {
                     reg = allocate_free_reg(&ra, interval);
@@ -433,26 +478,40 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     // move resolver:
     //   when a split happens, all indirect paths that cross the split will have
     //   moves inserted.
+
+    // resolve all split interval references
+    CUIK_TIMED_BLOCK("split resolver") {
+        FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+            MachineBB* mbb = &ctx->machine_bbs[i];
+
+            for (Tile* t = mbb->start; t; t = t->next) {
+                int pos = t->time;
+                t->interval = split_interval_at(t->interval, pos - 1);
+
+                FOREACH_N(i, 0, t->in_count) {
+                    t->ins[i].src = split_interval_at(t->ins[i].src, pos);
+                }
+            }
+        }
+    }
+
     ctx->stack_usage += ra.spills*8;
     ctx->callee_spills = ra.callee_spills;
 }
 
-// returns -1 if no registers are available
-static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
-    int rc = interval->mask.class;
-    uint64_t mask = interval->mask.mask;
-
+static void compute_free_pos(LSRA* restrict ra, LiveInterval* interval, int class, uint64_t mask) {
     // callee saved will be biased to have nearer free positions to avoid incurring
     // a spill on them early.
-    int half_free = 0;//interval_end(interval);
-    FOREACH_N(i, 0, ra->num_regs[rc]) {
+    int half_free = interval_end(interval);
+    FOREACH_N(i, 0, ra->num_regs[class]) {
         int p = 0;
-
-        // it can be allocated and isn't in use rn
-        if ((mask & (1u << i)) && !set_get(&ra->active_set[rc], i)) {
-            p = INT_MAX;
-            if (ra->callee_saved[rc] & (1ull << i)) {
-                p = half_free;
+        if (mask == 0 || (mask & (1u << i))) {
+            // it's in use rn, stop trying to steal
+            if (!set_get(&ra->active_set[class], i)) {
+                p = INT_MAX;
+                if (ra->callee_saved[class] & (1ull << i)) {
+                    p = half_free;
+                }
             }
         }
 
@@ -470,6 +529,12 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             }
         }
     }
+}
+
+// returns -1 if no registers are available
+static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
+    int rc = interval->mask.class;
+    compute_free_pos(ra, interval, interval->mask.class, interval->mask.mask);
 
     int highest = -1;
     int hint_reg = interval->hint ? interval->hint->assigned : -1;
@@ -503,7 +568,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
         set_remove(&ra->active_set[rc], reg);
 
         // split whatever is using the interval right now
-        split_intersecting(ra, interval_start(interval) - 1, active_user, REGMASK(STK, 0));
+        split_intersecting(ra, interval_start(interval) - 3, active_user, REGMASK(STK, 0));
         return reg;
     } else {
         if (UNLIKELY(ra->callee_saved[rc] & (1ull << highest))) {
@@ -512,12 +577,9 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             TB_OPTDEBUG(REGALLOC)(printf("  #   spill callee saved register "), print_reg_name(rc, highest), printf("\n"));
             LiveInterval* fixed = &ra->fixed[rc][highest];
 
-            tb_todo();
-            // ra->stack_usage = align_up(ra->stack_usage + 8, 8);
-            // ra->spills[fixed->id] = ra->stack_usage;
-
             // mark callee move
-            dyn_array_put(ra->callee_spills, fixed);
+            CalleeSpill c = { fixed->class, fixed->reg, ra->spills++ };
+            dyn_array_put(ra->callee_spills, c);
         }
 
         if (interval_end(interval) <= pos) {
@@ -537,7 +599,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             // TODO(NeGate): split at optimal position before current
             interval->class = interval->mask.class;
             interval->assigned = highest;
-            split_intersecting(ra, pos - 1, interval, REGMASK(STK, 0));
+            split_intersecting(ra, pos - 3, interval, REGMASK(STK, 0));
             TB_OPTDEBUG(REGALLOC)(printf("  #   stole "), print_reg_name(rc, highest), printf("\n"));
         }
 
@@ -601,7 +663,11 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
     assert(interval->mask.class != new_mask.class);
     new_it->mask = new_mask;
 
-    TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: split ", interval->id), print_reg_name(rc, interval->assigned), printf(" at t=%d\x1b[0m\n", pos));
+    if (interval->assigned >= 0) {
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: split ", interval->id), print_reg_name(rc, interval->assigned), printf(" at t=%d\x1b[0m\n", pos));
+    } else {
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: split *undecided* at t=%d\x1b[0m\n", interval->id, pos));
+    }
 
     // split lifetime
     new_it->assigned = new_it->reg = -1;

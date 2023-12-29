@@ -277,19 +277,21 @@ static void push_to_compile(Words* w) {
 static Words* pop_to_compile(void) {
     // if we can move the read head, we can take the item
     Words *old_reader, *next;
-    do {
+    for (;;) {
         old_reader = atomic_load_explicit(&compile_reader, memory_order_relaxed);
         next = old_reader->next_compile;
         if (next == NULL) {
             // queue is empty
             return NULL;
         }
-    } while (!atomic_compare_exchange_strong(&compile_reader, &old_reader, next));
 
-    // we can take our sweet time resetting next_compile, it's not on the queue
-    // rn so it's not visible to other threads.
-    next->next_compile = NULL;
-    return next;
+        if (atomic_compare_exchange_strong(&compile_reader, &old_reader, next)) {
+            // we can take our sweet time resetting next_compile, it's not on the queue
+            // rn so it's not visible to other threads.
+            next->next_compile = NULL;
+            return next;
+        }
+    }
 }
 
 static void compile_word(Words* words, TB_Function* f, TB_Arena* arena) {
