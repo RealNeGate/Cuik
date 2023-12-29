@@ -495,7 +495,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         }
     }
 
-    ctx->stack_usage += ra.spills*8;
+    ctx->stack_usage += (ra.spills - ctx->num_regs[0]) * 8;
     ctx->callee_spills = ra.callee_spills;
 }
 

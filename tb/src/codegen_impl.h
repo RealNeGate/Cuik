@@ -186,7 +186,7 @@ void tb__print_regmask(RegMask mask) {
         }
 
         if (mask.may_spill) {
-            printf("| SPILL");
+            printf(" | SPILL");
         }
         printf("]");
     }
@@ -400,7 +400,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         LiveInterval* src = get_tile(&ctx, v->n, true)->interval;
 
                         TB_OPTDEBUG(CODEGEN)(printf("  PHI %u: ", v->phi->gvn), print_node_sexpr(v->phi, 0), printf("\n"));
-                        TB_OPTDEBUG(CODEGEN)(printf("    v%d [%#08llx]\n", phi_tile->interval->id, phi_tile->interval->mask.mask));
+                        TB_OPTDEBUG(CODEGEN)(printf("    v%d ", phi_tile->interval->id), tb__print_regmask(phi_tile->interval->mask), printf("\n"));
 
                         Tile* move = TB_ARENA_ALLOC(arena, Tile);
                         *move = (Tile){ .prev = bot, .tag = TILE_SPILL_MOVE, .interval = phi_tile->interval };

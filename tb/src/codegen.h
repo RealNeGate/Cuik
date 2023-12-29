@@ -225,6 +225,7 @@ struct Ctx {
 
     // Regalloc
     int interval_count;
+    int stack_header;
     int stack_usage;
     int num_fixed;
     int num_classes;
