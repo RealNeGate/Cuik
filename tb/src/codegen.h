@@ -43,7 +43,8 @@ enum {
     REG_CLASS_STK = 0,
 };
 
-// represents a set of registers, usually for register constraints
+// represents a set of registers, usually for register constraints.
+// we can also say that a value might fit into the stack with may_spill.
 typedef struct {
     uint64_t class     : 3;
     uint64_t may_spill : 1;
@@ -59,22 +60,8 @@ typedef struct {
 } LiveRange;
 
 typedef struct {
-    int pos;
-
-    // this is used to denote folded reloads
-    //
-    //   # r2 is spilled
-    //   add r0, r1, r2
-    //
-    // when we codegen, we don't need to allocate
-    // a register for r2 here.
-    //
-    //   add r0, r1, [sp - 24]
-    enum {
-        USE_OUT,
-        USE_REG,
-        USE_MEM_OR_REG,
-    } kind;
+    int may_spill : 1;
+    int pos       : 31;
 } UsePos;
 
 typedef enum {
@@ -262,7 +249,7 @@ void tb__print_regmask(RegMask mask);
 
 static int fixed_reg_mask(RegMask mask) {
     if (mask.class == REG_CLASS_STK) {
-        return -1;
+        return mask.mask;
     } else {
         return tb_popcount64(mask.mask) == 1 ? 63 - tb_clz64(mask.mask) : -1;
     }

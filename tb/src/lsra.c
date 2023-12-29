@@ -34,7 +34,7 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
 static void cuiksort_defs(LiveInterval** intervals, ptrdiff_t lo, ptrdiff_t hi);
 static bool update_interval(LSRA* restrict ra, LiveInterval* interval, bool is_active, int time, int inactive_index);
 static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval);
-static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, int new_class);
+static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, RegMask new_mask);
 static void move_to_active(LSRA* restrict ra, LiveInterval* interval);
 
 static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
@@ -78,7 +78,7 @@ static int interval_intersect(LiveInterval* a, LiveInterval* b) {
     return -1;
 }
 
-static void add_use_pos(LSRA* restrict ra, LiveInterval* interval, int t, int kind) {
+static void add_use_pos(LSRA* restrict ra, LiveInterval* interval, int t, bool may_spill) {
     if (interval->use_cap == interval->use_count) {
         if (interval->use_cap == 0) {
             interval->use_cap = 4;
@@ -88,7 +88,7 @@ static void add_use_pos(LSRA* restrict ra, LiveInterval* interval, int t, int ki
         interval->uses = tb_arena_realloc(ra->arena, interval->uses, interval->use_cap * sizeof(UsePos));
     }
 
-    interval->uses[interval->use_count++] = (UsePos){ t, kind };
+    interval->uses[interval->use_count++] = (UsePos){ may_spill, t };
 }
 
 static void add_range(LSRA* restrict ra, LiveInterval* interval, int start, int end) {
@@ -154,7 +154,7 @@ static Tile* tile_at_time(LSRA* restrict ra, int t) {
 }
 
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
-    LSRA ra = { .ctx = ctx, .arena = arena };
+    LSRA ra = { .ctx = ctx, .arena = arena, .spills = ctx->num_regs[0] };
 
     // build intervals from dataflow
     CUIK_TIMED_BLOCK("build intervals") {
@@ -227,7 +227,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                         // add def range & use range
                         add_range(&ra, fixed, time, time);
-                        add_use_pos(&ra, fixed, time, USE_REG);
+                        add_use_pos(&ra, fixed, time, false);
                     }
 
                     if (interval->range_count == 1) {
@@ -268,7 +268,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     }
 
                     int use_time = time;
-                    int use_kind = in_mask.may_spill ? USE_MEM_OR_REG : USE_REG;
                     bool both_fixed = hint >= 0 && in_def_mask.mask == in_mask.mask;
 
                     // we resolve def-use conflicts with a spill move, either when:
@@ -305,7 +304,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                         // insert fixed interval use site, def site will be set later
                         add_range(&ra, tmp->interval, bb_start, use_time);
-                        add_use_pos(&ra, tmp->interval, bb_start, use_kind);
+                        add_use_pos(&ra, tmp->interval, bb_start, in_mask.may_spill);
                     } else if (_2addr && j != 0) {
                         // extend
                         use_time += 2;
@@ -317,7 +316,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     }
 
                     add_range(&ra, in_def, bb_start, use_time);
-                    add_use_pos(&ra, in_def, use_time, use_kind);
+                    add_use_pos(&ra, in_def, use_time, in_mask.may_spill);
                 }
             }
         }
@@ -393,21 +392,25 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 i++;
             }
 
-            if (interval->mask.class == REG_CLASS_STK) {
-                __debugbreak();
-            } else {
-                ptrdiff_t reg = interval->reg;
-                if (reg < 0) {
+            // allocate free register (or stack slot)
+            ptrdiff_t reg = interval->reg;
+            if (reg < 0) {
+                if (interval->mask.class == REG_CLASS_STK) {
+                    assert(interval->mask.mask == 0);
+
+                    reg = ra.spills++;
+                    TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [SP + %"PRId64"]\n", reg*8));
+                } else {
                     reg = allocate_free_reg(&ra, interval);
                     assert(reg >= 0 && "despair");
                 }
+            }
 
-                // add to active set
-                if (reg >= 0) {
-                    interval->class = interval->mask.class;
-                    interval->assigned = reg;
-                    move_to_active(&ra, interval);
-                }
+            // add to active set
+            if (reg >= 0) {
+                interval->class = interval->mask.class;
+                interval->assigned = reg;
+                move_to_active(&ra, interval);
             }
 
             // display active set
@@ -436,13 +439,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
 // returns -1 if no registers are available
 static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
-    int rc = interval_class(interval);
-    if (rc == REG_CLASS_STK) {
-        // it's not a mask, it's a position in this case (and it's always fixed)
-        TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [SP + %"PRId64"]\n", interval->mask.mask*8));
-        return interval->mask.mask;
-    }
-
+    int rc = interval->mask.class;
     uint64_t mask = interval->mask.mask;
 
     // callee saved will be biased to have nearer free positions to avoid incurring
@@ -506,7 +503,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
         set_remove(&ra->active_set[rc], reg);
 
         // split whatever is using the interval right now
-        split_intersecting(ra, interval_start(interval) - 1, active_user, REG_CLASS_STK);
+        split_intersecting(ra, interval_start(interval) - 1, active_user, REGMASK(STK, 0));
         return reg;
     } else {
         if (UNLIKELY(ra->callee_saved[rc] & (1ull << highest))) {
@@ -540,7 +537,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
             // TODO(NeGate): split at optimal position before current
             interval->class = interval->mask.class;
             interval->assigned = highest;
-            split_intersecting(ra, pos - 1, interval, REG_CLASS_STK);
+            split_intersecting(ra, pos - 1, interval, REGMASK(STK, 0));
             TB_OPTDEBUG(REGALLOC)(printf("  #   stole "), print_reg_name(rc, highest), printf("\n"));
         }
 
@@ -594,15 +591,15 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
     }
 }
 
-static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, int new_class) {
+static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, RegMask new_mask) {
     cuikperf_region_start("split", NULL);
     int rc = interval->class;
 
     LiveInterval* restrict new_it = TB_ARENA_ALLOC(ra->arena, LiveInterval);
     *new_it = *interval;
 
-    assert(interval->class != new_class);
-    new_it->class = new_class;
+    assert(interval->mask.class != new_mask.class);
+    new_it->mask = new_mask;
 
     TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: split ", interval->id), print_reg_name(rc, interval->assigned), printf(" at t=%d\x1b[0m\n", pos));
 
@@ -686,10 +683,10 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
     insert_split_move(ra, pos, interval, new_it);
 
     // reload before next use that requires the original regclass
-    if (new_class == REG_CLASS_STK) {
+    if (new_mask.class == REG_CLASS_STK) {
         FOREACH_REVERSE_N(i, 0, new_it->use_count) {
-            if (new_it->uses[i].kind == USE_REG) {
-                split_intersecting(ra, new_it->uses[i].pos - 1, new_it, interval->class);
+            if (!new_it->uses[i].may_spill) {
+                split_intersecting(ra, new_it->uses[i].pos - 3, new_it, interval->mask);
                 break;
             }
         }

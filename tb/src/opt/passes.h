@@ -12,7 +12,7 @@ enum {
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 1
@@ -181,9 +181,6 @@ struct TB_Passes {
         size_t type_cap;
         Lattice** types;
     };
-
-    // this is used to do GVN
-    NL_HashSet gvn_nodes;
 
     // might be out of date if you haven't called tb_pass_update_cfg
     TB_CFG cfg;
