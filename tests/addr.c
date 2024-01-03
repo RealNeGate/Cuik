@@ -1,7 +1,7 @@
+/*#include <stdint.h>
 #include <assert.h>
-#include <stdint.h>
 #include <string.h>
-#include <stddef.h>
+#include <stddef.h>*/
 
 /*int foo() {
     int x = 5 + 5;
@@ -22,7 +22,13 @@ int vol(volatile int* x) {
     return *x;
 }*/
 
-#if 0
+#if 1
+/*void mem(int* a, int i) {
+    while (i--) {
+        a[i] = 0;
+    }
+}*/
+#else
 uint32_t murmur3_32(const void* key, size_t len) {
     uint32_t h = 0;
 
@@ -56,24 +62,25 @@ uint32_t murmur3_32(const void* key, size_t len) {
 #endif
 
 #if 0
-uint32_t mur(uint32_t h, uint32_t k) {
-    k *= 0xcc9e2d51;
-    k = ((k << 15) | (k >> 17))*0x1b873593;
-    return (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
-}
-
 float floats(float* x, int i, int j) {
     return x[i*4]*2.0f + 1.0f;
 }
 
 uint64_t baz() { return __rdtsc(); }
 
-extern int bar(int x);
-int foo(int x) { return bar(x) + 16; }
-
-#endif
-
 extern int bar(int, int, int, int, int);
 int foo(int x, int y) {
     return bar(x, 1, 2, 3, 4) + y;
+}
+#endif
+
+/*extern int bar(int x);
+int foo(int x) { return bar(x) + 16; }
+*/
+
+typedef unsigned int uint32_t;
+uint32_t mur(uint32_t h, uint32_t k) {
+    k *= 0xcc9e2d51;
+    k = ((k << 15) | (k >> 17))*0x1b873593;
+    return (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
 }

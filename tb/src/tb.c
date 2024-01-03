@@ -6,6 +6,7 @@ static ICodeGen* tb__find_code_generator(TB_Module* m) {
     // Place all the codegen interfaces down here
     extern ICodeGen tb__x64_codegen;
     extern ICodeGen tb__aarch64_codegen;
+    extern ICodeGen tb__mips64_codegen;
 
     switch (m->target_arch) {
         #ifdef TB_HAS_X64
@@ -14,6 +15,10 @@ static ICodeGen* tb__find_code_generator(TB_Module* m) {
 
         #ifdef TB_HAS_AARCH64
         case TB_ARCH_AARCH64: return &tb__aarch64_codegen;
+        #endif
+
+        #ifdef TB_HAS_MIPS
+        case TB_ARCH_MIPS64: return &tb__mips64_codegen;
         #endif
 
         default: return NULL;

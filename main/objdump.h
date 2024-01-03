@@ -96,9 +96,11 @@ int run_objdump(int argc, const char** argv) {
     for (size_t i = 0; i < parser.section_count; i++) {
         TB_ObjectSection* s = &sections[i];
 
+        printf("DUMP: %.*s\n", (int) s->name.length, s->name.data);
+
         size_t size = s->raw_data.length;
         if (size == 0) {
-            printf("~~empty~~\n\n");
+            printf("  ~~empty~~\n\n");
             continue;
         }
 
@@ -117,9 +119,10 @@ int run_objdump(int argc, const char** argv) {
                 }
                 count += 1;
             }
+            printf("\n");
         } else {
             // dump raw data
-            printf("DUMP: %.*s\n  ", (int) s->name.length, s->name.data);
+            printf("  ");
 
             size_t j = 0;
             for (; j < size; j++) {

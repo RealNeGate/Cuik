@@ -67,7 +67,8 @@ typedef enum TB_Arch {
     TB_ARCH_UNKNOWN,
 
     TB_ARCH_X86_64,
-    TB_ARCH_AARCH64, // unsupported but planned
+    TB_ARCH_AARCH64,
+    TB_ARCH_MIPS64,
     TB_ARCH_WASM32,
 } TB_Arch;
 

@@ -45,10 +45,7 @@ static bool try_for_imm12(int bits, TB_Node* n, int32_t* out_x) {
     return true;
 }
 
-static bool _2addr(TB_Node* n) {
-    return false; // n->type >= TB_AND && n->type <= TB_CMP_FLE;
-}
-
+static bool _2addr(TB_Node* n) { return false; }
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
     ctx->_2addr = _2addr;

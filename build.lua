@@ -43,13 +43,15 @@ local modules = {
 			-- toolchain support
 			"libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c",
 			-- architectures
-			"libCuik/lib/targets/x64_desc.c", "libCuik/lib/targets/aarch64_desc.c"
+			"libCuik/lib/targets/x64_desc.c", "libCuik/lib/targets/aarch64_desc.c", "libCuik/lib/targets/mips_desc.c"
 		}, flags="-I libCuik/include", deps={"common"}
 	},
 	--   TildeBackend
 	tb = { srcs={
-			"tb/src/libtb.c", "tb/src/x64/x64_target.c", "tb/src/aarch64/aarch64_target.c"
-		}, flags="-I tb/include -DCUIK_USE_TB -DTB_HAS_X64", deps={"common"}
+			"tb/src/libtb.c",
+			-- archictectures
+			"tb/src/x64/x64_target.c", "tb/src/aarch64/aarch64_target.c", "tb/src/mips/mips_target.c"
+		}, flags="-I tb/include -DCUIK_USE_TB -DTB_HAS_MIPS", deps={"common"}
 	},
 	-- executables:
 	--   Cuik command line
