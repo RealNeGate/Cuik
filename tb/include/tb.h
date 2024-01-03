@@ -279,9 +279,6 @@ typedef enum TB_NodeTypeEnum {
     ////////////////////////////////
     // CONTROL + MEMORY
     ////////////////////////////////
-    //   this special op tracks calls such that we can produce our cool call graph, there's
-    //   one call graph node per function that never moves.
-    TB_CALLGRAPH,      // (Call...) -> Void
     //   nothing special, it's just a function call, 3rd argument here is the
     //   target pointer (or syscall number) and the rest are just data args.
     TB_CALL,           // (Control, Memory, Data, Data...) -> (Control, Memory, Data)
@@ -292,13 +289,18 @@ typedef enum TB_NodeTypeEnum {
     //   says to (platform specific but almost always just the page being made
     //   unmapped/guard), 3rd argument is the poll site.
     TB_SAFEPOINT_POLL, // (Control, Memory, Ptr?, Data...) -> (Control)
+    //   this special op tracks calls such that we can produce our cool call graph, there's
+    //   one call graph node per function that never moves.
+    TB_CALLGRAPH,      // (Call...) -> Void
 
     ////////////////////////////////
     // MEMORY
     ////////////////////////////////
+    //   produces a set of non-aliasing memory effects
+    TB_SPLITMEM,    // (Memory) -> (Memory...)
     //   MERGEMEM will join multiple non-aliasing memory effects, because
     //   they don't alias there's no ordering guarentee.
-    TB_MERGEMEM,    // (Memory...) -> Memory
+    TB_MERGEMEM,    // (Split, Memory...) -> Memory
     //   LOAD and STORE are standard memory accesses, they can be folded away.
     TB_LOAD,        // (Control?, Memory, Ptr)       -> Data
     TB_STORE,       // (Control, Memory, Ptr, Data) -> Memory
@@ -619,6 +621,11 @@ typedef struct {
 typedef struct {
     int64_t offset;
 } TB_NodeMember;
+
+typedef struct {
+    int alias_cnt;
+    int alias_idx[];
+} TB_NodeMemSplit;
 
 typedef struct {
     TB_Symbol* sym;

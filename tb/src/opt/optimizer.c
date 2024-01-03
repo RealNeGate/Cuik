@@ -21,6 +21,7 @@ static User* remove_user(TB_Node* n, int slot);
 static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 
 static void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n);
+static void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
 static TB_Node* gvn(TB_Function* f, TB_Node* n, size_t extra);
 
 // node creation helpers
@@ -182,7 +183,7 @@ static TB_Node* mem_user(TB_Passes* restrict p, TB_Node* n, int slot) {
     return NULL;
 }
 
-static bool single_use(TB_Passes* restrict p, TB_Node* n) {
+static bool single_use(TB_Node* n) {
     return n->users->next == NULL;
 }
 
@@ -331,7 +332,7 @@ static Lattice* sccp_meetchads(TB_Passes* restrict p, TB_Node* n) {
 // this is where the vtable goes for all peepholes
 #include "peeps.h"
 
-TB_API TB_Node* tb_pass_gvn_node(TB_Function* f, TB_Node* n) {
+TB_Node* tb_pass_gvn_node(TB_Function* f, TB_Node* n) {
     size_t extra = extra_bytes(n);
     return gvn(f, n, extra);
 }
@@ -684,6 +685,8 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_XNULL: printf("[~null]"); break;
         case LATTICE_PTR:   printf("[%s]", l->_ptr.sym->name); break;
 
+        case LATTICE_MEM:   printf("mem[%d]", l->_mem.alias_idx); break;
+
         case LATTICE_TUPLE: {
             printf("[");
             FOREACH_N(i, 0, l->_tuple.count) {
@@ -719,7 +722,7 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
 // because certain optimizations apply when things are the same
 // we mark ALL users including the ones who didn't get changed
 // when subsuming.
-TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
+TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
     TB_Function* f = p->f;
 
     // idealize can modify the node, make sure it's not in the GVN pool at the time
@@ -801,7 +804,7 @@ TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
     return n;
 }
 
-static void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
+static void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     CUIK_TIMED_BLOCK("subsume") {
         User* use = n->users;
         while (use != NULL) {
@@ -815,7 +818,10 @@ static void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
             use = next;
         }
     }
+}
 
+static void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
+    subsume_node2(f, n, new_n);
     tb_pass_kill_node(f, n);
 }
 
@@ -1072,12 +1078,15 @@ void dummy_interp(TB_Passes* p) {
 
 void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p);
-    tb_pass_sroa(p);
+    tb_pass_split_locals(p);
+    tb_pass_peephole(p);
+
+    /*tb_pass_sroa(p);
     tb_pass_peephole(p);
     tb_pass_mem2reg(p);
     tb_pass_peephole(p);
     tb_pass_loop(p);
-    tb_pass_peephole(p);
+    tb_pass_peephole(p);*/
 
     // tb_pass_print(p);
     // dummy_interp(p);
@@ -1121,6 +1130,7 @@ void tb_pass_prep(TB_Passes* p) {
             nl_hashset_put2(&p->type_interner, &TRUE_IN_THE_SKY,  lattice_hash, lattice_cmp);
 
             // place ROOT type
+            p->root_mem = lattice_new_alias(p);
             p->types[f->root_node->gvn] = lattice_tuple_from_node(p, f->root_node);
         }
     }

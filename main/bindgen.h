@@ -191,7 +191,6 @@ int run_bindgen(int argc, const char** argv) {
         }
 
         nl_map_free(typedefs);
-        memset(&typedefs, 0, sizeof(typedefs));
     }
 
     return 0;

@@ -80,6 +80,35 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     TB_Node* ctrl = n->inputs[0];
     TB_Node* mem = n->inputs[1];
     TB_Node* addr = n->inputs[2];
+
+    // convert memory phis into data phis
+    if (mem->type == TB_PHI) {
+        TB_DataType dt = n->dt;
+
+        size_t path_count = mem->input_count - 1;
+        TB_Node** paths = tb_arena_alloc(tmp_arena, path_count * sizeof(TB_Node*));
+
+        bool fail = false;
+        FOREACH_N(i, 0, path_count) {
+            TB_Node* st = mem->inputs[1+i];
+            if (st->type != TB_STORE || st->inputs[2] != addr || st->inputs[3]->dt.raw != dt.raw) {
+                fail = true;
+                break;
+            }
+
+            paths[i] = st->inputs[3];
+        }
+
+        if (!fail) {
+            TB_Node* phi = tb_alloc_node(f, TB_PHI, dt, 1 + path_count, 0);
+            set_input(f, phi, mem->inputs[0], 0);
+            FOREACH_N(i, 0, path_count) {
+                set_input(f, phi, paths[i], 1+i);
+            }
+            return phi;
+        }
+    }
+
     if (ctrl != NULL) {
         // we've dependent on code which must always be run (ROOT.mem)
         if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_ROOT) {
@@ -135,6 +164,10 @@ static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n)
     return n;
 }
 
+static TB_Node* ideal_merge_mem(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    return NULL;
+}
+
 static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     TB_Node *mem = n->inputs[1], *addr = n->inputs[2], *val = n->inputs[3];
     TB_DataType dt = val->dt;
@@ -142,7 +175,7 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // if a store has only one user in this chain it means it's only job was
     // to facilitate the creation of that user store... if we can detect that
     // user store is itself dead, everything in the middle is too.
-    if (mem->type == TB_STORE && single_use(p, mem) && mem->inputs[2] == addr && mem->inputs[3]->dt.raw == dt.raw) {
+    if (mem->type == TB_STORE && single_use(mem) && mem->inputs[2] == addr && mem->inputs[3]->dt.raw == dt.raw) {
         // choose the bigger alignment (we wanna keep this sort of info)
         TB_NodeMemAccess* a = TB_NODE_GET_EXTRA(mem);
         TB_NodeMemAccess* b = TB_NODE_GET_EXTRA(n);
@@ -208,4 +241,32 @@ static TB_Node* ideal_memcpy(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
     }
 
     return NULL;
+}
+
+static Lattice* sccp_split_mem(TB_Passes* restrict p, TB_Node* n) {
+    TB_NodeMemSplit* s = TB_NODE_GET_EXTRA(n);
+
+    size_t size = sizeof(Lattice) + s->alias_cnt*sizeof(Lattice*);
+    Lattice* l = tb_arena_alloc(tmp_arena, size);
+    *l = (Lattice){ LATTICE_TUPLE, ._tuple = { s->alias_cnt } };
+    FOREACH_N(i, 0, s->alias_cnt) {
+        l->elems[i] = lattice_alias(p, s->alias_idx[i]);
+    }
+
+    Lattice* k = nl_hashset_put2(&p->type_interner, l, lattice_hash, lattice_cmp);
+    if (k) {
+        tb_arena_free(tmp_arena, l, size);
+        return k;
+    } else {
+        return l;
+    }
+}
+
+static Lattice* sccp_merge_mem(TB_Passes* restrict p, TB_Node* n) {
+    return &BOT_IN_THE_SKY;
+}
+
+static Lattice* sccp_mem(TB_Passes* restrict p, TB_Node* n) {
+    // just inherit memory from parent
+    return lattice_universe_get(p, n->inputs[1]);
 }
