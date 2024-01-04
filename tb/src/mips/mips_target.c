@@ -27,6 +27,26 @@ typedef enum {
 
 #include "../codegen_impl.h"
 
+static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
+    if (n->type != TB_INTEGER_CONST) {
+        return false;
+    }
+
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    if (bits > 32) {
+        bool sign = (i->value >> 31ull) & 1;
+        uint64_t top = i->value >> 32ull;
+
+        // if the sign matches the rest of the top bits, we can sign extend just fine
+        if (top != (sign ? 0xFFFFFFFF : 0)) {
+            return false;
+        }
+    }
+
+    *out_x = i->value;
+    return true;
+}
+
 static bool _2addr(TB_Node* n) { return false; }
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
@@ -70,13 +90,22 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         }
 
         case TB_ROOT: {
-            int rets = n->input_count - 4;
-            TileInput* ins = tile_set_ins(ctx, dst, n, 4, n->input_count);
+            int rets = (n->input_count - 4);
+
+            dst->ins = tb_arena_alloc(tmp_arena, (1+rets) * sizeof(TileInput));
+            dst->in_count = 1+rets;
+            dst->ins[0].mask = REGMASK(GPR, 1u << RA);
+            dst->ins[0].src = get_tile(ctx, n->inputs[2], true)->interval;
 
             assert(rets <= 2 && "At most 2 return values :(");
-            FOREACH_N(i, 0, rets) {
-                // TB_DataType dt = n->inputs[4+i]->dt;
-                ins[i].mask = REGMASK(GPR, 1u << (V0 + i));
+            if (rets >= 1) {
+                dst->ins[1].mask = REGMASK(GPR, 1u << V0);
+                dst->ins[1].src = get_tile(ctx, n->inputs[4], true)->interval;
+            }
+
+            if (rets >= 2) {
+                dst->ins[2].mask = REGMASK(GPR, 1u << V1);
+                dst->ins[2].src = get_tile(ctx, n->inputs[5], true)->interval;
             }
             return REGEMPTY;
         }
@@ -97,9 +126,18 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_SHL:
         case TB_SHR:
         case TB_SAR:
+        tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[REG_CLASS_GPR]);
+        return ctx->normie_mask[REG_CLASS_GPR];
+
+        // no rotate ops, we'll emulate it:
         case TB_ROL:
         case TB_ROR: {
-            tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[REG_CLASS_GPR]);
+            dst->ins = tb_arena_alloc(tmp_arena, 2 * sizeof(TileInput));
+            dst->in_count = 2;
+            dst->ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
+            dst->ins[1].mask = ctx->normie_mask[REG_CLASS_GPR];
+            dst->ins[0].src = get_tile(ctx, n->inputs[1], true)->interval;
+            dst->ins[1].src = NULL;
             return ctx->normie_mask[REG_CLASS_GPR];
         }
 
@@ -113,20 +151,32 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
     ctx->prologue_length = ctx->emit.count;
 }
 
-static uint32_t rtype(uint32_t op, uint32_t rd, uint32_t rs, uint32_t rt, uint32_t shamt, uint32_t funct) {
-    return (op<<26) | (rs<<21) | (rt<<16) | (rd<<11) | (shamt<<6) | funct;
+#define RTYPE(name, op, funct) static uint32_t name(uint32_t rd, uint32_t rs, uint32_t rt, uint32_t shamt) { \
+    return (op<<26) | (rs<<21) | (rt<<16) | (rd<<11) | (shamt<<6) | funct; \
 }
 
-enum {
-    // R-type opcodes
-    ADD  = 32,
-    ADDU = 33,
-    SUB  = 34,
-    SUBU = 35,
-    AND  = 36,
-    OR   = 37,
-    XOR  = 38,
-};
+#define ITYPE(name, op) static uint32_t name(uint32_t rt, uint32_t rs, uint32_t imm) { \
+    return (op<<26) | (rs<<21) | (rt<<16) | imm; \
+}
+
+RTYPE(ADD,  0x20, 0);
+RTYPE(ADDU, 0x21, 0);
+RTYPE(SUB,  0x22, 0);
+RTYPE(SUBU, 0x23, 0);
+RTYPE(AND,  0x24, 0);
+RTYPE(OR,   0x25, 0);
+RTYPE(XOR,  0x26, 0);
+
+// special
+RTYPE(SLL, 0b000000, 0b000000);
+RTYPE(SRL, 0b000000, 0b000010);
+RTYPE(JR,  0b000000, 0b001000);
+
+// special2
+RTYPE(MUL, 0b011100, 0b000010);
+
+ITYPE(ORI, 0b001101);
+ITYPE(LUI, 0b001111);
 
 static GPR gpr_at(LiveInterval* l) { assert(l->class == REG_CLASS_GPR); return l->assigned; }
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
@@ -134,7 +184,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
         GPR dst = gpr_at(t->interval);
         GPR src = gpr_at(t->ins[0].src);
         if (dst != src) {
-            EMIT4(e, rtype(OR, dst, src, ZR, 0, 0));
+            EMIT4(e, OR(dst, src, ZR, 0));
         }
     } else {
         TB_Node* n = t->n;
@@ -150,6 +200,65 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_MERGEMEM:
             case TB_CALLGRAPH:
             break;
+
+            case TB_ROOT: {
+                JR(0, RA, 0, 0);
+                break;
+            }
+
+            case TB_INTEGER_CONST: {
+                bool is_64bit = false;
+                GPR dst = gpr_at(t->interval);
+                uint64_t imm = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
+
+                GPR curr = ZR;
+                if (imm > UINT16_MAX) {
+                    EMIT4(e, LUI(dst, curr, (imm >> 16ull) & 0xFFFF));
+                }
+                EMIT4(e, ORI(dst, curr, imm & 0xFFFF));
+                break;
+            }
+
+            case TB_ADD: {
+                GPR dst = gpr_at(t->interval);
+                GPR lhs = gpr_at(t->ins[0].src);
+                GPR rhs = gpr_at(t->ins[1].src);
+                EMIT4(e, ADD(dst, lhs, rhs, 0));
+                break;
+            }
+
+            case TB_XOR: {
+                GPR dst = gpr_at(t->interval);
+                GPR lhs = gpr_at(t->ins[0].src);
+                GPR rhs = gpr_at(t->ins[1].src);
+                EMIT4(e, XOR(dst, lhs, rhs, 0));
+                break;
+            }
+
+            case TB_MUL: {
+                GPR dst = gpr_at(t->interval);
+                GPR lhs = gpr_at(t->ins[0].src);
+                GPR rhs = gpr_at(t->ins[1].src);
+                EMIT4(e, MUL(dst, lhs, rhs, 0));
+                break;
+            }
+
+            case TB_ROL: {
+                GPR dst = gpr_at(t->interval);
+                GPR src = gpr_at(t->ins[0].src);
+                GPR tmp = gpr_at(t->ins[1].src);
+
+                int32_t x;
+                if (try_for_imm32(n->dt.data, n->inputs[2], &x)) {
+                    int32_t y = 32 - x;
+                    EMIT4(e, SLL(tmp, 0, src, x));  //   sll     tmp,src,X
+                    EMIT4(e, SRL(dst, 0, src, y));  //   srl     dst,src,Y
+                    EMIT4(e, OR(dst, dst, tmp, 0)); //   or      dst,dst,tmp
+                } else {
+                    tb_todo();
+                }
+                break;
+            }
 
             default: tb_todo();
         }

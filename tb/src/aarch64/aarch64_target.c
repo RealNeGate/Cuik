@@ -154,8 +154,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 GPR dst = gpr_at(t->interval);
                 uint64_t imm = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
 
-                int shift = 0;
-                bool first = true;
+                int shift = 0; bool first = true;
                 while (imm) {
                     if (imm & 0xFFFF) {
                         emit_movimm(e, dst, imm & 0xFFFF, shift / 16, is_64bit, first);
