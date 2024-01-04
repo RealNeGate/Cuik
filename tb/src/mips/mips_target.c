@@ -27,15 +27,15 @@ typedef enum {
 
 #include "../codegen_impl.h"
 
-static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
+static bool try_for_imm16(int bits, TB_Node* n, int32_t* out_x) {
     if (n->type != TB_INTEGER_CONST) {
         return false;
     }
 
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    if (bits > 32) {
-        bool sign = (i->value >> 31ull) & 1;
-        uint64_t top = i->value >> 32ull;
+    if (bits > 16) {
+        bool sign = (i->value >> 15ull) & 1;
+        uint64_t top = i->value >> 16ull;
 
         // if the sign matches the rest of the top bits, we can sign extend just fine
         if (top != (sign ? 0xFFFFFFFF : 0)) {
@@ -47,17 +47,14 @@ static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
     return true;
 }
 
-static bool _2addr(TB_Node* n) { return false; }
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
-    ctx->_2addr = _2addr;
     ctx->regalloc = tb__lsra;
 
-    uint32_t all_tmps = ((1u << 18) - 1) << T0;
-    uint32_t non_vol  = ((1u << 8) - 1)  << S0;
+    uint32_t not_tmps = (1 << ZR) | (1 << AT) | (1 << SP) | (1 << K0) | (1 << K1) | (1 << GP);
 
     ctx->num_regs[REG_CLASS_GPR] = 32;
-    ctx->normie_mask[REG_CLASS_GPR] = REGMASK(GPR, all_tmps);
+    ctx->normie_mask[REG_CLASS_GPR] = REGMASK(GPR, UINT32_MAX & ~not_tmps);
 }
 
 static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
@@ -151,32 +148,51 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
     ctx->prologue_length = ctx->emit.count;
 }
 
-#define RTYPE(name, op, funct) static uint32_t name(uint32_t rd, uint32_t rs, uint32_t rt, uint32_t shamt) { \
-    return (op<<26) | (rs<<21) | (rt<<16) | (rd<<11) | (shamt<<6) | funct; \
+#define RTYPE(op, funct) ((op<<26) | (funct))
+#define ITYPE(op)        (op<<26)
+
+enum {
+    // R-types
+    SLL, SRL, AND, ADD, ADDU, SUB, SUBU, OR, XOR, NOR, JR, MUL,
+
+    // I-type
+    ORI, XORI, LUI,
+
+    INST_MAX,
+};
+
+static uint32_t insts[INST_MAX] = {
+    // special
+    [SLL]  = RTYPE(0b000000, 0b000000),
+    [SRL]  = RTYPE(0b000000, 0b000010),
+    [ADD]  = RTYPE(0b000000, 0b100000),
+    [ADDU] = RTYPE(0b000000, 0b100001),
+    [AND]  = RTYPE(0b000000, 0b100100),
+    [OR]   = RTYPE(0b000000, 0b100101),
+    [XOR]  = RTYPE(0b000000, 0b100110),
+    [NOR]  = RTYPE(0b000000, 0b100111),
+    [JR]   = RTYPE(0b000000, 0b001000),
+
+    // special2
+    [MUL] = RTYPE(0b011100, 0b000010),
+
+    // i-types
+    [ORI]  = ITYPE(0b001101),
+    [XORI] = ITYPE(0b001110),
+    [LUI]  = ITYPE(0b001111),
+};
+
+static void nop(TB_CGEmitter* e) {
+    EMIT4(e, 0);
 }
 
-#define ITYPE(name, op) static uint32_t name(uint32_t rt, uint32_t rs, uint32_t imm) { \
-    return (op<<26) | (rs<<21) | (rt<<16) | imm; \
+static void rtype(TB_CGEmitter* e, int op, uint32_t rd, uint32_t rs, uint32_t rt, uint32_t shamt) {
+    EMIT4(e, insts[op] | (rs<<21) | (rt<<16) | (rd<<11) | (shamt<<6));
 }
 
-RTYPE(ADD,  0x20, 0);
-RTYPE(ADDU, 0x21, 0);
-RTYPE(SUB,  0x22, 0);
-RTYPE(SUBU, 0x23, 0);
-RTYPE(AND,  0x24, 0);
-RTYPE(OR,   0x25, 0);
-RTYPE(XOR,  0x26, 0);
-
-// special
-RTYPE(SLL, 0b000000, 0b000000);
-RTYPE(SRL, 0b000000, 0b000010);
-RTYPE(JR,  0b000000, 0b001000);
-
-// special2
-RTYPE(MUL, 0b011100, 0b000010);
-
-ITYPE(ORI, 0b001101);
-ITYPE(LUI, 0b001111);
+static void itype(TB_CGEmitter* e, int op, uint32_t rt, uint32_t rs, uint32_t imm) {
+    EMIT4(e, insts[op] | (rs<<21) | (rt<<16) | imm);
+}
 
 static GPR gpr_at(LiveInterval* l) { assert(l->class == REG_CLASS_GPR); return l->assigned; }
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
@@ -184,7 +200,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
         GPR dst = gpr_at(t->interval);
         GPR src = gpr_at(t->ins[0].src);
         if (dst != src) {
-            EMIT4(e, OR(dst, src, ZR, 0));
+            itype(e, ORI, dst, src, 0);
         }
     } else {
         TB_Node* n = t->n;
@@ -202,36 +218,34 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             break;
 
             case TB_ROOT: {
-                JR(0, RA, 0, 0);
+                rtype(e, JR, 0, RA, 0, 0);
+                nop(e); // TODO(NeGate): delay slots
                 break;
             }
 
             case TB_INTEGER_CONST: {
-                bool is_64bit = false;
                 GPR dst = gpr_at(t->interval);
                 uint64_t imm = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
 
                 GPR curr = ZR;
                 if (imm > UINT16_MAX) {
-                    EMIT4(e, LUI(dst, curr, (imm >> 16ull) & 0xFFFF));
+                    itype(e, LUI, dst, curr, (imm >> 16ull) & 0xFFFF);
+                    curr = dst;
                 }
-                EMIT4(e, ORI(dst, curr, imm & 0xFFFF));
+                itype(e, ORI, dst, curr, imm & 0xFFFF);
                 break;
             }
 
-            case TB_ADD: {
+            case TB_AND:
+            case TB_OR:
+            case TB_XOR:
+            case TB_ADD:
+            case TB_SUB: {
+                const static int ops[] = { AND, OR, XOR, ADD, SUB };
                 GPR dst = gpr_at(t->interval);
                 GPR lhs = gpr_at(t->ins[0].src);
                 GPR rhs = gpr_at(t->ins[1].src);
-                EMIT4(e, ADD(dst, lhs, rhs, 0));
-                break;
-            }
-
-            case TB_XOR: {
-                GPR dst = gpr_at(t->interval);
-                GPR lhs = gpr_at(t->ins[0].src);
-                GPR rhs = gpr_at(t->ins[1].src);
-                EMIT4(e, XOR(dst, lhs, rhs, 0));
+                rtype(e, ops[n->type - TB_AND], dst, lhs, rhs, 0);
                 break;
             }
 
@@ -239,7 +253,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 GPR dst = gpr_at(t->interval);
                 GPR lhs = gpr_at(t->ins[0].src);
                 GPR rhs = gpr_at(t->ins[1].src);
-                EMIT4(e, MUL(dst, lhs, rhs, 0));
+                rtype(e, MUL, dst, lhs, rhs, 0);
                 break;
             }
 
@@ -251,9 +265,9 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 int32_t x;
                 if (try_for_imm32(n->dt.data, n->inputs[2], &x)) {
                     int32_t y = 32 - x;
-                    EMIT4(e, SLL(tmp, 0, src, x));  //   sll     tmp,src,X
-                    EMIT4(e, SRL(dst, 0, src, y));  //   srl     dst,src,Y
-                    EMIT4(e, OR(dst, dst, tmp, 0)); //   or      dst,dst,tmp
+                    rtype(e, SLL, tmp, 0, src, x);   //   sll     tmp,src,X
+                    rtype(e, SRL, dst, 0, src, y);   //   srl     dst,src,Y
+                    rtype(e, OR,  dst, dst, tmp, 0); //   or      dst,dst,tmp
                 } else {
                     tb_todo();
                 }

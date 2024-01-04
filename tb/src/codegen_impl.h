@@ -6,21 +6,12 @@
 //
 #include "codegen.h"
 
+// Implemented by the target, go read the mips_target.c docs on this.
 static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n);
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
-
-static bool clobbers(Ctx* restrict ctx, Tile* t, uint64_t clobbers[MAX_REG_CLASSES]);
-
-// This is where we do the byte emitting phase
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t);
-
-// Used for post-processing after regalloc (prologue mostly)
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n);
-
-// Write bytes after every tile's emitted, used by x86 for NOP padding
 static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e);
-
-// Disassembles a basic block
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
 
 static uint32_t node_to_bb_hash(void* ptr) { return (((uintptr_t) ptr) * 11400714819323198485ull) >> 32ull; }
@@ -192,6 +183,7 @@ void tb__print_regmask(RegMask mask) {
     }
 }
 
+static bool null_2addr(TB_Node* n) { return false; }
 static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
     verify_tmp_arena(p);
 
@@ -235,6 +227,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     nl_map_create(ctx.stack_slots, 4);
     init_ctx(&ctx, f->super.module->target_abi);
+
+    if (ctx._2addr == NULL) {
+        ctx._2addr = null_2addr;
+    }
 
     ctx.values = tb_arena_alloc(arena, f->node_count * sizeof(Tile*));
     memset(ctx.values, 0, f->node_count * sizeof(Tile*));
