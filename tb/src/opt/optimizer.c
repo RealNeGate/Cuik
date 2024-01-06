@@ -137,7 +137,7 @@ void verify_tmp_arena(TB_Passes* p) {
 
     if (p->pinned_thread == NULL) {
         p->pinned_thread = info;
-        tb_arena_clear(&p->pinned_thread->tmp_arena);
+        tb_arena_clear(p->pinned_thread->tmp_arena);
     } else if (p->pinned_thread != info) {
         tb_panic(
             "TB_Passes are bound to a thread, you can't switch which threads they're run on\n\n"
@@ -146,7 +146,7 @@ void verify_tmp_arena(TB_Passes* p) {
         );
     }
 
-    tmp_arena = &p->pinned_thread->tmp_arena;
+    tmp_arena = p->pinned_thread->tmp_arena;
 }
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt) {

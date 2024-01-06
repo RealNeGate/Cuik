@@ -54,7 +54,7 @@ struct Cuik_BuildStep {
             Cuik_DriverArgs* args;
             const char* source;
 
-            TB_Arena arena;
+            TB_Arena* arena;
             Cuik_CPP* cpp;
             TranslationUnit* tu;
         } cc;
@@ -70,11 +70,11 @@ struct Cuik_BuildStep {
     };
 };
 
-static TB_Arena* get_ir_arena(void) {
-    static _Thread_local TB_Arena ir_arena[2];
-    if (tb_arena_is_empty(&ir_arena[0])) {
-        tb_arena_create(&ir_arena[0], TB_ARENA_LARGE_CHUNK_SIZE);
-        tb_arena_create(&ir_arena[1], TB_ARENA_LARGE_CHUNK_SIZE);
+static TB_Arena** get_ir_arena(void) {
+    static _Thread_local TB_Arena* ir_arena[2];
+    if (ir_arena[0] == NULL) {
+        ir_arena[0] = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
+        ir_arena[1] = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
     }
 
     return ir_arena;
@@ -143,14 +143,14 @@ static void local_opt_func(TB_Function* f, void* arg) {
 
     const char* name = ((TB_Symbol*) f)->name;
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
-        TB_Arena* arenas = get_ir_arena();
-        TB_Passes* p = tb_pass_enter(f, &arenas[0]);
+        TB_Arena** arenas = get_ir_arena();
+        TB_Passes* p = tb_pass_enter(f, arenas[0]);
 
         assert(args->opt_level >= 1);
         tb_pass_optimize(p);
 
         tb_pass_exit(p);
-        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(&arenas[0]) / 1024.0f);
+        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(arenas[0]) / 1024.0f);
     }
 }
 
@@ -160,8 +160,8 @@ static void apply_func(TB_Function* f, void* arg) {
 
     const char* name = ((TB_Symbol*) f)->name;
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
-        TB_Arena* arenas = get_ir_arena();
-        TB_Passes* p = tb_pass_enter(f, &arenas[0]);
+        TB_Arena** arenas = get_ir_arena();
+        TB_Passes* p = tb_pass_enter(f, arenas[0]);
 
         if (args->emit_dot) {
             tb_pass_print_dot(p, tb_default_print_callback, stdout);
@@ -169,7 +169,7 @@ static void apply_func(TB_Function* f, void* arg) {
             tb_pass_print(p);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
-                TB_FunctionOutput* out = tb_pass_codegen(p, &arenas[1], NULL, print_asm);
+                TB_FunctionOutput* out = tb_pass_codegen(p, arenas[1], NULL, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");
@@ -178,7 +178,7 @@ static void apply_func(TB_Function* f, void* arg) {
         }
 
         tb_pass_exit(p);
-        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(&arenas[0]) / 1024.0f);
+        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(arenas[0]) / 1024.0f);
     }
 }
 #endif
@@ -211,9 +211,9 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 
     Cuik_ParseResult result;
     CUIK_TIMED_BLOCK_ARGS("parse", s->cc.source) {
-        tb_arena_create(&s->cc.arena, TB_ARENA_LARGE_CHUNK_SIZE);
+        s->cc.arena = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
 
-        result = cuikparse_run(args->version, tokens, args->target, &s->cc.arena, false);
+        result = cuikparse_run(args->version, tokens, args->target, s->cc.arena, false);
         s->cc.tu = result.tu;
 
         if (result.error_count > 0) {
@@ -293,7 +293,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         }
 
         CUIK_TIMED_BLOCK("Free arena") {
-            tb_arena_destroy(&s->cc.arena);
+            tb_arena_destroy(s->cc.arena);
         }
     }
 
@@ -825,7 +825,7 @@ static void irgen_job(void* arg) {
     TB_Module* mod = task.mod;
 
     CompilationUnit* cu = task.tu->parent;
-    TB_Arena* arena = get_ir_arena();
+    TB_Arena** arenas = get_ir_arena();
 
     for (size_t i = 0; i < task.count; i++) {
         if ((task.stmts[i]->flags & STMT_FLAGS_HAS_IR_BACKING) == 0) {
@@ -835,7 +835,7 @@ static void irgen_job(void* arg) {
         const char* name = task.stmts[i]->decl.name;
         TB_Symbol* s;
         CUIK_TIMED_BLOCK_ARGS("irgen", name) {
-            s = cuikcg_top_level(task.tu, mod, arena, task.stmts[i]);
+            s = cuikcg_top_level(task.tu, mod, arenas[0], task.stmts[i]);
         }
 
         if (s != NULL && s->tag == TB_SYMBOL_FUNCTION) {

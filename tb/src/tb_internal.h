@@ -345,8 +345,8 @@ struct TB_ThreadInfo {
     // linked list forward.
     TB_ThreadInfo** chain;
 
-    TB_Arena perm_arena;
-    TB_Arena tmp_arena;
+    TB_Arena* perm_arena;
+    TB_Arena* tmp_arena;
 
     // live symbols (globals, functions and externals)
     //   we'll be iterating these during object/executable
@@ -583,9 +583,9 @@ static bool is_same_location(TB_Location* a, TB_Location* b) {
 }
 
 static TB_Arena* get_temporary_arena(TB_Module* m) {
-    return &tb_thread_info(m)->tmp_arena;
+    return tb_thread_info(m)->tmp_arena;
 }
 
 static TB_Arena* get_permanent_arena(TB_Module* m) {
-    return &tb_thread_info(m)->perm_arena;
+    return tb_thread_info(m)->perm_arena;
 }

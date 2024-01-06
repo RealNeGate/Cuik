@@ -25,7 +25,7 @@ struct Cuik_Diagnostics {
     Cuik_DiagCallback callback;
     void* userdata;
 
-    TB_Arena buffer;
+    TB_Arena* buffer;
 
     // We write the text output to a buffer such that we
     // can do ordered output.

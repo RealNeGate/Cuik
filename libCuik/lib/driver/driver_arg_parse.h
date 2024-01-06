@@ -45,7 +45,7 @@ static TargetOption target_options[] = {
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
 struct Cuik_Arguments {
-    TB_Arena arena;
+    TB_Arena* arena;
 
     // _[0] is for non-flag arguments
     size_t count[ARG_DESC_COUNT];
@@ -87,7 +87,7 @@ static size_t find_arg_desc(const char* arg) {
 }
 
 static Cuik_Arg* insert_arg(Cuik_Arguments* restrict args, int slot) {
-    Cuik_Arg* new_arg = TB_ARENA_ALLOC(&args->arena, Cuik_Arg);
+    Cuik_Arg* new_arg = TB_ARENA_ALLOC(args->arena, Cuik_Arg);
     new_arg->prev = args->_[slot];
     args->_[slot] = new_arg;
     args->count[slot] += 1;
@@ -99,7 +99,7 @@ CUIK_API Cuik_Arguments* cuik_alloc_args(void) {
 }
 
 CUIK_API void cuik_free_args(Cuik_Arguments* args) {
-    tb_arena_destroy(&args->arena);
+    tb_arena_destroy(args->arena);
     cuik_free(args);
 }
 
@@ -153,7 +153,7 @@ CUIK_API void cuik_parse_args(Cuik_Arguments* restrict args, int argc, const cha
 
 CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const char* argv[]) {
     Cuik_Arguments* args = cuik_alloc_args();
-    tb_arena_create(&args->arena, TB_ARENA_SMALL_CHUNK_SIZE);
+    args->arena = tb_arena_create(TB_ARENA_SMALL_CHUNK_SIZE);
 
     cuik_parse_args(args, argc, argv);
 

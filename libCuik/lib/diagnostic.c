@@ -79,12 +79,12 @@ Cuik_Diagnostics* cuikdg_make(Cuik_DiagCallback callback, void* userdata) {
     Cuik_Diagnostics* d = cuik_calloc(1, sizeof(Cuik_Diagnostics));
     d->callback = callback;
     d->userdata = userdata;
-    tb_arena_create(&d->buffer, TB_ARENA_MEDIUM_CHUNK_SIZE);
+    d->buffer = tb_arena_create(TB_ARENA_MEDIUM_CHUNK_SIZE);
     return d;
 }
 
 void cuikdg_free(Cuik_Diagnostics* diag) {
-    tb_arena_destroy(&diag->buffer);
+    tb_arena_destroy(diag->buffer);
     cuik_free(diag);
 }
 
@@ -97,7 +97,7 @@ CUIK_API void cuikdg_dump_to_stderr(TokenStream* tokens) {
 }
 
 CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
-    TB_Arena* arena = &tokens->diag->buffer;
+    TB_Arena* arena = tokens->diag->buffer;
 
     TB_ArenaChunk* c = arena->base;
     while (c->next) {
@@ -274,7 +274,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     if (loc_start.raw != 0) {
         sprintfcb(tokens->diag, "     |\n");
     } else {
-        *(char*)tb_arena_unaligned_alloc(&tokens->diag->buffer, 1) = '\n';
+        *(char*)tb_arena_unaligned_alloc(tokens->diag->buffer, 1) = '\n';
     }
 
     if (d->callback) d->callback(d, d->userdata, type);
@@ -325,14 +325,14 @@ void diag_header(TokenStream* tokens, DiagType type, const char* fmt, ...) {
         sprintfcb(tokens->diag, "%s%s\x1b[0m: ", report_colors[type], report_names[type]);
     }
     stbsp_vsprintfcb(sprintf_callback, &tokens->diag->buffer, tmp, fmt, ap);
-    *(char*)tb_arena_unaligned_alloc(&tokens->diag->buffer, 1) = '\n';
+    *(char*)tb_arena_unaligned_alloc(tokens->diag->buffer, 1) = '\n';
     va_end(ap);
 }
 
 static void diag_writer_write_upto(DiagWriter* writer, size_t pos) {
     if (writer->cursor < pos) {
         int l = pos - writer->cursor;
-        memset(tb_arena_unaligned_alloc(&writer->tokens->diag->buffer, l), ' ', l);
+        memset(tb_arena_unaligned_alloc(writer->tokens->diag->buffer, l), ' ', l);
 
         //printf("%.*s", (int)(pos - writer->cursor), writer->line_start + writer->cursor);
         writer->cursor = pos;

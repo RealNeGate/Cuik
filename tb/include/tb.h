@@ -760,7 +760,7 @@ typedef void (*TB_PrintCallback)(void* user_data, const char* fmt, ...);
 typedef struct TB_Arena TB_Arena;
 
 // 0 for default
-TB_API void tb_arena_create(TB_Arena* restrict arena, size_t chunk_size);
+TB_API TB_Arena* tb_arena_create(size_t chunk_size);
 TB_API void tb_arena_destroy(TB_Arena* restrict arena);
 TB_API bool tb_arena_is_empty(TB_Arena* restrict arena);
 TB_API void tb_arena_clear(TB_Arena* restrict arena);

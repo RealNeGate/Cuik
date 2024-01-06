@@ -64,7 +64,7 @@ struct Cuik_SymbolTable {
     uint8_t* buffer;
     void* not_found;
 
-    TB_Arena globals_arena;
+    TB_Arena* globals_arena;
 
     size_t local_count;
     Cuik_SymbolNamePair locals[CUIK__MAX_LOCALS];
@@ -78,19 +78,19 @@ Cuik_SymbolTable* cuik_symtab_create(void* not_found) {
     st->local_count = 0;
     st->top = NULL;
     st->not_found = not_found;
-    tb_arena_create(&st->globals_arena, TB_ARENA_MEDIUM_CHUNK_SIZE);
+    st->globals_arena = tb_arena_create(TB_ARENA_MEDIUM_CHUNK_SIZE);
     return st;
 }
 
 void cuik_symtab_destroy(Cuik_SymbolTable* st) {
-    tb_arena_destroy(&st->globals_arena);
+    tb_arena_destroy(st->globals_arena);
     nl_map_free(st->globals);
     cuik_free(st->buffer);
     cuik_free(st);
 }
 
 void cuik_symtab_clear(Cuik_SymbolTable* st) {
-    tb_arena_destroy(&st->globals_arena);
+    tb_arena_clear(st->globals_arena);
     nl_map_free(st->globals);
 
     st->watermark = st->local_count = 0;
@@ -101,7 +101,7 @@ void cuik_symtab_clear(Cuik_SymbolTable* st) {
 
 static void* cuik_symtab__alloc(Cuik_SymbolTable* st, size_t size, bool is_global) {
     if (is_global) {
-        return tb_arena_alloc(&st->globals_arena, size);
+        return tb_arena_alloc(st->globals_arena, size);
     }
 
     size_t align_mask = TB_ARENA_ALIGNMENT - 1;
