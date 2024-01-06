@@ -1,7 +1,7 @@
-/*#include <stdint.h>
+#include <stdint.h>
 #include <assert.h>
 #include <string.h>
-#include <stddef.h>*/
+#include <stddef.h>
 
 /*int foo() {
     int x = 5 + 5;
@@ -22,7 +22,7 @@ int vol(volatile int* x) {
     return *x;
 }*/
 
-#if 1
+#if 0
 /*void mem(int* a, int i) {
     while (i--) {
         a[i] = 0;
@@ -74,13 +74,14 @@ int foo(int x, int y) {
 }
 #endif
 
-/*extern int bar(int x);
+#if 0
+extern int bar(int x);
 int foo(int x) { return bar(x) + 16; }
-*/
 
 typedef unsigned int uint32_t;
-uint32_t mur(uint32_t h, uint32_t k) {
+void mur(uint32_t* ptr, uint32_t h, uint32_t k) {
     k *= 0xcc9e2d51;
     k = ((k << 15) | (k >> 17))*0x1b873593;
-    return (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
+    *ptr = (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
 }
+#endif

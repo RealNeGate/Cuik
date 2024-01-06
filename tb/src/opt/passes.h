@@ -15,7 +15,10 @@ enum {
 #define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
-#define TB_OPTDEBUG_REGALLOC 1
+#define TB_OPTDEBUG_REGALLOC 0
+
+// for toggling ANSI colors
+#define TB_OPTDEBUG_ANSI     1
 
 #define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
 
@@ -155,7 +158,6 @@ struct TB_BasicBlock {
     TB_Node* end;
     int id, dom_depth;
 
-    TB_Node* mem_in;
     NL_HashSet items;
 };
 

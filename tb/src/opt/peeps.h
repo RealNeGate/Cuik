@@ -6,7 +6,7 @@
 //
 // * Identity: replace a node with it's direct inputs (one step).
 //
-// * SCCP: runs SCCP on a node.
+// * SCCP:     runs SCCP on a node.
 //
 // * GVN:      if a node has some identical copy, it will be replaced with it.
 //

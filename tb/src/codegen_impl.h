@@ -12,42 +12,8 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t);
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n);
 static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e);
+static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb);
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
-
-static uint32_t node_to_bb_hash(void* ptr) { return (((uintptr_t) ptr) * 11400714819323198485ull) >> 32ull; }
-static MachineBB* node_to_bb(Ctx* restrict ctx, TB_Node* n) {
-    uint32_t h = node_to_bb_hash(n);
-
-    size_t mask = (1 << ctx->node_to_bb.exp) - 1;
-    size_t first = h & mask, i = first;
-    do {
-        if (ctx->node_to_bb.entries[i].k == n) {
-            return ctx->node_to_bb.entries[i].v;
-        }
-
-        i = (i + 1) & mask;
-    } while (i != first);
-
-    abort();
-}
-
-static void node_to_bb_put(Ctx* restrict ctx, TB_Node* n, MachineBB* bb) {
-    uint32_t h = node_to_bb_hash(n);
-
-    size_t mask = (1 << ctx->node_to_bb.exp) - 1;
-    size_t first = h & mask, i = first;
-    do {
-        if (ctx->node_to_bb.entries[i].k == NULL) {
-            ctx->node_to_bb.entries[i].k = n;
-            ctx->node_to_bb.entries[i].v = bb;
-            return;
-        }
-
-        i = (i + 1) & mask;
-    } while (i != first);
-
-    abort();
-}
 
 static ValueDesc* val_at(Ctx* restrict ctx, TB_Node* n) {
     if (ctx->values[n->gvn].use_count < 0) {
@@ -201,6 +167,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         .emit = {
             .output = func_out,
             .arena = arena,
+            .has_comments = true,
         }
     };
 
@@ -618,7 +585,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             TB_NodeLocation* last_loc = NULL;
 
             // mark label
-            tb_resolve_rel32(e, &e->labels[bbid], e->count);
+            on_basic_block(&ctx, e, bbid);
             while (t) {
                 if (t->tag == TILE_LOCATION) {
                     TB_Location l = {
@@ -667,7 +634,12 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         }
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 
-        Disasm d = { func_out->first_patch, ctx.locations, &ctx.locations[dyn_array_length(ctx.locations)] };
+        Disasm d = {
+            func_out->first_patch,
+            ctx.locations,
+            &ctx.locations[dyn_array_length(ctx.locations)],
+            ctx.emit.comment_head,
+        };
 
         if (ctx.prologue_length) {
             disassemble(&ctx.emit, &d, -1, 0, ctx.prologue_length);

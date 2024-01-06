@@ -517,6 +517,40 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     // move resolver:
     //   when a split happens, all indirect paths that cross the split will have
     //   moves inserted.
+    CUIK_TIMED_BLOCK("move resolver") {
+        FOREACH_N(i, 0, ctx->bb_count) {
+            MachineBB* mbb = &ctx->machine_bbs[i];
+            TB_Node* end_node = mbb->end_n;
+            int terminator = mbb->end->time;
+
+            for (User* u = end_node->users; u; u = u->next) {
+                if (cfg_is_control(u->n)) {
+                    TB_Node* succ = end_node->type == TB_BRANCH ? cfg_next_bb_after_cproj(u->n) : u->n;
+                    MachineBB* target = node_to_bb(ctx, succ);
+                    int start_time = target->start->time;
+
+                    // for all live-ins, we should check if we need to insert a move
+                    FOREACH_SET(k, target->live_in) {
+                        LiveInterval* interval = ctx->id2interval[k];
+
+                        // if the value changes across the edge, insert move
+                        LiveInterval* start = split_interval_at(interval, terminator);
+                        LiveInterval* end = split_interval_at(interval, start_time);
+
+                        if (start != end) {
+                            __debugbreak();
+                            /* if (start->spill > 0) {
+                                assert(end->spill == start->spill && "TODO: both can't be spills yet");
+                                insert_split_move(&ra, start_time, start, end);
+                            } else {
+                                insert_split_move(&ra, terminator - 1, start, end);
+                            } */
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // resolve all split interval references
     CUIK_TIMED_BLOCK("split resolver") {

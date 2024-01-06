@@ -22,7 +22,6 @@ static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 
 static void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n);
 static void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
-static TB_Node* gvn(TB_Function* f, TB_Node* n, size_t extra);
 
 // node creation helpers
 TB_Node* make_poison(TB_Function* f, TB_DataType dt);
@@ -334,13 +333,21 @@ static Lattice* sccp_meetchads(TB_Passes* restrict p, TB_Node* n) {
 
 TB_Node* tb_pass_gvn_node(TB_Function* f, TB_Node* n) {
     size_t extra = extra_bytes(n);
-    return gvn(f, n, extra);
+    return tb__gvn(f, n, extra);
 }
 
-static TB_Node* gvn(TB_Function* f, TB_Node* n, size_t extra) {
+TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra) {
     // try GVN, if we succeed, just delete the node and use the old copy
     TB_Node* k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k != NULL) {
+        // remove users
+        FOREACH_REVERSE_N(i, 0, n->input_count) {
+            User* u = remove_user(n, i);
+            if (u) { tb_arena_free(f->arena, u, sizeof(User)); }
+
+            n->inputs[i] = NULL;
+        }
+
         // try free
         tb_arena_free(f->arena, n->inputs, n->input_cap * sizeof(TB_Node*));
         tb_arena_free(f->arena, n, sizeof(TB_Node) + extra);
@@ -353,7 +360,7 @@ static TB_Node* gvn(TB_Function* f, TB_Node* n, size_t extra) {
 TB_Node* make_poison(TB_Function* f, TB_DataType dt) {
     TB_Node* n = tb_alloc_node(f, TB_POISON, dt, 1, 0);
     set_input(f, n, f->root_node, 0);
-    return gvn(f, n, 0);
+    return tb__gvn(f, n, 0);
 }
 
 TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, uint64_t x) {
@@ -373,14 +380,14 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
         l = x ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
     }
     lattice_universe_map(p, n, l);
-    return gvn(f, n, sizeof(TB_NodeInt));
+    return tb__gvn(f, n, sizeof(TB_NodeInt));
 }
 
 TB_Node* dead_node(TB_Function* f, TB_Passes* p) {
     TB_Node* n = tb_alloc_node(f, TB_DEAD, TB_TYPE_CONTROL, 1, 0);
     set_input(f, n, f->root_node, 0);
     lattice_universe_map(p, n, &XCTRL_IN_THE_SKY);
-    return gvn(f, n, 0);
+    return tb__gvn(f, n, 0);
 }
 
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i) {
@@ -1080,13 +1087,8 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p);
     tb_pass_split_locals(p);
     tb_pass_peephole(p);
-
-    /*tb_pass_sroa(p);
-    tb_pass_peephole(p);
-    tb_pass_mem2reg(p);
-    tb_pass_peephole(p);
     tb_pass_loop(p);
-    tb_pass_peephole(p);*/
+    tb_pass_peephole(p);
 
     // tb_pass_print(p);
     // dummy_interp(p);

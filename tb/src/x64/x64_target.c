@@ -358,7 +358,9 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
         case TB_LOAD:
         isel_addr(ctx, dst, n, n->inputs[2], 0);
-        return ctx->normie_mask[n->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR];
+        return normie_mask(ctx, n->dt);
+
+        ctx->normie_mask[n->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR];
 
         case TB_CYCLE_COUNTER: {
             dst->ins = tb_arena_alloc(tmp_arena, 2 * sizeof(TileInput));
@@ -960,17 +962,25 @@ static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
     return ea;
 }
 
+static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb) {
+    tb_resolve_rel32(e, &e->labels[bb], e->count);
+}
+
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
     if (t->tag == TILE_SPILL_MOVE) {
         Val dst = op_at(ctx, t->interval);
         Val src = op_at(ctx, t->ins[0].src);
         if (!is_value_match(&dst, &src)) {
+            COMMENT("move v%d -> v%d", t->interval->id, t->ins[0].src->id);
+
             TB_DataType dt = t->spill_dt;
             if (dt.type == TB_FLOAT) {
                 inst2sse(e, FP_MOV, &dst, &src, legalize_float(dt));
             } else {
                 inst2(e, MOV, &dst, &src, legalize_int2(dt));
             }
+        } else {
+            COMMENT("folded move v%d -> v%d", t->interval->id, t->ins[0].src->id);
         }
     } else if (t->tag == TILE_GOTO) {
         MachineBB* mbb = node_to_bb(ctx, t->succ);
@@ -1458,7 +1468,8 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 if (br->succ_count == 1) {
                     assert(0 && "degenerate branch? that's odd");
                 } else if (br->succ_count == 2) {
-                    int naw = succ[1], yea = succ[0];
+                    Val naw = val_label(succ[1]);
+                    Val yea = val_label(succ[0]);
 
                     Val a = op_at(ctx, t->ins[0].src);
                     Cond cc;
@@ -1505,13 +1516,12 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     }
 
                     // if flipping avoids a jmp, do that
-                    if (ctx->fallthrough == yea) {
-                        // jcc false
-                        jcc(e, cc ^ 1, naw);
+                    if (ctx->fallthrough == yea.label) {
+                        __(jcc, cc ^ 1, naw);
                     } else {
-                        jcc(e, cc, yea);
-                        if (ctx->fallthrough != naw) {
-                            jmp(e, naw);
+                        __(jcc, cc, yea);
+                        if (ctx->fallthrough != naw.label) {
+                            __(jmp, naw);
                         }
                     }
                 } else {
@@ -1534,9 +1544,9 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                                 inst2(e, MOV, &key, &imm, cmp_dt);
                                 inst2(e, CMP, &key, &imm, cmp_dt);
                             }
-                            jcc(e, E, succ[i]);
+                            __(jcc, E, val_label(succ[i]));
                         }
-                        jmp(e, succ[0]);
+                        __(jmp, val_label(succ[0]));
                     } else {
                         int64_t min = aux->min;
                         int64_t max = aux->max;
@@ -1626,7 +1636,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                         //   add target, table
                         inst2(e, ADD, &target, &table, TB_X86_TYPE_QWORD);
                         //   jmp target
-                        inst1(e, JMP, &target, TB_X86_TYPE_QWORD);
+                        __(jmp, target);
                     }
 
                     #if 0
@@ -1828,57 +1838,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
             continue;
         }
 
-        // special syntax:
-        //   mov rax, rcx
-        //   add rax, rdx   INTO   add rax, rcx, rdx
-        #if 0
-        if (inst.opcode >= 0x88 && inst.opcode <= 0x8B && inst.regs[0] >= 0) {
-            size_t saved = pos;
-            size_t next = pos + inst.length;
-            pos = next;
-
-            // skip REX
-            if ((e->data[pos] & 0xF0) == 0x40) {
-                pos += 1;
-            }
-
-            // are we an x86 integer op
-            switch (e->data[pos]) {
-                case 0x00 ... 0x03:
-                case 0x08 ... 0x0B:
-                case 0x20 ... 0x23:
-                case 0x28 ... 0x2B:
-                case 0x30 ... 0x33:
-                case 0x38 ... 0x3B:
-                case 0x88 ... 0x8B:
-                break;
-
-                default:
-                pos = saved;
-                goto normie;
-            }
-
-            TB_X86_Inst inst2;
-            if (!tb_x86_disasm(&inst2, end - next, &e->data[next]) || inst2.regs[0] != inst.regs[0]) {
-                pos = saved;
-                goto normie;
-            }
-
-            const char* mnemonic = tb_x86_mnemonic(&inst2);
-
-            E("  %s ", mnemonic);
-            // print operands for mov instruction
-            disassemble_operands(e, d, &inst, pos, 0);
-            // print operands for data op without the destination
-            disassemble_operands(e, d, &inst2, next, 1);
-            E("\n");
-
-            pos = next + inst2.length;
-            continue;
-        }
-        #endif
-
-        normie:;
+        uint64_t line_start = e->total_asm;
         const char* mnemonic = tb_x86_mnemonic(&inst);
         E("  ");
         if (inst.flags & TB_X86_INSTR_REP) {
@@ -1894,7 +1854,26 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         }
         E(" ");
         disassemble_operands(e, d, &inst, pos, 0);
-        E("\n");
+
+        int offset = e->total_asm - line_start;
+        if (d->comment && d->comment->pos == pos) {
+            TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
+            E("  // ");
+            bool out_of_line = false;
+            do {
+                if (out_of_line) {
+                    // tack on a newline
+                    E("%*s  // ", offset, "");
+                }
+
+                E("%.*s\n", d->comment->line_len, d->comment->line);
+                d->comment = d->comment->next;
+                out_of_line = true;
+            } while  (d->comment && d->comment->pos == pos);
+            TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
+        } else {
+            E("\n");
+        }
 
         pos += inst.length;
     }
