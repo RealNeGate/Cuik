@@ -1021,6 +1021,8 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
 
         TB_Node* poison = tb_alloc_node(f, TB_POISON, root->inputs[i]->dt, 1, 0);
         set_input(f, poison, f->root_node, 0);
+
+        poison = tb__gvn(f, poison, 0);
         add_input_late(f, root->inputs[i], poison);
     }
 

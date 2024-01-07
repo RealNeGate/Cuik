@@ -99,13 +99,15 @@ CUIK_API void cuikdg_dump_to_stderr(TokenStream* tokens) {
 CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
     TB_Arena* arena = tokens->diag->buffer;
 
-    TB_ArenaChunk* c = arena->base;
-    while (c->next) {
-        fwrite(c->data, arena->chunk_size, 1, out);
-        c = c->next;
-    }
+    for (TB_ArenaChunk* c = arena->base; c; c = c->next) {
+        char* end = &c->data[arena->chunk_size];
+        if (c->next == NULL) {
+            end = arena->watermark;
+        }
 
-    fwrite(c->data, arena->watermark - c->data, 1, out);
+        char* start = c == arena->base ? &c->data[sizeof(TB_Arena)] : c->data;
+        fwrite(start, end - start, 1, out);
+    }
 }
 
 // we use the call stack so we can print in reverse order

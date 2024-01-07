@@ -1265,6 +1265,9 @@ static SCCNode* scc_walk(SCC* restrict scc, TB_Function* f) {
 }
 
 void tb_module_prepare_ipo(TB_Module* m) {
+}
+
+bool tb_module_ipo(TB_Module* m) {
     SCC scc = { 0 };
     scc.arena    = get_temporary_arena(m);
     scc.fn_count = m->symbol_count[TB_SYMBOL_FUNCTION];
@@ -1297,6 +1300,8 @@ void tb_module_prepare_ipo(TB_Module* m) {
     }
 
     // we've got our bottom up ordering on the worklist... start trying to inline callsites
+    bool progress = false;
+
     TB_OPTDEBUG(INLINE)(printf("BOTTOM-UP ORDER:\n"));
     FOREACH_N(i, 0, scc.ws_cnt) {
         TB_Function* f = scc.ws[i];
@@ -1313,8 +1318,5 @@ void tb_module_prepare_ipo(TB_Module* m) {
         }
     }
 
-}
-
-bool tb_module_ipo(TB_Module* m) {
     return false;
 }

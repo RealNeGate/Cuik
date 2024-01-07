@@ -192,6 +192,12 @@ static void* tb_jit_alloc_obj(TB_JIT* jit, void* tag, size_t size, size_t align)
     return NULL;
 }
 
+void tb_jit_free_obj(TB_JIT* jit, void* ptr) {
+    FreeList* obj = ((FreeList*) ptr) - 1;
+    assert(obj->cookie == ALLOC_COOKIE);
+    obj->size &= ~1;
+}
+
 void tb_jit_dump_heap(TB_JIT* jit) {
     mtx_lock(&jit->lock);
 
@@ -224,10 +230,6 @@ void tb_jit_dump_heap(TB_JIT* jit) {
         l = next;
     }
     mtx_unlock(&jit->lock);
-}
-
-void tb_jit_free_obj(TB_JIT* jit, void* ptr, size_t s) {
-    tb_todo();
 }
 
 static void* get_proc(TB_JIT* jit, const char* name) {
