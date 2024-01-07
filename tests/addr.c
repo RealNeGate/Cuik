@@ -1,5 +1,8 @@
-#include <stdint.h>
+/*
 #include <assert.h>
+*/
+
+#include <stdint.h>
 #include <string.h>
 #include <stddef.h>
 
@@ -67,21 +70,23 @@ float floats(float* x, int i, int j) {
 }
 
 uint64_t baz() { return __rdtsc(); }
-
-extern int bar(int, int, int, int, int);
-int foo(int x, int y) {
-    return bar(x, 1, 2, 3, 4) + y;
-}
 #endif
 
-#if 0
-extern int bar(int x);
-int foo(int x) { return bar(x) + 16; }
+extern int bar(int, int, int, int, int);
+int foo3(int x, int y) {
+    return bar(x, 1, 2, 3, 4) + y;
+}
 
-typedef unsigned int uint32_t;
+extern int bar2(int x);
+int foo2(int x) { return bar2(x) + 16; }
+
 void mur(uint32_t* ptr, uint32_t h, uint32_t k) {
     k *= 0xcc9e2d51;
     k = ((k << 15) | (k >> 17))*0x1b873593;
     *ptr = (((h^k) << 13) | ((h^k) >> 19))*5 + 0xe6546b64;
 }
-#endif
+
+uint64_t foo() {
+    return 93487194713ull;
+}
+

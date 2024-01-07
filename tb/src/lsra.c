@@ -223,7 +223,11 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         tmp->in_count = 1;
                         tmp->ins[0].src  = in_def;
                         tmp->ins[0].mask = in_def_mask;
-                        t->prev->next = tmp;
+                        if (t->prev == NULL) {
+                            mbb->start = tmp;
+                        } else {
+                            t->prev->next = tmp;
+                        }
                         t->prev = tmp;
 
                         // replace use site with temporary that legalized the constraint

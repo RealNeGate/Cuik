@@ -362,14 +362,6 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                         // construct live interval
                         FOREACH_N(i, 0, phi_tile->out_count) {
                             LiveInterval* phi_it = phi_tile->outs[i];
-                            *phi_it = (LiveInterval){
-                                .id = ctx.interval_count++,
-                                .reg = -1,
-                                .assigned = -1,
-                                .range_cap = 4, .range_count = 1,
-                                .ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange))
-                            };
-                            phi_it->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
                             phi_it->tile = phi_tile;
                             phi_it->dt = v->phi->dt;
 
