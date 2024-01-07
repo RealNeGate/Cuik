@@ -172,6 +172,7 @@ static Tile* tile_at_time(LSRA* restrict ra, int t) {
 
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     LSRA ra = { .ctx = ctx, .arena = arena, .spills = ctx->num_regs[0] };
+    int initial_spills = ctx->num_regs[0];
 
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {
@@ -465,7 +466,8 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                     // add new stack slot
                     if (reg < 0) {
-                        if (ctx->num_regs[0] == ra.stack_slot_cap) {
+                        int next_stk_regs = ra.num_regs[0]++;
+                        if (next_stk_regs == ra.stack_slot_cap) {
                             size_t old_cap = ra.stack_slot_cap;
                             ra.stack_slot_cap *= 2;
 
@@ -477,10 +479,10 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                             ra.active_set[REG_CLASS_STK] = new_set;
                             ra.active[REG_CLASS_STK] = new_active;
-                            ra.active[REG_CLASS_STK][ra.spills] = NULL;
+                            ra.active[REG_CLASS_STK][next_stk_regs] = NULL;
                         }
 
-                        reg = ctx->num_regs[0]++;
+                        reg = ra.spills++;
                     }
 
                     TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [SP + %"PRId64"]\n", reg*8));
@@ -568,7 +570,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         }
     }
 
-    ctx->stack_usage += (ra.spills - ctx->num_regs[0]) * 8;
+    ctx->stack_usage += (ra.spills - initial_spills) * 8;
     ctx->callee_spills = ra.callee_spills;
 }
 

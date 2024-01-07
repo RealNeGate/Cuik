@@ -76,6 +76,7 @@ static int tb_emit_get_label(TB_CGEmitter* restrict e, uint32_t pos) {
 
 static void tb_emit_comment(TB_CGEmitter* restrict e, TB_Arena* arena, const char* fmt, ...) {
     Comment* comment = tb_arena_alloc(arena, sizeof(Comment) + 100);
+    comment->next = NULL;
     comment->pos = e->count;
 
     va_list ap;

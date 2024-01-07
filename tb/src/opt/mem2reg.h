@@ -99,10 +99,19 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
             cat = categorize_alias_idx(ctx, curr->inputs[2]);
         }
 
-        assert(cat >= 0);
-        if (latest[cat] != curr) {
-            set_input(f, curr, latest[cat], 1);
-            latest[cat] = curr;
+        // skip past projections
+        if (curr->type != TB_PROJ) {
+            assert(cat >= 0);
+            if (latest[cat] != curr) {
+                set_input(f, curr, latest[cat], 1);
+
+                if (curr->dt.type == TB_TUPLE) {
+                    curr = next_mem_user(curr);
+                }
+
+                assert(curr->dt.type == TB_MEMORY);
+                latest[cat] = curr;
+            }
         }
 
         int user_cap = 0;
@@ -202,6 +211,8 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                     // convert single phi into multiple parallel phis
                     set_input(f, use_n, latest[0], use_i);
                     nl_table_put(&ctx->phi2alias, use_n, (void*) 1);
+
+                    assert(use_n->dt.type == TB_MEMORY);
                     new_latest[0] = use_n;
 
                     // make extra alias phis

@@ -167,7 +167,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         .emit = {
             .output = func_out,
             .arena = arena,
-            .has_comments = true,
+            .has_comments = false,
         }
     };
 

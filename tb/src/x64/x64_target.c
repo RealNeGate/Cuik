@@ -698,10 +698,10 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             }
 
             FOREACH_N(i, 0, param_count) {
-                ins[i].src = get_tile(ctx, n->inputs[i + input_start], true)->interval;
+                ins[i].src = get_tile(ctx, n->inputs[i + 3], true)->interval;
 
                 if (i < abi->gpr_count) {
-                    if (TB_IS_FLOAT_TYPE(n->inputs[i + input_start]->dt)) {
+                    if (TB_IS_FLOAT_TYPE(n->inputs[i + 3]->dt)) {
                         ins[i].mask = REGMASK(XMM, 1u << i);
                     } else {
                         ins[i].mask = REGMASK(GPR, 1u << abi->gprs[i]);
@@ -734,7 +734,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 static int stk_offset(Ctx* ctx, int reg) {
     int pos = reg*8;
     if (reg >= ctx->num_regs[0]) {
-        return ctx->stack_usage - (pos + 8);
+        return (ctx->stack_usage - pos) + 8;
     } else {
         return pos;
     }
@@ -1797,9 +1797,9 @@ static void disassemble_operands(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Ins
 
                 imm = false;
                 if (inst->flags & TB_X86_INSTR_ABSOLUTE) {
-                    E("%#llx", inst->abs);
+                    E("%#lld", inst->abs);
                 } else {
-                    E("%#x", inst->imm);
+                    E("%#d", inst->imm);
                 }
             } else {
                 break;
