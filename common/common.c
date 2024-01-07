@@ -94,11 +94,13 @@ TB_Arena* tb_arena_create(size_t chunk_size) {
 }
 
 void tb_arena_destroy(TB_Arena* restrict arena) {
-    TB_ArenaChunk* c = arena->base;
-    while (c != NULL) {
-        TB_ArenaChunk* next = c->next;
-        cuik__vfree(c, arena->chunk_size);
-        c = next;
+    if (arena) {
+        TB_ArenaChunk* c = arena->base;
+        while (c != NULL) {
+            TB_ArenaChunk* next = c->next;
+            cuik__vfree(c, arena->chunk_size);
+            c = next;
+        }
     }
 }
 

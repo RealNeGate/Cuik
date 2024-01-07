@@ -181,8 +181,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             MachineBB* mbb = &ctx->machine_bbs[i];
 
             for (Tile* t = mbb->start; t; t = t->next) {
-                LiveInterval* interval = t->interval;
-
                 // insert input copies
                 FOREACH_N(j, 0, t->in_count) {
                     LiveInterval* in_def = t->ins[j].src;
@@ -212,7 +210,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         TB_OPTDEBUG(REGALLOC)(printf("  TEMP "), tb__print_regmask(in_def_mask), printf(" -> "), tb__print_regmask(in_mask), printf("\n"));
 
                         // construct copy (either to a fixed interval or a new masked interval)
-                        Tile* tmp = tb_arena_alloc(arena, sizeof(Tile));
+                        Tile* tmp = tb_arena_alloc(arena, sizeof(Tile) + sizeof(LiveInterval*));
                         *tmp = (Tile){
                             .prev = t->prev,
                             .next = t,
@@ -229,8 +227,9 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         t->prev = tmp;
 
                         // replace use site with temporary that legalized the constraint
-                        tmp->interval = gimme_interval_for_mask(ctx, arena, &ra, in_mask, in_def->dt);
-                        t->ins[j].src = tmp->interval;
+                        tmp->out_count = 1;
+                        tmp->outs[0] = gimme_interval_for_mask(ctx, arena, &ra, in_mask, in_def->dt);
+                        t->ins[j].src = tmp->outs[0];
 
                         timeline += 2;
                     }
@@ -242,7 +241,9 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 timeline += t->n && ctx->_2addr(t->n) ? 4 : 2;
 
                 // insert copy if we're writing to a fixed interval
-                if (interval && interval->mask.mask) {
+                FOREACH_N(j, 0, t->out_count) if (t->outs[j]) {
+                    LiveInterval* interval = t->outs[j];
+
                     // if we're writing to a fixed interval, insert copy
                     // such that we only guarentee a fixed location at the
                     // def site.
@@ -257,7 +258,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                         // insert copy such that the def site is the only piece which "requires"
                         // the fixed range.
-                        Tile* tmp = tb_arena_alloc(arena, sizeof(Tile));
+                        Tile* tmp = tb_arena_alloc(arena, sizeof(Tile) + sizeof(LiveInterval*));
                         *tmp = (Tile){
                             .prev = t,
                             .next = t->next,
@@ -274,8 +275,9 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         t->next = tmp;
 
                         // replace def site with fixed interval
-                        tmp->interval = interval;
-                        t->interval = fixed;
+                        tmp->out_count = 1;
+                        tmp->outs[0] = t->outs[j];
+                        t->outs[j] = fixed;
 
                         // skip this move op
                         t = tmp;
@@ -311,12 +313,13 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             }
 
             for (Tile* t = mbb->end; t; t = t->prev) {
-                LiveInterval* interval = t->interval;
-
                 int time = t->time;
 
                 // mark output
-                if (interval != NULL && interval->mask.mask) {
+                FOREACH_N(j, 0, t->out_count) {
+                    LiveInterval* interval = t->outs[j];
+                    assert(interval->mask.mask);
+
                     if (!set_get(&visited, interval->id)) {
                         set_put(&visited, interval->id);
                         if (interval->reg < 0) {
@@ -366,9 +369,13 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         if (j != 0) {
                             // extend
                             use_time += 2;
-                        } else if (interval->hint == NULL) {
+                        } else {
+                            assert(t->out_count >= 1 && "2addr ops need destinations");
+
                             // hint as copy
-                            interval->hint = in_def;
+                            if (t->outs[0]->hint == NULL) {
+                                t->outs[0]->hint = in_def;
+                            }
                         }
                     }
 
@@ -561,7 +568,10 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             for (Tile* t = mbb->start; t; t = t->next) {
                 int pos = t->time;
-                t->interval = split_interval_at(t->interval, pos - 1);
+
+                FOREACH_N(j, 0, t->out_count) {
+                    t->outs[j] = split_interval_at(t->outs[j], pos - 1);
+                }
 
                 FOREACH_N(i, 0, t->in_count) {
                     t->ins[i].src = split_interval_at(t->ins[i].src, pos);
@@ -698,10 +708,9 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
         prev = curr, curr = curr->next;
     }
 
-    Tile* move = tb_arena_alloc(ra->arena, sizeof(Tile));
+    Tile* move = tb_arena_alloc(ra->arena, sizeof(Tile) + sizeof(LiveInterval*));
     *move = (Tile){
         .tag = TILE_SPILL_MOVE,
-        .interval = new_it
     };
     assert(old_it->dt.raw);
     move->spill_dt = old_it->dt;
@@ -709,6 +718,8 @@ static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, Li
     move->in_count = 1;
     move->ins[0].src  = old_it;
     move->ins[0].mask = old_it->mask;
+    move->out_count = 1;
+    move->outs[0] = new_it;
     if (prev) {
         move->time = prev->time + 1;
         move->prev = prev;

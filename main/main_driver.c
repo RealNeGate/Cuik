@@ -126,7 +126,8 @@ int main(int argc, const char** argv) {
     };
 
     if (!cuik_parse_driver_args(&args, argc - 1, argv + 1)) {
-        return EXIT_SUCCESS;
+        status = EXIT_FAILURE;
+        goto done2;
     }
 
     // default to host target
@@ -225,5 +226,6 @@ int main(int argc, const char** argv) {
     cuik_free_driver_args(&args);
 
     // stb_leakcheck_dumpmem();
+    done2:
     return status;
 }

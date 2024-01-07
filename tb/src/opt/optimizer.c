@@ -1267,6 +1267,7 @@ static SCCNode* scc_walk(SCC* restrict scc, TB_Function* f) {
 void tb_module_prepare_ipo(TB_Module* m) {
 }
 
+static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_Function* kid);
 bool tb_module_ipo(TB_Module* m) {
     SCC scc = { 0 };
     scc.arena    = get_temporary_arena(m);
@@ -1312,11 +1313,103 @@ bool tb_module_ipo(TB_Module* m) {
         FOREACH_N(i, 1, callgraph->input_count) {
             TB_Node* call = callgraph->inputs[i];
             TB_Function* target = static_call_site(call);
-            if (target != NULL) {
-                TB_OPTDEBUG(INLINE)(printf("  -> %s (from v%u)\n", target->super.name, call->gvn));
+            if (target == NULL) {
+                continue;
+            }
+
+            // TODO(NeGate): do some heuristics on inlining
+            TB_OPTDEBUG(INLINE)(printf("  -> %s (from v%u)\n", target->super.name, call->gvn));
+            /* inline_into(scc.arena, f, call, target);
+            progress = true; */
+        }
+    }
+
+    return progress;
+}
+
+static TB_Node* inline_clone_node(TB_Function* f, TB_Node* call_site, TB_Node** clones, TB_Node* n) {
+    // special case
+    if (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT) {
+        // this is a parameter, just hook it directly to the inputs of
+        // the callsite.
+        int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+        if (index >= 3) {
+            clones[n->gvn] = call_site->inputs[index + 1];
+        } else {
+            clones[n->gvn] = call_site->inputs[index];
+        }
+
+        assert(clones[n->gvn]);
+        return clones[n->gvn];
+    } else if (clones[n->gvn] != NULL) {
+        return clones[n->gvn];
+    }
+
+    size_t extra = extra_bytes(n);
+    TB_Node* cloned = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
+
+    // clone extra data (i hope it's that easy lol)
+    memcpy(cloned->extra, n->extra, extra);
+    clones[n->gvn] = cloned;
+
+    // fill cloned edges
+    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+        TB_Node* in = inline_clone_node(f, call_site, clones, n->inputs[i]);
+
+        cloned->inputs[i] = in;
+        add_user(f, cloned, in, i, NULL);
+    }
+
+    #if TB_OPTDEBUG_INLINE
+    printf("CLONE: ");
+    print_node_sexpr(n, 0);
+    printf(" => ");
+    print_node_sexpr(cloned, 0);
+    printf("\n");
+    #endif
+
+    return cloned;
+
+    /*TB_Node* k = tb__gvn(f, cloned, extra);
+    if (k != cloned) {
+        #if TB_OPTDEBUG_INLINE
+        printf(" => GVN");
+        #endif
+    }
+    printf("\n");
+    return  = cloned;*/
+}
+
+static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_Function* kid) {
+    TB_ArenaSavepoint sp = tb_arena_save(arena);
+    TB_Node** clones = tb_arena_alloc(arena, kid->node_count * sizeof(TB_Node*));
+    memset(clones, 0, kid->node_count * sizeof(TB_Node*));
+
+    // find all nodes
+    Worklist ws = { 0 };
+    worklist_alloc(&ws, kid->node_count);
+    {
+        worklist_test_n_set(&ws, kid->root_node);
+        dyn_array_put(ws.items, kid->root_node);
+
+        for (size_t i = 0; i < dyn_array_length(ws.items); i++) {
+            TB_Node* n = ws.items[i];
+
+            FOR_USERS(u, n) {
+                TB_Node* out = u->n;
+                if (!worklist_test_n_set(&ws, out)) {
+                    dyn_array_put(ws.items, out);
+                }
             }
         }
     }
 
-    return false;
+    // clone all nodes in kid into f (GVN while we're at it)
+    FOREACH_REVERSE_N(i, 0, dyn_array_length(ws.items)) {
+        inline_clone_node(f, call_site, clones, ws.items[i]);
+    }
+
+    __debugbreak();
+    tb_arena_restore(arena, sp);
 }
+

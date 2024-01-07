@@ -1,0 +1,36 @@
+// special
+R(sllv, RTYPE, 0b000000, 0b000100)
+R(srlv, RTYPE, 0b000000, 0b000110)
+R(srav, RTYPE, 0b000000, 0b000111)
+R(sll,  RTYPE, 0b000000, 0b000000)
+R(srl,  RTYPE, 0b000000, 0b000010)
+R(sra,  RTYPE, 0b000000, 0b000011)
+R(add,  RTYPE, 0b000000, 0b100000)
+R(addu, RTYPE, 0b000000, 0b100001)
+R(sub,  RTYPE, 0b000000, 0b100010)
+R(subu, RTYPE, 0b000000, 0b100011)
+R(and,  RTYPE, 0b000000, 0b100100)
+R(or,   RTYPE, 0b000000, 0b100101)
+R(xor,  RTYPE, 0b000000, 0b100110)
+R(nor,  RTYPE, 0b000000, 0b100111)
+R(jr,   RTYPE, 0b000000, 0b001000)
+// special2
+R(mul,  RTYPE, 0b011100, 0b000010)
+// i-types
+I(addi, ITYPE, 0b001000)
+I(andi, ITYPE, 0b001100)
+I(ori,  ITYPE, 0b001101)
+I(xori, ITYPE, 0b001110)
+I(lui,  ITYPE, 0b001111)
+// loads
+I(lb,   ITYPE, 0b100000)
+I(lw,   ITYPE, 0b100011)
+I(ld,   ITYPE, 0b110111)
+// stores
+I(sb,   ITYPE, 0b101000)
+I(sh,   ITYPE, 0b101001)
+I(sw,   ITYPE, 0b101011)
+// branches
+I(beq,  ITYPE, 0b000100)
+#undef R
+#undef I

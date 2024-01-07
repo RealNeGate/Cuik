@@ -4,21 +4,16 @@
 static void set_defines(const Cuik_Target* target, Cuik_CPP* cpp) {
     target_generic_set_defines(cpp, target->system, true, true);
 
-    cuikpp_define_cstr(cpp, "__arm",          "1");
-    cuikpp_define_cstr(cpp, "__arm__",        "1");
-    cuikpp_define_cstr(cpp, "__ARM_ARCH_8__", "1");
-
-    if (target->system == CUIK_SYSTEM_WINDOWS) {
-        cuikpp_define_cstr(cpp, "_M_ARM64", "1");
-    }
+    cuikpp_define_cstr(cpp, "mips",     "1");
+    cuikpp_define_cstr(cpp, "__mips",   "1");
+    cuikpp_define_cstr(cpp, "__mips__", "1");
+    cuikpp_define_cstr(cpp, "__MIPS__", "1");
 }
 
 #ifdef CUIK_USE_TB
-// on Win64 all structs that have a size of 1,2,4,8
-// or any scalars are passed via registers
 static bool win64_should_pass_via_reg(TranslationUnit* tu, Cuik_Type* type) {
     if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-        return type->size <= 8;
+        return type->size <= tu->target->pointer_byte_size;
     } else {
         return true;
     }
@@ -39,10 +34,9 @@ static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const ch
 }
 #endif /* CUIK_USE_TB */
 
-Cuik_Target* cuik_target_mips64(Cuik_System system, Cuik_Environment env) {
+static Cuik_Target* cuik_target_mips(Cuik_System system, Cuik_Environment env, bool is64bit) {
     BuiltinTable builtins;
     nl_map_create(builtins, 128);
-
     target_generic_fill_builtin_table(&builtins);
 
     // #define X(name, format) nl_map_put_cstr(builtins, #name, format);
@@ -57,7 +51,7 @@ Cuik_Target* cuik_target_mips64(Cuik_System system, Cuik_Environment env) {
         .pointer_byte_size = 8,
 
         #ifdef CUIK_USE_TB
-        .arch = TB_ARCH_MIPS64,
+        .arch = is64bit ? TB_ARCH_MIPS64 : TB_ARCH_MIPS32,
         #endif
 
         .builtin_func_map = builtins,
@@ -77,4 +71,12 @@ Cuik_Target* cuik_target_mips64(Cuik_System system, Cuik_Environment env) {
     t->ptrdiff_type.also_known_as = "ptrdiff_t";
 
     return t;
+}
+
+Cuik_Target* cuik_target_mips32(Cuik_System system, Cuik_Environment env) {
+    return cuik_target_mips(system, env, false);
+}
+
+Cuik_Target* cuik_target_mips64(Cuik_System system, Cuik_Environment env) {
+    return cuik_target_mips(system, env, true);
 }

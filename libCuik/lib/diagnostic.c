@@ -65,7 +65,7 @@ static int sprintfcb(Cuik_Diagnostics* d, char const *fmt, ...) {
 
     va_list ap;
     va_start(ap, fmt);
-    int r = stbsp_vsprintfcb(sprintf_callback, &d->buffer, tmp, fmt, ap);
+    int r = stbsp_vsprintfcb(sprintf_callback, d->buffer, tmp, fmt, ap);
     va_end(ap);
     return r;
 }
@@ -242,7 +242,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     } else {
         sprintfcb(d, "%s%s\x1b[0m: ", report_colors[type], report_names[type]);
     }
-    stbsp_vsprintfcb(sprintf_callback, &d->buffer, tmp, fmt, ap);
+    stbsp_vsprintfcb(sprintf_callback, d->buffer, tmp, fmt, ap);
 
     // location summary
     if (loc_start.raw != 0) {
