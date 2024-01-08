@@ -375,6 +375,11 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         isel_addr(ctx, dst, n, n->inputs[2], 0);
         break;
 
+        case TB_ARRAY_ACCESS:
+        case TB_MEMBER_ACCESS:
+        isel_addr(ctx, dst, n, n, 0);
+        break;
+
         case TB_CYCLE_COUNTER: {
             dst->ins = tb_arena_alloc(tmp_arena, 2 * sizeof(TileInput));
             dst->in_count = 2;
@@ -401,11 +406,6 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         } else {
             tile_broadcast_ins(ctx, dst, n, 1, 2, normie_mask(ctx, n->inputs[1]->dt));
         }
-        break;
-
-        case TB_ARRAY_ACCESS:
-        case TB_MEMBER_ACCESS:
-        isel_addr(ctx, dst, n, n, 0);
         break;
 
         case TB_BITCAST:
@@ -1756,22 +1756,18 @@ static void disassemble_operands(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Ins
                     }
 
                     if (inst->disp > 0) {
-                        E(" + %d", inst->disp);
+                        E(" + %#x", inst->disp);
                     } else if (inst->disp < 0) {
-                        E(" - %d", -inst->disp);
+                        E(" - %#x", -inst->disp);
                     }
 
                     E("]");
                 }
-            } else if (imm && (inst->flags & (TB_X86_INSTR_IMMEDIATE | TB_X86_INSTR_ABSOLUTE))) {
+            } else if (imm && (inst->flags & TB_X86_INSTR_IMMEDIATE)) {
                 if (i > 0) E(", ");
 
                 imm = false;
-                if (inst->flags & TB_X86_INSTR_ABSOLUTE) {
-                    E("%#lld", inst->abs);
-                } else {
-                    E("%#d", inst->imm);
-                }
+                E("%#llx", inst->imm);
             } else {
                 break;
             }

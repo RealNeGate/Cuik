@@ -5,9 +5,11 @@
 #define UNPACK_233(a, b, c, src) \
 (a = (src >> 6), b = (src >> 3) & 7, c = (src & 7))
 
+#define READ16(x)   (memcpy(&(x), &data[current], 2), current += 2, x)
 #define READ32(x)   (memcpy(&(x), &data[current], 4), current += 4, x)
 #define READ64(x)   (memcpy(&(x), &data[current], 8), current += 8, x)
 
+#define READ16LE(x) READ16(x)
 #define READ32LE(x) READ32(x)
 #define READ64LE(x) READ64(x)
 
@@ -232,8 +234,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0xF6] = OP_M | OP_FAKERX | OP_8BIT,
         [0xF7] = OP_M | OP_FAKERX,
         // dec/call/jmp r/m
-        [0xFE] = OP_M | OP_FAKERX | OP_64BIT,
-        [0xFF] = OP_M | OP_FAKERX | OP_64BIT,
+        [0xFE] = OP_M | OP_FAKERX,
+        [0xFF] = OP_M | OP_FAKERX,
     };
     #undef NORMIE_BINOP
 
@@ -322,6 +324,16 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         inst->imm = imm;
         inst->length = current;
         return true;
+    } else if (enc == OP_REL8) {
+        inst->flags |= TB_X86_INSTR_USE_RIPMEM;
+        inst->flags |= TB_X86_INSTR_USE_MEMOP;
+        inst->base = -1;
+        inst->index = -1;
+
+        ABC(1);
+        inst->disp = data[current++];
+        inst->length = current;
+        return true;
     } else if (enc == OP_REL32) {
         inst->flags |= TB_X86_INSTR_USE_RIPMEM;
         inst->flags |= TB_X86_INSTR_USE_MEMOP;
@@ -341,13 +353,36 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         inst->regs[0] = (rex & 1 ? 8 : 0) | (inst->opcode & 7);
         inst->opcode &= ~7;
 
-        if ((rex & 8) && op >= 0xB8 && op <= 0xBF) {
+        if (op >= 0xB0 && op <= 0xBF) {
             // movabs (pre-APX) is the only instruction with a 64bit immediate so i'm finna
             // special case it.
-            ABC(8);
-            uint64_t imm = READ64LE(imm);
-            inst->flags |= TB_X86_INSTR_ABSOLUTE;
-            inst->abs = imm;
+            uint64_t imm = 0;
+            switch (inst->data_type) {
+                case TB_X86_TYPE_BYTE:
+                ABC(1);
+                imm = data[current++];
+                break;
+
+                case TB_X86_TYPE_WORD:
+                ABC(2);
+                imm = READ16LE(imm);
+                break;
+
+                case TB_X86_TYPE_DWORD:
+                ABC(4);
+                imm = READ32LE(imm);
+                break;
+
+                case TB_X86_TYPE_QWORD:
+                ABC(8);
+                imm = READ64LE(imm);
+                break;
+
+                default: tb_todo();
+            }
+
+            inst->flags |= TB_X86_INSTR_IMMEDIATE;
+            inst->imm = imm;
     	}
         inst->length = current;
         return true;

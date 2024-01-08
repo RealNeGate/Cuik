@@ -57,6 +57,8 @@ int run_objdump(int argc, const char** argv) {
         }
         printf("\n");
     }
+
+    #if 0
     printf("\n  note:\n");
     printf("    r - read   w - write   x - execute\n");
     printf("    c - code   u - uninit  i - init\n");
@@ -91,6 +93,7 @@ int run_objdump(int argc, const char** argv) {
     }
 
     printf("\n");
+    #endif
 
     // print disassembly
     for (size_t i = 0; i < parser.section_count; i++) {

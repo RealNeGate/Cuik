@@ -17,11 +17,8 @@ typedef enum {
     // LOCK prefix is present
     TB_X86_INSTR_LOCK = (1u << 3u),
 
-    // uses a signed immediate
+    // uses an immediate
     TB_X86_INSTR_IMMEDIATE = (1u << 4u),
-
-    // absolute means it's using the 64bit immediate (cannot be applied while a memory operand is active)
-    TB_X86_INSTR_ABSOLUTE = (1u << 5u),
 
     // set if the r/m can be found on the right hand side
     TB_X86_INSTR_DIRECTION = (1u << 6u),
@@ -89,12 +86,7 @@ typedef struct {
     int32_t disp;
 
     // immediate operand
-    //   imm for INSTR_IMMEDIATE
-    //   abs for INSTR_ABSOLUTE
-    union {
-        int32_t  imm;
-        uint64_t abs;
-    };
+    int64_t imm;
 } TB_X86_Inst;
 
 bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data);

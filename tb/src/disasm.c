@@ -26,9 +26,9 @@ ptrdiff_t tb_print_disassembly_inst(TB_Arch arch, size_t length, const void* ptr
                         mem = false;
                         if (inst.flags & TB_X86_INSTR_USE_RIPMEM) {
                             if (inst.disp < 0) {
-                                printf("rip - %d", -inst.disp);
+                                printf("[rip - %#x]", -inst.disp);
                             } else {
-                                printf("rip + %d", inst.disp);
+                                printf("[rip + %#x]", inst.disp);
                             }
                         } else {
                             printf("%s [", tb_x86_type_name(inst.data_type));
@@ -41,18 +41,18 @@ ptrdiff_t tb_print_disassembly_inst(TB_Arch arch, size_t length, const void* ptr
                             }
 
                             if (inst.disp > 0) {
-                                printf(" + %d", inst.disp);
+                                printf(" + %x", inst.disp);
                             } else if (inst.disp < 0) {
-                                printf(" - %d", -inst.disp);
+                                printf(" - %x", -inst.disp);
                             }
 
                             printf("]");
                         }
-                    } else if (imm && (inst.flags & (TB_X86_INSTR_IMMEDIATE | TB_X86_INSTR_ABSOLUTE))) {
+                    } else if (imm && (inst.flags & TB_X86_INSTR_IMMEDIATE)) {
                         if (i > 0) printf(", ");
 
                         imm = false;
-                        printf("%d", inst.imm);
+                        printf("%#llx", inst.imm);
                     } else {
                         break;
                     }
