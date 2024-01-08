@@ -319,18 +319,10 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
 }
 
 static void x86_jmp(TB_CGEmitter* restrict e, Val label) {
-    if (label.type == VAL_LABEL) {
-        EMIT1(e, 0xE9); EMIT4(e, 0);
-        tb_emit_rel32(e, &e->labels[label.label], GET_CODE_POS(e) - 4);
-    } else {
-        EMIT1(e, 0xFF);
-        emit_memory_operand(e, 4, &label);
-    }
+    inst1(e, JMP, &label, TB_X86_TYPE_QWORD);
 }
 
 static void x86_jcc(TB_CGEmitter* restrict e, int cc, Val label) {
-    assert(label.type == VAL_LABEL);
-    EMIT1(e, 0x0F); EMIT1(e, 0x80 + cc); EMIT4(e, 0);
-    tb_emit_rel32(e, &e->labels[label.label], GET_CODE_POS(e) - 4);
+    inst1(e, JO + cc, &label, TB_X86_TYPE_QWORD);
 }
 
