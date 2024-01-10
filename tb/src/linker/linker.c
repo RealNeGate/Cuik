@@ -216,28 +216,22 @@ void tb_linker_append_module_section(TB_Linker* l, TB_LinkerThreadInfo* info, TB
 }
 
 void tb_linker_associate(TB_Linker* l, TB_LinkerSectionPiece* a, TB_LinkerSectionPiece* b) {
-    dyn_array_for(i, a->inputs) {
-        if (a->inputs[i] == b) { return; }
-    }
-
-    dyn_array_put(a->inputs, b);
+    assert(a->assoc == NULL);
+    a->assoc = b;
 }
 
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base) {
     // write section contents
     // TODO(NeGate): we can actually parallelize this part of linking
     CUIK_TIMED_BLOCK("write sections") {
-        nl_table_for(kv, &l->sections) {
-            TB_LinkerSection* s = kv->k;
+        nl_table_for(e, &l->sections) {
+            TB_LinkerSection* s = e->v;
             if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
-            __debugbreak();
-
-            #if 0
             assert(s->offset == write_pos);
             for (TB_LinkerSectionPiece* p = s->first; p != NULL; p = p->next) {
                 uint8_t* p_out = &output[write_pos];
-                TB_LinkerInput in = l->inputs[p->input];
+                TB_LinkerObject* obj = p->obj;
 
                 switch (p->kind) {
                     case PIECE_NORMAL: {
@@ -247,12 +241,12 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                         break;
                     }
                     case PIECE_MODULE_SECTION: {
-                        tb_helper_write_section(in.module, 0, (TB_ModuleSection*) p->data, p_out, 0);
+                        tb_helper_write_section(obj->module, 0, (TB_ModuleSection*) p->data, p_out, 0);
                         break;
                     }
                     case PIECE_PDATA: {
                         uint32_t* p_out32 = (uint32_t*) p_out;
-                        TB_Module* m = in.module;
+                        TB_Module* m = obj->module;
 
                         uint32_t rdata_rva = m->xdata->parent->address + m->xdata->offset;
 
@@ -279,7 +273,8 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                         break;
                     }
                     case PIECE_RELOC: {
-                        TB_Module* m = in.module;
+                        TB_Module* m = obj->module;
+                        assert(m != NULL);
 
                         dyn_array_for(i, m->sections) {
                             DynArray(TB_Global*) globals = m->sections[i].globals;
@@ -331,7 +326,6 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                 write_pos += p->size;
                 skip:;
             }
-            #endif
 
             write_pos = tb__pad_file(output, write_pos, 0x00, section_alignment);
         }
@@ -387,24 +381,6 @@ TB_LinkerSectionPiece* tb_linker_append_piece(TB_LinkerThreadInfo* info, TB_Link
     return piece;
 }
 
-ImportThunk* tb__find_or_create_import(TB_Linker* l, TB_LinkerSymbol* sym) {
-    assert(sym->tag == TB_LINKER_SYMBOL_IMPORT);
-
-    size_t len = tb_linker_intern_len(l, sym->name) - (sizeof("__imp_") - 1);
-    const char* name = sym->name + sizeof("__imp_") - 1;
-
-    ImportTable* table = &l->imports[sym->import.id];
-    dyn_array_for(i, table->thunks) {
-        if (table->thunks[i].name == name) {
-            return &table->thunks[i];
-        }
-    }
-
-    ImportThunk t = { .name = sym->name, .ordinal = sym->import.ordinal };
-    dyn_array_put(table->thunks, t);
-    return &table->thunks[dyn_array_length(table->thunks) - 1];
-}
-
 TB_LinkerSymbol* tb_linker_find_symbol(TB_Linker* l, TB_LinkerInternStr name) {
     return nl_table_get(&l->symbols, name);
 }
@@ -413,20 +389,26 @@ TB_LinkerSymbol* tb_linker_find_symbol2(TB_Linker* l, const char* name) {
     return nl_table_get(&l->symbols, tb_linker_intern_cstring(l, name));
 }
 
-// name is interned
 TB_LinkerSymbol* tb_linker_new_symbol(TB_Linker* l, TB_LinkerInternStr name) {
     cuikperf_region_start("append sym", NULL);
 
     TB_LinkerThreadInfo* info = linker_thread_info(l);
     TB_LinkerSymbol* sym = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerSymbol));
 
-    void* old;
+    TB_LinkerSymbol* old;
     if (old = nl_table_put(&l->symbols, name, sym), old) {
-        // symbol collision
-        __debugbreak();
+        tb_arena_free(info->perm_arena, sym, sizeof(TB_LinkerSymbol));
+        sym = old;
+
+        if (old->tag != TB_LINKER_SYMBOL_UNKNOWN) {
+            // symbol collision if we're overriding something that's
+            // not a forward ref.
+            // __debugbreak();
+        }
+    } else {
+        *sym = (TB_LinkerSymbol){ .name = name };
     }
 
-    *sym = (TB_LinkerSymbol){ .name = name };
     cuikperf_region_end();
     return sym;
 }
@@ -478,6 +460,7 @@ size_t tb_linker_intern_len(TB_Linker* l, TB_LinkerInternStr str) {
 
 void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
     DynArray(TB_ModuleSection) sections = m->sections;
+    TB_LinkerThreadInfo* info = linker_thread_info(l);
 
     CUIK_TIMED_BLOCK("apply symbols") {
         dyn_array_for(i, sections) {
@@ -499,7 +482,13 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
                 const char* name = globals[i]->super.name;
                 TB_LinkerInternStr interned = tb_linker_intern_string(l, strlen(name), name);
 
-                TB_LinkerSymbol* ls = tb_linker_new_symbol(l, interned);
+                TB_LinkerSymbol* ls = NULL;
+                if (globals[i]->linkage == TB_LINKAGE_PRIVATE) {
+                    ls = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerSymbol));
+                    *ls = (TB_LinkerSymbol){ .name = interned };
+                } else {
+                    ls = tb_linker_new_symbol(l, interned);
+                }
                 ls->tag = TB_LINKER_SYMBOL_TB;
                 ls->tb.piece = piece;
                 ls->tb.sym = &globals[i]->super;
@@ -508,12 +497,7 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
     }
 }
 
-void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
-    TB_LinkerSection* text = tb_linker_find_section(l, ".text");
-    if (text == NULL) {
-        return;
-    }
-
+void tb_linker_apply_module_relocs(TB_Linker* l, TB_Module* m, TB_LinkerSection* text, uint8_t* output) {
     uint64_t trampoline_rva = text->address + l->trampoline_pos;
 
     dyn_array_for(i, m->sections) {
@@ -534,16 +518,19 @@ void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output) {
 
                 int32_t p = 0;
                 if (patch->target->tag == TB_SYMBOL_EXTERNAL) {
-                    uintptr_t thunk_p = (uintptr_t) patch->target->address;
-                    if (thunk_p & 1) {
-                        TB_LinkerSymbol* sym = (TB_LinkerSymbol*) (thunk_p & ~1);
-                        p = tb__get_symbol_rva(l, sym);
+                    TB_LinkerSymbol* sym = patch->target->address;
+                    if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN) {
+                        // TODO(NeGate): error for unresolved symbol
+                        tb_todo();
+                    } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
+                        p = trampoline_rva + (sym->thunk->import.thunk_id * 6);
+                    } else if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
+                        p = trampoline_rva + (sym->import.thunk_id * 6);
                     } else {
-                        ImportThunk* thunk = (ImportThunk*) thunk_p;
-                        assert(thunk != NULL);
-
-                        p = (trampoline_rva + (thunk->thunk_id * 6)) - actual_pos;
+                        p = tb__get_symbol_rva(l, sym);
                     }
+
+                    p -= actual_pos;
                 } else if (patch->target->tag == TB_SYMBOL_FUNCTION) {
                     // internal patching has already handled this
                 } else if (patch->target->tag == TB_SYMBOL_GLOBAL) {
@@ -719,5 +706,76 @@ void tb_linker_push_named(TB_Linker* l, const char* name) {
     TB_LinkerSymbol* sym   = tb_linker_find_symbol(l, str);
     if (sym != NULL) {
         tb_linker_push_piece(l, tb_linker_get_piece(l, sym));
+    }
+}
+
+static TB_LinkerSymbol* resolve_external(TB_Linker* l, TB_External* ext) {
+    TB_LinkerInternStr str = tb_linker_intern_cstring(l, ext->super.name);
+    TB_LinkerSymbol* sym = tb_linker_find_symbol2(l, str);
+    if (sym == NULL) {
+        tb_todo();
+    } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
+        sym->thunk->flags |= TB_LINKER_SYMBOL_USED;
+    }
+
+    ext->super.address = sym;
+    sym->flags |= TB_LINKER_SYMBOL_USED;
+    return sym;
+}
+
+void tb_linker_mark_live(TB_Linker* l) {
+    while (dyn_array_length(l->worklist)) {
+        TB_LinkerSectionPiece* p = dyn_array_pop(l->worklist);
+        p->flags |= TB_LINKER_PIECE_LIVE;
+
+        // associated section
+        if (p->assoc) {
+            tb_linker_push_piece(l, p->assoc);
+        }
+
+        // mark module content
+        if (p->obj->module && !p->obj->module->visited) {
+            p->obj->module->visited = true;
+
+            TB_Module* m = p->obj->module;
+            dyn_array_for(i, m->sections) {
+                if (m->sections[i].piece) {
+                    tb_linker_push_piece(l, m->sections[i].piece);
+                }
+            }
+
+            // associate TB externals with linker symbols
+            FOREACH_N(i, 0, m->exports.count) {
+                if (&m->exports.data[i]->super == m->chkstk_extern && m->uses_chkstk == 0) {
+                    continue;
+                }
+
+                TB_LinkerSymbol* sym = resolve_external(l, m->exports.data[i]);
+                TB_LinkerSectionPiece* piece = tb_linker_get_piece(l, sym);
+                if (piece) {
+                    tb_linker_push_piece(l, piece);
+                }
+            }
+        }
+
+        // mark any kid symbols
+        for (TB_LinkerSymbol* sym = p->first_sym; sym != NULL; sym = sym->next) {
+            if (sym) {
+                sym->flags |= TB_LINKER_SYMBOL_USED;
+                if (sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB) {
+                    tb_linker_push_piece(l, sym->normal.piece);
+                }
+            }
+        }
+
+        // mark any relocations
+        dyn_array_for(i, p->inputs) {
+            TB_LinkerSymbol* sym = p->inputs[i];
+            sym->flags |= TB_LINKER_SYMBOL_USED;
+
+            if (sym && (sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB)) {
+                tb_linker_push_piece(l, sym->normal.piece);
+            }
+        }
     }
 }

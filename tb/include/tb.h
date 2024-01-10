@@ -240,7 +240,7 @@ typedef enum TB_NodeTypeEnum {
     // projections just extract a single field of a tuple
     TB_PROJ,          // Tuple & Int -> Any
     // this is a simple way to embed machine code into the code
-    TB_MACHINE_OP,    // (Control, Memory) & Buffer -> (Control, Memory)
+    TB_INLINE_ASM,    // (Control, Memory) & InlineAsm -> (Control, Memory)
     // reads the TSC on x64
     TB_CYCLE_COUNTER, // (Control) -> Int64
     // prefetches data for reading. The number next to the
@@ -602,16 +602,6 @@ typedef struct {
 } TB_NodeLocal;
 
 typedef struct {
-    // this is the raw buffer
-    size_t length;
-    const uint8_t* data;
-
-    // represents the outputs, inputs and temporaries in that order
-    size_t outs, ins, tmps;
-    TB_PhysicalReg regs[];
-} TB_NodeMachineOp;
-
-typedef struct {
     float value;
 } TB_NodeFloat32;
 
@@ -719,6 +709,17 @@ typedef enum {
     TB_MODULE_SECTION_EXEC  = 2,
     TB_MODULE_SECTION_TLS   = 4,
 } TB_ModuleSectionFlags;
+
+typedef void (*TB_InlineAsmRA)(TB_Node* n, void* ctx);
+
+// This is the function that'll emit bytes from a TB_INLINE_ASM node
+typedef size_t (*TB_InlineAsmEmit)(TB_Node* n, void* ctx, size_t out_cap, uint8_t* out);
+
+typedef struct {
+    void* ctx;
+    TB_InlineAsmRA   ra;
+    TB_InlineAsmEmit emit;
+} TB_NodeInlineAsm;
 
 // *******************************
 // Public macros

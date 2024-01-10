@@ -361,6 +361,7 @@ typedef struct {
 
 struct TB_Module {
     bool is_jit;
+    bool visited; // used by the linker
     ICodeGen* codegen;
 
     atomic_flag is_tls_defined;
@@ -387,6 +388,7 @@ struct TB_Module {
     TB_Symbol* tls_index_extern;
     TB_Symbol* chkstk_extern;
 
+    _Atomic uint32_t uses_chkstk;
     _Atomic uint32_t compiled_function_count;
     _Atomic uint32_t symbol_count[TB_SYMBOL_MAX];
 

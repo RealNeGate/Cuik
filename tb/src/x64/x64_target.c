@@ -350,6 +350,13 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_SYMBOL:
         break;
 
+        case TB_INLINE_ASM: {
+            TB_NodeInlineAsm* a = TB_NODE_GET_EXTRA_T(n, TB_NodeInlineAsm);
+            // a->ra(n, a->ctx, tmp_arena);
+            tb_todo();
+            break;
+        }
+
         case TB_LOCAL: {
             TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
             isel_addr(ctx, dst, n, n, 0);
@@ -858,6 +865,8 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     // inserts a chkstk call if we use too much stack
     if (stack_usage >= param_descs[ctx->abi_index].chkstk_limit) {
         assert(ctx->f->super.module->chkstk_extern);
+        ctx->f->super.module->uses_chkstk++;
+
         Val sym = val_global(ctx->f->super.module->chkstk_extern, 0);
         Val imm = val_imm(stack_usage);
         Val rax = val_gpr(RAX);
@@ -1024,6 +1033,15 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_MERGEMEM:
             case TB_CALLGRAPH:
             break;
+
+            case TB_INLINE_ASM: {
+                TB_NodeInlineAsm* a = TB_NODE_GET_EXTRA_T(n, TB_NodeInlineAsm);
+
+                size_t count = a->emit(n, a->ctx, e->capacity, e->data);
+                assert(e->count + count < e->capacity);
+                e->count += count;
+                break;
+            }
 
             // rdtsc
             // shl rdx, 32

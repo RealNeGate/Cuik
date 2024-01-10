@@ -44,8 +44,10 @@ struct TB_LinkerSectionPiece {
 
     TB_LinkerSymbol* first_sym;
 
-    // needed for the GC phase (also where we stuff our associated sections)
-    DynArray(TB_LinkerSectionPiece*) inputs;
+    DynArray(TB_LinkerSymbol*) inputs;
+
+    // mostly for .pdata crap
+    TB_LinkerSectionPiece* assoc;
 
     // vsize is the virtual size
     size_t offset, vsize, size;
@@ -98,43 +100,22 @@ typedef enum TB_LinkerSymbolTag {
     TB_LINKER_SYMBOL_IMPORT,
 } TB_LinkerSymbolTag;
 
-typedef struct {
-    TB_LinkerInternStr name;
-    // this is the location the thunk will call
-    uint32_t ds_address;
-    // this is the ID of the thunk
-    uint32_t thunk_id;
-    uint16_t ordinal;
-} ImportThunk;
-
 typedef enum TB_LinkerSymbolFlags {
     TB_LINKER_SYMBOL_WEAK   = 1,
     TB_LINKER_SYMBOL_COMDAT = 2,
+    TB_LINKER_SYMBOL_USED   = 4,
 } TB_LinkerSymbolFlags;
-
-typedef struct TB_UnresolvedSymbol TB_UnresolvedSymbol;
-struct TB_UnresolvedSymbol {
-    TB_UnresolvedSymbol* next;
-
-    TB_Slice name;
-    uint32_t reloc;
-};
 
 // all symbols appended to the linker are converted into
 // these and used for all kinds of relocation resolution.
 struct TB_LinkerSymbol {
-    TB_LinkerSymbolTag   tag   : 4;
-    TB_LinkerSymbolFlags flags : 4;
-    // this is used for bitsets (namely the worklist's)
-    uint32_t             id    : 24;
+    TB_LinkerSymbolTag   tag;
+    TB_LinkerSymbolFlags flags;
 
     TB_LinkerInternStr name;
 
     // next symbol in the section
     TB_LinkerSymbol* next;
-
-    // unresolved symbol refs
-    TB_UnresolvedSymbol* unresolved;
 
     union {
         // for normal symbols
@@ -154,9 +135,14 @@ struct TB_LinkerSymbol {
 
         // for imports, refers to the imports array in TB_Linker
         struct {
+            // this is the location the thunk will call
+            uint32_t ds_address;
+            // this is the ID of the thunk
+            uint32_t thunk_id;
+            // import table ID
             uint32_t id;
+            // TODO(NeGate): i don't remember rn
             uint16_t ordinal;
-            ImportThunk* thunk;
         } import;
 
         TB_LinkerSymbol* thunk;
@@ -165,26 +151,10 @@ struct TB_LinkerSymbol {
 
 typedef struct {
     TB_Slice libpath;
-    DynArray(ImportThunk) thunks;
+    DynArray(TB_LinkerSymbol*) thunks;
 
     uint64_t *iat, *ilt;
 } ImportTable;
-
-typedef struct TB_LinkerRelocRel TB_LinkerRelocRel;
-struct TB_LinkerRelocRel {
-    // within the same piece
-    TB_LinkerRelocRel* next;
-
-    TB_Slice* alt;
-
-    TB_LinkerSectionPiece* src_piece;
-    uint32_t src_offset;
-
-    TB_LinkerObject* obj;
-
-    uint16_t addend;
-    uint16_t type;
-};
 
 typedef struct TB_LinkerReloc {
     uint8_t type;
@@ -220,6 +190,7 @@ struct TB_LinkerThreadInfo {
     DynArray(TB_LinkerCmd) alternates;
 
     DynArray(TB_LinkerReloc) relocs;
+    DynArray(TB_Module*) ir_modules;
 };
 
 // Format-specific vtable:
@@ -231,8 +202,6 @@ typedef struct TB_LinkerVtbl {
     TB_ExportBuffer (*export)(TB_Linker* l);
 } TB_LinkerVtbl;
 
-typedef TB_LinkerSymbol* TB_SymbolResolver(TB_Linker* l, TB_LinkerSymbol* sym, TB_Slice name, TB_Slice* alt, uint32_t reloc_i);
-
 // 1 << QEXP is the size of the queue
 #define QEXP 6
 
@@ -241,7 +210,6 @@ typedef struct TB_Linker {
 
     const char* entrypoint;
     TB_WindowsSubsystem subsystem;
-    TB_SymbolResolver* resolve_sym;
 
     // we intern symbol strings to make the rest of the
     // hash table work easier, it's easier to write a giant
@@ -279,9 +247,6 @@ typedef struct TB_Linker {
 
 TB_LinkerThreadInfo* linker_thread_info(TB_Linker* l);
 
-// Error handling
-TB_UnresolvedSymbol* tb__unresolved_symbol(TB_Linker* l, TB_Slice name);
-
 TB_LinkerSectionPiece* tb_linker_get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym);
 void tb_linker_associate(TB_Linker* l, TB_LinkerSectionPiece* a, TB_LinkerSectionPiece* b);
 
@@ -311,11 +276,12 @@ uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s);
 uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym);
 
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align);
-void tb__apply_module_relocs(TB_Linker* l, TB_Module* m, uint8_t* output);
+void tb_linker_apply_module_relocs(TB_Linker* l, TB_Module* m, TB_LinkerSection* text, uint8_t* output);
 size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_pos, TB_LinkerSection* text, TB_LinkerSection* data, TB_LinkerSection* rdata, size_t section_alignment, size_t image_base);
 
 void tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p);
 void tb_linker_push_named(TB_Linker* l, const char* name);
+void tb_linker_mark_live(TB_Linker* l);
 
 // do layouting (requires GC step to complete)
 bool tb__finalize_sections(TB_Linker* l);

@@ -43,7 +43,7 @@ static bool is_effect_tuple(TB_Node* n) {
         case TB_TAILCALL:
         case TB_READ:
         case TB_WRITE:
-        case TB_MACHINE_OP:
+        case TB_INLINE_ASM:
         return true;
 
         default:
