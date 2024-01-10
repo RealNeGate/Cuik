@@ -1,3 +1,4 @@
+#if 0
 #define NL_STRING_MAP_IMPL
 #include "linker.h"
 #include <tb_elf.h>
@@ -230,3 +231,4 @@ TB_LinkerVtbl tb__linker_elf = {
     .append_module  = elf_append_module,
     .export         = elf_export
 };
+#endif

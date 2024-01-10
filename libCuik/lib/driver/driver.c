@@ -491,12 +491,12 @@ static void ld_invoke(BuildStepInfo* info) {
             tb_linker_set_subsystem(l, args->subsystem);
         }
 
-        TB_LinkerMsg m;
+        /*TB_LinkerMsg m;
         while (tb_linker_get_msg(l, &m)) {
             if (m.tag == TB_LINKER_MSG_IMPORT) {
                 // TODO(NeGate): implement this
             }
-        }
+        }*/
 
         TB_ExportBuffer buffer = tb_linker_export(l);
         if (!tb_export_buffer_to_file(buffer, output_path.data)) {

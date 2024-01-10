@@ -82,7 +82,7 @@ int run_link(int argc, const char** argv) {
         add_linker_input(l, input_files[i]);
     }
 
-    TB_LinkerMsg m;
+    /*TB_LinkerMsg m;
     while (tb_linker_get_msg(l, &m)) {
         if (m.tag == TB_LINKER_MSG_IMPORT) {
             char path[FILENAME_MAX];
@@ -92,7 +92,7 @@ int run_link(int argc, const char** argv) {
 
             add_linker_input(l, path);
         }
-    }
+    }*/
 
     if (errors) {
         fprintf(stderr, "library search paths:\n");

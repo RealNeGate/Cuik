@@ -333,7 +333,7 @@ typedef struct {
 
 // only next_in_module is ever mutated on multiple threads (when first attached)
 struct TB_ThreadInfo {
-    TB_Module* owner;
+    void* owner;
     _Atomic(TB_ThreadInfo*) next_in_module;
 
     TB_ThreadInfo* prev;
@@ -582,10 +582,10 @@ static bool is_same_location(TB_Location* a, TB_Location* b) {
     return a->file == b->file && a->line == b->line && a->column == b->column;
 }
 
-static TB_Arena* get_temporary_arena(TB_Module* m) {
-    return tb_thread_info(m)->tmp_arena;
+static TB_Arena* get_temporary_arena(TB_Module* key) {
+    return tb_thread_info(key)->tmp_arena;
 }
 
-static TB_Arena* get_permanent_arena(TB_Module* m) {
-    return tb_thread_info(m)->perm_arena;
+static TB_Arena* get_permanent_arena(TB_Module* key) {
+    return tb_thread_info(key)->perm_arena;
 }

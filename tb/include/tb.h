@@ -655,6 +655,7 @@ typedef struct {
 
 typedef struct {
     void* tag;
+    int param_start;
 } TB_NodeSafepoint;
 
 typedef struct {
