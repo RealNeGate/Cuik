@@ -520,10 +520,16 @@ static void add_libraries(void* ctx, bool nocrt, Cuik_Linker* l) {
     }
 
     if (!nocrt) {
+        #if 1
+        cuiklink_add_input_file(l, "kernel32.lib");
+        cuiklink_add_input_file(l, "libcmt.lib");
+        cuiklink_add_input_file(l, "oldnames.lib");
+        #else
         cuiklink_add_input_file(l, "kernel32.lib");
         cuiklink_add_input_file(l, "ucrt.lib");
         cuiklink_add_input_file(l, "msvcrt.lib");
         cuiklink_add_input_file(l, "vcruntime.lib");
+        #endif
     }
 }
 

@@ -430,8 +430,8 @@ typedef uint8_t TB_NodeType;
 
 // just represents some region of bytes, usually in file parsing crap
 typedef struct {
-    size_t length;
     const uint8_t* data;
+    size_t length;
 } TB_Slice;
 
 // represents byte counts

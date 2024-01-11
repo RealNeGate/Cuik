@@ -19,7 +19,7 @@ int run_objdump(int argc, const char** argv) {
         return EXIT_FAILURE;
     }
 
-    TB_COFF_Parser parser = { { strlen(argv[0]), (const uint8_t*) argv[0] }, { fm.size, fm.data } };
+    TB_COFF_Parser parser = { { (const uint8_t*) argv[0], strlen(argv[0]) }, { fm.data, fm.size } };
     if (!tb_coff_parse_init(&parser)) {
         // TODO(NeGate): make better errors
         fprintf(stderr, "\x1b[31merror\x1b[0m: '%s' was not a valid COFF object!\n", argv[0]);

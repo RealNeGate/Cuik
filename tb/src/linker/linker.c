@@ -110,6 +110,10 @@ TB_API void tb_linker_destroy(TB_Linker* l) {
     tb_platform_heap_free(l);
 }
 
+void tb_linker_unresolved_sym(TB_Linker* l, TB_LinkerInternStr name) {
+    fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved external: %s\n", name);
+}
+
 TB_LinkerSectionPiece* tb_linker_get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym) {
     if (sym && (sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB)) {
         return sym->normal.piece;
@@ -566,7 +570,7 @@ static TB_Slice as_filename(TB_Slice s) {
         }
     }
 
-    return (TB_Slice){ s.length - last, s.data + last };
+    return (TB_Slice){ s.data + last, s.length - last };
 }
 
 static int compare_linker_sections(const void* a, const void* b) {
@@ -693,6 +697,14 @@ bool tb__finalize_sections(TB_Linker* l) {
     return true;
 }
 
+TB_LinkerSymbol* tb_linker_get_target(TB_LinkerReloc* r) {
+    if (r->target->tag == TB_LINKER_SYMBOL_UNKNOWN) {
+        return r->alt && r->alt->tag != TB_LINKER_SYMBOL_UNKNOWN ? r->alt : NULL;
+    } else {
+        return r->target;
+    }
+}
+
 void tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p) {
     if (p->size == 0 || (p->flags & TB_LINKER_PIECE_LIVE) || (p->parent->generic_flags & TB_LINKER_SECTION_DISCARD)) {
         return;
@@ -769,12 +781,16 @@ void tb_linker_mark_live(TB_Linker* l) {
         }
 
         // mark any relocations
+        TB_LinkerThreadInfo* info = p->info;
         dyn_array_for(i, p->inputs) {
-            TB_LinkerSymbol* sym = p->inputs[i];
-            sym->flags |= TB_LINKER_SYMBOL_USED;
+            size_t j = p->inputs[i];
+            TB_LinkerSymbol* sym = tb_linker_get_target(&info->relocs[j]);
 
-            if (sym && (sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB)) {
-                tb_linker_push_piece(l, sym->normal.piece);
+            if (sym) {
+                sym->flags |= TB_LINKER_SYMBOL_USED;
+                if (sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB) {
+                    tb_linker_push_piece(l, sym->normal.piece);
+                }
             }
         }
     }

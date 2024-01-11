@@ -16,7 +16,7 @@ static void add_linker_input(TB_Linker* l, const char* path) {
             snprintf(test_path, FILENAME_MAX, "%s/%s", libpaths[j], path);
             fm = open_file_map(test_path);
             if (fm.data != NULL) {
-                path_slice = (TB_Slice){ strlen(test_path), (const uint8_t*) cuik_strdup(test_path) };
+                path_slice = (TB_Slice){ (const uint8_t*) cuik_strdup(test_path), strlen(test_path) };
                 break;
             }
         }
@@ -27,10 +27,10 @@ static void add_linker_input(TB_Linker* l, const char* path) {
             return;
         }
 
-        tb_linker_append_library(l, path_slice, (TB_Slice){ fm.size, fm.data });
+        tb_linker_append_library(l, path_slice, (TB_Slice){ fm.data, fm.size });
     } else {
         // normal object files
-        path_slice = (TB_Slice){ strlen(path), (const uint8_t*) path };
+        path_slice = (TB_Slice){ (const uint8_t*) path, strlen(path) };
         fm = open_file_map(path);
 
         if (fm.data == NULL) {
@@ -39,7 +39,7 @@ static void add_linker_input(TB_Linker* l, const char* path) {
             return;
         }
 
-        TB_Slice data = { fm.size, fm.data };
+        TB_Slice data = { fm.data, fm.size };
         tb_linker_append_object(l, path_slice, data);
     }
 }

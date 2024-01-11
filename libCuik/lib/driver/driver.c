@@ -463,8 +463,8 @@ static void ld_invoke(BuildStepInfo* info) {
                 FileMap fm = open_file_map(path);
                 tb_linker_append_library(
                     l,
-                    (TB_Slice){ strlen(path), (const uint8_t*) cuik_strdup(path) },
-                    (TB_Slice){ fm.size, fm.data }
+                    (TB_Slice){ (const uint8_t*) cuik_strdup(path), strlen(path) },
+                    (TB_Slice){ fm.data, fm.size }
                 );
             }
 
