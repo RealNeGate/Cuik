@@ -146,7 +146,7 @@ static void local_opt_func(TB_Function* f, void* arg) {
         TB_Arena** arenas = get_ir_arena();
         TB_Passes* p = tb_pass_enter(f, arenas[0]);
 
-        assert(args->opt_level >= 1);
+        assert(args->optimize);
         tb_pass_optimize(p);
 
         tb_pass_exit(p);
@@ -202,6 +202,37 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     }
 
     TokenStream* tokens = cuikpp_get_token_stream(cpp);
+    if (args->write_deps) {
+        FILE* file = stdout;
+        if (args->dep_file) {
+            file = fopen(args->dep_file, "wb");
+        }
+
+        Cuik_Path obj_path;
+        if (args->output_name == NULL) {
+            cuik_path_set_ext(&obj_path, args->sources[0], 2, ".o");
+        } else {
+            cuik_path_append2(&obj_path, strlen(args->output_name), args->output_name, 4, ".o");
+        }
+
+        // write depfile
+        Cuik_FileEntry* files = cuikpp_get_files(tokens);
+        size_t file_count = cuikpp_get_file_count(tokens);
+
+        fprintf(file, "%s: ", obj_path.data);
+        for (size_t i = 0; i < file_count; i++) {
+            const char* filename = files[i].filename;
+            if (filename[0] == '$') continue;
+
+            fprintf(file, "\\\n  %s ", filename);
+        }
+        fprintf(file, "\n");
+
+        if (args->dep_file) {
+            fclose(file);
+        }
+    }
+
     if (args->preprocess) {
         cuikpp_dump_tokens(tokens);
         goto done;
@@ -326,7 +357,7 @@ static void ld_invoke(BuildStepInfo* info) {
     TB_Module* mod = s->ld.cu->ir_mod;
 
     CUIK_TIMED_BLOCK("Backend") {
-        if (args->opt_level >= 1) {
+        if (args->optimize) {
             tb_module_prepare_ipo(mod);
 
             do {

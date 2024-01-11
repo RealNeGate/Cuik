@@ -11,8 +11,11 @@ X(PP,          "P",        false, "print preprocessor output to stdout")
 X(LANG,        "lang",     true,  "choose the language (c11, c23, glsl)")
 X(AST,         "ast",      false, "print AST into stdout")
 X(SYNTAX,      "xe",       false, "type check only")
+// dep tracking
+X(DEPS,        "MD",       false, "write header dependencies")
+X(DEPFILE,     "MF",       true,  "write depout from -MD into a file")
 // optimizer
-X(OPTLVL,      "O",        true,  "no optimizations")
+X(OPTLVL,      "O",        false,  "no optimizations")
 // backend
 X(EMITIR,      "emit-ir",  false, "print IR into stdout")
 X(EMITDOT,     "emit-dot", false, "print graphviz into stdout")

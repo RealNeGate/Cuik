@@ -277,6 +277,11 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
         comp_args->entrypoint = entry->value;
     }
 
+    Cuik_Arg* mf = args->_[ARG_DEPFILE];
+    if (mf) {
+        comp_args->dep_file = mf->value;
+    }
+
     Cuik_Arg* threads = args->_[ARG_THREADS];
     if (threads) {
         if (threads->value != arg_is_set) {
@@ -304,10 +309,8 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
     if (args->_[ARG_ASSEMBLY]) comp_args->assembly = true;
     #endif
 
-    if (args->_[ARG_OPTLVL]) {
-        comp_args->opt_level = atoi(args->_[ARG_OPTLVL]->value);
-    }
-
+    TOGGLE(ARG_DEPS, write_deps);
+    TOGGLE(ARG_OPTLVL, optimize);
     TOGGLE(ARG_PP, preprocess);
     TOGGLE(ARG_PPTEST, test_preproc);
     TOGGLE(ARG_RUN, run);

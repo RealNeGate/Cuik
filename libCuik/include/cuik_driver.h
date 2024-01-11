@@ -29,9 +29,10 @@ struct Cuik_DriverArgs {
     Cuik_Target* target;
     Cuik_Toolchain toolchain;
 
-    int threads, opt_level;
+    int threads;
     const char* output_name;
     const char* entrypoint;
+    const char* dep_file;
 
     void* diag_userdata;
     Cuik_DiagCallback diag_callback;
@@ -52,6 +53,8 @@ struct Cuik_DriverArgs {
     bool bake            : 1;
     bool nocrt           : 1;
     bool live            : 1;
+    bool write_deps      : 1;
+    bool optimize        : 1;
     bool time            : 1;
     bool verbose         : 1;
     bool syntax_only     : 1;
