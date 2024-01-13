@@ -283,6 +283,8 @@ struct TB_Function {
     TB_Arena* arena;
     size_t node_count;
 
+    TB_Node* ret_node; // ir building crap
+
     TB_Node* root_node;
     TB_Trace trace;
 

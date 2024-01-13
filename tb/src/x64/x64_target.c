@@ -337,6 +337,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     switch (n->type) {
         // no inputs
         case TB_REGION:
+        case TB_ROOT:
         case TB_TRAP:
         case TB_CALLGRAPH:
         case TB_SPLITMEM:
@@ -347,8 +348,15 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_FLOAT32_CONST:
         case TB_FLOAT64_CONST:
         case TB_POISON:
-        case TB_SYMBOL:
         break;
+
+        case TB_SYMBOL: {
+            // mov t0, dword    [_tls_index]
+            // mov t1, qword gs:[58h]
+            // mov t1, qword [t1+t0*8]
+            // lea addr, [t1+relocation]
+            break;
+        }
 
         case TB_INLINE_ASM: {
             TB_NodeInlineAsm* a = TB_NODE_GET_EXTRA_T(n, TB_NodeInlineAsm);
@@ -433,15 +441,15 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         }
         return;
 
-        case TB_ROOT: {
+        case TB_RETURN: {
             static int ret_gprs[2] = { RAX, RDX };
 
-            int rets = n->input_count - 4;
-            TileInput* ins = tile_set_ins(ctx, dst, n, 4, n->input_count);
+            int rets = n->input_count - 3;
+            TileInput* ins = tile_set_ins(ctx, dst, n, 3, n->input_count);
 
             assert(rets <= 2 && "At most 2 return values :(");
             FOREACH_N(i, 0, rets) {
-                TB_DataType dt = n->inputs[4+i]->dt;
+                TB_DataType dt = n->inputs[3+i]->dt;
                 if (dt.type == TB_FLOAT) {
                     ins[i].mask = REGMASK(XMM, 1 << i);
                 } else {
@@ -466,7 +474,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                             rm = REGMASK(GPR, 1u << params->gprs[i - 3]);
                         }
                     }
-                } else if (n->inputs[0]->type == TB_CALL) {
+                } else if (n->inputs[0]->type == TB_CALL || n->inputs[0]->type == TB_SYSCALL) {
                     if (n->dt.type == TB_FLOAT) {
                         if (i >= 2) rm = REGMASK(XMM, 1 << (i - 2));
                     } else {
@@ -658,14 +666,52 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             break;
         }
 
+        case TB_SYSCALL: {
+            const struct ParamDesc* abi = &param_descs[2];
+            uint32_t caller_saved_gprs = abi->caller_saved_gprs;
+
+            int param_count = n->input_count - 3;
+            if (n->type == TB_TAILCALL) {
+                caller_saved_gprs &= ~(1u << RAX);
+            }
+
+            FOREACH_N(i, 0, param_count > 4 ? 4 : param_count) {
+                caller_saved_gprs &= ~(1u << abi->gprs[i]);
+            }
+
+            size_t clobber_count = tb_popcount(caller_saved_gprs);
+            size_t input_count = (n->input_count - 2) + clobber_count;
+
+            // SYSCALL
+            TileInput* ins = dst->ins = tb_arena_alloc(tmp_arena, input_count * sizeof(TileInput));
+            dst->in_count = input_count;
+
+            ins[0].src = get_interval(ctx, n->inputs[2], 0);
+            ins[0].mask = REGMASK(GPR, 1u << RAX);
+
+            assert(param_count < abi->gpr_count);
+            FOREACH_N(i, 0, param_count) {
+                ins[i].src = get_interval(ctx, n->inputs[i + 3], 0);
+                ins[i].mask = REGMASK(GPR, 1u << abi->gprs[i]);
+            }
+
+            int j = param_count;
+            FOREACH_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
+                if (caller_saved_gprs & (1u << i)) {
+                    ins[j].src = NULL;
+                    ins[j].mask = REGMASK(GPR, 1u << i);
+                    j++;
+                }
+            }
+            break;
+        }
+
         case TB_CALL:
         case TB_TAILCALL: {
             const struct ParamDesc* abi = &param_descs[ctx->abi_index];
             uint32_t caller_saved_gprs = abi->caller_saved_gprs;
             uint32_t caller_saved_xmms = ~0ull >> (64 - abi->caller_saved_xmms);
 
-            // system calls don't count, we track this for ABI
-            // and stack allocation purposes.
             int param_count = n->input_count - 3;
             if (ctx->num_regs[0] < param_count) {
                 ctx->num_regs[0] = param_count;
@@ -1006,7 +1052,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
         TB_Node* n = t->n;
         switch (n->type) {
             // epilogue
-            case TB_ROOT: {
+            case TB_RETURN: {
                 size_t pos = e->count;
                 emit_epilogue(ctx, e, ctx->stack_usage);
                 EMIT1(e, 0xC3);
@@ -1032,6 +1078,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_SPLITMEM:
             case TB_MERGEMEM:
             case TB_CALLGRAPH:
+            case TB_ROOT:
             break;
 
             case TB_INLINE_ASM: {
@@ -1438,13 +1485,12 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 inst1(e, is_signed ? IDIV : DIV, &rhs, legalize_int2(dt));
                 break;
             }
+            case TB_SYSCALL: {
+                inst0(e, SYSCALL, TB_X86_TYPE_QWORD);
+                break;
+            }
             case TB_CALL:
             case TB_TAILCALL: {
-                // we've already placed the register params in their slots, now we're missing
-                // stack params which go into [rsp + i*8] where i is the param index.
-                int stack_params = (n->inputs[2]->type == TB_SYMBOL ? 0 : 1) + param_descs[ctx->abi_index].gpr_count;
-                int param_count = n->input_count - 3;
-
                 int op = CALL;
                 if (n->type == TB_TAILCALL) {
                     op = JMP;
@@ -1534,7 +1580,13 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                             }
                         }
                     } else {
-                        inst2(e, TEST, &a, &a, legalize_int2(dt));
+                        if (br->keys[0] == 0) {
+                            inst2(e, TEST, &a, &a, legalize_int2(dt));
+                        } else {
+                            assert(fits_into_int32(br->keys[0]));
+                            Val imm = val_imm(br->keys[0]);
+                            inst2(e, CMP, &a, &imm, legalize_int2(dt));
+                        }
                         cc = NE;
                     }
 

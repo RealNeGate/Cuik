@@ -125,6 +125,7 @@ typedef struct {
     bool is_inline  : 1;
     bool is_extern  : 1;
     bool is_tls     : 1;
+    bool is_noret   : 1;
 
     // NOTE(NeGate): In all honesty, this should probably not be
     // here since it's used in cases that aren't relevant to attribs.

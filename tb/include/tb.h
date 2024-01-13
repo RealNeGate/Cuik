@@ -254,7 +254,9 @@ typedef enum TB_NodeTypeEnum {
     ////////////////////////////////
     //   there's only one ROOT per function, it's inputs are the return values, it's
     //   outputs are the initial params.
-    TB_ROOT,       // (Control, Memory, RPC, Callgraph, Data...) -> (Control, Memory, RPC, Data...)
+    TB_ROOT,       // (Callgraph, Exits...) -> (Control, Memory, RPC, Data...)
+    //   return nodes feed into ROOT, jumps through the RPC out of this stack frame.
+    TB_RETURN,     // (Control, Memory, RPC, Data...) -> ()
     //   regions are used to represent paths which have multiple entries.
     //   each input is a predecessor.
     TB_REGION,     // (Control...) -> (Control)
@@ -277,7 +279,7 @@ typedef enum TB_NodeTypeEnum {
     //   trap will not be continuable but will stop execution.
     TB_TRAP,        // (Control) -> (Control)
     //   unreachable means it won't trap or be continuable.
-    TB_UNREACHABLE, // (Control) -> ()
+    TB_UNREACHABLE, // (Control) -> (Control)
     //   all dead paths are stitched here
     TB_DEAD,        // (Control) -> (Control)
 

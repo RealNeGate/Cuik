@@ -131,8 +131,39 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
     Cuik_Attribute* attribute_list = parse_attributes(parser, s, NULL);
     SourceLoc loc = tokens_get_location(s);
 
-    // must be a declaration since it's a top level statement
     Attribs attr = { 0 };
+    for (;;) {
+        if (tokens_get(s)->type != TOKEN_KW_declspec &&
+            tokens_get(s)->type != TOKEN_KW_Pragma) {
+            break;
+        }
+
+        tokens_next(s);
+
+        SourceLoc opening_loc = tokens_get_location(s);
+        expect_char(s, '(');
+
+        if (tokens_match(s, sizeof("noreturn")-1, "noreturn")) {
+            attr.is_noret = true;
+            tokens_next(s);
+
+            expect_closing_paren(s, opening_loc);
+        } else {
+            // TODO(NeGate): Correctly parse declspec instead of
+            // ignoring them.
+            int depth = 1;
+            while (depth) {
+                if (tokens_get(s)->type == '(')
+                    depth++;
+                else if (tokens_get(s)->type == ')')
+                    depth--;
+
+                tokens_next(s);
+            }
+        }
+    }
+
+    // must be a declaration since it's a top level statement
     Cuik_QualType type = parse_declspec2(parser, s, &attr);
     if (CUIK_QUAL_TYPE_IS_NULL(type)) {
         diag_err(s, (SourceRange){ loc, tokens_get_last_location(s) }, "could not parse base type.");

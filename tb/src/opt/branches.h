@@ -370,6 +370,10 @@ static Lattice* sccp_call(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* l = tb_arena_alloc(tmp_arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._tuple = { c->proj_count } };
 
+    FOREACH_N(i, 1, c->proj_count) {
+        l->elems[i] = &BOT_IN_THE_SKY;
+    }
+
     FOR_USERS(u, n) {
         if (u->n->type == TB_PROJ) {
             int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
@@ -470,7 +474,34 @@ static Lattice* sccp_branch(TB_Passes* restrict opt, TB_Node* n) {
 static TB_Node* identity_ctrl(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     // Dead node? kill
     Lattice* ctrl = lattice_universe_get(p, n->inputs[0]);
-    return ctrl == &XCTRL_IN_THE_SKY ? dead_node(f, p) : n;
+    if (n->dt.type == TB_TUPLE && ctrl == &XCTRL_IN_THE_SKY) {
+        TB_Node* dead = dead_node(f, p);
+        while (n->users) {
+            TB_Node* use_n = n->users->n;
+            int use_i = n->users->slot;
+
+            if (use_n->type == TB_CALLGRAPH) {
+                TB_Node* last = use_n->inputs[use_n->input_count - 1];
+                set_input(f, use_n, NULL, use_n->input_count - 1);
+                if (use_i != use_n->input_count - 1) {
+                    set_input(f, use_n, last, use_i);
+                }
+                use_n->input_count--;
+            } else if (use_n->type == TB_PROJ) {
+                TB_Node* replacement = use_n->dt.type == TB_CONTROL
+                    ? dead
+                    : make_poison(f, use_n->dt);
+
+                subsume_node(f, use_n, replacement);
+            } else {
+                tb_todo();
+            }
+        }
+
+        return dead;
+    } else {
+        return ctrl == &XCTRL_IN_THE_SKY ? dead_node(f, p) : n;
+    }
 }
 
 static TB_Node* identity_safepoint(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {

@@ -537,7 +537,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             int terminator = mbb->end->time;
 
             for (User* u = end_node->users; u; u = u->next) {
-                if (cfg_is_control(u->n)) {
+                if (cfg_is_control(u->n) && !cfg_is_endpoint(u->n)) {
                     TB_Node* succ = end_node->type == TB_BRANCH ? cfg_next_bb_after_cproj(u->n) : u->n;
                     MachineBB* target = node_to_bb(ctx, succ);
                     int start_time = target->start->time;

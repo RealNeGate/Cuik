@@ -498,7 +498,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                             set_union(live_out, &node_to_bb(&ctx, succ)->live_in);
                         }
                     }
-                } else {
+                } else if (!cfg_is_endpoint(end)) {
                     // union with successor's lives
                     TB_Node* succ = cfg_next_control(end);
                     if (succ) set_union(live_out, &node_to_bb(&ctx, succ)->live_in);

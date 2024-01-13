@@ -384,7 +384,7 @@ TB_Node* make_int_node(TB_Function* f, TB_Passes* restrict p, TB_DataType dt, ui
 }
 
 TB_Node* dead_node(TB_Function* f, TB_Passes* p) {
-    TB_Node* n = tb_alloc_node(f, TB_DEAD, TB_TYPE_CONTROL, 1, 0);
+    TB_Node* n = tb_alloc_node(f, TB_DEAD, TB_TYPE_VOID, 1, 0);
     set_input(f, n, f->root_node, 0);
     lattice_universe_map(p, n, &XCTRL_IN_THE_SKY);
     return tb__gvn(f, n, 0);
@@ -409,7 +409,7 @@ static void remove_input(TB_Function* f, TB_Node* n, size_t i) {
 }
 
 void tb_pass_kill_node(TB_Function* f, TB_Node* n) {
-    // remove from CSE if we're murdering it
+    // remove from GVN if we're murdering it
     nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
 
     FOREACH_N(i, 0, n->input_count) {
@@ -627,10 +627,6 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
         case LATTICE_NULL:
         return make_int_node(p->f, p, n->dt, 0);
 
-        case LATTICE_PTR: {
-            return make_int_node(p->f, p, n->dt, 0);
-        }
-
         case LATTICE_TUPLE: {
             if (n->type != TB_BRANCH) return NULL;
 
@@ -648,13 +644,22 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
                 TB_Node* dead = dead_node(p->f, p);
                 TB_Node* ctrl = n->inputs[0];
 
+                NL_ChunkedArr projs = nl_chunked_arr_alloc(tmp_arena);
                 FOR_USERS(u, n) {
                     if (u->n->type == TB_PROJ) {
-                        int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-                        TB_Node* in = l->elems[index] == &CTRL_IN_THE_SKY ? ctrl : dead;
-                        subsume_node(p->f, u->n, ctrl);
+                        nl_chunked_arr_put(&projs, u->n);
                     }
                 }
+
+                for (NL_ArrChunk* restrict chk = projs.first; chk; chk = chk->next) {
+                    FOREACH_N(i, 0, chk->count) {
+                        TB_Node* proj = chk->elems[i];
+                        int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
+                        TB_Node* in = l->elems[index] == &CTRL_IN_THE_SKY ? ctrl : dead;
+                        subsume_node(p->f, proj, in);
+                    }
+                }
+                nl_chunked_arr_reset(&projs);
 
                 // no more projections, kill the branch
                 tb_pass_kill_node(p->f, n);
@@ -759,7 +764,7 @@ TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
     }
 
     // generate fancier type (SCCP)
-    if (n->dt.type != TB_MEMORY) {
+    {
         Lattice* new_type = sccp(p, n);
 
         // no type provided? just make a not-so-form fitting bottom type
@@ -1086,9 +1091,9 @@ void dummy_interp(TB_Passes* p) {
 void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p);
     tb_pass_split_locals(p);
-    tb_pass_peephole(p);
+    /* tb_pass_peephole(p);
     tb_pass_loop(p);
-    tb_pass_peephole(p);
+    tb_pass_peephole(p); */
 
     // tb_pass_print(p);
     // dummy_interp(p);
@@ -1274,6 +1279,7 @@ bool tb_module_ipo(TB_Module* m) {
     scc.fn_count = m->symbol_count[TB_SYMBOL_FUNCTION];
     scc.ws       = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
 
+    #if 0
     CUIK_TIMED_BLOCK("build SCC") {
         TB_ArenaSavepoint sp = tb_arena_save(scc.arena);
         scc.stk      = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
@@ -1323,8 +1329,10 @@ bool tb_module_ipo(TB_Module* m) {
             progress = true; */
         }
     }
-
     return progress;
+    #else
+    return false;
+    #endif
 }
 
 static TB_Node* inline_clone_node(TB_Function* f, TB_Node* call_site, TB_Node** clones, TB_Node* n) {

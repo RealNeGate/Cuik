@@ -13,6 +13,7 @@ typedef enum IRValType {
     RVALUE_PHI,
 
     LVALUE,
+    LVALUE_SYM,
     LVALUE_BITS,
     LVALUE_EXPR,
     LVALUE_LABEL,
@@ -24,7 +25,7 @@ typedef struct IRVal {
 
     union {
         TB_Node* reg;
-        TB_Symbol* sym;
+        Stmt* sym;
         Subexpr* e;
         struct {
             TB_Node* reg;

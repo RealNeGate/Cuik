@@ -145,7 +145,8 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
         if (num->value < 0xFFFF) {
-            printf("%"PRId64, num->value);
+            int bits = n->dt.type == TB_PTR ? 64 : n->dt.data;
+            printf("%"PRId64, tb__sxt(num->value, bits, 64));
         } else {
             printf("%#0"PRIx64, num->value);
         }
@@ -246,6 +247,8 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     printf("  goto ");
                     print_branch_edge(ctx, succ[0], false);
                 } else if (br->succ_count == 2) {
+                    int bits = n->inputs[1]->dt.type == TB_PTR ? 64 : n->inputs[1]->dt.data;
+
                     printf("  if ");
                     FOREACH_N(i, 1, n->input_count) {
                         if (i != 1) printf(", ");
@@ -254,7 +257,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     if (br->keys[0] == 0) {
                         printf(" then ");
                     } else {
-                        printf(" != %"PRId64" then ", br->keys[0]);
+                        printf(" != %"PRId64" then ", tb__sxt(br->keys[0], bits, 64));
                     }
                     print_branch_edge(ctx, succ[0], false);
                     printf(" else ");
@@ -285,7 +288,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                 break;
             }
 
-            case TB_ROOT: {
+            case TB_RETURN: {
                 printf("  end ");
                 FOREACH_N(i, 1, n->input_count) {
                     if (i != 1) printf(", ");

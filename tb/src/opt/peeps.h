@@ -25,8 +25,6 @@ typedef struct {
 static const NodeVtable vtables[TB_NODE_TYPE_MAX] = {
     // type                 ideal              identity            sccp
     [TB_INTEGER_CONST]  = { NULL,              NULL,               sccp_int         },
-    // root
-    [TB_ROOT]           = { ideal_root,        NULL,               NULL             },
     // memory
     [TB_LOAD]           = { ideal_load,        identity_load,      NULL             },
     [TB_STORE]          = { ideal_store,       NULL,               sccp_mem         },
