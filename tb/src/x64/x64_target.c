@@ -1163,13 +1163,14 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
 
             case TB_INTEGER_CONST: {
                 uint64_t x = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
-                TB_X86_DataType dt = legalize_int2(n->dt);
+                uint32_t hi = x >> 32ull;
 
+                TB_X86_DataType dt = legalize_int2(n->dt);
                 Val dst = op_at(ctx, t->outs[0]);
                 if (x == 0) {
                     // xor reg, reg
                     inst2(e, XOR, &dst, &dst, dt);
-                } else if (!fits_into_int32(x)) {
+                } else if (hi == 0) {
                     Val src = val_abs(x);
                     inst2(e, MOVABS, &dst, &src, dt);
                 } else {
@@ -1230,15 +1231,20 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
 
                 int op = 0;
+                TB_X86_DataType dt = legalize_int2(n->dt);
                 switch (bits_in_type) {
                     case 8:  op = is_signed ? MOVSXB : MOVZXB; break;
                     case 16: op = is_signed ? MOVSXB : MOVZXW; break;
-                    case 32: op = is_signed ? MOVSXD : MOV;    break;
-                    case 64: op = MOV;                         break;
+                    case 32: if (is_signed) {
+                        op = MOVSXD;
+                    } else {
+                        op = MOV, dt = TB_X86_TYPE_DWORD;
+                    }
+                    break;
+                    case 64: op = MOV; break;
                 }
 
                 Val dst = op_at(ctx, t->outs[0]);
-                TB_X86_DataType dt = legalize_int2(n->dt);
                 if (is_signed && dt <= TB_X86_TYPE_DWORD) {
                     dt = TB_X86_TYPE_DWORD;
                 }

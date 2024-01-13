@@ -741,7 +741,10 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                     unsigned int original = (unsigned int)e->int_lit.lit;
                     unsigned long long expected = (unsigned long long)e->int_lit.lit;
 
-                    if (original != expected) {
+                    long long signed_form = expected;
+                    if (signed_form > 0 && signed_form != (int) e->int_lit.lit) {
+                        return cuik_uncanonical_type(&target_unsigned_ints[CUIK_BUILTIN_INT]);
+                    } else if (original != expected) {
                         // diag_err(&tu->tokens, e->loc, "Could not represent integer literal as int. (%llu or %llx)", expected, expected);
                         return cuik_uncanonical_type(&target_signed_ints[CUIK_BUILTIN_LLONG]);
                     }
