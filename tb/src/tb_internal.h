@@ -69,13 +69,6 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #include <threads.h>
 #include <stdatomic.h>
 
-// Per-thread
-#ifndef TB_TEMPORARY_STORAGE_SIZE
-#define TB_TEMPORARY_STORAGE_SIZE (1 << 20)
-#endif
-
-#define CODE_REGION_BUFFER_SIZE (32 * 1024 * 1024)
-
 typedef struct TB_Emitter {
     size_t capacity, count;
     uint8_t* data;

@@ -79,8 +79,6 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     return info;
 }
 
-static thread_local uint8_t* tb_thread_storage;
-
 // we don't modify these strings
 char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
     if (len < 0) len = src ? strlen(src) : 0;
@@ -511,10 +509,6 @@ TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_
 // block per thread that can run TB.
 //
 void tb_free_thread_resources(void) {
-    if (tb_thread_storage != NULL) {
-        tb_platform_vfree(tb_thread_storage, TB_TEMPORARY_STORAGE_SIZE);
-        tb_thread_storage = NULL;
-    }
 }
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos) {

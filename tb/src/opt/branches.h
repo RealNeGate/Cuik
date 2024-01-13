@@ -454,7 +454,7 @@ static Lattice* sccp_branch(TB_Passes* restrict opt, TB_Node* n) {
     }
 
     // construct tuple type
-    match:
+    match:;
     size_t size = sizeof(Lattice) + br->succ_count*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(tmp_arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._tuple = { br->succ_count } };

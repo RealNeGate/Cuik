@@ -226,6 +226,26 @@ static bool addr_split_heuristic(int arr_uses, int stride, int scale) {
     return cost*arr_uses > 10;
 }
 
+// not TLS
+static bool simple_symbol(TB_Node* n) {
+    if (n->type != TB_SYMBOL) return false;
+
+    TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+    if (sym->tag != TB_SYMBOL_GLOBAL) return true;
+
+    TB_Global* g = (TB_Global*) sym;
+    return (sym->module->sections[g->parent].flags & TB_MODULE_SECTION_TLS) == 0;
+}
+
+static bool is_tls_symbol(TB_Symbol* sym) {
+    if (sym->tag == TB_SYMBOL_GLOBAL) {
+        TB_Global* g = (TB_Global*) sym;
+        return sym->module->sections[g->parent].flags & TB_MODULE_SECTION_TLS;
+    } else {
+        return false;
+    }
+}
+
 // x86 can do a lot of fancy address computation crap in one operand so we'll
 // track that tiling here.
 //
@@ -278,7 +298,7 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* og, TB_Node* n,
     }
 
     int in_cap = extra_cnt + (index?1:0) + has_tmp;
-    if (!(base->type == TB_LOCAL || (base->type == TB_SYMBOL && index == NULL))) {
+    if (!(base->type == TB_LOCAL || (simple_symbol(base) && index == NULL))) {
         in_cap += 1;
     }
 
@@ -290,7 +310,7 @@ static TileInput* isel_addr(Ctx* restrict ctx, Tile* t, TB_Node* og, TB_Node* n,
     if (base->type == TB_LOCAL) {
         try_init_stack_slot(ctx, base);
         t->flags |= TILE_FOLDED_BASE;
-    } else if (base->type == TB_SYMBOL && index == NULL) {
+    } else if (simple_symbol(base) && index == NULL) {
         t->flags |= TILE_FOLDED_BASE;
     } else {
         t->ins[in_count].src = get_interval(ctx, base, 0);
@@ -351,10 +371,19 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         break;
 
         case TB_SYMBOL: {
-            // mov t0, dword    [_tls_index]
-            // mov t1, qword gs:[58h]
-            // mov t1, qword [t1+t0*8]
-            // lea addr, [t1+relocation]
+            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+            if (is_tls_symbol(sym)) {
+                // on windows we'll need one temporary, linux needs none
+                if (ctx->abi_index == 0) {
+                    dst->ins = tb_arena_alloc(tmp_arena, 1 * sizeof(TileInput));
+                    dst->in_count = 1;
+                    dst->ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
+                    dst->ins[0].src = NULL;
+                } else {
+                    dst->ins = NULL;
+                    dst->in_count = 0;
+                }
+            }
             break;
         }
 
@@ -1258,16 +1287,22 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 }
 
                 if (op == 0) {
-                    // unconventional sizes do:
-                    //   SHL dst, x
-                    //   SAR dst, x (or SHR if zero ext)
-                    //
-                    // where x is 'reg_width - val_width'
-                    int dst_bits = dt == TB_X86_TYPE_QWORD ? 64 : 32;
-                    int ext = is_signed ? SAR : SHR;
-                    Val imm = val_imm(dst_bits - bits_in_type);
-                    inst2(e, SHL, &dst, &imm, dt);
-                    inst2(e, ext, &dst, &imm, dt);
+                    if (!is_signed && bits_in_type < 32) {
+                        // chop bits with a mask
+                        Val imm = val_imm(UINT64_MAX >> (64 - bits_in_type));
+                        inst2(e, AND, &dst, &imm, dt);
+                    } else {
+                        // unconventional sizes do:
+                        //   SHL dst, x
+                        //   SAR dst, x (or SHR if zero ext)
+                        //
+                        // where x is 'reg_width - val_width'
+                        int dst_bits = dt == TB_X86_TYPE_QWORD ? 64 : 32;
+                        int ext = is_signed ? SAR : SHR;
+                        Val imm = val_imm(dst_bits - bits_in_type);
+                        inst2(e, SHL, &dst, &imm, dt);
+                        inst2(e, ext, &dst, &imm, dt);
+                    }
                 }
                 break;
             }
@@ -1345,10 +1380,38 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             }
             case TB_SYMBOL: {
                 TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
-
                 Val dst = op_at(ctx, t->outs[0]);
-                Val src = val_global(sym, 0);
-                inst2(e, LEA, &dst, &src, TB_X86_TYPE_QWORD);
+
+                assert(sym);
+                if (is_tls_symbol(sym)) {
+                    if (ctx->abi_index == 0) {
+                        Val tmp = op_at(ctx, t->ins[0].src);
+                        Val tls_index = val_global(ctx->module->tls_index_extern, 0);
+
+                        // mov tmp, dword [_tls_index]
+                        inst2(e, MOV, &tmp, &tls_index, TB_X86_TYPE_DWORD);
+                        // mov dst, qword gs:[58h]
+                        EMIT1(e, 0x65);
+                        EMIT1(e, tmp.reg >= 8 ? 0x4C : 0x48);
+                        EMIT1(e, 0x8B);
+                        EMIT1(e, mod_rx_rm(MOD_INDIRECT, tmp.reg, RSP));
+                        EMIT1(e, mod_rx_rm(SCALE_X1, RSP, RBP));
+                        EMIT4(e, 0x58);
+                        // mov dst, qword [dst+tmp*8]
+                        Val mem = val_base_index_disp(dst.reg, tmp.reg, SCALE_X8, 0);
+                        INST2(MOV, &dst, &mem, TB_X86_TYPE_QWORD);
+                        // add dst, relocation
+                        EMIT1(e, rex(true, 0, dst.reg, 0)), EMIT1(e, 0x81);
+                        EMIT1(e, mod_rx_rm(MOD_DIRECT, 0, dst.reg));
+                        EMIT4(e, 0);
+                        tb_emit_symbol_patch(e->output, sym, e->count - 4);
+                    } else {
+                        tb_todo();
+                    }
+                } else {
+                    Val src = val_global(sym, 0);
+                    inst2(e, LEA, &dst, &src, TB_X86_TYPE_QWORD);
+                }
                 break;
             }
             case TB_NOT: {
@@ -1843,7 +1906,22 @@ static void disassemble_operands(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Ins
                 if (i > 0) E(", ");
 
                 imm = false;
-                E("%#llx", inst->imm);
+                if (d->patch && d->patch->pos == pos + inst->length - 4) {
+                    const TB_Symbol* target = d->patch->target;
+
+                    if (target->name[0] == 0) {
+                        E("offset sym%p", target);
+                    } else {
+                        E("offset %s", target->name);
+                    }
+
+                    if (inst->imm) {
+                        E(" + %#llx", inst->imm);
+                    }
+                    d->patch = d->patch->next;
+                } else {
+                    E("%#llx", inst->imm);
+                }
             } else {
                 break;
             }

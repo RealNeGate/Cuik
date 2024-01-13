@@ -52,7 +52,7 @@ ptrdiff_t tb_print_disassembly_inst(TB_Arch arch, size_t length, const void* ptr
                         if (i > 0) printf(", ");
 
                         imm = false;
-                        printf("%#llx", inst.imm);
+                        printf("%#"PRIx64, inst.imm);
                     } else {
                         break;
                     }

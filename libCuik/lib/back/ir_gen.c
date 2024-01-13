@@ -1186,6 +1186,10 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             bool is_volatile = CUIK_QUAL_TYPE_HAS(GET_TYPE(), CUIK_QUAL_VOLATILE);
 
             IRVal address = GET_ARG(0);
+            if (address.value_type == LVALUE_SYM) {
+                address.value_type = LVALUE;
+                address.reg = tb_inst_get_symbol_address(func, address.sym->backing.s);
+            }
             assert(address.value_type == LVALUE && "unsupported increment/decrement value");
 
             TB_DataType dt = ctype_to_tbtype(type);
@@ -2036,6 +2040,10 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
     } else if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) && s->backing.s) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
         Subexpr* initial = get_root_subexpr(s->decl.initial);
+
+        if (s->decl.attrs.is_tls) {
+            tb_module_set_tls_index(tu->ir_mod, sizeof("_tls_index")-1, "_tls_index");
+        }
 
         TB_ModuleSectionHandle section = get_variable_storage(tu->ir_mod, &s->decl.attrs, s->decl.type.raw & CUIK_QUAL_CONST);
         int max_tb_objects;

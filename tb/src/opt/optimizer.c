@@ -1417,7 +1417,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
         inline_clone_node(f, call_site, clones, ws.items[i]);
     }
 
-    __debugbreak();
+    tb_todo();
     tb_arena_restore(arena, sp);
 }
 

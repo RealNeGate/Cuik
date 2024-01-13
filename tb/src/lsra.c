@@ -551,7 +551,8 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         LiveInterval* end = split_interval_at(interval, start_time);
 
                         if (start != end) {
-                            __debugbreak();
+                            tb_todo();
+
                             /* if (start->spill > 0) {
                                 assert(end->spill == start->spill && "TODO: both can't be spills yet");
                                 insert_split_move(&ra, start_time, start, end);
