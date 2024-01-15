@@ -15,6 +15,11 @@ enum {
     REG_CLASS_COUNT,
 };
 
+typedef struct {
+    TB_Node* base;
+    int offset;
+} AuxAddress;
+
 typedef enum {
     ZR,                             // zero reg.
     AT,                             // reserved for assembler.
@@ -79,11 +84,16 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->sched = greedy_scheduler;
     ctx->regalloc = tb__lsra;
     ctx->abi_index = arch == TB_ARCH_MIPS64;
+    ctx->stack_slot_size = arch == TB_ARCH_MIPS64 ? 8 : 4;
 
     uint32_t not_tmps = (1 << ZR) | (1 << AT) | (1 << SP) | (1 << K0) | (1 << K1) | (1 << GP);
 
     ctx->num_regs[REG_CLASS_GPR] = 32;
     ctx->normie_mask[REG_CLASS_GPR] = REGMASK(GPR, UINT32_MAX & ~not_tmps);
+
+    uint32_t volatile_gprs = ((UINT32_MAX >> 7) << 1) & ~(0xFF << S0);
+    volatile_gprs |= 1u << RA;
+    ctx->callee_saved[REG_CLASS_GPR] = ~volatile_gprs;
 }
 
 static int bits_in_type(Ctx* restrict ctx, TB_DataType dt) {
@@ -120,6 +130,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     switch (n->type) {
         // 0-input normie ops
         case TB_REGION:
+        case TB_ROOT:
         case TB_TRAP:
         case TB_CALLGRAPH:
         case TB_SPLITMEM:
@@ -127,6 +138,10 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_INTEGER_CONST:
+        break;
+
+        case TB_LOCAL:
+        try_init_stack_slot(ctx, n);
         break;
 
         case TB_PHI:
@@ -138,26 +153,38 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         return;
 
         case TB_PROJ: {
-            int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-            if (n->inputs[0]->type == TB_ROOT) {
-                if (i == 2) {
-                    // RPC is the RA reg
-                    OUT1(REGMASK(GPR, 1u << RA));
-                } else if (i >= 3) {
-                    OUT1(REGMASK(GPR, 1u << ((i - 3) + A0)));
+            if (dst->out_count) {
+                RegMask rm = { 0 };
+                int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+                if (n->inputs[0]->type == TB_ROOT) {
+                    if (i == 2) {
+                        // RPC is the RA reg
+                        rm = REGMASK(GPR, 1u << RA);
+                    } else if (i >= 3) {
+                        rm = REGMASK(GPR, 1u << ((i - 3) + A0));
+                    }
+                } else if (n->inputs[0]->type == TB_CALL) {
+                    if (n->dt.type == TB_FLOAT) {
+                        tb_todo();
+                    } else if (i >= 2) {
+                        rm = REGMASK(GPR, 1 << (V0+i));
+                    }
+                } else if (n->inputs[0]->type == TB_BRANCH) {
+                } else if (n->inputs[0]->type == TB_SPLITMEM) {
+                } else {
+                    tb_todo();
                 }
-            } else if (n->inputs[0]->type == TB_BRANCH) {
-            } else if (n->inputs[0]->type == TB_SPLITMEM) {
-            } else {
-                tb_todo();
+
+                OUT1(rm);
             }
             return;
         }
 
-        case TB_ROOT: {
-            int rets = (n->input_count - 4);
+        case TB_RETURN: {
+            int rets = (n->input_count - 3);
             bool pair = false;
-            if (rets > 0 && is_regpair(ctx, n->inputs[4]->dt)) {
+            if (rets > 0 && is_regpair(ctx, n->inputs[3]->dt)) {
                 assert(rets == 1 && "At most 1 doubleword return :(");
                 pair = true;
                 rets = 2;
@@ -170,19 +197,19 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
             if (pair) {
                 dst->ins[1].mask = REGMASK(GPR, 1u << V0);
-                dst->ins[1].src = get_interval(ctx, n->inputs[4], 0);
+                dst->ins[1].src = get_interval(ctx, n->inputs[3], 0);
                 dst->ins[2].mask = REGMASK(GPR, 1u << V1);
-                dst->ins[2].src = get_interval(ctx, n->inputs[4], 1);
+                dst->ins[2].src = get_interval(ctx, n->inputs[3], 1);
             } else {
                 assert(rets <= 2 && "At most 2 return values :(");
                 if (rets >= 1) {
                     dst->ins[1].mask = REGMASK(GPR, 1u << V0);
-                    dst->ins[1].src = get_interval(ctx, n->inputs[4], 0);
+                    dst->ins[1].src = get_interval(ctx, n->inputs[3], 0);
                 }
 
                 if (rets >= 2) {
                     dst->ins[2].mask = REGMASK(GPR, 1u << V1);
-                    dst->ins[2].src = get_interval(ctx, n->inputs[5], 0);
+                    dst->ins[2].src = get_interval(ctx, n->inputs[4], 0);
                 }
             }
             break;
@@ -251,11 +278,22 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 }
             }
 
-            dst->ins = tb_arena_alloc(tmp_arena, 2 * sizeof(TileInput));
-            dst->in_count = 2;
-            dst->ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
-            dst->ins[0].src = get_interval(ctx, base, 0);
-            dst->aux = (void*) (intptr_t) offset;
+            if (base->type == TB_LOCAL) {
+                try_init_stack_slot(ctx, base);
+
+                dst->ins = NULL;
+                dst->in_count = 0;
+            } else {
+                dst->ins = tb_arena_alloc(tmp_arena, 1 * sizeof(TileInput));
+                dst->in_count = 1;
+                dst->ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
+                dst->ins[0].src = get_interval(ctx, base, 0);
+            }
+
+            AuxAddress* aux = tb_arena_alloc(tmp_arena, sizeof(AuxAddress));
+            aux->base = base;
+            aux->offset = offset;
+            dst->aux = aux;
             break;
         }
 
@@ -271,14 +309,85 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 }
             }
 
-            dst->ins = tb_arena_alloc(tmp_arena, 2 * sizeof(TileInput));
-            dst->in_count = 2;
+            if (base->type == TB_LOCAL) {
+                try_init_stack_slot(ctx, base);
+
+                dst->ins = tb_arena_alloc(tmp_arena, 1 * sizeof(TileInput));
+                dst->in_count = 1;
+            } else {
+                dst->ins = tb_arena_alloc(tmp_arena, 2 * sizeof(TileInput));
+                dst->in_count = 2;
+                dst->ins[1].mask = ctx->normie_mask[REG_CLASS_GPR];
+                dst->ins[1].src = get_interval(ctx, base, 0);
+            }
             dst->ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
-            dst->ins[1].mask = ctx->normie_mask[REG_CLASS_GPR];
-            dst->ins[0].src = get_interval(ctx, base, 0);
-            dst->ins[1].src = get_interval(ctx, n->inputs[3], 0);
-            dst->aux = (void*) (intptr_t) offset;
+            dst->ins[0].src = get_interval(ctx, n->inputs[3], 0);
+
+            AuxAddress* aux = tb_arena_alloc(tmp_arena, sizeof(AuxAddress));
+            aux->base = base;
+            aux->offset = offset;
+            dst->aux = aux;
             break;
+        }
+
+        case TB_CALL: {
+            uint32_t volatile_gprs = ((UINT32_MAX >> 7) << 1) & ~(0xFF << S0);
+            volatile_gprs |= 1u << RA;
+
+            int param_count = n->input_count - 3;
+            if (ctx->num_regs[0] < param_count) {
+                ctx->num_regs[0] = param_count;
+            }
+
+            FOREACH_N(i, 0, param_count > 4 ? 4 : param_count) {
+                volatile_gprs &= ~(1u << (A0 + i));
+            }
+
+            size_t clobber_count = tb_popcount(volatile_gprs);
+            size_t input_start = n->inputs[2]->type == TB_SYMBOL ? 3 : 2;
+            size_t input_count = (n->input_count - input_start) + clobber_count;
+
+            TileInput* ins;
+            if (n->inputs[2]->type == TB_SYMBOL) {
+                // CALL symbol
+                ins = dst->ins = tb_arena_alloc(tmp_arena, input_count * sizeof(TileInput));
+                dst->in_count = input_count;
+            } else {
+                // CALL r/m
+                ins = dst->ins = tb_arena_alloc(tmp_arena, input_count * sizeof(TileInput));
+                dst->in_count = input_count;
+
+                ins[0].src = get_interval(ctx, n->inputs[2], 0);
+                ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
+                ins += 1;
+            }
+
+            FOREACH_N(i, 0, param_count) {
+                ins[i].src = get_interval(ctx, n->inputs[i + 3], 0);
+
+                if (i < 4) {
+                    if (TB_IS_FLOAT_TYPE(n->inputs[i + 3]->dt)) {
+                        tb_todo();
+                    } else {
+                        ins[i].mask = REGMASK(GPR, 1u << (A0 + i));
+                    }
+                } else {
+                    // stack slots go into [RSP + 8i]
+                    ins[i].mask = REGMASK(STK, i);
+                }
+            }
+
+            int j = param_count;
+            FOREACH_N(i, 0, ctx->num_regs[1]) {
+                if (volatile_gprs & (1u << i)) {
+                    ins[j].src = NULL;
+                    ins[j].mask = REGMASK(GPR, 1u << i);
+                    j++;
+                }
+            }
+
+            assert(j == input_count - (n->inputs[2]->type != TB_SYMBOL));
+            return;
         }
 
         case TB_BRANCH: {
@@ -312,28 +421,31 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     }
 }
 
-static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
-    // TODO(NeGate): optionally preserve the frame pointer
-    // TODO(NeGate): stack allocation
-    ctx->prologue_length = ctx->emit.count;
-}
-
 enum {
-    #define R(name, type, op, funct) name,
-    #define I(name, type, op)        name,
+    #define R(name, op, funct) name,
+    #define I(name, op)        name,
+    #define J(name, op)        name,
     #include "mips_insts.inc"
 
     INST_MAX,
 };
 
+#define __(t, op, ...) t ## type(e, op, __VA_ARGS__)
+#define COMMENT(...) (e->has_comments ? tb_emit_comment(e, tmp_arena, __VA_ARGS__) : (void)0)
+
 static uint32_t insts[INST_MAX] = {
-    #define R(name, type, op, funct) [name] = ((op<<26) | (funct)),
-    #define I(name, type, op)        [name] = (op<<26),
+    #define R(name, op, funct) [name] = ((op<<26) | (funct)),
+    #define I(name, op)        [name] = (op<<26),
+    #define J(name, op)        [name] = (op<<26),
     #include "mips_insts.inc"
 };
 
 static void nop(TB_CGEmitter* e) {
     EMIT4(e, 0);
+}
+
+static void jtype(TB_CGEmitter* e, int op, uint32_t imm) {
+    EMIT4(e, insts[op] | (imm & 0x3FFFFFF));
 }
 
 static void rtype(TB_CGEmitter* e, int op, uint32_t rd, uint32_t rs, uint32_t rt, uint32_t shamt) {
@@ -396,13 +508,57 @@ static void loadimm(TB_CGEmitter* e, int dst, uint32_t imm) {
     itype(e, ori, dst, curr, imm & 0xFFFF);
 }
 
+static int stk_offset(Ctx* ctx, int reg) {
+    int pos = reg * ctx->stack_slot_size;
+    if (reg >= ctx->num_regs[0]) {
+        return (ctx->stack_usage - pos) + ctx->stack_slot_size;
+    } else {
+        return pos;
+    }
+}
+
+static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
+    // TODO(NeGate): optionally preserve the frame pointer
+    TB_FunctionPrototype* proto = ctx->f->prototype;
+
+    size_t stack_usage = (ctx->num_regs[0] + proto->param_count) * ctx->stack_slot_size;
+    ctx->stack_usage = stack_usage;
+
+    if (stack_usage > 0) {
+        __(i, addi, SP, SP, -stack_usage);
+    }
+
+    FOREACH_N(i, 0, dyn_array_length(ctx->callee_spills)) {
+        int pos = stk_offset(ctx, ctx->callee_spills[i].stk);
+        int rc = ctx->callee_spills[i].class;
+        assert(rc == REG_CLASS_GPR);
+
+        GPR src = ctx->callee_spills[i].reg;
+        __(i, sw, src, SP, stk_offset(ctx, pos));
+    }
+
+    ctx->prologue_length = ctx->emit.count;
+}
+
 static GPR gpr_at(LiveInterval* l) { assert(l->class == REG_CLASS_GPR); return l->assigned; }
 static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
     if (t->tag == TILE_SPILL_MOVE) {
-        GPR dst = gpr_at(t->outs[0]);
-        GPR src = gpr_at(t->ins[0].src);
-        if (dst != src) {
-            rtype(e, or, dst, src, 0, 0);
+        if (t->outs[0]->class == REG_CLASS_STK && t->ins[0].src->class == REG_CLASS_GPR) {
+            COMMENT("spill v%d -> v%d", t->outs[0]->id, t->ins[0].src->id);
+            GPR src = gpr_at(t->ins[0].src);
+            int dst = t->outs[0]->assigned;
+            itype(e, sw, src, SP, stk_offset(ctx, dst));
+        } else if (t->outs[0]->class == REG_CLASS_GPR && t->ins[0].src->class == REG_CLASS_STK) {
+            COMMENT("reload v%d -> v%d", t->outs[0]->id, t->ins[0].src->id);
+            GPR dst = gpr_at(t->outs[0]);
+            int src = t->ins[0].src->assigned;
+            itype(e, lw, dst, SP, stk_offset(ctx, src));
+        } else {
+            GPR dst = gpr_at(t->outs[0]);
+            GPR src = gpr_at(t->ins[0].src);
+            if (dst != src) {
+                rtype(e, or, dst, src, 0, 0);
+            }
         }
     } else if (t->tag == TILE_GOTO) {
         MachineBB* mbb = node_to_bb(ctx, t->succ);
@@ -417,6 +573,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_PROJ:
             case TB_REGION:
             case TB_PHI:
+            case TB_ROOT:
             case TB_POISON:
             case TB_UNREACHABLE:
             case TB_SPLITMEM:
@@ -424,9 +581,14 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_CALLGRAPH:
             break;
 
-            case TB_ROOT: {
-                rtype(e, jr, 0, RA, 0, 0);
-                nop(e); // TODO(NeGate): delay slots
+            case TB_RETURN: {
+                // return can run in parallel to the stack free
+                __(r, jr, 0, RA, 0, 0);
+                if (ctx->stack_usage > 0) {
+                    __(i, addi, SP, SP, ctx->stack_usage);
+                } else {
+                    nop(e);
+                }
                 break;
             }
 
@@ -438,19 +600,55 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 break;
             }
 
+            case TB_CALL: {
+                if (n->inputs[2]->type == TB_SYMBOL) {
+                    TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeSymbol)->sym;
+
+                    __(j, jal, 0);
+                    tb_emit_symbol_patch(e->output, sym, e->count - 4);
+                } else {
+                    tb_todo();
+                }
+                nop(e); // TODO(NeGate): delay slots
+                break;
+            }
+
             case TB_LOAD: {
-                intptr_t offset = (intptr_t) t->aux;
+                AuxAddress* aux = t->aux;
                 GPR dst  = gpr_at(t->outs[0]);
-                GPR base = gpr_at(t->ins[0].src);
+                int32_t offset = aux->offset;
+
+                GPR base;
+                if (aux->base->type == TB_LOCAL) {
+                    offset += get_stack_slot(ctx, aux->base);
+                    base = SP;
+                } else {
+                    base = gpr_at(t->ins[0].src);
+                }
                 itype(e, lw, dst, base, offset);
                 break;
             }
 
             case TB_STORE: {
-                intptr_t offset = (intptr_t) t->aux;
-                GPR base = gpr_at(t->ins[0].src);
-                GPR src = gpr_at(t->ins[1].src);
+                AuxAddress* aux = t->aux;
+                GPR src = gpr_at(t->ins[0].src);
+                int32_t offset = aux->offset;
+
+                GPR base;
+                if (aux->base->type == TB_LOCAL) {
+                    offset += get_stack_slot(ctx, aux->base);
+                    base = SP;
+                } else {
+                    base = gpr_at(t->ins[1].src);
+                }
                 itype(e, sw, src, base, offset);
+                break;
+            }
+
+            case TB_LOCAL: {
+                GPR dst = gpr_at(t->outs[0]);
+                int pos = get_stack_slot(ctx, n);
+                itype(e, addi, dst, SP, pos);
                 break;
             }
 
@@ -479,7 +677,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 } else {
                     tb_todo();
                 }
-                itype(e, add, dst, base, offset);
+                rtype(e, add, dst, base, offset, 0);
                 break;
             }
 
@@ -571,12 +769,14 @@ static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
 
 typedef struct {
     const char* name;
+    int op;
     enum { ITYPE, RTYPE, JTYPE } family;
 } Op;
 
 static Op decode(uint32_t inst) {
-    #define R(name, type, op, funct) if ((inst >> 26) == op && (inst & 0b11111) == funct) { return (Op){ #name, RTYPE }; }
-    #define I(name, type, op)        if ((inst >> 26) == op) { return (Op){ #name, ITYPE }; }
+    #define R(name, op, funct) if ((inst >> 26) == op && (inst & 0b111111) == funct) { return (Op){ #name, name, RTYPE }; }
+    #define I(name, op)        if ((inst >> 26) == op) { return (Op){ #name, name, ITYPE }; }
+    #define J(name, op)        if ((inst >> 26) == op) { return (Op){ #name, name, JTYPE }; }
     #include "mips_insts.inc"
 
     return (Op){ "error", RTYPE };
@@ -598,28 +798,85 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         memcpy(&inst, &e->data[pos], sizeof(uint32_t));
         pos += 4;
 
-        // figure out what instruction type it is (everything else is trivial from there)
-        Op op = decode(inst);
-        E("  %s ", op.name);
-        switch (op.family) {
-            case RTYPE: {
-                int a = (inst >> 11) & 0b11111;
-                int b = (inst >> 16) & 0b11111;
-                int c = (inst >> 21) & 0b11111;
-                E("$%s, $%s, $%s", gpr_names[a], gpr_names[b], gpr_names[c]);
-                break;
-            }
+        // special case
+        uint64_t line_start = e->total_asm;
+        if (inst == 0) {
+            E("  nop");
+        } else if ((inst >> 26) == 0 && (inst & 0b111111) == 0b100101 && ((inst >> 16) & 0b11111) == 0) {
+            int a = (inst >> 11) & 0b11111;
+            int c = (inst >> 21) & 0b11111;
+            E("  move $%s, $%s", gpr_names[a], gpr_names[c]);
+        } else if ((inst >> 26) == 0b001101 && ((inst >> 21) & 0b11111) == 0) {
+            int a = (inst >> 16) & 0b11111;
+            E("  lui $%s, %d", gpr_names[a], inst & 0xFFFF);
+        } else {
+            // figure out what instruction type it is (everything else is trivial from there)
+            Op op = decode(inst);
+            E("  %s ", op.name);
+            switch (op.family) {
+                case RTYPE: {
+                    int a = (inst >> 11) & 0b11111;
+                    int b = (inst >> 16) & 0b11111;
+                    int c = (inst >> 21) & 0b11111;
+                    E("$%s, $%s, $%s", gpr_names[a], gpr_names[b], gpr_names[c]);
+                    break;
+                }
 
-            case ITYPE: {
-                int b = (inst >> 16) & 0b11111;
-                int c = (inst >> 21) & 0b11111;
-                E("$%s, $%s(%d)", gpr_names[b], gpr_names[c], inst & 0xFFFF);
-                break;
-            }
+                case ITYPE: {
+                    int b = (inst >> 16) & 0b11111;
+                    int c = (inst >> 21) & 0b11111;
+                    if (op.op >= lb && op.op <= sw) {
+                        E("$%s, $%s(%d)", gpr_names[b], gpr_names[c], tb__sxt(inst & 0xFFFF, 16, 64));
+                    } else {
+                        E("$%s, $%s, %d", gpr_names[b], gpr_names[c], tb__sxt(inst & 0xFFFF, 16, 64));
+                    }
+                    break;
+                }
 
-            default: tb_todo();
+                case JTYPE: {
+                    int32_t disp = (inst & 0x3FFFFFF) * 2;
+                    if (d->patch && d->patch->pos == pos - 4) {
+                        const TB_Symbol* target = d->patch->target;
+                        d->patch = d->patch->next;
+
+                        if (target->name[0] == 0) {
+                            E("sym%p", target);
+                        } else {
+                            E("%s", target->name);
+                        }
+
+                        if (disp) {
+                            E(" + %"PRIu64, disp);
+                        }
+                    } else {
+                        E("%"PRIu64, disp);
+                    }
+                    break;
+                }
+
+                default: tb_todo();
+            }
         }
-        E("\n");
+
+        int offset = e->total_asm - line_start;
+        if (d->comment && d->comment->pos == pos) {
+            TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
+            E("  // ");
+            bool out_of_line = false;
+            do {
+                if (out_of_line) {
+                    // tack on a newline
+                    E("%*s  // ", offset, "");
+                }
+
+                E("%.*s\n", d->comment->line_len, d->comment->line);
+                d->comment = d->comment->next;
+                out_of_line = true;
+            } while  (d->comment && d->comment->pos == pos);
+            TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
+        } else {
+            E("\n");
+        }
     }
 }
 #undef E

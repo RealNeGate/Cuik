@@ -586,7 +586,8 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     }
 
     ctx->stack_usage += (ra.spills - initial_spills) * 8;
-    ctx->callee_spills = ra.callee_spills;
+    ctx->initial_spills = initial_spills;
+    ctx->callee_spills  = ra.callee_spills;
 }
 
 static void compute_free_pos(LSRA* restrict ra, LiveInterval* interval, int class, uint64_t mask) {

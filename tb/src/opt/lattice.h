@@ -177,7 +177,7 @@ static Lattice* lattice_tuple_from_node(TB_Passes* p, TB_Node* n) {
 // known X ^ unknown => unknown (commutative btw)
 #define TRIFECTA_MEET(a, b) ((a).trifecta == (b).trifecta ? (a).trifecta : LATTICE_UNKNOWN)
 
-#define MASK_UPTO(pos) (~UINT64_C(0) >> (64 - pos))
+#define MASK_UPTO(pos) (UINT64_MAX >> (64 - pos))
 #define BEXTR(src,pos) (((src) >> (pos)) & 1)
 uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
     uint64_t sign_bit = BEXTR(src, src_bits-1);

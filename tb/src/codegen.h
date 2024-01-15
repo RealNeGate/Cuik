@@ -232,9 +232,12 @@ struct Ctx {
     LiveInterval* fixed[MAX_REG_CLASSES];
 
     // Regalloc
+    int initial_spills;
+    int stack_slot_size;
     int interval_count;
     int stack_header;
     int stack_usage;
+    int call_usage;
     int num_fixed;
     int num_classes;
     int num_regs[MAX_REG_CLASSES];

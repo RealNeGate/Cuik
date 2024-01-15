@@ -13,7 +13,7 @@ TB_API TB_Trace tb_inst_get_trace(TB_Function* f) { return f->trace; }
 TB_Node* tb_inst_get_control(TB_Function* f) { return f->trace.bot_ctrl; }
 TB_API TB_Node* tb_inst_root_node(TB_Function* f) { return f->root_node; }
 
-TB_Node* transfer_ctrl(TB_Function* f, TB_Node* n) {
+static TB_Node* transfer_ctrl(TB_Function* f, TB_Node* n) {
     TB_Node* prev = f->trace.bot_ctrl;
     f->trace.bot_ctrl = n;
     if (f->line_loc) {

@@ -5,6 +5,7 @@ void* tb_jit_stack_create(void);
 #include "hash.c"
 #include "abi.c"
 #include "tb_builder.c"
+#include "new_builder.c"
 #include "debug_builder.c"
 #include "ir_printer.c"
 #include "exporter.c"

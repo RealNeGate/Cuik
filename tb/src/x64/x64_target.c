@@ -489,10 +489,10 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         }
 
         case TB_PROJ: {
-            int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-
             if (dst->out_count) {
                 RegMask rm = { 0 };
+                int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
                 if (n->inputs[0]->type == TB_ROOT) {
                     // function params are ABI crap
                     const struct ParamDesc* params = &param_descs[ctx->abi_index];
@@ -744,6 +744,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             int param_count = n->input_count - 3;
             if (ctx->num_regs[0] < param_count) {
                 ctx->num_regs[0] = param_count;
+                ctx->call_usage = param_count;
             }
 
             if (n->type == TB_TAILCALL) {
@@ -893,20 +894,19 @@ static Val parse_memory_op(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t, TB_Node*
 }
 
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
-    size_t caller_usage = 0;
-    if (ctx->abi_index == 0) {
-        caller_usage = ctx->num_regs[0];
-        if (caller_usage > 0 && caller_usage < 4) {
-            caller_usage = 4;
-        }
+    size_t call_usage = ctx->call_usage;
+    if (ctx->abi_index == 0 && call_usage > 0 && call_usage < 4) {
+        call_usage = 4;
     }
-    ctx->stack_usage += caller_usage * 8;
+
+    ctx->stack_usage -= ctx->initial_spills * 8;
+    ctx->stack_usage += call_usage * 8;
 
     TB_FunctionPrototype* proto = ctx->f->prototype;
     size_t stack_usage = 0;
     if (ctx->stack_usage > ctx->stack_header + (proto->param_count * 8)) {
         // Align stack usage to 16bytes + 8 to accommodate for the RIP being pushed by CALL
-        stack_usage = align_up(ctx->stack_usage, 16) + 8;
+        stack_usage = align_up(ctx->stack_usage + ctx->stack_header, 16) - ctx->stack_header;
     }
     ctx->stack_usage = stack_usage;
 
@@ -1846,99 +1846,80 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
 }
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
-static void disassemble_operands(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* inst, size_t pos, int start) {
-    bool mem = true, imm = true;
-    for (int i = start; i < 4; i++) {
-        if (inst->regs[i] == -1) {
-            if (mem && (inst->flags & TB_X86_INSTR_USE_MEMOP)) {
-                if (i > 0) E(", ");
+// #define E(fmt, ...) printf(fmt, ## __VA_ARGS__)
+static void print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos) {
+    uint8_t base = inst->regs & 0xFF;
+    uint8_t index = (inst->regs >> 8) & 0xFF;
 
-                mem = false;
-
-                if (inst->flags & TB_X86_INSTR_USE_RIPMEM) {
-                    bool is_label = inst->opcode == 0xE8 || inst->opcode == 0xE9
-                        || (inst->opcode >= 0x70   && inst->opcode <= 0x7F)
-                        || (inst->opcode >= 0x0F80 && inst->opcode <= 0x0F8F);
-
-                    if (!is_label) E("[");
-
-                    if (d->patch && d->patch->pos == pos + inst->length - 4) {
-                        const TB_Symbol* target = d->patch->target;
-
-                        if (target->name[0] == 0) {
-                            E("sym%p", target);
-                        } else {
-                            E("%s", target->name);
-                        }
-                        d->patch = d->patch->next;
-                    } else {
-                        uint32_t target = pos + inst->length + inst->disp;
-                        int bb = tb_emit_get_label(e, target);
-                        uint32_t landed = e->labels[bb] & 0x7FFFFFFF;
-
-                        if (landed != target) {
-                            E(".bb%d + %d", bb, (int)target - (int)landed);
-                        } else {
-                            E(".bb%d", bb);
-                        }
-                    }
-
-                    if (!is_label) E("]");
-                } else {
-                    E("%s [", tb_x86_type_name(inst->data_type));
-                    if (inst->base != 255) {
-                        E("%s", tb_x86_reg_name(inst->base, TB_X86_TYPE_QWORD));
-                    }
-
-                    if (inst->index != 255) {
-                        E(" + %s*%d", tb_x86_reg_name(inst->index, TB_X86_TYPE_QWORD), 1 << inst->scale);
-                    }
-
-                    if (inst->disp > 0) {
-                        E(" + %#x", inst->disp);
-                    } else if (inst->disp < 0) {
-                        E(" - %#x", -inst->disp);
-                    }
-
-                    E("]");
-                }
-            } else if (imm && (inst->flags & TB_X86_INSTR_IMMEDIATE)) {
-                if (i > 0) E(", ");
-
-                imm = false;
-                if (d->patch && d->patch->pos == pos + inst->length - 4) {
-                    const TB_Symbol* target = d->patch->target;
-
-                    if (target->name[0] == 0) {
-                        E("offset sym%p", target);
-                    } else {
-                        E("offset %s", target->name);
-                    }
-
-                    if (inst->imm) {
-                        E(" + %#llx", inst->imm);
-                    }
-                    d->patch = d->patch->next;
-                } else {
-                    E("%#llx", inst->imm);
-                }
-            } else {
-                break;
-            }
+    if (inst->flags & TB_X86_INSTR_INDIRECT) {
+        if ((inst->regs & 0xFFFF) == 0xFFFF) {
+            E("[rip");
         } else {
-            if (i > 0) {
-                E(", ");
-
-                // special case for certain ops with two data types
-                if (inst->flags & TB_X86_INSTR_TWO_DATA_TYPES) {
-                    E("%s", tb_x86_reg_name(inst->regs[i], inst->data_type2));
-                    continue;
-                }
+            E("%s [", tb_x86_type_name(inst->dt));
+            if (base != 0xFF) {
+                E("%s", tb_x86_reg_name(base, TB_X86_TYPE_QWORD));
             }
 
-            E("%s", tb_x86_reg_name(inst->regs[i], inst->data_type));
+            if (index != 0xFF) {
+                E(" + %s*%d", tb_x86_reg_name(index, TB_X86_TYPE_QWORD), 1 << inst->scale);
+            }
+        }
+
+        /*if (d->patch && d->patch->pos == pos + inst->length - 4) {
+            const TB_Symbol* target = d->patch->target;
+
+            if (target->name[0] == 0) {
+                E("sym%p", target);
+            } else {
+                E("%s", target->name);
+            }
+            d->patch = d->patch->next;
+        } else {
+            uint32_t target = pos + inst->length + inst->disp;
+            int bb = tb_emit_get_label(e, target);
+            uint32_t landed = e->labels[bb] & 0x7FFFFFFF;
+
+            if (landed != target) {
+                E(".bb%d + %d", bb, (int)target - (int)landed);
+            } else {
+                E(".bb%d", bb);
+            }
+        }*/
+
+        if (inst->disp > 0) {
+            E(" + %x", inst->disp);
+        } else if (inst->disp < 0) {
+            E(" - %x", -inst->disp);
+        }
+        E("]");
+    } else if (base != 0xFF) {
+        E("%s", tb_x86_reg_name(base, inst->dt));
+    }
+}
+
+static void disassemble_operands(TB_X86_Inst* inst, size_t pos, int start) {
+    #if 0
+    if (d->patch && d->patch->pos == pos + inst->length - 4) {
+        const TB_Symbol* target = d->patch->target;
+
+        if (target->name[0] == 0) {
+            E("sym%p", target);
+        } else {
+            E("%s", target->name);
+        }
+        d->patch = d->patch->next;
+    } else {
+        uint32_t target = pos + inst->length + inst->disp;
+        int bb = tb_emit_get_label(e, target);
+        uint32_t landed = e->labels[bb] & 0x7FFFFFFF;
+
+        if (landed != target) {
+            E(".bb%d + %d", bb, (int)target - (int)landed);
+        } else {
+            E(".bb%d", bb);
         }
     }
+    #endif
 }
 
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end) {
@@ -1969,12 +1950,50 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
             E("lock ");
         }
         E("%s", mnemonic);
-        if (inst.data_type >= TB_X86_TYPE_SSE_SS && inst.data_type <= TB_X86_TYPE_SSE_PD) {
+        if (inst.dt >= TB_X86_TYPE_SSE_SS && inst.dt <= TB_X86_TYPE_SSE_PD) {
             static const char* strs[] = { "ss", "sd", "ps", "pd" };
-            E(strs[inst.data_type - TB_X86_TYPE_SSE_SS]);
+            E("%s", strs[inst.dt - TB_X86_TYPE_SSE_SS]);
         }
         E(" ");
-        disassemble_operands(e, d, &inst, pos, 0);
+
+        uint8_t rx = (inst.regs >> 16) & 0xFF;
+        if (inst.flags & TB_X86_INSTR_DIRECTION) {
+            print_memory_operand(e, d, &inst, pos);
+            if (rx != 255) {
+                E(", ");
+                E("%s", tb_x86_reg_name(rx, inst.dt2));
+            }
+        } else {
+            if (rx != 255) {
+                E("%s", tb_x86_reg_name(rx, inst.dt2));
+                E(", ");
+            }
+            print_memory_operand(e, d, &inst, pos);
+        }
+
+        if (inst.flags & TB_X86_INSTR_IMMEDIATE) {
+            if (inst.regs != 0xFFFFFF) {
+                E(", ");
+            }
+
+            if (d->patch && d->patch->pos == pos + inst.length - 4) {
+                const TB_Symbol* target = d->patch->target;
+
+                if (target->name[0] == 0) {
+                    E("sym%p", target);
+                } else {
+                    E("%s", target->name);
+                }
+
+                if (inst.imm > 0) {
+                    E(" + %#"PRIx64, inst.imm);
+                } else if (inst.imm < 0) {
+                    E(" - %#"PRIx64, -inst.imm);
+                }
+            } else {
+                E("%#"PRIx64, inst.imm);
+            }
+        }
 
         int offset = e->total_asm - line_start;
         if (d->comment && d->comment->pos == pos) {

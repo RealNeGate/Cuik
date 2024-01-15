@@ -1300,6 +1300,69 @@ TB_API void tb_inst_if2(TB_Function* f, TB_Node* cond, TB_Node* projs[2]);
 TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 
 ////////////////////////////////
+// Cooler IR building
+////////////////////////////////
+typedef struct TB_GraphBuilder TB_GraphBuilder;
+enum { TB_GRAPH_BUILDER_PARAMS = 1 };
+
+// arena isn't for the function, it's for the builder
+TB_API TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena);
+TB_API void tb_builder_exit(TB_GraphBuilder* g);
+
+// ( -- a )
+TB_API void tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x);
+TB_API void tb_builder_sint(TB_GraphBuilder* g, TB_DataType dt, int64_t x);
+TB_API void tb_builder_float32(TB_GraphBuilder* g, float imm);
+TB_API void tb_builder_float64(TB_GraphBuilder* g, double imm);
+TB_API void tb_builder_string(TB_GraphBuilder* g, ptrdiff_t len, const char* str);
+
+// ( a b -- c )
+//
+// works with type: AND, OR, XOR, ADD, SUB, MUL, SHL, SHR, SAR, ROL, ROR, UDIV, SDIV, UMOD, SMOD.
+// note that arithmetic behavior is irrelevant for some of the operations (but 0 is always a good default).
+TB_API void tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_ArithmeticBehavior ab);
+
+// ( a b -- c )
+TB_API void tb_builder_cmp(TB_GraphBuilder* g, int type, TB_DataType dt);
+
+// pointer arithmetic
+//   ( a b -- c )   =>   a + b*stride
+TB_API void tb_builder_array(TB_GraphBuilder* g, int64_t stride);
+//   ( a -- c )     =>   a + offset
+TB_API void tb_builder_member(TB_GraphBuilder* g, int64_t offset);
+
+// memory
+//   ( addr -- val )
+TB_API void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_CharUnits align);
+//   ( addr val -- )
+TB_API void tb_builder_store(TB_GraphBuilder* g, int mem_var, TB_CharUnits align);
+
+// variables (these are just named stack slots)
+//   ( a -- )
+//
+//   we take the top item in the stack and treat it as a
+//   variable we'll might later fiddle with, the control
+//   flow primitives will diff changes to insert phis.
+TB_API int tb_builder_var(TB_GraphBuilder* g);
+//   ( -- a )
+TB_API void tb_builder_get_var(TB_GraphBuilder* g, int id);
+//   ( a -- )
+TB_API void tb_builder_assign(TB_GraphBuilder* g, int id);
+
+// control flow primitives
+//   ( a -- )
+TB_API void tb_builder_if(TB_GraphBuilder* g);
+//   ( -- )
+TB_API void tb_builder_else(TB_GraphBuilder* g);
+//   ( -- )
+TB_API void tb_builder_endif(TB_GraphBuilder* g);
+//   ( ... -- )
+//
+//   technically TB has multiple returns, in practice it's like 2 regs before
+//   ABI runs out of shit.
+TB_API void tb_builder_ret(TB_GraphBuilder* g, int count);
+
+////////////////////////////////
 // Passes
 ////////////////////////////////
 // Function analysis, optimizations, and codegen are all part of this
