@@ -1847,7 +1847,7 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
 // #define E(fmt, ...) printf(fmt, ## __VA_ARGS__)
-static void print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos) {
+static void our_print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos) {
     uint8_t base = inst->regs & 0xFF;
     uint8_t index = (inst->regs >> 8) & 0xFF;
 
@@ -1887,9 +1887,9 @@ static void print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Ins
         }*/
 
         if (inst->disp > 0) {
-            E(" + %x", inst->disp);
+            E(" + %#x", inst->disp);
         } else if (inst->disp < 0) {
-            E(" - %x", -inst->disp);
+            E(" - %#x", -inst->disp);
         }
         E("]");
     } else if (base != 0xFF) {
@@ -1958,17 +1958,17 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
 
         uint8_t rx = (inst.regs >> 16) & 0xFF;
         if (inst.flags & TB_X86_INSTR_DIRECTION) {
-            print_memory_operand(e, d, &inst, pos);
             if (rx != 255) {
-                E(", ");
                 E("%s", tb_x86_reg_name(rx, inst.dt2));
+                E(", ");
             }
+            our_print_memory_operand(e, d, &inst, pos);
         } else {
+            our_print_memory_operand(e, d, &inst, pos);
             if (rx != 255) {
-                E("%s", tb_x86_reg_name(rx, inst.dt2));
                 E(", ");
+                E("%s", tb_x86_reg_name(rx, inst.dt2));
             }
-            print_memory_operand(e, d, &inst, pos);
         }
 
         if (inst.flags & TB_X86_INSTR_IMMEDIATE) {

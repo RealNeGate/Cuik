@@ -190,7 +190,6 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
 
 static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     print_ref_to_node(ctx, bb_start, true);
-    printf(":");
 
     if (ctx->opt->error_n == bb_start) {
         printf("\x1b[31m  <-- ERROR\x1b[0m");
@@ -279,6 +278,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     }
                     printf("  }");
                 }
+                printf(" // v%u", n->gvn);
                 tb_arena_restore(tmp_arena, sp);
                 break;
             }

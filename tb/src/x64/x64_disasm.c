@@ -21,14 +21,15 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 
     // legacy prefixes
     uint8_t b;
+    uint32_t flags = 0;
     while (true) {
         b = data[current++];
         switch (b) {
-            case 0xF0: inst->flags |= TB_X86_INSTR_LOCK;  break;
+            case 0xF0: flags |= TB_X86_INSTR_LOCK;        break;
+            case 0xF3: flags |= TB_X86_INSTR_REP;         break;
+            case 0xF2: flags |= TB_X86_INSTR_REPNE;       break;
             case 0x66: inst->dt = TB_X86_TYPE_WORD;       break;
             case 0x67: inst->dt = TB_X86_TYPE_DWORD;      break;
-            case 0xF3: inst->flags |= TB_X86_INSTR_REP;   break;
-            case 0xF2: inst->flags |= TB_X86_INSTR_REPNE; break;
             case 0x2E: inst->segment = TB_X86_SEGMENT_CS; break;
             case 0x36: inst->segment = TB_X86_SEGMENT_SS; break;
             case 0x3E: inst->segment = TB_X86_SEGMENT_DS; break;
@@ -65,25 +66,36 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 
     enum {
         // fancy x86 operand
-        OP_MODRM = 1,
+        OP_MODRM  = 1,
         // r/m operand will appear on the left side by default, this will flip that
-        OP_DIR   = 2,
+        OP_DIR    = 2,
         // immediate with a size is based on the operand size
-        OP_IMM   = 4,
+        OP_IMM    = 4,
         // signed 8bit immediate
-        OP_IMM8  = 8,
+        OP_IMM8   = 8,
         // operand size is forcibly 8bit
-        OP_8BIT  = 16,
+        OP_8BIT   = 16,
+        // operand size is forcibly 64bit
+        OP_64BIT  = 32,
         // the bottom 3bits of the opcode are the base reg
-        OP_PLUSR = 32,
+        OP_PLUSR  = 64,
         // rx represents an extended piece of the opcode
-        OP_FAKERX = 64,
+        OP_FAKERX = 128,
         // no operands
-        OP_0ARY = 128,
+        OP_0ARY   = 256,
+        // 2 datatypes on the instruction
+        OP_2DT    = 512,
+        // rcx is the rx field
+        OP_RCX    = 1024,
+        // rax is the rm field
+        OP_RAX    = 2048,
+        // vector op
+        OP_SSE    = 4096,
     };
 
-    #define NORMIE_BINOP(op) [op+0] = OP_MODRM | OP_8BIT, [op+1] = OP_MODRM, [op+2] = OP_MODRM | OP_DIR | OP_8BIT, [op+3] = OP_MODRM | OP_DIR
-    #define _0F(op) [0x100+op]
+    #define NORMIE_BINOP(op) [op+0] = OP_MODRM | OP_8BIT, [op+1] = OP_MODRM, [op+2] = OP_MODRM | OP_DIR | OP_8BIT, [op+3] = OP_MODRM | OP_DIR, [op+4] = OP_RAX | OP_IMM8, [op+5] = OP_RAX | OP_IMM
+    #define _0F(op)   [0x100+op]
+    #define _0F2(a,b) [0x100+a ... 0x100+b]
     static const uint32_t op_map[1024] = {
         NORMIE_BINOP(0x00), // add
         NORMIE_BINOP(0x08), // or
@@ -91,53 +103,128 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         NORMIE_BINOP(0x28), // sub
         NORMIE_BINOP(0x30), // xor
         NORMIE_BINOP(0x38), // cmp
-        NORMIE_BINOP(0x88), // mov
 
+        // mov
+        [0x88] = OP_MODRM | OP_8BIT,
+        [0x89] = OP_MODRM,
+        [0x8A] = OP_MODRM | OP_DIR | OP_8BIT,
+        [0x8B] = OP_MODRM | OP_DIR,
+
+        // push r+
+        // pop  r+
+        [0x50 ... 0x5F] = OP_PLUSR | OP_64BIT,
+        // movsxd reg, r/m
+        [0x63]          = OP_MODRM | OP_DIR | OP_2DT,
+        // jcc rel8
+        [0x70 ... 0x7F] = OP_IMM8,
         // OP r/m8, imm8
-        [0x80] = OP_MODRM | OP_IMM | OP_8BIT | OP_FAKERX,
+        [0x80]          = OP_MODRM | OP_IMM | OP_8BIT | OP_FAKERX,
         // OP r/m, imm32
-        [0x81] = OP_MODRM | OP_IMM | OP_FAKERX,
+        [0x81]          = OP_MODRM | OP_IMM | OP_FAKERX,
         // OP r/m, imm8
-        [0x83] = OP_MODRM | OP_IMM8 | OP_FAKERX,
+        [0x83]          = OP_MODRM | OP_IMM8 | OP_FAKERX,
+        // test r/m, reg
+        [0x84]          = OP_MODRM | OP_8BIT,
+        [0x85]          = OP_MODRM,
         // lea reg, r/m
         [0x8D]          = OP_MODRM | OP_DIR,
         // nop
         [0x90]          = OP_0ARY,
+        // cbw/cwde/cdqe
+        [0x98]          = OP_0ARY,
         // cwd/cdq/cqo
         [0x99]          = OP_0ARY,
         // mov r+   imm
         [0xB0 ... 0xB7] = OP_PLUSR | OP_IMM | OP_8BIT,
         [0xB8 ... 0xBF] = OP_PLUSR | OP_IMM,
+        // sar r/m, imm8
+        // shl r/m, imm8
+        // shr r/m, imm8
+        [0xC0]          = OP_MODRM | OP_IMM8 | OP_FAKERX | OP_8BIT,
+        [0xC1]          = OP_MODRM | OP_IMM8 | OP_FAKERX,
         // ret
         [0xC3]          = OP_0ARY,
         // mov r/m  imm
-        [0xC6]          = OP_MODRM | OP_IMM | OP_8BIT,
-        [0xC7]          = OP_MODRM | OP_IMM,
+        [0xC6]          = OP_MODRM | OP_IMM | OP_8BIT | OP_FAKERX,
+        [0xC7]          = OP_MODRM | OP_IMM | OP_FAKERX,
         // int3
         [0xCC]          = OP_0ARY,
+        // sar r/m, CL
+        // shl r/m, CL
+        // shr r/m, CL
+        // rol r/m, CL
+        // ror r/m, CL
+        [0xD2]          = OP_MODRM | OP_RCX | OP_FAKERX | OP_8BIT,
+        [0xD3]          = OP_MODRM | OP_RCX | OP_FAKERX,
         // call rel32
         [0xE8]          = OP_IMM,
         // jmp rel32
         [0xE9]          = OP_IMM,
         // jmp rel8
         [0xEB]          = OP_IMM8,
+        // idiv r/m8
+        [0xF6] = OP_MODRM | OP_FAKERX | OP_8BIT,
+        [0xF7] = OP_MODRM | OP_FAKERX,
+        // dec/call/jmp r/m
+        [0xFE] = OP_MODRM | OP_FAKERX,
+        [0xFF] = OP_MODRM | OP_FAKERX,
+
+        ////////////////////////////////
+        // ESCAPE OPS
+        ////////////////////////////////
+        // SSE: movu
+        _0F(0x10)        = OP_MODRM | OP_SSE | OP_DIR,
+        _0F(0x11)        = OP_MODRM | OP_SSE,
         // nop r/m
-        _0F(0x1F)       = OP_MODRM,
+        _0F(0x1F)        = OP_MODRM,
+        // cmovcc reg, r/m
+        _0F2(0x40, 0x4F) = OP_MODRM | OP_DIR,
+        // SSE: add, mul, sub, min, div, max
+        _0F2(0x51, 0x5F) = OP_MODRM | OP_DIR | OP_SSE,
+        // movzx reg, r/m
+        _0F(0xB6)        = OP_MODRM | OP_2DT | OP_DIR,
+        _0F(0xB7)        = OP_MODRM | OP_2DT | OP_DIR,
+        // movsx reg, r/m
+        _0F(0xBE)        = OP_MODRM | OP_2DT | OP_DIR,
+        _0F(0xBF)        = OP_MODRM | OP_2DT | OP_DIR,
+        // jcc rel32
+        _0F2(0x80, 0x8F) = OP_IMM,
+        // setcc r/m
+        _0F2(0x90, 0x9F) = OP_MODRM | OP_FAKERX,
     };
     #undef NORMIE_BINOP
     #undef _0F
 
     uint32_t props = op_map[op];
-    assert(props);
+    if (props == 0) {
+        return false;
+    }
 
     uint32_t regs = 0;
     int32_t  disp = 0;
-    uint32_t flags = 0;
     uint8_t  scale = 0;
 
     // in the "default" "type" "system", REX.W is 64bit, certain ops
     // will mark they're 8bit and most will just be 32bit (with 16bit on ADDR16)
-    if (flags & OP_8BIT) {
+    if (flags & OP_SSE) {
+        // ss     REP    OPCODE
+        // sd     REPNE  OPCODE
+        // ps     __     OPCODE
+        // pd     DATA16 OPCODE
+        if (inst->flags & TB_X86_INSTR_REPNE) {
+            inst->dt = TB_X86_TYPE_SSE_SD;
+        } else if (inst->flags & TB_X86_INSTR_REP) {
+            inst->dt = TB_X86_TYPE_SSE_SS;
+        } else if (inst->dt == TB_X86_TYPE_WORD) {
+            inst->dt = TB_X86_TYPE_SSE_PD;
+        } else {
+            inst->dt = TB_X86_TYPE_SSE_PS;
+        }
+
+        flags &= ~(TB_X86_INSTR_REP | TB_X86_INSTR_REPNE);
+    } else if (props & OP_64BIT) {
+        inst->dt = TB_X86_TYPE_QWORD;
+    } else if (props & OP_8BIT) {
         inst->dt = TB_X86_TYPE_BYTE;
     } else {
         if (rex & 8) inst->dt = TB_X86_TYPE_QWORD;
@@ -148,9 +235,16 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         UNPACK_233(mod, rx, rm, modrm);
 
         if (props & OP_FAKERX) {
-            regs |= 0xFF0000; // no rx since it's reserved
+            if (op == 0xF6) {
+                props |= OP_IMM8;
+            } else if (op == 0xF7) {
+                props |= OP_IMM;
+            }
 
+            regs |= 0xFF0000; // no rx since it's reserved
             op |= rx << 12;
+        } else if (props & OP_RCX) {
+            regs |= RCX << 16;
         } else {
             // unpack rx
             regs |= ((rex&4 ? 8 : 0) | rx) << 16;
@@ -181,18 +275,24 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
                     regs |= 0xFFFF;
                 } else {
                     // base-only
+                    regs |= 0xFF00;
                     regs |= (rex&1 ? 8 : 0) | rm;
                 }
             }
 
             // unpack displacement
             if (mod == MOD_INDIRECT_DISP8) {
-                inst->disp = data[current++];
+                inst->disp = (int8_t) data[current++];
             } else if (mod == MOD_INDIRECT_DISP32 || (regs & 0xFFFF) == 0xFFFF) {
                 memcpy(&inst->disp, &data[current], sizeof(disp));
                 current += 4;
+            } else {
+                inst->disp = 0;
             }
         }
+    } else if (props & OP_RAX) {
+        regs |= 0xFFFF00;
+        regs |= RAX << 0;
     } else if (props & OP_PLUSR) {
         regs |= 0xFFFF00;
         regs |= (rex&1 ? 8 : 0) | (op & 0x7);
@@ -455,7 +555,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         } else if (inst->flags & TB_X86_INSTR_REP) {
             inst->dt = TB_X86_TYPE_SSE_SS;
         } else if (addr16) {
-            inst->dt = TB_X86_TYPE_SSE_SS;
+            inst->dt = TB_X86_TYPE_SSE_PD;
         } else {
             inst->dt = TB_X86_TYPE_SSE_PS;
         }
@@ -615,16 +715,23 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 #endif
 
 const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
-    // cwd/cdq/cqo
     if (inst->opcode == 0x99) {
+        // cwd/cdq/cqo
         if (inst->dt == TB_X86_TYPE_WORD)  return "cwd";
         if (inst->dt == TB_X86_TYPE_DWORD) return "cdq";
         if (inst->dt == TB_X86_TYPE_QWORD) return "cqo";
+        return "??";
+    } else if (inst->opcode == 0x98) {
+        // cbw/cwde/cdqe
+        if (inst->dt == TB_X86_TYPE_WORD)  return "cbw";
+        if (inst->dt == TB_X86_TYPE_DWORD) return "cwde";
+        if (inst->dt == TB_X86_TYPE_QWORD) return "cdqe";
         return "??";
     }
 
     #define _0F(op)      0x100+op
     #define _0Fx(op, rx) 0x100+op+(rx<<12)
+    #define _Rx(op, rx)  op+(rx<<12)
     #define NORMIE_BINOP(op) case 0x80 + (op<<12): case 0x81 + (op<<12): case 0x83 + (op<<12)
     switch (inst->opcode) {
         case _0F(0x0B): return "ud2";
@@ -636,28 +743,28 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case _0Fx(0x18, 2): return "prefetch1";
         case _0Fx(0x18, 3): return "prefetch2";
 
-        case 0x00 ... 0x03: NORMIE_BINOP(0): return "add";
-        case 0x08 ... 0x0B: NORMIE_BINOP(1): return "or";
-        case 0x20 ... 0x23: NORMIE_BINOP(4): return "and";
-        case 0x28 ... 0x2B: NORMIE_BINOP(5): return "sub";
+        case 0x00 ... 0x05: NORMIE_BINOP(0): return "add";
+        case 0x08 ... 0x0D: NORMIE_BINOP(1): return "or";
+        case 0x20 ... 0x25: NORMIE_BINOP(4): return "and";
+        case 0x28 ... 0x2D: NORMIE_BINOP(5): return "sub";
         case 0x30 ... 0x33: NORMIE_BINOP(6): return "xor";
-        case 0x38 ... 0x3B: NORMIE_BINOP(7): return "cmp";
-        case 0x88 ... 0x8B: case 0xC60: case 0xC70: return "mov";
+        case 0x38 ... 0x3D: NORMIE_BINOP(7): return "cmp";
+        case 0x88 ... 0x8B: case 0x00C6: case 0x00C7: return "mov";
 
         case 0xA4: case 0xA5: return "movs";
         case 0xAA: case 0xAB: return "stos";
         case 0xAE: case 0xAF: return "scas";
 
-        case 0xC00: case 0xC10: case 0xD20: case 0xD30: return "rol";
-        case 0xC01: case 0xC11: case 0xD21: case 0xD31: return "ror";
-        case 0xC04: case 0xC14: case 0xD24: case 0xD34: return "shl";
-        case 0xC05: case 0xC15: case 0xD25: case 0xD35: return "shr";
-        case 0xC07: case 0xC17: case 0xD27: case 0xD37: return "sar";
+        case 0x00C0: case 0x00C1: case 0x00D2: case 0x00D3: return "rol";
+        case 0x10C0: case 0x10C1: case 0x10D2: case 0x10D3: return "ror";
+        case 0x40C0: case 0x40C1: case 0x40D2: case 0x40D3: return "shl";
+        case 0x50C0: case 0x50C1: case 0x50D2: case 0x50D3: return "shr";
+        case 0x70C0: case 0x70C1: case 0x70D2: case 0x70D3: return "sar";
 
-        case 0xF60: case 0xF70: return "test";
-        case 0xF62: case 0xF72: return "not";
-        case 0xF66: case 0xF76: return "div";
-        case 0xF67: case 0xF77: return "idiv";
+        case 0x00F6: case 0x00F7: return "test";
+        case 0x20F6: case 0x20F7: return "not";
+        case 0x60F6: case 0x60F7: return "div";
+        case 0x70F6: case 0x70F7: return "idiv";
 
         case 0x84: case 0x85: return "test";
 
@@ -689,11 +796,11 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x50: return "push";
         case 0x58: return "pop";
 
-        case 0xFF0: return "inc";
-        case 0xFF1: return "dec";
+        case 0x00FF: return "inc";
+        case 0x10FF: return "dec";
 
-        case 0xE8: case 0xFF2: case 0xFF3: return "call";
-        case 0xEB: case 0xE9: case 0xFF4: case 0xFF5: return "jmp";
+        case 0xE8: case 0x20FF: case 0x30FF: return "call";
+        case 0xEB: case 0xE9: case 0x40FF: case 0x50FF: return "jmp";
 
         case _0F(0x1F): return "nop";
         case 0x68: return "push";
@@ -796,3 +903,83 @@ const char* tb_x86_type_name(TB_X86_DataType dt) {
         default: return "??";
     }
 }
+
+static const char* x86_fmts[] = {
+    " + %d",
+    " - %d",
+    "%"PRId64,
+
+    // displacement
+    // " + %#x",
+    // " - %#x",
+    // immediates
+    // "%#"PRIx64,
+};
+
+static void print_memory_operand(FILE* fp, TB_X86_Inst* restrict inst) {
+    uint8_t base = inst->regs & 0xFF;
+    uint8_t index = (inst->regs >> 8) & 0xFF;
+
+    if (inst->flags & TB_X86_INSTR_INDIRECT) {
+        if ((inst->regs & 0xFFFF) == 0xFFFF) {
+            fprintf(fp, "[rip");
+        } else {
+            fprintf(fp, "%s [", tb_x86_type_name(inst->dt));
+            if (base != 0xFF) {
+                fprintf(fp, "%s", tb_x86_reg_name(base, TB_X86_TYPE_QWORD));
+            }
+
+            if (index != 0xFF) {
+                fprintf(fp, " + %s*%d", tb_x86_reg_name(index, TB_X86_TYPE_QWORD), 1 << inst->scale);
+            }
+        }
+
+        if (inst->disp > 0) {
+            fprintf(fp, x86_fmts[0], inst->disp);
+        } else if (inst->disp < 0) {
+            fprintf(fp, x86_fmts[1], -inst->disp);
+        }
+        fprintf(fp, "]");
+    } else if (base != 0xFF) {
+        fprintf(fp, "%s", tb_x86_reg_name(base, inst->dt));
+    }
+}
+
+void tb_x86_print_inst(FILE* fp, TB_X86_Inst* inst) {
+    if (fp == NULL) { fp = stdout; }
+
+    const char* mnemonic = tb_x86_mnemonic(inst);
+    if (inst->dt >= TB_X86_TYPE_SSE_SS && inst->dt <= TB_X86_TYPE_SSE_PD) {
+        static const char* strs[] = { "ss", "sd", "ps", "pd" };
+        fprintf(fp, "%s", mnemonic);
+        fprintf(fp, "%-6s", strs[inst->dt - TB_X86_TYPE_SSE_SS]);
+    } else {
+        fprintf(fp, "%-8s", mnemonic);
+    }
+
+    uint8_t rx = (inst->regs >> 16) & 0xFF;
+    if (inst->flags & TB_X86_INSTR_DIRECTION) {
+        if (rx != 255) {
+            fprintf(fp, "%s", tb_x86_reg_name(rx, inst->dt));
+            fprintf(fp, ", ");
+        }
+        print_memory_operand(fp, inst);
+    } else {
+        print_memory_operand(fp, inst);
+        if (rx != 255) {
+            fprintf(fp, ", ");
+            fprintf(fp, "%s", tb_x86_reg_name(rx, inst->dt));
+        }
+    }
+
+    if (inst->flags & TB_X86_INSTR_IMMEDIATE) {
+        if (inst->regs != 0xFFFFFF) {
+            fprintf(fp, ", ");
+        }
+
+        fprintf(fp, x86_fmts[2], inst->imm);
+    }
+
+    fprintf(fp, "\n");
+}
+
