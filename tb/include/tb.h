@@ -1303,11 +1303,15 @@ TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 // Cooler IR building
 ////////////////////////////////
 typedef struct TB_GraphBuilder TB_GraphBuilder;
-enum { TB_GRAPH_BUILDER_PARAMS = 1 };
+enum { TB_GRAPH_BUILDER_PARAMS = 0 };
 
 // arena isn't for the function, it's for the builder
 TB_API TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena);
 TB_API void tb_builder_exit(TB_GraphBuilder* g);
+
+// sometimes you wanna make a scope and have some shit in there... use this
+TB_API int tb_builder_save(TB_GraphBuilder* g);
+TB_API void tb_builder_restore(TB_GraphBuilder* g, int v);
 
 // ( -- a )
 TB_API void tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x);
@@ -1337,17 +1341,22 @@ TB_API void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_D
 //   ( addr val -- )
 TB_API void tb_builder_store(TB_GraphBuilder* g, int mem_var, TB_CharUnits align);
 
+// locals (variables but as stack vars)
+TB_API TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align);
+TB_API void tb_builder_push(TB_GraphBuilder* g, TB_Node* n);
+TB_API TB_Node* tb_builder_pop(TB_GraphBuilder* g);
+
 // variables (these are just named stack slots)
 //   ( a -- )
 //
 //   we take the top item in the stack and treat it as a
 //   variable we'll might later fiddle with, the control
 //   flow primitives will diff changes to insert phis.
-TB_API int tb_builder_var(TB_GraphBuilder* g);
+TB_API int tb_builder_decl(TB_GraphBuilder* g);
 //   ( -- a )
 TB_API void tb_builder_get_var(TB_GraphBuilder* g, int id);
 //   ( a -- )
-TB_API void tb_builder_assign(TB_GraphBuilder* g, int id);
+TB_API void tb_builder_set_var(TB_GraphBuilder* g, int id);
 
 // control flow primitives
 //   ( a -- )

@@ -58,7 +58,7 @@ int run_objdump(int argc, const char** argv) {
         printf("\n");
     }
 
-    #if 0
+    #if 1
     printf("\n  note:\n");
     printf("    r - read   w - write   x - execute\n");
     printf("    c - code   u - uninit  i - init\n");
@@ -98,6 +98,9 @@ int run_objdump(int argc, const char** argv) {
     // print disassembly
     for (size_t i = 0; i < parser.section_count; i++) {
         TB_ObjectSection* s = &sections[i];
+        if ((s->flags & TB_COFF_SECTION_CODE) == 0) {
+            continue;
+        }
 
         printf("DUMP: %.*s\n", (int) s->name.length, s->name.data);
 
@@ -110,17 +113,29 @@ int run_objdump(int argc, const char** argv) {
         const uint8_t* data = s->raw_data.data;
         if (s->flags & TB_COFF_SECTION_CODE) {
             // dump assembly
-            size_t pos = 0, count = 0;
+            uint64_t pos = 0;
             while (pos < s->raw_data.length) {
-                printf("  %08zx: ", pos);
-                ptrdiff_t delta = tb_print_disassembly_inst(TB_ARCH_X86_64, s->raw_data.length - pos, data + pos);
-                if (delta < 0) {
+                printf(" %8"PRIx64": ", pos);
+
+                TB_X86_Inst inst;
+                if (tb_x86_disasm(&inst, s->raw_data.length - pos, data + pos)) {
+                    // print first 10 bytes
+                    size_t i = 0;
+                    for (; i < inst.length && i < 10; i++) {
+                        printf("%02x ", data[pos + i]);
+                    }
+
+                    for (; i < 10; i++) {
+                        printf("   ");
+                    }
+
+                    // print op
+                    tb_x86_print_inst(stdout, &inst);
+                    pos += inst.length;
+                } else {
                     printf("ERROR\n");
                     pos += 1;
-                } else {
-                    pos += delta;
                 }
-                count += 1;
             }
             printf("\n");
         } else {

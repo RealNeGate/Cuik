@@ -62,17 +62,25 @@ TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena) {
     g->ctrl = tb_platform_heap_alloc(g->ctrl_cap * sizeof(TB_GraphCtrl));
     g->vals = tb_platform_heap_alloc(g->val_cap * sizeof(TB_Node*));
 
-    assert(g->val_cap >= 1 + f->param_count);
-    g->val_cnt = 1 + f->param_count;
-    g->vals[0] = f->params[2];
+    assert(g->val_cap >= f->param_count);
+    g->val_cnt = f->param_count;
     FOREACH_N(i, 0, f->param_count) {
-        g->vals[1 + i] = f->params[3 + i];
+        g->vals[i] = f->params[3 + i];
     }
 
     return g;
 }
 
 void tb_builder_exit(TB_GraphBuilder* g) {
+}
+
+int tb_builder_save(TB_GraphBuilder* g) {
+    return g->val_cnt;
+}
+
+void tb_builder_restore(TB_GraphBuilder* g, int v) {
+    assert(g->val_cnt >= v);
+    g->val_cnt = v;
 }
 
 void tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x) {
@@ -196,6 +204,7 @@ void tb_builder_store(TB_GraphBuilder* g, int mem_var, TB_CharUnits alignment) {
 
     TB_Node* val  = pop(g);
     TB_Node* addr = pop(g);
+    assert(g->vals[mem_var]->dt.type == TB_MEMORY);
 
     TB_Node* n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
     set_input(f, n, f->trace.bot_ctrl, 0);

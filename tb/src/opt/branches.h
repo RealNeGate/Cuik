@@ -268,60 +268,78 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
             // if (a && b) A else B => if (a ? b : 0) A else B
             //
             // TODO(NeGate): implement form which works on an arbitrary falsey
-            /*if (n->inputs[0]->type == TB_REGION && n->inputs[0]->input_count == 2 && is_empty_bb(opt, n)) {
-                TB_Node* bb = n->inputs[0];
-
+            if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_BRANCH && is_empty_bb(opt, n)) {
                 uint64_t falsey = br->keys[0];
-                TB_Node* pred_branch = bb->inputs[0]->inputs[0];
+                TB_Node* pred_branch = n->inputs[0]->inputs[0];
+
+                int index = TB_NODE_GET_EXTRA_T(n->inputs[0], TB_NodeProj)->index;
 
                 // needs one pred
                 uint64_t pred_falsey;
-                if (bb->input_count == 1 && is_if_branch(pred_branch, &pred_falsey)) {
+                if (is_if_branch(pred_branch, &pred_falsey) && pred_falsey == 0) {
                     TB_NodeBranch* pred_br_info = TB_NODE_GET_EXTRA(pred_branch);
 
-                    bool bb_on_false = pred_br_info->succ[0] == bb;
-                    TB_Node* shared_edge = pred_br_info->succ[!bb_on_false];
+                    // check our parent's aux path
+                    User* other_proj      = proj_with_index(pred_branch, 1 - index);
+                    TB_Node* shared_edge  = cfg_next_bb_after_cproj(other_proj->n);
 
-                    int shared_i = -1;
-                    if (shared_edge == br->succ[0]) shared_i = 0;
-                    if (shared_edge == br->succ[1]) shared_i = 1;
+                    // check our aux path
+                    User* other_proj2     = proj_with_index(n, 1 - index);
+                    TB_Node* shared_edge2 = cfg_next_bb_after_cproj(other_proj2->n);
 
-                    if (shared_i >= 0) {
-                        TB_Node* pred_cmp = pred_branch->inputs[1];
-
-                        // convert first branch into an unconditional into bb
-                        transmute_goto(opt, f, pred_branch, bb);
-
-                        // we wanna normalize into a comparison (not a boolean -> boolean)
-                        if (!(pred_cmp->dt.type == TB_INT && pred_cmp->dt.data == 1)) {
-                            assert(pred_cmp->dt.type != TB_FLOAT && "TODO");
-                            TB_Node* imm = make_int_node(f, opt, pred_cmp->dt, pred_falsey);
-                            tb_pass_mark(opt, imm);
-
-                            TB_Node* new_node = tb_alloc_node(f, TB_CMP_NE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
-                            set_input(f, new_node, pred_cmp, 1);
-                            set_input(f, new_node, imm, 2);
-                            TB_NODE_SET_EXTRA(new_node, TB_NodeCompare, .cmp_dt = pred_cmp->dt);
-
-                            tb_pass_mark(opt, new_node);
-                            pred_cmp = new_node;
+                    // if they're the same then we've got a shortcircuit eval setup
+                    if (shared_edge == shared_edge2) {
+                        assert(shared_edge->type == TB_REGION);
+                        FOR_USERS(phis, shared_edge) if (phis->n->type == TB_PHI) {
+                            tb_todo();
                         }
 
-                        TB_Node* false_node = make_int_node(f, opt, n->inputs[1]->dt, falsey);
-                        tb_pass_mark(opt, false_node);
+                        // remove pred from shared edge
+                        int shared_i = other_proj->n->users->slot;
+                        remove_input(f, shared_edge, shared_i);
+                        FOR_USERS(use, shared_edge) {
+                            if (use->n->type == TB_PHI && use->slot == 0) {
+                                remove_input(f, use->n, shared_i + 1);
+                                tb_pass_mark(opt, use->n);
+                            }
+                        }
+
+                        TB_Node* before = pred_branch->inputs[0];
+                        TB_Node* cmp = pred_branch->inputs[1];
+
+                        // remove first branch
+                        tb_pass_kill_node(f, pred_branch);
+                        set_input(f, n, before, 0);
+
+                        // we wanna normalize into a comparison (not a boolean -> boolean)
+                        if (!(cmp->dt.type == TB_INT && cmp->dt.data == 1)) {
+                            assert(cmp->dt.type != TB_FLOAT && "TODO");
+                            TB_Node* imm = make_int_node(f, opt, cmp->dt, pred_falsey);
+
+                            TB_Node* new_node = tb_alloc_node(f, TB_CMP_NE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+                            set_input(f, new_node, cmp, 1);
+                            set_input(f, new_node, imm, 2);
+                            TB_NODE_SET_EXTRA(new_node, TB_NodeCompare, .cmp_dt = cmp->dt);
+
+                            tb_pass_mark(opt, new_node);
+                            cmp = new_node;
+                        }
+
+                        // construct branchless merge
+                        TB_Node* false_node = make_int_node(f, opt, n->inputs[1]->dt, 0);
 
                         // a ? b : 0
                         TB_Node* selector = tb_alloc_node(f, TB_SELECT, n->inputs[1]->dt, 4, 0);
-                        set_input(f, selector, pred_cmp, 1);
-                        set_input(f, selector, n->inputs[1], 2 + bb_on_false);
-                        set_input(f, selector, false_node, 2 + !bb_on_false);
+                        set_input(f, selector, cmp,          1);
+                        set_input(f, selector, n->inputs[1], 2);
+                        set_input(f, selector, false_node,   3);
 
                         set_input(f, n, selector, 1);
                         tb_pass_mark(opt, selector);
                         return n;
                     }
                 }
-            }*/
+            }
 
             // br ((y <= x)) => br (x < y) flipped conditions
             if (cmp_type == TB_CMP_SLE || cmp_type == TB_CMP_ULE) {
