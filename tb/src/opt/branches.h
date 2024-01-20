@@ -290,53 +290,61 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                     // if they're the same then we've got a shortcircuit eval setup
                     if (shared_edge == shared_edge2) {
                         assert(shared_edge->type == TB_REGION);
-                        FOR_USERS(phis, shared_edge) if (phis->n->type == TB_PHI) {
-                            tb_todo();
-                        }
+                        int shared_i  = other_proj->n->users->slot;
+                        int shared_i2 = other_proj2->n->users->slot;
 
-                        // remove pred from shared edge
-                        int shared_i = other_proj->n->users->slot;
-                        remove_input(f, shared_edge, shared_i);
-                        FOR_USERS(use, shared_edge) {
-                            if (use->n->type == TB_PHI && use->slot == 0) {
-                                remove_input(f, use->n, shared_i + 1);
-                                tb_pass_mark(opt, use->n);
+                        bool match = true;
+                        FOR_USERS(phis, shared_edge) if (phis->n->type == TB_PHI) {
+                            if (phis->n->inputs[1+shared_i] != phis->n->inputs[1+shared_i2]) {
+                                match = false;
+                                break;
                             }
                         }
 
-                        TB_Node* before = pred_branch->inputs[0];
-                        TB_Node* cmp = pred_branch->inputs[1];
+                        if (match) {
+                            // remove pred from shared edge
+                            remove_input(f, shared_edge, shared_i);
+                            FOR_USERS(use, shared_edge) {
+                                if (use->n->type == TB_PHI && use->slot == 0) {
+                                    remove_input(f, use->n, shared_i + 1);
+                                    tb_pass_mark(opt, use->n);
+                                }
+                            }
 
-                        // remove first branch
-                        tb_pass_kill_node(f, pred_branch);
-                        set_input(f, n, before, 0);
+                            TB_Node* before = pred_branch->inputs[0];
+                            TB_Node* cmp = pred_branch->inputs[1];
 
-                        // we wanna normalize into a comparison (not a boolean -> boolean)
-                        if (!(cmp->dt.type == TB_INT && cmp->dt.data == 1)) {
-                            assert(cmp->dt.type != TB_FLOAT && "TODO");
-                            TB_Node* imm = make_int_node(f, opt, cmp->dt, pred_falsey);
+                            // remove first branch
+                            tb_pass_kill_node(f, pred_branch);
+                            set_input(f, n, before, 0);
 
-                            TB_Node* new_node = tb_alloc_node(f, TB_CMP_NE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
-                            set_input(f, new_node, cmp, 1);
-                            set_input(f, new_node, imm, 2);
-                            TB_NODE_SET_EXTRA(new_node, TB_NodeCompare, .cmp_dt = cmp->dt);
+                            // we wanna normalize into a comparison (not a boolean -> boolean)
+                            if (!(cmp->dt.type == TB_INT && cmp->dt.data == 1)) {
+                                assert(cmp->dt.type != TB_FLOAT && "TODO");
+                                TB_Node* imm = make_int_node(f, opt, cmp->dt, pred_falsey);
 
-                            tb_pass_mark(opt, new_node);
-                            cmp = new_node;
+                                TB_Node* new_node = tb_alloc_node(f, TB_CMP_NE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+                                set_input(f, new_node, cmp, 1);
+                                set_input(f, new_node, imm, 2);
+                                TB_NODE_SET_EXTRA(new_node, TB_NodeCompare, .cmp_dt = cmp->dt);
+
+                                tb_pass_mark(opt, new_node);
+                                cmp = new_node;
+                            }
+
+                            // construct branchless merge
+                            TB_Node* false_node = make_int_node(f, opt, n->inputs[1]->dt, 0);
+
+                            // a ? b : 0
+                            TB_Node* selector = tb_alloc_node(f, TB_SELECT, n->inputs[1]->dt, 4, 0);
+                            set_input(f, selector, cmp,          1);
+                            set_input(f, selector, n->inputs[1], 2);
+                            set_input(f, selector, false_node,   3);
+
+                            set_input(f, n, selector, 1);
+                            tb_pass_mark(opt, selector);
+                            return n;
                         }
-
-                        // construct branchless merge
-                        TB_Node* false_node = make_int_node(f, opt, n->inputs[1]->dt, 0);
-
-                        // a ? b : 0
-                        TB_Node* selector = tb_alloc_node(f, TB_SELECT, n->inputs[1]->dt, 4, 0);
-                        set_input(f, selector, cmp,          1);
-                        set_input(f, selector, n->inputs[1], 2);
-                        set_input(f, selector, false_node,   3);
-
-                        set_input(f, n, selector, 1);
-                        tb_pass_mark(opt, selector);
-                        return n;
                     }
                 }
             }
