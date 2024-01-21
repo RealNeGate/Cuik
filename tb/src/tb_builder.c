@@ -23,10 +23,16 @@ static TB_Node* transfer_ctrl(TB_Function* f, TB_Node* n) {
 }
 
 void tb_inst_set_control(TB_Function* f, TB_Node* control) {
-    assert(control->type == TB_REGION);
-    f->trace.top_ctrl = control;
-    f->trace.bot_ctrl = control;
-    f->trace.mem = TB_NODE_GET_EXTRA_T(control, TB_NodeRegion)->mem_in;
+    if (control == NULL) {
+        f->trace.top_ctrl = NULL;
+        f->trace.bot_ctrl = NULL;
+        f->trace.mem = NULL;
+    } else {
+        assert(control->type == TB_REGION);
+        f->trace.top_ctrl = control;
+        f->trace.bot_ctrl = control;
+        f->trace.mem = TB_NODE_GET_EXTRA_T(control, TB_NodeRegion)->mem_in;
+    }
 }
 
 TB_Node* tb_inst_region_mem_in(TB_Function* f, TB_Node* region) {

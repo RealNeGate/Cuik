@@ -24,7 +24,7 @@ enum {
 
     //   cmp a, b
     //   jcc cond
-    TILE_CMP_JCC = 8,
+    TILE_FOLDED_CMP = 8,
 };
 
 typedef struct {
@@ -524,6 +524,101 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[REG_CLASS_GPR]);
         break;
 
+        case TB_CMP_EQ:
+        case TB_CMP_NE:
+        case TB_CMP_SLT:
+        case TB_CMP_SLE:
+        case TB_CMP_ULT:
+        case TB_CMP_ULE:
+        case TB_CMP_FLT:
+        case TB_CMP_FLE: {
+            TB_Node* cmp = n->inputs[1];
+            TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeCompare)->cmp_dt;
+
+            int cap = 1;
+            if (cmp->type >= TB_CMP_EQ && cmp->type <= TB_CMP_FLE) {
+                dst->flags |= TILE_FOLDED_CMP;
+
+                int32_t x;
+                if (!try_for_imm32(cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, cmp->inputs[2], &x)) {
+                    cap += 1;
+                } else {
+                    dst->flags |= TILE_HAS_IMM;
+                }
+            }
+
+            RegMask rm = normie_mask(ctx, n->dt);
+            dst->ins = tb_arena_alloc(tmp_arena, cap * sizeof(TileInput));
+            dst->in_count = cap;
+
+            int in_count = 0;
+            if (dst->flags & TILE_FOLDED_CMP) {
+                RegMask rm = normie_mask(ctx, cmp_dt);
+                dst->ins[0].src = get_interval(ctx, cmp->inputs[1], 0);
+                dst->ins[0].mask = rm;
+                in_count++;
+
+                if ((dst->flags & TILE_HAS_IMM) == 0) {
+                    dst->ins[1].src  = get_interval(ctx, cmp->inputs[2], 0);
+                    dst->ins[1].mask = rm;
+                    in_count++;
+                }
+            } else {
+                dst->ins[0].src = get_interval(ctx, cmp, 0);
+                dst->ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
+                in_count++;
+            }
+            break;
+        }
+
+        case TB_SELECT: {
+            TB_Node* cmp = n->inputs[1];
+            TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeCompare)->cmp_dt;
+
+            int cap = 3;
+            if (cmp->type >= TB_CMP_EQ && cmp->type <= TB_CMP_FLE) {
+                dst->flags |= TILE_FOLDED_CMP;
+
+                int32_t x;
+                if (!try_for_imm32(cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, cmp->inputs[2], &x)) {
+                    cap += 1;
+                } else {
+                    dst->flags |= TILE_HAS_IMM;
+                }
+            }
+
+            RegMask rm = normie_mask(ctx, n->dt);
+            dst->ins = tb_arena_alloc(tmp_arena, cap * sizeof(TileInput));
+            dst->in_count = cap;
+
+            int in_count = 0;
+            if (dst->flags & TILE_FOLDED_CMP) {
+                RegMask rm = normie_mask(ctx, cmp_dt);
+                dst->ins[0].src = get_interval(ctx, cmp->inputs[1], 0);
+                dst->ins[0].mask = rm;
+                in_count++;
+
+                if ((dst->flags & TILE_HAS_IMM) == 0) {
+                    dst->ins[1].src  = get_interval(ctx, cmp->inputs[2], 0);
+                    dst->ins[1].mask = rm;
+                    in_count++;
+                }
+            } else {
+                dst->ins[0].src = get_interval(ctx, cmp, 0);
+                dst->ins[0].mask = ctx->normie_mask[REG_CLASS_GPR];
+                in_count++;
+            }
+
+            dst->ins[in_count].src  = get_interval(ctx, n->inputs[2], 0);
+            dst->ins[in_count].mask = rm;
+            in_count++;
+
+            dst->ins[in_count].src  = get_interval(ctx, n->inputs[3], 0);
+            dst->ins[in_count].mask = rm;
+            in_count++;
+            break;
+        }
+
         // binary ops
         case TB_AND:
         case TB_OR:
@@ -656,7 +751,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             } else {
                 if (cmp->type >= TB_CMP_EQ && cmp->type <= TB_CMP_FLE) {
                     TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeCompare)->cmp_dt;
-                    dst->flags |= TILE_CMP_JCC;
+                    dst->flags |= TILE_FOLDED_CMP;
 
                     int32_t x;
                     if (!try_for_imm32(cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, cmp->inputs[2], &x)) {
@@ -671,7 +766,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             dst->in_count = ins+tmps;
             dst->aux = aux;
 
-            if (dst->flags & TILE_CMP_JCC) {
+            if (dst->flags & TILE_FOLDED_CMP) {
                 TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cmp, TB_NodeCompare)->cmp_dt;
 
                 RegMask rm = normie_mask(ctx, cmp_dt);
@@ -1049,6 +1144,62 @@ static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
 
     ea.imm += aux->offset;
     return ea;
+}
+
+static Cond emit_cmp(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* cmp, Tile* t, int64_t falsey) {
+    Val a = op_at(ctx, t->ins[0].src);
+    if (t->flags & TILE_FOLDED_CMP) {
+        TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cmp, TB_NodeCompare)->cmp_dt;
+        assert(cmp->type >= TB_CMP_EQ && cmp->type <= TB_CMP_FLE);
+        assert(falsey == 0 || falsey == 1);
+
+        Cond cc;
+        if (TB_IS_FLOAT_TYPE(cmp_dt)) {
+            Val b = op_at(ctx, t->ins[1].src);
+            inst2sse(e, FP_UCOMI, &a, &b, legalize_float(cmp_dt));
+
+            switch (cmp->type) {
+                case TB_CMP_EQ:  cc = E;  break;
+                case TB_CMP_NE:  cc = NE; break;
+                case TB_CMP_FLT: cc = B;  break;
+                case TB_CMP_FLE: cc = BE; break;
+                default: tb_unreachable();
+            }
+        } else {
+            if (t->flags & TILE_HAS_IMM) {
+                assert(cmp->inputs[2]->type == TB_INTEGER_CONST);
+                TB_NodeInt* i = TB_NODE_GET_EXTRA(cmp->inputs[2]);
+
+                Val b = val_imm(i->value);
+                inst2(e, CMP, &a, &b, legalize_int2(cmp_dt));
+            } else {
+                Val b = op_at(ctx, t->ins[1].src);
+                inst2(e, CMP, &a, &b, legalize_int2(cmp_dt));
+            }
+
+            switch (cmp->type) {
+                case TB_CMP_EQ:  cc = E;  break;
+                case TB_CMP_NE:  cc = NE; break;
+                case TB_CMP_SLT: cc = L;  break;
+                case TB_CMP_SLE: cc = LE; break;
+                case TB_CMP_ULT: cc = B;  break;
+                case TB_CMP_ULE: cc = BE; break;
+                default: tb_unreachable();
+            }
+        }
+
+        if (falsey == 1) { cc ^= 1; }
+        return cc;
+    } else {
+        if (falsey == 0) {
+            inst2(e, TEST, &a, &a, legalize_int2(cmp->dt));
+        } else {
+            assert(fits_into_int32(falsey));
+            Val imm = val_imm(falsey);
+            inst2(e, CMP, &a, &imm, legalize_int2(cmp->dt));
+        }
+        return NE;
+    }
 }
 
 static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb) {
@@ -1577,6 +1728,41 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 }
                 break;
             }
+            case TB_CMP_EQ:
+            case TB_CMP_NE:
+            case TB_CMP_SLT:
+            case TB_CMP_SLE:
+            case TB_CMP_ULT:
+            case TB_CMP_ULE:
+            case TB_CMP_FLT:
+            case TB_CMP_FLE: {
+                TB_X86_DataType dt = legalize_int2(n->dt);
+                Val dst = op_at(ctx, t->outs[0]);
+
+                Cond cc = emit_cmp(ctx, e, n, t, 0);
+                inst1(e, SETO+(cc^1), &dst, dt);
+                break;
+            }
+            case TB_SELECT: {
+                TB_X86_DataType dt = legalize_int2(n->dt);
+                Val dst = op_at(ctx, t->outs[0]);
+
+                Cond cc = emit_cmp(ctx, e, n->inputs[1], t, 0);
+
+                int ops = 1;
+                if ((t->flags & TILE_HAS_IMM) == 0) {
+                    ops += 1;
+                }
+
+                Val a = op_at(ctx, t->ins[ops+0].src);
+                if (!is_value_match(&dst, &a)) {
+                    inst2(e, MOV, &dst, &a, dt);
+                }
+
+                Val b = op_at(ctx, t->ins[ops+1].src);
+                inst2(e, CMOVO+(cc^1), &dst, &b, dt);
+                break;
+            }
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
 
@@ -1608,64 +1794,15 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 } else if (br->succ_count == 2) {
                     Val naw = val_label(succ[1]);
                     Val yea = val_label(succ[0]);
-
-                    Val a = op_at(ctx, t->ins[0].src);
-                    Cond cc;
-                    if (t->flags & TILE_CMP_JCC) {
-                        TB_Node* cmp = n->inputs[1];
-                        TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cmp, TB_NodeCompare)->cmp_dt;
-
-                        if (TB_IS_FLOAT_TYPE(cmp_dt)) {
-                            Val b = op_at(ctx, t->ins[1].src);
-                            inst2sse(e, FP_UCOMI, &a, &b, legalize_float(cmp_dt));
-
-                            switch (cmp->type) {
-                                case TB_CMP_EQ:  cc = E;  break;
-                                case TB_CMP_NE:  cc = NE; break;
-                                case TB_CMP_FLT: cc = B;  break;
-                                case TB_CMP_FLE: cc = BE; break;
-                                default: tb_unreachable();
-                            }
-                        } else {
-                            if (t->flags & TILE_HAS_IMM) {
-                                assert(cmp->inputs[2]->type == TB_INTEGER_CONST);
-                                TB_NodeInt* i = TB_NODE_GET_EXTRA(cmp->inputs[2]);
-
-                                Val b = val_imm(i->value);
-                                inst2(e, CMP, &a, &b, legalize_int2(cmp_dt));
-                            } else {
-                                Val b = op_at(ctx, t->ins[1].src);
-                                inst2(e, CMP, &a, &b, legalize_int2(cmp_dt));
-                            }
-
-                            switch (cmp->type) {
-                                case TB_CMP_EQ:  cc = E;  break;
-                                case TB_CMP_NE:  cc = NE; break;
-                                case TB_CMP_SLT: cc = L;  break;
-                                case TB_CMP_SLE: cc = LE; break;
-                                case TB_CMP_ULT: cc = B;  break;
-                                case TB_CMP_ULE: cc = BE; break;
-                                default: tb_unreachable();
-                            }
-                        }
-                    } else {
-                        if (br->keys[0] == 0) {
-                            inst2(e, TEST, &a, &a, legalize_int2(dt));
-                        } else {
-                            assert(fits_into_int32(br->keys[0]));
-                            Val imm = val_imm(br->keys[0]);
-                            inst2(e, CMP, &a, &imm, legalize_int2(dt));
-                        }
-                        cc = NE;
-                    }
+                    Cond cc = emit_cmp(ctx, e, n->inputs[1], t, br->keys[0]);
 
                     // if flipping avoids a jmp, do that
                     if (ctx->fallthrough == yea.label) {
-                        __(jcc, cc ^ 1, naw);
+                        x86_jcc(e, cc ^ 1, naw);
                     } else {
-                        __(jcc, cc, yea);
+                        x86_jcc(e, cc, yea);
                         if (ctx->fallthrough != naw.label) {
-                            __(jmp, naw);
+                            x86_jmp(e, naw);
                         }
                     }
                 } else {
@@ -1688,9 +1825,9 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                                 inst2(e, MOV, &key, &imm, cmp_dt);
                                 inst2(e, CMP, &key, &imm, cmp_dt);
                             }
-                            __(jcc, E, val_label(succ[i]));
+                            x86_jcc(e, E, val_label(succ[i]));
                         }
-                        __(jmp, val_label(succ[0]));
+                        x86_jmp(e, val_label(succ[0]));
                     } else {
                         int64_t min = aux->min;
                         int64_t max = aux->max;
@@ -1865,27 +2002,6 @@ static void our_print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86
             }
         }
 
-        /*if (d->patch && d->patch->pos == pos + inst->length - 4) {
-            const TB_Symbol* target = d->patch->target;
-
-            if (target->name[0] == 0) {
-                E("sym%p", target);
-            } else {
-                E("%s", target->name);
-            }
-            d->patch = d->patch->next;
-        } else {
-            uint32_t target = pos + inst->length + inst->disp;
-            int bb = tb_emit_get_label(e, target);
-            uint32_t landed = e->labels[bb] & 0x7FFFFFFF;
-
-            if (landed != target) {
-                E(".bb%d + %d", bb, (int)target - (int)landed);
-            } else {
-                E(".bb%d", bb);
-            }
-        }*/
-
         if (inst->disp > 0) {
             E(" + %#x", inst->disp);
         } else if (inst->disp < 0) {
@@ -1897,9 +2013,8 @@ static void our_print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86
     }
 }
 
-static void disassemble_operands(TB_X86_Inst* inst, size_t pos, int start) {
-    #if 0
-    if (d->patch && d->patch->pos == pos + inst->length - 4) {
+static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos, int64_t imm) {
+    if (d->patch && d->patch->pos == pos - 4) {
         const TB_Symbol* target = d->patch->target;
 
         if (target->name[0] == 0) {
@@ -1907,9 +2022,16 @@ static void disassemble_operands(TB_X86_Inst* inst, size_t pos, int start) {
         } else {
             E("%s", target->name);
         }
+
+        if (imm > 0) {
+            E(" + %"PRId64, imm);
+        } else if (imm < 0) {
+            E(" - %"PRId64, imm);
+        }
+
         d->patch = d->patch->next;
     } else {
-        uint32_t target = pos + inst->length + inst->disp;
+        uint32_t target = pos + imm;
         int bb = tb_emit_get_label(e, target);
         uint32_t landed = e->labels[bb] & 0x7FFFFFFF;
 
@@ -1919,7 +2041,6 @@ static void disassemble_operands(TB_X86_Inst* inst, size_t pos, int start) {
             E(".bb%d", bb);
         }
     }
-    #endif
 }
 
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end) {
@@ -1976,20 +2097,8 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
                 E(", ");
             }
 
-            if (d->patch && d->patch->pos == pos + inst.length - 4) {
-                const TB_Symbol* target = d->patch->target;
-
-                if (target->name[0] == 0) {
-                    E("sym%p", target);
-                } else {
-                    E("%s", target->name);
-                }
-
-                if (inst.imm > 0) {
-                    E(" + %#"PRIx64, inst.imm);
-                } else if (inst.imm < 0) {
-                    E(" - %#"PRIx64, -inst.imm);
-                }
+            if (inst.opcode == 0xE8 || inst.opcode == 0xE9 || inst.opcode == 0xEB || (inst.opcode >= 0x180 && inst.opcode <= 0x18F)) {
+                our_print_rip32(e, d, &inst, pos + inst.length, inst.imm);
             } else {
                 E("%#"PRIx64, inst.imm);
             }

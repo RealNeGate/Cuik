@@ -1959,7 +1959,12 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
 
             irgen_stmt(tu, func, s->switch_.body);
 
-            fallthrough_label(func, break_label);
+            // don't make fallthru if it's a dead path
+            if (break_label->input_count > 0) {
+                fallthrough_label(func, break_label);
+            } else {
+                tb_inst_set_control(func, NULL);
+            }
             break;
         }
 
