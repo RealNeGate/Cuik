@@ -25,7 +25,6 @@ local options = {
 	driver        = false,
 	shared        = false,
 	test          = false,
-	forth         = false,
 	lld           = false,
 	gcc           = false,
 	asan          = false,
@@ -56,8 +55,6 @@ local modules = {
 	-- executables:
 	--   Cuik command line
 	driver       = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik", "tb"} },
-	--   forth
-	forth        = { is_exe=true, srcs={"forth/forth.c"}, deps={"common", "tb"}, flags="-I libCuik/include" },
 	--   TB unittests
 	tests        = { is_exe=true, srcs={"tb/tests/cg_test.c"}, deps={"tb", "common"} },
 
@@ -284,7 +281,6 @@ local obj_names = table.concat(objs, " ")
 local exe_name = "cuik"
 if options.tb    then exe_name = "tb" end
 if options.tests then exe_name = "tests" end
-if options.forth then exe_name = "forth" end
 
 -- placing executables into bin/
 exe_name = "bin/"..exe_name
