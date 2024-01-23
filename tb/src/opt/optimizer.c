@@ -339,7 +339,7 @@ TB_Node* tb_pass_gvn_node(TB_Function* f, TB_Node* n) {
 TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra) {
     // try GVN, if we succeed, just delete the node and use the old copy
     TB_Node* k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
-    if (k != NULL) {
+    if (k && k != n) {
         // remove users
         FOREACH_REVERSE_N(i, 0, n->input_count) {
             User* u = remove_user(n, i);

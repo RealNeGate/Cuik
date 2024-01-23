@@ -148,16 +148,19 @@ static Lattice* sccp_arith(TB_Passes* restrict opt, TB_Node* n) {
         case TB_ADD:
         overflow |= l_add_overflow(a->_int.min, b->_int.min, mask, &min);
         overflow |= l_add_overflow(a->_int.max, b->_int.max, mask, &max);
+        if (min > max) { overflow = true; }
         break;
 
         case TB_SUB:
         overflow |= l_sub_overflow(a->_int.min, b->_int.min, mask, &min);
         overflow |= l_sub_overflow(a->_int.max, b->_int.max, mask, &max);
+        if (min > max) { overflow = true; }
         break;
 
         case TB_MUL:
         overflow |= l_mul_overflow(a->_int.min, b->_int.min, mask, &min);
         overflow |= l_mul_overflow(a->_int.max, b->_int.max, mask, &max);
+        if (min > max) { overflow = true; }
         break;
     }
 

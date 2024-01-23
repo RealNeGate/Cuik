@@ -1341,6 +1341,10 @@ TB_API void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_D
 //   ( addr val -- )
 TB_API void tb_builder_store(TB_GraphBuilder* g, int mem_var, TB_CharUnits align);
 
+// function call
+//   ( ... -- ... )
+TB_API void tb_builder_static_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, TB_Symbol* target, int mem_var, int nargs);
+
 // locals (variables but as stack vars)
 TB_API TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align);
 TB_API void tb_builder_push(TB_GraphBuilder* g, TB_Node* n);

@@ -1,7 +1,11 @@
 // I'm trying to transition most people over since it's a bit nicer.
 
-typedef struct {
+typedef struct TB_GraphCtrl TB_GraphCtrl;
+struct TB_GraphCtrl {
+    TB_GraphCtrl* prev;
+
     int pos; // where the stack head was before doing the code
+    bool has_else;
     bool is_loop;
 
     // LOOP: [0] body, [1] break
@@ -16,10 +20,7 @@ typedef struct {
     TB_ArenaSavepoint sp;
     int val_cnt;
     TB_Node* vals[];
-} TB_GraphCtrl;
-
-typedef struct {
-} TB_GraphNames;
+};
 
 struct TB_GraphBuilder {
     TB_Function* f;
@@ -29,8 +30,7 @@ struct TB_GraphBuilder {
     TB_Node *top_ctrl, *bot_ctrl;
 
     // ctrl stack
-    int ctrl_cap, ctrl_cnt;
-    TB_GraphCtrl** ctrl;
+    TB_GraphCtrl* top;
 
     // value stack
     int val_cap, val_cnt;
@@ -58,16 +58,17 @@ static TB_Node* pop(TB_GraphBuilder* g) {
 
 TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena) {
     TB_GraphBuilder* g = tb_arena_alloc(arena, sizeof(TB_GraphBuilder));
-    *g = (TB_GraphBuilder){ .f = f, .arena = arena, .ctrl_cap = 8, .val_cap = 32 };
-    g->ctrl = tb_platform_heap_alloc(g->ctrl_cap * sizeof(TB_GraphCtrl));
+    *g = (TB_GraphBuilder){ .f = f, .arena = arena, .val_cap = 32 };
     g->vals = tb_platform_heap_alloc(g->val_cap * sizeof(TB_Node*));
 
-    assert(g->val_cap >= f->param_count);
-    g->val_cnt = f->param_count;
-    FOREACH_N(i, 0, f->param_count) {
-        g->vals[i] = f->params[3 + i];
+    // both RPC and memory are mutable vars
+    assert(g->val_cap >= 2 + f->param_count);
+    g->val_cnt = 2 + f->param_count;
+    FOREACH_N(i, 0, 2 + f->param_count) {
+        g->vals[i] = f->params[1 + i];
     }
 
+    g->top_ctrl = g->bot_ctrl = f->params[0];
     return g;
 }
 
@@ -226,7 +227,7 @@ void tb_builder_get_var(TB_GraphBuilder* g, int id) {
     push(g, g->vals[id]);
 }
 
-void tb_builder_assign(TB_GraphBuilder* g, int id) {
+void tb_builder_set_var(TB_GraphBuilder* g, int id) {
     assert(id < g->val_cnt - 1);
     g->vals[id] = pop(g);
 }
@@ -236,6 +237,9 @@ void tb_builder_if(TB_GraphBuilder* g) {
 
     TB_ArenaSavepoint sp = tb_arena_save(g->arena);
     TB_GraphCtrl* ctrl = tb_arena_alloc(g->arena, sizeof(TB_GraphCtrl) + g->val_cnt*sizeof(TB_Node*));
+    *ctrl = (TB_GraphCtrl){ 0 };
+
+    TB_Node* cond = pop(g);
 
     // clone incoming state so we can diff & insert phis later
     ctrl->sp = sp;
@@ -244,14 +248,11 @@ void tb_builder_if(TB_GraphBuilder* g) {
         ctrl->vals[i] = g->vals[i];
     }
 
-    __debugbreak();
-
-    assert(g->ctrl_cnt < g->ctrl_cap);
-    g->ctrl[g->ctrl_cnt++] = ctrl;
+    ctrl->prev = g->top;
+    g->top = ctrl;
 
     // generate branch op
     {
-        TB_Node* cond = pop(g);
         TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(int64_t));
         set_input(f, n, xfer_ctrl(g, NULL), 0);
         set_input(f, n, cond, 1);
@@ -274,8 +275,8 @@ void tb_builder_if(TB_GraphBuilder* g) {
 }
 
 void tb_builder_else(TB_GraphBuilder* g) {
-    assert(g->ctrl_cnt > 0);
-    TB_GraphCtrl* ctrl = g->ctrl[g->ctrl_cnt - 1];
+    assert(g->top && "we're not inside of an if block");
+    TB_GraphCtrl* ctrl = g->top;
 
     if (g->bot_ctrl) {
         // goto true => join
@@ -283,35 +284,145 @@ void tb_builder_else(TB_GraphBuilder* g) {
     }
 
     // goto the false path
+    ctrl->has_else = true;
     g->top_ctrl = g->bot_ctrl = ctrl->paths[1];
 }
 
 void tb_builder_endif(TB_GraphBuilder* g) {
-    assert(g->ctrl_cnt > 0);
-    TB_GraphCtrl* ctrl = g->ctrl[--g->ctrl_cnt];
+    assert(g->top_ctrl && "we're not inside of an if block");
+    TB_GraphCtrl* ctrl = g->top;
+    g->top = ctrl->prev;
+
+    if (!ctrl->has_else) {
+        // goto false => join
+        add_input_late(g->f, ctrl->join, ctrl->paths[1]);
+    }
 
     if (g->bot_ctrl) {
-        // goto false => join
+        // fallthru
         add_input_late(g->f, ctrl->join, g->bot_ctrl);
     }
 
     // insert phis
-    assert(g->val_cnt == ctrl->val_cnt && "paths on branch mismatch in outgoing variables?");
     TB_Node* join = ctrl->join;
-    FOREACH_N(i, 0, g->val_cnt) {
-        if (g->vals[i] != ctrl->vals[i]) {
-            g->vals[i] = tb_inst_phi2(g->f, join, ctrl->vals[i], g->vals[i]);
+    assert(join->type == TB_REGION);
+    assert(g->val_cnt == ctrl->val_cnt && "paths on branch mismatch in outgoing variables?");
+
+    if (join->input_count > 0) {
+        FOREACH_N(i, 0, g->val_cnt) {
+            if (g->vals[i] != ctrl->vals[i]) {
+                g->vals[i] = tb_inst_phi2(g->f, join, ctrl->vals[i], g->vals[i]);
+            }
         }
+
+        g->top_ctrl = g->bot_ctrl = join;
+    } else {
+        tb_pass_kill_node(g->f, join);
+        g->top_ctrl = g->bot_ctrl = NULL;
     }
-
-    __debugbreak();
-
-    g->top_ctrl = g->bot_ctrl = ctrl->join;
     tb_arena_restore(g->arena, ctrl->sp);
 }
 
+void tb_builder_static_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, TB_Symbol* target, int mem_var, int nargs) {
+    assert(g->val_cnt >= nargs);
+    TB_Function* f = g->f;
+
+    TB_Node* target_node;
+    {
+        target_node = tb_alloc_node(f, TB_SYMBOL, TB_TYPE_PTR, 1, sizeof(TB_NodeSymbol));
+        set_input(f, target_node, f->root_node, 0);
+        TB_NODE_SET_EXTRA(target_node, TB_NodeSymbol, .sym = target);
+
+        target_node = tb_pass_gvn_node(g->f, target_node);
+    }
+
+    // construct call op
+    g->val_cnt -= nargs;
+    {
+        size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
+
+        TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + nargs, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
+        set_input(f, n, target_node, 2);
+        FOREACH_N(i, 0, nargs) {
+            set_input(f, n, g->vals[g->val_cnt + i], i + 3);
+        }
+
+        TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+        c->proj_count = proj_count;
+        c->proto = proto;
+
+        // control proj
+        TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+        set_input(f, n, xfer_ctrl(g, cproj), 0);
+
+        // memory proj
+        TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
+        set_input(f, n, g->vals[mem_var], 1);
+
+        // create data projections
+        TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
+        FOREACH_N(i, 0, proto->return_count) {
+            c->projs[i + 2] = tb__make_proj(f, rets[i].dt, n, i + 2);
+        }
+
+        // we'll slot a NULL so it's easy to tell when it's empty
+        if (proto->return_count == 0) {
+            c->projs[2] = NULL;
+        }
+
+        c->projs[0] = cproj;
+        c->projs[1] = mproj;
+
+        g->vals[mem_var] = mproj;
+        add_input_late(f, get_callgraph(f), n);
+
+        // push all returns
+        assert(proto->return_count < 2);
+        FOREACH_N(i, 0, proto->return_count) {
+            push(g, c->projs[2 + i]);
+        }
+    }
+}
+
 void tb_builder_ret(TB_GraphBuilder* g, int count) {
+    TB_Function* f = g->f;
+    TB_Node* mem_state = g->vals[0];
+
     assert(g->val_cnt >= count);
-    tb_inst_ret(g->f, count, &g->vals[g->val_cnt - count]);
     g->val_cnt -= count;
+    TB_Node** args = &g->vals[g->val_cnt];
+
+    // allocate return node
+    TB_Node* ret = f->ret_node;
+    TB_Node* ctrl = ret->inputs[0];
+    assert(ctrl->type == TB_REGION);
+
+    // add to PHIs
+    assert(ret->input_count >= 3 + count);
+    add_input_late(f, ret->inputs[1], mem_state);
+
+    size_t i = 3;
+    for (; i < count + 3; i++) {
+        TB_Node* v = args[i - 3];
+        assert(ret->inputs[i]->dt.raw == v->dt.raw && "datatype mismatch");
+        add_input_late(f, ret->inputs[i], v);
+    }
+
+    size_t phi_count = ret->input_count;
+    for (; i < phi_count; i++) {
+        // put poison in the leftovers?
+        log_warn("%s: ir: generated poison due to inconsistent number of returned values", f->super.name);
+
+        TB_Node* poison = tb_alloc_node(f, TB_POISON, ret->inputs[i]->dt, 1, 0);
+        set_input(f, poison, f->ret_node, 0);
+
+        poison = tb__gvn(f, poison, 0);
+        add_input_late(f, ret->inputs[i], poison);
+    }
+
+    // basically just tb_inst_goto without the memory PHI (we did it earlier)
+    TB_Node* n = g->bot_ctrl;
+    g->bot_ctrl = NULL;
+
+    add_input_late(f, ctrl, n);
 }

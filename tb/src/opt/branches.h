@@ -451,7 +451,6 @@ static Lattice* sccp_branch(TB_Passes* restrict opt, TB_Node* n) {
         int64_t* primary_keys = br->keys;
 
         // check for redundant conditions in the doms.
-        TB_Node* initial_bb = get_block_begin(n->inputs[0]);
         FOR_USERS(u, n->inputs[1]) {
             if (u->n->type != TB_BRANCH || u->slot != 1 || u->n == n) {
                 continue;
@@ -459,7 +458,7 @@ static Lattice* sccp_branch(TB_Passes* restrict opt, TB_Node* n) {
 
             TB_Node* end = u->n;
             int64_t* keys = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->keys;
-            if (TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count != 2 && keys[0] != primary_keys[0]) {
+            if (TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count != 2 || keys[0] != primary_keys[0]) {
                 continue;
             }
 
@@ -469,7 +468,7 @@ static Lattice* sccp_branch(TB_Passes* restrict opt, TB_Node* n) {
                 TB_Node* succ = cfg_next_bb_after_cproj(succ_user->n);
 
                 // we must be dominating for this to work
-                if (!fast_dommy(succ, initial_bb)) {
+                if (!fast_dommy(succ, n)) {
                     continue;
                 }
 
