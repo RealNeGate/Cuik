@@ -917,7 +917,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 static int stk_offset(Ctx* ctx, int reg) {
     int pos = reg*8;
     if (reg >= ctx->num_regs[0]) {
-        return (ctx->stack_usage - pos) + 8;
+        return ctx->stack_usage - pos;
     } else {
         return pos;
     }
