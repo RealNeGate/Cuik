@@ -411,7 +411,7 @@ struct TB_CPUContext {
     TB_JIT* jit;
     size_t ud_size;
 
-    volatile bool done;
+    volatile bool interrupted;
     volatile bool running;
 
     CONTEXT cont;
@@ -477,6 +477,7 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
         // necessary for stack crawling later
         cpu->pc = (void*) e->ContextRecord->Rip;
         cpu->sp = (void*) e->ContextRecord->Rsp;
+        cpu->interrupted = true;
         cpu->running = false;
 
         // jump out of the JIT
@@ -495,6 +496,7 @@ bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t ar
     void* handle = AddVectoredExceptionHandler(1, except_handler);
 
     // save our precious restore point
+    cpu->interrupted = false;
     cpu->running = true;
     RtlCaptureContext(&cpu->cont);
 
@@ -516,6 +518,6 @@ bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t ar
     }
 
     RemoveVectoredExceptionHandler(handle);
-    return !cpu->done;
+    return cpu->interrupted;
 }
 #endif
