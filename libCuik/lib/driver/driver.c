@@ -335,12 +335,6 @@ static void cc_invoke(BuildStepInfo* restrict info) {
     done_no_cpp: step_done(s);
 }
 
-static void jit_entry(int fn(int, char**)) {
-    char* argv[] = { "jit", "10" };
-    fn(2, argv);
-    __builtin_trap();
-}
-
 static void ld_invoke(BuildStepInfo* info) {
     Cuik_BuildStep* s = info->step;
     Cuik_DriverArgs* args = s->ld.args;
@@ -391,74 +385,8 @@ static void ld_invoke(BuildStepInfo* info) {
     }
 
     if (args->run) {
-        // TODO(NeGate): support more platforms with the JIT API
-        #ifdef _WIN32
-        TB_JIT* jit = tb_jit_begin(mod, 0);
-
-        // put every function into the heap
-        int(*entry)(int, char**) = NULL;
-
-        TB_Symbol* sym;
-        for (TB_SymbolIter it = tb_symbol_iter(mod); sym = tb_symbol_iter_next(&it), sym;) {
-            if (sym->tag != TB_SYMBOL_FUNCTION) continue;
-
-            TB_Function* f = (TB_Function*) sym;
-            void* ptr = tb_jit_place_function(jit, f);
-            if (strcmp(tb_symbol_get_name((TB_Symbol*) f), "main") == 0) {
-                entry = ptr;
-            }
-        }
-        assert(entry != NULL);
-
-        TB_CPUContext* cpu = tb_jit_thread_create(jit_entry, entry);
-        tb_jit_thread_resume(jit, cpu, TB_DBG_NONE);
-
-        #if 0
-        tb_jit_breakpoint(jit, entry);
-        if (tb_jit_thread_resume(jit, cpu, TB_DBG_NONE)) {
-            for (int i = 0; i < 10000; i++) {
-                uint8_t* pc = tb_jit_thread_pc(cpu);
-                if (pc == NULL) {
-                    break;
-                }
-
-                printf("=== STEP %p", pc);
-                TB_ResolvedAddr addr = tb_jit_addr2sym(jit, pc);
-                if (addr.base) {
-                    printf(" %s", addr.base->name);
-                    if (addr.offset) {
-                        printf(" + %d", addr.offset);
-                    }
-                }
-                printf(" ===\n");
-
-                // dump next 5 lines
-                for (int j = 0; j < 5; j++) {
-                    printf("  %p: ", pc);
-                    ptrdiff_t delta = tb_print_disassembly_inst(TB_ARCH_X86_64, 16, pc);
-                    if (delta < 0) {
-                        printf("ERROR\n");
-                        pc += 1;
-                    } else {
-                        pc += delta;
-                    }
-                }
-
-                if (!tb_jit_thread_resume(jit, cpu, TB_DBG_LINE)) {
-                    break;
-                }
-
-                tb_jit_thread_dump_stack(jit, cpu);
-            }
-        }
-        #endif
-
-        tb_jit_end(jit);
-        goto done;
-        #else
         fprintf(stderr, "C JIT unsupported here :(\n");
         goto done;
-        #endif
     }
 
     ////////////////////////////////

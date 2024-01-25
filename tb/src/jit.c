@@ -39,7 +39,6 @@ struct TB_JIT {
     size_t capacity;
     mtx_t lock;
     NL_Strmap(void*) loaded_funcs;
-    DynArray(TB_Breakpoint) breakpoints;
     DynArray(Tag) tags;
 
     FreeList heap;
@@ -403,188 +402,120 @@ void* tb_jit_get_code_ptr(TB_Function* f) {
 ////////////////////////////////
 #if defined(CUIK__IS_X64) && defined(_WIN32)
 struct TB_CPUContext {
-    // we'll need this to track breakpoints once we hit
-    // them (not all INT3s are breakpoints, some are user
-    // made)
+    // used for stack crawling
+    void* pc;
+    void* sp;
+
+    void* old_sp;
+
     TB_JIT* jit;
+    size_t ud_size;
+
     volatile bool done;
     volatile bool running;
 
     CONTEXT cont;
-    CONTEXT state;
+
+    // safepoint page
+    _Alignas(4096) char poll_site[4096];
+
+    char user_data[];
 };
 
-TB_CPUContext* tb_jit_thread_create(void* entry, void* arg) {
-    void* stack = tb_jit_stack_create();
+typedef struct {
+    // rcx, rdx, r8, r9
+    void* gprs[4];
+} X64Params;
 
-    CONTEXT base;
-    RtlCaptureContext(&base);
+// jump_in(Ctx, PC, X64Params)
+__declspec(allocate(".text")) __declspec(align(16))
+static const uint8_t tb_jit__trampoline[] = {
+    // # save old SP, we'll come back for it later
+    0x48, 0x89, 0x61, 0x10,                   // mov [rcx + 0x10], rsp
+    // # place SP at the top of the region (minus 40 for shadow stack + RPC)
+    0x48, 0x89, 0xCC,                         // mov rsp, rcx
+    0x48, 0x81, 0xC4, 0xD8, 0xFF, 0x1F, 0x00, // add rsp, (2*1024*1024) - 40
+    // # shuffle some params into win64 volatile regs
+    0x48, 0x89, 0xD0,                         // mov rax, rdx
+    0x4D, 0x89, 0xC2,                         // mov r10, r8
+    // # fill GPR params
+    0x49, 0x8B, 0x0A,                         // mov rcx, [r10 + 0x00]
+    0x49, 0x8B, 0x52, 0x08,                   // mov rdx, [r10 + 0x08]
+    0x4D, 0x8B, 0x42, 0x10,                   // mov r8,  [r10 + 0x10]
+    0x4D, 0x8B, 0x4A, 0x18,                   // mov r9,  [r10 + 0x18]
+    0xFF, 0xD0,                               // call rax
+    // # restore stack & return normally
+    0x48, 0x81, 0xE4, 0x00, 0x00, 0xE0, 0xFF, // and rsp, -0x200000
+    0x48, 0x8B, 0x64, 0x24, 0x10,             // mov rsp, [rsp + 0x10]
+    0xC3,                                     // ret
+};
 
-    TB_CPUContext* cpu = stack;
-    cpu->state = base;
-    cpu->state.Rip = (uint64_t) entry;
-    // enough room for a retaddr and the shadow space
-    cpu->state.Rsp = ((uint64_t) stack) + (STACK_SIZE - 40);
-    cpu->state.Rbp = 0;
-    cpu->state.Rcx = (uint64_t) arg;
+TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size) {
+    TB_CPUContext* cpu = tb_jit_stack_create();
+    cpu->ud_size = ud_size;
+    cpu->jit = jit;
+    memset(cpu->user_data, 0, ud_size);
     return cpu;
 }
 
+void* tb_jit_thread_get_userdata(TB_CPUContext* cpu) {
+    return cpu->user_data;
+}
+
 static LONG except_handler(EXCEPTION_POINTERS* e) {
-    // find breakpoints
-    if (e->ExceptionRecord->ExceptionCode == EXCEPTION_BREAKPOINT ||
-        e->ExceptionRecord->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION ||
-        e->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP) {
-        TB_CPUContext* cpu = (TB_CPUContext*) (e->ContextRecord->Rsp & -(STACK_SIZE));
-        if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION) {
-            cpu->done = true;
-        }
+    TB_CPUContext* cpu = (TB_CPUContext*) (e->ContextRecord->Rsp & -STACK_SIZE);
+    if (e->ExceptionRecord->ExceptionCode == EXCEPTION_GUARD_PAGE &&
+        e->ExceptionRecord->ExceptionInformation[1] == (uintptr_t) &cpu->poll_site[0]) {
+        // we hit a safepoint poll
+        void* addr = 0;
+
+        // TODO(NeGate): copy values out of the regs/stk
+        printf("Yikes!\n");
+
+        // TB_* sp = nl_table_get(cpu->safepoints, (void*) e->ContextRecord->Rip);
+
+        // necessary for stack crawling later
+        cpu->pc = (void*) e->ContextRecord->Rip;
+        cpu->sp = (void*) e->ContextRecord->Rsp;
         cpu->running = false;
-        cpu->state = *e->ContextRecord;
+
+        // jump out of the JIT
         *e->ContextRecord = cpu->cont;
         return EXCEPTION_CONTINUE_EXECUTION;
+    } else if (e->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+        // TODO(NeGate): NULLchk segv
+        // void* accessed = (void*) e->ExceptionRecord->ExceptionInformation[1];
     }
 
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-// I do love frame pointers
-typedef struct X86_StackFrame X86_StackFrame;
-struct X86_StackFrame {
-    X86_StackFrame* rbp;
-    void* rip;
-};
-
-static void tb_dump_stack_entry(TB_JIT* jit, TB_CPUContext* cpu, TB_ResolvedAddr addr, void* rpc) {
-    if (addr.base != NULL) {
-        assert(addr.base->tag == TB_SYMBOL_FUNCTION);
-
-        TB_ResolvedLine loc = jit__addr2line(jit, addr);
-        if (loc.loc) {
-            printf("* %s -- %s:%d", addr.base->name, loc.loc->file->path, loc.loc->line);
-        } else {
-            printf("* %s", addr.base->name);
-        }
-    } else {
-        printf("* UNKNOWN? %p", rpc);
-    }
-    printf("\n");
-}
-
-void tb_jit_thread_dump_stack(TB_JIT* jit, TB_CPUContext* cpu) {
-    void* rpc = tb_jit_thread_pc(cpu);
-    TB_ResolvedAddr addr = tb_jit_addr2sym(jit, rpc);
-    if (addr.base == NULL) {
-        return;
-    }
-
-    assert(addr.base->tag == TB_SYMBOL_FUNCTION);
-
-    printf("== CALL STACK ==\n");
-    tb_dump_stack_entry(jit, cpu, addr, rpc);
-
-    // first stack frame might be mid-construction so we
-    // need to accomodate when reading the RPC or SP
-    TB_Function* f = (TB_Function*) addr.base;
-    X86_StackFrame* stk = (X86_StackFrame*) cpu->state.Rbp;
-    if (addr.offset < f->output->prologue_length) {
-        rpc = ((void**) cpu->state.Rsp)[0];
-    } else {
-        rpc = stk->rip;
-        stk = stk->rbp;
-    }
-
-    while (stk) {
-        TB_ResolvedAddr addr = tb_jit_addr2sym(jit, rpc);
-        tb_dump_stack_entry(jit, cpu, addr, rpc);
-
-        // previous frame
-        rpc = stk->rip;
-        stk = stk->rbp;
-    }
-}
-
-static void jit__step(TB_JIT* jit, TB_CPUContext* cpu, bool step) {
-    // install breakpoints
-    const uint8_t* rip = (const uint8_t*) cpu->state.Rip;
-    dyn_array_for(i, jit->breakpoints) {
-        uint8_t* code = jit->breakpoints[i].pos;
-        if (code != rip) {
-            jit->breakpoints[i].prev_byte = *code;
-            *code = 0xCC;
-        }
-    }
-
-    // enable trap flag for single-stepping
-    if (step) {
-        cpu->state.EFlags |= 0x100;
-    } else {
-        cpu->state.EFlags &= ~0x100;
-    }
+bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args) {
+    // install exception handler, then we can run code
+    void* handle = AddVectoredExceptionHandler(1, except_handler);
 
     // save our precious restore point
     cpu->running = true;
-    cpu->state.ContextFlags = 0x10000f;
     RtlCaptureContext(&cpu->cont);
+
     if (cpu->running) {
-        RtlRestoreContext(&cpu->state, NULL);
-    }
+        // continue in JITted code
+        X64Params params;
 
-    // uninstall breakpoints
-    dyn_array_for(i, jit->breakpoints) {
-        uint8_t* code = jit->breakpoints[i].pos;
-        *code = jit->breakpoints[i].prev_byte;
-    }
-}
-
-bool tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step) {
-    // install exception handler, then we can run code
-    void* handle = AddVectoredExceptionHandler(1, except_handler);
-    if (step == TB_DBG_LINE) {
-        TB_ResolvedLine l = tb_jit_addr2line(jit, tb_jit_thread_pc(cpu));
-
-        // make sure we skip all non-user code first, this is slow and annoying
-        while (l.f == NULL) {
-            jit__step(jit, cpu, true);
-            if (cpu->done) goto leave;
-
-            l = tb_jit_addr2line(jit, tb_jit_thread_pc(cpu));
+        // pass int reg params (there's 4 on win64, 6 on sysv)
+        assert(arg_count <= 4);
+        for (size_t i = 0; i < arg_count && i < 4; i++) {
+            params.gprs[i] = args[i];
         }
 
-        uintptr_t start = ((uintptr_t) l.f->compiled_pos) + l.start;
-        uintptr_t range = l.end - l.start;
+        typedef uint64_t (*Trampoline)(TB_CPUContext* cpu, void* pc, X64Params* params);
+        uint64_t r = ((Trampoline)tb_jit__trampoline)(cpu, pc, &params);
+        if (ret) { *ret = r; }
 
-        // keep stepping until we're out of the line
-        for (;;) {
-            jit__step(jit, cpu, true);
-            if (cpu->done) goto leave;
-
-            uintptr_t rip = (uintptr_t) tb_jit_thread_pc(cpu);
-            if (rip - start >= range) {
-                break;
-            }
-        }
-    } else {
-        jit__step(jit, cpu, step == TB_DBG_INST);
+        cpu->running = false;
     }
 
-    leave:
     RemoveVectoredExceptionHandler(handle);
     return !cpu->done;
-}
-
-void* tb_jit_thread_pc(TB_CPUContext* cpu) {
-    return (void*) cpu->state.Rip;
-}
-
-void tb_jit_breakpoint(TB_JIT* jit, void* addr) {
-    TB_Breakpoint bp = { addr };
-    dyn_array_for(i, jit->breakpoints) {
-        if (jit->breakpoints[i].pos == addr) {
-            return;
-        }
-    }
-
-    dyn_array_put(jit->breakpoints, bp);
 }
 #endif

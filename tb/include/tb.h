@@ -861,26 +861,16 @@ TB_API TB_ResolvedAddr tb_jit_addr2sym(TB_JIT* jit, void* ptr);
 TB_API TB_ResolvedLine tb_jit_addr2line(TB_JIT* jit, void* ptr);
 TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 
-typedef enum {
-    // just keeps running
-    TB_DBG_NONE,
-    // stops after one instruction
-    TB_DBG_INST,
-    // stops once the line changes
-    TB_DBG_LINE,
-} TB_DbgStep;
-
 // Debugger stuff
 //   creates a new context we can run JIT code in, you don't
 //   technically need this but it's a nice helper for writing
 //   JITs especially when it comes to breakpoints (and eventually
 //   safepoints)
-TB_API TB_CPUContext* tb_jit_thread_create(void* entry, void* arg);
-//   runs until TB_DbgStep condition is met
-TB_API bool tb_jit_thread_resume(TB_JIT* jit, TB_CPUContext* cpu, TB_DbgStep step);
-TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
-TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);
-TB_API void tb_jit_thread_dump_stack(TB_JIT* jit, TB_CPUContext* cpu);
+TB_API TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size);
+TB_API void* tb_jit_thread_get_userdata(TB_CPUContext* cpu);
+
+// runs until TB_DbgStep condition is met
+TB_API bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args);
 
 ////////////////////////////////
 // Disassembler
