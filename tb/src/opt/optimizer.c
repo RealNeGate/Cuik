@@ -316,15 +316,31 @@ static Lattice* sccp_lookup(TB_Passes* restrict p, TB_Node* n) {
     return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = a });
 }
 
+static Lattice* sccp_region(TB_Passes* restrict p, TB_Node* n) {
+    assert(n->type == TB_REGION);
+    Lattice* l = lattice_universe_get(p, n->inputs[1]);
+    FOREACH_N(i, 1, n->input_count) {
+        Lattice* edge = lattice_universe_get(p, n->inputs[i]);
+        if (edge == &CTRL_IN_THE_SKY || edge == &TOP_IN_THE_SKY) {
+            return edge;
+        }
+    }
+
+    return &XCTRL_IN_THE_SKY;
+}
+
 static Lattice* sccp_meetchads(TB_Passes* restrict p, TB_Node* n) {
-    assert(n->type == TB_REGION || n->type == TB_SELECT || n->type == TB_PHI);
-    int start = n->type == TB_REGION ? 0 : 1;
-    if (n->type == TB_SELECT) start = 2 ;
+    assert(n->type == TB_SELECT || n->type == TB_PHI);
+    int start = n->type == TB_SELECT ? 2 : 1;
 
     Lattice* l = lattice_universe_get(p, n->inputs[start]);
     FOREACH_N(i, start+1, n->input_count) {
-        l = lattice_meet(p, l, lattice_universe_get(p, n->inputs[i]), n->dt);
+        Lattice* edge = lattice_universe_get(p, n->inputs[i]);
+        if (edge == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+
+        l = lattice_meet(p, l, edge, n->dt);
     }
+
     return l;
 }
 

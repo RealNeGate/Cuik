@@ -75,7 +75,7 @@ static const NodeVtable vtables[TB_NODE_TYPE_MAX] = {
     [TB_SELECT]         = { ideal_select,      NULL,               sccp_meetchads   },
     [TB_PHI]            = { ideal_phi,         identity_phi,       sccp_meetchads   },
     // control flow
-    [TB_REGION]         = { ideal_region,      identity_region,    sccp_meetchads   },
+    [TB_REGION]         = { ideal_region,      identity_region,    sccp_region      },
     [TB_BRANCH]         = { ideal_branch,      NULL,               sccp_branch      },
     [TB_SAFEPOINT_POLL] = { NULL,              identity_safepoint, sccp_ctrl        },
     [TB_CALL]           = { ideal_libcall,     identity_ctrl,      sccp_call        },
