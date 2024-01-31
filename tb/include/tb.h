@@ -847,19 +847,15 @@ TB_API void tb_jit_dump_heap(TB_JIT* jit);
 TB_API void tb_jit_end(TB_JIT* jit);
 
 typedef struct {
-    TB_Symbol* base;
+    void* tag;
     uint32_t offset;
 } TB_ResolvedAddr;
 
-typedef struct {
-    TB_Function* f;
-    TB_Location* loc;
-    uint32_t start, end;
-} TB_ResolvedLine;
-
-TB_API TB_ResolvedAddr tb_jit_addr2sym(TB_JIT* jit, void* ptr);
-TB_API TB_ResolvedLine tb_jit_addr2line(TB_JIT* jit, void* ptr);
+TB_API void* tb_jit_resolve_addr(TB_JIT* jit, void* ptr, uint32_t* offset);
 TB_API void* tb_jit_get_code_ptr(TB_Function* f);
+
+// you can take an tag an allocation, fresh space for random userdata :)
+TB_API void tb_jit_tag_object(TB_JIT* jit, void* ptr, void* tag);
 
 // Debugger stuff
 //   creates a new context we can run JIT code in, you don't
@@ -868,9 +864,15 @@ TB_API void* tb_jit_get_code_ptr(TB_Function* f);
 //   safepoints)
 TB_API TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size);
 TB_API void* tb_jit_thread_get_userdata(TB_CPUContext* cpu);
+TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);
+
+// Only relevant when you're pausing the thread
+TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
+TB_API void* tb_jit_thread_sp(TB_CPUContext* cpu);
 
 // runs until TB_DbgStep condition is met
 TB_API bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args);
+TB_API void tb_jit_thread_step(TB_CPUContext* cpu, uintptr_t pc_start, uintptr_t pc_end);
 
 ////////////////////////////////
 // Disassembler
