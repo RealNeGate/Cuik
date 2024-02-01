@@ -872,7 +872,9 @@ TB_API void* tb_jit_thread_sp(TB_CPUContext* cpu);
 
 // runs until TB_DbgStep condition is met
 TB_API bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args);
-TB_API void tb_jit_thread_step(TB_CPUContext* cpu, uintptr_t pc_start, uintptr_t pc_end);
+
+// returns true if we stepped off the end and returned through the trampoline
+TB_API bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end);
 
 ////////////////////////////////
 // Disassembler

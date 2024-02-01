@@ -471,14 +471,14 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
-void tb_jit_thread_step(TB_CPUContext* cpu, uintptr_t pc_start, uintptr_t pc_end) {
+bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end) {
     void* handle = AddVectoredExceptionHandler(1, except_handler);
 
     // step until we're out of the current PC region
     DynArray(TB_Breakpoint) bp = cpu->jit->breakpoints;
     uintptr_t rip = cpu->state.Rip;
     while (rip >= pc_start && rip < pc_end) {
-        printf("step %#"PRIxPTR" [%#"PRIxPTR" %#"PRIxPTR"]\n", rip, pc_start, pc_end);
+        // printf("step %#"PRIxPTR" [%#"PRIxPTR" %#"PRIxPTR"]\n", rip, pc_start, pc_end);
 
         // install breakpoints
         dyn_array_for(i, bp) {
@@ -510,6 +510,15 @@ void tb_jit_thread_step(TB_CPUContext* cpu, uintptr_t pc_start, uintptr_t pc_end
     }
 
     RemoveVectoredExceptionHandler(handle);
+
+    uintptr_t t = (uintptr_t) &tb_jit__trampoline;
+    if ((rip - t) < sizeof(tb_jit__trampoline)) {
+        // we in the trampoline, read RAX for the return
+        *ret = cpu->state.Rax;
+        return true;
+    } else {
+        return false;
+    }
 }
 
 bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args) {
