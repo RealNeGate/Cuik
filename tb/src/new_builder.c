@@ -48,7 +48,13 @@ static void push(TB_GraphBuilder* g, TB_Node* n) {
         g->val_cap *= 2;
         g->vals = tb_platform_heap_realloc(g->vals, g->val_cap * sizeof(TB_Node*));
     }
-    g->vals[g->val_cnt++] = tb_pass_gvn_node(g->f, n);
+
+    // we don't wanna GVN phis too early, they might be incomplete
+    if (n->type != TB_PHI) {
+        n = tb_pass_gvn_node(g->f, n);
+    }
+
+    g->vals[g->val_cnt++] = n;
 }
 
 static TB_Node* pop(TB_GraphBuilder* g) {
@@ -82,6 +88,14 @@ int tb_builder_save(TB_GraphBuilder* g) {
 void tb_builder_restore(TB_GraphBuilder* g, int v) {
     assert(g->val_cnt >= v);
     g->val_cnt = v;
+}
+
+void tb_builder_push(TB_GraphBuilder* g, TB_Node* n) {
+    push(g, n);
+}
+
+TB_Node* tb_builder_pop(TB_GraphBuilder* g) {
+    return pop(g);
 }
 
 void tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x) {
@@ -133,6 +147,16 @@ void tb_builder_string(TB_GraphBuilder* g, ptrdiff_t len, const char* str) {
     push(g, tb_inst_get_symbol_address(f, (TB_Symbol*) dummy));
 }
 
+void tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type) {
+    assert(type >= TB_TRUNCATE && type <= TB_BITCAST);
+    TB_Node* a = pop(g);
+
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, type, dt, 2, 0);
+    set_input(f, n, a, 1);
+    push(g, n);
+}
+
 void tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_ArithmeticBehavior ab) {
     assert(type >= TB_AND && type <= TB_SMOD);
     TB_Node* b = pop(g);
@@ -146,7 +170,7 @@ void tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_ArithmeticBehavior ab
     push(g, n);
 }
 
-void tb_builder_cmp(TB_GraphBuilder* g, int type, TB_DataType dt) {
+void tb_builder_cmp(TB_GraphBuilder* g, int type, bool flip, TB_DataType dt) {
     TB_Node* b = pop(g);
     TB_Node* a = pop(g);
     tb_assert(type >= TB_CMP_EQ && type <= TB_CMP_FLE, "'type' wasn't a comparison node type (see TB_NodeTypeEnum)");
@@ -154,8 +178,13 @@ void tb_builder_cmp(TB_GraphBuilder* g, int type, TB_DataType dt) {
 
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, type, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
-    set_input(f, n, a, 1);
-    set_input(f, n, b, 2);
+    if (flip) {
+        set_input(f, n, b, 1);
+        set_input(f, n, a, 2);
+    } else {
+        set_input(f, n, a, 1);
+        set_input(f, n, b, 2);
+    }
     TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = a->dt);
     push(g, n);
 }
@@ -185,10 +214,17 @@ void tb_builder_member(TB_GraphBuilder* g, int64_t offset) {
     push(g, n);
 }
 
-void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_CharUnits alignment) {
+void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, int32_t offset, TB_CharUnits alignment) {
     TB_Function* f = g->f;
 
     TB_Node* addr = pop(g);
+    if (offset) {
+        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
+        set_input(f, n, addr, 1);
+        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
+        addr = n;
+    }
+
     TB_Node* n = tb_alloc_node(f, TB_LOAD, dt, 3, sizeof(TB_NodeMemAccess));
     if (ctrl_dep) {
         set_input(f, n, g->bot_ctrl, 0);
@@ -200,12 +236,19 @@ void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType
     push(g, n);
 }
 
-void tb_builder_store(TB_GraphBuilder* g, int mem_var, TB_CharUnits alignment) {
+void tb_builder_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_CharUnits alignment) {
     TB_Function* f = g->f;
 
     TB_Node* val  = pop(g);
     TB_Node* addr = pop(g);
     assert(g->vals[mem_var]->dt.type == TB_MEMORY);
+
+    if (offset) {
+        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
+        set_input(f, n, addr, 1);
+        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
+        addr = n;
+    }
 
     TB_Node* n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
     set_input(f, n, f->trace.bot_ctrl, 0);
@@ -216,6 +259,11 @@ void tb_builder_store(TB_GraphBuilder* g, int mem_var, TB_CharUnits alignment) {
 
     // assign ROOT memory
     g->vals[mem_var] = n;
+}
+
+void tb_builder_debugbreak(TB_GraphBuilder* g) {
+    TB_Node* n = tb_alloc_node(g->f, TB_DEBUGBREAK, TB_TYPE_CONTROL, 1, 0);
+    set_input(g->f, n, xfer_ctrl(g, n), 0);
 }
 
 int tb_builder_var(TB_GraphBuilder* g) {
@@ -311,7 +359,11 @@ void tb_builder_endif(TB_GraphBuilder* g) {
     if (join->input_count > 0) {
         FOREACH_N(i, 0, g->val_cnt) {
             if (g->vals[i] != ctrl->vals[i]) {
-                g->vals[i] = tb_inst_phi2(g->f, join, ctrl->vals[i], g->vals[i]);
+                TB_Node* n = tb_alloc_node_dyn(g->f, TB_PHI, g->vals[i]->dt, 3, 3, 0);
+                set_input(g->f, n, join, 0);
+                set_input(g->f, n, ctrl->vals[i], 1);
+                set_input(g->f, n, g->vals[i], 2);
+                g->vals[i] = n;
             }
         }
 
@@ -320,6 +372,161 @@ void tb_builder_endif(TB_GraphBuilder* g) {
         tb_pass_kill_node(g->f, join);
         g->top_ctrl = g->bot_ctrl = NULL;
     }
+    tb_arena_restore(g->arena, ctrl->sp);
+}
+
+static void block_jmp(TB_GraphBuilder* g, TB_Node* bot, int depth) {
+    TB_GraphCtrl* ctrl = g->top;
+    while (depth--) { ctrl = ctrl->prev; }
+
+    // add exit path
+    if (!ctrl->is_loop && ctrl->join == NULL) {
+        ctrl->join = tb_alloc_node_dyn(g->f, TB_REGION, TB_TYPE_CONTROL, 0, 2, sizeof(TB_NodeRegion));
+        TB_NODE_SET_EXTRA(ctrl->join, TB_NodeRegion, .freq = 1.0f);
+    }
+
+    TB_Node* target = ctrl->is_loop ? ctrl->header : ctrl->join;
+
+    assert(ctrl->val_cnt == g->val_cnt);
+    add_input_late(g->f, target, bot);
+
+    // add edges to phis
+    if (ctrl->is_loop) {
+        FOREACH_N(i, 0, ctrl->val_cnt) {
+            add_input_late(g->f, ctrl->vals[i], g->vals[i]);
+        }
+    } else {
+        FOREACH_N(i, 0, ctrl->val_cnt) {
+            TB_Node* val = ctrl->vals[i];
+            if (val == NULL) {
+                ctrl->vals[i] = g->vals[i];
+            } else if (val->type == TB_PHI && val->inputs[0] == target) {
+                add_input_late(g->f, val, g->vals[i]);
+            } else {
+                // add phi
+                TB_Node* n = tb_alloc_node_dyn(g->f, TB_PHI, g->vals[i]->dt, 3, 3, 0);
+                set_input(g->f, n, target,     0);
+                set_input(g->f, n, val,        1);
+                set_input(g->f, n, g->vals[i], 2);
+                ctrl->vals[i] = n;
+            }
+        }
+    }
+}
+
+void tb_builder_loop(TB_GraphBuilder* g) {
+    TB_Function* f = g->f;
+
+    TB_ArenaSavepoint sp = tb_arena_save(g->arena);
+    TB_GraphCtrl* ctrl = tb_arena_alloc(g->arena, sizeof(TB_GraphCtrl) + g->val_cnt*sizeof(TB_Node*));
+    *ctrl = (TB_GraphCtrl){ 0 };
+
+    // add header region
+    ctrl->header = tb_alloc_node_dyn(f, TB_REGION, TB_TYPE_CONTROL, 0, 2, sizeof(TB_NodeRegion));
+    ctrl->join = NULL;
+    ctrl->is_loop = true;
+    TB_NODE_SET_EXTRA(ctrl->header, TB_NodeRegion, .freq = 10.0f);
+
+    if (g->bot_ctrl) {
+        // fallthru
+        add_input_late(g->f, ctrl->header, g->bot_ctrl);
+    }
+
+    // since we don't know which values are mutated, we'll just clone all of them
+    ctrl->sp = sp;
+    ctrl->val_cnt = g->val_cnt;
+    FOREACH_N(i, 0, g->val_cnt) {
+        TB_Node* n = tb_alloc_node_dyn(g->f, TB_PHI, g->vals[i]->dt, 2, 4, 0);
+        set_input(g->f, n, ctrl->header, 0);
+        set_input(g->f, n, g->vals[i], 1);
+        g->vals[i] = ctrl->vals[i] = n;
+    }
+
+    ctrl->prev = g->top;
+    g->top = ctrl;
+
+    // goto the loop body
+    g->top_ctrl = g->bot_ctrl = ctrl->header;
+}
+
+void tb_builder_endloop(TB_GraphBuilder* g) {
+    TB_GraphCtrl* ctrl = g->top;
+    g->top = ctrl->prev;
+
+    TB_Node* header = ctrl->header;
+    FOREACH_N(i, 0, ctrl->val_cnt) {
+        // phis are complete now, we can fold them out if unused
+        TB_Node* src = ctrl->vals[i];
+        /* if (src->type == TB_PHI && src->inputs[0] == header && src->input_count > 1) {
+            TB_Node* k = identity_phi(NULL, g->f, src);
+            if (k != src) {
+                // phi => same
+                subsume_node(g->f, src, k);
+                g->vals[i] = k;
+                continue;
+            }
+        } */
+
+        g->vals[i] = ctrl->vals[i];
+    }
+
+    tb_arena_restore(g->arena, ctrl->sp);
+}
+
+void tb_builder_br(TB_GraphBuilder* g, int depth) {
+    block_jmp(g, g->bot_ctrl, depth);
+    g->top_ctrl = g->bot_ctrl = NULL;
+}
+
+void tb_builder_br_if(TB_GraphBuilder* g, int depth) {
+    TB_Function* f = g->f;
+
+    TB_Node* cond = pop(g);
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(int64_t));
+    set_input(f, n, xfer_ctrl(g, NULL), 0);
+    set_input(f, n, cond, 1);
+
+    TB_Node* leave    = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+    TB_Node* fallthru = tb__make_proj(f, TB_TYPE_CONTROL, n, 1);
+
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    br->succ_count = 2;
+    br->keys[0] = 0;
+
+    block_jmp(g, leave, depth);
+
+    // goto fallthru path
+    g->top_ctrl = g->bot_ctrl = fallthru;
+}
+
+void tb_builder_block(TB_GraphBuilder* g) {
+    TB_Function* f = g->f;
+
+    TB_ArenaSavepoint sp = tb_arena_save(g->arena);
+    TB_GraphCtrl* ctrl = tb_arena_alloc(g->arena, sizeof(TB_GraphCtrl) + sizeof(TB_Node*)*g->val_cnt);
+    *ctrl = (TB_GraphCtrl){ 0 };
+    ctrl->sp = sp;
+
+    ctrl->val_cnt = g->val_cnt;
+    memset(ctrl->vals, 0, sizeof(TB_Node*)*g->val_cnt);
+
+    ctrl->prev = g->top;
+    g->top = ctrl;
+}
+
+void tb_builder_endblock(TB_GraphBuilder* g) {
+    if (g->bot_ctrl != NULL) {
+        block_jmp(g, g->bot_ctrl, 0);
+    }
+
+    TB_GraphCtrl* ctrl = g->top;
+    g->top = ctrl->prev;
+
+    FOREACH_N(i, 0, ctrl->val_cnt) {
+        g->vals[i] = ctrl->vals[i];
+    }
+
+    g->top_ctrl = g->bot_ctrl = ctrl->join;
     tb_arena_restore(g->arena, ctrl->sp);
 }
 

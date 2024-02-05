@@ -496,7 +496,9 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 if (n->inputs[0]->type == TB_ROOT) {
                     // function params are ABI crap
                     const struct ParamDesc* params = &param_descs[ctx->abi_index];
-                    if (i >= 3) {
+                    if (i == 2) {
+                        assert(0 && "tf are you doing with the RPC?");
+                    } else if (i >= 3) {
                         if (n->dt.type == TB_FLOAT) {
                             rm = REGMASK(XMM, 1u << (i - 3));
                         } else {
@@ -917,7 +919,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 static int stk_offset(Ctx* ctx, int reg) {
     int pos = reg*8;
     if (reg >= ctx->num_regs[0]) {
-        return ctx->stack_usage - pos;
+        return ctx->stack_usage - (pos + 8);
     } else {
         return pos;
     }
@@ -1350,7 +1352,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 if (x == 0) {
                     // xor reg, reg
                     inst2(e, XOR, &dst, &dst, dt);
-                } else if (hi == 0) {
+                } else if (hi == 0 || dt == TB_X86_TYPE_QWORD) {
                     Val src = val_abs(x);
                     inst2(e, MOVABS, &dst, &src, dt);
                 } else {

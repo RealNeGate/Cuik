@@ -92,8 +92,8 @@ local ar = options.gcc and "ar"  or "llvm-ar"
 if not options.debug then
 	cflags = cflags.." -O2 -DNDEBUG"
 	if not options.gcc then
-		options.lld = true
-		cflags = cflags.." -flto"
+		-- options.lld = true
+		-- cflags = cflags.." -flto"
 	end
 end
 

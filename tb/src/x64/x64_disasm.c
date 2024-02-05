@@ -115,6 +115,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x50 ... 0x5F] = OP_PLUSR | OP_64BIT,
         // movsxd reg, r/m
         [0x63]          = OP_MODRM | OP_DIR | OP_2DT,
+        // imul reg, r/m, imm
+        [0x69]          = OP_MODRM | OP_DIR | OP_IMM,
         // jcc rel8
         [0x70 ... 0x7F] = OP_IMM8,
         // OP r/m8, imm8

@@ -576,6 +576,9 @@ static TB_Node* identity_phi(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
     }
 
     assert(same);
-    tb_pass_mark_users(p, n->inputs[0]);
+    if (p) {
+        tb_pass_mark_users(p, n->inputs[0]);
+    }
+
     return same;
 }

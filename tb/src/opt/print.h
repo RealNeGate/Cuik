@@ -498,7 +498,7 @@ void tb_pass_print(TB_Passes* opt) {
     TB_Node* end_bb = NULL;
     FOREACH_N(i, 0, ctx.cfg.block_count) {
         TB_Node* end = nl_map_get_checked(ctx.cfg.node_to_block, opt->worklist.items[i]).end;
-        if (end == f->root_node) {
+        if (end->type == TB_RETURN) {
             end_bb = opt->worklist.items[i];
             continue;
         }

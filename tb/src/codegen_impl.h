@@ -232,7 +232,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         int stop_bb = -1;
         FOREACH_N(i, 0, cfg.block_count) {
             TB_Node* end = nl_map_get_checked(cfg.node_to_block, bbs[i]).end;
-            if (end->type == TB_ROOT) {
+            if (end->type == TB_RETURN) {
                 stop_bb = i;
             } else {
                 machine_bbs[bb_count++] = (MachineBB){ i };
@@ -366,6 +366,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                             phi_it->dt = v->phi->dt;
 
                             LiveInterval* src = get_interval(&ctx, v->n, i);
+                            src->dt = v->phi->dt;
 
                             TB_OPTDEBUG(CODEGEN)(printf("  PHI %u: ", v->phi->gvn), print_node_sexpr(v->phi, 0), printf("\n"));
                             TB_OPTDEBUG(CODEGEN)(printf("    v%d ", phi_it->id), tb__print_regmask(phi_it->mask), printf("\n"));
@@ -393,10 +394,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 }
                 dyn_array_set_length(ws->items, base);
 
-                machine_bbs[bbid].start = top;
-                machine_bbs[bbid].end = bot;
-                machine_bbs[bbid].n = bb_start;
-                machine_bbs[bbid].end_n = end;
+                machine_bbs[i].start = top;
+                machine_bbs[i].end = bot;
+                machine_bbs[i].n = bb_start;
+                machine_bbs[i].end_n = end;
             }
         }
         dyn_array_destroy(phi_vals);

@@ -93,7 +93,7 @@ void* tb_jit_resolve_addr(TB_JIT* jit, void* ptr, uint32_t* out_offset) {
     return NULL;
 }
 
-static void* tb_jit_alloc_obj(TB_JIT* jit, size_t size, size_t align) {
+void* tb_jit_alloc_obj(TB_JIT* jit, size_t size, size_t align) {
     mtx_lock(&jit->lock);
     size = (size + ALLOC_GRANULARITY - 1) & ~(ALLOC_GRANULARITY - 1);
 
@@ -359,6 +359,7 @@ struct TB_CPUContext {
     void* sp;
 
     void* old_sp;
+    void* except;
 
     TB_JIT* jit;
     size_t ud_size;
@@ -403,34 +404,15 @@ static const uint8_t tb_jit__trampoline[] = {
     0xC3,                                     // ret
 };
 
-TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size) {
-    TB_CPUContext* cpu = tb_jit_stack_create();
-    cpu->ud_size = ud_size;
-    cpu->jit = jit;
-    memset(cpu->user_data, 0, ud_size);
-    return cpu;
-}
-
-void* tb_jit_thread_pc(TB_CPUContext* cpu) { return cpu->pc; }
-void* tb_jit_thread_sp(TB_CPUContext* cpu) { return cpu->sp; }
-
-void* tb_jit_thread_get_userdata(TB_CPUContext* cpu) {
-    return cpu->user_data;
-}
-
-void tb_jit_breakpoint(TB_JIT* jit, void* addr) {
-    TB_Breakpoint bp = { addr };
-    dyn_array_for(i, jit->breakpoints) {
-        if (jit->breakpoints[i].pos == addr) {
-            return;
-        }
-    }
-
-    dyn_array_put(jit->breakpoints, bp);
-}
-
 static LONG except_handler(EXCEPTION_POINTERS* e) {
     TB_CPUContext* cpu = (TB_CPUContext*) (e->ContextRecord->Rsp & -STACK_SIZE);
+
+    // necessary for stack crawling later
+    cpu->pc = (void*) e->ContextRecord->Rip;
+    cpu->sp = (void*) e->ContextRecord->Rsp;
+    cpu->interrupted = true;
+    cpu->running = false;
+
     switch (e->ExceptionRecord->ExceptionCode) {
         case EXCEPTION_GUARD_PAGE: {
             if (e->ExceptionRecord->ExceptionInformation[1] == (uintptr_t) &cpu->poll_site[0]) {
@@ -448,6 +430,7 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
         case EXCEPTION_ACCESS_VIOLATION: {
             // TODO(NeGate): NULLchk segv
             // void* accessed = (void*) e->ExceptionRecord->ExceptionInformation[1];
+            printf("PAUSE RIP=%p\n", cpu->pc);
             break;
         }
 
@@ -460,20 +443,41 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
 
-    // necessary for stack crawling later
-    cpu->pc = (void*) e->ContextRecord->Rip;
-    cpu->sp = (void*) e->ContextRecord->Rsp;
-    cpu->interrupted = true;
-    cpu->running = false;
-
     // jump out of the JIT
     *e->ContextRecord = cpu->cont;
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
-bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end) {
-    void* handle = AddVectoredExceptionHandler(1, except_handler);
+TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size) {
+    TB_CPUContext* cpu = tb_jit_stack_create();
+    cpu->ud_size = ud_size;
+    cpu->jit = jit;
+    cpu->except = AddVectoredExceptionHandler(1, except_handler);
+    memset(cpu->user_data, 0, ud_size);
+    return cpu;
+}
 
+void* tb_jit_thread_pc(TB_CPUContext* cpu) { return cpu->pc; }
+void* tb_jit_thread_sp(TB_CPUContext* cpu) { return cpu->sp; }
+
+size_t tb_jit_thread_pollsite(void) { return offsetof(TB_CPUContext, poll_site); }
+
+void* tb_jit_thread_get_userdata(TB_CPUContext* cpu) {
+    return cpu->user_data;
+}
+
+void tb_jit_breakpoint(TB_JIT* jit, void* addr) {
+    TB_Breakpoint bp = { addr };
+    dyn_array_for(i, jit->breakpoints) {
+        if (jit->breakpoints[i].pos == addr) {
+            return;
+        }
+    }
+
+    dyn_array_put(jit->breakpoints, bp);
+}
+
+bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end) {
     // step until we're out of the current PC region
     DynArray(TB_Breakpoint) bp = cpu->jit->breakpoints;
     uintptr_t rip = cpu->state.Rip;
@@ -509,8 +513,6 @@ bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, u
         rip = cpu->state.Rip;
     }
 
-    RemoveVectoredExceptionHandler(handle);
-
     uintptr_t t = (uintptr_t) &tb_jit__trampoline;
     if ((rip - t) < sizeof(tb_jit__trampoline)) {
         // we in the trampoline, read RAX for the return
@@ -521,10 +523,7 @@ bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, u
     }
 }
 
-bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args) {
-    // install exception handler, then we can run code
-    void* handle = AddVectoredExceptionHandler(1, except_handler);
-
+bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args) {
     // save our precious restore point
     cpu->interrupted = false;
     cpu->running = true;
@@ -580,7 +579,6 @@ bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t ar
         cpu->running = false;
     }
 
-    RemoveVectoredExceptionHandler(handle);
     return cpu->interrupted;
 }
 #endif

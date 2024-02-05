@@ -842,6 +842,7 @@ typedef struct TB_CPUContext TB_CPUContext;
 TB_API TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity);
 TB_API void* tb_jit_place_function(TB_JIT* jit, TB_Function* f);
 TB_API void* tb_jit_place_global(TB_JIT* jit, TB_Global* g);
+TB_API void* tb_jit_alloc_obj(TB_JIT* jit, size_t size, size_t align);
 TB_API void tb_jit_free_obj(TB_JIT* jit, void* ptr);
 TB_API void tb_jit_dump_heap(TB_JIT* jit);
 TB_API void tb_jit_end(TB_JIT* jit);
@@ -866,12 +867,14 @@ TB_API TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size);
 TB_API void* tb_jit_thread_get_userdata(TB_CPUContext* cpu);
 TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);
 
+// offsetof pollsite in the CPUContext
+TB_API size_t tb_jit_thread_pollsite(void);
+
 // Only relevant when you're pausing the thread
 TB_API void* tb_jit_thread_pc(TB_CPUContext* cpu);
 TB_API void* tb_jit_thread_sp(TB_CPUContext* cpu);
 
-// runs until TB_DbgStep condition is met
-TB_API bool tb_jit_thread_resume(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args);
+TB_API bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_count, void** args);
 
 // returns true if we stepped off the end and returned through the trampoline
 TB_API bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end);
@@ -1307,6 +1310,11 @@ TB_API void tb_builder_exit(TB_GraphBuilder* g);
 TB_API int tb_builder_save(TB_GraphBuilder* g);
 TB_API void tb_builder_restore(TB_GraphBuilder* g, int v);
 
+TB_API void tb_builder_push(TB_GraphBuilder* g, TB_Node* n);
+TB_API TB_Node* tb_builder_pop(TB_GraphBuilder* g);
+
+TB_API void tb_builder_debugbreak(TB_GraphBuilder* g);
+
 // ( -- a )
 TB_API void tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x);
 TB_API void tb_builder_sint(TB_GraphBuilder* g, TB_DataType dt, int64_t x);
@@ -1320,8 +1328,10 @@ TB_API void tb_builder_string(TB_GraphBuilder* g, ptrdiff_t len, const char* str
 // note that arithmetic behavior is irrelevant for some of the operations (but 0 is always a good default).
 TB_API void tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_ArithmeticBehavior ab);
 
+TB_API void tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type);
+
 // ( a b -- c )
-TB_API void tb_builder_cmp(TB_GraphBuilder* g, int type, TB_DataType dt);
+TB_API void tb_builder_cmp(TB_GraphBuilder* g, int type, bool flip, TB_DataType dt);
 
 // pointer arithmetic
 //   ( a b -- c )   =>   a + b*stride
@@ -1331,9 +1341,9 @@ TB_API void tb_builder_member(TB_GraphBuilder* g, int64_t offset);
 
 // memory
 //   ( addr -- val )
-TB_API void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_CharUnits align);
+TB_API void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, int32_t offset, TB_CharUnits align);
 //   ( addr val -- )
-TB_API void tb_builder_store(TB_GraphBuilder* g, int mem_var, TB_CharUnits align);
+TB_API void tb_builder_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_CharUnits align);
 
 // function call
 //   ( ... -- ... )
@@ -1368,6 +1378,18 @@ TB_API void tb_builder_endif(TB_GraphBuilder* g);
 //   technically TB has multiple returns, in practice it's like 2 regs before
 //   ABI runs out of shit.
 TB_API void tb_builder_ret(TB_GraphBuilder* g, int count);
+//   ( a -- )
+TB_API void tb_builder_br(TB_GraphBuilder* g, int depth);
+//   ( a -- )
+TB_API void tb_builder_br_if(TB_GraphBuilder* g, int depth);
+//   ( -- )
+TB_API void tb_builder_loop(TB_GraphBuilder* g);
+//   ( -- )
+TB_API void tb_builder_endloop(TB_GraphBuilder* g);
+//   ( -- )
+TB_API void tb_builder_block(TB_GraphBuilder* g);
+//   ( -- )
+TB_API void tb_builder_endblock(TB_GraphBuilder* g);
 
 ////////////////////////////////
 // Passes
