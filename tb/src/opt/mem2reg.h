@@ -287,7 +287,7 @@ static void expunge(TB_Function* f, TB_Node* n) {
     tb_pass_kill_node(f, n);
 }
 
-void tb_pass_split_locals(TB_Passes* p) {
+bool tb_pass_split_locals(TB_Passes* p) {
     TB_Function* f = p->f;
 
     assert(dyn_array_length(p->worklist.items) == 0);
@@ -314,7 +314,7 @@ void tb_pass_split_locals(TB_Passes* p) {
     }
 
     if (dyn_array_length(p->worklist.items) == 0) {
-        return;
+        return false;
     }
 
     // locals + root mem
@@ -390,4 +390,10 @@ void tb_pass_split_locals(TB_Passes* p) {
         expunge(f, addr);
         set_input(f, merge, ctx.projs[i], 2+i);
     }
+
+    tb_pass_mark(p, merge);
+    tb_pass_mark_users(p, merge);
+
+    tb_pass_peephole(p);
+    return true;
 }

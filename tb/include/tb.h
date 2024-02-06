@@ -1417,16 +1417,8 @@ TB_API TB_Node* tb_pass_gvn_node(TB_Function* f, TB_Node* n);
 //     break down most optimizations into local rewrites, it's
 //     incremental and recommended to run after any non-peephole
 //     pass.
-//
-//   mem2reg: lowers TB_LOCALs into SoN values, this makes more
-//     data flow analysis possible on the code and allows to codegen
-//     to place variables into registers.
-//
-//   SROA: splits LOCALs into multiple to allow for more dataflow
-//     analysis later on.
 TB_API void tb_pass_peephole(TB_Passes* p);
-TB_API void tb_pass_sroa(TB_Passes* p);
-TB_API void tb_pass_mem2reg(TB_Passes* p);
+TB_API bool tb_pass_split_locals(TB_Passes* p);
 TB_API void tb_pass_loop(TB_Passes* p);
 
 // this just runs the optimizer in the default configuration

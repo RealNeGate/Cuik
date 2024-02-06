@@ -1107,8 +1107,10 @@ void dummy_interp(TB_Passes* p) {
 void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p);
     tb_pass_split_locals(p);
-    /* tb_pass_peephole(p);
     tb_pass_loop(p);
+    tb_pass_peephole(p);
+
+    /* tb_pass_peephole(p);
     tb_pass_peephole(p); */
 
     // tb_pass_print(p);
