@@ -240,6 +240,11 @@ TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
     Cuik_Type* src = cuik_canonical_type(v->type);
     bool is_volatile = CUIK_QUAL_TYPE_HAS(v->type, CUIK_QUAL_VOLATILE);
 
+    if (v->value_type == LVALUE_SYM) {
+        v->reg = tb_inst_get_symbol_address(func, v->sym->backing.s);
+        v->value_type = LVALUE;
+    }
+
     TB_Node* reg = 0;
     switch (v->value_type) {
         case RVALUE: {
@@ -263,10 +268,6 @@ TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
 
             tb_inst_set_control(func, v->phi.merger);
             reg = tb_inst_phi2(func, v->phi.merger, one, zero);
-            break;
-        }
-        case LVALUE_SYM: {
-            reg = tb_inst_get_symbol_address(func, v->sym->backing.s);
             break;
         }
         case LVALUE: {
@@ -307,7 +308,9 @@ TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
 }
 
 TB_Node* cvt2lval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
-    if (v->value_type == LVALUE) {
+    if (v->value_type == LVALUE_SYM) {
+        return tb_inst_get_symbol_address(func, v->sym->backing.s);
+    } else if (v->value_type == LVALUE) {
         return v->reg;
     } else if (v->value_type == RVALUE) {
         Cuik_Type* t = cuik_canonical_type(v->cast_type);
