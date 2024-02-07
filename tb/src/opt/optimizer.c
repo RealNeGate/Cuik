@@ -22,6 +22,7 @@ static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 
 static void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n);
 static void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
+static void print_lattice(Lattice* l, TB_DataType dt);
 
 // node creation helpers
 TB_Node* make_poison(TB_Function* f, TB_DataType dt);
@@ -299,7 +300,7 @@ static Lattice* sccp_ptr_vals(TB_Passes* restrict p, TB_Node* n) {
         return &XNULL_IN_THE_SKY;
     } else {
         assert(n->type == TB_SYMBOL);
-        return lattice_intern(p, (Lattice){ LATTICE_PTR, ._ptr = { TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym } });
+        return lattice_intern(p, (Lattice){ LATTICE_PTRCON, ._ptr = { TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym } });
     }
 }
 
@@ -701,20 +702,21 @@ static void validate_node_users(TB_Node* n) {
 
 static void print_lattice(Lattice* l, TB_DataType dt) {
     switch (l->tag) {
-        case LATTICE_BOT: printf("[bot]"); break;
-        case LATTICE_TOP: printf("[top]"); break;
+        case LATTICE_BOT: printf("bot"); break;
+        case LATTICE_TOP: printf("top"); break;
 
-        case LATTICE_CTRL:  printf("[ctrl]"); break;
-        case LATTICE_XCTRL: printf("[~ctrl]"); break;
+        case LATTICE_CTRL:  printf("ctrl"); break;
+        case LATTICE_XCTRL: printf("~ctrl"); break;
 
-        case LATTICE_FLOAT32: printf("[f32]"); break;
-        case LATTICE_FLOAT64: printf("[f64]"); break;
+        case LATTICE_FLOAT32: printf("f32"); break;
+        case LATTICE_FLOAT64: printf("f64"); break;
 
-        case LATTICE_NULL:  printf("[null]"); break;
-        case LATTICE_XNULL: printf("[~null]"); break;
-        case LATTICE_PTR:   printf("[%s]", l->_ptr.sym->name); break;
+        case LATTICE_NULL:   printf("null"); break;
+        case LATTICE_XNULL:  printf("~null"); break;
+        case LATTICE_ALLPTR: printf("ptr"); break;
+        case LATTICE_PTRCON: printf("%s", l->_ptr.sym->name); break;
 
-        case LATTICE_MEM:   printf("mem[%d]", l->_mem.alias_idx); break;
+        case LATTICE_MEM:   printf("$mem%d", l->_mem.alias_idx); break;
 
         case LATTICE_TUPLE: {
             printf("[");
@@ -728,18 +730,28 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_INT: {
             assert(dt.type == TB_INT);
             if (l->_int.min == l->_int.max) {
-                printf("[%"PRId64, tb__sxt(l->_int.min, dt.data, 64));
-            } else if (l->_int.min > l->_int.max) {
-                printf("[%"PRId64",%"PRId64, tb__sxt(l->_int.min, dt.data, 64), tb__sxt(l->_int.max, dt.data, 64));
+                printf("%"PRId64, tb__sxt(l->_int.min, dt.data, 64));
+            } else if (l->_int.min == 0 && l->_int.max == UINT8_MAX) {
+                printf("u8");
+            } else if (l->_int.min == 0 && l->_int.max == UINT16_MAX) {
+                printf("u16");
+            } else if (l->_int.min == 0 && l->_int.max == UINT32_MAX) {
+                printf("u32");
+            } else if (l->_int.min == 0 && l->_int.max == UINT64_MAX) {
+                printf("u64");
             } else {
-                printf("[%"PRIu64",%"PRIu64, l->_int.min, l->_int.max);
-            }
+                if (l->_int.min > l->_int.max) {
+                    printf("[%"PRId64",%"PRId64, tb__sxt(l->_int.min, dt.data, 64), tb__sxt(l->_int.max, dt.data, 64));
+                } else {
+                    printf("[%"PRIu64",%"PRIu64, l->_int.min, l->_int.max);
+                }
 
-            uint64_t known = l->_int.known_zeros | l->_int.known_ones;
-            if (known && known != UINT64_MAX) {
-                printf("; zeros=%#"PRIx64", ones=%#"PRIx64, l->_int.known_zeros, l->_int.known_ones);
+                uint64_t known = l->_int.known_zeros | l->_int.known_ones;
+                if (known && known != UINT64_MAX) {
+                    printf("; zeros=%#"PRIx64", ones=%#"PRIx64, l->_int.known_zeros, l->_int.known_ones);
+                }
+                printf("]");
             }
-            printf("]");
             break;
         }
 
@@ -791,7 +803,7 @@ TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
         }
 
         // print fancy type
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type, n->dt), printf("\x1b[0m"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m"));
 
         // types that consist of one possible value are made into value constants.
         k = try_as_const(p, n, new_type);
@@ -1152,6 +1164,7 @@ void tb_pass_prep(TB_Passes* p) {
             nl_hashset_put2(&p->type_interner, &XCTRL_IN_THE_SKY, lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &NULL_IN_THE_SKY,  lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &XNULL_IN_THE_SKY, lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &PTR_IN_THE_SKY,   lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &FALSE_IN_THE_SKY, lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &TRUE_IN_THE_SKY,  lattice_hash, lattice_cmp);
 

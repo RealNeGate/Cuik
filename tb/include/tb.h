@@ -1085,9 +1085,6 @@ TB_API TB_Global* tb_symbol_as_global(TB_Symbol* s);
 ////////////////////////////////
 TB_API void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t* align);
 
-// the user_data is expected to be a valid FILE*
-TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...);
-
 TB_API void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column);
 
 // this is where the STOP will be
@@ -1444,6 +1441,15 @@ bool tb_module_ipo(TB_Module* m);
 TB_API void tb_pass_kill_node(TB_Function* f, TB_Node* n);
 TB_API void tb_pass_mark(TB_Passes* opt, TB_Node* n);
 TB_API void tb_pass_mark_users(TB_Passes* opt, TB_Node* n);
+
+////////////////////////////////
+// Helpers
+////////////////////////////////
+// the user_data is expected to be a valid FILE*
+TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...);
+
+// p is optional
+TB_API void tb_dumb_print(TB_Function* f, TB_Passes* p);
 
 ////////////////////////////////
 // IR access

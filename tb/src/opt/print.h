@@ -28,11 +28,11 @@ static void print_type(TB_DataType dt) {
             break;
         }
         case TB_CONTROL: {
-            printf("control");
+            printf("ctrl");
             break;
         }
         case TB_MEMORY: {
-            printf("memory");
+            printf("mem");
             break;
         }
         default: tb_todo();

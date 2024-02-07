@@ -90,14 +90,15 @@ struct Lattice {
         //    /     \
         //   /     /|\
         //   |    / | \
-        //   |   a  b  ...
+        //   |   a  b  ... # ptrcon
         //   |    \ | /
         // null   ~null
         //     \  /
-        //      bot
+        //    allptr
+        LATTICE_ALLPTR,
         LATTICE_NULL,
         LATTICE_XNULL,
-        LATTICE_PTR,
+        LATTICE_PTRCON,
 
         // memory:
         //    top
