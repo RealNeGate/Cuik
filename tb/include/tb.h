@@ -1410,12 +1410,13 @@ TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n);
 TB_API TB_Node* tb_pass_gvn_node(TB_Function* f, TB_Node* n);
 
 // transformation passes:
-//   peephole: 99% of the optimizer, i'm sea of nodes pilled so i
+//   peephole: 90% of the optimizer, i'm sea of nodes pilled so i
 //     break down most optimizations into local rewrites, it's
-//     incremental and recommended to run after any non-peephole
-//     pass.
+//     also incremental so spamming it doesn't really do anything and
+//     if placing all the nodes back onto the worklist caused progress
+//     that's a bug that should be reported.
 TB_API void tb_pass_peephole(TB_Passes* p);
-TB_API bool tb_pass_split_locals(TB_Passes* p);
+TB_API void tb_pass_locals(TB_Passes* p);
 TB_API void tb_pass_loop(TB_Passes* p);
 
 // this just runs the optimizer in the default configuration

@@ -263,9 +263,9 @@ static bool slow_dommy(TB_CFG* cfg, TB_Node* expected_dom, TB_Node* bb) {
 #include "branches.h"
 #include "print.h"
 #include "print_dumb.h"
-#include "mem2reg.h"
 #include "gcm.h"
 #include "libcalls.h"
+#include "mem2reg.h"
 #include "scheduler.h"
 
 static void violent_kill(TB_Function* f, TB_Node* n) {
@@ -1337,9 +1337,10 @@ static void tb_pass_const(TB_Passes* p) {
 }
 
 void tb_pass_optimize(TB_Passes* p) {
-    tb_dumb_print(p->f, p);
     tb_pass_peephole(p);
-    tb_pass_split_locals(p);
+
+    // mostly just SSA construction from memory edges
+    tb_pass_locals(p);
 
     // const prop leaves work for the peephole optimizer
     tb_pass_const(p);
