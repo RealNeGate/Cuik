@@ -670,8 +670,13 @@ static Lattice* sccp(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
-static bool is_dead_ctrl(Lattice* l, bool optimistic) {
-    return l == &XCTRL_IN_THE_SKY || (optimistic && l == &TOP_IN_THE_SKY);
+static bool is_dead_ctrl(TB_Passes* restrict p, TB_Node* n, bool optimistic) {
+    if (n->type == TB_DEAD) {
+        return true;
+    } else {
+        Lattice* l = lattice_universe_get(p, n);
+        return l == &XCTRL_IN_THE_SKY || (optimistic && l == &TOP_IN_THE_SKY);
+    }
 }
 
 // converts constant Lattice into constant node
@@ -689,8 +694,7 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l, bool
 
         size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
-            Lattice* pred_ty = lattice_universe_get(p, n->inputs[i]);
-            if (is_dead_ctrl(pred_ty, optimistic)) {
+            if (is_dead_ctrl(p, n->inputs[i], optimistic)) {
                 changes = true;
                 remove_input(f, n, i);
 
@@ -727,8 +731,7 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l, bool
             return NULL;
         }
     } else if (vtables[n->type].flags & NODE_IS_CTRL) {
-        Lattice* ctrl = lattice_universe_get(p, n->inputs[0]);
-        if (is_dead_ctrl(ctrl, optimistic)) {
+        if (is_dead_ctrl(p, n->inputs[0], optimistic)) {
             if (n->dt.type == TB_TUPLE) {
                 TB_Node* dead = dead_node(f, p);
                 while (n->users) {
