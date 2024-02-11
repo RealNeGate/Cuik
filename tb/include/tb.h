@@ -1406,7 +1406,7 @@ TB_API void tb_pass_prep(TB_Passes* p);
 TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n);
 
 // returns GVN on a new node, returning either the same node or a duplicate node 'k'.
-// does not subsume n -> k.
+// it deletes 'n' if it's a duplicate btw.
 TB_API TB_Node* tb_pass_gvn_node(TB_Function* f, TB_Node* n);
 
 // transformation passes:

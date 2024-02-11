@@ -670,8 +670,12 @@ static Lattice* sccp(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
+static bool is_dead_ctrl(Lattice* l, bool optimistic) {
+    return l == &XCTRL_IN_THE_SKY || (optimistic && l == &TOP_IN_THE_SKY);
+}
+
 // converts constant Lattice into constant node
-static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
+static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l, bool optimistic) {
     // already a constant?
     if (n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
         return NULL;
@@ -686,7 +690,7 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
         size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
             Lattice* pred_ty = lattice_universe_get(p, n->inputs[i]);
-            if (pred_ty == &TOP_IN_THE_SKY) {
+            if (is_dead_ctrl(pred_ty, optimistic)) {
                 changes = true;
                 remove_input(f, n, i);
 
@@ -724,33 +728,35 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l) {
         }
     } else if (vtables[n->type].flags & NODE_IS_CTRL) {
         Lattice* ctrl = lattice_universe_get(p, n->inputs[0]);
-        if (n->dt.type == TB_TUPLE && ctrl == &TOP_IN_THE_SKY) {
-            TB_Node* dead = dead_node(f, p);
-            while (n->users) {
-                TB_Node* use_n = n->users->n;
-                int use_i = n->users->slot;
+        if (is_dead_ctrl(ctrl, optimistic)) {
+            if (n->dt.type == TB_TUPLE) {
+                TB_Node* dead = dead_node(f, p);
+                while (n->users) {
+                    TB_Node* use_n = n->users->n;
+                    int use_i = n->users->slot;
 
-                if (use_n->type == TB_CALLGRAPH) {
-                    TB_Node* last = use_n->inputs[use_n->input_count - 1];
-                    set_input(f, use_n, NULL, use_n->input_count - 1);
-                    if (use_i != use_n->input_count - 1) {
-                        set_input(f, use_n, last, use_i);
+                    if (use_n->type == TB_CALLGRAPH) {
+                        TB_Node* last = use_n->inputs[use_n->input_count - 1];
+                        set_input(f, use_n, NULL, use_n->input_count - 1);
+                        if (use_i != use_n->input_count - 1) {
+                            set_input(f, use_n, last, use_i);
+                        }
+                        use_n->input_count--;
+                    } else if (use_n->type == TB_PROJ) {
+                        TB_Node* replacement = use_n->dt.type == TB_CONTROL
+                            ? dead
+                            : make_poison(f, use_n->dt);
+
+                        subsume_node(f, use_n, replacement);
+                    } else {
+                        tb_todo();
                     }
-                    use_n->input_count--;
-                } else if (use_n->type == TB_PROJ) {
-                    TB_Node* replacement = use_n->dt.type == TB_CONTROL
-                        ? dead
-                        : make_poison(f, use_n->dt);
-
-                    subsume_node(f, use_n, replacement);
-                } else {
-                    tb_todo();
                 }
-            }
 
-            return dead;
-        } else if (ctrl == &TOP_IN_THE_SKY) {
-            return dead_node(f, p);
+                return dead;
+            } else {
+                return dead_node(f, p);
+            }
         }
     }
 
@@ -834,6 +840,7 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_TOP: printf("top"); break;
 
         case LATTICE_CTRL:  printf("ctrl"); break;
+        case LATTICE_XCTRL: printf("~ctrl"); break;
 
         case LATTICE_FLOAT32: printf("f32"); break;
         case LATTICE_FLOAT64: printf("f64"); break;
@@ -934,7 +941,7 @@ TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
         // print fancy type
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m"));
 
-        TB_Node* k = try_as_const(p, n, new_type);
+        TB_Node* k = try_as_const(p, n, new_type, false);
         if (k != NULL) {
             DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
 
@@ -1314,7 +1321,7 @@ static void tb_pass_const(TB_Passes* p) {
 
     for (size_t i = 0; i < dyn_array_length(ws.items); i++) {
         TB_Node* n = ws.items[i];
-        TB_Node* k = try_as_const(p, n, lattice_universe_get(p, n));
+        TB_Node* k = try_as_const(p, n, lattice_universe_get(p, n), true);
 
         DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++p->stats.time), print_node_sexpr(n, 0));
         if (k != NULL) {
@@ -1388,6 +1395,7 @@ void tb_pass_prep(TB_Passes* p) {
             nl_hashset_put2(&p->type_interner, &BOT_IN_THE_SKY,   lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &TOP_IN_THE_SKY,   lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &CTRL_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &XCTRL_IN_THE_SKY, lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &NULL_IN_THE_SKY,  lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &XNULL_IN_THE_SKY, lattice_hash, lattice_cmp);
             nl_hashset_put2(&p->type_interner, &PTR_IN_THE_SKY,   lattice_hash, lattice_cmp);

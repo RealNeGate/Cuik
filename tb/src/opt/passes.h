@@ -115,6 +115,7 @@ struct Lattice {
 
         // control tokens
         LATTICE_CTRL,
+        LATTICE_XCTRL,
     } tag;
     uint32_t pad;
     union {

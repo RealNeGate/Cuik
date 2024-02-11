@@ -82,182 +82,6 @@ enum {
     MEM_FORK, MEM_JOIN, MEM_END, MEM_USE
 };
 
-#if 0
-static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter* restrict ctx, TB_Node* curr, TB_Node** latest) {
-    int user_cnt = 0;
-    MemOp* users = NULL;
-    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-
-    // walk past each memory effect and categorize it
-    while (curr) {
-        // skip past projections
-        if (curr->type != TB_PROJ && curr->type != TB_SPLITMEM && curr->type != TB_MERGEMEM) {
-            int cat = -1;
-            if (curr->type == TB_CALL || curr->type == TB_SYSCALL) {
-                cat = 0;
-            } else if (curr->type == TB_PHI) {
-                uintptr_t v = (uintptr_t) nl_table_get(&ctx->phi2alias, curr);
-                assert(v);
-                cat = v - 1;
-            } else {
-                cat = categorize_alias_idx(ctx, curr->inputs[2]);
-            }
-
-            assert(cat >= 0);
-            if (latest[cat] != curr) {
-                set_input(f, curr, latest[cat], 1);
-
-                if (curr->dt.type == TB_TUPLE) {
-                    curr = next_mem_user(curr);
-                }
-
-                assert(curr->dt.type == TB_MEMORY);
-                latest[cat] = curr;
-            }
-        }
-
-        int user_cap = 0;
-        FOR_USERS(u, curr) { user_cap++; }
-
-        sp = tb_arena_save(tmp_arena);
-        user_cnt = 0;
-        users = tb_arena_alloc(tmp_arena, user_cap * sizeof(MemOp));
-        FOR_USERS(u, curr) {
-            TB_Node* use_n = u->n;
-            int use_i = u->slot;
-
-            // we can either be followed by:
-            // * merge: we're done now, stitch in the latest ops
-            //
-            // * phi: whoever makes it here first follows it through and generates the
-            //        parallel memory phis, everyone else just fills in the existing nodes.
-            //
-            // * normie memory op: just advances (maybe forking)
-            int reason = -1;
-
-            if (0) {}
-            else if (use_n == ctx->merge)        { reason = MEM_END;  }
-            else if (use_n->type == TB_PHI)      { reason = MEM_JOIN; }
-            else if (is_mem_only_in_op(u->n))    { reason = MEM_USE;  }
-            else if (cfg_is_mproj(use_n) || (use_i == 1 && is_mem_out_op(use_n))) {
-                reason = MEM_FORK;
-            }
-
-            if (reason >= 0) {
-                users[user_cnt].n    = u->n;
-                users[user_cnt].slot = u->slot;
-                users[user_cnt].reason = reason;
-                user_cnt += 1;
-            }
-        }
-
-        // fixup any connected loads
-        FOREACH_N(i, 0, user_cnt) {
-            TB_Node* use_n = users[i].n;
-            int use_i = users[i].slot;
-            int reason = users[i].reason;
-
-            if (reason == MEM_USE) {
-                int op_cat = categorize_alias_idx(ctx, use_n->inputs[2]);
-                set_input(f, use_n, latest[op_cat], 1);
-
-                if (use_n->type == TB_LOAD) {
-                    tb_pass_mark(p, use_n);
-                }
-            }
-        }
-
-        lattice_universe_map(p, curr, &TOP_IN_THE_SKY);
-        tb_pass_mark(p, curr);
-
-        // "tail" such that we don't make another stack frame and more
-        // importantly another "latest" array
-        if (user_cnt == 1 && users[0].reason == MEM_FORK) {
-            curr = users[0].n;
-            tb_arena_restore(tmp_arena, sp);
-        } else {
-            break;
-        }
-    }
-
-    FOREACH_N(i, 0, user_cnt) {
-        TB_Node* use_n = users[i].n;
-        int use_i = users[i].slot;
-        int reason = users[i].reason;
-
-        switch (reason) {
-            case MEM_FORK: {
-                TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-                TB_Node** new_latest = tb_arena_alloc(tmp_arena, ctx->alias_cnt * sizeof(TB_Node*));
-                FOREACH_N(i, 0, ctx->alias_cnt) {
-                    new_latest[i] = latest[i];
-                }
-
-                fixup_mem_node(f, p, ctx, use_n, new_latest);
-                tb_arena_restore(tmp_arena, sp);
-                break;
-            }
-
-            case MEM_JOIN: {
-                // stitch latest state to phis
-                TB_Node* region = use_n->inputs[0];
-
-                uintptr_t v = (uintptr_t) nl_table_get(&ctx->phi2alias, use_n);
-                if (v == 0) {
-                    TB_Node** new_latest = tb_arena_alloc(tmp_arena, ctx->alias_cnt * sizeof(TB_Node*));
-
-                    // convert single phi into multiple parallel phis (first one will be replaced
-                    // with the root mem)
-                    set_input(f, use_n, latest[0], use_i);
-                    lattice_universe_map(p, use_n, &TOP_IN_THE_SKY);
-
-                    nl_table_put(&ctx->phi2alias, use_n, (void*) 1);
-
-                    assert(use_n->dt.type == TB_MEMORY);
-                    new_latest[0] = use_n;
-
-                    // make extra alias phis
-                    FOREACH_N(i, 1, ctx->alias_cnt) {
-                        TB_Node* new_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_MEMORY, use_n->input_count, 0);
-                        set_input(f, new_phi, region, 0);
-                        set_input(f, new_phi, latest[i], use_i);
-                        new_latest[i] = new_phi;
-                        tb_pass_mark(p, new_phi);
-
-                        nl_table_put(&ctx->phi2alias, new_phi, (void*) (i+1));
-                        lattice_universe_map(p, new_phi, &TOP_IN_THE_SKY);
-                    }
-
-                    if (!worklist_test_n_set(&p->worklist, use_n)) {
-                        dyn_array_put(p->worklist.items, use_n);
-                        fixup_mem_node(f, p, ctx, use_n, new_latest);
-                    }
-                } else {
-                    FOR_USERS(phi, region) {
-                        if (phi->n->type == TB_PHI && phi->n->dt.type == TB_MEMORY) {
-                            uintptr_t alias_idx = (uintptr_t) nl_table_get(&ctx->phi2alias, phi->n);
-                            assert(alias_idx != 0);
-                            set_input(f, phi->n, latest[alias_idx - 1], use_i);
-                        }
-                    }
-                }
-                break;
-            }
-
-            case MEM_END: {
-                // stitch the latest nodes to the merge or phis
-                FOREACH_N(i, 0, ctx->alias_cnt) {
-                    set_input(f, use_n, latest[i], 2+i);
-                }
-                break;
-            }
-        }
-    }
-
-    tb_arena_restore(tmp_arena, sp);
-}
-#endif
-
 static bool all_stores_dead(TB_Node* n) {
     FOR_USERS(u, n) {
         if (u->slot != 2 || u->n->type != TB_STORE) {
@@ -350,7 +174,7 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
 
                     // invalidate old memory type
                     tb_pass_mark(p, curr);
-                    lattice_universe_map(p, curr, &TOP_IN_THE_SKY);
+                    lattice_universe_map(p, curr, NULL);
                 } else {
                     // get rid of the store, we don't need it
                     latest[1 + cat] = curr->inputs[3];
@@ -430,7 +254,7 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                     // convert single phi into multiple parallel phis (first one will be replaced
                     // with the root mem)
                     set_input(f, use_n, latest[0], use_i);
-                    lattice_universe_map(p, use_n, &TOP_IN_THE_SKY);
+                    lattice_universe_map(p, use_n, NULL);
 
                     assert(use_n->dt.type == TB_MEMORY);
                     new_latest[0] = use_n;
@@ -448,7 +272,7 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                         tb_pass_mark(p, new_phi);
 
                         nl_table_put(&ctx->phi2local, new_phi, &ctx->renames[i]);
-                        lattice_universe_map(p, new_phi, &TOP_IN_THE_SKY);
+                        lattice_universe_map(p, new_phi, NULL);
                     }
 
                     // first entry, every other time we'll just be stitching phis
@@ -556,9 +380,6 @@ void tb_pass_locals(TB_Passes* p) {
         ctx.local_count = j;
         ctx.phi2local = nl_table_alloc(200);
 
-        tb_pass_print(p);
-        __debugbreak();
-
         // let's rewrite values & memory
         TB_Node* first_mem = next_mem_user(f->params[1]);
         if (first_mem) {
@@ -573,9 +394,6 @@ void tb_pass_locals(TB_Passes* p) {
         FOREACH_N(i, 0, ctx.local_count) if (ctx.renames[i].alias_idx < 0) {
             tb_pass_kill_node(f, ctx.renames[i].addr);
         }
-
-        tb_pass_print(p);
-        __debugbreak();
 
         nl_table_free(ctx.phi2local);
         nl_chunked_arr_reset(&locals);

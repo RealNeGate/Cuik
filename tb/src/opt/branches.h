@@ -25,7 +25,8 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
         size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
-            if (n->inputs[i]->type == TB_DEAD) {
+            Lattice* ty = lattice_universe_get(p, n->inputs[i]);
+            if (n->inputs[i]->type == TB_DEAD || ty == &XCTRL_IN_THE_SKY) {
                 remove_input(f, n, i);
 
                 // update PHIs
@@ -485,7 +486,7 @@ static Lattice* sccp_branch(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* l = tb_arena_alloc(tmp_arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._tuple = { br->succ_count } };
     FOREACH_N(i, 0, br->succ_count) {
-        l->elems[i] = taken < 0 || i == taken ? &CTRL_IN_THE_SKY : &TOP_IN_THE_SKY;
+        l->elems[i] = taken < 0 || i == taken ? &CTRL_IN_THE_SKY : &XCTRL_IN_THE_SKY;
     }
 
     Lattice* k = nl_hashset_put2(&opt->type_interner, l, lattice_hash, lattice_cmp);

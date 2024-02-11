@@ -209,6 +209,8 @@ void tb_arena_clear(TB_Arena* arena) {
         cuik__vfree(c, arena->chunk_size);
         c = next;
     }
+
+    arena->top->next = NULL;
 }
 
 bool tb_arena_is_empty(TB_Arena* arena) {

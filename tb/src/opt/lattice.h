@@ -3,6 +3,7 @@
 static Lattice TOP_IN_THE_SKY   = { LATTICE_TOP    };
 static Lattice BOT_IN_THE_SKY   = { LATTICE_BOT    };
 static Lattice CTRL_IN_THE_SKY  = { LATTICE_CTRL   };
+static Lattice XCTRL_IN_THE_SKY = { LATTICE_XCTRL  };
 static Lattice XNULL_IN_THE_SKY = { LATTICE_XNULL  };
 static Lattice NULL_IN_THE_SKY  = { LATTICE_NULL   };
 static Lattice PTR_IN_THE_SKY   = { LATTICE_BOTPTR };
@@ -342,6 +343,14 @@ static Lattice* lattice_meet(TB_Passes* p, Lattice* a, Lattice* b, TB_DataType d
             } else {
                 return &BOT_IN_THE_SKY;
             }
+        }
+
+        case LATTICE_CTRL:
+        case LATTICE_XCTRL: {
+            // ctrl  ^ ctrl   = ctrl
+            // ctrl  ^ xctrl  = bot
+            // xctrl ^ xctrl  = xctrl
+            return a == b ? a : &BOT_IN_THE_SKY;
         }
 
         // if we make it here, they're not the same mem
