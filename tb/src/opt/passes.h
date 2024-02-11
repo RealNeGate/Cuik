@@ -7,7 +7,8 @@ enum {
 };
 
 #define TB_OPTDEBUG_STATS    0
-#define TB_OPTDEBUG_PEEP     0
+#define TB_OPTDEBUG_PEEP     1
+#define TB_OPTDEBUG_SCCP     1
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
@@ -16,6 +17,8 @@ enum {
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
+
+#define TB_OPTDEBUG_GVN      0
 
 // for toggling ANSI colors
 #define TB_OPTDEBUG_ANSI     1
@@ -94,8 +97,8 @@ struct Lattice {
         //   |    \ | /
         // null   ~null
         //     \  /
-        //    allptr
-        LATTICE_ALLPTR,
+        //    botptr
+        LATTICE_BOTPTR,
         LATTICE_NULL,
         LATTICE_XNULL,
         LATTICE_PTRCON,
@@ -112,7 +115,6 @@ struct Lattice {
 
         // control tokens
         LATTICE_CTRL,
-        LATTICE_XCTRL,
     } tag;
     uint32_t pad;
     union {

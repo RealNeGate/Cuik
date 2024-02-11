@@ -90,3 +90,15 @@ uint64_t foo() {
     return 93487194713ull;
 }
 
+uint64_t aaa(uint64_t mask) {
+    mask = mask ^ (mask << 1);
+    mask = mask ^ (mask << 1);
+    mask = mask ^ (mask << 1);
+    mask = mask ^ (mask << 1);
+    mask = mask ^ (mask << 1);
+    mask = mask ^ (mask << 1);
+    mask = mask ^ (mask << 1);
+    mask = mask ^ (mask << 1);
+    // for (int i=0;i<64;i++){mask = mask ^ (mask << 1);}
+    return mask;
+}

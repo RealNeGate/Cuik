@@ -188,11 +188,12 @@ TB_API void tb_free_dominance_frontiers(TB_DominanceFrontiers* df) {
     tb_platform_heap_free(df);
 }
 
-// https://www.cs.rice.edu/~keith/EMBED/dom.pdf
 void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg) {
     tb_compute_dominators2(f, &p->worklist, cfg);
 }
 
+// Cooper, Keith D., Harvey, Timothy J. and Kennedy, Ken. "A simple, fast dominance algorithm." (2006)
+//   https://repository.rice.edu/items/99a574c3-90fe-4a00-adf9-ce73a21df2ed
 void tb_compute_dominators2(TB_Function* f, Worklist* ws, TB_CFG cfg) {
     TB_Node** blocks = ws->items;
 
