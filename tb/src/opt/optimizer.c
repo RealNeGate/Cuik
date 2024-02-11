@@ -1334,7 +1334,7 @@ static void tb_pass_const(TB_Passes* p) {
             tb_pass_mark_users(p, n);
             n = k;
         }
-        printf("\n");
+        DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
 
         FOR_USERS(use, n) {
             TB_Node* out = use->n;
@@ -1357,11 +1357,6 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p);
 
     // tb_pass_loop(p);
-    // tb_pass_peephole(p);
-
-    /* tb_pass_peephole(p);
-    tb_pass_peephole(p); */
-
     // tb_pass_print(p);
     // dummy_interp(p);
 }
