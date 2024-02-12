@@ -324,6 +324,7 @@ void tb_pass_locals(TB_Passes* p) {
     TB_Function* f = p->f;
 
     do {
+        cuikperf_region_start("locals", NULL);
         assert(dyn_array_length(p->worklist.items) == 0);
 
         // find all locals
@@ -374,6 +375,8 @@ void tb_pass_locals(TB_Passes* p) {
         }
 
         if (!needs_to_rewrite) {
+            nl_chunked_arr_reset(&locals);
+            cuikperf_region_end();
             break;
         }
 
@@ -397,6 +400,7 @@ void tb_pass_locals(TB_Passes* p) {
 
         nl_table_free(ctx.phi2local);
         nl_chunked_arr_reset(&locals);
+        cuikperf_region_end();
 
         // run a round of peepholes, lots of new room to explore :)
         tb_pass_peephole(p);

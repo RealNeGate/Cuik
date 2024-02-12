@@ -1341,15 +1341,15 @@ static void tb_pass_const(TB_Passes* p) {
         TB_Node* n = ws.items[i];
         TB_Node* k = try_as_const(p, n, lattice_universe_get(p, n), true);
 
-        DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++p->stats.time), print_node_sexpr(n, 0));
+        // DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++p->stats.time), print_node_sexpr(n, 0));
         if (k != NULL) {
-            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
+            // DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
 
             subsume_node(f, n, k);
             tb_pass_mark_users(p, n);
             n = k;
         }
-        DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
+        // DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
 
         FOR_USERS(use, n) {
             TB_Node* out = use->n;
