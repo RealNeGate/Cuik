@@ -5,7 +5,6 @@ void stuff_b();
 void stuff_c();
 void stuff_d(int);
 
-#if 0
 int example(void) {
     int i = 10;
     while (stuff_a()) {
@@ -19,14 +18,6 @@ int example(void) {
 
     return i * 1000 * 1000 * 10;
 }
-#else
-/* void foo() {
-    int x=1;
-    if( false ) {
-        while( true ) { x++; }
-        stuff_d(x);
-    }
-} */
 
 int main() {
     size_t iter = 0;
@@ -47,5 +38,14 @@ int main() {
 
     ***ptr_ptr_ptr_iter += 1;
     return ***ptr_ptr_ptr_iter;
+}
+
+#if 0
+void foo() {
+    int x=1;
+    if( false ) {
+        while( true ) { x++; }
+        stuff_d(x);
+    }
 }
 #endif

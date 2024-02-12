@@ -657,14 +657,18 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     return identity ? identity(p, f, n) : n;
 }
 
-static Lattice* sccp(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* sccp(TB_Passes* restrict p, TB_Node* n, bool optimistic) {
     NodeConstprop constprop = vtables[n->type].constprop;
     Lattice* type = constprop ? constprop(p, n) : NULL;
 
     // no type provided? just make a not-so-form fitting bottom type
     if (type == NULL) {
-        Lattice* old_type = lattice_universe_get(p, n);
-        return old_type != &TOP_IN_THE_SKY ? old_type : lattice_from_dt(p, n->dt);
+        if (optimistic) {
+            return lattice_from_dt(p, n->dt);
+        } else {
+            Lattice* old_type = lattice_universe_get(p, n);
+            return old_type != &TOP_IN_THE_SKY ? old_type : lattice_from_dt(p, n->dt);
+        }
     } else {
         return type;
     }
@@ -939,7 +943,7 @@ TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
 
     // pessimistic constant prop
     {
-        Lattice* new_type = sccp(p, n);
+        Lattice* new_type = sccp(p, n, false);
 
         // print fancy type
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m"));
@@ -979,7 +983,10 @@ TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
     dyn_array_for(i, arr) {
         printf("  * ");
         print_node_sexpr(arr[i], 0);
-        printf("\n");
+        if (gvn_compare(arr[i], n)) {
+            printf(" <-- HERE");
+        }
+        printf(" (hash=%#x)\n", gvn_hash(arr[i]));
     }
     #endif
 
@@ -1264,18 +1271,26 @@ void dummy_interp(TB_Passes* p) {
     }
 }
 
-static void push_non_bottoms(TB_Passes* restrict p, TB_Node* n, bool top) {
-    FOR_USERS(use, n) {
-        Lattice* l = lattice_universe_get(p, use->n);
+static void push_non_bottoms(TB_Passes* restrict p, TB_Node* n) {
+    // if it's a bottom there's no more steps it can take, don't recompute it
+    Lattice* l = lattice_universe_get(p, n);
+    if (l != lattice_from_dt(p, n->dt)) {
+        // printf("  * MARK v%u\n", n->gvn);
+        worklist_push(&p->worklist, n);
+    } else {
+        // printf("  * ALREADY THERE v%u\n", n->gvn);
+    }
+}
 
-        // if it's a bottom there's no more steps it can take, don't recompute it
-        if (l != lattice_from_dt(p, use->n->dt)) {
-            worklist_push(&p->worklist, use->n);
-        }
+static void push_non_bottom_users(TB_Passes* restrict p, TB_Node* n) {
+    FOR_USERS(use, n) {
+        push_non_bottoms(p, use->n);
 
         TB_NodeTypeEnum type = use->n->type;
-        if (top && type == TB_PHI) {
-            push_non_bottoms(p, use->n, false);
+        if (type == TB_REGION) {
+            FOR_USERS(phi, use->n) if (phi->n->type == TB_PHI) {
+                push_non_bottoms(p, phi->n);
+            }
         }
     }
 }
@@ -1301,12 +1316,12 @@ static void tb_pass_const(TB_Passes* p) {
         TB_Node* n;
         while ((n = worklist_pop(&p->worklist))) {
             Lattice* old_type = lattice_universe_get(p, n);
-            Lattice* new_type = sccp(p, n);
+            Lattice* new_type = sccp(p, n, true);
             if (old_type != new_type) {
                 DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++p->stats.time), print_node_sexpr(n, 0), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
 
                 lattice_universe_map(p, n, new_type);
-                push_non_bottoms(p, n, true);
+                push_non_bottom_users(p, n);
             } else {
                 // DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++p->stats.time), print_node_sexpr(n, 0), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("] (STILL)\x1b[0m\n"));
             }
@@ -1357,7 +1372,6 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_peephole(p);
 
     // tb_pass_loop(p);
-    // tb_pass_print(p);
     // dummy_interp(p);
 }
 
