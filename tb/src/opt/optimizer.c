@@ -240,18 +240,6 @@ static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
     return bb == expected_dom;
 }
 
-static bool slow_dommy(TB_CFG* cfg, TB_Node* expected_dom, TB_Node* bb) {
-    while (bb != NULL && expected_dom != bb) {
-        TB_Node* new_bb = idom(cfg, bb);
-        if (new_bb == NULL || new_bb == bb) {
-            return false;
-        }
-        bb = new_bb;
-    }
-
-    return true;
-}
-
 // unity build with all the passes
 #include "lattice.h"
 #include "cfg.h"
@@ -305,7 +293,7 @@ static Lattice* sccp_proj(TB_Passes* restrict p, TB_Node* n) {
     if (l == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     } else if (l == &BOT_IN_THE_SKY) {
-        return &BOT_IN_THE_SKY;
+        return lattice_from_dt(p, n->dt);
     } else {
         assert(l->tag == LATTICE_TUPLE);
         int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;

@@ -592,13 +592,17 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* 
     TB_NodeTypeEnum type = n->type;
     TB_Node* a = n->inputs[1];
     TB_Node* b = n->inputs[2];
-    bool less = node_pos(a) < node_pos(b);
 
     // if it's commutative: we wanna have a canonical form.
-    if (is_commutative(type) && less) {
-        set_input(f, n, b, 1);
-        set_input(f, n, a, 2);
-        return n;
+    if (is_commutative(type)) {
+        // if they're the same rank, then we'll just shuffle for smaller gvn on the right
+        int ap = node_pos(a);
+        int bp = node_pos(b);
+        if (ap < bp || (ap == bp && a->gvn < b->gvn)) {
+            set_input(f, n, b, 1);
+            set_input(f, n, a, 2);
+            return n;
+        }
     }
 
     // (aa + ab) + b => aa + (ab + b) where ab and b are constant

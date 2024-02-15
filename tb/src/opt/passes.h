@@ -499,6 +499,18 @@ static int dom_depth(TB_CFG* cfg, TB_Node* n) {
     return nl_map_get_checked(cfg->node_to_block, n).dom_depth;
 }
 
+static bool slow_dommy(TB_CFG* cfg, TB_Node* expected_dom, TB_Node* bb) {
+    while (bb != NULL && expected_dom != bb) {
+        TB_Node* new_bb = idom(cfg, bb);
+        if (new_bb == NULL || new_bb == bb) {
+            return false;
+        }
+        bb = new_bb;
+    }
+
+    return true;
+}
+
 extern thread_local TB_Arena* tmp_arena;
 
 void verify_tmp_arena(TB_Passes* p);

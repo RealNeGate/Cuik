@@ -283,18 +283,20 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                         Rename* name = nl_table_get(&ctx->phi2local, phi->n);
                         if (name == &RENAME_DUMMY) {
                             set_input(f, phi->n, latest[0], use_i);
-                        } else if (name->alias_idx < 0) {
-                            TB_Node* val = latest[1 + (name - ctx->renames)];
-                            if (val->dt.raw != phi->n->dt.raw) {
-                                // insert bitcast
-                                TB_Node* cast = tb_alloc_node(f, TB_BITCAST, phi->n->dt, 2, 0);
-                                set_input(f, cast, val, 1);
-                                val = cast;
-                            }
+                        } else if (name) {
+                            if (name->alias_idx < 0) {
+                                TB_Node* val = latest[1 + (name - ctx->renames)];
+                                if (val->dt.raw != phi->n->dt.raw) {
+                                    // insert bitcast
+                                    TB_Node* cast = tb_alloc_node(f, TB_BITCAST, phi->n->dt, 2, 0);
+                                    set_input(f, cast, val, 1);
+                                    val = cast;
+                                }
 
-                            set_input(f, phi->n, val, use_i);
-                        } else {
-                            set_input(f, phi->n, latest[1 + (name - ctx->renames)], use_i);
+                                set_input(f, phi->n, val, use_i);
+                            } else {
+                                set_input(f, phi->n, latest[1 + (name - ctx->renames)], use_i);
+                            }
                         }
                     }
                 }

@@ -206,7 +206,6 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 
     ctx->sched(ctx->opt, &ctx->cfg, ws, NULL, bb, bb->end);
 
-    TB_Node* prev_effect = NULL;
     FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];
 
