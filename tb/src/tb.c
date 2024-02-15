@@ -8,10 +8,12 @@ static ICodeGen* tb__find_code_generator(TB_Module* m) {
     extern ICodeGen tb__aarch64_codegen;
     extern ICodeGen tb__mips32_codegen;
     extern ICodeGen tb__mips64_codegen;
+    extern ICodeGen tb__wasm32_codegen;
 
     switch (m->target_arch) {
         #ifdef TB_HAS_X64
-        case TB_ARCH_X86_64:  return &tb__x64_codegen;
+        // case TB_ARCH_X86_64: return &tb__x64_codegen;
+        case TB_ARCH_X86_64: return &tb__wasm32_codegen;
         #endif
 
         #ifdef TB_HAS_AARCH64
@@ -21,6 +23,10 @@ static ICodeGen* tb__find_code_generator(TB_Module* m) {
         #ifdef TB_HAS_MIPS
         case TB_ARCH_MIPS32: return &tb__mips32_codegen;
         case TB_ARCH_MIPS64: return &tb__mips64_codegen;
+        #endif
+
+        #ifdef TB_HAS_WASM
+        case TB_ARCH_WASM32: return &tb__wasm32_codegen;
         #endif
 
         default: return NULL;

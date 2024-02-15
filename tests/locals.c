@@ -1,5 +1,20 @@
 #include <stddef.h>
 
+/* int foo(int x, int y) {
+    return (x + y) + (y + x);
+} */
+
+void foo(int n, int* arr) {
+    for (int i = 2; i < n; i++) {
+        if (arr[n] != 0) {
+            arr[0] += arr[i];
+        } else {
+            arr[1] += 1;
+        }
+    }
+}
+
+#if 0
 int  stuff_a();
 void stuff_b();
 void stuff_c();
@@ -40,7 +55,6 @@ int main() {
     return ***ptr_ptr_ptr_iter;
 }
 
-#if 0
 void foo() {
     int x=1;
     if( false ) {
