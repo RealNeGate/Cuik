@@ -51,6 +51,7 @@ typedef enum Cuik_Subsystem {
 typedef enum Cuik_Environment {
     CUIK_ENV_MSVC,
     CUIK_ENV_GNU,
+    CUIK_ENV_WEB,
 } Cuik_Environment;
 
 typedef struct Cuik_TargetDesc {
@@ -69,6 +70,7 @@ CUIK_API Cuik_Target* cuik_target_x64(Cuik_System system, Cuik_Environment env);
 CUIK_API Cuik_Target* cuik_target_aarch64(Cuik_System system, Cuik_Environment env);
 CUIK_API Cuik_Target* cuik_target_mips32(Cuik_System system, Cuik_Environment env);
 CUIK_API Cuik_Target* cuik_target_mips64(Cuik_System system, Cuik_Environment env);
+CUIK_API Cuik_Target* cuik_target_wasm32(Cuik_System system, Cuik_Environment env);
 CUIK_API void cuik_free_target(Cuik_Target* target);
 
 CUIK_API Cuik_System cuik_get_target_system(const Cuik_Target* t);

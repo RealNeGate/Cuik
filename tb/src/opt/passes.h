@@ -7,7 +7,7 @@ enum {
 };
 
 #define TB_OPTDEBUG_STATS    0
-#define TB_OPTDEBUG_PEEP     1
+#define TB_OPTDEBUG_PEEP     0
 #define TB_OPTDEBUG_SCCP     0
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
@@ -51,9 +51,6 @@ typedef struct {
 // a simplification of the set of all pointers (or floats)
 typedef enum {
     LATTICE_UNKNOWN,         // bottom aka {nan, non-nan} or for pointers {null, non-null}
-
-    LATTICE_KNOWN_NAN = 1,   // {nan}
-    LATTICE_KNOWN_NOT_NAN,   // {non-nan}
 
     LATTICE_KNOWN_FALSE = 1, // {false}
     LATTICE_KNOWN_TRUE,      // {true}
@@ -536,8 +533,11 @@ int worklist_popcount(Worklist* ws);
 TB_Node* worklist_pop(Worklist* ws);
 
 // Local scheduler
-void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
-void tb_pass_schedule(TB_Passes* opt, TB_CFG cfg, bool renumber);
+void greedy_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
+void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber);
+
+// makes arch-friendly IR
+void tb_pass_legalize(TB_Passes* p, TB_Arch arch);
 
 Lattice* lattice_universe_get(TB_Passes* p, TB_Node* n);
 LatticeTrifecta lattice_truthy(Lattice* l);

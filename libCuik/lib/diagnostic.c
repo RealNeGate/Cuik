@@ -98,15 +98,8 @@ CUIK_API void cuikdg_dump_to_stderr(TokenStream* tokens) {
 
 CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
     TB_Arena* arena = tokens->diag->buffer;
-
-    for (TB_ArenaChunk* c = arena->base; c; c = c->next) {
-        char* end = &c->data[arena->chunk_size];
-        if (c->next == NULL) {
-            end = arena->watermark;
-        }
-
-        char* start = c == arena->base ? &c->data[sizeof(TB_Arena)] : c->data;
-        fwrite(start, end - start, 1, out);
+    for (TB_Arena* c = arena; c; c = c->next) {
+        fwrite(c->data, c->watermark - c->data, 1, out);
     }
 }
 

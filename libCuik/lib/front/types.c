@@ -50,10 +50,10 @@ Cuik_Type* cuik__new_pointer(Cuik_TypeTable* types, Cuik_QualType base) {
     // TODO(NeGate): this code depends on pointers being 8bytes, plz stop doing that
     Cuik_Type* t = type_alloc(types, false);
     *t = (Cuik_Type){
-        .kind = KIND_PTR,
-        .size = 8,
-        .align = 8,
-        .flags = CUIK_TYPE_FLAG_COMPLETE,
+        .kind   = KIND_PTR,
+        .size   = types->target->pointer_byte_size,
+        .align  = types->target->pointer_byte_size,
+        .flags  = CUIK_TYPE_FLAG_COMPLETE,
         .ptr_to = base,
     };
     return t;

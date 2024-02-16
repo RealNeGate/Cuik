@@ -452,7 +452,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     assert(s != NULL);
 
     tls_init();
-    assert(target->pointer_byte_size == 8 && "other sized pointers aren't really supported yet");
+    // assert(target->pointer_byte_size == 8 && "other sized pointers aren't really supported yet");
 
     int r;
     Cuik_Parser parser = { 0 };
@@ -549,14 +549,12 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         // faster than walking the hash map, cache locality amirite)
         _Static_assert(sizeof(Symbol) == ((sizeof(Symbol) + 15ull) & ~15ull), "needs to be 16byte aligned to be walked in the arena easily");
 
-        TB_ArenaChunk* base = parser.symbols->globals_arena->base;
-        size_t chunk_size = parser.symbols->globals_arena->chunk_size;
+        TB_Arena* base = parser.symbols->globals_arena;
         TB_ARENA_FOR(chunk, parser.symbols->globals_arena) {
-            Symbol* syms = (Symbol*) &chunk->data[chunk == base ? sizeof(TB_Arena) : 0];
-            Symbol* end_syms = (Symbol*) &chunk->data[chunk_size];
-            if (chunk->next == NULL) {
-                end_syms = (Symbol*) parser.symbols->globals_arena->watermark;
-            }
+            size_t chunk_size = tb_arena_chunk_size(chunk);
+
+            Symbol* syms = (Symbol*) chunk->data;
+            Symbol* end_syms = (Symbol*) chunk->watermark;
 
             size_t count = end_syms - syms;
             for (size_t i = 0; i < count; i++) {

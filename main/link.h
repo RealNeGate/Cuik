@@ -47,6 +47,7 @@ static void add_linker_input(TB_Linker* l, const char* path) {
 // pretends to act like link.exe
 int run_link(int argc, const char** argv) {
     dyn_array_put(libpaths, "./");
+    TB_Arena* arena = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
 
     // find toolchain details from Cuik
     {
@@ -102,12 +103,11 @@ int run_link(int argc, const char** argv) {
         return EXIT_FAILURE;
     }
 
-    TB_ExportBuffer buffer = tb_linker_export(l);
+    TB_ExportBuffer buffer = tb_linker_export(l, arena);
     if (!tb_export_buffer_to_file(buffer, output_name)) {
         return EXIT_FAILURE;
     }
 
-    tb_export_buffer_free(buffer);
     tb_linker_destroy(l);
     return EXIT_SUCCESS;
 }

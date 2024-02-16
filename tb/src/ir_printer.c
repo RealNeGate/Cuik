@@ -93,6 +93,7 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_ROL: return "rol";
         case TB_ROR: return "ror";
         case TB_SAR: return "sar";
+        case TB_ADC: return "adc";
 
         case TB_FADD: return "fadd";
         case TB_FSUB: return "fsub";

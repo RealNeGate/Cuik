@@ -42,6 +42,7 @@ static TargetOption target_options[] = {
     { "aarch64_linux_gnu",        cuik_target_aarch64,   CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
     { "mips32_linux_gnu",         cuik_target_mips32,    CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
     { "mips64_linux_gnu",         cuik_target_mips64,    CUIK_SYSTEM_LINUX,       CUIK_ENV_GNU,  cuik_toolchain_gnu    },
+    { "wasm32",                   cuik_target_wasm32,    CUIK_SYSTEM_WEB,         CUIK_ENV_WEB,  NULL                  },
 };
 enum { TARGET_OPTION_COUNT = sizeof(target_options) / sizeof(target_options[0]) };
 
@@ -177,7 +178,11 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
             if (strcmp(target->value, target_options[i].key) == 0) {
                 TargetOption* o = &target_options[i];
                 comp_args->target = o->target(o->system, o->env);
-                comp_args->toolchain = o->toolchain();
+                if (o->toolchain) {
+                    comp_args->toolchain = o->toolchain();
+                } else {
+                    comp_args->toolchain = (Cuik_Toolchain){ 0 };
+                }
                 success = true;
                 break;
             }
@@ -197,7 +202,11 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
     }
 
     // initialize toolchain
-    comp_args->toolchain.ctx = comp_args->toolchain.init();
+    if (comp_args->toolchain.init) {
+        comp_args->toolchain.ctx = comp_args->toolchain.init();
+    } else {
+        comp_args->toolchain.ctx = NULL;
+    }
 
     if (args->_[ARG_OUTPUT]) {
         comp_args->output_name = cuik_strdup(args->_[ARG_OUTPUT]->value);

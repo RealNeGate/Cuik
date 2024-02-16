@@ -81,7 +81,7 @@ typedef enum TB_System {
     TB_SYSTEM_LINUX,
     TB_SYSTEM_MACOS,
     TB_SYSTEM_ANDROID, // Not supported yet
-    TB_SYSTEM_WEB,
+    TB_SYSTEM_WASM,
 
     TB_SYSTEM_MAX,
 } TB_System;
@@ -410,9 +410,8 @@ typedef enum TB_NodeTypeEnum {
     TB_CMP_FLE,
 
     // Special ops
-    //   adds two paired integers to two other paired integers and returns
-    //   a low and high value
-    TB_ADDPAIR,
+    //   add with carry
+    TB_ADC, // (Int, Int, Bool?) -> (Int, Bool)
     //   does full multiplication (64x64=128 and so on) returning
     //   the low and high values in separate projections
     TB_MULPAIR,
@@ -902,9 +901,8 @@ typedef struct {
     TB_ExportChunk *head, *tail;
 } TB_ExportBuffer;
 
-TB_API TB_ExportBuffer tb_module_object_export(TB_Module* m, TB_DebugFormat debug_fmt);
+TB_API TB_ExportBuffer tb_module_object_export(TB_Module* m, TB_Arena* dst_arena, TB_DebugFormat debug_fmt);
 TB_API bool tb_export_buffer_to_file(TB_ExportBuffer buffer, const char* path);
-TB_API void tb_export_buffer_free(TB_ExportBuffer buffer);
 
 ////////////////////////////////
 // Linker exporter
@@ -930,7 +928,7 @@ typedef struct {
 TB_API TB_ExecutableType tb_system_executable_format(TB_System s);
 
 TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch);
-TB_API TB_ExportBuffer tb_linker_export(TB_Linker* l);
+TB_API TB_ExportBuffer tb_linker_export(TB_Linker* l, TB_Arena* arena);
 TB_API void tb_linker_destroy(TB_Linker* l);
 
 TB_API bool tb_linker_get_msg(TB_Linker* l, TB_LinkerMsg* msg);

@@ -83,7 +83,9 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
 
     FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];
-        if (n->type == TB_PROJ || n->type == TB_REGION || n->type == TB_PHI) continue;
+        if (n->type == TB_PROJ || n->type == TB_REGION || n->type == TB_PHI || n->type == TB_BRANCH) {
+            continue;
+        }
 
         // begin building up a tree (right now they'll all be tiny)
         ctx->stack_n  = 1;
@@ -108,14 +110,32 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
             case TB_CMP_ULE:
             case TB_CMP_FLT:
             case TB_CMP_FLE:
-            {
-                push_val(ctx, n->inputs[2]);
-                push_val(ctx, n->inputs[1]);
-                break;
-            }
+            push_val(ctx, n->inputs[2]);
+            push_val(ctx, n->inputs[1]);
+            break;
+
+            case TB_ARRAY_ACCESS:
+            push_val(ctx, n->inputs[2]);
+            push_val(ctx, n->inputs[1]);
+            break;
+
+            case TB_MEMBER_ACCESS:
+            push_val(ctx, n->inputs[1]);
+            break;
+
+            case TB_LOAD:
+            push_val(ctx, n->inputs[2]);
+            break;
+
+            case TB_STORE:
+            push_val(ctx, n->inputs[3]);
+            push_val(ctx, n->inputs[2]);
+            break;
 
             case TB_RETURN: {
-                push_val(ctx, n->inputs[3]);
+                if (n->input_count > 3) {
+                    push_val(ctx, n->inputs[3]);
+                }
                 break;
             }
 
@@ -127,9 +147,9 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
             TB_Node* val_n = ctx->stack[i];
             ValueDesc* val = &ctx->locals[val_n->gvn];
 
-            indent(depth);
             if (i != 0 && val->id >= 0) {
-                printf("get_local %d\n", val->id);
+                EMIT1(&ctx->emit, 0x20);
+                emit_uint(ctx, val->id);
                 continue;
             }
 
@@ -156,6 +176,71 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                     break;
                 }
 
+                case TB_LOAD: {
+                    if (n->dt.type == TB_INT) {
+                        if (0) {}
+                        else if (n->dt.data <= 8)  { EMIT1(&ctx->emit, 0x2D); } // i32.load8_u
+                        else if (n->dt.data <= 16) { EMIT1(&ctx->emit, 0x2E); } // i32.load16_u
+                        else if (n->dt.data <= 32) { EMIT1(&ctx->emit, 0x28); } // i32.load
+                        else if (n->dt.data <= 64) { EMIT1(&ctx->emit, 0x29); } // i64.load
+                        else tb_todo();
+                    } else {
+                        if (0) {}
+                        else if (n->dt.data == TB_FLT_32) { EMIT1(&ctx->emit, 0x2A); } // f32.load
+                        else if (n->dt.data == TB_FLT_64) { EMIT1(&ctx->emit, 0x2B); } // f64.load
+                        else tb_todo();
+                    }
+
+                    // memarg
+                    EMIT1(&ctx->emit, 0x00);
+                    break;
+                }
+
+                case TB_STORE: {
+                    TB_DataType dt = n->dt;
+                    if (dt.type == TB_INT) {
+                        if (0) {}
+                        else if (dt.data <= 8)  { EMIT1(&ctx->emit, 0x3A); } // i32.store8_u
+                        else if (dt.data <= 16) { EMIT1(&ctx->emit, 0x3B); } // i32.store16_u
+                        else if (dt.data <= 32) { EMIT1(&ctx->emit, 0x36); } // i32.store
+                        else if (dt.data <= 64) { EMIT1(&ctx->emit, 0x37); } // i64.store
+                        else tb_todo();
+                    } else {
+                        if (0) {}
+                        else if (dt.data == TB_FLT_32) { EMIT1(&ctx->emit, 0x38); } // f32.store
+                        else if (dt.data == TB_FLT_64) { EMIT1(&ctx->emit, 0x39); } // f64.store
+                        else tb_todo();
+                    }
+
+                    // memarg
+                    EMIT1(&ctx->emit, 0x00);
+                    break;
+                }
+
+                case TB_MEMBER_ACCESS: {
+                    int32_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
+
+                    // i32.const stride
+                    EMIT1(&ctx->emit, 0x41);
+                    emit_uint(ctx, offset);
+                    // i32.add
+                    EMIT1(&ctx->emit, 0x6A);
+                    break;
+                }
+
+                case TB_ARRAY_ACCESS: {
+                    int32_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
+
+                    // i32.const stride
+                    EMIT1(&ctx->emit, 0x41);
+                    emit_uint(ctx, stride);
+                    // i32.mul
+                    EMIT1(&ctx->emit, 0x6C);
+                    // i32.add
+                    EMIT1(&ctx->emit, 0x6A);
+                    break;
+                }
+
                 case TB_CMP_EQ:
                 case TB_CMP_NE:
                 case TB_CMP_SLT:
@@ -178,18 +263,18 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                 }
 
                 case TB_RETURN: {
+                    EMIT1(&ctx->emit, 0x0F);
                     break;
                 }
 
                 default: tb_todo();
             }
-            printf("\n");
         }
 
         if (n->dt.type == TB_INT || n->dt.type == TB_PTR || n->dt.type == TB_FLOAT) {
             int dst = spill_tos(ctx, n);
-            indent(depth);
-            printf("set_local %d\n", dst);
+            EMIT1(&ctx->emit, 0x21);
+            emit_uint(ctx, dst);
         }
     }
 }
@@ -259,8 +344,13 @@ static void do_branch(Ctx* ctx, DomTree* src, TB_Node* bb_start, int depth) {
 
     if (dst->id < src->id || has_merge_root(ctx, bb_start, dst->id)) {
         // forward or backwards edge (continue/break)
+        EMIT1(&ctx->emit, 0x0C);
+        emit_uint(ctx, depth - dst->depth);
+
+        #if TB_OPTDEBUG_CODEGEN
         indent(depth);
         printf("  br %d (BB%d)\n", depth - dst->depth, dst->id);
+        #endif
     } else {
         do_dom_tree(ctx, dst, depth + 1);
     }
@@ -268,16 +358,18 @@ static void do_branch(Ctx* ctx, DomTree* src, TB_Node* bb_start, int depth) {
 
 static void do_dom_tree(Ctx* ctx, DomTree* node, int depth) {
     bool loop = is_natural_loop(ctx, node->start);
-    indent(depth);
-    if (loop) {
-        printf("loop 64 (depth=%d)\n", depth);
-    } else {
-        printf("block 64 (depth=%d)\n", depth);
-    }
+
+    EMIT1(&ctx->emit, loop ? 0x03 : 0x02);
+    EMIT1(&ctx->emit, 0x40);
 
     // compile code for node
+    #if TB_OPTDEBUG_CODEGEN
+    indent(depth);
+    printf("%s 64 (depth=%d)\n", loop ? "loop" : "block", depth);
+
     indent(depth + 1);
     printf("BB%d\n", node->id);
+    #endif
 
     node->depth = depth;
     compile_bb(ctx, node->start, depth + 1);
@@ -300,18 +392,29 @@ static void do_dom_tree(Ctx* ctx, DomTree* node, int depth) {
     if (succ_count == 1) {
         do_branch(ctx, node, succ_blocks[0], depth);
     } else if (succ_count == 2) {
+        #if TB_OPTDEBUG_CODEGEN
         indent(depth + 1);
         printf("if 64 (depth=%d)\n", depth + 1);
+        #endif
+
+        EMIT1(&ctx->emit, 0x04);
+        EMIT1(&ctx->emit, 0x40);
 
         do_branch(ctx, node, succ_blocks[0], depth + 1);
+        EMIT1(&ctx->emit, 0x05);
 
+        #if TB_OPTDEBUG_CODEGEN
         indent(depth + 1);
         printf("else\n");
+        #endif
 
         do_branch(ctx, node, succ_blocks[1], depth + 1);
+        EMIT1(&ctx->emit, 0x0B);
 
+        #if TB_OPTDEBUG_CODEGEN
         indent(depth + 1);
         printf("end\n");
+        #endif
     } else if (succ_count != 0) {
         tb_todo();
     }
@@ -321,9 +424,12 @@ static void do_dom_tree(Ctx* ctx, DomTree* node, int depth) {
         do_dom_tree(ctx, ctx->filtered[i], depth + 1);
     }
     dyn_array_set_length(ctx->filtered, base);
+    EMIT1(&ctx->emit, 0x0B);
 
+    #if TB_OPTDEBUG_CODEGEN
     indent(depth);
     printf("end\n");
+    #endif
 }
 
 static int dom_sort_cmp(const void* a, const void* b) {
@@ -378,6 +484,11 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     Worklist* restrict ws = &p->worklist;
+
+    // legalize step takes out any of our 16bit and 8bit math ops
+    tb_pass_prep(p);
+    tb_pass_legalize(p, f->super.module->target_arch);
+
     worklist_clear(ws);
 
     CUIK_TIMED_BLOCK("global sched") {

@@ -42,7 +42,8 @@ local modules = {
 			-- toolchain support
 			"libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c",
 			-- architectures
-			"libCuik/lib/targets/x64_desc.c", "libCuik/lib/targets/aarch64_desc.c", "libCuik/lib/targets/mips_desc.c"
+			"libCuik/lib/targets/x64_desc.c",  "libCuik/lib/targets/aarch64_desc.c",
+			"libCuik/lib/targets/mips_desc.c", "libCuik/lib/targets/wasm_desc.c",
 		}, flags="-I libCuik/include", deps={"common"}
 	},
 	--   TildeBackend

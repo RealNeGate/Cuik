@@ -65,6 +65,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_PHI:
         case TB_CLZ:
         case TB_CTZ:
+        case TB_ADC:
         case TB_VA_START:
         case TB_POISON:
         case TB_SELECT:
@@ -74,7 +75,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
         case TB_CYCLE_COUNTER:
-        case TB_ADDPAIR:
         case TB_MULPAIR:
         case TB_READ:
         case TB_WRITE:

@@ -34,6 +34,7 @@ void* tb_jit_stack_create(void);
 #include "objects/coff.c"
 #include "objects/elf64.c"
 #include "objects/macho.c"
+#include "objects/wasm_obj.c"
 
 // Linker
 #include "linker/linker.c"

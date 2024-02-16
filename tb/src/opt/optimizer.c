@@ -255,6 +255,7 @@ static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
 #include "libcalls.h"
 #include "mem2reg.h"
 #include "scheduler.h"
+#include "legalizer.h"
 
 static void violent_kill(TB_Function* f, TB_Node* n) {
     // remove from GVN if we're murdering it
