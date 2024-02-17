@@ -287,12 +287,12 @@ TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v) {
             TB_DataType dt = ctype_to_tbtype(src);
 
             reg = tb_inst_load(func, dt, v->reg, src->align, is_volatile);
-            if (v->bits.width != (src->size * 8)) {
-                reg = tb_inst_and(func, reg, tb_inst_uint(func, dt, mask));
-            }
-
             if (v->bits.offset) {
                 reg = tb_inst_shr(func, reg, tb_inst_uint(func, dt, v->bits.offset));
+            }
+
+            if (v->bits.width != (src->size * 8)) {
+                reg = tb_inst_and(func, reg, tb_inst_uint(func, dt, mask));
             }
             break;
         }

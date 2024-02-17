@@ -283,6 +283,10 @@ static Lattice* sccp_shift(TB_Passes* restrict opt, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
+    if (b->tag == LATTICE_INT && b->_int.max > b->_int.min) {
+        return NULL;
+    }
+
     uint64_t bits = n->dt.data;
     uint64_t mask = tb__mask(n->dt.data);
 
@@ -336,7 +340,8 @@ static Lattice* sccp_shift(TB_Passes* restrict opt, TB_Node* n) {
             // if we know how many bits we shifted then we know where
             // our known ones ones went
             if (b->_int.min == b->_int.max) {
-                ones >>= b->_int.min;
+                ones  = 0;
+                zeros = ~(mask >> b->_int.min) & mask;
             }
             break;
 
@@ -585,6 +590,10 @@ static int node_pos(TB_Node* n) {
         case TB_PHI:
         return 3;
     }
+}
+
+static bool is_shift_op(TB_Node* n) {
+    return n->type == TB_SHL || n->type == TB_SHR || n->type == TB_SAR;
 }
 
 static bool is_iconst(TB_Passes* p, TB_Node* n) { return lattice_is_const(lattice_universe_get(p, n)); }
@@ -852,7 +861,23 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
 // a ^ 0 => a
 // a * 0 => 0
 // a / 0 => poison
-static TB_Node* identity_int_binop(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* identity_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+    if (n->type == TB_AND) {
+        Lattice* aa = lattice_universe_get(p, n->inputs[1]);
+        Lattice* bb = lattice_universe_get(p, n->inputs[2]);
+        uint64_t mask = tb__mask(n->dt.data);
+
+        if (aa != &TOP_IN_THE_SKY && bb->tag == LATTICE_INT && bb->_int.min == bb->_int.max) {
+            uint32_t src = aa->_int.known_zeros;
+            uint32_t chopped = ~bb->_int.min & mask;
+
+            // if the known zeros is more than those chopped then the mask is useless
+            if ((src & chopped) == chopped) {
+                return n->inputs[1];
+            }
+        }
+    }
+
     uint64_t b;
     if (!get_int_const(n->inputs[2], &b)) {
         return n;

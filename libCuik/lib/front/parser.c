@@ -382,9 +382,9 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
                     current_bit_offset = 0;
 
                     offset = align_up(offset + member_size, member_align);
-                    member->bit_offset = offset;
                 }
 
+                member->bit_offset = current_bit_offset;
                 current_bit_offset += bit_width;
             } else {
                 if (is_union) {
@@ -397,6 +397,11 @@ void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cu
             // the total alignment of a struct/union is based on the biggest member
             last_member_size = member_size;
             if (member_align > align) align = member_align;
+        }
+
+        // if it's a bitfield, we should finalize that field
+        if (current_bit_offset) {
+            offset += 1;
         }
 
         offset = align_up(offset, align);

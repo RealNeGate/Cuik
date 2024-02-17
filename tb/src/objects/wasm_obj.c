@@ -136,6 +136,10 @@ TB_ExportBuffer tb_wasm_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
 
     #if 1
     dyn_array_for(i, sections) {
+        if ((sections[i].flags & TB_MODULE_SECTION_EXEC) == 0) {
+            continue;
+        }
+
         size_t body_size = len_uint(dyn_array_length(sections[i].funcs)) + sections[i].total_size;
         TB_ExportChunk* sec = tb_export_make_chunk(dst_arena, 1 + body_size + len_uint(body_size));
 
