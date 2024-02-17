@@ -12,8 +12,7 @@ static ICodeGen* tb__find_code_generator(TB_Module* m) {
 
     switch (m->target_arch) {
         #ifdef TB_HAS_X64
-        // case TB_ARCH_X86_64: return &tb__x64_codegen;
-        case TB_ARCH_X86_64: return &tb__wasm32_codegen;
+        case TB_ARCH_X86_64: return &tb__x64_codegen;
         #endif
 
         #ifdef TB_HAS_AARCH64

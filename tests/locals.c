@@ -1,9 +1,11 @@
 #include <stddef.h>
+#include <stdint.h>
 
-/* int foo(int x, int y) {
-    return (x + y) + (y + x);
-} */
-
+#if 0
+void foo(uint64_t* dst) {
+    *dst += 5;
+}
+#else
 void foo(int n, int* arr) {
     for (int i = 2; i < n; i++) {
         if (arr[n] != 0) {
@@ -13,6 +15,7 @@ void foo(int n, int* arr) {
         }
     }
 }
+#endif
 
 #if 0
 int  stuff_a();

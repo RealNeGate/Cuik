@@ -114,7 +114,11 @@ TB_ExportBuffer tb_wasm_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
 
     // Type section
     tb_out1b(&emit, 0x01);
-    emit_uint(&emit, func_types.count);
+    emit_uint(&emit, func_types.count + len_uint(func_type_count));
+    emit_uint(&emit, func_type_count);
+
+    tb_out_reserve(&emit, func_types.count + len_uint(func_type_count));
+    tb_outs_UNSAFE(&emit, func_types.count, (const uint8_t*) func_types.data);
 
     // Function section
     tb_out1b(&emit, 0x03);
@@ -123,14 +127,14 @@ TB_ExportBuffer tb_wasm_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
     dyn_array_for(i, sections) {
         DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
         dyn_array_for(j, funcs) {
-            emit_uint(&func_types, funcs[j]->wasm_type);
+            emit_uint(&emit, funcs[j]->wasm_type);
         }
     }
 
     TB_ExportBuffer buffer = { 0 };
     tb_export_append_chunk(&buffer, emitter_to_chunk(dst_arena, &emit));
-    tb_export_append_chunk(&buffer, emitter_to_chunk(dst_arena, &func_types));
 
+    #if 1
     dyn_array_for(i, sections) {
         size_t body_size = len_uint(dyn_array_length(sections[i].funcs)) + sections[i].total_size;
         TB_ExportChunk* sec = tb_export_make_chunk(dst_arena, 1 + body_size + len_uint(body_size));
@@ -143,8 +147,7 @@ TB_ExportBuffer tb_wasm_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
 
         tb_export_append_chunk(&buffer, sec);
     }
-
-    __debugbreak();
+    #endif
     return buffer;
 }
 

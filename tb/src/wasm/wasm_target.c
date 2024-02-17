@@ -50,6 +50,18 @@ static void emit_uint(Ctx* ctx, uint64_t x) {
     } while (x);
 }
 
+// uleb128 encode
+static void patch_uint(uint8_t* p, uint64_t x) {
+    for (int i = 0; i < 4; i++) {
+        uint32_t lo = x & 0x7F;
+        x >>= 7;
+        if (i < 3) {
+            lo |= 0x80;
+        }
+        *p++ = lo;
+    }
+}
+
 static int use_count(TB_Node* n) {
     int c = 0;
     FOR_USERS(u, n) { c += 1; }
@@ -462,6 +474,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     ctx.emit.capacity = code_arena->high_point - code_arena->watermark;
     ctx.emit.data = tb_arena_alloc(code_arena, ctx.emit.capacity);
 
+    // patch place for the code size of the function
+    EMIT4(&ctx.emit, 0x00808080);
+    EMIT4(&ctx.emit, 0x00808080);
+
     ctx.locals = tb_arena_alloc(arena, f->node_count * sizeof(ValueDesc));
     FOREACH_N(i, 0, f->node_count) {
         ctx.locals[i].id = -1;
@@ -523,10 +539,15 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     CUIK_TIMED_BLOCK("emit") {
         worklist_clear_visited(ws);
-        do_dom_tree(&ctx, &doms[0], 0);
+        // do_dom_tree(&ctx, &doms[0], 0);
+        EMIT1(&ctx.emit, 0x0B);
     }
 
     tb_free_cfg(&ctx.cfg);
+
+    // uleb code size patch
+    patch_uint(ctx.emit.data,     ctx.emit.count - 4);
+    patch_uint(&ctx.emit.data[4], 0);
 
     // trim code arena (it fits in a single chunk so just arena free the top)
     code_arena->watermark = (char*) &ctx.emit.data[ctx.emit.count];
