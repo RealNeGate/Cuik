@@ -278,7 +278,7 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
     n->type = TB_NULL;
 }
 
-static Lattice* sccp_int(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_int(TB_Passes* restrict p, TB_Node* n) {
     assert(n->type == TB_INTEGER_CONST);
     TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
     if (n->dt.type == TB_PTR) {
@@ -288,7 +288,7 @@ static Lattice* sccp_int(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
-static Lattice* sccp_proj(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_proj(TB_Passes* restrict p, TB_Node* n) {
     assert(n->type == TB_PROJ);
     Lattice* l = lattice_universe_get(p, n->inputs[0]);
     if (l == &TOP_IN_THE_SKY) {
@@ -302,11 +302,11 @@ static Lattice* sccp_proj(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
-static Lattice* sccp_ctrl(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_ctrl(TB_Passes* restrict p, TB_Node* n) {
     return lattice_universe_get(p, n->inputs[0]);
 }
 
-static Lattice* sccp_ptr_vals(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_ptr_vals(TB_Passes* restrict p, TB_Node* n) {
     if (n->type == TB_LOCAL) {
         return &XNULL_IN_THE_SKY;
     } else {
@@ -315,7 +315,7 @@ static Lattice* sccp_ptr_vals(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
-static Lattice* sccp_lookup(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_lookup(TB_Passes* restrict p, TB_Node* n) {
     TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
     TB_DataType dt = n->dt;
     assert(dt.type == TB_INT);
@@ -329,7 +329,7 @@ static Lattice* sccp_lookup(TB_Passes* restrict p, TB_Node* n) {
     return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = a });
 }
 
-static Lattice* sccp_region(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_region(TB_Passes* restrict p, TB_Node* n) {
     assert(n->type == TB_REGION);
     FOREACH_N(i, 0, n->input_count) {
         Lattice* edge = lattice_universe_get(p, n->inputs[i]);
@@ -341,7 +341,7 @@ static Lattice* sccp_region(TB_Passes* restrict p, TB_Node* n) {
     return &TOP_IN_THE_SKY;
 }
 
-static Lattice* sccp_phi(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_phi(TB_Passes* restrict p, TB_Node* n) {
     // wait for region to check first
     TB_Node* r = n->inputs[0];
     if (lattice_universe_get(p, r) == &TOP_IN_THE_SKY) return &TOP_IN_THE_SKY;
@@ -360,7 +360,7 @@ static Lattice* sccp_phi(TB_Passes* restrict p, TB_Node* n) {
     return l;
 }
 
-static Lattice* sccp_select(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_select(TB_Passes* restrict p, TB_Node* n) {
     Lattice* a = lattice_universe_get(p, n->inputs[2]);
     Lattice* b = lattice_universe_get(p, n->inputs[3]);
     return lattice_meet(p, a, b, n->dt);
@@ -646,9 +646,9 @@ static TB_Node* identity(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     return identity ? identity(p, f, n) : n;
 }
 
-static Lattice* sccp(TB_Passes* restrict p, TB_Node* n, bool optimistic) {
-    NodeConstprop constprop = vtables[n->type].constprop;
-    Lattice* type = constprop ? constprop(p, n) : NULL;
+static Lattice* value_of(TB_Passes* restrict p, TB_Node* n, bool optimistic) {
+    NodeValueOf value = vtables[n->type].value;
+    Lattice* type = value ? value(p, n) : NULL;
 
     // no type provided? just make a not-so-form fitting bottom type
     if (type == NULL) {
@@ -932,7 +932,7 @@ TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
 
     // pessimistic constant prop
     {
-        Lattice* new_type = sccp(p, n, false);
+        Lattice* new_type = value_of(p, n, false);
 
         // print fancy type
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m"));
@@ -1305,7 +1305,7 @@ static void tb_pass_const(TB_Passes* p) {
         TB_Node* n;
         while ((n = worklist_pop(&p->worklist))) {
             Lattice* old_type = lattice_universe_get(p, n);
-            Lattice* new_type = sccp(p, n, true);
+            Lattice* new_type = value_of(p, n, true);
             if (old_type != new_type) {
                 DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++p->stats.time), print_node_sexpr(n, 0), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
 

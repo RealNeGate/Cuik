@@ -388,7 +388,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     return NULL;
 }
 
-static Lattice* sccp_call(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_call(TB_Passes* restrict opt, TB_Node* n) {
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
 
     size_t size = sizeof(Lattice) + c->proj_count*sizeof(Lattice*);
@@ -420,7 +420,7 @@ static Lattice* sccp_call(TB_Passes* restrict opt, TB_Node* n) {
     }
 }
 
-static Lattice* sccp_branch(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_branch(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* before = lattice_universe_get(opt, n->inputs[0]);
     if (before == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;

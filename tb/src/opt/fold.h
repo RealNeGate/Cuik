@@ -65,7 +65,7 @@ static bool inverted_cmp(TB_Node* n, TB_Node* n2) {
     }
 }
 
-static Lattice* sccp_sext(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_sext(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -98,7 +98,7 @@ static Lattice* sccp_sext(TB_Passes* restrict opt, TB_Node* n) {
     return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* sccp_zext(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_zext(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -114,7 +114,7 @@ static Lattice* sccp_zext(TB_Passes* restrict opt, TB_Node* n) {
     return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* sccp_trunc(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_trunc(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -133,7 +133,7 @@ static Lattice* sccp_trunc(TB_Passes* restrict opt, TB_Node* n) {
     return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* sccp_arith(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_arith(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
@@ -176,7 +176,7 @@ static Lattice* sccp_arith(TB_Passes* restrict opt, TB_Node* n) {
     }
 }
 
-static Lattice* sccp_bitcast(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_bitcast(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -190,7 +190,7 @@ static Lattice* sccp_bitcast(TB_Passes* restrict opt, TB_Node* n) {
     return NULL;
 }
 
-static Lattice* sccp_unary(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_unary(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -231,7 +231,7 @@ static Lattice* sccp_unary(TB_Passes* restrict opt, TB_Node* n) {
     }
 }
 
-static Lattice* sccp_bits(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_bits(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
@@ -276,7 +276,7 @@ static Lattice* sccp_bits(TB_Passes* restrict opt, TB_Node* n) {
     return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* sccp_shift(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_shift(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
@@ -354,7 +354,7 @@ static Lattice* sccp_shift(TB_Passes* restrict opt, TB_Node* n) {
     }
 }
 
-static Lattice* sccp_cmp(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_cmp(TB_Passes* restrict opt, TB_Node* n) {
     Lattice* a = lattice_universe_get(opt, n->inputs[1]);
     Lattice* b = lattice_universe_get(opt, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
@@ -620,7 +620,7 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* 
         set_input(f, abb, a->inputs[2], 1);
         set_input(f, abb, b, 2);
 
-        Lattice* l = sccp_arith(p, abb);
+        Lattice* l = value_arith(p, abb);
         assert(l->tag == LATTICE_INT && l->_int.min == l->_int.max);
 
         violent_kill(f, abb);
@@ -909,7 +909,7 @@ static TB_Node* identity_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Nod
             case TB_CMP_NE: {
                 // walk up extension
                 TB_Node* src = n->inputs[1];
-                if (src->type == TB_ZERO_EXT) {
+                if (src->type == TB_ZERO_EXT || src->type == TB_SIGN_EXT) {
                     src = src->inputs[1];
                 }
 
