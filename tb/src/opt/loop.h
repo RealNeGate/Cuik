@@ -1,6 +1,12 @@
 
 typedef struct {
     TB_Node* n;
+    int count;
+
+    // preferences
+    bool is_signed;
+    TB_DataType dt;
+    ptrdiff_t stride;
 } IVUser;
 
 // clone anything except control edges and phis to region
@@ -9,7 +15,7 @@ static TB_Node* loop_clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* 
     if (n->type == TB_PHI && n->inputs[0] == region) {
         // replace OG with phi's edge
         cloned = n->inputs[phi_index];
-    } else if (n->type == TB_REGION || n->type == TB_ROOT || (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT)) {
+    } else if (cfg_is_region(n) || n->type == TB_ROOT || (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT)) {
         // doesn't clone
     } else {
         size_t extra = extra_bytes(n);
@@ -49,6 +55,12 @@ static uint64_t* iconst(TB_Node* n) {
     return n->type == TB_INTEGER_CONST ? &TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value : NULL;
 }
 
+static void swap_nodes(TB_Function* f, TB_Node* n, int i, int j) {
+    TB_Node* old = n->inputs[i];
+    set_input(f, n, n->inputs[j], i);
+    set_input(f, n, old, j);
+}
+
 void tb_pass_loop(TB_Passes* p) {
     cuikperf_region_start("loop", NULL);
     verify_tmp_arena(p);
@@ -56,8 +68,120 @@ void tb_pass_loop(TB_Passes* p) {
     size_t block_count = tb_pass_update_cfg(p, &p->worklist, true);
     TB_Node** blocks = &p->worklist.items[0];
 
+    worklist_clear_visited(&p->worklist);
     TB_Function* f = p->f;
 
+    // canonicalize regions into natural loop headers (or affine loops)
+    DynArray(ptrdiff_t) backedges = NULL;
+    FOREACH_N(i, 0, block_count) {
+        TB_Node* header = blocks[i];
+        if (!cfg_is_region(header) || header->input_count < 2) {
+            continue;
+        }
+
+        // find all backedges
+        dyn_array_clear(backedges);
+        FOREACH_N(j, 0, header->input_count) {
+            TB_Node* pred = cfg_get_pred(&p->cfg, header, j);
+            if (slow_dommy(&p->cfg, header, pred)) {
+                dyn_array_put(backedges, j);
+            }
+        }
+
+        // found a loop :)
+        if (dyn_array_length(backedges) == 0) {
+            continue;
+        }
+
+        TB_OPTDEBUG(LOOP)(printf("found loop on .bb%zu (v%u) with %zu backedges\n", i, header->gvn, dyn_array_length(backedges)));
+        TB_NODE_GET_EXTRA_T(header, TB_NodeRegion)->freq = 10.0f;
+        ptrdiff_t single_backedge = backedges[0];
+
+        // as part of loop simplification we convert backedges into one, this
+        // makes it easier to analyze the exit condition.
+        if (dyn_array_length(backedges) > 1) {
+            tb_todo();
+        }
+
+        // somehow we couldn't simplify the loop? welp
+        if (single_backedge < 0 || header->input_count != 2) {
+            continue;
+        }
+
+        // guarentee that the dominator is inputs[0]
+        if (single_backedge == 0) {
+            swap_nodes(f, header, 0, 1);
+            FOR_USERS(phi, header) {
+                if (phi->n->type == TB_PHI) {
+                    swap_nodes(f, phi->n, 1, 2);
+                }
+            }
+            single_backedge = 1;
+        }
+        header->type = TB_NATURAL_LOOP;
+
+        // given the induction var exists and is representable by an affine function we'll reorder things
+        // such that it's the first backedge in the header's preds (inputs[1]) alongside making the header
+        // into a TB_AFFINE_LOOP.
+        //
+        // if we don't have the latch in the header BB... ngmi
+        TB_BasicBlock* header_info = &nl_map_get_checked(p->cfg.node_to_block, header);
+        TB_Node* latch = header_info->end;
+        if (latch->type != TB_BRANCH && TB_NODE_GET_EXTRA_T(latch, TB_NodeBranch)->succ_count != 2) {
+            break;
+        }
+
+        TB_Node* ind_var = NULL;
+        TB_Node* cond = latch->inputs[1];
+        TB_Node* end_cond = NULL;
+        TB_Node* phi = cond;
+
+        // detect induction var for affine loops (only valid if it's a phi on the header)
+        if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE &&
+            cond->inputs[1]->type == TB_PHI && cond->inputs[1]->inputs[0] == header) {
+            phi = cond->inputs[1];
+            end_cond = cond->inputs[2];
+        }
+
+        // affine loop's induction var should loop like:
+        //   i = phi(init, i + step) where step is constant.
+        if (phi->inputs[0] == header && phi->dt.type == TB_INT) {
+            TB_Node* op = phi->inputs[2];
+            if ((op->type == TB_ADD || op->type == TB_SUB) && op->inputs[2]->type == TB_INTEGER_CONST) {
+                // we're a real affine loop now!
+                header->type = TB_AFFINE_LOOP;
+
+                int64_t step = TB_NODE_GET_EXTRA_T(op->inputs[2], TB_NodeInt)->value;
+                if (phi->inputs[2]->type == TB_SUB) {
+                    step = -step;
+                }
+
+                #ifdef TB_OPTDEBUG_LOOP
+                uint64_t* init = iconst(phi->inputs[1]);
+                if (init) {
+                    printf("  affine loop: v%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init);
+                } else {
+                    printf("  affine loop: v%u = %"PRId64"*x + v%u\n", phi->gvn, step, phi->inputs[1]->gvn);
+                }
+
+                uint64_t* end = iconst(end_cond);
+                if (end) {
+                    printf("        latch: %s(v%u, %"PRId64")\n", tb_node_get_name(cond), phi->gvn, *end);
+                } else {
+                    printf("        latch: %s(v%u, v%u)\n", tb_node_get_name(cond), phi->gvn, end_cond->gvn);
+                }
+
+                // fixed trip count loops aren't *uncommon*
+                if (init && end) {
+                    printf("        trips: %"PRId64" (%"PRId64" ... %"PRId64")\n", (*end - *init) / step, *init, *end);
+                }
+                #endif
+            }
+        }
+    }
+    dyn_array_destroy(backedges);
+
+    #if 0
     // find & canonicalize loops
     DynArray(ptrdiff_t) backedges = NULL;
     FOREACH_N(i, 0, block_count) {
@@ -109,9 +233,9 @@ void tb_pass_loop(TB_Passes* p) {
         }
 
         // if it's already rotated don't do it again
-        if (header->inputs[single_backedge]->type == TB_PROJ && header->inputs[single_backedge]->inputs[0]->type == TB_BRANCH) {
+        /* if (header->inputs[single_backedge]->type == TB_PROJ && header->inputs[single_backedge]->inputs[0]->type == TB_BRANCH) {
             continue;
-        }
+        } */
 
         // if we don't have the latch in the header BB... ngmi
         TB_BasicBlock* header_info = &nl_map_get_checked(p->cfg.node_to_block, header);
@@ -149,24 +273,54 @@ void tb_pass_loop(TB_Passes* p) {
                     TB_OPTDEBUG(LOOP)(printf("  affine loop: v%u = %"PRId64"*x + v%u\n", phi->gvn, step, phi->inputs[1]->gvn));
                 }
 
+                __debugbreak();
+
+                #if 0
                 // track the kinds of casts/ops users do and then see who's the winner
                 int cnt = 0;
                 bool legal_scale = true;
 
                 int keys[4] = { -1, -1, -1, -1 };
-                int uses[4];
+                int uses[4] = { 0 };
+                uint32_t use_signed = 0;
                 TB_DataType use_dt[4];
+
+                IndVar iv = {
+                    .users = nl_chunked_arr_alloc(tmp_arena)
+                };
+
+                indvar_push(&indvar, phi);
+
+                // find the best option
+                for (NL_ArrChunk* restrict chk = iv.users; chk; chk = chk->next) {
+                    FOREACH_N(i, 0, chk->count) {
+                        TB_Node* use = chk->elems[i];
+                        __debugbreak();
+                    }
+                }
+
+                nl_chunked_arr_reset(&projs);
 
                 FOR_USERS(u, phi) {
                     if (u->n == op) continue;
                     if (u->n == cond) continue;
                     if (u->n == latch) continue;
 
+                    // look past the casts, we do wanna know if we benefit from using a
+                    // before type tho.
+                    if (u->n->type == TB_SIGN_EXT || u->n->type == TB_ZERO_EXT) {
+                        is_signed = u->n->type == TB_SIGN_EXT;
+                        stride = 1;
+                        dt = u->n->dt;
+                    }
+
+                    bool is_signed = false;
                     ptrdiff_t stride = 0;
                     TB_DataType dt = phi->dt;
                     if (u->n->type == TB_ARRAY_ACCESS) {
                         stride = TB_NODE_GET_EXTRA_T(u->n, TB_NodeArray)->stride;
                     } else if (u->n->type == TB_SIGN_EXT || u->n->type == TB_ZERO_EXT) {
+                        is_signed = u->n->type == TB_SIGN_EXT;
                         stride = 1;
                         dt = u->n->dt;
                     } else {
@@ -192,6 +346,7 @@ void tb_pass_loop(TB_Passes* p) {
                         keys[cnt++] = stride;
                     }
 
+                    use_signed |= 1 << i;
                     use_dt[i] = u->n->dt;
                     uses[i] += node_uses;
                 }
@@ -248,6 +403,7 @@ void tb_pass_loop(TB_Passes* p) {
                         }
                     }
                 }
+                #endif
             }
         }
 
@@ -397,6 +553,7 @@ void tb_pass_loop(TB_Passes* p) {
 
         skip:;
     }
+    #endif
 
     dyn_array_destroy(backedges);
     cuikperf_region_end();

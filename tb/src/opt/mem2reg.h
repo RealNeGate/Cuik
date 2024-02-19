@@ -183,7 +183,7 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                     // get rid of the store, we don't need it
                     latest[1 + cat] = curr->inputs[3];
 
-                    printf("* KILL %%%u (latest[%d] = %%%u)\n", curr->gvn, 1 + cat, curr->inputs[3]->gvn);
+                    // printf("* KILL %%%u (latest[%d] = %%%u)\n", curr->gvn, 1 + cat, curr->inputs[3]->gvn);
                     tb_pass_kill_node(f, curr);
                 }
             }

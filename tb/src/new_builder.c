@@ -422,7 +422,7 @@ void tb_builder_loop(TB_GraphBuilder* g) {
     *ctrl = (TB_GraphCtrl){ 0 };
 
     // add header region
-    ctrl->header = tb_alloc_node_dyn(f, TB_REGION, TB_TYPE_CONTROL, 0, 2, sizeof(TB_NodeRegion));
+    ctrl->header = tb_alloc_node_dyn(f, TB_NATURAL_LOOP, TB_TYPE_CONTROL, 0, 2, sizeof(TB_NodeRegion));
     ctrl->join = NULL;
     ctrl->is_loop = true;
     TB_NODE_SET_EXTRA(ctrl->header, TB_NodeRegion, .freq = 10.0f);

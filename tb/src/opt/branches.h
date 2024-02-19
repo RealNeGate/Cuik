@@ -35,7 +35,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
                         remove_input(f, use->n, i + 1);
                     }
                 }
-            } else if (n->inputs[i]->type == TB_REGION) {
+            } else if (cfg_is_region(n->inputs[i])) {
                 #if 1
                 // pure regions can be collapsed into direct edges
                 if (n->inputs[i]->users->next == NULL && n->inputs[i]->input_count > 0) {
@@ -288,7 +288,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
 
                     // if they're the same then we've got a shortcircuit eval setup
                     if (shared_edge == shared_edge2) {
-                        assert(shared_edge->type == TB_REGION);
+                        assert(cfg_is_region(shared_edge));
                         int shared_i  = other_proj->n->users->slot;
                         int shared_i2 = other_proj2->n->users->slot;
 

@@ -318,7 +318,7 @@ static TB_Node** successors(Ctx* ctx, Worklist* ws, TB_Node* end, size_t* out_su
     return succ_blocks;
 }
 
-static bool is_natural_loop(Ctx* ctx, TB_Node* header) {
+static bool wasm_is_natural_loop(Ctx* ctx, TB_Node* header) {
     if (header->type == TB_REGION) {
         FOREACH_N(i, 0, header->input_count) {
             TB_Node* pred = cfg_get_pred(&ctx->cfg, header, i);
@@ -369,7 +369,7 @@ static void do_branch(Ctx* ctx, DomTree* src, TB_Node* bb_start, int depth) {
 }
 
 static void do_dom_tree(Ctx* ctx, DomTree* node, int depth) {
-    bool loop = is_natural_loop(ctx, node->start);
+    bool loop = wasm_is_natural_loop(ctx, node->start);
 
     EMIT1(&ctx->emit, loop ? 0x03 : 0x02);
     EMIT1(&ctx->emit, 0x40);

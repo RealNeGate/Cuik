@@ -228,7 +228,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
                     DO_IF(TB_OPTDEBUG_GCM)(printf("  user v%u @ bb%d\n", y->gvn, use_block->id));
                     if (y->type == TB_PHI) {
                         TB_Node* use_node = y->inputs[0];
-                        assert(use_node->type == TB_REGION);
+                        assert(cfg_is_region(use_node));
 
                         if (y->input_count != use_node->input_count + 1) {
                             tb_panic("phi has parent with mismatched predecessors");

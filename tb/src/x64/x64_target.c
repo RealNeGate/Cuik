@@ -357,6 +357,8 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
     switch (n->type) {
         // no inputs
         case TB_REGION:
+        case TB_NATURAL_LOOP:
+        case TB_AFFINE_LOOP:
         case TB_ROOT:
         case TB_TRAP:
         case TB_CALLGRAPH:
@@ -1254,6 +1256,8 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             // TUPLE node's job.
             case TB_PROJ:
             case TB_REGION:
+            case TB_NATURAL_LOOP:
+            case TB_AFFINE_LOOP:
             case TB_PHI:
             case TB_POISON:
             case TB_UNREACHABLE:

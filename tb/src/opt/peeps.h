@@ -82,6 +82,8 @@ static const NodeVtable vtables[TB_NODE_TYPE_MAX] = {
     // control flow
     [TB_RETURN]         = { ideal_return,      NULL,               value_ctrl,       NODE_IS_CTRL },
     [TB_REGION]         = { ideal_region,      identity_region,    value_region,     NODE_IS_CTRL },
+    [TB_NATURAL_LOOP]   = { ideal_region,      identity_region,    value_region,     NODE_IS_CTRL },
+    [TB_AFFINE_LOOP]    = { ideal_region,      identity_region,    value_region,     NODE_IS_CTRL },
     [TB_BRANCH]         = { ideal_branch,      NULL,               value_branch,     NODE_IS_CTRL },
     [TB_SAFEPOINT_POLL] = { NULL,              identity_safepoint, value_ctrl,       NODE_IS_CTRL },
     [TB_CALL]           = { ideal_libcall,     NULL,               value_call,       NODE_IS_CTRL },

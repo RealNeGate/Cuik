@@ -222,6 +222,9 @@ static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
 // a limited walk of 20 steps.
 static TB_Node* fast_idom(TB_Node* bb) {
     int steps = 0;
+
+    // note that "subtypes" of region like TB_NATURAL_LOOP and TB_AFFINE_LOOP are
+    // valid for fast doms since they guarentee they're dominated by inputs[0]
     while (steps < FAST_IDOM_LIMIT && bb->type != TB_REGION && bb->type != TB_ROOT) {
         bb = bb->inputs[0];
         steps++;
@@ -232,6 +235,9 @@ static TB_Node* fast_idom(TB_Node* bb) {
 
 static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
     int steps = 0;
+
+    // note that "subtypes" of region like TB_NATURAL_LOOP and TB_AFFINE_LOOP are
+    // valid for fast doms since they guarentee they're dominated by inputs[0]
     while (steps < FAST_IDOM_LIMIT && bb != expected_dom && bb->type != TB_REGION && bb->type != TB_ROOT) {
         bb = bb->inputs[0];
         steps++;
@@ -330,7 +336,7 @@ static Lattice* value_lookup(TB_Passes* restrict p, TB_Node* n) {
 }
 
 static Lattice* value_region(TB_Passes* restrict p, TB_Node* n) {
-    assert(n->type == TB_REGION);
+    assert(cfg_is_region(n));
     FOREACH_N(i, 0, n->input_count) {
         Lattice* edge = lattice_universe_get(p, n->inputs[i]);
         if (edge == &CTRL_IN_THE_SKY) {
@@ -572,7 +578,7 @@ static void push_all_nodes(TB_Passes* restrict p, Worklist* restrict ws, TB_Func
 
 static void cool_print_type(TB_Node* n) {
     TB_DataType dt = n->dt;
-    if (n->type != TB_ROOT && n->type != TB_REGION && !(n->type == TB_BRANCH && n->input_count == 1)) {
+    if (n->type != TB_ROOT && !cfg_is_region(n) && !(n->type == TB_BRANCH && n->input_count == 1)) {
         if (n->type == TB_STORE) {
             dt = n->inputs[3]->dt;
         } else if (n->type == TB_BRANCH) {
@@ -681,7 +687,7 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l, bool
 
     // Dead node? kill
     TB_Function* f = p->f;
-    if (n->type == TB_REGION) {
+    if (cfg_is_region(n)) {
         // remove dead predeccessors
         bool changes = false;
 
@@ -1110,6 +1116,8 @@ static Value eval(Interp* vm, TB_Node* n) {
         }
 
         case TB_REGION:
+        case TB_NATURAL_LOOP:
+        case TB_AFFINE_LOOP:
         return (Value){ .ctrl = cfg_next_user(n) };
 
         case TB_PROJ:
@@ -1179,7 +1187,7 @@ void dummy_interp(TB_Passes* p) {
             }
         }
 
-        if (ip->type != TB_REGION) {
+        if (!cfg_is_region(ip)) {
             FOREACH_N(i, 1, ip->input_count) {
                 worklist_push(&p->worklist, ip->inputs[i]);
             }
@@ -1210,7 +1218,7 @@ void dummy_interp(TB_Passes* p) {
             }
         }
 
-        if (ip->type == TB_REGION) {
+        if (cfg_is_region(ip)) {
             vm.vals[ip->gvn] = eval(&vm, ip);
             vm.ready[ip->gvn] = true;
         } else {
@@ -1225,7 +1233,7 @@ void dummy_interp(TB_Passes* p) {
         last_edge = succ->slot;
         ip = succ->n;
 
-        if (ip->type == TB_REGION) {
+        if (cfg_is_region(ip)) {
             FOR_USERS(u, ip) {
                 TB_Node* phi = u->n;
                 if (phi->type == TB_PHI) {
@@ -1275,8 +1283,7 @@ static void push_non_bottom_users(TB_Passes* restrict p, TB_Node* n) {
     FOR_USERS(use, n) {
         push_non_bottoms(p, use->n);
 
-        TB_NodeTypeEnum type = use->n->type;
-        if (type == TB_REGION) {
+        if (cfg_is_region(use->n)) {
             FOR_USERS(phi, use->n) if (phi->n->type == TB_PHI) {
                 push_non_bottoms(p, phi->n);
             }
@@ -1360,7 +1367,9 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_const(p);
     tb_pass_peephole(p);
 
-    // tb_pass_loop(p);
+    tb_pass_print(p);
+    tb_pass_loop(p);
+
     // dummy_interp(p);
 }
 

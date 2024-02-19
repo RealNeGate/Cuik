@@ -253,16 +253,22 @@ typedef enum TB_NodeTypeEnum {
     ////////////////////////////////
     //   there's only one ROOT per function, it's inputs are the return values, it's
     //   outputs are the initial params.
-    TB_ROOT,       // (Callgraph, Exits...) -> (Control, Memory, RPC, Data...)
+    TB_ROOT,         // (Callgraph, Exits...) -> (Control, Memory, RPC, Data...)
     //   return nodes feed into ROOT, jumps through the RPC out of this stack frame.
-    TB_RETURN,     // (Control, Memory, RPC, Data...) -> ()
+    TB_RETURN,       // (Control, Memory, RPC, Data...) -> ()
     //   regions are used to represent paths which have multiple entries.
     //   each input is a predecessor.
-    TB_REGION,     // (Control...) -> (Control)
+    TB_REGION,       // (Control...) -> (Control)
+    //   a natural loop header has the first edge be the dominating predecessor, every other edge
+    //   is a backedge.
+    TB_NATURAL_LOOP, // (Control...) -> (Control)
+    //   a natural loop header (thus also a region) of an affine loop (one where the induction
+    //   var is an affine y=mx+b kind of function)
+    TB_AFFINE_LOOP,  // (Control...) -> (Control)
     //   phi nodes work the same as in SSA CFG, the value is based on which predecessor was taken.
     //   each input lines up with the regions such that region.in[i] will use phi.in[i+1] as the
     //   subsequent data.
-    TB_PHI,        // (Control, Data...) -> Data
+    TB_PHI,          // (Control, Data...) -> Data
     //   branch is used to implement most control flow, it acts like a switch
     //   statement in C usually. they take a key and match against some cases,
     //   if they match, it'll jump to that successor, if none match it'll take
@@ -653,11 +659,6 @@ typedef struct {
 
 typedef struct {
     const char* tag;
-
-    // natural loops here will have in[0] has entry and in[1] as the backedge,
-    // the nice bit is that it means we know the dominator and can take advantage
-    // of that later.
-    bool natty;
 
     // magic factor for hot-code, higher means run more often
     float freq;

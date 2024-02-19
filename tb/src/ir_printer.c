@@ -17,6 +17,8 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_RETURN: return "return";
         case TB_PROJ:   return "proj";
         case TB_REGION: return "region";
+        case TB_NATURAL_LOOP: return "loop";
+        case TB_AFFINE_LOOP: return "loop.affine";
         case TB_CALLGRAPH: return "callgraph";
 
         case TB_LOCAL: return "local";
