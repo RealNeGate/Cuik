@@ -109,9 +109,9 @@ void tb_pass_loop(TB_Passes* p) {
         }
 
         // if it's already rotated don't do it again
-        /*if (header->inputs[single_backedge]->type == TB_PROJ && header->inputs[single_backedge]->inputs[0]->type == TB_BRANCH) {
+        if (header->inputs[single_backedge]->type == TB_PROJ && header->inputs[single_backedge]->inputs[0]->type == TB_BRANCH) {
             continue;
-        }*/
+        }
 
         // if we don't have the latch in the header BB... ngmi
         TB_BasicBlock* header_info = &nl_map_get_checked(p->cfg.node_to_block, header);

@@ -2,6 +2,10 @@
 #include "host.h"
 #include "opt/passes.h"
 
+static bool has_divrem(TB_Module* m) {
+    return m->target_arch != TB_ARCH_WASM32;
+}
+
 static ICodeGen* tb__find_code_generator(TB_Module* m) {
     // Place all the codegen interfaces down here
     extern ICodeGen tb__x64_codegen;

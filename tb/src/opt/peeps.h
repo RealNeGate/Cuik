@@ -6,7 +6,7 @@
 //
 // * Identity: replace a node with it's direct inputs (one step).
 //
-// * SCCP:     value-of
+// * ValueOf:  constant propagation crap (works for pessimistic and optimistic crap out of the box)
 //
 // * GVN:      if a node has some identical copy, it will be replaced with it.
 //

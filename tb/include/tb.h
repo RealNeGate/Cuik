@@ -25,7 +25,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-// https://semver.org/
 #define TB_VERSION_MAJOR 0
 #define TB_VERSION_MINOR 3
 #define TB_VERSION_PATCH 0
@@ -411,7 +410,10 @@ typedef enum TB_NodeTypeEnum {
 
     // Special ops
     //   add with carry
-    TB_ADC, // (Int, Int, Bool?) -> (Int, Bool)
+    TB_ADC,    // (Int, Int, Bool?) -> (Int, Bool)
+    //   division and modulo
+    TB_UDIVMOD, // (Int, Int) -> (Int, Int)
+    TB_SDIVMOD, // (Int, Int) -> (Int, Int)
     //   does full multiplication (64x64=128 and so on) returning
     //   the low and high values in separate projections
     TB_MULPAIR,
