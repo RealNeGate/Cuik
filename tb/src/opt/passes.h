@@ -215,7 +215,7 @@ struct TB_Passes {
 
     // nice stats
     struct {
-        #if TB_OPTDEBUG_PEEP
+        #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
         int time;
         #endif
 

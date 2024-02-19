@@ -1367,7 +1367,6 @@ void tb_pass_optimize(TB_Passes* p) {
     tb_pass_const(p);
     tb_pass_peephole(p);
 
-    tb_pass_print(p);
     tb_pass_loop(p);
 
     // dummy_interp(p);

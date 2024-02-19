@@ -68,7 +68,6 @@ void tb_pass_loop(TB_Passes* p) {
     size_t block_count = tb_pass_update_cfg(p, &p->worklist, true);
     TB_Node** blocks = &p->worklist.items[0];
 
-    worklist_clear_visited(&p->worklist);
     TB_Function* f = p->f;
 
     // canonicalize regions into natural loop headers (or affine loops)
@@ -156,15 +155,30 @@ void tb_pass_loop(TB_Passes* p) {
                     step = -step;
                 }
 
-                #ifdef TB_OPTDEBUG_LOOP
                 uint64_t* init = iconst(phi->inputs[1]);
+                uint64_t* end = iconst(end_cond);
+
+                if (0 && init && end) {
+                    int64_t trips = (*end - *init) / step;
+                    if (cond->type == TB_CMP_SLT || cond->type == TB_CMP_ULT) {
+                        // if we know the right number of trips we can just append that to the value info
+                        // TODO(NeGate): we should be using a JOIN op to narrow.
+                        Lattice* range = lattice_gimme_uint(p, *init, *init + trips*step);
+
+                        tb_pass_mark(p, phi);
+                        if (lattice_universe_map_progress(p, phi, range)) {
+                            tb_pass_mark_users(p, phi);
+                        }
+                    }
+                }
+
+                #if TB_OPTDEBUG_LOOP
                 if (init) {
                     printf("  affine loop: v%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init);
                 } else {
                     printf("  affine loop: v%u = %"PRId64"*x + v%u\n", phi->gvn, step, phi->inputs[1]->gvn);
                 }
 
-                uint64_t* end = iconst(end_cond);
                 if (end) {
                     printf("        latch: %s(v%u, %"PRId64")\n", tb_node_get_name(cond), phi->gvn, *end);
                 } else {
