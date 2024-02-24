@@ -576,7 +576,7 @@ typedef struct { // TB_BRANCH
     int64_t key;
 } TB_BranchKey;
 
-// this represents switch (many targets), if (one target) and goto (only default) logic.
+// this represents switch (many targets), if (one target)
 typedef struct { // TB_BRANCH
     uint64_t total_hits;
     size_t succ_count;
