@@ -9,6 +9,10 @@ typedef struct Elem {
     int i;
 } Elem;
 
+static bool swag_to_hoist(TB_Node* n) {
+    return n->type == TB_LOAD;
+}
+
 ////////////////////////////////
 // Late scheduling
 ////////////////////////////////
@@ -255,17 +259,21 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber) {
                     // which didn't already get scheduled in EARLY
                     assert(old && "huh?");
 
-                    // replace old BB entry
+                    // replace old BB entry, also if old is a natural loop we might
+                    // be better off hoisting the values if possible.
                     if (old != lca && lca->dom_depth > old->dom_depth) {
-                        TB_OPTDEBUG(GCM)(
-                            printf("  LATE  v%u into .bb%d: ", n->gvn, lca->id),
-                            print_node_sexpr(n, 0),
-                            printf("\n")
-                        );
+                        // some ops deserve hoisting more than others (cough cough loads)
+                        if (!swag_to_hoist(n) || !cfg_is_natural_loop(old->start)) {
+                            TB_OPTDEBUG(GCM)(
+                                printf("  LATE  v%u into .bb%d: ", n->gvn, lca->id),
+                                print_node_sexpr(n, 0),
+                                printf("\n")
+                            );
 
-                        p->scheduled[n->gvn] = lca;
-                        nl_hashset_remove(&old->items, n);
-                        nl_hashset_put(&lca->items, n);
+                            p->scheduled[n->gvn] = lca;
+                            nl_hashset_remove(&old->items, n);
+                            nl_hashset_put(&lca->items, n);
+                        }
                     }
                 }
             }

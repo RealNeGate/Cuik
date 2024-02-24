@@ -982,13 +982,13 @@ static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node
         return n;
     }
 
-    // (array A (add B C) D) => (member (array A B D) C*D)
     if (index->type == TB_ADD) {
         TB_Node* new_index = index->inputs[1];
         TB_Node* add_rhs   = index->inputs[2];
 
         uint64_t offset;
         if (get_int_const(add_rhs, &offset)) {
+            // (array A (add B C) D) => (member (array A B D) C*D)
             offset *= stride;
 
             TB_Node* new_n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 3, sizeof(TB_NodeArray));
@@ -1003,6 +1003,20 @@ static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node
             tb_pass_mark(opt, new_n);
             tb_pass_mark(opt, new_member);
             return new_member;
+        } else if (add_rhs->type == TB_SHL && add_rhs->inputs[2]->type == TB_INTEGER_CONST) {
+            // (array A (add B (shl C D)) E) => (array (array A B 1<<D) B E)
+            TB_Node* second_index = add_rhs->inputs[1];
+            uint64_t amt = 1ull << TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
+
+            TB_Node* new_n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 3, sizeof(TB_NodeArray));
+            set_input(f, new_n, base, 1);
+            set_input(f, new_n, second_index, 2);
+            TB_NODE_SET_EXTRA(new_n, TB_NodeArray, .stride = amt);
+
+            tb_pass_mark(opt, new_n);
+            set_input(f, n, new_n,     1);
+            set_input(f, n, new_index, 2);
+            return n;
         }
     }
 

@@ -17,7 +17,6 @@ enum {
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
-
 #define TB_OPTDEBUG_GVN      0
 
 // for toggling ANSI colors
@@ -226,6 +225,15 @@ struct TB_Passes {
         #endif
     } stats;
 };
+
+typedef struct {
+    TB_Module* mod;
+    NL_HashSet visited;
+
+    size_t ws_cap;
+    size_t ws_cnt;
+    TB_Function** ws;
+} IPOSolver;
 
 static uint64_t tb__mask(uint64_t bits) {
     return ~UINT64_C(0) >> (64 - bits);

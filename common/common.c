@@ -217,7 +217,7 @@ size_t tb_arena_current_size(TB_Arena* arena) {
     size_t total = 0;
     TB_Arena* c = arena;
     while (c != NULL) {
-        total += tb_arena_chunk_size(arena);
+        total += arena->watermark - (char*) arena;
         c = c->next;
     }
     return total;

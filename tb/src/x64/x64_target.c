@@ -685,8 +685,8 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_FSUB:
         case TB_FMUL:
         case TB_FDIV:
-        case TB_FMAX:
         case TB_FMIN:
+        case TB_FMAX:
         tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[REG_CLASS_XMM]);
         break;
 
@@ -1395,9 +1395,9 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
             case TB_FSUB:
             case TB_FMUL:
             case TB_FDIV:
-            case TB_FMAX:
-            case TB_FMIN: {
-                const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV, FP_MAX, FP_MIN };
+            case TB_FMIN:
+            case TB_FMAX: {
+                const static InstType ops[] = { FP_ADD, FP_SUB, FP_MUL, FP_DIV, FP_MIN, FP_MAX };
                 TB_X86_DataType dt = legalize_float(n->dt);
 
                 Val dst = op_at(ctx, t->outs[0]);

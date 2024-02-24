@@ -8,9 +8,29 @@ typedef struct {
     int uses;
 } ValueDesc;
 
+// control flow element
+typedef struct WasmElem WasmElem;
+struct WasmElem {
+    enum {
+        WASM_BLOCK,
+        WASM_BLOCK2, // body goes after _then case
+        WASM_BR,
+        WASM_IF,
+        WASM_LOOP
+    } tag;
+
+    bool refs;
+    uint16_t depth;
+
+    TB_Node* body;
+    WasmElem* _then;
+    WasmElem* _else; // only relevant for WASM_IF
+};
+
 typedef struct DomTree DomTree;
 struct DomTree {
-    int id, depth;
+    int id;
+    WasmElem* elem;
     TB_Node *start, *end;
     DynArray(DomTree*) kids;
 };
@@ -27,12 +47,14 @@ typedef struct Ctx {
     size_t block_count;
 
     DomTree* doms;
+
     DynArray(DomTree*) filtered;
+    DynArray(PhiVal) phi_vals;
 
     int stack_n;
     TB_Node* stack[64];
 
-    int local_count;
+    DynArray(uint8_t) local_desc;
     ValueDesc* locals;
 } Ctx;
 
@@ -48,6 +70,33 @@ static void emit_uint(Ctx* ctx, uint64_t x) {
         }
         EMIT1(&ctx->emit, lo);
     } while (x);
+}
+
+WasmElem* new_elem(int tag, TB_Node* body) {
+    WasmElem* e = tb_arena_alloc(tmp_arena, sizeof(WasmElem));
+    *e = (WasmElem){ .tag = tag, .body = body };
+    return e;
+}
+
+static uint8_t get_wasm_type(TB_DataType dt) {
+    switch (dt.type) {
+        case TB_INT: {
+            if (dt.data <= 8)  return 0x7F;
+            if (dt.data <= 16) return 0x7F;
+            if (dt.data <= 32) return 0x7F;
+            if (dt.data <= 64) return 0x7E;
+            break;
+        }
+        case TB_FLOAT: {
+            if (dt.data == TB_FLT_32) return 0x7D;
+            if (dt.data == TB_FLT_64) return 0x7C;
+            break;
+        }
+        case TB_PTR: return 0x7F;
+    }
+
+    assert(0 && "TODO");
+    return 0;
 }
 
 // uleb128 encode
@@ -72,7 +121,8 @@ static int spill_tos(Ctx* ctx, TB_Node* n) {
     // if there was something on top, we probably wanna spill it later
     ValueDesc* spilled = &ctx->locals[n->gvn];
     if (spilled->id < 0) {
-        spilled->id = ctx->local_count++;
+        dyn_array_put(ctx->local_desc, get_wasm_type(n->dt));
+        spilled->id = dyn_array_length(ctx->local_desc) - 1;
     }
     return spilled->id;
 }
@@ -91,20 +141,23 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
     assert(expected == bb);
     #endif
 
-    greedy_scheduler(ctx->p, &ctx->cfg, ws, NULL, bb, bb->end);
+    dyn_array_clear(ctx->phi_vals);
+    greedy_scheduler(ctx->p, &ctx->cfg, ws, &ctx->phi_vals, bb, bb->end);
 
     FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
-        TB_Node* n = ws->items[i];
-        if (n->type == TB_PROJ || n->type == TB_REGION || n->type == TB_PHI || n->type == TB_BRANCH) {
+        TB_Node* bot = ws->items[i];
+        if (bot->type == TB_SYMBOL || bot->type == TB_PROJ || cfg_is_region(bot) || bot->type == TB_PHI || bot->type == TB_BRANCH) {
             continue;
         }
 
         // begin building up a tree (right now they'll all be tiny)
         ctx->stack_n  = 1;
-        ctx->stack[0] = n;
+        ctx->stack[0] = bot;
 
-        switch (n->type) {
+        switch (bot->type) {
             case TB_INTEGER_CONST:
+            case TB_FLOAT32_CONST:
+            case TB_FLOAT64_CONST:
             break;
 
             // integer ops
@@ -114,6 +167,9 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
             case TB_ADD:
             case TB_SUB:
             case TB_MUL:
+            case TB_SHL:
+            case TB_SHR:
+            case TB_SAR:
             case TB_CMP_EQ:
             case TB_CMP_NE:
             case TB_CMP_SLT:
@@ -122,31 +178,41 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
             case TB_CMP_ULE:
             case TB_CMP_FLT:
             case TB_CMP_FLE:
-            push_val(ctx, n->inputs[2]);
-            push_val(ctx, n->inputs[1]);
+            case TB_FADD:
+            case TB_FSUB:
+            case TB_FMUL:
+            case TB_FDIV:
+            push_val(ctx, bot->inputs[2]);
+            push_val(ctx, bot->inputs[1]);
             break;
 
             case TB_ARRAY_ACCESS:
-            push_val(ctx, n->inputs[2]);
-            push_val(ctx, n->inputs[1]);
+            push_val(ctx, bot->inputs[2]);
+            push_val(ctx, bot->inputs[1]);
             break;
 
             case TB_MEMBER_ACCESS:
-            push_val(ctx, n->inputs[1]);
+            push_val(ctx, bot->inputs[1]);
+            break;
+
+            case TB_CALL:
+            FOREACH_REVERSE_N(i, 3, bot->input_count) {
+                push_val(ctx, bot->inputs[i]);
+            }
             break;
 
             case TB_LOAD:
-            push_val(ctx, n->inputs[2]);
+            push_val(ctx, bot->inputs[2]);
             break;
 
             case TB_STORE:
-            push_val(ctx, n->inputs[3]);
-            push_val(ctx, n->inputs[2]);
+            push_val(ctx, bot->inputs[3]);
+            push_val(ctx, bot->inputs[2]);
             break;
 
             case TB_RETURN: {
-                if (n->input_count > 3) {
-                    push_val(ctx, n->inputs[3]);
+                if (bot->input_count > 3) {
+                    push_val(ctx, bot->inputs[3]);
                 }
                 break;
             }
@@ -156,8 +222,8 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
 
         // ok emit ops now
         FOREACH_REVERSE_N(i, 0, ctx->stack_n) {
-            TB_Node* val_n = ctx->stack[i];
-            ValueDesc* val = &ctx->locals[val_n->gvn];
+            TB_Node* n = ctx->stack[i];
+            ValueDesc* val = &ctx->locals[n->gvn];
 
             if (i != 0 && val->id >= 0) {
                 EMIT1(&ctx->emit, 0x20);
@@ -165,11 +231,33 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                 continue;
             }
 
-            switch (val_n->type) {
+            switch (n->type) {
                 case TB_INTEGER_CONST: {
-                    TB_NodeInt* i = TB_NODE_GET_EXTRA(val_n);
+                    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
                     EMIT1(&ctx->emit, 0x41);
                     emit_uint(ctx, i->value);
+                    break;
+                }
+
+                case TB_FLOAT32_CONST: {
+                    TB_NodeFloat32* i = TB_NODE_GET_EXTRA(n);
+
+                    uint32_t x;
+                    memcpy(&x, &i->value, sizeof(x));
+
+                    EMIT1(&ctx->emit, 0x43);
+                    EMIT4(&ctx->emit, x);
+                    break;
+                }
+
+                case TB_FLOAT64_CONST: {
+                    TB_NodeFloat64* i = TB_NODE_GET_EXTRA(n);
+
+                    uint64_t x;
+                    memcpy(&x, &i->value, sizeof(x));
+
+                    EMIT1(&ctx->emit, 0x44);
+                    EMIT8(&ctx->emit, x);
                     break;
                 }
 
@@ -188,7 +276,31 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                     break;
                 }
 
+                // float ops
+                case TB_FADD:
+                case TB_FSUB:
+                case TB_FMUL:
+                case TB_FDIV:
+                case TB_FMIN:
+                case TB_FMAX: {
+                    assert(n->dt.type == TB_FLOAT);
+                    int base = n->dt.data == TB_FLT_64 ? 0xA0 : 0x92;
+                    EMIT1(&ctx->emit, base + (n->type - TB_FADD));
+                    break;
+                }
+
+                case TB_SHL:
+                case TB_SHR:
+                case TB_SAR: {
+                    static const uint8_t ops[] = { 0 /* shl */, 2 /* shr */, 1 /* sar */ };
+
+                    int base = n->dt.data > 32 ? 0x86 : 0x74;
+                    EMIT1(&ctx->emit, base + ops[n->type - TB_SHL]);
+                    break;
+                }
+
                 case TB_LOAD: {
+                    TB_CharUnits align = TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->align;
                     if (n->dt.type == TB_INT) {
                         if (0) {}
                         else if (n->dt.data <= 8)  { EMIT1(&ctx->emit, 0x2D); } // i32.load8_u
@@ -204,11 +316,13 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                     }
 
                     // memarg
-                    EMIT1(&ctx->emit, 0x00);
+                    EMIT1(&ctx->emit, align); // align
+                    EMIT1(&ctx->emit, 0x00);  // offset
                     break;
                 }
 
                 case TB_STORE: {
+                    TB_CharUnits align = TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->align;
                     TB_DataType dt = n->dt;
                     if (dt.type == TB_INT) {
                         if (0) {}
@@ -225,6 +339,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                     }
 
                     // memarg
+                    EMIT1(&ctx->emit, align); // align
                     EMIT1(&ctx->emit, 0x00);
                     break;
                 }
@@ -250,6 +365,17 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                     EMIT1(&ctx->emit, 0x6C);
                     // i32.add
                     EMIT1(&ctx->emit, 0x6A);
+                    break;
+                }
+
+                case TB_CALL: {
+                    assert(n->inputs[2]->type == TB_SYMBOL);
+                    TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeSymbol)->sym;
+
+                    // call
+                    EMIT1(&ctx->emit, 0x10);
+                    EMIT4(&ctx->emit, 0x00808080);
+                    tb_emit_symbol_patch(ctx->emit.output, sym, ctx->emit.count - 4);
                     break;
                 }
 
@@ -283,8 +409,26 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
             }
         }
 
-        if (n->dt.type == TB_INT || n->dt.type == TB_PTR || n->dt.type == TB_FLOAT) {
-            int dst = spill_tos(ctx, n);
+        if (bot->dt.type == TB_INT || bot->dt.type == TB_PTR || bot->dt.type == TB_FLOAT) {
+            int dst = spill_tos(ctx, bot);
+            EMIT1(&ctx->emit, 0x21);
+            emit_uint(ctx, dst);
+        }
+    }
+
+    // if the endpoint is a not a terminator, we've hit some implicit GOTO edge
+    TB_Node* end = bb->end;
+    if (!cfg_is_terminator(end)) {
+        // writeback phis
+        FOREACH_N(i, 0, dyn_array_length(ctx->phi_vals)) {
+            PhiVal* v = &ctx->phi_vals[i];
+
+            // get_local src
+            int src = ctx->locals[v->n->gvn].id;
+            EMIT1(&ctx->emit, 0x20);
+            emit_uint(ctx, src);
+            // set_local dst
+            int dst = spill_tos(ctx, v->phi);
             EMIT1(&ctx->emit, 0x21);
             emit_uint(ctx, dst);
         }
@@ -319,7 +463,7 @@ static TB_Node** successors(Ctx* ctx, Worklist* ws, TB_Node* end, size_t* out_su
 }
 
 static bool wasm_is_natural_loop(Ctx* ctx, TB_Node* header) {
-    if (header->type == TB_REGION) {
+    if (cfg_is_region(header)) {
         FOREACH_N(i, 0, header->input_count) {
             TB_Node* pred = cfg_get_pred(&ctx->cfg, header, i);
             if (slow_dommy(&ctx->cfg, header, pred)) {
@@ -332,7 +476,7 @@ static bool wasm_is_natural_loop(Ctx* ctx, TB_Node* header) {
 }
 
 static bool has_merge_root(Ctx* ctx, TB_Node* n, int id) {
-    if (n->type != TB_REGION) {
+    if (!cfg_is_region(n)) {
         return false;
     }
 
@@ -348,53 +492,47 @@ static bool has_merge_root(Ctx* ctx, TB_Node* n, int id) {
     return true;
 }
 
-static void do_dom_tree(Ctx* ctx, DomTree* node, int depth);
+static WasmElem* do_dom_tree(Ctx* ctx, DomTree* node);
 
-static void do_branch(Ctx* ctx, DomTree* src, TB_Node* bb_start, int depth) {
+static WasmElem* do_branch(Ctx* ctx, DomTree* src, TB_Node* bb_start) {
     TB_BasicBlock* bb = ctx->p->scheduled[bb_start->gvn];
     DomTree* dst = &ctx->doms[bb->id];
 
     if (dst->id < src->id || has_merge_root(ctx, bb_start, dst->id)) {
         // forward or backwards edge (continue/break)
-        EMIT1(&ctx->emit, 0x0C);
-        emit_uint(ctx, depth - dst->depth);
-
-        #if TB_OPTDEBUG_CODEGEN
-        indent(depth);
-        printf("  br %d (BB%d)\n", depth - dst->depth, dst->id);
-        #endif
+        WasmElem* e = new_elem(WASM_BR, NULL);
+        assert(dst->elem);
+        e->_then = dst->elem;
+        dst->elem->refs = true;
+        return e;
     } else {
-        do_dom_tree(ctx, dst, depth + 1);
+        return do_dom_tree(ctx, dst);
     }
 }
 
-static void do_dom_tree(Ctx* ctx, DomTree* node, int depth) {
+static WasmElem* do_dom_tree(Ctx* ctx, DomTree* node) {
     bool loop = wasm_is_natural_loop(ctx, node->start);
+    WasmElem* e = node->elem = new_elem(loop ? WASM_LOOP : WASM_BLOCK, node->start);
 
-    EMIT1(&ctx->emit, loop ? 0x03 : 0x02);
-    EMIT1(&ctx->emit, 0x40);
-
-    // compile code for node
-    #if TB_OPTDEBUG_CODEGEN
-    indent(depth);
-    printf("%s 64 (depth=%d)\n", loop ? "loop" : "block", depth);
-
-    indent(depth + 1);
-    printf("BB%d\n", node->id);
-    #endif
-
-    node->depth = depth;
-    compile_bb(ctx, node->start, depth + 1);
-
-    // find merges
+    // find merges (embed within each other)
     size_t base = dyn_array_length(ctx->filtered);
+    WasmElem* last = NULL;
     FOREACH_N(i, 0, dyn_array_length(node->kids)) {
         TB_Node* start = node->kids[i]->start;
         TB_BasicBlock* start_bb = ctx->p->scheduled[start->gvn];
 
+        DomTree* kid = node->kids[i];
         if (has_merge_root(ctx, start, start_bb->id)) {
-            dyn_array_put(ctx->filtered, node->kids[i]);
-            node->kids[i]->depth = depth;
+            dyn_array_put(ctx->filtered, kid);
+
+            if (last) {
+                WasmElem* new_e = new_elem(WASM_BLOCK2, start);
+                new_e->_then = last;
+                last = kid->elem = new_e;
+            } else {
+                __debugbreak();
+                last = kid->elem;
+            }
         }
     }
 
@@ -402,46 +540,127 @@ static void do_dom_tree(Ctx* ctx, DomTree* node, int depth) {
     size_t succ_count;
     TB_Node** succ_blocks = successors(ctx, &ctx->p->worklist, node->end, &succ_count);
     if (succ_count == 1) {
-        do_branch(ctx, node, succ_blocks[0], depth);
+        e->_then = do_branch(ctx, node, succ_blocks[0]);
     } else if (succ_count == 2) {
-        #if TB_OPTDEBUG_CODEGEN
-        indent(depth + 1);
-        printf("if 64 (depth=%d)\n", depth + 1);
-        #endif
-
-        EMIT1(&ctx->emit, 0x04);
-        EMIT1(&ctx->emit, 0x40);
-
-        do_branch(ctx, node, succ_blocks[0], depth + 1);
-        EMIT1(&ctx->emit, 0x05);
-
-        #if TB_OPTDEBUG_CODEGEN
-        indent(depth + 1);
-        printf("else\n");
-        #endif
-
-        do_branch(ctx, node, succ_blocks[1], depth + 1);
-        EMIT1(&ctx->emit, 0x0B);
-
-        #if TB_OPTDEBUG_CODEGEN
-        indent(depth + 1);
-        printf("end\n");
-        #endif
+        WasmElem* if_block = new_elem(WASM_IF, NULL);
+        e->_then = if_block;
+        if_block->_then = do_branch(ctx, node, succ_blocks[0]);
+        if_block->_else = do_branch(ctx, node, succ_blocks[1]);
     } else if (succ_count != 0) {
         tb_todo();
     }
 
     // compile merges
     FOREACH_N(i, base, dyn_array_length(ctx->filtered)) {
-        do_dom_tree(ctx, ctx->filtered[i], depth + 1);
+        do_dom_tree(ctx, ctx->filtered[i]);
     }
-    dyn_array_set_length(ctx->filtered, base);
-    EMIT1(&ctx->emit, 0x0B);
+    if (ctx->filtered) {
+        dyn_array_set_length(ctx->filtered, base);
+    }
+    return e;
+}
 
-    #if TB_OPTDEBUG_CODEGEN
-    indent(depth);
-    printf("end\n");
-    #endif
+static const char* elem_name(WasmElem* elem) {
+    switch (elem->tag) {
+        case WASM_BLOCK:  return "block";
+        case WASM_BLOCK2: return "block";
+        case WASM_LOOP:   return "loop";
+        case WASM_BR:     return "br";
+        case WASM_IF:     return "if";
+        default:          return NULL;
+    }
+}
+
+static uint8_t elem_byte(WasmElem* elem) {
+    switch (elem->tag) {
+        case WASM_BLOCK:  return 0x02;
+        case WASM_BLOCK2: return 0x02;
+        case WASM_LOOP:   return 0x03;
+        case WASM_IF:     return 0x04;
+        default:          return 0;
+    }
+}
+
+static void render_block(Ctx* ctx, WasmElem* elem, int depth) {
+    elem->depth = depth;
+
+    // no block necessary if no one jumps to it
+    bool is_block = elem->tag == WASM_IF || elem->refs > 0;
+    if (is_block) {
+        indent(depth), printf("%s", elem_name(elem));
+        if (elem->tag != WASM_BR) {
+            printf(" (depth=%d)", depth);
+        }
+        printf("\n");
+    }
+
+    int inner_depth = depth + is_block;
+    switch (elem->tag) {
+        case WASM_BLOCK:
+        case WASM_LOOP:
+        if (elem->body) { indent(inner_depth), printf("v%u\n", elem->body->gvn); }
+        if (elem->_then) { render_block(ctx, elem->_then, inner_depth); }
+        break;
+
+        case WASM_BLOCK2:
+        if (elem->_then) { render_block(ctx, elem->_then, inner_depth); }
+        if (elem->body) { indent(inner_depth), printf("v%u\n", elem->body->gvn); }
+        break;
+
+        case WASM_IF:
+        render_block(ctx, elem->_then, inner_depth);
+        indent(depth), printf("else\n");
+        render_block(ctx, elem->_else, inner_depth);
+        break;
+
+        case WASM_BR:
+        indent(depth), printf("br %d\n", elem->_then->depth);
+        break;
+    }
+
+    if (is_block) {
+        indent(depth), printf("end\n");
+    }
+}
+
+static void compile_block(Ctx* ctx, WasmElem* elem, int depth) {
+    elem->depth = depth;
+
+    // no block necessary if no one jumps to it
+    bool is_block = elem->tag == WASM_IF || elem->refs > 0;
+    if (is_block) {
+        EMIT1(&ctx->emit, elem_byte(elem));
+        EMIT1(&ctx->emit, 0x40);
+    }
+
+    int inner_depth = depth + is_block;
+    switch (elem->tag) {
+        case WASM_BLOCK:
+        case WASM_LOOP:
+        if (elem->body) { compile_bb(ctx, elem->body, inner_depth); }
+        if (elem->_then) { compile_block(ctx, elem->_then, inner_depth); }
+        break;
+
+        case WASM_BLOCK2:
+        if (elem->_then) { compile_block(ctx, elem->_then, inner_depth); }
+        if (elem->body) { compile_bb(ctx, elem->body, inner_depth); }
+        break;
+
+        case WASM_IF:
+        compile_block(ctx, elem->_then, inner_depth);
+        EMIT1(&ctx->emit, 0x05);
+        compile_block(ctx, elem->_else, inner_depth);
+        break;
+
+        case WASM_BR:
+        EMIT1(&ctx->emit, 0x0C);
+        emit_uint(ctx, depth - elem->_then->depth);
+        break;
+    }
+
+    if (is_block) {
+        EMIT1(&ctx->emit, 0x0B);
+    }
 }
 
 static int dom_sort_cmp(const void* a, const void* b) {
@@ -473,6 +692,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     // allocate entire top of the code arena (we'll trim it later if possible)
     ctx.emit.capacity = code_arena->high_point - code_arena->watermark;
     ctx.emit.data = tb_arena_alloc(code_arena, ctx.emit.capacity);
+    ctx.local_desc = dyn_array_create(uint8_t, 32);
 
     // patch place for the code size of the function
     EMIT4(&ctx.emit, 0x00808080);
@@ -489,7 +709,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             // params fit into the first few locals
             ctx.locals[u->n->gvn].id = i - 3;
             ctx.locals[u->n->gvn].uses = use_count(u->n);
-            ctx.local_count++;
+            dyn_array_put(ctx.local_desc, get_wasm_type(u->n->dt));
         }
     }
 
@@ -518,7 +738,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     DomTree* doms = ctx.doms = tb_arena_alloc(tmp_arena, ctx.cfg.block_count * sizeof(DomTree));
     FOREACH_N(i, 0, ctx.cfg.block_count) {
         doms[i].id    = i;
-        doms[i].depth = -1;
+        doms[i].elem  = NULL;
         doms[i].start = NULL;
         doms[i].end   = NULL;
         doms[i].kids  = NULL;
@@ -539,11 +759,16 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     CUIK_TIMED_BLOCK("emit") {
         worklist_clear_visited(ws);
-        // do_dom_tree(&ctx, &doms[0], 0);
-        EMIT1(&ctx.emit, 0x0B);
+
+        WasmElem* root = do_dom_tree(&ctx, &doms[0]);
+        #if TB_OPTDEBUG_CODEGEN
+        render_block(&ctx, root, 0);
+        #endif
+        compile_block(&ctx, root, 0);
     }
 
     tb_free_cfg(&ctx.cfg);
+    dyn_array_destroy(ctx.phi_vals);
 
     // uleb code size patch
     patch_uint(ctx.emit.data,     ctx.emit.count - 4);
@@ -574,7 +799,27 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 }
 
 static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f) {
-    return 0;
+    size_t r = 0;
+    uint32_t src_section = out_f->section;
+
+    for (TB_SymbolPatch* patch = out_f->first_patch; patch; patch = patch->next) {
+        if (patch->target->tag == TB_SYMBOL_FUNCTION) {
+            uint32_t dst_section = ((TB_Function*) patch->target)->output->section;
+
+            // we can relocate across section on WASM, the "object" file isn't really
+            // relocatable in the same sense as other objects.
+            assert(patch->pos < out_f->code_size);
+            size_t actual_pos = out_f->code_pos + patch->pos + 4;
+
+            uint32_t p = ((TB_Function*) patch->target)->output->code_pos - actual_pos;
+            patch_uint(&out_f->code[patch->pos], p);
+
+            r += 1;
+            patch->internal = true;
+        }
+    }
+
+    return out_f->patch_count - r;
 }
 
 static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_align) {

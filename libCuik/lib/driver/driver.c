@@ -151,13 +151,15 @@ static void local_opt_func(TB_Function* f, void* arg) {
     const char* name = ((TB_Symbol*) f)->name;
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
         MyArenas* arenas = get_ir_arena();
+        float start = tb_arena_current_size(arenas->ir);
         TB_Passes* p = tb_pass_enter(f, arenas->ir);
 
         assert(args->optimize);
         tb_pass_optimize(p);
 
         tb_pass_exit(p);
-        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(arenas->ir) / 1024.0f);
+        float end = tb_arena_current_size(arenas->ir);
+        log_debug("%s: func = %.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
     }
 }
 
@@ -168,6 +170,7 @@ static void apply_func(TB_Function* f, void* arg) {
     const char* name = ((TB_Symbol*) f)->name;
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
         MyArenas* arenas = get_ir_arena();
+        float start = tb_arena_current_size(arenas->ir);
         TB_Passes* p = tb_pass_enter(f, arenas->ir);
 
         if (args->emit_dot) {
@@ -185,7 +188,9 @@ static void apply_func(TB_Function* f, void* arg) {
         }
 
         tb_pass_exit(p);
-        log_debug("%s: IR arena size = %.1f KiB", name, tb_arena_current_size(arenas->ir) / 1024.0f);
+
+        float end = tb_arena_current_size(arenas->ir);
+        log_debug("%s: func = %.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
     }
 }
 #endif
@@ -359,10 +364,11 @@ static void ld_invoke(BuildStepInfo* info) {
 
     CUIK_TIMED_BLOCK("Backend") {
         if (args->optimize) {
-            tb_module_prepare_ipo(mod);
-
+            int t = 0;
             do {
+                log_debug("Optimizing in functions... t=%d", ++t);
                 cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, local_opt_func);
+                log_debug("Interprocedural opts...");
             } while (tb_module_ipo(mod));
         }
 
@@ -806,7 +812,11 @@ static void irgen_job(void* arg) {
         const char* name = task.stmts[i]->decl.name;
         TB_Symbol* s;
         CUIK_TIMED_BLOCK_ARGS("irgen", name) {
+            float start = tb_arena_current_size(arenas->ir);
             s = cuikcg_top_level(task.tu, mod, arenas->ir, task.stmts[i]);
+            float end = tb_arena_current_size(arenas->ir);
+
+            log_debug("%s: func = %.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
         }
 
         if (s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
@@ -822,6 +832,8 @@ static void irgen_job(void* arg) {
 }
 
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod) {
+    log_debug("IR generation...");
+
     if (thread_pool != NULL) {
         #if CUIK_ALLOW_THREADS
         size_t stmt_count = 0;

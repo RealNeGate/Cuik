@@ -663,7 +663,7 @@ static TB_Node* atomic_op(TB_Function* f, int op, TB_DataType dt, TB_Node* addr,
 
     TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 0);
     TB_Node* dproj = tb__make_proj(f, dt, n, 1);
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST, .proj0 = mproj, .proj1 = dproj);
+    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
 
     // memory proj
     set_input(f, n, append_mem(f, mproj), 1);
@@ -716,7 +716,7 @@ TB_Node* tb_inst_atomic_cmpxchg(TB_Function* f, TB_Node* addr, TB_Node* expected
 
     TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 0);
     TB_Node* dproj = tb__make_proj(f, dt, n, 1);
-    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = succ, .order2 = fail, .proj0 = mproj, .proj1 = dproj);
+    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = succ, .order2 = fail);
 
     // memory proj
     set_input(f, n, append_mem(f, mproj), 1);

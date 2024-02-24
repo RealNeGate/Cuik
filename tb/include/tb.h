@@ -401,8 +401,8 @@ typedef enum TB_NodeTypeEnum {
     TB_FSUB,
     TB_FMUL,
     TB_FDIV,
-    TB_FMAX,
     TB_FMIN,
+    TB_FMAX,
 
     // Comparisons
     TB_CMP_EQ,
@@ -416,7 +416,7 @@ typedef enum TB_NodeTypeEnum {
 
     // Special ops
     //   add with carry
-    TB_ADC,    // (Int, Int, Bool?) -> (Int, Bool)
+    TB_ADC,     // (Int, Int, Bool?) -> (Int, Bool)
     //   division and modulo
     TB_UDIVMOD, // (Int, Int) -> (Int, Int)
     TB_SDIVMOD, // (Int, Int) -> (Int, Int)
@@ -638,8 +638,6 @@ typedef struct {
 typedef struct {
     TB_MemoryOrder order;
     TB_MemoryOrder order2;
-    TB_Node* proj0;
-    TB_Node* proj1;
 } TB_NodeAtomic;
 
 typedef struct {
@@ -1435,10 +1433,8 @@ TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* u
 //   at least)
 TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
 
-void tb_module_prepare_ipo(TB_Module* m);
-
 // interprocedural optimizer iter
-bool tb_module_ipo(TB_Module* m);
+TB_API bool tb_module_ipo(TB_Module* m);
 
 TB_API void tb_pass_kill_node(TB_Function* f, TB_Node* n);
 TB_API void tb_pass_mark(TB_Passes* opt, TB_Node* n);

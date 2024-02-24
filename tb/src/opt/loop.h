@@ -1,14 +1,4 @@
 
-typedef struct {
-    TB_Node* n;
-    int count;
-
-    // preferences
-    bool is_signed;
-    TB_DataType dt;
-    ptrdiff_t stride;
-} IVUser;
-
 // clone anything except control edges and phis to region
 static TB_Node* loop_clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* region, TB_Node* n, int phi_index) {
     TB_Node* cloned = n;
@@ -59,6 +49,112 @@ static void swap_nodes(TB_Function* f, TB_Node* n, int i, int j) {
     TB_Node* old = n->inputs[i];
     set_input(f, n, n->inputs[j], i);
     set_input(f, n, old, j);
+}
+
+static TB_Node* upcast(TB_Passes* p, TB_Function* f, TB_Node* src, TB_DataType dt) {
+    TB_Node* cast = tb_alloc_node(f, TB_ZERO_EXT, dt, 2, 0);
+    set_input(f, cast, src, 1);
+    tb_pass_mark(p, cast);
+    return cast;
+}
+
+static bool indvar_simplify(TB_Passes* p, TB_Node* phi, TB_Node* cond, TB_Node* op) {
+    TB_Function* f = p->f;
+
+    // -1 means signed, 1 means unsigned, 0 means don't care
+    int best_uses = 0;
+    TB_DataType best_dt = phi->dt;
+
+    // in the simple case we wanna see if our induction var is usually casted
+    int phi_uses = 0;
+    FOR_USERS(u, phi) {
+        TB_Node* use_n = u->n;
+        if (use_n == phi) continue;
+        if (use_n == cond) continue;
+        if (use_n == op) continue;
+
+        int node_uses = 0;
+        FOR_USERS(u2, u->n) node_uses += 1;
+
+        // if we've got any casts, let's try to see which is most common
+        if (use_n->type == TB_SIGN_EXT || use_n->type == TB_ZERO_EXT) {
+            if (node_uses > best_uses) {
+                best_uses = node_uses;
+                best_dt = use_n->dt;
+            }
+        } else {
+            phi_uses += 1;
+        }
+    }
+
+    if (best_uses > phi_uses) {
+        // replace all uses with a different size
+        TB_Node* cast = tb_alloc_node(f, TB_TRUNCATE, phi->dt, 2, 0);
+        set_input(f, cast, phi, 1);
+
+        size_t new_node_mark = f->node_count;
+        User* users = phi->users;
+        while (users) {
+            User* next     = users->next;
+            TB_Node* use_n = users->n;
+            int use_i      = users->slot;
+
+            if (use_n == cond && cond != phi) {
+                assert(use_i == 1);
+                TB_NODE_SET_EXTRA(cond, TB_NodeCompare, .cmp_dt = best_dt);
+
+                // upcast the other comparand
+                TB_Node* b_cast = upcast(p, f, cond->inputs[2], best_dt);
+                set_input(f, cond, b_cast, 2);
+            } else if (use_n == op) {
+                assert(use_i == 1);
+                op->dt = best_dt;
+
+                TB_Node* b_cast = upcast(p, f, op->inputs[2], best_dt);
+                set_input(f, op, b_cast, 2);
+            } else if (use_n != cast) {
+                if (use_n->dt.raw == best_dt.raw && (use_n->type == TB_ZERO_EXT || use_n->type == TB_SIGN_EXT)) {
+                    // no cast necessary
+                    subsume_node2(f, use_n, phi);
+                } else {
+                    // generic upgrade
+                    set_input(f, use_n, cast, use_i);
+                    tb_pass_mark_users(p, use_n);
+                }
+            }
+
+            users = next;
+        }
+
+        tb_pass_mark_users(p, cast);
+        tb_pass_mark_users(p, phi);
+        tb_pass_mark(p, cast);
+        tb_pass_mark(p, phi);
+
+        // upscale init var
+        TB_Node* init_cast = upcast(p, f, phi->inputs[1], best_dt);
+        set_input(f, phi, init_cast, 1);
+        tb_pass_mark(p, init_cast);
+
+        phi->dt = best_dt;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+// only case we handle rn is making a bigger stride when we proved the induction var never goes past
+static bool indvar_strength_reduction(TB_Passes* p, TB_Node* phi, TB_Node* cond, TB_Node* end_cond, TB_Node* op) {
+    TB_Function* f = p->f;
+
+    uint64_t* init = iconst(phi->inputs[1]);
+    uint64_t* end = end_cond ? iconst(end_cond) : NULL;
+
+    if (init && end) {
+        __debugbreak();
+    }
+
+    return false;
 }
 
 void tb_pass_loop(TB_Passes* p) {
@@ -156,7 +252,7 @@ void tb_pass_loop(TB_Passes* p) {
                 }
 
                 uint64_t* init = iconst(phi->inputs[1]);
-                uint64_t* end = iconst(end_cond);
+                uint64_t* end = end_cond ? iconst(end_cond) : NULL;
 
                 if (0 && init && end) {
                     int64_t trips = (*end - *init) / step;
@@ -190,6 +286,11 @@ void tb_pass_loop(TB_Passes* p) {
                     printf("        trips: %"PRId64" (%"PRId64" ... %"PRId64")\n", (*end - *init) / step, *init, *end);
                 }
                 #endif
+
+                // we'll just run these alongside the loop detection but maybe they
+                // should be a separate pass?
+                indvar_simplify(p, phi, cond, op);
+                // indvar_strength_reduction(p, phi, cond, end_cond, op);
             }
         }
     }
