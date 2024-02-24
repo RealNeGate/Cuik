@@ -280,7 +280,7 @@ void tb_builder_set_var(TB_GraphBuilder* g, int id) {
     g->vals[id] = pop(g);
 }
 
-void tb_builder_if(TB_GraphBuilder* g) {
+void tb_builder_if(TB_GraphBuilder* g, int total_hits, int taken) {
     TB_Function* f = g->f;
 
     TB_ArenaSavepoint sp = tb_arena_save(g->arena);
@@ -309,10 +309,10 @@ void tb_builder_if(TB_GraphBuilder* g) {
         ctrl->paths[1] = tb__make_proj(f, TB_TYPE_CONTROL, n, 1);
 
         TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-        br->total_hits = 100;
+        br->total_hits = total_hits;
         br->succ_count = 2;
         br->keys[0].key = 0;
-        br->keys[0].taken = 50;
+        br->keys[0].taken = total_hits - taken;
     }
 
     // add merge region (no phis yet, they'll be back)

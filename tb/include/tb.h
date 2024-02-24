@@ -1283,15 +1283,18 @@ TB_API bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* regio
 
 TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b);
 TB_API void tb_inst_goto(TB_Function* f, TB_Node* target);
-TB_API void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* true_case, TB_Node* false_case);
-TB_API void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_case, size_t entry_count, const TB_SwitchEntry* keys);
+TB_API TB_Node* tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* true_case, TB_Node* false_case);
+TB_API TB_Node* tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_case, size_t entry_count, const TB_SwitchEntry* keys);
 TB_API void tb_inst_unreachable(TB_Function* f);
 TB_API void tb_inst_debugbreak(TB_Function* f);
 TB_API void tb_inst_trap(TB_Function* f);
 
 // revised API for if, this one returns the control projections such that a target is not necessary while building
 //   projs[0] is the true case, projs[1] is false.
-TB_API void tb_inst_if2(TB_Function* f, TB_Node* cond, TB_Node* projs[2]);
+TB_API TB_Node* tb_inst_if2(TB_Function* f, TB_Node* cond, TB_Node* projs[2]);
+
+// n is a TB_BRANCH with two successors, taken is the number of times it's true
+TB_API void tb_inst_set_branch_freq(TB_Function* f, TB_Node* n, int total_hits, int taken);
 
 TB_API void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values);
 
@@ -1367,7 +1370,9 @@ TB_API void tb_builder_set_var(TB_GraphBuilder* g, int id);
 
 // control flow primitives
 //   ( a -- )
-TB_API void tb_builder_if(TB_GraphBuilder* g);
+//
+//   taken is the number of times we do the true case
+TB_API void tb_builder_if(TB_GraphBuilder* g, int total_hits, int taken);
 //   ( -- )
 TB_API void tb_builder_else(TB_GraphBuilder* g);
 //   ( -- )
