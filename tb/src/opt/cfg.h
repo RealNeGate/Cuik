@@ -56,6 +56,15 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
                 top->succ[index] = cfg_next_bb_after_cproj(u->n);
             }
         }
+
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
+        if (br->succ_count == 2) {
+            // make the hot path the fallthrough
+            float taken = (float)br->keys[0].taken / (float)br->total_hits;
+            if (taken < 0.5f) {
+                SWAP(TB_Node*, top->succ[0], top->succ[1]);
+            }
+        }
     } else if (!cfg_is_endpoint(end)) {
         top->succ[0] = cfg_next_user(end)->n;
     }
@@ -88,12 +97,7 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
             Block b = *top;
 
             TB_BasicBlock bb = { .start = b.bb, .end = b.end, .dom_depth = -1 };
-            if (cfg_is_region(b.bb)) {
-                bb.freq = TB_NODE_GET_EXTRA_T(b.bb, TB_NodeRegion)->freq;
-                assert(bb.freq >= BB_LOW_FREQ);
-            } else {
-                bb.freq = 1.0;
-            }
+            bb.freq = 1.0;
 
             dyn_array_put(ws->items, b.bb);
             nl_map_put(cfg.node_to_block, b.bb, bb);

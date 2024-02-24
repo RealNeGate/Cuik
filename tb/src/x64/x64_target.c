@@ -700,7 +700,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 // try for jump tables or if-chains
                 //
                 // check if there's at most only one space between entries
-                int64_t last = br->keys[0];
+                int64_t last = br->keys[0].key;
                 int64_t min = last, max = last;
 
                 double dist_avg = 0;
@@ -708,7 +708,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
 
                 bool large_num = false;
                 FOREACH_N(i, 2, br->succ_count) {
-                    int64_t key = br->keys[i - 1];
+                    int64_t key = br->keys[i - 1].key;
                     if (!fits_into_int32(key)) {
                         large_num = true;
                     }
@@ -1800,7 +1800,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 } else if (br->succ_count == 2) {
                     Val naw = val_label(succ[1]);
                     Val yea = val_label(succ[0]);
-                    Cond cc = emit_cmp(ctx, e, n->inputs[1], t, br->keys[0]);
+                    Cond cc = emit_cmp(ctx, e, n->inputs[1], t, br->keys[0].key);
 
                     // if flipping avoids a jmp, do that
                     if (ctx->fallthrough == yea.label) {
@@ -1819,7 +1819,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                     if (aux->if_chain) {
                         // Basic if-else chain
                         FOREACH_N(i, 1, br->succ_count) {
-                            uint64_t curr_key = br->keys[i-1];
+                            uint64_t curr_key = br->keys[i-1].key;
 
                             if (fits_into_int32(curr_key)) {
                                 Val imm = val_imm(curr_key);
@@ -1849,7 +1849,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
 
                         Set entries_set = set_create_in_arena(arena, range);
                         FOREACH_N(i, 1, br->succ_count) {
-                            uint64_t key_idx = br->keys[i - 1] - min;
+                            uint64_t key_idx = br->keys[i - 1].key - min;
                             assert(key_idx < range);
 
                             JumpTablePatch p;

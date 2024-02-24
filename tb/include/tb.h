@@ -571,10 +571,16 @@ struct TB_Node {
 #define TB_NODE_GET_EXTRA_T(n, T)    ((T*) (n)->extra)
 #define TB_NODE_SET_EXTRA(n, T, ...) (*((T*) (n)->extra) = (T){ __VA_ARGS__ })
 
+typedef struct { // TB_BRANCH
+    uint64_t taken;
+    int64_t key;
+} TB_BranchKey;
+
 // this represents switch (many targets), if (one target) and goto (only default) logic.
 typedef struct { // TB_BRANCH
+    uint64_t total_hits;
     size_t succ_count;
-    int64_t keys[];
+    TB_BranchKey keys[];
 } TB_NodeBranch;
 
 typedef struct { // TB_PROJ
@@ -657,9 +663,6 @@ typedef struct {
 
 typedef struct {
     const char* tag;
-
-    // magic factor for hot-code, higher means run more often
-    float freq;
 
     // used for IR building
     TB_Node *mem_in;

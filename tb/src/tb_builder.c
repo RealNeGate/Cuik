@@ -884,12 +884,10 @@ TB_API TB_Node* tb_inst_region(TB_Function* f) {
 
 TB_API TB_Trace tb_inst_new_trace(TB_Function* f) {
     TB_Node* n = tb_alloc_node_dyn(f, TB_REGION, TB_TYPE_CONTROL, 0, 4, sizeof(TB_NodeRegion));
-    TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-    r->freq = 1.0f;
 
     TB_Node* phi = tb_alloc_node_dyn(f, TB_PHI, TB_TYPE_MEMORY, 1, 5, 0);
     set_input(f, phi, n, 0);
-    r->mem_in = phi;
+    TB_NODE_SET_EXTRA(n, TB_NodeRegion, .mem_in = phi);
     return (TB_Trace){ n, n, phi };
 }
 
@@ -960,8 +958,10 @@ void tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_fal
     }
 
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-    br->succ_count = 2;
-    br->keys[0] = 0;
+    br->total_hits = 100;
+    br->succ_count  = 2;
+    br->keys[0].key = 0;
+    br->keys[0].taken = 50;
 }
 
 void tb_inst_if2(TB_Function* f, TB_Node* cond, TB_Node* projs[2]) {
@@ -977,8 +977,10 @@ void tb_inst_if2(TB_Function* f, TB_Node* cond, TB_Node* projs[2]) {
     }
 
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    br->total_hits = 100;
     br->succ_count = 2;
-    br->keys[0] = 0;
+    br->keys[0].key = 0;
+    br->keys[0].taken = 50;
 }
 
 void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_label, size_t entry_count, const TB_SwitchEntry* entries) {
@@ -998,9 +1000,11 @@ void tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* defau
     }
 
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    br->total_hits = (1 + entry_count) * 10;
     br->succ_count = 1 + entry_count;
     FOREACH_N(i, 0, entry_count) {
-        br->keys[i] = entries[i].key;
+        br->keys[i].key = entries[i].key;
+        br->keys[i].taken = 10;
     }
 }
 

@@ -189,7 +189,6 @@ void tb_pass_loop(TB_Passes* p) {
         }
 
         TB_OPTDEBUG(LOOP)(printf("found loop on .bb%zu (v%u) with %zu backedges\n", i, header->gvn, dyn_array_length(backedges)));
-        TB_NODE_GET_EXTRA_T(header, TB_NodeRegion)->freq = 10.0f;
         ptrdiff_t single_backedge = backedges[0];
 
         // as part of loop simplification we convert backedges into one, this

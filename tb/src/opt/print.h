@@ -254,10 +254,10 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                         if (i != 1) printf(", ");
                         print_ref_to_node(ctx, n->inputs[i], false);
                     }
-                    if (br->keys[0] == 0) {
+                    if (br->keys[0].key == 0) {
                         printf(" then ");
                     } else {
-                        printf(" != %"PRId64" then ", tb__sxt(br->keys[0], bits, 64));
+                        printf(" != %"PRId64" then ", tb__sxt(br->keys[0].key, bits, 64));
                     }
                     print_branch_edge(ctx, succ[0], false);
                     printf(" else ");
@@ -271,7 +271,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     printf("%s=> {\n", n->input_count > 1 ? " " : "");
 
                     FOREACH_N(i, 0, br->succ_count) {
-                        if (i != 0) printf("    %"PRId64": ", br->keys[i - 1]);
+                        if (i != 0) printf("    %"PRId64": ", br->keys[i - 1].key);
                         else printf("    default: ");
 
                         print_branch_edge(ctx, succ[i], false);

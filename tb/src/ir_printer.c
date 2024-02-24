@@ -170,7 +170,7 @@ static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, i
 
         case TB_BRANCH: {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-            if (br->succ_count == 2 && br->keys[0] == 0) {
+            if (br->succ_count == 2 && br->keys[0].key == 0) {
                 P("%s", index ? "false" : "true");
             } else if (index == 0) {
                 P("default");

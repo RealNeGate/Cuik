@@ -211,7 +211,7 @@ static bool is_empty_bb(TB_Passes* restrict p, TB_Node* end) {
 
 static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
     if (n->type == TB_BRANCH && n->input_count == 2 && TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->succ_count == 2) {
-        *falsey = TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->keys[0];
+        *falsey = TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->keys[0].key;
         return true;
     }
 
@@ -1113,7 +1113,7 @@ static Value eval(Interp* vm, TB_Node* n) {
             int index = 0;
 
             FOREACH_N(i, 0, br->succ_count - 1) {
-                if (key == br->keys[i]) {
+                if (key == br->keys[i].key) {
                     index = i + 1;
                     break;
                 }

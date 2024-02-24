@@ -374,7 +374,7 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
             set_input(f, ret, phi, i + 3);
         }
 
-        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .freq = 1.0f, .mem_in = mem_phi, .tag = "ret");
+        TB_NODE_SET_EXTRA(region, TB_NodeRegion, .mem_in = mem_phi, .tag = "ret");
     }
 
     f->prototype = p;
