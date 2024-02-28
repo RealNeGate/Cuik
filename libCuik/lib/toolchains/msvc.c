@@ -364,19 +364,23 @@ static bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik
     if (!instances)  return false;
 
     bool found_visual_studio_2017 = false;
+
+    BSTR bstr_inst_path = NULL;
     while (1) {
+        if (bstr_inst_path) {
+            SysFreeString(bstr_inst_path);
+            bstr_inst_path = NULL;
+        }
         ULONG found = 0;
         ISetupInstance *instance = NULL;
         HRESULT hr = CALL_STDMETHOD(instances, Next, 1, &instance, &found);
         if (hr != S_OK) break;
 
-        BSTR bstr_inst_path;
         hr = CALL_STDMETHOD(instance, GetInstallationPath, &bstr_inst_path);
         CALL_STDMETHOD_(instance, Release);
         if (hr != S_OK)  continue;
 
         wchar_t *tools_filename = concat2(bstr_inst_path, L"\\VC\\Auxiliary\\Build\\Microsoft.VCToolsVersion.default.txt");
-        SysFreeString(bstr_inst_path);
 
         FILE *f;
         errno_t open_result = _wfopen_s(&f, tools_filename, L"rt");
@@ -403,14 +407,15 @@ static bool find_visual_studio_2017_by_fighting_through_microsoft_craziness(Cuik
         wchar_t *version_tail = wcschr(version, '\n');
         if (version_tail) *version_tail = 0;  // Stomp the data, because nobody cares about it.
 
-        wchar_t *include_path = concat4(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\include");
-        wchar_t *library_path = concat4(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\lib\\x64");
-        wchar_t *library_file = concat2(library_path, L"\\vcruntime.lib");  // @Speed: Could have library_path point to this string, with a smaller count, to save on memory flailing!
+        swprintf(result->vs_include_path, MAX_PATH, L"%s", concat4(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\include"));
+        swprintf(result->vs_library_path, MAX_PATH, concat4(bstr_inst_path, L"\\VC\\Tools\\MSVC\\", version, L"\\lib\\x64"));
+        wchar_t *library_file = concat2(result->vs_library_path, L"\\vcruntime.lib");  // @Speed: Could have library_path point to this string, with a smaller count, to save on memory flailing!
 
         if (os_file_exists(library_file)) {
             swprintf(result->vc_tools_install, MAX_PATH, L"%s\\VC\\Tools\\MSVC\\%s\\", bstr_inst_path, version);
             cuik_free(version);
-
+            SysFreeString(bstr_inst_path);
+        
             found_visual_studio_2017 = true;
             break;
         }
