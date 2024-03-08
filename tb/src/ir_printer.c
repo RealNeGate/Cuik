@@ -8,7 +8,7 @@ TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...) {
     va_end(ap);
 }
 
-TB_API const char* tb_node_get_name(TB_Node* n) {
+const char* tb_node_get_name(TB_Node* n) {
     switch (n->type) {
         case TB_NULL: return "BAD";
         case TB_UNREACHABLE: return "unreachable";
@@ -115,7 +115,8 @@ TB_API const char* tb_node_get_name(TB_Node* n) {
         case TB_BRANCH:   return "branch";
         case TB_TAILCALL: return "tailcall";
 
-        default: tb_todo();return "(unknown)";
+        default: return tb_node_x86_get_name(n);
+        // default: tb_todo();return "(unknown)";
     }
 }
 
@@ -175,7 +176,7 @@ static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, i
             } else if (index == 0) {
                 P("default");
             } else {
-                P("%"PRId64, br->keys[index - 1]);
+                P("%"PRId64, br->keys[index - 1].key);
             }
             break;
         }

@@ -149,6 +149,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // mov r/m  imm
         [0xC6]          = OP_MODRM | OP_IMM | OP_8BIT | OP_FAKERX,
         [0xC7]          = OP_MODRM | OP_IMM | OP_FAKERX,
+        // stosb
+        [0xAA]          = OP_0ARY,
         // int3
         [0xCC]          = OP_0ARY,
         // sar r/m, CL
@@ -179,6 +181,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         _0F(0x11)        = OP_MODRM | OP_SSE,
         // nop r/m
         _0F(0x1F)        = OP_MODRM,
+        // imul reg, r/m
+        _0F(0xAF)        = OP_MODRM,
         // cmovcc reg, r/m
         _0F2(0x40, 0x4F) = OP_MODRM | OP_DIR,
         // SSE: add, mul, sub, min, div, max
@@ -245,8 +249,6 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 
             regs |= 0xFF0000; // no rx since it's reserved
             op |= rx << 12;
-        } else if (props & OP_RCX) {
-            regs |= RCX << 16;
         } else {
             // unpack rx
             regs |= ((rex&4 ? 8 : 0) | rx) << 16;
@@ -291,6 +293,11 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
             } else {
                 inst->disp = 0;
             }
+        }
+
+        if (props & OP_RCX) {
+            regs &= ~0xFF0000;
+            regs |= RCX << 16;
         }
     } else if (props & OP_RAX) {
         regs |= 0xFFFF00;

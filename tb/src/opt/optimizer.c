@@ -20,9 +20,9 @@ thread_local TB_Arena* tmp_arena;
 static User* remove_user(TB_Node* n, int slot);
 static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 static void violent_kill(TB_Function* f, TB_Node* n);
+static void push_for_death(TB_Passes* restrict p, TB_Node* n);
+static void disconnect(TB_Passes* restrict p, TB_Node* n);
 
-static void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n);
-static void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
 static void print_lattice(Lattice* l, TB_DataType dt);
 
 // node creation helpers
@@ -261,7 +261,12 @@ static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
 #include "libcalls.h"
 #include "mem2reg.h"
 #include "scheduler.h"
+#include "list_sched.h"
 #include "legalizer.h"
+
+void tb__gvn_remove(TB_Function* f, TB_Node* n) {
+    nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
+}
 
 static void violent_kill(TB_Function* f, TB_Node* n) {
     // remove from GVN if we're murdering it
@@ -282,6 +287,18 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
 
     n->input_count = 0;
     n->type = TB_NULL;
+}
+
+static Lattice* value_f32(TB_Passes* restrict p, TB_Node* n) {
+    assert(n->type == TB_FLOAT32_CONST);
+    TB_NodeFloat32* num = TB_NODE_GET_EXTRA(n);
+    return lattice_intern(p, (Lattice){ LATTICE_FLTCON32, ._f32 = num->value });
+}
+
+static Lattice* value_f64(TB_Passes* restrict p, TB_Node* n) {
+    assert(n->type == TB_FLOAT64_CONST);
+    TB_NodeFloat64* num = TB_NODE_GET_EXTRA(n);
+    return lattice_intern(p, (Lattice){ LATTICE_FLTCON64, ._f64 = num->value });
 }
 
 static Lattice* value_int(TB_Passes* restrict p, TB_Node* n) {
@@ -540,6 +557,11 @@ void tb_pass_mark_users(TB_Passes* restrict p, TB_Node* n) {
     }
 }
 
+// dead node? place into worklist to clean up
+static void disconnect(TB_Passes* restrict p, TB_Node* n) {
+    if (n->users->next == NULL) { tb_pass_mark(p, n); }
+}
+
 static void push_for_death(TB_Passes* restrict p, TB_Node* n) {
     FOREACH_N(i, 0, n->input_count) {
         TB_Node* in = n->inputs[i];
@@ -778,6 +800,22 @@ static TB_Node* try_as_const(TB_Passes* restrict p, TB_Node* n, Lattice* l, bool
             return NULL;
         }
 
+        case LATTICE_FLTCON32: {
+            TB_Node* k = tb_alloc_node(f, TB_FLOAT32_CONST, n->dt, 1, sizeof(TB_NodeFloat32));
+            set_input(f, k, f->root_node, 0);
+            TB_NODE_SET_EXTRA(k, TB_NodeFloat32, .value = l->_f32);
+            lattice_universe_map(p, k, l);
+            return k;
+        }
+
+        case LATTICE_FLTCON64: {
+            TB_Node* k = tb_alloc_node(f, TB_FLOAT64_CONST, n->dt, 1, sizeof(TB_NodeFloat64));
+            set_input(f, k, f->root_node, 0);
+            TB_NODE_SET_EXTRA(n, TB_NodeFloat64, .value = l->_f64);
+            lattice_universe_map(p, n, l);
+            return n;
+        }
+
         case LATTICE_NULL:
         return make_int_node(p->f, p, n->dt, 0);
 
@@ -838,21 +876,23 @@ static void validate_node_users(TB_Node* n) {
 
 static void print_lattice(Lattice* l, TB_DataType dt) {
     switch (l->tag) {
-        case LATTICE_BOT: printf("bot"); break;
-        case LATTICE_TOP: printf("top"); break;
-
-        case LATTICE_CTRL:  printf("ctrl"); break;
-        case LATTICE_XCTRL: printf("~ctrl"); break;
-
-        case LATTICE_FLOAT32: printf("f32"); break;
-        case LATTICE_FLOAT64: printf("f64"); break;
-
-        case LATTICE_NULL:   printf("null"); break;
-        case LATTICE_XNULL:  printf("~null"); break;
-        case LATTICE_BOTPTR: printf("allptr"); break;
-        case LATTICE_PTRCON: printf("%s", l->_ptr.sym->name); break;
-
-        case LATTICE_MEM:   printf("$mem%d", l->_mem.alias_idx); break;
+        case LATTICE_BOT:      printf("bot");                       break;
+        case LATTICE_TOP:      printf("top");                       break;
+        case LATTICE_CTRL:     printf("ctrl");                      break;
+        case LATTICE_XCTRL:    printf("~ctrl");                     break;
+        case LATTICE_FLT32:    printf("f32");                       break;
+        case LATTICE_FLT64:    printf("f64");                       break;
+        case LATTICE_FLTCON32: printf("[%f]", l->_f32);             break;
+        case LATTICE_FLTCON64: printf("[%f]", l->_f64);             break;
+        case LATTICE_NULL:     printf("null");                      break;
+        case LATTICE_XNULL:    printf("~null");                     break;
+        case LATTICE_NAN32:    printf("NaN32");                     break;
+        case LATTICE_XNAN32:   printf("~NaN32");                    break;
+        case LATTICE_NAN64:    printf("NaN64");                     break;
+        case LATTICE_XNAN64:   printf("~NaN64");                    break;
+        case LATTICE_BOTPTR:   printf("allptr");                    break;
+        case LATTICE_PTRCON:   printf("%s", l->_ptr.sym->name);     break;
+        case LATTICE_MEM:      printf("$mem%d", l->_mem.alias_idx); break;
 
         case LATTICE_TUPLE: {
             printf("[");
@@ -931,6 +971,7 @@ TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
 
         // transfer users from n -> k
         if (n != k) {
+            push_for_death(p, n);
             subsume_node(f, n, k);
             n = k;
         }
@@ -1008,7 +1049,7 @@ TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n) {
     return n;
 }
 
-static void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
+void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     CUIK_TIMED_BLOCK("subsume") {
         User* use = n->users;
         while (use != NULL) {
@@ -1024,7 +1065,7 @@ static void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     }
 }
 
-static void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
+void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     subsume_node2(f, n, new_n);
     tb_pass_kill_node(f, n);
 }
@@ -1326,8 +1367,6 @@ static void tb_pass_const(TB_Passes* p) {
 
                 lattice_universe_map(p, n, new_type);
                 push_non_bottom_users(p, n);
-            } else {
-                // DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++p->stats.time), print_node_sexpr(n, 0), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("] (STILL)\x1b[0m\n"));
             }
         }
     }
@@ -1345,15 +1384,15 @@ static void tb_pass_const(TB_Passes* p) {
         TB_Node* n = ws.items[i];
         TB_Node* k = try_as_const(p, n, lattice_universe_get(p, n), true);
 
-        // DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++p->stats.time), print_node_sexpr(n, 0));
+        DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++p->stats.time), print_node_sexpr(n, 0));
         if (k != NULL) {
-            // DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
+            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
 
             subsume_node(f, n, k);
             tb_pass_mark_users(p, n);
             n = k;
         }
-        // DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
+        DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
 
         FOR_USERS(use, n) {
             TB_Node* out = use->n;
@@ -1382,19 +1421,6 @@ void tb_pass_optimize(TB_Passes* p) {
     // dummy_interp(p);
 }
 
-static size_t tb_pass_update_cfg(TB_Passes* p, Worklist* ws, bool preserve) {
-    TB_Function* f = p->f;
-
-    p->cfg = tb_compute_rpo2(f, ws);
-    tb_compute_dominators2(f, ws, p->cfg);
-
-    if (!preserve) {
-        tb_free_cfg(&p->cfg);
-    }
-
-    return p->cfg.block_count;
-}
-
 void tb_pass_prep(TB_Passes* p) {
     TB_Function* f = p->f;
 
@@ -1411,15 +1437,21 @@ void tb_pass_prep(TB_Passes* p) {
                 p->types[i] = NULL;
             }
 
-            nl_hashset_put2(&p->type_interner, &BOT_IN_THE_SKY,   lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->type_interner, &TOP_IN_THE_SKY,   lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->type_interner, &CTRL_IN_THE_SKY,  lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->type_interner, &XCTRL_IN_THE_SKY, lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->type_interner, &NULL_IN_THE_SKY,  lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->type_interner, &XNULL_IN_THE_SKY, lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->type_interner, &PTR_IN_THE_SKY,   lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->type_interner, &FALSE_IN_THE_SKY, lattice_hash, lattice_cmp);
-            nl_hashset_put2(&p->type_interner, &TRUE_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &BOT_IN_THE_SKY,    lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &TOP_IN_THE_SKY,    lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &CTRL_IN_THE_SKY,   lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &XCTRL_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &NULL_IN_THE_SKY,   lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &XNULL_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &FLT32_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &FLT64_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &NAN32_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &NAN64_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &XNAN32_IN_THE_SKY, lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &XNAN64_IN_THE_SKY, lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &PTR_IN_THE_SKY,    lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &FALSE_IN_THE_SKY,  lattice_hash, lattice_cmp);
+            nl_hashset_put2(&p->type_interner, &TRUE_IN_THE_SKY,   lattice_hash, lattice_cmp);
 
             // place ROOT type
             p->root_mem = lattice_new_alias(p);

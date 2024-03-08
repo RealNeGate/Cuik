@@ -7,17 +7,18 @@ enum {
 };
 
 #define TB_OPTDEBUG_STATS    0
-#define TB_OPTDEBUG_PEEP     0
+#define TB_OPTDEBUG_PEEP     1
 #define TB_OPTDEBUG_SCCP     0
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
 #define TB_OPTDEBUG_GVN      0
+#define TB_OPTDEBUG_SCHEDULE 0
 
 // for toggling ANSI colors
 #define TB_OPTDEBUG_ANSI     1
@@ -33,8 +34,9 @@ enum {
 #define FOR_USERS(u, n) for (User* u = n->users; u; u = u->next)
 
 ////////////////////////////////
-// SCCP
+// Constant prop
 ////////////////////////////////
+// it's a lattice element i'm not fucking typing that shit tho
 typedef struct Lattice Lattice;
 
 // TODO(NeGate): implement dual? from there i can do join with
@@ -56,10 +58,6 @@ typedef enum {
 } LatticeTrifecta;
 
 typedef struct {
-    LatticeTrifecta trifecta;
-} LatticeFloat;
-
-typedef struct {
     TB_Symbol* sym;
 } LatticePtrConst;
 
@@ -79,9 +77,32 @@ struct Lattice {
         LATTICE_TOP, // top ^ x = x
 
         LATTICE_INT,
-        LATTICE_FLOAT32,
-        LATTICE_FLOAT64,
         LATTICE_TUPLE,
+
+        // float (each float type has it's own separate set of these btw):
+        //
+        //        top
+        //       /   \
+        //      /     \
+        //     /       \
+        //    /         \
+        //   /|\       /|\
+        //  / | \     / | \
+        // N  N  N 0.0 1.0 ... # fltcon
+        //  \ | /     \ | /
+        //   \|/       \|/
+        //   nan      ~nan
+        //     \       /
+        //      \     /
+        //       \   /
+        //        \ /
+        //        flt
+        //
+        // N means NaN it's just too long to write in the diagram
+        LATTICE_FLT32,    LATTICE_FLT64,    // bottom types for floats
+        LATTICE_NAN32,    LATTICE_NAN64,
+        LATTICE_XNAN32,   LATTICE_XNAN64,
+        LATTICE_FLTCON32, LATTICE_FLTCON64, // _f32 and _f64
 
         // pointers:
         //      top
@@ -116,10 +137,11 @@ struct Lattice {
     uint32_t pad;
     union {
         LatticeInt _int;
-        LatticeFloat _float;
         LatticePtrConst _ptr;
         LatticeTuple _tuple;
         LatticeMem _mem;
+        float _f32;
+        double _f64;
     };
     Lattice* elems[];
 };
@@ -127,21 +149,6 @@ struct Lattice {
 ////////////////////////////////
 // CFG
 ////////////////////////////////
-typedef struct {
-    size_t stride;
-    uint64_t arr[];
-} TB_DominanceFrontiers;
-
-static void tb_dommy_fronts_put(TB_DominanceFrontiers* df, size_t i, size_t j) {
-    size_t word_i = j / 64;
-    df->arr[i * df->stride + word_i] |= 1ull << (j % 64);
-}
-
-static bool tb_dommy_fronts_get(TB_DominanceFrontiers* df, size_t i, size_t j) {
-    size_t word_i = j / 64;
-    return df->arr[i * df->stride + word_i] & (1ull << (j % 64));
-}
-
 typedef struct {
     TB_Node *phi, *n;
     int dst, src;
@@ -151,12 +158,16 @@ typedef struct TB_BasicBlock TB_BasicBlock;
 struct TB_BasicBlock {
     TB_BasicBlock* dom;
 
-    // whatever regions say, everything else gets 1
-    float freq;
-
     TB_Node* start;
     TB_Node* end;
     int id, dom_depth;
+
+    // used by codegen to track the associated machine BB
+    int order;
+
+    // dataflow
+    Set gen, kill;
+    Set live_in, live_out;
 
     NL_HashSet items;
 };
@@ -177,8 +188,6 @@ typedef struct {
     uint64_t* visited;
 } Worklist;
 
-typedef void (*TB_Scheduler)(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
-
 struct TB_Passes {
     TB_Function* f;
 
@@ -188,7 +197,7 @@ struct TB_Passes {
 
     Worklist worklist;
 
-    // tracks the fancier type system
+    // tracks the fancier type system:
     //   hash-consing because there's a lot of
     //   redundant types we might construct.
     struct {
@@ -203,14 +212,9 @@ struct TB_Passes {
         Lattice** types;
     };
 
-    // might be out of date if you haven't called tb_pass_update_cfg
-    TB_CFG cfg;
-
     // value number -> TB_BasicBlock*
+    size_t scheduled_n;
     TB_BasicBlock** scheduled;
-
-    // debug shit:
-    TB_Node* error_n;
 
     // nice stats
     struct {
@@ -251,13 +255,14 @@ static bool cfg_is_mproj(TB_Node* n) {
 static bool cfg_is_control(TB_Node* n) {
     // easy case
     if (n->dt.type == TB_CONTROL) return true;
-    if (n->dt.type != TB_TUPLE) return false;
 
-    // harder case is figuring out which tuples have control outputs (without manually
-    // checking which is annoying and slow)
-    //
-    //     branch, debugbreak, trap, unreachable, dead  OR  call, syscall, safepoint
-    return n->type == TB_ROOT || (n->type >= TB_BRANCH && n->type <= TB_UNREACHABLE) || (n->type >= TB_CALL && n->type <= TB_SAFEPOINT_POLL);
+    if (n->dt.type == TB_TUPLE) {
+        FOR_USERS(u, n) if (u->n->type == TB_PROJ && u->n->dt.type == TB_CONTROL) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 static bool cfg_is_bb_entry(TB_Node* n) {
@@ -520,10 +525,12 @@ extern thread_local TB_Arena* tmp_arena;
 
 void verify_tmp_arena(TB_Passes* p);
 
+// internal debugging mostly
+void tb_dumb_print_node(Lattice** types, TB_Node* n);
+
 // CFG
 //   pushes postorder walk into worklist items, also modifies the visited set.
 TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* restrict p);
-TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws);
 void tb_free_cfg(TB_CFG* cfg);
 //   postorder walk -> dominators
 void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg);
@@ -540,12 +547,23 @@ void worklist_push(Worklist* restrict ws, TB_Node* restrict n);
 int worklist_popcount(Worklist* ws);
 TB_Node* worklist_pop(Worklist* ws);
 
+void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n);
+void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
+void tb__gvn_remove(TB_Function* f, TB_Node* n);
+
+// node latency
+typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n);
+
 // Local scheduler
-void greedy_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end);
-void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber);
+void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_Node** id2node, TB_GetLatency lat);
+void greedy_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb);
+
+// Global scheduler
+void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow);
 
 // makes arch-friendly IR
 void tb_pass_legalize(TB_Passes* p, TB_Arch arch);
 
 Lattice* lattice_universe_get(TB_Passes* p, TB_Node* n);
 LatticeTrifecta lattice_truthy(Lattice* l);
+

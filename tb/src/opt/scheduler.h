@@ -65,9 +65,10 @@ static void fill_phis(TB_Arena* arena, Phis* phis, TB_Node* succ, int phi_i) {
 }
 
 // basically just topological sort, no fancy shit
-void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal)* phi_vals, TB_BasicBlock* bb, TB_Node* end) {
+void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb) {
     TB_Arena* arena = tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
+    TB_Node* end = bb->end;
 
     // find phis
     int phi_curr = 0;

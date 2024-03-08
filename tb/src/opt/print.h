@@ -3,7 +3,6 @@ typedef struct {
     TB_Passes* opt;
     TB_Function* f;
     TB_CFG cfg;
-    TB_Scheduler sched;
 } PrinterCtx;
 
 static void print_type(TB_DataType dt) {
@@ -131,18 +130,6 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                 printf("*DEAD*");
             }
         }
-    } else if (n->type == TB_ZERO_EXT) {
-        printf("(zxt.");
-        print_type2(n->dt);
-        printf(" ");
-        print_ref_to_node(ctx, n->inputs[1], false);
-        printf(")");
-    } else if (n->type == TB_SIGN_EXT) {
-        printf("(sxt.");
-        print_type2(n->dt);
-        printf(" ");
-        print_ref_to_node(ctx, n->inputs[1], false);
-        printf(")");
     } else if (n->type == TB_INTEGER_CONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
@@ -192,10 +179,6 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
 
 static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     print_ref_to_node(ctx, bb_start, true);
-
-    if (ctx->opt->error_n == bb_start) {
-        printf("\x1b[31m  <-- ERROR\x1b[0m");
-    }
     printf("\n");
 
     TB_BasicBlock* bb = ctx->opt->scheduled[bb_start->gvn];
@@ -206,7 +189,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     assert(expected == bb);
     #endif
 
-    ctx->sched(ctx->opt, &ctx->cfg, ws, NULL, bb, bb->end);
+    greedy_scheduler(ctx->opt, &ctx->cfg, ws, NULL, bb);
 
     FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];
@@ -214,7 +197,6 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
         // skip these
         if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST ||
             n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
-            n->type == TB_SIGN_EXT || n->type == TB_ZERO_EXT ||
             n->type == TB_PROJ || n->type == TB_REGION ||
             n->type == TB_NATURAL_LOOP || n->type == TB_AFFINE_LOOP ||
             n->type == TB_NULL || n->type == TB_PHI) {
@@ -227,7 +209,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
         }
 
         switch (n->type) {
-            case TB_DEBUGBREAK: printf("  debugbreak"); break;
+            case TB_DEBUGBREAK:  printf("  debugbreak"); break;
             case TB_UNREACHABLE: printf("  unreachable"); break;
 
             case TB_BRANCH: {
@@ -453,14 +435,16 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                         break;
                     }
 
-                    default: tb_assert(extra_bytes(n) == 0, "TODO");
+                    default:
+                    if (n->type >= TB_FIRST_MACHINE_OP) {
+                        tb_node_x86_print_extra(n);
+                    } else {
+                        tb_assert(extra_bytes(n) == 0, "TODO");
+                    }
+                    break;
                 }
                 break;
             }
-        }
-
-        if (ctx->opt->error_n == n) {
-            printf("\x1b[31m  <-- ERROR\x1b[0m");
         }
 
         printf("\n");
@@ -487,13 +471,10 @@ void tb_pass_print(TB_Passes* opt) {
     opt->worklist = tmp_ws;
     ctx.cfg = tb_compute_rpo(f, opt);
 
-    // does the IR printing need smart scheduling lol (yes... when we're testing things)
-    ctx.sched = greedy_scheduler;
-
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
 
     // schedule nodes
-    tb_pass_schedule(opt, ctx.cfg, false);
+    tb_pass_schedule(opt, ctx.cfg, false, false);
     worklist_clear_visited(&opt->worklist);
 
     TB_Node* end_bb = NULL;
@@ -516,6 +497,5 @@ void tb_pass_print(TB_Passes* opt) {
     tb_free_cfg(&ctx.cfg);
     opt->worklist = old;
     opt->scheduled = NULL;
-    opt->error_n = NULL;
     cuikperf_region_end();
 }

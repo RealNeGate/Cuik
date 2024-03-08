@@ -10,6 +10,7 @@
 //   SROA - scalar replacement of aggregates
 //   SCCP - sparse conditional constant propagation
 //   RPO  - reverse postorder
+//   RA   - register allocation
 //   BB   - basic block
 //   ZTC  - zero trip count
 //   SCC  - strongly connected components
@@ -26,7 +27,7 @@
 #include <string.h>
 
 #define TB_VERSION_MAJOR 0
-#define TB_VERSION_MINOR 3
+#define TB_VERSION_MINOR 4
 #define TB_VERSION_PATCH 0
 
 #ifndef TB_API
@@ -148,7 +149,6 @@ typedef enum TB_Linkage {
 
 typedef enum {
     TB_COMDAT_NONE,
-
     TB_COMDAT_MATCH_ANY,
 } TB_ComdatType;
 
@@ -278,7 +278,7 @@ typedef enum TB_NodeTypeEnum {
     //
     //   it's possible to not pass a key and the default successor is always called, this is
     //   a GOTO. tb_inst_goto, tb_inst_if can handle common cases for you.
-    TB_BRANCH,      // (Control, Data?) -> (Control...)
+    TB_BRANCH,      // (Control, Data) -> (Control...)
     //   debugbreak will trap in a continuable manner.
     TB_DEBUGBREAK,  // (Control, Memory) -> (Control)
     //   trap will not be continuable but will stop execution.
@@ -433,9 +433,22 @@ typedef enum TB_NodeTypeEnum {
     TB_X86INTRIN_SQRT,
     TB_X86INTRIN_RSQRT,
 
+    // limit on normal nodes
     TB_NODE_TYPE_MAX,
+
+    // first machine op, we have some generic ops here:
+    TB_FIRST_MACHINE_OP,
+
+    TB_MACH_COPY = TB_FIRST_MACHINE_OP,
+    // does the phi move
+    TB_MACH_MOVE,
+    TB_MACH_LOCAL,
+
+    // this is where wthe
+    TB_FIRST_ARCH_MACHINE_OP,
 } TB_NodeTypeEnum;
-typedef uint8_t TB_NodeType;
+typedef uint16_t TB_NodeType;
+static_assert(sizeof(TB_NODE_TYPE_MAX) < 0x100, "this is the bound where machine nodes start");
 
 // just represents some region of bytes, usually in file parsing crap
 typedef struct {
@@ -479,6 +492,9 @@ typedef struct TB_Module            TB_Module;
 typedef struct TB_DebugType         TB_DebugType;
 typedef struct TB_ModuleSection     TB_ModuleSection;
 typedef struct TB_FunctionPrototype TB_FunctionPrototype;
+
+// TODO(NeGate): get rid of the lack of namespace here
+typedef struct RegMask RegMask;
 
 enum { TB_MODULE_SECTION_NONE = -1 };
 typedef int32_t TB_ModuleSectionHandle;
@@ -583,6 +599,17 @@ typedef struct { // TB_BRANCH
     TB_BranchKey keys[];
 } TB_NodeBranch;
 
+typedef struct { // TB_MACH_COPY
+    RegMask* def;
+    RegMask* use;
+} TB_NodeMachCopy;
+
+typedef struct { // TB_MACH_LOCAL
+    const char* name;
+    TB_DebugType* type;
+    int disp;
+} TB_NodeMachLocal;
+
 typedef struct { // TB_PROJ
     int index;
 } TB_NodeProj;
@@ -657,7 +684,7 @@ typedef struct {
 } TB_NodeTailcall;
 
 typedef struct {
-    void* tag;
+    void* userdata;
     int param_start;
 } TB_NodeSafepoint;
 
@@ -700,7 +727,7 @@ typedef enum {
     TB_EXECUTABLE_ELF,
 } TB_ExecutableType;
 
-typedef struct {
+typedef struct TB_Safepoint {
     TB_Node* node; // type == TB_SAFEPOINT
     void* userdata;
 
@@ -839,6 +866,10 @@ TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip);
 // JIT compilation
 ////////////////////////////////
 typedef struct TB_JIT TB_JIT;
+
+#ifdef EMSCRIPTEN
+TB_API void* tb_jit_wasm_obj(TB_Arena* arena, TB_Function* f);
+#else
 typedef struct TB_CPUContext TB_CPUContext;
 
 // passing 0 to jit_heap_capacity will default to 4MiB
@@ -881,6 +912,7 @@ TB_API bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size
 
 // returns true if we stepped off the end and returned through the trampoline
 TB_API bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end);
+#endif
 
 ////////////////////////////////
 // Disassembler
@@ -1288,6 +1320,12 @@ TB_API TB_Node* tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_
 TB_API void tb_inst_unreachable(TB_Function* f);
 TB_API void tb_inst_debugbreak(TB_Function* f);
 TB_API void tb_inst_trap(TB_Function* f);
+
+TB_API const char* tb_node_get_name(TB_Node* n);
+
+// machine specific nodes (mostly internal usage)
+TB_API const char* tb_node_x86_get_name(TB_Node* n);
+TB_API void tb_node_x86_print_extra(TB_Node* n);
 
 // revised API for if, this one returns the control projections such that a target is not necessary while building
 //   projs[0] is the true case, projs[1] is false.

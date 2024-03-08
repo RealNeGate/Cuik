@@ -1,14 +1,21 @@
 #include <hashes.h>
+#include <math.h>
 
-static Lattice TOP_IN_THE_SKY   = { LATTICE_TOP    };
-static Lattice BOT_IN_THE_SKY   = { LATTICE_BOT    };
-static Lattice CTRL_IN_THE_SKY  = { LATTICE_CTRL   };
-static Lattice XCTRL_IN_THE_SKY = { LATTICE_XCTRL  };
-static Lattice XNULL_IN_THE_SKY = { LATTICE_XNULL  };
-static Lattice NULL_IN_THE_SKY  = { LATTICE_NULL   };
-static Lattice PTR_IN_THE_SKY   = { LATTICE_BOTPTR };
-static Lattice FALSE_IN_THE_SKY = { LATTICE_INT, ._int = { 0, 0, 1, 0 } };
-static Lattice TRUE_IN_THE_SKY  = { LATTICE_INT, ._int = { 1, 1, 0, 1 } };
+static Lattice TOP_IN_THE_SKY    = { LATTICE_TOP    };
+static Lattice BOT_IN_THE_SKY    = { LATTICE_BOT    };
+static Lattice CTRL_IN_THE_SKY   = { LATTICE_CTRL   };
+static Lattice XCTRL_IN_THE_SKY  = { LATTICE_XCTRL  };
+static Lattice XNULL_IN_THE_SKY  = { LATTICE_XNULL  };
+static Lattice NULL_IN_THE_SKY   = { LATTICE_NULL   };
+static Lattice FLT32_IN_THE_SKY  = { LATTICE_FLT32  };
+static Lattice FLT64_IN_THE_SKY  = { LATTICE_FLT64  };
+static Lattice NAN32_IN_THE_SKY  = { LATTICE_NAN32  };
+static Lattice NAN64_IN_THE_SKY  = { LATTICE_NAN64  };
+static Lattice XNAN32_IN_THE_SKY = { LATTICE_XNAN32 };
+static Lattice XNAN64_IN_THE_SKY = { LATTICE_XNAN64 };
+static Lattice PTR_IN_THE_SKY    = { LATTICE_BOTPTR };
+static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = { 0, 0, 1, 0 } };
+static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = { 1, 1, 0, 1 } };
 
 static Lattice* lattice_from_dt(TB_Passes* p, TB_DataType dt);
 
@@ -100,12 +107,11 @@ LatticeTrifecta lattice_truthy(Lattice* l) {
         }
         return LATTICE_UNKNOWN;
 
-        case LATTICE_FLOAT32:
-        case LATTICE_FLOAT64:
-        return LATTICE_UNKNOWN;
+        case LATTICE_NAN32: return LATTICE_KNOWN_FALSE;
+        case LATTICE_NAN64: return LATTICE_KNOWN_FALSE;
 
-        case LATTICE_NULL:  return false;
-        case LATTICE_XNULL: return true;
+        case LATTICE_NULL:  return LATTICE_KNOWN_FALSE;
+        case LATTICE_XNULL: return LATTICE_KNOWN_TRUE;
 
         default:
         return LATTICE_UNKNOWN;
@@ -129,7 +135,7 @@ static Lattice* lattice_from_dt(TB_Passes* p, TB_DataType dt) {
 
         case TB_FLOAT: {
             assert(dt.data == TB_FLT_32 || dt.data == TB_FLT_64);
-            return lattice_intern(p, (Lattice){ dt.data == TB_FLT_64 ? LATTICE_FLOAT64 : LATTICE_FLOAT32, ._float = { LATTICE_UNKNOWN } });
+            return dt.data == TB_FLT_64 ? &FLT64_IN_THE_SKY : &FLT32_IN_THE_SKY;
         }
 
         case TB_PTR: {
@@ -311,14 +317,30 @@ static Lattice* lattice_meet(TB_Passes* p, Lattice* a, Lattice* b, TB_DataType d
             return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = i });
         }
 
-        case LATTICE_FLOAT32:
-        case LATTICE_FLOAT64: {
-            if (b->tag != a->tag) {
-                return &BOT_IN_THE_SKY;
-            }
-
-            LatticeFloat f = { .trifecta = TRIFECTA_MEET(a->_float, b->_float) };
-            return lattice_intern(p, (Lattice){ a->tag, ._float = f });
+        // here's the cases we need to handle for floats (a is rows):
+        //   Fc means float constant, N is NaN and ~N is not-NaN
+        //
+        //    F  N ~N Fc
+        //  F
+        //  N F
+        // ~N F  F
+        // Fc *  *  *  *
+        //
+        // * Fc meeting with things has to worry about mismatching constants and which
+        //   bucket the constant fits into (nans or not).
+        case LATTICE_FLT32: case LATTICE_NAN32: case LATTICE_XNAN32: return &FLT32_IN_THE_SKY;
+        case LATTICE_FLT64: case LATTICE_NAN64: case LATTICE_XNAN64: return &FLT64_IN_THE_SKY;
+        case LATTICE_FLTCON32: if (b->tag == a->tag) {
+            bool anan = isnan(a->_f32), bnan = isnan(b->_f32);
+            return anan == bnan ? (anan ? &NAN32_IN_THE_SKY : &XNAN32_IN_THE_SKY) : &FLT32_IN_THE_SKY;
+        } else {
+            return &BOT_IN_THE_SKY;
+        }
+        case LATTICE_FLTCON64: if (b->tag == a->tag) {
+            bool anan = isnan(a->_f64), bnan = isnan(b->_f64);
+            return anan == bnan ? (anan ? &NAN64_IN_THE_SKY : &XNAN64_IN_THE_SKY) : &FLT64_IN_THE_SKY;
+        } else {
+            return &BOT_IN_THE_SKY;
         }
 
         // all cases that reached down here are bottoms

@@ -1,5 +1,5 @@
 
-static void dumb_print_node_internal(TB_Function* f, Lattice** types, TB_Node* n, uint64_t* visited) {
+void tb_dumb_print_node(Lattice** types, TB_Node* n) {
     printf("%%%u: ", n->gvn);
     if (types && types[n->gvn] != NULL && types[n->gvn] != &TOP_IN_THE_SKY) {
         print_lattice(types[n->gvn], n->dt);
@@ -26,7 +26,9 @@ static void dumb_print_node_internal(TB_Function* f, Lattice** types, TB_Node* n
         }
     }
     printf(" = %s ", tb_node_get_name(n));
-    if (n->type == TB_STORE) {
+    if (n->type == TB_PROJ) {
+        printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
+    } else if (n->type == TB_STORE) {
         print_type(n->inputs[3]->dt);
         printf(" ");
     } if (n->type == TB_SYMBOL) {
@@ -68,10 +70,10 @@ static void dumb_print_node_internal(TB_Function* f, Lattice** types, TB_Node* n
             printf("___ ");
         }
     }
-    printf(")\n");
+    printf(")");
 }
 
-static void dumb_print_node(TB_Function* f, Lattice** types, TB_Node* n, uint64_t* visited) {
+static void dumb_walk(TB_Function* f, Lattice** types, TB_Node* n, uint64_t* visited) {
     if (visited[n->gvn / 64] & (1ull << (n->gvn % 64))) {
         return;
     }
@@ -80,11 +82,11 @@ static void dumb_print_node(TB_Function* f, Lattice** types, TB_Node* n, uint64_
     FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
         TB_Node* in = n->inputs[i];
         if (in->type == TB_PROJ) { in = in->inputs[0]; }
-
-        dumb_print_node(f, types, in, visited);
+        dumb_walk(f, types, in, visited);
     }
 
-    dumb_print_node_internal(f, types, n, visited);
+    tb_dumb_print_node(types, n);
+    printf("\n");
 }
 
 void tb_dumb_print(TB_Function* f, TB_Passes* p) {
@@ -96,10 +98,12 @@ void tb_dumb_print(TB_Function* f, TB_Passes* p) {
     TB_Node* root   = f->root_node;
     Lattice** types = p ? p->types : NULL;
 
-    dumb_print_node_internal(f, types, root, visited);
+    tb_dumb_print_node(types, root);
+    printf("\n");
+
     visited[root->gvn / 64] |= (1ull << (root->gvn % 64));
 
     FOREACH_N(i, 0, root->input_count) {
-        dumb_print_node(f, types, root->inputs[i], visited);
+        dumb_walk(f, types, root->inputs[i], visited);
     }
 }

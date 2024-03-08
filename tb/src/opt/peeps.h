@@ -30,6 +30,8 @@ typedef struct {
 static const NodeVtable vtables[TB_NODE_TYPE_MAX] = {
     // type                 ideal              identity            value
     [TB_INTEGER_CONST]  = { NULL,              NULL,               value_int        },
+    [TB_FLOAT32_CONST]  = { NULL,              NULL,               value_f32        },
+    [TB_FLOAT64_CONST]  = { NULL,              NULL,               value_f64        },
     // memory
     [TB_LOAD]           = { ideal_load,        identity_load,      NULL             },
     [TB_STORE]          = { ideal_store,       NULL,               value_mem        },

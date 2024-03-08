@@ -7,120 +7,42 @@
 #include "codegen.h"
 
 // Implemented by the target, go read the mips_target.c docs on this.
-static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n);
-static int reg_count(Ctx* restrict ctx, TB_Node* n);
+static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n);
+static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
+static int node_tmp_count(Ctx* restrict ctx, TB_Node* n);
+static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg);
+static int node_latency(TB_Function* f, TB_Node* n);
+static int node_2addr(TB_Node* n);
+
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
-static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t);
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n);
 static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e);
 static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb);
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
 
-static ValueDesc* val_at(Ctx* restrict ctx, TB_Node* n) {
-    if (ctx->values[n->gvn].use_count < 0) {
-        int count = 0;
-        FOR_USERS(u, n) count++;
-        ctx->values[n->gvn].use_count = count;
-    }
-
-    return &ctx->values[n->gvn];
-}
-
-static Tile* get_tile(Ctx* restrict ctx, TB_Node* n) {
-    ValueDesc* val = val_at(ctx, n);
-    if (val->tile == NULL) {
-        int nregs = ctx->regcnt(ctx, n);
-        Tile* tile = tb_arena_alloc(tmp_arena, sizeof(Tile) + nregs*sizeof(LiveInterval*));
-        *tile = (Tile){ .tag = TILE_NORMAL, .n = n, .out_count = nregs };
-
-        FOREACH_N(i, 0, nregs) {
-            tile->outs[i] = tb_arena_alloc(tmp_arena, sizeof(LiveInterval));
-            *tile->outs[i] = (LiveInterval){
-                .tile = tile,
-                .id = ctx->interval_count++,
-                .reg = -1,
-                .assigned = -1,
-                .range_cap = 4, .range_count = 1,
-                .ranges = tb_platform_heap_alloc(4 * sizeof(LiveRange))
-            };
-            tile->outs[i]->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
-        }
-        val->tile = tile;
-    }
-
-    return val->tile;
-}
-
-static LiveInterval* get_interval(Ctx* restrict ctx, TB_Node* n, int i) {
-    Tile* t = get_tile(ctx, n);
-    assert(i < t->out_count);
-    return t->outs[i];
-}
-
-// you're expected to set the masks in the returned array
-static TileInput* tile_set_ins(Ctx* restrict ctx, Tile* t, TB_Node* n, int start, int end) {
-    t->ins = tb_arena_alloc(tmp_arena, (end - start) * sizeof(TileInput));
-    t->in_count = end - start;
-    FOREACH_N(i, start, end) {
-        t->ins[i - start].src = get_interval(ctx, n->inputs[i], 0);
-    }
-    return t->ins;
-}
-
-// fills all inputs with the same mask
-static TileInput* tile_broadcast_ins(Ctx* restrict ctx, Tile* t, TB_Node* n, int start, int end, RegMask rm) {
-    t->ins = tb_arena_alloc(tmp_arena, (end - start) * sizeof(TileInput));
-    t->in_count = end - start;
-    FOREACH_N(i, start, end) {
-        t->ins[i - start].src = get_tile(ctx, n->inputs[i])->outs[0];
-        t->ins[i - start].mask = rm;
-    }
-    return t->ins;
-}
-
-static int try_init_stack_slot(Ctx* restrict ctx, TB_Node* n) {
-    if (n->type == TB_LOCAL) {
-        TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
-        ptrdiff_t search = nl_map_get(ctx->stack_slots, n);
-        if (search >= 0) {
-            return ctx->stack_slots[search].v;
-        } else {
-            ctx->stack_usage = align_up(ctx->stack_usage + local->size, local->align);
-            nl_map_put(ctx->stack_slots, n, ctx->stack_usage);
-            return ctx->stack_usage;
-        }
-    } else {
-        return 0;
+static const char* reg_class_name(int class) {
+    switch (class) {
+        case 0: return "STK";
+        case 1: return "GPR";
+        case 2: return "XMM";
+        default: return NULL;
     }
 }
 
-static int get_stack_slot(Ctx* restrict ctx, TB_Node* n) {
-    int pos = nl_map_get_checked(ctx->stack_slots, n);
-    return ctx->stack_usage - pos;
-}
-
-static LiveInterval* canonical_interval(Ctx* restrict ctx, LiveInterval* interval, RegMask mask) {
-    int reg = fixed_reg_mask(mask);
-    if (reg >= 0) {
-        return &ctx->fixed[mask.class][reg];
-    } else {
-        return interval;
-    }
-}
-
-void tb__print_regmask(RegMask mask) {
-    if (mask.class == REG_CLASS_STK) {
-        if (mask.mask == 0) {
+void tb__print_regmask(RegMask* mask) {
+    assert(mask->count == 1 && "TODO");
+    if (mask->class == REG_CLASS_STK) {
+        if (mask->mask[0] == 0) {
             printf("[any spill]");
         } else {
-            printf("[SP + %"PRId64"]", mask.mask*8);
+            printf("[SP + %"PRId64"]", mask->mask[0]*8);
         }
     } else {
         int i = 0;
         bool comma = false;
-        uint64_t bits = mask.mask;
+        uint64_t bits = mask->mask[0];
 
-        printf("[");
+        printf("[%s:", reg_class_name(mask->class));
         while (bits) {
             // skip zeros
             int skip = __builtin_ffs(bits) - 1;
@@ -143,14 +65,54 @@ void tb__print_regmask(RegMask mask) {
             bits >>= len, i += len;
         }
 
-        if (mask.may_spill) {
+        if (mask->may_spill) {
             printf(" | SPILL");
         }
         printf("]");
     }
 }
 
-static bool null_2addr(TB_Node* n) { return false; }
+static void walk_node(Ctx* ctx, Worklist* ws, TB_Node* n) {
+    if (n == NULL || worklist_test_n_set(ws, n)) { return; }
+
+    // replace with machine op
+    TB_Node* k = node_isel(ctx, ctx->f, n);
+    if (k && k != n) {
+        // yes... we can run GVN on machine ops :)
+        k = tb_pass_gvn_node(ctx->f, k);
+
+        subsume_node2(ctx->f, n, k);
+
+        // kill fully disconnected edges
+        FOREACH_N(i, 0, n->input_count) {
+            TB_Node* in = n->inputs[i];
+            if (in) {
+                User* u = in->users;
+                if (u->next == NULL) {
+                    assert(u->n == n && i == u->slot);
+                    set_input(ctx->f, n, NULL, i);
+                    tb_pass_kill_node(ctx->f, in);
+                }
+            }
+        }
+        tb_pass_kill_node(ctx->f, n);
+
+        // don't walk the replacement
+        worklist_test_n_set(ws, k);
+        n = k;
+    }
+    // if (k) { tb_pass_print(ctx->p); }
+
+    // replace all input edges
+    FOREACH_N(i, 0, n->input_count) {
+        walk_node(ctx, ws, n->inputs[i]);
+    }
+}
+
+static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
+    log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(tmp_arena) / 1024.0f, (tb_arena_current_size(f->arena) - og_size) / 1024.0f, label);
+}
+
 static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
     verify_tmp_arena(p);
 
@@ -164,8 +126,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         .module = f->super.module,
         .f = f,
         .p = p,
+        .tmp_count   = node_tmp_count,
+        .constraint  = node_constraint,
         .num_classes = REG_CLASS_COUNT,
-        .regcnt = reg_count,
         .emit = {
             .output = func_out,
             .arena = arena,
@@ -177,6 +140,9 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     ctx.emit.capacity = code_arena->high_point - code_arena->watermark;
     ctx.emit.data = tb_arena_alloc(code_arena, ctx.emit.capacity);
 
+    init_ctx(&ctx, f->super.module->target_abi);
+    ctx.node_2addr = node_2addr;
+
     if (features == NULL) {
         ctx.features = (TB_FeatureSet){ 0 };
     } else {
@@ -187,7 +153,22 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     // legalize step takes out any of our 16bit and 8bit math ops
     tb_pass_prep(p);
-    tb_pass_legalize(p, f->super.module->target_arch);
+    // tb_pass_legalize(p, f->super.module->target_arch);
+    size_t og_size = tb_arena_current_size(f->arena);
+
+    CUIK_TIMED_BLOCK("isel") {
+        log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
+
+        // bottom-up rewrite
+        worklist_clear(ws);
+        walk_node(&ctx, ws, f->root_node);
+
+        // TB_OPTDEBUG(CODEGEN)(tb_pass_print_dot(p, tb_default_print_callback, stdout));
+        TB_OPTDEBUG(CODEGEN)(tb_dumb_print(f, p));
+        TB_OPTDEBUG(CODEGEN)(tb_pass_print(p));
+
+        log_phase_end(f, og_size, "isel");
+    }
 
     worklist_clear(ws);
 
@@ -196,45 +177,23 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         // We need to generate a CFG
         cfg = tb_compute_rpo(f, p);
         // And perform global scheduling
-        tb_pass_schedule(p, cfg, false);
+        tb_pass_schedule(p, cfg, false, true);
+
+        log_phase_end(f, og_size, "GCM");
     }
-
-    nl_map_create(ctx.stack_slots, 4);
-    init_ctx(&ctx, f->super.module->target_abi);
-
-    if (ctx._2addr == NULL) {
-        ctx._2addr = null_2addr;
-    }
-
-    ctx.values = tb_arena_alloc(arena, f->node_count * sizeof(Tile*));
-    memset(ctx.values, 0, f->node_count * sizeof(Tile*));
-
-    ctx.values = tb_arena_alloc(arena, f->node_count * sizeof(ValueDesc));
-    FOREACH_N(i, 0, f->node_count) {
-        ctx.values[i].use_count = -1;
-        ctx.values[i].mat_count = 0;
-        ctx.values[i].tile = NULL;
-    }
-
-    // allocate more stuff now that we've run stats on the IR
-    ctx.emit.label_count = cfg.block_count;
-    ctx.emit.labels = tb_arena_alloc(arena, cfg.block_count * sizeof(uint32_t));
-    memset(ctx.emit.labels, 0, cfg.block_count * sizeof(uint32_t));
 
     int bb_count = 0;
     MachineBB* restrict machine_bbs = tb_arena_alloc(arena, cfg.block_count * sizeof(MachineBB));
     TB_Node** bbs = ws->items;
 
-    size_t cap = ((cfg.block_count * 4) / 3);
-    ctx.node_to_bb.exp = 64 - __builtin_clzll((cap < 4 ? 4 : cap) - 1);
-    ctx.node_to_bb.entries = tb_arena_alloc(arena, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
-    memset(ctx.node_to_bb.entries, 0, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
-
-    CUIK_TIMED_BLOCK("isel") {
-        assert(dyn_array_length(ws->items) == cfg.block_count);
+    int stop_bb = -1;
+    CUIK_TIMED_BLOCK("BB scheduling") {
+        size_t cap = ((cfg.block_count * 4) / 3);
+        ctx.node_to_bb.exp = 64 - __builtin_clzll((cap < 4 ? 4 : cap) - 1);
+        ctx.node_to_bb.entries = tb_arena_alloc(arena, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
+        memset(ctx.node_to_bb.entries, 0, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
 
         // define all PHIs early and sort BB order
-        int stop_bb = -1;
         FOREACH_N(i, 0, cfg.block_count) {
             TB_Node* end = nl_map_get_checked(cfg.node_to_block, bbs[i]).end;
             if (end->type == TB_RETURN) {
@@ -249,350 +208,170 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
             machine_bbs[bb_count++] = (MachineBB){ stop_bb };
         }
 
-        // build blocks in reverse
-        DynArray(PhiVal) phi_vals = NULL;
-        FOREACH_REVERSE_N(i, 0, bb_count) {
+        log_phase_end(f, og_size, "BB-sched");
+    }
+
+    size_t node_count = f->node_count;
+    size_t vreg_cap = 0;
+    CUIK_TIMED_BLOCK("local schedule") {
+        ctx.mask_intern = nl_hashset_alloc(64);
+        nl_hashset_put2(&ctx.mask_intern, &TB_REG_EMPTY, rm_hash, rm_compare);
+
+        // zero out the root & callgraph node
+        ctx.vreg_map = aarray_create(arena, int, tb_next_pow2(f->node_count + 16));
+        aarray_set_length(ctx.vreg_map, f->node_count);
+
+        FOREACH_N(i, 0, f->node_count) { ctx.vreg_map[i] = 0; }
+        ctx.vreg_map[0] = 0;
+        ctx.vreg_map[f->root_node->inputs[0]->gvn] = 0;
+
+        int max_ins = 0;
+        size_t vreg_count = 1; // 0 is reserved as the NULL vreg
+        assert(dyn_array_length(ws->items) == cfg.block_count);
+        FOREACH_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
             TB_Node* bb_start = bbs[bbid];
             TB_BasicBlock* bb = p->scheduled[bb_start->gvn];
 
+            bb->order = i;
             node_to_bb_put(&ctx, bb_start, &machine_bbs[i]);
+
+            // compute local schedule
             size_t base = dyn_array_length(ws->items);
+            // list_scheduler(p, &cfg, ws, NULL, bb, ctx.id2node, node_latency);
+            greedy_scheduler(p, &cfg, ws, NULL, bb);
 
-            // phase 1: logical schedule
-            CUIK_TIMED_BLOCK("phase 1") {
-                dyn_array_clear(phi_vals);
-                ctx.sched(p, &cfg, ws, &phi_vals, bb, bb->end);
-            }
+            size_t item_count = dyn_array_length(ws->items) - base;
+            size_t item_cap   = item_count + 16; // a bit of slack for spills
+            TB_Node** items   = tb_arena_alloc(arena, item_cap * sizeof(TB_Node*));
 
-            // phase 2: reverse walk to generate tiles (greedily)
-            CUIK_TIMED_BLOCK("phase 2") {
-                TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
+            // copy out sched
+            FOREACH_N(i, 0, item_count) {
+                TB_Node* n = ws->items[cfg.block_count + i];
+                items[i] = n;
 
-                // force materialization of phi ins
-                FOREACH_N(i, 0, dyn_array_length(phi_vals)) {
-                    PhiVal* v = &phi_vals[i];
-                    get_tile(&ctx, v->n);
-                }
+                // if there's a def, let's make a vreg
+                RegMask* def_mask = node_constraint(&ctx, n, NULL);
 
-                Tile* top = NULL;
-                Tile* bot = NULL;
-                TB_NodeLocation* last_loc = NULL;
-                FOREACH_REVERSE_N(i, cfg.block_count, dyn_array_length(ws->items)) {
-                    TB_Node* n = ws->items[i];
-                    if (n->type == TB_PHI) {
-                        continue;
-                    } else if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
-                        // these are always run because they're cool effect nodes
-                        TB_NodeLocation* v;
-                        if (v = nl_table_get(&f->locations, n), v) {
-                            if (last_loc) {
-                                TB_OPTDEBUG(CODEGEN)(printf("  LOCATION\n"));
+                int ins = n->input_count + node_tmp_count(&ctx, n);
+                if (ins > max_ins) { max_ins = ins; }
 
-                                Tile* loc = TB_ARENA_ALLOC(arena, Tile);
-                                *loc = (Tile){ .tag = TILE_LOCATION, .loc = last_loc };
-                                loc->next = top;
+                // these ops are guarenteed to fit since new nodes aren't being added and the
+                // size was fine when we started.
+                assert(n->gvn < aarray_length(ctx.vreg_map));
 
-                                // attach to list
-                                if (top) top->prev = loc;
-                                if (!bot) bot = loc;
-                                top = loc;
-                            }
-                            last_loc = v;
+                int vreg_id = 0;
+                if (def_mask != &TB_REG_EMPTY) {
+                    if (n->type == TB_MACH_MOVE) {
+                        assert(n->users->next == NULL);
+                        assert(n->users->n->type == TB_PHI);
+
+                        // these are phi moves, they should share the vreg of phi
+                        TB_Node* phi = n->users->n;
+                        if (ctx.vreg_map[phi->gvn] == 0) {
+                            ctx.vreg_map[phi->gvn] = vreg_id = vreg_count++;
+                        } else {
+                            vreg_id = ctx.vreg_map[phi->gvn];
                         }
+                    } else if (n->type == TB_PHI && ctx.vreg_map[n->gvn] > 0) {
+                        vreg_id = ctx.vreg_map[n->gvn];
                     } else {
-                        if (ctx.values[n->gvn].tile == NULL) {
-                            TB_OPTDEBUG(CODEGEN)(printf("  FOLDED "), print_node_sexpr(n, 0), printf("\n"));
-                            continue;
-                        }
-                    }
-
-                    TB_OPTDEBUG(CODEGEN)(printf("  TILE "), print_node_sexpr(n, 0), printf("\n"));
-
-                    Tile* tile = get_tile(&ctx, n);
-                    tile->next = top;
-
-                    // attach to list
-                    if (top) top->prev = tile;
-                    if (!bot) bot = tile;
-                    top = tile;
-
-                    FOREACH_N(j, 0, tile->out_count) {
-                        tile->outs[0]->dt = TB_TYPE_VOID;
-                    }
-
-                    isel_node(&ctx, tile, n);
-                    if (tile->out_count > 0) {
-                        FOREACH_N(j, 0, tile->out_count) {
-                            LiveInterval* out = tile->outs[j];
-                            assert(out->dt.raw    && "we should've defined this by now");
-                            TB_OPTDEBUG(CODEGEN)(printf("    v%d ", out->id), tb__print_regmask(out->mask), printf("\n"));
-                        }
-                    } else {
-                        TB_OPTDEBUG(CODEGEN)(printf("    no def\n"));
-                    }
-
-                    FOREACH_N(j, 0, tile->in_count) {
-                        TB_OPTDEBUG(CODEGEN)(printf("    IN[%zu] = ", j), tb__print_regmask(tile->ins[j].mask), printf("\n"));
+                        vreg_id = vreg_count++;
                     }
                 }
-
-                if (last_loc) {
-                    TB_OPTDEBUG(CODEGEN)(printf("  LOCATION\n"));
-
-                    Tile* loc = TB_ARENA_ALLOC(arena, Tile);
-                    *loc = (Tile){ .tag = TILE_LOCATION, .loc = last_loc };
-                    loc->next = top;
-
-                    // attach to list
-                    if (top) top->prev = loc;
-                    if (!bot) bot = loc;
-                    top = loc;
-                }
-
-                // if the endpoint is a not a terminator, we've hit some implicit GOTO edge
-                TB_Node* end = bb->end;
-                if (!cfg_is_terminator(end)) {
-                    TB_OPTDEBUG(CODEGEN)(printf("  TERMINATOR %u: ", end->gvn), print_node_sexpr(end, 0), printf("\n"));
-
-                    // writeback phis
-                    FOREACH_N(i, 0, dyn_array_length(phi_vals)) {
-                        PhiVal* v = &phi_vals[i];
-
-                        Tile* phi_tile = get_tile(&ctx, v->phi);
-                        isel_node(&ctx, phi_tile, v->phi);
-
-                        // PHIs are weird because they have multiple tiles with the same destination.
-                        // post phi elimination we don't have "SSA" really.
-                        // construct live interval
-                        FOREACH_N(i, 0, phi_tile->out_count) {
-                            LiveInterval* phi_it = phi_tile->outs[i];
-                            phi_it->tile = phi_tile;
-                            phi_it->dt = v->phi->dt;
-
-                            LiveInterval* src = get_interval(&ctx, v->n, i);
-                            src->dt = v->phi->dt;
-
-                            TB_OPTDEBUG(CODEGEN)(printf("  PHI %u: ", v->phi->gvn), print_node_sexpr(v->phi, 0), printf("\n"));
-                            TB_OPTDEBUG(CODEGEN)(printf("    v%d ", phi_it->id), tb__print_regmask(phi_it->mask), printf("\n"));
-
-                            Tile* move = tb_arena_alloc(arena, sizeof(Tile) + sizeof(LiveInterval*));
-                            *move = (Tile){ .prev = bot, .tag = TILE_SPILL_MOVE };
-                            move->spill_dt = v->phi->dt;
-                            move->n = v->phi;
-                            move->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
-                            move->in_count = 1;
-                            move->ins[0].src  = src;
-                            move->ins[0].mask = phi_it->mask;
-                            move->out_count = 1;
-                            move->outs[0] = phi_it;
-                            bot->next = move;
-                            bot = move;
-                        }
-                    }
-
-                    Tile* tile = TB_ARENA_ALLOC(arena, Tile);
-                    TB_Node* succ_n = cfg_next_control(end);
-                    *tile = (Tile){ .prev = bot, .tag = TILE_GOTO, .succ = succ_n };
-                    bot->next = tile;
-                    bot = tile;
-                }
-                dyn_array_set_length(ws->items, base);
-
-                machine_bbs[i].start = top;
-                machine_bbs[i].end = bot;
-                machine_bbs[i].n = bb_start;
-                machine_bbs[i].end_n = end;
-            }
-        }
-        dyn_array_destroy(phi_vals);
-        log_debug("%s: tmp_arena=%.1f KiB (postISel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
-    }
-
-    CUIK_TIMED_BLOCK("create physical intervals") {
-        FOREACH_N(i, 0, ctx.num_classes) {
-            LiveInterval* intervals = tb_arena_alloc(arena, ctx.num_regs[i] * sizeof(LiveInterval));
-            FOREACH_N(j, 0, ctx.num_regs[i]) {
-                intervals[j] = (LiveInterval){
-                    .id = ctx.interval_count++,
-                    .assigned = -1, .hint = NULL, .reg = j,
-                    .mask = { i, 0, 1u << j },
-                    .class = i,
-                    .range_cap = 4,
-                    .range_count = 1,
-                };
-                intervals[j].ranges = tb_arena_alloc(arena, 4 * sizeof(LiveRange));
-                intervals[j].ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
-            }
-            ctx.fixed[i] = intervals;
-            ctx.num_fixed += ctx.num_regs[i];
-        }
-    }
-
-    CUIK_TIMED_BLOCK("liveness") {
-        int interval_count = ctx.interval_count;
-        ctx.id2interval = tb_arena_alloc(arena, interval_count * sizeof(Tile*));
-
-        // local liveness (along with placing tiles on a timeline)
-        FOREACH_N(i, 0, bb_count) {
-            MachineBB* mbb = &machine_bbs[i];
-            mbb->live_in = set_create_in_arena(arena, interval_count);
-            mbb->live_out = set_create_in_arena(arena, interval_count);
-        }
-
-        // we don't need to keep the GEN and KILL sets, this doesn't save us
-        // much memory but it would potentially mean not using new cachelines
-        // in a few of the later stages.
-        TB_ArenaSavepoint sp = tb_arena_save(arena);
-        CUIK_TIMED_BLOCK("local") {
-            FOREACH_N(i, 0, bb_count) {
-                MachineBB* mbb = &machine_bbs[i];
-                int bbid = mbb->id;
-
-                mbb->gen = set_create_in_arena(arena, interval_count);
-                mbb->kill = set_create_in_arena(arena, interval_count);
-
-                Set* gen = &mbb->gen;
-                Set* kill = &mbb->kill;
-                for (Tile* t = mbb->start; t; t = t->next) {
-                    FOREACH_N(j, 0, t->in_count) {
-                        LiveInterval* in_def = t->ins[j].src;
-                        if (in_def && !set_get(kill, in_def->id)) {
-                            set_put(gen, in_def->id);
-                        }
-                    }
-
-                    FOREACH_N(j, 0, t->out_count) {
-                        LiveInterval* interval = t->outs[j];
-                        set_put(kill, interval->id);
-                        ctx.id2interval[interval->id] = interval;
-                    }
-                }
-            }
-        }
-
-        // generate global live sets
-        CUIK_TIMED_BLOCK("global") {
-            size_t base = dyn_array_length(ws->items);
-
-            // all BB go into the worklist
-            FOREACH_REVERSE_N(i, 0, bb_count) {
-                // in(bb) = use(bb)
-                set_copy(&machine_bbs[i].live_in, &machine_bbs[i].gen);
-
-                TB_Node* n = bbs[machine_bbs[i].id];
-                dyn_array_put(ws->items, n);
+                ctx.vreg_map[n->gvn] = vreg_id;
             }
 
-            Set visited = set_create_in_arena(arena, bb_count);
-            while (dyn_array_length(ws->items) > base) CUIK_TIMED_BLOCK("iter")
-            {
-                TB_Node* bb = dyn_array_pop(ws->items);
-                MachineBB* mbb = node_to_bb(&ctx, bb);
-                set_remove(&visited, mbb - machine_bbs);
-
-                Set* live_out = &mbb->live_out;
-                set_clear(live_out);
-
-                // walk all successors
-                TB_Node* end = mbb->end_n;
-                if (end->type == TB_BRANCH) {
-                    FOR_USERS(u, end) {
-                        if (u->n->type == TB_PROJ) {
-                            // union with successor's lives
-                            TB_Node* succ = cfg_next_bb_after_cproj(u->n);
-                            set_union(live_out, &node_to_bb(&ctx, succ)->live_in);
-                        }
-                    }
-                } else if (!cfg_is_endpoint(end)) {
-                    // union with successor's lives
-                    TB_Node* succ = cfg_next_control(end);
-                    if (succ) set_union(live_out, &node_to_bb(&ctx, succ)->live_in);
-                }
-
-                Set* restrict live_in = &mbb->live_in;
-                Set* restrict kill = &mbb->kill;
-                Set* restrict gen = &mbb->gen;
-
-                // live_in = (live_out - live_kill) U live_gen
-                bool changes = false;
-                FOREACH_N(i, 0, (interval_count + 63) / 64) {
-                    uint64_t new_in = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
-
-                    changes |= (live_in->data[i] != new_in);
-                    live_in->data[i] = new_in;
-                }
-
-                // if we have changes, mark the predeccesors
-                if (changes && !(bb->type == TB_PROJ && bb->inputs[0]->type == TB_ROOT)) {
-                    FOREACH_N(i, 0, bb->input_count) {
-                        TB_Node* pred = cfg_get_pred(&cfg, bb, i);
-                        if (pred->input_count > 0) {
-                            MachineBB* pred_mbb = node_to_bb(&ctx, pred);
-                            if (!set_get(&visited, pred_mbb - machine_bbs)) {
-                                set_put(&visited, pred_mbb - machine_bbs);
-                                dyn_array_put(ws->items, pred);
-                            }
-                        }
-                    }
-                }
-            }
             dyn_array_set_length(ws->items, base);
-        }
 
-        #if TB_OPTDEBUG_DATAFLOW
-        // log live ins and outs
+            machine_bbs[i].n = bb_start;
+            machine_bbs[i].end_n = bb->end;
+            machine_bbs[i].items = items;
+            machine_bbs[i].item_count = item_count;
+            machine_bbs[i].item_cap = item_cap;
+        }
+        ctx.bb_count = bb_count;
+        ctx.machine_bbs = machine_bbs;
+        ctx.ins = tb_arena_alloc(arena, max_ins * sizeof(RegMask*));
+
+        // ops with temporaries are *relatively* uncommon (mostly calls)
+        ctx.tmps_map = nl_table_alloc((vreg_count / 16) + 4);
+
+        log_phase_end(f, og_size, "local-sched & ra constraints");
+
+        // setup for the next phase
+        ctx.vregs = aarray_create(arena, VReg, tb_next_pow2(vreg_count + 16));
+        aarray_set_length(ctx.vregs, vreg_count);
+    }
+
+    CUIK_TIMED_BLOCK("gather RA constraints") {
         FOREACH_N(i, 0, bb_count) {
-            MachineBB* mbb = &machine_bbs[i];
+            MachineBB* mbb = &ctx.machine_bbs[i];
+            TB_OPTDEBUG(CODEGEN)(printf("BB %zu\n", i));
 
-            printf("BB%d:\n  live-ins:", mbb->id);
-            FOREACH_N(j, 0, interval_count) if (set_get(&mbb->live_in, j)) {
-                printf(" v%zu", j);
+            FOREACH_N(j, 0, mbb->item_count) {
+                TB_Node* n = mbb->items[j];
+                int vreg_id = ctx.vreg_map[n->gvn];
+
+                // all vreg writes here are in-bounds but later work will grow vregs
+                // so don't be assuming it everywhere.
+                assert(vreg_id >= 0 && vreg_id < aarray_length(ctx.vregs));
+
+                #ifdef TB_OPTDEBUG_CODEGEN
+                int tmps = node_tmp_count(&ctx, n);
+                RegMask* def_mask = node_constraint(&ctx, n, ctx.ins);
+
+                printf("  "), tb_dumb_print_node(p->types, n), printf("\n");
+                if (vreg_id > 0) {
+                    printf("    OUT    = "), tb__print_regmask(def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
+                }
+
+                FOREACH_N(j, 1, n->input_count) {
+                    if (n->inputs[j] && ctx.ins[j] != &TB_REG_EMPTY) {
+                        printf("    IN[%zu]  = ", j), tb__print_regmask(ctx.ins[j]), printf(" v%d\n", n->inputs[j]->gvn);
+                    }
+                }
+
+                FOREACH_N(j, n->input_count, n->input_count + tmps) {
+                    printf("    TMP[%zu] = ", j), tb__print_regmask(ctx.ins[j]), printf("\n");
+                }
+                #endif
+
+                if (vreg_id > 0 && n->type != TB_MACH_MOVE) {
+                    RegMask* def_mask = node_constraint(&ctx, n, NULL);
+                    ctx.vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1 };
+                }
             }
-            printf("\n  live-outs:");
-            FOREACH_N(j, 0, interval_count) if (set_get(&mbb->live_out, j)) {
-                printf(" v%zu", j);
-            }
-            printf("\n  gen:");
-            FOREACH_N(j, 0, interval_count) if (set_get(&mbb->gen, j)) {
-                printf(" v%zu", j);
-            }
-            printf("\n  kill:");
-            FOREACH_N(j, 0, interval_count) if (set_get(&mbb->kill, j)) {
-                printf(" v%zu", j);
-            }
-            printf("\n");
         }
-        #endif
-
-        log_debug("%s: tmp_arena=%.1f KiB (dataflow)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
-        tb_arena_restore(arena, sp);
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        log_debug("%s: tmp_arena=%.1f KiB (preRA)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
+        // tb__chaitin(&ctx, arena);
+        tb__lsra(&ctx, arena);
+        nl_hashset_free(ctx.mask_intern);
 
-        ctx.bb_count = bb_count;
-        ctx.machine_bbs = machine_bbs;
-        ctx.regalloc(&ctx, arena);
-
-        log_debug("%s: tmp_arena=%.1f KiB (postRA)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
+        log_phase_end(f, og_size, "RA");
     }
 
     CUIK_TIMED_BLOCK("emit") {
+        // allocate more stuff now that we've run stats on the IR
+        ctx.emit.label_count = cfg.block_count;
+        ctx.emit.labels = tb_arena_alloc(arena, cfg.block_count * sizeof(uint32_t));
+        memset(ctx.emit.labels, 0, cfg.block_count * sizeof(uint32_t));
+
         TB_CGEmitter* e = &ctx.emit;
         pre_emit(&ctx, e, f->root_node);
 
         FOREACH_N(i, 0, bb_count) {
-            int bbid = machine_bbs[i].id;
-            Tile* t = machine_bbs[i].start;
+            MachineBB* mbb = &machine_bbs[i];
+            int bbid = mbb->id;
 
             if (i + 1 < bb_count) {
                 ctx.fallthrough = machine_bbs[i + 1].id;
             } else {
                 ctx.fallthrough = INT_MAX;
             }
-            ctx.current_emit_bb = &machine_bbs[i];
+            ctx.current_emit_bb = mbb;
             ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
             // line info is BB-local
@@ -600,27 +379,44 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
             // mark label
             on_basic_block(&ctx, e, bbid);
-            while (t) {
-                if (t->tag == TILE_LOCATION) {
-                    TB_Location l = {
-                        .file = t->loc->file,
-                        .line = t->loc->line,
-                        .column = t->loc->column,
-                        .pos = GET_CODE_POS(e)
-                    };
+            TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
 
-                    size_t top = dyn_array_length(ctx.locations);
-                    if (top == 0 || (ctx.locations[top - 1].pos != l.pos && !is_same_location(&l, &ctx.locations[top - 1]))) {
-                        dyn_array_put(ctx.locations, l);
-                    }
-                } else {
-                    emit_tile(&ctx, e, t);
+            FOREACH_N(i, 0, mbb->item_count) {
+                TB_Node* n = mbb->items[i];
+                int def_id = ctx.vreg_map[n->gvn];
+                VReg* vreg = def_id > 0 ? &ctx.vregs[def_id] : NULL;
+
+                #ifdef TB_OPTDEBUG_CODEGEN
+                printf("  "), tb_dumb_print_node(p->types, n), printf("\n");
+
+                if (vreg) {
+                    printf("    OUT    = %s:R%d\n", reg_class_name(vreg->class), vreg->assigned);
                 }
-                t = t->next;
+
+                FOREACH_N(j, 1, n->input_count) {
+                    TB_Node* in = n->inputs[j];
+                    int in_id = in ? ctx.vreg_map[in->gvn] : 0;
+                    if (in_id > 0) {
+                        VReg* vreg = &ctx.vregs[in_id];
+                        printf("    IN[%zu]  = %s:R%d\n", j, reg_class_name(vreg->class), vreg->assigned);
+                    }
+                }
+
+                Tmps* tmps = nl_table_get(&ctx.tmps_map, n);
+                if (tmps) {
+                    FOREACH_N(j, 0, tmps->count) {
+                        VReg* vreg = &ctx.vregs[tmps->elems[j]];
+                        printf("    TMP[%zu] = %s:R%d\n", j, reg_class_name(vreg->class), vreg->assigned);
+                    }
+                }
+                #endif
+
+                node_emit(&ctx, e, n, vreg);
             }
         }
 
         post_emit(&ctx, e);
+        log_phase_end(f, og_size, "emit");
 
         // Fill jump table entries
         CUIK_TIMED_BLOCK("jump tables") {
@@ -630,6 +426,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 *ctx.jump_table_patches[i].pos = target & ~0x80000000;
             }
         }
+
+        nl_table_free(ctx.tmps_map);
     }
 
     if (ctx.locations) {
@@ -674,7 +472,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     // cleanup memory
-    nl_map_free(ctx.stack_slots);
+    f->arena = NULL;
     tb_free_cfg(&cfg);
 
     log_debug("%s: code_arena=%.1f KiB", f->super.name, tb_arena_current_size(code_arena) / 1024.0f);

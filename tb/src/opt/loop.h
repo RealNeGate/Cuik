@@ -161,10 +161,12 @@ void tb_pass_loop(TB_Passes* p) {
     cuikperf_region_start("loop", NULL);
     verify_tmp_arena(p);
 
-    size_t block_count = tb_pass_update_cfg(p, &p->worklist, true);
-    TB_Node** blocks = &p->worklist.items[0];
-
     TB_Function* f = p->f;
+    TB_CFG cfg = tb_compute_rpo(f, p);
+    tb_compute_dominators2(f, &p->worklist, cfg);
+
+    size_t block_count = cfg.block_count;
+    TB_Node** blocks = &p->worklist.items[0];
 
     // canonicalize regions into natural loop headers (or affine loops)
     DynArray(ptrdiff_t) backedges = NULL;
@@ -177,8 +179,8 @@ void tb_pass_loop(TB_Passes* p) {
         // find all backedges
         dyn_array_clear(backedges);
         FOREACH_N(j, 0, header->input_count) {
-            TB_Node* pred = cfg_get_pred(&p->cfg, header, j);
-            if (slow_dommy(&p->cfg, header, pred)) {
+            TB_Node* pred = cfg_get_pred(&cfg, header, j);
+            if (slow_dommy(&cfg, header, pred)) {
                 dyn_array_put(backedges, j);
             }
         }
@@ -219,7 +221,7 @@ void tb_pass_loop(TB_Passes* p) {
         // into a TB_AFFINE_LOOP.
         //
         // if we don't have the latch in the header BB... ngmi
-        TB_BasicBlock* header_info = &nl_map_get_checked(p->cfg.node_to_block, header);
+        TB_BasicBlock* header_info = &nl_map_get_checked(cfg.node_to_block, header);
         TB_Node* latch = header_info->end;
         if (latch->type != TB_BRANCH && TB_NODE_GET_EXTRA_T(latch, TB_NodeBranch)->succ_count != 2) {
             break;
@@ -294,6 +296,7 @@ void tb_pass_loop(TB_Passes* p) {
         }
     }
     dyn_array_destroy(backedges);
+    tb_free_cfg(&cfg);
 
     #if 0
     // find & canonicalize loops
@@ -307,8 +310,8 @@ void tb_pass_loop(TB_Passes* p) {
         // find all backedges
         dyn_array_clear(backedges);
         FOREACH_N(j, 0, header->input_count) {
-            TB_Node* pred = cfg_get_pred(&p->cfg, header, j);
-            if (slow_dommy(&p->cfg, header, pred)) {
+            TB_Node* pred = cfg_get_pred(&cfg, header, j);
+            if (slow_dommy(&cfg, header, pred)) {
                 dyn_array_put(backedges, j);
             }
         }
@@ -352,7 +355,7 @@ void tb_pass_loop(TB_Passes* p) {
         } */
 
         // if we don't have the latch in the header BB... ngmi
-        TB_BasicBlock* header_info = &nl_map_get_checked(p->cfg.node_to_block, header);
+        TB_BasicBlock* header_info = &nl_map_get_checked(cfg.node_to_block, header);
         TB_Node* latch = header_info->end;
         if (latch->type != TB_BRANCH && TB_NODE_GET_EXTRA_T(latch, TB_NodeBranch)->succ_count != 2) {
             break;
@@ -522,7 +525,7 @@ void tb_pass_loop(TB_Passes* p) {
         }
 
         if (0) {
-            TB_Node* backedge_bb = cfg_get_pred(&p->cfg, header, single_backedge);
+            TB_Node* backedge_bb = cfg_get_pred(&cfg, header, single_backedge);
 
             // check which paths lead to exitting the loop (don't dominate the single backedge)
             int exit_proj_i = -1;

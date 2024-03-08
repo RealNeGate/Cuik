@@ -164,7 +164,7 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
 
         // skip past projections
         TB_Node* st_val = NULL;
-        if (curr->type >= TB_STORE && curr->type <= TB_MEMSET) {
+        if (curr->type == TB_STORE) {
             int cat = categorize_alias_idx(ctx, curr->inputs[2]);
             if (cat < 0) {
                 set_input(f, curr, latest[0], 1);
@@ -187,7 +187,12 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                     tb_pass_kill_node(f, curr);
                 }
             }
-        } else if (curr->dt.type == TB_TUPLE) {
+        } else if (curr->type != TB_PHI && is_mem_out_op(curr)) {
+            set_input(f, curr, latest[0], 1);
+            latest[0] = curr;
+        }
+
+        if (curr->dt.type == TB_TUPLE) {
             // skip to mproj
             assert(curr->type != TB_SPLITMEM);
             curr = next_mem_user(curr);

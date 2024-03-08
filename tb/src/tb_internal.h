@@ -38,6 +38,7 @@
 #include <new_hash_map.h>
 
 #include <perf.h>
+#include <log.h>
 
 #define FOREACH_N(it, start, end) \
 for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)

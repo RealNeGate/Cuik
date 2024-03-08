@@ -15,10 +15,6 @@ void tb_free_cfg(TB_CFG* cfg) {
     nl_map_free(cfg->node_to_block);
 }
 
-TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* p) {
-    return tb_compute_rpo2(f, &p->worklist);
-}
-
 // walks until the terminator or other critical edge
 static TB_Node* end_of_bb(TB_Node* n) {
     while (!cfg_is_terminator(n)) {
@@ -72,12 +68,14 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
     return top;
 }
 
-TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
+TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* p) {
     cuikperf_region_start("RPO", NULL);
+
+    Worklist* ws = &p->worklist;
     assert(dyn_array_length(ws->items) == 0);
 
     TB_CFG cfg = { 0 };
-    nl_map_create(cfg.node_to_block, (f->node_count / 16) + 4);
+    nl_map_create(cfg.node_to_block, (f->node_count / 64) + 4);
 
     // push initial block
     Block* top = create_block(tmp_arena, f->params[0]);
@@ -95,9 +93,7 @@ TB_CFG tb_compute_rpo2(TB_Function* f, Worklist* ws) {
             }
         } else {
             Block b = *top;
-
             TB_BasicBlock bb = { .start = b.bb, .end = b.end, .dom_depth = -1 };
-            bb.freq = 1.0;
 
             dyn_array_put(ws->items, b.bb);
             nl_map_put(cfg.node_to_block, b.bb, bb);
@@ -155,41 +151,6 @@ static int resolve_dom_depth(TB_CFG* cfg, TB_Node* bb) {
 static TB_BasicBlock* get_pred_bb(TB_CFG* cfg, TB_Node* n, int i) {
     n = get_pred(n, i);
     return &nl_map_get_checked(cfg->node_to_block, n);
-}
-
-TB_DominanceFrontiers* tb_get_dominance_frontiers(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg, TB_Node** blocks) {
-    size_t stride = (cfg.block_count + 63) / 64;
-    size_t elems = stride * cfg.block_count;
-    size_t size = sizeof(TB_DominanceFrontiers) + sizeof(uint64_t)*elems;
-
-    TB_DominanceFrontiers* df = tb_platform_heap_alloc(size);
-    memset(df, 0, size);
-    df->stride = stride;
-
-    FOREACH_N(i, 0, cfg.block_count) {
-        TB_Node* bb = blocks[i];
-        assert(find_traversal_index(&cfg, bb) == i);
-
-        if (cfg_is_region(bb) && bb->input_count >= 2) {
-            FOREACH_N(k, 0, bb->input_count) {
-                TB_Node* runner = cfg_get_pred(&cfg, bb, k);
-
-                while (!(runner->type == TB_PROJ && runner->inputs[0]->type == TB_ROOT) && runner != idom(&cfg, bb)) {
-                    // add to frontier set
-                    int id = nl_map_get_checked(cfg.node_to_block, runner).id;
-                    tb_dommy_fronts_put(df, id, i);
-
-                    runner = idom(&cfg, runner);
-                }
-            }
-        }
-    }
-
-    return df;
-}
-
-TB_API void tb_free_dominance_frontiers(TB_DominanceFrontiers* df) {
-    tb_platform_heap_free(df);
 }
 
 void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg) {

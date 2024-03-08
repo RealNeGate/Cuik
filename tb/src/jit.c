@@ -1,5 +1,29 @@
 #include "tb_internal.h"
 #include "host.h"
+
+#ifdef EMSCRIPTEN
+void* tb_jit_wasm_obj(TB_Arena* arena, TB_Function* f) {
+    TB_Arena* arena = get_temporary_arena(m);
+    TB_ArenaSavepoint sp = tb_arena_save(arena);
+
+    // Construct type section (with the function and anything it references)
+    size_t func_type_count = 0;
+    size_t func_type_size  = 0;
+
+    DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
+    dyn_array_for(j, funcs) {
+        funcs[j]->wasm_type = func_type_count++;
+        TB_FunctionPrototype* proto = funcs[j]->parent->prototype;
+
+        func_type_size += 1;
+        func_type_size += len_uint(proto->param_count)  + proto->param_count;
+        func_type_size += len_uint(proto->return_count) + proto->return_count;
+    }
+
+    tb_arena_restore(arena, sp);
+    return NULL;
+}
+#else
 #include <setjmp.h>
 
 #ifdef _WIN32
@@ -582,3 +606,5 @@ bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_
     return cpu->interrupted;
 }
 #endif
+#endif
+

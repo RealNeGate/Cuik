@@ -584,11 +584,17 @@ static int node_pos(TB_Node* n) {
         case TB_FLOAT64_CONST:
         return 1;
 
-        default:
+        case TB_SHR:
         return 2;
 
-        case TB_PHI:
+        case TB_SHL:
         return 3;
+
+        default:
+        return 4;
+
+        case TB_PHI:
+        return 5;
     }
 }
 
@@ -635,17 +641,18 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* 
         assert(n->dt.type == TB_INT);
         int bits = n->dt.data;
 
-        // (or (shl a 24) (shr a 40)) => (rol a 24)
-        if (a->type == TB_SHL && b->type == TB_SHR) {
+        // (or (shr a 40) (shl a 24)) => (rol a 24)
+        if (b->type == TB_SHL && a->type == TB_SHR) {
             uint64_t shl_amt, shr_amt;
             if (a->inputs[1] == b->inputs[1] &&
-                get_int_const(a->inputs[2], &shl_amt) &&
-                get_int_const(b->inputs[2], &shr_amt) &&
+                get_int_const(a->inputs[2], &shr_amt) &&
+                get_int_const(b->inputs[2], &shl_amt) &&
                 shl_amt == bits - shr_amt) {
                 // convert to rotate left
                 n->type = TB_ROL;
-                set_input(f, n, a->inputs[1], 1);
-                set_input(f, n, a->inputs[2], 2);
+                disconnect(p, a), disconnect(p, b);
+                set_input(f, n, b->inputs[1], 1);
+                set_input(f, n, b->inputs[2], 2);
                 return n;
             }
         }

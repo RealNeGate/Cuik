@@ -142,7 +142,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
     #endif
 
     dyn_array_clear(ctx->phi_vals);
-    greedy_scheduler(ctx->p, &ctx->cfg, ws, &ctx->phi_vals, bb, bb->end);
+    greedy_scheduler(ctx->p, &ctx->cfg, ws, &ctx->phi_vals, bb);
 
     FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
         TB_Node* bot = ws->items[i];
@@ -732,7 +732,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         ctx.cfg = tb_compute_rpo(f, p);
         ctx.block_count = dyn_array_length(ws->items);
         // And perform global scheduling
-        tb_pass_schedule(p, ctx.cfg, false);
+        tb_pass_schedule(p, ctx.cfg, false, false);
     }
 
     DomTree* doms = ctx.doms = tb_arena_alloc(tmp_arena, ctx.cfg.block_count * sizeof(DomTree));

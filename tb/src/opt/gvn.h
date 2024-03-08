@@ -129,7 +129,9 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_PROJ:
         return sizeof(TB_NodeProj);
 
-        default: tb_todo();
+        default:
+        assert("TODO");
+        return 0;
     }
 }
 

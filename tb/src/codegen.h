@@ -4,26 +4,26 @@
 //
 // This can be broken down into a few steps:
 //
-//   GCM => Init => Per BB: { Local sched, Tiling } => Dataflow => Regalloc => Emit
+//   Init => Selection => RA constraints => GCM => Local sched => Dataflow => Regalloc => Emit
 //
 // Here's where you can find more info on these:
-//
-//   * GCM: handled by the tb_pass_schedule (TODO ways to skew global scheduling).
 //
 //   * Init: This is where you can process ABI details and fill in certain important details
 //     for later like ctx.sched which is the scheduler, and ctx.regalloc which is the register
 //     allocator.
 //
-//   * Local sched: handled by ctx.sched, it's just a function you can replace with your
-//     own based on whatever you wanna achieve, for now i've only got the topo sort greedy
-//     sched (TODO implement a latency-based list scheduler)
+//   * Selection: handled by node_isel(), it'll just do a bottom-up rewrite of the generic nodes into
+//     machine-friendly forms, this is where you might introduce things like
 //
-//   * Tiling: handled by isel_node, by default we walk the BB backwards building one tile
-//     per node, we can call fold_node to say we expended a use of a value, this way if we
-//     we've folded all uses of a value we don't materialize it alone. isel_node has to fill
-//     in the register constraints, it'll return the output mask and construct input masks.
+//   * RA constraints: handled by node_interval(), this is how we define the live interval's constraints
 //
-//   * Regalloc: handled by ctx.regalloc (TODO implement more register allocators)
+//   * GCM: we've kept all the nice SoN dependencies so we can flatten the graph after isel (making
+//     the most of memory aliasing for instance)
+//
+//   * Local sched: for now i've only got the topo sort greedy sched (TODO implement
+//     a latency-based list scheduler)
+//
+//   * Reg alloc: handled by ctx.regalloc (TODO implement more register allocators)
 //
 //   * Emit: handled by emit_tile, writes out the bytes now that we've completed regalloc.
 //
@@ -31,125 +31,45 @@
 
 #include "opt/passes.h"
 #include "emitter.h"
+#include <log.h>
+#include <arena_array.h>
 
 enum {
+    // every platform has a stack regclass, the mask is actually an offset
+    // on the stack (useful for parameter passing).
+    REG_CLASS_STK = 0,
+
     // all we can fit into 3bits, but also... 8 classes is a lot.
     //
     // * x86 has 3 currently: GPR, Vector, and Stack.
     MAX_REG_CLASSES = 8,
-
-    // every platform has a stack regclass, the mask is actually an offset
-    // on the stack (useful for parameter passing).
-    REG_CLASS_STK = 0,
 };
 
 // represents a set of registers, usually for register constraints.
 // we can also say that a value might fit into the stack with may_spill.
-typedef struct {
+//
+// we can model these regmasks in a lattice, why? because I made a
+// meet function (mfw my shit gets ordered).
+struct RegMask {
     uint64_t class     : 3;
     uint64_t may_spill : 1;
-    uint64_t mask      : 60;
-} RegMask;
-
-#define REGMASK(c, m)  (RegMask){ REG_CLASS_ ## c, 0, m }
-#define REGMASK2(c, m) (RegMask){ REG_CLASS_ ## c, 1, m }
-#define REGEMPTY (RegMask){ 0 }
-
-typedef struct {
-    int start, end;
-} LiveRange;
-
-typedef struct {
-    int may_spill : 1;
-    int pos       : 31;
-} UsePos;
-
-typedef enum {
-    // single node tile
-    TILE_NORMAL,
-    // SoN doesn't have a jump op, this serves that purpose
-    TILE_GOTO,
-    // performs a move operation between two live intervals
-    TILE_SPILL_MOVE,
-    // debug line
-    TILE_LOCATION,
-} TileTag;
-
-typedef struct Tile Tile;
-typedef struct LiveInterval LiveInterval;
-
-typedef struct {
-    LiveInterval* src;
-    RegMask mask;
-} TileInput;
-
-struct LiveInterval {
-    int id; // used by live sets
-    int active_range;
-
-    RegMask mask;
-    TB_DataType dt;
-
-    Tile* tile;
-
-    int8_t class;
-    int8_t reg;
-    int8_t assigned;
-
-    LiveInterval* hint;
-    LiveInterval* split_kid;
-
-    int use_cap, use_count;
-    UsePos* uses;
-
-    int range_cap, range_count;
-    LiveRange* ranges;
-};
-
-// represents a pattern of instructions
-struct Tile {
-    struct Tile* prev;
-    struct Tile* next;
-
-    TileTag tag : 8;
-    uint32_t flags : 24;
-
-    int time;
-
-    union {
-        // tag = TILE_GOTO, this is the successor
-        TB_Node* succ;
-
-        // tag = TILE_SPILL_MOVE
-        TB_DataType spill_dt;
-
-        // tag = TILE_NORMAL
-        void* aux;
-
-        // tag = TILE_LOCATION
-        TB_NodeLocation* loc;
-    };
-
-    int out_count;
-    int in_count;
-    TileInput* ins;
-
-    TB_Node* n;
-    LiveInterval* outs[];
+    uint64_t count     : 60;
+    uint64_t mask[];
 };
 
 typedef struct {
     int id;
 
+    // times
+    int start_t, end_t;
+
     TB_Node* n;
     TB_Node* end_n;
 
-    Tile* start;
-    Tile* end;
-
-    // dataflow
-    Set gen, kill;
-    Set live_in, live_out;
+    // local schedule
+    uint32_t item_cap;
+    uint32_t item_count;
+    TB_Node** items;
 } MachineBB;
 
 typedef struct {
@@ -165,24 +85,46 @@ typedef struct {
     MachineBB* v;
 } NodeToBB;
 
-typedef struct {
-    // number of times we asked for it
-    // to materialize, only certain nodes
-    // can be rematerialized several times
-    // like constants.
-    int mat_count;
-    int use_count;
-    Tile* tile;
-} ValueDesc;
+typedef struct Range {
+    struct Range* next;
+    int start, end;
+} Range;
+
+typedef struct VReg VReg;
+struct VReg {
+    TB_Node* n;
+
+    int16_t class;
+    int16_t assigned;
+
+    RegMask* mask;
+
+    int tmp_count;
+    int* tmps;
+
+    // only matters for linear-scan
+    struct {
+        int end_time, hint_vreg;
+        Range* active_range;
+    };
+};
 
 typedef struct Ctx Ctx;
-typedef void (*TB_RegAlloc)(Ctx* restrict ctx, TB_Arena* arena);
-typedef bool (*TB_2Addr)(TB_Node* n);
+typedef int (*TmpCount)(Ctx* restrict ctx, TB_Node* n);
 
-// how many live intervals do we need to allocate to actually store
-// this register, usually 0 or 1 but occassionally (especially on 32bit
-// platforms when doing 64bit arithmetic) we'll get 2.
-typedef int (*TB_RegCount)(Ctx* restrict ctx, TB_Node* n);
+// ins can be NULL
+typedef RegMask* (*Constraint)(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
+
+// if we're doing 2addr ops like x86 the real operations are mutating:
+//
+//   v4 = x86_add v5, v6 # would require a move
+//
+// to avoid unnecessary moves and stretched lifetimes we'll tell RA which
+// each is the "shared" edge (holds input but could act as the dst), in this
+// case that's whichever holds v5 "in[1]".
+//
+// returns -1 if there's no edge btw.
+typedef int (*TB_2Addr)(TB_Node* n);
 
 typedef struct {
     uint32_t* pos;
@@ -190,9 +132,9 @@ typedef struct {
 } JumpTablePatch;
 
 typedef struct {
-    int class, reg;
-    int stk;
-} CalleeSpill;
+    int count;
+    int elems[]; // vregs
+} Tmps;
 
 struct Ctx {
     TB_Passes* p;
@@ -202,11 +144,10 @@ struct Ctx {
     TB_Function* f;
     TB_FeatureSet features;
 
-    // user-provided details
-    TB_Scheduler sched;
-    TB_RegAlloc regalloc;
-    TB_RegCount regcnt;
-    TB_2Addr _2addr;
+    // user callbacks
+    TmpCount tmp_count;
+    Constraint constraint;
+    TB_2Addr node_2addr;
 
     // target-dependent index
     int abi_index;
@@ -226,29 +167,27 @@ struct Ctx {
     int bb_count;
     MachineBB* machine_bbs;
 
+    // used when calling node_constraint since it needs an array, we
+    // figure out the max input count of all nodes before allocating it.
+    RegMask** ins;
+
     // Values
-    ValueDesc* values; // [n.gvn]
-    LiveInterval** id2interval; // [tile.id]
-    LiveInterval* fixed[MAX_REG_CLASSES];
+    ArenaArray(VReg) vregs;   // [vid]
+    ArenaArray(int) vreg_map; // [gvn] -> vid
+    NL_Table tmps_map;        // TB_Node* -> Tmps*
 
     // Regalloc
     int initial_spills;
     int stack_slot_size;
-    int interval_count;
     int stack_header;
     int stack_usage;
     int call_usage;
-    int num_fixed;
     int num_classes;
     int num_regs[MAX_REG_CLASSES];
-    uint64_t callee_saved[MAX_REG_CLASSES];
 
-    // where scratch registers can go, a mask is used to avoid
-    // allocating special regiters.
-    RegMask normie_mask[MAX_REG_CLASSES];
+    NL_HashSet mask_intern;
+    RegMask* normie_mask[MAX_REG_CLASSES];
 
-    DynArray(CalleeSpill) callee_spills;
-    NL_Map(TB_Node*, int) stack_slots;
     DynArray(TB_StackSlot) debug_stack_slots;
     DynArray(JumpTablePatch) jump_table_patches;
 
@@ -259,17 +198,103 @@ struct Ctx {
     DynArray(TB_Location) locations;
 };
 
+extern RegMask TB_REG_EMPTY;
+
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena);
 void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena);
 
-void tb__print_regmask(RegMask mask);
+void tb__print_regmask(RegMask* mask);
 
-static int fixed_reg_mask(RegMask mask) {
-    if (mask.class == REG_CLASS_STK) {
-        return mask.mask;
-    } else {
-        return tb_popcount64(mask.mask) == 1 ? 63 - tb_clz64(mask.mask) : -1;
+// RA helpers
+RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b);
+void tb__insert_before(Ctx* ctx, TB_Passes* p, TB_Node* n, TB_Node* before_n);
+void tb__insert_after(Ctx* ctx, TB_Passes* p, TB_Node* n, TB_Node* before_n);
+VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n);
+
+static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {
+    return a == b ? false : tb__reg_mask_meet(ctx, a, b) == b;
+}
+
+static VReg* vreg_at(Ctx* ctx, int id)       { return id > 0 ? &ctx->vregs[id] : NULL; }
+static VReg* node_vreg(Ctx* ctx, TB_Node* n) { return n && ctx->vreg_map[n->gvn] > 0 ? &ctx->vregs[ctx->vreg_map[n->gvn]] : NULL; }
+
+static bool reg_mask_eq(RegMask* a, RegMask* b) {
+    if (a->count != b->count) { return false; }
+    FOREACH_N(i, 0, a->count) {
+        if (a->mask[i] != b->mask[i]) return false;
     }
+
+    return true;
+}
+
+static bool reg_mask_is_not_empty(RegMask* mask) {
+    if (mask == NULL) return false;
+
+    assert(mask->count == 1);
+    FOREACH_N(i, 0, mask->count) {
+        if (mask->mask[0] != 0) return true;
+    }
+
+    return false;
+}
+
+static int fixed_reg_mask(RegMask* mask) {
+    if (mask->class == REG_CLASS_STK) {
+        assert(mask->count == 1);
+        return mask->mask[0];
+    } else {
+        int set = -1;
+        FOREACH_N(i, 0, mask->count) {
+            int found = 63 - tb_clz64(mask->mask[i]);
+            if (mask->mask[0] == (1ull << found)) {
+                if (set >= 0) return -1;
+                set = i*64 + found;
+            }
+        }
+
+        return set;
+    }
+}
+
+static RegMask* new_regmask(int reg_class, bool may_spill, uint64_t mask) {
+    RegMask* rm = tb_arena_alloc(tmp_arena, sizeof(RegMask) + sizeof(uint64_t));
+    rm->may_spill = may_spill;
+    rm->class = reg_class;
+    rm->count = 1;
+    rm->mask[0] = mask;
+    return rm;
+}
+
+static uint32_t rm_hash(void* a) {
+    RegMask* x = a;
+    uint32_t sum = 0;
+    FOREACH_N(i, 0, x->count) {
+        sum += x->mask[i];
+    }
+
+    return x->count + x->class + x->may_spill + sum;
+}
+
+static bool rm_compare(void* a, void* b) {
+    RegMask *x = a, *y = b;
+    if (x->count != y->count || x->class != y->class || x->count != y->count) {
+        return false;
+    }
+
+    FOREACH_N(i, 0, x->count) {
+        if (x->mask[i] != y->mask[i]) { return false; }
+    }
+    return true;
+}
+
+static RegMask* intern_regmask(Ctx* ctx, int reg_class, bool may_spill, uint64_t mask) {
+    RegMask* new_rm = new_regmask(reg_class, may_spill, mask);
+    RegMask* old_rm = nl_hashset_put2(&ctx->mask_intern, new_rm, rm_hash, rm_compare);
+    if (old_rm != NULL) {
+        tb_arena_free(tmp_arena, new_rm, sizeof(RegMask));
+        return old_rm;
+    }
+    return new_rm;
 }
 
 static uint32_t node_to_bb_hash(void* ptr) { return (((uintptr_t) ptr) * 11400714819323198485ull) >> 32ull; }

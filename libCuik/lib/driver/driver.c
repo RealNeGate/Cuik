@@ -159,7 +159,7 @@ static void local_opt_func(TB_Function* f, void* arg) {
 
         tb_pass_exit(p);
         float end = tb_arena_current_size(arenas->ir);
-        log_debug("%s: func = %.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
+        log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
     }
 }
 
@@ -190,7 +190,7 @@ static void apply_func(TB_Function* f, void* arg) {
         tb_pass_exit(p);
 
         float end = tb_arena_current_size(arenas->ir);
-        log_debug("%s: func = %.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
+        log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
     }
 }
 #endif
@@ -816,7 +816,7 @@ static void irgen_job(void* arg) {
             s = cuikcg_top_level(task.tu, mod, arenas->ir, task.stmts[i]);
             float end = tb_arena_current_size(arenas->ir);
 
-            log_debug("%s: func = %.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
+            log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
         }
 
         if (s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
