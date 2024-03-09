@@ -319,7 +319,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 // so don't be assuming it everywhere.
                 assert(vreg_id >= 0 && vreg_id < aarray_length(ctx.vregs));
 
-                #ifdef TB_OPTDEBUG_CODEGEN
+                #if TB_OPTDEBUG_CODEGEN
                 int tmps = node_tmp_count(&ctx, n);
                 RegMask* def_mask = node_constraint(&ctx, n, ctx.ins);
 
@@ -390,7 +390,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 int def_id = ctx.vreg_map[n->gvn];
                 VReg* vreg = def_id > 0 ? &ctx.vregs[def_id] : NULL;
 
-                #ifdef TB_OPTDEBUG_CODEGEN
+                #if TB_OPTDEBUG_CODEGEN
                 printf("  "), tb_dumb_print_node(NULL, n), printf("\n");
 
                 if (vreg) {
