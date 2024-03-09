@@ -4,28 +4,30 @@
 //
 // This can be broken down into a few steps:
 //
-//   Init => Selection => RA constraints => GCM => Local sched => Dataflow => Regalloc => Emit
+//   Init => Selection => RA constraints => GCM + Dataflow => Local sched => Regalloc => Emit
 //
 // Here's where you can find more info on these:
 //
-//   * Init: This is where you can process ABI details and fill in certain important details
-//     for later like ctx.sched which is the scheduler, and ctx.regalloc which is the register
-//     allocator.
+//   * Init: fill in the ctx.num_regs and ctx.normie_mask i guess
 //
 //   * Selection: handled by node_isel(), it'll just do a bottom-up rewrite of the generic nodes into
 //     machine-friendly forms, this is where you might introduce things like
 //
-//   * RA constraints: handled by node_interval(), this is how we define the live interval's constraints
+//   * RA constraints: handled by node_constraint(), this is how we define the node's constraints.
 //
 //   * GCM: we've kept all the nice SoN dependencies so we can flatten the graph after isel (making
 //     the most of memory aliasing for instance)
 //
-//   * Local sched: for now i've only got the topo sort greedy sched (TODO implement
-//     a latency-based list scheduler)
+//   * Dataflow: because we're in SSA form, we don't need a local schedule to derive the
+//     live-ins & outs, see gcm.c for more info.
 //
-//   * Reg alloc: handled by ctx.regalloc (TODO implement more register allocators)
+//   * Local sched: just toposorts the nodes in a block, for now we've got a dumb latency-based
+//     list scheduler (list_scheduler) & an RPO walker (greedy_scheduler).
 //
-//   * Emit: handled by emit_tile, writes out the bytes now that we've completed regalloc.
+//   * Reg alloc: solves the constraints, inserting nodes into an already scheduled graph if
+//     necessary (and it is necessary since spilling is basically inevitable)
+//
+//   * Emit: handled by node_emit, writes out the bytes from the flattened SoN + RA results.
 //
 #pragma once
 
@@ -41,7 +43,7 @@ enum {
 
     // all we can fit into 3bits, but also... 8 classes is a lot.
     //
-    // * x86 has 3 currently: GPR, Vector, and Stack.
+    // * x86 has 3 currently: Stack, GPR, Vector, and FLAGS.
     MAX_REG_CLASSES = 8,
 };
 
@@ -113,7 +115,8 @@ typedef struct Ctx Ctx;
 typedef int (*TmpCount)(Ctx* restrict ctx, TB_Node* n);
 
 // ins can be NULL
-typedef RegMask* (*Constraint)(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
+typedef RegMask* (*NodeConstraint)(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
+typedef bool (*NodeFlags)(Ctx* restrict ctx, TB_Node* n);
 
 // if we're doing 2addr ops like x86 the real operations are mutating:
 //
@@ -146,7 +149,8 @@ struct Ctx {
 
     // user callbacks
     TmpCount tmp_count;
-    Constraint constraint;
+    NodeConstraint constraint;
+    NodeFlags flags;
     TB_2Addr node_2addr;
 
     // target-dependent index

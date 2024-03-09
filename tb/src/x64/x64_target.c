@@ -6,7 +6,8 @@
 #ifdef TB_HAS_X64
 enum {
     // register classes
-    REG_CLASS_GPR = 1,
+    REG_CLASS_FLAGS = 1,
+    REG_CLASS_GPR,
     REG_CLASS_XMM,
     REG_CLASS_COUNT,
 };
@@ -209,6 +210,7 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     // currently only using 16 GPRs and 16 XMMs, AVX gives us
     // 32 YMMs (which double as XMMs) and later on APX will do
     // 32 GPRs.
+    ctx->num_regs[REG_CLASS_FLAGS] = 1;
     ctx->num_regs[REG_CLASS_GPR] = 16;
     ctx->num_regs[REG_CLASS_XMM] = 16;
 
@@ -220,8 +222,9 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         ctx->stack_header = 8;
     }
 
-    ctx->normie_mask[REG_CLASS_GPR] = new_regmask(REG_CLASS_GPR, false, all_gprs);
-    ctx->normie_mask[REG_CLASS_XMM] = new_regmask(REG_CLASS_XMM, false, 0xFFFF);
+    ctx->normie_mask[REG_CLASS_FLAGS] = new_regmask(REG_CLASS_FLAGS, false, 1);
+    ctx->normie_mask[REG_CLASS_GPR]   = new_regmask(REG_CLASS_GPR,   false, all_gprs);
+    ctx->normie_mask[REG_CLASS_XMM]   = new_regmask(REG_CLASS_XMM,   false, 0xFFFF);
 
     // mark GPR callees (technically includes RSP but since it's
     // never conventionally allocated we should never run into issues)
@@ -270,6 +273,25 @@ static bool addr_split_heuristic(int arr_uses, int stride, int scale) {
     return cost*arr_uses > 10;
 }
 
+// store(binop(load(a), b))
+static bool can_folded_store(TB_Node* mem, TB_Node* addr, TB_Node* src) {
+    switch (src->type) {
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        return
+            src->inputs[1]->type == TB_LOAD &&
+            src->inputs[1]->inputs[1] == mem &&
+            src->inputs[1]->inputs[2] == addr &&
+            src->users->next == NULL &&
+            src->inputs[1]->users->next == NULL;
+
+        default: return -1;
+    }
+}
+
 // not TLS
 static bool simple_symbol(TB_Node* n) {
     if (n->type != TB_SYMBOL) return false;
@@ -315,9 +337,23 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 set_input(f, cpy, n->inputs[i], 1);
                 set_input(f, n, cpy, i);
             }
-        }
 
-        return n;
+            RegMask* rm = ctx->normie_mask[n->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR];
+
+            // just in case we have some recursive phis, RA should be able to fold it away later.
+            // we have to be a bit hacky since we can't subsume the node with something that's
+            // referencing it (we'll get a cycle we didn't want).
+            TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+            TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = rm, .use = rm);
+
+            subsume_node2(f, n, cpy);
+            set_input(f, cpy, n, 1);
+
+            // we did the subsumes for it
+            return n;
+        } else {
+            return n;
+        }
     } else if (n->type == TB_ZERO_EXT) {
         TB_DataType src_dt = n->inputs[1]->dt;
         int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
@@ -505,7 +541,16 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
             set_input(f, op, n->inputs[0], 0); // ctrl in
             set_input(f, op, n->inputs[1], 1); // mem in
-            set_input(f, op, n->inputs[3], 4); // val
+
+            if (can_folded_store(n->inputs[1], n->inputs[2], n->inputs[3])) {
+                TB_Node* binop = n->inputs[3];
+                assert(binop->type >= TB_AND && binop->type <= TB_SUB);
+
+                op->type = ops[binop->type - TB_AND];
+                set_input(f, op, binop->inputs[2], 4); // val
+            } else {
+                set_input(f, op, n->inputs[3], 4); // val
+            }
             n = n->inputs[2];
         } else {
             // folded binop
@@ -571,6 +616,34 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
+static bool node_flags(Ctx* restrict ctx, TB_Node* n) {
+    switch (n->type) {
+        // regions & misc nodes don't even generate ops
+        case TB_PHI:
+        case TB_PROJ:
+        case TB_REGION:
+        case TB_AFFINE_LOOP:
+        case TB_NATURAL_LOOP:
+        // moves don't affect FLAGS
+        case x86_mov:
+        case x86_movimm:
+        case x86_movsx:
+        case x86_movzx:
+        case TB_MACH_MOVE:
+        case TB_MACH_COPY:
+        case TB_INTEGER_CONST:
+        // actually uses flags, that's handled in node_constraint
+        case TB_BRANCH:
+        case TB_RETURN:
+        // actually produces FLAGS we care about
+        case x86_cmp: case x86_cmpimm:
+        return false;
+
+        default:
+        return true;
+    }
+}
+
 static int node_tmp_count(Ctx* restrict ctx, TB_Node* n) {
     switch (n->type) {
         case x86_call: case x86_static_call: {
@@ -617,6 +690,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         case TB_INTEGER_CONST:
+        case TB_SYMBOL:
         return ctx->normie_mask[REG_CLASS_GPR];
 
         case TB_PROJ: {
@@ -644,7 +718,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     if (i >= 2) { return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i == 2 ? RAX : RDX)); }
                 }
             } else {
-                __debugbreak();
+                tb_todo();
                 return &TB_REG_EMPTY;
             }
         }
@@ -669,7 +743,15 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     ins[2] = &TB_REG_EMPTY;
                 }
             }
-            return ctx->normie_mask[REG_CLASS_GPR];
+
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            if (op->mode == MODE_ST) {
+                return &TB_REG_EMPTY;
+            } else if (n->type == x86_cmp || n->type == x86_cmpimm) {
+                return ctx->normie_mask[REG_CLASS_FLAGS];
+            } else {
+                return ctx->normie_mask[REG_CLASS_GPR];
+            }
         }
 
         case TB_MUL:
@@ -720,7 +802,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
         case TB_BRANCH:
         {
-            if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
+            if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_FLAGS]; }
             return &TB_REG_EMPTY;
         }
 
@@ -798,7 +880,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         default:
-        __debugbreak();
+        tb_todo();
         return &TB_REG_EMPTY;
     }
 }
@@ -815,11 +897,18 @@ static Val op_at(Ctx* ctx, TB_Node* n) {
     assert(ctx->vreg_map[n->gvn] > 0);
     VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
     if (vreg->class == REG_CLASS_STK) {
-        __debugbreak();
+        tb_todo();
         return val_stack(vreg->assigned*8);
     } else {
         assert(vreg->assigned >= 0);
         return (Val) { .type = vreg->class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR, .reg = vreg->assigned };
+    }
+}
+
+static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ) {
+    if (ctx->fallthrough != succ->id) {
+        EMIT1(e, 0xE9); EMIT4(e, 0);
+        tb_emit_rel32(e, &e->labels[succ->id], GET_CODE_POS(e) - 4);
     }
 }
 
@@ -876,6 +965,15 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             } else {
                 tb_todo();
             }
+            break;
+        }
+
+        case TB_SYMBOL: {
+            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
+
+            Val dst = op_at(ctx, n);
+            Val src = val_global(sym, 0);
+            inst2(e, LEA, &dst, &src, TB_X86_TYPE_QWORD);
             break;
         }
 
@@ -976,6 +1074,9 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             if (op->mode == MODE_ST) {
                 Val lhs = op_at(ctx, lhs_n);
                 inst2(e, ops[n->type - x86_add], &rhs, &lhs, dt);
+            } else if (n->type == x86_cmp || n->type == x86_cmpimm) {
+                Val lhs = op_at(ctx, lhs_n);
+                inst2(e, CMP, &lhs, &rhs, dt);
             } else {
                 Val dst = op_at(ctx, n);
                 if (lhs_n != NULL) {
@@ -1106,13 +1207,18 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         }
 
         default:
-        __debugbreak();
+        tb_todo();
         break;
     }
 }
 
 static int node_latency(TB_Function* f, TB_Node* n) {
     switch (n->type) {
+        case x86_movsx: case x86_movzx: {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            return 2 + (op->mode == MODE_LD ? 3 : 0);
+        }
+
         // load/store ops should count as a bit slower
         case x86_add: case x86_or:  case x86_and: case x86_sub:
         case x86_xor: case x86_cmp: case x86_mov: case x86_test:

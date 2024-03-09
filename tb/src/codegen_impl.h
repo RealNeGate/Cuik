@@ -1,9 +1,5 @@
 // See codegen.h for more details, this is the implementation file for it, each target
 // will include this to define their own copy of the codegen.
-//
-// Your job is to implement:
-//   isel_node, init_ctx, emit_tile, disassemble.
-//
 #include "codegen.h"
 
 // Implemented by the target, go read the mips_target.c docs on this.
@@ -13,6 +9,8 @@ static int node_tmp_count(Ctx* restrict ctx, TB_Node* n);
 static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg);
 static int node_latency(TB_Function* f, TB_Node* n);
 static int node_2addr(TB_Node* n);
+static bool node_flags(Ctx* ctx, TB_Node* n);
+static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ);
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n);
@@ -23,8 +21,9 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
 static const char* reg_class_name(int class) {
     switch (class) {
         case 0: return "STK";
-        case 1: return "GPR";
-        case 2: return "XMM";
+        case 1: return "FLAGS";
+        case 2: return "GPR";
+        case 3: return "XMM";
         default: return NULL;
     }
 }
@@ -37,6 +36,8 @@ void tb__print_regmask(RegMask* mask) {
         } else {
             printf("[SP + %"PRId64"]", mask->mask[0]*8);
         }
+    } else if (mask->class == REG_CLASS_FLAGS) {
+        printf("[FLAGS]");
     } else {
         int i = 0;
         bool comma = false;
@@ -128,6 +129,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         .p = p,
         .tmp_count   = node_tmp_count,
         .constraint  = node_constraint,
+        .flags       = node_flags,
         .num_classes = REG_CLASS_COUNT,
         .emit = {
             .output = func_out,
@@ -164,7 +166,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         walk_node(&ctx, ws, f->root_node);
 
         // TB_OPTDEBUG(CODEGEN)(tb_pass_print_dot(p, tb_default_print_callback, stdout));
-        TB_OPTDEBUG(CODEGEN)(tb_dumb_print(f, p));
+        TB_OPTDEBUG(CODEGEN)(tb_dumb_print(f, NULL));
         TB_OPTDEBUG(CODEGEN)(tb_pass_print(p));
 
         log_phase_end(f, og_size, "isel");
@@ -177,7 +179,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         // We need to generate a CFG
         cfg = tb_compute_rpo(f, p);
         // And perform global scheduling
-        tb_pass_schedule(p, cfg, false, true);
+        tb_pass_schedule(p, cfg, false, true, node_latency);
 
         log_phase_end(f, og_size, "GCM");
     }
@@ -238,8 +240,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
             // compute local schedule
             size_t base = dyn_array_length(ws->items);
-            // list_scheduler(p, &cfg, ws, NULL, bb, ctx.id2node, node_latency);
-            greedy_scheduler(p, &cfg, ws, NULL, bb);
+            list_scheduler(p, &cfg, ws, NULL, bb, node_latency);
+            // greedy_scheduler(p, &cfg, ws, NULL, bb);
 
             size_t item_count = dyn_array_length(ws->items) - base;
             size_t item_cap   = item_count + 16; // a bit of slack for spills
@@ -321,7 +323,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 int tmps = node_tmp_count(&ctx, n);
                 RegMask* def_mask = node_constraint(&ctx, n, ctx.ins);
 
-                printf("  "), tb_dumb_print_node(p->types, n), printf("\n");
+                printf("  "), tb_dumb_print_node(NULL, n), printf("\n");
                 if (vreg_id > 0) {
                     printf("    OUT    = "), tb__print_regmask(def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
                 }
@@ -335,6 +337,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 FOREACH_N(j, n->input_count, n->input_count + tmps) {
                     printf("    TMP[%zu] = ", j), tb__print_regmask(ctx.ins[j]), printf("\n");
                 }
+
+                if (node_flags(&ctx, n)) { printf("    CLOBBER FLAGS\n"); }
                 #endif
 
                 if (vreg_id > 0 && n->type != TB_MACH_MOVE) {
@@ -387,7 +391,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 VReg* vreg = def_id > 0 ? &ctx.vregs[def_id] : NULL;
 
                 #ifdef TB_OPTDEBUG_CODEGEN
-                printf("  "), tb_dumb_print_node(p->types, n), printf("\n");
+                printf("  "), tb_dumb_print_node(NULL, n), printf("\n");
 
                 if (vreg) {
                     printf("    OUT    = %s:R%d\n", reg_class_name(vreg->class), vreg->assigned);
@@ -412,6 +416,11 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
                 #endif
 
                 node_emit(&ctx, e, n, vreg);
+            }
+
+            if (!cfg_is_terminator(mbb->end_n)) {
+                MachineBB* succ = node_to_bb(&ctx, cfg_next_control(mbb->end_n));
+                emit_goto(&ctx, e, succ);
             }
         }
 

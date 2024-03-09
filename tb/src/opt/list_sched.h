@@ -9,7 +9,7 @@ static bool is_node_ready(TB_Passes* p, TB_BasicBlock* bb, Set* done, TB_Node* n
     return true;
 }
 
-void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_Node** id2node, TB_GetLatency get_lat) {
+void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat) {
     assert(phi_vals == NULL && "TODO");
 
     TB_Function* f = p->f;
@@ -27,11 +27,17 @@ void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) p
     if (bb->id == 0) {
         TB_Node* root = f->root_node;
         set_put(&done, root->gvn);
-        FOR_USERS(u, root) { set_put(&done, u->n->gvn); }
+        FOR_USERS(u, root) {
+            if (u->n->type == TB_PROJ && u->slot == 0) {
+                TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH: "), tb_dumb_print_node(NULL, u->n), printf("\n"));
+                sched[sched_count++] = u->n;
+                set_put(&done, u->n->gvn);
+            }
+        }
     } else {
         set_put(&done, bb->start->gvn);
-        FOR_USERS(u, bb->start) if (u->n->type == TB_PHI) {
-            TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH: "), print_node_sexpr(u->n, 0), printf("\n"));
+        FOR_USERS(u, bb->start) if (u->n->type == TB_PHI && u->slot == 0) {
+            TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH: "), tb_dumb_print_node(NULL, u->n), printf("\n"));
             sched[sched_count++] = u->n;
             set_put(&done, u->n->gvn);
         }
@@ -41,36 +47,40 @@ void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) p
     nl_hashset_for(e, &bb->items) {
         TB_Node* n = *e;
         if (!set_get(&done, n->gvn) && p->scheduled[n->gvn] == bb && is_node_ready(p, bb, &done, n)) {
-            TB_OPTDEBUG(SCHEDULE)(printf("  READY: "), print_node_sexpr(n, 0), printf("\n"));
+            TB_OPTDEBUG(SCHEDULE)(printf("  READY: "), tb_dumb_print_node(NULL, n), printf("\n"));
             worklist_push(ws, n);
         }
     }
 
     while (dyn_array_length(ws->items) > cfg->block_count) {
         // find highest priority item
-        TB_Node* best = NULL;
         int best_lat  = 0;
+        int best_i = -1;
         FOREACH_N(i, cfg->block_count, dyn_array_length(ws->items)) {
             TB_Node* n = ws->items[i];
             if (!is_node_ready(p, bb, &done, n)) continue;
             int lat = get_lat(f, n);
-            if (best_lat > lat) continue;
-            best = ws->items[i];
-            best_lat = lat;
-            worklist_remove(ws, best);
-            dyn_array_remove(ws->items, i);
-            break;
+            if (lat > best_lat) {
+                best_i   = i;
+                best_lat = lat;
+            }
         }
 
-        TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH: "), print_node_sexpr(best, 0), printf("\n"));
+        assert(best_i >= 0);
+        assert(best_lat > 0);
 
-        assert(best && best_lat > 0);
-        sched[sched_count++] = best;
-        set_put(&done, best->gvn);
+        TB_Node* best = ws->items[best_i];
+        worklist_remove(ws, best);
+        dyn_array_remove(ws->items, best_i);
+        {
+            TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH: "), tb_dumb_print_node(NULL, best), printf(" (%d clks)\n", best_lat));
+            sched[sched_count++] = best;
+            set_put(&done, best->gvn);
+        }
 
         // make sure to place all projections directly after their tuple node
-        if (best->dt.type == TB_TUPLE) {
-            FOR_USERS(u, best) if (u->n->type == TB_PROJ) {
+        if (best->dt.type == TB_TUPLE && best->type != TB_BRANCH) {
+            FOR_USERS(u, best) if (u->n->type == TB_PROJ && u->slot == 0) {
                 assert(!set_get(&done, u->n->gvn));
                 sched[sched_count++] = u->n;
                 set_put(&done, u->n->gvn);
@@ -81,7 +91,7 @@ void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) p
         if (best != end) {
             FOR_USERS(u, best) {
                 if (!set_get(&done, u->n->gvn) && p->scheduled[u->n->gvn] == bb && is_node_ready(p, bb, &done, u->n)) {
-                    TB_OPTDEBUG(SCHEDULE)(printf("    READY: "), print_node_sexpr(u->n, 0), printf("\n"));
+                    TB_OPTDEBUG(SCHEDULE)(printf("    READY: "), tb_dumb_print_node(NULL, u->n), printf("\n"));
                     worklist_push(ws, u->n);
                 }
             }

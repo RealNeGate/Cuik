@@ -7,13 +7,13 @@ enum {
 };
 
 #define TB_OPTDEBUG_STATS    0
-#define TB_OPTDEBUG_PEEP     1
+#define TB_OPTDEBUG_PEEP     0
 #define TB_OPTDEBUG_SCCP     0
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
-#define TB_OPTDEBUG_CODEGEN  1
+#define TB_OPTDEBUG_CODEGEN  0
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
@@ -555,11 +555,11 @@ void tb__gvn_remove(TB_Function* f, TB_Node* n);
 typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n);
 
 // Local scheduler
-void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_Node** id2node, TB_GetLatency lat);
+void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat);
 void greedy_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb);
 
 // Global scheduler
-void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow);
+void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB_GetLatency get_lat);
 
 // makes arch-friendly IR
 void tb_pass_legalize(TB_Passes* p, TB_Arch arch);

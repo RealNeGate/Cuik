@@ -9,8 +9,12 @@ typedef struct Elem {
     int i;
 } Elem;
 
-static bool swag_to_hoist(TB_Node* n) {
-    return n->type == TB_LOAD;
+// any blocks in the dom tree between and including early and late are valid schedules.
+static TB_BasicBlock* try_to_hoist(TB_Function* f, TB_GetLatency get_lat, TB_Node* n, TB_BasicBlock* early, TB_BasicBlock* late) {
+    if (get_lat == NULL) return late;
+
+    int lat = get_lat(f, n);
+    return lat >= 2 ? late->dom : late;
 }
 
 ////////////////////////////////
@@ -33,7 +37,7 @@ static TB_BasicBlock* find_lca(TB_Passes* p, TB_BasicBlock* a, TB_BasicBlock* b)
     return a;
 }
 
-void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow) {
+void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB_GetLatency get_lat) {
     assert(p->scheduled == NULL && "make sure when you're done with the schedule, you throw away the old one");
 
     CUIK_TIMED_BLOCK("schedule") {
@@ -268,7 +272,8 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow) {
                     // be better off hoisting the values if possible.
                     if (old != lca && lca->dom_depth > old->dom_depth) {
                         // some ops deserve hoisting more than others (cough cough loads)
-                        if (!swag_to_hoist(n) || !cfg_is_natural_loop(old->start)) {
+                        TB_BasicBlock* better = try_to_hoist(f, get_lat, n, old, lca);
+                        if (old != better) {
                             TB_OPTDEBUG(GCM)(
                                 printf("  LATE  v%u into .bb%d: ", n->gvn, lca->id),
                                 print_node_sexpr(n, 0),
@@ -319,6 +324,9 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow) {
                                     }
                                 }
                             } else {
+                                // other than phis every node dominates all uses which means it's KILL
+                                // within it's scheduled block and since it's single assignment this is
+                                // the only KILL for that a through all sets.
                                 set_put(&bb->kill, n->gvn);
                             }
                         }

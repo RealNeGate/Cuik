@@ -49,9 +49,11 @@ static int vreg_start(Ctx* ctx, int id) { return ctx->vregs[id].active_range->st
 static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
 static void print_reg_name(int rg, int num) {
     if (rg == 1) {
+        printf("FLAGS");
+    } else if (rg == 2) {
         // printf("R%d", num);
         printf("%s", GPR_NAMES[num]);
-    } else if (rg == 2) {
+    } else if (rg == 3) {
         printf("XMM%d", num);
     } else if (rg == REG_CLASS_STK) {
         printf("[sp + %d]", num*8);
@@ -122,9 +124,16 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         ra.num_regs   = ctx->num_regs;
     }
 
+    // probably gonna throw into the arena later but the important bit is that
+    // new nodes inherit liveness from some other node.
+    //
+    // new GVN -> old GVN
+    NL_Table fwd_table = nl_table_alloc(32);
+
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {
         ra.time = aarray_create(arena, int, tb_next_pow2(node_count));
+        ra.time[0] = 4;
 
         int timeline = 4;
         FOREACH_N(i, 0, ctx->bb_count) {
@@ -245,6 +254,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         tmp_vreg->mask = ctx->normie_mask[def_mask->class];
                         tmp_vreg->active_range = &NULL_RANGE;
 
+                        nl_table_put(&fwd_table, (void*) (uintptr_t) n->gvn, (void*) (uintptr_t) tmp->gvn);
                         aarray_insert(ra.time, tmp->gvn, timeline);
                         timeline += 2;
                         j += 1;
@@ -271,8 +281,14 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 uint64_t bits = live_out->data[j];
                 if (bits == 0) continue;
                 FOREACH_N(k, 0, 64) if (bits & (1ull << k)) {
-                    int vreg_id = ctx->vreg_map[j*64 + k];
-                    if (vreg_id > 0) { add_range(&ra, &ctx->vregs[vreg_id], bb_start, bb_end); }
+                    uintptr_t fwd = (uintptr_t) nl_table_get(&fwd_table, (void*) (j*64 + k));
+                    uintptr_t gvn = fwd ? fwd : j*64 + k;
+
+                    int vreg_id = ctx->vreg_map[gvn];
+                    if (vreg_id > 0) {
+                        assert(ctx->vregs[vreg_id].assigned < 0);
+                        add_range(&ra, &ctx->vregs[vreg_id], bb_start, bb_end);
+                    }
                 }
             }
 
@@ -301,10 +317,13 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     }
 
                     Tmps* tmps = nl_table_get(&ctx->tmps_map, n);
-                    if (tmps) {
-                        FOREACH_N(k, 0, tmps->count) {
-                            add_range(&ra, &ctx->vregs[tmps->elems[k]], bb_start, time);
-                        }
+                    if (tmps) FOREACH_N(k, 0, tmps->count) {
+                        add_range(&ra, &ctx->vregs[tmps->elems[k]], time, time + 1);
+                    }
+
+                    if (ctx->flags(ctx, n)) {
+                        int reg = ra.fixed[1]; // we assume FLAGS is in class[1]
+                        add_range(&ra, &ctx->vregs[reg], time, time + 1);
                     }
                 }
 
@@ -367,7 +386,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             printf("  # V%-4d t=[%-4d - %4d) ", vreg_id, start, end);
             tb__print_regmask(vreg->mask);
             printf("    ");
-            if (vreg->n) { tb_dumb_print_node(ctx->p->types, vreg->n); }
+            if (vreg->n) { tb_dumb_print_node(NULL, vreg->n); }
             printf("\n");
             #endif
 
@@ -391,7 +410,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             // display active set
             #if TB_OPTDEBUG_REGALLOC
-            static const char* classes[] = { "STK", "GPR", "VEC" };
+            static const char* classes[] = { "STK", "FLAGS", "GPR", "VEC" };
             FOREACH_N(rc, 0, ctx->num_classes) {
                 printf("  \x1b[32m%s { ", classes[rc]);
                 FOREACH_SET(reg, ra.active_set[rc]) {

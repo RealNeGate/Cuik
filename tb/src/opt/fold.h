@@ -152,8 +152,8 @@ static Lattice* value_arith(TB_Passes* restrict opt, TB_Node* n) {
         break;
 
         case TB_SUB:
-        overflow |= l_sub_overflow(a->_int.min, b->_int.min, mask, &min);
-        overflow |= l_sub_overflow(a->_int.max, b->_int.max, mask, &max);
+        overflow |= l_sub_overflow(a->_int.min, b->_int.max, mask, &min);
+        overflow |= l_sub_overflow(a->_int.max, b->_int.min, mask, &max);
         if (min > max) { overflow = true; }
         break;
 
@@ -678,8 +678,8 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* 
         if (get_int_const(n->inputs[2], &rhs) && rhs == 0) {
             // !(a <  b) is (b <= a)
             switch (cmp->type) {
-                case TB_CMP_EQ: n->type = TB_CMP_EQ; break;
-                case TB_CMP_NE: n->type = TB_CMP_NE; break;
+                case TB_CMP_EQ: n->type = TB_CMP_NE; break;
+                case TB_CMP_NE: n->type = TB_CMP_EQ; break;
                 case TB_CMP_SLT: n->type = TB_CMP_SLE; break;
                 case TB_CMP_SLE: n->type = TB_CMP_SLT; break;
                 case TB_CMP_ULT: n->type = TB_CMP_ULE; break;

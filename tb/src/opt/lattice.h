@@ -247,7 +247,7 @@ static bool l_mul_overflow(uint64_t x, uint64_t y, uint64_t mask, uint64_t* out)
 
 static bool l_sub_overflow(uint64_t x, uint64_t y, uint64_t mask, uint64_t* out) {
     *out = (x - y) & mask;
-    return x && *out > x;
+    return x < y;
 }
 
 static bool wrapped_int_lt(int64_t x, int64_t y, int bits) {

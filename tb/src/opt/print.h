@@ -474,7 +474,7 @@ void tb_pass_print(TB_Passes* opt) {
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
 
     // schedule nodes
-    tb_pass_schedule(opt, ctx.cfg, false, false);
+    tb_pass_schedule(opt, ctx.cfg, false, false, NULL);
     worklist_clear_visited(&opt->worklist);
 
     TB_Node* end_bb = NULL;
