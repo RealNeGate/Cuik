@@ -334,41 +334,20 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
     P("\n");
 }
 
-TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* user_data) {
-    TB_Function* f = opt->f;
-    Worklist old = opt->worklist;
-    Worklist tmp_ws = { 0 };
-    worklist_alloc(&tmp_ws, f->node_count);
-
+void tb_print_dot(TB_Function* f, TB_PrintCallback callback, void* user_data) {
     P("digraph %s {\n  node [ordering=in; shape=record];\n", f->super.name ? f->super.name : "unnamed");
 
-    opt->worklist = tmp_ws;
+    Worklist ws = { 0 };
+    worklist_alloc(&ws, f->node_count);
+    worklist_push(&ws, f->root_node);
 
-    Worklist* ws = &opt->worklist;
-    worklist_clear_visited(ws);
-
-    worklist_test_n_set(ws, f->root_node);
-    dyn_array_put(ws->items, f->root_node);
-
-    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-        TB_Node* n = ws->items[i];
-
-        bool has_users = true;
-        FOR_USERS(u, n) {
-            TB_Node* out = u->n;
-            if (!worklist_test_n_set(ws, out)) {
-                dyn_array_put(ws->items, out);
-            }
-            has_users = true;
-        }
-
-        if (has_users && n->type != TB_PROJ) {
-            print_graph_node(f, callback, user_data, i, n);
-        }
+    for (size_t i = 0; i < dyn_array_length(ws.items); i++) {
+        TB_Node* n = ws.items[i];
+        FOR_USERS(u, n) { worklist_push(&ws, f->root_node); }
+        if (n->type != TB_PROJ) { print_graph_node(f, callback, user_data, i, n); }
     }
 
-    worklist_free(ws);
-    opt->worklist = old;
+    worklist_free(&ws);
 
     P("}\n");
 }

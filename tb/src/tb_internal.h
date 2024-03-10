@@ -226,6 +226,9 @@ typedef struct {
 typedef struct COFF_UnwindInfo COFF_UnwindInfo;
 typedef struct ICodeGen ICodeGen;
 
+// it's a lattice element i'm not fucking typing that shit tho
+typedef struct Lattice Lattice;
+
 typedef struct TB_FunctionOutput {
     TB_Function* parent;
     TB_ModuleSectionHandle section;
@@ -262,6 +265,39 @@ typedef struct TB_FunctionOutput {
     TB_SymbolPatch* last_patch;
 } TB_FunctionOutput;
 
+typedef struct {
+    DynArray(TB_Node*) items;
+
+    // uses gvn as key
+    size_t visited_cap; // in words
+    uint64_t* visited;
+} Worklist;
+
+// we have analysis stuff for computing BBs from our graphs, these aren't
+// kept around at all times like an SSA-CFG compiler.
+typedef struct TB_BasicBlock TB_BasicBlock;
+struct TB_BasicBlock {
+    TB_BasicBlock* dom;
+
+    TB_Node* start;
+    TB_Node* end;
+    int id, dom_depth;
+
+    // used by codegen to track the associated machine BB
+    int order;
+
+    // dataflow
+    Set gen, kill;
+    Set live_in, live_out;
+
+    NL_HashSet items;
+};
+
+typedef struct TB_CFG {
+    size_t block_count;
+    NL_Map(TB_Node*, TB_BasicBlock) node_to_block;
+} TB_CFG;
+
 struct TB_Function {
     TB_Symbol super;
     TB_ModuleSectionHandle section;
@@ -274,21 +310,62 @@ struct TB_Function {
     size_t param_count;
     TB_Node** params;
 
-    // IR allocation
-    TB_Arena* arena;
+    TB_Arena* arena; // stores nodes, uses & lattice elems.
+    TB_Arena* tmp_arena; // all the random allocs within passes
+
     size_t node_count;
-
-    TB_Node* ret_node; // ir building crap
-
     TB_Node* root_node;
+
+    // for legacy builder
     TB_Trace trace;
 
     TB_NodeLocation* line_loc;
     NL_Table locations; // TB_Node* -> TB_NodeLocation*
 
-    // how we track duplicates for GVN, it's possible to run while optimizing
-    // the IR so we optionally do it.
-    NL_HashSet gvn_nodes;
+    // Optimizer related data
+    struct {
+        TB_Arena* arenas[2];
+
+        // we use this to verify that we're on the same thread
+        // for the entire duration of the TB_Function... we'll
+        // get rid of this limitation soon.
+        TB_ThreadInfo* pinned_thread;
+
+        // how we track duplicates for GVN, it's possible to run while building the IR.
+        NL_HashSet gvn_nodes;
+
+        // tracks the fancier type system:
+        //   hash-consing because there's a lot of
+        //   redundant types we might construct.
+        NL_HashSet type_interner;
+        // track a lattice per node (basically all get one so a compact array works)
+        size_t type_cap;
+        Lattice** types;
+        // for memory alias indices
+        int alias_n;
+        Lattice* root_mem;
+
+        // it's what the peepholes are iterating on
+        Worklist worklist;
+
+        // we throw the results of scheduling here:
+        //   [value number] -> TB_BasicBlock*
+        size_t scheduled_n;
+        TB_BasicBlock** scheduled;
+
+        // nice stats
+        /* struct {
+            #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
+            int time;
+            #endif
+
+            #if TB_OPTDEBUG_STATS
+            int initial;
+            int gvn_hit, gvn_miss;
+            int peeps, identities, rewrites;
+            #endif
+        } stats;*/
+    };
 
     // Compilation output
     union {
@@ -421,7 +498,7 @@ struct ICodeGen {
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
 
-    void (*compile_function)(TB_Passes* p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* arena, bool emit_asm);
+    void (*compile_function)(TB_Function* f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* arena, bool emit_asm);
 };
 
 // All debug formats i know of boil down to adding some extra sections to the object file
@@ -544,6 +621,7 @@ inline static bool tb_is_power_of_two(uint64_t x) {
 TB_Node* tb_alloc_node_dyn(TB_Function* f, int type, TB_DataType dt, int input_count, int input_cap, size_t extra);
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);
 TB_Node* tb__make_proj(TB_Function* f, TB_DataType dt, TB_Node* src, int index);
+void tb_kill_node(TB_Function* f, TB_Node* n);
 
 ExportList tb_module_layout_sections(TB_Module* m);
 

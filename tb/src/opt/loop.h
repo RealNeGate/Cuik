@@ -1,6 +1,6 @@
 
 // clone anything except control edges and phis to region
-static TB_Node* loop_clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* region, TB_Node* n, int phi_index) {
+static TB_Node* loop_clone_node(TB_Function* f, TB_Node* region, TB_Node* n, int phi_index) {
     TB_Node* cloned = n;
     if (n->type == TB_PHI && n->inputs[0] == region) {
         // replace OG with phi's edge
@@ -15,19 +15,16 @@ static TB_Node* loop_clone_node(TB_Passes* restrict p, TB_Function* f, TB_Node* 
         memcpy(cloned->extra, n->extra, extra);
 
         // mark new node
-        tb_pass_mark(p, cloned);
+        mark_node(f, cloned);
 
         // fill cloned edges
         FOREACH_N(i, 1, n->input_count) {
-            TB_Node* in = loop_clone_node(p, f, region, n->inputs[i], phi_index);
-
+            TB_Node* in = loop_clone_node(f, region, n->inputs[i], phi_index);
             cloned->inputs[i] = in;
             add_user(f, cloned, in, i, NULL);
         }
 
-        if (n->inputs[0]) {
-            cloned = tb__gvn(f, cloned, extra);
-        }
+        if (n->inputs[0]) { cloned = tb__gvn(f, cloned, extra); }
     }
 
     #if TB_OPTDEBUG_LOOP
@@ -51,16 +48,14 @@ static void swap_nodes(TB_Function* f, TB_Node* n, int i, int j) {
     set_input(f, n, old, j);
 }
 
-static TB_Node* upcast(TB_Passes* p, TB_Function* f, TB_Node* src, TB_DataType dt) {
+static TB_Node* upcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
     TB_Node* cast = tb_alloc_node(f, TB_ZERO_EXT, dt, 2, 0);
     set_input(f, cast, src, 1);
-    tb_pass_mark(p, cast);
+    mark_node(f, cast);
     return cast;
 }
 
-static bool indvar_simplify(TB_Passes* p, TB_Node* phi, TB_Node* cond, TB_Node* op) {
-    TB_Function* f = p->f;
-
+static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* op) {
     // -1 means signed, 1 means unsigned, 0 means don't care
     int best_uses = 0;
     TB_DataType best_dt = phi->dt;
@@ -104,13 +99,13 @@ static bool indvar_simplify(TB_Passes* p, TB_Node* phi, TB_Node* cond, TB_Node* 
                 TB_NODE_SET_EXTRA(cond, TB_NodeCompare, .cmp_dt = best_dt);
 
                 // upcast the other comparand
-                TB_Node* b_cast = upcast(p, f, cond->inputs[2], best_dt);
+                TB_Node* b_cast = upcast(f, cond->inputs[2], best_dt);
                 set_input(f, cond, b_cast, 2);
             } else if (use_n == op) {
                 assert(use_i == 1);
                 op->dt = best_dt;
 
-                TB_Node* b_cast = upcast(p, f, op->inputs[2], best_dt);
+                TB_Node* b_cast = upcast(f, op->inputs[2], best_dt);
                 set_input(f, op, b_cast, 2);
             } else if (use_n != cast) {
                 if (use_n->dt.raw == best_dt.raw && (use_n->type == TB_ZERO_EXT || use_n->type == TB_SIGN_EXT)) {
@@ -119,22 +114,22 @@ static bool indvar_simplify(TB_Passes* p, TB_Node* phi, TB_Node* cond, TB_Node* 
                 } else {
                     // generic upgrade
                     set_input(f, use_n, cast, use_i);
-                    tb_pass_mark_users(p, use_n);
+                    mark_users(f, use_n);
                 }
             }
 
             users = next;
         }
 
-        tb_pass_mark_users(p, cast);
-        tb_pass_mark_users(p, phi);
-        tb_pass_mark(p, cast);
-        tb_pass_mark(p, phi);
+        mark_users(f, cast);
+        mark_users(f, phi);
+        mark_node(f, cast);
+        mark_node(f, phi);
 
         // upscale init var
-        TB_Node* init_cast = upcast(p, f, phi->inputs[1], best_dt);
+        TB_Node* init_cast = upcast(f, phi->inputs[1], best_dt);
         set_input(f, phi, init_cast, 1);
-        tb_pass_mark(p, init_cast);
+        mark_node(f, init_cast);
 
         phi->dt = best_dt;
         return true;
@@ -144,29 +139,25 @@ static bool indvar_simplify(TB_Passes* p, TB_Node* phi, TB_Node* cond, TB_Node* 
 }
 
 // only case we handle rn is making a bigger stride when we proved the induction var never goes past
-static bool indvar_strength_reduction(TB_Passes* p, TB_Node* phi, TB_Node* cond, TB_Node* end_cond, TB_Node* op) {
-    TB_Function* f = p->f;
-
+static bool indvar_strength_reduction(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* end_cond, TB_Node* op) {
     uint64_t* init = iconst(phi->inputs[1]);
     uint64_t* end = end_cond ? iconst(end_cond) : NULL;
 
     if (init && end) {
-        __debugbreak();
+        tb_todo();
     }
 
     return false;
 }
 
-void tb_pass_loop(TB_Passes* p) {
+void tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop", NULL);
-    verify_tmp_arena(p);
 
-    TB_Function* f = p->f;
-    TB_CFG cfg = tb_compute_rpo(f, p);
-    tb_compute_dominators2(f, &p->worklist, cfg);
+    TB_CFG cfg = tb_compute_rpo(f, &f->worklist);
+    tb_compute_dominators(f, &f->worklist, cfg);
 
     size_t block_count = cfg.block_count;
-    TB_Node** blocks = &p->worklist.items[0];
+    TB_Node** blocks = &f->worklist.items[0];
 
     // canonicalize regions into natural loop headers (or affine loops)
     DynArray(ptrdiff_t) backedges = NULL;
@@ -260,12 +251,10 @@ void tb_pass_loop(TB_Passes* p) {
                     if (cond->type == TB_CMP_SLT || cond->type == TB_CMP_ULT) {
                         // if we know the right number of trips we can just append that to the value info
                         // TODO(NeGate): we should be using a JOIN op to narrow.
-                        Lattice* range = lattice_gimme_uint(p, *init, *init + trips*step);
+                        Lattice* range = lattice_gimme_uint(f, *init, *init + trips*step);
 
-                        tb_pass_mark(p, phi);
-                        if (lattice_universe_map_progress(p, phi, range)) {
-                            tb_pass_mark_users(p, phi);
-                        }
+                        mark_node(f, phi);
+                        if (latuni_set_progress(f, phi, range)) { mark_users(f, phi); }
                     }
                 }
 
@@ -290,7 +279,7 @@ void tb_pass_loop(TB_Passes* p) {
 
                 // we'll just run these alongside the loop detection but maybe they
                 // should be a separate pass?
-                indvar_simplify(p, phi, cond, op);
+                indvar_simplify(f, phi, cond, op);
                 // indvar_strength_reduction(p, phi, cond, end_cond, op);
             }
         }
@@ -485,8 +474,8 @@ void tb_pass_loop(TB_Passes* p) {
                     // rescale the step
                     TB_Node* scale_n = make_int_node(f, p, phi->dt, best_stride);
                     set_input(f, op, scale_n, 2);
-                    tb_pass_mark(p, op);
-                    tb_pass_mark(p, scale_n);
+                    mark_node(f, op);
+                    mark_node(f, scale_n);
 
                     // rescale the limit
                     if (cond->type != TB_PHI) {
@@ -500,8 +489,8 @@ void tb_pass_loop(TB_Passes* p) {
 
                         set_input(f, cond, limit_scaled, 2);
 
-                        tb_pass_mark(p, cond);
-                        tb_pass_mark(p, limit_scaled);
+                        mark_node(f, cond);
+                        mark_node(f, limit_scaled);
                     }
 
                     FOR_USERS(u, phi) {
@@ -562,7 +551,7 @@ void tb_pass_loop(TB_Passes* p) {
 
             // update latch before killing it (we want it's current users to know shit's
             // in motion)
-            tb_pass_mark_users(p, latch);
+            mark_users(p, latch);
 
             // convert to rotated loops
             //
@@ -582,7 +571,7 @@ void tb_pass_loop(TB_Passes* p) {
                 TB_Node *bot_cloned = NULL, *top_cloned = NULL;
                 for (TB_Node* curr = latch; curr != header; curr = curr->inputs[0]) {
                     TB_Node* cloned = loop_clone_node(p, f, header, curr, 1 + init_edge);
-                    tb_pass_mark_users(p, cloned);
+                    mark_users(p, cloned);
 
                     // attach control edge
                     if (top_cloned) {
@@ -598,14 +587,14 @@ void tb_pass_loop(TB_Passes* p) {
                 TB_Node* proj0 = make_proj_node(f, TB_TYPE_CONTROL, bot_cloned, 0);
                 TB_Node* proj1 = make_proj_node(f, TB_TYPE_CONTROL, bot_cloned, 1);
 
-                tb_pass_mark(p, proj0);
-                tb_pass_mark(p, proj1);
+                mark_node(f, proj0);
+                mark_node(f, proj1);
 
                 // add zero trip count check
                 TB_Node* ztc_check = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 1, sizeof(TB_NodeRegion));
                 set_input(f, ztc_check, header->inputs[init_edge], 0);
                 TB_NODE_GET_EXTRA_T(ztc_check, TB_NodeRegion)->freq = 1.0f;
-                tb_pass_mark(p, ztc_check);
+                mark_node(f, ztc_check);
 
                 // intercept the init path on the header
                 set_input(f, top_cloned, ztc_check, 0);
@@ -613,7 +602,7 @@ void tb_pass_loop(TB_Passes* p) {
 
                 exit_region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
                 TB_NODE_GET_EXTRA_T(exit_region, TB_NodeRegion)->freq = 1.0f;
-                tb_pass_mark(p, exit_region);
+                mark_node(f, exit_region);
                 set_input(f, exit_region, exit_proj_i ? proj1 : proj0, 0);
 
                 // connect exit projection to exit region, then connect the exit region to
@@ -648,8 +637,8 @@ void tb_pass_loop(TB_Passes* p) {
                 assert(bot_cloned->type == TB_BRANCH);
                 TB_Node* proj0 = make_proj_node(f, TB_TYPE_CONTROL, bot_cloned, 0);
                 TB_Node* proj1 = make_proj_node(f, TB_TYPE_CONTROL, bot_cloned, 1);
-                tb_pass_mark(p, proj0);
-                tb_pass_mark(p, proj1);
+                mark_node(f, proj0);
+                mark_node(f, proj1);
 
                 set_input(f, top_cloned, header->inputs[single_backedge], 0);
                 set_input(f, header, exit_proj_i ? proj0 : proj1, single_backedge);

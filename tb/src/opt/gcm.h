@@ -22,7 +22,7 @@ static TB_BasicBlock* try_to_hoist(TB_Function* f, TB_GetLatency get_lat, TB_Nod
 ////////////////////////////////
 // schedule nodes such that they appear the least common
 // ancestor to all their users
-static TB_BasicBlock* find_lca(TB_Passes* p, TB_BasicBlock* a, TB_BasicBlock* b) {
+static TB_BasicBlock* find_lca(TB_BasicBlock* a, TB_BasicBlock* b) {
     if (a == NULL) return b;
 
     // line both up
@@ -37,18 +37,18 @@ static TB_BasicBlock* find_lca(TB_Passes* p, TB_BasicBlock* a, TB_BasicBlock* b)
     return a;
 }
 
-void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB_GetLatency get_lat) {
-    assert(p->scheduled == NULL && "make sure when you're done with the schedule, you throw away the old one");
+void tb_global_schedule(TB_Function* f, TB_CFG cfg, bool renumber, bool dataflow, TB_GetLatency get_lat) {
+    assert(f->scheduled == NULL && "make sure when you're done with the schedule, you throw away the old one");
+    TB_Arena* tmp_arena = f->tmp_arena;
 
     CUIK_TIMED_BLOCK("schedule") {
-        TB_Function* f = p->f;
-        Worklist* restrict ws = &p->worklist;
+        Worklist* restrict ws = &f->worklist;
 
         // arraychads stay up
         size_t node_count = f->node_count;
-        p->scheduled_n = node_count + 32;
-        p->scheduled = tb_arena_alloc(tmp_arena, p->scheduled_n * sizeof(TB_BasicBlock*));
-        memset(p->scheduled, 0, node_count * sizeof(TB_BasicBlock*));
+        f->scheduled_n = node_count + 32;
+        f->scheduled = tb_arena_alloc(tmp_arena, f->scheduled_n * sizeof(TB_BasicBlock*));
+        memset(f->scheduled, 0, node_count * sizeof(TB_BasicBlock*));
 
         if (dataflow) {
             // live ins & outs will outlive this function so we wanna alloc before the savepoint
@@ -67,7 +67,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
 
         CUIK_TIMED_BLOCK("dominators") {
             // jarvis pull up the dommies
-            tb_compute_dominators(p->f, p, cfg);
+            tb_compute_dominators(f, &f->worklist, cfg);
 
             FOREACH_N(i, 0, cfg.block_count) {
                 TB_Node* n = ws->items[i];
@@ -75,13 +75,13 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
 
                 bb->items = nl_hashset_alloc(32);
                 nl_hashset_put(&bb->items, n);
-                p->scheduled[n->gvn] = bb;
+                f->scheduled[n->gvn] = bb;
             }
 
             worklist_clear_visited(ws);
         }
 
-        TB_BasicBlock* start_bb = p->scheduled[p->worklist.items[0]->gvn];
+        TB_BasicBlock* start_bb = f->scheduled[f->worklist.items[0]->gvn];
         NL_ChunkedArr pins = nl_chunked_arr_alloc(tmp_arena);
 
         CUIK_TIMED_BLOCK("pinned schedule") {
@@ -102,7 +102,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                     } else if (n->type != TB_ROOT) {
                         TB_Node* curr = n;
                         do {
-                            bb = p->scheduled[curr->gvn];
+                            bb = f->scheduled[curr->gvn];
                             curr = curr->inputs[0];
                             if (curr == NULL || curr->type == TB_ROOT) {
                                 break;
@@ -112,19 +112,14 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
 
                     if (bb) {
                         nl_hashset_put(&bb->items, n);
-                        p->scheduled[n->gvn] = bb;
+                        f->scheduled[n->gvn] = bb;
                         nl_chunked_arr_put(&pins, n);
 
                         DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u pinned to .bb%d\n", f->super.name, n->gvn, bb->id));
                     }
                 }
 
-                FOR_USERS(u, n) {
-                    TB_Node* out = u->n;
-                    if (!worklist_test_n_set(ws, out)) {
-                        dyn_array_put(ws->items, out);
-                    }
-                }
+                FOR_USERS(u, n) { worklist_push(ws, u->n); }
             }
 
             DO_IF(TB_OPTDEBUG_GCM)(printf("%s: scheduled %zu nodes (%zu recorded in the graph)\n", f->super.name, dyn_array_length(ws->items) - cfg.block_count, f->node_count));
@@ -195,7 +190,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                                     continue;
                                 }
 
-                                TB_BasicBlock* bb = p->scheduled[n->inputs[i]->gvn];
+                                TB_BasicBlock* bb = f->scheduled[n->inputs[i]->gvn];
                                 if (bb == NULL) {
                                     // input has no scheduling... weird?
                                     DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ dead\n", n->inputs[i]->gvn));
@@ -209,9 +204,9 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                                 }
                             }
 
-                            DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", p->f->super.name, n->gvn, best->id));
+                            DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", f->super.name, n->gvn, best->id));
 
-                            p->scheduled[n->gvn] = best;
+                            f->scheduled[n->gvn] = best;
                             nl_hashset_put(&best->items, n);
                             dyn_array_put(ws->items, n);
                         }
@@ -229,13 +224,13 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
             FOREACH_REVERSE_N(i, cfg.block_count, dyn_array_length(ws->items)) {
                 TB_Node* n = ws->items[i];
 
-                DO_IF(TB_OPTDEBUG_GCM)(printf("%s: try late v%u\n", p->f->super.name, n->gvn));
+                DO_IF(TB_OPTDEBUG_GCM)(printf("%s: try late v%u\n", f->super.name, n->gvn));
 
                 // we're gonna find the least common ancestor
                 TB_BasicBlock* lca = NULL;
                 FOR_USERS(use, n) {
                     TB_Node* y = use->n;
-                    TB_BasicBlock* use_block = p->scheduled[y->gvn];
+                    TB_BasicBlock* use_block = f->scheduled[y->gvn];
                     if (use_block == NULL) { continue; } // dead
 
                     DO_IF(TB_OPTDEBUG_GCM)(printf("  user v%u @ bb%d\n", y->gvn, use_block->id));
@@ -255,15 +250,15 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                         }
                         assert(j >= 0);
 
-                        TB_BasicBlock* bb = p->scheduled[use_node->inputs[j - 1]->gvn];
+                        TB_BasicBlock* bb = f->scheduled[use_node->inputs[j - 1]->gvn];
                         if (bb) { use_block = bb; }
                     }
 
-                    lca = find_lca(p, lca, use_block);
+                    lca = find_lca(lca, use_block);
                 }
 
                 if (lca != NULL) {
-                    TB_BasicBlock* old = p->scheduled[n->gvn];
+                    TB_BasicBlock* old = f->scheduled[n->gvn];
                     // i dont think it should be possible to schedule something here
                     // which didn't already get scheduled in EARLY
                     assert(old && "huh?");
@@ -280,7 +275,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                                 printf("\n")
                             );
 
-                            p->scheduled[n->gvn] = lca;
+                            f->scheduled[n->gvn] = lca;
                             nl_hashset_remove(&old->items, n);
                             nl_hashset_put(&lca->items, n);
                         }
@@ -299,7 +294,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                 size_t node_count = f->node_count;
                 FOREACH_N(i, 0, cfg.block_count) {
                     TB_Node* n = ws->items[i];
-                    TB_BasicBlock* bb = p->scheduled[n->gvn];
+                    TB_BasicBlock* bb = f->scheduled[n->gvn];
 
                     bb->gen = set_create_in_arena(tmp_arena, node_count);
                     bb->kill = set_create_in_arena(tmp_arena, node_count);
@@ -308,7 +303,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                 CUIK_TIMED_BLOCK("local") {
                     // we're doing dataflow analysis without the local schedule :)
                     FOREACH_N(i, 0, bb_count) {
-                        TB_BasicBlock* bb = p->scheduled[ws->items[i]->gvn];
+                        TB_BasicBlock* bb = f->scheduled[ws->items[i]->gvn];
                         nl_hashset_for(e, &bb->items) {
                             TB_Node* n = *e;
 
@@ -319,7 +314,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                                 FOREACH_N(i, 1, n->input_count) {
                                     TB_Node* in = n->inputs[i];
                                     if (in) {
-                                        TB_BasicBlock* in_bb = p->scheduled[in->gvn];
+                                        TB_BasicBlock* in_bb = f->scheduled[in->gvn];
                                         set_put(&in_bb->kill, n->gvn);
                                     }
                                 }
@@ -333,7 +328,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                     }
 
                     FOREACH_N(i, 0, bb_count) {
-                        TB_BasicBlock* bb = p->scheduled[ws->items[i]->gvn];
+                        TB_BasicBlock* bb = f->scheduled[ws->items[i]->gvn];
                         nl_hashset_for(e, &bb->items) {
                             TB_Node* n = *e;
                             if (n->type == TB_PHI) continue;
@@ -355,7 +350,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                         TB_Node* n = ws->items[i];
 
                         // in(bb) = use(bb)
-                        TB_BasicBlock* bb = p->scheduled[n->gvn];
+                        TB_BasicBlock* bb = f->scheduled[n->gvn];
                         set_copy(&bb->live_in, &bb->gen);
 
                         dyn_array_put(ws->items, n);
@@ -365,7 +360,7 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                     while (dyn_array_length(ws->items) > bb_count) CUIK_TIMED_BLOCK("iter")
                     {
                         TB_Node* bb_node = dyn_array_pop(ws->items);
-                        TB_BasicBlock* bb = p->scheduled[bb_node->gvn];
+                        TB_BasicBlock* bb = f->scheduled[bb_node->gvn];
                         worklist_remove(ws, bb_node);
 
                         Set* live_out = &bb->live_out;
@@ -378,14 +373,14 @@ void tb_pass_schedule(TB_Passes* p, TB_CFG cfg, bool renumber, bool dataflow, TB
                                 if (u->n->type == TB_PROJ) {
                                     // union with successor's lives
                                     TB_Node* succ = cfg_next_bb_after_cproj(u->n);
-                                    TB_BasicBlock* succ_bb = p->scheduled[succ->gvn];
+                                    TB_BasicBlock* succ_bb = f->scheduled[succ->gvn];
                                     set_union(live_out, &succ_bb->live_in);
                                 }
                             }
                         } else if (!cfg_is_endpoint(end)) {
                             // union with successor's lives
                             TB_Node* succ = cfg_next_control(end);
-                            TB_BasicBlock* succ_bb = p->scheduled[succ->gvn];
+                            TB_BasicBlock* succ_bb = f->scheduled[succ->gvn];
                             set_union(live_out, &succ_bb->live_in);
                         }
 

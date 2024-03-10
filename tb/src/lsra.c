@@ -119,8 +119,8 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         }
 
         // only need enough to store for the biggest register class
-        ra.free_until = tb_arena_alloc(tmp_arena, max_regs_in_class * sizeof(int));
-        ra.block_pos  = tb_arena_alloc(tmp_arena, max_regs_in_class * sizeof(int));
+        ra.free_until = tb_arena_alloc(arena, max_regs_in_class * sizeof(int));
+        ra.block_pos  = tb_arena_alloc(arena, max_regs_in_class * sizeof(int));
         ra.num_regs   = ctx->num_regs;
     }
 
@@ -180,7 +180,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         TB_NODE_SET_EXTRA(tmp, TB_NodeMachCopy, .def = in_mask, .use = in_def_mask);
 
                         // schedule the split right before use
-                        tb__insert_before(ctx, ctx->p, tmp, n);
+                        tb__insert_before(ctx, f, tmp, n);
                         if (hint >= 0) {
                             int fixed_vreg = ra.fixed[in_mask->class] + hint;
                             aarray_insert(ctx->vreg_map, tmp->gvn, fixed_vreg);
@@ -249,7 +249,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         TB_NODE_SET_EXTRA(tmp, TB_NodeMachCopy, .def = ctx->normie_mask[def_mask->class], .use = def_mask);
 
                         // schedule the split right after def
-                        tb__insert_after(ctx, ctx->p, tmp, n);
+                        tb__insert_after(ctx, f, tmp, n);
                         VReg* tmp_vreg = tb__set_node_vreg(ctx, tmp);
                         tmp_vreg->mask = ctx->normie_mask[def_mask->class];
                         tmp_vreg->active_range = &NULL_RANGE;
@@ -275,7 +275,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             // live outs define a full range across the BB (if they're defined
             // in the block, the later reverse walk will fix that up)
-            TB_BasicBlock* bb = ctx->p->scheduled[mbb->n->gvn];
+            TB_BasicBlock* bb = f->scheduled[mbb->n->gvn];
             Set* live_out = &bb->live_out;
             FOREACH_N(j, 0, (node_count + 63) / 64) {
                 uint64_t bits = live_out->data[j];
@@ -810,7 +810,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         };
                         assert(in_def->dt.raw);
                         tmp->spill_dt = in_def->dt;
-                        tmp->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
+                        tmp->ins = tb_arena_alloc(arena, sizeof(Tile*));
                         tmp->in_count = 1;
                         tmp->ins[0].src  = in_def;
                         tmp->ins[0].mask = in_def_mask;

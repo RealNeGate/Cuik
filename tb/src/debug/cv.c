@@ -69,7 +69,7 @@ static uint16_t get_codeview_type(TB_DataType dt) {
     return 0x0003; // T_VOID
 }
 
-static uint16_t convert_to_codeview_type(CV_Builder* builder, TB_DebugType* type) {
+static uint16_t convert_to_codeview_type(TB_Arena* tmp_arena, CV_Builder* builder, TB_DebugType* type) {
     if (type->type_id != 0) {
         return type->type_id;
     }
@@ -98,16 +98,16 @@ static uint16_t convert_to_codeview_type(CV_Builder* builder, TB_DebugType* type
         }
 
         case TB_DEBUG_TYPE_ARRAY:
-        return (type->type_id = tb_codeview_builder_add_array(builder, convert_to_codeview_type(builder, type->array.base), debug_type_size(TB_ABI_WIN64, type->array.base) * type->array.count));
+        return (type->type_id = tb_codeview_builder_add_array(builder, convert_to_codeview_type(tmp_arena, builder, type->array.base), debug_type_size(TB_ABI_WIN64, type->array.base) * type->array.count));
 
         case TB_DEBUG_TYPE_POINTER:
-        return (type->type_id = tb_codeview_builder_add_pointer(builder, convert_to_codeview_type(builder, type->ptr_to)));
+        return (type->type_id = tb_codeview_builder_add_pointer(builder, convert_to_codeview_type(tmp_arena, builder, type->ptr_to)));
 
         case TB_DEBUG_TYPE_FUNCTION:
         return (type->type_id = tb_codeview_builder_add_pointer(builder, 0x0003));
 
         case TB_DEBUG_TYPE_ALIAS:
-        return (type->type_id = tb_codeview_builder_add_alias(builder, convert_to_codeview_type(builder, type->alias.type), type->alias.name));
+        return (type->type_id = tb_codeview_builder_add_alias(builder, convert_to_codeview_type(tmp_arena, builder, type->alias.type), type->alias.name));
 
         case TB_DEBUG_TYPE_STRUCT:
         case TB_DEBUG_TYPE_UNION: {
@@ -131,7 +131,7 @@ static uint16_t convert_to_codeview_type(CV_Builder* builder, TB_DebugType* type
                 const TB_DebugType* f = type->record.members[i];
                 assert(f->tag == TB_DEBUG_TYPE_FIELD);
 
-                list[i].type = convert_to_codeview_type(builder, f->field.type);
+                list[i].type = convert_to_codeview_type(tmp_arena, builder, f->field.type);
                 list[i].name = f->field.name;
                 list[i].offset = f->field.offset;
             }
@@ -381,7 +381,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
                     if (g->super.name == NULL) continue;
 
                     size_t name_len = strlen(g->super.name) + 1;
-                    CV_TypeIndex type = g->dbg_type ? convert_to_codeview_type(&builder, g->dbg_type) : T_VOID;
+                    CV_TypeIndex type = g->dbg_type ? convert_to_codeview_type(arena, &builder, g->dbg_type) : T_VOID;
 
                     // printf("%-20s : %d\n", name, type);
                     size_t baseline = debugs_out.count;
@@ -434,7 +434,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
                         CV_TypeIndex* params = tb_arena_alloc(arena, proto->param_count * sizeof(CV_TypeIndex));
                         FOREACH_N(i, 0, proto->param_count) {
                             TB_DebugType* t = proto->params[i].debug_type;
-                            params[i] = t ? convert_to_codeview_type(&builder, t) : T_VOID;
+                            params[i] = t ? convert_to_codeview_type(arena, &builder, t) : T_VOID;
                         }
 
                         CV_TypeIndex arg_list = tb_codeview_builder_add_arg_list(&builder, proto->param_count, params, proto->has_varargs);
@@ -444,7 +444,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
                         CV_TypeIndex return_type = T_VOID;
                         if (proto->return_count == 1) {
                             const TB_PrototypeParam* ret = &TB_PROTOTYPE_RETURNS(proto)[0];
-                            return_type = ret->debug_type ? convert_to_codeview_type(&builder, ret->debug_type) : get_codeview_type(ret->dt);
+                            return_type = ret->debug_type ? convert_to_codeview_type(arena, &builder, ret->debug_type) : get_codeview_type(ret->dt);
                         }
 
                         // Create the procedure type
@@ -510,7 +510,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
                             assert(var_name);
 
                             size_t var_name_len = strlen(var_name);
-                            uint32_t type_index = convert_to_codeview_type(&builder, type);
+                            uint32_t type_index = convert_to_codeview_type(arena, &builder, type);
 
                             // define S_REGREL32
                             CV_RegRel32 l = {

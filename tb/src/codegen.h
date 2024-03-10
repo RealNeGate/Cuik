@@ -140,7 +140,6 @@ typedef struct {
 } Tmps;
 
 struct Ctx {
-    TB_Passes* p;
     TB_CGEmitter emit;
 
     TB_Module* module;
@@ -211,8 +210,8 @@ void tb__print_regmask(RegMask* mask);
 
 // RA helpers
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b);
-void tb__insert_before(Ctx* ctx, TB_Passes* p, TB_Node* n, TB_Node* before_n);
-void tb__insert_after(Ctx* ctx, TB_Passes* p, TB_Node* n, TB_Node* before_n);
+void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
+void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n);
 
 static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {
@@ -260,8 +259,8 @@ static int fixed_reg_mask(RegMask* mask) {
     }
 }
 
-static RegMask* new_regmask(int reg_class, bool may_spill, uint64_t mask) {
-    RegMask* rm = tb_arena_alloc(tmp_arena, sizeof(RegMask) + sizeof(uint64_t));
+static RegMask* new_regmask(TB_Function* f, int reg_class, bool may_spill, uint64_t mask) {
+    RegMask* rm = tb_arena_alloc(f->tmp_arena, sizeof(RegMask) + sizeof(uint64_t));
     rm->may_spill = may_spill;
     rm->class = reg_class;
     rm->count = 1;
@@ -292,10 +291,10 @@ static bool rm_compare(void* a, void* b) {
 }
 
 static RegMask* intern_regmask(Ctx* ctx, int reg_class, bool may_spill, uint64_t mask) {
-    RegMask* new_rm = new_regmask(reg_class, may_spill, mask);
+    RegMask* new_rm = new_regmask(ctx->f, reg_class, may_spill, mask);
     RegMask* old_rm = nl_hashset_put2(&ctx->mask_intern, new_rm, rm_hash, rm_compare);
     if (old_rm != NULL) {
-        tb_arena_free(tmp_arena, new_rm, sizeof(RegMask));
+        tb_arena_free(ctx->f->tmp_arena, new_rm, sizeof(RegMask));
         return old_rm;
     }
     return new_rm;

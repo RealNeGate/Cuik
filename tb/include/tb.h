@@ -8,6 +8,7 @@
 //   DSE  - dead store elimination
 //   GCM  - global code motion
 //   SROA - scalar replacement of aggregates
+//   CCP  - conditional constant propagation
 //   SCCP - sparse conditional constant propagation
 //   RPO  - reverse postorder
 //   RA   - register allocation
@@ -1434,66 +1435,45 @@ TB_API void tb_builder_block(TB_GraphBuilder* g);
 TB_API void tb_builder_endblock(TB_GraphBuilder* g);
 
 ////////////////////////////////
-// Passes
+// New optimizer API
 ////////////////////////////////
-// Function analysis, optimizations, and codegen are all part of this
-typedef struct TB_Passes TB_Passes;
+// the optimizer has fancy types for CCP, these can be freed once you're done with
+// transforms/analysis. returns true if it actually allocated.
+TB_API bool tb_opt_alloc_types(TB_Function* f);
+TB_API void tb_opt_free_types(TB_Function* f);
 
-// the arena is used to allocate the nodes while passes are being done.
-TB_API TB_Passes* tb_pass_enter(TB_Function* f, TB_Arena* arena);
-TB_API void tb_pass_exit(TB_Passes* p);
-
-// allocates peephole datastructures, necessarily if you wanna run the peephole optimizer
-// during IR construction.
-TB_API void tb_pass_prep(TB_Passes* p);
-
-// this is the peephole optimizer in a form you can run during IR construction.
-TB_API TB_Node* tb_pass_peephole_node(TB_Passes* p, TB_Node* n);
+// this will allocate the worklist, you can free worklist once you're done with analysis/transforms.
+TB_API void tb_opt_push_all_nodes(TB_Function* f, TB_Arena* ir, TB_Arena* tmp);
+TB_API void tb_opt_free_worklist(TB_Function* f);
+TB_API void tb_opt_dump_stats(TB_Function* f);
 
 // returns GVN on a new node, returning either the same node or a duplicate node 'k'.
 // it deletes 'n' if it's a duplicate btw.
-TB_API TB_Node* tb_pass_gvn_node(TB_Function* f, TB_Node* n);
+TB_API TB_Node* tb_opt_gvn_node(TB_Function* f, TB_Node* n);
+// returns isomorphic node that's run it's peepholes.
+TB_API TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n);
 
-// transformation passes:
-//   peephole: 90% of the optimizer, i'm sea of nodes pilled so i
-//     break down most optimizations into local rewrites, it's
-//     also incremental so spamming it doesn't really do anything and
-//     if placing all the nodes back onto the worklist caused progress
-//     that's a bug that should be reported.
-TB_API void tb_pass_peephole(TB_Passes* p);
-TB_API void tb_pass_locals(TB_Passes* p);
-TB_API void tb_pass_loop(TB_Passes* p);
+// Trust me bro, just use my configs
+TB_API void tb_opt(TB_Function* f);
 
-// this just runs the optimizer in the default configuration
-TB_API void tb_pass_optimize(TB_Passes* p);
-
-// analysis
-//   print: prints IR in a flattened text form.
-TB_API void tb_pass_print(TB_Passes* opt);
-//   print-dot: prints IR as DOT
-TB_API void tb_pass_print_dot(TB_Passes* opt, TB_PrintCallback callback, void* user_data);
+// print in SSA-CFG looking form (with BB params for the phis)
+TB_API void tb_print(TB_Function* f);
+// prints IR as GraphViz's DOT
+TB_API void tb_print_dot(TB_Function* f, TB_PrintCallback callback, void* user_data);
+// p is optional
+TB_API void tb_print_dumb(TB_Function* f, bool use_fancy_types);
 
 // codegen:
 //   output goes at the top of the code_arena, feel free to place multiple functions
 //   into the same code arena (although arenas aren't thread-safe you'll want one per thread
 //   at least)
-TB_API TB_FunctionOutput* tb_pass_codegen(TB_Passes* opt, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
+TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
 
 // interprocedural optimizer iter
 TB_API bool tb_module_ipo(TB_Module* m);
 
-TB_API void tb_pass_kill_node(TB_Function* f, TB_Node* n);
-TB_API void tb_pass_mark(TB_Passes* opt, TB_Node* n);
-TB_API void tb_pass_mark_users(TB_Passes* opt, TB_Node* n);
-
-////////////////////////////////
-// Helpers
-////////////////////////////////
 // the user_data is expected to be a valid FILE*
 TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...);
-
-// p is optional
-TB_API void tb_dumb_print(TB_Function* f, TB_Passes* p);
 
 ////////////////////////////////
 // IR access

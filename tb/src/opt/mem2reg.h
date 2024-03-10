@@ -35,12 +35,12 @@ static Rename RENAME_DUMMY = { 0 };
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt);
 
-static bool good_mem_op(TB_Passes* p, TB_Node* n) { // ld, st, memcpy, memset
+static bool good_mem_op(TB_Function* f, TB_Node* n) { // ld, st, memcpy, memset
     if (n->type == TB_LOAD) {
         return true;
     } else if (n->type >= TB_STORE && n->type <= TB_MEMSET) {
-        Lattice* l = lattice_universe_get(p, n);
-        return l == &TOP_IN_THE_SKY || l == p->root_mem;
+        Lattice* l = latuni_get(f, n);
+        return l == &TOP_IN_THE_SKY || l == f->root_mem;
     } else {
         return false;
     }
@@ -109,16 +109,18 @@ static void expunge(TB_Function* f, TB_Node* n) {
             }
         }
 
-        tb_pass_kill_node(f, use_n);
+        tb_kill_node(f, use_n);
     }
-    tb_pass_kill_node(f, n);
+    tb_kill_node(f, n);
 }
 
 static TB_Node* node_or_poison(TB_Function* f, TB_Node* n, TB_DataType dt) {
     return n ? n : make_poison(f, dt);
 }
 
-static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter* restrict ctx, TB_Node* curr, TB_Node** latest) {
+static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node* curr, TB_Node** latest) {
+    TB_Arena* tmp_arena = f->tmp_arena;
+
     int user_cnt = 0;
     MemOp* users = NULL;
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
@@ -177,14 +179,14 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                     latest[1 + cat] = curr;
 
                     // invalidate old memory type
-                    tb_pass_mark(p, curr);
-                    lattice_universe_map(p, curr, NULL);
+                    mark_node(f, curr);
+                    latuni_set(f, curr, NULL);
                 } else {
                     // get rid of the store, we don't need it
                     latest[1 + cat] = curr->inputs[3];
 
                     // printf("* KILL %%%u (latest[%d] = %%%u)\n", curr->gvn, 1 + cat, curr->inputs[3]->gvn);
-                    tb_pass_kill_node(f, curr);
+                    tb_kill_node(f, curr);
                 }
             }
         } else if (curr->type != TB_PHI && is_mem_out_op(curr)) {
@@ -213,7 +215,7 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                     if (alias_idx >= 0) {
                         // rewrite edge
                         set_input(f, use_n, latest[1 + cat], 1);
-                        tb_pass_mark(p, use_n);
+                        mark_node(f, use_n);
                     } else {
                         assert(use_n->type == TB_LOAD);
 
@@ -247,7 +249,7 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                     new_latest[i] = latest[i];
                 }
 
-                fixup_mem_node(f, p, ctx, use_n, new_latest);
+                fixup_mem_node(f, ctx, use_n, new_latest);
                 tb_arena_restore(tmp_arena, sp);
                 break;
             }
@@ -266,7 +268,7 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                     // convert single phi into multiple parallel phis (first one will be replaced
                     // with the root mem)
                     set_input(f, use_n, latest[0], use_i);
-                    lattice_universe_map(p, use_n, NULL);
+                    latuni_set(f, use_n, NULL);
 
                     assert(use_n->dt.type == TB_MEMORY);
                     new_latest[0] = use_n;
@@ -287,18 +289,18 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
                             set_input(f, new_phi, region, 0);
                             set_input(f, new_phi, val, use_i);
                             new_latest[1 + i] = new_phi;
-                            tb_pass_mark(p, new_phi);
+                            mark_node(f, new_phi);
 
                             nl_table_put(&ctx->phi2local, new_phi, &ctx->renames[i]);
-                            lattice_universe_map(p, new_phi, NULL);
+                            latuni_set(f, new_phi, NULL);
                         } else {
                             new_latest[1 + i] = NULL;
                         }
                     }
 
                     // first entry, every other time we'll just be stitching phis
-                    tb_pass_mark(p, use_n);
-                    fixup_mem_node(f, p, ctx, use_n, new_latest);
+                    mark_node(f, use_n);
+                    fixup_mem_node(f, ctx, use_n, new_latest);
                 } else if (v == &RENAME_DUMMY) {
                     FOR_USERS(phi, region) if (phi->n->type == TB_PHI) {
                         Rename* name = nl_table_get(&ctx->phi2local, phi->n);
@@ -343,12 +345,11 @@ static void fixup_mem_node(TB_Function* f, TB_Passes* restrict p, LocalSplitter*
     tb_arena_restore(tmp_arena, sp);
 }
 
-void tb_pass_locals(TB_Passes* p) {
-    TB_Function* f = p->f;
-
+void tb_opt_locals(TB_Function* f) {
+    TB_Arena* tmp_arena = f->tmp_arena;
     do {
         cuikperf_region_start("locals", NULL);
-        assert(dyn_array_length(p->worklist.items) == 0);
+        assert(dyn_array_length(f->worklist.items) == 0);
 
         // find all locals
         LocalSplitter ctx = { 0 };
@@ -375,7 +376,7 @@ void tb_pass_locals(TB_Passes* p) {
                         // mode = RENAME_MEMORY;
                         mode = RENAME_NONE;
                         break;
-                    } else if (mem->slot != 2 || !good_mem_op(p, mem->n)) {
+                    } else if (mem->slot != 2 || !good_mem_op(f, mem->n)) {
                         mode = RENAME_NONE;
                         break;
                     }
@@ -384,7 +385,7 @@ void tb_pass_locals(TB_Passes* p) {
                 if (mode != RENAME_NONE) {
                     // allocate new alias index
                     if (mode == RENAME_MEMORY) {
-                        ctx.renames[j].alias_idx = p->alias_n++;
+                        ctx.renames[j].alias_idx = f->alias_n++;
                         needs_to_rewrite = true;
                     } else if (mode == RENAME_VALUE) {
                         ctx.renames[j].alias_idx = -1;
@@ -413,12 +414,12 @@ void tb_pass_locals(TB_Passes* p) {
             FOREACH_N(i, 1, 1 + ctx.local_count) { latest[i] = NULL; }
             latest[0] = f->params[1];
 
-            fixup_mem_node(f, p, &ctx, first_mem, latest);
+            fixup_mem_node(f, &ctx, first_mem, latest);
         }
 
         // ok if they're now value edges we can delete the LOCAL
         FOREACH_N(i, 0, ctx.local_count) if (ctx.renames[i].alias_idx < 0) {
-            tb_pass_kill_node(f, ctx.renames[i].addr);
+            tb_kill_node(f, ctx.renames[i].addr);
         }
 
         nl_table_free(ctx.phi2local);
@@ -426,6 +427,6 @@ void tb_pass_locals(TB_Passes* p) {
         cuikperf_region_end();
 
         // run a round of peepholes, lots of new room to explore :)
-        tb_pass_peephole(p);
+        tb_opt_peeps(f);
     } while (true);
 }

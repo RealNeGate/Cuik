@@ -1,6 +1,5 @@
 
 typedef struct {
-    TB_Passes* opt;
     TB_Function* f;
     TB_CFG cfg;
 } PrinterCtx;
@@ -181,15 +180,16 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     print_ref_to_node(ctx, bb_start, true);
     printf("\n");
 
-    TB_BasicBlock* bb = ctx->opt->scheduled[bb_start->gvn];
-    Worklist* ws = &ctx->opt->worklist;
+    TB_Function* f = ctx->f;
+    TB_BasicBlock* bb = f->scheduled[bb_start->gvn];
+    Worklist* ws = &f->worklist;
 
     #ifndef NDEBUG
     TB_BasicBlock* expected = &nl_map_get_checked(ctx->cfg.node_to_block, bb_start);
     assert(expected == bb);
     #endif
 
-    greedy_scheduler(ctx->opt, &ctx->cfg, ws, NULL, bb);
+    tb_greedy_scheduler(f, &ctx->cfg, ws, NULL, bb);
 
     FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];
@@ -204,7 +204,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
         }
 
         TB_NodeLocation* v;
-        if (v = nl_table_get(&ctx->f->locations, n), v) {
+        if (v = nl_table_get(&f->locations, n), v) {
             printf("  # location %s:%d\n", v->file->path, v->line);
         }
 
@@ -214,8 +214,8 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-                TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-                TB_Node** restrict succ = tb_arena_alloc(tmp_arena, br->succ_count * sizeof(TB_Node**));
+                TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
+                TB_Node** restrict succ = tb_arena_alloc(f->tmp_arena, br->succ_count * sizeof(TB_Node**));
 
                 // fill successors
                 FOR_USERS(u, n) {
@@ -262,7 +262,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                     printf("  }");
                 }
                 printf(" // v%u", n->gvn);
-                tb_arena_restore(tmp_arena, sp);
+                tb_arena_restore(f->tmp_arena, sp);
                 break;
             }
 
@@ -459,43 +459,40 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
     }
 }
 
-void tb_pass_print(TB_Passes* opt) {
-    TB_Function* f = opt->f;
+void tb_print(TB_Function* f) {
+    assert(f->scheduled == NULL);
     cuikperf_region_start("print", NULL);
 
-    Worklist old = opt->worklist;
-    Worklist tmp_ws = { 0 };
-    worklist_alloc(&tmp_ws, f->node_count);
+    Worklist ws = { 0 };
+    worklist_alloc(&ws, f->node_count);
 
-    PrinterCtx ctx = { opt, f };
-    opt->worklist = tmp_ws;
-    ctx.cfg = tb_compute_rpo(f, opt);
+    PrinterCtx ctx = { 0 };
+    ctx.cfg = tb_compute_rpo(f, &ws);
 
-    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
 
     // schedule nodes
-    tb_pass_schedule(opt, ctx.cfg, false, false, NULL);
-    worklist_clear_visited(&opt->worklist);
+    tb_global_schedule(f, ctx.cfg, false, false, NULL);
+    worklist_clear_visited(&ws);
 
     TB_Node* end_bb = NULL;
     FOREACH_N(i, 0, ctx.cfg.block_count) {
-        TB_Node* end = nl_map_get_checked(ctx.cfg.node_to_block, opt->worklist.items[i]).end;
+        TB_Node* end = nl_map_get_checked(ctx.cfg.node_to_block, ws.items[i]).end;
         if (end->type == TB_RETURN) {
-            end_bb = opt->worklist.items[i];
+            end_bb = ws.items[i];
             continue;
         }
 
-        print_bb(&ctx, opt->worklist.items[i]);
+        print_bb(&ctx, ws.items[i]);
     }
 
     if (end_bb != NULL) {
         print_bb(&ctx, end_bb);
     }
-
-    tb_arena_restore(tmp_arena, sp);
-    worklist_free(&opt->worklist);
+    worklist_free(&ws);
     tb_free_cfg(&ctx.cfg);
-    opt->worklist = old;
-    opt->scheduled = NULL;
+
+    tb_arena_restore(f->tmp_arena, sp);
+    f->scheduled = NULL;
     cuikperf_region_end();
 }

@@ -12,7 +12,6 @@ struct LegalizeCtx {
     TB_Arch arch;
 
     TB_Function* f;
-    TB_Passes* p;
 
     Worklist* ws;
     LegalizeFn fn;
@@ -51,7 +50,7 @@ static TB_Node* make_member(TB_Function* f, TB_Node* src, int32_t offset) {
     return tb__gvn(f, n, 0);
 }
 
-static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Node* n, LegalType valid) {
+static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Arena* tmp_arena, TB_Node* n, LegalType valid) {
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
     TB_Node** pieces = tb_arena_alloc(tmp_arena, valid.splits * sizeof(TB_Node*));
 
@@ -61,7 +60,7 @@ static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Node* n, LegalType valid) {
         uint64_t mask = tb__mask(valid.size*8);
 
         FOREACH_N(i, 0, valid.splits) {
-            pieces[i] = make_int_node(f, ctx->p, valid.dt, imm & mask);
+            pieces[i] = make_int_node(f, valid.dt, imm & mask);
             imm >>= valid.size*8;
         }
     } else if (n->type == TB_LOAD) {
@@ -83,8 +82,8 @@ static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Node* n, LegalType valid) {
             pieces[i] = ld;
         }
     } else if (n->type == TB_ADD) {
-        TB_Node** a = legalize_node(ctx, n->inputs[1], valid);
-        TB_Node** b = legalize_node(ctx, n->inputs[2], valid);
+        TB_Node** a = legalize_node(ctx, tmp_arena, n->inputs[1], valid);
+        TB_Node** b = legalize_node(ctx, tmp_arena, n->inputs[2], valid);
 
         TB_Node* carry = NULL;
         FOREACH_N(i, 0, valid.splits) {
@@ -99,6 +98,7 @@ static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Node* n, LegalType valid) {
     } else {
         tb_todo();
     }
+    tb_arena_restore(tmp_arena, sp);
     return pieces;
 }
 
@@ -113,7 +113,7 @@ static TB_Node* walk_node(LegalizeCtx* ctx, TB_Node* n) {
     LegalType valid;
     if (n->type == TB_STORE && ctx->fn(ctx, n->inputs[3]->dt, &valid)) {
         // split store
-        TB_Node** op = legalize_node(ctx, n->inputs[3], valid);
+        TB_Node** op = legalize_node(ctx, ctx->f->tmp_arena, n->inputs[3], valid);
 
         int32_t align = TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->align;
         if (align < valid.size) { align = valid.size; }
@@ -157,11 +157,9 @@ static TB_Node* walk_node(LegalizeCtx* ctx, TB_Node* n) {
 }
 
 // This is the post-optimize pass which gets rid of weird integer types
-void tb_pass_legalize(TB_Passes* p, TB_Arch arch) {
+void tb_opt_legalize(TB_Function* f, TB_Arch arch) {
     CUIK_TIMED_BLOCK("global sched") {
-        TB_Function* f = p->f;
-
-        LegalizeCtx ctx = { arch, f, p, &p->worklist };
+        LegalizeCtx ctx = { arch, f, &f->worklist };
         ctx.fn = legalize_64bit_machine;
 
         // bottom-up rewrite

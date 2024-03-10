@@ -12,7 +12,7 @@ static bool get_int_const(TB_Node* n, uint64_t* imm) {
 ////////////////////////////////
 // Integer idealizations
 ////////////////////////////////
-static TB_Node* ideal_bitcast(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_bitcast(TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
     if (src->type == TB_BITCAST) {
@@ -25,7 +25,7 @@ static TB_Node* ideal_bitcast(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
         n->type = TB_TRUNCATE;
         return n;
     } else if (src->type == TB_INTEGER_CONST) {
-        return make_int_node(f, opt, n->dt, TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value);
+        return make_int_node(f, n->dt, TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value);
     }
 
     return NULL;
@@ -65,8 +65,8 @@ static bool inverted_cmp(TB_Node* n, TB_Node* n2) {
     }
 }
 
-static Lattice* value_sext(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
+static Lattice* value_sext(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -95,11 +95,11 @@ static Lattice* value_sext(TB_Passes* restrict opt, TB_Node* n) {
         ones |= mask;
     }
 
-    return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* value_zext(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
+static Lattice* value_zext(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -111,11 +111,11 @@ static Lattice* value_zext(TB_Passes* restrict opt, TB_Node* n) {
     uint64_t zeros = a->_int.known_zeros | mask; // we know the top bits must be zero
     uint64_t ones  = a->_int.known_ones;
 
-    return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* value_trunc(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
+static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -130,12 +130,12 @@ static Lattice* value_trunc(TB_Passes* restrict opt, TB_Node* n) {
 
     uint64_t zeros = a->_int.known_zeros | ~mask;
     uint64_t ones  = a->_int.known_ones  & mask;
-    return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* value_arith(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
-    Lattice* b = lattice_universe_get(opt, n->inputs[2]);
+static Lattice* value_arith(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    Lattice* b = latuni_get(f, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -168,16 +168,16 @@ static Lattice* value_arith(TB_Passes* restrict opt, TB_Node* n) {
     min &= mask, max &= mask;
 
     if (min == max) {
-        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
     } else if (overflow) {
-        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { 0, mask } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, mask } });
     } else {
-        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max } });
     }
 }
 
-static Lattice* value_bitcast(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
+static Lattice* value_bitcast(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -190,8 +190,8 @@ static Lattice* value_bitcast(TB_Passes* restrict opt, TB_Node* n) {
     return NULL;
 }
 
-static Lattice* value_unary(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
+static Lattice* value_unary(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -225,15 +225,15 @@ static Lattice* value_unary(TB_Passes* restrict opt, TB_Node* n) {
             ones  = a->_int.known_zeros;
         }
 
-        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
     } else {
         return NULL;
     }
 }
 
-static Lattice* value_bits(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
-    Lattice* b = lattice_universe_get(opt, n->inputs[2]);
+static Lattice* value_bits(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    Lattice* b = latuni_get(f, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -273,12 +273,12 @@ static Lattice* value_bits(TB_Passes* restrict opt, TB_Node* n) {
     }
     min &= mask, max &= mask;
 
-    return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* value_shift(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
-    Lattice* b = lattice_universe_get(opt, n->inputs[2]);
+static Lattice* value_shift(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    Lattice* b = latuni_get(f, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -348,15 +348,15 @@ static Lattice* value_shift(TB_Passes* restrict opt, TB_Node* n) {
             default: tb_todo();
         }
 
-        return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
     } else {
         return NULL;
     }
 }
 
-static Lattice* value_cmp(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* a = lattice_universe_get(opt, n->inputs[1]);
-    Lattice* b = lattice_universe_get(opt, n->inputs[2]);
+static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    Lattice* b = latuni_get(f, n->inputs[2]);
     if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -401,11 +401,11 @@ static Lattice* value_cmp(TB_Passes* restrict opt, TB_Node* n) {
         }
 
         if (cmp != 2) {
-            return lattice_intern(opt, (Lattice){ LATTICE_INT, ._int = { cmp, cmp, ~cmp, cmp } });
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { cmp, cmp, ~cmp, cmp } });
         }
     } else if (dt.type == TB_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-        a = lattice_meet(opt, a, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
-        b = lattice_meet(opt, b, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
+        a = lattice_meet(f, a, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
+        b = lattice_meet(f, b, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
 
         if (n->type == TB_CMP_EQ) {
             return a == b ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY;
@@ -417,13 +417,13 @@ static Lattice* value_cmp(TB_Passes* restrict opt, TB_Node* n) {
     return NULL;
 }
 
-static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
-    LatticeTrifecta key_truthy = lattice_truthy(lattice_universe_get(opt, src));
-    if (key_truthy == LATTICE_KNOWN_TRUE) {
+    Lattice* key_truthy = lattice_truthy(latuni_get(f, src));
+    if (key_truthy == &TRUE_IN_THE_SKY) {
         return n->inputs[2];
-    } else if (key_truthy == LATTICE_KNOWN_FALSE) {
+    } else if (key_truthy == &FALSE_IN_THE_SKY) {
         return n->inputs[3];
     }
 
@@ -435,7 +435,7 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
         TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(src, TB_NodeCompare)->cmp_dt);
 
         set_input(f, n, new_cmp, 1);
-        tb_pass_mark(opt, new_cmp);
+        mark_node(f, new_cmp);
         return n;
     }
 
@@ -458,7 +458,7 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
         if (true_imm && false_imm && on_true == 1 && on_false == 0) {
             TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
             set_input(f, ext_node, src, 1);
-            tb_pass_mark(opt, ext_node);
+            mark_node(f, ext_node);
             return ext_node;
         }
     }
@@ -489,7 +489,7 @@ static TB_Node* ideal_select(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
 }
 
 static bool nice_ass_trunc(TB_NodeTypeEnum t) { return t == TB_ADD || t == TB_AND || t == TB_XOR || t == TB_OR || t == TB_MUL || t == TB_SHL || t == TB_SHR || t == TB_SMOD || t == TB_UMOD; }
-static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_truncate(TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
     if (src->type == TB_ZERO_EXT && src->inputs[1]->dt.type == TB_INT && n->dt.type == TB_INT) {
@@ -510,11 +510,11 @@ static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node*
     if (nice_ass_trunc(src->type)) {
         TB_Node* left = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
         set_input(f, left, src->inputs[1], 1);
-        tb_pass_mark(opt, left);
+        mark_node(f, left);
 
         TB_Node* right = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
         set_input(f, right, src->inputs[2], 1);
-        tb_pass_mark(opt, right);
+        mark_node(f, right);
 
         TB_Node* new_binop = tb_alloc_node(f, src->type, n->dt, 3, 0);
         set_input(f, new_binop, left, 1);
@@ -525,7 +525,7 @@ static TB_Node* ideal_truncate(TB_Passes* restrict opt, TB_Function* f, TB_Node*
     return NULL;
 }
 
-static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
     TB_NodeTypeEnum ext_type = n->type;
     TB_Node* src = n->inputs[1];
 
@@ -551,7 +551,7 @@ static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node
             TB_Node* ext_node = tb_alloc_node(f, ext_type, dt, 2, 0);
             set_input(f, ext_node, src->inputs[i], 1);
             set_input(f, src, ext_node, i);
-            tb_pass_mark(opt, ext_node);
+            mark_node(f, ext_node);
         }
 
         src->dt = dt;
@@ -562,11 +562,11 @@ static TB_Node* ideal_extension(TB_Passes* restrict opt, TB_Function* f, TB_Node
     if (nice_ass_trunc(src->type)) {
         TB_Node* left = tb_alloc_node(f, ext_type, n->dt, 2, 0);
         set_input(f, left, src->inputs[1], 1);
-        tb_pass_mark(opt, left);
+        mark_node(f, left);
 
         TB_Node* right = tb_alloc_node(f, ext_type, n->dt, 2, 0);
         set_input(f, right, src->inputs[2], 1);
-        tb_pass_mark(opt, right);
+        mark_node(f, right);
 
         TB_Node* new_binop = tb_alloc_node(f, src->type, n->dt, 3, 0);
         set_input(f, new_binop, left, 1);
@@ -602,8 +602,8 @@ static bool is_shift_op(TB_Node* n) {
     return n->type == TB_SHL || n->type == TB_SHR || n->type == TB_SAR;
 }
 
-static bool is_iconst(TB_Passes* p, TB_Node* n) { return lattice_is_const(lattice_universe_get(p, n)); }
-static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static bool is_iconst(TB_Function* f, TB_Node* n) { return lattice_is_const(latuni_get(f, n)); }
+static TB_Node* ideal_int_binop(TB_Function* f, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
     TB_Node* a = n->inputs[1];
     TB_Node* b = n->inputs[2];
@@ -621,17 +621,17 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* 
     }
 
     // (aa + ab) + b => aa + (ab + b) where ab and b are constant
-    if (is_associative(type) && a->type == type && is_iconst(p, a->inputs[2]) && is_iconst(p, b)) {
+    if (is_associative(type) && a->type == type && is_iconst(f, a->inputs[2]) && is_iconst(f, b)) {
         TB_Node* abb = tb_alloc_node(f, type, n->dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, abb, a->inputs[2], 1);
         set_input(f, abb, b, 2);
 
-        Lattice* l = value_arith(p, abb);
+        Lattice* l = value_arith(f, abb);
         assert(l->tag == LATTICE_INT && l->_int.min == l->_int.max);
 
         violent_kill(f, abb);
 
-        TB_Node* con = make_int_node(f, p, n->dt, l->_int.min);
+        TB_Node* con = make_int_node(f, n->dt, l->_int.min);
         set_input(f, n, a->inputs[1], 1);
         set_input(f, n, con,          2);
         return n;
@@ -650,7 +650,7 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* 
                 shl_amt == bits - shr_amt) {
                 // convert to rotate left
                 n->type = TB_ROL;
-                disconnect(p, a), disconnect(p, b);
+                disconnect(f, a), disconnect(f, b);
                 set_input(f, n, b->inputs[1], 1);
                 set_input(f, n, b->inputs[2], 2);
                 return n;
@@ -663,10 +663,10 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* 
             if (rhs == (UINT64_C(1) << log2)) {
                 TB_Node* shl_node = tb_alloc_node(f, TB_SHL, n->dt, 3, sizeof(TB_NodeBinopInt));
                 set_input(f, shl_node, a, 1);
-                set_input(f, shl_node, make_int_node(f, p, n->dt, log2), 2);
+                set_input(f, shl_node, make_int_node(f, n->dt, log2), 2);
 
-                tb_pass_mark(p, shl_node->inputs[1]);
-                tb_pass_mark(p, shl_node->inputs[2]);
+                mark_node(f, shl_node->inputs[1]);
+                mark_node(f, shl_node->inputs[2]);
                 return shl_node;
             }
         }
@@ -712,18 +712,18 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* 
 
             TB_Node* shift = n->inputs[1]->inputs[1];
             if (amt) {
-                TB_Node* imm = make_int_node(f, p, n->dt, b - c);
-                tb_pass_mark(p, imm);
+                TB_Node* imm = make_int_node(f, n->dt, b - c);
+                mark_node(f, imm);
 
                 // if we have a negative shift amount, that's a right shift
                 shift = tb_alloc_node(f, amt < 0 ? TB_SHR : TB_SHL, n->dt, 3, sizeof(TB_NodeBinopInt));
                 set_input(f, shift, n->inputs[1]->inputs[1], 1);
                 set_input(f, shift, imm, 2);
 
-                tb_pass_mark(p, shift);
+                mark_node(f, shift);
             }
 
-            TB_Node* mask_node = make_int_node(f, p, n->dt, mask);
+            TB_Node* mask_node = make_int_node(f, n->dt, mask);
             TB_Node* and_node = tb_alloc_node(f, TB_AND, n->dt, 3, sizeof(TB_NodeBinopInt));
             set_input(f, and_node, shift,     1);
             set_input(f, and_node, mask_node, 2);
@@ -745,7 +745,7 @@ static TB_Node* ideal_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* 
     return NULL;
 }
 
-static TB_Node* ideal_int_mod(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_int_mod(TB_Function* f, TB_Node* n) {
     bool is_signed = n->type == TB_SMOD;
 
     TB_DataType dt = n->dt;
@@ -756,14 +756,14 @@ static TB_Node* ideal_int_mod(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     if (!is_signed && y == (UINT64_C(1) << log2)) {
         TB_Node* and_node = tb_alloc_node(f, TB_AND, dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, and_node, x, 1);
-        set_input(f, and_node, make_int_node(f, opt, dt, y - 1), 2);
+        set_input(f, and_node, make_int_node(f, dt, y - 1), 2);
         return and_node;
     }
 
     return NULL;
 }
 
-static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
     bool is_signed = n->type == TB_SDIV;
 
     // if we have a constant denominator we may be able to reduce the division into a
@@ -788,7 +788,7 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
         if (!is_signed && y == (UINT64_C(1) << log2)) {
             TB_Node* shr_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
             set_input(f, shr_node, x, 1);
-            set_input(f, shr_node, make_int_node(f, opt, dt, log2), 2);
+            set_input(f, shr_node, make_int_node(f, dt, log2), 2);
             return shr_node;
         }
     }
@@ -815,18 +815,18 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
     if (bits > 32) {
         TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, 0);
         set_input(f, mul_node, x, 1);
-        set_input(f, mul_node, make_int_node(f, opt, dt, a), 2);
+        set_input(f, mul_node, make_int_node(f, dt, a), 2);
 
         TB_Node* lo = make_proj_node(f, dt, mul_node, 0);
         TB_Node* hi = make_proj_node(f, dt, mul_node, 1);
 
-        tb_pass_mark(opt, mul_node);
-        tb_pass_mark(opt, lo);
-        tb_pass_mark(opt, hi);
+        mark_node(f, mul_node);
+        mark_node(f, lo);
+        mark_node(f, hi);
 
         TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, sh_node, hi, 1);
-        set_input(f, sh_node, make_int_node(f, opt, dt, sh), 2);
+        set_input(f, sh_node, make_int_node(f, dt, sh), 2);
         TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
 
         return sh_node;
@@ -842,20 +842,20 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
 
         TB_Node* mul_node = tb_alloc_node(f, TB_MUL, big_dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, mul_node, ext_node, 1);
-        set_input(f, mul_node, make_int_node(f, opt, big_dt, a), 2);
+        set_input(f, mul_node, make_int_node(f, big_dt, a), 2);
         TB_NODE_SET_EXTRA(mul_node, TB_NodeBinopInt, .ab = 0);
 
         TB_Node* sh_node = tb_alloc_node(f, TB_SHR, big_dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, sh_node, mul_node, 1);
-        set_input(f, sh_node, make_int_node(f, opt, big_dt, sh), 2);
+        set_input(f, sh_node, make_int_node(f, big_dt, sh), 2);
         TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
 
         TB_Node* trunc_node = tb_alloc_node(f, TB_TRUNCATE, dt, 2, 0);
         set_input(f, trunc_node, sh_node, 1);
 
-        tb_pass_mark(opt, mul_node);
-        tb_pass_mark(opt, sh_node);
-        tb_pass_mark(opt, ext_node);
+        mark_node(f, mul_node);
+        mark_node(f, sh_node);
+        mark_node(f, ext_node);
         return trunc_node;
     }
 }
@@ -868,10 +868,10 @@ static TB_Node* ideal_int_div(TB_Passes* restrict opt, TB_Function* f, TB_Node* 
 // a ^ 0 => a
 // a * 0 => 0
 // a / 0 => poison
-static TB_Node* identity_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
     if (n->type == TB_AND) {
-        Lattice* aa = lattice_universe_get(p, n->inputs[1]);
-        Lattice* bb = lattice_universe_get(p, n->inputs[2]);
+        Lattice* aa = latuni_get(f, n->inputs[1]);
+        Lattice* bb = latuni_get(f, n->inputs[2]);
         uint64_t mask = tb__mask(n->dt.data);
 
         if (aa != &TOP_IN_THE_SKY && bb->tag == LATTICE_INT && bb->_int.min == bb->_int.max) {
@@ -935,14 +935,14 @@ static TB_Node* identity_int_binop(TB_Passes* restrict p, TB_Function* f, TB_Nod
 ////////////////////////////////
 // Pointer idealizations
 ////////////////////////////////
-static TB_Node* identity_member_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* identity_member_ptr(TB_Function* f, TB_Node* n) {
     if (TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset == 0) {
         return n->inputs[1];
     }
     return n;
 }
 
-static TB_Node* ideal_member_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_member_ptr(TB_Function* f, TB_Node* n) {
     int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
     TB_Node* base  = n->inputs[1];
 
@@ -957,7 +957,7 @@ static TB_Node* ideal_member_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Nod
     return NULL;
 }
 
-static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_array_ptr(TB_Function* f, TB_Node* n) {
     int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
     TB_Node* base  = n->inputs[1];
     TB_Node* index = n->inputs[2];
@@ -1007,8 +1007,8 @@ static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node
             set_input(f, new_member, new_n, 1);
             TB_NODE_SET_EXTRA(new_member, TB_NodeMember, .offset = offset);
 
-            tb_pass_mark(opt, new_n);
-            tb_pass_mark(opt, new_member);
+            mark_node(f, new_n);
+            mark_node(f, new_member);
             return new_member;
         } else if (add_rhs->type == TB_SHL && add_rhs->inputs[2]->type == TB_INTEGER_CONST) {
             // (array A (add B (shl C D)) E) => (array (array A B 1<<D) B E)
@@ -1020,7 +1020,7 @@ static TB_Node* ideal_array_ptr(TB_Passes* restrict opt, TB_Function* f, TB_Node
             set_input(f, new_n, second_index, 2);
             TB_NODE_SET_EXTRA(new_n, TB_NodeArray, .stride = amt);
 
-            tb_pass_mark(opt, new_n);
+            mark_node(f, new_n);
             set_input(f, n, new_n,     1);
             set_input(f, n, new_index, 2);
             return n;

@@ -29,7 +29,7 @@ static TB_Node* end_of_bb(TB_Node* n) {
 }
 
 static Block* create_block(TB_Arena* arena, TB_Node* bb) {
-    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Node* end = end_of_bb(bb);
     size_t succ_count = end->type == TB_BRANCH ? TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count : 1;
@@ -68,17 +68,15 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
     return top;
 }
 
-TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* p) {
+TB_CFG tb_compute_rpo(TB_Function* f, Worklist* ws) {
     cuikperf_region_start("RPO", NULL);
-
-    Worklist* ws = &p->worklist;
     assert(dyn_array_length(ws->items) == 0);
 
     TB_CFG cfg = { 0 };
     nl_map_create(cfg.node_to_block, (f->node_count / 64) + 4);
 
     // push initial block
-    Block* top = create_block(tmp_arena, f->params[0]);
+    Block* top = create_block(f->tmp_arena, f->params[0]);
     worklist_test_n_set(ws, f->params[0]);
 
     while (top != NULL) {
@@ -87,7 +85,7 @@ TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* p) {
             // push next unvisited succ
             TB_Node* succ = top->succ[--top->succ_i];
             if (!worklist_test_n_set(ws, succ)) {
-                Block* new_top = create_block(tmp_arena, succ);
+                Block* new_top = create_block(f->tmp_arena, succ);
                 new_top->parent = top;
                 top = new_top;
             }
@@ -99,7 +97,7 @@ TB_CFG tb_compute_rpo(TB_Function* f, TB_Passes* p) {
             nl_map_put(cfg.node_to_block, b.bb, bb);
             cfg.block_count += 1;
 
-            tb_arena_restore(tmp_arena, top->sp);
+            tb_arena_restore(f->tmp_arena, top->sp);
             top = b.parent; // off to wherever we left off
         }
         cuikperf_region_end();
@@ -153,13 +151,9 @@ static TB_BasicBlock* get_pred_bb(TB_CFG* cfg, TB_Node* n, int i) {
     return &nl_map_get_checked(cfg->node_to_block, n);
 }
 
-void tb_compute_dominators(TB_Function* f, TB_Passes* restrict p, TB_CFG cfg) {
-    tb_compute_dominators2(f, &p->worklist, cfg);
-}
-
 // Cooper, Keith D., Harvey, Timothy J. and Kennedy, Ken. "A simple, fast dominance algorithm." (2006)
 //   https://repository.rice.edu/items/99a574c3-90fe-4a00-adf9-ce73a21df2ed
-void tb_compute_dominators2(TB_Function* f, Worklist* ws, TB_CFG cfg) {
+void tb_compute_dominators(TB_Function* f, Worklist* ws, TB_CFG cfg) {
     TB_Node** blocks = ws->items;
 
     TB_BasicBlock* entry = &nl_map_get_checked(cfg.node_to_block, blocks[0]);

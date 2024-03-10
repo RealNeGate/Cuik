@@ -29,16 +29,16 @@ typedef struct FoundPhis {
     TB_Node* new;
 } FoundPhis;
 
-static TB_Node* data_phi_from_memory_phi(TB_Passes* restrict p, TB_Function* f, TB_Node* n, TB_Node* addr, TB_Node* mem, FoundPhis* prev, int steps) {
+static TB_Node* data_phi_from_memory_phi(TB_Function* f, TB_Node* n, TB_Node* addr, TB_Node* mem, FoundPhis* prev, int steps) {
     // convert memory phis into data phis
     assert(mem->type == TB_PHI);
     assert(mem->dt.type == TB_MEMORY && "memory input should be memory");
 
     TB_DataType dt = n->dt;
 
-    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
     size_t path_count = mem->input_count - 1;
-    TB_Node** paths = tb_arena_alloc(tmp_arena, path_count * sizeof(TB_Node*));
+    TB_Node** paths = tb_arena_alloc(f->tmp_arena, path_count * sizeof(TB_Node*));
 
     TB_Node* phi = tb_alloc_node(f, TB_PHI, dt, 1 + path_count, 0);
 
@@ -55,11 +55,8 @@ static TB_Node* data_phi_from_memory_phi(TB_Passes* restrict p, TB_Function* f, 
 
             if (k == NULL) {
                 FoundPhis next = { prev, mem, phi };
-                k = data_phi_from_memory_phi(p, f, n, addr, st, &next, steps - 1);
-                if (k == NULL) {
-                    fail = true;
-                    break;
-                }
+                k = data_phi_from_memory_phi(f, n, addr, st, &next, steps - 1);
+                if (k == NULL) { fail = true; break; }
             }
 
             paths[i] = k;
@@ -80,18 +77,18 @@ static TB_Node* data_phi_from_memory_phi(TB_Passes* restrict p, TB_Function* f, 
     FOREACH_N(i, 0, path_count) {
         set_input(f, phi, paths[i], 1+i);
     }
-    tb_arena_restore(tmp_arena, sp);
+    tb_arena_restore(f->tmp_arena, sp);
 
     return phi;
 }
 
-static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
     TB_Node* ctrl = n->inputs[0];
     TB_Node* mem = n->inputs[1];
     TB_Node* addr = n->inputs[2];
 
     if (mem->type == TB_PHI) {
-        TB_Node* k = data_phi_from_memory_phi(p, f, n, addr, mem, NULL, 2);
+        TB_Node* k = data_phi_from_memory_phi(f, n, addr, mem, NULL, 2);
         if (k) return k;
     }
 
@@ -138,7 +135,7 @@ static TB_Node* ideal_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
-static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* identity_load(TB_Function* f, TB_Node* n) {
     // god i need a pattern matcher
     //   (load (store X A Y) A) => Y
     TB_Node *mem = n->inputs[1], *addr = n->inputs[2];
@@ -150,26 +147,26 @@ static TB_Node* identity_load(TB_Passes* restrict p, TB_Function* f, TB_Node* n)
     return n;
 }
 
-static Lattice* value_split_mem(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_split_mem(TB_Function* f, TB_Node* n) {
     TB_NodeMemSplit* s = TB_NODE_GET_EXTRA(n);
 
     size_t size = sizeof(Lattice) + s->alias_cnt*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(tmp_arena, size);
+    Lattice* l = tb_arena_alloc(f->tmp_arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._tuple = { s->alias_cnt } };
     FOREACH_N(i, 0, s->alias_cnt) {
-        l->elems[i] = lattice_alias(p, s->alias_idx[i]);
+        l->elems[i] = lattice_alias(f, s->alias_idx[i]);
     }
 
-    Lattice* k = nl_hashset_put2(&p->type_interner, l, lattice_hash, lattice_cmp);
+    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
     if (k) {
-        tb_arena_free(tmp_arena, l, size);
+        tb_arena_free(f->tmp_arena, l, size);
         return k;
     } else {
         return l;
     }
 }
 
-static TB_Node* ideal_merge_mem(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {
     bool progress = false;
     TB_Node* split_node = n->inputs[1];
     TB_NodeMemSplit* split = TB_NODE_GET_EXTRA(split_node);
@@ -191,7 +188,7 @@ static TB_Node* ideal_merge_mem(TB_Passes* restrict p, TB_Function* f, TB_Node* 
             assert(proj->n);
             TB_NODE_SET_EXTRA(proj->n, TB_NodeProj, .index = j);
 
-            tb_pass_kill_node(f, n->inputs[i]);
+            tb_kill_node(f, n->inputs[i]);
 
             // simple remove-swap
             set_input(f, n, n->inputs[n->input_count - 1], i);
@@ -200,8 +197,8 @@ static TB_Node* ideal_merge_mem(TB_Passes* restrict p, TB_Function* f, TB_Node* 
 
             // we didn't *really* change the memory type, just reordered it (all the live projs
             // are the same so we don't need to push them onto the worklist)
-            Lattice* new_split_type = value_split_mem(p, split_node);
-            lattice_universe_map(p, split_node, new_split_type);
+            Lattice* new_split_type = value_split_mem(f, split_node);
+            latuni_set(f, split_node, new_split_type);
         } else {
             i += 1;
         }
@@ -210,7 +207,7 @@ static TB_Node* ideal_merge_mem(TB_Passes* restrict p, TB_Function* f, TB_Node* 
     return progress ? n : NULL;
 }
 
-static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_store(TB_Function* f, TB_Node* n) {
     TB_Node *mem = n->inputs[1], *addr = n->inputs[2], *val = n->inputs[3];
     TB_DataType dt = val->dt;
 
@@ -225,7 +222,7 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 
         // make sure to kill the stores to avoid problems
         TB_Node* parent = mem->inputs[1];
-        tb_pass_kill_node(f, mem);
+        tb_kill_node(f, mem);
 
         set_input(f, n, parent, 1);
         return n;
@@ -235,7 +232,7 @@ static TB_Node* ideal_store(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
 }
 
 static bool is_cool(uint64_t x) { return x == 1 || x == 2 || x == 4 || x == 8; }
-static TB_Node* ideal_memset(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_memset(TB_Function* f, TB_Node* n) {
     // convert small memsets into stores
     uint64_t count, val;
     if (get_int_const(n->inputs[4], &count) && get_int_const(n->inputs[3], &val) && is_cool(count)) {
@@ -245,7 +242,7 @@ static TB_Node* ideal_memset(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
         }
 
         TB_DataType dt = TB_TYPE_INTN(count*8);
-        set_input(f, n, make_int_node(f, p, dt, val), 3);
+        set_input(f, n, make_int_node(f, dt, val), 3);
         set_input(f, n, NULL, 4);
         n->input_count = 4;
         n->type = TB_STORE;
@@ -255,11 +252,11 @@ static TB_Node* ideal_memset(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
     return NULL;
 }
 
-static TB_Node* ideal_return(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_return(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
-static TB_Node* ideal_memcpy(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_memcpy(TB_Function* f, TB_Node* n) {
     // convert small memsets into ld+st pairs
     uint64_t count, val;
     if (get_int_const(n->inputs[4], &count) && is_cool(count)) {
@@ -272,7 +269,7 @@ static TB_Node* ideal_memcpy(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
         set_input(f, ld, ctrl, 0);
         set_input(f, ld, mem, 1);
         set_input(f, ld, src, 2);
-        tb_pass_mark(p, ld);
+        mark_node(f, ld);
 
         // convert to store, remove extra input
         n->type = TB_STORE;
@@ -285,11 +282,11 @@ static TB_Node* ideal_memcpy(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
     return NULL;
 }
 
-static Lattice* value_merge_mem(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_merge_mem(TB_Function* f, TB_Node* n) {
     return &BOT_IN_THE_SKY;
 }
 
-static Lattice* value_mem(TB_Passes* restrict p, TB_Node* n) {
+static Lattice* value_mem(TB_Function* f, TB_Node* n) {
     // just inherit memory from parent
-    return lattice_universe_get(p, n->inputs[1]);
+    return latuni_get(f, n->inputs[1]);
 }

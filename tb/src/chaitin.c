@@ -78,19 +78,13 @@ static bool ifg_empty(Chaitin* ra) {
 }
 
 static void* resize_stuff(void* ptr, size_t old) {
-    size_t new_size = old*2;
-    void* new_ptr = tb_arena_alloc(tmp_arena, new_size);
-    memcpy(new_ptr, ptr, old);
-
-    return new_ptr;
+    abort();
+    return NULL;
 }
 
 static RegMask* constraint_in(Ctx* ctx, TB_Node* n, int i) {
-    RegMask** ins = tb_arena_alloc(tmp_arena, n->input_count * sizeof(RegMask*));
-    ctx->constraint(ctx, n, ins);
-    RegMask* mask = ins[i];
-    tb_arena_free(tmp_arena, ins, n->input_count * sizeof(RegMask*));
-    return mask;
+    ctx->constraint(ctx, n, ctx->ins);
+    return ctx->ins[i];
 }
 
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
@@ -100,13 +94,13 @@ VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
     return &ctx->vregs[i];
 }
 
-MachineBB* tb__insert(Ctx* ctx, TB_Passes* p, TB_BasicBlock* bb, TB_Node* n) {
-    if (ctx->f->node_count >= p->scheduled_n) {
-        p->scheduled  = resize_stuff(p->scheduled, p->scheduled_n * sizeof(TB_BasicBlock*));
-        p->scheduled_n *= 2;
+MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
+    if (f->node_count >= f->scheduled_n) {
+        f->scheduled  = resize_stuff(f->scheduled, f->scheduled_n * sizeof(TB_BasicBlock*));
+        f->scheduled_n *= 2;
     }
 
-    p->scheduled[n->gvn] = bb;
+    f->scheduled[n->gvn] = bb;
 
     MachineBB* mbb = &ctx->machine_bbs[bb->order];
     if (mbb->item_count == mbb->item_cap) {
@@ -117,8 +111,8 @@ MachineBB* tb__insert(Ctx* ctx, TB_Passes* p, TB_BasicBlock* bb, TB_Node* n) {
     return mbb;
 }
 
-void tb__insert_before(Ctx* ctx, TB_Passes* p, TB_Node* n, TB_Node* before_n) {
-    MachineBB* mbb = tb__insert(ctx, p, p->scheduled[before_n->gvn], n);
+void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
+    MachineBB* mbb = tb__insert(ctx, f, f->scheduled[before_n->gvn], n);
 
     size_t i = 0, cnt = mbb->item_count;
     while (i < cnt && mbb->items[i] != before_n) { i++; }
@@ -130,8 +124,8 @@ void tb__insert_before(Ctx* ctx, TB_Passes* p, TB_Node* n, TB_Node* before_n) {
     mbb->item_count += 1;
 }
 
-void tb__insert_after(Ctx* ctx, TB_Passes* p, TB_Node* n, TB_Node* after_n) {
-    MachineBB* mbb = tb__insert(ctx, p, p->scheduled[after_n->gvn], n);
+void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
+    MachineBB* mbb = tb__insert(ctx, f, f->scheduled[after_n->gvn], n);
 
     size_t i = 0, cnt = mbb->item_count;
     while (i < cnt && mbb->items[i] != after_n) { i++; }
@@ -204,7 +198,7 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
     Set live = set_create_in_arena(arena, f->node_count);
     FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
         MachineBB* mbb = &ctx->machine_bbs[i];
-        TB_BasicBlock* bb = ctx->p->scheduled[mbb->n->gvn];
+        TB_BasicBlock* bb = f->scheduled[mbb->n->gvn];
 
         set_copy(&live, &bb->live_out);
 
@@ -399,7 +393,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                         reload_n->inputs[1] = n;
 
                         // schedule the split right before use
-                        tb__insert_before(ctx, ctx->p, reload_n, n);
+                        tb__insert_before(ctx, ctx->f, reload_n, n);
                         VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
                         reload_vreg->mask = in_mask;
 

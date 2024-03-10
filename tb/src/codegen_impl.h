@@ -73,14 +73,14 @@ void tb__print_regmask(RegMask* mask) {
     }
 }
 
-static void walk_node(Ctx* ctx, Worklist* ws, TB_Node* n) {
-    if (n == NULL || worklist_test_n_set(ws, n)) { return; }
+static void walk_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
+    if (n == NULL || worklist_test_n_set(&f->worklist, n)) { return; }
 
     // replace with machine op
     TB_Node* k = node_isel(ctx, ctx->f, n);
     if (k && k != n) {
         // yes... we can run GVN on machine ops :)
-        k = tb_pass_gvn_node(ctx->f, k);
+        k = tb_opt_gvn_node(ctx->f, k);
 
         subsume_node2(ctx->f, n, k);
 
@@ -92,41 +92,37 @@ static void walk_node(Ctx* ctx, Worklist* ws, TB_Node* n) {
                 if (u->next == NULL) {
                     assert(u->n == n && i == u->slot);
                     set_input(ctx->f, n, NULL, i);
-                    tb_pass_kill_node(ctx->f, in);
+                    tb_kill_node(ctx->f, in);
                 }
             }
         }
-        tb_pass_kill_node(ctx->f, n);
+        tb_kill_node(ctx->f, n);
 
         // don't walk the replacement
-        worklist_test_n_set(ws, k);
+        worklist_test_n_set(&f->worklist, k);
         n = k;
     }
     // if (k) { tb_pass_print(ctx->p); }
 
     // replace all input edges
     FOREACH_N(i, 0, n->input_count) {
-        walk_node(ctx, ws, n->inputs[i]);
+        walk_node(ctx, f, n->inputs[i]);
     }
 }
 
 static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
-    log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(tmp_arena) / 1024.0f, (tb_arena_current_size(f->arena) - og_size) / 1024.0f, label);
+    log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(f->tmp_arena) / 1024.0f, (tb_arena_current_size(f->arena) - og_size) / 1024.0f, label);
 }
 
-static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
-    verify_tmp_arena(p);
-
-    TB_Arena* arena = tmp_arena;
+static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
+    TB_Arena* arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
-    TB_Function* restrict f = p->f;
     TB_OPTDEBUG(CODEGEN)(tb_pass_print(p));
 
     Ctx ctx = {
         .module = f->super.module,
         .f = f,
-        .p = p,
         .tmp_count   = node_tmp_count,
         .constraint  = node_constraint,
         .flags       = node_flags,
@@ -151,10 +147,10 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         ctx.features = *features;
     }
 
-    Worklist* restrict ws = &p->worklist;
+    Worklist* restrict ws = &f->worklist;
 
     // legalize step takes out any of our 16bit and 8bit math ops
-    tb_pass_prep(p);
+    // tb_opt_alloc_types(p);
     // tb_pass_legalize(p, f->super.module->target_arch);
     size_t og_size = tb_arena_current_size(f->arena);
 
@@ -163,7 +159,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
         // bottom-up rewrite
         worklist_clear(ws);
-        walk_node(&ctx, ws, f->root_node);
+        walk_node(&ctx, f, f->root_node);
 
         // TB_OPTDEBUG(CODEGEN)(tb_pass_print_dot(p, tb_default_print_callback, stdout));
         TB_OPTDEBUG(CODEGEN)(tb_dumb_print(f, NULL));
@@ -176,10 +172,8 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
     TB_CFG cfg;
     CUIK_TIMED_BLOCK("global sched") {
-        // We need to generate a CFG
-        cfg = tb_compute_rpo(f, p);
-        // And perform global scheduling
-        tb_pass_schedule(p, cfg, false, true, node_latency);
+        cfg = tb_compute_rpo(f, &f->worklist);
+        tb_global_schedule(f, cfg, false, true, node_latency);
 
         log_phase_end(f, og_size, "GCM");
     }
@@ -233,15 +227,15 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         FOREACH_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
             TB_Node* bb_start = bbs[bbid];
-            TB_BasicBlock* bb = p->scheduled[bb_start->gvn];
+            TB_BasicBlock* bb = f->scheduled[bb_start->gvn];
 
             bb->order = i;
             node_to_bb_put(&ctx, bb_start, &machine_bbs[i]);
 
             // compute local schedule
             size_t base = dyn_array_length(ws->items);
-            list_scheduler(p, &cfg, ws, NULL, bb, node_latency);
-            // greedy_scheduler(p, &cfg, ws, NULL, bb);
+            tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency);
+            // tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
 
             size_t item_count = dyn_array_length(ws->items) - base;
             size_t item_cap   = item_count + 16; // a bit of slack for spills
@@ -481,12 +475,11 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     // cleanup memory
-    f->arena = NULL;
     tb_free_cfg(&cfg);
 
     log_debug("%s: code_arena=%.1f KiB", f->super.name, tb_arena_current_size(code_arena) / 1024.0f);
     tb_arena_restore(arena, sp);
-    p->scheduled = NULL;
+    f->scheduled = NULL;
 
     // we're done, clean up
     func_out->asm_out = ctx.emit.head_asm;

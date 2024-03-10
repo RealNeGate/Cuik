@@ -74,6 +74,7 @@ struct Cuik_BuildStep {
 // it's just a one-off struct only used in this file
 typedef struct {
     TB_Arena* ir;
+    TB_Arena* tmp;
     TB_Arena* code;
 } MyArenas;
 
@@ -81,6 +82,7 @@ static MyArenas* get_ir_arena(void) {
     static _Thread_local MyArenas arenas;
     if (arenas.ir == NULL) {
         arenas.ir   = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
+        arenas.tmp  = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
         arenas.code = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
     }
 
@@ -146,18 +148,19 @@ static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restr
 
 static void local_opt_func(TB_Function* f, void* arg) {
     Cuik_DriverArgs* args = arg;
-    bool print_asm = args->assembly;
+    assert(args->optimize);
 
     const char* name = ((TB_Symbol*) f)->name;
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
         MyArenas* arenas = get_ir_arena();
         float start = tb_arena_current_size(arenas->ir);
-        TB_Passes* p = tb_pass_enter(f, arenas->ir);
 
-        assert(args->optimize);
-        tb_pass_optimize(p);
+        tb_opt_push_all_nodes(f, arenas->ir, arenas->tmp);
+        tb_opt_alloc_types(f);
+        tb_opt(f);
+        tb_opt_free_types(f);
+        tb_opt_free_worklist(f);
 
-        tb_pass_exit(p);
         float end = tb_arena_current_size(arenas->ir);
         log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
     }
@@ -171,23 +174,20 @@ static void apply_func(TB_Function* f, void* arg) {
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
         MyArenas* arenas = get_ir_arena();
         float start = tb_arena_current_size(arenas->ir);
-        TB_Passes* p = tb_pass_enter(f, arenas->ir);
 
         if (args->emit_dot) {
-            tb_pass_print_dot(p, tb_default_print_callback, stdout);
+            tb_print_dot(f, tb_default_print_callback, stdout);
         } else if (args->emit_ir) {
-            tb_pass_print(p);
+            tb_print(f);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
-                TB_FunctionOutput* out = tb_pass_codegen(p, arenas->code, NULL, print_asm);
+                TB_FunctionOutput* out = tb_codegen(f, arenas->code, NULL, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");
                 }
             }
         }
-
-        tb_pass_exit(p);
 
         float end = tb_arena_current_size(arenas->ir);
         log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);

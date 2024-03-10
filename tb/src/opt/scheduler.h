@@ -38,8 +38,8 @@ static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n
     return s;
 }
 
-static bool sched_in_bb(TB_Passes* passes, Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
-    return passes->scheduled[n->gvn] == bb && !worklist_test_n_set(ws, n);
+static bool sched_in_bb(TB_Function* f, Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
+    return f->scheduled[n->gvn] == bb && !worklist_test_n_set(ws, n);
 }
 
 typedef struct {
@@ -65,8 +65,8 @@ static void fill_phis(TB_Arena* arena, Phis* phis, TB_Node* succ, int phi_i) {
 }
 
 // basically just topological sort, no fancy shit
-void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb) {
-    TB_Arena* arena = tmp_arena;
+void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb) {
+    TB_Arena* arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
     TB_Node* end = bb->end;
 
@@ -98,7 +98,7 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
     worklist_test_n_set(ws, end);
 
     // reserve projections for the top
-    TB_Node* start = bb->id == 0 ? passes->f->root_node : NULL;
+    TB_Node* start = bb->id == 0 ? f->root_node : NULL;
     if (start) {
         FOR_USERS(use, start) {
             if (use->n->type == TB_PROJ && !worklist_test_n_set(ws, use->n)) {
@@ -116,7 +116,7 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
         // resolve inputs first
         if (n->type != TB_PHI && top->index < n->input_count) {
             TB_Node* in = n->inputs[top->index++];
-            if (in != NULL && sched_in_bb(passes, ws, bb, in)) {
+            if (in != NULL && sched_in_bb(f, ws, bb, in)) {
                 top = sched_make_node(arena, top, in);
             }
             continue;
@@ -129,7 +129,7 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
                 TB_Node* anti = top->antis[top->anti_i]->n;
                 int slot = top->antis[top->anti_i]->slot;
 
-                if (anti != n && slot == 1 && sched_in_bb(passes, ws, bb, anti)) {
+                if (anti != n && slot == 1 && sched_in_bb(f, ws, bb, anti)) {
                     top = sched_make_node(arena, top, anti);
                 }
 
@@ -157,7 +157,7 @@ void greedy_scheduler(TB_Passes* passes, TB_CFG* cfg, Worklist* ws, DynArray(Phi
                     dyn_array_put(*phi_vals, p);
                 }
 
-                if (sched_in_bb(passes, ws, bb, val)) {
+                if (sched_in_bb(f, ws, bb, val)) {
                     top = sched_make_node(arena, top, val);
                 }
                 continue;

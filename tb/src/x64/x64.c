@@ -1271,7 +1271,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 // lattice is the superior type, trust it over the
                 // TB_DataType, in this case if we see a 1bit value
                 // let's just do bitsets.
-                Lattice* l = lattice_universe_get(&ctx->p->universe, n);
+                Lattice* l = latuni_get(&ctx->p->universe, n);
                 if (l->tag == LATTICE_INT && l->_int.min == 0 && l->_int.max == 1) {
                     bits = 1;
                 }

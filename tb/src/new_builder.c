@@ -51,7 +51,7 @@ static void push(TB_GraphBuilder* g, TB_Node* n) {
 
     // we don't wanna GVN phis too early, they might be incomplete
     if (n->type != TB_PHI) {
-        n = tb_pass_gvn_node(g->f, n);
+        n = tb_opt_gvn_node(g->f, n);
     }
 
     g->vals[g->val_cnt++] = n;
@@ -371,7 +371,7 @@ void tb_builder_endif(TB_GraphBuilder* g) {
 
         g->top_ctrl = g->bot_ctrl = join;
     } else {
-        tb_pass_kill_node(g->f, join);
+        tb_kill_node(g->f, join);
         g->top_ctrl = g->bot_ctrl = NULL;
     }
     tb_arena_restore(g->arena, ctrl->sp);
@@ -544,7 +544,7 @@ void tb_builder_static_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, TB_
         set_input(f, target_node, f->root_node, 0);
         TB_NODE_SET_EXTRA(target_node, TB_NodeSymbol, .sym = target);
 
-        target_node = tb_pass_gvn_node(g->f, target_node);
+        target_node = tb_opt_gvn_node(g->f, target_node);
     }
 
     // construct call op
@@ -604,7 +604,8 @@ void tb_builder_ret(TB_GraphBuilder* g, int count) {
     TB_Node** args = &g->vals[g->val_cnt];
 
     // allocate return node
-    TB_Node* ret = f->ret_node;
+    TB_Node* ret = f->root_node->inputs[1];
+    assert(ret->type == TB_RETURN);
     TB_Node* ctrl = ret->inputs[0];
     assert(ctrl->type == TB_REGION);
 
@@ -625,7 +626,7 @@ void tb_builder_ret(TB_GraphBuilder* g, int count) {
         log_warn("%s: ir: generated poison due to inconsistent number of returned values", f->super.name);
 
         TB_Node* poison = tb_alloc_node(f, TB_POISON, ret->inputs[i]->dt, 1, 0);
-        set_input(f, poison, f->ret_node, 0);
+        set_input(f, poison, ret, 0);
 
         poison = tb__gvn(f, poison, 0);
         add_input_late(f, ret->inputs[i], poison);

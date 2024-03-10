@@ -39,14 +39,14 @@ static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* c
 }
 
 // false means failure to SROA
-static bool add_configs(TB_Passes* p, User* use, TB_Node* base_address, size_t base_offset, size_t* config_count, AggregateConfig* configs, int pointer_size) {
+static bool add_configs(TB_Function* f, User* use, TB_Node* base_address, size_t base_offset, size_t* config_count, AggregateConfig* configs, int pointer_size) {
     for (; use; use = use->next) {
         TB_Node* n = use->n;
 
         if (n->type == TB_MEMBER_ACCESS && use->slot == 1) {
             // same rules, different offset
             int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
-            if (!add_configs(p, n->users, base_address, base_offset + offset, config_count, configs, pointer_size)) {
+            if (!add_configs(f, n->users, base_address, base_offset + offset, config_count, configs, pointer_size)) {
                 return false;
             }
             continue;
@@ -78,7 +78,7 @@ static bool add_configs(TB_Passes* p, User* use, TB_Node* base_address, size_t b
             }
             configs[(*config_count)++] = (AggregateConfig){ address, base_offset, size, dt };
         } else if (configs[match].old_n != address) {
-            log_warn("%s: v%u SROA config matches but reaches so via a different node, please idealize nodes before mem2reg", p->f->super.name, address->gvn);
+            log_warn("%s: v%u SROA config matches but reaches so via a different node, please idealize nodes before mem2reg", f->super.name, address->gvn);
             return false;
         }
     }
@@ -86,12 +86,12 @@ static bool add_configs(TB_Passes* p, User* use, TB_Node* base_address, size_t b
     return true;
 }
 
-static size_t sroa_rewrite(TB_Passes* restrict p, int pointer_size, TB_Node* start, TB_Node* n) {
-    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+static size_t sroa_rewrite(TB_Function* f, int pointer_size, TB_Node* start, TB_Node* n) {
+    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
 
     size_t config_count = 0;
-    AggregateConfig* configs = tb_arena_alloc(tmp_arena, SROA_LIMIT * sizeof(AggregateConfig));
-    if (!add_configs(p, n->users, n, 0, &config_count, configs, pointer_size)) {
+    AggregateConfig* configs = tb_arena_alloc(f->tmp_arena, SROA_LIMIT * sizeof(AggregateConfig));
+    if (!add_configs(f, n->users, n, 0, &config_count, configs, pointer_size)) {
         return 1;
     }
 
@@ -101,23 +101,23 @@ static size_t sroa_rewrite(TB_Passes* restrict p, int pointer_size, TB_Node* sta
 
         uint32_t alignment = TB_NODE_GET_EXTRA_T(n, TB_NodeLocal)->align;
         FOREACH_N(i, 0, config_count) {
-            TB_Node* new_n = tb_alloc_node(p->f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
-            set_input(p->f, new_n, start, 0);
+            TB_Node* new_n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
+            set_input(f, new_n, start, 0);
             TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);
 
             // replace old pointer with new fancy
-            subsume_node(p->f, configs[i].old_n, new_n);
+            subsume_node(f, configs[i].old_n, new_n);
 
             // mark all users, there may be some fun new opts now
-            tb_pass_mark(p, new_n);
-            tb_pass_mark_users(p, new_n);
+            mark_node(f, new_n);
+            mark_users(f, new_n);
         }
 
         // we marked the changes else where which is cheating the peephole
         // but still doing all the progress it needs to.
-        tb_pass_mark_users(p, n);
+        mark_users(f, n);
     }
 
-    tb_arena_restore(tmp_arena, sp);
+    tb_arena_restore(f->tmp_arena, sp);
     return config_count > 1 ? 1 + config_count : 1;
 }

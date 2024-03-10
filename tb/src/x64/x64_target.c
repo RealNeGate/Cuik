@@ -222,9 +222,9 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         ctx->stack_header = 8;
     }
 
-    ctx->normie_mask[REG_CLASS_FLAGS] = new_regmask(REG_CLASS_FLAGS, false, 1);
-    ctx->normie_mask[REG_CLASS_GPR]   = new_regmask(REG_CLASS_GPR,   false, all_gprs);
-    ctx->normie_mask[REG_CLASS_XMM]   = new_regmask(REG_CLASS_XMM,   false, 0xFFFF);
+    ctx->normie_mask[REG_CLASS_FLAGS] = new_regmask(ctx->f, REG_CLASS_FLAGS, false, 1);
+    ctx->normie_mask[REG_CLASS_GPR]   = new_regmask(ctx->f, REG_CLASS_GPR,   false, all_gprs);
+    ctx->normie_mask[REG_CLASS_XMM]   = new_regmask(ctx->f, REG_CLASS_XMM,   false, 0xFFFF);
 
     // mark GPR callees (technically includes RSP but since it's
     // never conventionally allocated we should never run into issues)
@@ -392,8 +392,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
         op_extra->mode = MODE_LD;
         set_input(f, op, addr, 2); // addr
-
-        __debugbreak();
         return op;
     } else if ((n->type >= TB_SHL && n->type <= TB_ROR) && n->inputs[2]->type == TB_INTEGER_CONST) {
         const static int ops[] = { x86_shlimm, x86_shrimm, x86_sarimm, x86_rolimm, x86_rorimm };
@@ -495,7 +493,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
             br->keys[0].key = cc ^ flip;
         } else {
-            __debugbreak();
+            tb_todo();
         }
 
         return n;

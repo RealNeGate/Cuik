@@ -1,18 +1,17 @@
 
-static bool is_node_ready(TB_Passes* p, TB_BasicBlock* bb, Set* done, TB_Node* n) {
+static bool is_node_ready(TB_Function* f, TB_BasicBlock* bb, Set* done, TB_Node* n) {
     FOREACH_N(i, 0, n->input_count) {
         TB_Node* in = n->inputs[i];
-        if (in && p->scheduled[in->gvn] == bb && !set_get(done, in->gvn)) {
+        if (in && f->scheduled[in->gvn] == bb && !set_get(done, in->gvn)) {
             return false;
         }
     }
     return true;
 }
 
-void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat) {
+void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat) {
     assert(phi_vals == NULL && "TODO");
-
-    TB_Function* f = p->f;
+    TB_Arena* tmp_arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
 
     TB_Node* end = bb->end;
@@ -46,7 +45,7 @@ void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) p
     // initial items (everything used by the live-ins)
     nl_hashset_for(e, &bb->items) {
         TB_Node* n = *e;
-        if (!set_get(&done, n->gvn) && p->scheduled[n->gvn] == bb && is_node_ready(p, bb, &done, n)) {
+        if (!set_get(&done, n->gvn) && f->scheduled[n->gvn] == bb && is_node_ready(f, bb, &done, n)) {
             TB_OPTDEBUG(SCHEDULE)(printf("  READY: "), tb_dumb_print_node(NULL, n), printf("\n"));
             worklist_push(ws, n);
         }
@@ -58,7 +57,7 @@ void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) p
         int best_i = -1;
         FOREACH_N(i, cfg->block_count, dyn_array_length(ws->items)) {
             TB_Node* n = ws->items[i];
-            if (!is_node_ready(p, bb, &done, n)) continue;
+            if (!is_node_ready(f, bb, &done, n)) continue;
             int lat = get_lat(f, n);
             if (lat > best_lat) {
                 best_i   = i;
@@ -90,7 +89,7 @@ void list_scheduler(TB_Passes* p, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) p
         // now that the op is retired, try to ready up users
         if (best != end) {
             FOR_USERS(u, best) {
-                if (!set_get(&done, u->n->gvn) && p->scheduled[u->n->gvn] == bb && is_node_ready(p, bb, &done, u->n)) {
+                if (!set_get(&done, u->n->gvn) && f->scheduled[u->n->gvn] == bb && is_node_ready(f, bb, &done, u->n)) {
                     TB_OPTDEBUG(SCHEDULE)(printf("    READY: "), tb_dumb_print_node(NULL, u->n), printf("\n"));
                     worklist_push(ws, u->n);
                 }

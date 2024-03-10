@@ -17,7 +17,7 @@ static Lattice PTR_IN_THE_SKY    = { LATTICE_BOTPTR };
 static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = { 0, 0, 1, 0 } };
 static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = { 1, 1, 0, 1 } };
 
-static Lattice* lattice_from_dt(TB_Passes* p, TB_DataType dt);
+static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt);
 
 static uint32_t lattice_hash(void* a) {
     size_t s = sizeof(Lattice);
@@ -49,49 +49,45 @@ static bool lattice_cmp(void* a, void* b) {
 static bool lattice_is_const_int(Lattice* l) { return l->_int.min == l->_int.max; }
 static bool lattice_is_const(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
 
-static void lattice_universe_grow(TB_Passes* p, size_t top) {
+static void latuni_grow(TB_Function* f, size_t top) {
     size_t new_cap = tb_next_pow2(top + 16);
-    p->types = tb_platform_heap_realloc(p->types, new_cap * sizeof(Lattice*));
+    f->types = tb_platform_heap_realloc(f->types, new_cap * sizeof(Lattice*));
 
     // clear new space
-    FOREACH_N(i, p->type_cap, new_cap) {
-        p->types[i] = NULL;
+    FOREACH_N(i, f->type_cap, new_cap) {
+        f->types[i] = NULL;
     }
 
-    p->type_cap = new_cap;
+    f->type_cap = new_cap;
 }
 
-static bool lattice_universe_map_progress(TB_Passes* p, TB_Node* n, Lattice* l) {
-    // reserve cap, slow path :p
-    if (UNLIKELY(n->gvn >= p->type_cap)) {
-        lattice_universe_grow(p, n->gvn);
-    }
-
-    Lattice* old = p->types[n->gvn];
-    p->types[n->gvn] = l;
+static bool latuni_set_progress(TB_Function* f, TB_Node* n, Lattice* l) {
+    if (UNLIKELY(n->gvn >= f->type_cap)) { latuni_grow(f, n->gvn); }
+    Lattice* old = f->types[n->gvn];
+    f->types[n->gvn] = l;
     return old != l;
 }
 
-static void lattice_universe_map(TB_Passes* p, TB_Node* n, Lattice* l) {
-    // reserve cap, slow path :p
-    if (UNLIKELY(n->gvn >= p->type_cap)) {
-        lattice_universe_grow(p, n->gvn);
-    }
-
-    p->types[n->gvn] = l;
+static void latuni_set(TB_Function* f, TB_Node* n, Lattice* l) {
+    if (UNLIKELY(n->gvn >= f->type_cap)) { latuni_grow(f, n->gvn); }
+    f->types[n->gvn] = l;
 }
 
-static Lattice* lattice_intern(TB_Passes* p, Lattice l) {
+Lattice* latuni_get(TB_Function* f, TB_Node* n) {
+    if (UNLIKELY(n->gvn >= f->type_cap)) { latuni_grow(f, n->gvn); }
+    if (f->types[n->gvn] == NULL) { f->types[n->gvn] = lattice_from_dt(f, n->dt); }
+    return f->types[n->gvn];
+}
+
+static Lattice* lattice_intern(TB_Function* f, Lattice l) {
     assert(l.tag != LATTICE_TUPLE);
-    Lattice* k = nl_hashset_get2(&p->type_interner, &l, lattice_hash, lattice_cmp);
-    if (k != NULL) {
-        return k;
-    }
+    Lattice* k = nl_hashset_get2(&f->type_interner, &l, lattice_hash, lattice_cmp);
+    if (k != NULL) { return k; }
 
     // allocate new node
-    k = tb_arena_alloc(tmp_arena, sizeof(Lattice));
+    k = tb_arena_alloc(f->tmp_arena, sizeof(Lattice));
     memcpy(k, &l, sizeof(l));
-    nl_hashset_put2(&p->type_interner, k, lattice_hash, lattice_cmp);
+    nl_hashset_put2(&f->type_interner, k, lattice_hash, lattice_cmp);
     return k;
 }
 
@@ -99,22 +95,22 @@ static bool lattice_top_or_bot(Lattice* l) {
     return l->tag <= LATTICE_TOP;
 }
 
-LatticeTrifecta lattice_truthy(Lattice* l) {
+Lattice* lattice_truthy(Lattice* l) {
     switch (l->tag) {
         case LATTICE_INT:
         if (l->_int.min == l->_int.max) {
-            return l->_int.min ? LATTICE_KNOWN_TRUE : LATTICE_KNOWN_FALSE;
+            return l->_int.min ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY;
         }
-        return LATTICE_UNKNOWN;
+        return &BOT_IN_THE_SKY;
 
-        case LATTICE_NAN32: return LATTICE_KNOWN_FALSE;
-        case LATTICE_NAN64: return LATTICE_KNOWN_FALSE;
+        case LATTICE_NAN32: return &FALSE_IN_THE_SKY;
+        case LATTICE_NAN64: return &FALSE_IN_THE_SKY;
 
-        case LATTICE_NULL:  return LATTICE_KNOWN_FALSE;
-        case LATTICE_XNULL: return LATTICE_KNOWN_TRUE;
+        case LATTICE_NULL:  return &FALSE_IN_THE_SKY;
+        case LATTICE_XNULL: return &TRUE_IN_THE_SKY;
 
         default:
-        return LATTICE_UNKNOWN;
+        return &BOT_IN_THE_SKY;
     }
 }
 
@@ -122,7 +118,7 @@ static int64_t lattice_int_min(int bits) { return 1ll << (bits - 1); }
 static int64_t lattice_int_max(int bits) { return (1ll << (bits - 1)) - 1; }
 static uint64_t lattice_uint_max(int bits) { return UINT64_MAX >> (64 - bits); }
 
-static Lattice* lattice_from_dt(TB_Passes* p, TB_DataType dt) {
+static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
     switch (dt.type) {
         case TB_INT: {
             assert(dt.data <= 64);
@@ -130,7 +126,7 @@ static Lattice* lattice_from_dt(TB_Passes* p, TB_DataType dt) {
                 return &BOT_IN_THE_SKY;
             }
 
-            return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = { 0, lattice_uint_max(dt.data) } });
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, lattice_uint_max(dt.data) } });
         }
 
         case TB_FLOAT: {
@@ -143,7 +139,7 @@ static Lattice* lattice_from_dt(TB_Passes* p, TB_DataType dt) {
         }
 
         case TB_MEMORY: {
-            return p->root_mem;
+            return f->root_mem;
         }
 
         case TB_CONTROL: return &CTRL_IN_THE_SKY;
@@ -151,20 +147,7 @@ static Lattice* lattice_from_dt(TB_Passes* p, TB_DataType dt) {
     }
 }
 
-Lattice* lattice_universe_get(TB_Passes* p, TB_Node* n) {
-    // reserve cap, slow path :p
-    if (UNLIKELY(n->gvn >= p->type_cap)) {
-        lattice_universe_grow(p, n->gvn);
-    }
-
-    if (p->types[n->gvn] == NULL) {
-        p->types[n->gvn] = lattice_from_dt(p, n->dt);
-    }
-
-    return p->types[n->gvn];
-}
-
-static Lattice* lattice_tuple_from_node(TB_Passes* p, TB_Node* n) {
+static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
     assert(n->dt.type == TB_TUPLE);
     // count projs
     int projs = 0;
@@ -173,18 +156,18 @@ static Lattice* lattice_tuple_from_node(TB_Passes* p, TB_Node* n) {
     }
 
     size_t size = sizeof(Lattice) + projs*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(tmp_arena, size);
+    Lattice* l = tb_arena_alloc(f->tmp_arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._tuple = { projs } };
     FOR_USERS(u, n) {
         if (u->n->type != TB_PROJ) continue;
 
         int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-        l->elems[index] = lattice_from_dt(p, u->n->dt);
+        l->elems[index] = lattice_from_dt(f, u->n->dt);
     }
 
-    Lattice* k = nl_hashset_put2(&p->type_interner, l, lattice_hash, lattice_cmp);
+    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
     if (k) {
-        tb_arena_free(tmp_arena, l, size);
+        tb_arena_free(f->tmp_arena, l, size);
         return k;
     } else {
         return l;
@@ -217,22 +200,22 @@ static LatticeInt lattice_into_unsigned(LatticeInt i, int bits) {
     }
 }
 
-static Lattice* lattice_gimme_int(TB_Passes* p, int64_t min, int64_t max) {
+static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max) {
     assert(min <= max);
-    return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = { min, max } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max } });
 }
 
-static Lattice* lattice_gimme_uint(TB_Passes* p, uint64_t min, uint64_t max) {
+static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max) {
     assert(min <= max);
-    return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = { min, max } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max } });
 }
 
-static Lattice* lattice_new_alias(TB_Passes* p) {
-    return lattice_intern(p, (Lattice){ LATTICE_MEM, ._mem = { p->alias_n++ } });
+static Lattice* lattice_new_alias(TB_Function* f) {
+    return lattice_intern(f, (Lattice){ LATTICE_MEM, ._mem = { f->alias_n++ } });
 }
 
-static Lattice* lattice_alias(TB_Passes* p, int alias_idx) {
-    return lattice_intern(p, (Lattice){ LATTICE_MEM, ._mem = { alias_idx } });
+static Lattice* lattice_alias(TB_Function* f, int alias_idx) {
+    return lattice_intern(f, (Lattice){ LATTICE_MEM, ._mem = { alias_idx } });
 }
 
 static bool l_add_overflow(uint64_t x, uint64_t y, uint64_t mask, uint64_t* out) {
@@ -277,7 +260,7 @@ static LatticeInt lattice_meet_int(LatticeInt a, LatticeInt b, TB_DataType dt) {
     return a;
 }
 
-static Lattice* lattice_dual(TB_Passes* p, Lattice* type) {
+static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
     switch (type->tag) {
         case LATTICE_BOT: {
             return &TOP_IN_THE_SKY;
@@ -285,7 +268,7 @@ static Lattice* lattice_dual(TB_Passes* p, Lattice* type) {
 
         case LATTICE_INT: {
             LatticeInt i = type->_int;
-            return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = { i.max, i.min, i.known_ones, i.known_zeros } });
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { i.max, i.min, i.known_ones, i.known_zeros } });
         }
 
         default:
@@ -294,7 +277,7 @@ static Lattice* lattice_dual(TB_Passes* p, Lattice* type) {
 }
 
 // generates the greatest lower bound between a and b
-static Lattice* lattice_meet(TB_Passes* p, Lattice* a, Lattice* b, TB_DataType dt) {
+static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b, TB_DataType dt) {
     // a ^ a = a
     if (a == b) return a;
 
@@ -314,7 +297,7 @@ static Lattice* lattice_meet(TB_Passes* p, Lattice* a, Lattice* b, TB_DataType d
             }
 
             LatticeInt i = lattice_meet_int(a->_int, b->_int, dt);
-            return lattice_intern(p, (Lattice){ LATTICE_INT, ._int = i });
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = i });
         }
 
         // here's the cases we need to handle for floats (a is rows):

@@ -1,5 +1,5 @@
 
-void tb_dumb_print_node(Lattice** types, TB_Node* n) {
+void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     printf("%%%u: ", n->gvn);
     if (types && types[n->gvn] != NULL && types[n->gvn] != &TOP_IN_THE_SKY) {
         print_lattice(types[n->gvn], n->dt);
@@ -85,20 +85,20 @@ static void dumb_walk(TB_Function* f, Lattice** types, TB_Node* n, uint64_t* vis
         dumb_walk(f, types, in, visited);
     }
 
-    tb_dumb_print_node(types, n);
+    tb_print_dumb_node(types, n);
     printf("\n");
 }
 
-void tb_dumb_print(TB_Function* f, TB_Passes* p) {
+void tb_print_dumb(TB_Function* f, bool use_fancy_types) {
     printf("=== DUMP %s ===\n", f->super.name);
 
     uint64_t* visited = tb_platform_heap_alloc(((f->node_count + 63) / 64) * sizeof(uint64_t));
     memset(visited, 0, ((f->node_count + 63) / 64) * sizeof(uint64_t));
 
     TB_Node* root   = f->root_node;
-    Lattice** types = p ? p->types : NULL;
+    Lattice** types = use_fancy_types ? f->types : NULL;
 
-    tb_dumb_print_node(types, root);
+    tb_print_dumb_node(types, root);
     printf("\n");
 
     visited[root->gvn / 64] |= (1ull << (root->gvn % 64));
@@ -106,4 +106,6 @@ void tb_dumb_print(TB_Function* f, TB_Passes* p) {
     FOREACH_N(i, 0, root->input_count) {
         dumb_walk(f, types, root->inputs[i], visited);
     }
+
+    tb_platform_heap_free(visited);
 }

@@ -1,5 +1,5 @@
 
-static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
     // if a region is dead, start a violent death chain
@@ -25,7 +25,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
 
         size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
-            Lattice* ty = lattice_universe_get(p, n->inputs[i]);
+            Lattice* ty = latuni_get(f, n->inputs[i]);
             if (n->inputs[i]->type == TB_DEAD || ty == &XCTRL_IN_THE_SKY) {
                 remove_input(f, n, i);
 
@@ -107,7 +107,7 @@ static TB_Node* ideal_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
     return NULL;
 }
 
-static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
     // degenerate PHI, poison it
     if (n->input_count == 1) {
         log_warn("%s: ir: generated poison due to PHI with no edges", f->super.name);
@@ -174,13 +174,13 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
                         // header -> merge
                         {
                             TB_Node* parent = branch->inputs[0];
-                            tb_pass_kill_node(f, branch);
-                            tb_pass_kill_node(f, left);
-                            tb_pass_kill_node(f, right);
+                            tb_kill_node(f, branch);
+                            tb_kill_node(f, left);
+                            tb_kill_node(f, right);
 
                             // attach the header and merge to each other
-                            tb_pass_mark(opt, parent);
-                            tb_pass_mark_users(opt, region);
+                            mark_node(f, parent);
+                            mark_users(f, region);
                             subsume_node(f, region, parent);
                         }
 
@@ -245,7 +245,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
 
             // kill branch, we don't really need it anymore
             TB_Node* before = parent->inputs[0];
-            tb_pass_kill_node(f, parent);
+            tb_kill_node(f, parent);
             subsume_node(f, region, before);
 
             return lookup;
@@ -255,7 +255,7 @@ static TB_Node* ideal_phi(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
-static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n) {
+static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
 
     if (br->succ_count == 2) {
@@ -267,7 +267,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
             // if (a && b) A else B => if (a ? b : 0) A else B
             //
             // TODO(NeGate): implement form which works on an arbitrary falsey
-            if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_BRANCH && is_empty_bb(opt, n)) {
+            if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_BRANCH && is_empty_bb(f, n)) {
                 uint64_t falsey = br->keys[0].key;
                 TB_Node* pred_branch = n->inputs[0]->inputs[0];
 
@@ -306,7 +306,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                             FOR_USERS(use, shared_edge) {
                                 if (use->n->type == TB_PHI && use->slot == 0) {
                                     remove_input(f, use->n, shared_i + 1);
-                                    tb_pass_mark(opt, use->n);
+                                    mark_node(f, use->n);
                                 }
                             }
 
@@ -314,25 +314,25 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                             TB_Node* cmp = pred_branch->inputs[1];
 
                             // remove first branch
-                            tb_pass_kill_node(f, pred_branch);
+                            tb_kill_node(f, pred_branch);
                             set_input(f, n, before, 0);
 
                             // we wanna normalize into a comparison (not a boolean -> boolean)
                             if (!(cmp->dt.type == TB_INT && cmp->dt.data == 1)) {
                                 assert(cmp->dt.type != TB_FLOAT && "TODO");
-                                TB_Node* imm = make_int_node(f, opt, cmp->dt, pred_falsey);
+                                TB_Node* imm = make_int_node(f, cmp->dt, pred_falsey);
 
                                 TB_Node* new_node = tb_alloc_node(f, TB_CMP_NE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
                                 set_input(f, new_node, cmp, 1);
                                 set_input(f, new_node, imm, 2);
                                 TB_NODE_SET_EXTRA(new_node, TB_NodeCompare, .cmp_dt = cmp->dt);
 
-                                tb_pass_mark(opt, new_node);
+                                mark_node(f, new_node);
                                 cmp = new_node;
                             }
 
                             // construct branchless merge
-                            TB_Node* false_node = make_int_node(f, opt, n->inputs[1]->dt, 0);
+                            TB_Node* false_node = make_int_node(f, n->inputs[1]->dt, 0);
 
                             // a ? b : 0
                             TB_Node* selector = tb_alloc_node(f, TB_SELECT, n->inputs[1]->dt, 4, 0);
@@ -341,7 +341,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                             set_input(f, selector, false_node,   3);
 
                             set_input(f, n, selector, 1);
-                            tb_pass_mark(opt, selector);
+                            mark_node(f, selector);
                             return n;
                         }
                     }
@@ -362,7 +362,7 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
                 }
 
                 set_input(f, n, new_cmp, 1);
-                tb_pass_mark(opt, new_cmp);
+                mark_node(f, new_cmp);
                 return n;
             }
 
@@ -389,11 +389,11 @@ static TB_Node* ideal_branch(TB_Passes* restrict opt, TB_Function* f, TB_Node* n
     return NULL;
 }
 
-static Lattice* value_call(TB_Passes* restrict opt, TB_Node* n) {
+static Lattice* value_call(TB_Function* f, TB_Node* n) {
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
 
     size_t size = sizeof(Lattice) + c->proj_count*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(tmp_arena, size);
+    Lattice* l = tb_arena_alloc(f->tmp_arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._tuple = { c->proj_count } };
 
     FOREACH_N(i, 1, c->proj_count) {
@@ -403,26 +403,24 @@ static Lattice* value_call(TB_Passes* restrict opt, TB_Node* n) {
     FOR_USERS(u, n) {
         if (u->n->type == TB_PROJ) {
             int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-            if (index > 0) {
-                l->elems[index] = lattice_from_dt(opt, u->n->dt);
-            }
+            if (index > 0) { l->elems[index] = lattice_from_dt(f, u->n->dt); }
         }
     }
 
     // control just flows through
-    l->elems[0] = lattice_universe_get(opt, n->inputs[0]);
+    l->elems[0] = latuni_get(f, n->inputs[0]);
 
-    Lattice* k = nl_hashset_put2(&opt->type_interner, l, lattice_hash, lattice_cmp);
+    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
     if (k) {
-        tb_arena_free(tmp_arena, l, size);
+        tb_arena_free(f->tmp_arena, l, size);
         return k;
     } else {
         return l;
     }
 }
 
-static Lattice* value_branch(TB_Passes* restrict opt, TB_Node* n) {
-    Lattice* before = lattice_universe_get(opt, n->inputs[0]);
+static Lattice* value_branch(TB_Function* f, TB_Node* n) {
+    Lattice* before = latuni_get(f, n->inputs[0]);
     if (before == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -431,7 +429,7 @@ static Lattice* value_branch(TB_Passes* restrict opt, TB_Node* n) {
 
     // constant fold branch
     assert(n->input_count == 2);
-    Lattice* key = lattice_universe_get(opt, n->inputs[1]);
+    Lattice* key = latuni_get(f, n->inputs[1]);
     if (key == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
@@ -482,22 +480,22 @@ static Lattice* value_branch(TB_Passes* restrict opt, TB_Node* n) {
     // construct tuple type
     match:;
     size_t size = sizeof(Lattice) + br->succ_count*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(tmp_arena, size);
+    Lattice* l = tb_arena_alloc(f->tmp_arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._tuple = { br->succ_count } };
     FOREACH_N(i, 0, br->succ_count) {
         l->elems[i] = taken < 0 || i == taken ? &CTRL_IN_THE_SKY : &XCTRL_IN_THE_SKY;
     }
 
-    Lattice* k = nl_hashset_put2(&opt->type_interner, l, lattice_hash, lattice_cmp);
+    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
     if (k) {
-        tb_arena_free(tmp_arena, l, size);
+        tb_arena_free(f->tmp_arena, l, size);
         return k;
     } else {
         return l;
     }
 }
 
-static TB_Node* identity_safepoint(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* identity_safepoint(TB_Function* f, TB_Node* n) {
     if (n->inputs[0]->type == TB_SAFEPOINT_POLL) {
         // (safepoint (safepoint X)) => (safepoint X)
         return n->inputs[0];
@@ -506,7 +504,7 @@ static TB_Node* identity_safepoint(TB_Passes* restrict p, TB_Function* f, TB_Nod
     }
 }
 
-static TB_Node* identity_region(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
     // fold out diamond shaped patterns
     TB_Node* same = n->inputs[0];
     if (same->type == TB_PROJ && same->inputs[0]->type == TB_BRANCH) {
@@ -526,14 +524,14 @@ static TB_Node* identity_region(TB_Passes* restrict p, TB_Function* f, TB_Node* 
         }
 
         TB_Node* before = same->inputs[0];
-        tb_pass_kill_node(f, same);
+        tb_kill_node(f, same);
         return before;
     }
 
     return n;
 }
 
-static TB_Node* identity_phi(TB_Passes* restrict p, TB_Function* f, TB_Node* n) {
+static TB_Node* identity_phi(TB_Function* f, TB_Node* n) {
     TB_Node* same = NULL;
     FOREACH_N(i, 1, n->input_count) {
         if (n->inputs[i] == n) continue;
@@ -542,9 +540,7 @@ static TB_Node* identity_phi(TB_Passes* restrict p, TB_Function* f, TB_Node* n) 
     }
 
     assert(same);
-    if (p) {
-        tb_pass_mark_users(p, n->inputs[0]);
-    }
+    if (f->worklist.items != NULL) { mark_users(f, n->inputs[0]); }
 
     return same;
 }

@@ -12,9 +12,9 @@
 //
 // They're run in this order for every node and given each is well-formed (one step Church-Rosser)
 // the number of rewrites performed should scale linearly with the size of the IR.
-typedef TB_Node* (*NodeIdealize)(TB_Passes* restrict p, TB_Function* f, TB_Node* n);
-typedef TB_Node* (*NodeIdentity)(TB_Passes* restrict p, TB_Function* f, TB_Node* n);
-typedef Lattice* (*NodeValueOf)(TB_Passes* restrict p, TB_Node* n);
+typedef TB_Node* (*NodeIdealize)(TB_Function* f, TB_Node* n);
+typedef TB_Node* (*NodeIdentity)(TB_Function* f, TB_Node* n);
+typedef Lattice* (*NodeValueOf)(TB_Function* f, TB_Node* n);
 
 enum {
     NODE_IS_CTRL = 1,

@@ -177,13 +177,12 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     return m;
 }
 
-TB_FunctionOutput* tb_pass_codegen(TB_Passes* p, TB_Arena* arena, const TB_FeatureSet* features, bool emit_asm) {
-    TB_Function* f = p->f;
+TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Arena* arena, const TB_FeatureSet* features, bool emit_asm) {
     TB_Module* m = f->super.module;
 
     TB_FunctionOutput* func_out = tb_arena_alloc(arena, sizeof(TB_FunctionOutput));
     *func_out = (TB_FunctionOutput){ .parent = f, .section = f->section, .linkage = f->linkage };
-    m->codegen->compile_function(p, func_out, features, arena, emit_asm);
+    m->codegen->compile_function(f, func_out, features, arena, emit_asm);
     atomic_fetch_add(&m->compiled_function_count, 1);
 
     f->output = func_out;
@@ -354,7 +353,7 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
     set_input(f, root, callgraph, 0);
 
     // create return node
-    TB_Node* ret = f->ret_node = tb_alloc_node(f, TB_RETURN, TB_TYPE_CONTROL, 3 + p->return_count, 0);
+    TB_Node* ret = tb_alloc_node(f, TB_RETURN, TB_TYPE_CONTROL, 3 + p->return_count, 0);
     set_input(f, root, ret, 1);
 
     // fill return crap
