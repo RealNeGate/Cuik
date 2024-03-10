@@ -265,13 +265,13 @@ typedef struct TB_FunctionOutput {
     TB_SymbolPatch* last_patch;
 } TB_FunctionOutput;
 
-typedef struct {
+struct TB_Worklist {
     DynArray(TB_Node*) items;
 
     // uses gvn as key
     size_t visited_cap; // in words
     uint64_t* visited;
-} Worklist;
+};
 
 // we have analysis stuff for computing BBs from our graphs, these aren't
 // kept around at all times like an SSA-CFG compiler.
@@ -324,8 +324,6 @@ struct TB_Function {
 
     // Optimizer related data
     struct {
-        TB_Arena* arenas[2];
-
         // we use this to verify that we're on the same thread
         // for the entire duration of the TB_Function... we'll
         // get rid of this limitation soon.
@@ -346,7 +344,7 @@ struct TB_Function {
         Lattice* root_mem;
 
         // it's what the peepholes are iterating on
-        Worklist worklist;
+        TB_Worklist* worklist;
 
         // we throw the results of scheduling here:
         //   [value number] -> TB_BasicBlock*

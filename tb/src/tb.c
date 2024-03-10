@@ -177,7 +177,8 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     return m;
 }
 
-TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Arena* arena, const TB_FeatureSet* features, bool emit_asm) {
+TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, const TB_FeatureSet* features, bool emit_asm) {
+    f->worklist = ws;
     TB_Module* m = f->super.module;
 
     TB_FunctionOutput* func_out = tb_arena_alloc(arena, sizeof(TB_FunctionOutput));
@@ -186,13 +187,13 @@ TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Arena* arena, const TB_FeatureS
     atomic_fetch_add(&m->compiled_function_count, 1);
 
     f->output = func_out;
+    f->worklist = NULL;
+
     return func_out;
 }
 
 void tb_output_print_asm(TB_FunctionOutput* out, FILE* fp) {
-    if (fp == NULL) {
-        fp = stdout;
-    }
+    if (fp == NULL) { fp = stdout; }
 
     TB_Assembly* a = tb_output_get_asm(out);
     for (; a; a = a->next) {

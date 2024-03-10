@@ -74,7 +74,7 @@ void tb__print_regmask(RegMask* mask) {
 }
 
 static void walk_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
-    if (n == NULL || worklist_test_n_set(&f->worklist, n)) { return; }
+    if (n == NULL || worklist_test_n_set(f->worklist, n)) { return; }
 
     // replace with machine op
     TB_Node* k = node_isel(ctx, ctx->f, n);
@@ -88,9 +88,9 @@ static void walk_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
         FOREACH_N(i, 0, n->input_count) {
             TB_Node* in = n->inputs[i];
             if (in) {
-                User* u = in->users;
+                TB_User u = in->users;
                 if (u->next == NULL) {
-                    assert(u->n == n && i == u->slot);
+                    assert(USERN(u) == n && i == USERI(u));
                     set_input(ctx->f, n, NULL, i);
                     tb_kill_node(ctx->f, in);
                 }
@@ -99,7 +99,7 @@ static void walk_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
         tb_kill_node(ctx->f, n);
 
         // don't walk the replacement
-        worklist_test_n_set(&f->worklist, k);
+        worklist_test_n_set(f->worklist, k);
         n = k;
     }
     // if (k) { tb_pass_print(ctx->p); }
@@ -118,7 +118,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     TB_Arena* arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
-    TB_OPTDEBUG(CODEGEN)(tb_pass_print(p));
+    TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
     Ctx ctx = {
         .module = f->super.module,
@@ -147,7 +147,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         ctx.features = *features;
     }
 
-    Worklist* restrict ws = &f->worklist;
+    TB_Worklist* restrict ws = f->worklist;
 
     // legalize step takes out any of our 16bit and 8bit math ops
     // tb_opt_alloc_types(p);
@@ -161,9 +161,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         worklist_clear(ws);
         walk_node(&ctx, f, f->root_node);
 
-        // TB_OPTDEBUG(CODEGEN)(tb_pass_print_dot(p, tb_default_print_callback, stdout));
-        TB_OPTDEBUG(CODEGEN)(tb_dumb_print(f, NULL));
-        TB_OPTDEBUG(CODEGEN)(tb_pass_print(p));
+        TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
+        TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
         log_phase_end(f, og_size, "isel");
     }
@@ -172,8 +171,14 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     TB_CFG cfg;
     CUIK_TIMED_BLOCK("global sched") {
-        cfg = tb_compute_rpo(f, &f->worklist);
-        tb_global_schedule(f, cfg, false, true, node_latency);
+        // we're gonna build a bunch of compact tables... they're only
+        // compact if we didn't spend like 40% of our value numbers on dead shit.
+        tb_renumber_nodes(f, ws);
+
+        cfg = tb_compute_rpo(f, ws);
+        tb_global_schedule(f, cfg, true, node_latency);
+
+        TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
 
         log_phase_end(f, og_size, "GCM");
     }
@@ -260,10 +265,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 if (def_mask != &TB_REG_EMPTY) {
                     if (n->type == TB_MACH_MOVE) {
                         assert(n->users->next == NULL);
-                        assert(n->users->n->type == TB_PHI);
+                        assert(USERN(n->users)->type == TB_PHI);
 
                         // these are phi moves, they should share the vreg of phi
-                        TB_Node* phi = n->users->n;
+                        TB_Node* phi = USERN(n->users);
                         if (ctx.vreg_map[phi->gvn] == 0) {
                             ctx.vreg_map[phi->gvn] = vreg_id = vreg_count++;
                         } else {
@@ -317,7 +322,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 int tmps = node_tmp_count(&ctx, n);
                 RegMask* def_mask = node_constraint(&ctx, n, ctx.ins);
 
-                printf("  "), tb_dumb_print_node(NULL, n), printf("\n");
+                printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
                 if (vreg_id > 0) {
                     printf("    OUT    = "), tb__print_regmask(def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
                 }
@@ -385,7 +390,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 VReg* vreg = def_id > 0 ? &ctx.vregs[def_id] : NULL;
 
                 #if TB_OPTDEBUG_CODEGEN
-                printf("  "), tb_dumb_print_node(NULL, n), printf("\n");
+                printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
 
                 if (vreg) {
                     printf("    OUT    = %s:R%d\n", reg_class_name(vreg->class), vreg->assigned);

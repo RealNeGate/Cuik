@@ -230,12 +230,11 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
     if (n->dt.type == TB_TUPLE) {
         TB_Node* projs[128] = { 0 };
         int limit = 0;
-        FOR_USERS(use, n) {
-            if (use->n->type == TB_PROJ) {
-                int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
+        FOR_USERS(u, n) {
+            if (USERN(u)->type == TB_PROJ) {
+                int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                 if (limit < index+1) limit = index+1;
-
-                projs[index] = use->n;
+                projs[index] = USERN(u);
             }
         }
 
@@ -337,7 +336,7 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
 void tb_print_dot(TB_Function* f, TB_PrintCallback callback, void* user_data) {
     P("digraph %s {\n  node [ordering=in; shape=record];\n", f->super.name ? f->super.name : "unnamed");
 
-    Worklist ws = { 0 };
+    TB_Worklist ws = { 0 };
     worklist_alloc(&ws, f->node_count);
     worklist_push(&ws, f->root_node);
 

@@ -31,6 +31,8 @@
 #define TB_VERSION_MINOR 4
 #define TB_VERSION_PATCH 0
 
+#define TB_PACKED_USERS 0
+
 #ifndef TB_API
 #  ifdef __cplusplus
 #    define TB_EXTERN extern "C"
@@ -556,9 +558,11 @@ typedef struct TB_Node TB_Node;
 typedef struct User User;
 struct User {
     User* next;
-    TB_Node* n;
-    int slot;
+    TB_Node* _n;
+    int _slot;
 };
+
+typedef User* TB_User;
 
 struct TB_Node {
     TB_NodeType type;
@@ -571,7 +575,6 @@ struct TB_Node {
     // makes it easier to track in graph walks
     uint32_t gvn;
 
-    // only value while inside of a TB_Passes,
     // these are unordered and usually just
     // help perform certain transformations or
     // analysis (not necessarily semantics)
@@ -1437,14 +1440,18 @@ TB_API void tb_builder_endblock(TB_GraphBuilder* g);
 ////////////////////////////////
 // New optimizer API
 ////////////////////////////////
-// the optimizer has fancy types for CCP, these can be freed once you're done with
-// transforms/analysis. returns true if it actually allocated.
-TB_API bool tb_opt_alloc_types(TB_Function* f);
+// To avoid allocs, you can make a worklist and keep it across multiple functions so long
+// as they're not trying to use it at the same time.
+typedef struct TB_Worklist TB_Worklist;
+
+TB_API TB_Worklist* tb_worklist_alloc(void);
+TB_API void tb_worklist_free(TB_Worklist* ws);
+
+// if you decide during tb_opt that you wanna preserve the types, this is how you'd later free them.
 TB_API void tb_opt_free_types(TB_Function* f);
 
 // this will allocate the worklist, you can free worklist once you're done with analysis/transforms.
-TB_API void tb_opt_push_all_nodes(TB_Function* f, TB_Arena* ir, TB_Arena* tmp);
-TB_API void tb_opt_free_worklist(TB_Function* f);
+TB_API void tb_opt_push_all_nodes(TB_Function* f);
 TB_API void tb_opt_dump_stats(TB_Function* f);
 
 // returns GVN on a new node, returning either the same node or a duplicate node 'k'.
@@ -1454,7 +1461,7 @@ TB_API TB_Node* tb_opt_gvn_node(TB_Function* f, TB_Node* n);
 TB_API TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n);
 
 // Trust me bro, just use my configs
-TB_API void tb_opt(TB_Function* f);
+TB_API void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool preserve_types);
 
 // print in SSA-CFG looking form (with BB params for the phis)
 TB_API void tb_print(TB_Function* f);
@@ -1467,7 +1474,7 @@ TB_API void tb_print_dumb(TB_Function* f, bool use_fancy_types);
 //   output goes at the top of the code_arena, feel free to place multiple functions
 //   into the same code arena (although arenas aren't thread-safe you'll want one per thread
 //   at least)
-TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
+TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
 
 // interprocedural optimizer iter
 TB_API bool tb_module_ipo(TB_Module* m);

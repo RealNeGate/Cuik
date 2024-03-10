@@ -85,15 +85,15 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             bool first = true;
             printf("(");
             FOR_USERS(u, n) {
-                if (u->n->type == TB_PHI) {
+                if (USERN(u)->type == TB_PHI) {
                     if (first) {
                         first = false;
                     } else {
                         printf(", ");
                     }
 
-                    printf("v%u: ", u->n->gvn);
-                    print_type2(u->n->dt);
+                    printf("v%u: ", USERN(u)->gvn);
+                    print_type2(USERN(u)->dt);
                 }
             }
             // printf(")");
@@ -153,15 +153,15 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
     if (cfg_is_region(target)) {
         int phi_i = -1;
         FOR_USERS(u, n) {
-            if (cfg_is_region(u->n)) {
-                phi_i = 1 + u->slot;
+            if (cfg_is_region(USERN(u))) {
+                phi_i = 1 + USERI(u);
                 break;
             }
         }
 
         bool first = true;
         FOR_USERS(u, target) {
-            if (u->n->type == TB_PHI) {
+            if (USERN(u)->type == TB_PHI) {
                 if (first) {
                     first = false;
                 } else {
@@ -169,7 +169,7 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
                 }
 
                 assert(phi_i >= 0);
-                print_ref_to_node(ctx, u->n->inputs[phi_i], false);
+                print_ref_to_node(ctx, USERN(u)->inputs[phi_i], false);
             }
         }
     }
@@ -182,7 +182,7 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 
     TB_Function* f = ctx->f;
     TB_BasicBlock* bb = f->scheduled[bb_start->gvn];
-    Worklist* ws = &f->worklist;
+    TB_Worklist* ws   = f->worklist;
 
     #ifndef NDEBUG
     TB_BasicBlock* expected = &nl_map_get_checked(ctx->cfg.node_to_block, bb_start);
@@ -219,9 +219,9 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 
                 // fill successors
                 FOR_USERS(u, n) {
-                    if (u->n->type == TB_PROJ) {
-                        int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                        succ[index] = u->n;
+                    if (USERN(u)->type == TB_PROJ) {
+                        int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                        succ[index] = USERN(u);
                     }
                 }
 
@@ -284,10 +284,10 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
                 if (n->dt.type == TB_TUPLE) {
                     // print with multiple returns
                     TB_Node* projs[32] = { 0 };
-                    FOR_USERS(use, n) {
-                        if (use->n->type == TB_PROJ) {
-                            int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
-                            projs[index] = use->n;
+                    FOR_USERS(u, n) {
+                        if (USERN(u)->type == TB_PROJ) {
+                            int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                            projs[index] = USERN(u);
                         }
                     }
 
@@ -460,19 +460,23 @@ static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
 }
 
 void tb_print(TB_Function* f) {
-    assert(f->scheduled == NULL);
+    size_t old_scheduled_n = f->scheduled_n;
+    TB_BasicBlock** old_scheduled = f->scheduled;
+    f->scheduled = NULL;
+
     cuikperf_region_start("print", NULL);
 
-    Worklist ws = { 0 };
+    TB_Worklist ws = { 0 };
     worklist_alloc(&ws, f->node_count);
 
     PrinterCtx ctx = { 0 };
+    ctx.f   = f;
     ctx.cfg = tb_compute_rpo(f, &ws);
 
     TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
 
     // schedule nodes
-    tb_global_schedule(f, ctx.cfg, false, false, NULL);
+    tb_global_schedule(f, ctx.cfg, false, NULL);
     worklist_clear_visited(&ws);
 
     TB_Node* end_bb = NULL;
@@ -492,7 +496,9 @@ void tb_print(TB_Function* f) {
     worklist_free(&ws);
     tb_free_cfg(&ctx.cfg);
 
+    f->scheduled_n = old_scheduled_n;
+    f->scheduled = old_scheduled;
+
     tb_arena_restore(f->tmp_arena, sp);
-    f->scheduled = NULL;
     cuikperf_region_end();
 }

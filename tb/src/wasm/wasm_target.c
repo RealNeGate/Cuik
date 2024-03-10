@@ -134,7 +134,7 @@ static void push_val(Ctx* ctx, TB_Node* n) {
 
 static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
     TB_BasicBlock* bb = ctx->p->scheduled[bb_start->gvn];
-    Worklist* ws = &ctx->p->worklist;
+    TB_Worklist* ws = &ctx->p->worklist;
 
     #ifndef NDEBUG
     TB_BasicBlock* expected = &nl_map_get_checked(ctx->cfg.node_to_block, bb_start);
@@ -435,7 +435,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
     }
 }
 
-static TB_Node** successors(Ctx* ctx, Worklist* ws, TB_Node* end, size_t* out_succ_count) {
+static TB_Node** successors(Ctx* ctx, TB_Worklist* ws, TB_Node* end, size_t* out_succ_count) {
     size_t succ_count = !cfg_is_endpoint(end);
     if (end->type == TB_BRANCH) {
         succ_count = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count;
@@ -719,7 +719,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         ctx.features = *features;
     }
 
-    Worklist* restrict ws = &p->worklist;
+    TB_Worklist* restrict ws = &p->worklist;
 
     // legalize step takes out any of our 16bit and 8bit math ops
     tb_pass_prep(p);

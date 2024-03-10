@@ -15,6 +15,16 @@ void tb_free_cfg(TB_CFG* cfg) {
     nl_map_free(cfg->node_to_block);
 }
 
+static TB_Node* cfg_next_control0(TB_Node* n) {
+    FOR_USERS(u, n) {
+        if (USERI(u) == 0 && cfg_is_control(USERN(u))) {
+            return USERN(u);
+        }
+    }
+
+    return NULL;
+}
+
 // walks until the terminator or other critical edge
 static TB_Node* end_of_bb(TB_Node* n) {
     while (!cfg_is_terminator(n)) {
@@ -47,9 +57,9 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
 
     if (end->type == TB_BRANCH) {
         FOR_USERS(u, end) {
-            if (u->n->type == TB_PROJ) {
-                int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                top->succ[index] = cfg_next_bb_after_cproj(u->n);
+            if (USERN(u)->type == TB_PROJ) {
+                int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                top->succ[index] = cfg_next_bb_after_cproj(USERN(u));
             }
         }
 
@@ -62,13 +72,13 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
             }
         }
     } else if (!cfg_is_endpoint(end)) {
-        top->succ[0] = cfg_next_user(end)->n;
+        top->succ[0] = USERN(cfg_next_user(end));
     }
 
     return top;
 }
 
-TB_CFG tb_compute_rpo(TB_Function* f, Worklist* ws) {
+TB_CFG tb_compute_rpo(TB_Function* f, TB_Worklist* ws) {
     cuikperf_region_start("RPO", NULL);
     assert(dyn_array_length(ws->items) == 0);
 
@@ -153,7 +163,7 @@ static TB_BasicBlock* get_pred_bb(TB_CFG* cfg, TB_Node* n, int i) {
 
 // Cooper, Keith D., Harvey, Timothy J. and Kennedy, Ken. "A simple, fast dominance algorithm." (2006)
 //   https://repository.rice.edu/items/99a574c3-90fe-4a00-adf9-ce73a21df2ed
-void tb_compute_dominators(TB_Function* f, Worklist* ws, TB_CFG cfg) {
+void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
     TB_Node** blocks = ws->items;
 
     TB_BasicBlock* entry = &nl_map_get_checked(cfg.node_to_block, blocks[0]);

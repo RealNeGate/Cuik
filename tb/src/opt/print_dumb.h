@@ -7,10 +7,10 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         if (n->dt.type == TB_TUPLE) {
             // print with multiple returns
             TB_Node* projs[32] = { 0 };
-            FOR_USERS(use, n) {
-                if (use->n->type == TB_PROJ) {
-                    int index = TB_NODE_GET_EXTRA_T(use->n, TB_NodeProj)->index;
-                    projs[index] = use->n;
+            FOR_USERS(u, n) {
+                if (USERN(u)->type == TB_PROJ) {
+                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                    projs[index] = USERN(u);
                 }
             }
 

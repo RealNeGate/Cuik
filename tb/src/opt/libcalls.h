@@ -12,11 +12,12 @@ static TB_Node* ideal_libcall(TB_Function* f, TB_Node* n) {
     if (is_memcpy || is_memset) {
         // remove from callgraph
         FOR_USERS(u, n) {
-            if (u->n->type == TB_CALLGRAPH) {
-                TB_Node* last = u->n->inputs[u->n->input_count - 1];
-                set_input(f, u->n, NULL, u->n->input_count - 1);
-                set_input(f, u->n, last, u->slot);
-                u->n->input_count--;
+            TB_Node* un = USERN(u);
+            if (un->type == TB_CALLGRAPH) {
+                TB_Node* last = un->inputs[un->input_count - 1];
+                set_input(f, un, NULL, un->input_count - 1);
+                set_input(f, un, last, USERI(u));
+                un->input_count--;
                 break;
     	    }
         }

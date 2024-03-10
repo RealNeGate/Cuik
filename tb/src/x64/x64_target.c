@@ -933,9 +933,9 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             // fill successors
             bool has_default = false;
             FOR_USERS(u, n) {
-                if (u->n->type == TB_PROJ) {
-                    int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-                    TB_Node* succ_n = cfg_next_bb_after_cproj(u->n);
+                if (USERN(u)->type == TB_PROJ) {
+                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                    TB_Node* succ_n = cfg_next_bb_after_cproj(USERN(u));
 
                     if (index == 0) {
                         has_default = !cfg_is_unreachable(succ_n);
@@ -1876,7 +1876,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     ctx->stack_usage = stack_usage;
 
     FOR_USERS(u, root) {
-        TB_Node* n = u->n;
+        TB_Node* n = USERN(u);
         if (n->type != TB_MACH_LOCAL) continue;
         TB_NodeMachLocal* l = TB_NODE_GET_EXTRA(n);
         if (l->type == NULL) continue;

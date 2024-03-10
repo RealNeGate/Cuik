@@ -2,13 +2,14 @@
 typedef struct SchedNode SchedNode;
 struct SchedNode {
     SchedNode* parent;
+    TB_ArenaSavepoint sp;
 
     TB_Node* n;
     int index;
 
     int anti_i;
     int anti_count;
-    User* antis[];
+    TB_User antis[];
 };
 
 typedef struct {
@@ -17,6 +18,8 @@ typedef struct {
 } SchedPhi;
 
 static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n) {
+    TB_ArenaSavepoint sp = tb_arena_save(arena);
+
     int anti_count = 0;
     if (n->type == TB_MERGEMEM) {
         anti_count = n->input_count - 2;
@@ -24,8 +27,8 @@ static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n
         anti_count = 1;
     }
 
-    SchedNode* s = tb_arena_alloc(arena, sizeof(SchedNode) + anti_count*sizeof(User*));
-    *s = (SchedNode){ .parent = parent, .n = n, .index = 0, .anti_count = anti_count };
+    SchedNode* s = tb_arena_alloc(arena, sizeof(SchedNode) + anti_count*sizeof(TB_User));
+    *s = (SchedNode){ .parent = parent, .sp = sp, .n = n, .index = 0, .anti_count = anti_count };
 
     if (n->type == TB_MERGEMEM) {
         FOREACH_N(i, 2, n->input_count) {
@@ -38,59 +41,45 @@ static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n
     return s;
 }
 
-static bool sched_in_bb(TB_Function* f, Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
+static bool sched_in_bb(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
     return f->scheduled[n->gvn] == bb && !worklist_test_n_set(ws, n);
 }
 
-typedef struct {
-    int cap, count;
-    SchedPhi* arr;
-} Phis;
-
-static void fill_phis(TB_Arena* arena, Phis* phis, TB_Node* succ, int phi_i) {
-    for (User* u = succ->users; u; u = u->next) {
-        if (u->n->type != TB_PHI) continue;
-
-        // ensure cap (not very effective since it moves each time, that's ok it's rare)
-        if (phis->count == phis->cap) {
-            phis->cap *= 2;
-
-            SchedPhi* new_phis = tb_arena_alloc(arena, phis->cap * sizeof(SchedPhi));
-            memcpy(new_phis, phis->arr, phis->count * sizeof(SchedPhi));
-            phis->arr = new_phis;
-        }
-
-        phis->arr[phis->count++] = (SchedPhi){ .phi = u->n, .n = u->n->inputs[1 + phi_i] };
+static void fill_phis(TB_Arena* arena, ArenaArray(SchedPhi)* phis, TB_Node* succ, int phi_i) {
+    FOR_USERS(u, succ) {
+        if (USERN(u)->type != TB_PHI) continue;
+        SchedPhi p = { .phi = USERN(u), .n = USERN(u)->inputs[1 + phi_i] };
+        aarray_push(*phis, p);
     }
 }
 
 // basically just topological sort, no fancy shit
-void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb) {
+void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb) {
     TB_Arena* arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
     TB_Node* end = bb->end;
 
     // find phis
-    int phi_curr = 0;
-    Phis phis = { .cap = 256, .arr = tb_arena_alloc(arena, 256 * sizeof(SchedPhi)) };
+    size_t phi_curr = 0;
+    ArenaArray(SchedPhi) phis = aarray_create(arena, SchedPhi, 32);
 
     if (end->type == TB_BRANCH) {
-        for (User* u = end->users; u; u = u->next) {
-            if (u->n->type != TB_PROJ) continue;
+        FOR_USERS(u, end) {
+            if (USERN(u)->type != TB_PROJ) continue;
 
             // we might have some memory phis over here if the projections aren't bbs
-            ptrdiff_t search = nl_map_get(cfg->node_to_block, u->n);
+            ptrdiff_t search = nl_map_get(cfg->node_to_block, USERN(u));
             if (search >= 0) continue;
 
-            User* succ = cfg_next_user(end);
-            if (cfg_is_region(succ->n)) {
-                fill_phis(arena, &phis, succ->n, succ->slot);
+            TB_User succ = cfg_next_user(end);
+            if (cfg_is_region(USERN(succ))) {
+                fill_phis(arena, &phis, USERN(succ), USERI(succ));
             }
         }
     } else if (!cfg_is_endpoint(end)) {
-        User* succ = cfg_next_user(end);
-        if (cfg_is_region(succ->n)) {
-            fill_phis(arena, &phis, succ->n, succ->slot);
+        TB_User succ = cfg_next_user(end);
+        if (cfg_is_region(USERN(succ))) {
+            fill_phis(arena, &phis, USERN(succ), USERI(succ));
         }
     }
 
@@ -99,11 +88,9 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(Phi
 
     // reserve projections for the top
     TB_Node* start = bb->id == 0 ? f->root_node : NULL;
-    if (start) {
-        FOR_USERS(use, start) {
-            if (use->n->type == TB_PROJ && !worklist_test_n_set(ws, use->n)) {
-                dyn_array_put(ws->items, use->n);
-            }
+    if (start) FOR_USERS(u, start) {
+        if (USERN(u)->type == TB_PROJ && !worklist_test_n_set(ws, USERN(u))) {
+            dyn_array_put(ws->items, USERN(u));
         }
     }
 
@@ -125,9 +112,9 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(Phi
         // resolve anti-deps
         if (top->anti_i < top->anti_count) {
             if (top->antis[top->anti_i] != NULL) {
-                User* next = top->antis[top->anti_i]->next;
-                TB_Node* anti = top->antis[top->anti_i]->n;
-                int slot = top->antis[top->anti_i]->slot;
+                TB_User next  = top->antis[top->anti_i]->next;
+                TB_Node* anti = USERN(top->antis[top->anti_i]);
+                int slot      = USERI(top->antis[top->anti_i]);
 
                 if (anti != n && slot == 1 && sched_in_bb(f, ws, bb, anti)) {
                     top = sched_make_node(arena, top, anti);
@@ -142,9 +129,9 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(Phi
         // resolve phi edges & leftovers when we're at the endpoint
         if (end == n) {
             // skip non-phis
-            if (phi_curr < phis.count) {
-                TB_Node* phi = phis.arr[phi_curr].phi;
-                TB_Node* val = phis.arr[phi_curr].n;
+            if (phi_curr < aarray_length(phis)) {
+                TB_Node* phi = phis[phi_curr].phi;
+                TB_Node* val = phis[phi_curr].n;
                 phi_curr += 1;
 
                 // reserve PHI space
@@ -178,13 +165,16 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(Phi
         }
 
         dyn_array_put(ws->items, n);
-        top = top->parent;
+
+        SchedNode* parent = top->parent;
+        tb_arena_restore(arena, top->sp);
+        top = parent;
 
         // push outputs (projections, if they apply)
         if (n->dt.type == TB_TUPLE && n->type != TB_BRANCH && n->type != TB_ROOT) {
-            for (User* use = n->users; use; use = use->next) {
-                if (use->n->type == TB_PROJ && !worklist_test_n_set(ws, use->n)) {
-                    dyn_array_put(ws->items, use->n);
+            FOR_USERS(u, n) {
+                if (USERN(u)->type == TB_PROJ && !worklist_test_n_set(ws, USERN(u))) {
+                    dyn_array_put(ws->items, USERN(u));
                 }
             }
         }

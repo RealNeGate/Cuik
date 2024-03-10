@@ -13,7 +13,7 @@ struct LegalizeCtx {
 
     TB_Function* f;
 
-    Worklist* ws;
+    TB_Worklist* ws;
     LegalizeFn fn;
 };
 
@@ -159,7 +159,7 @@ static TB_Node* walk_node(LegalizeCtx* ctx, TB_Node* n) {
 // This is the post-optimize pass which gets rid of weird integer types
 void tb_opt_legalize(TB_Function* f, TB_Arch arch) {
     CUIK_TIMED_BLOCK("global sched") {
-        LegalizeCtx ctx = { arch, f, &f->worklist };
+        LegalizeCtx ctx = { arch, f, f->worklist };
         ctx.fn = legalize_64bit_machine;
 
         // bottom-up rewrite

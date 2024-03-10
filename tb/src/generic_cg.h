@@ -82,7 +82,7 @@ typedef struct {
 
     // Scheduling
     TB_CFG cfg;
-    Worklist worklist; // reusing from TB_Passes.
+    TB_Worklist worklist; // reusing from TB_Passes.
     ValueDesc* values; // the indices match the GVN.
     TB_Scheduler sched;
 

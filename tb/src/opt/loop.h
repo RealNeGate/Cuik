@@ -63,13 +63,13 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
     // in the simple case we wanna see if our induction var is usually casted
     int phi_uses = 0;
     FOR_USERS(u, phi) {
-        TB_Node* use_n = u->n;
+        TB_Node* use_n = USERN(u);
         if (use_n == phi) continue;
         if (use_n == cond) continue;
         if (use_n == op) continue;
 
         int node_uses = 0;
-        FOR_USERS(u2, u->n) node_uses += 1;
+        FOR_USERS(u2, USERN(u)) node_uses += 1;
 
         // if we've got any casts, let's try to see which is most common
         if (use_n->type == TB_SIGN_EXT || use_n->type == TB_ZERO_EXT) {
@@ -91,8 +91,8 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
         User* users = phi->users;
         while (users) {
             User* next     = users->next;
-            TB_Node* use_n = users->n;
-            int use_i      = users->slot;
+            TB_Node* use_n = USERN(users);
+            int use_i      = USERI(users);
 
             if (use_n == cond && cond != phi) {
                 assert(use_i == 1);
@@ -153,11 +153,11 @@ static bool indvar_strength_reduction(TB_Function* f, TB_Node* phi, TB_Node* con
 void tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop", NULL);
 
-    TB_CFG cfg = tb_compute_rpo(f, &f->worklist);
-    tb_compute_dominators(f, &f->worklist, cfg);
+    TB_CFG cfg = tb_compute_rpo(f, f->worklist);
+    tb_compute_dominators(f, f->worklist, cfg);
 
     size_t block_count = cfg.block_count;
-    TB_Node** blocks = &f->worklist.items[0];
+    TB_Node** blocks = &f->worklist->items[0];
 
     // canonicalize regions into natural loop headers (or affine loops)
     DynArray(ptrdiff_t) backedges = NULL;
@@ -187,7 +187,7 @@ void tb_opt_loops(TB_Function* f) {
         // as part of loop simplification we convert backedges into one, this
         // makes it easier to analyze the exit condition.
         if (dyn_array_length(backedges) > 1) {
-            tb_todo();
+            // TODO(NeGate): i haven't thought about if we care much yet...
         }
 
         // somehow we couldn't simplify the loop? welp
@@ -199,9 +199,7 @@ void tb_opt_loops(TB_Function* f) {
         if (single_backedge == 0) {
             swap_nodes(f, header, 0, 1);
             FOR_USERS(phi, header) {
-                if (phi->n->type == TB_PHI) {
-                    swap_nodes(f, phi->n, 1, 2);
-                }
+                if (USERN(phi)->type == TB_PHI) { swap_nodes(f, USERN(phi), 1, 2); }
             }
             single_backedge = 1;
         }

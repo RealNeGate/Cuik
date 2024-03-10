@@ -20,6 +20,7 @@ static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 static void violent_kill(TB_Function* f, TB_Node* n);
 static void push_for_death(TB_Function* f, TB_Node* n);
 static void disconnect(TB_Function* f, TB_Node* n);
+static bool alloc_types(TB_Function* f);
 
 static void print_lattice(Lattice* l, TB_DataType dt);
 
@@ -29,12 +30,12 @@ TB_Node* dead_node(TB_Function* f);
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 
-static size_t tb_pass_update_cfg(TB_Function* f, Worklist* ws, bool preserve);
+static size_t tb_pass_update_cfg(TB_Function* f, TB_Worklist* ws, bool preserve);
 
 ////////////////////////////////
-// Worklist
+// TB_Worklist
 ////////////////////////////////
-void worklist_alloc(Worklist* restrict ws, size_t initial_cap) {
+void worklist_alloc(TB_Worklist* restrict ws, size_t initial_cap) {
     ws->visited_cap = (initial_cap + 63) / 64;
     ws->visited = tb_platform_heap_alloc(ws->visited_cap * sizeof(uint64_t));
     ws->items = dyn_array_create(uint64_t, ws->visited_cap * 64);
@@ -43,25 +44,25 @@ void worklist_alloc(Worklist* restrict ws, size_t initial_cap) {
     }
 }
 
-void worklist_free(Worklist* restrict ws) {
+void worklist_free(TB_Worklist* restrict ws) {
     tb_platform_heap_free(ws->visited);
     dyn_array_destroy(ws->items);
 }
 
-void worklist_clear_visited(Worklist* restrict ws) {
+void worklist_clear_visited(TB_Worklist* restrict ws) {
     CUIK_TIMED_BLOCK("clear visited") {
         memset(ws->visited, 0, ws->visited_cap * sizeof(uint64_t));
     }
 }
 
-void worklist_clear(Worklist* restrict ws) {
+void worklist_clear(TB_Worklist* restrict ws) {
     CUIK_TIMED_BLOCK("clear worklist") {
         memset(ws->visited, 0, ws->visited_cap * sizeof(uint64_t));
         dyn_array_clear(ws->items);
     }
 }
 
-void worklist_remove(Worklist* restrict ws, TB_Node* n) {
+void worklist_remove(TB_Worklist* restrict ws, TB_Node* n) {
     uint64_t gvn_word = n->gvn / 64; // which word this ID is at
     if (gvn_word >= ws->visited_cap) return;
 
@@ -70,7 +71,7 @@ void worklist_remove(Worklist* restrict ws, TB_Node* n) {
 }
 
 // checks if node is visited but doesn't push item
-bool worklist_test(Worklist* restrict ws, TB_Node* n) {
+bool worklist_test(TB_Worklist* restrict ws, TB_Node* n) {
     uint64_t gvn_word = n->gvn / 64; // which word this ID is at
     if (gvn_word >= ws->visited_cap) return false;
 
@@ -78,7 +79,7 @@ bool worklist_test(Worklist* restrict ws, TB_Node* n) {
     return ws->visited[gvn_word] & gvn_mask;
 }
 
-bool worklist_test_n_set(Worklist* restrict ws, TB_Node* n) {
+bool worklist_test_n_set(TB_Worklist* restrict ws, TB_Node* n) {
     uint64_t gvn_word = n->gvn / 64; // which word this ID is at
 
     // resize?
@@ -103,11 +104,11 @@ bool worklist_test_n_set(Worklist* restrict ws, TB_Node* n) {
     }
 }
 
-void worklist_push(Worklist* restrict ws, TB_Node* restrict n) {
+void worklist_push(TB_Worklist* restrict ws, TB_Node* restrict n) {
     if (!worklist_test_n_set(ws, n)) { dyn_array_put(ws->items, n); }
 }
 
-TB_Node* worklist_pop(Worklist* ws) {
+TB_Node* worklist_pop(TB_Worklist* ws) {
     if (dyn_array_length(ws->items)) {
         TB_Node* n = dyn_array_pop(ws->items);
         uint64_t gvn_word = n->gvn / 64;
@@ -120,7 +121,7 @@ TB_Node* worklist_pop(Worklist* ws) {
     }
 }
 
-int worklist_count(Worklist* ws) {
+int worklist_count(TB_Worklist* ws) {
     return dyn_array_length(ws->items);
 }
 
@@ -136,21 +137,11 @@ static int bits_in_data_type(int pointer_size, TB_DataType dt) {
     }
 }
 
-static char* lil_name(TB_Function* f, const char* fmt, ...) {
-    char* buf = TB_ARENA_ALLOC(f->tmp_arena, 30);
-
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(buf, 30, fmt, ap);
-    va_end(ap);
-    return buf;
-}
-
 static TB_Node* mem_user(TB_Function* f, TB_Node* n, int slot) {
     FOR_USERS(u, n) {
-        if ((u->n->type == TB_PROJ && u->n->dt.type == TB_MEMORY) ||
-            (u->slot == slot && is_mem_out_op(u->n))) {
-            return u->n;
+        if ((USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_MEMORY) ||
+            (USERI(u) == slot && is_mem_out_op(USERN(u)))) {
+            return USERN(u);
         }
     }
 
@@ -161,12 +152,6 @@ static bool single_use(TB_Node* n) {
     return n->users->next == NULL;
 }
 
-static bool is_same_align(TB_Node* a, TB_Node* b) {
-    TB_NodeMemAccess* aa = TB_NODE_GET_EXTRA(a);
-    TB_NodeMemAccess* bb = TB_NODE_GET_EXTRA(b);
-    return aa->align == bb->align;
-}
-
 static bool is_empty_bb(TB_Function* f, TB_Node* end) {
     assert(end->type == TB_BRANCH || end->type == TB_UNREACHABLE);
     if (!cfg_is_bb_entry(end->inputs[0])) {
@@ -174,9 +159,8 @@ static bool is_empty_bb(TB_Function* f, TB_Node* end) {
     }
 
     TB_Node* bb = end->inputs[0];
-    FOR_USERS(use, bb) {
-        TB_Node* n = use->n;
-        if (use->n != end) return false;
+    FOR_USERS(u, bb) {
+        if (USERN(u) != end) { return false; }
     }
 
     return true;
@@ -220,21 +204,21 @@ static bool fast_dommy(TB_Node* expected_dom, TB_Node* bb) {
 }
 
 static void mark_node(TB_Function* f, TB_Node* n) {
-    worklist_push(&f->worklist, n);
+    worklist_push(f->worklist, n);
 }
 
 static void mark_users_raw(TB_Function* f, TB_Node* n) {
-    FOR_USERS(use, n) { mark_node(f, use->n); }
+    FOR_USERS(u, n) { mark_node(f, USERN(u)); }
 }
 
 static void mark_users(TB_Function* f, TB_Node* n) {
-    FOR_USERS(use, n) {
-        worklist_push(&f->worklist, use->n);
-        TB_NodeTypeEnum type = use->n->type;
+    FOR_USERS(u, n) {
+        worklist_push(f->worklist, USERN(u));
+        TB_NodeTypeEnum type = USERN(u)->type;
 
         // tuples changing means their projections did too.
         if (type == TB_PROJ) {
-            mark_users(f, use->n);
+            mark_users(f, USERN(u));
         }
 
         // (br (cmp a b)) => ...
@@ -242,7 +226,7 @@ static void mark_users(TB_Function* f, TB_Node* n) {
         // (trunc (mul a b)) => ...
         // (phi ...) => ... (usually converting into branchless ops)
         if ((type >= TB_CMP_EQ && type <= TB_CMP_FLE) || type == TB_SHL || type == TB_SHR || type == TB_MUL || type == TB_PHI) {
-            mark_users_raw(f, use->n);
+            mark_users_raw(f, USERN(u));
         }
     }
 }
@@ -493,7 +477,7 @@ static User* remove_user(TB_Node* n, int slot) {
 
     // remove old user (this must succeed unless our users go desync'd)
     for (User* prev = NULL; old_use; prev = old_use, old_use = old_use->next) {
-        if (old_use->slot == slot && old_use->n == n) {
+        if (USERI(old_use) == slot && USERN(old_use) == n) {
             // remove
             if (prev != NULL) {
                 prev->next = old_use->next;
@@ -521,9 +505,13 @@ void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
 // we sometimes get the choice to recycle users because we just deleted something
 void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot, User* recycled) {
     User* use = recycled ? recycled : TB_ARENA_ALLOC(f->arena, User);
+    #if TB_PACKED_USERS
+    #error todo
+    #else
     use->next = in->users;
-    use->n = n;
-    use->slot = slot;
+    use->_n = n;
+    use->_slot = slot;
+    #endif
     in->users = use;
 }
 
@@ -661,10 +649,9 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
                 changes = true;
                 remove_input(f, n, i);
 
-                // update PHIs
-                FOR_USERS(use, n) {
-                    if (use->n->type == TB_PHI && use->slot == 0) {
-                        remove_input(f, use->n, i + 1);
+                FOR_USERS(u, n) {
+                    if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
+                        remove_input(f, USERN(u), i + 1);
                     }
                 }
             } else {
@@ -677,14 +664,15 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
             return dead_node(f);
         } else if (n->input_count == 1) {
             // check for any phi nodes, because we're single entry they're all degens
-            User* use = n->users;
-            while (use != NULL) {
-                User* next = use->next;
-                if (use->n->type == TB_PHI) {
-                    assert(use->n->input_count == 2);
-                    subsume_node(f, use->n, use->n->inputs[1]);
+            User* u = n->users;
+            while (u != NULL) {
+                TB_Node* un = USERN(u);
+                User* next = u->next;
+                if (un->type == TB_PHI) {
+                    assert(un->input_count == 2);
+                    subsume_node(f, un, un->inputs[1]);
                 }
-                use = next;
+                u = next;
             }
 
             return n->inputs[0];
@@ -698,8 +686,8 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
             if (n->dt.type == TB_TUPLE) {
                 TB_Node* dead = dead_node(f);
                 while (n->users) {
-                    TB_Node* use_n = n->users->n;
-                    int use_i = n->users->slot;
+                    TB_Node* use_n = USERN(n->users);
+                    int use_i      = USERI(n->users);
 
                     if (use_n->type == TB_CALLGRAPH) {
                         TB_Node* last = use_n->inputs[use_n->input_count - 1];
@@ -778,8 +766,8 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
 
                 NL_ChunkedArr projs = nl_chunked_arr_alloc(f->tmp_arena);
                 FOR_USERS(u, n) {
-                    if (u->n->type == TB_PROJ) {
-                        nl_chunked_arr_put(&projs, u->n);
+                    if (USERN(u)->type == TB_PROJ) {
+                        nl_chunked_arr_put(&projs, USERN(u));
                     }
                 }
 
@@ -805,14 +793,6 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
         }
 
         default: return NULL;
-    }
-}
-
-static void validate_node_users(TB_Node* n) {
-    if (n != NULL) {
-        FOR_USERS(use, n) {
-            tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
-        }
     }
 }
 
@@ -991,16 +971,16 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
 
 void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     CUIK_TIMED_BLOCK("subsume") {
-        User* use = n->users;
-        while (use != NULL) {
-            tb_assert(use->n->inputs[use->slot] == n, "Mismatch between def-use and use-def data");
+        while (n->users != NULL) {
+            User* u     = n->users;
+            TB_Node* un = USERN(u);
+            int ui      = USERI(u);
+            tb_assert(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
 
             // set_input will delete 'use' so we can't use it afterwards
-            TB_Node* use_n = use->n;
-            User* next = use->next;
-
-            set_input(f, use->n, new_n, use->slot);
-            use = next;
+            User* next = u->next;
+            set_input(f, un, new_n, ui);
+            u = next;
         }
     }
 }
@@ -1008,40 +988,12 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
 void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     subsume_node2(f, n, new_n);
     tb_kill_node(f, n);
-}
 
-void tb_opt_push_all_nodes(TB_Function* f, TB_Arena* ir, TB_Arena* tmp) {
-    assert(f->root_node && "missing root node");
-
-    f->arena     = ir;
-    f->tmp_arena = tmp;
-
-    Worklist* ws = &f->worklist;
-    worklist_alloc(ws, f->node_count);
-
-    CUIK_TIMED_BLOCK("push_all_nodes") {
-        // generate work list (put everything)
-        worklist_test_n_set(ws, f->root_node);
-        dyn_array_put(ws->items, f->root_node);
-
-        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-            TB_Node* n = ws->items[i];
-            FOR_USERS(use, n) { worklist_push(ws, use->n); }
-        }
-
-        // just leads to getting to the important bits first in practice (RPO would be better but
-        // more work to perform)
-        CUIK_TIMED_BLOCK("reversing") {
-            size_t last = dyn_array_length(ws->items) - 1;
-            FOREACH_N(i, 0, dyn_array_length(ws->items) / 2) {
-                SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
-            }
-        }
-
-        DO_IF(TB_OPTDEBUG_STATS)(f->stats.initial = worklist_count(&f->worklist));
-    }
-
-    DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(&f->worklist), f->node_count));
+    // replacing a node should merge the type info, both are
+    // true so we'll intersect (in our case JOIN)
+    Lattice* old_t = latuni_get(f, n);
+    Lattice* new_t = latuni_get(f, new_n);
+    latuni_set(f, new_n, lattice_join(f, old_t, new_t, n->dt));
 }
 
 void tb_opt_dump_stats(TB_Function* f) {
@@ -1066,22 +1018,15 @@ void tb_opt_dump_stats(TB_Function* f) {
     #endif
 }
 
-void tb_opt_free_worklist(TB_Function* f) {
-    CUIK_TIMED_BLOCK("exit") {
-        worklist_free(&f->worklist);
-        tb_arena_clear(f->tmp_arena);
-    }
-}
-
 void tb_pass_sroa(TB_Function* f) {
     CUIK_TIMED_BLOCK("sroa") {
-        Worklist* ws = &f->worklist;
+        TB_Worklist* ws = f->worklist;
         int pointer_size = f->super.module->codegen->pointer_size;
         TB_Node* root = f->root_node;
 
         // write initial locals
         FOR_USERS(u, root) {
-            if (u->n->type == TB_LOCAL) { worklist_push(&f->worklist, u->n); }
+            if (USERN(u)->type == TB_LOCAL) { worklist_push(ws, USERN(u)); }
         }
 
         // i think the SROA'd pieces can't themselves split more? that should something we check
@@ -1099,7 +1044,7 @@ typedef union {
 } Value;
 
 typedef struct {
-    Worklist* ws;
+    TB_Worklist* ws;
     Value* vals;
     bool* ready;
     int phi_i;
@@ -1180,19 +1125,19 @@ static void dirty_deps(Interp* vm, TB_Node* n) {
     vm->ready[n->gvn] = false;
 
     FOR_USERS(u, n) {
-        if (u->n->type != TB_PHI && vm->ready[u->n->gvn]) {
-            dirty_deps(vm, u->n);
+        TB_Node* un = USERN(u);
+        if (un->type != TB_PHI && vm->ready[un->gvn]) {
+            dirty_deps(vm, un);
         }
     }
 }
 
 void dummy_interp(TB_Function* f) {
-    TB_Arena* arena = get_temporary_arena(f->super.module);
-
+    TB_Arena* arena = f->tmp_arena;
     TB_Node* ip = cfg_next_control(f->root_node);
 
     Interp vm = {
-        .ws = &f->worklist,
+        .ws = f->worklist,
         .vals = tb_arena_alloc(arena, f->node_count * sizeof(Value)),
         .ready = tb_arena_alloc(arena, f->node_count * sizeof(bool))
     };
@@ -1201,42 +1146,40 @@ void dummy_interp(TB_Function* f) {
     while (ip) {
         printf("IP = v%u\n", ip->gvn);
 
-        worklist_clear(&f->worklist);
+        worklist_clear(vm.ws);
 
         // push all direct users of the parent's users (our antideps)
         FOR_USERS(u, ip->inputs[last_edge]) {
-            if (is_ready(&vm, u->n)) {
-                worklist_push(&f->worklist, u->n);
-            }
+            TB_Node* un = USERN(u);
+            if (is_ready(&vm, un)) { worklist_push(vm.ws, un); }
         }
 
         if (!cfg_is_region(ip)) {
             FOREACH_N(i, 1, ip->input_count) {
-                worklist_push(&f->worklist, ip->inputs[i]);
+                worklist_push(vm.ws, ip->inputs[i]);
             }
         }
 
         if (is_ready(&vm, ip)) {
-            worklist_push(&f->worklist, ip);
+            worklist_push(vm.ws, ip);
         }
 
         size_t i = 0;
-        for (; i < dyn_array_length(f->worklist.items); i++) {
-            TB_Node* n = f->worklist.items[i];
+        for (; i < dyn_array_length(vm.ws->items); i++) {
+            TB_Node* n = vm.ws->items[i];
             if (n->type == TB_PHI) continue;
 
             vm.vals[n->gvn] = eval(&vm, n);
             vm.ready[n->gvn] = true;
 
             FOR_USERS(u, n) {
-                if (is_ready(&vm, u->n)) {
-                    worklist_push(&f->worklist, u->n);
-                }
+                TB_Node* un = USERN(u);
+                if (is_ready(&vm, un)) { worklist_push(vm.ws, un); }
             }
 
             // advance now
             if (n == ip) {
-                dyn_array_set_length(f->worklist.items, i + 1);
+                dyn_array_set_length(vm.ws->items, i + 1);
                 break;
             }
         }
@@ -1253,22 +1196,22 @@ void dummy_interp(TB_Function* f) {
             break;
         }
 
-        last_edge = succ->slot;
-        ip = succ->n;
+        last_edge = USERI(succ);
+        ip        = USERN(succ);
 
         if (cfg_is_region(ip)) {
             FOR_USERS(u, ip) {
-                TB_Node* phi = u->n;
+                TB_Node* phi = USERN(u);
                 if (phi->type == TB_PHI) {
                     TB_Node* in = phi->inputs[1 + last_edge];
                     if (is_ready(&vm, in)) {
-                        worklist_push(&f->worklist, in);
+                        worklist_push(vm.ws, in);
                     }
                 }
             }
 
-            for (; i < dyn_array_length(f->worklist.items); i++) {
-                TB_Node* n = f->worklist.items[i];
+            for (; i < dyn_array_length(vm.ws->items); i++) {
+                TB_Node* n = vm.ws->items[i];
                 if (n->type == TB_PHI) continue;
 
                 vm.vals[n->gvn] = eval(&vm, n);
@@ -1276,7 +1219,7 @@ void dummy_interp(TB_Function* f) {
             }
 
             FOR_USERS(u, ip) {
-                TB_Node* phi = u->n;
+                TB_Node* phi = USERN(u);
                 if (phi->type == TB_PHI) {
                     printf("  PHI = v%u (v%u)\n", phi->gvn, phi->inputs[1 + last_edge]->gvn);
 
@@ -1294,28 +1237,25 @@ void dummy_interp(TB_Function* f) {
 static void push_non_bottoms(TB_Function* f, TB_Node* n) {
     // if it's a bottom there's no more steps it can take, don't recompute it
     Lattice* l = latuni_get(f, n);
-    if (l != lattice_from_dt(f, n->dt)) { worklist_push(&f->worklist, n); }
+    if (l != lattice_from_dt(f, n->dt)) { mark_node(f, n); }
 }
 
 void tb_opt_cprop(TB_Function* f) {
-    assert(worklist_count(&f->worklist) == 0);
+    assert(worklist_count(f->worklist) == 0);
 
-    // types will all be flipped to TOP except for ROOT
-    if (tb_opt_alloc_types(f)) {
-        //   reset all types into TOP
-        FOREACH_N(i, 0, f->type_cap) {
-            f->types[i] = &TOP_IN_THE_SKY;
-        }
-
-        // start at ROOT
-        f->types[f->root_node->gvn] = lattice_tuple_from_node(f, f->root_node);
-        FOR_USERS(use, f->root_node) { worklist_push(&f->worklist, use->n); }
+    alloc_types(f);
+    //   reset all types into TOP
+    FOREACH_N(i, 0, f->type_cap) {
+        f->types[i] = &TOP_IN_THE_SKY;
     }
+    // except for ROOT
+    f->types[f->root_node->gvn] = lattice_tuple_from_node(f, f->root_node);
+    FOR_USERS(u, f->root_node) { worklist_push(f->worklist, USERN(u)); }
 
     // Pass 1: find constants.
     CUIK_TIMED_BLOCK("sccp") {
         TB_Node* n;
-        while ((n = worklist_pop(&f->worklist))) {
+        while ((n = worklist_pop(f->worklist))) {
             Lattice* old_type = latuni_get(f, n);
             Lattice* new_type = value_of(f, n, true);
             if (old_type != new_type) {
@@ -1324,12 +1264,11 @@ void tb_opt_cprop(TB_Function* f) {
                 latuni_set(f, n, new_type);
 
                 // push affected users
-                FOR_USERS(use, n) {
-                    push_non_bottoms(f, use->n);
-
-                    if (cfg_is_region(use->n)) {
-                        FOR_USERS(phi, use->n) if (phi->n->type == TB_PHI) {
-                            push_non_bottoms(f, phi->n);
+                FOR_USERS(u, n) {
+                    push_non_bottoms(f, USERN(u));
+                    if (cfg_is_region(USERN(u))) {
+                        FOR_USERS(phi, USERN(u)) if (USERN(phi)->type == TB_PHI) {
+                            push_non_bottoms(f, USERN(phi));
                         }
                     }
                 }
@@ -1339,7 +1278,7 @@ void tb_opt_cprop(TB_Function* f) {
 
     // Pass 2: ok replace with constants now
     //   we need a separate worklist for SCCP
-    Worklist ws = { 0 };
+    TB_Worklist ws = { 0 };
     worklist_alloc(&ws, f->node_count);
 
     // root node can't constant fold
@@ -1359,27 +1298,73 @@ void tb_opt_cprop(TB_Function* f) {
             n = k;
         }
         DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
-        FOR_USERS(use, n) { worklist_push(&ws, use->n); }
+        FOR_USERS(u, n) { worklist_push(&ws, USERN(u)); }
     }
     worklist_free(&ws);
 }
 
-void tb_opt(TB_Function* f) {
+void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool preserve_types) {
+    assert(f->root_node && "missing root node");
+    f->arena     = ir;
+    f->tmp_arena = tmp;
+    f->worklist  = ws;
+
+    TB_ArenaSavepoint sp = tb_arena_save(tmp);
+
+    assert(worklist_count(ws) == 0);
+    CUIK_TIMED_BLOCK("push_all_nodes") {
+        // generate work list (put everything)
+        worklist_test_n_set(ws, f->root_node);
+        dyn_array_put(ws->items, f->root_node);
+
+        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+            TB_Node* n = ws->items[i];
+            FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+        }
+
+        // just leads to getting to the important bits first in practice (RPO would be better but
+        // more work to perform)
+        CUIK_TIMED_BLOCK("reversing") {
+            size_t last = dyn_array_length(ws->items) - 1;
+            FOREACH_N(i, 0, dyn_array_length(ws->items) / 2) {
+                SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
+            }
+        }
+
+        DO_IF(TB_OPTDEBUG_STATS)(f->stats.initial = worklist_count(&f->worklist));
+    }
+    DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(&f->worklist), f->node_count));
+
     tb_opt_peeps(f);
     // mostly just SSA construction from memory edges
     tb_opt_locals(f);
     // const prop leaves work for the peephole optimizer
     tb_opt_cprop(f);
     tb_opt_peeps(f);
-
+    // mostly just detecting loops and upcasting indvars
     tb_opt_loops(f);
     tb_opt_peeps(f);
+    // if we're doing IPO then it's helpful
+    if (!preserve_types) {
+        tb_opt_free_types(f);
+    }
 
-    // tb_dumb_print(p->f, p);
-    // dummy_interp(p);
+    tb_arena_restore(tmp, sp);
+    f->worklist = NULL;
 }
 
-TB_API bool tb_opt_alloc_types(TB_Function* f) {
+TB_API TB_Worklist* tb_worklist_alloc(void) {
+    TB_Worklist* ws = tb_platform_heap_alloc(sizeof(TB_Worklist));
+    worklist_alloc(ws, 500);
+    return ws;
+}
+
+TB_API void tb_worklist_free(TB_Worklist* ws) {
+    worklist_free(ws);
+    tb_platform_heap_free(ws);
+}
+
+static bool alloc_types(TB_Function* f) {
     if (f->types != NULL) { return false; }
 
     CUIK_TIMED_BLOCK("allocate type array") {
@@ -1418,14 +1403,15 @@ TB_API void tb_opt_free_types(TB_Function* f) {
     if (f->types != NULL) {
         nl_hashset_free(f->type_interner);
         tb_platform_heap_free(f->types);
+        f->types = NULL;
     }
 }
 
 // combined pessimistic solver
 void tb_opt_peeps(TB_Function* f) {
-    if (tb_opt_alloc_types(f)) {
-        FOREACH_N(i, 0, dyn_array_length(f->worklist.items)) {
-            TB_Node* n = f->worklist.items[i];
+    if (alloc_types(f)) {
+        FOREACH_N(i, 0, dyn_array_length(f->worklist->items)) {
+            TB_Node* n = f->worklist->items[i];
             f->types[n->gvn] = lattice_from_dt(f, n->dt);
         }
 
@@ -1434,7 +1420,7 @@ void tb_opt_peeps(TB_Function* f) {
 
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
-        while ((n = worklist_pop(&f->worklist))) {
+        while ((n = worklist_pop(f->worklist))) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.peeps++);
             DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), print_node_sexpr(n, 0));
 
@@ -1645,7 +1631,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
     memset(clones, 0, kid->node_count * sizeof(TB_Node*));
 
     // find all nodes
-    Worklist ws = { 0 };
+    TB_Worklist ws = { 0 };
     worklist_alloc(&ws, kid->node_count);
     {
         worklist_test_n_set(&ws, kid->root_node);
@@ -1655,7 +1641,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
             TB_Node* n = ws.items[i];
 
             FOR_USERS(u, n) {
-                TB_Node* out = u->n;
+                TB_Node* out = USERN(u);
                 if (!worklist_test_n_set(&ws, out)) {
                     dyn_array_put(ws.items, out);
                 }
@@ -1679,18 +1665,18 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
         TB_Node* ret = kid_root->inputs[1];
         assert(ret->type == TB_RETURN);
 
-        User* users = call_site->users;
-        while (users) {
-            User* next     = users->next;
-            TB_Node* use_n = users->n;
-            int use_i      = users->slot;
+        User* u = call_site->users;
+        while (u) {
+            User* next     = u->next;
+            TB_Node* use_n = USERN(u);
+            int use_i      = USERI(u);
 
             // replace returning projection with one of our return vals
             if (use_n->type == TB_PROJ) {
                 int index = TB_NODE_GET_EXTRA_T(use_n, TB_NodeProj)->index;
                 subsume_node(f, use_n, ret->inputs[index]);
             }
-            users = next;
+            u = next;
         }
 
         subsume_node(f, kid_root, f->root_node);

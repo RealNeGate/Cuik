@@ -57,9 +57,7 @@ static bool same_base(TB_Node* a, TB_Node* b) {
 
 static TB_Node* next_mem_user(TB_Node* n) {
     FOR_USERS(u, n) {
-        if (is_mem_out_op(u->n)) {
-            return u->n;
-        }
+        if (is_mem_out_op(USERN(u))) { return USERN(u); }
     }
 
     return NULL;
@@ -81,38 +79,6 @@ static int categorize_alias_idx(LocalSplitter* restrict ctx, TB_Node* n) {
 enum {
     MEM_FORK, MEM_JOIN, MEM_END, MEM_USE
 };
-
-static bool all_stores_dead(TB_Node* n) {
-    FOR_USERS(u, n) {
-        if (u->slot != 2 || u->n->type != TB_STORE) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static void expunge(TB_Function* f, TB_Node* n) {
-    // delete users without weird iteration invalidation issues
-    while (n->users) {
-        TB_Node* use_n = n->users->n;
-        int use_i      = n->users->slot;
-
-        assert(use_i == 2);
-        n->users = n->users->next;
-        use_n->inputs[2] = NULL;
-
-        FOR_USERS(u, use_n) {
-            // kill connected phis
-            if (u->n->type == TB_PHI) {
-                set_input(f, u->n, NULL, 0);
-            }
-        }
-
-        tb_kill_node(f, use_n);
-    }
-    tb_kill_node(f, n);
-}
 
 static TB_Node* node_or_poison(TB_Function* f, TB_Node* n, TB_DataType dt) {
     return n ? n : make_poison(f, dt);
@@ -136,8 +102,8 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
         user_cnt = 0;
         users = tb_arena_alloc(tmp_arena, user_cap * sizeof(MemOp));
         FOR_USERS(u, curr) {
-            TB_Node* use_n = u->n;
-            int use_i = u->slot;
+            TB_Node* use_n = USERN(u);
+            int use_i = USERI(u);
 
             // we can either be followed by:
             // * merge: we're done now, stitch in the latest ops
@@ -151,14 +117,14 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
             if (0) {}
             else if (use_n->type == TB_RETURN)   { reason = MEM_END;  }
             else if (use_n->type == TB_PHI)      { reason = MEM_JOIN; }
-            else if (is_mem_only_in_op(u->n))    { reason = MEM_USE;  }
+            else if (is_mem_only_in_op(use_n))   { reason = MEM_USE;  }
             else if (cfg_is_mproj(use_n) || (use_i == 1 && is_mem_out_op(use_n))) {
                 reason = MEM_FORK;
             }
 
             if (reason >= 0) {
-                users[user_cnt].n    = u->n;
-                users[user_cnt].slot = u->slot;
+                users[user_cnt].n    = use_n;
+                users[user_cnt].slot = use_i;
                 users[user_cnt].reason = reason;
                 user_cnt += 1;
             }
@@ -302,23 +268,23 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                     mark_node(f, use_n);
                     fixup_mem_node(f, ctx, use_n, new_latest);
                 } else if (v == &RENAME_DUMMY) {
-                    FOR_USERS(phi, region) if (phi->n->type == TB_PHI) {
-                        Rename* name = nl_table_get(&ctx->phi2local, phi->n);
+                    FOR_USERS(phi, region) if (USERN(phi)->type == TB_PHI) {
+                        Rename* name = nl_table_get(&ctx->phi2local, USERN(phi));
                         if (name == &RENAME_DUMMY) {
-                            set_input(f, phi->n, latest[0], use_i);
+                            set_input(f, USERN(phi), latest[0], use_i);
                         } else if (name) {
                             if (name->alias_idx < 0) {
                                 TB_Node* val = latest[1 + (name - ctx->renames)];
-                                if (val->dt.raw != phi->n->dt.raw) {
+                                if (val->dt.raw != USERN(phi)->dt.raw) {
                                     // insert bitcast
-                                    TB_Node* cast = tb_alloc_node(f, TB_BITCAST, phi->n->dt, 2, 0);
+                                    TB_Node* cast = tb_alloc_node(f, TB_BITCAST, USERN(phi)->dt, 2, 0);
                                     set_input(f, cast, val, 1);
                                     val = cast;
                                 }
 
-                                set_input(f, phi->n, val, use_i);
+                                set_input(f, USERN(phi), val, use_i);
                             } else {
-                                set_input(f, phi->n, latest[1 + (name - ctx->renames)], use_i);
+                                set_input(f, USERN(phi), latest[1 + (name - ctx->renames)], use_i);
                             }
                         }
                     }
@@ -349,14 +315,14 @@ void tb_opt_locals(TB_Function* f) {
     TB_Arena* tmp_arena = f->tmp_arena;
     do {
         cuikperf_region_start("locals", NULL);
-        assert(dyn_array_length(f->worklist.items) == 0);
+        assert(dyn_array_length(f->worklist->items) == 0);
 
         // find all locals
         LocalSplitter ctx = { 0 };
         NL_ChunkedArr locals = nl_chunked_arr_alloc(tmp_arena);
         FOR_USERS(u, f->root_node) {
-            if (u->n->type != TB_LOCAL) continue;
-            nl_chunked_arr_put(&locals, u->n);
+            if (USERN(u)->type != TB_LOCAL) continue;
+            nl_chunked_arr_put(&locals, USERN(u));
             ctx.local_count++;
         }
 
@@ -371,12 +337,12 @@ void tb_opt_locals(TB_Function* f) {
                 RenameMode mode = RENAME_VALUE;
 
                 FOR_USERS(mem, addr) {
-                    if (mem->slot == 1 && (mem->n->type == TB_MEMBER_ACCESS || mem->n->type == TB_ARRAY_ACCESS)) {
+                    if (USERI(mem) == 1 && (USERN(mem)->type == TB_MEMBER_ACCESS || USERN(mem)->type == TB_ARRAY_ACCESS)) {
                         // TODO(NeGate): pointer arith are also fair game, since they'd stay in bounds (given no UB)
                         // mode = RENAME_MEMORY;
                         mode = RENAME_NONE;
                         break;
-                    } else if (mem->slot != 2 || !good_mem_op(f, mem->n)) {
+                    } else if (USERI(mem) != 2 || !good_mem_op(f, USERN(mem))) {
                         mode = RENAME_NONE;
                         break;
                     }

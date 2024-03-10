@@ -11,9 +11,9 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         User* use = n->users;
         while (use != NULL) {
             User* next = use->next;
-            if (use->n->type == TB_PHI) {
-                assert(use->n->input_count == 2);
-                subsume_node(f, use->n, use->n->inputs[1]);
+            if (USERN(use)->type == TB_PHI) {
+                assert(USERN(use)->input_count == 2);
+                subsume_node(f, USERN(use), USERN(use)->inputs[1]);
             }
             use = next;
         }
@@ -27,19 +27,20 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         while (i < n->input_count) {
             Lattice* ty = latuni_get(f, n->inputs[i]);
             if (n->inputs[i]->type == TB_DEAD || ty == &XCTRL_IN_THE_SKY) {
+                // both the region and phi are doing remove swap so the order should
+                // stay fine across them.
                 remove_input(f, n, i);
 
-                // update PHIs
                 FOR_USERS(use, n) {
-                    if (use->n->type == TB_PHI && use->slot == 0) {
-                        remove_input(f, use->n, i + 1);
+                    if (USERN(use)->type == TB_PHI && USERI(use) == 0) {
+                        remove_input(f, USERN(use), i + 1);
                     }
                 }
             } else if (cfg_is_region(n->inputs[i])) {
                 #if 1
                 // pure regions can be collapsed into direct edges
                 if (n->inputs[i]->users->next == NULL && n->inputs[i]->input_count > 0) {
-                    assert(n->inputs[i]->users->n == n);
+                    assert(USERN(n->inputs[i]->users) == n);
                     changes = true;
 
                     TB_Node* pred = n->inputs[i];
@@ -67,10 +68,10 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                     }
 
                     // update PHIs
-                    FOR_USERS(use, n) {
-                        if (use->n->type == TB_PHI && use->slot == 0) {
+                    FOR_USERS(u, n) {
+                        if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
                             // we don't replace the initial, just the rest
-                            TB_Node* phi = use->n;
+                            TB_Node* phi = USERN(u);
                             TB_Node* phi_val = phi->inputs[i + 1];
 
                             // append more phi vals... lovely allocs
@@ -125,10 +126,8 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
         if (region->input_count == 2) {
             // for now we'll leave multi-phi scenarios alone, we need
             // to come up with a cost-model around this stuff.
-            FOR_USERS(use, region) {
-                if (use->n->type == TB_PHI) {
-                    if (use->n != n) return NULL;
-                }
+            FOR_USERS(u, region) {
+                if (USERN(u)->type == TB_PHI) { if (USERN(u) != n) return NULL; }
             }
 
             // guarentee paths are effectless (there's only one data phi and no control nodes)
@@ -151,16 +150,16 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
 
                     TB_Node *values[2];
                     FOR_USERS(u, branch) {
-                        TB_Node* proj = u->n;
+                        TB_Node* proj = USERN(u);
                         if (proj->type == TB_PROJ) {
                             int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
                             // the projection needs to exclusively refer to the region,
                             // if not we can't elide those effects here.
-                            if (proj->users->next != NULL || proj->users->n != region) {
+                            if (proj->users->next != NULL || USERN(proj->users) != region) {
                                 return NULL;
                             }
 
-                            int phi_i = proj->users->slot;
+                            int phi_i = USERI(proj->users);
                             assert(phi_i + 1 < n->input_count);
                             values[index] = n->inputs[1 + phi_i];
                         }
@@ -279,22 +278,22 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
                     TB_NodeBranch* pred_br_info = TB_NODE_GET_EXTRA(pred_branch);
 
                     // check our parent's aux path
-                    User* other_proj      = proj_with_index(pred_branch, 1 - index);
-                    TB_Node* shared_edge  = cfg_next_bb_after_cproj(other_proj->n);
+                    TB_User  other_proj   = proj_with_index(pred_branch, 1 - index);
+                    TB_Node* shared_edge  = cfg_next_bb_after_cproj(USERN(other_proj));
 
                     // check our aux path
-                    User* other_proj2     = proj_with_index(n, 1 - index);
-                    TB_Node* shared_edge2 = cfg_next_bb_after_cproj(other_proj2->n);
+                    TB_User  other_proj2  = proj_with_index(n, 1 - index);
+                    TB_Node* shared_edge2 = cfg_next_bb_after_cproj(USERN(other_proj2));
 
                     // if they're the same then we've got a shortcircuit eval setup
                     if (shared_edge == shared_edge2) {
                         assert(cfg_is_region(shared_edge));
-                        int shared_i  = other_proj->n->users->slot;
-                        int shared_i2 = other_proj2->n->users->slot;
+                        int shared_i  = USERI(USERN(other_proj)->users);
+                        int shared_i2 = USERI(USERN(other_proj2)->users);
 
                         bool match = true;
-                        FOR_USERS(phis, shared_edge) if (phis->n->type == TB_PHI) {
-                            if (phis->n->inputs[1+shared_i] != phis->n->inputs[1+shared_i2]) {
+                        FOR_USERS(phis, shared_edge) if (USERN(phis)->type == TB_PHI) {
+                            if (USERN(phis)->inputs[1+shared_i] != USERN(phis)->inputs[1+shared_i2]) {
                                 match = false;
                                 break;
                             }
@@ -303,10 +302,10 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
                         if (match) {
                             // remove pred from shared edge
                             remove_input(f, shared_edge, shared_i);
-                            FOR_USERS(use, shared_edge) {
-                                if (use->n->type == TB_PHI && use->slot == 0) {
-                                    remove_input(f, use->n, shared_i + 1);
-                                    mark_node(f, use->n);
+                            FOR_USERS(u, shared_edge) {
+                                if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
+                                    remove_input(f, USERN(u), shared_i + 1);
+                                    mark_node(f, USERN(u));
                                 }
                             }
 
@@ -356,8 +355,9 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
                 TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(cmp_node, TB_NodeCompare)->cmp_dt);
 
                 // flip
+                br->keys[0].taken = br->total_hits - br->keys[0].taken;
                 FOR_USERS(u, n) {
-                    TB_NodeProj* p = TB_NODE_GET_EXTRA(u->n);
+                    TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
                     p->index = !p->index;
                 }
 
@@ -376,7 +376,7 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
                 if (cmp_type == TB_CMP_EQ) {
                     br->keys[0].taken = br->total_hits - br->keys[0].taken;
                     FOR_USERS(u, n) {
-                        TB_NodeProj* p = TB_NODE_GET_EXTRA(u->n);
+                        TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
                         p->index = !p->index;
                     }
                 }
@@ -401,9 +401,9 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     }
 
     FOR_USERS(u, n) {
-        if (u->n->type == TB_PROJ) {
-            int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-            if (index > 0) { l->elems[index] = lattice_from_dt(f, u->n->dt); }
+        if (USERN(u)->type == TB_PROJ) {
+            int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+            if (index > 0) { l->elems[index] = lattice_from_dt(f, USERN(u)->dt); }
         }
     }
 
@@ -451,20 +451,20 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
 
         // check for redundant conditions in the doms.
         FOR_USERS(u, n->inputs[1]) {
-            if (u->n->type != TB_BRANCH || u->slot != 1 || u->n == n) {
+            if (USERN(u)->type != TB_BRANCH || USERI(u) != 1 || USERN(u) == n) {
                 continue;
             }
 
-            TB_Node* end = u->n;
+            TB_Node* end = USERN(u);
             TB_BranchKey* keys = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->keys;
             if (TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count != 2 || keys[0].key != primary_keys[0].key) {
                 continue;
             }
 
             FOR_USERS(succ_user, end) {
-                assert(succ_user->n->type == TB_PROJ);
-                int index = TB_NODE_GET_EXTRA_T(succ_user->n, TB_NodeProj)->index;
-                TB_Node* succ = cfg_next_bb_after_cproj(succ_user->n);
+                assert(USERN(succ_user)->type == TB_PROJ);
+                int index = TB_NODE_GET_EXTRA_T(USERN(succ_user), TB_NodeProj)->index;
+                TB_Node* succ = cfg_next_bb_after_cproj(USERN(succ_user));
 
                 // we must be dominating for this to work
                 if (!fast_dommy(succ, n)) {
@@ -512,9 +512,7 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
 
         // if it has phis... quit
         FOR_USERS(u, n) {
-            if (u->n->type == TB_PHI) {
-                return n;
-            }
+            if (USERN(u)->type == TB_PHI) { return n; }
         }
 
         FOREACH_N(i, 1, n->input_count) {
@@ -540,7 +538,9 @@ static TB_Node* identity_phi(TB_Function* f, TB_Node* n) {
     }
 
     assert(same);
-    if (f->worklist.items != NULL) { mark_users(f, n->inputs[0]); }
+    if (f->worklist != NULL) {
+        mark_users(f, n->inputs[0]);
+    }
 
     return same;
 }

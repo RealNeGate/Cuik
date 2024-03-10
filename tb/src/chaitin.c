@@ -376,8 +376,8 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                     // aggressive split
                     User* u = n->users;
                     while (u) {
-                        TB_Node* use_n = u->n;
-                        int use_i = u->slot;
+                        TB_Node* use_n = USERN(u);
+                        int use_i      = USERI(u);
 
                         RegMask* in_mask = constraint_in(ctx, use_n, use_i);
 
@@ -388,8 +388,12 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
 
                         // we'll inplace replace the user edge to avoid
                         // iterator invalidation problems.
-                        u->n = reload_n;
-                        u->slot = 1;
+                        #if TB_PACKED_USERS
+                        #error todo
+                        #else
+                        u->_n = reload_n;
+                        u->_slot = 1;
+                        #endif
                         reload_n->inputs[1] = n;
 
                         // schedule the split right before use

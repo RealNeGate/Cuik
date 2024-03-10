@@ -386,7 +386,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             printf("  # V%-4d t=[%-4d - %4d) ", vreg_id, start, end);
             tb__print_regmask(vreg->mask);
             printf("    ");
-            if (vreg->n) { tb_dumb_print_node(NULL, vreg->n); }
+            if (vreg->n) { tb_print_dumb_node(NULL, vreg->n); }
             printf("\n");
             #endif
 

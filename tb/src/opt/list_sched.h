@@ -9,7 +9,7 @@ static bool is_node_ready(TB_Function* f, TB_BasicBlock* bb, Set* done, TB_Node*
     return true;
 }
 
-void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat) {
+void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat) {
     assert(phi_vals == NULL && "TODO");
     TB_Arena* tmp_arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
@@ -27,18 +27,18 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(PhiVa
         TB_Node* root = f->root_node;
         set_put(&done, root->gvn);
         FOR_USERS(u, root) {
-            if (u->n->type == TB_PROJ && u->slot == 0) {
-                TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH: "), tb_dumb_print_node(NULL, u->n), printf("\n"));
-                sched[sched_count++] = u->n;
-                set_put(&done, u->n->gvn);
+            if (USERN(u)->type == TB_PROJ && USERI(u) == 0) {
+                TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH: "), tb_dumb_print_node(NULL, USERN(u)), printf("\n"));
+                sched[sched_count++] = USERN(u);
+                set_put(&done, USERN(u)->gvn);
             }
         }
     } else {
         set_put(&done, bb->start->gvn);
-        FOR_USERS(u, bb->start) if (u->n->type == TB_PHI && u->slot == 0) {
-            TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH: "), tb_dumb_print_node(NULL, u->n), printf("\n"));
-            sched[sched_count++] = u->n;
-            set_put(&done, u->n->gvn);
+        FOR_USERS(u, bb->start) if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
+            TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH: "), tb_dumb_print_node(NULL, USERN(u)), printf("\n"));
+            sched[sched_count++] = USERN(u);
+            set_put(&done, USERN(u)->gvn);
         }
     }
 
@@ -79,19 +79,21 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, Worklist* ws, DynArray(PhiVa
 
         // make sure to place all projections directly after their tuple node
         if (best->dt.type == TB_TUPLE && best->type != TB_BRANCH) {
-            FOR_USERS(u, best) if (u->n->type == TB_PROJ && u->slot == 0) {
-                assert(!set_get(&done, u->n->gvn));
-                sched[sched_count++] = u->n;
-                set_put(&done, u->n->gvn);
+            FOR_USERS(u, best) if (USERN(u)->type == TB_PROJ && USERI(u) == 0) {
+                TB_Node* un = USERN(u);
+                assert(!set_get(&done, un->gvn));
+                sched[sched_count++] = un;
+                set_put(&done, un->gvn);
             }
         }
 
         // now that the op is retired, try to ready up users
         if (best != end) {
             FOR_USERS(u, best) {
-                if (!set_get(&done, u->n->gvn) && f->scheduled[u->n->gvn] == bb && is_node_ready(f, bb, &done, u->n)) {
-                    TB_OPTDEBUG(SCHEDULE)(printf("    READY: "), tb_dumb_print_node(NULL, u->n), printf("\n"));
-                    worklist_push(ws, u->n);
+                TB_Node* un = USERN(u);
+                if (!set_get(&done, un->gvn) && f->scheduled[un->gvn] == bb && is_node_ready(f, bb, &done, un)) {
+                    TB_OPTDEBUG(SCHEDULE)(printf("    READY: "), tb_dumb_print_node(NULL, un), printf("\n"));
+                    worklist_push(ws, un);
                 }
             }
         }

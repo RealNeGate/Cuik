@@ -41,9 +41,9 @@ static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* c
 // false means failure to SROA
 static bool add_configs(TB_Function* f, User* use, TB_Node* base_address, size_t base_offset, size_t* config_count, AggregateConfig* configs, int pointer_size) {
     for (; use; use = use->next) {
-        TB_Node* n = use->n;
+        TB_Node* n = USERN(use);
 
-        if (n->type == TB_MEMBER_ACCESS && use->slot == 1) {
+        if (n->type == TB_MEMBER_ACCESS && USERI(use) == 1) {
             // same rules, different offset
             int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
             if (!add_configs(f, n->users, base_address, base_offset + offset, config_count, configs, pointer_size)) {
@@ -54,7 +54,7 @@ static bool add_configs(TB_Function* f, User* use, TB_Node* base_address, size_t
 
         // we can only SROA if we know we're not using the
         // address for anything but direct memory ops or TB_MEMBERs.
-        if (use->slot != 2) {
+        if (USERI(use) != 2) {
             return false;
         }
 

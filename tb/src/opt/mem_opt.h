@@ -115,14 +115,14 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
         ICodeGen* cg = f->super.module->codegen;
         int bits_read = bits_in_data_type(cg->pointer_size, n->dt);
 
-        for (User* u = addr->users; u; u = u->next) {
-            // find other users of the address which read the same size (or more)
+        // find other users of the address which read the same size (or more)
+        FOR_USERS(u, addr) {
             TB_NodeTypeEnum type = 0;
-            if (u->n != n && u->slot == 2 && u->n->type == TB_LOAD) {
+            if (USERN(u) != n && USERI(u) == 2 && USERN(u)->type == TB_LOAD) {
                 TB_DataType mem_dt = n->type == TB_LOAD ? n->dt : n->inputs[3]->dt;
                 int other_bits_read = bits_in_data_type(cg->pointer_size, mem_dt);
                 if (bits_read <= other_bits_read) {
-                    TB_Node* other_ctrl = u->n->inputs[0];
+                    TB_Node* other_ctrl = USERN(u)->inputs[0];
                     if (other_ctrl == NULL || (fast_dommy(other_ctrl, ctrl) && other_ctrl != ctrl)) {
                         set_input(f, n, other_ctrl, 0);
                         return n;
@@ -184,9 +184,8 @@ static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {
             split->alias_cnt -= 1;
             split->alias_idx[j] = split->alias_idx[split->alias_cnt];
 
-            User* proj = proj_with_index(split_node, split->alias_cnt);
-            assert(proj->n);
-            TB_NODE_SET_EXTRA(proj->n, TB_NodeProj, .index = j);
+            TB_User proj = proj_with_index(split_node, split->alias_cnt);
+            TB_NODE_SET_EXTRA(USERN(proj), TB_NodeProj, .index = j);
 
             tb_kill_node(f, n->inputs[i]);
 

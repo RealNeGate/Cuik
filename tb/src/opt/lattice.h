@@ -52,12 +52,8 @@ static bool lattice_is_const(Lattice* l) { return l->tag == LATTICE_INT && l->_i
 static void latuni_grow(TB_Function* f, size_t top) {
     size_t new_cap = tb_next_pow2(top + 16);
     f->types = tb_platform_heap_realloc(f->types, new_cap * sizeof(Lattice*));
-
     // clear new space
-    FOREACH_N(i, f->type_cap, new_cap) {
-        f->types[i] = NULL;
-    }
-
+    FOREACH_N(i, f->type_cap, new_cap) { f->types[i] = NULL; }
     f->type_cap = new_cap;
 }
 
@@ -149,20 +145,20 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
 
 static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
     assert(n->dt.type == TB_TUPLE);
+
     // count projs
     int projs = 0;
     FOR_USERS(u, n) {
-        if (u->n->type == TB_PROJ) projs++;
+        if (USERN(u)->type == TB_PROJ) projs++;
     }
 
     size_t size = sizeof(Lattice) + projs*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(f->tmp_arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._tuple = { projs } };
     FOR_USERS(u, n) {
-        if (u->n->type != TB_PROJ) continue;
-
-        int index = TB_NODE_GET_EXTRA_T(u->n, TB_NodeProj)->index;
-        l->elems[index] = lattice_from_dt(f, u->n->dt);
+        if (USERN(u)->type != TB_PROJ) continue;
+        int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+        l->elems[index] = lattice_from_dt(f, USERN(u)->dt);
     }
 
     Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
@@ -173,10 +169,6 @@ static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
         return l;
     }
 }
-
-// known X ^ known X => known X or
-// known X ^ unknown => unknown (commutative btw)
-#define TRIFECTA_MEET(a, b) ((a).trifecta == (b).trifecta ? (a).trifecta : LATTICE_UNKNOWN)
 
 #define MASK_UPTO(pos) (UINT64_MAX >> (64 - pos))
 #define BEXTR(src,pos) (((src) >> (pos)) & 1)
@@ -276,7 +268,7 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
     }
 }
 
-// generates the greatest lower bound between a and b
+// greatest lower bound between a and b
 static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b, TB_DataType dt) {
     // a ^ a = a
     if (a == b) return a;
@@ -362,6 +354,17 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b, TB_DataType
         case LATTICE_MEM:
         return &BOT_IN_THE_SKY;
 
+        case LATTICE_TUPLE:
+        return &BOT_IN_THE_SKY;
+
         default: tb_todo();
     }
 }
+
+// least upper bound between a and b
+static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b, TB_DataType dt) {
+    a = lattice_dual(f, a);
+    b = lattice_dual(f, b);
+    return lattice_dual(f, lattice_meet(f, a, b, dt));
+}
+
