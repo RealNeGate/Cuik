@@ -185,7 +185,7 @@ static void apply_func(TB_Function* f, void* arg) {
         if (args->emit_dot) {
             tb_print_dot(f, tb_default_print_callback, stdout);
         } else if (args->emit_ir) {
-            tb_print(f);
+            tb_print(f, arenas->tmp);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
                 TB_FunctionOutput* out = tb_codegen(f, ir_worklist, arenas->tmp, arenas->code, NULL, print_asm);

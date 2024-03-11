@@ -131,7 +131,7 @@ static Lattice* value_split_mem(TB_Function* f, TB_Node* n) {
 
     size_t size = sizeof(Lattice) + s->alias_cnt*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(f->tmp_arena, size);
-    *l = (Lattice){ LATTICE_TUPLE, ._tuple = { s->alias_cnt } };
+    *l = (Lattice){ LATTICE_TUPLE, ._elem_count = s->alias_cnt };
     FOREACH_N(i, 0, s->alias_cnt) {
         l->elems[i] = lattice_alias(f, s->alias_idx[i]);
     }

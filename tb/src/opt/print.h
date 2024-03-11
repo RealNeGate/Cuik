@@ -458,9 +458,12 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
     }
 }
 
-void tb_print(TB_Function* f) {
+void tb_print(TB_Function* f, TB_Arena* tmp) {
     size_t old_scheduled_n = f->scheduled_n;
     TB_BasicBlock** old_scheduled = f->scheduled;
+    TB_ArenaSavepoint sp = tb_arena_save(tmp);
+    TB_Arena* old = f->tmp_arena;
+    f->tmp_arena = tmp;
     f->scheduled = NULL;
 
     cuikperf_region_start("print", NULL);
@@ -471,8 +474,6 @@ void tb_print(TB_Function* f) {
     PrinterCtx ctx = { 0 };
     ctx.f   = f;
     ctx.cfg = tb_compute_rpo(f, &ws);
-
-    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
 
     // schedule nodes
     tb_global_schedule(f, &ws, ctx.cfg, false, NULL);
@@ -497,7 +498,8 @@ void tb_print(TB_Function* f) {
 
     f->scheduled_n = old_scheduled_n;
     f->scheduled = old_scheduled;
+    f->tmp_arena = old;
 
-    tb_arena_restore(f->tmp_arena, sp);
+    tb_arena_restore(tmp, sp);
     cuikperf_region_end();
 }

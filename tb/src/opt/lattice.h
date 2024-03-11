@@ -13,36 +13,95 @@ static Lattice NAN32_IN_THE_SKY  = { LATTICE_NAN32  };
 static Lattice NAN64_IN_THE_SKY  = { LATTICE_NAN64  };
 static Lattice XNAN32_IN_THE_SKY = { LATTICE_XNAN32 };
 static Lattice XNAN64_IN_THE_SKY = { LATTICE_XNAN64 };
-static Lattice PTR_IN_THE_SKY    = { LATTICE_BOTPTR };
+static Lattice ANYMEM_IN_THE_SKY = { LATTICE_ANYMEM };
+static Lattice ALLMEM_IN_THE_SKY = { LATTICE_ALLMEM };
+static Lattice PTR_IN_THE_SKY    = { LATTICE_PTR    };
 static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = { 0, 0, 1, 0 } };
 static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = { 1, 1, 0, 1 } };
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt);
 
 static uint32_t lattice_hash(void* a) {
-    size_t s = sizeof(Lattice);
     Lattice* l = a;
-    if (l->tag == LATTICE_TUPLE) {
-        s += l->_tuple.count*sizeof(Lattice*);
+    uint64_t h = l->tag + 1000;
+    switch (l->tag) {
+        case LATTICE_TUPLE: {
+            // just add pointers together, what's the worst that could happen
+            FOREACH_N(i, 0, l->_elem_count) {
+                h += (uintptr_t) l->elems[i];
+            }
+            h += l->_elem_count;
+            break;
+        }
+
+        case LATTICE_INT:
+        h += l->_int.min,         h += l->_int.max;
+        h += l->_int.known_zeros, h += l->_int.known_ones, h += l->_int.widen;
+        break;
+
+        case LATTICE_PTRCON:
+        h += (uintptr_t) l->_ptr;
+        break;
+
+        case LATTICE_MEM_SLICE:
+        h += l->_alias_n;
+        FOREACH_N(i, 0, l->_alias_n) { h += l->alias[i]; }
+        break;
+
+        case LATTICE_FLTCON32: memcpy(&h, &l->_f32, sizeof(float));  break;
+        case LATTICE_FLTCON64: memcpy(&h, &l->_f64, sizeof(double)); break;
+
+        // no fields
+        case LATTICE_BOT:   case LATTICE_TOP:
+        case LATTICE_FLT32: case LATTICE_FLT64:
+        case LATTICE_NAN32: case LATTICE_XNAN32:
+        case LATTICE_NAN64: case LATTICE_XNAN64:
+        case LATTICE_NULL:  case LATTICE_XNULL:
+        case LATTICE_CTRL:  case LATTICE_XCTRL:
+        case LATTICE_ALLMEM:case LATTICE_ANYMEM:
+        case LATTICE_PTR:
+        break;
+
+        default: tb_todo();
     }
 
-    return tb__murmur3_32(a, s);
+    // fib hashing amirite
+    return (h * 11400714819323198485llu) >> 32llu;
 }
 
 static bool lattice_cmp(void* a, void* b) {
     Lattice *aa = a, *bb = b;
-    if (aa->tag != bb->tag) {
-        return false;
-    }
+    if (aa->tag != bb->tag) { return false; }
 
-    if (aa->tag == LATTICE_TUPLE) {
-        if (aa->_tuple.count != bb->_tuple.count) {
-            return false;
+    switch (aa->tag) {
+        case LATTICE_TUPLE:
+        if (aa->_elem_count != bb->_elem_count) { return false; }
+        FOREACH_N(i, 0, aa->_elem_count) {
+            if (aa->elems[i] != bb->elems[i]) { return false; }
         }
+        return true;
 
-        return memcmp(aa, bb, sizeof(Lattice) + aa->_tuple.count*sizeof(Lattice*)) == 0;
-    } else {
-        return memcmp(aa, bb, sizeof(Lattice)) == 0;
+        case LATTICE_INT:
+        return memcmp(&aa->_int, &bb->_int, sizeof(LatticeInt)) == 0;
+
+        case LATTICE_PTRCON:
+        return aa->_ptr == bb->_ptr;
+
+        case LATTICE_FLTCON32:
+        return memcmp(&aa->_f32, &bb->_f32, sizeof(float)) == 0;
+
+        case LATTICE_FLTCON64:
+        return memcmp(&aa->_f64, &bb->_f64, sizeof(double)) == 0;
+
+        case LATTICE_MEM_SLICE:
+        if (aa->_alias_n != bb->_alias_n) { return false; }
+        FOREACH_N(i, 0, aa->_alias_n) {
+            if (aa->alias[i] != bb->alias[i]) { return false; }
+        }
+        return true;
+
+        // no fields
+        default: return true;
     }
 }
 
@@ -136,7 +195,7 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
         }
 
         case TB_MEMORY: {
-            return f->root_mem;
+            return &ALLMEM_IN_THE_SKY;
         }
 
         case TB_CONTROL: return &CTRL_IN_THE_SKY;
@@ -155,7 +214,7 @@ static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
 
     size_t size = sizeof(Lattice) + projs*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(f->arena, size);
-    *l = (Lattice){ LATTICE_TUPLE, ._tuple = { projs } };
+    *l = (Lattice){ LATTICE_TUPLE, ._elem_count = projs };
     FOR_USERS(u, n) {
         if (USERN(u)->type != TB_PROJ) continue;
         int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
@@ -203,20 +262,26 @@ static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max) {
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max } });
 }
 
-static Lattice* lattice_new_alias(TB_Function* f) {
-    return lattice_intern(f, (Lattice){ LATTICE_MEM, ._mem = { f->alias_n++ } });
-}
-
 static Lattice* lattice_alias(TB_Function* f, int alias_idx) {
-    return lattice_intern(f, (Lattice){ LATTICE_MEM, ._mem = { alias_idx } });
+    size_t alias_n = (alias_idx + 63) / 64;
+    size_t size = sizeof(Lattice) + alias_n*sizeof(Lattice*);
+    Lattice* l = tb_arena_alloc(f->arena, size);
+    *l = (Lattice){ LATTICE_TUPLE, ._alias_n = alias_n };
+
+    // just flip aliases
+    FOREACH_N(i, 0, alias_n) { l->alias[i] = 0; }
+    l->alias[alias_idx / 64] |= 1ull << (alias_idx % 64);
+
+    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
+    if (k) {
+        tb_arena_free(f->arena, l, size);
+        return k;
+    } else {
+        return l;
+    }
 }
 
 static LatticeInt lattice_meet_int(LatticeInt a, LatticeInt b) {
-    // [amin, amax] /\ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
-    a.min = TB_MIN(a.min, b.min);
-    a.max = TB_MAX(a.max, b.max);
-    a.known_zeros &= b.known_zeros;
-    a.known_ones &= b.known_ones;
     return a;
 }
 
@@ -231,12 +296,32 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { i.max, i.min, i.known_ones, i.known_zeros } });
         }
 
+        case LATTICE_ALLMEM: return &ANYMEM_IN_THE_SKY;
+        case LATTICE_ANYMEM: return &ALLMEM_IN_THE_SKY;
+
+        case LATTICE_MEM_SLICE: {
+            size_t size = sizeof(Lattice) + type->_alias_n*sizeof(Lattice*);
+            Lattice* l = tb_arena_alloc(f->arena, size);
+            *l = (Lattice){ LATTICE_TUPLE, ._alias_n = type->_alias_n };
+
+            // just flip aliases
+            FOREACH_N(i, 0, type->_alias_n) { l->alias[i] = ~type->alias[i]; }
+
+            Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
+            if (k) {
+                tb_arena_free(f->arena, l, size);
+                return k;
+            } else {
+                return l;
+            }
+        }
+
         default:
         return type;
     }
 }
 
-// greatest lower bound between a and b
+// greatest lower bound between a and b, note that we expect interned lattices here
 static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
     // a ^ a = a
     if (a == b) return a;
@@ -256,7 +341,14 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
                 return &BOT_IN_THE_SKY;
             }
 
-            LatticeInt i = lattice_meet_int(a->_int, b->_int);
+            // [amin, amax] /\ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
+            LatticeInt i = {
+                .min         = TB_MIN(a->_int.min, b->_int.min),
+                .max         = TB_MAX(a->_int.max, b->_int.max),
+                .known_zeros = a->_int.known_zeros & b->_int.known_zeros,
+                .known_ones  = a->_int.known_ones  & b->_int.known_ones,
+                .widen       = TB_MAX(a->_int.widen, b->_int.widen)
+            };
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = i });
         }
 
@@ -287,7 +379,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
         }
 
         // all cases that reached down here are bottoms
-        case LATTICE_BOTPTR:
+        case LATTICE_PTR:
         case LATTICE_NULL:
         return &PTR_IN_THE_SKY;
 
@@ -303,7 +395,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
         // symA ^ symB = ~null
         case LATTICE_PTRCON: {
             if (b->tag == LATTICE_PTRCON) {
-                assert(a->_ptr.sym != b->_ptr.sym);
+                assert(a->_ptr != b->_ptr);
                 return &XNULL_IN_THE_SKY;
             } else {
                 return &BOT_IN_THE_SKY;
@@ -318,9 +410,28 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             return a == b ? a : &BOT_IN_THE_SKY;
         }
 
-        // if we make it here, they're not the same mem
-        case LATTICE_MEM:
-        return &BOT_IN_THE_SKY;
+        case LATTICE_ALLMEM: return &ALLMEM_IN_THE_SKY;
+        case LATTICE_ANYMEM: return b;
+        case LATTICE_MEM_SLICE: {
+            if (b->tag != LATTICE_MEM_SLICE) { return &BOT_IN_THE_SKY; }
+            size_t alias_n = TB_MAX(a->_alias_n, b->_alias_n);
+
+            size_t size = sizeof(Lattice) + alias_n*sizeof(Lattice*);
+            Lattice* l = tb_arena_alloc(f->arena, size);
+            *l = (Lattice){ LATTICE_TUPLE, ._alias_n = alias_n };
+
+            FOREACH_N(i, 0, a->_alias_n) { l->alias[i] = a->alias[i]; }
+            FOREACH_N(i, a->_alias_n, alias_n) { l->alias[i] = 0; }
+            FOREACH_N(i, 0, b->_alias_n) { l->alias[i] |= b->alias[i]; }
+
+            Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
+            if (k) {
+                tb_arena_free(f->arena, l, size);
+                return k;
+            } else {
+                return l;
+            }
+        }
 
         case LATTICE_TUPLE:
         return &BOT_IN_THE_SKY;

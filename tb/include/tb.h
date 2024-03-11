@@ -1464,7 +1464,7 @@ TB_API TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n);
 TB_API void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool preserve_types);
 
 // print in SSA-CFG looking form (with BB params for the phis)
-TB_API void tb_print(TB_Function* f);
+TB_API void tb_print(TB_Function* f, TB_Arena* tmp);
 // prints IR as GraphViz's DOT
 TB_API void tb_print_dot(TB_Function* f, TB_PrintCallback callback, void* user_data);
 // p is optional

@@ -319,7 +319,7 @@ static Lattice* value_ptr_vals(TB_Function* f, TB_Node* n) {
         return &XNULL_IN_THE_SKY;
     } else {
         assert(n->type == TB_SYMBOL);
-        return lattice_intern(f, (Lattice){ LATTICE_PTRCON, ._ptr = { TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym } });
+        return lattice_intern(f, (Lattice){ LATTICE_PTRCON, ._ptr = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym });
     }
 }
 
@@ -330,8 +330,11 @@ static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
 
     LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
     FOREACH_N(i, 1, n->input_count) {
-        LatticeInt b = { l->entries[i].val, l->entries[i].val, l->entries[i].val, ~l->entries[i].val };
-        a = lattice_meet_int(a, b);
+        TB_LookupEntry* e = &l->entries[i];
+        a.min = TB_MIN(a.min, l->entries[i].val);
+        a.max = TB_MAX(a.max, l->entries[i].val);
+        a.known_zeros &=  l->entries[i].val;
+        a.known_ones  &= ~l->entries[i].val;
     }
 
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = a });
@@ -341,9 +344,7 @@ static Lattice* value_region(TB_Function* f, TB_Node* n) {
     assert(cfg_is_region(n));
     FOREACH_N(i, 0, n->input_count) {
         Lattice* edge = latuni_get(f, n->inputs[i]);
-        if (edge == &CTRL_IN_THE_SKY) {
-            return &CTRL_IN_THE_SKY;
-        }
+        if (edge == &CTRL_IN_THE_SKY) { return &CTRL_IN_THE_SKY; }
     }
 
     return &TOP_IN_THE_SKY;
@@ -762,7 +763,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
 
             // check if tuple is constant path
             int trues = 0;
-            FOREACH_N(i, 0, l->_tuple.count) {
+            FOREACH_N(i, 0, l->_elem_count) {
                 if (l->elems[i] == &CTRL_IN_THE_SKY) {
                     trues++;
                 }
@@ -820,13 +821,30 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_XNAN32:   printf("~NaN32");                    break;
         case LATTICE_NAN64:    printf("NaN64");                     break;
         case LATTICE_XNAN64:   printf("~NaN64");                    break;
-        case LATTICE_BOTPTR:   printf("allptr");                    break;
-        case LATTICE_PTRCON:   printf("%s", l->_ptr.sym->name);     break;
-        case LATTICE_MEM:      printf("$mem%d", l->_mem.alias_idx); break;
+        case LATTICE_PTR:      printf("allptr");                    break;
+        case LATTICE_PTRCON:   printf("%s", l->_ptr->name);         break;
+        case LATTICE_ANYMEM:   printf("anymem");                    break;
+        case LATTICE_ALLMEM:   printf("allmem");                    break;
+        case LATTICE_MEM_SLICE: {
+            printf("[mem:");
+            bool comma = false;
+            FOREACH_N(i, 0, l->_alias_n) {
+                uint64_t bits = l->alias[i], j = 0;
+                while (bits) {
+                    if (bits & 1) {
+                        if (!comma) { comma = true; } else { printf(","); }
+                        printf("%"PRIu64, i*64 + j);
+                    }
+                    bits >>= 1, j++;
+                }
+            }
+            printf("]");
+            break;
+        }
 
         case LATTICE_TUPLE: {
             printf("[");
-            FOREACH_N(i, 0, l->_tuple.count) {
+            FOREACH_N(i, 0, l->_elem_count) {
                 if (i) printf(", ");
                 print_lattice(l->elems[i], TB_TYPE_I64);
             }
@@ -843,20 +861,12 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
                 printf("bool");
             } else if (l->_int.min == INT16_MIN && l->_int.max == INT16_MAX) {
                 printf("i8");
-            } else if (l->_int.min == 0 && l->_int.max == UINT8_MAX) {
-                printf("u8");
             } else if (l->_int.min == INT16_MIN && l->_int.max == INT16_MAX) {
                 printf("i16");
-            } else if (l->_int.min == 0 && l->_int.max == UINT16_MAX) {
-                printf("u16");
             } else if (l->_int.min == INT32_MIN && l->_int.max == INT32_MAX) {
                 printf("i32");
-            } else if (l->_int.min == 0 && l->_int.max == UINT32_MAX) {
-                printf("u32");
             } else if (l->_int.min == INT64_MIN && l->_int.max == INT64_MAX) {
                 printf("i64");
-            } else if (l->_int.min == 0 && l->_int.max == UINT64_MAX) {
-                printf("u64");
             } else if (l->_int.min > l->_int.max) {
                 printf("%"PRIu64",%"PRIu64, l->_int.min, l->_int.max);
             } else {
@@ -882,6 +892,12 @@ static int node_sort_cmp(const void* a, const void* b) {
     return aa[0]->gvn - bb[0]->gvn;
 }
 
+static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
+    Lattice* old_t = latuni_get(f, n);
+    Lattice* new_t = latuni_get(f, k);
+    latuni_set(f, k, lattice_join(f, old_t, new_t));
+}
+
 // because certain optimizations apply when things are the same
 // we mark ALL users including the ones who didn't get changed
 // when subsuming.
@@ -900,6 +916,7 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         // transfer users from n -> k
         if (n != k) {
             push_for_death(f, n);
+            migrate_type(f, n, k);
             subsume_node(f, n, k);
             n = k;
         }
@@ -926,6 +943,7 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
             DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
             push_for_death(f, n);
+            migrate_type(f, n, k);
             subsume_node(f, n, k);
             mark_users(f, k);
             return k;
@@ -941,6 +959,7 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
         push_for_death(f, n);
+        migrate_type(f, n, k);
         subsume_node(f, n, k);
         mark_users(f, k);
         return k;
@@ -969,6 +988,7 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_hit++);
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[95mGVN v%u\x1b[0m\n", k->gvn));
 
+        migrate_type(f, n, k);
         subsume_node(f, n, k);
         mark_users(f, k);
         return k;
@@ -997,12 +1017,6 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
 void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     subsume_node2(f, n, new_n);
     tb_kill_node(f, n);
-
-    // replacing a node should merge the type info, both are
-    // true so we'll intersect (in our case JOIN)
-    Lattice* old_t = latuni_get(f, n);
-    Lattice* new_t = latuni_get(f, new_n);
-    latuni_set(f, new_n, lattice_join(f, old_t, new_t));
 }
 
 void tb_opt_dump_stats(TB_Function* f) {
@@ -1390,10 +1404,8 @@ static bool alloc_types(TB_Function* f) {
         f->type_interner = nl_hashset_alloc(64);
         f->type_cap = count;
         f->types = tb_platform_heap_alloc(count * sizeof(Lattice*));
-
-        FOREACH_N(i, 0, count) {
-            f->types[i] = NULL;
-        }
+        // when latuni_get sees a NULL, it'll replace it with the correct bottom type
+        FOREACH_N(i, 0, count) { f->types[i] = NULL; }
 
         nl_hashset_put2(&f->type_interner, &BOT_IN_THE_SKY,      lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &TOP_IN_THE_SKY,      lattice_hash, lattice_cmp);
@@ -1407,12 +1419,14 @@ static bool alloc_types(TB_Function* f) {
         nl_hashset_put2(&f->type_interner, &NAN64_IN_THE_SKY,    lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &XNAN32_IN_THE_SKY,   lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &XNAN64_IN_THE_SKY,   lattice_hash, lattice_cmp);
+        nl_hashset_put2(&f->type_interner, &ANYMEM_IN_THE_SKY,   lattice_hash, lattice_cmp);
+        nl_hashset_put2(&f->type_interner, &ALLMEM_IN_THE_SKY,   lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &PTR_IN_THE_SKY,      lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &FALSE_IN_THE_SKY,    lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &TRUE_IN_THE_SKY,     lattice_hash, lattice_cmp);
 
         // place ROOT type
-        f->root_mem = lattice_new_alias(f);
+        f->root_mem = lattice_alias(f, 0);
     }
     return true;
 }
@@ -1432,7 +1446,6 @@ void tb_opt_peeps(TB_Function* f) {
             TB_Node* n = f->worklist->items[i];
             f->types[n->gvn] = lattice_from_dt(f, n->dt);
         }
-
         f->types[f->root_node->gvn] = lattice_tuple_from_node(f, f->root_node);
     }
 

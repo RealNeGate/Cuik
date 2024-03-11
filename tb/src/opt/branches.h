@@ -393,8 +393,8 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
 
     size_t size = sizeof(Lattice) + c->proj_count*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(f->tmp_arena, size);
-    *l = (Lattice){ LATTICE_TUPLE, ._tuple = { c->proj_count } };
+    Lattice* l = tb_arena_alloc(f->arena, size);
+    *l = (Lattice){ LATTICE_TUPLE, ._elem_count = c->proj_count };
 
     FOREACH_N(i, 1, c->proj_count) {
         l->elems[i] = &BOT_IN_THE_SKY;
@@ -412,7 +412,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
 
     Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
     if (k) {
-        tb_arena_free(f->tmp_arena, l, size);
+        tb_arena_free(f->arena, l, size);
         return k;
     } else {
         return l;
@@ -480,15 +480,15 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
     // construct tuple type
     match:;
     size_t size = sizeof(Lattice) + br->succ_count*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(f->tmp_arena, size);
-    *l = (Lattice){ LATTICE_TUPLE, ._tuple = { br->succ_count } };
+    Lattice* l = tb_arena_alloc(f->arena, size);
+    *l = (Lattice){ LATTICE_TUPLE, ._elem_count = br->succ_count };
     FOREACH_N(i, 0, br->succ_count) {
         l->elems[i] = taken < 0 || i == taken ? &CTRL_IN_THE_SKY : &XCTRL_IN_THE_SKY;
     }
 
     Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
     if (k) {
-        tb_arena_free(f->tmp_arena, l, size);
+        tb_arena_free(f->arena, l, size);
         return k;
     } else {
         return l;

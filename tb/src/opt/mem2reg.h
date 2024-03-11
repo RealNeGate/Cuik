@@ -40,7 +40,7 @@ static bool good_mem_op(TB_Function* f, TB_Node* n) { // ld, st, memcpy, memset
         return true;
     } else if (n->type >= TB_STORE && n->type <= TB_MEMSET) {
         Lattice* l = latuni_get(f, n);
-        return l == &TOP_IN_THE_SKY || l == f->root_mem;
+        return l == &ALLMEM_IN_THE_SKY || l == f->root_mem;
     } else {
         return false;
     }
@@ -351,7 +351,8 @@ void tb_opt_locals(TB_Function* f) {
                 if (mode != RENAME_NONE) {
                     // allocate new alias index
                     if (mode == RENAME_MEMORY) {
-                        ctx.renames[j].alias_idx = f->alias_n++;
+                        // TODO(NeGate): let's make it possible to add equivalence classes here
+                        // ctx.renames[j].alias_idx = f->alias_n++;
                         needs_to_rewrite = true;
                     } else if (mode == RENAME_VALUE) {
                         ctx.renames[j].alias_idx = -1;

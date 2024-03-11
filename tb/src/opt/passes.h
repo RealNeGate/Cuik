@@ -27,17 +27,8 @@ typedef struct {
     uint64_t known_ones;
 
     // we really don't wanna widen 18 quintillion times, it's never worth it
-    int widen;
+    uint64_t widen;
 } LatticeInt;
-
-// a simplification of the set of all pointers (or floats)
-typedef struct {
-    TB_Symbol* sym;
-} LatticePtrConst;
-
-typedef struct {
-    size_t count;
-} LatticeTuple;
 
 typedef struct {
     int alias_idx;
@@ -84,40 +75,37 @@ struct Lattice {
         //    /     \
         //   /     /|\
         //   |    / | \
-        //   |   a  b  ... # ptrcon
+        // null  a  b  ... # ptrcon
         //   |    \ | /
-        // null   ~null
-        //     \  /
-        //    botptr
-        LATTICE_BOTPTR,
+        //   \    ~null
+        //    \   /
+        //     ptr
+        LATTICE_PTR,
         LATTICE_NULL,
         LATTICE_XNULL,
         LATTICE_PTRCON,
 
-        // memory:
-        //    top
-        //   / | \
-        //  a  b  ...
-        //   \ | /
-        //    bot
-        //
-        // alias idx on each memory type.
-        LATTICE_MEM,
+        // memory types
+        LATTICE_ALLMEM,    // bottom type for memory
+        LATTICE_ANYMEM,    // top type for memory
+        LATTICE_MEM_SLICE, // some set of bits where 1 means aliased.
 
         // control tokens
         LATTICE_CTRL,
         LATTICE_XCTRL,
     } tag;
-    uint32_t pad;
     union {
-        LatticeInt _int;
-        LatticePtrConst _ptr;
-        LatticeTuple _tuple;
-        LatticeMem _mem;
-        float _f32;
-        double _f64;
+        size_t _alias_n;    // LATTICE_MEM_SLICE
+        size_t _elem_count; // LATTICE_TUPLE
+        LatticeInt _int;    // LATTICE_INT
+        TB_Symbol* _ptr;    // LATTICE_PTRCON
+        float  _f32;        // LATTICE_FLTCON32
+        double _f64;        // LATTICE_FLTCON64
     };
-    Lattice* elems[];
+    union {
+        uint64_t alias[];
+        Lattice* elems[];
+    };
 };
 
 ////////////////////////////////
