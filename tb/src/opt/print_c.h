@@ -113,79 +113,37 @@ static void c_fmt_output(CFmtState* ctx, TB_Node* n) {
 }
 
 static bool c_fmt_will_inline(TB_Node *n) {
-    // if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST ||
-    //     n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
-    //     n->type == TB_SIGN_EXT || n->type == TB_ZERO_EXT ||
-    //     n->type == TB_PROJ || n->type == TB_REGION ||
-    //     n->type == TB_NULL ||
-    //     n->type == TB_PHI) {
-    //     return true;
-    // }
-    if (n->type == TB_ROOT) {
+    switch (n->type) {
+        case TB_ROOT: case TB_INTEGER_CONST:
+        case TB_REGION: case TB_NATURAL_LOOP: case TB_AFFINE_LOOP:
+        case TB_FLOAT32_CONST: case TB_FLOAT64_CONST:
+        case TB_SYMBOL: case TB_ZERO_EXT: case TB_SIGN_EXT:
         return true;
+
+        case TB_PROJ: if (n->dt.type == TB_CONTROL) { return true; }
+        break;
     }
-    if (n->type == TB_PROJ && n->dt.type == TB_CONTROL) {
-        return true;
-    }
-    if (n->type == TB_REGION) {
-        return true;
-    }
-    if (n->type == TB_FLOAT32_CONST) {
-        return true;
-    }
-    if (n->type == TB_FLOAT64_CONST) {
-        return true;
-    }
-    if (n->type == TB_SYMBOL) {
-        return true;
-    }
-    if (n->type == TB_ZERO_EXT) {
-        return true;
-    }
-    if (n->type == TB_SIGN_EXT) {
-        return true;
-    }
-    if (n->type == TB_INTEGER_CONST) {
-        return true;
-    }
+
     size_t len = 0;
     for (User *head = n->users; head != NULL; head = head->next) {
         len += 1;
+
+        // counts as two uses in the C code
+        if (USERN(head)->type == TB_ROL) len += 1;
     }
-    if (len <= 1) {
-        if (n->type == TB_SELECT) {
-            return true;
-        }
-        if (n->type == TB_SHL || n->type == TB_SHR || n->type == TB_SAR) {
-            return true;
-        }
-        if (n->type == TB_AND || n->type == TB_OR || n->type == TB_XOR) {
-            return true;
-        }
-        if (n->type == TB_ADD || n->type == TB_FADD) {
-            return true;
-        }
-        if (n->type == TB_SUB || n->type == TB_FSUB) {
-            return true;
-        }
-        if (n->type == TB_MUL || n->type == TB_FMUL) {
-            return true;
-        }
-        if (n->type == TB_SDIV || n->type == TB_UDIV || n->type == TB_FDIV) {
-            return true;
-        }
-        if (n->type == TB_CMP_EQ) {
-            return true;
-        }
-        if (n->type == TB_CMP_NE) {
-            return true;
-        }
-        if (n->type == TB_CMP_SLT || n->type == TB_CMP_ULT || n->type == TB_CMP_FLT) {
-            return true;
-        }
-        if (n->type == TB_CMP_SLE || n->type == TB_CMP_ULE || n->type == TB_CMP_FLE) {
-            return true;
-        }
+
+    if (len <= 1) switch (n->type) {
+        case TB_SELECT:
+        case TB_SHL: case TB_SHR: case TB_SAR:
+        case TB_AND: case TB_XOR: case TB_OR:
+        case TB_ADD: case TB_FADD:
+        case TB_SUB: case TB_FSUB:
+        case TB_MUL: case TB_FMUL:
+        case TB_UDIV: case TB_SDIV: case TB_FDIV:
+        case TB_CMP_EQ: case TB_CMP_NE:
+        case TB_CMP_SLT: case TB_CMP_ULT: case TB_CMP_FLT:
+        case TB_CMP_SLE: case TB_CMP_ULE: case TB_CMP_FLE:
+        return true;
     }
     return false;
 }
@@ -334,7 +292,6 @@ static void c_fmt_inline_node(CFmtState* ctx, TB_Node *n) {
                 }
                 case TB_SYMBOL_GLOBAL: {
                     TB_Global *g = (void *) sym;
-
                     uint8_t *data = tb_platform_heap_alloc(g->size);
 
                     memset(&data[g->pos], 0, g->size);
@@ -430,70 +387,68 @@ CFmtBlockRange *c_fmt_get_block_range(CFmtState* ctx, TB_Worklist* ws, TB_Node* 
 static void c_fmt_branch_edge(CFmtState* ctx, TB_Node* n, bool fallthru) {
     TB_Node* target = fallthru ? cfg_next_control(n) : cfg_next_bb_after_cproj(n);
 
-    if (target->type == TB_REGION) {
+    if (cfg_is_region(target)) {
         int phi_i = -1;
         FOR_USERS(u, n) {
-            if (USERN(u)->type == TB_REGION) {
+            if (cfg_is_region(USERN(u))) {
                 phi_i = 1 + USERI(u);
                 break;
             }
         }
 
-        if (target->users != NULL) {
-            c_fmt_spaces(ctx);
-            nl_buffer_format(ctx->buf, "{\n");
-            ctx->depth += 1;
-            size_t has_phi = 0;
-            FOR_USERS(u, target) {
-                if (USERN(u)->type == TB_PHI) {
-                    if (USERN(u)->inputs[phi_i] != NULL) {
-                        if (USERN(u)->inputs[phi_i]->dt.type != TB_CONTROL && USERN(u)->inputs[phi_i]->dt.type != TB_MEMORY) {
-                            has_phi += 1;
-                        }
+        c_fmt_spaces(ctx);
+        nl_buffer_format(ctx->buf, "{ // phi moves\n");
+        ctx->depth += 1;
+        size_t has_phi = 0;
+        FOR_USERS(u, target) {
+            if (USERN(u)->type == TB_PHI) {
+                if (USERN(u)->inputs[phi_i] != NULL) {
+                    if (USERN(u)->inputs[phi_i]->dt.type != TB_CONTROL && USERN(u)->inputs[phi_i]->dt.type != TB_MEMORY) {
+                        has_phi += 1;
                     }
                 }
             }
-            ctx->a += has_phi;
-            size_t pos = 0;
-            FOR_USERS(u, target) {
-                if (USERN(u)->type == TB_PHI) {
-                    if (USERN(u)->inputs[phi_i] != NULL) {
-                        if (USERN(u)->inputs[phi_i]->dt.type != TB_CONTROL && USERN(u)->inputs[phi_i]->dt.type != TB_MEMORY) {
-                            assert(phi_i >= 0);
-                            if (pos != 0) {
-                                c_fmt_spaces(ctx);
-                                nl_buffer_format(ctx->buf, "%s a%zu = ", c_fmt_type_name(USERN(u)->dt), ctx->a + pos);
-                                c_fmt_ref_to_node(ctx, USERN(u)->inputs[phi_i]);
-                                nl_buffer_format(ctx->buf, ";\n");
-                            }
-                            pos += 1;
-                        }
-                    }
-                }
-            }
-            pos = 0;
-            FOR_USERS(u, target) {
-                if (USERN(u)->type == TB_PHI) {
-                    if (USERN(u)->inputs[phi_i] != NULL) {
-                        if (USERN(u)->inputs[phi_i]->dt.type != TB_CONTROL && USERN(u)->inputs[phi_i]->dt.type != TB_MEMORY) {
-                            assert(phi_i >= 0);
-                            if (pos == 0) {
-                                c_fmt_output(ctx, USERN(u));
-                                c_fmt_ref_to_node(ctx, USERN(u)->inputs[phi_i]);
-                                nl_buffer_format(ctx->buf, ";\n");
-                            } else {
-                                c_fmt_output(ctx, USERN(u));
-                                nl_buffer_format(ctx->buf, "a%zu;\n", ctx->a + pos);
-                            }
-                            pos += 1;
-                        }
-                    }
-                }
-            }
-            ctx->depth -= 1;
-            c_fmt_spaces(ctx);
-            nl_buffer_format(ctx->buf, "}\n");
         }
+        ctx->a += has_phi;
+        size_t pos = 0;
+        FOR_USERS(u, target) {
+            if (USERN(u)->type == TB_PHI) {
+                if (USERN(u)->inputs[phi_i] != NULL) {
+                    if (USERN(u)->inputs[phi_i]->dt.type != TB_CONTROL && USERN(u)->inputs[phi_i]->dt.type != TB_MEMORY) {
+                        assert(phi_i >= 0);
+                        if (pos != 0) {
+                            c_fmt_spaces(ctx);
+                            nl_buffer_format(ctx->buf, "%s a%zu = ", c_fmt_type_name(USERN(u)->dt), ctx->a + pos);
+                            c_fmt_ref_to_node(ctx, USERN(u)->inputs[phi_i]);
+                            nl_buffer_format(ctx->buf, ";\n");
+                        }
+                        pos += 1;
+                    }
+                }
+            }
+        }
+        pos = 0;
+        FOR_USERS(u, target) {
+            if (USERN(u)->type == TB_PHI) {
+                if (USERN(u)->inputs[phi_i] != NULL) {
+                    if (USERN(u)->inputs[phi_i]->dt.type != TB_CONTROL && USERN(u)->inputs[phi_i]->dt.type != TB_MEMORY) {
+                        assert(phi_i >= 0);
+                        if (pos == 0) {
+                            c_fmt_output(ctx, USERN(u));
+                            c_fmt_ref_to_node(ctx, USERN(u)->inputs[phi_i]);
+                            nl_buffer_format(ctx->buf, ";\n");
+                        } else {
+                            c_fmt_output(ctx, USERN(u));
+                            nl_buffer_format(ctx->buf, "a%zu;\n", ctx->a + pos);
+                        }
+                        pos += 1;
+                    }
+                }
+            }
+        }
+        ctx->depth -= 1;
+        c_fmt_spaces(ctx);
+        nl_buffer_format(ctx->buf, "}\n");
     }
 
     c_fmt_spaces(ctx);
@@ -869,6 +824,23 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                 nl_buffer_format(ctx->buf, "(%s) ", c_fmt_type_name(n->dt));
                 c_fmt_ref_to_node(ctx, rhs);
                 nl_buffer_format(ctx->buf, ";\n");
+                break;
+            }
+            case TB_ROL: {
+                TB_Node *lhs = n->inputs[n->input_count-2];
+                TB_Node *rhs = n->inputs[n->input_count-1];
+                c_fmt_output(ctx, n);
+                nl_buffer_format(ctx->buf, "((%s) ", c_fmt_type_name(n->dt));
+                c_fmt_ref_to_node(ctx, lhs);
+                nl_buffer_format(ctx->buf, " << ");
+                nl_buffer_format(ctx->buf, "(%s) ", c_fmt_type_name(n->dt));
+                c_fmt_ref_to_node(ctx, rhs);
+                nl_buffer_format(ctx->buf, ") | ((%s)", c_fmt_type_name(n->dt));
+                c_fmt_ref_to_node(ctx, lhs);
+                nl_buffer_format(ctx->buf, " >> (%d - ", n->dt.data);
+                nl_buffer_format(ctx->buf, "(%s) ", c_fmt_type_name(n->dt));
+                c_fmt_ref_to_node(ctx, rhs);
+                nl_buffer_format(ctx->buf, "));\n");
                 break;
             }
             case TB_SHR: {

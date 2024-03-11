@@ -621,10 +621,10 @@ static Lattice* value_of(TB_Function* f, TB_Node* n, bool optimistic) {
 
     // no type provided? just make a not-so-form fitting bottom type
     if (type == NULL) {
+        Lattice* old_type = latuni_get(f, n);
         if (optimistic) {
-            return lattice_from_dt(f, n->dt);
+            return lattice_meet(f, old_type, lattice_from_dt(f, n->dt));
         } else {
-            Lattice* old_type = latuni_get(f, n);
             return old_type != &TOP_IN_THE_SKY ? old_type : lattice_from_dt(f, n->dt);
         }
     } else {
@@ -933,7 +933,15 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
 
     // pessimistic constant prop
     {
+        #ifndef NDEBUG
+        Lattice* old_type = latuni_get(f, n);
         Lattice* new_type = value_of(f, n, false);
+        if (old_type != lattice_from_dt(f, n->dt)) {
+            assert(lattice_meet(f, old_type, new_type) == new_type);
+        }
+        #else
+        Lattice* new_type = value_of(f, n, false);
+        #endif
 
         // print fancy type
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m"));
@@ -1289,6 +1297,8 @@ void tb_opt_cprop(TB_Function* f) {
             Lattice* new_type = value_of(f, n, true);
             if (old_type != new_type) {
                 DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
+
+                assert(lattice_meet(f, old_type, new_type) == new_type);
                 latuni_set(f, n, new_type);
 
                 // push affected users

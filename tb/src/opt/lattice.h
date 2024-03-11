@@ -347,7 +347,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
                 .max         = TB_MAX(a->_int.max, b->_int.max),
                 .known_zeros = a->_int.known_zeros & b->_int.known_zeros,
                 .known_ones  = a->_int.known_ones  & b->_int.known_ones,
-                .widen       = TB_MAX(a->_int.widen, b->_int.widen)
+                .widen       = TB_MAX(a->_int.widen, b->_int.widen),
             };
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = i });
         }
@@ -446,4 +446,3 @@ static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b) {
     b = lattice_dual(f, b);
     return lattice_dual(f, lattice_meet(f, a, b));
 }
-
