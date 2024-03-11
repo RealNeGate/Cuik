@@ -23,13 +23,7 @@ static KnownPointer known_pointer(TB_Node* n) {
     }
 }
 
-typedef struct FoundPhis {
-    struct FoundPhis* prev;
-    TB_Node* old;
-    TB_Node* new;
-} FoundPhis;
-
-static TB_Node* data_phi_from_memory_phi(TB_Function* f, TB_Node* n, TB_Node* addr, TB_Node* mem, FoundPhis* prev, int steps) {
+static TB_Node* data_phi_from_memory_phi(TB_Function* f, TB_Node* n, TB_Node* addr, TB_Node* mem) {
     // convert memory phis into data phis
     assert(mem->type == TB_PHI);
     assert(mem->dt.type == TB_MEMORY && "memory input should be memory");
@@ -45,26 +39,11 @@ static TB_Node* data_phi_from_memory_phi(TB_Function* f, TB_Node* n, TB_Node* ad
     bool fail = false;
     FOREACH_N(i, 0, path_count) {
         TB_Node* st = mem->inputs[1+i];
-        if (st->type == TB_PHI && steps > 0) {
-            TB_Node* k = NULL;
-
-            // if we've already seen this phi before, let's just reference the OG
-            for (FoundPhis* p = prev; p; p = p->prev) {
-                if (p->old == st) k = p->new;
-            }
-
-            if (k == NULL) {
-                FoundPhis next = { prev, mem, phi };
-                k = data_phi_from_memory_phi(f, n, addr, st, &next, steps - 1);
-                if (k == NULL) { fail = true; break; }
-            }
-
-            paths[i] = k;
-        } else if (st->type != TB_STORE || st->inputs[2] != addr || st->inputs[3]->dt.raw != dt.raw) {
+        if (st->type == TB_STORE && st->inputs[2] == addr && st->inputs[3]->dt.raw == dt.raw) {
+            paths[i] = st->inputs[3];
+        } else {
             fail = true;
             break;
-        } else {
-            paths[i] = st->inputs[3];
         }
     }
 
@@ -87,10 +66,10 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
     TB_Node* mem = n->inputs[1];
     TB_Node* addr = n->inputs[2];
 
-    if (mem->type == TB_PHI) {
-        TB_Node* k = data_phi_from_memory_phi(f, n, addr, mem, NULL, 2);
+    /* if (mem->type == TB_PHI) {
+        TB_Node* k = data_phi_from_memory_phi(f, n, addr, mem);
         if (k) return k;
-    }
+    } */
 
     if (ctrl != NULL) {
         // we've dependent on code which must always be run (ROOT.mem)

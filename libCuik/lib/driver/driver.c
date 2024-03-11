@@ -169,6 +169,11 @@ static void local_opt_func(TB_Function* f, void* arg) {
 }
 
 static void apply_func(TB_Function* f, void* arg) {
+    if (ir_worklist == NULL) {
+        // we just leak these btw, i don't care yet
+        ir_worklist = tb_worklist_alloc();
+    }
+
     Cuik_DriverArgs* args = arg;
     bool print_asm = args->assembly;
 
@@ -183,7 +188,7 @@ static void apply_func(TB_Function* f, void* arg) {
             tb_print(f);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
-                TB_FunctionOutput* out = tb_codegen(f, ir_worklist, arenas->code, NULL, print_asm);
+                TB_FunctionOutput* out = tb_codegen(f, ir_worklist, arenas->tmp, arenas->code, NULL, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");

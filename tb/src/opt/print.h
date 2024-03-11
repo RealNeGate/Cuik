@@ -176,13 +176,12 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
     printf(")");
 }
 
-static void print_bb(PrinterCtx* ctx, TB_Node* bb_start) {
+static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
     print_ref_to_node(ctx, bb_start, true);
     printf("\n");
 
     TB_Function* f = ctx->f;
     TB_BasicBlock* bb = f->scheduled[bb_start->gvn];
-    TB_Worklist* ws   = f->worklist;
 
     #ifndef NDEBUG
     TB_BasicBlock* expected = &nl_map_get_checked(ctx->cfg.node_to_block, bb_start);
@@ -476,7 +475,7 @@ void tb_print(TB_Function* f) {
     TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
 
     // schedule nodes
-    tb_global_schedule(f, ctx.cfg, false, NULL);
+    tb_global_schedule(f, &ws, ctx.cfg, false, NULL);
     worklist_clear_visited(&ws);
 
     TB_Node* end_bb = NULL;
@@ -487,11 +486,11 @@ void tb_print(TB_Function* f) {
             continue;
         }
 
-        print_bb(&ctx, ws.items[i]);
+        print_bb(&ctx, &ws, ws.items[i]);
     }
 
     if (end_bb != NULL) {
-        print_bb(&ctx, end_bb);
+        print_bb(&ctx, &ws, end_bb);
     }
     worklist_free(&ws);
     tb_free_cfg(&ctx.cfg);

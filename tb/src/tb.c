@@ -177,16 +177,19 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     return m;
 }
 
-TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, const TB_FeatureSet* features, bool emit_asm) {
+TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp, TB_Arena* code, const TB_FeatureSet* features, bool emit_asm) {
     f->worklist = ws;
+    f->tmp_arena = tmp;
+
     TB_Module* m = f->super.module;
 
-    TB_FunctionOutput* func_out = tb_arena_alloc(arena, sizeof(TB_FunctionOutput));
+    TB_FunctionOutput* func_out = tb_arena_alloc(code, sizeof(TB_FunctionOutput));
     *func_out = (TB_FunctionOutput){ .parent = f, .section = f->section, .linkage = f->linkage };
-    m->codegen->compile_function(f, func_out, features, arena, emit_asm);
+    m->codegen->compile_function(f, func_out, features, code, emit_asm);
     atomic_fetch_add(&m->compiled_function_count, 1);
 
     f->output = func_out;
+    f->tmp_arena = NULL;
     f->worklist = NULL;
 
     return func_out;

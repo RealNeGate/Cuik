@@ -53,7 +53,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
 
     while (dyn_array_length(ws->items) > cfg->block_count) {
         // find highest priority item
-        int best_lat  = 0;
+        int best_lat = -1;
         int best_i = -1;
         FOREACH_N(i, cfg->block_count, dyn_array_length(ws->items)) {
             TB_Node* n = ws->items[i];
@@ -66,7 +66,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         }
 
         assert(best_i >= 0);
-        assert(best_lat > 0);
+        assert(best_lat >= 0);
 
         TB_Node* best = ws->items[best_i];
         worklist_remove(ws, best);

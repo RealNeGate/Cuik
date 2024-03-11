@@ -133,6 +133,9 @@ static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
+// im afraid of signed overflow UB
+static int64_t sadd(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a + (uint64_t)b) & mask; }
+static int64_t ssub(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a - (uint64_t)b) & mask; }
 static Lattice* value_arith(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
     Lattice* b = latuni_get(f, n->inputs[2]);
@@ -140,37 +143,51 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
+    int64_t mask = tb__mask(n->dt.data);
+    int64_t imin = lattice_int_min(n->dt.data);
+    int64_t imax = lattice_int_max(n->dt.data);
+    int64_t amin = a->_int.min, amax = a->_int.max;
+    int64_t bmin = b->_int.min, bmax = b->_int.max;
+
+    // let's convert into signed numbers... for simplicity?
+    // if ((uint64_t)amin > (uint64_t)amax) { SWAP(int64_t, amin, amax); }
+    // if ((uint64_t)bmin > (uint64_t)bmax) { SWAP(int64_t, bmin, bmax); }
+
     assert(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
-    uint64_t mask = tb__mask(n->dt.data);
-    uint64_t min, max;
-    bool overflow = false;
+    int64_t min, max;
     switch (n->type) {
         case TB_ADD:
-        overflow |= l_add_overflow(a->_int.min, b->_int.min, mask, &min);
-        overflow |= l_add_overflow(a->_int.max, b->_int.max, mask, &max);
-        if (min > max) { overflow = true; }
+        min = sadd(amin, bmin, mask);
+        max = sadd(amax, bmax, mask);
+
+        if (amin != amax || bmin != bmax) {
+            // Ahh sweet, Hacker's delight horrors beyond my comprehension
+            uint64_t u = amin & bmin & ~min;
+            uint64_t v = ~(amax | bmax) & max;
+            // just checking the sign bits
+            if ((u | v) & imin) { min = imin, max = imax; }
+        }
         break;
 
         case TB_SUB:
-        overflow |= l_sub_overflow(a->_int.min, b->_int.max, mask, &min);
-        overflow |= l_sub_overflow(a->_int.max, b->_int.min, mask, &max);
-        if (min > max) { overflow = true; }
+        min = ssub(amin, bmax, mask);
+        max = ssub(amax, bmin, mask);
+
+        // overflow |= l_sub_overflow(a->_int.min, b->_int.max, mask, &min);
+        // overflow |= l_sub_overflow(a->_int.max, b->_int.min, mask, &max);
         break;
 
         case TB_MUL:
-        overflow |= l_mul_overflow(a->_int.min, b->_int.min, mask, &min);
-        overflow |= l_mul_overflow(a->_int.max, b->_int.max, mask, &max);
-        if (min > max) { overflow = true; }
+        min = 0, max = -1;
+        // overflow |= l_mul_overflow(a->_int.min, b->_int.min, mask, &min);
+        // overflow |= l_mul_overflow(a->_int.max, b->_int.max, mask, &max);
         break;
     }
 
-    // truncate to the size of the raw DataType
-    min &= mask, max &= mask;
-
-    if (min == max) {
+    if (min > max) {
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { imin | ~mask, imax } });
+    } else if (min == max) {
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
-    } else if (overflow) {
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, mask } });
     } else {
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max } });
     }
@@ -200,10 +217,7 @@ static Lattice* value_unary(TB_Function* f, TB_Node* n) {
         uint64_t mask = tb__mask(n->dt.data);
         uint64_t min = ~a->_int.min & mask;
         uint64_t max = ~a->_int.max & mask;
-
-        if (wrapped_int_lt(max, min, n->dt.data)) {
-            SWAP(int64_t, min, max);
-        }
+        if (min > max) { return NULL; }
 
         uint64_t zeros = 0, ones = 0;
         if (n->type == TB_NEG) {
@@ -214,8 +228,7 @@ static Lattice* value_unary(TB_Function* f, TB_Node* n) {
             uint64_t max_inc = (max+1) & mask;
 
             if (min_inc < min || max_inc < min) {
-                min = lattice_int_min(n->dt.data);
-                max = lattice_int_max(n->dt.data);
+                return NULL;
             } else {
                 min = min_inc;
                 max = max_inc;
@@ -267,9 +280,8 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
 
     // we can deduce a min and max by assuming the unknown bits are either zeros or ones
     int64_t min = ones, max = ~zeros;
-    if (wrapped_int_lt(max, min, n->dt.data)) {
-        min = lattice_int_min(n->dt.data);
-        max = lattice_int_max(n->dt.data);
+    if (min > max) {
+        return NULL;
     }
     min &= mask, max &= mask;
 
@@ -292,56 +304,51 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
 
     // shift that's in-bounds can tell us quite a few nice details
     if (b->_int.max <= bits) {
-        uint64_t min, max, zeros, ones = 0;
+        uint64_t zeros = 0, ones = 0;
+        uint64_t min = a->_int.min & mask;
+        uint64_t max = a->_int.max & mask;
+
+        // convert the ranges into unsigned values
+        if (min > max) { min = 0, max = mask; }
+
+        uint64_t bmin = b->_int.min & mask;
+        uint64_t bmax = b->_int.max & mask;
+        if (bmin > bmax) { bmin = 0, bmax = mask; }
+
         switch (n->type) {
             case TB_SHL:
-            min = a->_int.min << b->_int.min;
-            max = a->_int.max << b->_int.max;
-            min &= mask, max &= mask;
+            if (bmin == bmax) {
+                min = (min << bmin) & mask;
+                max = (max << bmin) & mask;
 
-            if (((a->_int.min & b->_int.min) < 0 && min >= 0) ||
-                (~(a->_int.max | b->_int.max) < 0 && max < 0) ||
-                wrapped_int_lt(max, min, n->dt.data)
-            ) {
-                min = lattice_int_min(n->dt.data);
-                max = lattice_int_max(n->dt.data);
+                // check if we chop bits off the end (if we do we can't use
+                // the range info, we still have known bits tho)
+                if (((min >> bmin) & mask) != min ||
+                    ((max >> bmin) & mask) != max) {
+                    min = lattice_int_min(n->dt.data) | ~mask;
+                    max = lattice_int_max(n->dt.data);
+                }
+
+                // we know exactly where the bits went
+                ones <<= b->_int.min;
             }
 
             // we at least shifted this many bits therefore we
             // at least have this many zeros at the bottom
-            zeros = (1ull << b->_int.min) - 1ull;
-            // if we know how many bits we shifted then we know where
-            // our known ones ones went
-            if (b->_int.min == b->_int.max) {
-                ones <<= b->_int.min;
-            }
+            zeros |= (1ull << b->_int.min) - 1ull;
             break;
 
             case TB_SHR:
-            // perform shift logic as unsigned
-            min = a->_int.min;
-            max = a->_int.max;
-            if (min > max) {
-                min = 0, max = mask;
-            }
-
             // the largest value is caused by the lowest shift amount
-            min >>= b->_int.max;
-            max >>= b->_int.min;
+            min = (min >> b->_int.max) + 1;
+            max = (max >> b->_int.min);
 
-            // convert range back into signed
-            if (wrapped_int_lt(max, min, n->dt.data)) {
-                min = lattice_int_min(n->dt.data);
-                max = lattice_int_max(n->dt.data);
-            }
-
-            // TODO(NeGate): we can technically guarentee the top bits are zero
-            zeros = 0;
             // if we know how many bits we shifted then we know where
             // our known ones ones went
             if (b->_int.min == b->_int.max) {
-                ones  = 0;
-                zeros = ~(mask >> b->_int.min) & mask;
+                ones  = a->_int.known_ones  >> b->_int.min;
+                zeros = a->_int.known_zeros >> b->_int.min;
+                zeros |= ~(mask >> b->_int.min) & mask;
             }
             break;
 
@@ -354,21 +361,17 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
     }
 }
 
+static bool ucmple(uint64_t a, uint64_t b, uint64_t mask) { return (a & mask) <= (b & mask); }
 static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
     Lattice* b = latuni_get(f, n->inputs[2]);
-    if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) {
-        return &TOP_IN_THE_SKY;
-    }
-
-    if (a == &BOT_IN_THE_SKY || b == &BOT_IN_THE_SKY) {
-        return &BOT_IN_THE_SKY;
-    }
+    if (a == &TOP_IN_THE_SKY || b == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+    if (a == &BOT_IN_THE_SKY || b == &BOT_IN_THE_SKY) { return &BOT_IN_THE_SKY; }
 
     TB_DataType dt = n->inputs[1]->dt;
     if (dt.type == TB_INT) {
         uint64_t mask = tb__mask(dt.data);
-        uint64_t sign_range = (1 << (dt.data - 1)) - 1;
+        uint64_t sign_range = (1ull << (dt.data - 1)) - 1;
 
         bool a_cst = a->_int.min == a->_int.max;
         bool b_cst = b->_int.min == b->_int.max;
@@ -386,16 +389,20 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             case TB_CMP_SLE:
             case TB_CMP_SLT:
             if (a->_int.max < sign_range && b->_int.max < sign_range) {
-                if (wrapped_int_lt(a->_int.max, b->_int.min, dt.data)) cmp = 1;
-                if (wrapped_int_lt(b->_int.max, a->_int.min, dt.data)) cmp = 0;
+                if (a->_int.max < b->_int.min) cmp = 1;
+                if (b->_int.max < a->_int.min) cmp = 0;
             }
             break;
 
             case TB_CMP_ULT:
             case TB_CMP_ULE:
-            if (a->_int.min <= a->_int.max && b->_int.min <= b->_int.max) {
-                if ((a->_int.max & mask) < (b->_int.min & mask)) cmp = 1;
-                if ((b->_int.max & mask) < (a->_int.min & mask)) cmp = 0;
+            {
+                uint64_t amin = a->_int.min, amax = a->_int.max;
+                uint64_t bmin = b->_int.min, bmax = b->_int.max;
+                if (amin < amax && bmin < bmax) {
+                    if (amax < bmin) cmp = 1;
+                    if (bmax < amin) cmp = 0;
+                }
             }
             break;
         }
@@ -404,8 +411,8 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { cmp, cmp, ~cmp, cmp } });
         }
     } else if (dt.type == TB_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-        a = lattice_meet(f, a, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
-        b = lattice_meet(f, b, &XNULL_IN_THE_SKY, TB_TYPE_PTR);
+        a = lattice_meet(f, a, &XNULL_IN_THE_SKY);
+        b = lattice_meet(f, b, &XNULL_IN_THE_SKY);
 
         if (n->type == TB_CMP_EQ) {
             return a == b ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY;
@@ -641,12 +648,12 @@ static TB_Node* ideal_int_binop(TB_Function* f, TB_Node* n) {
         assert(n->dt.type == TB_INT);
         int bits = n->dt.data;
 
-        // (or (shr a 40) (shl a 24)) => (rol a 24)
-        if (b->type == TB_SHL && a->type == TB_SHR) {
+        // (or (shl a 24) (shr a 40)) => (rol a 24)
+        if (a->type == TB_SHL && b->type == TB_SHR) {
             uint64_t shl_amt, shr_amt;
             if (a->inputs[1] == b->inputs[1] &&
-                get_int_const(a->inputs[2], &shr_amt) &&
-                get_int_const(b->inputs[2], &shl_amt) &&
+                get_int_const(a->inputs[2], &shl_amt) &&
+                get_int_const(b->inputs[2], &shr_amt) &&
                 shl_amt == bits - shr_amt) {
                 // convert to rotate left
                 n->type = TB_ROL;

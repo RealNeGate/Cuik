@@ -74,12 +74,11 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
     worklist_clear(ws);
 }
 
-void tb_global_schedule(TB_Function* f, TB_CFG cfg, bool dataflow, TB_GetLatency get_lat) {
+void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool dataflow, TB_GetLatency get_lat) {
     assert(f->scheduled == NULL && "make sure when you're done with the schedule, you throw away the old one");
     TB_Arena* tmp_arena = f->tmp_arena;
 
     CUIK_TIMED_BLOCK("schedule") {
-        TB_Worklist* restrict ws = f->worklist;
         size_t node_count = f->node_count;
 
         // arraychads stay up

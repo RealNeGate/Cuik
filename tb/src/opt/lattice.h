@@ -81,7 +81,7 @@ static Lattice* lattice_intern(TB_Function* f, Lattice l) {
     if (k != NULL) { return k; }
 
     // allocate new node
-    k = tb_arena_alloc(f->tmp_arena, sizeof(Lattice));
+    k = tb_arena_alloc(f->arena, sizeof(Lattice));
     memcpy(k, &l, sizeof(l));
     nl_hashset_put2(&f->type_interner, k, lattice_hash, lattice_cmp);
     return k;
@@ -110,8 +110,8 @@ Lattice* lattice_truthy(Lattice* l) {
     }
 }
 
-static int64_t lattice_int_min(int bits) { return 1ll << (bits - 1); }
-static int64_t lattice_int_max(int bits) { return (1ll << (bits - 1)) - 1; }
+static uint64_t lattice_int_min(int bits) { return 1ll << (bits - 1); }
+static uint64_t lattice_int_max(int bits) { return (1ll << (bits - 1)) - 1; }
 static uint64_t lattice_uint_max(int bits) { return UINT64_MAX >> (64 - bits); }
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
@@ -122,7 +122,8 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
                 return &BOT_IN_THE_SKY;
             }
 
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, lattice_uint_max(dt.data) } });
+            uint64_t mask = tb__mask(dt.data);
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(dt.data) | ~mask, lattice_int_max(dt.data) } });
         }
 
         case TB_FLOAT: {
@@ -153,7 +154,7 @@ static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
     }
 
     size_t size = sizeof(Lattice) + projs*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(f->tmp_arena, size);
+    Lattice* l = tb_arena_alloc(f->arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._tuple = { projs } };
     FOR_USERS(u, n) {
         if (USERN(u)->type != TB_PROJ) continue;
@@ -163,7 +164,7 @@ static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
 
     Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
     if (k) {
-        tb_arena_free(f->tmp_arena, l, size);
+        tb_arena_free(f->arena, l, size);
         return k;
     } else {
         return l;
@@ -210,43 +211,10 @@ static Lattice* lattice_alias(TB_Function* f, int alias_idx) {
     return lattice_intern(f, (Lattice){ LATTICE_MEM, ._mem = { alias_idx } });
 }
 
-static bool l_add_overflow(uint64_t x, uint64_t y, uint64_t mask, uint64_t* out) {
-    *out = (x + y) & mask;
-    return x && *out < x;
-}
-
-static bool l_mul_overflow(uint64_t x, uint64_t y, uint64_t mask, uint64_t* out) {
-    *out = (x * y) & mask;
-    return x && *out < x;
-}
-
-static bool l_sub_overflow(uint64_t x, uint64_t y, uint64_t mask, uint64_t* out) {
-    *out = (x - y) & mask;
-    return x < y;
-}
-
-static bool wrapped_int_lt(int64_t x, int64_t y, int bits) {
-    return (int64_t)tb__sxt(x, bits, 64) < (int64_t)tb__sxt(y, bits, 64);
-}
-
-static LatticeInt lattice_meet_int(LatticeInt a, LatticeInt b, TB_DataType dt) {
-    // [amin, amax] ^ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
-    int bits = dt.data;
-    uint64_t mask = tb__mask(dt.data);
-
-    bool aas = a.min > a.max;
-    bool bbs = b.min > b.max;
-    if (aas && bbs) {
-        if (wrapped_int_lt(b.min, a.min, bits)) a.min = b.min;
-        if (wrapped_int_lt(a.max, b.max, bits)) a.max = b.max;
-    } else {
-        if (aas) a = lattice_into_unsigned(a, bits);
-        if (bbs) b = lattice_into_unsigned(b, bits);
-
-        if (b.min < a.min) a.min = b.min;
-        if (a.max < b.max) a.max = b.max;
-    }
-
+static LatticeInt lattice_meet_int(LatticeInt a, LatticeInt b) {
+    // [amin, amax] /\ [bmin, bmax] => [min(amin, bmin), max(amax, bmax)]
+    a.min = TB_MIN(a.min, b.min);
+    a.max = TB_MAX(a.max, b.max);
     a.known_zeros &= b.known_zeros;
     a.known_ones &= b.known_ones;
     return a;
@@ -269,7 +237,7 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
 }
 
 // greatest lower bound between a and b
-static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b, TB_DataType dt) {
+static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
     // a ^ a = a
     if (a == b) return a;
 
@@ -288,7 +256,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b, TB_DataType
                 return &BOT_IN_THE_SKY;
             }
 
-            LatticeInt i = lattice_meet_int(a->_int, b->_int, dt);
+            LatticeInt i = lattice_meet_int(a->_int, b->_int);
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = i });
         }
 
@@ -362,9 +330,9 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b, TB_DataType
 }
 
 // least upper bound between a and b
-static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b, TB_DataType dt) {
+static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b) {
     a = lattice_dual(f, a);
     b = lattice_dual(f, b);
-    return lattice_dual(f, lattice_meet(f, a, b, dt));
+    return lattice_dual(f, lattice_meet(f, a, b));
 }
 

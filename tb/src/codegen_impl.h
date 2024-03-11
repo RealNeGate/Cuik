@@ -176,9 +176,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         tb_renumber_nodes(f, ws);
 
         cfg = tb_compute_rpo(f, ws);
-        tb_global_schedule(f, cfg, true, node_latency);
-
-        TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
+        tb_global_schedule(f, ws, cfg, true, node_latency);
 
         log_phase_end(f, og_size, "GCM");
     }
@@ -215,7 +213,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     size_t node_count = f->node_count;
     size_t vreg_cap = 0;
     CUIK_TIMED_BLOCK("local schedule") {
-        ctx.mask_intern = nl_hashset_alloc(64);
+        ctx.mask_intern = nl_hashset_alloc(200);
         nl_hashset_put2(&ctx.mask_intern, &TB_REG_EMPTY, rm_hash, rm_compare);
 
         // zero out the root & callgraph node

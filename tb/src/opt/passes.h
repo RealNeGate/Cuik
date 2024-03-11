@@ -7,29 +7,6 @@ enum {
     FAST_IDOM_LIMIT = 20
 };
 
-#define TB_OPTDEBUG_STATS    0
-#define TB_OPTDEBUG_PEEP     0
-#define TB_OPTDEBUG_SCCP     0
-#define TB_OPTDEBUG_LOOP     0
-#define TB_OPTDEBUG_SROA     0
-#define TB_OPTDEBUG_GCM      0
-#define TB_OPTDEBUG_MEM2REG  0
-#define TB_OPTDEBUG_CODEGEN  1
-#define TB_OPTDEBUG_DATAFLOW 0
-#define TB_OPTDEBUG_INLINE   0
-#define TB_OPTDEBUG_REGALLOC 1
-#define TB_OPTDEBUG_GVN      0
-#define TB_OPTDEBUG_SCHEDULE 0
-
-// for toggling ANSI colors
-#define TB_OPTDEBUG_ANSI     1
-
-#define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
-
-#define DO_IF(cond) CONCAT(DO_IF_, cond)
-#define DO_IF_0(...)
-#define DO_IF_1(...) __VA_ARGS__
-
 #define BB_LOW_FREQ 1e-4
 
 #define USERN(u) ((u)->_n)    // node
@@ -40,14 +17,17 @@ enum {
 ////////////////////////////////
 // Constant prop
 ////////////////////////////////
-// TODO(NeGate): implement dual? from there i can do join with
-// dual(dual(x) ^ dual(y)) = join(x, y)
+enum { INT_WIDEN_LIMIT = 4 };
+
 typedef struct {
-    uint64_t min, max;
+    int64_t min, max;
 
     // for known bit analysis
     uint64_t known_zeros;
     uint64_t known_ones;
+
+    // we really don't wanna widen 18 quintillion times, it's never worth it
+    int widen;
 } LatticeInt;
 
 // a simplification of the set of all pointers (or floats)
@@ -388,7 +368,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
 
 // Global scheduler
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws);
-void tb_global_schedule(TB_Function* f, TB_CFG cfg, bool dataflow, TB_GetLatency get_lat);
+void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool dataflow, TB_GetLatency get_lat);
 
 // makes arch-friendly IR
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);

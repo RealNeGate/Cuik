@@ -8,9 +8,6 @@
 
 #include "tb.h"
 #include "tb_formats.h"
-
-#include <limits.h>
-#include <time.h>
 #include <stdalign.h>
 
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -52,13 +49,6 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_MIN(x, y) ((x) < (y) ? (x) : (y))
 #define TB_MAX(x, y) ((x) > (y) ? (x) : (y))
 
-#define PP_ARG0(a, ...) a
-#define PP_AFTER0(a, ...) __VA_ARGS__
-
-#define PP_ID(...) __VA_ARGS__
-#define PP_VOID(...)
-#define PP_JOIN(a, b) a b
-
 #ifndef CONCAT
 #define CONCAT_(x, y) x ## y
 #define CONCAT(x, y) CONCAT_(x, y)
@@ -69,6 +59,31 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 
 #include <threads.h>
 #include <stdatomic.h>
+
+////////////////////////////////
+// Random toggles
+////////////////////////////////
+#define TB_OPTDEBUG_STATS    0
+#define TB_OPTDEBUG_PEEP     0
+#define TB_OPTDEBUG_SCCP     0
+#define TB_OPTDEBUG_LOOP     0
+#define TB_OPTDEBUG_SROA     0
+#define TB_OPTDEBUG_GCM      0
+#define TB_OPTDEBUG_MEM2REG  0
+#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_DATAFLOW 0
+#define TB_OPTDEBUG_INLINE   0
+#define TB_OPTDEBUG_REGALLOC 0
+#define TB_OPTDEBUG_GVN      0
+#define TB_OPTDEBUG_SCHEDULE 0
+// for toggling ANSI colors
+#define TB_OPTDEBUG_ANSI     1
+
+#define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
+
+#define DO_IF(cond) CONCAT(DO_IF_, cond)
+#define DO_IF_0(...)
+#define DO_IF_1(...) __VA_ARGS__
 
 typedef struct TB_Emitter {
     size_t capacity, count;
@@ -352,17 +367,17 @@ struct TB_Function {
         TB_BasicBlock** scheduled;
 
         // nice stats
-        /* struct {
+        struct {
             #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
             int time;
             #endif
 
             #if TB_OPTDEBUG_STATS
             int initial;
-            int gvn_hit, gvn_miss;
-            int peeps, identities, rewrites;
+            int gvn_hit, gvn_tries;
+            int peeps, identities, rewrites, constants, opto_constants;
             #endif
-        } stats;*/
+        } stats;
     };
 
     // Compilation output
@@ -496,7 +511,7 @@ struct ICodeGen {
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
 
-    void (*compile_function)(TB_Function* f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* arena, bool emit_asm);
+    void (*compile_function)(TB_Function* f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code, bool emit_asm);
 };
 
 // All debug formats i know of boil down to adding some extra sections to the object file

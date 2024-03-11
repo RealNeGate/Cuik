@@ -288,7 +288,7 @@ static bool can_folded_store(TB_Node* mem, TB_Node* addr, TB_Node* src) {
             src->users->next == NULL &&
             src->inputs[1]->users->next == NULL;
 
-        default: return -1;
+        default: return false;
     }
 }
 
@@ -398,8 +398,8 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         X86NodeType type = ops[n->type - TB_SHL];
         uint64_t imm = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
 
-        TB_Node* op = tb_alloc_node(f, type, n->dt, 2, sizeof(X86MemOp));
-        set_input(f, op, n->inputs[1], 1);
+        TB_Node* op = tb_alloc_node(f, type, n->dt, 3, sizeof(X86MemOp));
+        set_input(f, op, n->inputs[1], 2);
         TB_NODE_SET_EXTRA(op, X86MemOp, .imm = imm & 63);
         return op;
     } else if (n->type == TB_CALL) {
@@ -493,7 +493,11 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
             br->keys[0].key = cc ^ flip;
         } else {
-            tb_todo();
+            TB_Node* mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 3, sizeof(X86MemOp));
+            TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .imm = 0);
+
+            set_input(f, mach_cond, cond, 2);
+            set_input(f, n, mach_cond,    1);
         }
 
         return n;
@@ -1226,17 +1230,20 @@ static int node_latency(TB_Function* f, TB_Node* n) {
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
 
-            int base;
+            int clk;
             switch (n->type) {
-                case x86_imulimm: base = 3; break;
-                default: base = 1; break;
+                case x86_imulimm: clk = 3; break;
+                default:          clk = 1; break;
             }
 
-            if (op->mode == MODE_LD) return base + 3;
+            if (op->mode == MODE_LD) clk += 3;
             // every store op except for x86_mov will do both a ld(3 clks) + st(4 clks)
-            if (op->mode == MODE_ST) return base + (n->type != x86_mov ? 7 : 4);
-            return base;
+            if (op->mode == MODE_ST) clk += (n->type != x86_mov ? 7 : 4);
+            return clk;
         }
+
+        case TB_MACH_MOVE:
+        return 0; // cheapest op so that it tries to schedule it later
 
         default: return 1;
     }

@@ -331,7 +331,7 @@ static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
     LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
     FOREACH_N(i, 1, n->input_count) {
         LatticeInt b = { l->entries[i].val, l->entries[i].val, l->entries[i].val, ~l->entries[i].val };
-        a = lattice_meet_int(a, b, dt);
+        a = lattice_meet_int(a, b);
     }
 
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = a });
@@ -354,15 +354,23 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     TB_Node* r = n->inputs[0];
     if (latuni_get(f, r) == &TOP_IN_THE_SKY) return &TOP_IN_THE_SKY;
 
-    Lattice* l = latuni_get(f, n);
-    l = lattice_dual(f, l);
+    Lattice* old = latuni_get(f, n);
+    if (old->_int.widen >= INT_WIDEN_LIMIT) return NULL;
 
+    Lattice* l = &TOP_IN_THE_SKY;
     FOREACH_N(i, 1, n->input_count) {
         Lattice* ctrl = latuni_get(f, r->inputs[i - 1]);
         if (ctrl == &CTRL_IN_THE_SKY) {
             Lattice* edge = latuni_get(f, n->inputs[i]);
-            l = lattice_meet(f, l, edge, n->dt);
+            l = lattice_meet(f, l, edge);
         }
+    }
+
+    if (l != old) {
+        // made progress? that's a widen
+        Lattice new_l = *l;
+        new_l._int.widen = old->_int.widen + 1;
+        return lattice_intern(f, new_l);
     }
 
     return l;
@@ -371,7 +379,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
 static Lattice* value_select(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[2]);
     Lattice* b = latuni_get(f, n->inputs[3]);
-    return lattice_meet(f, a, b, n->dt);
+    return lattice_meet(f, a, b);
 }
 
 // this is where the vtable goes for all peepholes
@@ -850,9 +858,9 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
             } else if (l->_int.min == 0 && l->_int.max == UINT64_MAX) {
                 printf("u64");
             } else if (l->_int.min > l->_int.max) {
-                printf("%"PRId64",%"PRId64, tb__sxt(l->_int.min, dt.data, 64), tb__sxt(l->_int.max, dt.data, 64));
-            } else {
                 printf("%"PRIu64",%"PRIu64, l->_int.min, l->_int.max);
+            } else {
+                printf("%"PRId64",%"PRId64, tb__sxt(l->_int.min, dt.data, 64), tb__sxt(l->_int.max, dt.data, 64));
             }
 
             uint64_t known = l->_int.known_zeros | l->_int.known_ones;
@@ -886,8 +894,8 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     TB_Node* k = idealize(f, n);
     DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
     while (k != NULL) {
-        DO_IF(TB_OPTDEBUG_STATS)(p->stats.rewrites++);
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
+        DO_IF(TB_OPTDEBUG_STATS)(f->stats.rewrites++);
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m"));
 
         // transfer users from n -> k
         if (n != k) {
@@ -914,7 +922,8 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
 
         TB_Node* k = try_as_const(f, n, new_type, false);
         if (k != NULL) {
-            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m\n"));
+            DO_IF(TB_OPTDEBUG_STATS)(f->stats.constants++);
+            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
             push_for_death(f, n);
             subsume_node(f, n, k);
@@ -928,8 +937,8 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     // convert into matching identity
     k = identity(f, n);
     if (n != k) {
-        DO_IF(TB_OPTDEBUG_STATS)(p->stats.identities++);
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), print_node_sexpr(k, 0), printf("\x1b[0m\n"));
+        DO_IF(TB_OPTDEBUG_STATS)(f->stats.identities++);
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
         push_for_death(f, n);
         subsume_node(f, n, k);
@@ -946,7 +955,7 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     qsort(arr, dyn_array_length(arr), sizeof(TB_Node*), node_sort_cmp);
     dyn_array_for(i, arr) {
         printf("  * ");
-        print_node_sexpr(arr[i], 0);
+        tb_print_dumb_node(NULL, arr[i]);
         if (gvn_compare(arr[i], n)) {
             printf(" <-- HERE");
         }
@@ -954,18 +963,18 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     }
     #endif
 
+    DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_tries++);
     k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k && (k != n)) {
-        DO_IF(TB_OPTDEBUG_STATS)(p->stats.gvn_hit++);
+        DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_hit++);
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[95mGVN v%u\x1b[0m\n", k->gvn));
 
         subsume_node(f, n, k);
         mark_users(f, k);
         return k;
-    } else {
-        DO_IF(TB_OPTDEBUG_STATS)(p->stats.gvn_miss++);
     }
 
+    DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
     return n;
 }
 
@@ -993,28 +1002,33 @@ void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     // true so we'll intersect (in our case JOIN)
     Lattice* old_t = latuni_get(f, n);
     Lattice* new_t = latuni_get(f, new_n);
-    latuni_set(f, new_n, lattice_join(f, old_t, new_t, n->dt));
+    latuni_set(f, new_n, lattice_join(f, old_t, new_t));
 }
 
 void tb_opt_dump_stats(TB_Function* f) {
     #if TB_OPTDEBUG_STATS
+    TB_Worklist* ws = f->worklist;
     CUIK_TIMED_BLOCK("push_all_nodes") {
         worklist_test_n_set(ws, f->root_node);
         dyn_array_put(ws->items, f->root_node);
 
         for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
             TB_Node* n = ws->items[i];
-            FOR_USERS(use, n) { worklist_push(use->n); }
+            FOR_USERS(use, n) { worklist_push(ws, USERN(use)); }
         }
     }
 
-    int final_count = worklist_count(&p->worklist);
-    double factor = ((double) final_count / (double) p->stats.initial) * 100.0;
+    int total_constants = f->stats.constants + f->stats.opto_constants;
+    int final_count = worklist_count(ws);
+    double factor = ((double) final_count / (double) f->stats.initial) * 100.0;
+
+    worklist_clear(ws);
 
     printf("%s: stats:\n", f->super.name);
-    printf("  %4d   -> %4d nodes (%.2f%%)\n", p->stats.initial, final_count, factor);
-    printf("  %4d GVN hit    %4d GVN miss\n", p->stats.gvn_hit, p->stats.gvn_miss);
-    printf("  %4d peepholes  %4d rewrites    %4d identities\n", p->stats.peeps, p->stats.rewrites, p->stats.identities);
+    printf("  %4d   -> %4d nodes (%.2f%%)\n", f->stats.initial, final_count, factor);
+    printf("  %4d GVN hit    %4d GVN attempts\n", f->stats.gvn_hit, f->stats.gvn_tries);
+    printf("  %4d peepholes  %4d rewrites    %4d identities\n", f->stats.peeps, f->stats.rewrites, f->stats.identities);
+    printf("  %4d constants  %4d of which were optimistic\n", total_constants, f->stats.opto_constants);
     #endif
 }
 
@@ -1259,8 +1273,7 @@ void tb_opt_cprop(TB_Function* f) {
             Lattice* old_type = latuni_get(f, n);
             Lattice* new_type = value_of(f, n, true);
             if (old_type != new_type) {
-                DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), print_node_sexpr(n, 0), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
-
+                DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
                 latuni_set(f, n, new_type);
 
                 // push affected users
@@ -1289,9 +1302,10 @@ void tb_opt_cprop(TB_Function* f) {
         TB_Node* n = ws.items[i];
         TB_Node* k = try_as_const(f, n, latuni_get(f, n), true);
 
-        DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++f->stats.time), print_node_sexpr(n, 0));
+        DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
         if (k != NULL) {
-            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m"));
+            DO_IF(TB_OPTDEBUG_STATS)(f->stats.opto_constants++);
+            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m\n"));
 
             subsume_node(f, n, k);
             mark_users(f, n);
@@ -1331,9 +1345,9 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
             }
         }
 
-        DO_IF(TB_OPTDEBUG_STATS)(f->stats.initial = worklist_count(&f->worklist));
+        DO_IF(TB_OPTDEBUG_STATS)(f->stats.initial = worklist_count(ws));
     }
-    DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(&f->worklist), f->node_count));
+    DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(f->worklist), f->node_count));
 
     tb_opt_peeps(f);
     // mostly just SSA construction from memory edges
@@ -1348,6 +1362,10 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
     if (!preserve_types) {
         tb_opt_free_types(f);
     }
+
+    #ifdef TB_OPTDEBUG_STATS
+    tb_opt_dump_stats(f);
+    #endif
 
     tb_arena_restore(tmp, sp);
     f->worklist = NULL;
@@ -1422,7 +1440,7 @@ void tb_opt_peeps(TB_Function* f) {
         TB_Node* n;
         while ((n = worklist_pop(f->worklist))) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.peeps++);
-            DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), print_node_sexpr(n, 0));
+            DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
             // must've dead sometime between getting scheduled and getting here.
             if (n->type != TB_PROJ && n->users == NULL) {

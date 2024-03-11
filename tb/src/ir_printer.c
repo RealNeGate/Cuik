@@ -10,7 +10,7 @@ TB_API void tb_default_print_callback(void* user_data, const char* fmt, ...) {
 
 const char* tb_node_get_name(TB_Node* n) {
     switch (n->type) {
-        case TB_NULL: return "BAD";
+        case TB_NULL: return "FREED";
         case TB_UNREACHABLE: return "unreachable";
 
         case TB_ROOT:   return "root";
