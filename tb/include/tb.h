@@ -1470,6 +1470,10 @@ TB_API void tb_print_dot(TB_Function* f, TB_PrintCallback callback, void* user_d
 // p is optional
 TB_API void tb_print_dumb(TB_Function* f, bool use_fancy_types);
 
+// super special experimental stuff (no touchy yet)
+TB_API char* tb_c_prelude(TB_Module* mod);
+TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp);
+
 // codegen:
 //   output goes at the top of the code_arena, feel free to place multiple functions
 //   into the same code arena (although arenas aren't thread-safe you'll want one per thread

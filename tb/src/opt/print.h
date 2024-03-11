@@ -477,7 +477,6 @@ void tb_print(TB_Function* f, TB_Arena* tmp) {
 
     // schedule nodes
     tb_global_schedule(f, &ws, ctx.cfg, false, NULL);
-    worklist_clear_visited(&ws);
 
     TB_Node* end_bb = NULL;
     FOREACH_N(i, 0, ctx.cfg.block_count) {

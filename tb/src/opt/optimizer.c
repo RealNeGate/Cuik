@@ -242,6 +242,7 @@ static void mark_users(TB_Function* f, TB_Node* n) {
 #include "branches.h"
 #include "print.h"
 #include "print_dumb.h"
+#include "print_c.h"
 #include "gcm.h"
 #include "libcalls.h"
 #include "mem2reg.h"

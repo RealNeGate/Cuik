@@ -19,6 +19,9 @@
 #define NL_CHUNKED_ARRAY_IMPL
 #include <chunked_array.h>
 
+#define NL_BUFFER_IMPL
+#include <buffer.h>
+
 #define LOG_USE_COLOR
 #include "log.c"
 
