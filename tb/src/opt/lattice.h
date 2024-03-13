@@ -293,7 +293,7 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
 
         case LATTICE_INT: {
             LatticeInt i = type->_int;
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { i.max, i.min, i.known_ones, i.known_zeros } });
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { i.max, i.min, ~i.known_zeros, ~i.known_ones } });
         }
 
         case LATTICE_ALLMEM: return &ANYMEM_IN_THE_SKY;
@@ -306,6 +306,23 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
 
             // just flip aliases
             FOREACH_N(i, 0, type->_alias_n) { l->alias[i] = ~type->alias[i]; }
+
+            Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
+            if (k) {
+                tb_arena_free(f->arena, l, size);
+                return k;
+            } else {
+                return l;
+            }
+        }
+
+        case LATTICE_TUPLE: {
+            size_t size = sizeof(Lattice) + type->_elem_count*sizeof(Lattice*);
+            Lattice* l = tb_arena_alloc(f->arena, size);
+            *l = (Lattice){ LATTICE_TUPLE, ._elem_count = type->_elem_count };
+            FOREACH_N(i, 0, type->_elem_count) {
+                l->elems[i] = lattice_dual(f, type->elems[i]);
+            }
 
             Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
             if (k) {
@@ -433,8 +450,26 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             }
         }
 
-        case LATTICE_TUPLE:
-        return &BOT_IN_THE_SKY;
+        case LATTICE_TUPLE: {
+            if (b->tag != LATTICE_TUPLE || a->_elem_count != b->_elem_count) {
+                return &BOT_IN_THE_SKY;
+            }
+
+            size_t size = sizeof(Lattice) + a->_elem_count*sizeof(Lattice*);
+            Lattice* l = tb_arena_alloc(f->arena, size);
+            *l = (Lattice){ LATTICE_TUPLE, ._elem_count = a->_elem_count };
+            FOREACH_N(i, 0, a->_elem_count) {
+                l->elems[i] = lattice_meet(f, a->elems[i], b->elems[i]);
+            }
+
+            Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
+            if (k) {
+                tb_arena_free(f->arena, l, size);
+                return k;
+            } else {
+                return l;
+            }
+        }
 
         default: tb_todo();
     }

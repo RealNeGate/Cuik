@@ -66,6 +66,11 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                     print_type2(params[i]->dt);
                 }
             }
+
+            FOR_USERS(u, n) if (USERN(u)->type == TB_MACH_PROJ) {
+                printf(", v%u: ", USERN(u)->gvn);
+                print_type2(USERN(u)->dt);
+            }
             printf(")");
         }
     } else if (cfg_is_region(n)) {
@@ -196,7 +201,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
         // skip these
         if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST ||
             n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
-            n->type == TB_PROJ || n->type == TB_REGION ||
+            n->type == TB_PROJ || n->type == TB_MACH_PROJ || n->type == TB_REGION ||
             n->type == TB_NATURAL_LOOP || n->type == TB_AFFINE_LOOP ||
             n->type == TB_NULL || n->type == TB_PHI) {
             continue;

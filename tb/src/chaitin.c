@@ -94,6 +94,14 @@ VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
     return &ctx->vregs[i];
 }
 
+void tb__dump(MachineBB* mbb) {
+    printf("DUMP:\n");
+    aarray_for(i, mbb->items) {
+        printf("  v%u\n", mbb->items[i]->gvn);
+    }
+    printf("\n");
+}
+
 MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     if (f->node_count >= f->scheduled_n) {
         f->scheduled  = resize_stuff(f->scheduled, f->scheduled_n * sizeof(TB_BasicBlock*));
@@ -101,41 +109,30 @@ MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     }
 
     f->scheduled[n->gvn] = bb;
-
-    MachineBB* mbb = &ctx->machine_bbs[bb->order];
-    if (mbb->item_count == mbb->item_cap) {
-        mbb->items = resize_stuff(mbb->items, mbb->item_cap * sizeof(TB_Node*));
-        mbb->item_cap *= 2;
-    }
-
-    return mbb;
+    return &ctx->machine_bbs[bb->order];
 }
 
 void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
     MachineBB* mbb = tb__insert(ctx, f, f->scheduled[before_n->gvn], n);
 
-    size_t i = 0, cnt = mbb->item_count;
+    size_t i = 0, cnt = aarray_length(mbb->items);
     while (i < cnt && mbb->items[i] != before_n) { i++; }
 
-    if (i != cnt) {
-        memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
-    }
+    aarray_push(mbb->items, 0);
+    memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
     mbb->items[i] = n;
-    mbb->item_count += 1;
 }
 
 void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
     MachineBB* mbb = tb__insert(ctx, f, f->scheduled[after_n->gvn], n);
 
-    size_t i = 0, cnt = mbb->item_count;
+    size_t i = 0, cnt = aarray_length(mbb->items);
     while (i < cnt && mbb->items[i] != after_n) { i++; }
+    i += 1;
 
-    assert(i != cnt);
-    if (i != cnt - 1) {
-        memmove(&mbb->items[i + 2], &mbb->items[i + 1], ((cnt - i) - 1) * sizeof(TB_Node*));
-    }
-    mbb->items[i + 1] = n;
-    mbb->item_count += 1;
+    aarray_push(mbb->items, 0);
+    memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
+    mbb->items[i] = n;
 }
 
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b) {
@@ -202,7 +199,8 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
 
         set_copy(&live, &bb->live_out);
 
-        FOREACH_REVERSE_N(j, 0, mbb->item_count) {
+        size_t item_count = aarray_length(mbb->items);
+        FOREACH_REVERSE_N(j, 0, item_count) {
             TB_Node* n = mbb->items[j];
             int vreg_id = ctx->vreg_map[n->gvn];
 

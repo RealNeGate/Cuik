@@ -173,7 +173,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
         // push outputs (projections, if they apply)
         if (n->dt.type == TB_TUPLE && n->type != TB_BRANCH && n->type != TB_ROOT) {
             FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_PROJ && !worklist_test_n_set(ws, USERN(u))) {
+                if ((USERN(u)->type == TB_PROJ || USERN(u)->type == TB_MACH_PROJ) && !worklist_test_n_set(ws, USERN(u))) {
                     dyn_array_put(ws->items, USERN(u));
                 }
             }

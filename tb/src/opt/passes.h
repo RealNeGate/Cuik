@@ -1,13 +1,10 @@
 #pragma once
 #include "../tb_internal.h"
-#include "properties.h"
 #include <arena_array.h>
 
 enum {
     FAST_IDOM_LIMIT = 20
 };
-
-#define BB_LOW_FREQ 1e-4
 
 #define USERN(u) ((u)->_n)    // node
 #define USERI(u) ((u)->_slot) // index
@@ -21,18 +18,11 @@ enum { INT_WIDEN_LIMIT = 4 };
 
 typedef struct {
     int64_t min, max;
-
     // for known bit analysis
-    uint64_t known_zeros;
-    uint64_t known_ones;
-
+    uint64_t known_zeros, known_ones;
     // we really don't wanna widen 18 quintillion times, it's never worth it
     uint64_t widen;
 } LatticeInt;
-
-typedef struct {
-    int alias_idx;
-} LatticeMem;
 
 // Represents the fancier type system within the optimizer, it's
 // all backed by my shitty understanding of lattice theory
@@ -323,6 +313,12 @@ static bool slow_dommy(TB_CFG* cfg, TB_Node* expected_dom, TB_Node* bb) {
     return true;
 }
 
+// lovely properties
+bool cfg_is_region(TB_Node* n);
+bool cfg_is_natural_loop(TB_Node* n);
+bool cfg_is_terminator(TB_Node* n);
+bool cfg_is_endpoint(TB_Node* n);
+
 // internal debugging mostly
 void tb_print_dumb_node(Lattice** types, TB_Node* n);
 
@@ -365,3 +361,4 @@ void tb_opt_loops(TB_Function* f);
 void tb_opt_locals(TB_Function* f);
 
 Lattice* latuni_get(TB_Function* f, TB_Node* n);
+

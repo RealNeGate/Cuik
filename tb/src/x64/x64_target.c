@@ -49,6 +49,7 @@ const char* tb_node_x86_get_name(TB_Node* n) {
     switch (n->type) {
         case TB_MACH_COPY: return "mach_copy";
         case TB_MACH_MOVE: return "mach_move";
+        case TB_MACH_PROJ: return "mach_proj";
         case TB_MACH_LOCAL: return "mach_local";
         #define X(name) case x86_ ## name: return STR(x86_ ## name);
         #include "x64_nodes.inc"
@@ -328,6 +329,37 @@ static TB_Node* to_mach_local(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     if (n->type == TB_PROJ) {
         return n;
+    } else if (n->type == TB_ROOT) {
+        assert(n->input_count == 2);
+        assert(n->inputs[1]->type == TB_RETURN);
+        TB_Node* ret = n->inputs[1];
+
+        // add some callee-saved mach projections
+        int j = 0;
+        uint32_t callee_saved_gpr = ~param_descs[ctx->abi_index].caller_saved_gprs;
+        callee_saved_gpr &= ~(1u << RSP);
+
+        FOREACH_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
+            if ((callee_saved_gpr >> i) & 1) {
+                RegMask* rm = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << i);
+                TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+                TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = j++, .def = rm);
+
+                set_input(f, proj, n, 0);
+                add_input_late(f, ret, proj);
+            }
+        }
+
+        FOREACH_N(i, param_descs[ctx->abi_index].caller_saved_xmms, ctx->num_regs[REG_CLASS_XMM]) {
+            RegMask* rm = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << i);
+            TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_F64, 1, sizeof(TB_NodeMachProj));
+            TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = j++, .def = rm);
+
+            set_input(f, proj, n, 0);
+            add_input_late(f, ret, proj);
+        }
+
+        return n;
     } else if (n->type == TB_PHI) {
         if (n->dt.type == TB_FLOAT || n->dt.type == TB_INT || n->dt.type == TB_PTR) {
             // we just want some copies on the data edges which RA will coalesce, this way we
@@ -443,6 +475,19 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
             set_input(f, op, n->inputs[i], i);
         }
+
+        FOR_USERS(u, n) {
+            TB_Node* un = USERN(u);
+            if (un->type != TB_PROJ) continue;
+            int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+            if (index >= 2) {
+                if (un->dt.type == TB_FLOAT)
+                { op_extra->clobber_xmm &= ~(1u << (index - 2)); }
+                else
+                { op_extra->clobber_gpr &= ~(1u << (index == 2 ? RAX : RDX)); }
+            }
+        }
+
         return op;
     } else if (n->type == TB_BRANCH) {
         // convert an if into a machine-if
@@ -623,6 +668,7 @@ static bool node_flags(Ctx* restrict ctx, TB_Node* n) {
         // regions & misc nodes don't even generate ops
         case TB_PHI:
         case TB_PROJ:
+        case TB_MACH_PROJ:
         case TB_REGION:
         case TB_AFFINE_LOOP:
         case TB_NATURAL_LOOP:
@@ -673,6 +719,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             TB_NodeMachCopy* move = TB_NODE_GET_EXTRA(n);
             if (ins) { ins[1] = move->use; }
             return move->def;
+        }
+
+        case TB_MACH_PROJ: {
+            return TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def;
         }
 
         case TB_MACH_MOVE: {
@@ -812,17 +862,27 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         {
             if (ins) {
                 static int ret_gprs[2] = { RAX, RDX };
-                assert(n->input_count <= 5 && "At most 2 return values :(");
 
                 ins[1] = &TB_REG_EMPTY; // mem
                 ins[2] = &TB_REG_EMPTY; // rpc
 
+                TB_FunctionPrototype* proto = ctx->f->prototype;
+                assert(proto->return_count <= 2 && "At most 2 return values :(");
+
                 FOREACH_N(i, 3, n->input_count) {
-                    TB_DataType dt = n->inputs[i]->dt;
-                    if (dt.type == TB_FLOAT) {
-                        ins[i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << (i-3));
+                    TB_Node* in = n->inputs[i];
+                    if ((i - 3) < proto->return_count) {
+                        TB_DataType dt = in->dt;
+                        if (dt.type == TB_FLOAT) { ins[i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << (i-3)); }
+                        else { ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << ret_gprs[i-3]); }
                     } else {
-                        ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << ret_gprs[i-3]);
+                        if (n->inputs[i]->type == TB_MACH_PROJ) {
+                            ins[i] = TB_NODE_GET_EXTRA_T(n->inputs[i], TB_NodeMachProj)->def;
+                        } else if (n->inputs[i]->type == TB_MACH_COPY) {
+                            ins[i] = TB_NODE_GET_EXTRA_T(n->inputs[i], TB_NodeMachCopy)->def;
+                        } else {
+                            tb_todo();
+                        }
                     }
                 }
             }
@@ -922,6 +982,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_AFFINE_LOOP:
         case TB_NATURAL_LOOP:
         case TB_PROJ:
+        case TB_MACH_PROJ:
         case TB_MACH_LOCAL:
         break;
 
@@ -1000,12 +1061,13 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
         case TB_MACH_MOVE:
         case TB_MACH_COPY: {
-            TB_X86_DataType dt = legalize_int2(n->dt);
+            TB_X86_DataType dt = legalize(n->dt);
+
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
-
             if (!is_value_match(&dst, &src)) {
-                inst2(e, MOV, &dst, &src, dt);
+                if (dt < TB_X86_TYPE_SSE_SS) { inst2(e, MOV, &dst, &src, dt); }
+                else { inst2sse(e, FP_MOV, &dst, &src, dt); }
             }
             break;
         }

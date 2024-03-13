@@ -16,18 +16,37 @@ typedef TB_Node* (*NodeIdealize)(TB_Function* f, TB_Node* n);
 typedef TB_Node* (*NodeIdentity)(TB_Function* f, TB_Node* n);
 typedef Lattice* (*NodeValueOf)(TB_Function* f, TB_Node* n);
 
-enum {
-    NODE_IS_CTRL = 1,
-};
-
 typedef struct {
-    NodeIdealize  idealize;
-    NodeIdentity  identity;
-    NodeValueOf   value;
-    uint32_t      flags;
+    NodeIdealize idealize;
+    NodeIdentity identity;
+    NodeValueOf  value;
 } NodeVtable;
 
-static const NodeVtable vtables[TB_NODE_TYPE_MAX] = {
+enum {
+    NODE_CTRL       = 1,
+    NODE_END        = 2,
+    NODE_TERMINATOR = 4,
+};
+
+static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
+    [TB_ROOT]           =             NODE_TERMINATOR | NODE_END,
+    [TB_RETURN]         = NODE_CTRL | NODE_TERMINATOR | NODE_END,
+    [TB_TRAP]           = NODE_CTRL | NODE_TERMINATOR | NODE_END,
+    [TB_UNREACHABLE]    = NODE_CTRL | NODE_TERMINATOR | NODE_END,
+    [TB_TAILCALL]       = NODE_CTRL | NODE_TERMINATOR | NODE_END,
+    [TB_BRANCH]         = NODE_CTRL | NODE_TERMINATOR,
+    [TB_CALL]           = NODE_CTRL,
+    [TB_SYSCALL]        = NODE_CTRL,
+    [TB_REGION]         = NODE_CTRL,
+    [TB_NATURAL_LOOP]   = NODE_CTRL,
+    [TB_AFFINE_LOOP]    = NODE_CTRL,
+    [TB_SAFEPOINT_POLL] = NODE_CTRL,
+    [TB_DEBUGBREAK]     = NODE_CTRL,
+    [TB_READ]           = NODE_CTRL,
+    [TB_WRITE]          = NODE_CTRL,
+};
+
+static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     // type                 ideal              identity            value
     [TB_INTEGER_CONST]  = { NULL,              NULL,               value_int        },
     [TB_FLOAT32_CONST]  = { NULL,              NULL,               value_f32        },
@@ -82,17 +101,22 @@ static const NodeVtable vtables[TB_NODE_TYPE_MAX] = {
     [TB_SELECT]         = { ideal_select,      NULL,               value_select     },
     [TB_PHI]            = { ideal_phi,         identity_phi,       value_phi        },
     // control flow
-    [TB_RETURN]         = { ideal_return,      NULL,               value_ctrl,       NODE_IS_CTRL },
-    [TB_REGION]         = { ideal_region,      identity_region,    value_region,     NODE_IS_CTRL },
-    [TB_NATURAL_LOOP]   = { ideal_region,      identity_region,    value_region,     NODE_IS_CTRL },
-    [TB_AFFINE_LOOP]    = { ideal_region,      identity_region,    value_region,     NODE_IS_CTRL },
-    [TB_BRANCH]         = { ideal_branch,      NULL,               value_branch,     NODE_IS_CTRL },
-    [TB_SAFEPOINT_POLL] = { NULL,              identity_safepoint, value_ctrl,       NODE_IS_CTRL },
-    [TB_CALL]           = { ideal_libcall,     NULL,               value_call,       NODE_IS_CTRL },
-    [TB_TAILCALL]       = { NULL,              NULL,               value_ctrl,       NODE_IS_CTRL },
-    [TB_SYSCALL]        = { NULL,              NULL,               value_call,       NODE_IS_CTRL },
-    [TB_DEBUGBREAK]     = { NULL,              NULL,               value_ctrl,       NODE_IS_CTRL },
-    [TB_TRAP]           = { NULL,              NULL,               value_ctrl,       NODE_IS_CTRL },
-    [TB_UNREACHABLE]    = { NULL,              NULL,               value_ctrl,       NODE_IS_CTRL },
+    [TB_RETURN]         = { ideal_return,      NULL,               value_ctrl       },
+    [TB_REGION]         = { ideal_region,      identity_region,    value_region,    },
+    [TB_NATURAL_LOOP]   = { ideal_region,      identity_region,    value_region,    },
+    [TB_AFFINE_LOOP]    = { ideal_region,      identity_region,    value_region,    },
+    [TB_BRANCH]         = { ideal_branch,      NULL,               value_branch,    },
+    [TB_SAFEPOINT_POLL] = { NULL,              identity_safepoint, value_ctrl,      },
+    [TB_CALL]           = { ideal_libcall,     NULL,               value_call,      },
+    [TB_TAILCALL]       = { NULL,              NULL,               value_ctrl,      },
+    [TB_SYSCALL]        = { NULL,              NULL,               value_call,      },
+    [TB_DEBUGBREAK]     = { NULL,              NULL,               value_ctrl,      },
+    [TB_TRAP]           = { NULL,              NULL,               value_ctrl,      },
+    [TB_UNREACHABLE]    = { NULL,              NULL,               value_ctrl,      },
+    [TB_ROOT]           = { NULL,              NULL,               NULL,            },
 };
 
+bool cfg_is_region(TB_Node* n)       { return n->type >= TB_REGION && n->type <= TB_AFFINE_LOOP; }
+bool cfg_is_natural_loop(TB_Node* n) { return n->type >= TB_NATURAL_LOOP && n->type <= TB_AFFINE_LOOP; }
+bool cfg_is_terminator(TB_Node* n)   { return node_flags[n->type] & NODE_TERMINATOR; }
+bool cfg_is_endpoint(TB_Node* n)     { return node_flags[n->type] & NODE_END; }

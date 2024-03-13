@@ -141,7 +141,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             mbb->start_t = timeline;
 
             size_t j = 0; // we do insert things while iterating
-            for (; j < mbb->item_count; j++) {
+            for (; j < aarray_length(mbb->items); j++) {
                 TB_Node* n = mbb->items[j];
                 int tmp_count = ctx->tmp_count(ctx, n);
 
@@ -219,7 +219,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 }
 
                 int shared_edge = ctx->node_2addr(n);
-                if (n->type == TB_PROJ) {
+                if (n->type == TB_PROJ || n->type == TB_MACH_PROJ) {
                     // projections share time with their tuple node
                     int tup_time = ra.time[n->inputs[0]->gvn];
                     aarray_insert(ra.time, n->gvn, tup_time);
@@ -292,7 +292,8 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 }
             }
 
-            FOREACH_REVERSE_N(j, 0, mbb->item_count) {
+            size_t item_count = aarray_length(mbb->items);
+            FOREACH_REVERSE_N(j, 0, item_count) {
                 TB_Node* n = mbb->items[j];
 
                 int vreg_id = ctx->vreg_map[n->gvn];

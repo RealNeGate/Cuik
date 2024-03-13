@@ -232,6 +232,7 @@ static void mark_users(TB_Function* f, TB_Node* n) {
 }
 
 // unity build with all the passes
+#include "properties.h"
 #include "lattice.h"
 #include "cfg.h"
 #include "gvn.h"
@@ -606,17 +607,17 @@ void print_node_sexpr(TB_Node* n, int depth) {
 
 // Returns NULL or a modified node (could be the same node, we can stitch it back into place)
 static TB_Node* idealize(TB_Function* f, TB_Node* n) {
-    NodeIdealize ideal = vtables[n->type].idealize;
+    NodeIdealize ideal = node_vtables[n->type].idealize;
     return ideal ? ideal(f, n) : NULL;
 }
 
 static TB_Node* identity(TB_Function* f, TB_Node* n) {
-    NodeIdentity identity = vtables[n->type].identity;
+    NodeIdentity identity = node_vtables[n->type].identity;
     return identity ? identity(f, n) : n;
 }
 
 static Lattice* value_of(TB_Function* f, TB_Node* n, bool optimistic) {
-    NodeValueOf value = vtables[n->type].value;
+    NodeValueOf value = node_vtables[n->type].value;
     Lattice* type = value ? value(f, n) : NULL;
 
     // no type provided? just make a not-so-form fitting bottom type
@@ -691,36 +692,38 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
         } else {
             return NULL;
         }
-    } else if (vtables[n->type].flags & NODE_IS_CTRL) {
-        if (is_dead_ctrl(f, n->inputs[0], optimistic)) {
-            if (n->dt.type == TB_TUPLE) {
-                TB_Node* dead = dead_node(f);
-                while (n->users) {
-                    TB_Node* use_n = USERN(n->users);
-                    int use_i      = USERI(n->users);
+    } else if (n->inputs[0] && is_dead_ctrl(f, n->inputs[0], optimistic)) {
+        // control-dependent nodes which become considered dead will also
+        // have to be dead.
+        if (n->dt.type == TB_TUPLE) {
+            TB_Node* dead = dead_node(f);
+            while (n->users) {
+                TB_Node* use_n = USERN(n->users);
+                int use_i      = USERI(n->users);
 
-                    if (use_n->type == TB_CALLGRAPH) {
-                        TB_Node* last = use_n->inputs[use_n->input_count - 1];
-                        set_input(f, use_n, NULL, use_n->input_count - 1);
-                        if (use_i != use_n->input_count - 1) {
-                            set_input(f, use_n, last, use_i);
-                        }
-                        use_n->input_count--;
-                    } else if (use_n->type == TB_PROJ) {
-                        TB_Node* replacement = use_n->dt.type == TB_CONTROL
-                            ? dead
-                            : make_poison(f, use_n->dt);
-
-                        subsume_node(f, use_n, replacement);
-                    } else {
-                        tb_todo();
+                if (use_n->type == TB_CALLGRAPH) {
+                    TB_Node* last = use_n->inputs[use_n->input_count - 1];
+                    set_input(f, use_n, NULL, use_n->input_count - 1);
+                    if (use_i != use_n->input_count - 1) {
+                        set_input(f, use_n, last, use_i);
                     }
-                }
+                    use_n->input_count--;
+                } else if (use_n->type == TB_PROJ) {
+                    TB_Node* replacement = use_n->dt.type == TB_CONTROL
+                        ? dead
+                        : make_poison(f, use_n->dt);
 
-                return dead;
-            } else {
-                return dead_node(f);
+                    subsume_node(f, use_n, replacement);
+                } else {
+                    tb_todo();
+                }
             }
+
+            return dead;
+        } else if (n->dt.type == TB_CONTROL) {
+            return dead_node(f);
+        } else {
+            return make_poison(f, n->dt);
         }
     }
 
@@ -893,10 +896,12 @@ static int node_sort_cmp(const void* a, const void* b) {
     return aa[0]->gvn - bb[0]->gvn;
 }
 
-static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
+static Lattice* migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
     Lattice* old_t = latuni_get(f, n);
     Lattice* new_t = latuni_get(f, k);
-    latuni_set(f, k, lattice_join(f, old_t, new_t));
+    Lattice* merged = lattice_join(f, old_t, new_t);
+    latuni_set(f, k, merged);
+    return merged;
 }
 
 // because certain optimizations apply when things are the same
@@ -1383,10 +1388,12 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
     // mostly just detecting loops and upcasting indvars
     tb_opt_loops(f);
     tb_opt_peeps(f);
-    // if we're doing IPO then it's helpful
+    // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {
         tb_opt_free_types(f);
     }
+    // some of the inlining heuristics are based on node count
+    tb_renumber_nodes(f, ws);
 
     #ifdef TB_OPTDEBUG_STATS
     tb_opt_dump_stats(f);
@@ -1599,17 +1606,20 @@ bool tb_module_ipo(TB_Module* m) {
 
         TB_Node* callgraph = f->root_node->inputs[0];
         assert(callgraph->type == TB_CALLGRAPH);
-        FOREACH_N(i, 1, callgraph->input_count) {
+
+        size_t i = 1;
+        while (i < callgraph->input_count) {
             TB_Node* call = callgraph->inputs[i];
             TB_Function* target = static_call_site(call);
-            if (target == NULL) {
-                continue;
-            }
 
-            // TODO(NeGate): do some heuristics on inlining
-            // TB_OPTDEBUG(INLINE)(printf("  -> %s (from v%u)\n", target->super.name, call->gvn));
-            // inline_into(scc.arena, f, call, target);
-            // progress = true;
+            // really simple getter/setter kind of heuristic
+            if (0 && target && target->node_count < 15) {
+                TB_OPTDEBUG(INLINE)(printf("  -> %s (from v%u)\n", target->super.name, call->gvn));
+                inline_into(scc.arena, f, call, target);
+                progress = true;
+            } else {
+                i++;
+            }
         }
     }
 
@@ -1648,11 +1658,7 @@ static TB_Node* inline_clone_node(TB_Function* f, TB_Node* call_site, TB_Node** 
     }
 
     #if TB_OPTDEBUG_INLINE
-    printf("CLONE: ");
-    print_node_sexpr(n, 0);
-    printf(" => ");
-    print_node_sexpr(cloned, 0);
-    printf("\n");
+    printf("CLONE "), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, cloned), printf("\n");
     #endif
 
     return cloned;
@@ -1676,18 +1682,10 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
     TB_Worklist ws = { 0 };
     worklist_alloc(&ws, kid->node_count);
     {
-        worklist_test_n_set(&ws, kid->root_node);
-        dyn_array_put(ws.items, kid->root_node);
-
+        worklist_push(&ws, kid->root_node);
         for (size_t i = 0; i < dyn_array_length(ws.items); i++) {
             TB_Node* n = ws.items[i];
-
-            FOR_USERS(u, n) {
-                TB_Node* out = USERN(u);
-                if (!worklist_test_n_set(&ws, out)) {
-                    dyn_array_put(ws.items, out);
-                }
-            }
+            FOR_USERS(u, n) { worklist_push(&ws, USERN(u)); }
         }
     }
 
@@ -1696,7 +1694,6 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
         inline_clone_node(f, call_site, clones, ws.items[i]);
     }
     worklist_free(&ws);
-    tb_kill_node(f, call_site);
 
     {
         // TODO(NeGate): region-ify the exit point
@@ -1709,19 +1706,23 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
 
         User* u = call_site->users;
         while (u) {
-            User* next     = u->next;
             TB_Node* use_n = USERN(u);
             int use_i      = USERI(u);
 
             // replace returning projection with one of our return vals
             if (use_n->type == TB_PROJ) {
                 int index = TB_NODE_GET_EXTRA_T(use_n, TB_NodeProj)->index;
+                if (index >= 2) { index += 1; }
+
                 subsume_node(f, use_n, ret->inputs[index]);
+                u = call_site->users;
+            } else {
+                u = u->next;
             }
-            u = next;
         }
 
         subsume_node(f, kid_root, f->root_node);
+        tb_kill_node(f, call_site);
     }
 
     // kill edge in callgraph
@@ -1737,9 +1738,12 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
         }
     }
 
-    // TODO(NeGate): append all callee callgraph edges to caller
-    // ...
-
+    // append all callee callgraph edges to caller
+    TB_Node* kid_callgraph = clones[kid->root_node->inputs[0]->gvn];
+    FOREACH_N(i, 1, kid_callgraph->input_count) {
+        add_input_late(f, callgraph, kid_callgraph->inputs[i]);
+    }
+    tb_kill_node(f, kid_callgraph);
     tb_arena_restore(arena, sp);
 }
 

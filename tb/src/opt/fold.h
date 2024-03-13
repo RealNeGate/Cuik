@@ -172,9 +172,12 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
         case TB_SUB:
         min = ssub(amin, bmax, mask);
         max = ssub(amax, bmin, mask);
-
-        // overflow |= l_sub_overflow(a->_int.min, b->_int.max, mask, &min);
-        // overflow |= l_sub_overflow(a->_int.max, b->_int.min, mask, &max);
+        if (amin != amax || bmin != bmax) {
+            // Ahh sweet, Hacker's delight horrors beyond my comprehension
+            uint64_t u = (amin ^ bmax) | (amin ^ min);
+            uint64_t v = (amax ^ bmin) | (amax ^ max);
+            if (~(u & v) & imin) { min = imin, max = imax; }
+        }
         break;
 
         case TB_MUL:
@@ -186,10 +189,16 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
 
     if (min > max) {
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { imin | ~mask, imax } });
-    } else if (min == max) {
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
     } else {
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max } });
+        // sign extend our integers now
+        min |= min & imin ? ~mask : 0;
+        max |= max & imin ? ~mask : 0;
+
+        if (min == max) {
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
+        } else {
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max } });
+        }
     }
 }
 

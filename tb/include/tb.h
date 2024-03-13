@@ -447,6 +447,11 @@ typedef enum TB_NodeTypeEnum {
     TB_MACH_MOVE,
     TB_MACH_LOCAL,
 
+    // this is a hack for me to add nodes which need to be scheduled directly
+    // after a tuple (like a projection) but don't really act like projections
+    // in any other context.
+    TB_MACH_PROJ,
+
     // this is where wthe
     TB_FIRST_ARCH_MACHINE_OP,
 } TB_NodeTypeEnum;
@@ -603,9 +608,14 @@ typedef struct { // TB_BRANCH
     TB_BranchKey keys[];
 } TB_NodeBranch;
 
-typedef struct { // TB_MACH_COPY
+typedef struct { // TB_MACH_PROJ
+    int index;
     RegMask* def;
+} TB_NodeMachProj;
+
+typedef struct { // TB_MACH_COPY
     RegMask* use;
+    RegMask* def;
 } TB_NodeMachCopy;
 
 typedef struct { // TB_MACH_LOCAL

@@ -449,7 +449,7 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
     } else if (br->succ_count == 2) {
         TB_BranchKey* primary_keys = br->keys;
 
-        // check for redundant conditions in the doms.
+        // check for redundant conditions
         FOR_USERS(u, n->inputs[1]) {
             if (USERN(u)->type != TB_BRANCH || USERI(u) != 1 || USERN(u) == n) {
                 continue;
@@ -467,12 +467,10 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
                 TB_Node* succ = cfg_next_bb_after_cproj(USERN(succ_user));
 
                 // we must be dominating for this to work
-                if (!fast_dommy(succ, n)) {
-                    continue;
+                if (fast_dommy(succ, n)) {
+                    taken = index;
+                    goto match;
                 }
-
-                taken = index;
-                goto match;
             }
         }
     }

@@ -69,9 +69,7 @@ typedef struct {
     TB_Node* end_n;
 
     // local schedule
-    uint32_t item_cap;
-    uint32_t item_count;
-    TB_Node** items;
+    ArenaArray(TB_Node*) items;
 } MachineBB;
 
 typedef struct {

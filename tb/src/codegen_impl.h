@@ -115,10 +115,10 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 }
 
 static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
+    TB_OPTDEBUG(CODEGEN)(tb_print(f, f->tmp_arena));
+
     TB_Arena* arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
-
-    TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
     Ctx ctx = {
         .module = f->super.module,
@@ -150,9 +150,11 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     TB_Worklist* restrict ws = f->worklist;
 
     // legalize step takes out any of our 16bit and 8bit math ops
-    // tb_opt_alloc_types(p);
     // tb_pass_legalize(p, f->super.module->target_arch);
     size_t og_size = tb_arena_current_size(f->arena);
+
+    ctx.mask_intern = nl_hashset_alloc(200);
+    nl_hashset_put2(&ctx.mask_intern, &TB_REG_EMPTY, rm_hash, rm_compare);
 
     CUIK_TIMED_BLOCK("isel") {
         log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
@@ -162,7 +164,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         walk_node(&ctx, f, f->root_node);
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
-        TB_OPTDEBUG(CODEGEN)(tb_print(f));
+        TB_OPTDEBUG(CODEGEN)(tb_print(f, arena));
 
         log_phase_end(f, og_size, "isel");
     }
@@ -213,9 +215,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     size_t node_count = f->node_count;
     size_t vreg_cap = 0;
     CUIK_TIMED_BLOCK("local schedule") {
-        ctx.mask_intern = nl_hashset_alloc(200);
-        nl_hashset_put2(&ctx.mask_intern, &TB_REG_EMPTY, rm_hash, rm_compare);
-
         // zero out the root & callgraph node
         ctx.vreg_map = aarray_create(arena, int, tb_next_pow2(f->node_count + 16));
         aarray_set_length(ctx.vreg_map, f->node_count);
@@ -237,12 +236,13 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             // compute local schedule
             size_t base = dyn_array_length(ws->items);
-            tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency);
-            // tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
+            // tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency);
+            tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
 
+            // a bit of slack for spills
             size_t item_count = dyn_array_length(ws->items) - base;
-            size_t item_cap   = item_count + 16; // a bit of slack for spills
-            TB_Node** items   = tb_arena_alloc(arena, item_cap * sizeof(TB_Node*));
+            ArenaArray(TB_Node*) items = aarray_create(arena, TB_Node*, item_count + 16);
+            aarray_set_length(items, item_count);
 
             // copy out sched
             FOREACH_N(i, 0, item_count) {
@@ -286,8 +286,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             machine_bbs[i].n = bb_start;
             machine_bbs[i].end_n = bb->end;
             machine_bbs[i].items = items;
-            machine_bbs[i].item_count = item_count;
-            machine_bbs[i].item_cap = item_cap;
         }
         ctx.bb_count = bb_count;
         ctx.machine_bbs = machine_bbs;
@@ -308,7 +306,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             MachineBB* mbb = &ctx.machine_bbs[i];
             TB_OPTDEBUG(CODEGEN)(printf("BB %zu\n", i));
 
-            FOREACH_N(j, 0, mbb->item_count) {
+            aarray_for(j, mbb->items) {
                 TB_Node* n = mbb->items[j];
                 int vreg_id = ctx.vreg_map[n->gvn];
 
@@ -382,7 +380,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             on_basic_block(&ctx, e, bbid);
             TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
 
-            FOREACH_N(i, 0, mbb->item_count) {
+            aarray_for(i, mbb->items) {
                 TB_Node* n = mbb->items[i];
                 int def_id = ctx.vreg_map[n->gvn];
                 VReg* vreg = def_id > 0 ? &ctx.vregs[def_id] : NULL;
