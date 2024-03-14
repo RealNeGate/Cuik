@@ -240,18 +240,6 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     TB_FunctionPrototype* proto = ctx->f->prototype;
     TB_Node** params = ctx->f->params;
     TB_Node* root_ctrl = params[0];
-
-    ctx->stack_usage += ctx->stack_header + (proto->param_count * 8);
-
-    if (proto->has_varargs) {
-        const GPR* parameter_gprs = param_descs[ctx->abi_index].gprs;
-
-        // spill the rest of the parameters (assumes they're all in the GPRs)
-        size_t gpr_count = param_descs[ctx->abi_index].gpr_count;
-        size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
-
-        ctx->stack_usage += (extra_param_count * 8);
-    }
 }
 
 static RegMask* normie_mask(Ctx* restrict ctx, TB_DataType dt) {
@@ -448,6 +436,11 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             set_input(f, op, n->inputs[2], 2);
         }
 
+        int num_params = n->input_count - 3;
+        // win64 abi will alloc 4 param slots if you even use one
+        if (ctx->abi_index == 0 && num_params > 0 && num_params < 4) { num_params = 4; }
+        if (num_params > ctx->call_usage) { ctx->call_usage = num_params; }
+
         const struct ParamDesc* abi = &param_descs[ctx->abi_index];
         op_extra->clobber_gpr = abi->caller_saved_gprs;
         op_extra->clobber_xmm = ~0ull >> (64 - abi->caller_saved_xmms);
@@ -536,6 +529,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 case TB_CMP_FLE: cc = BE; break;
                 default: tb_unreachable();
             }
+            if (cond->users == NULL) { tb_kill_node(f, cond); }
             br->keys[0].key = cc ^ flip;
         } else {
             TB_Node* mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 3, sizeof(X86MemOp));
@@ -955,12 +949,20 @@ static int op_reg_at(Ctx* ctx, TB_Node* n, int class) {
     return vreg->assigned;
 }
 
+static int stk_offset(Ctx* ctx, int reg) {
+    if (reg >= STACK_BASE_REG_NAMES) {
+        int pos = (reg-STACK_BASE_REG_NAMES)*8;
+        return ctx->stack_usage - (pos + 8);
+    } else {
+        return reg*8;
+    }
+}
+
 static Val op_at(Ctx* ctx, TB_Node* n) {
     assert(ctx->vreg_map[n->gvn] > 0);
     VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
     if (vreg->class == REG_CLASS_STK) {
-        tb_todo();
-        return val_stack(vreg->assigned*8);
+        return val_stack(stk_offset(ctx, vreg->assigned));
     } else {
         assert(vreg->assigned >= 0);
         return (Val) { .type = vreg->class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR, .reg = vreg->assigned };
@@ -1066,6 +1068,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
             if (!is_value_match(&dst, &src)) {
+                COMMENT("move v%d -> v%d", n->inputs[1]->gvn, n->gvn);
                 if (dt < TB_X86_TYPE_SSE_SS) { inst2(e, MOV, &dst, &src, dt); }
                 else { inst2sse(e, FP_MOV, &dst, &src, dt); }
             }
@@ -1075,7 +1078,28 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         // epilogue
         case TB_RETURN: {
             size_t pos = e->count;
-            // emit_epilogue(ctx, e, ctx->stack_usage);
+            TB_FunctionPrototype* proto = ctx->f->prototype;
+
+            int stack_usage = ctx->stack_usage;
+            if (stack_usage) {
+                // add rsp, N
+                if (stack_usage == (int8_t)stack_usage) {
+                    EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
+                    EMIT1(&ctx->emit, 0x83);
+                    EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
+                    EMIT1(&ctx->emit, (int8_t) stack_usage);
+                } else {
+                    EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
+                    EMIT1(&ctx->emit, 0x81);
+                    EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
+                    EMIT4(&ctx->emit, stack_usage);
+                }
+            }
+
+            // pop rbp (if we even used the frameptr)
+            if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
+                EMIT1(&ctx->emit, 0x58 + RBP);
+            }
             EMIT1(e, 0xC3);
             ctx->epilogue_length = e->count - pos;
             break;
@@ -1893,54 +1917,16 @@ static GPR op_gpr_at(LiveInterval* l) {
 }
 #endif
 
-static int stk_offset(Ctx* ctx, int reg) {
-    int pos = reg*8;
-    if (reg >= ctx->num_regs[0]) {
-        return ctx->stack_usage - (pos + 8);
-    } else {
-        return pos;
-    }
-}
-
-static void emit_epilogue(Ctx* restrict ctx, TB_CGEmitter* e, int stack_usage) {
-    TB_FunctionPrototype* proto = ctx->f->prototype;
-    bool needs_stack = stack_usage > ctx->stack_header + (proto->param_count * 8);
-
-    // add rsp, N
-    if (stack_usage) {
-        if (stack_usage == (int8_t)stack_usage) {
-            EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
-            EMIT1(&ctx->emit, 0x83);
-            EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
-            EMIT1(&ctx->emit, (int8_t) stack_usage);
-        } else {
-            EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
-            EMIT1(&ctx->emit, 0x81);
-            EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
-            EMIT4(&ctx->emit, stack_usage);
-        }
-    }
-
-    // pop rbp (if we even used the frameptr)
-    if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
-        EMIT1(&ctx->emit, 0x58 + RBP);
-    }
-}
-
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
-    size_t call_usage = ctx->call_usage;
-    if (ctx->abi_index == 0 && call_usage > 0 && call_usage < 4) {
-        call_usage = 4;
-    }
-
-    ctx->stack_usage -= ctx->initial_spills * 8;
-    ctx->stack_usage += call_usage * 8;
-
     TB_FunctionPrototype* proto = ctx->f->prototype;
+
     size_t stack_usage = 0;
-    if (ctx->stack_usage > ctx->stack_header + (proto->param_count * 8)) {
-        // Align stack usage to 16bytes + 8 to accommodate for the RIP being pushed by CALL
-        stack_usage = align_up(ctx->stack_usage + ctx->stack_header, 16) - ctx->stack_header;
+    if (ctx->num_spills != 0 || ctx->call_usage != 0) {
+        stack_usage = (ctx->num_spills+ctx->call_usage) * 8;
+
+        // Align stack usage to 16bytes + header to accommodate for the RIP being pushed
+        // by CALL (and frameptr if applies)
+        stack_usage = align_up(stack_usage + ctx->stack_header, 16) - ctx->stack_header;
     }
     ctx->stack_usage = stack_usage;
 
@@ -3049,7 +3035,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         int offset = e->total_asm - line_start;
         if (d->comment && d->comment->pos == pos) {
             TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
-            E("  // ");
+            E("%*s", 40 - offset, "// ");
             bool out_of_line = false;
             do {
                 if (out_of_line) {

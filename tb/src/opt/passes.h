@@ -172,7 +172,7 @@ static bool is_mem_out_op(TB_Node* n) {
 }
 
 static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ;
+    return (n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ || n->type == TB_MACH_PROJ;
 }
 
 static bool is_mem_in_op(TB_Node* n) {
@@ -299,6 +299,18 @@ static TB_Node* idom(TB_CFG* cfg, TB_Node* n) {
 
 static int dom_depth(TB_CFG* cfg, TB_Node* n) {
     return nl_map_get_checked(cfg->node_to_block, n).dom_depth;
+}
+
+static bool slow_dommy2(TB_BasicBlock* expected_dom, TB_BasicBlock* bb) {
+    while (bb != NULL && expected_dom != bb) {
+        TB_BasicBlock* new_bb = bb->dom;
+        if (new_bb == NULL || new_bb == bb) {
+            return false;
+        }
+        bb = new_bb;
+    }
+
+    return true;
 }
 
 static bool slow_dommy(TB_CFG* cfg, TB_Node* expected_dom, TB_Node* bb) {

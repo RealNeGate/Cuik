@@ -47,6 +47,12 @@ enum {
     MAX_REG_CLASSES = 8,
 };
 
+enum {
+    // any assigned stack vregs past this point refer to spill slots
+    // not the stack base (where params usually go).
+    STACK_BASE_REG_NAMES = 0x4000,
+};
+
 // represents a set of registers, usually for register constraints.
 // we can also say that a value might fit into the stack with may_spill.
 //
@@ -98,9 +104,6 @@ struct VReg {
     int16_t assigned;
 
     RegMask* mask;
-
-    int tmp_count;
-    int* tmps;
 
     // only matters for linear-scan
     struct {
@@ -178,7 +181,7 @@ struct Ctx {
     NL_Table tmps_map;        // TB_Node* -> Tmps*
 
     // Regalloc
-    int initial_spills;
+    int num_spills;
     int stack_slot_size;
     int stack_header;
     int stack_usage;
@@ -208,6 +211,7 @@ void tb__print_regmask(RegMask* mask);
 
 // RA helpers
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b);
+MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n);
 void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n);

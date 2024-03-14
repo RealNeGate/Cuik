@@ -155,7 +155,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                     tb_kill_node(f, curr);
                 }
             }
-        } else if (curr->type != TB_PHI && is_mem_out_op(curr)) {
+        } else if (curr->type != TB_PROJ && curr->type != TB_PHI && is_mem_out_op(curr)) {
             set_input(f, curr, latest[0], 1);
             latest[0] = curr;
         }
@@ -164,6 +164,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
             // skip to mproj
             assert(curr->type != TB_SPLITMEM);
             curr = next_mem_user(curr);
+            latest[0] = curr;
         }
 
         // fixup any connected loads

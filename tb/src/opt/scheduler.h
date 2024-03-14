@@ -23,8 +23,18 @@ static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n
     int anti_count = 0;
     if (n->type == TB_MERGEMEM) {
         anti_count = n->input_count - 2;
-    } else if (is_mem_out_op(n) && n->type != TB_PHI && n->type != TB_PROJ) {
-        anti_count = 1;
+    } else if (n->type != TB_PHI && n->type != TB_PROJ) {
+        if (is_mem_out_op(n) || n->dt.type == TB_MEMORY) {
+            anti_count = 1;
+        } else if (n->dt.type == TB_TUPLE) {
+            FOR_USERS(u, n) {
+                if (USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_MEMORY) {
+                    assert(USERI(u) == 0);
+                    anti_count += 1;
+                }
+            }
+            assert(anti_count < 2);
+        }
     }
 
     SchedNode* s = tb_arena_alloc(arena, sizeof(SchedNode) + anti_count*sizeof(TB_User));
@@ -89,7 +99,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
     // reserve projections for the top
     TB_Node* start = bb->id == 0 ? f->root_node : NULL;
     if (start) FOR_USERS(u, start) {
-        if (USERN(u)->type == TB_PROJ && !worklist_test_n_set(ws, USERN(u))) {
+        if ((USERN(u)->type == TB_PROJ || USERN(u)->type == TB_MACH_PROJ) && !worklist_test_n_set(ws, USERN(u))) {
             dyn_array_put(ws->items, USERN(u));
         }
     }

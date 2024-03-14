@@ -504,6 +504,8 @@ static User* remove_user(TB_Node* n, int slot) {
 }
 
 void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
+    // assert(slot < n->input_count);
+
     // recycle the user
     User* old_use = remove_user(n, slot);
 
@@ -1613,7 +1615,7 @@ bool tb_module_ipo(TB_Module* m) {
             TB_Function* target = static_call_site(call);
 
             // really simple getter/setter kind of heuristic
-            if (0 && target && target->node_count < 15) {
+            if (target && target->node_count < 15) {
                 TB_OPTDEBUG(INLINE)(printf("  -> %s (from v%u)\n", target->super.name, call->gvn));
                 inline_into(scc.arena, f, call, target);
                 progress = true;

@@ -2,6 +2,8 @@
 // will include this to define their own copy of the codegen.
 #include "codegen.h"
 
+#define COMMENT(...) (e->has_comments ? tb_emit_comment(e, ctx->f->tmp_arena, __VA_ARGS__) : (void)0)
+
 // Implemented by the target, go read the mips_target.c docs on this.
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n);
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
@@ -130,7 +132,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         .emit = {
             .output = func_out,
             .arena = arena,
-            .has_comments = false,
+            .has_comments = true,
         }
     };
 

@@ -18,6 +18,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
             FOREACH_N(i, 0, 32) {
                 if (projs[i] == NULL) break;
                 if (i) printf(", ");
+                printf("%%%u:", projs[i]->gvn);
                 print_type(projs[i]->dt);
             }
             printf(" }");

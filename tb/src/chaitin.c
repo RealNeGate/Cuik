@@ -82,11 +82,6 @@ static void* resize_stuff(void* ptr, size_t old) {
     return NULL;
 }
 
-static RegMask* constraint_in(Ctx* ctx, TB_Node* n, int i) {
-    ctx->constraint(ctx, n, ctx->ins);
-    return ctx->ins[i];
-}
-
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
     int i = aarray_length(ctx->vregs);
     aarray_insert(ctx->vreg_map, n->gvn, i);
@@ -104,7 +99,12 @@ void tb__dump(MachineBB* mbb) {
 
 MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     if (f->node_count >= f->scheduled_n) {
-        f->scheduled  = resize_stuff(f->scheduled, f->scheduled_n * sizeof(TB_BasicBlock*));
+        TB_BasicBlock** new_sched = tb_arena_alloc(f->tmp_arena, 2 * f->scheduled_n * sizeof(TB_BasicBlock*));
+        memcpy(new_sched, f->scheduled, f->scheduled_n * sizeof(TB_BasicBlock*));
+        FOREACH_N(i, f->scheduled_n, 2 * f->scheduled_n) {
+            new_sched[i] = NULL;
+        }
+        f->scheduled = new_sched;
         f->scheduled_n *= 2;
     }
 
@@ -128,23 +128,31 @@ void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
 
     size_t i = 0, cnt = aarray_length(mbb->items);
     while (i < cnt && mbb->items[i] != after_n) { i++; }
+
+    assert(i != cnt);
     i += 1;
 
-    aarray_push(mbb->items, 0);
+    aarray_push(mbb->items, NULL);
     memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
     mbb->items[i] = n;
 }
 
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b) {
-    // a ^ TOP = a
+    // a /\ a = a
+    if (a == b) { return a; }
+    // a /\ TOP = a
     if (a == NULL) { return b; }
     if (b == NULL) { return a; }
-    // CLASS1 ^ CLASS2 = BOT
-    if (a->class != b->class) { return &TB_REG_EMPTY; }
-    // CLASS1 ^ CLASS1 = intersect masks
+    // if they both may spill, we can intersect on the stack
+    bool may_spill = a->may_spill && b->may_spill;
+    // a /\ b = BOT if their masks disagree
+    if (!may_spill && a->class != b->class) { return &TB_REG_EMPTY; }
+    // if it's stack and both don't ask for a slot... we're good
+    // a /\ b = intersect masks
     assert(a->count == b->count);
     assert(a->count == 1);
-    return intern_regmask(ctx, a->class, a->may_spill && b->may_spill, a->mask[0] & b->mask[0]);
+    uint64_t i = a->mask[0] & b->mask[0];
+    return intern_regmask(ctx, i == 0 ? 1 : a->class, may_spill, i);
 }
 
 static float node_cost(Ctx* ctx, TB_Node* n) {
@@ -153,28 +161,6 @@ static float node_cost(Ctx* ctx, TB_Node* n) {
     float c = 1.0f;
     FOR_USERS(u, n) { c += 1.0f; }
     return c;
-}
-
-// we can avoid adding edges to the IFG if the masks never intersect
-static bool reg_mask_may_intersect(RegMask* a, RegMask* b) {
-    if (a == b) {
-        return true;
-    } else if (a->class == REG_CLASS_STK) {
-        return b->may_spill || (b->class == REG_CLASS_STK && b->mask[0] == 0);
-    } else if (b->class == REG_CLASS_STK) {
-        return a->may_spill || (a->class == REG_CLASS_STK && a->mask[0] == 0);
-    } else if (a->class != b->class) {
-        return false;
-    }
-
-    assert(a->count == b->count);
-    FOREACH_N(i, 0, a->count) {
-        if ((a->mask[i] & b->mask[i]) != 0) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 static bool reg_mask_may_stack(RegMask* a) {
@@ -395,7 +381,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                         reload_n->inputs[1] = n;
 
                         // schedule the split right before use
-                        tb__insert_before(ctx, ctx->f, reload_n, n);
+                        tb__insert_before(ctx, ctx->f, reload_n, use_n);
                         VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
                         reload_vreg->mask = in_mask;
 

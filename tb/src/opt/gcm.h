@@ -35,6 +35,8 @@ static TB_BasicBlock* find_lca(TB_BasicBlock* a, TB_BasicBlock* b) {
 }
 
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
+    if (1) return;
+
     CUIK_TIMED_BLOCK("find live") {
         // BFS walk all the nodes
         worklist_push(ws, f->root_node);
@@ -130,7 +132,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                     // BB will refer to it's parent (who should've been scheduled
                     // by now)
                     TB_BasicBlock* bb = NULL;
-                    if (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT) {
+                    if ((n->type == TB_MACH_PROJ || n->type == TB_PROJ) && n->inputs[0]->type == TB_ROOT) {
                         bb = start_bb;
                     } else if (n->type != TB_ROOT) {
                         TB_Node* curr = n;
@@ -290,9 +292,9 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                                 printf("\n")
                             );
 
-                            f->scheduled[n->gvn] = lca;
+                            f->scheduled[n->gvn] = better;
                             nl_hashset_remove(&old->items, n);
-                            nl_hashset_put(&lca->items, n);
+                            nl_hashset_put(&better->items, n);
                         }
                     }
                 }
