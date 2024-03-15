@@ -149,6 +149,10 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // mov r/m  imm
         [0xC6]          = OP_MODRM | OP_IMM | OP_8BIT | OP_FAKERX,
         [0xC7]          = OP_MODRM | OP_IMM | OP_FAKERX,
+        // pushf
+        [0x9C]          = OP_0ARY,
+        // popf
+        [0x9D]          = OP_0ARY,
         // stosb
         [0xAA]          = OP_0ARY,
         // int3
@@ -746,6 +750,8 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case _0F(0x0B): return "ud2";
         case _0F(0x31): return "rdtsc";
         case 0xCC: return "int3";
+        case 0x9C: return "pushf";
+        case 0x9D: return "popf";
 
         case _0Fx(0x18, 0): return "prefetchnta";
         case _0Fx(0x18, 1): return "prefetch0";

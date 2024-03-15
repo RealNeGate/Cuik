@@ -35,8 +35,6 @@ static TB_BasicBlock* find_lca(TB_BasicBlock* a, TB_BasicBlock* b) {
 }
 
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
-    if (1) return;
-
     CUIK_TIMED_BLOCK("find live") {
         // BFS walk all the nodes
         worklist_push(ws, f->root_node);

@@ -10,6 +10,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
 static int node_tmp_count(Ctx* restrict ctx, TB_Node* n);
 static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg);
 static int node_latency(TB_Function* f, TB_Node* n);
+static int node_priority(TB_Function* f, TB_Node* n, TB_Node* prev);
 static int node_2addr(TB_Node* n);
 static bool node_flags(Ctx* ctx, TB_Node* n);
 static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ);
@@ -238,8 +239,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             // compute local schedule
             size_t base = dyn_array_length(ws->items);
-            // tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency);
+
             tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
+            // tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency, node_priority);
 
             // a bit of slack for spills
             size_t item_count = dyn_array_length(ws->items) - base;

@@ -109,6 +109,9 @@ struct VReg {
     struct {
         int end_time, hint_vreg;
         Range* active_range;
+
+        // when we retry, we need to rewind to this point
+        Range* saved_range;
     };
 };
 
@@ -181,6 +184,8 @@ struct Ctx {
     NL_Table tmps_map;        // TB_Node* -> Tmps*
 
     // Regalloc
+    bool has_flags; // if true, the reg class 1 is reserved for it
+
     int num_spills;
     int stack_slot_size;
     int stack_header;

@@ -31,6 +31,10 @@ typedef struct {
 } X86MemOp;
 
 typedef struct {
+    int cc;
+} X86Cmov;
+
+typedef struct {
     TB_FunctionPrototype* proto;
     TB_Symbol* sym;
     uint32_t clobber_gpr;
@@ -190,7 +194,7 @@ static int node_2addr(TB_Node* n) {
         }
 
         // ANY_GPR = OP(COND, shared: ANY_GPR, ANY_GPR)
-        case TB_SELECT:
+        case x86_cmovcc:
         return 2;
 
         // ANY_GPR = OP(ANY_GPR, CL)
@@ -207,6 +211,7 @@ static int node_2addr(TB_Node* n) {
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->abi_index = abi == TB_ABI_SYSTEMV ? 1 : 0;
+    ctx->has_flags = true;
 
     // currently only using 16 GPRs and 16 XMMs, AVX gives us
     // 32 YMMs (which double as XMMs) and later on APX will do
@@ -312,6 +317,58 @@ static TB_Node* to_mach_local(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     set_input(f, addr, n->inputs[0], 0); // root node
     TB_NODE_SET_EXTRA(addr, TB_NodeMachLocal, .name = local->name, .type = local->type, .disp = disp);
     return addr;
+}
+
+// n.in[1] = ...FLAGS producing op...
+static TB_Node* node_isel_flags(Ctx* restrict ctx, TB_Function* f, TB_Node* n, uint64_t falsey, int* out_cc) {
+    TB_Node* cond = n->inputs[1];
+    TB_Node* mach_cond = NULL;
+    if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
+        TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cond, TB_NodeCompare)->cmp_dt;
+
+        // starts at 1 since the keys[0] maps to the "falsey" edge
+        int flip = (falsey == 0);
+
+        TB_Node* a = cond->inputs[1];
+        TB_Node* b = cond->inputs[2];
+        if (a->type == TB_INTEGER_CONST && b->type != TB_INTEGER_CONST) {
+            flip ^= 1;
+            SWAP(TB_Node*, a, b);
+        }
+
+        int32_t x;
+        if ((cmp_dt.type == TB_INT || cmp_dt.type == TB_PTR) && try_for_imm32(cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, b, &x)) {
+            // x86_cmpimm n[1]
+            mach_cond = tb_alloc_node(f, x86_cmpimm, TB_TYPE_I8, 3, sizeof(X86MemOp));
+            X86MemOp* op_extra = TB_NODE_GET_EXTRA(mach_cond);
+            op_extra->imm = x;
+        } else {
+            mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 5, sizeof(X86MemOp));
+            set_input(f, mach_cond, b, 4);
+        }
+        set_input(f, mach_cond, a, 2);
+
+        Cond cc;
+        switch (cond->type) {
+            case TB_CMP_EQ:  cc = E;  break;
+            case TB_CMP_NE:  cc = NE; break;
+            case TB_CMP_SLT: cc = L;  break;
+            case TB_CMP_SLE: cc = LE; break;
+            case TB_CMP_ULT: cc = B;  break;
+            case TB_CMP_ULE: cc = BE; break;
+            case TB_CMP_FLT: cc = B;  break;
+            case TB_CMP_FLE: cc = BE; break;
+            default: tb_unreachable();
+        }
+        *out_cc = cc ^ flip;
+    } else {
+        mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 3, sizeof(X86MemOp));
+        TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .imm = falsey);
+        set_input(f, mach_cond, cond, 2);
+        *out_cc = E;
+    }
+    if (cond->users->next == NULL) { tb_kill_node(f, cond); }
+    return mach_cond;
 }
 
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
@@ -422,6 +479,16 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         set_input(f, op, n->inputs[1], 2);
         TB_NODE_SET_EXTRA(op, X86MemOp, .imm = imm & 63);
         return op;
+    } else if (n->type == TB_SELECT) {
+        int cc;
+        TB_Node* mach_cond = node_isel_flags(ctx, f, n, 0, &cc);
+
+        TB_Node* op = tb_alloc_node(f, x86_cmovcc, n->dt, 3, sizeof(X86Cmov));
+        set_input(f, op, mach_cond,    1);
+        set_input(f, op, n->inputs[2], 2);
+        set_input(f, op, n->inputs[3], 3);
+        TB_NODE_SET_EXTRA(op, X86Cmov, .cc = cc);
+        return op;
     } else if (n->type == TB_CALL) {
         TB_Node* op = tb_alloc_node(f, x86_call, n->dt, n->input_count, sizeof(X86Call));
         set_input(f, op, n->inputs[0], 0); // ctrl
@@ -487,58 +554,10 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
         assert(br->succ_count == 2 && "TODO");
 
-        TB_Node* cond = n->inputs[1];
-        uint64_t falsey = br->keys[0].key;
-        if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
-            TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cond, TB_NodeCompare)->cmp_dt;
-            assert(falsey == 0 || falsey == 1);
-
-            // starts at 1 since the keys[0] maps to the "falsey" edge
-            int flip = 1;
-
-            TB_Node* a = cond->inputs[1];
-            TB_Node* b = cond->inputs[2];
-            if (a->type == TB_INTEGER_CONST && b->type != TB_INTEGER_CONST) {
-                flip ^= 1;
-                SWAP(TB_Node*, a, b);
-            }
-
-            int32_t x;
-            TB_Node* mach_cond = NULL;
-            if ((cmp_dt.type == TB_INT || cmp_dt.type == TB_PTR) && try_for_imm32(cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, b, &x)) {
-                // x86_cmpimm n[1]
-                mach_cond = tb_alloc_node(f, x86_cmpimm, TB_TYPE_I8, 3, sizeof(X86MemOp));
-                X86MemOp* op_extra = TB_NODE_GET_EXTRA(mach_cond);
-                op_extra->imm = x;
-            } else {
-                mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 5, sizeof(X86MemOp));
-                set_input(f, mach_cond, b, 4);
-            }
-            set_input(f, mach_cond, a, 2);
-            set_input(f, n, mach_cond, 1);
-
-            Cond cc;
-            switch (cond->type) {
-                case TB_CMP_EQ:  cc = E;  break;
-                case TB_CMP_NE:  cc = NE; break;
-                case TB_CMP_SLT: cc = L;  break;
-                case TB_CMP_SLE: cc = LE; break;
-                case TB_CMP_ULT: cc = B;  break;
-                case TB_CMP_ULE: cc = BE; break;
-                case TB_CMP_FLT: cc = B;  break;
-                case TB_CMP_FLE: cc = BE; break;
-                default: tb_unreachable();
-            }
-            if (cond->users == NULL) { tb_kill_node(f, cond); }
-            br->keys[0].key = cc ^ flip;
-        } else {
-            TB_Node* mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 3, sizeof(X86MemOp));
-            TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .imm = 0);
-
-            set_input(f, mach_cond, cond, 2);
-            set_input(f, n, mach_cond,    1);
-        }
-
+        int cc;
+        TB_Node* mach_cond = node_isel_flags(ctx, f, n, br->keys[0].key, &cc);
+        set_input(f, n, mach_cond, 1);
+        br->keys[0].key = cc;
         return n;
     }
 
@@ -824,11 +843,12 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return rm;
         }
 
-        case TB_SELECT:
+        case x86_cmovcc:
         {
+            int cc = TB_NODE_GET_EXTRA_T(n, X86Cmov)->cc;
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
             if (ins) {
-                ins[1] = rm;
+                ins[1] = intern_regmask(ctx, REG_CLASS_FLAGS, false, 1);
                 ins[2] = rm;
                 ins[3] = rm;
             }
@@ -958,6 +978,10 @@ static int stk_offset(Ctx* ctx, int reg) {
     }
 }
 
+static bool is_flags_vreg(Ctx* ctx, TB_Node* n) {
+    return ctx->vregs[ctx->vreg_map[n->gvn]].class == REG_CLASS_FLAGS;
+}
+
 static Val op_at(Ctx* ctx, TB_Node* n) {
     assert(ctx->vreg_map[n->gvn] > 0);
     VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
@@ -1063,14 +1087,35 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
         case TB_MACH_MOVE:
         case TB_MACH_COPY: {
-            TB_X86_DataType dt = legalize(n->dt);
+            if (is_flags_vreg(ctx, n)) {
+                // FLAGS -> FLAGS is a nop since there's only one flags reg
+                if (!is_flags_vreg(ctx, n->inputs[1])) {
+                    COMMENT("reload FLAGS");
 
-            Val dst = op_at(ctx, n);
-            Val src = op_at(ctx, n->inputs[1]);
-            if (!is_value_match(&dst, &src)) {
-                COMMENT("move v%d -> v%d", n->inputs[1]->gvn, n->gvn);
-                if (dt < TB_X86_TYPE_SSE_SS) { inst2(e, MOV, &dst, &src, dt); }
-                else { inst2sse(e, FP_MOV, &dst, &src, dt); }
+                    // GPR -> FLAGS
+                    int reg = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+                    EMIT1(e, 0x48 + (reg >= 8)); // REX.W (optional B)
+                    EMIT1(e, 0x50 + reg);        // pop r64
+                    EMIT1(e, 0x9D);              // popf
+                }
+            } else if (is_flags_vreg(ctx, n->inputs[1])) {
+                COMMENT("spilled FLAGS");
+
+                // FLAGS -> GPR
+                int reg = op_reg_at(ctx, n, REG_CLASS_GPR);
+                EMIT1(e, 0x9C);              // pushf
+                EMIT1(e, 0x48 + (reg >= 8)); // REX.W (optional B)
+                EMIT1(e, 0x58 + reg);        // pop r64
+            } else {
+                TB_X86_DataType dt = legalize(n->dt);
+
+                Val dst = op_at(ctx, n);
+                Val src = op_at(ctx, n->inputs[1]);
+                if (!is_value_match(&dst, &src)) {
+                    COMMENT("spill move");
+                    if (dt < TB_X86_TYPE_SSE_SS) { inst2(e, MOV, &dst, &src, dt); }
+                    else { inst2sse(e, FP_MOV, &dst, &src, dt); }
+                }
             }
             break;
         }
@@ -1084,21 +1129,21 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             if (stack_usage) {
                 // add rsp, N
                 if (stack_usage == (int8_t)stack_usage) {
-                    EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
-                    EMIT1(&ctx->emit, 0x83);
-                    EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
-                    EMIT1(&ctx->emit, (int8_t) stack_usage);
+                    EMIT1(e, rex(true, 0x00, RSP, 0));
+                    EMIT1(e, 0x83);
+                    EMIT1(e, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
+                    EMIT1(e, (int8_t) stack_usage);
                 } else {
-                    EMIT1(&ctx->emit, rex(true, 0x00, RSP, 0));
-                    EMIT1(&ctx->emit, 0x81);
-                    EMIT1(&ctx->emit, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
-                    EMIT4(&ctx->emit, stack_usage);
+                    EMIT1(e, rex(true, 0x00, RSP, 0));
+                    EMIT1(e, 0x81);
+                    EMIT1(e, mod_rx_rm(MOD_DIRECT, 0x00, RSP));
+                    EMIT4(e, stack_usage);
                 }
             }
 
             // pop rbp (if we even used the frameptr)
             if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
-                EMIT1(&ctx->emit, 0x58 + RBP);
+                EMIT1(e, 0x58 + RBP);
             }
             EMIT1(e, 0xC3);
             ctx->epilogue_length = e->count - pos;
@@ -1210,20 +1255,18 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             break;
         }
 
-        case TB_SELECT: {
+        case x86_cmovcc: {
             TB_X86_DataType dt = legalize_int2(n->dt);
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            int cc = TB_NODE_GET_EXTRA_T(n, X86Cmov)->cc;
 
             Val dst  = op_at(ctx, n);
-            Val cond = op_at(ctx, n->inputs[1]);
             Val lhs  = op_at(ctx, n->inputs[2]);
             Val rhs  = op_at(ctx, n->inputs[3]);
 
-            inst2(e, TEST, &cond, &cond, dt);
             if (!is_value_match(&dst, &lhs)) {
                 inst2(e, MOV, &dst, &lhs, dt);
             }
-            inst2(e, CMOVO+E, &dst, &rhs, dt);
+            inst2(e, CMOVO+cc, &dst, &rhs, dt);
             break;
         }
 
@@ -1298,6 +1341,23 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         tb_todo();
         break;
     }
+}
+
+typedef int (*TB_GetPriority)(TB_Function* f, TB_Node* n, TB_Node* prev);
+
+static bool flags_producer(TB_Node* n) {
+    return n->type == x86_cmp || n->type == x86_cmpimm
+        || n->type == x86_test || n->type == x86_testimm;
+}
+
+static int node_priority(TB_Function* f, TB_Node* n, TB_Node* prev) {
+    // prioritize certain critical paths:
+    //   test/cmp => cmovcc/jcc
+    if (prev && flags_producer(prev) && (n->type == x86_cmovcc || n->type == TB_BRANCH)) {
+        return 3;
+    }
+
+    return 1;
 }
 
 static int node_latency(TB_Function* f, TB_Node* n) {
