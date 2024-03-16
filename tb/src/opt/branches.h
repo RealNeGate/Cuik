@@ -26,7 +26,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
             Lattice* ty = latuni_get(f, n->inputs[i]);
-            if (n->inputs[i]->type == TB_DEAD || ty == &XCTRL_IN_THE_SKY) {
+            if (n->inputs[i]->type == TB_DEAD || ty == &TOP_IN_THE_SKY) {
                 // both the region and phi are doing remove swap so the order should
                 // stay fine across them.
                 remove_input(f, n, i);
@@ -481,7 +481,7 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
     Lattice* l = tb_arena_alloc(f->arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = br->succ_count };
     FOR_N(i, 0, br->succ_count) {
-        l->elems[i] = taken < 0 || i == taken ? &CTRL_IN_THE_SKY : &XCTRL_IN_THE_SKY;
+        l->elems[i] = taken < 0 || i == taken ? &CTRL_IN_THE_SKY : &TOP_IN_THE_SKY;
     }
 
     Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);

@@ -43,7 +43,7 @@ struct Lattice {
         //    /         \
         //   /|\       /|\
         //  / | \     / | \
-        // N  N  N 0.0 1.0 ... # fltcon
+        // N  N  N 0.0 1.5 ... # fltcon
         //  \ | /     \ | /
         //   \|/       \|/
         //   nan      ~nan
@@ -80,9 +80,13 @@ struct Lattice {
         LATTICE_ANYMEM,    // top type for memory
         LATTICE_MEM_SLICE, // some set of bits where 1 means aliased.
 
-        // control tokens
+        // control tokens:
+        //    top
+        //     |
+        //   ctrl
+        //     |
+        //    bot
         LATTICE_CTRL,
-        LATTICE_XCTRL,
     } tag;
     union {
         size_t _alias_n;    // LATTICE_MEM_SLICE

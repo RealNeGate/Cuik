@@ -82,8 +82,9 @@ static void walk_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     // replace with machine op
     TB_Node* k = node_isel(ctx, ctx->f, n);
     if (k && k != n) {
-        // yes... we can run GVN on machine ops :)
-        k = tb_opt_gvn_node(ctx->f, k);
+        // we could run GVN on machine ops :) i just haven't said
+        // what data is in the extra payload so we can't yet...
+        // k = tb_opt_gvn_node(ctx->f, k);
 
         subsume_node2(ctx->f, n, k);
 
@@ -161,6 +162,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     CUIK_TIMED_BLOCK("isel") {
         log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
+
+        tb_print(f, arena);
 
         // bottom-up rewrite
         worklist_clear(ws);
@@ -240,8 +243,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             // compute local schedule
             size_t base = dyn_array_length(ws->items);
 
-            tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
-            // tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency, node_priority);
+            // tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
+            tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency, node_priority);
 
             // a bit of slack for spills
             size_t item_count = dyn_array_length(ws->items) - base;

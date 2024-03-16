@@ -4,7 +4,6 @@
 static Lattice TOP_IN_THE_SKY    = { LATTICE_TOP    };
 static Lattice BOT_IN_THE_SKY    = { LATTICE_BOT    };
 static Lattice CTRL_IN_THE_SKY   = { LATTICE_CTRL   };
-static Lattice XCTRL_IN_THE_SKY  = { LATTICE_XCTRL  };
 static Lattice XNULL_IN_THE_SKY  = { LATTICE_XNULL  };
 static Lattice NULL_IN_THE_SKY   = { LATTICE_NULL   };
 static Lattice FLT32_IN_THE_SKY  = { LATTICE_FLT32  };
@@ -18,6 +17,7 @@ static Lattice ALLMEM_IN_THE_SKY = { LATTICE_ALLMEM };
 static Lattice PTR_IN_THE_SKY    = { LATTICE_PTR    };
 static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = { 0, 0, 1, 0 } };
 static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = { 1, 1, 0, 1 } };
+static Lattice BOOL_IN_THE_SKY   = { LATTICE_INT, ._int = { 0, 1, 0, 0 } };
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt);
 
@@ -57,9 +57,8 @@ static uint32_t lattice_hash(void* a) {
         case LATTICE_NAN32: case LATTICE_XNAN32:
         case LATTICE_NAN64: case LATTICE_XNAN64:
         case LATTICE_NULL:  case LATTICE_XNULL:
-        case LATTICE_CTRL:  case LATTICE_XCTRL:
+        case LATTICE_CTRL:  case LATTICE_PTR:
         case LATTICE_ALLMEM:case LATTICE_ANYMEM:
-        case LATTICE_PTR:
         break;
 
         default: tb_todo();
@@ -179,6 +178,8 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
             assert(dt.data <= 64);
             if (dt.data == 0) {
                 return &BOT_IN_THE_SKY;
+            } else if (dt.data == 1) {
+                return &BOOL_IN_THE_SKY;
             }
 
             uint64_t mask = tb__mask(dt.data);
@@ -419,13 +420,9 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             }
         }
 
+        // already handled ctrl ^ ctrl, top ^ any, bot ^ any so everything else is bot
         case LATTICE_CTRL:
-        case LATTICE_XCTRL: {
-            // ctrl  ^ ctrl   = ctrl
-            // ctrl  ^ xctrl  = bot
-            // xctrl ^ xctrl  = xctrl
-            return a == b ? a : &BOT_IN_THE_SKY;
-        }
+        return &BOT_IN_THE_SKY;
 
         case LATTICE_ALLMEM: return &ALLMEM_IN_THE_SKY;
         case LATTICE_ANYMEM: return b;

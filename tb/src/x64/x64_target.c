@@ -51,9 +51,9 @@ typedef enum {
 
 const char* tb_node_x86_get_name(TB_Node* n) {
     switch (n->type) {
-        case TB_MACH_COPY: return "mach_copy";
-        case TB_MACH_MOVE: return "mach_move";
-        case TB_MACH_PROJ: return "mach_proj";
+        case TB_MACH_COPY:  return "mach_copy";
+        case TB_MACH_MOVE:  return "mach_move";
+        case TB_MACH_PROJ:  return "mach_proj";
         case TB_MACH_LOCAL: return "mach_local";
         #define X(name) case x86_ ## name: return STR(x86_ ## name);
         #include "x64_nodes.inc"
@@ -480,13 +480,31 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         TB_NODE_SET_EXTRA(op, X86MemOp, .imm = imm & 63);
         return op;
     } else if (n->type == TB_SELECT) {
-        int cc;
-        TB_Node* mach_cond = node_isel_flags(ctx, f, n, 0, &cc);
+        TB_Node* op = tb_alloc_node(f, x86_cmovcc, n->dt, 5, sizeof(X86Cmov));
 
-        TB_Node* op = tb_alloc_node(f, x86_cmovcc, n->dt, 4, sizeof(X86Cmov));
-        set_input(f, op, mach_cond,    1);
-        set_input(f, op, n->inputs[2], 2);
-        set_input(f, op, n->inputs[3], 3);
+        Cond cc = E;
+        TB_Node* cond = n->inputs[1];
+        if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
+            switch (cond->type) {
+                case TB_CMP_EQ:  cc = E;  break;
+                case TB_CMP_NE:  cc = NE; break;
+                case TB_CMP_SLT: cc = L;  break;
+                case TB_CMP_SLE: cc = LE; break;
+                case TB_CMP_ULT: cc = B;  break;
+                case TB_CMP_ULE: cc = BE; break;
+                case TB_CMP_FLT: cc = B;  break;
+                case TB_CMP_FLE: cc = BE; break;
+                default: tb_unreachable();
+            }
+
+            set_input(f, op, cond->inputs[1], 1);
+            set_input(f, op, cond->inputs[2], 2);
+            if (cond->users == NULL) { tb_kill_node(f, cond); }
+        } else {
+            set_input(f, op, cond, 1);
+        }
+        set_input(f, op, n->inputs[2], 3);
+        set_input(f, op, n->inputs[3], 4);
         TB_NODE_SET_EXTRA(op, X86Cmov, .cc = cc);
         return op;
     } else if (n->type == TB_CALL) {
@@ -848,9 +866,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             int cc = TB_NODE_GET_EXTRA_T(n, X86Cmov)->cc;
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
             if (ins) {
-                ins[1] = intern_regmask(ctx, REG_CLASS_FLAGS, false, 1);
-                ins[2] = rm;
+                ins[1] = rm;
+                ins[2] = n->inputs[2] ? rm : &TB_REG_EMPTY;
                 ins[3] = rm;
+                ins[4] = rm;
             }
             return rm;
         }
@@ -1256,12 +1275,20 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             int cc = TB_NODE_GET_EXTRA_T(n, X86Cmov)->cc;
 
             Val dst  = op_at(ctx, n);
-            Val lhs  = op_at(ctx, n->inputs[2]);
-            Val rhs  = op_at(ctx, n->inputs[3]);
-
+            Val lhs  = op_at(ctx, n->inputs[3]);
             if (!is_value_match(&dst, &lhs)) {
                 __(MOV, dt, &dst, &lhs);
             }
+
+            Val cmp1 = op_at(ctx, n->inputs[1]);
+            if (n->inputs[2]) {
+                Val cmp2 = op_at(ctx, n->inputs[2]);
+                __(CMP, dt, &cmp1, &cmp2);
+            } else {
+                __(CMP, dt, &cmp1, Vimm(0));
+            }
+
+            Val rhs = op_at(ctx, n->inputs[4]);
             __(CMOVO+cc, dt, &dst, &rhs);
             break;
         }
@@ -1276,7 +1303,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             Val dst = op_at(ctx, n);
             Val lhs = op_at(ctx, n->inputs[1]);
             if (!is_value_match(&dst, &lhs)) {
-                inst2(e, MOV, &dst, &lhs, dt);
+                __(MOV, dt, &dst, &lhs);
             }
 
             InstType op;
@@ -1289,8 +1316,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 default: tb_todo();
             }
 
-            Val rcx = val_gpr(RCX);
-            inst2(e, op, &dst, &rcx, dt);
+            __(op, dt, &dst, Vgpr(RCX));
             break;
         }
 
@@ -1315,7 +1341,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             }
 
             Val lhs  = op_at(ctx, n->inputs[1]);
-            inst2(e, op ? op : MOV, &dst, &lhs, dt);
+            __(op, dt, &dst, &lhs);
             break;
         }
 
@@ -1345,13 +1371,7 @@ static bool flags_producer(TB_Node* n) {
 }
 
 static int node_priority(TB_Function* f, TB_Node* n, TB_Node* prev) {
-    // prioritize certain critical paths:
-    //   test/cmp => cmovcc/jcc
-    if (prev && flags_producer(prev) && (n->type == x86_cmovcc || n->type == TB_BRANCH)) {
-        return 3;
-    }
-
-    return 1;
+    return node_latency(f, n);
 }
 
 static int node_latency(TB_Function* f, TB_Node* n) {

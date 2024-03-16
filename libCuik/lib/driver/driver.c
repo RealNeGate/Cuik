@@ -186,6 +186,9 @@ static void apply_func(TB_Function* f, void* arg) {
             tb_print_dot(f, tb_default_print_callback, stdout);
         } else if (args->emit_ir) {
             tb_print(f, arenas->tmp);
+
+            // char* str = tb_print_c(f, ir_worklist, arenas->tmp);
+            // printf("%s", str);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
                 TB_FunctionOutput* out = tb_codegen(f, ir_worklist, arenas->tmp, arenas->code, NULL, print_asm);
@@ -377,6 +380,11 @@ static void ld_invoke(BuildStepInfo* info) {
                 cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, local_opt_func);
                 log_debug("Interprocedural opts...");
             } while (tb_module_ipo(mod));
+        }
+
+        if (args->emit_ir) {
+            // char* pre = tb_c_prelude(mod);
+            // printf("%s", pre);
         }
 
         cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, apply_func);

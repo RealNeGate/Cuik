@@ -635,17 +635,17 @@ static Lattice* value_of(TB_Function* f, TB_Node* n, bool optimistic) {
     }
 }
 
-static bool is_dead_ctrl(TB_Function* f, TB_Node* n, bool optimistic) {
+static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
     if (n->type == TB_DEAD) {
         return true;
     } else {
         Lattice* l = latuni_get(f, n);
-        return l == &XCTRL_IN_THE_SKY || (optimistic && l == &TOP_IN_THE_SKY);
+        return l == &TOP_IN_THE_SKY;
     }
 }
 
 // converts constant Lattice into constant node
-static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimistic) {
+static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
     // already a constant?
     if (n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
         return NULL;
@@ -658,7 +658,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
 
         size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
-            if (is_dead_ctrl(f, n->inputs[i], optimistic)) {
+            if (is_dead_ctrl(f, n->inputs[i])) {
                 changes = true;
                 remove_input(f, n, i);
 
@@ -694,7 +694,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
         } else {
             return NULL;
         }
-    } else if (n->inputs[0] && is_dead_ctrl(f, n->inputs[0], optimistic)) {
+    } else if (n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
         // control-dependent nodes which become considered dead will also
         // have to be dead.
         if (n->dt.type == TB_TUPLE) {
@@ -816,7 +816,6 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_BOT:      printf("bot");                       break;
         case LATTICE_TOP:      printf("top");                       break;
         case LATTICE_CTRL:     printf("ctrl");                      break;
-        case LATTICE_XCTRL:    printf("~ctrl");                     break;
         case LATTICE_FLT32:    printf("f32");                       break;
         case LATTICE_FLT64:    printf("f64");                       break;
         case LATTICE_FLTCON32: printf("[%f]", l->_f32);             break;
@@ -944,6 +943,7 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         Lattice* old_type = latuni_get(f, n);
         Lattice* new_type = value_of(f, n, false);
         if (old_type != lattice_from_dt(f, n->dt)) {
+            assert(new_type != &TOP_IN_THE_SKY);
             assert(lattice_meet(f, old_type, new_type) == new_type);
         }
         #else
@@ -953,7 +953,7 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         // print fancy type
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m"));
 
-        TB_Node* k = try_as_const(f, n, new_type, false);
+        TB_Node* k = try_as_const(f, n, new_type);
         if (k != NULL) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.constants++);
             DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
@@ -1302,9 +1302,9 @@ void tb_opt_cprop(TB_Function* f) {
         while ((n = worklist_pop(f->worklist))) {
             Lattice* old_type = latuni_get(f, n);
             Lattice* new_type = value_of(f, n, true);
-            if (old_type != new_type) {
-                DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
 
+            DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
+            if (old_type != new_type) {
                 assert(lattice_meet(f, old_type, new_type) == new_type);
                 latuni_set(f, n, new_type);
 
@@ -1326,14 +1326,12 @@ void tb_opt_cprop(TB_Function* f) {
     TB_Worklist ws = { 0 };
     worklist_alloc(&ws, f->node_count);
 
-    // root node can't constant fold
-    worklist_test_n_set(&ws, f->root_node);
-    dyn_array_put(ws.items, f->root_node);
+    // root node can't constant fold btw
+    worklist_push(&ws, f->root_node);
 
     for (size_t i = 0; i < dyn_array_length(ws.items); i++) {
         TB_Node* n = ws.items[i];
-        TB_Node* k = try_as_const(f, n, latuni_get(f, n), true);
-
+        TB_Node* k = try_as_const(f, n, latuni_get(f, n));
         DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
         if (k != NULL) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.opto_constants++);
@@ -1386,6 +1384,7 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
     tb_opt_locals(f);
     // const prop leaves work for the peephole optimizer
     tb_opt_cprop(f);
+    tb_print_dumb(f, false);
     tb_opt_peeps(f);
     // mostly just detecting loops and upcasting indvars
     tb_opt_loops(f);
@@ -1430,7 +1429,6 @@ static bool alloc_types(TB_Function* f) {
         nl_hashset_put2(&f->type_interner, &BOT_IN_THE_SKY,      lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &TOP_IN_THE_SKY,      lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &CTRL_IN_THE_SKY,     lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &XCTRL_IN_THE_SKY,    lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &NULL_IN_THE_SKY,     lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &XNULL_IN_THE_SKY,    lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &FLT32_IN_THE_SKY,    lattice_hash, lattice_cmp);
@@ -1444,6 +1442,7 @@ static bool alloc_types(TB_Function* f) {
         nl_hashset_put2(&f->type_interner, &PTR_IN_THE_SKY,      lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &FALSE_IN_THE_SKY,    lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &TRUE_IN_THE_SKY,     lattice_hash, lattice_cmp);
+        nl_hashset_put2(&f->type_interner, &BOOL_IN_THE_SKY,     lattice_hash, lattice_cmp);
 
         // place ROOT type
         f->root_mem = lattice_alias(f, 0);
