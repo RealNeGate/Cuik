@@ -86,11 +86,11 @@ TB_ExportBuffer tb_wasm_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
 
             tb_out1b(&func_types, 0x60);
             emit_uint(&func_types, proto->param_count);
-            FOREACH_N(k, 0, proto->param_count) {
+            FOR_N(k, 0, proto->param_count) {
                 tb_out1b(&func_types, get_wasm_type(proto->params[k].dt));
             }
             emit_uint(&func_types, proto->return_count);
-            FOREACH_N(k, 0, proto->return_count) {
+            FOR_N(k, 0, proto->return_count) {
                 tb_out1b(&func_types, get_wasm_type(proto->params[proto->param_count + k].dt));
             }
         }

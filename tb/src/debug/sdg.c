@@ -169,7 +169,7 @@ static TB_SectionGroup sdg_generate_debug_info(TB_Module* m, TB_Arena* arena) {
                 }
                 tb_outs(&types.e, sizeof(t), &t);
 
-                FOREACH_N(i, 0, proto->param_count) {
+                FOR_N(i, 0, proto->param_count) {
                     TB_DebugType* param_ty = proto->params[i].debug_type;
                     SDG_TypeIndex param = param_ty ? sdg_get_type(&types, param_ty) : sdg_get_type_from_dt(proto->params[i].dt);
                     tb_outs(&types.e, sizeof(param), &param);

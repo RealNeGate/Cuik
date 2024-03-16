@@ -461,7 +461,7 @@ static DynArray(int) liveness(Ctx* restrict ctx, TB_Function* f) {
 
     TB_Node** bbs = ctx->worklist.items;
     int* bb_order = ctx->bb_order;
-    FOREACH_N(i, 0, ctx->bb_count) {
+    FOR_N(i, 0, ctx->bb_count) {
         TB_Node* n = bbs[bb_order[i]];
         TB_BasicBlock* bb = &nl_map_get_checked(ctx->cfg.node_to_block, n);
 
@@ -517,14 +517,14 @@ static DynArray(int) liveness(Ctx* restrict ctx, TB_Function* f) {
                 timeline += 2;
 
                 RegIndex* ins = inst->operands + inst->out_count;
-                FOREACH_N(i, 0, inst->in_count) {
+                FOR_N(i, 0, inst->in_count) {
                     if (!set_get(kill, ins[i])) {
                         set_put(gen, ins[i]);
                     }
                 }
 
                 RegIndex* outs = inst->operands;
-                FOREACH_N(i, 0, inst->out_count) {
+                FOR_N(i, 0, inst->out_count) {
                     set_put(kill, outs[i]);
                 }
             }
@@ -537,7 +537,7 @@ static DynArray(int) liveness(Ctx* restrict ctx, TB_Function* f) {
     size_t base = dyn_array_length(ctx->worklist.items);
 
     // all nodes go into the worklist
-    FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+    FOR_REV_N(i, 0, ctx->bb_count) {
         TB_Node* n = bbs[bb_order[i]];
         dyn_array_put(ctx->worklist.items, n);
 
@@ -580,7 +580,7 @@ static DynArray(int) liveness(Ctx* restrict ctx, TB_Function* f) {
 
         // live_in = (live_out - live_kill) U live_gen
         bool changes = false;
-        FOREACH_N(i, 0, (interval_count + 63) / 64) {
+        FOR_N(i, 0, (interval_count + 63) / 64) {
             uint64_t new_in = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
 
             changes |= (live_in->data[i] != new_in);
@@ -589,7 +589,7 @@ static DynArray(int) liveness(Ctx* restrict ctx, TB_Function* f) {
 
         // if we have changes, mark the predeccesors
         if (changes && !(bb->type == TB_PROJ && bb->inputs[0]->type == TB_START)) {
-            FOREACH_N(i, 0, bb->input_count) {
+            FOR_N(i, 0, bb->input_count) {
                 TB_Node* pred = get_pred_cfg(&ctx->cfg, bb, i);
                 if (pred->input_count > 0 && !set_get(&visited, pred->gvn)) {
                     set_put(&visited, pred->gvn);
@@ -601,7 +601,7 @@ static DynArray(int) liveness(Ctx* restrict ctx, TB_Function* f) {
     tb_arena_restore(arena, sp);
 
     /*if (reg_alloc_log) {
-        FOREACH_N(i, 0, ctx->bb_count) {
+        FOR_N(i, 0, ctx->bb_count) {
             TB_Node* n = bbs[bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(seq_bb, n);
 
@@ -697,7 +697,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
     // phase 2: define all the nodes in this BB
     CUIK_TIMED_BLOCK("phase 2") {
-        FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
+        FOR_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
             TB_Node* n = ctx->worklist.items[i];
 
             // track non-dead users
@@ -716,7 +716,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
     // not the new one we're producing.
     size_t our_phis = ctx->our_phis = dyn_array_length(phi_vals);
     CUIK_TIMED_BLOCK("phase 3") {
-        FOREACH_N(i, 0, our_phis) {
+        FOR_N(i, 0, our_phis) {
             PhiVal* v = &phi_vals[i];
 
             // mark the proper output, especially before we make the BB-local ones
@@ -759,7 +759,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
         Inst* head = ctx->head;
         Inst* last = NULL;
         TB_Node* prev_loc = NULL;
-        FOREACH_REVERSE_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
+        FOR_REV_N(i, ctx->cfg.block_count, dyn_array_length(ctx->worklist.items)) {
             TB_Node* n = ctx->worklist.items[i];
             if (n->type == TB_START) {
                 continue;
@@ -838,7 +838,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
         }
 
         // restore the PHI value to normal
-        FOREACH_N(i, our_phis, dyn_array_length(phi_vals)) {
+        FOR_N(i, our_phis, dyn_array_length(phi_vals)) {
             PhiVal* v = &phi_vals[i];
             lookup_val(ctx, v->phi)->vreg = v->dst;
         }
@@ -862,7 +862,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
             SUBMIT(alloc_inst(INST_TERMINATOR, TB_TYPE_VOID, 0, 0, 0));
 
             // writeback phis
-            FOREACH_N(i, 0, ctx->our_phis) {
+            FOR_N(i, 0, ctx->our_phis) {
                 PhiVal* v = &phi_vals[i];
 
                 TB_DataType dt = v->phi->dt;
@@ -957,7 +957,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
         // define all PHIs early and sort BB order
         int stop_bb = -1;
-        FOREACH_N(i, 0, ctx.cfg.block_count) {
+        FOR_N(i, 0, ctx.cfg.block_count) {
             TB_Node* bb = ctx.worklist.items[i];
 
             for (User* use = find_users(p, bb); use; use = use->next) {
@@ -983,7 +983,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         }
 
         TB_Node** bbs = ctx.worklist.items;
-        FOREACH_N(i, 0, ctx.bb_count) {
+        FOR_N(i, 0, ctx.bb_count) {
             TB_Node* bb = bbs[bb_order[i]];
 
             ctx.emit.labels[bb_order[i]] = 0;
@@ -1043,7 +1043,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         disassemble(&ctx.emit, &d, -1, 0, func_out->prologue_length);
 
         TB_Node** bbs = ctx.worklist.items;
-        FOREACH_N(i, 0, ctx.bb_count) {
+        FOR_N(i, 0, ctx.bb_count) {
             TB_Node* bb = bbs[bb_order[i]];
 
             uint32_t start = ctx.emit.labels[bb_order[i]] & ~0x80000000;

@@ -88,7 +88,7 @@ static void walk_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
         subsume_node2(ctx->f, n, k);
 
         // kill fully disconnected edges
-        FOREACH_N(i, 0, n->input_count) {
+        FOR_N(i, 0, n->input_count) {
             TB_Node* in = n->inputs[i];
             if (in) {
                 TB_User u = in->users;
@@ -108,7 +108,7 @@ static void walk_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     // if (k) { tb_pass_print(ctx->p); }
 
     // replace all input edges
-    FOREACH_N(i, 0, n->input_count) {
+    FOR_N(i, 0, n->input_count) {
         walk_node(ctx, f, n->inputs[i]);
     }
 }
@@ -198,7 +198,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         memset(ctx.node_to_bb.entries, 0, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
 
         // define all PHIs early and sort BB order
-        FOREACH_N(i, 0, cfg.block_count) {
+        FOR_N(i, 0, cfg.block_count) {
             TB_Node* end = nl_map_get_checked(cfg.node_to_block, bbs[i]).end;
             if (end->type == TB_RETURN) {
                 stop_bb = i;
@@ -222,14 +222,14 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         ctx.vreg_map = aarray_create(arena, int, tb_next_pow2(f->node_count + 16));
         aarray_set_length(ctx.vreg_map, f->node_count);
 
-        FOREACH_N(i, 0, f->node_count) { ctx.vreg_map[i] = 0; }
+        FOR_N(i, 0, f->node_count) { ctx.vreg_map[i] = 0; }
         ctx.vreg_map[0] = 0;
         ctx.vreg_map[f->root_node->inputs[0]->gvn] = 0;
 
         int max_ins = 0;
         size_t vreg_count = 1; // 0 is reserved as the NULL vreg
         assert(dyn_array_length(ws->items) == cfg.block_count);
-        FOREACH_N(i, 0, bb_count) {
+        FOR_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
             TB_Node* bb_start = bbs[bbid];
             TB_BasicBlock* bb = f->scheduled[bb_start->gvn];
@@ -249,7 +249,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             aarray_set_length(items, item_count);
 
             // copy out sched
-            FOREACH_N(i, 0, item_count) {
+            FOR_N(i, 0, item_count) {
                 TB_Node* n = ws->items[cfg.block_count + i];
                 items[i] = n;
 
@@ -306,7 +306,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("gather RA constraints") {
-        FOREACH_N(i, 0, bb_count) {
+        FOR_N(i, 0, bb_count) {
             MachineBB* mbb = &ctx.machine_bbs[i];
             TB_OPTDEBUG(CODEGEN)(printf("BB %zu\n", i));
 
@@ -327,13 +327,13 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                     printf("    OUT    = "), tb__print_regmask(def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
                 }
 
-                FOREACH_N(j, 1, n->input_count) {
+                FOR_N(j, 1, n->input_count) {
                     if (n->inputs[j] && ctx.ins[j] != &TB_REG_EMPTY) {
                         printf("    IN[%zu]  = ", j), tb__print_regmask(ctx.ins[j]), printf(" v%d\n", n->inputs[j]->gvn);
                     }
                 }
 
-                FOREACH_N(j, n->input_count, n->input_count + tmps) {
+                FOR_N(j, n->input_count, n->input_count + tmps) {
                     printf("    TMP[%zu] = ", j), tb__print_regmask(ctx.ins[j]), printf("\n");
                 }
 
@@ -365,7 +365,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         TB_CGEmitter* e = &ctx.emit;
         pre_emit(&ctx, e, f->root_node);
 
-        FOREACH_N(i, 0, bb_count) {
+        FOR_N(i, 0, bb_count) {
             MachineBB* mbb = &machine_bbs[i];
             int bbid = mbb->id;
 
@@ -396,7 +396,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                     printf("    OUT    = %s:R%d\n", reg_class_name(vreg->class), vreg->assigned);
                 }
 
-                FOREACH_N(j, 1, n->input_count) {
+                FOR_N(j, 1, n->input_count) {
                     TB_Node* in = n->inputs[j];
                     int in_id = in ? ctx.vreg_map[in->gvn] : 0;
                     if (in_id > 0) {
@@ -407,7 +407,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
                 Tmps* tmps = nl_table_get(&ctx.tmps_map, n);
                 if (tmps) {
-                    FOREACH_N(j, 0, tmps->count) {
+                    FOR_N(j, 0, tmps->count) {
                         VReg* vreg = &ctx.vregs[tmps->elems[j]];
                         printf("    TMP[%zu] = %s:R%d\n", j, reg_class_name(vreg->class), vreg->assigned);
                     }
@@ -465,7 +465,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             disassemble(&ctx.emit, &d, -1, 0, ctx.prologue_length);
         }
 
-        FOREACH_N(i, 0, bb_count) {
+        FOR_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
             TB_Node* bb = bbs[bbid];
 

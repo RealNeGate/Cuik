@@ -152,7 +152,7 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_ModuleSectionHan
         params = tb_arena_alloc(f->arena, sizeof(TB_Node*) * param_count);
 
         bool has_aggregate_return = dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
-        FOREACH_N(i, 0, param_count) {
+        FOR_N(i, 0, param_count) {
             TB_DebugType* type = param_list[i]->field.type;
             const char* name = param_list[i]->field.name;
             size_t name_len = param_list[i]->field.len;
@@ -221,7 +221,7 @@ TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* d
     p->param_count = has_aggregate_return + param_count;
 
     if (dbg->func.param_count > 0) {
-        FOREACH_N(i, 0, dbg->func.param_count) {
+        FOR_N(i, 0, dbg->func.param_count) {
             TB_DebugType* type = param_list[i]->field.type;
             RegClass rg = classify_reg(abi, type);
 

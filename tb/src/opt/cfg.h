@@ -116,13 +116,13 @@ TB_CFG tb_compute_rpo(TB_Function* f, TB_Worklist* ws) {
     // just reverse the items here... im too lazy to flip all my uses
     CUIK_TIMED_BLOCK("reversing") {
         size_t last = cfg.block_count - 1;
-        FOREACH_N(i, 0, cfg.block_count / 2) {
+        FOR_N(i, 0, cfg.block_count / 2) {
             SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
         }
     }
 
     CUIK_TIMED_BLOCK("dom depths") {
-        FOREACH_N(i, 0, cfg.block_count) {
+        FOR_N(i, 0, cfg.block_count) {
             TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
             if (i == 0) {
                 bb->dom_depth = 0;
@@ -174,7 +174,7 @@ void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
         changed = false;
 
         // for all nodes, b, in reverse postorder (except start node)
-        FOREACH_N(i, 1, cfg.block_count) {
+        FOR_N(i, 1, cfg.block_count) {
             TB_Node* b = blocks[i];
             TB_Node* new_idom = NULL;
 
@@ -232,7 +232,7 @@ void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
 
     // generate depth values
     CUIK_TIMED_BLOCK("generate dom tree") {
-        FOREACH_REVERSE_N(i, 1, cfg.block_count) {
+        FOR_REV_N(i, 1, cfg.block_count) {
             resolve_dom_depth(&cfg, blocks[i]);
         }
     }

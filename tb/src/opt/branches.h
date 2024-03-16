@@ -61,7 +61,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                         n->input_count = new_count;
                         n->input_cap = new_count;
 
-                        FOREACH_N(j, 0, pred->input_count - 1) {
+                        FOR_N(j, 0, pred->input_count - 1) {
                             new_inputs[old_count + j] = pred->inputs[j + 1];
                             add_user(f, n, pred->inputs[j + 1], old_count + j, NULL);
                         }
@@ -84,7 +84,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                             phi->input_count = new_phi_ins;
                             phi->input_cap = new_phi_ins;
 
-                            FOREACH_N(j, 0, pred->input_count - 1) {
+                            FOR_N(j, 0, pred->input_count - 1) {
                                 new_inputs[phi_ins + j] = phi_val;
                                 add_user(f, phi, phi_val, phi_ins + j, NULL);
                             }
@@ -216,7 +216,7 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
             }
 
             // verify we have a really clean looking diamond shape
-            FOREACH_N(i, 0, n->input_count - 1) {
+            FOR_N(i, 0, n->input_count - 1) {
                 if (region->inputs[i]->type != TB_PROJ || region->inputs[i]->inputs[0] != parent) return NULL;
                 if (n->inputs[1 + i]->type != TB_INTEGER_CONST) return NULL;
             }
@@ -227,7 +227,7 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
 
             TB_NodeLookup* l = TB_NODE_GET_EXTRA(lookup);
             l->entry_count = br->succ_count;
-            FOREACH_N(i, 0, n->input_count - 1) {
+            FOR_N(i, 0, n->input_count - 1) {
                 TB_Node* k = region->inputs[i];
                 int index = TB_NODE_GET_EXTRA_T(k, TB_NodeProj)->index;
                 assert(index < br->succ_count);
@@ -396,7 +396,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     Lattice* l = tb_arena_alloc(f->arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = c->proj_count };
 
-    FOREACH_N(i, 1, c->proj_count) {
+    FOR_N(i, 1, c->proj_count) {
         l->elems[i] = &BOT_IN_THE_SKY;
     }
 
@@ -439,7 +439,7 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
         int64_t key_const = key->_int.max;
         taken = 0;
 
-        FOREACH_N(i, 0, br->succ_count - 1) {
+        FOR_N(i, 0, br->succ_count - 1) {
             int64_t case_key = br->keys[i].key;
             if (key_const == case_key) {
                 taken = i + 1;
@@ -480,7 +480,7 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
     size_t size = sizeof(Lattice) + br->succ_count*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(f->arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = br->succ_count };
-    FOREACH_N(i, 0, br->succ_count) {
+    FOR_N(i, 0, br->succ_count) {
         l->elems[i] = taken < 0 || i == taken ? &CTRL_IN_THE_SKY : &XCTRL_IN_THE_SKY;
     }
 
@@ -513,7 +513,7 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
             if (USERN(u)->type == TB_PHI) { return n; }
         }
 
-        FOREACH_N(i, 1, n->input_count) {
+        FOR_N(i, 1, n->input_count) {
             if (n->inputs[i]->type != TB_PROJ || n->inputs[i]->inputs[0] != same) {
                 return n;
             }
@@ -529,7 +529,7 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
 
 static TB_Node* identity_phi(TB_Function* f, TB_Node* n) {
     TB_Node* same = NULL;
-    FOREACH_N(i, 1, n->input_count) {
+    FOR_N(i, 1, n->input_count) {
         if (n->inputs[i] == n) continue;
         if (same && same != n->inputs[i]) return n;
         same = n->inputs[i];

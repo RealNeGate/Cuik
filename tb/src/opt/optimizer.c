@@ -39,7 +39,7 @@ void worklist_alloc(TB_Worklist* restrict ws, size_t initial_cap) {
     ws->visited_cap = (initial_cap + 63) / 64;
     ws->visited = tb_platform_heap_alloc(ws->visited_cap * sizeof(uint64_t));
     ws->items = dyn_array_create(uint64_t, ws->visited_cap * 64);
-    FOREACH_N(i, 0, ws->visited_cap) {
+    FOR_N(i, 0, ws->visited_cap) {
         ws->visited[i] = 0;
     }
 }
@@ -88,7 +88,7 @@ bool worklist_test_n_set(TB_Worklist* restrict ws, TB_Node* n) {
         ws->visited = tb_platform_heap_realloc(ws->visited, new_cap * sizeof(uint64_t));
 
         // clear new space
-        FOREACH_N(i, ws->visited_cap, new_cap) {
+        FOR_N(i, ws->visited_cap, new_cap) {
             ws->visited[i] = 0;
         }
 
@@ -261,7 +261,7 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
     nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
 
     // remove users
-    FOREACH_REVERSE_N(i, 0, n->input_count) {
+    FOR_REV_N(i, 0, n->input_count) {
         User* u = remove_user(n, i);
         if (u) { tb_arena_free(f->arena, u, sizeof(User)); }
 
@@ -331,7 +331,7 @@ static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
     assert(dt.type == TB_INT);
 
     LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
-    FOREACH_N(i, 1, n->input_count) {
+    FOR_N(i, 1, n->input_count) {
         TB_LookupEntry* e = &l->entries[i];
         a.min = TB_MIN(a.min, l->entries[i].val);
         a.max = TB_MAX(a.max, l->entries[i].val);
@@ -344,7 +344,7 @@ static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
 
 static Lattice* value_region(TB_Function* f, TB_Node* n) {
     assert(cfg_is_region(n));
-    FOREACH_N(i, 0, n->input_count) {
+    FOR_N(i, 0, n->input_count) {
         Lattice* edge = latuni_get(f, n->inputs[i]);
         if (edge == &CTRL_IN_THE_SKY) { return &CTRL_IN_THE_SKY; }
     }
@@ -361,7 +361,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     if (old->_int.widen >= INT_WIDEN_LIMIT) return NULL;
 
     Lattice* l = &TOP_IN_THE_SKY;
-    FOREACH_N(i, 1, n->input_count) {
+    FOR_N(i, 1, n->input_count) {
         Lattice* ctrl = latuni_get(f, r->inputs[i - 1]);
         if (ctrl == &CTRL_IN_THE_SKY) {
             Lattice* edge = latuni_get(f, n->inputs[i]);
@@ -397,7 +397,7 @@ TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra) {
     TB_Node* k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k && k != n) {
         // remove users
-        FOREACH_REVERSE_N(i, 0, n->input_count) {
+        FOR_REV_N(i, 0, n->input_count) {
             User* u = remove_user(n, i);
             if (u) { tb_arena_free(f->arena, u, sizeof(User)); }
 
@@ -468,7 +468,7 @@ void tb_kill_node(TB_Function* f, TB_Node* n) {
     // remove from GVN if we're murdering it
     nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
 
-    FOREACH_N(i, 0, n->input_count) {
+    FOR_N(i, 0, n->input_count) {
         remove_user(n, i);
         n->inputs[i] = NULL;
     }
@@ -534,7 +534,7 @@ static void disconnect(TB_Function* f, TB_Node* n) {
 }
 
 static void push_for_death(TB_Function* f, TB_Node* n) {
-    FOREACH_N(i, 0, n->input_count) {
+    FOR_N(i, 0, n->input_count) {
         TB_Node* in = n->inputs[i];
 
         // we can guarentee it's got a user... that's us lmao
@@ -583,7 +583,7 @@ void print_node_sexpr(TB_Node* n, int depth) {
 
         printf("(v%u: %s", n->gvn, tb_node_get_name(n));
         cool_print_type(n);
-        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+        FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
             if (i == 0) printf(" @");
             else printf(" ");
 
@@ -769,7 +769,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
 
             // check if tuple is constant path
             int trues = 0;
-            FOREACH_N(i, 0, l->_elem_count) {
+            FOR_N(i, 0, l->_elem_count) {
                 if (l->elems[i] == &CTRL_IN_THE_SKY) {
                     trues++;
                 }
@@ -787,7 +787,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l, bool optimi
                 }
 
                 for (NL_ArrChunk* restrict chk = projs.first; chk; chk = chk->next) {
-                    FOREACH_N(i, 0, chk->count) {
+                    FOR_N(i, 0, chk->count) {
                         TB_Node* proj = chk->elems[i];
                         int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
                         TB_Node* in = l->elems[index] == &CTRL_IN_THE_SKY ? ctrl : dead;
@@ -834,7 +834,7 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_MEM_SLICE: {
             printf("[mem:");
             bool comma = false;
-            FOREACH_N(i, 0, l->_alias_n) {
+            FOR_N(i, 0, l->_alias_n) {
                 uint64_t bits = l->alias[i], j = 0;
                 while (bits) {
                     if (bits & 1) {
@@ -850,7 +850,7 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
 
         case LATTICE_TUPLE: {
             printf("[");
-            FOREACH_N(i, 0, l->_elem_count) {
+            FOR_N(i, 0, l->_elem_count) {
                 if (i) printf(", ");
                 print_lattice(l->elems[i], TB_TYPE_I64);
             }
@@ -1117,7 +1117,7 @@ static Value eval(Interp* vm, TB_Node* n) {
             uint64_t key = in_val(vm, n, 1)->i;
             int index = 0;
 
-            FOREACH_N(i, 0, br->succ_count - 1) {
+            FOR_N(i, 0, br->succ_count - 1) {
                 if (key == br->keys[i].key) {
                     index = i + 1;
                     break;
@@ -1155,7 +1155,7 @@ static Value eval(Interp* vm, TB_Node* n) {
 }
 
 static bool is_ready(Interp* vm, TB_Node* n) {
-    FOREACH_N(i, 1, n->input_count) {
+    FOR_N(i, 1, n->input_count) {
         if (!vm->ready[n->inputs[i]->gvn]) {
             return false;
         }
@@ -1199,7 +1199,7 @@ void dummy_interp(TB_Function* f) {
         }
 
         if (!cfg_is_region(ip)) {
-            FOREACH_N(i, 1, ip->input_count) {
+            FOR_N(i, 1, ip->input_count) {
                 worklist_push(vm.ws, ip->inputs[i]);
             }
         }
@@ -1289,7 +1289,7 @@ void tb_opt_cprop(TB_Function* f) {
 
     alloc_types(f);
     //   reset all types into TOP
-    FOREACH_N(i, 0, f->type_cap) {
+    FOR_N(i, 0, f->type_cap) {
         f->types[i] = &TOP_IN_THE_SKY;
     }
     // except for ROOT
@@ -1372,7 +1372,7 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
         // more work to perform)
         CUIK_TIMED_BLOCK("reversing") {
             size_t last = dyn_array_length(ws->items) - 1;
-            FOREACH_N(i, 0, dyn_array_length(ws->items) / 2) {
+            FOR_N(i, 0, dyn_array_length(ws->items) / 2) {
                 SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
             }
         }
@@ -1425,7 +1425,7 @@ static bool alloc_types(TB_Function* f) {
         f->type_cap = count;
         f->types = tb_platform_heap_alloc(count * sizeof(Lattice*));
         // when latuni_get sees a NULL, it'll replace it with the correct bottom type
-        FOREACH_N(i, 0, count) { f->types[i] = NULL; }
+        FOR_N(i, 0, count) { f->types[i] = NULL; }
 
         nl_hashset_put2(&f->type_interner, &BOT_IN_THE_SKY,      lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &TOP_IN_THE_SKY,      lattice_hash, lattice_cmp);
@@ -1462,7 +1462,7 @@ TB_API void tb_opt_free_types(TB_Function* f) {
 // combined pessimistic solver
 void tb_opt_peeps(TB_Function* f) {
     if (alloc_types(f)) {
-        FOREACH_N(i, 0, dyn_array_length(f->worklist->items)) {
+        FOR_N(i, 0, dyn_array_length(f->worklist->items)) {
             TB_Node* n = f->worklist->items[i];
             f->types[n->gvn] = lattice_from_dt(f, n->dt);
         }
@@ -1527,7 +1527,7 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f) {
     // consider the successors
     TB_Node* callgraph = f->root_node->inputs[0];
     assert(callgraph->type == TB_CALLGRAPH);
-    FOREACH_N(i, 1, callgraph->input_count) {
+    FOR_N(i, 1, callgraph->input_count) {
         TB_Node* call = callgraph->inputs[i];
         TB_Function* target = static_call_site(call);
         if (target != NULL) {
@@ -1582,7 +1582,7 @@ bool tb_module_ipo(TB_Module* m) {
             TB_Symbol** syms = (TB_Symbol**) info->symbols.data;
             if (syms == NULL) continue;
 
-            FOREACH_N(i, 0, 1ull << info->symbols.exp) {
+            FOR_N(i, 0, 1ull << info->symbols.exp) {
                 TB_Symbol* s = syms[i];
                 if (s == NULL || s == NL_HASHSET_TOMB) continue;
                 if (atomic_load_explicit(&s->tag, memory_order_relaxed) != TB_SYMBOL_FUNCTION) continue;
@@ -1601,7 +1601,7 @@ bool tb_module_ipo(TB_Module* m) {
     bool progress = false;
 
     TB_OPTDEBUG(INLINE)(printf("BOTTOM-UP ORDER:\n"));
-    FOREACH_N(i, 0, ipo.ws_cnt) {
+    FOR_N(i, 0, ipo.ws_cnt) {
         TB_Function* f = ipo.ws[i];
 
         TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s\n", f->super.name));
@@ -1652,7 +1652,7 @@ static TB_Node* inline_clone_node(TB_Function* f, TB_Node* call_site, TB_Node** 
     clones[n->gvn] = cloned;
 
     // fill cloned edges
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+    FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
         TB_Node* in = inline_clone_node(f, call_site, clones, n->inputs[i]);
 
         cloned->inputs[i] = in;
@@ -1692,7 +1692,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
     }
 
     // clone all nodes in kid into f (GVN while we're at it)
-    FOREACH_REVERSE_N(i, 0, dyn_array_length(ws.items)) {
+    FOR_REV_N(i, 0, dyn_array_length(ws.items)) {
         inline_clone_node(f, call_site, clones, ws.items[i]);
     }
     worklist_free(&ws);
@@ -1731,7 +1731,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
     TB_Node* callgraph = f->root_node->inputs[0];
     assert(callgraph->type == TB_CALLGRAPH);
 
-    FOREACH_N(i, 1, callgraph->input_count) {
+    FOR_N(i, 1, callgraph->input_count) {
         if (callgraph->inputs[i] == call_site) {
             set_input(f, callgraph, callgraph->inputs[callgraph->input_count - 1], i);
             set_input(f, callgraph, NULL, callgraph->input_count - 1);
@@ -1742,7 +1742,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
 
     // append all callee callgraph edges to caller
     TB_Node* kid_callgraph = clones[kid->root_node->inputs[0]->gvn];
-    FOREACH_N(i, 1, kid_callgraph->input_count) {
+    FOR_N(i, 1, kid_callgraph->input_count) {
         add_input_late(f, callgraph, kid_callgraph->inputs[i]);
     }
     tb_kill_node(f, kid_callgraph);

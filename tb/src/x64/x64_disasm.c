@@ -17,7 +17,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     size_t current = 0;
     uint8_t rex = 0;
 
-    inst->dt = TB_X86_TYPE_DWORD;
+    inst->dt = TB_X86_DWORD;
 
     // legacy prefixes
     uint8_t b;
@@ -28,8 +28,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
             case 0xF0: flags |= TB_X86_INSTR_LOCK;        break;
             case 0xF3: flags |= TB_X86_INSTR_REP;         break;
             case 0xF2: flags |= TB_X86_INSTR_REPNE;       break;
-            case 0x66: inst->dt = TB_X86_TYPE_WORD;       break;
-            case 0x67: inst->dt = TB_X86_TYPE_DWORD;      break;
+            case 0x66: inst->dt = TB_X86_WORD;            break;
+            case 0x67: inst->dt = TB_X86_DWORD;           break;
             case 0x2E: inst->segment = TB_X86_SEGMENT_CS; break;
             case 0x36: inst->segment = TB_X86_SEGMENT_SS; break;
             case 0x3E: inst->segment = TB_X86_SEGMENT_DS; break;
@@ -217,27 +217,19 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     // in the "default" "type" "system", REX.W is 64bit, certain ops
     // will mark they're 8bit and most will just be 32bit (with 16bit on ADDR16)
     if (props & OP_SSE) {
-        // ss     REP    OPCODE
-        // sd     REPNE  OPCODE
-        // ps     __     OPCODE
-        // pd     DATA16 OPCODE
-        if (flags & TB_X86_INSTR_REPNE) {
-            inst->dt = TB_X86_TYPE_SSE_SD;
-        } else if (flags & TB_X86_INSTR_REP) {
-            inst->dt = TB_X86_TYPE_SSE_SS;
-        } else if (inst->dt == TB_X86_TYPE_WORD) {
-            inst->dt = TB_X86_TYPE_SSE_PD;
-        } else {
-            inst->dt = TB_X86_TYPE_SSE_PS;
-        }
+        if (0) {}
+        else if (flags & TB_X86_INSTR_REPNE) { inst->dt = TB_X86_F64x1; } // sd     REPNE  OPCODE
+        else if (flags & TB_X86_INSTR_REP)   { inst->dt = TB_X86_F32x1; } // ss     REP    OPCODE
+        else if (inst->dt == TB_X86_WORD)    { inst->dt = TB_X86_F64x2; } // pd     DATA16 OPCODE
+        else                                 { inst->dt = TB_X86_F32x4; } // ps     __     OPCODE
 
         flags &= ~(TB_X86_INSTR_REP | TB_X86_INSTR_REPNE);
     } else if (props & OP_64BIT) {
-        inst->dt = TB_X86_TYPE_QWORD;
+        inst->dt = TB_X86_QWORD;
     } else if (props & OP_8BIT) {
-        inst->dt = TB_X86_TYPE_BYTE;
+        inst->dt = TB_X86_BYTE;
     } else {
-        if (rex & 8) inst->dt = TB_X86_TYPE_QWORD;
+        if (rex & 8) inst->dt = TB_X86_QWORD;
     }
 
     if (props & OP_MODRM) {
@@ -320,8 +312,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         inst->imm = (int8_t) data[current++];
         flags |= TB_X86_INSTR_IMMEDIATE;
     } else if (props & OP_IMM) {
-        assert(inst->dt >= TB_X86_TYPE_BYTE && inst->dt <= TB_X86_TYPE_QWORD);
-        int size = 1 << (inst->dt - TB_X86_TYPE_BYTE);
+        assert(inst->dt >= TB_X86_BYTE && inst->dt <= TB_X86_QWORD);
+        int size = 1 << (inst->dt - TB_X86_BYTE);
         if (size > 4 && (op < 0xB8 || op > 0xBF)) {
             // only operation with 8byte immediates is movabs (0xB8 ... 0xBF)
             size = 4;
@@ -730,15 +722,15 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
 const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
     if (inst->opcode == 0x99) {
         // cwd/cdq/cqo
-        if (inst->dt == TB_X86_TYPE_WORD)  return "cwd";
-        if (inst->dt == TB_X86_TYPE_DWORD) return "cdq";
-        if (inst->dt == TB_X86_TYPE_QWORD) return "cqo";
+        if (inst->dt == TB_X86_WORD)  return "cwd";
+        if (inst->dt == TB_X86_DWORD) return "cdq";
+        if (inst->dt == TB_X86_QWORD) return "cqo";
         return "??";
     } else if (inst->opcode == 0x98) {
         // cbw/cwde/cdqe
-        if (inst->dt == TB_X86_TYPE_WORD)  return "cbw";
-        if (inst->dt == TB_X86_TYPE_DWORD) return "cwde";
-        if (inst->dt == TB_X86_TYPE_QWORD) return "cdqe";
+        if (inst->dt == TB_X86_WORD)  return "cbw";
+        if (inst->dt == TB_X86_DWORD) return "cwde";
+        if (inst->dt == TB_X86_QWORD) return "cdqe";
         return "??";
     }
 
@@ -890,9 +882,9 @@ const char* tb_x86_reg_name(int8_t reg, TB_X86_DataType dt) {
         "ah", "ch", "dh", "bh"
     };
 
-    if (dt >= TB_X86_TYPE_BYTE && dt <= TB_X86_TYPE_QWORD) {
-        return X86__GPR_NAMES[dt - TB_X86_TYPE_BYTE][reg];
-    } else if (dt >= TB_X86_TYPE_SSE_SS && dt <= TB_X86_TYPE_SSE_PD) {
+    if (dt >= TB_X86_BYTE && dt <= TB_X86_QWORD) {
+        return X86__GPR_NAMES[dt - TB_X86_BYTE][reg];
+    } else if (dt >= TB_X86_F32x1 && dt <= TB_X86_F64x2) {
         static const char* X86__XMM_NAMES[] = {
             "xmm0", "xmm1", "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
             "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
@@ -906,14 +898,14 @@ const char* tb_x86_reg_name(int8_t reg, TB_X86_DataType dt) {
 
 const char* tb_x86_type_name(TB_X86_DataType dt) {
     switch (dt) {
-        case TB_X86_TYPE_BYTE:  return "byte";
-        case TB_X86_TYPE_WORD:  return "word";
-        case TB_X86_TYPE_DWORD: return "dword";
-        case TB_X86_TYPE_QWORD: return "qword";
-        case TB_X86_TYPE_SSE_SS:return "dword";
-        case TB_X86_TYPE_SSE_SD:return "qword";
-        case TB_X86_TYPE_SSE_PS:return "xmmword";
-        case TB_X86_TYPE_SSE_PD:return "xmmword";
+        case TB_X86_BYTE:  return "byte";
+        case TB_X86_WORD:  return "word";
+        case TB_X86_DWORD: return "dword";
+        case TB_X86_QWORD: return "qword";
+        case TB_X86_F32x1: return "dword";
+        case TB_X86_F64x1: return "qword";
+        case TB_X86_F32x4: return "xmmword";
+        case TB_X86_F64x2: return "xmmword";
 
         default: return "??";
     }
@@ -941,11 +933,11 @@ static void print_memory_operand(FILE* fp, TB_X86_Inst* restrict inst) {
         } else {
             fprintf(fp, "%s [", tb_x86_type_name(inst->dt));
             if (base != 0xFF) {
-                fprintf(fp, "%s", tb_x86_reg_name(base, TB_X86_TYPE_QWORD));
+                fprintf(fp, "%s", tb_x86_reg_name(base, TB_X86_QWORD));
             }
 
             if (index != 0xFF) {
-                fprintf(fp, " + %s*%d", tb_x86_reg_name(index, TB_X86_TYPE_QWORD), 1 << inst->scale);
+                fprintf(fp, " + %s*%d", tb_x86_reg_name(index, TB_X86_QWORD), 1 << inst->scale);
             }
         }
 
@@ -964,10 +956,10 @@ void tb_x86_print_inst(FILE* fp, TB_X86_Inst* inst) {
     if (fp == NULL) { fp = stdout; }
 
     const char* mnemonic = tb_x86_mnemonic(inst);
-    if (inst->dt >= TB_X86_TYPE_SSE_SS && inst->dt <= TB_X86_TYPE_SSE_PD) {
+    if (inst->dt >= TB_X86_F32x1 && inst->dt <= TB_X86_F64x2) {
         static const char* strs[] = { "ss", "sd", "ps", "pd" };
         fprintf(fp, "%s", mnemonic);
-        fprintf(fp, "%-6s", strs[inst->dt - TB_X86_TYPE_SSE_SS]);
+        fprintf(fp, "%-6s", strs[inst->dt - TB_X86_F32x1]);
     } else {
         fprintf(fp, "%-8s", mnemonic);
     }

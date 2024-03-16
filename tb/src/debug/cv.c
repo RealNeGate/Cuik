@@ -127,7 +127,7 @@ static uint16_t convert_to_codeview_type(TB_Arena* tmp_arena, CV_Builder* builde
 
             TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
             CV_Field* list = tb_arena_alloc(tmp_arena, type->record.count * sizeof(CV_Field));
-            FOREACH_N(i, 0, type->record.count) {
+            FOR_N(i, 0, type->record.count) {
                 const TB_DebugType* f = type->record.members[i];
                 assert(f->tag == TB_DEBUG_TYPE_FIELD);
 
@@ -432,7 +432,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
 
                         // Create argument list
                         CV_TypeIndex* params = tb_arena_alloc(arena, proto->param_count * sizeof(CV_TypeIndex));
-                        FOREACH_N(i, 0, proto->param_count) {
+                        FOR_N(i, 0, proto->param_count) {
                             TB_DebugType* t = proto->params[i].debug_type;
                             params[i] = t ? convert_to_codeview_type(arena, &builder, t) : T_VOID;
                         }

@@ -149,17 +149,17 @@ uint32_t gvn_hash(void* a) {
             h += (uintptr_t) n->gvn;
         }
 
-        FOREACH_N(i, 0, n->input_count) {
+        FOR_N(i, 0, n->input_count) {
             h += n->inputs[i] ? n->inputs[i]->gvn : 0;
         }
 
         // fnv1a the extra space
         uint32_t* extra_arr = (uint32_t*) n->extra;
-        FOREACH_N(i, 0, extra / 4) {
+        FOR_N(i, 0, extra / 4) {
             h += extra_arr[i];
         }
 
-        FOREACH_N(i, extra & ~0x7, extra) {
+        FOR_N(i, extra & ~0x7, extra) {
             h += n->extra[i];
         }
 
@@ -184,7 +184,7 @@ bool gvn_compare(void* a, void* b) {
     }
 
     // match up inputs
-    FOREACH_N(i, 0, x->input_count) {
+    FOR_N(i, 0, x->input_count) {
         if (x->inputs[i] != y->inputs[i]) {
             return false;
         }

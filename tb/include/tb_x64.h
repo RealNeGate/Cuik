@@ -38,24 +38,24 @@ typedef enum {
 } TB_X86_Segment;
 
 typedef enum {
-    TB_X86_TYPE_NONE = 0,
+    TB_X86_NONE = 0,
 
-    TB_X86_TYPE_BYTE,    // 1
-    TB_X86_TYPE_WORD,    // 2
-    TB_X86_TYPE_DWORD,   // 4
-    TB_X86_TYPE_QWORD,   // 8
+    TB_X86_BYTE,    // 1
+    TB_X86_WORD,    // 2
+    TB_X86_DWORD,   // 4
+    TB_X86_QWORD,   // 8
 
-    TB_X86_TYPE_PBYTE,   // int8 x 16 = 16
-    TB_X86_TYPE_PWORD,   // int16 x 8 = 16
-    TB_X86_TYPE_PDWORD,  // int32 x 4 = 16
-    TB_X86_TYPE_PQWORD,  // int64 x 2 = 16
+    TB_X86_PBYTE,   // int8 x 16 = 16
+    TB_X86_PWORD,   // int16 x 8 = 16
+    TB_X86_PDWORD,  // int32 x 4 = 16
+    TB_X86_PQWORD,  // int64 x 2 = 16
 
-    TB_X86_TYPE_SSE_SS,  // float32 x 1 = 4
-    TB_X86_TYPE_SSE_SD,  // float64 x 1 = 8
-    TB_X86_TYPE_SSE_PS,  // float32 x 4 = 16
-    TB_X86_TYPE_SSE_PD,  // float64 x 2 = 16
+    TB_X86_F32x1,   // ss
+    TB_X86_F64x1,   // sd
+    TB_X86_F32x4,   // ps
+    TB_X86_F64x2,   // pd
 
-    TB_X86_TYPE_XMMWORD, // the generic idea of them
+    TB_X86_XMMWORD, // the generic idea of them
 } TB_X86_DataType;
 
 typedef struct {

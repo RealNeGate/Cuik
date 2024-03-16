@@ -15,7 +15,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
             }
 
             printf("{ ");
-            FOREACH_N(i, 0, 32) {
+            FOR_N(i, 0, 32) {
                 if (projs[i] == NULL) break;
                 if (i) printf(", ");
                 printf("%%%u:", projs[i]->gvn);
@@ -58,7 +58,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         printf("%f ", f->value);
     }
     printf("( ");
-    FOREACH_N(i, 0, n->input_count) {
+    FOR_N(i, 0, n->input_count) {
         TB_Node* in = n->inputs[i];
         if (in) {
             if (in->type == TB_PROJ) {
@@ -82,7 +82,7 @@ static void dumb_walk(TB_Function* f, Lattice** types, TB_Node* n, uint64_t* vis
     }
     visited[n->gvn / 64] |= (1ull << (n->gvn % 64));
 
-    FOREACH_REVERSE_N(i, 0, n->input_count) if (n->inputs[i]) {
+    FOR_REV_N(i, 0, n->input_count) if (n->inputs[i]) {
         TB_Node* in = n->inputs[i];
         if (in->type == TB_PROJ) { in = in->inputs[0]; }
         dumb_walk(f, types, in, visited);
@@ -106,7 +106,7 @@ void tb_print_dumb(TB_Function* f, bool use_fancy_types) {
 
     visited[root->gvn / 64] |= (1ull << (root->gvn % 64));
 
-    FOREACH_N(i, 0, root->input_count) {
+    FOR_N(i, 0, root->input_count) {
         dumb_walk(f, types, root->inputs[i], visited);
     }
 

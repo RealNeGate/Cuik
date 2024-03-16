@@ -166,7 +166,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
             }
         }
 
-        FOREACH_N(i, 0, exports.count) {
+        FOR_N(i, 0, exports.count) {
             exports.data[i]->super.symbol_id = unique_id_counter++;
         }
     }
@@ -227,7 +227,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
         debug_sections = dbg->generate_debug_info(m, arena);
     }
 
-    FOREACH_N(i, 0, debug_sections.length) {
+    FOR_N(i, 0, debug_sections.length) {
         debug_sections.data[i].virtual_address = output_size;
         output_size += debug_sections.data[i].raw_data.length;
     }
@@ -235,7 +235,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
     // calculate relocation layout
     output_size = tb__layout_relocations(m, sections, code_gen, output_size, sizeof(COFF_ImageReloc));
 
-    FOREACH_N(i, 0, debug_sections.length) {
+    FOR_N(i, 0, debug_sections.length) {
         size_t reloc_count = debug_sections.data[i].relocation_count;
 
         // we're storing the relocation array's file pos here
@@ -266,7 +266,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
         }
     }
 
-    FOREACH_N(i, 0, exports.count) {
+    FOR_N(i, 0, exports.count) {
         size_t name_len = strlen(exports.data[i]->super.name);
         if (name_len >= 8) strtbl.size += name_len + 1;
     }
@@ -309,7 +309,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
                 *sec_headers++ = header;
             }
 
-            FOREACH_N(i, 0, debug_sections.length) {
+            FOR_N(i, 0, debug_sections.length) {
                 COFF_SectionHeader header = {
                     .characteristics = COFF_CHARACTERISTICS_DEBUG,
                     .raw_data_size = debug_sections.data[i].raw_data.length,
@@ -364,7 +364,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
             }
         }
 
-        FOREACH_N(i, 0, debug_sections.length) {
+        FOR_N(i, 0, debug_sections.length) {
             TB_ExportChunk* sec = tb_export_make_chunk(dst_arena, debug_sections.data[i].raw_data.length);
             memcpy(sec->data, debug_sections.data[i].raw_data.data, debug_sections.data[i].raw_data.length);
             tb_export_append_chunk(&buffer, sec);
@@ -420,7 +420,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
             dyn_array_for(j, globals) {
                 TB_Global* g = globals[j];
 
-                FOREACH_N(k, 0, g->obj_count) {
+                FOR_N(k, 0, g->obj_count) {
                     size_t actual_pos = g->pos + g->objects[k].offset;
 
                     if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
@@ -441,11 +441,11 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
             assert(relocations->pos == sections[i].reloc_pos);
         }
 
-        FOREACH_N(i, 0, debug_sections.length) {
+        FOR_N(i, 0, debug_sections.length) {
             TB_ExportChunk* relocations = tb_export_make_chunk(dst_arena, debug_sections.data[i].relocation_count * sizeof(COFF_ImageReloc));
             COFF_ImageReloc* relocs = (COFF_ImageReloc*) relocations->data;
 
-            FOREACH_N(j, 0, debug_sections.data[i].relocation_count) {
+            FOR_N(j, 0, debug_sections.data[i].relocation_count) {
                 TB_ObjectReloc* in_reloc = &debug_sections.data[i].relocations[j];
 
                 int type = 0;
@@ -496,7 +496,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
                 symbol_count++;
             }
 
-            FOREACH_N(i, 0, debug_sections.length) {
+            FOR_N(i, 0, debug_sections.length) {
                 COFF_Symbol s = {
                     .section_number = symbol_count,
                     .storage_class = IMAGE_SYM_CLASS_STATIC,
@@ -617,7 +617,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
                 }
             }
 
-            FOREACH_N(i, 0, exports.count) {
+            FOR_N(i, 0, exports.count) {
                 TB_External* ext = exports.data[i];
                 COFF_Symbol sym = {
                     .value = 0,
@@ -653,7 +653,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
             memcpy(chunk->data, &string_table_mark, sizeof(uint32_t));
 
             size_t j = 4;
-            FOREACH_N(i, 0, string_table_length) {
+            FOR_N(i, 0, string_table_length) {
                 const char* s = string_table[i];
                 size_t l = strlen(s) + 1;
 

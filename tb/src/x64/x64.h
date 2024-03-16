@@ -131,67 +131,55 @@ static const InstDesc inst_table[] = {
 #define SYSCALL_ABI_CALLER_SAVED ((1u << RDI) | (1u << RSI) | (1u << RDX) | (1u << R10) | (1u << R8) | (1u << R9) | (1u << RAX) | (1u << R11))
 #define SYSCALL_ABI_CALLEE_SAVED ~SYSCALL_ABI_CALLER_SAVED
 
-inline static Val val_gpr(GPR g) {
+static Val val_gpr(GPR g) {
     return (Val) { .type = VAL_GPR, .reg = g };
 }
 
-inline static Val val_xmm(XMM x) {
+static Val val_xmm(XMM x) {
     return (Val) { .type = VAL_XMM, .reg = x };
 }
 
-inline static Val val_flags(Cond c) {
+static Val val_flags(Cond c) {
     return (Val) { .type = VAL_FLAGS, .reg = c };
 }
 
-inline static Val val_global(TB_Symbol* s, int disp) {
+static Val val_global(TB_Symbol* s, int disp) {
     return (Val) { .type = VAL_GLOBAL, .symbol = s, .imm = disp };
 }
 
-inline static Val val_imm(int32_t imm) {
-    return (Val) { .type = VAL_IMM, .imm = imm };
-}
-
-inline static Val val_abs(uint64_t abs) {
-    return (Val) { .type = VAL_ABS, .abs = abs };
-}
-
-inline static Val val_label(int target) {
-    return (Val) { .type = VAL_LABEL, .label = target };
-}
-
-inline static Val val_stack(int s) {
+static Val val_stack(int s) {
     return (Val) { .type = VAL_MEM, .reg = RSP, .index = GPR_NONE, .scale = SCALE_X1, .imm = s };
 }
 
-inline static Val val_base_disp(GPR b, int d) {
+static Val val_base_disp(GPR b, int d) {
     return (Val) {
         .type = VAL_MEM, .reg = b, .index = GPR_NONE, .scale = SCALE_X1, .imm = d
     };
 }
 
-inline static Val val_base_index_disp(GPR b, GPR i, Scale s, int d) {
+static Val val_base_index_disp(GPR b, GPR i, Scale s, int d) {
     return (Val) {
         .type = VAL_MEM, .reg = b, .index = i, .scale = s, .imm = d
     };
 }
 
-inline static bool is_value_mem(const Val* v) {
+static bool is_value_mem(const Val* v) {
     return v->type == VAL_MEM || v->type == VAL_GLOBAL;
 }
 
-inline static bool is_value_gpr(const Val* v, GPR g) {
+static bool is_value_gpr(const Val* v, GPR g) {
     if (v->type != VAL_GPR) return false;
 
     return (v->reg == g);
 }
 
-inline static bool is_value_xmm(const Val* v, XMM x) {
+static bool is_value_xmm(const Val* v, XMM x) {
     if (v->type != VAL_XMM) return false;
 
     return (v->reg == x);
 }
 
-inline static bool is_value_match(const Val* a, const Val* b) {
+static bool is_value_match(const Val* a, const Val* b) {
     if (a->type != b->type) return false;
 
     if (a->type == VAL_MEM) {
@@ -215,14 +203,23 @@ static const char* COND_NAMES[] = {
 #pragma GCC diagnostic pop
 #endif
 
+// operand shorthands
+#define Vimm(x)    &(Val){ VAL_IMM, .imm = (x) }
+#define Vgpr(x)    &(Val){ VAL_GPR, .reg = (x) }
+#define Vvec(x)    &(Val){ VAL_XMM, .reg = (x) }
+#define Vabs(x)    &(Val){ VAL_ABS, .abs = (x) }
+#define Vlbl(x)    &(Val){ VAL_LABEL,  .label = (x) }
+#define Vbase(b,d) &(Val){ VAL_MEM, .reg = (b), .index = GPR_NONE, .imm = (d) }
+#define Vsym(b,d)  &(Val){ VAL_GLOBAL, .imm = (d), .symbol = (b) }
+
 // shorthand macros
-#define STACK_ALLOC(size, align) (ctx->stack_usage = align_up(ctx->stack_usage + (size), align), - ctx->stack_usage)
 #define INST0(op, dt)             inst0(&ctx->emit, op, dt)
 #define INST1(op, a, dt)          inst1(&ctx->emit, op, a, dt)
 #define INST2(op, a, b, dt)       inst2(&ctx->emit, op, a, b, dt)
 #define INST2SSE(op, a, b, dt)    inst2sse(&ctx->emit, op, a, b, dt)
 
-#define __(mnemonic, ...) x86_ ## mnemonic(e, __VA_ARGS__)
+#define GET_MACRO(_0, _1, _2, NAME, ...) NAME
+#define __(mnemonic, dt, ...) GET_MACRO(_0, ##__VA_ARGS__, asm_inst2, asm_inst1, asm_inst0)(e, mnemonic, dt, __VA_ARGS__)
 
 typedef enum {
     UNWIND_OP_PUSH_NONVOL = 0, /* info == register number */

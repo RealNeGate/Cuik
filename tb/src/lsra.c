@@ -3,7 +3,7 @@
 #include "codegen.h"
 
 #define FOREACH_SET(it, set) \
-FOREACH_N(_i, 0, ((set).capacity + 63) / 64) FOREACH_BIT(it, _i*64, (set).data[_i])
+FOR_N(_i, 0, ((set).capacity + 63) / 64) FOR_BIT(it, _i*64, (set).data[_i])
 
 typedef struct {
     int id;
@@ -63,7 +63,7 @@ static bool reg_mask_may_intersect(RegMask* a, RegMask* b) {
     }
 
     assert(a->count == b->count);
-    FOREACH_N(i, 0, a->count) {
+    FOR_N(i, 0, a->count) {
         if ((a->mask[i] & b->mask[i]) != 0) {
             return true;
         }
@@ -123,7 +123,7 @@ static void add_range(LSRA* restrict ra, VReg* vreg, int start, int end) {
 }
 
 static void dump_sched(Ctx* restrict ctx, LSRA* restrict ra) {
-    FOREACH_N(i, 0, ctx->bb_count) {
+    FOR_N(i, 0, ctx->bb_count) {
         MachineBB* mbb = &ctx->machine_bbs[i];
         printf("BB %zu:\n", i);
         aarray_for(i, mbb->items) {
@@ -145,14 +145,14 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     CUIK_TIMED_BLOCK("pre-pass on fixed intervals") {
         ra.fixed    = tb_arena_alloc(arena, ctx->num_classes * sizeof(int));
 
-        FOREACH_N(i, 0, ctx->num_classes) {
+        FOR_N(i, 0, ctx->num_classes) {
             size_t count = ctx->num_regs[i];
             if (max_regs_in_class < count) {
                 max_regs_in_class = count;
             }
 
             int base = aarray_length(ctx->vregs);
-            FOREACH_N(j, 0, count) {
+            FOR_N(j, 0, count) {
                 RegMask* mask = intern_regmask(ctx, i, false, 1ull << j);
                 aarray_push(ctx->vregs, (VReg){
                         .class = i,
@@ -186,7 +186,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         ra.time[0] = 4;
 
         int timeline = 4;
-        FOREACH_N(i, 0, ctx->bb_count) {
+        FOR_N(i, 0, ctx->bb_count) {
             MachineBB* mbb = &ctx->machine_bbs[i];
             mbb->start_t = timeline;
 
@@ -203,7 +203,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 // insert input copies (temporaries & clobbers never introduce
                 // these so we're safe don't check those)
                 size_t in_count = n->input_count;
-                FOREACH_N(k, 1, in_count) if (n->inputs[k]) {
+                FOR_N(k, 1, in_count) if (n->inputs[k]) {
                     TB_Node* in = n->inputs[k];
                     RegMask* in_mask = ins[k];
                     if (in_mask == &TB_REG_EMPTY) continue;
@@ -261,7 +261,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     tmps->count = tmp_count;
                     nl_table_put(&ctx->tmps_map, n, tmps);
 
-                    FOREACH_N(k, in_count, in_count + tmp_count) {
+                    FOR_N(k, in_count, in_count + tmp_count) {
                         RegMask* in_mask = ins[k];
                         assert(in_mask != &TB_REG_EMPTY);
 
@@ -330,7 +330,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
     // build intervals from dataflow
     CUIK_TIMED_BLOCK("build intervals") {
-        FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+        FOR_REV_N(i, 0, ctx->bb_count) {
             MachineBB* mbb = &ctx->machine_bbs[i];
             int bb_start   = mbb->start_t;
             int bb_end     = mbb->end_t + 2;
@@ -339,10 +339,10 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             // in the block, the later reverse walk will fix that up)
             TB_BasicBlock* bb = f->scheduled[mbb->n->gvn];
             Set* live_out = &bb->live_out;
-            FOREACH_N(j, 0, (node_count + 63) / 64) {
+            FOR_N(j, 0, (node_count + 63) / 64) {
                 uint64_t bits = live_out->data[j];
                 if (bits == 0) continue;
-                FOREACH_N(k, 0, 64) if (bits & (1ull << k)) {
+                FOR_N(k, 0, 64) if (bits & (1ull << k)) {
                     uintptr_t fwd = (uintptr_t) nl_table_get(&fwd_table, (void*) (j*64 + k));
                     uintptr_t gvn = fwd ? fwd : j*64 + k;
 
@@ -355,7 +355,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             }
 
             size_t item_count = aarray_length(mbb->items);
-            FOREACH_REVERSE_N(j, 0, item_count) {
+            FOR_REV_N(j, 0, item_count) {
                 TB_Node* n = mbb->items[j];
 
                 int vreg_id = ctx->vreg_map[n->gvn];
@@ -387,7 +387,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 }
 
                 Tmps* tmps = nl_table_get(&ctx->tmps_map, n);
-                if (tmps) FOREACH_N(k, 0, tmps->count) {
+                if (tmps) FOR_N(k, 0, tmps->count) {
                     add_range(&ra, &ctx->vregs[tmps->elems[k]], time, time + 1);
                 }
 
@@ -400,7 +400,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     RegMask** ins = ctx->ins;
                     ctx->constraint(ctx, n, ins);
 
-                    FOREACH_N(k, 1, n->input_count) if (n->inputs[k]) {
+                    FOR_N(k, 1, n->input_count) if (n->inputs[k]) {
                         TB_Node* in = n->inputs[k];
                         RegMask* in_mask = ins[k];
                         if (in_mask == &TB_REG_EMPTY) continue;
@@ -421,9 +421,9 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     }
 
     CUIK_TIMED_BLOCK("post-pass on fixed intervals") {
-        FOREACH_N(i, 0, ctx->num_classes) {
+        FOR_N(i, 0, ctx->num_classes) {
             // add range at beginning such that all fixed intervals are "awake"
-            FOREACH_N(j, 0, ctx->num_regs[i]) {
+            FOR_N(j, 0, ctx->num_regs[i]) {
                 add_range(&ra, &ctx->vregs[ra.fixed[i]+j], 0, 1);
                 dyn_array_put(ra.unhandled, ra.fixed[i]+j);
             }
@@ -500,7 +500,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 // display active set
                 #if TB_OPTDEBUG_REGALLOC
                 static const char* classes[] = { "STK", "FLAGS", "GPR", "VEC" };
-                FOREACH_N(rc, 1, ctx->num_classes) {
+                FOR_N(rc, 1, ctx->num_classes) {
                     printf("  \x1b[32m%s { ", classes[rc]);
                     FOREACH_SET(reg, ra.active_set[rc]) {
                         int other_id = ra.active[rc][reg];
@@ -519,13 +519,13 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             cuikperf_region_start("alloc fail", NULL);
             // alloc failure? spill/split
-            FOREACH_N(i, 0, spills_accum) {
+            FOR_N(i, 0, spills_accum) {
                 VReg* vreg = &ctx->vregs[ra.spills[i].id];
                 spill_entire_life(ctx, &ra, vreg, ra.spills[i].mask);
             }
 
             // undo all non-fixed regs
-            FOREACH_N(i, 0, dyn_array_length(ra.unhandled)) {
+            FOR_N(i, 0, dyn_array_length(ra.unhandled)) {
                 int vreg_id = ra.unhandled[i];
                 VReg* vreg  = &ctx->vregs[vreg_id];
                 if (!vreg_is_fixed(ctx, &ra, vreg_id)) {
@@ -538,7 +538,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 }
             }
 
-            FOREACH_N(rc, 1, ctx->num_classes) {
+            FOR_N(rc, 1, ctx->num_classes) {
                 set_clear(&ra.active_set[rc]);
             }
             dyn_array_clear(ra.inactive);
@@ -580,7 +580,7 @@ static void compute_free_until(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg)
 
     size_t reg_count = ra->num_regs[class];
     uint64_t word_count = (ra->num_regs[class] + 63) / 64;
-    FOREACH_N(i, 0, word_count) {
+    FOR_N(i, 0, word_count) {
         uint64_t in_use = ra->active_set[class].data[i];
         // don't care about non-intersecting free/blocked regs
         in_use |= ~mask->mask[i];
@@ -620,7 +620,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
     int rc = vreg->mask->class;
     if (highest < 0) {
         highest = 0;
-        FOREACH_N(i, 1, ra->num_regs[rc]) if (ra->free_until[i] > ra->free_until[highest]) {
+        FOR_N(i, 1, ra->num_regs[rc]) if (ra->free_until[i] > ra->free_until[highest]) {
             highest = i;
         }
     }
@@ -628,7 +628,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
     int pos = ra->free_until[highest];
     if (UNLIKELY(pos == 0)) {
         int reg = -1;
-        FOREACH_N(i, 0, ra->num_regs[rc]) {
+        FOR_N(i, 0, ra->num_regs[rc]) {
             if (set_get(&ra->active_set[rc], i) && !vreg_is_fixed(ctx, ra, ra->active[rc][i])) {
                 reg = i;
                 break;
@@ -833,7 +833,7 @@ static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, int pos, VR
     TB_NODE_SET_EXTRA(spill_n, TB_NodeMachCopy, .def = new_mask, .use = vreg->mask);
 
     TB_BasicBlock* bb = NULL;
-    FOREACH_N(i, 0, ctx->bb_count) {
+    FOR_N(i, 0, ctx->bb_count) {
         MachineBB* mbb = &ctx->machine_bbs[i];
         if (pos <= mbb->end_t) { bb = f->scheduled[mbb->n->gvn]; break; }
     }
@@ -902,9 +902,9 @@ static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, int pos, VR
 
         // build up the bitset for each predecessor: 0 for og_def, 1 for spill_def
         uint64_t* ins = tb_arena_alloc(f->tmp_arena, ((pred_count + 63) / 64) * sizeof(uint64_t));
-        FOREACH_N(i, 0, (pred_count + 63) / 64) { ins[i] = 0; }
+        FOR_N(i, 0, (pred_count + 63) / 64) { ins[i] = 0; }
 
-        FOREACH_N(i, 0, pred_count) {
+        FOR_N(i, 0, pred_count) {
             TB_BasicBlock* pred_bb = f->scheduled[use_bb_node->inputs[i]->gvn];
             if (slow_dommy2(bb, pred_bb)) { ins[i / 64] |= 1ull << (i % 64); }
         }
@@ -912,7 +912,7 @@ static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, int pos, VR
         // we only need a phi if they disagree
         bool needs_phi = false;
         bool path = ins[0] & 1;
-        FOREACH_N(i, 1, pred_count) {
+        FOR_N(i, 1, pred_count) {
             bool v = (ins[i / 64] >> (i % 64)) & 1;
             if (v != path) { needs_phi = true; }
         }
@@ -924,7 +924,7 @@ static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, int pos, VR
             TB_Node* phi_n = tb_alloc_node(f, TB_PHI, n->dt, 1 + pred_count, 0);
             set_input(f, phi_n, use_bb_node, 0);
 
-            FOREACH_N(i, 0, pred_count) {
+            FOR_N(i, 0, pred_count) {
                 bool v = (ins[i / 64] >> (i % 64)) & 1;
                 set_input(f, phi_n, v ? spill_n : n, 1 + i);
             }
@@ -1011,7 +1011,7 @@ static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, int pos, VR
 // intersecting we'll move to the inactive state.
 static void update_intervals(Ctx* restrict ctx, LSRA* restrict ra, int time) {
     // update intervals (inactive <-> active along with expiring)
-    FOREACH_N(rc, 0, ctx->num_classes) {
+    FOR_N(rc, 0, ctx->num_classes) {
         FOREACH_SET(reg, ra->active_set[rc]) {
             update_interval(ctx, ra, ra->active[rc][reg], true, time, -1);
         }
@@ -1160,7 +1160,7 @@ LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* 
 static Tile* tile_at_time(LSRA* restrict ra, int t) {
     // find which BB
     MachineBB* mbb = NULL;
-    FOREACH_N(i, 0, ra->ctx->bb_count) {
+    FOR_N(i, 0, ra->ctx->bb_count) {
         mbb = &ra->ctx->machine_bbs[i];
         if (t <= mbb->end->time) break;
     }
@@ -1183,16 +1183,16 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {
         int timeline = 4;
-        FOREACH_N(i, 0, ctx->bb_count) {
+        FOR_N(i, 0, ctx->bb_count) {
             MachineBB* mbb = &ctx->machine_bbs[i];
 
-            FOREACH_N(j, 0, mbb->item_count) {
+            FOR_N(j, 0, mbb->item_count) {
                 TB_Node* n = mbb->items[j];
                 LiveInterval* li = ctx->intervals[n->gvn];
 
                 // insert input copies (temporaries & clobbers never introduce
                 // these so we're safe don't check those)
-                FOREACH_N(k, 1, n->input_count) if (n->inputs[k]) {
+                FOR_N(k, 1, n->input_count) if (n->inputs[k]) {
                     TB_Node* in = n->inputs[k];
                     RegMask* in_mask = c->ins[k];
 
@@ -1211,7 +1211,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             for (Tile* t = mbb->start; t; t = t->next) {
                 // insert input copies
-                FOREACH_N(j, 0, t->in_count) {
+                FOR_N(j, 0, t->in_count) {
                     LiveInterval* in_def = t->ins[j].src;
                     RegMask in_mask = t->ins[j].mask;
 
@@ -1273,7 +1273,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 timeline += t->n && ctx->_2addr(t->n) ? 4 : 2;
 
                 // insert copy if we're writing to a fixed interval
-                FOREACH_N(j, 0, t->out_count) if (t->outs[j]) {
+                FOR_N(j, 0, t->out_count) if (t->outs[j]) {
                     LiveInterval* interval = t->outs[j];
 
                     // if we're writing to a fixed interval, insert copy
@@ -1326,7 +1326,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     CUIK_TIMED_BLOCK("build intervals") {
         Set visited = set_create_in_arena(arena, ctx->interval_count);
 
-        FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+        FOR_REV_N(i, 0, ctx->bb_count) {
             MachineBB* mbb = &ctx->machine_bbs[i];
 
             int bb_start = mbb->start->time;
@@ -1335,11 +1335,11 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             // live outs define a full range across the BB (if they're defined
             // in the block, the later reverse walk will fix that up)
             Set* live_out = &mbb->live_out;
-            FOREACH_N(j, 0, (ctx->interval_count + 63) / 64) {
+            FOR_N(j, 0, (ctx->interval_count + 63) / 64) {
                 uint64_t bits = live_out->data[j];
                 if (bits == 0) continue;
 
-                FOREACH_N(k, 0, 64) if (bits & (1ull << k)) {
+                FOR_N(k, 0, 64) if (bits & (1ull << k)) {
                     add_range(&ra, ctx->id2interval[j*64 + k], bb_start, bb_end);
                 }
             }
@@ -1348,7 +1348,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 int time = t->time;
 
                 // mark output
-                FOREACH_N(j, 0, t->out_count) {
+                FOR_N(j, 0, t->out_count) {
                     LiveInterval* interval = t->outs[j];
                     assert(interval->mask.mask);
 
@@ -1371,7 +1371,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 bool _2addr = t->tag == TILE_SPILL_MOVE || (t->n && ctx->_2addr(t->n));
 
                 // mark inputs
-                FOREACH_N(j, 0, t->in_count) {
+                FOR_N(j, 0, t->in_count) {
                     LiveInterval* in_def = t->ins[j].src;
                     RegMask in_mask = t->ins[j].mask;
                     int hint = fixed_reg_mask(in_mask);
@@ -1425,13 +1425,13 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         ra.normie_mask = ctx->normie_mask;
         ra.callee_saved = ctx->callee_saved;
 
-        FOREACH_N(i, 0, ctx->num_classes) {
+        FOR_N(i, 0, ctx->num_classes) {
             if (max_regs_in_class < ctx->num_regs[i]) {
                 max_regs_in_class = ctx->num_regs[i];
             }
 
             // add range at beginning such that all fixed intervals are "awake"
-            FOREACH_N(j, 0, ctx->num_regs[i]) {
+            FOR_N(j, 0, ctx->num_regs[i]) {
                 add_range(&ra, &ctx->fixed[i][j], 0, 1);
                 dyn_array_put(ra.unhandled, &ctx->fixed[i][j]);
             }
@@ -1483,7 +1483,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             #endif
 
             // update intervals (inactive <-> active along with expiring)
-            FOREACH_N(rc, 0, ctx->num_classes) {
+            FOR_N(rc, 0, ctx->num_classes) {
                 FOREACH_SET(reg, ra.active_set[rc]) {
                     update_interval(&ra, ra.active[rc][reg], true, time, -1);
                 }
@@ -1541,7 +1541,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             // display active set
             #if TB_OPTDEBUG_REGALLOC
             static const char* classes[] = { "STK", "GPR", "VEC" };
-            FOREACH_N(rc, 0, ctx->num_classes) {
+            FOR_N(rc, 0, ctx->num_classes) {
                 printf("  \x1b[32m%s { ", classes[rc]);
                 FOREACH_SET(reg, ra.active_set[rc]) {
                     LiveInterval* l = ra.active[rc][reg];
@@ -1559,7 +1559,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     //   when a split happens, all indirect paths that cross the split will have
     //   moves inserted.
     CUIK_TIMED_BLOCK("move resolver") {
-        FOREACH_N(i, 0, ctx->bb_count) {
+        FOR_N(i, 0, ctx->bb_count) {
             MachineBB* mbb = &ctx->machine_bbs[i];
             TB_Node* end_node = mbb->end_n;
             int terminator = mbb->end->time;
@@ -1596,17 +1596,17 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
     // resolve all split interval references
     CUIK_TIMED_BLOCK("split resolver") {
-        FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+        FOR_REV_N(i, 0, ctx->bb_count) {
             MachineBB* mbb = &ctx->machine_bbs[i];
 
             for (Tile* t = mbb->start; t; t = t->next) {
                 int pos = t->time;
 
-                FOREACH_N(j, 0, t->out_count) {
+                FOR_N(j, 0, t->out_count) {
                     t->outs[j] = split_interval_at(t->outs[j], pos - 1);
                 }
 
-                FOREACH_N(i, 0, t->in_count) {
+                FOR_N(i, 0, t->in_count) {
                     t->ins[i].src = split_interval_at(t->ins[i].src, pos);
                 }
             }
@@ -1634,7 +1634,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
     // pick highest free pos
     if (highest < 0) {
         highest = 0;
-        FOREACH_N(i, 1, ra->num_regs[rc]) if (ra->free_pos[i] > ra->free_pos[highest]) {
+        FOR_N(i, 1, ra->num_regs[rc]) if (ra->free_pos[i] > ra->free_pos[highest]) {
             highest = i;
         }
     }
@@ -1642,7 +1642,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
     int pos = ra->free_pos[highest];
     if (UNLIKELY(pos == 0)) {
         int reg = -1;
-        FOREACH_N(i, 0, ra->num_regs[rc]) {
+        FOR_N(i, 0, ra->num_regs[rc]) {
             if (set_get(&ra->active_set[rc], i) && ra->active[rc][i]->reg < 0) {
                 reg = i;
                 break;
@@ -1697,7 +1697,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
 static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, LiveInterval* new_it) {
     // find which BB
     MachineBB* mbb = NULL;
-    FOREACH_N(i, 0, ra->ctx->bb_count) {
+    FOR_N(i, 0, ra->ctx->bb_count) {
         mbb = &ra->ctx->machine_bbs[i];
         if (t <= mbb->end->time) break;
     }
@@ -1782,7 +1782,7 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
 
     // split ranges
     size_t end = interval->range_count;
-    FOREACH_REVERSE_N(i, 1, end) {
+    FOR_REV_N(i, 1, end) {
         LiveRange* range = &interval->ranges[i];
         if (range->end > pos) {
             bool clean_split = pos < range->start;
@@ -1801,7 +1801,7 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
             interval->active_range -= start - 1;
             interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
 
-            FOREACH_N(j, start, end) {
+            FOR_N(j, start, end) {
                 assert(j - start + 1 < interval->range_count);
                 interval->ranges[j - start + 1] = new_it->ranges[j];
             }
@@ -1838,7 +1838,7 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
 
     // reload before next use that requires the original regclass
     if (new_mask.class == REG_CLASS_STK) {
-        FOREACH_REVERSE_N(i, 0, new_it->use_count) {
+        FOR_REV_N(i, 0, new_it->use_count) {
             if (!new_it->uses[i].may_spill) {
                 split_intersecting(ra, new_it->uses[i].pos - 3, new_it, interval->mask);
                 break;

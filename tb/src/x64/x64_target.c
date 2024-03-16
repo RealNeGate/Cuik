@@ -112,15 +112,15 @@ enum {
 // *out_mask of 0 means no mask
 static TB_X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
     assert(dt.type == TB_INT || dt.type == TB_PTR);
-    if (dt.type == TB_PTR) return *out_mask = 0, TB_X86_TYPE_QWORD;
+    if (dt.type == TB_PTR) return *out_mask = 0, TB_X86_QWORD;
 
-    TB_X86_DataType t = TB_X86_TYPE_NONE;
+    TB_X86_DataType t = TB_X86_NONE;
     int bits = 0;
 
-    if (dt.data <= 8) bits = 8, t = TB_X86_TYPE_BYTE;
-    else if (dt.data <= 16) bits = 16, t = TB_X86_TYPE_WORD;
-    else if (dt.data <= 32) bits = 32, t = TB_X86_TYPE_DWORD;
-    else if (dt.data <= 64) bits = 64, t = TB_X86_TYPE_QWORD;
+    if (dt.data <= 8) bits = 8, t = TB_X86_BYTE;
+    else if (dt.data <= 16) bits = 16, t = TB_X86_WORD;
+    else if (dt.data <= 32) bits = 32, t = TB_X86_DWORD;
+    else if (dt.data <= 64) bits = 64, t = TB_X86_QWORD;
 
     assert(bits != 0 && "TODO: large int support");
     assert(dt.data != 0);
@@ -137,7 +137,7 @@ static TB_X86_DataType legalize_int2(TB_DataType dt) {
 
 static TB_X86_DataType legalize_float(TB_DataType dt) {
     assert(dt.type == TB_FLOAT);
-    return (dt.data == TB_FLT_64 ? TB_X86_TYPE_SSE_SD : TB_X86_TYPE_SSE_SS);
+    return (dt.data == TB_FLT_64 ? TB_X86_F64x1 : TB_X86_F32x1);
 }
 
 static TB_X86_DataType legalize(TB_DataType dt) {
@@ -238,7 +238,7 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
 
     // mark XMM callees
     // ctx->callee_saved[REG_CLASS_XMM] = 0;
-    /* FOREACH_N(i, param_descs[ctx->abi_index].caller_saved_xmms, 16) {
+    /* FOR_N(i, param_descs[ctx->abi_index].caller_saved_xmms, 16) {
         ctx->callee_saved[REG_CLASS_XMM] |= (1ull << i);
     } */
 
@@ -384,7 +384,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         uint32_t callee_saved_gpr = ~param_descs[ctx->abi_index].caller_saved_gprs;
         callee_saved_gpr &= ~(1u << RSP);
 
-        FOREACH_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
+        FOR_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
             if ((callee_saved_gpr >> i) & 1) {
                 RegMask* rm = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << i);
                 TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
@@ -395,7 +395,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
         }
 
-        FOREACH_N(i, param_descs[ctx->abi_index].caller_saved_xmms, ctx->num_regs[REG_CLASS_XMM]) {
+        FOR_N(i, param_descs[ctx->abi_index].caller_saved_xmms, ctx->num_regs[REG_CLASS_XMM]) {
             RegMask* rm = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << i);
             TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_F64, 1, sizeof(TB_NodeMachProj));
             TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = j++, .def = rm);
@@ -409,7 +409,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         if (n->dt.type == TB_FLOAT || n->dt.type == TB_INT || n->dt.type == TB_PTR) {
             // we just want some copies on the data edges which RA will coalesce, this way we
             // never leave SSA.
-            FOREACH_N(i, 1, n->input_count) {
+            FOR_N(i, 1, n->input_count) {
                 TB_Node* cpy = tb_alloc_node(f, TB_MACH_MOVE, n->inputs[i]->dt, 2, 0);
                 set_input(f, cpy, n->inputs[i], 1);
                 set_input(f, n, cpy, i);
@@ -483,7 +483,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         int cc;
         TB_Node* mach_cond = node_isel_flags(ctx, f, n, 0, &cc);
 
-        TB_Node* op = tb_alloc_node(f, x86_cmovcc, n->dt, 3, sizeof(X86Cmov));
+        TB_Node* op = tb_alloc_node(f, x86_cmovcc, n->dt, 4, sizeof(X86Cmov));
         set_input(f, op, mach_cond,    1);
         set_input(f, op, n->inputs[2], 2);
         set_input(f, op, n->inputs[3], 3);
@@ -513,7 +513,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         op_extra->clobber_xmm = ~0ull >> (64 - abi->caller_saved_xmms);
 
         int gprs_used = 0, xmms_used = 0;
-        FOREACH_N(i, 3, n->input_count) {
+        FOR_N(i, 3, n->input_count) {
             int param_num = i - 3;
 
             // on win64 we always have the XMMs and GPRs used match the param_num
@@ -723,7 +723,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case TB_NATURAL_LOOP:
         if (ins) {
             // region inputs are all control
-            FOREACH_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
+            FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
         }
         return &TB_REG_EMPTY;
 
@@ -746,7 +746,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
         case TB_PHI: {
             if (ins) {
-                FOREACH_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
+                FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
             }
 
             if (n->dt.type == TB_MEMORY) return &TB_REG_EMPTY;
@@ -800,7 +800,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
             if (ins) {
                 ins[1] = &TB_REG_EMPTY;
-                FOREACH_N(i, 2, n->input_count) {
+                FOR_N(i, 2, n->input_count) {
                     ins[i] = n->inputs[i] ? rm : &TB_REG_EMPTY;
                 }
 
@@ -883,7 +883,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 TB_FunctionPrototype* proto = ctx->f->prototype;
                 assert(proto->return_count <= 2 && "At most 2 return values :(");
 
-                FOREACH_N(i, 3, n->input_count) {
+                FOR_N(i, 3, n->input_count) {
                     TB_Node* in = n->inputs[i];
                     if ((i - 3) < proto->return_count) {
                         TB_DataType dt = in->dt;
@@ -915,7 +915,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[1] = &TB_REG_EMPTY;
                 ins[2] = n->type == x86_static_call ? &TB_REG_EMPTY : ctx->normie_mask[REG_CLASS_GPR];
 
-                FOREACH_N(i, 3, n->input_count) {
+                FOR_N(i, 3, n->input_count) {
                     int param_num = i - 3;
 
                     // on win64 we always have the XMMs and GPRs used match the param_num
@@ -968,6 +968,8 @@ static int op_reg_at(Ctx* ctx, TB_Node* n, int class) {
     assert(vreg->class == class);
     return vreg->assigned;
 }
+static int op_gpr_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_GPR); }
+static int op_xmm_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_XMM); }
 
 static int stk_offset(Ctx* ctx, int reg) {
     if (reg >= STACK_BASE_REG_NAMES) {
@@ -1038,18 +1040,16 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             }
 
             if (br->succ_count == 2) {
-                Val taken    = val_label(succ[0]);
-                Val fallthru = val_label(succ[1]);
                 Cond cc = br->keys[0].key;
+                if (ctx->fallthrough == succ[0]) {
+                    // if flipping avoids a jmp, do that
+                    cc ^= 1;
+                    SWAP(int, succ[0], succ[1]);
+                }
 
-                // if flipping avoids a jmp, do that
-                if (ctx->fallthrough == taken.label) {
-                    x86_jcc(e, cc ^ 1, fallthru);
-                } else {
-                    x86_jcc(e, cc, taken);
-                    if (ctx->fallthrough != fallthru.label) {
-                        x86_jmp(e, fallthru);
-                    }
+                __(JO+cc, TB_X86_QWORD, Vlbl(succ[0]));
+                if (ctx->fallthrough != succ[1]) {
+                    __(JMP, TB_X86_QWORD, Vlbl(succ[1]));
                 }
             } else {
                 tb_todo();
@@ -1060,9 +1060,8 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_SYMBOL: {
             TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
 
-            Val dst = op_at(ctx, n);
-            Val src = val_global(sym, 0);
-            inst2(e, LEA, &dst, &src, TB_X86_TYPE_QWORD);
+            GPR dst = op_gpr_at(ctx, n);
+            __(LEA, TB_X86_QWORD, Vgpr(dst), Vsym(sym, 0));
             break;
         }
 
@@ -1071,16 +1070,13 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             uint32_t hi = x >> 32ull;
 
             TB_X86_DataType dt = legalize_int2(n->dt);
-            Val dst = op_at(ctx, n);
+            GPR dst = op_gpr_at(ctx, n);
             if (x == 0) {
-                // xor reg, reg
-                inst2(e, XOR, &dst, &dst, dt);
-            } else if (hi == 0 || dt == TB_X86_TYPE_QWORD) {
-                Val src = val_abs(x);
-                inst2(e, MOVABS, &dst, &src, dt);
+                __(XOR, dt, Vgpr(dst), Vgpr(dst));
+            } else if (hi == 0 || dt == TB_X86_QWORD) {
+                __(MOVABS, dt, Vgpr(dst), Vabs(x));
             } else {
-                Val src = val_imm(x);
-                inst2(e, MOV, &dst, &src, dt);
+                __(MOV, dt, Vgpr(dst), Vimm(x));
             }
             break;
         }
@@ -1093,7 +1089,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                     COMMENT("reload FLAGS");
 
                     // GPR -> FLAGS
-                    int reg = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+                    int reg = op_gpr_at(ctx, n->inputs[1]);
                     EMIT1(e, 0x48 + (reg >= 8)); // REX.W (optional B)
                     EMIT1(e, 0x50 + reg);        // pop r64
                     EMIT1(e, 0x9D);              // popf
@@ -1102,7 +1098,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 COMMENT("spilled FLAGS");
 
                 // FLAGS -> GPR
-                int reg = op_reg_at(ctx, n, REG_CLASS_GPR);
+                int reg = op_gpr_at(ctx, n);
                 EMIT1(e, 0x9C);              // pushf
                 EMIT1(e, 0x48 + (reg >= 8)); // REX.W (optional B)
                 EMIT1(e, 0x58 + reg);        // pop r64
@@ -1113,8 +1109,9 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 Val src = op_at(ctx, n->inputs[1]);
                 if (!is_value_match(&dst, &src)) {
                     COMMENT("spill move");
-                    if (dt < TB_X86_TYPE_SSE_SS) { inst2(e, MOV, &dst, &src, dt); }
-                    else { inst2sse(e, FP_MOV, &dst, &src, dt); }
+
+                    int op = dt < TB_X86_F32x1 ? MOV : FP_MOV;
+                    __(op, dt, &dst, &src);
                 }
             }
             break;
@@ -1182,7 +1179,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
             Val rhs = { 0 };
             if (n->type >= x86_addimm && n->type <= x86_rorimm) {
-                rhs = val_imm(op->imm);
+                rhs = (Val){ VAL_IMM, .imm = op->imm };
             } else if (op->mode == MODE_LD || op->mode == MODE_ST) {
                 rhs.type = VAL_MEM;
                 if (n->inputs[2]->type == TB_MACH_LOCAL) {
@@ -1190,10 +1187,10 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                     rhs.reg = RSP;
                     rhs.imm = ctx->stack_usage - disp;
                 } else {
-                    rhs.reg = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+                    rhs.reg = op_gpr_at(ctx, n->inputs[2]);
                 }
                 if (n->inputs[3]) {
-                    rhs.index = op_at(ctx, n->inputs[3]).reg;
+                    rhs.index = op_gpr_at(ctx, n->inputs[3]);
                 } else {
                     rhs.index = -1;
                 }
@@ -1201,26 +1198,26 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 rhs.scale  = op->scale;
             } else {
                 rhs.type = VAL_GPR;
-                rhs.reg = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+                rhs.reg = op_gpr_at(ctx, n->inputs[2]);
             }
 
-            if (op->mode == MODE_ST) {
+            int op_type = ops[n->type - x86_add];
+            if (op_type == CMP) {
                 Val lhs = op_at(ctx, lhs_n);
-                inst2(e, ops[n->type - x86_add], &rhs, &lhs, dt);
-            } else if (n->type == x86_cmp || n->type == x86_cmpimm) {
+                __(CMP, dt, &lhs, &rhs);
+            } else if (op->mode == MODE_ST) {
                 Val lhs = op_at(ctx, lhs_n);
-                inst2(e, CMP, &lhs, &rhs, dt);
+                __(op_type, dt, &rhs, &lhs);
             } else {
                 Val dst = op_at(ctx, n);
                 if (lhs_n != NULL) {
                     assert(n->type != x86_lea);
                     Val lhs = op_at(ctx, lhs_n);
                     if (!is_value_match(&dst, &lhs)) {
-                        inst2(e, MOV, &dst, &lhs, dt);
+                        __(MOV, dt, &dst, &lhs);
                     }
                 }
-
-                inst2(e, ops[n->type - x86_add], &dst, &rhs, dt);
+                __(op_type, dt, &dst, &rhs);
             }
             break;
         }
@@ -1232,12 +1229,11 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             Val dst = op_at(ctx, n);
             Val lhs = op_at(ctx, n->inputs[1]);
 
-            inst2(e, IMUL3, &dst, &lhs, dt);
-            if (dt == TB_X86_TYPE_WORD) {
-                EMIT2(e, op->imm);
-            } else {
-                EMIT4(e, op->imm);
-            }
+            // hacky but the ternary multiply is just a 2op modrm like normal, except with an
+            // extra immediate afterwards.
+            __(IMUL3, dt, &dst, &lhs);
+            if (dt == TB_X86_WORD) { EMIT2(e, op->imm); }
+            else { EMIT4(e, op->imm); }
             break;
         }
 
@@ -1249,9 +1245,9 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             Val rhs  = op_at(ctx, n->inputs[2]);
 
             if (!is_value_match(&dst, &lhs)) {
-                inst2(e, MOV, &dst, &lhs, dt);
+                __(MOV, dt, &dst, &lhs);
             }
-            inst2(e, IMUL, &dst, &rhs, dt);
+            __(IMUL, dt, &dst, &rhs);
             break;
         }
 
@@ -1264,9 +1260,9 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             Val rhs  = op_at(ctx, n->inputs[3]);
 
             if (!is_value_match(&dst, &lhs)) {
-                inst2(e, MOV, &dst, &lhs, dt);
+                __(MOV, dt, &dst, &lhs);
             }
-            inst2(e, CMOVO+cc, &dst, &rhs, dt);
+            __(CMOVO+cc, dt, &dst, &rhs);
             break;
         }
 
@@ -1309,13 +1305,13 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             switch (bits_in_type) {
                 case 8:  op =  is_signed ? MOVSXB : MOVZXB; break;
                 case 16: op =  is_signed ? MOVSXB : MOVZXW; break;
-                case 32: op = (is_signed ? MOVSXD : MOV), dt = TB_X86_TYPE_DWORD; break;
+                case 32: op = (is_signed ? MOVSXD : MOV), dt = TB_X86_DWORD; break;
                 case 64: op = MOV;                          break;
             }
 
             Val dst = op_at(ctx, n);
-            if (is_signed && dt <= TB_X86_TYPE_DWORD) {
-                dt = TB_X86_TYPE_DWORD;
+            if (is_signed && dt <= TB_X86_DWORD) {
+                dt = TB_X86_DWORD;
             }
 
             Val lhs  = op_at(ctx, n->inputs[1]);
@@ -1331,9 +1327,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
         case x86_static_call: {
             X86Call* op_extra = TB_NODE_GET_EXTRA(n);
-            Val sym = val_global(op_extra->sym, 0);
-
-            inst1(e, CALL, &sym, TB_X86_TYPE_QWORD);
+            __(CALL, TB_X86_QWORD, Vsym(op_extra->sym, 0));
             break;
         }
 
@@ -1523,7 +1517,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             TileInput* ins = tile_set_ins(ctx, dst, n, 3, n->input_count);
 
             assert(rets <= 2 && "At most 2 return values :(");
-            FOREACH_N(i, 0, rets) {
+            FOR_N(i, 0, rets) {
                 TB_DataType dt = n->inputs[3+i]->dt;
                 if (dt.type == TB_FLOAT) {
                     ins[i].mask = REGMASK(XMM, 1 << i);
@@ -1751,7 +1745,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 double inv_succ_count = 1.0 / (br->succ_count - 2);
 
                 bool large_num = false;
-                FOREACH_N(i, 2, br->succ_count) {
+                FOR_N(i, 2, br->succ_count) {
                     int64_t key = br->keys[i - 1].key;
                     if (!fits_into_int32(key)) {
                         large_num = true;
@@ -1830,7 +1824,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 dst->ins[0].mask = normie_mask(ctx, cmp->dt);
             }
 
-            FOREACH_N(i, ins, ins+tmps) {
+            FOR_N(i, ins, ins+tmps) {
                 dst->ins[i].src = NULL;
                 dst->ins[i].mask = ctx->normie_mask[REG_CLASS_GPR];
             }
@@ -1847,7 +1841,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 caller_saved_gprs &= ~(1u << RAX);
             }
 
-            FOREACH_N(i, 0, param_count > 4 ? 4 : param_count) {
+            FOR_N(i, 0, param_count > 4 ? 4 : param_count) {
                 caller_saved_gprs &= ~(1u << abi->gprs[i]);
             }
 
@@ -1862,13 +1856,13 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             ins[0].mask = REGMASK(GPR, 1u << RAX);
 
             assert(param_count < abi->gpr_count);
-            FOREACH_N(i, 0, param_count) {
+            FOR_N(i, 0, param_count) {
                 ins[i].src = get_interval(ctx, n->inputs[i + 3], 0);
                 ins[i].mask = REGMASK(GPR, 1u << abi->gprs[i]);
             }
 
             int j = param_count;
-            FOREACH_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
+            FOR_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
                 if (caller_saved_gprs & (1u << i)) {
                     ins[j].src = NULL;
                     ins[j].mask = REGMASK(GPR, 1u << i);
@@ -1894,7 +1888,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 caller_saved_gprs &= ~(1u << RAX);
             }
 
-            FOREACH_N(i, 0, param_count > 4 ? 4 : param_count) {
+            FOR_N(i, 0, param_count > 4 ? 4 : param_count) {
                 caller_saved_gprs &= ~(1u << abi->gprs[i]);
             }
 
@@ -1921,7 +1915,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 ins += 1;
             }
 
-            FOREACH_N(i, 0, param_count) {
+            FOR_N(i, 0, param_count) {
                 ins[i].src = get_interval(ctx, n->inputs[i + 3], 0);
 
                 if (i < abi->gpr_count) {
@@ -1937,7 +1931,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             }
 
             int j = param_count;
-            FOREACH_N(i, 0, 16) {
+            FOR_N(i, 0, 16) {
                 if (caller_saved_gprs & (1u << i)) {
                     ins[j].src = NULL;
                     ins[j].mask = REGMASK(GPR, 1u << i);
@@ -2019,13 +2013,12 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         ctx->f->super.module->uses_chkstk++;
 
         Val sym = val_global(ctx->f->super.module->chkstk_extern, 0);
-        Val imm = val_imm(stack_usage);
         Val rax = val_gpr(RAX);
         Val rsp = val_gpr(RSP);
 
-        inst2(e, MOV, &rax, &imm, TB_X86_TYPE_DWORD);
-        inst1(e, CALL, &sym, TB_X86_TYPE_QWORD);
-        inst2(e, SUB, &rsp, &rax, TB_X86_TYPE_QWORD);
+        __(MOV,  TB_X86_DWORD, &rax, Vimm(stack_usage));
+        __(CALL, TB_X86_QWORD, &sym);
+        __(SUB,  TB_X86_QWORD, &rsp, &rax);
     } else if (stack_usage) {
         if (stack_usage == (int8_t)stack_usage) {
             // sub rsp, stack_usage
@@ -2044,18 +2037,15 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
 
     // handle unknown parameters (if we have varargs)
     if (proto->has_varargs) {
-        const GPR* parameter_gprs = param_descs[ctx->abi_index].gprs;
+        const GPR* params = param_descs[ctx->abi_index].gprs;
 
         // spill the rest of the parameters (assumes they're all in the GPRs)
         size_t gpr_count = param_descs[ctx->abi_index].gpr_count;
         size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
 
-        FOREACH_N(i, proto->param_count, gpr_count) {
+        FOR_N(i, proto->param_count, gpr_count) {
             int dst_pos = ctx->stack_header + (i * 8);
-            Val src = val_gpr(parameter_gprs[i]);
-
-            Val dst = val_base_disp(RSP, stack_usage + dst_pos);
-            inst2(e, MOV, &dst, &src, TB_X86_TYPE_QWORD);
+            __(MOV, TB_X86_QWORD, Vgpr(params[i]), Vbase(RSP, stack_usage + dst_pos));
         }
     }
 
@@ -2067,73 +2057,6 @@ static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb) {
 }
 
 #if 0
-static Val parse_memory_op(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t, TB_Node* addr) {
-    Val ptr;
-    if (addr->type == TB_LOCAL) {
-        int pos = get_stack_slot(ctx, addr);
-        ptr = val_stack(pos);
-    } else if (addr->type == TB_SYMBOL) {
-        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(addr, TB_NodeSymbol)->sym;
-        ptr = val_global(sym, 0);
-    } else {
-        tb_todo();
-    }
-
-    return ptr;
-}
-
-// compute effective address operand
-static Val emit_addr(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
-    bool use_tmp = t->out_count == 0 || t->outs[0]->mask->class == REG_CLASS_XMM;
-
-    int in_count = 0;
-    Val ea = { .type = VAL_MEM, .index = GPR_NONE };
-    AuxAddress* aux = t->aux;
-    if (t->flags & TILE_FOLDED_BASE) {
-        if (aux->base->type == TB_LOCAL) {
-            int pos = get_stack_slot(ctx, aux->base);
-            ea.reg = RSP;
-            ea.imm = pos;
-        } else {
-            assert(aux->base->type == TB_SYMBOL);
-            ea.type = VAL_GLOBAL;
-            ea.symbol = TB_NODE_GET_EXTRA_T(aux->base, TB_NodeSymbol)->sym;
-        }
-    } else {
-        ea.reg = op_at(ctx, t->ins[in_count].src).reg;
-        in_count++;
-    }
-
-    if (t->flags & TILE_INDEXED) {
-        int index = op_gpr_at(t->ins[in_count++].src);
-
-        int stride = aux->stride;
-        if (tb_is_power_of_two(stride)) {
-            int scale = tb_ffs(stride) - 1;
-            if (scale > 3) {
-                Val tmp = val_gpr(op_gpr_at(use_tmp ? t->ins[in_count++].src : t->outs[0]));
-                if (tmp.reg != index) {
-                    Val index_op = val_gpr(index);
-                    inst2(e, MOV, &tmp, &index_op, TB_X86_TYPE_QWORD);
-                }
-
-                Val imm = val_imm(scale);
-                inst2(e, SHL, &tmp, &imm, TB_X86_TYPE_QWORD);
-                index = tmp.reg;
-            } else {
-                ea.scale = scale;
-            }
-        } else {
-            tb_todo();
-        }
-
-        ea.index = index;
-    }
-
-    ea.imm += aux->offset;
-    return ea;
-}
-
 static Cond emit_cmp(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* cmp, Tile* t, int64_t falsey) {
     Val a = op_at(ctx, t->ins[0].src);
     if (t->flags & TILE_FOLDED_CMP) {
@@ -2799,7 +2722,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
 
                     if (aux->if_chain) {
                         // Basic if-else chain
-                        FOREACH_N(i, 1, br->succ_count) {
+                        FOR_N(i, 1, br->succ_count) {
                             uint64_t curr_key = br->keys[i-1].key;
 
                             if (fits_into_int32(curr_key)) {
@@ -2829,7 +2752,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                         uint32_t* jump_entries = tb_global_add_region(f->super.module, jump_table, 0, range*4);
 
                         Set entries_set = set_create_in_arena(arena, range);
-                        FOREACH_N(i, 1, br->succ_count) {
+                        FOR_N(i, 1, br->succ_count) {
                             uint64_t key_idx = br->keys[i - 1].key - min;
                             assert(key_idx < range);
 
@@ -2841,7 +2764,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                         }
 
                         // handle default cases
-                        FOREACH_N(i, 0, range) {
+                        FOR_N(i, 0, range) {
                             if (!set_get(&entries_set, i)) {
                                 JumpTablePatch p;
                                 p.pos = &jump_entries[i];
@@ -2982,11 +2905,11 @@ static void our_print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86
         } else {
             E("%s [", tb_x86_type_name(inst->dt));
             if (base != 0xFF) {
-                E("%s", tb_x86_reg_name(base, TB_X86_TYPE_QWORD));
+                E("%s", tb_x86_reg_name(base, TB_X86_QWORD));
             }
 
             if (index != 0xFF) {
-                E(" + %s*%d", tb_x86_reg_name(index, TB_X86_TYPE_QWORD), 1 << inst->scale);
+                E(" + %s*%d", tb_x86_reg_name(index, TB_X86_QWORD), 1 << inst->scale);
             }
         }
 
@@ -3059,9 +2982,9 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
             E("lock ");
         }
         E("%s", mnemonic);
-        if (inst.dt >= TB_X86_TYPE_SSE_SS && inst.dt <= TB_X86_TYPE_SSE_PD) {
+        if (inst.dt >= TB_X86_F32x1 && inst.dt <= TB_X86_F64x2) {
             static const char* strs[] = { "ss", "sd", "ps", "pd" };
-            E("%s", strs[inst.dt - TB_X86_TYPE_SSE_SS]);
+            E("%s", strs[inst.dt - TB_X86_F32x1]);
         }
         E(" ");
 

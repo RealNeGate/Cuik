@@ -9,7 +9,7 @@ typedef struct {
 } AggregateConfig;
 
 static ptrdiff_t find_config(size_t config_count, AggregateConfig* configs, int64_t offset) {
-    FOREACH_N(i, 0, config_count) {
+    FOR_N(i, 0, config_count) {
         if (configs[i].offset == offset) return i;
     }
 
@@ -22,7 +22,7 @@ static ptrdiff_t find_config(size_t config_count, AggregateConfig* configs, int6
 static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* configs, int64_t offset, TB_CharUnits size, TB_DataType dt) {
     int64_t max = offset + size;
 
-    FOREACH_N(i, 0, config_count) {
+    FOR_N(i, 0, config_count) {
         int64_t max2 = configs[i].offset + configs[i].size;
 
         if (offset >= configs[i].offset && max <= max2) {
@@ -100,7 +100,7 @@ static size_t sroa_rewrite(TB_Function* f, int pointer_size, TB_Node* start, TB_
         DO_IF(TB_OPTDEBUG_SROA)(printf("sroa v%u => SROA to %zu pieces", n->gvn, config_count));
 
         uint32_t alignment = TB_NODE_GET_EXTRA_T(n, TB_NodeLocal)->align;
-        FOREACH_N(i, 0, config_count) {
+        FOR_N(i, 0, config_count) {
             TB_Node* new_n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
             set_input(f, new_n, start, 0);
             TB_NODE_SET_EXTRA(new_n, TB_NodeLocal, .size = configs[i].size, .align = alignment);

@@ -230,7 +230,7 @@ static VReg* node_vreg(Ctx* ctx, TB_Node* n) { return n && ctx->vreg_map[n->gvn]
 
 static bool reg_mask_eq(RegMask* a, RegMask* b) {
     if (a->count != b->count) { return false; }
-    FOREACH_N(i, 0, a->count) {
+    FOR_N(i, 0, a->count) {
         if (a->mask[i] != b->mask[i]) return false;
     }
 
@@ -241,7 +241,7 @@ static bool reg_mask_is_not_empty(RegMask* mask) {
     if (mask == NULL) return false;
 
     assert(mask->count == 1);
-    FOREACH_N(i, 0, mask->count) {
+    FOR_N(i, 0, mask->count) {
         if (mask->mask[0] != 0) return true;
     }
 
@@ -254,7 +254,7 @@ static int fixed_reg_mask(RegMask* mask) {
         return mask->mask[0];
     } else {
         int set = -1;
-        FOREACH_N(i, 0, mask->count) {
+        FOR_N(i, 0, mask->count) {
             int found = 63 - tb_clz64(mask->mask[i]);
             if (mask->mask[0] == (1ull << found)) {
                 if (set >= 0) return -1;
@@ -278,7 +278,7 @@ static RegMask* new_regmask(TB_Function* f, int reg_class, bool may_spill, uint6
 static uint32_t rm_hash(void* a) {
     RegMask* x = a;
     uint32_t sum = 0;
-    FOREACH_N(i, 0, x->count) {
+    FOR_N(i, 0, x->count) {
         sum += x->mask[i];
     }
 
@@ -291,7 +291,7 @@ static bool rm_compare(void* a, void* b) {
         return false;
     }
 
-    FOREACH_N(i, 0, x->count) {
+    FOR_N(i, 0, x->count) {
         if (x->mask[i] != y->mask[i]) { return false; }
     }
     return true;

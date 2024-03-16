@@ -56,7 +56,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         if (def) {
             printf("(");
             TB_Node** params = ctx->f->params;
-            FOREACH_N(i, 1, 3 + ctx->f->param_count) {
+            FOR_N(i, 1, 3 + ctx->f->param_count) {
                 if (i > 1) printf(", ");
 
                 if (params[i] == NULL) {
@@ -195,7 +195,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
     tb_greedy_scheduler(f, &ctx->cfg, ws, NULL, bb);
 
-    FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
+    FOR_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];
 
         // skip these
@@ -236,7 +236,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     int bits = n->inputs[1]->dt.type == TB_PTR ? 64 : n->inputs[1]->dt.data;
 
                     printf("  if ");
-                    FOREACH_N(i, 1, n->input_count) {
+                    FOR_N(i, 1, n->input_count) {
                         if (i != 1) printf(", ");
                         print_ref_to_node(ctx, n->inputs[i], false);
                     }
@@ -250,13 +250,13 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     print_branch_edge(ctx, succ[1], false);
                 } else {
                     printf("  br ");
-                    FOREACH_N(i, 1, n->input_count) {
+                    FOR_N(i, 1, n->input_count) {
                         if (i != 1) printf(", ");
                         print_ref_to_node(ctx, n->inputs[i], false);
                     }
                     printf("%s=> {\n", n->input_count > 1 ? " " : "");
 
-                    FOREACH_N(i, 0, br->succ_count) {
+                    FOR_N(i, 0, br->succ_count) {
                         if (i != 0) printf("    %"PRId64": ", br->keys[i - 1].key);
                         else printf("    default: ");
 
@@ -277,7 +277,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
             case TB_RETURN: {
                 printf("  end ");
-                FOREACH_N(i, 1, n->input_count) {
+                FOR_N(i, 1, n->input_count) {
                     if (i != 1) printf(", ");
                     print_ref_to_node(ctx, n->inputs[i], false);
                 }
@@ -298,13 +298,13 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     printf("  ");
 
                     size_t first = projs[0] && projs[0]->dt.type == TB_CONTROL ? 1 : 0;
-                    FOREACH_N(i, first, 32) {
+                    FOR_N(i, first, 32) {
                         if (projs[i] == NULL) break;
                         if (i > first) printf(", ");
                         printf("v%u", projs[i]->gvn);
                     }
                     printf(" = %s.(", tb_node_get_name(n));
-                    FOREACH_N(i, first, 32) {
+                    FOR_N(i, first, 32) {
                         if (projs[i] == NULL) break;
                         if (i > first) printf(", ");
                         print_type2(projs[i]->dt);
@@ -325,7 +325,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                 printf(" ");
 
                 size_t first = n->type == TB_PROJ ? 0 : 1;
-                FOREACH_N(i, first, n->input_count) {
+                FOR_N(i, first, n->input_count) {
                     if (i != first) printf(", ");
                     print_ref_to_node(ctx, n->inputs[i], false);
                 }
@@ -432,7 +432,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                         TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
 
                         printf(" { default: %"PRId64, l->entries[0].val);
-                        FOREACH_N(i, 1, l->entry_count) {
+                        FOR_N(i, 1, l->entry_count) {
                             printf(", %"PRId64": %"PRId64, l->entries[i].key, l->entries[i].val);
                         }
                         printf("}");
@@ -484,7 +484,7 @@ void tb_print(TB_Function* f, TB_Arena* tmp) {
     tb_global_schedule(f, &ws, ctx.cfg, false, NULL);
 
     TB_Node* end_bb = NULL;
-    FOREACH_N(i, 0, ctx.cfg.block_count) {
+    FOR_N(i, 0, ctx.cfg.block_count) {
         TB_Node* end = nl_map_get_checked(ctx.cfg.node_to_block, ws.items[i]).end;
         if (end->type == TB_RETURN) {
             end_bb = ws.items[i];

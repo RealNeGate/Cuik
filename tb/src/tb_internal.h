@@ -37,13 +37,13 @@
 #include <perf.h>
 #include <log.h>
 
-#define FOREACH_N(it, start, end) \
+#define FOR_N(it, start, end) \
 for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
 
-#define FOREACH_REVERSE_N(it, start, end) \
+#define FOR_REV_N(it, start, end) \
 for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
 
-#define FOREACH_BIT(it, start, bits) \
+#define FOR_BIT(it, start, bits) \
 for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bits_ & 1)
 
 #define TB_MIN(x, y) ((x) < (y) ? (x) : (y))
@@ -70,7 +70,7 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0

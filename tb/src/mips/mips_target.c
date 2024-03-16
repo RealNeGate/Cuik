@@ -342,7 +342,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 ctx->num_regs[0] = param_count;
             }
 
-            FOREACH_N(i, 0, param_count > 4 ? 4 : param_count) {
+            FOR_N(i, 0, param_count > 4 ? 4 : param_count) {
                 volatile_gprs &= ~(1u << (A0 + i));
             }
 
@@ -365,7 +365,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
                 ins += 1;
             }
 
-            FOREACH_N(i, 0, param_count) {
+            FOR_N(i, 0, param_count) {
                 ins[i].src = get_interval(ctx, n->inputs[i + 3], 0);
 
                 if (i < 4) {
@@ -381,7 +381,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             }
 
             int j = param_count;
-            FOREACH_N(i, 0, ctx->num_regs[1]) {
+            FOR_N(i, 0, ctx->num_regs[1]) {
                 if (volatile_gprs & (1u << i)) {
                     ins[j].src = NULL;
                     ins[j].mask = REGMASK(GPR, 1u << i);
@@ -531,7 +531,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
         __(i, addi, SP, SP, -stack_usage);
     }
 
-    FOREACH_N(i, 0, dyn_array_length(ctx->callee_spills)) {
+    FOR_N(i, 0, dyn_array_length(ctx->callee_spills)) {
         int pos = stk_offset(ctx, ctx->callee_spills[i].stk);
         int rc = ctx->callee_spills[i].class;
         assert(rc == REG_CLASS_GPR);

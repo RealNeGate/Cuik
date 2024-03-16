@@ -93,7 +93,7 @@ size_t tb_archive_parse_entries(TB_ArchiveFileParser* restrict parser, size_t st
     TB_Slice strtbl = parser->strtbl;
     size_t entry_count = 0;
 
-    FOREACH_N(i, start, count) {
+    FOR_N(i, start, count) {
         COFF_ArchiveMemberHeader* restrict sym = (COFF_ArchiveMemberHeader*) &file.data[parser->members[i]];
         size_t len = tb__parse_decimal_int(sizeof(sym->size), sym->size);
 

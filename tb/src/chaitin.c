@@ -41,12 +41,12 @@ static void ifg_remove(Chaitin* ra, int i, int j) {
 }
 
 static void ifg_dump(Chaitin* ra) {
-    FOREACH_N(i, 0, ra->ifg_len) {
-        FOREACH_N(j, 0, ra->ifg_stride) {
+    FOR_N(i, 0, ra->ifg_len) {
+        FOR_N(j, 0, ra->ifg_stride) {
             uint64_t bits = ra->ifg[i*ra->ifg_stride + j];
             if (bits == 0) continue;
 
-            FOREACH_N(k, 0, 64) if ((bits >> k) & 1) {
+            FOR_N(k, 0, 64) if ((bits >> k) & 1) {
                 printf("V%zu -- V%zu\n", j*64 + k, i);
             }
         }
@@ -54,11 +54,11 @@ static void ifg_dump(Chaitin* ra) {
 }
 
 static void ifg_remove_edges(Chaitin* ra, int i) {
-    FOREACH_N(j, 0, ra->ifg_stride) {
+    FOR_N(j, 0, ra->ifg_stride) {
         uint64_t bits = ra->ifg[i*ra->ifg_stride + j];
         if (bits == 0) continue;
 
-        FOREACH_N(k, 0, 64) if ((bits >> k) & 1) {
+        FOR_N(k, 0, 64) if ((bits >> k) & 1) {
             ifg_remove(ra, j*64 + k, i);
             ra->degree[j*64 + k] -= 1;
         }
@@ -70,7 +70,7 @@ static void ifg_remove_edges(Chaitin* ra, int i) {
 }
 
 static bool ifg_empty(Chaitin* ra) {
-    FOREACH_N(i, 0, ra->ifg_len) {
+    FOR_N(i, 0, ra->ifg_len) {
         if (ra->degree[i]) return false;
     }
 
@@ -101,7 +101,7 @@ MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     if (f->node_count >= f->scheduled_n) {
         TB_BasicBlock** new_sched = tb_arena_alloc(f->tmp_arena, 2 * f->scheduled_n * sizeof(TB_BasicBlock*));
         memcpy(new_sched, f->scheduled, f->scheduled_n * sizeof(TB_BasicBlock*));
-        FOREACH_N(i, f->scheduled_n, 2 * f->scheduled_n) {
+        FOR_N(i, f->scheduled_n, 2 * f->scheduled_n) {
             new_sched[i] = NULL;
         }
         f->scheduled = new_sched;
@@ -179,14 +179,14 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
     memset(ra->degree, 0, ra->ifg_len * sizeof(int));
 
     Set live = set_create_in_arena(arena, f->node_count);
-    FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+    FOR_REV_N(i, 0, ctx->bb_count) {
         MachineBB* mbb = &ctx->machine_bbs[i];
         TB_BasicBlock* bb = f->scheduled[mbb->n->gvn];
 
         set_copy(&live, &bb->live_out);
 
         size_t item_count = aarray_length(mbb->items);
-        FOREACH_REVERSE_N(j, 0, item_count) {
+        FOR_REV_N(j, 0, item_count) {
             TB_Node* n = mbb->items[j];
             int vreg_id = ctx->vreg_map[n->gvn];
 
@@ -197,7 +197,7 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
                 set_remove(&live, n->gvn);
 
                 // interfere
-                FOREACH_N(k, 1, ra->ifg_len) {
+                FOR_N(k, 1, ra->ifg_len) {
                     TB_Node* kn = ctx->vregs[k].n;
                     if (set_get(&live, kn->gvn) && reg_mask_may_intersect(def_mask, ctx->vregs[k].mask)) {
                         printf("V%d -- V%td\n", vreg_id, k);
@@ -211,7 +211,7 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
                 int shared_edge = ctx->node_2addr(n);
                 if (shared_edge >= 0) {
                     assert(shared_edge < n->input_count);
-                    FOREACH_N(k, 1, n->input_count) if (k != shared_edge) {
+                    FOR_N(k, 1, n->input_count) if (k != shared_edge) {
                         TB_Node* in = n->inputs[k];
                         VReg* in_vreg = node_vreg(ctx, in);
                         if (in_vreg && reg_mask_may_intersect(def_mask, in_vreg->mask)) {
@@ -226,7 +226,7 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
                 RegMask** ins = tb_arena_alloc(arena, n->input_count * sizeof(RegMask*));
                 ctx->constraint(ctx, n, ins);
 
-                FOREACH_N(j, 1, n->input_count) {
+                FOR_N(j, 1, n->input_count) {
                     TB_Node* in = n->inputs[j];
                     if (ins[j] != &TB_REG_EMPTY) {
                         VReg* in_vreg = node_vreg(ctx, in);
@@ -247,16 +247,16 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
                 tb_arena_free(arena, ins, n->input_count * sizeof(RegMask*));
             } else {
                 // uses are live now
-                FOREACH_N(j, 0, n->input_count) {
+                FOR_N(j, 0, n->input_count) {
                     if (n->inputs[i]) { set_put(&live, n->inputs[i]->gvn); }
                 }
             }
         }
 
         // compute degree
-        FOREACH_N(i, 0, ra->ifg_len) {
+        FOR_N(i, 0, ra->ifg_len) {
             int sum = 0;
-            FOREACH_N(j, 0, ra->ifg_stride) {
+            FOR_N(j, 0, ra->ifg_stride) {
                 sum += tb_popcount64(ra->ifg[i*ra->ifg_stride + j]);
             }
             ra->degree[i] = sum;
@@ -268,7 +268,7 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
 static int simplify(Ctx* restrict ctx, Chaitin* restrict ra, int* stk, int cap) {
     int cnt = 0;
 
-    FOREACH_N(i, 1, ra->ifg_len) {
+    FOR_N(i, 1, ra->ifg_len) {
         VReg* vreg = &ctx->vregs[i];
         if (vreg) {
             int d = ra->degree[i];
@@ -287,7 +287,7 @@ static int simplify(Ctx* restrict ctx, Chaitin* restrict ra, int* stk, int cap) 
         float best_cost = FLT_MAX;
 
         // pick next best spill
-        FOREACH_N(i, 1, ra->ifg_len) {
+        FOR_N(i, 1, ra->ifg_len) {
             VReg* vreg = &ctx->vregs[i];
             if (vreg && ra->degree[i] >= ctx->num_regs[vreg->mask->class]) {
                 float c = node_cost(ctx, ctx->vregs[i].n);
@@ -349,7 +349,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
 
             if (dyn_array_length(ra.spills) > 0) {
                 // insert spill code
-                FOREACH_N(i, 0, dyn_array_length(ra.spills)) {
+                FOR_N(i, 0, dyn_array_length(ra.spills)) {
                     int vreg_id = ra.spills[i];
                     VReg* spill = &ctx->vregs[vreg_id];
                     TB_Node* n = spill->n;
@@ -410,11 +410,11 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
             printf("  => %#llx\n", mask);
 
             int def_class = vreg->mask->class;
-            FOREACH_N(j, 0, ra.ifg_stride) {
+            FOR_N(j, 0, ra.ifg_stride) {
                 uint64_t bits = ra.ifg[vreg_id*ra.ifg_stride + j];
                 if (bits == 0) continue;
 
-                FOREACH_N(k, 0, 64) if ((bits >> k) & 1) {
+                FOR_N(k, 0, 64) if ((bits >> k) & 1) {
                     VReg* other = &ctx->vregs[j*64 + k];
                     assert(other->mask->class == def_class);
 

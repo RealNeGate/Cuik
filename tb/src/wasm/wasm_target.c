@@ -144,7 +144,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
     dyn_array_clear(ctx->phi_vals);
     greedy_scheduler(ctx->p, &ctx->cfg, ws, &ctx->phi_vals, bb);
 
-    FOREACH_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
+    FOR_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
         TB_Node* bot = ws->items[i];
         if (bot->type == TB_SYMBOL || bot->type == TB_PROJ || cfg_is_region(bot) || bot->type == TB_PHI || bot->type == TB_BRANCH) {
             continue;
@@ -196,7 +196,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
             break;
 
             case TB_CALL:
-            FOREACH_REVERSE_N(i, 3, bot->input_count) {
+            FOR_REV_N(i, 3, bot->input_count) {
                 push_val(ctx, bot->inputs[i]);
             }
             break;
@@ -221,7 +221,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
         }
 
         // ok emit ops now
-        FOREACH_REVERSE_N(i, 0, ctx->stack_n) {
+        FOR_REV_N(i, 0, ctx->stack_n) {
             TB_Node* n = ctx->stack[i];
             ValueDesc* val = &ctx->locals[n->gvn];
 
@@ -420,7 +420,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
     TB_Node* end = bb->end;
     if (!cfg_is_terminator(end)) {
         // writeback phis
-        FOREACH_N(i, 0, dyn_array_length(ctx->phi_vals)) {
+        FOR_N(i, 0, dyn_array_length(ctx->phi_vals)) {
             PhiVal* v = &ctx->phi_vals[i];
 
             // get_local src
@@ -464,7 +464,7 @@ static TB_Node** successors(Ctx* ctx, TB_Worklist* ws, TB_Node* end, size_t* out
 
 static bool wasm_is_natural_loop(Ctx* ctx, TB_Node* header) {
     if (cfg_is_region(header)) {
-        FOREACH_N(i, 0, header->input_count) {
+        FOR_N(i, 0, header->input_count) {
             TB_Node* pred = cfg_get_pred(&ctx->cfg, header, i);
             if (slow_dommy(&ctx->cfg, header, pred)) {
                 return true;
@@ -480,7 +480,7 @@ static bool has_merge_root(Ctx* ctx, TB_Node* n, int id) {
         return false;
     }
 
-    FOREACH_N(i, 0, n->input_count) {
+    FOR_N(i, 0, n->input_count) {
         TB_Node* pred = cfg_get_pred(&ctx->cfg, n, i);
         TB_BasicBlock* pred_bb = ctx->p->scheduled[pred->gvn];
 
@@ -517,7 +517,7 @@ static WasmElem* do_dom_tree(Ctx* ctx, DomTree* node) {
     // find merges (embed within each other)
     size_t base = dyn_array_length(ctx->filtered);
     WasmElem* last = NULL;
-    FOREACH_N(i, 0, dyn_array_length(node->kids)) {
+    FOR_N(i, 0, dyn_array_length(node->kids)) {
         TB_Node* start = node->kids[i]->start;
         TB_BasicBlock* start_bb = ctx->p->scheduled[start->gvn];
 
@@ -551,7 +551,7 @@ static WasmElem* do_dom_tree(Ctx* ctx, DomTree* node) {
     }
 
     // compile merges
-    FOREACH_N(i, base, dyn_array_length(ctx->filtered)) {
+    FOR_N(i, base, dyn_array_length(ctx->filtered)) {
         do_dom_tree(ctx, ctx->filtered[i]);
     }
     if (ctx->filtered) {
@@ -699,7 +699,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     EMIT4(&ctx.emit, 0x00808080);
 
     ctx.locals = tb_arena_alloc(arena, f->node_count * sizeof(ValueDesc));
-    FOREACH_N(i, 0, f->node_count) {
+    FOR_N(i, 0, f->node_count) {
         ctx.locals[i].id = -1;
     }
 
@@ -736,7 +736,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
     }
 
     DomTree* doms = ctx.doms = tb_arena_alloc(tmp_arena, ctx.cfg.block_count * sizeof(DomTree));
-    FOREACH_N(i, 0, ctx.cfg.block_count) {
+    FOR_N(i, 0, ctx.cfg.block_count) {
         doms[i].id    = i;
         doms[i].elem  = NULL;
         doms[i].start = NULL;
@@ -744,7 +744,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         doms[i].kids  = NULL;
     }
 
-    FOREACH_N(i, 0, ctx.cfg.block_count) {
+    FOR_N(i, 0, ctx.cfg.block_count) {
         TB_BasicBlock* bb = ctx.p->scheduled[ws->items[i]->gvn];
         doms[i].start = ws->items[i];
         doms[i].end   = bb->end;
@@ -752,7 +752,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
         dyn_array_put(doms[bb->dom->id].kids, &doms[bb->id]);
     }
 
-    FOREACH_N(i, 0, ctx.cfg.block_count) {
+    FOR_N(i, 0, ctx.cfg.block_count) {
         DomTree* node = &ctx.doms[i];
         qsort(node->kids, dyn_array_length(node->kids), sizeof(DomTree*), dom_sort_cmp);
     }

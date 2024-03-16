@@ -41,7 +41,7 @@ static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n
     *s = (SchedNode){ .parent = parent, .sp = sp, .n = n, .index = 0, .anti_count = anti_count };
 
     if (n->type == TB_MERGEMEM) {
-        FOREACH_N(i, 2, n->input_count) {
+        FOR_N(i, 2, n->input_count) {
             s->antis[i - 2] = n->inputs[i]->users;
         }
     } else if (anti_count == 1) {

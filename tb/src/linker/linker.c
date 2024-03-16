@@ -292,7 +292,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
 
                             dyn_array_for(j, globals) {
                                 TB_Global* g = globals[j];
-                                FOREACH_N(k, 0, g->obj_count) {
+                                FOR_N(k, 0, g->obj_count) {
                                     size_t actual_pos  = g->pos + g->objects[k].offset;
                                     size_t actual_page = actual_pos & ~4095;
                                     size_t page_offset = actual_pos - actual_page;
@@ -564,7 +564,7 @@ void tb_linker_apply_module_relocs(TB_Linker* l, TB_Module* m, TB_LinkerSection*
 
 static TB_Slice as_filename(TB_Slice s) {
     size_t last = 0;
-    FOREACH_N(i, 0, s.length) {
+    FOR_N(i, 0, s.length) {
         if (s.data[i] == '/' || s.data[i] == '\\') {
             last = i+1;
         }
@@ -757,7 +757,7 @@ void tb_linker_mark_live(TB_Linker* l) {
             }
 
             // associate TB externals with linker symbols
-            FOREACH_N(i, 0, m->exports.count) {
+            FOR_N(i, 0, m->exports.count) {
                 if (&m->exports.data[i]->super == m->chkstk_extern && m->uses_chkstk == 0) {
                     continue;
                 }

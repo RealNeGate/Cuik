@@ -59,7 +59,7 @@ static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Arena* tmp_arena, TB_Node* n
         uint64_t imm = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
         uint64_t mask = tb__mask(valid.size*8);
 
-        FOREACH_N(i, 0, valid.splits) {
+        FOR_N(i, 0, valid.splits) {
             pieces[i] = make_int_node(f, valid.dt, imm & mask);
             imm >>= valid.size*8;
         }
@@ -68,7 +68,7 @@ static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Arena* tmp_arena, TB_Node* n
         if (align < valid.size) { align = valid.size; }
 
         int32_t off  = 0;
-        FOREACH_N(i, 0, valid.splits) {
+        FOR_N(i, 0, valid.splits) {
             TB_Node* addr = make_member(f, n->inputs[2], off);
             off += valid.size;
 
@@ -86,7 +86,7 @@ static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Arena* tmp_arena, TB_Node* n
         TB_Node** b = legalize_node(ctx, tmp_arena, n->inputs[2], valid);
 
         TB_Node* carry = NULL;
-        FOREACH_N(i, 0, valid.splits) {
+        FOR_N(i, 0, valid.splits) {
             TB_Node* n = tb_alloc_node(f, TB_ADC, TB_TYPE_TUPLE, 4, 0);
             set_input(f, n, a[i],  1);
             set_input(f, n, b[i],  2);
@@ -120,7 +120,7 @@ static TB_Node* walk_node(LegalizeCtx* ctx, TB_Node* n) {
 
         TB_Node* prev_st = n->inputs[1];
         int32_t off  = 0;
-        FOREACH_N(i, 0, valid.splits - 1) {
+        FOR_N(i, 0, valid.splits - 1) {
             TB_Node* addr = make_member(f, n->inputs[2], off);
             off += valid.size;
 
@@ -145,7 +145,7 @@ static TB_Node* walk_node(LegalizeCtx* ctx, TB_Node* n) {
     }
 
     // replace all input edges
-    FOREACH_N(i, 0, n->input_count) {
+    FOR_N(i, 0, n->input_count) {
         TB_Node* in = n->inputs[i];
         if (in) {
             TB_Node* k  = walk_node(ctx, in);

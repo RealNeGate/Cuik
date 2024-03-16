@@ -100,7 +100,7 @@ ExportList tb_module_layout_sections(TB_Module* m) {
 
         // unpack symbols
         TB_Symbol** syms = (TB_Symbol**) info->symbols.data;
-        if (syms) FOREACH_N(i, 0, 1ull << info->symbols.exp) {
+        if (syms) FOR_N(i, 0, 1ull << info->symbols.exp) {
             TB_Symbol* s = syms[i];
             if (s == NULL || s == NL_HASHSET_TOMB) continue;
 
@@ -189,7 +189,7 @@ size_t tb_helper_write_section(TB_Module* m, size_t write_pos, TB_ModuleSection*
         TB_Global* restrict g = section->globals[i];
 
         memset(&data[g->pos], 0, g->size);
-        FOREACH_N(k, 0, g->obj_count) {
+        FOR_N(k, 0, g->obj_count) {
             if (g->objects[k].type == TB_INIT_OBJ_REGION) {
                 assert(g->objects[k].offset + g->objects[k].region.size <= g->size);
                 memcpy(&data[g->pos + g->objects[k].offset], g->objects[k].region.ptr, g->objects[k].region.size);
@@ -212,7 +212,7 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection) sections,
 
         dyn_array_for(j, sec->globals) {
             TB_Global* restrict g = sec->globals[j];
-            FOREACH_N(k, 0, g->obj_count) {
+            FOR_N(k, 0, g->obj_count) {
                 reloc_count += (g->objects[k].type == TB_INIT_OBJ_RELOC);
             }
         }

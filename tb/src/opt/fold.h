@@ -555,13 +555,13 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
 
     // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))
     if (src->type == TB_PHI) {
-        FOREACH_N(i, 1, src->input_count) {
+        FOR_N(i, 1, src->input_count) {
             if (src->inputs[i]->type != TB_INTEGER_CONST) return NULL;
         }
 
         // generate extension nodes
         TB_DataType dt = n->dt;
-        FOREACH_N(i, 1, src->input_count) {
+        FOR_N(i, 1, src->input_count) {
             assert(src->inputs[i]->type == TB_INTEGER_CONST);
 
             TB_Node* ext_node = tb_alloc_node(f, ext_type, dt, 2, 0);

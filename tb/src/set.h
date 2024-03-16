@@ -43,7 +43,7 @@ static bool set_union(Set* dst, Set* src) {
     size_t n = (src->capacity + 63) / 64;
 
     uint64_t changes = 0;
-    FOREACH_N(i, 0, n) {
+    FOR_N(i, 0, n) {
         uint64_t old = dst->data[i];
         uint64_t new = old | src->data[i];
 
@@ -57,7 +57,7 @@ static bool set_equals(Set* dst, Set* src) {
     assert(dst->capacity == src->capacity);
     size_t n = (dst->capacity + 63) / 64;
 
-    FOREACH_N(i, 0, n) {
+    FOR_N(i, 0, n) {
         if (dst->data[i] != src->data[i]) return false;
     }
 
@@ -73,7 +73,7 @@ static size_t set_popcount(Set* s) {
     size_t n = (s->capacity + 63) / 64;
 
     size_t sum = 0;
-    FOREACH_N(i, 0, n) {
+    FOR_N(i, 0, n) {
         sum += tb_popcount64(s->data[i]);
     }
 

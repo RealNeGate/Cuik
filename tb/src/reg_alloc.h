@@ -134,7 +134,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
     RegIndex* ops = inst->operands;
     bool dst_use_reg = inst->type == IMUL || inst->type == INST_ZERO || (inst->flags & (INST_MEM | INST_GLOBAL));
 
-    FOREACH_N(i, 0, inst->out_count) {
+    FOR_N(i, 0, inst->out_count) {
         assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
@@ -155,7 +155,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
         use = USE_MEM_OR_REG;
     }
 
-    FOREACH_N(i, 0, inst->in_count) {
+    FOR_N(i, 0, inst->in_count) {
         assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
@@ -165,7 +165,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
 
     // calls use the temporaries for clobbers
     bool is_call = (inst->type == CALL || inst->type == SYSCALL);
-    FOREACH_N(i, 0, inst->tmp_count) {
+    FOR_N(i, 0, inst->tmp_count) {
         assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
@@ -176,7 +176,7 @@ static void reverse_bb_walk(LSRA* restrict ra, MachineBB* bb, Inst* inst) {
     }
 
     // safepoints don't care about memory or reg, it just needs to be available
-    FOREACH_N(i, 0, inst->save_count) {
+    FOR_N(i, 0, inst->save_count) {
         assert(*ops >= 0);
         LiveInterval* interval = &ra->intervals[*ops++];
 
@@ -194,8 +194,8 @@ static int range_intersect(LiveRange* a, LiveRange* b) {
 }
 
 static int interval_intersect(LiveInterval* a, LiveInterval* b) {
-    FOREACH_REVERSE_N(i, 1, a->active_range+1) {
-        FOREACH_REVERSE_N(j, 1, b->active_range+1) {
+    FOR_REV_N(i, 1, a->active_range+1) {
+        FOR_REV_N(j, 1, b->active_range+1) {
             int t = range_intersect(&a->ranges[i], &b->ranges[j]);
             if (t >= 0) {
                 return t;
@@ -207,11 +207,11 @@ static int interval_intersect(LiveInterval* a, LiveInterval* b) {
 }
 
 #define FOREACH_SET(it, set) \
-FOREACH_N(_i, 0, ((set).capacity + 63) / 64) FOREACH_BIT(it, _i*64, (set).data[_i])
+FOR_N(_i, 0, ((set).capacity + 63) / 64) FOREACH_BIT(it, _i*64, (set).data[_i])
 
 static int next_use(LSRA* restrict ra, LiveInterval* interval, int time) {
     for (;;) {
-        FOREACH_N(i, 0, dyn_array_length(interval->uses)) {
+        FOR_N(i, 0, dyn_array_length(interval->uses)) {
             if (interval->uses[i].pos > time) {
                 return interval->uses[i].pos;
             }
@@ -345,7 +345,7 @@ static int split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval
 
     // split uses
     size_t use_count = dyn_array_length(interval->uses);
-    FOREACH_REVERSE_N(i, 0, use_count) {
+    FOR_REV_N(i, 0, use_count) {
         size_t split_count = use_count - (i + 1);
         if (interval->uses[i].pos > pos && split_count > 0) {
             // split
@@ -362,7 +362,7 @@ static int split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval
 
     // split ranges
     size_t end = interval->range_count;
-    FOREACH_REVERSE_N(i, 1, end) {
+    FOR_REV_N(i, 1, end) {
         LiveRange* range = &interval->ranges[i];
         if (range->end > pos) {
             bool clean_split = pos < range->start;
@@ -381,7 +381,7 @@ static int split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval
             interval->active_range -= start - 1;
             interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
 
-            FOREACH_N(j, start, end) {
+            FOR_N(j, start, end) {
                 assert(j - start + 1 < interval->range_count);
                 interval->ranges[j - start + 1] = it.ranges[j];
             }
@@ -412,7 +412,7 @@ static int split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval
 
     // reload before next use
     if (is_spill) {
-        FOREACH_REVERSE_N(i, 0, dyn_array_length(it.uses)) {
+        FOR_REV_N(i, 0, dyn_array_length(it.uses)) {
             if (it.uses[i].kind == USE_REG) {
                 // new split
                 split_intersecting(ra, it.uses[i].pos - 1, &ra->intervals[new_reg], false);
@@ -432,7 +432,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     // callee saved will be biased to have nearer free positions to avoid incurring
     // a spill on them early.
     int half_free = 1 << 16;
-    FOREACH_N(i, 0, 16) {
+    FOR_N(i, 0, 16) {
         ra->free_pos[i] = (ra->callee_saved[rc] & (1ull << i)) ? half_free : INT_MAX;
     }
 
@@ -482,7 +482,7 @@ static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval) {
     // pick highest free pos
     if (highest < 0) {
         highest = 0;
-        FOREACH_N(i, 1, 16) if (ra->free_pos[i] > ra->free_pos[highest]) {
+        FOR_N(i, 1, 16) if (ra->free_pos[i] > ra->free_pos[highest]) {
             highest = i;
         }
     }
@@ -554,8 +554,8 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
     int rc = interval->reg_class;
     int* use_pos = ra->free_pos;
 
-    FOREACH_N(i, 0, 16) ra->block_pos[i] = INT_MAX;
-    FOREACH_N(i, 0, 16) use_pos[i] = INT_MAX;
+    FOR_N(i, 0, 16) ra->block_pos[i] = INT_MAX;
+    FOR_N(i, 0, 16) use_pos[i] = INT_MAX;
 
     // mark non-fixed intervals
     int start = interval_start(interval);
@@ -603,7 +603,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
 
     // pick highest use pos
     int highest = 0;
-    FOREACH_N(i, 1, 16) if (use_pos[i] > use_pos[highest]) {
+    FOR_N(i, 1, 16) if (use_pos[i] > use_pos[highest]) {
         highest = i;
     }
 
@@ -620,7 +620,7 @@ static ptrdiff_t allocate_blocked_reg(LSRA* restrict ra, LiveInterval* interval)
         interval->is_spill = true;
 
         // split at optimal spot before first use that requires a register
-        FOREACH_REVERSE_N(i, 0, dyn_array_length(interval->uses)) {
+        FOR_REV_N(i, 0, dyn_array_length(interval->uses)) {
             if (interval->uses[i].pos >= pos && interval->uses[i].kind == USE_REG) {
                 split_intersecting(ra, interval->uses[i].pos - 1, interval, false);
                 break;
@@ -721,7 +721,7 @@ static void cuiksort_defs(LiveInterval* intervals, ptrdiff_t lo, ptrdiff_t hi, R
 static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynArray(int) epilogues) {
     LSRA ra = { .first = ctx->first, .cache = ctx->first, .intervals = ctx->intervals, .epilogues = epilogues, .stack_usage = stack_usage };
 
-    FOREACH_N(i, 0, CG_REGISTER_CLASSES) {
+    FOR_N(i, 0, CG_REGISTER_CLASSES) {
         ra.active_set[i] = set_create_in_arena(tmp_arena, 16);
     }
 
@@ -730,7 +730,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynAr
     MachineBBs mbbs = ctx->machine_bbs;
     size_t interval_count = dyn_array_length(ra.intervals);
     CUIK_TIMED_BLOCK("build intervals") {
-        FOREACH_REVERSE_N(i, 0, ctx->bb_count) {
+        FOR_REV_N(i, 0, ctx->bb_count) {
             TB_Node* bb = ctx->worklist.items[ctx->bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
 
@@ -739,11 +739,11 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynAr
 
             // for anything that's live out, add the entire range
             Set* live_out = &mbb->live_out;
-            FOREACH_N(j, 0, (interval_count + 63) / 64) {
+            FOR_N(j, 0, (interval_count + 63) / 64) {
                 uint64_t bits = live_out->data[j];
                 if (bits == 0) continue;
 
-                FOREACH_N(k, 0, 64) if (bits & (1ull << k)) {
+                FOR_N(k, 0, 64) if (bits & (1ull << k)) {
                     add_range(&ra.intervals[j*64 + k], bb_start, bb_end);
                 }
             }
@@ -758,7 +758,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynAr
     // we use every fixed interval at the very start to force them into
     // the inactive set.
     int fixed_count = 32;
-    FOREACH_N(i, 0, fixed_count) {
+    FOR_N(i, 0, fixed_count) {
         add_range(&ra.intervals[i], 0, 1);
     }
 
@@ -768,7 +768,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynAr
     ra.unhandled = dyn_array_create(LiveInterval*, (interval_count * 4) / 3);
 
     SpillSlot* slots = tb_arena_alloc(tmp_arena, (interval_count - fixed_count) * sizeof(SpillSlot));
-    FOREACH_N(i, 0, interval_count) {
+    FOR_N(i, 0, interval_count) {
         if (i >= fixed_count) {
             slots[i - fixed_count].pos = 0;
             ra.intervals[i].spill = &slots[i - fixed_count];
@@ -811,7 +811,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynAr
             }
 
             // expire intervals
-            FOREACH_N(rc, 0, CG_REGISTER_CLASSES) {
+            FOR_N(rc, 0, CG_REGISTER_CLASSES) {
                 FOREACH_SET(reg, ra.active_set[rc]) {
                     RegIndex active_i = ra.active[rc][reg];
                     update_interval(&ra, &ra.intervals[active_i], true, time, -1);
@@ -857,7 +857,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynAr
             // display active set
             REG_ALLOC_LOG {
                 printf("  \x1b[32m{ ");
-                FOREACH_N(rc, 0, CG_REGISTER_CLASSES) {
+                FOR_N(rc, 0, CG_REGISTER_CLASSES) {
                     FOREACH_SET(reg, ra.active_set[rc]) {
                         int id = ra.active[rc][reg];
 
@@ -877,7 +877,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynAr
     CUIK_TIMED_BLOCK("move resolver") {
         TB_Node** bbs = ctx->worklist.items;
         int* bb_order = ctx->bb_order;
-        FOREACH_N(i, 0, ctx->bb_count) {
+        FOR_N(i, 0, ctx->bb_count) {
             TB_Node* bb = bbs[bb_order[i]];
             MachineBB* mbb = &nl_map_get_checked(mbbs, bb);
             TB_Node* end_node = mbb->end_node;
@@ -917,7 +917,7 @@ static int linear_scan(Ctx* restrict ctx, TB_Function* f, int stack_usage, DynAr
             }
 
             int pos = inst->time;
-            FOREACH_N(i, 0, inst->out_count + inst->in_count + inst->tmp_count + inst->save_count) {
+            FOR_N(i, 0, inst->out_count + inst->in_count + inst->tmp_count + inst->save_count) {
                 inst->operands[i] = split_interval_at(&ra, &ra.intervals[inst->operands[i]], pos) - ra.intervals;
             }
         }

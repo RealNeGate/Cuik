@@ -69,7 +69,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
             int rets = n->input_count - 4;
 
             assert(rets <= 2 && "At most 2 return values :(");
-            FOREACH_N(i, 0, rets) {
+            FOR_N(i, 0, rets) {
                 ins[i].mask = REGMASK(GPR, 1 << i);
             }
             return REGEMPTY;

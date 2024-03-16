@@ -69,7 +69,7 @@ static int categorize_alias_idx(LocalSplitter* restrict ctx, TB_Node* n) {
         n = n->inputs[1];
     }
 
-    FOREACH_N(i, 0, ctx->local_count) {
+    FOR_N(i, 0, ctx->local_count) {
         if (ctx->renames[i].addr == n) return i;
     }
 
@@ -168,7 +168,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
         }
 
         // fixup any connected loads
-        FOREACH_N(i, 0, user_cnt) {
+        FOR_N(i, 0, user_cnt) {
             TB_Node* use_n = users[i].n;
             int use_i = users[i].slot;
             int reason = users[i].reason;
@@ -203,7 +203,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
         }
     }
 
-    FOREACH_N(i, 0, user_cnt) {
+    FOR_N(i, 0, user_cnt) {
         TB_Node* use_n = users[i].n;
         int use_i = users[i].slot;
         int reason = users[i].reason;
@@ -212,7 +212,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
             case MEM_FORK: {
                 TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
                 TB_Node** new_latest = tb_arena_alloc(tmp_arena, (1 + ctx->local_count) * sizeof(TB_Node*));
-                FOREACH_N(i, 0, 1 + ctx->local_count) {
+                FOR_N(i, 0, 1 + ctx->local_count) {
                     new_latest[i] = latest[i];
                 }
 
@@ -241,7 +241,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                     new_latest[0] = use_n;
 
                     // make extra alias phis
-                    FOREACH_N(i, 0, ctx->local_count) {
+                    FOR_N(i, 0, ctx->local_count) {
                         // let's hope the first datatype we get from the phi is decent, if not the
                         // peepholes will ideally fix it.
                         TB_Node* val = latest[1 + i];
@@ -299,7 +299,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                 set_input(f, use_n, latest[0], 1);
 
                 /* size_t j = 0;
-                FOREACH_N(i, 0, ctx->local_count) if (ctx->renames[i].alias_idx > 0) {
+                FOR_N(i, 0, ctx->local_count) if (ctx->renames[i].alias_idx > 0) {
                     assert(latest[i] != NULL && "TODO we should place a poison?");
                     set_input(f, use_n, latest[i], 2+j);
                     j += 1;
@@ -333,7 +333,7 @@ void tb_opt_locals(TB_Function* f) {
         size_t j = 0;
         bool needs_to_rewrite = false;
         for (NL_ArrChunk* restrict chk = locals.first; chk; chk = chk->next) {
-            FOREACH_N(i, 0, chk->count) {
+            FOR_N(i, 0, chk->count) {
                 TB_Node* addr = chk->elems[i];
                 RenameMode mode = RENAME_VALUE;
 
@@ -379,14 +379,14 @@ void tb_opt_locals(TB_Function* f) {
         TB_Node* first_mem = next_mem_user(f->params[1]);
         if (first_mem) {
             TB_Node** latest = tb_arena_alloc(tmp_arena, (1 + ctx.local_count) * sizeof(TB_Node*));
-            FOREACH_N(i, 1, 1 + ctx.local_count) { latest[i] = NULL; }
+            FOR_N(i, 1, 1 + ctx.local_count) { latest[i] = NULL; }
             latest[0] = f->params[1];
 
             fixup_mem_node(f, &ctx, first_mem, latest);
         }
 
         // ok if they're now value edges we can delete the LOCAL
-        FOREACH_N(i, 0, ctx.local_count) if (ctx.renames[i].alias_idx < 0) {
+        FOR_N(i, 0, ctx.local_count) if (ctx.renames[i].alias_idx < 0) {
             tb_kill_node(f, ctx.renames[i].addr);
         }
 

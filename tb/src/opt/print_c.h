@@ -295,7 +295,7 @@ static void c_fmt_inline_node(CFmtState* ctx, TB_Node *n) {
                     uint8_t *data = tb_platform_heap_alloc(g->size);
 
                     memset(&data[g->pos], 0, g->size);
-                    FOREACH_N(k, 0, g->obj_count) {
+                    FOR_N(k, 0, g->obj_count) {
                         if (g->objects[k].type == TB_INIT_OBJ_REGION) {
                             assert(g->objects[k].offset + g->objects[k].region.size <= g->size);
                             memcpy(&data[g->pos + g->objects[k].offset], g->objects[k].region.ptr, g->objects[k].region.size);
@@ -303,7 +303,7 @@ static void c_fmt_inline_node(CFmtState* ctx, TB_Node *n) {
                     }
 
                     nl_buffer_format(ctx->buf, "\"");
-                    FOREACH_N(k, 0, g->size) {
+                    FOR_N(k, 0, g->size) {
                         if (data[k] == 0 && k + 1 == g->size) {
                             break;
                         }
@@ -463,7 +463,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
     CFmtBlockRange *range = c_fmt_get_block_range(ctx, ws, bb_start);
 
     TB_Node* prev_effect = NULL;
-    FOREACH_N(i, range->low, range->high) {
+    FOR_N(i, range->low, range->high) {
         TB_Node* n = ws->items[i];
 
         // skip these
@@ -515,7 +515,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     if (br->keys[0].key == 0) {
                         c_fmt_spaces(ctx);
                         nl_buffer_format(ctx->buf, "if (");
-                        FOREACH_N(i, 1, n->input_count) {
+                        FOR_N(i, 1, n->input_count) {
                             if (i != 1) nl_buffer_format(ctx->buf, ", ");
                             c_fmt_ref_to_node(ctx, n->inputs[i]);
                         }
@@ -533,7 +533,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     } else {
                         c_fmt_spaces(ctx);
                         nl_buffer_format(ctx->buf, "if ((uint64_t) ");
-                        FOREACH_N(i, 1, n->input_count) {
+                        FOR_N(i, 1, n->input_count) {
                             if (i != 1) nl_buffer_format(ctx->buf, ", ");
                             c_fmt_ref_to_node(ctx, n->inputs[i]);
                         }
@@ -553,12 +553,12 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                 } else {
                     c_fmt_spaces(ctx);
                     nl_buffer_format(ctx->buf, "switch ((uint64_t) ");
-                    FOREACH_N(i, 1, n->input_count) {
+                    FOR_N(i, 1, n->input_count) {
                         if (i != 1) nl_buffer_format(ctx->buf, ", ");
                         c_fmt_ref_to_node(ctx, n->inputs[i]);
                     }
                     nl_buffer_format(ctx->buf, ") {\n");
-                    FOREACH_N(i, 1, succ_count) {
+                    FOR_N(i, 1, succ_count) {
                         c_fmt_spaces(ctx);
                         nl_buffer_format(ctx->buf, "case %"PRIi64"llu:\n", br->keys[i-1].key);
                         ctx->depth += 1;
@@ -598,7 +598,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     } else {
                         nl_buffer_format(ctx->globals, "typedef struct {\n");
                         size_t index = 0;
-                        FOREACH_N(i, 0, nrets) {
+                        FOR_N(i, 0, nrets) {
                             nl_buffer_format(ctx->globals, "  %s v%zu;\n", c_fmt_type_name(rets[i].dt), index);
                             index += 1;
                         }
@@ -606,7 +606,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                         nl_buffer_format(ctx->globals, "typedef tb2c_%s_v%u_ret_t(*tb2c_%s_v%u_t)(", ctx->name, n->gvn, ctx->name, n->gvn);
                     }
                     bool first = true;
-                    FOREACH_N(i, 3, n->input_count) {
+                    FOR_N(i, 3, n->input_count) {
                         if (n->inputs[i]->dt.type != TB_CONTROL && n->inputs[i]->dt.type != TB_MEMORY) {
                             if (!first) {
                                 nl_buffer_format(ctx->globals, ", ");
@@ -631,7 +631,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     nl_buffer_format(ctx->buf, "(");
                     {
                         bool first = true;
-                        FOREACH_N(i, 3, n->input_count) {
+                        FOR_N(i, 3, n->input_count) {
                             if (n->inputs[i]->dt.type != TB_CONTROL && n->inputs[i]->dt.type != TB_MEMORY) {
                                 if (!first) {
                                     nl_buffer_format(ctx->buf, ", ");
@@ -654,7 +654,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     nl_buffer_format(ctx->buf, ")(");
                     {
                         bool first = true;
-                        FOREACH_N(i, 3, n->input_count) {
+                        FOR_N(i, 3, n->input_count) {
                             if (n->inputs[i]->dt.type != TB_CONTROL && n->inputs[i]->dt.type != TB_MEMORY) {
                                 if (!first) {
                                     nl_buffer_format(ctx->buf, ", ");
@@ -671,7 +671,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     c_fmt_spaces(ctx);
                     nl_buffer_format(ctx->buf, "tb2c_%s_ret_t ret;\n", ctx->name);
                     size_t index = 0;
-                    FOREACH_N(i, 0, nrets) {
+                    FOR_N(i, 0, nrets) {
                         c_fmt_spaces(ctx);
                         nl_buffer_format(ctx->buf, "ret.v%zu = v%u_ret.v%zu;\n", index, n->gvn, index);
                         index += 1;
@@ -687,7 +687,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
             case TB_RETURN: {
                 size_t count = 0;
-                FOREACH_N(i, 3, n->input_count) {
+                FOR_N(i, 3, n->input_count) {
                     count += 1;
                 }
                 if (count == 0) {
@@ -696,7 +696,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                 } else if (count == 1) {
                     c_fmt_spaces(ctx);
                     nl_buffer_format(ctx->buf, "return ");
-                    FOREACH_N(i, 3, n->input_count) {
+                    FOR_N(i, 3, n->input_count) {
                         c_fmt_ref_to_node(ctx, n->inputs[i]);
                     }
                     nl_buffer_format(ctx->buf, ";\n");
@@ -707,7 +707,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     nl_buffer_format(ctx->buf, "  tb2c_%s_ret_t ret;\n", ctx->name);
 
                     size_t index = 0;
-                    FOREACH_N(i, 3, n->input_count) {
+                    FOR_N(i, 3, n->input_count) {
                         c_fmt_spaces(ctx);
                         nl_buffer_format(ctx->buf, "  ret.v%zu = ", index);
                         c_fmt_ref_to_node(ctx, n->inputs[i]);
@@ -1147,7 +1147,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     nl_buffer_format(ctx->globals, "typedef %s(*tb2c_%s_v%u_t)(", c_fmt_type_name(projs[2]->dt), ctx->name, n->gvn);
                 } else {
                     nl_buffer_format(ctx->globals, "typedef struct {\n");
-                    FOREACH_N(i, 2, 4) {
+                    FOR_N(i, 2, 4) {
                         if (projs[i] == NULL) break;
                         nl_buffer_format(ctx->globals, "  %s v%u;\n", c_fmt_type_name(projs[i]->dt), projs[i]->gvn);
                     }
@@ -1156,7 +1156,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                 }
                 {
                     bool first = true;
-                    FOREACH_N(i, 3, n->input_count) {
+                    FOR_N(i, 3, n->input_count) {
                         if (n->inputs[i]->dt.type != TB_CONTROL && n->inputs[i]->dt.type != TB_MEMORY) {
                             if (!first) {
                                 nl_buffer_format(ctx->globals, ", ");
@@ -1182,7 +1182,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     nl_buffer_format(ctx->buf, "(");
                     {
                         bool first = true;
-                        FOREACH_N(i, 3, n->input_count) {
+                        FOR_N(i, 3, n->input_count) {
                             if (n->inputs[i]->dt.type != TB_CONTROL && n->inputs[i]->dt.type != TB_MEMORY) {
                                 if (!first) {
                                     nl_buffer_format(ctx->buf, ", ");
@@ -1204,7 +1204,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     nl_buffer_format(ctx->buf, ")(");
                     {
                         bool first = true;
-                        FOREACH_N(i, 3, n->input_count) {
+                        FOR_N(i, 3, n->input_count) {
                             if (n->inputs[i]->dt.type != TB_CONTROL && n->inputs[i]->dt.type != TB_MEMORY) {
                                 if (!first) {
                                     nl_buffer_format(ctx->buf, ", ");
@@ -1216,7 +1216,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     }
                     nl_buffer_format(ctx->buf, ");\n");
                     if (projs[2] != NULL) {
-                        FOREACH_N(i, 2, 4) {
+                        FOR_N(i, 2, 4) {
                             if (projs[i] == NULL) break;
                             c_fmt_output(ctx, projs[i]);
                             nl_buffer_format(ctx->buf, "ret.v%u;\n", projs[i]->gvn);
@@ -1336,7 +1336,7 @@ TB_API char *tb_c_prelude(TB_Module *mod) {
                 } else {
                     uint8_t *data_buf = tb_platform_heap_alloc(sizeof(uint8_t) * g->size);
                     memset(data_buf, 0, sizeof(uint8_t) * g->size);
-                    FOREACH_N(k, 0, g->obj_count) {
+                    FOR_N(k, 0, g->obj_count) {
                         if (g->objects[k].type == TB_INIT_OBJ_REGION) {
                             assert(g->objects[k].offset + g->objects[k].region.size <= g->size);
                             memcpy(&data_buf[g->pos + g->objects[k].offset], g->objects[k].region.ptr, g->objects[k].region.size);
@@ -1367,7 +1367,7 @@ TB_API char *tb_c_prelude(TB_Module *mod) {
                     nl_buffer_format(buf, "typedef struct {\n");
 
                     size_t index = 0;
-                    FOREACH_N(i, 0, p->return_count) {
+                    FOR_N(i, 0, p->return_count) {
                         nl_buffer_format(buf, "  %s v%zu;\n", c_fmt_type_name(p->params[p->param_count + i].dt), index);
                         index += 1;
                     }
@@ -1379,7 +1379,7 @@ TB_API char *tb_c_prelude(TB_Module *mod) {
                 nl_buffer_format(buf, "tb2c_%s_ret_t %s(", sym->name, sym->name);
                 TB_Node** params = f->params;
                 size_t count = 0;
-                FOREACH_N(i, 3, 3 + f->param_count) {
+                FOR_N(i, 3, 3 + f->param_count) {
                     if (params[i] != NULL && params[i]->dt.type != TB_MEMORY && params[i]->dt.type != TB_CONTROL && params[i]->dt.type != TB_TUPLE) {
                         if (count != 0) {
                             nl_buffer_format(buf, ", ");
@@ -1429,7 +1429,7 @@ TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp) {
     tb_global_schedule(f, ws, ctx.cfg, false, NULL);
 
     // TB_Node* end_bb = NULL;
-    FOREACH_N(i, 0, ctx.cfg.block_count) {
+    FOR_N(i, 0, ctx.cfg.block_count) {
         ctx.depth += 1;
         c_fmt_bb(&ctx, ws, ws->items[i]);
         ctx.depth -= 1;
@@ -1446,7 +1446,7 @@ TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp) {
     nl_buffer_format(buf, "tb2c_%s_ret_t %s(", name, name);
     TB_Node** params = f->params;
     size_t count = 0;
-    FOREACH_N(i, 3, 3 + f->param_count) {
+    FOR_N(i, 3, 3 + f->param_count) {
         if (params[i] != NULL && params[i]->dt.type != TB_MEMORY && params[i]->dt.type != TB_CONTROL && params[i]->dt.type != TB_TUPLE) {
             if (count != 0) {
                 nl_buffer_format(buf, ", ");

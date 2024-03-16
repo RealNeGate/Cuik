@@ -346,7 +346,7 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
 
     // create parameter projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(p);
-    FOREACH_N(i, 0, param_count) {
+    FOR_N(i, 0, param_count) {
         TB_DataType dt = p->params[i].dt;
         f->params[3+i] = tb__make_proj(f, dt, f->root_node, 3+i);
     }
@@ -371,7 +371,7 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
         set_input(f, ret, f->params[2], 2);
 
         TB_PrototypeParam* returns = TB_PROTOTYPE_RETURNS(p);
-        FOREACH_N(i, 0, p->return_count) {
+        FOR_N(i, 0, p->return_count) {
             TB_Node* phi = tb_alloc_node_dyn(f, TB_PHI, returns[i].dt, 1, 5, 0);
             set_input(f, phi, region, 0);
             set_input(f, ret, phi, i + 3);

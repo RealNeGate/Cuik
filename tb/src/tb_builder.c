@@ -276,7 +276,7 @@ void tb_inst_safepoint_poll(TB_Function* f, void* tag, TB_Node* addr, int input_
     set_input(f, n, transfer_ctrl(f, n), 0);
     set_input(f, n, peek_mem(f), 1);
     set_input(f, n, addr, 2);
-    FOREACH_N(i, 0, input_count) {
+    FOR_N(i, 0, input_count) {
         set_input(f, n, inputs[i], i + 3);
     }
     TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, tag);
@@ -437,7 +437,7 @@ TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
 TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
     TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*[3]));
     set_input(f, n, syscall_num, 2);
-    FOREACH_N(i, 0, param_count) {
+    FOR_N(i, 0, param_count) {
         set_input(f, n, params[i], i + 3);
     }
 
@@ -466,7 +466,7 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 
     TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
     set_input(f, n, target, 2);
-    FOREACH_N(i, 0, param_count) {
+    FOR_N(i, 0, param_count) {
         set_input(f, n, params[i], i + 3);
     }
 
@@ -484,7 +484,7 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
 
     // create data projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
-    FOREACH_N(i, 0, proto->return_count) {
+    FOR_N(i, 0, proto->return_count) {
         c->projs[i + 2] = tb__make_proj(f, rets[i].dt, n, i + 2);
     }
 
@@ -510,7 +510,7 @@ void tb_inst_tailcall(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* targ
     set_input(f, n, transfer_ctrl(f, n), 0);
     set_input(f, n, peek_mem(f), 1);
     set_input(f, n, target, 2);
-    FOREACH_N(i, 0, param_count) {
+    FOR_N(i, 0, param_count) {
         set_input(f, n, params[i], i + 3);
     }
 
@@ -853,7 +853,7 @@ bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* region, TB_N
     TB_Node* phi_region = phi->inputs[0];
 
     // the slot to fill is based on the predecessor list of the region
-    FOREACH_N(i, 0, phi_region->input_count) {
+    FOR_N(i, 0, phi_region->input_count) {
         TB_Node* pred = phi_region->inputs[i];
         while (pred->type != TB_REGION) pred = pred->inputs[0];
 
@@ -949,7 +949,7 @@ TB_Node* tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if
     set_input(f, n, transfer_ctrl(f, NULL), 0);
     set_input(f, n, cond, 1);
 
-    FOREACH_N(i, 0, 2) {
+    FOR_N(i, 0, 2) {
         TB_Node* target = i ? if_false : if_true;
 
         TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
@@ -973,7 +973,7 @@ TB_Node* tb_inst_if2(TB_Function* f, TB_Node* cond, TB_Node* projs[2]) {
     set_input(f, n, transfer_ctrl(f, NULL), 0);
     set_input(f, n, cond, 1);
 
-    FOREACH_N(i, 0, 2) {
+    FOR_N(i, 0, 2) {
         projs[i] = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
     }
 
@@ -1001,7 +1001,7 @@ TB_Node* tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* d
     set_input(f, n, transfer_ctrl(f, NULL), 0);
     set_input(f, n, key, 1);
 
-    FOREACH_N(i, 0, 1 + entry_count) {
+    FOR_N(i, 0, 1 + entry_count) {
         TB_Node* target = i ? entries[i - 1].value : default_label;
 
         TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
@@ -1012,7 +1012,7 @@ TB_Node* tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* d
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
     br->total_hits = (1 + entry_count) * 10;
     br->succ_count = 1 + entry_count;
-    FOREACH_N(i, 0, entry_count) {
+    FOR_N(i, 0, entry_count) {
         br->keys[i].key = entries[i].key;
         br->keys[i].taken = 10;
     }

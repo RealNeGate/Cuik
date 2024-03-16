@@ -330,13 +330,13 @@ void* tb_jit_place_global(TB_JIT* jit, TB_Global* g) {
     log_debug("jit: apply global %s (%p)", g->super.name ? g->super.name : "<unnamed>", data);
 
     memset(data, 0, g->size);
-    FOREACH_N(k, 0, g->obj_count) {
+    FOR_N(k, 0, g->obj_count) {
         if (g->objects[k].type == TB_INIT_OBJ_REGION) {
             memcpy(&data[g->objects[k].offset], g->objects[k].region.ptr, g->objects[k].region.size);
         }
     }
 
-    FOREACH_N(k, 0, g->obj_count) {
+    FOR_N(k, 0, g->obj_count) {
         if (g->objects[k].type == TB_INIT_OBJ_RELOC) {
             uintptr_t addr = (uintptr_t) get_symbol_address(g->objects[k].reloc);
 

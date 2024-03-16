@@ -51,9 +51,9 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
                 f->type_cap = tb_next_pow2(f->node_count + 16);
 
                 Lattice** new_types = tb_platform_heap_alloc(f->type_cap * sizeof(Lattice*));
-                FOREACH_N(i, 0, f->type_cap) { new_types[i] = NULL; }
+                FOR_N(i, 0, f->type_cap) { new_types[i] = NULL; }
 
-                FOREACH_N(i, 0, dyn_array_length(ws->items)) {
+                FOR_N(i, 0, dyn_array_length(ws->items)) {
                     uint32_t old_gvn = ws->items[i]->gvn;
                     new_types[i] = f->types[old_gvn];
                     ws->items[i]->gvn = i;
@@ -63,7 +63,7 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
                 tb_platform_heap_free(f->types);
                 f->types = new_types;
             } else {
-                FOREACH_N(i, 0, dyn_array_length(ws->items)) {
+                FOR_N(i, 0, dyn_array_length(ws->items)) {
                     ws->items[i]->gvn = i;
                 }
             }
@@ -90,7 +90,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
 
         if (dataflow) {
             // live ins & outs will outlive this function so we wanna alloc before the savepoint
-            FOREACH_N(i, 0, cfg.block_count) {
+            FOR_N(i, 0, cfg.block_count) {
                 TB_Node* n = ws->items[i];
                 TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, n);
 
@@ -107,7 +107,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
             // jarvis pull up the dommies
             tb_compute_dominators(f, ws, cfg);
 
-            FOREACH_N(i, 0, cfg.block_count) {
+            FOR_N(i, 0, cfg.block_count) {
                 TB_Node* n = rpo_nodes[i];
                 TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, n);
 
@@ -203,7 +203,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                         TB_BasicBlock* best = start_bb;
 
                         // choose deepest block
-                        FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+                        FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
                             if (n->inputs[i]->type == TB_ROOT) {
                                 DO_IF(TB_OPTDEBUG_GCM)(printf("  in v%u @ bb0\n", n->inputs[i]->gvn));
                                 continue;
@@ -239,7 +239,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
 
         // move nodes closer to their usage site
         CUIK_TIMED_BLOCK("late schedule") {
-            FOREACH_REVERSE_N(i, 0, dyn_array_length(ws->items)) {
+            FOR_REV_N(i, 0, dyn_array_length(ws->items)) {
                 TB_Node* n = ws->items[i];
                 DO_IF(TB_OPTDEBUG_GCM)(printf("%s: try late v%u\n", f->super.name, n->gvn));
 
@@ -308,7 +308,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
             dyn_array_set_length(ws->items, bb_count);
 
             CUIK_TIMED_BLOCK("dataflow") {
-                FOREACH_N(i, 0, cfg.block_count) {
+                FOR_N(i, 0, cfg.block_count) {
                     TB_Node* n = rpo_nodes[i];
                     TB_BasicBlock* bb = f->scheduled[n->gvn];
 
@@ -318,7 +318,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
 
                 CUIK_TIMED_BLOCK("local") {
                     // we're doing dataflow analysis without the local schedule :)
-                    FOREACH_N(i, 0, bb_count) {
+                    FOR_N(i, 0, bb_count) {
                         TB_BasicBlock* bb = f->scheduled[rpo_nodes[i]->gvn];
                         nl_hashset_for(e, &bb->items) {
                             TB_Node* n = *e;
@@ -327,7 +327,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                             if (n->type == TB_PHI) {
                                 // every block which has the phi edges will def the phi, this emulates
                                 // the phi move.
-                                FOREACH_N(i, 1, n->input_count) {
+                                FOR_N(i, 1, n->input_count) {
                                     TB_Node* in = n->inputs[i];
                                     if (in) {
                                         TB_BasicBlock* in_bb = f->scheduled[in->gvn];
@@ -343,13 +343,13 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                         }
                     }
 
-                    FOREACH_N(i, 0, bb_count) {
+                    FOR_N(i, 0, bb_count) {
                         TB_BasicBlock* bb = f->scheduled[rpo_nodes[i]->gvn];
                         nl_hashset_for(e, &bb->items) {
                             TB_Node* n = *e;
                             if (n->type == TB_PHI) continue;
 
-                            FOREACH_N(i, 1, n->input_count) {
+                            FOR_N(i, 1, n->input_count) {
                                 TB_Node* in = n->inputs[i];
                                 if (in && !set_get(&bb->kill, in->gvn)) {
                                     set_put(&bb->gen, in->gvn);
@@ -362,7 +362,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                 // generate global live sets
                 CUIK_TIMED_BLOCK("global") {
                     // all BB go into the worklist
-                    FOREACH_REVERSE_N(i, 0, bb_count) {
+                    FOR_REV_N(i, 0, bb_count) {
                         TB_Node* n = rpo_nodes[i];
 
                         // in(bb) = use(bb)
@@ -405,7 +405,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
 
                         // live_in = (live_out - live_kill) U live_gen
                         bool changes = false;
-                        FOREACH_N(i, 0, (node_count + 63) / 64) {
+                        FOR_N(i, 0, (node_count + 63) / 64) {
                             uint64_t new_in = (live_out->data[i] & ~kill->data[i]) | gen->data[i];
 
                             changes |= (live_in->data[i] != new_in);
@@ -414,7 +414,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
 
                         // if we have changes, mark the predeccesors
                         if (changes && !(bb_node->type == TB_PROJ && bb_node->inputs[0]->type == TB_ROOT)) {
-                            FOREACH_N(i, 0, bb_node->input_count) {
+                            FOR_N(i, 0, bb_node->input_count) {
                                 TB_Node* pred = cfg_get_pred(&cfg, bb_node, i);
                                 if (pred->input_count > 0) {
                                     worklist_push(ws, pred);
@@ -427,24 +427,24 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
 
             #if TB_OPTDEBUG_DATAFLOW
             // log live ins and outs
-            FOREACH_N(i, 0, cfg.block_count) {
+            FOR_N(i, 0, cfg.block_count) {
                 TB_Node* n = rpo_nodes[i];
                 TB_BasicBlock* bb = p->scheduled[n->gvn];
 
                 printf("BB%zu:\n  live-ins:", i);
-                FOREACH_N(j, 0, node_count) if (set_get(&bb->live_in, j)) {
+                FOR_N(j, 0, node_count) if (set_get(&bb->live_in, j)) {
                     printf(" v%zu", j);
                 }
                 printf("\n  live-outs:");
-                FOREACH_N(j, 0, node_count) if (set_get(&bb->live_out, j)) {
+                FOR_N(j, 0, node_count) if (set_get(&bb->live_out, j)) {
                     printf(" v%zu", j);
                 }
                 printf("\n  gen:");
-                FOREACH_N(j, 0, node_count) if (set_get(&bb->gen, j)) {
+                FOR_N(j, 0, node_count) if (set_get(&bb->gen, j)) {
                     printf(" v%zu", j);
                 }
                 printf("\n  kill:");
-                FOREACH_N(j, 0, node_count) if (set_get(&bb->kill, j)) {
+                FOR_N(j, 0, node_count) if (set_get(&bb->kill, j)) {
                     printf(" v%zu", j);
                 }
                 printf("\n");

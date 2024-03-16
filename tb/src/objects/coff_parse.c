@@ -32,7 +32,7 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
     };
 
     obj_file->section_count = header->section_count;
-    FOREACH_N(i, 0, header->section_count) {
+    FOR_N(i, 0, header->section_count) {
     }
 
     obj_file->symbols = tb_platform_heap_alloc(header->symbol_count * sizeof(TB_ObjectSymbol));

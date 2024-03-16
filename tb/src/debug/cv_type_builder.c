@@ -270,7 +270,7 @@ CV_TypeIndex tb_codeview_builder_add_field_list(CV_Builder* builder, size_t coun
     tb_out2b(&builder->type_section, 0); // length (we'll patch it later)
     tb_out2b(&builder->type_section, LF_FIELDLIST); // type
 
-    FOREACH_N(i, 0, count) {
+    FOR_N(i, 0, count) {
         size_t name_size = strlen(fields[i].name) + 1;
 
         // write member heading

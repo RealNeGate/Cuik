@@ -215,7 +215,7 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
     P("  r%u [label=\"{", n->gvn);
 
     bool ins = false;
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+    FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
         if (!ins) P("{");
         else P("|");
 
@@ -240,7 +240,7 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
 
         P("%s|{", tb_node_get_name(n));
         int outs = 0;
-        FOREACH_N(i, 0, limit) {
+        FOR_N(i, 0, limit) {
             if (projs[i] != NULL) {
                 if (outs) P("|");
 
@@ -312,7 +312,7 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
         P("}\"]");
     }
 
-    FOREACH_N(i, 0, n->input_count) if (n->inputs[i]) {
+    FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
         TB_Node* in = n->inputs[i];
 
         const char* color = "black";

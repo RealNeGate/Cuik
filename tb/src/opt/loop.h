@@ -18,7 +18,7 @@ static TB_Node* loop_clone_node(TB_Function* f, TB_Node* region, TB_Node* n, int
         mark_node(f, cloned);
 
         // fill cloned edges
-        FOREACH_N(i, 1, n->input_count) {
+        FOR_N(i, 1, n->input_count) {
             TB_Node* in = loop_clone_node(f, region, n->inputs[i], phi_index);
             cloned->inputs[i] = in;
             add_user(f, cloned, in, i, NULL);
@@ -161,7 +161,7 @@ void tb_opt_loops(TB_Function* f) {
 
     // canonicalize regions into natural loop headers (or affine loops)
     DynArray(ptrdiff_t) backedges = NULL;
-    FOREACH_N(i, 0, block_count) {
+    FOR_N(i, 0, block_count) {
         TB_Node* header = blocks[i];
         if (!cfg_is_region(header) || header->input_count < 2) {
             continue;
@@ -169,7 +169,7 @@ void tb_opt_loops(TB_Function* f) {
 
         // find all backedges
         dyn_array_clear(backedges);
-        FOREACH_N(j, 0, header->input_count) {
+        FOR_N(j, 0, header->input_count) {
             TB_Node* pred = cfg_get_pred(&cfg, header, j);
             if (slow_dommy(&cfg, header, pred)) {
                 dyn_array_put(backedges, j);
@@ -288,7 +288,7 @@ void tb_opt_loops(TB_Function* f) {
     #if 0
     // find & canonicalize loops
     DynArray(ptrdiff_t) backedges = NULL;
-    FOREACH_N(i, 0, block_count) {
+    FOR_N(i, 0, block_count) {
         TB_Node* header = blocks[i];
         if (header->type != TB_REGION || header->input_count < 2) {
             continue;
@@ -296,7 +296,7 @@ void tb_opt_loops(TB_Function* f) {
 
         // find all backedges
         dyn_array_clear(backedges);
-        FOREACH_N(j, 0, header->input_count) {
+        FOR_N(j, 0, header->input_count) {
             TB_Node* pred = cfg_get_pred(&cfg, header, j);
             if (slow_dommy(&cfg, header, pred)) {
                 dyn_array_put(backedges, j);
@@ -397,7 +397,7 @@ void tb_opt_loops(TB_Function* f) {
 
                 // find the best option
                 for (NL_ArrChunk* restrict chk = iv.users; chk; chk = chk->next) {
-                    FOREACH_N(i, 0, chk->count) {
+                    FOR_N(i, 0, chk->count) {
                         TB_Node* use = chk->elems[i];
                         __debugbreak();
                     }
@@ -462,7 +462,7 @@ void tb_opt_loops(TB_Function* f) {
                 if (legal_scale && cnt == 1) {
                     // choose high use step to scale by
                     int biggest = 0, big_use = uses[0];
-                    FOREACH_N(i, 1, cnt) if (uses[i] > big_use) {
+                    FOR_N(i, 1, cnt) if (uses[i] > big_use) {
                         big_use = uses[i];
                         biggest = i;
                     }

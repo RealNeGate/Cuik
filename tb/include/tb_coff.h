@@ -233,7 +233,7 @@ bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectS
         COFF_ImageReloc* src_relocs = (COFF_ImageReloc*) &file.data[sec->pointer_to_reloc];
 
         TB_ObjectReloc* dst_relocs = tb_platform_heap_alloc(sec->num_reloc * sizeof(TB_ObjectReloc));
-        FOREACH_N(j, 0, sec->num_reloc) {
+        FOR_N(j, 0, sec->num_reloc) {
             dst_relocs[j] = (TB_ObjectReloc){ 0 };
             switch (src_relocs[j].Type) {
                 case IMAGE_REL_AMD64_ADDR32NB: dst_relocs[j].type = TB_OBJECT_RELOC_ADDR32NB; break;
@@ -325,7 +325,7 @@ size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_Object
     if (sym->aux_symbols_count) {
         out_sym->extra = &sym[1];
 
-        // FOREACH_N(j, 0, sym->aux_symbols_count) {}
+        // FOR_N(j, 0, sym->aux_symbols_count) {}
     }
 
     return sym->aux_symbols_count + 1;

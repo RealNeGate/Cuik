@@ -41,7 +41,7 @@ static void emit_epilogue(Ctx* restrict ctx);
 // initialize register allocator state
 static void init_regalloc(Ctx* restrict ctx) {
     // Generate intervals for physical registers
-    FOREACH_N(i, 0, 32) {
+    FOR_N(i, 0, 32) {
         bool is_gpr = i < 16;
         int reg = i % 16;
 
@@ -71,7 +71,7 @@ static void mark_callee_saved_constraints(Ctx* restrict ctx, uint64_t callee_sav
 
     // mark XMM callees
     callee_saved[1] = 0;
-    FOREACH_N(i, desc->caller_saved_xmms, 16) {
+    FOR_N(i, desc->caller_saved_xmms, 16) {
         callee_saved[1] |= (1ull << i);
     }
 }
@@ -470,7 +470,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             // handle known parameters
             int used_gpr = 0, used_xmm = 0;
             TB_Node** params = ctx->f->params;
-            FOREACH_N(i, 0, ctx->f->param_count) {
+            FOR_N(i, 0, ctx->f->param_count) {
                 TB_Node* proj = params[3 + i];
                 bool is_float = proj->dt.type == TB_FLOAT;
 
@@ -516,7 +516,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             // walk the entry to find any parameter stack slots
             bool has_param_slots = false;
-            FOREACH_N(i, 0, ctx->f->param_count) {
+            FOR_N(i, 0, ctx->f->param_count) {
                 TB_Node* proj = params[3 + i];
                 User* use = find_users(ctx->p, proj);
                 if (use == NULL || use->next != NULL || use->slot == 0) {
@@ -560,7 +560,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 size_t gpr_count = is_sysv ? 6 : 4;
                 size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
 
-                FOREACH_N(i, 0, extra_param_count) {
+                FOR_N(i, 0, extra_param_count) {
                     size_t param_num = proto->param_count + i;
 
                     int dst_pos = 16 + (param_num * 8);
@@ -1040,7 +1040,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             if (n->type != TB_TAILCALL) {
                 assert(proto->return_count <= 2);
-                FOREACH_N(i, 0, proto->return_count) {
+                FOR_N(i, 0, proto->return_count) {
                     TB_Node* ret_node = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->projs[proj_base + i];
                     if (!has_users(ctx, ret_node)) {
                         ret_node = NULL;
@@ -1075,7 +1075,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             int vararg_cutoff = proto && proto->has_varargs ? proto->param_count : n->input_count-2;
 
             size_t xmms_used = 0, gprs_used = 0;
-            FOREACH_N(i, 3, n->input_count) {
+            FOR_N(i, 3, n->input_count) {
                 TB_Node* param = n->inputs[i];
                 TB_DataType param_dt = param->dt;
 
@@ -1118,7 +1118,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             // perform last minute copies (this avoids keeping parameter registers alive for too long)
-            FOREACH_N(i, 0, in_count) {
+            FOR_N(i, 0, in_count) {
                 TB_DataType dt = n->inputs[3 + i]->dt;
 
                 bool use_xmm = TB_IS_FLOAT_TYPE(dt);
@@ -1172,18 +1172,18 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             // mark clobber list
             {
                 RegIndex* clobbers = &call_inst->operands[call_inst->out_count + call_inst->in_count];
-                FOREACH_N(i, 0, 16) if (caller_saved_gprs & (1u << i)) {
+                FOR_N(i, 0, 16) if (caller_saved_gprs & (1u << i)) {
                     *clobbers++ = FIRST_GPR + i;
                 }
 
-                FOREACH_N(i, 0, 16) if (caller_saved_xmms & (1u << i)) {
+                FOR_N(i, 0, 16) if (caller_saved_xmms & (1u << i)) {
                     *clobbers++ = FIRST_XMM + i;
                 }
             }
 
             // return value (either XMM0 or RAX)
             RegIndex* dst_ins = call_inst->operands;
-            FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
+            FOR_N(i, 0, 2) if (ret_nodes[i] != NULL) {
                 bool use_xmm_ret = TB_IS_FLOAT_TYPE(ret_nodes[i]->dt);
                 if (use_xmm_ret) {
                     *dst_ins++ = FIRST_XMM + i;
@@ -1211,7 +1211,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 SUBMIT(inst_jmp_reg(RAX));
             } else {
                 // copy out return
-                FOREACH_N(i, 0, 2) if (ret_nodes[i] != NULL) {
+                FOR_N(i, 0, 2) if (ret_nodes[i] != NULL) {
                     assert(rets[i] >= 0);
                     TB_DataType dt = ret_nodes[i]->dt;
                     bool use_xmm_ret = TB_IS_FLOAT_TYPE(dt);
@@ -1257,7 +1257,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             double inv_key_count = 1.0 / (l->entry_count - 1);
 
             int64_t last = l->entries[1].key;
-            FOREACH_N(i, 2, l->entry_count) {
+            FOR_N(i, 2, l->entry_count) {
                 int64_t key = l->entries[i].key;
 
                 dist_avg += (key - last) * inv_key_count;
@@ -1290,7 +1290,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
 
             // encode every entry
             int amt = tb_ffs(64 / bits) - 1;
-            FOREACH_N(i, 0, l->entry_count) {
+            FOR_N(i, 0, l->entry_count) {
                 uint64_t index = 0;
                 if (i > 0) {
                     index = (l->entries[i].key - min->key) + 1;
@@ -1414,7 +1414,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 double dist_avg = 0;
                 double inv_succ_count = 1.0 / (br->succ_count - 2);
 
-                FOREACH_N(i, 2, br->succ_count) {
+                FOR_N(i, 2, br->succ_count) {
                     int64_t key = br->keys[i - 1];
                     min = (min > key) ? key : min;
                     max = (max > key) ? max : key;
@@ -1436,7 +1436,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                 switch (r) {
                     case IF_ELSE_CHAIN: {
                         // Basic if-else chain
-                        FOREACH_N(i, 1, br->succ_count) {
+                        FOR_N(i, 1, br->succ_count) {
                             uint64_t curr_key = br->keys[i-1];
 
                             if (fits_into_int32(curr_key)) {
@@ -1462,7 +1462,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                         uint32_t* jump_entries = tb_global_add_region(f->super.module, jump_table, 0, range*4);
 
                         Set entries_set = set_create_in_arena(arena, range);
-                        FOREACH_N(i, 1, br->succ_count) {
+                        FOR_N(i, 1, br->succ_count) {
                             uint64_t key_idx = br->keys[i - 1] - min;
                             assert(key_idx < range);
 
@@ -1474,7 +1474,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
                         }
 
                         // handle default cases
-                        FOREACH_N(i, 0, range) {
+                        FOR_N(i, 0, range) {
                             if (!set_get(&entries_set, i)) {
                                 JumpTablePatch p;
                                 p.pos = &jump_entries[i];
@@ -1568,7 +1568,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             tb_todo();
 
             // force uses of the inputs
-            /*FOREACH_N(i, 3, n->input_count) {
+            /*FOR_N(i, 3, n->input_count) {
                 input_reg(ctx, n->inputs[i]);
             }*/
 
@@ -1676,7 +1676,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             static int ret_gprs[2] = { RAX, RDX };
 
             int rets = n->input_count - 3;
-            FOREACH_N(i, 0, rets) {
+            FOR_N(i, 0, rets) {
                 int src = input_reg(ctx, n->inputs[3+i]);
 
                 // copy to return register
@@ -1883,11 +1883,11 @@ static void emit_code(Ctx* restrict ctx, TB_FunctionOutput* restrict func_out) {
 
         if (0) {
             printf("  \x1b[32m# %s t=%d { outs:", inst->type < inst_table_size ? inst_table[inst->type].mnemonic : "???", inst->time);
-            FOREACH_N(i, 0, inst->out_count) {
+            FOR_N(i, 0, inst->out_count) {
                 printf(" v%d", inst->operands[i]);
             }
             printf(", ins: ");
-            FOREACH_N(i, inst->out_count, inst->out_count + inst->in_count) {
+            FOR_N(i, inst->out_count, inst->out_count + inst->in_count) {
                 printf(" v%d", inst->operands[i]);
             }
             printf("}\x1b[0m\n");

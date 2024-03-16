@@ -152,7 +152,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
     put_section_symbols(sections, &strtbl, &local_symtab, TB_ELF64_STB_LOCAL);
     put_section_symbols(sections, &strtbl, &global_symtab, TB_ELF64_STB_GLOBAL);
 
-    FOREACH_N(i, 0, exports.count) {
+    FOR_N(i, 0, exports.count) {
         TB_External* ext = exports.data[i];
         uint32_t name = tb_outstr_nul_UNSAFE(&strtbl, ext->super.name);
         ext->super.symbol_id = global_symtab.count / sizeof(TB_Elf64_Sym);

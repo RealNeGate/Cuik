@@ -37,7 +37,7 @@ static TB_Node* data_phi_from_memory_phi(TB_Function* f, TB_Node* n, TB_Node* ad
     TB_Node* phi = tb_alloc_node(f, TB_PHI, dt, 1 + path_count, 0);
 
     bool fail = false;
-    FOREACH_N(i, 0, path_count) {
+    FOR_N(i, 0, path_count) {
         TB_Node* st = mem->inputs[1+i];
         if (st->type == TB_STORE && st->inputs[2] == addr && st->inputs[3]->dt.raw == dt.raw) {
             paths[i] = st->inputs[3];
@@ -53,7 +53,7 @@ static TB_Node* data_phi_from_memory_phi(TB_Function* f, TB_Node* n, TB_Node* ad
     }
 
     set_input(f, phi, mem->inputs[0], 0);
-    FOREACH_N(i, 0, path_count) {
+    FOR_N(i, 0, path_count) {
         set_input(f, phi, paths[i], 1+i);
     }
     tb_arena_restore(f->tmp_arena, sp);
@@ -132,7 +132,7 @@ static Lattice* value_split_mem(TB_Function* f, TB_Node* n) {
     size_t size = sizeof(Lattice) + s->alias_cnt*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(f->tmp_arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = s->alias_cnt };
-    FOREACH_N(i, 0, s->alias_cnt) {
+    FOR_N(i, 0, s->alias_cnt) {
         l->elems[i] = lattice_alias(f, s->alias_idx[i]);
     }
 
@@ -215,7 +215,7 @@ static TB_Node* ideal_memset(TB_Function* f, TB_Node* n) {
     uint64_t count, val;
     if (get_int_const(n->inputs[4], &count) && get_int_const(n->inputs[3], &val) && is_cool(count)) {
         // fill rest of the bytes
-        FOREACH_N(i, 1, count) {
+        FOR_N(i, 1, count) {
             val |= (val & 0xFF) << (i*8);
         }
 

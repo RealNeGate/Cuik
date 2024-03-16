@@ -27,7 +27,7 @@ static uint32_t lattice_hash(void* a) {
     switch (l->tag) {
         case LATTICE_TUPLE: {
             // just add pointers together, what's the worst that could happen
-            FOREACH_N(i, 0, l->_elem_count) {
+            FOR_N(i, 0, l->_elem_count) {
                 h += (uintptr_t) l->elems[i];
             }
             h += l->_elem_count;
@@ -45,7 +45,7 @@ static uint32_t lattice_hash(void* a) {
 
         case LATTICE_MEM_SLICE:
         h += l->_alias_n;
-        FOREACH_N(i, 0, l->_alias_n) { h += l->alias[i]; }
+        FOR_N(i, 0, l->_alias_n) { h += l->alias[i]; }
         break;
 
         case LATTICE_FLTCON32: memcpy(&h, &l->_f32, sizeof(float));  break;
@@ -76,7 +76,7 @@ static bool lattice_cmp(void* a, void* b) {
     switch (aa->tag) {
         case LATTICE_TUPLE:
         if (aa->_elem_count != bb->_elem_count) { return false; }
-        FOREACH_N(i, 0, aa->_elem_count) {
+        FOR_N(i, 0, aa->_elem_count) {
             if (aa->elems[i] != bb->elems[i]) { return false; }
         }
         return true;
@@ -95,7 +95,7 @@ static bool lattice_cmp(void* a, void* b) {
 
         case LATTICE_MEM_SLICE:
         if (aa->_alias_n != bb->_alias_n) { return false; }
-        FOREACH_N(i, 0, aa->_alias_n) {
+        FOR_N(i, 0, aa->_alias_n) {
             if (aa->alias[i] != bb->alias[i]) { return false; }
         }
         return true;
@@ -112,7 +112,7 @@ static void latuni_grow(TB_Function* f, size_t top) {
     size_t new_cap = tb_next_pow2(top + 16);
     f->types = tb_platform_heap_realloc(f->types, new_cap * sizeof(Lattice*));
     // clear new space
-    FOREACH_N(i, f->type_cap, new_cap) { f->types[i] = NULL; }
+    FOR_N(i, f->type_cap, new_cap) { f->types[i] = NULL; }
     f->type_cap = new_cap;
 }
 
@@ -269,7 +269,7 @@ static Lattice* lattice_alias(TB_Function* f, int alias_idx) {
     *l = (Lattice){ LATTICE_TUPLE, ._alias_n = alias_n };
 
     // just flip aliases
-    FOREACH_N(i, 0, alias_n) { l->alias[i] = 0; }
+    FOR_N(i, 0, alias_n) { l->alias[i] = 0; }
     l->alias[alias_idx / 64] |= 1ull << (alias_idx % 64);
 
     Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
@@ -305,7 +305,7 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
             *l = (Lattice){ LATTICE_TUPLE, ._alias_n = type->_alias_n };
 
             // just flip aliases
-            FOREACH_N(i, 0, type->_alias_n) { l->alias[i] = ~type->alias[i]; }
+            FOR_N(i, 0, type->_alias_n) { l->alias[i] = ~type->alias[i]; }
 
             Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
             if (k) {
@@ -320,7 +320,7 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
             size_t size = sizeof(Lattice) + type->_elem_count*sizeof(Lattice*);
             Lattice* l = tb_arena_alloc(f->arena, size);
             *l = (Lattice){ LATTICE_TUPLE, ._elem_count = type->_elem_count };
-            FOREACH_N(i, 0, type->_elem_count) {
+            FOR_N(i, 0, type->_elem_count) {
                 l->elems[i] = lattice_dual(f, type->elems[i]);
             }
 
@@ -437,9 +437,9 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             Lattice* l = tb_arena_alloc(f->arena, size);
             *l = (Lattice){ LATTICE_TUPLE, ._alias_n = alias_n };
 
-            FOREACH_N(i, 0, a->_alias_n) { l->alias[i] = a->alias[i]; }
-            FOREACH_N(i, a->_alias_n, alias_n) { l->alias[i] = 0; }
-            FOREACH_N(i, 0, b->_alias_n) { l->alias[i] |= b->alias[i]; }
+            FOR_N(i, 0, a->_alias_n) { l->alias[i] = a->alias[i]; }
+            FOR_N(i, a->_alias_n, alias_n) { l->alias[i] = 0; }
+            FOR_N(i, 0, b->_alias_n) { l->alias[i] |= b->alias[i]; }
 
             Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
             if (k) {
@@ -458,7 +458,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             size_t size = sizeof(Lattice) + a->_elem_count*sizeof(Lattice*);
             Lattice* l = tb_arena_alloc(f->arena, size);
             *l = (Lattice){ LATTICE_TUPLE, ._elem_count = a->_elem_count };
-            FOREACH_N(i, 0, a->_elem_count) {
+            FOR_N(i, 0, a->_elem_count) {
                 l->elems[i] = lattice_meet(f, a->elems[i], b->elems[i]);
             }
 

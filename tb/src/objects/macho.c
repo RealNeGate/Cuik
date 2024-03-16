@@ -57,12 +57,12 @@ TB_ExportBuffer tb_macho_write_output(TB_Module* m, TB_Arena* dst_arena, const I
     {
         /*symtab_cmd.nsyms += m->compiled_function_count;
 
-        FOREACH_N(i, 0, m->max_threads) {
+        FOR_N(i, 0, m->max_threads) {
             size_t external_len = pool_popcount(m->thread_info[i].externals);
             symtab_cmd.nsyms += external_len ? external_len - 1 : 0;
         }
 
-        FOREACH_N(i, 0, m->max_threads) {
+        FOR_N(i, 0, m->max_threads) {
             symtab_cmd.nsyms += pool_popcount(m->thread_info[i].globals);
         }*/
     }
@@ -106,7 +106,7 @@ TB_ExportBuffer tb_macho_write_output(TB_Module* m, TB_Arena* dst_arena, const I
     // write_pos = tb_helper_write_section(m, write_pos, &m->text, output, sections[0].offset);
 
     // emit section contents
-    FOREACH_N(i, 0, NUMBER_OF_SECTIONS) {
+    FOR_N(i, 0, NUMBER_OF_SECTIONS) {
 
     }
 

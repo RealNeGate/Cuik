@@ -70,7 +70,7 @@ TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena) {
     // both RPC and memory are mutable vars
     assert(g->val_cap >= 2 + f->param_count);
     g->val_cnt = 2 + f->param_count;
-    FOREACH_N(i, 0, 2 + f->param_count) {
+    FOR_N(i, 0, 2 + f->param_count) {
         g->vals[i] = f->params[1 + i];
     }
 
@@ -292,7 +292,7 @@ void tb_builder_if(TB_GraphBuilder* g, int total_hits, int taken) {
     // clone incoming state so we can diff & insert phis later
     ctrl->sp = sp;
     ctrl->val_cnt = g->val_cnt;
-    FOREACH_N(i, 0, g->val_cnt) {
+    FOR_N(i, 0, g->val_cnt) {
         ctrl->vals[i] = g->vals[i];
     }
 
@@ -359,7 +359,7 @@ void tb_builder_endif(TB_GraphBuilder* g) {
     assert(g->val_cnt == ctrl->val_cnt && "paths on branch mismatch in outgoing variables?");
 
     if (join->input_count > 0) {
-        FOREACH_N(i, 0, g->val_cnt) {
+        FOR_N(i, 0, g->val_cnt) {
             if (g->vals[i] != ctrl->vals[i]) {
                 TB_Node* n = tb_alloc_node_dyn(g->f, TB_PHI, g->vals[i]->dt, 3, 3, 0);
                 set_input(g->f, n, join, 0);
@@ -394,11 +394,11 @@ static void block_jmp(TB_GraphBuilder* g, TB_Node* bot, int depth) {
 
     // add edges to phis
     if (ctrl->is_loop) {
-        FOREACH_N(i, 0, ctrl->val_cnt) {
+        FOR_N(i, 0, ctrl->val_cnt) {
             add_input_late(g->f, ctrl->vals[i], g->vals[i]);
         }
     } else {
-        FOREACH_N(i, 0, ctrl->val_cnt) {
+        FOR_N(i, 0, ctrl->val_cnt) {
             TB_Node* val = ctrl->vals[i];
             if (val == NULL) {
                 ctrl->vals[i] = g->vals[i];
@@ -437,7 +437,7 @@ void tb_builder_loop(TB_GraphBuilder* g) {
     // since we don't know which values are mutated, we'll just clone all of them
     ctrl->sp = sp;
     ctrl->val_cnt = g->val_cnt;
-    FOREACH_N(i, 0, g->val_cnt) {
+    FOR_N(i, 0, g->val_cnt) {
         TB_Node* n = tb_alloc_node_dyn(g->f, TB_PHI, g->vals[i]->dt, 2, 4, 0);
         set_input(g->f, n, ctrl->header, 0);
         set_input(g->f, n, g->vals[i], 1);
@@ -456,7 +456,7 @@ void tb_builder_endloop(TB_GraphBuilder* g) {
     g->top = ctrl->prev;
 
     TB_Node* header = ctrl->header;
-    FOREACH_N(i, 0, ctrl->val_cnt) {
+    FOR_N(i, 0, ctrl->val_cnt) {
         // phis are complete now, we can fold them out if unused
         TB_Node* src = ctrl->vals[i];
         /* if (src->type == TB_PHI && src->inputs[0] == header && src->input_count > 1) {
@@ -526,7 +526,7 @@ void tb_builder_endblock(TB_GraphBuilder* g) {
     TB_GraphCtrl* ctrl = g->top;
     g->top = ctrl->prev;
 
-    FOREACH_N(i, 0, ctrl->val_cnt) {
+    FOR_N(i, 0, ctrl->val_cnt) {
         g->vals[i] = ctrl->vals[i];
     }
 
@@ -554,7 +554,7 @@ void tb_builder_static_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, TB_
 
         TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + nargs, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
         set_input(f, n, target_node, 2);
-        FOREACH_N(i, 0, nargs) {
+        FOR_N(i, 0, nargs) {
             set_input(f, n, g->vals[g->val_cnt + i], i + 3);
         }
 
@@ -572,7 +572,7 @@ void tb_builder_static_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, TB_
 
         // create data projections
         TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
-        FOREACH_N(i, 0, proto->return_count) {
+        FOR_N(i, 0, proto->return_count) {
             c->projs[i + 2] = tb__make_proj(f, rets[i].dt, n, i + 2);
         }
 
@@ -589,7 +589,7 @@ void tb_builder_static_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, TB_
 
         // push all returns
         assert(proto->return_count < 2);
-        FOREACH_N(i, 0, proto->return_count) {
+        FOR_N(i, 0, proto->return_count) {
             push(g, c->projs[2 + i]);
         }
     }

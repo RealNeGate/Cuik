@@ -73,16 +73,16 @@ void pe_append_object(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name
     // Apply all sections (generate lookup for sections based on ordinals)
     TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
     TB_ObjectSection* sections = tb_arena_alloc(info->tmp_arena, parser.section_count * sizeof(TB_ObjectSection));
-    FOREACH_N(i, 0, parser.section_count) {
+    FOR_N(i, 0, parser.section_count) {
         TB_ObjectSection* restrict s = &sections[i];
         tb_coff_parse_section(&parser, i, s);
 
         // trim the dollar sign (if applies)
         uint32_t order = 0;
-        FOREACH_N(j, 0, s->name.length) {
+        FOR_N(j, 0, s->name.length) {
             if (s->name.data[j] == '$') {
                 // convert letters into score
-                FOREACH_N(k, j + 1, s->name.length) {
+                FOR_N(k, j + 1, s->name.length) {
                     order <<= 8;
                     order += s->name.data[k];
                 }
@@ -292,7 +292,7 @@ void pe_append_object(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name
         }
     }
 
-    CUIK_TIMED_BLOCK("parse relocations") FOREACH_N(i, 1, parser.section_count) {
+    CUIK_TIMED_BLOCK("parse relocations") FOR_N(i, 1, parser.section_count) {
         TB_ObjectSection* restrict s = &sections[i];
         TB_LinkerSectionPiece* restrict p = s->user_data;
 
@@ -301,7 +301,7 @@ void pe_append_object(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name
 
         // some relocations point to sections within the same object file, we resolve
         // their symbols early.
-        FOREACH_N(j, 0, s->relocation_count) {
+        FOR_N(j, 0, s->relocation_count) {
             TB_ObjectReloc* restrict reloc = &s->relocations[j];
 
             // resolve address used in relocation, symbols are sorted so we can binary search
@@ -364,7 +364,7 @@ static void pe_append_library(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice 
         new_count = tb_archive_parse_entries(&ar_parser, 0, ar_parser.member_count, entries);
     }
 
-    FOREACH_N(i, 0, new_count) {
+    FOR_N(i, 0, new_count) {
         TB_ArchiveEntry* restrict e = &entries[i];
 
         if (e->import_name.length) {
@@ -491,7 +491,7 @@ static void pe_append_module(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Module*
             DynArray(TB_Global*) globals = m->sections[i].globals;
             dyn_array_for(j, globals) {
                 TB_Global* g = globals[j];
-                FOREACH_N(k, 0, g->obj_count) {
+                FOR_N(k, 0, g->obj_count) {
                     size_t actual_page = g->pos + g->objects[k].offset;
 
                     if (g->objects[k].type == TB_INIT_OBJ_RELOC) {

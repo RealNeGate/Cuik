@@ -64,7 +64,7 @@ static void tb_reloc4(TB_CGEmitter* restrict e, uint32_t p, uint32_t b) {
 }
 
 static int tb_emit_get_label(TB_CGEmitter* restrict e, uint32_t pos) {
-    FOREACH_N(i, 0, e->label_count) {
+    FOR_N(i, 0, e->label_count) {
         assert(e->labels[i] & 0x80000000);
         if ((e->labels[i] & ~0x80000000) == pos) {
             return i;
