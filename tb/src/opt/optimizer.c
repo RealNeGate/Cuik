@@ -944,7 +944,9 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         Lattice* new_type = value_of(f, n, false);
         if (old_type != lattice_from_dt(f, n->dt)) {
             assert(new_type != &TOP_IN_THE_SKY);
-            assert(lattice_meet(f, old_type, new_type) == new_type);
+
+            Lattice* glb = lattice_meet(f, old_type, new_type);
+            assert(glb == new_type && "forward progress assert!");
         }
         #else
         Lattice* new_type = value_of(f, n, false);
@@ -1289,9 +1291,9 @@ void tb_opt_cprop(TB_Function* f) {
 
     alloc_types(f);
     //   reset all types into TOP
-    FOR_N(i, 0, f->type_cap) {
-        f->types[i] = &TOP_IN_THE_SKY;
-    }
+    FOR_N(i, 0, f->node_count) { f->types[i] = &TOP_IN_THE_SKY; }
+    //   anything unallocated should stay as NULL tho
+    FOR_N(i, f->node_count, f->type_cap) { f->types[i] = NULL; }
     // except for ROOT
     f->types[f->root_node->gvn] = lattice_tuple_from_node(f, f->root_node);
     FOR_USERS(u, f->root_node) { worklist_push(f->worklist, USERN(u)); }
@@ -1305,7 +1307,11 @@ void tb_opt_cprop(TB_Function* f) {
 
             DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
             if (old_type != new_type) {
-                assert(lattice_meet(f, old_type, new_type) == new_type);
+                #ifndef NDEBUG
+                Lattice* glb = lattice_meet(f, old_type, new_type);
+                assert(glb == new_type && "forward progress assert!");
+                #endif
+
                 latuni_set(f, n, new_type);
 
                 // push affected users

@@ -56,6 +56,9 @@ static TB_Node* upcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
 }
 
 static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* op) {
+    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
+    ArenaArray(TB_User) uses = aarray_create(f->tmp_arena, TB_User, 16);
+
     // -1 means signed, 1 means unsigned, 0 means don't care
     int best_uses = 0;
     TB_DataType best_dt = phi->dt;
@@ -64,12 +67,14 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
     int phi_uses = 0;
     FOR_USERS(u, phi) {
         TB_Node* use_n = USERN(u);
+        aarray_push(uses, u);
+
         if (use_n == phi) continue;
         if (use_n == cond) continue;
         if (use_n == op) continue;
 
         int node_uses = 0;
-        FOR_USERS(u2, USERN(u)) node_uses += 1;
+        FOR_USERS(u2, USERN(u)) { node_uses += 1; }
 
         // if we've got any casts, let's try to see which is most common
         if (use_n->type == TB_SIGN_EXT || use_n->type == TB_ZERO_EXT) {
@@ -82,60 +87,65 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
         }
     }
 
-    if (best_uses > phi_uses) {
-        // replace all uses with a different size
-        TB_Node* cast = tb_alloc_node(f, TB_TRUNCATE, phi->dt, 2, 0);
-        set_input(f, cast, phi, 1);
-
-        size_t new_node_mark = f->node_count;
-        User* users = phi->users;
-        while (users) {
-            User* next     = users->next;
-            TB_Node* use_n = USERN(users);
-            int use_i      = USERI(users);
-
-            if (use_n == cond && cond != phi) {
-                assert(use_i == 1);
-                TB_NODE_SET_EXTRA(cond, TB_NodeCompare, .cmp_dt = best_dt);
-
-                // upcast the other comparand
-                TB_Node* b_cast = upcast(f, cond->inputs[2], best_dt);
-                set_input(f, cond, b_cast, 2);
-            } else if (use_n == op) {
-                assert(use_i == 1);
-                op->dt = best_dt;
-
-                TB_Node* b_cast = upcast(f, op->inputs[2], best_dt);
-                set_input(f, op, b_cast, 2);
-            } else if (use_n != cast) {
-                if (use_n->dt.raw == best_dt.raw && (use_n->type == TB_ZERO_EXT || use_n->type == TB_SIGN_EXT)) {
-                    // no cast necessary
-                    subsume_node2(f, use_n, phi);
-                } else {
-                    // generic upgrade
-                    set_input(f, use_n, cast, use_i);
-                    mark_users(f, use_n);
-                }
-            }
-
-            users = next;
-        }
-
-        mark_users(f, cast);
-        mark_users(f, phi);
-        mark_node(f, cast);
-        mark_node(f, phi);
-
-        // upscale init var
-        TB_Node* init_cast = upcast(f, phi->inputs[1], best_dt);
-        set_input(f, phi, init_cast, 1);
-        mark_node(f, init_cast);
-
-        phi->dt = best_dt;
-        return true;
-    } else {
+    if (best_uses <= phi_uses) {
+        tb_arena_restore(f->tmp_arena, sp);
         return false;
     }
+
+    // replace all uses with a different size
+    TB_Node* cast = tb_alloc_node(f, TB_TRUNCATE, phi->dt, 2, 0);
+    set_input(f, cast, phi, 1);
+    mark_node(f, cast);
+
+    size_t new_node_mark = f->node_count;
+    aarray_for(i, uses) {
+        TB_Node* use_n = USERN(uses[i]);
+        int use_i      = USERI(uses[i]);
+
+        if (use_n == cond && cond != phi) {
+            assert(use_i == 1);
+            TB_NODE_SET_EXTRA(cond, TB_NodeCompare, .cmp_dt = best_dt);
+
+            // upcast the other comparand
+            TB_Node* b_cast = upcast(f, cond->inputs[2], best_dt);
+            set_input(f, cond, b_cast, 2);
+            mark_users(f, cond);
+            mark_node(f, cond);
+        } else if (use_n == op) {
+            assert(use_i == 1);
+            op->dt = best_dt;
+
+            TB_Node* b_cast = upcast(f, op->inputs[2], best_dt);
+            set_input(f, op, b_cast, 2);
+            mark_users(f, op);
+            mark_node(f, op);
+        } else if (use_n != cast) {
+            if (use_n->dt.raw == best_dt.raw && (use_n->type == TB_ZERO_EXT || use_n->type == TB_SIGN_EXT)) {
+                // no cast necessary
+                mark_users(f, use_n);
+                subsume_node2(f, use_n, phi);
+            } else {
+                // generic upgrade
+                set_input(f, use_n, cast, use_i);
+                mark_users(f, use_n);
+            }
+        }
+    }
+
+    if (cast->users == NULL) {
+        tb_kill_node(f, cast);
+    } else {
+        mark_users(f, cast);
+    }
+
+    // upscale init var
+    TB_Node* init_cast = upcast(f, phi->inputs[1], best_dt);
+    set_input(f, phi, init_cast, 1);
+    mark_node(f, phi);
+
+    phi->dt = best_dt;
+    tb_arena_restore(f->tmp_arena, sp);
+    return true;
 }
 
 // only case we handle rn is making a bigger stride when we proved the induction var never goes past

@@ -363,14 +363,29 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             LatticeInt i = {
                 .min         = TB_MIN(a->_int.min, b->_int.min),
                 .max         = TB_MAX(a->_int.max, b->_int.max),
-                .known_zeros = a->_int.known_zeros & b->_int.known_zeros,
-                .known_ones  = a->_int.known_ones  & b->_int.known_ones,
                 .widen       = TB_MAX(a->_int.widen, b->_int.widen),
             };
+
+            // intersect bits since we're "unioning" our ranges, for instance:
+            //   2 /\ 5 = 2's known 1s are 0010 and 5's are 0110, once
+            //            they meet you'd only know 0010 is actually 1
+            //
+            // if both ranges are the same size then meeting can't introduce issues like
+            // this and we're allowed to union the facts easily.
+            //
+            //  [0,10) /\ [0,10) with different known bits would only union known bits.
+            if (a->_int.min == b->_int.min && a->_int.max == b->_int.max) {
+                i.known_zeros = a->_int.known_zeros | b->_int.known_zeros;
+                i.known_ones  = a->_int.known_ones  | b->_int.known_ones;
+            } else {
+                i.known_zeros = a->_int.known_zeros & b->_int.known_zeros;
+                i.known_ones  = a->_int.known_ones  & b->_int.known_ones;
+            }
+
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = i });
         }
 
-        // here's the cases we need to handle for floats (a is rows):
+        // here's the cases we need to handle here for floats (a is rows):
         //   Fc means float constant, N is NaN and ~N is not-NaN
         //
         //    F  N ~N Fc

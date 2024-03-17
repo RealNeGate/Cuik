@@ -6,7 +6,7 @@
 FOR_N(_i, 0, ((set).capacity + 63) / 64) FOR_BIT(it, _i*64, (set).data[_i])
 
 typedef struct {
-    int id;
+    int id, time;
     RegMask* mask;
 } Spill;
 
@@ -450,7 +450,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             // run linear scan all the way through, we'll accumulate things to
             // split and handle them in bulk
-            cuikperf_region_start("linear scan", NULL);
+            cuikperf_region_start("alloc", NULL);
 
             int unhandled_i = dyn_array_length(ra.unhandled);
             while (unhandled_i--) {
@@ -646,7 +646,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
         // HACK(NeGate): FLAGS can't spill to the stack so we'll just still to GPRs which we're
         // assuming to be in slot 2
         RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
-        aarray_push(ra->spills, (Spill){ active_id, spill_rm });
+        aarray_push(ra->spills, (Spill){ active_id, vreg_start(ctx, vreg_id) - 1, spill_rm });
         return reg;
     } else if (vreg->end_time <= pos) {
         // we can steal it completely
@@ -673,7 +673,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
 
         // steal the reg
         RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
-        aarray_push(ra->spills, (Spill){ vreg_id, spill_rm });
+        aarray_push(ra->spills, (Spill){ vreg_id, pos - 1, spill_rm });
         return highest;
     }
 }
