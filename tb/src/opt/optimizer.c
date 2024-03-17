@@ -15,11 +15,9 @@
 #include <log.h>
 
 // helps us do some matching later
-static User* remove_user(TB_Node* n, int slot);
+static User* remove_user(TB_Function* f, TB_Node* n, int slot);
 static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 static void violent_kill(TB_Function* f, TB_Node* n);
-static void push_for_death(TB_Function* f, TB_Node* n);
-static void disconnect(TB_Function* f, TB_Node* n);
 static bool alloc_types(TB_Function* f);
 
 static void print_lattice(Lattice* l, TB_DataType dt);
@@ -262,7 +260,7 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
 
     // remove users
     FOR_REV_N(i, 0, n->input_count) {
-        User* u = remove_user(n, i);
+        User* u = remove_user(f, n, i);
         if (u) { tb_arena_free(f->arena, u, sizeof(User)); }
 
         n->inputs[i] = NULL;
@@ -398,7 +396,7 @@ TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra) {
     if (k && k != n) {
         // remove users
         FOR_REV_N(i, 0, n->input_count) {
-            User* u = remove_user(n, i);
+            User* u = remove_user(f, n, i);
             if (u) { tb_arena_free(f->arena, u, sizeof(User)); }
 
             n->inputs[i] = NULL;
@@ -469,7 +467,7 @@ void tb_kill_node(TB_Function* f, TB_Node* n) {
     nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
 
     FOR_N(i, 0, n->input_count) {
-        remove_user(n, i);
+        remove_user(f, n, i);
         n->inputs[i] = NULL;
     }
 
@@ -478,7 +476,7 @@ void tb_kill_node(TB_Function* f, TB_Node* n) {
     n->type = TB_NULL;
 }
 
-static User* remove_user(TB_Node* n, int slot) {
+static User* remove_user(TB_Function* f, TB_Node* n, int slot) {
     // early out: there was no previous input
     if (n->inputs[slot] == NULL) return NULL;
 
@@ -490,10 +488,12 @@ static User* remove_user(TB_Node* n, int slot) {
     for (User* prev = NULL; old_use; prev = old_use, old_use = old_use->next) {
         if (USERI(old_use) == slot && USERN(old_use) == n) {
             // remove
-            if (prev != NULL) {
-                prev->next = old_use->next;
-            } else {
-                old->users = old_use->next;
+            if (prev != NULL) { prev->next = old_use->next; }
+            else { old->users = old_use->next; }
+
+            // push to worklist, we've got a dead node
+            if (old->users == NULL && f->worklist) {
+                worklist_push(f->worklist, old);
             }
 
             return old_use;
@@ -506,8 +506,8 @@ static User* remove_user(TB_Node* n, int slot) {
 void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
     // assert(slot < n->input_count);
 
-    // recycle the user
-    User* old_use = remove_user(n, slot);
+    // try to recycle the user
+    User* old_use = remove_user(f, n, slot);
 
     n->inputs[slot] = in;
     if (in != NULL) {
@@ -526,20 +526,6 @@ void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot, User* recycled)
     use->_slot = slot;
     #endif
     in->users = use;
-}
-
-// dead node? place into worklist to clean up
-static void disconnect(TB_Function* f, TB_Node* n) {
-    if (n->users->next == NULL) { mark_node(f, n); }
-}
-
-static void push_for_death(TB_Function* f, TB_Node* n) {
-    FOR_N(i, 0, n->input_count) {
-        TB_Node* in = n->inputs[i];
-
-        // we can guarentee it's got a user... that's us lmao
-        if (in && in->users->next == NULL) { mark_node(f, in); }
-    }
 }
 
 static void cool_print_type(TB_Node* n) {
@@ -922,7 +908,6 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
 
         // transfer users from n -> k
         if (n != k) {
-            push_for_death(f, n);
             migrate_type(f, n, k);
             subsume_node(f, n, k);
             n = k;
@@ -960,7 +945,6 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.constants++);
             DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
-            push_for_death(f, n);
             migrate_type(f, n, k);
             subsume_node(f, n, k);
             mark_users(f, k);
@@ -976,7 +960,6 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         DO_IF(TB_OPTDEBUG_STATS)(f->stats.identities++);
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
-        push_for_death(f, n);
         migrate_type(f, n, k);
         subsume_node(f, n, k);
         mark_users(f, k);
@@ -1390,7 +1373,6 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
     tb_opt_locals(f);
     // const prop leaves work for the peephole optimizer
     tb_opt_cprop(f);
-    tb_print_dumb(f, false);
     tb_opt_peeps(f);
     // mostly just detecting loops and upcasting indvars
     tb_opt_loops(f);
@@ -1483,7 +1465,6 @@ void tb_opt_peeps(TB_Function* f) {
             // must've dead sometime between getting scheduled and getting here.
             if (n->type != TB_PROJ && n->users == NULL) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
-                push_for_death(f, n);
                 tb_kill_node(f, n);
             } else {
                 tb_opt_peep_node(f, n);

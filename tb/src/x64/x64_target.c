@@ -1127,7 +1127,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 Val dst = op_at(ctx, n);
                 Val src = op_at(ctx, n->inputs[1]);
                 if (!is_value_match(&dst, &src)) {
-                    COMMENT("spill move");
+                    COMMENT("%%%u = copy(%%%u)", n->gvn, n->inputs[1]->gvn);
 
                     int op = dt < TB_X86_F32x1 ? MOV : FP_MOV;
                     __(op, dt, &dst, &src);

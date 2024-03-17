@@ -694,7 +694,6 @@ static TB_Node* ideal_int_binop(TB_Function* f, TB_Node* n) {
                 shl_amt == bits - shr_amt) {
                 // convert to rotate left
                 n->type = TB_ROL;
-                disconnect(f, a), disconnect(f, b);
                 set_input(f, n, b->inputs[1], 1);
                 set_input(f, n, b->inputs[2], 2);
                 return n;

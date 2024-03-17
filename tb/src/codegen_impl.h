@@ -76,44 +76,6 @@ void tb__print_regmask(RegMask* mask) {
     }
 }
 
-static void walk_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
-    if (n == NULL || worklist_test_n_set(f->worklist, n)) { return; }
-
-    // replace with machine op
-    TB_Node* k = node_isel(ctx, ctx->f, n);
-    if (k && k != n) {
-        // we could run GVN on machine ops :) i just haven't said
-        // what data is in the extra payload so we can't yet...
-        // k = tb_opt_gvn_node(ctx->f, k);
-
-        subsume_node2(ctx->f, n, k);
-
-        // kill fully disconnected edges
-        FOR_N(i, 0, n->input_count) {
-            TB_Node* in = n->inputs[i];
-            if (in) {
-                TB_User u = in->users;
-                if (u->next == NULL) {
-                    assert(USERN(u) == n && i == USERI(u));
-                    set_input(ctx->f, n, NULL, i);
-                    tb_kill_node(ctx->f, in);
-                }
-            }
-        }
-        tb_kill_node(ctx->f, n);
-
-        // don't walk the replacement
-        worklist_test_n_set(f->worklist, k);
-        n = k;
-    }
-    // if (k) { tb_pass_print(ctx->p); }
-
-    // replace all input edges
-    FOR_N(i, 0, n->input_count) {
-        walk_node(ctx, f, n->inputs[i]);
-    }
-}
-
 static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
     log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(f->tmp_arena) / 1024.0f, (tb_arena_current_size(f->arena) - og_size) / 1024.0f, label);
 }
@@ -138,10 +100,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     };
 
-    // allocate entire top of the code arena (we'll trim it later if possible)
-    ctx.emit.capacity = code_arena->high_point - code_arena->watermark;
-    ctx.emit.data = tb_arena_alloc(code_arena, ctx.emit.capacity);
-
     init_ctx(&ctx, f->super.module->target_abi);
     ctx.node_2addr = node_2addr;
 
@@ -163,25 +121,58 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     CUIK_TIMED_BLOCK("isel") {
         log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
 
-        tb_print(f, arena);
+        TB_Worklist walker_ws = { 0 };
+        worklist_alloc(&walker_ws, f->node_count);
 
-        // bottom-up rewrite
-        worklist_clear(ws);
-        walk_node(&ctx, f, f->root_node);
+        // bottom-up rewrite:
+        //   we keep the visited bits set once we've rewritten a node, unlike most worklist usage
+        //   which unsets a bit once it's popped from the items array.
+        CUIK_TIMED_BLOCK("rewriting") {
+            worklist_push(&walker_ws, f->root_node);
 
-        TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
-        TB_OPTDEBUG(CODEGEN)(tb_print(f, arena));
+            while (dyn_array_length(walker_ws.items) > 0) {
+                TB_Node* n = dyn_array_pop(walker_ws.items);
+
+                // replace with machine op
+                TB_Node* k = node_isel(&ctx, f, n);
+                if (k && k != n) {
+                    // we could run GVN on machine ops :) i just haven't said
+                    // what data is in the extra payload so we can't yet...
+                    // k = tb_opt_gvn_node(ctx->f, k);
+
+                    subsume_node(f, n, k);
+
+                    // don't walk the replacement
+                    worklist_test_n_set(&walker_ws, k);
+                    n = k;
+                }
+
+                // replace all input edges
+                FOR_REV_N(i, 0, n->input_count) if (n->inputs[i]) {
+                    worklist_push(&walker_ws, n->inputs[i]);
+                }
+            }
+            worklist_free(&walker_ws);
+        }
+
+        // dead node elim
+        CUIK_TIMED_BLOCK("dead node elim") {
+            for (TB_Node* n; n = worklist_pop(ws), n;) {
+                if (n->users == NULL) { tb_kill_node(f, n); }
+            }
+        }
 
         log_phase_end(f, og_size, "isel");
     }
-
-    worklist_clear(ws);
 
     TB_CFG cfg;
     CUIK_TIMED_BLOCK("global sched") {
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
         tb_renumber_nodes(f, ws);
+
+        TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
+        TB_OPTDEBUG(CODEGEN)(tb_print(f, arena));
 
         cfg = tb_compute_rpo(f, ws);
         tb_global_schedule(f, ws, cfg, true, node_latency);
@@ -360,6 +351,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("emit") {
+        // allocate entire top of the code arena (we'll trim it later if possible)
+        ctx.emit.capacity = code_arena->high_point - code_arena->watermark;
+        ctx.emit.data = tb_arena_alloc(code_arena, ctx.emit.capacity);
+
         // allocate more stuff now that we've run stats on the IR
         ctx.emit.label_count = cfg.block_count;
         ctx.emit.labels = tb_arena_alloc(arena, cfg.block_count * sizeof(uint32_t));

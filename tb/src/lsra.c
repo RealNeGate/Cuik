@@ -483,6 +483,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                         // add to active set
                         if (reg >= 0) {
+                            assert(reg < ctx->num_regs[vreg->mask->class]);
                             vreg->class = vreg->mask->class;
                             vreg->assigned = reg;
                             move_to_active(&ra, vreg, vreg_id);
@@ -518,11 +519,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             if (spills_accum == 0) { break; }
 
             cuikperf_region_start("alloc fail", NULL);
-            // alloc failure? spill/split
-            FOR_N(i, 0, spills_accum) {
-                VReg* vreg = &ctx->vregs[ra.spills[i].id];
-                spill_entire_life(ctx, &ra, vreg, ra.spills[i].mask);
-            }
 
             // undo all non-fixed regs
             FOR_N(i, 0, dyn_array_length(ra.unhandled)) {
@@ -541,6 +537,13 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             FOR_N(rc, 1, ctx->num_classes) {
                 set_clear(&ra.active_set[rc]);
             }
+
+            // spill/split
+            FOR_N(i, 0, spills_accum) {
+                VReg* vreg = &ctx->vregs[ra.spills[i].id];
+                spill_entire_life(ctx, &ra, vreg, ra.spills[i].mask);
+            }
+
             dyn_array_clear(ra.inactive);
             aarray_clear(ra.spills);
             cuikperf_region_end();
@@ -613,8 +616,15 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
     int highest = -1;
 
     // it's better in the long run to aggressively split based on hints
-    int hint = vreg->hint_vreg > 0 ? ctx->vregs[vreg->hint_vreg].assigned : -1;
-    if (hint >= 0 && vreg->end_time <= ra->free_until[hint]) { highest = hint; }
+    int hint = -1;
+    if (vreg->hint_vreg > 0) {
+        VReg* hint_vreg = &ctx->vregs[vreg->hint_vreg];
+        if (hint_vreg->assigned >= 0 && vreg->end_time <= ra->free_until[hint_vreg->assigned]) {
+            // make sure it's a compatible mask
+            RegMask* glb = tb__reg_mask_meet(ctx, hint_vreg->mask, vreg->mask);
+            if (glb != &TB_REG_EMPTY) { highest = hint_vreg->assigned; }
+        }
+    }
 
     // pick highest free pos
     int rc = vreg->mask->class;
@@ -734,7 +744,9 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
     TB_NODE_SET_EXTRA(spill_n, TB_NodeMachCopy, .def = new_mask, .use = vreg->mask);
 
     TB_BasicBlock* bb = f->scheduled[n->gvn];
-    int pos = ra->time[n->gvn] + 1;
+
+    int def_t = ra->time[n->gvn];
+    int pos = (def_t - 1) | 1;
 
     // might invalidate vreg ptr
     aarray_insert(ra->time, spill_n->gvn, pos);
@@ -749,13 +761,15 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
         .n = spill_n,
         .end_time = vreg->end_time,
     };
+    vreg->assigned = -1;
     vreg->end_time = pos;
     add_to_unhandled(ctx, ra, spill_vreg - ctx->vregs, pos);
 
     // pre-spill range is just a tiny piece
+    assert(vreg->active_range != &NULL_RANGE);
     Range* rg = tb_arena_alloc(ra->arena, sizeof(Range));
     rg->next  = &NULL_RANGE;
-    rg->start = pos - 1;
+    rg->start = def_t;
     rg->end   = pos;
     spill_vreg->active_range = vreg->active_range;
     vreg->saved_range = vreg->active_range = rg;
@@ -788,7 +802,7 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
             VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
             reload_vreg->mask = in_mask;
 
-            int good_before_spot = use_t - 1;
+            int good_before_spot = (use_t + 1) & ~1;
             assert(good_before_spot > pos);
 
             // insert small range
