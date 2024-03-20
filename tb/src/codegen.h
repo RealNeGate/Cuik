@@ -109,8 +109,6 @@ struct VReg {
     struct {
         int end_time, hint_vreg;
         Range* active_range;
-
-        // when we retry, we need to rewind to this point
         Range* saved_range;
     };
 };

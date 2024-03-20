@@ -26,9 +26,10 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         size_t i = 0, extra_edges = 0;
         while (i < n->input_count) {
             Lattice* ty = latuni_get(f, n->inputs[i]);
-            if (n->inputs[i]->type == TB_DEAD || ty == &TOP_IN_THE_SKY) {
+            if (ty == &TOP_IN_THE_SKY) {
                 // both the region and phi are doing remove swap so the order should
                 // stay fine across them.
+                changes = true;
                 remove_input(f, n, i);
 
                 FOR_USERS(use, n) {
@@ -434,10 +435,9 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    ptrdiff_t taken = -1;
     if (key->tag == LATTICE_INT && key->_int.min == key->_int.max) {
         int64_t key_const = key->_int.max;
-        taken = 0;
+        ptrdiff_t taken = 0;
 
         FOR_N(i, 0, br->succ_count - 1) {
             int64_t case_key = br->keys[i].key;
@@ -446,9 +446,9 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
                 break;
             }
         }
-    } else if (br->succ_count == 2) {
-        TB_BranchKey* primary_keys = br->keys;
 
+        return lattice_branch_goto(f, br->succ_count, taken);
+    } else {
         // check for redundant conditions
         FOR_USERS(u, n->inputs[1]) {
             if (USERN(u)->type != TB_BRANCH || USERI(u) != 1 || USERN(u) == n) {
@@ -456,41 +456,22 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
             }
 
             TB_Node* end = USERN(u);
-            TB_BranchKey* keys = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->keys;
-            if (TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count != 2 || keys[0].key != primary_keys[0].key) {
-                continue;
-            }
+            if (same_sorta_branch(end, n)) {
+                FOR_USERS(succ_user, end) {
+                    assert(USERN(succ_user)->type == TB_PROJ);
+                    int index = TB_NODE_GET_EXTRA_T(USERN(succ_user), TB_NodeProj)->index;
+                    TB_Node* succ = cfg_next_bb_after_cproj(USERN(succ_user));
 
-            FOR_USERS(succ_user, end) {
-                assert(USERN(succ_user)->type == TB_PROJ);
-                int index = TB_NODE_GET_EXTRA_T(USERN(succ_user), TB_NodeProj)->index;
-                TB_Node* succ = cfg_next_bb_after_cproj(USERN(succ_user));
-
-                // we must be dominating for this to work
-                if (fast_dommy(succ, n)) {
-                    taken = index;
-                    goto match;
+                    // we must be dominating for this to work
+                    if (fast_dommy(succ, n)) {
+                        return lattice_branch_goto(f, br->succ_count, index);
+                    }
                 }
             }
         }
     }
 
-    // construct tuple type
-    match:;
-    size_t size = sizeof(Lattice) + br->succ_count*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(f->arena, size);
-    *l = (Lattice){ LATTICE_TUPLE, ._elem_count = br->succ_count };
-    FOR_N(i, 0, br->succ_count) {
-        l->elems[i] = taken < 0 || i == taken ? &CTRL_IN_THE_SKY : &TOP_IN_THE_SKY;
-    }
-
-    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-    if (k) {
-        tb_arena_free(f->arena, l, size);
-        return k;
-    } else {
-        return l;
-    }
+    return NULL;
 }
 
 static TB_Node* identity_safepoint(TB_Function* f, TB_Node* n) {

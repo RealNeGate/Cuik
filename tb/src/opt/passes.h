@@ -196,6 +196,7 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
     assert(proj->type == TB_PROJ && proj->inputs[0]->type == TB_BRANCH);
     TB_Node* n = proj->inputs[0];
 
+    assert(proj->users && "missing successor after cproj");
     TB_Node* r = USERN(proj->users);
     if (proj->users->next != NULL || r->type != TB_REGION) {
         // multi-user proj, this means it's basically a BB
@@ -280,7 +281,7 @@ static TB_Node* cfg_get_pred(TB_CFG* cfg, TB_Node* n, int i) {
     n = n->inputs[i];
     for (;;) {
         ptrdiff_t search = nl_map_get(cfg->node_to_block, n);
-        if (search >= 0 || n->type == TB_REGION) {
+        if (search >= 0 || n->type == TB_DEAD || n->type == TB_REGION) {
             return n;
         }
 

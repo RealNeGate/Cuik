@@ -112,7 +112,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             if (n != end) {
                 FOR_USERS(u, n) {
                     TB_Node* un = USERN(u);
-                    if (!set_get(&ready_set, un->gvn) && f->scheduled[un->gvn] == bb && is_node_ready(f, ws, bb, un)) {
+                    if (!set_get(&ready_set, un->gvn) && un != end && f->scheduled[un->gvn] == bb && is_node_ready(f, ws, bb, un)) {
                         TB_OPTDEBUG(SCHEDULE)(printf("        READY    "), tb_print_dumb_node(NULL, un), printf("\n"));
 
                         set_put(&ready_set, un->gvn);
@@ -127,6 +127,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         }
     }
 
+    worklist_push(ws, end);
     tb_arena_restore(tmp_arena, sp);
 }
 

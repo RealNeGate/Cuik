@@ -113,6 +113,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_DEBUGBREAK]     = { NULL,              NULL,               value_ctrl,      },
     [TB_TRAP]           = { NULL,              NULL,               value_ctrl,      },
     [TB_UNREACHABLE]    = { NULL,              NULL,               value_ctrl,      },
+    [TB_DEAD]           = { NULL,              NULL,               value_dead,      },
     [TB_ROOT]           = { NULL,              NULL,               NULL,            },
 };
 

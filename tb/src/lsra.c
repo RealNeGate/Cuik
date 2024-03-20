@@ -6,11 +6,6 @@
 FOR_N(_i, 0, ((set).capacity + 63) / 64) FOR_BIT(it, _i*64, (set).data[_i])
 
 typedef struct {
-    int id, time;
-    RegMask* mask;
-} Spill;
-
-typedef struct {
     Ctx* ctx;
     TB_Arena* arena;
 
@@ -22,8 +17,7 @@ typedef struct {
     int* free_until;
     int* block_pos;
     int* fixed;
-
-    ArenaArray(Spill) spills; // [vreg]
+    NL_Table fwd_table;
 
     // Row numbers per node
     ArenaArray(int) time;   // [gvn]
@@ -46,8 +40,9 @@ static void move_to_active(LSRA* restrict ra, VReg* vreg, int vreg_id);
 static void update_intervals(Ctx* restrict ctx, LSRA* restrict ra, int time);
 static void cuiksort_defs(Ctx* ctx, int* intervals, ptrdiff_t lo, ptrdiff_t hi);
 static bool update_interval(Ctx* restrict ctx, LSRA* restrict ra, int vreg_id, bool is_active, int time, int inactive_index);
-static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, int pos, VReg* vreg, RegMask* new_mask);
+static void split_ranges(Ctx* restrict ctx, LSRA* restrict ra);
 static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, RegMask* new_mask);
+static bool rematerialize(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg);
 static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int vreg_id);
 
 // Helpers
@@ -178,7 +173,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     // new nodes inherit liveness from some other node.
     //
     // new GVN -> old GVN
-    NL_Table fwd_table = nl_table_alloc(32);
+    ra.fwd_table = nl_table_alloc(32);
 
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {
@@ -293,7 +288,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     RegMask* def_mask = vreg->mask;
                     vreg->active_range = &NULL_RANGE;
 
-                    #if 0
                     // if we're writing to a fixed interval, insert copy
                     // such that we only guarentee a fixed location at the
                     // def site.
@@ -314,12 +308,11 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         tmp_vreg->mask = ctx->normie_mask[def_mask->class];
                         tmp_vreg->active_range = &NULL_RANGE;
 
-                        nl_table_put(&fwd_table, (void*) (uintptr_t) n->gvn, (void*) (uintptr_t) tmp->gvn);
+                        nl_table_put(&ra.fwd_table, (void*) (uintptr_t) n->gvn, (void*) (uintptr_t) tmp->gvn);
                         aarray_insert(ra.time, tmp->gvn, timeline);
                         timeline += 2;
                         j += 1;
                     }
-                    #endif
                 }
             }
 
@@ -343,7 +336,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 uint64_t bits = live_out->data[j];
                 if (bits == 0) continue;
                 FOR_N(k, 0, 64) if (bits & (1ull << k)) {
-                    uintptr_t fwd = (uintptr_t) nl_table_get(&fwd_table, (void*) (j*64 + k));
+                    uintptr_t fwd = (uintptr_t) nl_table_get(&ra.fwd_table, (void*) (j*64 + k));
                     uintptr_t gvn = fwd ? fwd : j*64 + k;
 
                     int vreg_id = ctx->vreg_map[gvn];
@@ -437,121 +430,76 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
     int total_spills = 0;
     CUIK_TIMED_BLOCK("linear scan") {
-        ra.spills = aarray_create(arena, Spill, 100);
+        int total_spills = 0;
 
-        int rounds = 0;
-        for (;;) {
-            total_spills = 0;
+        // run linear scan all the way through, we'll accumulate things to
+        // split and handle them in bulk
+        while (dyn_array_length(ra.unhandled)) {
+            int vreg_id = dyn_array_pop(ra.unhandled);
+            VReg* vreg  = &ctx->vregs[vreg_id];
 
-            rounds += 1;
-            TB_OPTDEBUG(REGALLOC)(printf("  ###############################\n"));
-            TB_OPTDEBUG(REGALLOC)(printf("  #  ROUND %-4d                 #\n", rounds));
-            TB_OPTDEBUG(REGALLOC)(printf("  ###############################\n"));
+            int start = vreg->active_range->start;
+            int end   = vreg->end_time;
 
-            // run linear scan all the way through, we'll accumulate things to
-            // split and handle them in bulk
-            cuikperf_region_start("alloc", NULL);
+            #if TB_OPTDEBUG_REGALLOC
+            printf("  # V%-4d t=[%-4d - %4d) ", vreg_id, start, end);
+            tb__print_regmask(vreg->mask);
+            printf("    ");
+            if (vreg->n) { tb_print_dumb_node(NULL, vreg->n); }
+            printf("\n");
+            #endif
 
-            int unhandled_i = dyn_array_length(ra.unhandled);
-            while (unhandled_i--) {
-                int vreg_id = ra.unhandled[unhandled_i];
-                VReg* vreg  = &ctx->vregs[vreg_id];
+            assert(start != INT_MAX);
+            if (vreg->saved_range == NULL) {
+                vreg->saved_range = vreg->active_range;
+            }
+            update_intervals(ctx, &ra, start);
 
-                int start = vreg->active_range->start;
-                int end   = vreg->end_time;
-                assert(start != INT_MAX);
+            int reg = vreg->assigned;
+            if (reg >= 0) {
+                move_to_active(&ra, vreg, vreg_id);
+            } else {
+                if (reg_mask_is_not_empty(vreg->mask)) {
+                    // allocate free register
+                    reg = allocate_free_reg(ctx, &ra, vreg, vreg_id);
+                    vreg = &ctx->vregs[vreg_id];
 
-                #if TB_OPTDEBUG_REGALLOC
-                printf("  # V%-4d t=[%-4d - %4d) ", vreg_id, start, end);
-                tb__print_regmask(vreg->mask);
-                printf("    ");
-                if (vreg->n) { tb_print_dumb_node(NULL, vreg->n); }
-                printf("\n");
-                #endif
-
-                if (vreg->saved_range == NULL) { vreg->saved_range = vreg->active_range; }
-                update_intervals(ctx, &ra, start);
-
-                int reg = vreg->assigned;
-                if (reg >= 0) {
-                    move_to_active(&ra, vreg, vreg_id);
+                    // add to active set
+                    if (reg >= 0) {
+                        assert(reg < ctx->num_regs[vreg->mask->class]);
+                        vreg->class    = vreg->mask->class;
+                        vreg->assigned = reg;
+                        move_to_active(&ra, vreg, vreg_id);
+                    }
+                } else if (vreg->mask->may_spill) {
+                    // allocate stack slo t
+                    TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [BP - %d]\n", 8 + total_spills*8));
+                    vreg->class    = REG_CLASS_STK;
+                    vreg->assigned = STACK_BASE_REG_NAMES + total_spills++;
                 } else {
-                    if (reg_mask_is_not_empty(vreg->mask)) {
-                        // allocate free register
-                        reg = allocate_free_reg(ctx, &ra, vreg, vreg_id);
-                        vreg = &ctx->vregs[vreg_id];
-
-                        // add to active set
-                        if (reg >= 0) {
-                            assert(reg < ctx->num_regs[vreg->mask->class]);
-                            vreg->class = vreg->mask->class;
-                            vreg->assigned = reg;
-                            move_to_active(&ra, vreg, vreg_id);
-                        }
-                    } else if (vreg->mask->may_spill) {
-                        // allocate stack slo t
-                        TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [BP - %d]\n", 8 + total_spills*8));
-                        vreg->class    = REG_CLASS_STK;
-                        vreg->assigned = STACK_BASE_REG_NAMES + total_spills++;
-                    } else {
-                        tb_todo();
-                    }
-                }
-
-                // display active set
-                #if TB_OPTDEBUG_REGALLOC
-                static const char* classes[] = { "STK", "FLAGS", "GPR", "VEC" };
-                FOR_N(rc, 1, ctx->num_classes) {
-                    printf("  \x1b[32m%s { ", classes[rc]);
-                    FOREACH_SET(reg, ra.active_set[rc]) {
-                        int other_id = ra.active[rc][reg];
-                        printf("V%d:", other_id);
-                        print_reg_name(rc, reg);
-                        printf(" ");
-                    }
-                    printf("}\x1b[0m\n");
-                }
-                #endif
-            }
-            cuikperf_region_end();
-
-            size_t spills_accum = aarray_length(ra.spills);
-            if (spills_accum == 0) { break; }
-
-            cuikperf_region_start("alloc fail", NULL);
-
-            // undo all non-fixed regs
-            FOR_N(i, 0, dyn_array_length(ra.unhandled)) {
-                int vreg_id = ra.unhandled[i];
-                VReg* vreg  = &ctx->vregs[vreg_id];
-                if (!vreg_is_fixed(ctx, &ra, vreg_id)) {
-                    vreg->class    = vreg->mask->class;
-                    vreg->assigned = -1;
-                }
-
-                if (vreg->saved_range) {
-                    vreg->active_range = vreg->saved_range;
+                    tb_todo();
                 }
             }
 
+            // display active set
+            #if TB_OPTDEBUG_REGALLOC
+            static const char* classes[] = { "STK", "FLAGS", "GPR", "VEC" };
             FOR_N(rc, 1, ctx->num_classes) {
-                set_clear(&ra.active_set[rc]);
+                printf("  \x1b[32m%s { ", classes[rc]);
+                FOREACH_SET(reg, ra.active_set[rc]) {
+                    int other_id = ra.active[rc][reg];
+                    printf("V%d:", other_id);
+                    print_reg_name(rc, reg);
+                    printf(" ");
+                }
+                printf("}\x1b[0m\n");
             }
-
-            // spill/split
-            FOR_N(i, 0, spills_accum) {
-                VReg* vreg = &ctx->vregs[ra.spills[i].id];
-                spill_entire_life(ctx, &ra, vreg, ra.spills[i].mask);
-            }
-
-            dyn_array_clear(ra.inactive);
-            aarray_clear(ra.spills);
-            cuikperf_region_end();
+            #endif
         }
-
+        cuikperf_region_end();
         ctx->num_spills = total_spills;
     }
-
+    nl_table_free(ra.fwd_table);
     // dump_sched(ctx);
 }
 
@@ -651,12 +599,12 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
 
         // alloc failure, split any
         VReg* active_user = &ctx->vregs[active_id];
-        set_remove(&ra->active_set[rc], reg);
+        active_user->active_range = NULL;
 
         // HACK(NeGate): FLAGS can't spill to the stack so we'll just still to GPRs which we're
         // assuming to be in slot 2
         RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
-        aarray_push(ra->spills, (Spill){ active_id, vreg_start(ctx, vreg_id) - 1, spill_rm });
+        spill_entire_life(ctx, ra, active_user, spill_rm); // vreg_start(ctx, vreg_id) - 1
         return reg;
     } else if (vreg->end_time <= pos) {
         // we can steal it completely
@@ -678,18 +626,17 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
         vreg->class    = rc;
         vreg->assigned = highest;
 
-        TB_OPTDEBUG(REGALLOC)(printf("  #   spill v%u\n", vreg_id));
-        TB_OPTDEBUG(REGALLOC)(printf("  #   stole "), print_reg_name(rc, highest), printf("\n"));
+        TB_OPTDEBUG(REGALLOC)(printf("  #   spill v%u (stole ", vreg_id), print_reg_name(rc, highest), printf(")\n"));
 
         // steal the reg
         RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
-        aarray_push(ra->spills, (Spill){ vreg_id, pos - 1, spill_rm });
+        spill_entire_life(ctx, ra, vreg, spill_rm); // pos - 1
         return highest;
     }
 }
 
 ////////////////////////////////
-// VReg splitting
+// VReg spilling
 ////////////////////////////////
 static void insert_before_time(Ctx* ctx, LSRA* restrict ra, TB_BasicBlock* bb, TB_Node* n, int time) {
     MachineBB* mbb = tb__insert(ctx, ctx->f, bb, n);
@@ -721,17 +668,11 @@ static void add_to_unhandled(Ctx* restrict ctx, LSRA* restrict ra, int vreg_id, 
     ra->unhandled[i] = vreg_id;
 }
 
-// spills for the entire lifetime, we don't wanna be doing this but it's a fast compiling low-quality option
+// spills for basically the entire lifetime, we don't wanna be doing this but it's a fast compiling low-quality option
 static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, RegMask* new_mask) {
     cuikperf_region_start("spill", NULL);
     int class = vreg->class;
     int vreg_id = vreg - ctx->vregs;
-
-    if (vreg->assigned >= 0) {
-        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: spilled ", vreg_id), print_reg_name(class, vreg->assigned), printf("\x1b[0m\n"));
-    } else {
-        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: spilled *undecided*\x1b[0m\n", vreg_id));
-    }
 
     // insert spill move
     TB_Function* f = ctx->f;
@@ -744,7 +685,6 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
     TB_NODE_SET_EXTRA(spill_n, TB_NodeMachCopy, .def = new_mask, .use = vreg->mask);
 
     TB_BasicBlock* bb = f->scheduled[n->gvn];
-
     int def_t = ra->time[n->gvn];
     int pos = (def_t - 1) | 1;
 
@@ -754,6 +694,12 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
     VReg* spill_vreg = tb__set_node_vreg(ctx, spill_n);
     vreg = &ctx->vregs[vreg_id];
 
+    if (vreg->assigned >= 0) {
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: spilled ", vreg_id), print_reg_name(class, vreg->assigned), printf(" (v%zu)\x1b[0m\n", spill_vreg - ctx->vregs));
+    } else {
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: spilled *undecided* (v%zu)\x1b[0m\n", vreg_id, spill_vreg - ctx->vregs));
+    }
+
     *spill_vreg = (VReg){
         .class = class,
         .assigned = -1,
@@ -761,8 +707,8 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
         .n = spill_n,
         .end_time = vreg->end_time,
     };
-    vreg->assigned = -1;
     vreg->end_time = pos;
+
     add_to_unhandled(ctx, ra, spill_vreg - ctx->vregs, pos);
 
     // pre-spill range is just a tiny piece
@@ -771,19 +717,18 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
     rg->next  = &NULL_RANGE;
     rg->start = def_t;
     rg->end   = pos;
-    spill_vreg->active_range = vreg->active_range;
+    spill_vreg->active_range = vreg->saved_range;
     vreg->saved_range = vreg->active_range = rg;
 
     // it's probably gonna get invalidated by the new vreg adds so
     // i'd rather NULL it before using it
     vreg = NULL;
 
-    // we'll just split at every use site... not the best
-    // move (pun intended) but we'll improve it later
     User* u = spill_n->users;
     while (u != NULL) {
         TB_Node* use_n = USERN(u);
         int use_i      = USERI(u);
+        int use_t      = ra->time[use_n->gvn];
 
         RegMask* in_mask = constraint_in(ctx, use_n, use_i);
         RegMask* intersect = tb__reg_mask_meet(ctx, in_mask, new_mask);
@@ -794,16 +739,13 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
             set_input(f, reload_n, spill_n, 1);
             TB_NODE_SET_EXTRA(reload_n, TB_NodeMachCopy, .def = in_mask, .use = new_mask);
 
-            int use_t = ra->time[use_n->gvn];
-            TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: reload at t=%d\x1b[0m\n", vreg_id, use_t));
-
             // schedule the split right before use
             tb__insert_before(ctx, ctx->f, reload_n, use_n);
             VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
             reload_vreg->mask = in_mask;
 
             int good_before_spot = (use_t + 1) & ~1;
-            assert(good_before_spot > pos);
+            TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: reload at t=%d (v%zu)\x1b[0m\n", vreg_id, good_before_spot, reload_vreg - ctx->vregs));
 
             // insert small range
             Range* rg = tb_arena_alloc(ra->arena, sizeof(Range));
@@ -811,7 +753,7 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
             rg->start = good_before_spot;
             rg->end   = use_t;
             reload_vreg->end_time = use_t;
-            reload_vreg->active_range = rg;
+            reload_vreg->saved_range =reload_vreg->active_range = rg;
 
             aarray_insert(ra->time, reload_n->gvn, good_before_spot);
             add_to_unhandled(ctx, ra, reload_vreg - ctx->vregs, good_before_spot);
@@ -824,8 +766,90 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
     cuikperf_region_end();
 }
 
+////////////////////////////////
+// VReg spilling
+////////////////////////////////
+static void remove_from_unhandled(Ctx* ctx, LSRA* restrict ra, int vreg_id) {
+    size_t i = 0, count = dyn_array_length(ra->unhandled);
+    for (; i < count; i++) {
+        if (ra->unhandled[i] == vreg_id) break;
+    }
+
+    // we know where to insert
+    memmove(&ra->unhandled[i], &ra->unhandled[i + 1], (count - i) * sizeof(int));
+    dyn_array_pop(ra->unhandled);
+}
+
+static void tb__delete_from(Ctx* ctx, TB_Function* f, TB_Node* n) {
+    MachineBB* mbb = &ctx->machine_bbs[f->scheduled[n->gvn]->order];
+
+    size_t i = 0, cnt = aarray_length(mbb->items);
+    while (i < cnt && mbb->items[i] != n) { i++; }
+
+    memmove(&mbb->items[i], &mbb->items[i + 1], (cnt - i) * sizeof(TB_Node*));
+    aarray_pop(mbb->items);
+}
+
+static TB_BasicBlock* find_bb_at_time(Ctx* restrict ctx, TB_Function* f, int pos) {
+    TB_BasicBlock* bb = NULL;
+    FOR_N(i, 0, ctx->bb_count) {
+        MachineBB* mbb = &ctx->machine_bbs[i];
+        if (pos <= mbb->end_t) { return f->scheduled[mbb->n->gvn]; }
+    }
+    return NULL;
+}
+
+static bool rematerialize(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg) {
+    TB_Function* f = ctx->f;
+    TB_Node* n     = vreg->n;
+    if (n->type != TB_INTEGER_CONST) {
+        return false;
+    }
+
+    int vreg_id = vreg - ctx->vregs;
+    uint64_t value = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
+
+    // remat for every use site... not the best move
+    User* u;
+    while (u = n->users, u != NULL) {
+        TB_Node* use_n = USERN(u);
+        int use_i      = USERI(u);
+        RegMask* in_mask = constraint_in(ctx, use_n, use_i);
+
+        // reload per use site
+        TB_Node* reload_n = tb_alloc_node(f, TB_INTEGER_CONST, n->dt, 1, sizeof(TB_NodeInt));
+        set_input(f, use_n, reload_n, use_i);
+        TB_NODE_SET_EXTRA(reload_n, TB_NodeInt, .value = value);
+
+        int use_t = ra->time[use_n->gvn];
+        int good_before_spot = (use_t + 1) & ~1;
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: remat before %%%u at t=%d // ", vreg_id, use_n->gvn, use_t), tb_print_dumb_node(NULL, reload_n), printf("\x1b[0m\n"));
+
+        // schedule the split right before use
+        tb__insert_before(ctx, ctx->f, reload_n, use_n);
+        VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
+        reload_vreg->mask = in_mask;
+
+        // insert small range
+        Range* rg = tb_arena_alloc(ra->arena, sizeof(Range));
+        rg->next  = &NULL_RANGE;
+        rg->start = good_before_spot;
+        rg->end   = use_t;
+        reload_vreg->end_time = use_t;
+        reload_vreg->active_range = rg;
+
+        aarray_insert(ra->time, reload_n->gvn, good_before_spot);
+        add_to_unhandled(ctx, ra, reload_vreg - ctx->vregs, good_before_spot);
+    }
+
+    remove_from_unhandled(ctx, ra, vreg - ctx->vregs);
+    tb__delete_from(ctx, f, n);
+    tb_kill_node(f, n);
+    return true;
+}
+
 #if 0
-static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, int pos, VReg* vreg, RegMask* new_mask) {
+static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, RegMask* new_mask, int pos) {
     cuikperf_region_start("split", NULL);
     int class = vreg->class;
     int vreg_id = vreg - ctx->vregs;
@@ -901,6 +925,10 @@ static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, int pos, VR
     // i'd rather NULL it before using it
     vreg = NULL;
 
+    // earliest reload point
+
+    __debugbreak();
+
     // insert phis to guarentee SSA-form:
     // * just find all user's blocks and see if they're
     //   dominated by the spill block.
@@ -951,7 +979,6 @@ static void split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, int pos, VR
     }
 
     dump_sched(ctx, ra);
-    __debugbreak();
 
     // we'll just split at every use site... not the best
     // move (pun intended) but we'll improve it later
@@ -1129,446 +1156,7 @@ static void cuiksort_defs(Ctx* ctx, int* intervals, ptrdiff_t lo, ptrdiff_t hi) 
 }
 
 #if 0
-static void insert_split_move(LSRA* restrict ra, int t, LiveInterval* old_it, LiveInterval* new_it);
-static ptrdiff_t allocate_free_reg(LSRA* restrict ra, LiveInterval* interval);
-static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval* interval, RegMask new_mask);
-
-static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
-
-static LiveInterval* split_vreg_at(LiveInterval* interval, int pos) {
-    if (interval == NULL) {
-        return interval;
-    }
-
-    // skip past previous intervals
-    while (interval->split_kid && pos > vreg_end(interval)) {
-        interval = interval->split_kid;
-    }
-
-    // assert(interval->reg >= 0 || pos <= vreg_end(interval));
-    return interval;
-}
-
-LiveInterval* gimme_interval_for_mask(Ctx* restrict ctx, TB_Arena* arena, LSRA* restrict ra, RegMask mask, TB_DataType dt) {
-    // not so fixed interval? we need a unique interval then
-    int reg = fixed_reg_mask(mask);
-    if (reg >= 0) {
-        return &ctx->fixed[mask.class][reg];
-    } else {
-        LiveInterval* interval = tb_arena_alloc(arena, sizeof(LiveInterval));
-        *interval = (LiveInterval){
-            .id = ctx->interval_count++,
-            .mask = mask,
-            .dt   = dt,
-            .hint = NULL,
-            .reg  = -1,
-            .assigned = -1,
-            .range_cap = 4, .range_count = 1,
-            .ranges = tb_arena_alloc(arena, 4 * sizeof(LiveRange))
-        };
-        interval->ranges[0] = (LiveRange){ INT_MAX, INT_MAX };
-        return interval;
-    }
-}
-
-static Tile* tile_at_time(LSRA* restrict ra, int t) {
-    // find which BB
-    MachineBB* mbb = NULL;
-    FOR_N(i, 0, ra->ctx->bb_count) {
-        mbb = &ra->ctx->machine_bbs[i];
-        if (t <= mbb->end->time) break;
-    }
-
-    Tile* curr = mbb->start;
-    while (curr != NULL) {
-        if (curr->time > t) {
-            return curr;
-        }
-        curr = curr->next;
-    }
-
-    return NULL;
-}
-
 void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
-    LSRA ra = { .ctx = ctx, .arena = arena, .spills = ctx->num_regs[0] };
-    int initial_spills = ctx->num_regs[0];
-
-    // create timeline & insert moves
-    CUIK_TIMED_BLOCK("insert legalizing moves") {
-        int timeline = 4;
-        FOR_N(i, 0, ctx->bb_count) {
-            MachineBB* mbb = &ctx->machine_bbs[i];
-
-            FOR_N(j, 0, mbb->item_count) {
-                TB_Node* n = mbb->items[j];
-                LiveInterval* li = ctx->intervals[n->gvn];
-
-                // insert input copies (temporaries & clobbers never introduce
-                // these so we're safe don't check those)
-                FOR_N(k, 1, n->input_count) if (n->inputs[k]) {
-                    TB_Node* in = n->inputs[k];
-                    RegMask* in_mask = c->ins[k];
-
-                    int hint = fixed_reg_mask(in_mask);
-                    RegMask* in_def_mask = ctx->intervals[in->gvn].out;
-                    if (hint >= 0) {
-                        in_def_mask->hint = c;
-                    }
-
-                    bool both_fixed = hint >= 0 && in_def_mask.mask == in_mask.mask;
-                }
-
-                set_put(kill, n->gvn);
-                // ctx.id2interval[n->gvn] = n;
-            }
-
-            for (Tile* t = mbb->start; t; t = t->next) {
-                // insert input copies
-                FOR_N(j, 0, t->in_count) {
-                    LiveInterval* in_def = t->ins[j].src;
-                    RegMask in_mask = t->ins[j].mask;
-
-                    if (in_def == NULL) {
-                        continue;
-                    }
-
-                    RegMask in_def_mask = in_def->mask;
-                    if (hint >= 0) {
-                        in_def->hint = &ctx->fixed[in_mask.class][hint];
-                    }
-
-                    bool both_fixed = hint >= 0 && in_def_mask.mask == in_mask.mask;
-
-                    // we resolve def-use conflicts with a spill move, either when:
-                    //   * the use and def classes don't match.
-                    //   * the use mask is more constrained than the def.
-                    //   * it's on both ends to avoid stretching fixed intervals.
-                    if (in_def_mask.class != in_mask.class || (in_def_mask.mask & in_mask.mask) != in_def_mask.mask || both_fixed) {
-                        if (both_fixed) {
-                            in_def_mask = ctx->normie_mask[in_def_mask.class];
-                        }
-
-                        TB_OPTDEBUG(REGALLOC)(printf("  TEMP "), tb__print_regmask(in_def_mask), printf(" -> "), tb__print_regmask(in_mask), printf("\n"));
-
-                        // construct copy (either to a fixed interval or a new masked interval)
-                        Tile* tmp = tb_arena_alloc(arena, sizeof(Tile) + sizeof(LiveInterval*));
-                        *tmp = (Tile){
-                            .prev = t->prev,
-                            .next = t,
-                            .tag = TILE_SPILL_MOVE,
-                            .time = timeline
-                        };
-                        assert(in_def->dt.raw);
-                        tmp->spill_dt = in_def->dt;
-                        tmp->ins = tb_arena_alloc(arena, sizeof(Tile*));
-                        tmp->in_count = 1;
-                        tmp->ins[0].src  = in_def;
-                        tmp->ins[0].mask = in_def_mask;
-                        if (t->prev == NULL) {
-                            mbb->start = tmp;
-                        } else {
-                            t->prev->next = tmp;
-                        }
-                        t->prev = tmp;
-
-                        // replace use site with temporary that legalized the constraint
-                        tmp->out_count = 1;
-                        tmp->outs[0] = gimme_interval_for_mask(ctx, arena, &ra, in_mask, in_def->dt);
-                        t->ins[j].src = tmp->outs[0];
-
-                        timeline += 2;
-                    }
-                }
-
-                // place on timeline
-                t->time = timeline;
-                // 2addr ops will have a bit of room for placing the hypothetical copy
-                timeline += t->n && ctx->_2addr(t->n) ? 4 : 2;
-
-                // insert copy if we're writing to a fixed interval
-                FOR_N(j, 0, t->out_count) if (t->outs[j]) {
-                    LiveInterval* interval = t->outs[j];
-
-                    // if we're writing to a fixed interval, insert copy
-                    // such that we only guarentee a fixed location at the
-                    // def site.
-                    int reg = fixed_reg_mask(interval->mask);
-                    if (reg >= 0 && t->tag != TILE_SPILL_MOVE) {
-                        RegMask rm = interval->mask;
-                        LiveInterval* fixed = &ctx->fixed[rm.class][reg];
-
-                        // interval: FIXED(t) => NORMIE_MASK
-                        interval->mask = ctx->normie_mask[rm.class];
-                        interval->hint = fixed;
-
-                        // insert copy such that the def site is the only piece which "requires"
-                        // the fixed range.
-                        Tile* tmp = tb_arena_alloc(arena, sizeof(Tile) + sizeof(LiveInterval*));
-                        *tmp = (Tile){
-                            .prev = t,
-                            .next = t->next,
-                            .tag = TILE_SPILL_MOVE,
-                            .time = timeline,
-                        };
-                        assert(interval->dt.raw);
-                        tmp->spill_dt = interval->dt;
-                        tmp->ins = tb_arena_alloc(tmp_arena, sizeof(Tile*));
-                        tmp->in_count = 1;
-                        tmp->ins[0].src  = fixed;
-                        tmp->ins[0].mask = rm;
-                        t->next->prev = tmp;
-                        t->next = tmp;
-
-                        // replace def site with fixed interval
-                        tmp->out_count = 1;
-                        tmp->outs[0] = t->outs[j];
-                        t->outs[j] = fixed;
-
-                        // skip this move op
-                        t = tmp;
-                        timeline += 2;
-                    }
-                }
-            }
-
-            timeline += 2;
-        }
-    }
-
-    // build intervals from dataflow
-    CUIK_TIMED_BLOCK("build intervals") {
-        Set visited = set_create_in_arena(arena, ctx->interval_count);
-
-        FOR_REV_N(i, 0, ctx->bb_count) {
-            MachineBB* mbb = &ctx->machine_bbs[i];
-
-            int bb_start = mbb->start->time;
-            int bb_end = mbb->end->time + 2;
-
-            // live outs define a full range across the BB (if they're defined
-            // in the block, the later reverse walk will fix that up)
-            Set* live_out = &mbb->live_out;
-            FOR_N(j, 0, (ctx->interval_count + 63) / 64) {
-                uint64_t bits = live_out->data[j];
-                if (bits == 0) continue;
-
-                FOR_N(k, 0, 64) if (bits & (1ull << k)) {
-                    add_range(&ra, ctx->id2interval[j*64 + k], bb_start, bb_end);
-                }
-            }
-
-            for (Tile* t = mbb->end; t; t = t->prev) {
-                int time = t->time;
-
-                // mark output
-                FOR_N(j, 0, t->out_count) {
-                    LiveInterval* interval = t->outs[j];
-                    assert(interval->mask.mask);
-
-                    if (!set_get(&visited, interval->id)) {
-                        set_put(&visited, interval->id);
-                        if (interval->reg < 0) {
-                            dyn_array_put(ra.unhandled, interval);
-                        }
-                    }
-
-                    if (interval->range_count == 1) {
-                        add_range(&ra, interval, time, time);
-                    } else {
-                        interval->ranges[interval->range_count - 1].start = time;
-                    }
-                }
-
-                // 2 address ops will interfere with their own inputs (except for
-                // shared dst/src)
-                bool _2addr = t->tag == TILE_SPILL_MOVE || (t->n && ctx->_2addr(t->n));
-
-                // mark inputs
-                FOR_N(j, 0, t->in_count) {
-                    LiveInterval* in_def = t->ins[j].src;
-                    RegMask in_mask = t->ins[j].mask;
-                    int hint = fixed_reg_mask(in_mask);
-
-                    // clobber fixed input
-                    if (in_def == NULL) {
-                        LiveInterval* tmp;
-                        if (hint >= 0) {
-                            tmp = &ctx->fixed[in_mask.class][hint];
-                        } else {
-                            tmp = gimme_interval_for_mask(ctx, arena, &ra, in_mask, TB_TYPE_I64);
-                            dyn_array_put(ra.unhandled, tmp);
-                            t->ins[j].src = tmp;
-                        }
-
-                        add_range(&ra, tmp, time, time + 1);
-                        continue;
-                    }
-
-                    RegMask in_def_mask = in_def->mask;
-                    if (hint >= 0) {
-                        in_def->hint = &ctx->fixed[in_mask.class][hint];
-                    }
-
-                    int use_time = time;
-                    if (_2addr) {
-                        if (j != 0) {
-                            // extend
-                            use_time += 2;
-                        } else {
-                            assert(t->out_count >= 1 && "2addr ops need destinations");
-
-                            // hint as copy
-                            if (t->outs[0]->hint == NULL) {
-                                t->outs[0]->hint = in_def;
-                            }
-                        }
-                    }
-
-                    add_range(&ra, in_def, bb_start, use_time);
-                    // add_use_pos(&ra, in_def, use_time, in_mask.may_spill);
-                }
-            }
-        }
-    }
-
-    int max_regs_in_class = 0;
-    CUIK_TIMED_BLOCK("pre-pass on fixed intervals") {
-        ra.num_classes = ctx->num_classes;
-        ra.num_regs = ctx->num_regs;
-        ra.normie_mask = ctx->normie_mask;
-        ra.callee_saved = ctx->callee_saved;
-
-        FOR_N(i, 0, ctx->num_classes) {
-            if (max_regs_in_class < ctx->num_regs[i]) {
-                max_regs_in_class = ctx->num_regs[i];
-            }
-
-            // add range at beginning such that all fixed intervals are "awake"
-            FOR_N(j, 0, ctx->num_regs[i]) {
-                add_range(&ra, &ctx->fixed[i][j], 0, 1);
-                dyn_array_put(ra.unhandled, &ctx->fixed[i][j]);
-            }
-
-            size_t cap = ctx->num_regs[i];
-            if (i == REG_CLASS_STK) {
-                // stack slots have infinite colors we so need to make sure we can resize things
-                if (cap < 128) cap = 128;
-                else cap = tb_next_pow2(cap + 1);
-
-                ra.stack_slot_cap = cap;
-            }
-
-            ra.active_set[i] = set_create_in_arena(arena, cap);
-            ra.active[i] = tb_arena_alloc(arena, cap * sizeof(LiveInterval*));
-            ra.fixed[i] = ctx->fixed[i];
-            memset(ra.active[i], 0, ctx->num_regs[i] * sizeof(LiveInterval*));
-        }
-
-        // only need enough to store for the biggest register class
-        ra.free_pos  = TB_ARENA_ARR_ALLOC(tmp_arena, max_regs_in_class, int);
-        ra.block_pos = TB_ARENA_ARR_ALLOC(tmp_arena, max_regs_in_class, int);
-    }
-
-    // sort intervals:
-    CUIK_TIMED_BLOCK("sort intervals") {
-        cuiksort_defs(ra.unhandled, 0, dyn_array_length(ra.unhandled) - 1);
-    }
-
-    // linear scan:
-    //   expire old => allocate free or spill/split => rinse & repeat.
-    CUIK_TIMED_BLOCK("linear scan") {
-        while (dyn_array_length(ra.unhandled)) {
-            LiveInterval* interval = dyn_array_pop(ra.unhandled);
-
-            int time = interval_start(interval);
-            int end = interval_end(interval);
-
-            assert(time != INT_MAX);
-
-            #if TB_OPTDEBUG_REGALLOC
-            printf("  # v%-4d t=[%-4d - %4d) ", interval->id, time, end);
-            tb__print_regmask(interval->mask);
-            printf("    ");
-            if (interval->tile && interval->tile->n) {
-                print_node_sexpr(interval->tile->n, 0);
-            }
-            printf("\n");
-            #endif
-
-            // update intervals (inactive <-> active along with expiring)
-            FOR_N(rc, 0, ctx->num_classes) {
-                FOREACH_SET(reg, ra.active_set[rc]) {
-                    update_interval(&ra, ra.active[rc][reg], true, time, -1);
-                }
-            }
-
-            for (size_t i = 0; i < dyn_array_length(ra.inactive);) {
-                LiveInterval* inactive = ra.inactive[i];
-                if (update_interval(&ra, inactive, false, time, i)) {
-                    continue;
-                }
-                i++;
-            }
-
-            // allocate free register (or stack slot)
-            ptrdiff_t reg = interval->reg;
-            if (reg < 0) {
-                if (interval->mask.class == REG_CLASS_STK) {
-                    assert(interval->mask.mask == 0);
-
-                    // add new stack slot
-                    if (reg < 0) {
-                        int next_stk_regs = ra.num_regs[0]++;
-                        if (next_stk_regs == ra.stack_slot_cap) {
-                            size_t old_cap = ra.stack_slot_cap;
-                            ra.stack_slot_cap *= 2;
-
-                            Set new_set = set_create_in_arena(arena, ra.stack_slot_cap);
-                            set_copy(&new_set, &ra.active_set[REG_CLASS_STK]);
-
-                            LiveInterval** new_active = tb_arena_alloc(arena, ra.stack_slot_cap * sizeof(LiveInterval*));
-                            memcpy(new_active, ra.active, ra.stack_slot_cap * sizeof(LiveInterval*));
-
-                            ra.active_set[REG_CLASS_STK] = new_set;
-                            ra.active[REG_CLASS_STK] = new_active;
-                            ra.active[REG_CLASS_STK][next_stk_regs] = NULL;
-                        }
-
-                        reg = ra.spills++;
-                    }
-
-                    TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [SP + %"PRId64"]\n", reg*8));
-                } else {
-                    reg = allocate_free_reg(&ra, interval);
-                    assert(reg >= 0 && "despair");
-                }
-            }
-
-            // add to active set
-            if (reg >= 0) {
-                interval->class = interval->mask.class;
-                interval->assigned = reg;
-                move_to_active(&ra, interval);
-            }
-
-            // display active set
-            #if TB_OPTDEBUG_REGALLOC
-            static const char* classes[] = { "STK", "GPR", "VEC" };
-            FOR_N(rc, 0, ctx->num_classes) {
-                printf("  \x1b[32m%s { ", classes[rc]);
-                FOREACH_SET(reg, ra.active_set[rc]) {
-                    LiveInterval* l = ra.active[rc][reg];
-                    printf("v%d:", l->id);
-                    print_reg_name(rc, reg);
-                    printf(" ");
-                }
-                printf("}\x1b[0m\n");
-            }
-            #endif
-        }
-    }
-
     // move resolver:
     //   when a split happens, all indirect paths that cross the split will have
     //   moves inserted.
@@ -1606,105 +1194,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 }
             }
         }
-    }
-
-    // resolve all split interval references
-    CUIK_TIMED_BLOCK("split resolver") {
-        FOR_REV_N(i, 0, ctx->bb_count) {
-            MachineBB* mbb = &ctx->machine_bbs[i];
-
-            for (Tile* t = mbb->start; t; t = t->next) {
-                int pos = t->time;
-
-                FOR_N(j, 0, t->out_count) {
-                    t->outs[j] = split_interval_at(t->outs[j], pos - 1);
-                }
-
-                FOR_N(i, 0, t->in_count) {
-                    t->ins[i].src = split_interval_at(t->ins[i].src, pos);
-                }
-            }
-        }
-    }
-
-    ctx->stack_usage += (ra.spills - initial_spills) * 8;
-    ctx->initial_spills = initial_spills;
-    ctx->callee_spills  = ra.callee_spills;
-}
-
-// returns -1 if no registers are available
-static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int vreg_id) {
-    int rc = interval->mask.class;
-    compute_free_pos(ra, interval, interval->mask.class, interval->mask.mask);
-
-    int highest = -1;
-    int hint_reg = interval->hint ? interval->hint->assigned : -1;
-
-    // it's better in the long run to aggressively split based on hints
-    if (hint_reg >= 0 && interval_end(interval) <= ra->free_pos[hint_reg]) {
-        highest = hint_reg;
-    }
-
-    // pick highest free pos
-    if (highest < 0) {
-        highest = 0;
-        FOR_N(i, 1, ra->num_regs[rc]) if (ra->free_pos[i] > ra->free_pos[highest]) {
-            highest = i;
-        }
-    }
-
-    int pos = ra->free_pos[highest];
-    if (UNLIKELY(pos == 0)) {
-        int reg = -1;
-        FOR_N(i, 0, ra->num_regs[rc]) {
-            if (set_get(&ra->active_set[rc], i) && ra->active[rc][i]->reg < 0) {
-                reg = i;
-                break;
-            }
-        }
-        assert(reg >= 0 && "no way they're all in fixed-use lmao");
-
-        // alloc failure, split any
-        LiveInterval* active_user = ra->active[rc][reg];
-        set_remove(&ra->active_set[rc], reg);
-
-        // split whatever is using the interval right now
-        split_intersecting(ra, interval_start(interval) - 3, active_user, REGMASK(STK, 0));
-        return reg;
-    } else {
-        if (UNLIKELY(ra->callee_saved[rc] & (1ull << highest))) {
-            ra->callee_saved[rc] &= ~(1ull << highest);
-
-            TB_OPTDEBUG(REGALLOC)(printf("  #   spill callee saved register "), print_reg_name(rc, highest), printf("\n"));
-            LiveInterval* fixed = &ra->fixed[rc][highest];
-
-            // mark callee move
-            CalleeSpill c = { fixed->class, fixed->reg, ra->spills++ };
-            dyn_array_put(ra->callee_spills, c);
-        }
-
-        if (interval_end(interval) <= pos) {
-            // we can steal it completely
-            TB_OPTDEBUG(REGALLOC)(printf("  #   assign to "), print_reg_name(rc, highest));
-
-            if (hint_reg >= 0) {
-                if (highest == hint_reg) {
-                    TB_OPTDEBUG(REGALLOC)(printf(" (HINTED)\n"));
-                } else {
-                    TB_OPTDEBUG(REGALLOC)(printf(" (FAILED HINT "), print_reg_name(rc, hint_reg), printf(")\n"));
-                }
-            } else {
-                TB_OPTDEBUG(REGALLOC)(printf("\n"));
-            }
-        } else {
-            // TODO(NeGate): split at optimal position before current
-            interval->class = interval->mask.class;
-            interval->assigned = highest;
-            split_intersecting(ra, pos - 3, interval, REGMASK(STK, 0));
-            TB_OPTDEBUG(REGALLOC)(printf("  #   stole "), print_reg_name(rc, highest), printf("\n"));
-        }
-
-        return highest;
     }
 }
 
@@ -1862,47 +1351,5 @@ static LiveInterval* split_intersecting(LSRA* restrict ra, int pos, LiveInterval
 
     cuikperf_region_end();
     return new_it;
-}
-
-// update active range to match where the position is currently
-static bool update_interval(LSRA* restrict ra, LiveInterval* interval, bool is_active, int time, int inactive_index) {
-    // get to the right range first
-    while (time >= interval->ranges[interval->active_range].end) {
-        assert(interval->active_range > 0);
-        interval->active_range -= 1;
-    }
-
-    int hole_end = interval->ranges[interval->active_range].start;
-    int active_end = interval->ranges[interval->active_range].end;
-    bool is_now_active = time >= hole_end;
-
-    int rc = interval_class(interval);
-    int reg = interval->assigned;
-
-    if (interval->active_range == 0) { // expired
-        if (is_active) {
-            TB_OPTDEBUG(REGALLOC)(printf("  #   active "), print_reg_name(rc, reg), printf(" has expired at t=%d (v%d)\n", interval_end(interval), interval->id));
-            set_remove(&ra->active_set[rc], reg);
-        } else {
-            TB_OPTDEBUG(REGALLOC)(printf("  #   inactive "), print_reg_name(rc, reg), printf(" has expired at t=%d (v%d)\n", interval_end(interval), interval->id));
-            dyn_array_remove(ra->inactive, inactive_index);
-            return true;
-        }
-    } else if (is_now_active != is_active) { // if we moved, change which list we're in
-        if (is_now_active) { // inactive -> active
-            TB_OPTDEBUG(REGALLOC)(printf("  #   inactive "), print_reg_name(rc, reg), printf(" is active again (until t=%d, v%d)\n", active_end, interval->id));
-
-            move_to_active(ra, interval);
-            dyn_array_remove(ra->inactive, inactive_index);
-            return true;
-        } else { // active -> inactive
-            TB_OPTDEBUG(REGALLOC)(printf("  #   active "), print_reg_name(rc, reg), printf(" is going quiet for now (until t=%d, v%d)\n", active_end, interval->id));
-
-            set_remove(&ra->active_set[rc], reg);
-            dyn_array_put(ra->inactive, interval);
-        }
-    }
-
-    return false;
 }
 #endif

@@ -164,6 +164,17 @@ static bool is_empty_bb(TB_Function* f, TB_Node* end) {
     return true;
 }
 
+static bool same_sorta_branch(TB_Node* n, TB_Node* n2) {
+    assert(n->type == TB_BRANCH && n2->type == TB_BRANCH);
+    TB_NodeBranch* br  = TB_NODE_GET_EXTRA(n);
+    TB_NodeBranch* br2 = TB_NODE_GET_EXTRA(n2);
+    if (br->succ_count != br2->succ_count) { return false; }
+    FOR_N(i, 0, br->succ_count - 1) {
+        if (br->keys[i].key != br2->keys[i].key) { return false; }
+    }
+    return true;
+}
+
 static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
     if (n->type == TB_BRANCH && n->input_count == 2 && TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->succ_count == 2) {
         *falsey = TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->keys[0].key;
@@ -310,6 +321,10 @@ static Lattice* value_proj(TB_Function* f, TB_Node* n) {
     }
 }
 
+static Lattice* value_dead(TB_Function* f, TB_Node* n) {
+    return &TOP_IN_THE_SKY;
+}
+
 static Lattice* value_ctrl(TB_Function* f, TB_Node* n) {
     return latuni_get(f, n->inputs[0]);
 }
@@ -342,6 +357,8 @@ static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
 
 static Lattice* value_region(TB_Function* f, TB_Node* n) {
     assert(cfg_is_region(n));
+
+    // technically just the MOP logic but folded out
     FOR_N(i, 0, n->input_count) {
         Lattice* edge = latuni_get(f, n->inputs[i]);
         if (edge == &CTRL_IN_THE_SKY) { return &CTRL_IN_THE_SKY; }
@@ -356,7 +373,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     if (latuni_get(f, r) == &TOP_IN_THE_SKY) return &TOP_IN_THE_SKY;
 
     Lattice* old = latuni_get(f, n);
-    if (old->_int.widen >= INT_WIDEN_LIMIT) return NULL;
+    if (old->tag == LATTICE_INT && old->_int.widen >= INT_WIDEN_LIMIT) return old;
 
     Lattice* l = &TOP_IN_THE_SKY;
     FOR_N(i, 1, n->input_count) {
@@ -611,26 +628,14 @@ static Lattice* value_of(TB_Function* f, TB_Node* n, bool optimistic) {
     // no type provided? just make a not-so-form fitting bottom type
     if (type == NULL) {
         Lattice* old_type = latuni_get(f, n);
-        if (optimistic) {
-            return lattice_meet(f, old_type, lattice_from_dt(f, n->dt));
-        } else {
-            return old_type != &TOP_IN_THE_SKY ? old_type : lattice_from_dt(f, n->dt);
-        }
+        return n->dt.type == TB_TUPLE ? lattice_tuple_from_node(f, n) : lattice_from_dt(f, n->dt);
     } else {
         return type;
     }
 }
 
-static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
-    if (n->type == TB_DEAD) {
-        return true;
-    } else {
-        Lattice* l = latuni_get(f, n);
-        return l == &TOP_IN_THE_SKY;
-    }
-}
-
 // converts constant Lattice into constant node
+static bool is_dead_ctrl(TB_Function* f, TB_Node* n) { return latuni_get(f, n) == &TOP_IN_THE_SKY; }
 static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
     // already a constant?
     if (n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
@@ -680,7 +685,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         } else {
             return NULL;
         }
-    } else if (n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
+    } else if (n->type != TB_ROOT && n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
         // control-dependent nodes which become considered dead will also
         // have to be dead.
         if (n->dt.type == TB_TUPLE) {
@@ -765,24 +770,21 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                 TB_Node* dead = dead_node(f);
                 TB_Node* ctrl = n->inputs[0];
 
-                NL_ChunkedArr projs = nl_chunked_arr_alloc(f->tmp_arena);
-                FOR_USERS(u, n) {
-                    if (USERN(u)->type == TB_PROJ) {
-                        nl_chunked_arr_put(&projs, USERN(u));
-                    }
-                }
-
-                for (NL_ArrChunk* restrict chk = projs.first; chk; chk = chk->next) {
-                    FOR_N(i, 0, chk->count) {
-                        TB_Node* proj = chk->elems[i];
-                        int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
+                User* u = n->users;
+                while (u != NULL) {
+                    TB_Node* un = USERN(u);
+                    if (un->type == TB_PROJ) {
+                        assert(USERI(u) == 0);
+                        int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
                         TB_Node* in = l->elems[index] == &CTRL_IN_THE_SKY ? ctrl : dead;
 
-                        set_input(f, proj, NULL, 0);
-                        subsume_node(f, proj, in);
+                        set_input(f, un, NULL, 0);
+                        subsume_node(f, un, in);
+                        u = n->users;
+                    } else {
+                        u = u->next;
                     }
                 }
-                nl_chunked_arr_reset(&projs);
 
                 // no more projections, kill the branch
                 tb_kill_node(f, n);
@@ -883,12 +885,15 @@ static int node_sort_cmp(const void* a, const void* b) {
     return aa[0]->gvn - bb[0]->gvn;
 }
 
-static Lattice* migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
-    Lattice* old_t = latuni_get(f, n);
-    Lattice* new_t = latuni_get(f, k);
-    Lattice* merged = lattice_join(f, old_t, new_t);
-    latuni_set(f, k, merged);
-    return merged;
+static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
+    // if both nodes are the same datatype, we should join the elements to avoid
+    // weird backtracking when dealing with the pessimistic solver
+    if (k->dt.raw == n->dt.raw) {
+        Lattice* new_t = latuni_get(f, k);
+        Lattice* old_t = latuni_get(f, n);
+        Lattice* merged = lattice_join(f, old_t, new_t);
+        latuni_set(f, k, merged);
+    }
 }
 
 // because certain optimizations apply when things are the same
@@ -927,12 +932,10 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         #ifndef NDEBUG
         Lattice* old_type = latuni_get(f, n);
         Lattice* new_type = value_of(f, n, false);
-        if (old_type != lattice_from_dt(f, n->dt)) {
-            assert(new_type != &TOP_IN_THE_SKY);
 
-            Lattice* glb = lattice_meet(f, old_type, new_type);
-            assert(glb == new_type && "forward progress assert!");
-        }
+        // monotonic moving up
+        Lattice* glb = lattice_meet(f, old_type, new_type);
+        assert(glb == old_type && "forward progress assert!");
         #else
         Lattice* new_type = value_of(f, n, false);
         #endif
@@ -1285,10 +1288,12 @@ void tb_opt_cprop(TB_Function* f) {
     CUIK_TIMED_BLOCK("sccp") {
         TB_Node* n;
         while ((n = worklist_pop(f->worklist))) {
+            DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+
             Lattice* old_type = latuni_get(f, n);
             Lattice* new_type = value_of(f, n, true);
 
-            DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
+            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
             if (old_type != new_type) {
                 #ifndef NDEBUG
                 Lattice* glb = lattice_meet(f, old_type, new_type);

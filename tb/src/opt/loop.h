@@ -114,6 +114,7 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
         } else if (use_n == op) {
             assert(use_i == 1);
             op->dt = best_dt;
+            latuni_set(f, op, NULL);
 
             TB_Node* b_cast = upcast(f, op->inputs[2], best_dt);
             set_input(f, op, b_cast, 2);
@@ -144,6 +145,7 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
     mark_node(f, phi);
 
     phi->dt = best_dt;
+    latuni_set(f, phi, NULL);
     tb_arena_restore(f->tmp_arena, sp);
     return true;
 }
