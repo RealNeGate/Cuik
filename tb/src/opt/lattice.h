@@ -15,9 +15,9 @@ static Lattice XNAN64_IN_THE_SKY = { LATTICE_XNAN64 };
 static Lattice ANYMEM_IN_THE_SKY = { LATTICE_ANYMEM };
 static Lattice ALLMEM_IN_THE_SKY = { LATTICE_ALLMEM };
 static Lattice PTR_IN_THE_SKY    = { LATTICE_PTR    };
-static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = { 0, 0, 1, 0 } };
-static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = { 1, 1, 0, 1 } };
-static Lattice BOOL_IN_THE_SKY   = { LATTICE_INT, ._int = { 0, 1, 0, 0 } };
+static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = {  0, 0, 1, 0 } };
+static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = {  1, 1, 0, 1 } };
+static Lattice BOOL_IN_THE_SKY   = { LATTICE_INT, ._int = { -1, 0, 0, 0 } };
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt);
 

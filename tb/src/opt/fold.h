@@ -120,17 +120,18 @@ static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    int64_t mask = tb__mask(n->dt.data);
-    int64_t min = a->_int.min & mask;
-    int64_t max = a->_int.max & mask;
-    if (min > max) {
-        min = 0;
-        max = mask;
-    }
+    if (n->dt.type == TB_INT) {
+        int64_t mask = tb__mask(n->dt.data);
+        int64_t min = tb__sxt(a->_int.min & mask, n->dt.data, 64);
+        int64_t max = tb__sxt(a->_int.max & mask, n->dt.data, 64);
+        if (min > max) { return NULL; }
 
-    uint64_t zeros = a->_int.known_zeros | ~mask;
-    uint64_t ones  = a->_int.known_ones  & mask;
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        uint64_t zeros = a->_int.known_zeros & mask;
+        uint64_t ones  = a->_int.known_ones  & mask;
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    } else {
+        return NULL;
+    }
 }
 
 // im afraid of signed overflow UB
@@ -385,21 +386,21 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
         bool a_cst = a->_int.min == a->_int.max;
         bool b_cst = b->_int.min == b->_int.max;
 
-        int cmp = 2; // 0 or 1 (2 for BOT)
+        int cmp = 1; // 0 or -1 (1 for BOT)
         switch (n->type) {
             case TB_CMP_EQ:
-            if (a_cst && b_cst) cmp = a->_int.min == b->_int.min;
+            if (a_cst && b_cst) cmp = a->_int.min == b->_int.min ? -1 : 0;
             break;
 
             case TB_CMP_NE:
-            if (a_cst && b_cst) cmp = a->_int.min != b->_int.min;
+            if (a_cst && b_cst) cmp = a->_int.min != b->_int.min ? -1 : 0;
             break;
 
             case TB_CMP_SLE:
             case TB_CMP_SLT:
             if (a->_int.max < sign_range && b->_int.max < sign_range) {
-                if (a->_int.max < b->_int.min) cmp = 1;
-                if (b->_int.max < a->_int.min) cmp = 0;
+                if (a->_int.max < b->_int.min) cmp = -1;
+                if (b->_int.max < a->_int.min) cmp =  0;
             }
             break;
 
@@ -409,14 +410,14 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
                 uint64_t amin = a->_int.min, amax = a->_int.max;
                 uint64_t bmin = b->_int.min, bmax = b->_int.max;
                 if (amin < amax && bmin < bmax) {
-                    if (amax < bmin) cmp = 1;
-                    if (bmax < amin) cmp = 0;
+                    if (amax < bmin) cmp = -1;
+                    if (bmax < amin) cmp =  0;
                 }
             }
             break;
         }
 
-        if (cmp != 2) {
+        if (cmp != 1) {
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { cmp, cmp, ~cmp, cmp } });
         }
     } else if (dt.type == TB_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {

@@ -329,6 +329,7 @@ void tb_opt_locals(TB_Function* f) {
 
         // find reasons for renaming
         ctx.renames = tb_arena_alloc(tmp_arena, ctx.local_count * sizeof(Rename));
+        int splits_needed = 1;
 
         size_t j = 0;
         bool needs_to_rewrite = false;
@@ -339,9 +340,8 @@ void tb_opt_locals(TB_Function* f) {
 
                 FOR_USERS(mem, addr) {
                     if (USERI(mem) == 1 && (USERN(mem)->type == TB_MEMBER_ACCESS || USERN(mem)->type == TB_ARRAY_ACCESS)) {
-                        // TODO(NeGate): pointer arith are also fair game, since they'd stay in bounds (given no UB)
-                        // mode = RENAME_MEMORY;
-                        mode = RENAME_NONE;
+                        // pointer arith are also fair game, since they'd stay in bounds (given no UB)
+                        mode = RENAME_MEMORY;
                         break;
                     } else if (USERI(mem) != 2 || !good_mem_op(f, USERN(mem))) {
                         mode = RENAME_NONE;
@@ -353,7 +353,8 @@ void tb_opt_locals(TB_Function* f) {
                     // allocate new alias index
                     if (mode == RENAME_MEMORY) {
                         // TODO(NeGate): let's make it possible to add equivalence classes here
-                        // ctx.renames[j].alias_idx = f->alias_n++;
+                        ctx.renames[j].alias_idx = f->alias_n++;
+                        splits_needed += 1;
                         needs_to_rewrite = true;
                     } else if (mode == RENAME_VALUE) {
                         ctx.renames[j].alias_idx = -1;

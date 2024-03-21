@@ -1,5 +1,9 @@
 #include <chunked_array.h>
 
+// for more consistent hashing than a pointer
+uint32_t node_hash(void* a) { return ((TB_Node*) a)->gvn; }
+bool node_cmp(void* a, void* b) { return a == b; }
+
 // Scheduling: "Global Code Motion Global Value Numbering", Cliff Click 1995
 // https://courses.cs.washington.edu/courses/cse501/06wi/reading/click-pldi95.pdf
 typedef struct Elem {
@@ -112,7 +116,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                 TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, n);
 
                 bb->items = nl_hashset_alloc(32);
-                nl_hashset_put(&bb->items, n);
+                nl_hashset_put2(&bb->items, n, node_hash, node_cmp);
                 f->scheduled[rpo_nodes[i]->gvn] = bb;
             }
 
@@ -146,7 +150,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                     }
 
                     if (bb) {
-                        nl_hashset_put(&bb->items, n);
+                        nl_hashset_put2(&bb->items, n, node_hash, node_cmp);
                         f->scheduled[n->gvn] = bb;
                         aarray_push(pins, n);
 
@@ -226,7 +230,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                         DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", f->super.name, n->gvn, best->id));
 
                         f->scheduled[n->gvn] = best;
-                        nl_hashset_put(&best->items, n);
+                        nl_hashset_put2(&best->items, n, node_hash, node_cmp);
                         dyn_array_put(ws->items, n);
                     }
 
@@ -293,8 +297,8 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                             );
 
                             f->scheduled[n->gvn] = better;
-                            nl_hashset_remove(&old->items, n);
-                            nl_hashset_put(&better->items, n);
+                            nl_hashset_remove2(&old->items, n, node_hash, node_cmp);
+                            nl_hashset_put2(&better->items, n, node_hash, node_cmp);
                         }
                     }
                 }

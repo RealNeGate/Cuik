@@ -3,6 +3,7 @@
 #include <arena_array.h>
 
 enum {
+    INT_WIDEN_LIMIT = 3,
     FAST_IDOM_LIMIT = 20
 };
 
@@ -14,8 +15,6 @@ enum {
 ////////////////////////////////
 // Constant prop
 ////////////////////////////////
-enum { INT_WIDEN_LIMIT = 4 };
-
 typedef struct {
     int64_t min, max;
     // for known bit analysis

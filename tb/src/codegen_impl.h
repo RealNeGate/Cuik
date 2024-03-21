@@ -40,7 +40,11 @@ void tb__print_regmask(RegMask* mask) {
             printf("[SP + %"PRId64"]", mask->mask[0]*8);
         }
     } else if (mask->class == REG_CLASS_FLAGS) {
-        printf("[FLAGS]");
+        if (mask->mask[0] == 0) {
+            printf("[SPILL]");
+        } else {
+            printf("[FLAGS]");
+        }
     } else {
         int i = 0;
         bool comma = false;
@@ -123,6 +127,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         TB_Worklist walker_ws = { 0 };
         worklist_alloc(&walker_ws, f->node_count);
+        worklist_clear(ws);
 
         // bottom-up rewrite:
         //   we keep the visited bits set once we've rewritten a node, unlike most worklist usage

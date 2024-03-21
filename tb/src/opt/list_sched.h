@@ -22,7 +22,7 @@ static bool is_node_ready(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB
 static ArenaArray(ReadyNode) add_to_ready(ArenaArray(ReadyNode) ready, TB_Node* n, int prio) {
     size_t i = 0, count = aarray_length(ready);
     for (; i < count; i++) {
-        if (prio > ready[i].prio) break;
+        if (prio < ready[i].prio) break;
     }
 
     // we know where to insert

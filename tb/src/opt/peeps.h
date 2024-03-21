@@ -114,7 +114,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_TRAP]           = { NULL,              NULL,               value_ctrl,      },
     [TB_UNREACHABLE]    = { NULL,              NULL,               value_ctrl,      },
     [TB_DEAD]           = { NULL,              NULL,               value_dead,      },
-    [TB_ROOT]           = { NULL,              NULL,               NULL,            },
+    [TB_ROOT]           = { NULL,              NULL,               value_root,      },
 };
 
 bool cfg_is_region(TB_Node* n)       { return n->type >= TB_REGION && n->type <= TB_AFFINE_LOOP; }

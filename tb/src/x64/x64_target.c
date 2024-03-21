@@ -190,7 +190,7 @@ static int node_2addr(TB_Node* n) {
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            return op->mode == MODE_REG ? 1 : -1;
+            return op->mode == MODE_REG ? 2 : -1;
         }
 
         // ANY_GPR = OP(COND, shared: ANY_GPR, ANY_GPR)
@@ -309,8 +309,10 @@ static bool is_tls_symbol(TB_Symbol* sym) {
 static TB_Node* to_mach_local(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     assert(n->type == TB_LOCAL);
     TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
-    ctx->stack_usage = align_up(ctx->stack_usage + local->size, local->align);
-    int disp = ctx->stack_usage;
+
+    // each stack slot is 8bytes
+    int disp = ctx->num_spills*8;
+    ctx->num_spills = align_up(ctx->num_spills + (local->size+7)/8, (local->align+7)/8);
 
     // machine address is effectively a MemberAccess on SP
     TB_Node* addr = tb_alloc_node(f, TB_MACH_LOCAL, n->dt, 2, sizeof(TB_NodeMachLocal));
@@ -1091,6 +1093,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             TB_X86_DataType dt = legalize_int2(n->dt);
             GPR dst = op_gpr_at(ctx, n);
             if (x == 0) {
+                if (dt != TB_X86_QWORD) { dt = TB_X86_DWORD; }
                 __(XOR, dt, Vgpr(dst), Vgpr(dst));
             } else if (hi == 0 || dt == TB_X86_QWORD) {
                 __(MOVABS, dt, Vgpr(dst), Vabs(x));
@@ -1401,6 +1404,9 @@ static int node_latency(TB_Function* f, TB_Node* n) {
             if (op->mode == MODE_ST) clk += (n->type != x86_mov ? 7 : 4);
             return clk;
         }
+
+        case TB_MEMSET: case TB_MEMCPY:
+        return 20;
 
         case TB_MACH_MOVE:
         return 0; // cheapest op so that it tries to schedule it later

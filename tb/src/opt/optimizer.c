@@ -303,8 +303,14 @@ static Lattice* value_int(TB_Function* f, TB_Node* n) {
     if (n->dt.type == TB_PTR) {
         return num->value ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
     } else {
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { num->value, num->value, ~num->value, num->value } });
+        uint64_t mask = tb__mask(n->dt.data);
+        int64_t x = tb__sxt(num->value & mask, n->dt.data, 64);
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { x, x, ~x, x } });
     }
+}
+
+static Lattice* value_root(TB_Function* f, TB_Node* n) {
+    return lattice_tuple_from_node(f, f->root_node);
 }
 
 static Lattice* value_proj(TB_Function* f, TB_Node* n) {
@@ -373,7 +379,10 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     if (latuni_get(f, r) == &TOP_IN_THE_SKY) return &TOP_IN_THE_SKY;
 
     Lattice* old = latuni_get(f, n);
-    if (old->tag == LATTICE_INT && old->_int.widen >= INT_WIDEN_LIMIT) return old;
+    if (old->tag == LATTICE_INT && old->_int.widen >= INT_WIDEN_LIMIT) {
+        uint64_t mask = tb__mask(n->dt.data);
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data) | ~mask, lattice_int_max(n->dt.data), .widen = INT_WIDEN_LIMIT } });
+    }
 
     Lattice* l = &TOP_IN_THE_SKY;
     FOR_N(i, 1, n->input_count) {
@@ -444,13 +453,7 @@ TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x) {
 
     set_input(f, n, f->root_node, 0);
 
-    Lattice* l;
-    if (dt.type == TB_INT) {
-        l = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { x, x, ~x & mask, x } });
-    } else {
-        l = x ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
-    }
-    latuni_set(f, n, l);
+    latuni_set(f, n, value_int(f, n));
     return tb__gvn(f, n, sizeof(TB_NodeInt));
 }
 
@@ -621,7 +624,7 @@ static TB_Node* identity(TB_Function* f, TB_Node* n) {
     return identity ? identity(f, n) : n;
 }
 
-static Lattice* value_of(TB_Function* f, TB_Node* n, bool optimistic) {
+static Lattice* value_of(TB_Function* f, TB_Node* n) {
     NodeValueOf value = node_vtables[n->type].value;
     Lattice* type = value ? value(f, n) : NULL;
 
@@ -806,8 +809,8 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
         case LATTICE_CTRL:     printf("ctrl");                      break;
         case LATTICE_FLT32:    printf("f32");                       break;
         case LATTICE_FLT64:    printf("f64");                       break;
-        case LATTICE_FLTCON32: printf("[%f]", l->_f32);             break;
-        case LATTICE_FLTCON64: printf("[%f]", l->_f64);             break;
+        case LATTICE_FLTCON32: printf("[f32: %f]", l->_f32);        break;
+        case LATTICE_FLTCON64: printf("[f64: %f]", l->_f64);        break;
         case LATTICE_NULL:     printf("null");                      break;
         case LATTICE_XNULL:    printf("~null");                     break;
         case LATTICE_NAN32:    printf("NaN32");                     break;
@@ -870,6 +873,9 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
             if (known && known != UINT64_MAX) {
                 printf("; zeros=%#"PRIx64", ones=%#"PRIx64, l->_int.known_zeros, l->_int.known_ones);
             }
+            if (l->_int.widen) {
+                printf(", widen=%llu", l->_int.widen);
+            }
             printf("]");
             break;
         }
@@ -931,17 +937,17 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     {
         #ifndef NDEBUG
         Lattice* old_type = latuni_get(f, n);
-        Lattice* new_type = value_of(f, n, false);
+        Lattice* new_type = value_of(f, n);
 
         // monotonic moving up
         Lattice* glb = lattice_meet(f, old_type, new_type);
         assert(glb == old_type && "forward progress assert!");
         #else
-        Lattice* new_type = value_of(f, n, false);
+        Lattice* new_type = value_of(f, n);
         #endif
 
         // print fancy type
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type, n->dt), printf("\x1b[0m"));
 
         TB_Node* k = try_as_const(f, n, new_type);
         if (k != NULL) {
@@ -1272,6 +1278,38 @@ static void push_non_bottoms(TB_Function* f, TB_Node* n) {
     if (l != lattice_from_dt(f, n->dt)) { mark_node(f, n); }
 }
 
+static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
+    DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+
+    Lattice* old_type = latuni_get(f, n);
+    Lattice* new_type = value_of(f, n);
+
+    DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[93m"), print_lattice(new_type, n->dt), printf("\x1b[0m\n"));
+    if (old_type != new_type) {
+        #ifndef NDEBUG
+        Lattice* glb = lattice_meet(f, old_type, new_type);
+        assert(glb == new_type && "forward progress assert!");
+        #endif
+
+        latuni_set(f, n, new_type);
+
+        // push affected users (handling one-input shit immediately)
+        FOR_USERS(u, n) {
+            TB_Node* un = USERN(u);
+            if (un->input_count == 1) {
+                tb_opt_cprop_node(f, un);
+            } else {
+                push_non_bottoms(f, un);
+                if (cfg_is_region(un)) {
+                    FOR_USERS(phi, un) if (USERN(phi)->type == TB_PHI) {
+                        push_non_bottoms(f, USERN(phi));
+                    }
+                }
+            }
+        }
+    }
+}
+
 void tb_opt_cprop(TB_Function* f) {
     assert(worklist_count(f->worklist) == 0);
 
@@ -1281,37 +1319,13 @@ void tb_opt_cprop(TB_Function* f) {
     //   anything unallocated should stay as NULL tho
     FOR_N(i, f->node_count, f->type_cap) { f->types[i] = NULL; }
     // except for ROOT
-    f->types[f->root_node->gvn] = lattice_tuple_from_node(f, f->root_node);
-    FOR_USERS(u, f->root_node) { worklist_push(f->worklist, USERN(u)); }
+    worklist_push(f->worklist, f->root_node);
 
     // Pass 1: find constants.
     CUIK_TIMED_BLOCK("sccp") {
         TB_Node* n;
-        while ((n = worklist_pop(f->worklist))) {
-            DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
-
-            Lattice* old_type = latuni_get(f, n);
-            Lattice* new_type = value_of(f, n, true);
-
-            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[93m["), print_lattice(new_type, n->dt), printf("]\x1b[0m\n"));
-            if (old_type != new_type) {
-                #ifndef NDEBUG
-                Lattice* glb = lattice_meet(f, old_type, new_type);
-                assert(glb == new_type && "forward progress assert!");
-                #endif
-
-                latuni_set(f, n, new_type);
-
-                // push affected users
-                FOR_USERS(u, n) {
-                    push_non_bottoms(f, USERN(u));
-                    if (cfg_is_region(USERN(u))) {
-                        FOR_USERS(phi, USERN(u)) if (USERN(phi)->type == TB_PHI) {
-                            push_non_bottoms(f, USERN(phi));
-                        }
-                    }
-                }
-            }
+        while (n = worklist_pop(f->worklist), n) {
+            tb_opt_cprop_node(f, n);
         }
     }
 
@@ -1439,6 +1453,7 @@ static bool alloc_types(TB_Function* f) {
 
         // place ROOT type
         f->root_mem = lattice_alias(f, 0);
+        f->alias_n  = 1;
     }
     return true;
 }
