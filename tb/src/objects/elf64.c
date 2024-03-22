@@ -67,7 +67,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
         exports = tb_module_layout_sections(m);
     }
 
-    const ICodeGen* restrict code_gen = tb__find_code_generator(m);
+    const ICodeGen* restrict code_gen = tb_codegen_info(m);
 
     uint16_t machine = 0;
     switch (m->target_arch) {

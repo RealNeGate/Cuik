@@ -141,7 +141,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
 
     int dbg_section_count = (dbg ? dbg->number_of_debug_sections(m) : 0);
     int section_count = dyn_array_length(sections) + dbg_section_count;
-    const ICodeGen* restrict code_gen = tb__find_code_generator(m);
+    const ICodeGen* restrict code_gen = tb_codegen_info(m);
 
     // mark each with a unique id
     size_t unique_id_counter = section_count * 2;

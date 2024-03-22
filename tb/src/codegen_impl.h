@@ -142,9 +142,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 // replace with machine op
                 TB_Node* k = node_isel(&ctx, f, n);
                 if (k && k != n) {
-                    // we could run GVN on machine ops :) i just haven't said
-                    // what data is in the extra payload so we can't yet...
-                    // k = tb_opt_gvn_node(ctx->f, k);
+                    // we could run GVN on machine ops :)
+                    k = tb_opt_gvn_node(f, k);
 
                     subsume_node(f, n, k);
 

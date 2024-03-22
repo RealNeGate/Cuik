@@ -114,8 +114,16 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_BRANCH:   return "branch";
         case TB_TAILCALL: return "tailcall";
 
-        default: return tb_node_x86_get_name(n);
-        // default: tb_todo();return "(unknown)";
+        case TB_MACH_MOVE:  return "mach_move";
+        case TB_MACH_COPY:  return "mach_copy";
+        case TB_MACH_LOCAL: return "mach_local";
+        case TB_MACH_PROJ:  return "mach_proj";
+
+        default: {
+            int family = n->type / 0x100;
+            assert(family >= 1 && family < TB_ARCH_MAX);
+            return tb_codegen_families[family].node_name(n);
+        }
     }
 }
 

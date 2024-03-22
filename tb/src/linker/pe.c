@@ -450,7 +450,7 @@ static void pe_append_module(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Module*
         tb_linker_append_module_section(l, info, obj_file, &sections[i], flags);
     }
 
-    const ICodeGen* restrict code_gen = tb__find_code_generator(m);
+    const ICodeGen* restrict code_gen = tb_codegen_info(m);
     if (m->compiled_function_count > 0 && code_gen->emit_win64eh_unwind_info) {
         TB_LinkerInternStr rdata_name = tb_linker_intern_cstring(l, ".rdata");
         TB_LinkerSection* rdata = tb_linker_find_or_create_section(l, rdata_name, IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);

@@ -2,39 +2,43 @@
 #include "host.h"
 #include "opt/passes.h"
 
+#ifndef TB_NO_THREADS
+static once_flag tb_global_init = ONCE_FLAG_INIT;
+#else
+static bool tb_global_init;
+#endif
+
+ICodeGen tb_codegen_families[TB_ARCH_MAX];
+
 static bool has_divrem(TB_Module* m) {
     return m->target_arch != TB_ARCH_WASM32;
 }
 
-static ICodeGen* tb__find_code_generator(TB_Module* m) {
-    // Place all the codegen interfaces down here
+static void init_codegen_families(void) {
+    #ifdef TB_HAS_X64
     extern ICodeGen tb__x64_codegen;
+    tb_codegen_families[TB_ARCH_X86_64] = tb__x64_codegen;
+    #endif
+
+    #ifdef TB_HAS_AARCH64
     extern ICodeGen tb__aarch64_codegen;
+    tb_codegen_families[TB_ARCH_AARCH64] = tb__aarch64_codegen;
+    #endif
+
+    #ifdef TB_HAS_MIPS
     extern ICodeGen tb__mips32_codegen;
     extern ICodeGen tb__mips64_codegen;
+    tb_codegen_families[TB_ARCH_MIPS32] = tb__mips32_codegen;
+    tb_codegen_families[TB_ARCH_MIPS64] = tb__mips64_codegen;
+    #endif
+
+    #ifdef TB_HAS_WASM
     extern ICodeGen tb__wasm32_codegen;
-
-    switch (m->target_arch) {
-        #ifdef TB_HAS_X64
-        case TB_ARCH_X86_64: return &tb__x64_codegen;
-        #endif
-
-        #ifdef TB_HAS_AARCH64
-        case TB_ARCH_AARCH64: return &tb__aarch64_codegen;
-        #endif
-
-        #ifdef TB_HAS_MIPS
-        case TB_ARCH_MIPS32: return &tb__mips32_codegen;
-        case TB_ARCH_MIPS64: return &tb__mips64_codegen;
-        #endif
-
-        #ifdef TB_HAS_WASM
-        case TB_ARCH_WASM32: return &tb__wasm32_codegen;
-        #endif
-
-        default: return NULL;
-    }
+    tb_codegen_families[TB_ARCH_WASM32] = tb__wasm32_codegen;
+    #endif
 }
+
+static ICodeGen* tb_codegen_info(TB_Module* m) { return &tb_codegen_families[m->target_arch]; }
 
 TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     static thread_local TB_ThreadInfo* chain;
@@ -134,6 +138,15 @@ TB_ModuleSectionHandle tb_module_create_section(TB_Module* m, ptrdiff_t len, con
 }
 
 TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
+    #ifndef TB_NO_THREADS
+    call_once(&tb_global_init, init_codegen_families);
+    #else
+    if (!tb_global_init) {
+        tb_global_init = true;
+        init_codegen_families();
+    }
+    #endif
+
     TB_Module* m = tb_platform_heap_alloc(sizeof(TB_Module));
     if (m == NULL) {
         fprintf(stderr, "tb_module_create: Out of memory!\n");
@@ -146,7 +159,7 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     m->target_abi = (sys == TB_SYSTEM_WINDOWS) ? TB_ABI_WIN64 : TB_ABI_SYSTEMV;
     m->target_arch = arch;
     m->target_system = sys;
-    m->codegen = tb__find_code_generator(m);
+    m->codegen = tb_codegen_info(m);
 
     mtx_init(&m->lock, mtx_plain);
 

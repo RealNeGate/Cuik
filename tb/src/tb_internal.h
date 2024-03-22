@@ -503,14 +503,16 @@ struct ICodeGen {
     // what does CHAR_BIT mean on said platform
     int minimum_addressable_size, pointer_size;
 
-    void (*get_data_type_size)(TB_DataType dt, size_t* out_size, size_t* out_align);
+    // Mach nodes info
+    size_t (*extra_bytes)(TB_Node* n);
+    const char* (*node_name)(TB_Node* n);
+    void (*print_extra)(TB_Node* n);
 
+    void (*get_data_type_size)(TB_DataType dt, size_t* out_size, size_t* out_align);
     // return the number of non-local patches
     size_t (*emit_call_patches)(TB_Module* restrict m, TB_FunctionOutput* out_f);
-
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
-
     void (*compile_function)(TB_Function* f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code, bool emit_asm);
 };
 

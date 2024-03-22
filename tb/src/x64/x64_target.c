@@ -43,25 +43,48 @@ typedef struct {
 
 // machine node types
 typedef enum {
-    x86_int3 = TB_FIRST_ARCH_MACHINE_OP,
+    x86_int3 = TB_MACH_X86,
 
     #define X(name) x86_ ## name,
     #include "x64_nodes.inc"
 } X86NodeType;
 
-const char* tb_node_x86_get_name(TB_Node* n) {
+static size_t extra_bytes(TB_Node* n) {
     switch (n->type) {
-        case TB_MACH_COPY:  return "mach_copy";
-        case TB_MACH_MOVE:  return "mach_move";
-        case TB_MACH_PROJ:  return "mach_proj";
-        case TB_MACH_LOCAL: return "mach_local";
+        case x86_int3:
+        return 0;
+
+        case x86_add: case x86_or:  case x86_and: case x86_sub:
+        case x86_xor: case x86_cmp: case x86_mov: case x86_test:
+        case x86_vmov: case x86_vadd:  case x86_vmul: case x86_vsub:
+        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
+        case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
+        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
+        case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
+        return sizeof(X86MemOp);
+
+        case x86_call:
+        case x86_static_call:
+        return sizeof(X86Call);
+
+        case x86_cmovcc:
+        return sizeof(X86Cmov);
+
+        default:
+        tb_todo();
+    }
+}
+
+static const char* node_name(TB_Node* n) {
+    switch (n->type) {
+        case x86_int3: return "int3";
         #define X(name) case x86_ ## name: return STR(x86_ ## name);
         #include "x64_nodes.inc"
         default: return NULL;
     }
 }
 
-void tb_node_x86_print_extra(TB_Node* n) {
+static void print_extra(TB_Node* n) {
     switch (n->type) {
         case x86_add: case x86_or:  case x86_and: case x86_sub:
         case x86_xor: case x86_cmp: case x86_mov: case x86_test:
@@ -3203,6 +3226,9 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
 ICodeGen tb__x64_codegen = {
     .minimum_addressable_size = 8,
     .pointer_size = 64,
+    .node_name = node_name,
+    .print_extra = print_extra,
+    .extra_bytes = extra_bytes,
     .emit_win64eh_unwind_info = emit_win64eh_unwind_info,
     .emit_call_patches  = emit_call_patches,
     .get_data_type_size = get_data_type_size,

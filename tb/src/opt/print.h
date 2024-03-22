@@ -439,13 +439,20 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                         break;
                     }
 
-                    default:
-                    if (n->type >= TB_FIRST_MACHINE_OP) {
-                        tb_node_x86_print_extra(n);
-                    } else {
-                        tb_assert(extra_bytes(n) == 0, "TODO");
-                    }
+                    case TB_MACH_COPY:
+                    case TB_MACH_MOVE:
                     break;
+
+                    default: {
+                        int family = n->type / 0x100;
+                        if (family == 0) {
+                            tb_assert(extra_bytes(n) == 0, "TODO");
+                        } else {
+                            assert(family >= 1 && family < TB_ARCH_MAX);
+                            tb_codegen_families[family].print_extra(n);
+                        }
+                        break;
+                    }
                 }
                 break;
             }

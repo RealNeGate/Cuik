@@ -79,6 +79,8 @@ typedef enum TB_Arch {
     TB_ARCH_MIPS64,
 
     TB_ARCH_WASM32,
+
+    TB_ARCH_MAX,
 } TB_Arch;
 
 typedef enum TB_System {
@@ -437,24 +439,22 @@ typedef enum TB_NodeTypeEnum {
     TB_X86INTRIN_SQRT,
     TB_X86INTRIN_RSQRT,
 
-    // limit on normal nodes
-    TB_NODE_TYPE_MAX,
-
-    // first machine op, we have some generic ops here:
-    TB_FIRST_MACHINE_OP,
-
-    TB_MACH_COPY = TB_FIRST_MACHINE_OP,
+    // general machine nodes:
     // does the phi move
     TB_MACH_MOVE,
+    TB_MACH_COPY,
     TB_MACH_LOCAL,
-
     // this is a hack for me to add nodes which need to be scheduled directly
     // after a tuple (like a projection) but don't really act like projections
     // in any other context.
-    TB_MACH_PROJ,
+    TB_MACH_PROJ, // (T) & Index -> T
 
-    // this is where wthe
-    TB_FIRST_ARCH_MACHINE_OP,
+    // limit on generic nodes
+    TB_NODE_TYPE_MAX,
+
+    // each family of machine nodes gets 256 nodes
+    // first machine op, we have some generic ops here:
+    TB_MACH_X86 = TB_ARCH_X86_64 * 0x100,
 } TB_NodeTypeEnum;
 typedef uint16_t TB_NodeType;
 static_assert(sizeof(TB_NODE_TYPE_MAX) < 0x100, "this is the bound where machine nodes start");
@@ -651,7 +651,9 @@ typedef struct {
 
 typedef struct {
     TB_CharUnits size, align;
-    int alias_index; // 0 if local is used beyond direct memops, 1...n as a unique alias name
+
+    // 0 if local is used beyond direct memops, 1...n as a unique alias name
+    int alias_index;
 
     // dbg info
     char* name;
@@ -1341,10 +1343,6 @@ TB_API void tb_inst_debugbreak(TB_Function* f);
 TB_API void tb_inst_trap(TB_Function* f);
 
 TB_API const char* tb_node_get_name(TB_Node* n);
-
-// machine specific nodes (mostly internal usage)
-TB_API const char* tb_node_x86_get_name(TB_Node* n);
-TB_API void tb_node_x86_print_extra(TB_Node* n);
 
 // revised API for if, this one returns the control projections such that a target is not necessary while building
 //   projs[0] is the true case, projs[1] is false.

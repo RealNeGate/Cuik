@@ -237,7 +237,7 @@ TB_Node* tb_inst_param(TB_Function* f, int param_id) {
 }
 
 void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t* align) {
-    const ICodeGen* restrict code_gen = tb__find_code_generator(mod);
+    const ICodeGen* restrict code_gen = tb_codegen_info(mod);
     code_gen->get_data_type_size(dt, size, align);
 }
 

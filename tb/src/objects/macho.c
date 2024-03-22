@@ -2,7 +2,7 @@
 
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
 TB_ExportBuffer tb_macho_write_output(TB_Module* m, TB_Arena* dst_arena, const IDebugFormat* dbg) {
-    const ICodeGen* code_gen = tb__find_code_generator(m);
+    const ICodeGen* code_gen = tb_codegen_info(m);
 
     //TB_TemporaryStorage* tls = tb_tls_allocate();
     TB_Emitter string_table = { 0 };

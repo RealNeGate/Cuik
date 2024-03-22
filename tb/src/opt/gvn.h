@@ -79,6 +79,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_WRITE:
         case TB_ROOT:
         case TB_RETURN:
+        case TB_MACH_MOVE:
         return 0;
 
         case TB_SPLITMEM:
@@ -128,12 +129,20 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_PROJ:
         return sizeof(TB_NodeProj);
 
+        case TB_MACH_COPY:
+        return sizeof(TB_NodeMachCopy);
+
+        case TB_MACH_LOCAL:
+        return sizeof(TB_NodeMachLocal);
+
         case TB_MACH_PROJ:
         return sizeof(TB_NodeMachProj);
 
-        default:
-        assert("TODO");
-        return 0;
+        default: {
+            int family = n->type / 0x100;
+            assert(family >= 1 && family < TB_ARCH_MAX);
+            return tb_codegen_families[family].extra_bytes(n);
+        }
     }
 }
 
@@ -144,6 +153,7 @@ uint32_t gvn_hash(void* a) {
         size_t extra = extra_bytes(n);
         h = n->type + n->dt.raw + n->input_count + extra;
 
+        // locals are fundamentally unique
         if (n->type == TB_LOCAL) {
             h += (uintptr_t) n->gvn;
         }
