@@ -13,23 +13,38 @@ static bool is_node_ready(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB
     FOR_N(i, 0, n->input_count) {
         TB_Node* in = n->inputs[i];
         if (in && f->scheduled[in->gvn] == bb && !worklist_test(ws, in)) {
+            printf("  %%%u waiting on %%%u...\n", n->gvn, in->gvn);
             return false;
         }
     }
     return true;
 }
 
-static ArenaArray(ReadyNode) add_to_ready(ArenaArray(ReadyNode) ready, TB_Node* n, int prio) {
+// should probably move this out, it's useful elsewhere
+static bool is_proj(TB_Node* n) { return n->type == TB_PROJ || n->type == TB_MACH_PROJ; }
+static ArenaArray(ReadyNode) ready_up(ArenaArray(ReadyNode) ready, Set* ready_set, TB_Node* n, int prio) {
+    TB_OPTDEBUG(SCHEDULE)(printf("        READY    "), tb_print_dumb_node(NULL, n), printf("\n"));
+    set_put(ready_set, n->gvn);
+
+    // projections are readied but not in the ready list
+    if (n->dt.type == TB_TUPLE) FOR_USERS(u, n) {
+        if (is_proj(USERN(u))) { set_put(ready_set, USERN(u)->gvn); }
+    }
+
+    // sorted insertion
     size_t i = 0, count = aarray_length(ready);
     for (; i < count; i++) {
         if (prio < ready[i].prio) break;
     }
 
-    // we know where to insert
     aarray_push(ready, (ReadyNode){ 0 });
     memmove(&ready[i + 1], &ready[i], (count - i) * sizeof(ReadyNode));
     ready[i] = (ReadyNode){ n, prio };
     return ready;
+}
+
+static bool can_ready_user(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, Set* ready_set, TB_Node* n, TB_Node* end) {
+    return !set_get(ready_set, n->gvn) && n != end && f->scheduled[n->gvn] == bb && is_node_ready(f, ws, bb, n);
 }
 
 void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetPriority get_prio) {
@@ -70,60 +85,62 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     nl_hashset_for(e, &bb->items) {
         TB_Node* n = *e;
         if (!worklist_test(ws, n) && f->scheduled[n->gvn] == bb && is_node_ready(f, ws, bb, n)) {
-            TB_OPTDEBUG(SCHEDULE)(printf("        READY    "), tb_print_dumb_node(NULL, n), printf("\n"));
-            set_put(&ready_set, n->gvn);
-            ready = add_to_ready(ready, n, get_prio(f, n, NULL));
+            ready = ready_up(ready, &ready_set, n, get_prio(f, n, NULL));
         }
     }
 
     // btw worklist has the final schedule
+    bool busy = false;
     while (aarray_length(active) > 0 || aarray_length(ready) > 0) {
         // dispatch one instruction to a machine per cycle
-        if (aarray_length(ready) > 0) {
+        if (!busy && aarray_length(ready) > 0) {
             TB_Node* n = aarray_pop(ready).n;
+            assert(n->type != TB_PROJ);
             worklist_push(ws, n);
 
             // make sure to place all projections directly after their tuple node
-            if (n->dt.type == TB_TUPLE && n->type != TB_BRANCH) {
-                FOR_USERS(u, n) if (USERN(u)->type == TB_MACH_PROJ || USERN(u)->type == TB_PROJ) {
+            if (n->dt.type == TB_TUPLE) {
+                assert(n->type != TB_BRANCH && "branches should only show up as the end node which can't be here");
+                FOR_USERS(u, n) if (is_proj(USERN(u))) {
                     assert(USERI(u) == 0);
                     assert(!worklist_test(ws, USERN(u)));
                     worklist_push(ws, USERN(u));
                 }
             }
 
-            TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, n), printf("\n"));
-
             int end_cycle = cycle + get_lat(f, n);
+            TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, n), printf(" (until %d)\n", end_cycle));
             aarray_push(active, (InFlight){ n, end_cycle });
+            busy = true;
+        } else {
+            TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: STALL\n", cycle));
         }
         cycle += 1;
 
-        bool stall = true;
         for (size_t i = 0; i < aarray_length(active);) {
             TB_Node* n = active[i].n;
             if (active[i].end > cycle) { i++; continue; }
 
             // instruction's retired, time to ready up users
-            stall = false;
+            busy = false;
             aarray_remove(active, i);
             TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: RETIRE   ", cycle), tb_print_dumb_node(NULL, n), printf("\n"));
 
             if (n != end) {
                 FOR_USERS(u, n) {
                     TB_Node* un = USERN(u);
-                    if (!set_get(&ready_set, un->gvn) && un != end && f->scheduled[un->gvn] == bb && is_node_ready(f, ws, bb, un)) {
-                        TB_OPTDEBUG(SCHEDULE)(printf("        READY    "), tb_print_dumb_node(NULL, un), printf("\n"));
-
-                        set_put(&ready_set, un->gvn);
-                        ready = add_to_ready(ready, un, get_prio(f, n, un));
+                    if (un->type == TB_PROJ || un->type == TB_MACH_PROJ) {
+                        // projections are where all the real users ended up
+                        FOR_USERS(proj_u, un) {
+                            if (can_ready_user(f, ws, bb, &ready_set, USERN(proj_u), end)) {
+                                ready = ready_up(ready, &ready_set, USERN(proj_u), get_prio(f, n, USERN(proj_u)));
+                            }
+                        }
+                    } else if (can_ready_user(f, ws, bb, &ready_set, un, end)) {
+                        ready = ready_up(ready, &ready_set, un, get_prio(f, n, un));
                     }
                 }
             }
-        }
-
-        if (stall) {
-            TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: STALL\n", cycle));
         }
     }
 

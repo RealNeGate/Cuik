@@ -185,9 +185,101 @@ static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {
     return progress ? n : NULL;
 }
 
+static bool no_alias_with(KnownPointer us, int us_bytes, TB_Node* them, int ptr_size) {
+    int them_bytes = bytes_in_data_type(ptr_size, them->inputs[3]->dt);
+    KnownPointer them_addr = known_pointer(them->inputs[2]);
+
+    if (them_addr.base == us.base) {
+        // if the stores don't intersect
+        if (!(them_addr.offset < us.offset+us_bytes && us.offset < them_addr.offset+them_bytes)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static TB_Node* ideal_store(TB_Function* f, TB_Node* n) {
     TB_Node *mem = n->inputs[1], *addr = n->inputs[2], *val = n->inputs[3];
     TB_DataType dt = val->dt;
+
+    // store is next to a non-aliasing adjacent store (or merge to non-adjacent stores)
+    ICodeGen* cg = f->super.module->codegen;
+    int curr_bytes = bytes_in_data_type(cg->pointer_size, val->dt);
+    KnownPointer curr_ptr = known_pointer(addr);
+
+    #if 0
+    if (mem->type == TB_MERGEMEM && mem->inputs[0] == n->inputs[0]) {
+        tb_print(f, f->tmp_arena);
+
+        bool good = true;
+        FOR_N(i, 2, mem->input_count) {
+            if (mem->inputs[i]->type != TB_STORE || !no_alias_with(curr_ptr, curr_bytes, mem->inputs[i], cg->pointer_size)) {
+                good = false;
+                break;
+            }
+        }
+
+        if (good) {
+            TB_Node* split = mem->inputs[1];
+            TB_NodeMemSplit* split_info = TB_NODE_GET_EXTRA(split);
+            assert(split->type == TB_SPLITMEM);
+
+            if (split_info->same_edges) {
+                TB_Node* new_proj = make_proj_node(f, TB_TYPE_MEMORY, split, split_info->alias_cnt++);
+
+                set_input(f, n, new_proj, 1);
+                subsume_node2(f, n, mem);
+                add_input_late(f, mem, n);
+
+                mark_node(f, mem);
+                mark_node(f, split);
+                mark_users(f, split);
+                mark_users(f, mem);
+
+                __debugbreak();
+                return n;
+            }
+        }
+    } else if (mem->type == TB_STORE && mem->inputs[0] == n->inputs[0]) {
+        if (no_alias_with(curr_ptr, curr_bytes, mem, cg->pointer_size)) {
+            TB_Node* split = tb_alloc_node(f, TB_SPLITMEM, TB_TYPE_TUPLE, 2, sizeof(TB_NodeMemSplit) + 2*sizeof(int));
+            set_input(f, split, mem->inputs[0], 0);
+            set_input(f, split, mem->inputs[1], 1);
+
+            TB_Node* us_proj   = make_proj_node(f, TB_TYPE_MEMORY, split, 0);
+            TB_Node* them_proj = make_proj_node(f, TB_TYPE_MEMORY, split, 1);
+            TB_NodeMemSplit* split_info = TB_NODE_GET_EXTRA(split);
+
+            split_info->alias_cnt = 2;
+            split_info->same_edges = true;
+
+            set_input(f, n,   us_proj,   1);
+            set_input(f, mem, them_proj, 1);
+
+            // merge node
+            TB_Node* merge = tb_alloc_node(f, TB_MERGEMEM, TB_TYPE_MEMORY, 4, 0);
+            subsume_node2(f, mem, merge);
+            subsume_node2(f, n, merge);
+
+            set_input(f, merge, n->inputs[0], 0);
+            set_input(f, merge, split,        1);
+            set_input(f, merge, n,            2);
+            set_input(f, merge, mem,          3);
+
+            mark_node(f, them_proj);
+            mark_node(f, us_proj);
+            mark_node(f, merge);
+            mark_node(f, split);
+            mark_users(f, merge);
+
+            // technically we've substituted for the peeps because
+            // we're wrapping the store in a split and don't want
+            // peeps to fuck that up.
+            return n;
+        }
+    }
+    #endif
 
     // if a store has only one user in this chain it means it's only job was
     // to facilitate the creation of that user store... if we can detect that
@@ -261,7 +353,7 @@ static TB_Node* ideal_memcpy(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_merge_mem(TB_Function* f, TB_Node* n) {
-    return &BOT_IN_THE_SKY;
+    return &ALLMEM_IN_THE_SKY;
 }
 
 static Lattice* value_mem(TB_Function* f, TB_Node* n) {

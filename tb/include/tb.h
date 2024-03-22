@@ -287,9 +287,9 @@ typedef enum TB_NodeTypeEnum {
     //   debugbreak will trap in a continuable manner.
     TB_DEBUGBREAK,  // (Control, Memory) -> (Control)
     //   trap will not be continuable but will stop execution.
-    TB_TRAP,        // (Control) -> (Control)
+    TB_TRAP,        // (Control, Memory) -> (Control)
     //   unreachable means it won't trap or be continuable.
-    TB_UNREACHABLE, // (Control) -> (Control)
+    TB_UNREACHABLE, // (Control, Memory) -> (Control)
     //   all dead paths are stitched here
     TB_DEAD,        // (Control) -> (Control)
 
@@ -380,7 +380,6 @@ typedef enum TB_NodeTypeEnum {
     TB_POPCNT,
 
     // Unary operations
-    TB_NOT,
     TB_NEG,
 
     // Integer arithmatic
@@ -676,6 +675,10 @@ typedef struct {
 } TB_NodeMember;
 
 typedef struct {
+    // if true, we just duplicate the input memory per projection
+    // the alias_idx is unused.
+    bool same_edges;
+
     int alias_cnt;
     int alias_idx[];
 } TB_NodeMemSplit;

@@ -88,8 +88,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_SHR]            = { ideal_int_binop,   identity_int_binop, value_shift      },
     [TB_SAR]            = { ideal_int_binop,   identity_int_binop, value_shift      },
     // unary
-    [TB_NEG]            = { NULL,              NULL,               value_unary      },
-    [TB_NOT]            = { NULL,              NULL,               value_unary      },
+    [TB_NEG]            = { NULL,              NULL,               value_negate     },
     // casts
     [TB_BITCAST]        = { ideal_bitcast,     NULL,               value_bitcast    },
     [TB_TRUNCATE]       = { ideal_truncate,    NULL,               value_trunc      },

@@ -79,7 +79,6 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_CLZ: return "clz";
         case TB_CTZ: return "ctz";
         case TB_NEG: return "neg";
-        case TB_NOT: return "not";
         case TB_AND: return "and";
         case TB_OR: return "or";
         case TB_XOR: return "xor";
@@ -342,7 +341,7 @@ void tb_print_dot(TB_Function* f, TB_PrintCallback callback, void* user_data) {
 
     for (size_t i = 0; i < dyn_array_length(ws.items); i++) {
         TB_Node* n = ws.items[i];
-        FOR_USERS(u, n) { worklist_push(&ws, f->root_node); }
+        FOR_USERS(u, n) { worklist_push(&ws, USERN(u)); }
         if (n->type != TB_PROJ) { print_graph_node(f, callback, user_data, i, n); }
     }
 

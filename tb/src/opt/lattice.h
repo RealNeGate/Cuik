@@ -168,7 +168,7 @@ Lattice* lattice_truthy(Lattice* l) {
     }
 }
 
-static uint64_t lattice_int_min(int bits) { return 1ll << (bits - 1); }
+static uint64_t lattice_int_min(int bits) { return (1ll << (bits - 1)) | ~tb__mask(bits); }
 static uint64_t lattice_int_max(int bits) { return (1ll << (bits - 1)) - 1; }
 static uint64_t lattice_uint_max(int bits) { return UINT64_MAX >> (64 - bits); }
 
@@ -182,8 +182,7 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
                 return &BOOL_IN_THE_SKY;
             }
 
-            uint64_t mask = tb__mask(dt.data);
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(dt.data) | ~mask, lattice_int_max(dt.data) } });
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(dt.data), lattice_int_max(dt.data) } });
         }
 
         case TB_FLOAT: {
@@ -281,10 +280,10 @@ static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max) {
 }
 
 static Lattice* lattice_alias(TB_Function* f, int alias_idx) {
-    size_t alias_n = (alias_idx + 63) / 64;
+    size_t alias_n = (alias_idx + 64) / 64;
     size_t size = sizeof(Lattice) + alias_n*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(f->arena, size);
-    *l = (Lattice){ LATTICE_TUPLE, ._alias_n = alias_n };
+    *l = (Lattice){ LATTICE_MEM_SLICE, ._alias_n = alias_n };
 
     // just flip aliases
     FOR_N(i, 0, alias_n) { l->alias[i] = 0; }
@@ -297,10 +296,6 @@ static Lattice* lattice_alias(TB_Function* f, int alias_idx) {
     } else {
         return l;
     }
-}
-
-static LatticeInt lattice_meet_int(LatticeInt a, LatticeInt b) {
-    return a;
 }
 
 static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
@@ -450,7 +445,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
 
             size_t size = sizeof(Lattice) + alias_n*sizeof(Lattice*);
             Lattice* l = tb_arena_alloc(f->arena, size);
-            *l = (Lattice){ LATTICE_TUPLE, ._alias_n = alias_n };
+            *l = (Lattice){ LATTICE_MEM_SLICE, ._alias_n = alias_n };
 
             FOR_N(i, 0, a->_alias_n) { l->alias[i] = a->alias[i]; }
             FOR_N(i, a->_alias_n, alias_n) { l->alias[i] = 0; }

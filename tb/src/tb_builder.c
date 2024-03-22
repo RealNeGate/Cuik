@@ -242,8 +242,9 @@ void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t*
 }
 
 void tb_inst_unreachable(TB_Function* f) {
-    TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 1, 0);
+    TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 2, 0);
     set_input(f, n, transfer_ctrl(f, n), 0);
+    set_input(f, n, peek_mem(f), 1);
     add_input_late(f, f->root_node, n);
     f->trace.bot_ctrl = NULL;
 }
@@ -254,8 +255,9 @@ void tb_inst_debugbreak(TB_Function* f) {
 }
 
 void tb_inst_trap(TB_Function* f) {
-    TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_CONTROL, 1, 0);
+    TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_CONTROL, 2, 0);
     set_input(f, n, transfer_ctrl(f, n), 0);
+    set_input(f, n, peek_mem(f), 1);
     add_input_late(f, f->root_node, n);
     f->trace.bot_ctrl = NULL;
 }
@@ -528,9 +530,7 @@ TB_Node* tb_inst_poison(TB_Function* f, TB_DataType dt) {
 }
 
 TB_Node* tb_inst_not(TB_Function* f, TB_Node* src) {
-    TB_Node* n = tb_alloc_node(f, TB_NOT, src->dt, 2, 0);
-    set_input(f, n, src, 1);
-    return tb_opt_gvn_node(f, n);
+    return tb_inst_xor(f, src, tb_inst_sint(f, src->dt, -1));
 }
 
 TB_Node* tb_inst_bswap(TB_Function* f, TB_Node* src) {

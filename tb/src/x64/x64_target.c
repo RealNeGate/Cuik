@@ -65,6 +65,8 @@ void tb_node_x86_print_extra(TB_Node* n) {
     switch (n->type) {
         case x86_add: case x86_or:  case x86_and: case x86_sub:
         case x86_xor: case x86_cmp: case x86_mov: case x86_test:
+        case x86_vmov: case x86_vadd:  case x86_vmul: case x86_vsub:
+        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             static const char* modes[] = { "reg", "ld", "st" };
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
@@ -179,6 +181,8 @@ static int node_2addr(TB_Node* n) {
         // ANY_GPR = OP(ANY_GPR, ANY_GPR)
         case x86_add: case x86_or:  case x86_and: case x86_sub:
         case x86_xor: case x86_cmp: case x86_mov: case x86_test:
+        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
+        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             return op->mode == MODE_REG ? 4 : -1;
@@ -268,22 +272,18 @@ static bool addr_split_heuristic(int arr_uses, int stride, int scale) {
 }
 
 // store(binop(load(a), b))
-static bool can_folded_store(TB_Node* mem, TB_Node* addr, TB_Node* src) {
-    switch (src->type) {
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
+static bool can_folded_store(TB_Node* mem, TB_Node* addr, TB_Node* n) {
+    if ((n->type >= TB_AND  && n->type <= TB_SUB) ||
+        (n->type >= TB_FADD && n->type <= TB_FMAX)) {
         return
-            src->inputs[1]->type == TB_LOAD &&
-            src->inputs[1]->inputs[1] == mem &&
-            src->inputs[1]->inputs[2] == addr &&
-            src->users->next == NULL &&
-            src->inputs[1]->users->next == NULL;
-
-        default: return false;
+            n->inputs[1]->type == TB_LOAD &&
+            n->inputs[1]->inputs[1] == mem &&
+            n->inputs[1]->inputs[2] == addr &&
+            n->users->next == NULL &&
+            n->inputs[1]->users->next == NULL;
     }
+
+    return false;
 }
 
 // not TLS
@@ -590,8 +590,12 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     }
 
     // any of these ops might be the starting point to complex addressing modes
-    if ((n->type >= TB_AND && n->type <= TB_SUB) || n->type == TB_LOAD || n->type == TB_STORE || n->type == TB_MEMBER_ACCESS || n->type == TB_ARRAY_ACCESS) {
-        const static int ops[] = { x86_and, x86_or, x86_xor, x86_add, x86_sub };
+    if ((n->type >= TB_AND && n->type <= TB_SUB)   ||
+        (n->type >= TB_FADD && n->type <= TB_FMAX) ||
+        n->type == TB_LOAD || n->type == TB_STORE  ||
+        n->type == TB_MEMBER_ACCESS || n->type == TB_ARRAY_ACCESS) {
+        const static int ops[]  = { x86_and, x86_or, x86_xor, x86_add, x86_sub };
+        const static int fops[] = { x86_vadd, x86_vsub, x86_vmul, x86_vdiv, x86_vmin, x86_vmax };
 
         // folded binop with immediate
         int32_t x;
@@ -616,7 +620,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         // folded load now
         if (n->type == TB_STORE) {
             op_extra->mode = MODE_ST;
-            op->type = x86_mov;
+            op->type = n->inputs[3]->dt.type == TB_FLOAT ? x86_vmov : x86_mov;
             op->dt = TB_TYPE_MEMORY;
 
             set_input(f, op, n->inputs[0], 0); // ctrl in
@@ -624,9 +628,14 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
             if (can_folded_store(n->inputs[1], n->inputs[2], n->inputs[3])) {
                 TB_Node* binop = n->inputs[3];
-                assert(binop->type >= TB_AND && binop->type <= TB_SUB);
 
-                op->type = ops[binop->type - TB_AND];
+                if (n->type >= TB_AND && n->type <= TB_SUB) {
+                    op->type = ops[binop->type - TB_AND];
+                } else {
+                    assert(binop->type >= TB_FADD && binop->type <= TB_FMAX);
+                    op->type = ops[binop->type - TB_FADD];
+                }
+
                 set_input(f, op, binop->inputs[2], 4); // val
             } else {
                 set_input(f, op, n->inputs[3], 4); // val
@@ -639,13 +648,18 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 op->type = ops[n->type - TB_AND];
                 set_input(f, op, n->inputs[1], 4);
                 n = n->inputs[2];
+            } else if (n->type >= TB_FADD && n->type <= TB_FMAX) {
+                op_extra->mode = MODE_REG;
+                op->type = fops[n->type - TB_FADD];
+                set_input(f, op, n->inputs[1], 4);
+                n = n->inputs[2];
             }
 
             // folded load now
             if (n->type == TB_LOAD) {
                 op_extra->mode = MODE_LD;
                 if (op->type == x86_lea) {
-                    op->type = x86_mov;
+                    op->type = n->dt.type == TB_FLOAT ? x86_vmov : x86_mov;
                 }
 
                 set_input(f, op, n->inputs[0], 0); // ctrl in
@@ -702,6 +716,8 @@ static bool node_flags(Ctx* restrict ctx, TB_Node* n) {
         case TB_PHI:
         case TB_PROJ:
         case TB_MACH_PROJ:
+        case TB_SPLITMEM:
+        case TB_MERGEMEM:
         case TB_REGION:
         case TB_AFFINE_LOOP:
         case TB_NATURAL_LOOP:
@@ -745,6 +761,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             // region inputs are all control
             FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
         }
+        return &TB_REG_EMPTY;
+
+        case TB_SPLITMEM:
+        case TB_MERGEMEM:
         return &TB_REG_EMPTY;
 
         case TB_MACH_LOCAL: return &TB_REG_EMPTY;
@@ -805,6 +825,29 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             } else {
                 tb_todo();
                 return &TB_REG_EMPTY;
+            }
+        }
+
+        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
+        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
+        {
+            RegMask* rm = ctx->normie_mask[REG_CLASS_XMM];
+            if (ins) {
+                ins[1] = &TB_REG_EMPTY;
+                FOR_N(i, 2, n->input_count) {
+                    ins[i] = n->inputs[i] ? rm : &TB_REG_EMPTY;
+                }
+
+                if (n->inputs[2] && n->inputs[2]->type == TB_MACH_LOCAL) {
+                    ins[2] = &TB_REG_EMPTY;
+                }
+            }
+
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            if (op->mode == MODE_ST) {
+                return &TB_REG_EMPTY;
+            } else {
+                return ctx->normie_mask[REG_CLASS_XMM];
             }
         }
 
@@ -1033,6 +1076,8 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_PROJ:
         case TB_MACH_PROJ:
         case TB_MACH_LOCAL:
+        case TB_SPLITMEM:
+        case TB_MERGEMEM:
         break;
 
         case TB_BRANCH: {
@@ -1166,6 +1211,63 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             }
             EMIT1(e, 0xC3);
             ctx->epilogue_length = e->count - pos;
+            break;
+        }
+
+        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
+        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
+        {
+            const static int ops[] = {
+                FP_MOV, FP_ADD, FP_MUL, FP_SUB, FP_DIV, FP_MIN, FP_MAX, FP_XOR
+            };
+
+            TB_X86_DataType dt;
+            if (n->dt.type == TB_MEMORY) {
+                dt = legalize_float(n->inputs[4]->dt);
+            } else {
+                dt = legalize_float(n->dt);
+            }
+
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            TB_Node* lhs_n = n->input_count == 3 ? n->inputs[2] : n->inputs[4];
+
+            Val rhs = { 0 };
+            if (op->mode == MODE_LD || op->mode == MODE_ST) {
+                rhs.type = VAL_MEM;
+                if (n->inputs[2]->type == TB_MACH_LOCAL) {
+                    int disp = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeMachLocal)->disp;
+                    rhs.reg = RSP;
+                    rhs.imm = ctx->stack_usage - disp;
+                } else {
+                    rhs.reg = op_gpr_at(ctx, n->inputs[2]);
+                }
+                if (n->inputs[3]) {
+                    rhs.index = op_gpr_at(ctx, n->inputs[3]);
+                } else {
+                    rhs.index = -1;
+                }
+                rhs.imm   += op->disp;
+                rhs.scale  = op->scale;
+            } else {
+                rhs.type = VAL_XMM;
+                rhs.reg = op_xmm_at(ctx, n->inputs[2]);
+            }
+
+            int op_type = ops[n->type - x86_vmov];
+            if (op->mode == MODE_ST) {
+                Val lhs = op_at(ctx, lhs_n);
+                __(op_type, dt, &rhs, &lhs);
+            } else {
+                Val dst = op_at(ctx, n);
+                if (lhs_n != NULL) {
+                    assert(n->type != x86_lea);
+                    Val lhs = op_at(ctx, lhs_n);
+                    if (!is_value_match(&dst, &lhs)) {
+                        __(FP_MOV, dt, &dst, &lhs);
+                    }
+                }
+                __(op_type, dt, &dst, &rhs);
+            }
             break;
         }
 
@@ -1387,6 +1489,8 @@ static int node_latency(TB_Function* f, TB_Node* n) {
         // load/store ops should count as a bit slower
         case x86_add: case x86_or:  case x86_and: case x86_sub:
         case x86_xor: case x86_cmp: case x86_mov: case x86_test:
+        case x86_vmov: case x86_vadd:  case x86_vmul: case x86_vsub:
+        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
         case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
@@ -1395,8 +1499,9 @@ static int node_latency(TB_Function* f, TB_Node* n) {
 
             int clk;
             switch (n->type) {
-                case x86_imulimm: clk = 3; break;
-                default:          clk = 1; break;
+                case x86_vdiv:    clk = 11; break;
+                case x86_imulimm: clk = 3;  break;
+                default:          clk = 1;  break;
             }
 
             if (op->mode == MODE_LD) clk += 3;
@@ -3037,7 +3142,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
             if (inst.opcode == 0xE8 || inst.opcode == 0xE9 || inst.opcode == 0xEB || (inst.opcode >= 0x180 && inst.opcode <= 0x18F)) {
                 our_print_rip32(e, d, &inst, pos + inst.length, inst.imm);
             } else {
-                E("%#"PRIx64, inst.imm);
+                E("%"PRId64, inst.imm);
             }
         }
 

@@ -2,7 +2,7 @@
 void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     printf("%%%u: ", n->gvn);
     if (types && types[n->gvn] != NULL && types[n->gvn] != &TOP_IN_THE_SKY) {
-        print_lattice(types[n->gvn], n->dt);
+        print_lattice(types[n->gvn]);
     } else {
         if (n->dt.type == TB_TUPLE) {
             // print with multiple returns
@@ -31,6 +31,8 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
     } else if (n->type == TB_MACH_PROJ) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->index);
+    } else if (n->type == TB_MEMBER_ACCESS) {
+        printf("%lld ", TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
     } else if (n->type == TB_STORE) {
         print_type(n->inputs[3]->dt);
         printf(" ");

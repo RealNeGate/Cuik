@@ -740,15 +740,6 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                 break;
             }
 
-            case TB_NOT: {
-                TB_Node *src = n->inputs[n->input_count-1];
-                c_fmt_output(ctx, n);
-                nl_buffer_format(ctx->buf, "~");
-                c_fmt_ref_to_node(ctx, src);
-                nl_buffer_format(ctx->buf, ";\n");
-                break;
-            }
-
             case TB_NEG: {
                 TB_Node *src = n->inputs[n->input_count-1];
                 c_fmt_output(ctx, n);

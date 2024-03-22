@@ -67,51 +67,47 @@ static bool inverted_cmp(TB_Node* n, TB_Node* n2) {
 
 static Lattice* value_sext(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
-    if (a == &TOP_IN_THE_SKY) {
-        return &TOP_IN_THE_SKY;
-    }
+    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+    if (a->_int.min == a->_int.max) { return a; }
 
-    int old_bits = n->inputs[1]->dt.data;
-
-    uint64_t sign_range = (1 << (old_bits - 1)) - 1;
-    uint64_t mask = tb__mask(n->dt.data) & ~tb__mask(old_bits);
-
-    int64_t min, max;
-    if (a->_int.min >= a->_int.max || a->_int.max < sign_range) {
-        min = tb__sxt(a->_int.min, old_bits, n->dt.data);
-        max = tb__sxt(a->_int.max, old_bits, n->dt.data);
-    } else {
-        min = lattice_int_min(old_bits) | mask;
-        max = lattice_int_max(old_bits);
-    }
-
+    uint64_t min   = a->_int.min;
+    uint64_t max   = a->_int.max;
     uint64_t zeros = a->_int.known_zeros;
     uint64_t ones  = a->_int.known_ones;
+    int old_bits   = n->inputs[1]->dt.data;
+    uint64_t mask  = tb__mask(n->dt.data) & ~tb__mask(old_bits);
 
-    // if we know the sign bit then we can know what the extended bits look like
-    if (zeros >> (old_bits - 1)) {
+    if (a->_int.min >= 0 || (zeros >> (old_bits - 1))) { // known non-negative
+        int64_t type_max = lattice_int_max(old_bits);
+
         zeros |= mask;
-    } else if (ones >> (old_bits - 1)) {
+        min = TB_MAX(a->_int.min, 0);
+        max = TB_MIN(a->_int.max, type_max);
+    } else if (a->_int.max < 0 || (ones >> (old_bits - 1))) { // known non-positive
+        int64_t type_min = lattice_int_min(old_bits);
+
         ones |= mask;
+        min = TB_MAX(a->_int.min, type_min);
+        max = TB_MIN(a->_int.max, -1);
     }
 
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    Lattice* this = latuni_get(f, n);
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones, TB_MAX(this->_int.widen, a->_int.widen) } });
 }
 
 static Lattice* value_zext(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
-    if (a == &TOP_IN_THE_SKY) {
-        return &TOP_IN_THE_SKY;
+    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+
+    int old_bits = n->inputs[1]->dt.data;
+    uint64_t mask = tb__mask(n->dt.data) & ~tb__mask(old_bits);
+    Lattice* full_zxt_range = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, lattice_uint_max(old_bits), mask } });
+
+    if (a->_int.min >= 0 || (a->_int.known_zeros >> (old_bits - 1))) { // known non-negative
+        return lattice_join(f, full_zxt_range, a);
     }
 
-    uint64_t mask = tb__mask(n->dt.data) & ~tb__mask(n->inputs[1]->dt.data);
-
-    int64_t min = a->_int.min;
-    int64_t max = a->_int.max;
-    uint64_t zeros = a->_int.known_zeros | mask; // we know the top bits must be zero
-    uint64_t ones  = a->_int.known_ones;
-
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return full_zxt_range;
 }
 
 static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
@@ -217,41 +213,30 @@ static Lattice* value_bitcast(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
-static Lattice* value_unary(TB_Function* f, TB_Node* n) {
+static Lattice* value_negate(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
-    if (a == &TOP_IN_THE_SKY) {
-        return &TOP_IN_THE_SKY;
-    }
+    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+    if (a->tag != LATTICE_INT) { return NULL; }
 
-    if (a->tag == LATTICE_INT) {
-        uint64_t mask = tb__mask(n->dt.data);
-        uint64_t min = ~a->_int.min & mask;
-        uint64_t max = ~a->_int.max & mask;
-        if (min > max) { return NULL; }
+    uint64_t mask = tb__mask(n->dt.data);
+    uint64_t min = ~a->_int.min & mask;
+    uint64_t max = ~a->_int.max & mask;
+    if (min > max) { return NULL; }
 
-        uint64_t zeros = 0, ones = 0;
-        if (n->type == TB_NEG) {
-            // -x => ~x + 1
-            //   because of this addition we can technically
-            //   overflow... umm? glhf?
-            uint64_t min_inc = (min+1) & mask;
-            uint64_t max_inc = (max+1) & mask;
+    // -x => ~x + 1
+    //   because of this addition we can technically
+    //   overflow... umm? glhf?
+    uint64_t min_inc = (min+1) & mask;
+    uint64_t max_inc = (max+1) & mask;
 
-            if (min_inc < min || max_inc < min) {
-                return NULL;
-            } else {
-                min = min_inc;
-                max = max_inc;
-            }
-        } else {
-            zeros = a->_int.known_ones;
-            ones  = a->_int.known_zeros;
-        }
-
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
-    } else {
+    if (min_inc < min || max_inc < min) {
         return NULL;
+    } else {
+        min = min_inc;
+        max = max_inc;
     }
+
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, .widen = a->_int.widen } });
 }
 
 static Lattice* value_bits(TB_Function* f, TB_Node* n) {
@@ -285,17 +270,7 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         default: tb_todo();
     }
 
-    uint64_t mask = tb__mask(n->dt.data);
-    zeros &= mask, ones &= mask;
-
-    // we can deduce a min and max by assuming the unknown bits are either zeros or ones
-    int64_t min = ones, max = ~zeros;
-    if (min > max) {
-        return NULL;
-    }
-    min &= mask, max &= mask;
-
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data), lattice_int_max(n->dt.data), zeros, ones } });
 }
 
 static Lattice* value_shift(TB_Function* f, TB_Node* n) {
@@ -533,7 +508,7 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
-static bool nice_ass_trunc(TB_NodeTypeEnum t) { return t == TB_ADD || t == TB_AND || t == TB_XOR || t == TB_OR || t == TB_MUL || t == TB_SHL || t == TB_SHR || t == TB_SMOD || t == TB_UMOD; }
+static bool nice_ass_trunc(TB_NodeTypeEnum t) { return t == TB_AND || t == TB_XOR || t == TB_OR; }
 static TB_Node* ideal_truncate(TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
@@ -608,10 +583,12 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
         TB_Node* left = tb_alloc_node(f, ext_type, n->dt, 2, 0);
         set_input(f, left, src->inputs[1], 1);
         mark_node(f, left);
+        latuni_set(f, left, value_of(f, left));
 
         TB_Node* right = tb_alloc_node(f, ext_type, n->dt, 2, 0);
         set_input(f, right, src->inputs[2], 1);
         mark_node(f, right);
+        latuni_set(f, right, value_of(f, right));
 
         TB_Node* new_binop = tb_alloc_node(f, src->type, n->dt, 3, 0);
         set_input(f, new_binop, left, 1);

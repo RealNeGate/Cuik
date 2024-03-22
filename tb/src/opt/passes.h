@@ -178,6 +178,10 @@ static bool is_pinned(TB_Node* n) {
     return (n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || n->type == TB_PROJ || n->type == TB_MACH_PROJ;
 }
 
+static bool is_mem_end_op(TB_Node* n) {
+    return n->type == TB_RETURN || n->type == TB_TRAP || n->type == TB_UNREACHABLE;
+}
+
 static bool is_mem_in_op(TB_Node* n) {
     return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
 }

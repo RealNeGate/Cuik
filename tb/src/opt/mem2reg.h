@@ -115,7 +115,8 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
             int reason = -1;
 
             if (0) {}
-            else if (use_n->type == TB_RETURN)   { reason = MEM_END;  }
+            else if (is_mem_end_op(use_n))       { reason = MEM_END;  }
+            else if (use_n->type == TB_MERGEMEM) { reason = MEM_END;  }
             else if (use_n->type == TB_PHI)      { reason = MEM_JOIN; }
             else if (is_mem_only_in_op(use_n))   { reason = MEM_USE;  }
             else if (cfg_is_mproj(use_n) || (use_i == 1 && is_mem_out_op(use_n))) {
@@ -162,8 +163,13 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
 
         if (curr->dt.type == TB_TUPLE) {
             // skip to mproj
-            assert(curr->type != TB_SPLITMEM);
-            curr = next_mem_user(curr);
+            if (curr->type != TB_SPLITMEM) {
+                curr = next_mem_user(curr);
+            } else {
+                // this is some random split, we'll just assume proj0 is the "leftovers" path
+                TB_User u = proj_with_index(curr, 0);
+                curr = USERN(u);
+            }
             latest[0] = curr;
         }
 
@@ -295,15 +301,21 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
 
             case MEM_END: {
                 // stitch the latest nodes to the merge or return
-                assert(use_n->type == TB_RETURN);
-                set_input(f, use_n, latest[0], 1);
-
-                /* size_t j = 0;
-                FOR_N(i, 0, ctx->local_count) if (ctx->renames[i].alias_idx > 0) {
-                    assert(latest[i] != NULL && "TODO we should place a poison?");
-                    set_input(f, use_n, latest[i], 2+j);
-                    j += 1;
-                } */
+                if (use_n->type == TB_MERGEMEM) {
+                    if (nl_table_get(&ctx->phi2local, use_n) == &RENAME_DUMMY) {
+                        size_t j = 1;
+                        set_input(f, use_n, latest[0], 2);
+                        FOR_N(i, 0, ctx->local_count) if (ctx->renames[i].alias_idx > 0) {
+                            assert(latest[1 + i] != NULL && "TODO we should place a poison?");
+                            set_input(f, use_n, latest[1 + i], 2+j);
+                            j += 1;
+                        }
+                    } else {
+                        set_input(f, use_n, latest[0], use_i);
+                    }
+                } else {
+                    set_input(f, use_n, latest[0], 1);
+                }
                 break;
             }
         }
@@ -322,9 +334,10 @@ void tb_opt_locals(TB_Function* f) {
         LocalSplitter ctx = { 0 };
         NL_ChunkedArr locals = nl_chunked_arr_alloc(tmp_arena);
         FOR_USERS(u, f->root_node) {
-            if (USERN(u)->type != TB_LOCAL) continue;
-            nl_chunked_arr_put(&locals, USERN(u));
-            ctx.local_count++;
+            if (USERN(u)->type == TB_LOCAL && TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeLocal)->alias_index == 0) {
+                nl_chunked_arr_put(&locals, USERN(u));
+                ctx.local_count++;
+            }
         }
 
         // find reasons for renaming
@@ -342,18 +355,22 @@ void tb_opt_locals(TB_Function* f) {
                     if (USERI(mem) == 1 && (USERN(mem)->type == TB_MEMBER_ACCESS || USERN(mem)->type == TB_ARRAY_ACCESS)) {
                         // pointer arith are also fair game, since they'd stay in bounds (given no UB)
                         mode = RENAME_MEMORY;
-                        break;
                     } else if (USERI(mem) != 2 || !good_mem_op(f, USERN(mem))) {
                         mode = RENAME_NONE;
                         break;
                     }
                 }
 
+                done:
                 if (mode != RENAME_NONE) {
                     // allocate new alias index
                     if (mode == RENAME_MEMORY) {
-                        // TODO(NeGate): let's make it possible to add equivalence classes here
-                        ctx.renames[j].alias_idx = f->alias_n++;
+                        TB_NodeLocal* local = TB_NODE_GET_EXTRA(addr);
+                        if (local->alias_index != 0) {
+                            ctx.renames[j].alias_idx = local->alias_index;
+                        } else {
+                            ctx.renames[j].alias_idx = local->alias_index = f->alias_n++;
+                        }
                         splits_needed += 1;
                         needs_to_rewrite = true;
                     } else if (mode == RENAME_VALUE) {
@@ -381,7 +398,62 @@ void tb_opt_locals(TB_Function* f) {
         if (first_mem) {
             TB_Node** latest = tb_arena_alloc(tmp_arena, (1 + ctx.local_count) * sizeof(TB_Node*));
             FOR_N(i, 1, 1 + ctx.local_count) { latest[i] = NULL; }
-            latest[0] = f->params[1];
+
+            // we need some locals split up
+            if (splits_needed > 1) {
+                TB_Node* split = tb_alloc_node(f, TB_SPLITMEM, TB_TYPE_TUPLE, 2, sizeof(TB_NodeMemSplit) + splits_needed*sizeof(int));
+
+                // move initial effect to split's proj0
+                latest[0] = make_proj_node(f, TB_TYPE_MEMORY, split, 0);
+                subsume_node2(f, f->params[1], latest[0]);
+
+                set_input(f, split, f->params[0], 0);
+                set_input(f, split, f->params[1], 1);
+
+                TB_NodeMemSplit* split_info = TB_NODE_GET_EXTRA(split);
+                split_info->alias_cnt = splits_needed;
+                split_info->alias_idx[0] = 0;
+
+                int j = 1;
+                FOR_N(i, 0, ctx.local_count) if (ctx.renames[i].alias_idx >= 0) {
+                    split_info->alias_idx[j] = ctx.renames[i].alias_idx;
+                    latest[1 + i] = make_proj_node(f, TB_TYPE_MEMORY, split, j);
+                    j += 1;
+
+                    mark_node(f, latest[1 + i]);
+                }
+                mark_node(f, latest[0]);
+                mark_node(f, split);
+
+                // each terminator has a separate merge, we can have multiple merges
+                // per split which is a bit wacky.
+                FOR_N(i, 1, f->root_node->input_count) {
+                    TB_Node* end = f->root_node->inputs[i];
+                    if (end->type != TB_RETURN && end->type != TB_TRAP && end->type != TB_UNREACHABLE) {
+                        continue;
+                    }
+
+                    // merge node
+                    TB_Node* merge = tb_alloc_node(f, TB_MERGEMEM, TB_TYPE_MEMORY, 2 + splits_needed, 0);
+                    set_input(f, merge, f->params[0], 0);
+                    set_input(f, merge, split, 1);
+
+                    j = 1;
+                    FOR_N(i, 0, ctx.local_count) if (ctx.renames[i].alias_idx >= 0) {
+                        set_input(f, merge, latest[1 + i], 2 + j);
+                        j += 1;
+                    }
+                    set_input(f, merge, end->inputs[1], 2);
+                    set_input(f, end, merge, 1);
+
+                    mark_node(f, merge);
+                    mark_node(f, end);
+
+                    nl_table_put(&ctx.phi2local, merge, &RENAME_DUMMY);
+                }
+            } else {
+                latest[0] = f->params[1];
+            }
 
             fixup_mem_node(f, &ctx, first_mem, latest);
         }

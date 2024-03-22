@@ -124,6 +124,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     CUIK_TIMED_BLOCK("isel") {
         log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
+        tb_print(f, f->tmp_arena);
 
         TB_Worklist walker_ws = { 0 };
         worklist_alloc(&walker_ws, f->node_count);
@@ -175,6 +176,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
         tb_renumber_nodes(f, ws);
+        tb_print(f, arena);
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
         TB_OPTDEBUG(CODEGEN)(tb_print(f, arena));

@@ -20,7 +20,9 @@ static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 static void violent_kill(TB_Function* f, TB_Node* n);
 static bool alloc_types(TB_Function* f);
 
-static void print_lattice(Lattice* l, TB_DataType dt);
+static void print_lattice(Lattice* l);
+
+static Lattice* value_of(TB_Function* f, TB_Node* n);
 
 // node creation helpers
 TB_Node* make_poison(TB_Function* f, TB_DataType dt);
@@ -135,6 +137,10 @@ static int bits_in_data_type(int pointer_size, TB_DataType dt) {
     }
 }
 
+static int bytes_in_data_type(int pointer_size, TB_DataType dt) {
+    return (bits_in_data_type(pointer_size, dt) + 7) / 8;
+}
+
 static TB_Node* mem_user(TB_Function* f, TB_Node* n, int slot) {
     FOR_USERS(u, n) {
         if ((USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_MEMORY) ||
@@ -226,7 +232,7 @@ static void mark_users(TB_Function* f, TB_Node* n) {
         TB_NodeTypeEnum type = USERN(u)->type;
 
         // tuples changing means their projections did too.
-        if (type == TB_PROJ) {
+        if (type == TB_PROJ || type == TB_MEMBER_ACCESS) {
             mark_users(f, USERN(u));
         }
 
@@ -234,7 +240,9 @@ static void mark_users(TB_Function* f, TB_Node* n) {
         // (or (shl a 24) (shr a 40)) => ...
         // (trunc (mul a b)) => ...
         // (phi ...) => ... (usually converting into branchless ops)
-        if ((type >= TB_CMP_EQ && type <= TB_CMP_FLE) || type == TB_SHL || type == TB_SHR || type == TB_MUL || type == TB_PHI) {
+        if ((type >= TB_CMP_EQ && type <= TB_CMP_FLE) ||
+            type == TB_SHL || type == TB_SHR || type == TB_MUL ||
+            type == TB_STORE || type == TB_PHI) {
             mark_users_raw(f, USERN(u));
         }
     }
@@ -380,8 +388,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
 
     Lattice* old = latuni_get(f, n);
     if (old->tag == LATTICE_INT && old->_int.widen >= INT_WIDEN_LIMIT) {
-        uint64_t mask = tb__mask(n->dt.data);
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data) | ~mask, lattice_int_max(n->dt.data), .widen = INT_WIDEN_LIMIT } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data), lattice_int_max(n->dt.data), .widen = INT_WIDEN_LIMIT } });
     }
 
     Lattice* l = &TOP_IN_THE_SKY;
@@ -732,7 +739,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
 
             // all bits are known
             uint64_t mask = tb__mask(n->dt.data);
-            if ((l->_int.known_zeros | l->_int.known_ones) == mask) {
+            if ((l->_int.known_zeros | l->_int.known_ones) == UINT64_MAX) {
                 return make_int_node(f, n->dt, l->_int.known_ones);
             }
 
@@ -802,7 +809,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
     }
 }
 
-static void print_lattice(Lattice* l, TB_DataType dt) {
+static void print_lattice(Lattice* l) {
     switch (l->tag) {
         case LATTICE_BOT:      printf("bot");                       break;
         case LATTICE_TOP:      printf("top");                       break;
@@ -842,17 +849,15 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
             printf("[");
             FOR_N(i, 0, l->_elem_count) {
                 if (i) printf(", ");
-                print_lattice(l->elems[i], TB_TYPE_I64);
+                print_lattice(l->elems[i]);
             }
             printf("]");
             break;
         }
         case LATTICE_INT: {
-            assert(dt.type == TB_INT);
-
             printf("[");
             if (l->_int.min == l->_int.max) {
-                printf("%"PRId64, tb__sxt(l->_int.min, dt.data, 64));
+                printf("%"PRId64, l->_int.min);
             } else if (l->_int.min == 0 && l->_int.max == 1) {
                 printf("bool");
             } else if (l->_int.min == INT16_MIN && l->_int.max == INT16_MAX) {
@@ -866,7 +871,7 @@ static void print_lattice(Lattice* l, TB_DataType dt) {
             } else if (l->_int.min > l->_int.max) {
                 printf("%"PRIu64",%"PRIu64, l->_int.min, l->_int.max);
             } else {
-                printf("%"PRId64",%"PRId64, tb__sxt(l->_int.min, dt.data, 64), tb__sxt(l->_int.max, dt.data, 64));
+                printf("%"PRId64",%"PRId64, l->_int.min, l->_int.max);
             }
 
             uint64_t known = l->_int.known_zeros | l->_int.known_ones;
@@ -941,13 +946,17 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
 
         // monotonic moving up
         Lattice* glb = lattice_meet(f, old_type, new_type);
-        assert(glb == old_type && "forward progress assert!");
+        if (glb != old_type) {
+            TB_OPTDEBUG(PEEP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
+            TB_OPTDEBUG(PEEP)(printf("  "), print_lattice(old_type), printf("  =//=>  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
+            assert(0 && "forward progress assert!");
+        }
         #else
         Lattice* new_type = value_of(f, n);
         #endif
 
         // print fancy type
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type, n->dt), printf("\x1b[0m"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m"));
 
         TB_Node* k = try_as_const(f, n, new_type);
         if (k != NULL) {
@@ -1284,11 +1293,15 @@ static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
     Lattice* old_type = latuni_get(f, n);
     Lattice* new_type = value_of(f, n);
 
-    DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[93m"), print_lattice(new_type, n->dt), printf("\x1b[0m\n"));
+    DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m\n"));
     if (old_type != new_type) {
         #ifndef NDEBUG
         Lattice* glb = lattice_meet(f, old_type, new_type);
-        assert(glb == new_type && "forward progress assert!");
+        if (glb != new_type) {
+            TB_OPTDEBUG(PEEP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
+            TB_OPTDEBUG(PEEP)(printf("  "), print_lattice(old_type), printf("  =//=>  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
+            assert(0 && "forward progress assert!");
+        }
         #endif
 
         latuni_set(f, n, new_type);
