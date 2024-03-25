@@ -99,8 +99,8 @@ static Lattice* value_zext(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
 
-    int old_bits = n->inputs[1]->dt.data;
-    uint64_t mask = tb__mask(n->dt.data) & ~tb__mask(old_bits);
+    int old_bits  = n->inputs[1]->dt.data;
+    uint64_t mask = ~tb__mask(old_bits);
     Lattice* full_zxt_range = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, lattice_uint_max(old_bits), mask } });
 
     if (a->_int.min >= 0 || (a->_int.known_zeros >> (old_bits - 1))) { // known non-negative
@@ -640,6 +640,16 @@ static TB_Node* ideal_int_binop(TB_Function* f, TB_Node* n) {
             set_input(f, n, a, 2);
             return n;
         }
+    }
+
+    // a - immediate => a + -immediate
+    if (type == TB_SUB && is_iconst(f, b)) {
+        Lattice* l = latuni_get(f, b);
+        TB_Node* con = make_int_node(f, n->dt, -l->_int.min);
+
+        n->type = TB_ADD;
+        set_input(f, n, con, 2);
+        return n;
     }
 
     // (aa + ab) + b => aa + (ab + b) where ab and b are constant

@@ -269,8 +269,7 @@ typedef enum TB_NodeTypeEnum {
     //   a natural loop header has the first edge be the dominating predecessor, every other edge
     //   is a backedge.
     TB_NATURAL_LOOP, // (Control...) -> (Control)
-    //   a natural loop header (thus also a region) of an affine loop (one where the induction
-    //   var is an affine y=mx+b kind of function)
+    //   a natural loop header (thus also a region) where the induction var is an affine function
     TB_AFFINE_LOOP,  // (Control...) -> (Control)
     //   phi nodes work the same as in SSA CFG, the value is based on which predecessor was taken.
     //   each input lines up with the regions such that region.in[i] will use phi.in[i+1] as the

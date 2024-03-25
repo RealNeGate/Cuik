@@ -419,11 +419,54 @@ static Lattice* value_select(TB_Function* f, TB_Node* n) {
 // this is where the vtable goes for all peepholes
 #include "peeps.h"
 
+static bool can_gvn(TB_Node* n) {
+    switch (n->type) {
+        case TB_LOCAL:
+        return false;
+
+        // control producing nodes can't really GVN, it doesn't make sense if
+        // they're constructed from a CFG.
+        case TB_ROOT:
+        case TB_CALL:
+        case TB_READ:
+        case TB_REGION:
+        case TB_WRITE:
+        case TB_RETURN:
+        case TB_BRANCH:
+        case TB_SYSCALL:
+        case TB_TAILCALL:
+        case TB_CALLGRAPH:
+        case TB_NATURAL_LOOP:
+        case TB_AFFINE_LOOP:
+        case TB_ATOMIC_LOAD:
+        case TB_ATOMIC_XCHG:
+        case TB_ATOMIC_ADD:
+        case TB_ATOMIC_SUB:
+        case TB_ATOMIC_AND:
+        case TB_ATOMIC_XOR:
+        case TB_ATOMIC_OR:
+        case TB_ATOMIC_CAS:
+        case TB_SAFEPOINT_POLL:
+        return false;
+
+        default:
+        int family = n->type / 0x100;
+        if (family == 0) {
+            return true;
+        } else {
+            assert(family >= 0 && family < TB_ARCH_MAX);
+            return tb_codegen_families[family].extra_bytes(n);
+        }
+    }
+}
+
 TB_Node* tb_opt_gvn_node(TB_Function* f, TB_Node* n) {
     return tb__gvn(f, n, extra_bytes(n));
 }
 
 TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra) {
+    if (!can_gvn(n)) { return n; }
+
     // try GVN, if we succeed, just delete the node and use the old copy
     TB_Node* k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k && k != n) {
@@ -491,7 +534,9 @@ static void remove_input(TB_Function* f, TB_Node* n, size_t i) {
 
 void tb_kill_node(TB_Function* f, TB_Node* n) {
     // remove from GVN if we're murdering it
-    nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
+    if (can_gvn(n)) {
+        nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
+    }
 
     FOR_N(i, 0, n->input_count) {
         remove_user(f, n, i);
@@ -674,6 +719,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         }
 
         if (n->input_count == 0) {
+            f->invalidated_loops = true;
             tb_kill_node(f, n);
             return dead_node(f);
         } else if (n->input_count == 1) {
@@ -689,13 +735,19 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                 u = next;
             }
 
+            f->invalidated_loops = true;
             return n->inputs[0];
         } else if (changes) {
+            f->invalidated_loops = true;
             return n;
         } else {
             return NULL;
         }
     } else if (n->type != TB_ROOT && n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
+        if (n->type == TB_BRANCH) {
+            f->invalidated_loops = true;
+        }
+
         // control-dependent nodes which become considered dead will also
         // have to be dead.
         if (n->dt.type == TB_TUPLE) {
@@ -912,7 +964,9 @@ static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
 // when subsuming.
 TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     // idealize can modify the node, make sure it's not in the GVN pool at the time
-    nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
+    if (can_gvn(n)) {
+        nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
+    }
 
     // idealize node (this can technically run an arbitrary number of times
     // but in practice we should only hit a node like once or twice)
@@ -947,6 +1001,8 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         // monotonic moving up
         Lattice* glb = lattice_meet(f, old_type, new_type);
         if (glb != old_type) {
+            tb_print_dumb(f, true);
+
             TB_OPTDEBUG(PEEP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
             TB_OPTDEBUG(PEEP)(printf("  "), print_lattice(old_type), printf("  =//=>  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
             assert(0 && "forward progress assert!");
@@ -1001,16 +1057,18 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     }
     #endif
 
-    DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_tries++);
-    k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
-    if (k && (k != n)) {
-        DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_hit++);
-        DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[95mGVN v%u\x1b[0m\n", k->gvn));
+    if (can_gvn(n)) {
+        DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_tries++);
+        k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
+        if (k && (k != n)) {
+            DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_hit++);
+            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[95mGVN v%u\x1b[0m\n", k->gvn));
 
-        migrate_type(f, n, k);
-        subsume_node(f, n, k);
-        mark_users(f, k);
-        return k;
+            migrate_type(f, n, k);
+            subsume_node(f, n, k);
+            mark_users(f, k);
+            return k;
+        }
     }
 
     DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
@@ -1396,19 +1454,55 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
             }
         }
 
-        DO_IF(TB_OPTDEBUG_STATS)(f->stats.initial = worklist_count(ws));
+        TB_OPTDEBUG(STATS)(f->stats.initial = worklist_count(ws));
     }
-    DO_IF(TB_OPTDEBUG_PEEP)(log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(f->worklist), f->node_count));
+    TB_OPTDEBUG(PEEP)(log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(f->worklist), f->node_count));
 
-    tb_opt_peeps(f);
-    // mostly just SSA construction from memory edges
-    tb_opt_locals(f);
-    // const prop leaves work for the peephole optimizer
-    tb_opt_cprop(f);
-    tb_opt_peeps(f);
-    // mostly just detecting loops and upcasting indvars
-    tb_opt_loops(f);
-    tb_opt_peeps(f);
+    f->invalidated_loops = true;
+    f->node2loop = nl_table_alloc(20);
+
+    TB_OPTDEBUG(PASSES)(printf("FUNCTION %s:\n", f->super.name));
+
+    int rounds = 0;
+    while (worklist_count(f->worklist)) {
+        TB_OPTDEBUG(PASSES)(printf("  * ROUND %d:\n", rounds++));
+
+        TB_OPTDEBUG(PASSES)(printf("    * Simple-rewrites\n"));
+        while (worklist_count(f->worklist)) {
+            TB_OPTDEBUG(PASSES)(printf("      * Peeps\n"));
+            tb_opt_peeps(f);
+
+            // mostly just SSA construction from local vars
+            if (tb_opt_locals(f)) { TB_OPTDEBUG(PASSES)(printf("      * Locals\n")); }
+        }
+
+        // const prop leaves work for the peephole optimizer and
+        // sometimes might invalidate the loop tree so we should
+        // track when it makes CFG changes.
+        TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
+        tb_opt_cprop(f);
+        if (worklist_count(f->worklist) > 0) {
+            TB_OPTDEBUG(PASSES)(printf("      * Peeps\n"));
+            tb_opt_peeps(f);
+        }
+
+        // only wanna build a loop tree if there's
+        // major changes to the CFG, most rounds of peeps
+        // wouldn't invalidate it.
+        if (f->invalidated_loops) {
+            nl_table_clear(&f->node2loop);
+            f->invalidated_loops = false;
+
+            TB_OPTDEBUG(PASSES)(printf("    * Update loop tree\n"));
+            tb_opt_build_loop_tree(f);
+        }
+
+        // mostly just detecting loops and upcasting indvars
+        TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
+        tb_opt_loops(f);
+    }
+    nl_table_free(f->node2loop);
+    tb_print_dumb(f, true);
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {
         tb_opt_free_types(f);

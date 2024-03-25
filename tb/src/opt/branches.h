@@ -12,6 +12,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         while (use != NULL) {
             User* next = use->next;
             if (USERN(use)->type == TB_PHI) {
+                assert(USERI(use) == 0);
                 assert(USERN(use)->input_count == 2);
                 subsume_node(f, USERN(use), USERN(use)->inputs[1]);
             }
@@ -102,6 +103,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         }
 
         if (changes) {
+            f->invalidated_loops = true;
             return n->input_count == 1 ? n->inputs[0] : n;
         }
     }

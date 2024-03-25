@@ -49,6 +49,10 @@ typedef enum {
     #include "x64_nodes.inc"
 } X86NodeType;
 
+static bool can_gvn(TB_Node* n) {
+    return true;
+}
+
 static size_t extra_bytes(TB_Node* n) {
     switch (n->type) {
         case x86_int3:
@@ -387,7 +391,7 @@ static TB_Node* node_isel_flags(Ctx* restrict ctx, TB_Function* f, TB_Node* n, u
         }
         *out_cc = cc ^ flip;
     } else {
-        mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 3, sizeof(X86MemOp));
+        mach_cond = tb_alloc_node(f, x86_cmpimm, TB_TYPE_I8, 3, sizeof(X86MemOp));
         TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .imm = falsey);
         set_input(f, mach_cond, cond, 2);
         *out_cc = E;
@@ -1313,7 +1317,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             };
 
             TB_X86_DataType dt;
-            if (n->dt.type == TB_MEMORY || n->type == x86_cmp) {
+            if (n->type == x86_cmp || n->dt.type == TB_MEMORY) {
                 dt = legalize_int2(n->inputs[4]->dt);
             } else if (n->type == x86_cmpimm) {
                 dt = legalize_int2(n->inputs[2]->dt);
@@ -3226,6 +3230,7 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
 ICodeGen tb__x64_codegen = {
     .minimum_addressable_size = 8,
     .pointer_size = 64,
+    .can_gvn = can_gvn,
     .node_name = node_name,
     .print_extra = print_extra,
     .extra_bytes = extra_bytes,

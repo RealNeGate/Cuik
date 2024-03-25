@@ -13,7 +13,6 @@ static bool is_node_ready(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB
     FOR_N(i, 0, n->input_count) {
         TB_Node* in = n->inputs[i];
         if (in && f->scheduled[in->gvn] == bb && !worklist_test(ws, in)) {
-            printf("  %%%u waiting on %%%u...\n", n->gvn, in->gvn);
             return false;
         }
     }

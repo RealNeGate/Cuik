@@ -378,8 +378,9 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
 // makes arch-friendly IR
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);
 void tb_opt_peeps(TB_Function* f);
+void tb_opt_build_loop_tree(TB_Function* f);
 void tb_opt_loops(TB_Function* f);
-void tb_opt_locals(TB_Function* f);
+bool tb_opt_locals(TB_Function* f);
 
 Lattice* latuni_get(TB_Function* f, TB_Node* n);
 

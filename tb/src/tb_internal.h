@@ -64,8 +64,9 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 // Random toggles
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS    0
+#define TB_OPTDEBUG_PASSES   0
 #define TB_OPTDEBUG_PEEP     1
-#define TB_OPTDEBUG_SCCP     1
+#define TB_OPTDEBUG_SCCP     0
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
@@ -75,7 +76,7 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
 #define TB_OPTDEBUG_GVN      0
-#define TB_OPTDEBUG_SCHEDULE 1
+#define TB_OPTDEBUG_SCHEDULE 0
 // for toggling ANSI colors
 #define TB_OPTDEBUG_ANSI     1
 
@@ -313,6 +314,48 @@ typedef struct TB_CFG {
     NL_Map(TB_Node*, TB_BasicBlock) node_to_block;
 } TB_CFG;
 
+typedef struct TB_LoopInfo {
+    // it's a tree
+    struct TB_LoopInfo* parent;
+    // so we can actually find all loops
+    struct TB_LoopInfo* next;
+
+    int depth;
+
+    // should always be a region
+    TB_Node* header;
+    TB_Node* latch;
+
+    // whichever projection in the header's BB that'll
+    // exit, this is helpful for affine loop crap.
+    TB_Node* exit;
+} TB_LoopInfo;
+
+typedef enum {
+    IND_NE, IND_SLT, IND_SLE, IND_ULT, IND_ULE,
+} TB_IndVarPredicate;
+
+typedef struct {
+    TB_Node* cond;
+    TB_Node* phi;
+    int64_t step;
+
+    // neutral limit:
+    //   while (ind != limit) IND_NE
+    // forwards limit:
+    //   while (ind <= limit) IND_LE
+    //   while (ind <  limit) IND_LT
+    // backwards limit:
+    //   while (limit <= ind) IND_LE
+    //   while (limit <  ind) IND_LT
+    TB_IndVarPredicate pred;
+    bool backwards;
+
+    // end_cond is NULL, we're exitting based on some constant
+    TB_Node* end_cond;
+    uint64_t end_const;
+} TB_InductionVar;
+
 struct TB_Function {
     TB_Symbol super;
     TB_ModuleSectionHandle section;
@@ -347,6 +390,9 @@ struct TB_Function {
         // how we track duplicates for GVN, it's possible to run while building the IR.
         NL_HashSet gvn_nodes;
 
+        // it's what the peepholes are iterating on
+        TB_Worklist* worklist;
+
         // tracks the fancier type system:
         //   hash-consing because there's a lot of
         //   redundant types we might construct.
@@ -358,8 +404,11 @@ struct TB_Function {
         int alias_n;
         Lattice* root_mem;
 
-        // it's what the peepholes are iterating on
-        TB_Worklist* worklist;
+        // some xforms like removing branches can
+        // invalidate the loop tree.
+        TB_LoopInfo* loop_list;
+        NL_Table node2loop; // TB_Node* -> TB_LoopInfo*
+        bool invalidated_loops;
 
         // we throw the results of scheduling here:
         //   [value number] -> TB_BasicBlock*
@@ -504,6 +553,7 @@ struct ICodeGen {
     int minimum_addressable_size, pointer_size;
 
     // Mach nodes info
+    bool (*can_gvn)(TB_Node* n);
     size_t (*extra_bytes)(TB_Node* n);
     const char* (*node_name)(TB_Node* n);
     void (*print_extra)(TB_Node* n);

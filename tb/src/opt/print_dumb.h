@@ -1,4 +1,19 @@
 
+void tb_print_dumb_edge(Lattice** types, TB_Node* n) {
+    if (n) {
+        if (n->type == TB_PROJ) {
+            int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+            n = n->inputs[0];
+
+            printf("%%%u.%d ", n->gvn, index);
+        } else {
+            printf("%%%u ", n->gvn);
+        }
+    } else {
+        printf("___ ");
+    }
+}
+
 void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     printf("%%%u: ", n->gvn);
     if (types && types[n->gvn] != NULL && types[n->gvn] != &TOP_IN_THE_SKY) {
@@ -61,19 +76,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     }
     printf("( ");
     FOR_N(i, 0, n->input_count) {
-        TB_Node* in = n->inputs[i];
-        if (in) {
-            if (in->type == TB_PROJ) {
-                int index = TB_NODE_GET_EXTRA_T(in, TB_NodeProj)->index;
-                in = in->inputs[0];
-
-                printf("%%%u.%d ", in->gvn, index);
-            } else {
-                printf("%%%u ", in->gvn);
-            }
-        } else {
-            printf("___ ");
-        }
+        tb_print_dumb_edge(types, n->inputs[i]);
     }
     printf(")");
 }
@@ -84,14 +87,32 @@ static void dumb_walk(TB_Function* f, Lattice** types, TB_Node* n, uint64_t* vis
     }
     visited[n->gvn / 64] |= (1ull << (n->gvn % 64));
 
-    FOR_REV_N(i, 0, n->input_count) if (n->inputs[i]) {
-        TB_Node* in = n->inputs[i];
-        if (in->type == TB_PROJ) { in = in->inputs[0]; }
-        dumb_walk(f, types, in, visited);
-    }
+    if (n->type == TB_PHI) {
+        FOR_N(i, 1, n->input_count) {
+            dumb_walk(f, types, n->inputs[i], visited);
+        }
+        dumb_walk(f, types, n->inputs[0], visited);
+    } else {
+        FOR_REV_N(i, 0, n->input_count) if (n->inputs[i]) {
+            TB_Node* in = n->inputs[i];
+            if (in->type == TB_PROJ) { in = in->inputs[0]; }
+            dumb_walk(f, types, in, visited);
+        }
 
-    tb_print_dumb_node(types, n);
-    printf("\n");
+        tb_print_dumb_node(types, n);
+        printf("\n");
+
+        if (cfg_is_region(n)) {
+            // we want the phis to appear below the region node, looks nice
+            FOR_USERS(u, n) if (USERN(u)->type == TB_PHI) {
+                assert(USERI(u) == 0);
+                uint32_t un_gvn = USERN(u)->gvn;
+                visited[un_gvn / 64] |= (1ull << (un_gvn % 64));
+                tb_print_dumb_node(types, USERN(u));
+                printf("\n");
+            }
+        }
+    }
 }
 
 void tb_print_dumb(TB_Function* f, bool use_fancy_types) {

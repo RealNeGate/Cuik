@@ -124,7 +124,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     CUIK_TIMED_BLOCK("isel") {
         log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
-        tb_print(f, f->tmp_arena);
 
         TB_Worklist walker_ws = { 0 };
         worklist_alloc(&walker_ws, f->node_count);
@@ -142,10 +141,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 // replace with machine op
                 TB_Node* k = node_isel(&ctx, f, n);
                 if (k && k != n) {
+                    subsume_node(f, n, k);
+
                     // we could run GVN on machine ops :)
                     k = tb_opt_gvn_node(f, k);
-
-                    subsume_node(f, n, k);
 
                     // don't walk the replacement
                     worklist_test_n_set(&walker_ws, k);
@@ -175,7 +174,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
         tb_renumber_nodes(f, ws);
-        tb_print(f, arena);
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
         TB_OPTDEBUG(CODEGEN)(tb_print(f, arena));
@@ -241,7 +239,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             size_t base = dyn_array_length(ws->items);
 
             // tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
-            tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency, node_priority);
+            CUIK_TIMED_BLOCK("local sched") {
+                tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency, node_priority);
+            }
 
             // a bit of slack for spills
             size_t item_count = dyn_array_length(ws->items) - base;

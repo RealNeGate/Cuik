@@ -54,6 +54,7 @@ typedef struct {
 
 NL_Table nl_table_alloc(size_t cap);
 NL_Table nl_table_arena_alloc(TB_Arena* arena, size_t cap);
+void nl_table_clear(NL_Table* tbl);
 void nl_table_free(NL_Table tbl);
 
 void* nl_table_put(NL_Table* restrict tbl, void* k, void* v);
@@ -286,6 +287,11 @@ NL_Table nl_table_arena_alloc(TB_Arena* arena, size_t cap) {
     void* data = tb_arena_alloc(arena, cap * sizeof(NL_TableEntry));
     memset(data, 0, cap * sizeof(NL_TableEntry));
     return (NL_Table){ .exp = exp, .data = data };
+}
+
+void nl_table_clear(NL_Table* tbl) {
+    size_t cap = 1ull << tbl->exp;
+    memset(tbl->data, 0, cap * sizeof(NL_TableEntry));
 }
 
 void nl_table_free(NL_Table tbl) {

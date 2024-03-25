@@ -62,13 +62,13 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                 if (params[i] == NULL) {
                     printf("_");
                 } else {
-                    printf("v%u: ", params[i]->gvn);
+                    printf("%%%u: ", params[i]->gvn);
                     print_type2(params[i]->dt);
                 }
             }
 
             FOR_USERS(u, n) if (USERN(u)->type == TB_MACH_PROJ) {
-                printf(", v%u: ", USERN(u)->gvn);
+                printf(", %%%u: ", USERN(u)->gvn);
                 print_type2(USERN(u)->dt);
             }
             printf(")");
@@ -97,12 +97,11 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                         printf(", ");
                     }
 
-                    printf("v%u: ", USERN(u)->gvn);
+                    printf("%%%u: ", USERN(u)->gvn);
                     print_type2(USERN(u)->dt);
                 }
             }
-            // printf(")");
-            printf(") // v%u", n->gvn);
+            printf(") // region %%%u", n->gvn);
             if (n->type == TB_NATURAL_LOOP) printf(" !natural");
             if (n->type == TB_AFFINE_LOOP) printf(" !affine");
         }
@@ -128,7 +127,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                 printf(".bb%zu", i);
                 if (def) {
                     // printf("()");
-                    printf("() // v%u", n->gvn);
+                    printf("() // cproj %%%u", n->gvn);
                 }
             } else {
                 printf("*DEAD*");
@@ -144,7 +143,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             printf("%#0"PRIx64, num->value);
         }
     } else {
-        printf("v%u", n->gvn);
+        printf("%%%u", n->gvn);
     }
 }
 
@@ -265,7 +264,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     }
                     printf("  }");
                 }
-                printf(" // v%u", n->gvn);
+                printf(" // branch %%%u", n->gvn);
                 tb_arena_restore(f->tmp_arena, sp);
                 break;
             }
@@ -276,7 +275,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
             }
 
             case TB_RETURN: {
-                printf("  end ");
+                printf("  return ");
                 FOR_N(i, 1, n->input_count) {
                     if (i != 1) printf(", ");
                     print_ref_to_node(ctx, n->inputs[i], false);
@@ -301,7 +300,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     FOR_N(i, first, 32) {
                         if (projs[i] == NULL) break;
                         if (i > first) printf(", ");
-                        printf("v%u", projs[i]->gvn);
+                        printf("%%%u", projs[i]->gvn);
                     }
                     printf(" = %s.(", tb_node_get_name(n));
                     FOR_N(i, first, 32) {
@@ -312,7 +311,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     printf(")");
                 } else {
                     // print as normal instruction
-                    printf("  v%u = %s.", n->gvn, tb_node_get_name(n));
+                    printf("  %%%u = %s.", n->gvn, tb_node_get_name(n));
 
                     TB_DataType dt = n->dt;
                     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {

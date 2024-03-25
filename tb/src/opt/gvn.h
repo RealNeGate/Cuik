@@ -153,10 +153,8 @@ uint32_t gvn_hash(void* a) {
         size_t extra = extra_bytes(n);
         h = n->type + n->dt.raw + n->input_count + extra;
 
-        // locals are fundamentally unique
-        if (n->type == TB_LOCAL) {
-            h += (uintptr_t) n->gvn;
-        }
+        // locals can't be put into the GVN table
+        assert(n->type != TB_LOCAL);
 
         FOR_N(i, 0, n->input_count) {
             h += n->inputs[i] ? n->inputs[i]->gvn : 0;
@@ -185,11 +183,6 @@ bool gvn_compare(void* a, void* b) {
     // early outs
     if (x->type != y->type || x->input_count != y->input_count || x->dt.raw != y->dt.raw) {
         return false;
-    }
-
-    // current exception to the GVN rule
-    if (x->type == TB_LOCAL) {
-        return x == y;
     }
 
     // match up inputs
