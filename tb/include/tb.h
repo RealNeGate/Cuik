@@ -16,7 +16,7 @@
 //   ZTC  - zero trip count
 //   MAF  - monotone analysis framework
 //   SCC  - strongly connected components
-//   MOP  - Meet Over all Paths
+//   MOP  - meet over all paths
 #ifndef TB_CORE_H
 #define TB_CORE_H
 

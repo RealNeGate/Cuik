@@ -4,13 +4,13 @@ X(xor) X(cmp) X(mov) X(test)
 // general integer binops with immediate
 X(addimm) X(orimm)  X(andimm) X(subimm)
 X(xorimm) X(cmpimm) X(movimm) X(testimm)
-// float/vector ops
-X(vmov) X(vadd) X(vmul) X(vsub) X(vdiv)
-X(vmin) X(vmax) X(vxor)
 // shift ops with immediates
 X(shlimm) X(shrimm) X(sarimm) X(rolimm) X(rorimm)
 // misc
 X(lea) X(cmovcc) X(imulimm)
+// float/vector ops
+X(vmov) X(vadd) X(vmul) X(vsub) X(vdiv)
+X(vmin) X(vmax) X(vxor)
 // casts
 X(movsx) X(movzx)
 // simple-high level ops

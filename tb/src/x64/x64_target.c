@@ -54,12 +54,13 @@ static bool can_gvn(TB_Node* n) {
 }
 
 static size_t extra_bytes(TB_Node* n) {
-    switch (n->type) {
+    X86NodeType type = n->type;
+    switch (type) {
         case x86_int3:
         return 0;
 
         case x86_add: case x86_or:  case x86_and: case x86_sub:
-        case x86_xor: case x86_cmp: case x86_mov: case x86_test:
+        case x86_xor: case x86_cmp: case x86_mov: case x86_test: case x86_lea:
         case x86_vmov: case x86_vadd:  case x86_vmul: case x86_vsub:
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
@@ -338,7 +339,7 @@ static TB_Node* to_mach_local(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
 
     // each stack slot is 8bytes
-    int disp = ctx->num_spills*8;
+    int disp = 8 + ctx->num_spills*8;
     ctx->num_spills = align_up(ctx->num_spills + (local->size+7)/8, (local->align+7)/8);
 
     // machine address is effectively a MemberAccess on SP
@@ -436,14 +437,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         return n;
     } else if (n->type == TB_PHI) {
         if (n->dt.type == TB_FLOAT || n->dt.type == TB_INT || n->dt.type == TB_PTR) {
-            // we just want some copies on the data edges which RA will coalesce, this way we
-            // never leave SSA.
-            FOR_N(i, 1, n->input_count) {
-                TB_Node* cpy = tb_alloc_node(f, TB_MACH_MOVE, n->inputs[i]->dt, 2, 0);
-                set_input(f, cpy, n->inputs[i], 1);
-                set_input(f, n, cpy, i);
-            }
-
             RegMask* rm = ctx->normie_mask[n->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR];
 
             // just in case we have some recursive phis, RA should be able to fold it away later.
@@ -455,11 +448,32 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             subsume_node2(f, n, cpy);
             set_input(f, cpy, n, 1);
 
+            // we just want some copies on the data edges which RA will coalesce, this way we
+            // never leave SSA.
+            FOR_N(i, 1, n->input_count) {
+                TB_Node* in = n->inputs[i];
+                assert(in->type != TB_MACH_MOVE);
+
+                TB_Node* move = tb_alloc_node(f, TB_MACH_MOVE, in->dt, 2, 0);
+                set_input(f, move, in, 1);
+                set_input(f, n, move, i);
+            }
+
             // we did the subsumes for it
             return n;
         } else {
             return n;
         }
+    } else if (n->type == TB_BITCAST) {
+        TB_Node* in = n->inputs[1];
+        RegMask* def_rm = ctx->normie_mask[n->dt.type  == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR];
+        RegMask* use_rm = ctx->normie_mask[in->dt.type == TB_FLOAT ? REG_CLASS_XMM : REG_CLASS_GPR];
+
+        // mach copy actually just handles these sorts of things mostly
+        TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+        set_input(f, cpy, in, 1);
+        TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = def_rm, .use = use_rm);
+        return cpy;
     } else if (n->type == TB_ZERO_EXT) {
         TB_DataType src_dt = n->inputs[1]->dt;
         int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
@@ -1480,6 +1494,13 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_MEMSET: {
             EMIT1(e, 0xF3);
             EMIT1(e, 0xAA);
+            break;
+        }
+
+        case x86_call: {
+            X86Call* op_extra = TB_NODE_GET_EXTRA(n);
+            Val target = op_at(ctx, n->inputs[2]);
+            __(CALL, TB_X86_QWORD, &target);
             break;
         }
 

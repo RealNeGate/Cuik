@@ -228,6 +228,13 @@ TB_Node* tb_inst_zxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
 }
 
 TB_Node* tb_inst_bitcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
+    // shaw uses bitcast for zero extends sometimes, i don't feel like changing minivm
+    // so i'll just extend the semantics of bitcast to consider zero extension the behavior
+    // when scaling up.
+    if (src->dt.type == TB_INT && dt.type == TB_INT && src->dt.data < dt.data) {
+        return tb_unary(f, TB_ZERO_EXT, dt, src);
+    }
+
     return tb_unary(f, TB_BITCAST, dt, src);
 }
 
