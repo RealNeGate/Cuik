@@ -414,6 +414,11 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         add_range(&ra, in_def, bb_start, use_time);
                         // add_use_pos(&ra, in_def, use_time, in_mask->may_spill);
                     }
+
+                    if (n->type == TB_MACH_MOVE) {
+                        TB_Node* in = n->inputs[1];
+                        ctx->vregs[ctx->vreg_map[in->gvn]].hint_vreg = vreg_id;
+                    }
                 }
             }
         }

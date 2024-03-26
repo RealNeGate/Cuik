@@ -1400,6 +1400,12 @@ TB_API void tb_builder_member(TB_GraphBuilder* g, int64_t offset);
 TB_API void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, int32_t offset, TB_CharUnits align);
 //   ( addr val -- )
 TB_API void tb_builder_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_CharUnits align);
+//   ( addr -- val )
+TB_API void tb_builder_atomic_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, int32_t offset, TB_MemoryOrder order);
+//   ( addr val -- )
+TB_API void tb_builder_atomic_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_MemoryOrder order);
+//   ( addr val -- old )
+TB_API void tb_builder_atomic_rmw(TB_GraphBuilder* g, int mem_var, int32_t offset, int op, TB_MemoryOrder order);
 
 // function call
 //   ( ... -- ... )
