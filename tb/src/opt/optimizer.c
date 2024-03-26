@@ -449,13 +449,14 @@ static bool can_gvn(TB_Node* n) {
         case TB_SAFEPOINT_POLL:
         return false;
 
-        default:
-        int family = n->type / 0x100;
-        if (family == 0) {
-            return true;
-        } else {
-            assert(family >= 0 && family < TB_ARCH_MAX);
-            return tb_codegen_families[family].extra_bytes(n);
+        default: {
+            int family = n->type / 0x100;
+            if (family == 0) {
+                return true;
+            } else {
+                assert(family >= 0 && family < TB_ARCH_MAX);
+                return tb_codegen_families[family].extra_bytes(n);
+            }
         }
     }
 }
@@ -931,7 +932,7 @@ static void print_lattice(Lattice* l) {
                 printf("; zeros=%#"PRIx64", ones=%#"PRIx64, l->_int.known_zeros, l->_int.known_ones);
             }
             if (l->_int.widen) {
-                printf(", widen=%llu", l->_int.widen);
+                printf(", widen=%"PRIu64, l->_int.widen);
             }
             printf("]");
             break;
