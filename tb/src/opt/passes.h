@@ -1,6 +1,7 @@
 #pragma once
 #include "../tb_internal.h"
 #include <arena_array.h>
+#include <limits.h>
 
 enum {
     INT_WIDEN_LIMIT = 3,
@@ -96,8 +97,8 @@ struct Lattice {
         double _f64;        // LATTICE_FLTCON64
     };
     union {
-        uint64_t alias[];
-        Lattice* elems[];
+        uint64_t alias[0];
+        Lattice* elems[0];
     };
 };
 

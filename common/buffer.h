@@ -2,6 +2,8 @@
 #ifndef NL_BUFFER_H
 #define NL_BUFFER_H
 
+#include "stdarg.h"
+
 struct nl_buffer_t;
 typedef struct nl_buffer_t nl_buffer_t;
 
