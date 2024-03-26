@@ -1,6 +1,7 @@
 // Linear scan register allocator:
 //   https://ssw.jku.at/Research/Papers/Wimmer04Master/Wimmer04Master.pdf
 #include "codegen.h"
+#include <limits.h>
 
 #define FOREACH_SET(it, set) \
 FOR_N(_i, 0, ((set).capacity + 63) / 64) FOR_BIT(it, _i*64, (set).data[_i])
