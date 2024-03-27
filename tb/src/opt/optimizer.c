@@ -400,8 +400,8 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
         }
     }
 
-    if (l != old) {
-        // made progress? that's a widen
+    // downward progress will widen...
+    if (old != l && lattice_meet(f, old, l) == l) {
         Lattice new_l = *l;
         new_l._int.widen = old->_int.widen + 1;
         return lattice_intern(f, new_l);
@@ -1001,8 +1001,6 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
         // monotonic moving up
         Lattice* glb = lattice_meet(f, old_type, new_type);
         if (glb != old_type) {
-            tb_print_dumb(f, true);
-
             TB_OPTDEBUG(PEEP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
             TB_OPTDEBUG(PEEP)(printf("  "), print_lattice(old_type), printf("  =//=>  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
             assert(0 && "forward progress assert!");
@@ -1502,7 +1500,6 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
         tb_opt_loops(f);
     }
     nl_table_free(f->node2loop);
-    tb_print_dumb(f, true);
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {
         tb_opt_free_types(f);

@@ -507,6 +507,34 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
         }
         cuikperf_region_end();
     }
+
+    /*CUIK_TIMED_BLOCK("move resolver") {
+        FOR_N(i, 0, ctx->bb_count) {
+            MachineBB* mbb = &ctx->machine_bbs[i];
+            TB_Node* end_node = mbb->end_n;
+            bool is_mbb_spill = mbb->end_time >= pos;
+
+            for (User* u = end_node->users; u; u = u->next) {
+                if (cfg_is_control(u->n) && !cfg_is_endpoint(u->n)) {
+                    TB_Node* succ = end_node->type == TB_BRANCH ? cfg_next_bb_after_cproj(u->n) : u->n;
+                    MachineBB* target = node_to_bb(ctx, succ);
+                    bool is_target_spill = target->start_time >= pos;
+
+                    uintptr_t fwd = (uintptr_t) nl_table_get(&ra.fwd_table, (void*) n->gvn);
+                    uintptr_t gvn = fwd ? fwd : n->gvn;
+
+                    if (set_get(target->live_in, gvn) && is_mbb_spill != is_target_spill) {
+                        if (is_mbb_spill) { // REG -> SPILL is done at the target's start
+
+                        } else {            // SPILL -> REG is done at the source's end
+                        }
+                    }
+                    __debugbreak();
+                }
+            }
+        }
+    }*/
+
     nl_table_free(ra.fwd_table);
     // dump_sched(ctx);
 }
@@ -1115,34 +1143,6 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
     assert(vreg->active_range != &NULL_RANGE);
     assert(spill_vreg->active_range != &NULL_RANGE);
     vreg = NULL;
-
-    // identify where phis need to be placed
-    #if 0
-    FOR_N(i, 0, ctx->bb_count) {
-        MachineBB* mbb = &ctx->machine_bbs[i];
-        TB_Node* end_node = mbb->end_n;
-        bool is_mbb_spill = mbb->end_time >= pos;
-
-        for (User* u = end_node->users; u; u = u->next) {
-            if (cfg_is_control(u->n) && !cfg_is_endpoint(u->n)) {
-                TB_Node* succ = end_node->type == TB_BRANCH ? cfg_next_bb_after_cproj(u->n) : u->n;
-                MachineBB* target = node_to_bb(ctx, succ);
-                bool is_target_spill = target->start_time >= pos;
-
-                uintptr_t fwd = (uintptr_t) nl_table_get(&ra.fwd_table, (void*) n->gvn);
-                uintptr_t gvn = fwd ? fwd : n->gvn;
-
-                if (set_get(target->live_in, gvn) && is_mbb_spill != is_target_spill) {
-                    if (is_mbb_spill) { // REG -> SPILL is done at the target's start
-
-                    } else {            // SPILL -> REG is done at the source's end
-                    }
-                }
-                __debugbreak();
-            }
-        }
-    }
-    #endif
 
     // reload before next use that requires the original mask
     if (!reg_mask_is_not_empty(new_mask) && new_mask->may_spill) {

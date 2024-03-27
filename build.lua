@@ -51,7 +51,7 @@ local modules = {
 			"tb/src/libtb.c",
 			-- archictectures
 			"tb/src/x64/x64_target.c", "tb/src/aarch64/aarch64_target.c", "tb/src/mips/mips_target.c", "tb/src/wasm/wasm_target.c"
-		}, flags="-I tb/include -DCUIK_USE_TB -DTB_HAS_X64 -DTB_HAS_WASM", deps={"common"}
+		}, flags="-I tb/include -DCUIK_USE_TB -DTB_HAS_X64", deps={"common"}
 	},
 	-- executables:
 	--   Cuik command line

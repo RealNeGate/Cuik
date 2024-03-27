@@ -811,6 +811,21 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return rm;
         }
 
+        case TB_VA_START: {
+            assert(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
+
+            // on Win64 va_start just means whatever is one parameter away from
+            // the parameter you give it (plus in Win64 the parameters in the stack
+            // are 8bytes, no fanciness like in SysV):
+            // void printf(const char* fmt, ...) {
+            //     va_list args;
+            //     va_start(args, fmt); // args = ((char*) &fmt) + 8;
+            //     ...
+            // }
+            if (ins) { ins[1] = &TB_REG_EMPTY; }
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
+
         case TB_PHI: {
             if (ins) {
                 FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
@@ -1106,6 +1121,15 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_SPLITMEM:
         case TB_MERGEMEM:
         break;
+
+        case TB_VA_START: {
+            TB_FunctionPrototype* proto = ctx->f->prototype;
+
+            Val dst = op_at(ctx, n);
+            Val ea = val_stack(ctx->stack_usage + ctx->stack_header + proto->param_count*8);
+            inst2(e, LEA, &dst, &ea, TB_X86_QWORD);
+            break;
+        }
 
         case TB_BRANCH: {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);

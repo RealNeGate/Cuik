@@ -95,6 +95,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         .f = f,
         .tmp_count   = node_tmp_count,
         .constraint  = node_constraint,
+        .node_2addr  = node_2addr,
         .flags       = node_flags,
         .num_classes = REG_CLASS_COUNT,
         .emit = {
@@ -104,15 +105,13 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
     };
 
-    init_ctx(&ctx, f->super.module->target_abi);
-    ctx.node_2addr = node_2addr;
-
     if (features == NULL) {
         ctx.features = (TB_FeatureSet){ 0 };
     } else {
         ctx.features = *features;
     }
 
+    init_ctx(&ctx, f->super.module->target_abi);
     TB_Worklist* restrict ws = f->worklist;
 
     // legalize step takes out any of our 16bit and 8bit math ops
