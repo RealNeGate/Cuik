@@ -407,7 +407,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
 
             uint64_t mask = vreg->mask->mask[0];
             printf("v%d:\n", vreg_id);
-            printf("  => %#llx\n", mask);
+            printf("  => %#"PRIx64"\n", mask);
 
             int def_class = vreg->mask->class;
             FOR_N(j, 0, ra.ifg_stride) {
@@ -421,12 +421,12 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                     int fixed = fixed_reg_mask(other->mask);
                     if (fixed >= 0) {
                         mask &= ~(1ull << fixed);
-                        printf("  => %#llx (neighbor precolored R%d)\n", mask, fixed);
+                        printf("  => %#"PRIx64" (neighbor precolored R%d)\n", mask, fixed);
                     } else {
                         int assigned = other->assigned;
                         if (assigned >= 0) {
                             mask &= ~(1ull << assigned);
-                            printf("  => %#llx (we can't be R%d)\n", mask, assigned);
+                            printf("  => %#"PRIx64" (we can't be R%d)\n", mask, assigned);
                         }
                     }
                 }

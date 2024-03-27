@@ -228,6 +228,13 @@ TB_Node* tb_inst_zxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
 }
 
 TB_Node* tb_inst_bitcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
+    // shaw uses bitcast for zero extends sometimes, i don't feel like changing minivm
+    // so i'll just extend the semantics of bitcast to consider zero extension the behavior
+    // when scaling up.
+    if (src->dt.type == TB_INT && dt.type == TB_INT && src->dt.data < dt.data) {
+        return tb_unary(f, TB_ZERO_EXT, dt, src);
+    }
+
     return tb_unary(f, TB_BITCAST, dt, src);
 }
 
@@ -903,7 +910,7 @@ void tb_inst_set_region_name(TB_Function* f, TB_Node* n, ptrdiff_t len, const ch
 void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
     // btw this is unnecessary, i'm just afraid of calling this function
     // on random nodes, technically it would work just fine.
-    assert(n->type == TB_REGION || n->type == TB_PHI || n->type == TB_ROOT || n->type == TB_CALLGRAPH || n->type == TB_MERGEMEM || n->type == TB_RETURN);
+    // assert(n->type == TB_REGION || n->type == TB_PHI || n->type == TB_ROOT || n->type == TB_CALLGRAPH || n->type == TB_MERGEMEM || n->type == TB_RETURN);
 
     if (n->input_count >= n->input_cap) {
         size_t new_cap = n->input_count * 2;

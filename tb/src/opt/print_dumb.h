@@ -47,7 +47,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     } else if (n->type == TB_MACH_PROJ) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->index);
     } else if (n->type == TB_MEMBER_ACCESS) {
-        printf("%lld ", TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
+        printf("%"PRIi64" ", TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
     } else if (n->type == TB_STORE) {
         print_type(n->inputs[3]->dt);
         printf(" ");

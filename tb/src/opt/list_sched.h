@@ -42,8 +42,8 @@ static ArenaArray(ReadyNode) ready_up(ArenaArray(ReadyNode) ready, Set* ready_se
     return ready;
 }
 
-static bool can_ready_user(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, Set* ready_set, TB_Node* n, TB_Node* end) {
-    return !set_get(ready_set, n->gvn) && n != end && f->scheduled[n->gvn] == bb && is_node_ready(f, ws, bb, n);
+static bool can_ready_user(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, Set* ready_set, TB_Node* n) {
+    return !set_get(ready_set, n->gvn) && f->scheduled[n->gvn] == bb && is_node_ready(f, ws, bb, n);
 }
 
 void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetPriority get_prio) {
@@ -88,6 +88,12 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         }
     }
 
+    TB_Node* cmp = NULL;
+    if (end->type == TB_BRANCH && f->scheduled[end->inputs[1]->gvn] == bb && end->inputs[1]->users->next == NULL &&
+        end->inputs[1]->type != TB_PROJ && end->inputs[1]->type != TB_MACH_PROJ) {
+        cmp = end->inputs[1];
+    }
+
     // btw worklist has the final schedule
     bool busy = false;
     while (aarray_length(active) > 0 || aarray_length(ready) > 0) {
@@ -125,17 +131,17 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             aarray_remove(active, i);
             TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: RETIRE   ", cycle), tb_print_dumb_node(NULL, n), printf("\n"));
 
-            if (n != end) {
+            if (n != end && n != cmp) {
                 FOR_USERS(u, n) {
                     TB_Node* un = USERN(u);
                     if (un->type == TB_PROJ || un->type == TB_MACH_PROJ) {
                         // projections are where all the real users ended up
                         FOR_USERS(proj_u, un) {
-                            if (can_ready_user(f, ws, bb, &ready_set, USERN(proj_u), end)) {
+                            if (USERN(proj_u) != end && USERN(proj_u) != cmp && can_ready_user(f, ws, bb, &ready_set, USERN(proj_u))) {
                                 ready = ready_up(ready, &ready_set, USERN(proj_u), get_prio(f, n, USERN(proj_u)));
                             }
                         }
-                    } else if (can_ready_user(f, ws, bb, &ready_set, un, end)) {
+                    } else if (un != end && un != cmp && can_ready_user(f, ws, bb, &ready_set, un)) {
                         ready = ready_up(ready, &ready_set, un, get_prio(f, n, un));
                     }
                 }
@@ -143,6 +149,13 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         }
     }
 
+    if (cmp) {
+        TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, cmp), printf("\n"));
+        worklist_push(ws, cmp);
+        cycle += get_lat(f, cmp);
+    }
+
+    TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, end), printf("\n"));
     worklist_push(ws, end);
     tb_arena_restore(tmp_arena, sp);
 }

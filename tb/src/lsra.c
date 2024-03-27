@@ -1,6 +1,7 @@
 // Linear scan register allocator:
 //   https://ssw.jku.at/Research/Papers/Wimmer04Master/Wimmer04Master.pdf
 #include "codegen.h"
+#include <limits.h>
 
 #define FOREACH_SET(it, set) \
 FOR_N(_i, 0, ((set).capacity + 63) / 64) FOR_BIT(it, _i*64, (set).data[_i])
@@ -413,6 +414,11 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                         add_range(&ra, in_def, bb_start, use_time);
                         // add_use_pos(&ra, in_def, use_time, in_mask->may_spill);
+                    }
+
+                    if (n->type == TB_MACH_MOVE) {
+                        TB_Node* in = n->inputs[1];
+                        ctx->vregs[ctx->vreg_map[in->gvn]].hint_vreg = vreg_id;
                     }
                 }
             }

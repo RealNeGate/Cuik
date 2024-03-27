@@ -251,14 +251,79 @@ void tb_builder_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_CharUn
     }
 
     TB_Node* n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
-    set_input(f, n, f->trace.bot_ctrl, 0);
+    set_input(f, n, g->bot_ctrl, 0);
     set_input(f, n, g->vals[mem_var], 1);
     set_input(f, n, addr, 2);
     set_input(f, n, val, 3);
     TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = alignment);
 
-    // assign ROOT memory
     g->vals[mem_var] = n;
+}
+
+void tb_builder_atomic_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, int32_t offset, TB_MemoryOrder order) {
+    TB_Function* f = g->f;
+    TB_Node* addr = pop(g);
+    if (offset) {
+        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
+        set_input(f, n, addr, 1);
+        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
+        addr = n;
+    }
+
+    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_LOAD, TB_TYPE_TUPLE, 3, sizeof(TB_NodeAtomic));
+    if (ctrl_dep) {
+        set_input(f, n, g->bot_ctrl, 0);
+    }
+    set_input(f, n, g->vals[mem_var], 1);
+    set_input(f, n, addr, 2);
+    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
+
+    g->vals[mem_var] = tb__make_proj(f, TB_TYPE_MEMORY, n, 0);
+    push(g, tb__make_proj(f, dt, n, 1));
+}
+
+void tb_builder_atomic_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_MemoryOrder order) {
+    TB_Function* f = g->f;
+    TB_Node* val  = pop(g);
+    TB_Node* addr = pop(g);
+    if (offset) {
+        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
+        set_input(f, n, addr, 1);
+        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
+        addr = n;
+    }
+
+    TB_Node* n = tb_alloc_node(f, TB_ATOMIC_XCHG, TB_TYPE_TUPLE, 4, sizeof(TB_NodeAtomic));
+    set_input(f, n, g->bot_ctrl, 0);
+    set_input(f, n, g->vals[mem_var], 1);
+    set_input(f, n, addr, 2);
+    set_input(f, n, val, 3);
+    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
+
+    g->vals[mem_var] = tb__make_proj(f, TB_TYPE_MEMORY, n, 0);
+    tb__make_proj(f, val->dt, n, 1);
+}
+
+void tb_builder_atomic_rmw(TB_GraphBuilder* g, int mem_var, int32_t offset, int op, TB_MemoryOrder order) {
+    TB_Function* f = g->f;
+    TB_Node* val  = pop(g);
+    TB_Node* addr = pop(g);
+    if (offset) {
+        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
+        set_input(f, n, addr, 1);
+        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
+        addr = n;
+    }
+
+    TB_Node* n = tb_alloc_node(f, op, TB_TYPE_TUPLE, 4, sizeof(TB_NodeAtomic));
+    set_input(f, n, g->bot_ctrl, 0);
+    set_input(f, n, g->vals[mem_var], 1);
+    set_input(f, n, addr, 2);
+    set_input(f, n, val,  3);
+    TB_NODE_SET_EXTRA(n, TB_NodeAtomic, .order = order, .order2 = TB_MEM_ORDER_SEQ_CST);
+
+    g->vals[mem_var] = tb__make_proj(f, TB_TYPE_MEMORY, n, 0);
+    push(g, tb__make_proj(f, val->dt, n, 1));
 }
 
 void tb_builder_debugbreak(TB_GraphBuilder* g) {

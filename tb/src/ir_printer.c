@@ -161,17 +161,21 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
     }
 }
 
-static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, int index) {
+static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, int index, bool mach) {
     switch (n->type) {
         case TB_ROOT: {
-            if (index == 0) {
-                P("ctrl");
-            } else if (index == 1) {
-                P("mem");
-            } else if (index == 2) {
-                P("rpc");
+            if (mach) {
+                P("%c", 'A'+index);
             } else {
-                P("%c", 'a'+(index - 3));
+                if (index == 0) {
+                    P("ctrl");
+                } else if (index == 1) {
+                    P("mem");
+                } else if (index == 2) {
+                    P("rpc");
+                } else {
+                    P("%c", 'a'+(index - 3));
+                }
             }
             break;
         }
@@ -250,9 +254,26 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
         FOR_N(i, 0, limit) {
             if (projs[i] != NULL) {
                 if (outs) P("|");
-
                 P("<p%zu>", i);
-                print_proj(callback, user_data, n, i);
+                print_proj(callback, user_data, n, i, false);
+                outs++;
+            }
+        }
+
+        limit = 0;
+        FOR_USERS(u, n) {
+            if (USERN(u)->type == TB_MACH_PROJ) {
+                int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                if (limit < index+1) limit = index+1;
+                projs[index] = USERN(u);
+            }
+        }
+
+        FOR_N(i, 0, limit) {
+            if (projs[i] != NULL) {
+                if (outs) P("|");
+                P("<m%zu>", i);
+                print_proj(callback, user_data, n, i, true);
                 outs++;
             }
         }
@@ -329,9 +350,11 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
             color = "blue";
         }
 
-        if (in->type == TB_PROJ) {
+        if (in->type == TB_MACH_PROJ) {
             int index = TB_NODE_GET_EXTRA_T(in, TB_NodeProj)->index;
-
+            P("; r%u:m%d -> r%u:i%zu [color=%s]", in->inputs[0]->gvn, index, n->gvn, i, color);
+        } else if (in->type == TB_PROJ) {
+            int index = TB_NODE_GET_EXTRA_T(in, TB_NodeProj)->index;
             P("; r%u:p%d -> r%u:i%zu [color=%s]", in->inputs[0]->gvn, index, n->gvn, i, color);
         } else {
             P("; r%u -> r%u:i%zu [color=%s]", in->gvn, n->gvn, i, color);
@@ -350,7 +373,7 @@ void tb_print_dot(TB_Function* f, TB_PrintCallback callback, void* user_data) {
     for (size_t i = 0; i < dyn_array_length(ws.items); i++) {
         TB_Node* n = ws.items[i];
         FOR_USERS(u, n) { worklist_push(&ws, USERN(u)); }
-        if (n->type != TB_PROJ) { print_graph_node(f, callback, user_data, i, n); }
+        if (n->type != TB_PROJ && n->type != TB_MACH_PROJ) { print_graph_node(f, callback, user_data, i, n); }
     }
 
     worklist_free(&ws);
