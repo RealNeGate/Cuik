@@ -364,12 +364,12 @@ void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void tb__gvn_remove(TB_Function* f, TB_Node* n);
 
-// Scheduler's cost model crap
+// Scheduler's cost model crap (talk about these in codegen_impl.h)
 typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n);
-typedef int (*TB_GetPriority)(TB_Function* f, TB_Node* n, TB_Node* prev);
+typedef uint64_t (*TB_GetUnitMask)(TB_Function* f, TB_Node* n);
 
 // Local scheduler
-void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetPriority get_prio);
+void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count);
 void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb);
 
 // Global scheduler

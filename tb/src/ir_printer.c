@@ -116,8 +116,8 @@ const char* tb_node_get_name(TB_Node* n) {
 
         case TB_MACH_MOVE:  return "mach_move";
         case TB_MACH_COPY:  return "mach_copy";
-        case TB_MACH_LOCAL: return "mach_local";
         case TB_MACH_PROJ:  return "mach_proj";
+        case TB_MACH_FRAME_PTR: return "mach_frameptr";
 
         default: {
             int family = n->type / 0x100;

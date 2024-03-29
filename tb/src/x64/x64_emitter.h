@@ -39,7 +39,7 @@ static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val*
 
         EMIT1(e, mod_rx_rm(mod, rx, needs_index ? RSP : base));
         if (needs_index) {
-            EMIT1(e, mod_rx_rm(scale, base == RSP ? RSP : index, base));
+            EMIT1(e, mod_rx_rm(scale, index >= 0 ? index : RSP, base));
         }
 
         if (mod == MOD_INDIRECT_DISP8) {

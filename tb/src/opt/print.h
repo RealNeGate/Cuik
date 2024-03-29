@@ -442,12 +442,6 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     case TB_MACH_MOVE:
                     break;
 
-                    case TB_MACH_LOCAL: {
-                        TB_NodeMachLocal* local = TB_NODE_GET_EXTRA(n);
-                        printf(" !pos(BP - %d)", local->disp);
-                        break;
-                    }
-
                     default: {
                         int family = n->type / 0x100;
                         if (family == 0) {

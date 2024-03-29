@@ -147,6 +147,7 @@ struct Ctx {
     TB_Module* module;
     TB_Function* f;
     TB_FeatureSet features;
+    TB_Node* frame_ptr;
 
     // user callbacks
     TmpCount tmp_count;
@@ -220,7 +221,7 @@ void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n);
 
 static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {
-    return a == b ? false : tb__reg_mask_meet(ctx, a, b) == b;
+    return a == b ? false : tb__reg_mask_meet(ctx, a, b) != a;
 }
 
 static VReg* vreg_at(Ctx* ctx, int id)       { return id > 0 ? &ctx->vregs[id] : NULL; }

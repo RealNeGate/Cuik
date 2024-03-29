@@ -4,21 +4,55 @@
 
 #define COMMENT(...) (e->has_comments ? tb_emit_comment(e, ctx->f->tmp_arena, __VA_ARGS__) : (void)0)
 
-// Implemented by the target, go read the mips_target.c docs on this.
+// Instruction selection:
+//   returns an equivalent but machine-friendly node (one you're willing to
+//   use during RA & emit).
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n);
+
+// RA constraints:
+//   TODO
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
+//   these are input edges to a node which do not have a register bound, they
+//   can be used to define clobbers or scratch depending on if they're later
+//   defined as fixed RegMasks or not.
 static int node_tmp_count(Ctx* restrict ctx, TB_Node* n);
-static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg);
-static int node_latency(TB_Function* f, TB_Node* n);
-static int node_priority(TB_Function* f, TB_Node* n, TB_Node* prev);
-static int node_2addr(TB_Node* n);
+//   returns true if it clobbers the FLAGS register.
 static bool node_flags(Ctx* ctx, TB_Node* n);
+//   when we represent 2addr ops in the SSA, we define which edge is potentially
+//   shared such that lifetimes don't freak out about the fact that there's a
+//   hypothetical move before the op (which means that it'll interfere with its
+//   own inputs).
+//
+//   return -1 if it's not a 2addr and anything else to represent which edge
+//   doesn't alias the dst.
+static int node_2addr(TB_Node* n);
+
+// Code emit:
+//   finally write bytes, this is done post-RA so you're expected to use the VReg data
+//   to know which regs you were assigned.
+static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg);
+//   i never actually add "goto" nodes to the graph, they're just implied and this is
+//   the function responsible for that.
 static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ);
+//   this is where I recommend emitting prologue bytes.
+static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n);
+//   this is called AFTER the emitting of epilogues, those are emitted as normal
+//   nodes. An example use of mine is NOP padding, idk do whatever, emitting is done.
+static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e);
+//   called at the start of each BB, it's mostly for bookkeeping about where labels
+//   are placed.
+static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb);
+
+// Scheduling bits:
+//   simple latency until the results of a node are useful (list scheduler will
+//   generally prioritize dispatching higher latency ops first).
+static int node_latency(TB_Function* f, TB_Node* n);
+//   on VLIWs it's important that we keep track of which functional units a specific
+//   node can even run on, use the bits to represent that (at most you can make 64
+//   functional units in the current design but i don't think i need more than 10 rn)
+static uint64_t node_unit_mask(TB_Function* f, TB_Node* n);
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
-static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n);
-static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e);
-static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb);
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
 
 static const char* reg_class_name(int class) {
@@ -128,6 +162,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         worklist_alloc(&walker_ws, f->node_count);
         worklist_clear(ws);
 
+        // pointer math around stack slots will refer to this
+        ctx.frame_ptr = tb_alloc_node(f, TB_MACH_FRAME_PTR, TB_TYPE_PTR, 1, 0);
+        set_input(f, ctx.frame_ptr, f->root_node, 0);
+
         // bottom-up rewrite:
         //   we keep the visited bits set once we've rewritten a node, unlike most worklist usage
         //   which unsets a bit once it's popped from the items array.
@@ -156,6 +194,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 }
             }
             worklist_free(&walker_ws);
+        }
+
+        if (ctx.frame_ptr->users == NULL) {
+            tb_kill_node(f, ctx.frame_ptr);
         }
 
         // dead node elim
@@ -239,7 +281,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             // tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
             CUIK_TIMED_BLOCK("local sched") {
-                tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency, node_priority);
+                tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency, node_unit_mask, FUNCTIONAL_UNIT_COUNT);
             }
 
             // a bit of slack for spills

@@ -80,6 +80,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_ROOT:
         case TB_RETURN:
         case TB_MACH_MOVE:
+        case TB_MACH_FRAME_PTR:
         return 0;
 
         case TB_SPLITMEM:
@@ -131,9 +132,6 @@ static size_t extra_bytes(TB_Node* n) {
 
         case TB_MACH_COPY:
         return sizeof(TB_NodeMachCopy);
-
-        case TB_MACH_LOCAL:
-        return sizeof(TB_NodeMachLocal);
 
         case TB_MACH_PROJ:
         return sizeof(TB_NodeMachProj);

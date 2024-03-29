@@ -416,6 +416,11 @@ TB_Node* tb_inst_cstring(TB_Function* f, const char* str) {
 }
 
 TB_Node* tb_inst_array_access(TB_Function* f, TB_Node* base, TB_Node* index, int64_t stride) {
+    if (index->type == TB_INTEGER_CONST) {
+        uint64_t x = TB_NODE_GET_EXTRA_T(index, TB_NodeInt)->value;
+        return tb_inst_member_access(f, base, x * stride);
+    }
+
     TB_Node* n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 3, sizeof(TB_NodeArray));
     set_input(f, n, base, 1);
     set_input(f, n, index, 2);

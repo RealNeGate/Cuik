@@ -368,8 +368,12 @@ struct TB_Function {
     size_t param_count;
     TB_Node** params;
 
-    TB_Arena* arena; // stores nodes, uses & lattice elems.
-    TB_Arena* tmp_arena; // all the random allocs within passes
+    struct {
+        // stores nodes, user lists & lattice elems.
+        TB_Arena* arena;
+        // all the random allocs within passes
+        TB_Arena* tmp_arena;
+    };
 
     size_t node_count;
     TB_Node* root_node;

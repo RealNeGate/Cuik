@@ -391,7 +391,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data), lattice_int_max(n->dt.data), .widen = INT_WIDEN_LIMIT } });
     }
 
-    Lattice* l = &TOP_IN_THE_SKY;
+    Lattice* l = old;
     FOR_N(i, 1, n->input_count) {
         Lattice* ctrl = latuni_get(f, r->inputs[i - 1]);
         if (ctrl == &CTRL_IN_THE_SKY) {
@@ -401,12 +401,12 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     }
 
     // downward progress will widen...
-    if (old != l && lattice_meet(f, old, l) == l) {
+    Lattice* glb = lattice_meet(f, old, l);
+    if (old != l && glb == l) {
         Lattice new_l = *l;
-        new_l._int.widen = old->_int.widen + 1;
+        new_l._int.widen = TB_MAX(old->_int.widen, l->_int.widen) + 1;
         return lattice_intern(f, new_l);
     }
-
     return l;
 }
 
@@ -1082,6 +1082,8 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
             int ui      = USERI(u);
             tb_assert(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
 
+            tb__gvn_remove(f, un);
+
             // set_input will delete 'use' so we can't use it afterwards
             User* next = u->next;
             set_input(f, un, new_n, ui);
@@ -1097,28 +1099,19 @@ void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
 
 void tb_opt_dump_stats(TB_Function* f) {
     #if TB_OPTDEBUG_STATS
-    TB_Worklist* ws = f->worklist;
-    CUIK_TIMED_BLOCK("push_all_nodes") {
-        worklist_test_n_set(ws, f->root_node);
-        dyn_array_put(ws->items, f->root_node);
-
-        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-            TB_Node* n = ws->items[i];
-            FOR_USERS(use, n) { worklist_push(ws, USERN(use)); }
-        }
-    }
-
     int total_constants = f->stats.constants + f->stats.opto_constants;
-    int final_count = worklist_count(ws);
+    int final_count = f->node_count;
     double factor = ((double) final_count / (double) f->stats.initial) * 100.0;
-
-    worklist_clear(ws);
 
     printf("%s: stats:\n", f->super.name);
     printf("  %4d   -> %4d nodes (%.2f%%)\n", f->stats.initial, final_count, factor);
     printf("  %4d GVN hit    %4d GVN attempts\n", f->stats.gvn_hit, f->stats.gvn_tries);
     printf("  %4d peepholes  %4d rewrites    %4d identities\n", f->stats.peeps, f->stats.rewrites, f->stats.identities);
     printf("  %4d constants  %4d of which were optimistic\n", total_constants, f->stats.opto_constants);
+
+    #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
+    printf("  %4d ticks\n", f->stats.time);
+    #endif
     #endif
 }
 

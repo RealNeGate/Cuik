@@ -442,7 +442,8 @@ typedef enum TB_NodeTypeEnum {
     // does the phi move
     TB_MACH_MOVE,
     TB_MACH_COPY,
-    TB_MACH_LOCAL,
+    // just... it, idk, it's the frame ptr
+    TB_MACH_FRAME_PTR,
     // this is a hack for me to add nodes which need to be scheduled directly
     // after a tuple (like a projection) but don't really act like projections
     // in any other context.
@@ -618,12 +619,6 @@ typedef struct { // TB_MACH_COPY
     RegMask* def;
 } TB_NodeMachCopy;
 
-typedef struct { // TB_MACH_LOCAL
-    const char* name;
-    TB_DebugType* type;
-    int disp;
-} TB_NodeMachLocal;
-
 typedef struct { // TB_PROJ
     int index;
 } TB_NodeProj;
@@ -653,6 +648,9 @@ typedef struct {
 
     // 0 if local is used beyond direct memops, 1...n as a unique alias name
     int alias_index;
+
+    // used when machine-ifying it
+    int stack_pos;
 
     // dbg info
     char* name;
@@ -1436,7 +1434,11 @@ TB_API void tb_builder_if(TB_GraphBuilder* g, int total_hits, int taken);
 //   ( -- )
 TB_API void tb_builder_else(TB_GraphBuilder* g);
 //   ( -- )
-TB_API void tb_builder_endif(TB_GraphBuilder* g);
+TB_API void tb_builder_loop(TB_GraphBuilder* g);
+//   ( -- )
+TB_API void tb_builder_block(TB_GraphBuilder* g);
+//   ( -- )
+TB_API void tb_builder_end(TB_GraphBuilder* g);
 //   ( ... -- )
 //
 //   technically TB has multiple returns, in practice it's like 2 regs before
@@ -1446,14 +1448,6 @@ TB_API void tb_builder_ret(TB_GraphBuilder* g, int count);
 TB_API void tb_builder_br(TB_GraphBuilder* g, int depth);
 //   ( a -- )
 TB_API void tb_builder_br_if(TB_GraphBuilder* g, int depth);
-//   ( -- )
-TB_API void tb_builder_loop(TB_GraphBuilder* g);
-//   ( -- )
-TB_API void tb_builder_endloop(TB_GraphBuilder* g);
-//   ( -- )
-TB_API void tb_builder_block(TB_GraphBuilder* g);
-//   ( -- )
-TB_API void tb_builder_endblock(TB_GraphBuilder* g);
 
 ////////////////////////////////
 // New optimizer API
@@ -1496,7 +1490,7 @@ TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp);
 //   output goes at the top of the code_arena, feel free to place multiple functions
 //   into the same code arena (although arenas aren't thread-safe you'll want one per thread
 //   at least)
-TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
+TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
 
 // interprocedural optimizer iter
 TB_API bool tb_module_ipo(TB_Module* m);
