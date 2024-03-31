@@ -1,7 +1,7 @@
 
 void tb_print_dumb_edge(Lattice** types, TB_Node* n) {
     if (n) {
-        if (n->type == TB_PROJ) {
+        if (is_proj(n)) {
             int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
             n = n->inputs[0];
 
@@ -23,7 +23,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
             // print with multiple returns
             TB_Node* projs[32] = { 0 };
             FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_PROJ) {
+                if (is_proj(USERN(u))) {
                     int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                     projs[index] = USERN(u);
                 }
@@ -42,7 +42,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         }
     }
     printf(" = %s ", tb_node_get_name(n));
-    if (n->type == TB_PROJ) {
+    if (is_proj(n)) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
     } else if (n->type == TB_MACH_PROJ) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->index);
@@ -95,7 +95,7 @@ static void dumb_walk(TB_Function* f, Lattice** types, TB_Node* n, uint64_t* vis
     } else {
         FOR_REV_N(i, 0, n->input_count) if (n->inputs[i]) {
             TB_Node* in = n->inputs[i];
-            if (in->type == TB_PROJ) { in = in->inputs[0]; }
+            if (is_proj(in)) { in = in->inputs[0]; }
             dumb_walk(f, types, in, visited);
         }
 

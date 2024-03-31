@@ -13,6 +13,8 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_NULL: return "FREED";
         case TB_UNREACHABLE: return "unreachable";
 
+        case TB_BRANCH_PROJ:   return "br_proj";
+
         case TB_ROOT:   return "root";
         case TB_RETURN: return "return";
         case TB_PROJ:   return "proj";
@@ -161,7 +163,8 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
     }
 }
 
-static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, int index, bool mach) {
+static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, TB_Node* proj, bool mach) {
+    int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
     switch (n->type) {
         case TB_ROOT: {
             if (mach) {
@@ -181,13 +184,11 @@ static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, i
         }
 
         case TB_BRANCH: {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-            if (br->succ_count == 2 && br->keys[0].key == 0) {
-                P("%s", index ? "false" : "true");
-            } else if (index == 0) {
-                P("default");
+            TB_NodeBranchProj* br = TB_NODE_GET_EXTRA(n);
+            if (index == 0) {
+                P("else");
             } else {
-                P("%"PRId64, br->keys[index - 1].key);
+                P("on %"PRId64, br->key);
             }
             break;
         }
@@ -242,7 +243,7 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
         TB_Node* projs[128] = { 0 };
         int limit = 0;
         FOR_USERS(u, n) {
-            if (USERN(u)->type == TB_PROJ) {
+            if (is_proj(USERN(u))) {
                 int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                 if (limit < index+1) limit = index+1;
                 projs[index] = USERN(u);
@@ -255,25 +256,7 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
             if (projs[i] != NULL) {
                 if (outs) P("|");
                 P("<p%zu>", i);
-                print_proj(callback, user_data, n, i, false);
-                outs++;
-            }
-        }
-
-        limit = 0;
-        FOR_USERS(u, n) {
-            if (USERN(u)->type == TB_MACH_PROJ) {
-                int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-                if (limit < index+1) limit = index+1;
-                projs[index] = USERN(u);
-            }
-        }
-
-        FOR_N(i, 0, limit) {
-            if (projs[i] != NULL) {
-                if (outs) P("|");
-                P("<m%zu>", i);
-                print_proj(callback, user_data, n, i, true);
+                print_proj(callback, user_data, n, projs[i], false);
                 outs++;
             }
         }

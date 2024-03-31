@@ -418,7 +418,8 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         TB_Node* ret = n->inputs[1];
 
         // add some callee-saved mach projections
-        int j = 0;
+        int j = 3 + f->prototype->param_count;
+
         uint32_t callee_saved_gpr = ~param_descs[ctx->abi_index].caller_saved_gprs;
         callee_saved_gpr &= ~(1u << RSP);
         if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
@@ -725,67 +726,70 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         TB_NODE_SET_EXTRA(op, X86Cmov, .cc = cc);
         return op;
     } else if (n->type == TB_BRANCH) {
-        // convert an if into a machine-if
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-        assert(br->succ_count == 2 && "TODO");
-
         TB_Node* cond = n->inputs[1];
-        TB_Node* mach_cond = NULL;
-        if (cond->type == x86_setcc) {
-            set_input(f, n, cond->inputs[1], 1);
-            br->keys[0].key = TB_NODE_GET_EXTRA_T(cond, X86Cmov)->cc;
-        } else if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
-            TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cond, TB_NodeCompare)->cmp_dt;
-            TB_Node* a = cond->inputs[1];
-            TB_Node* b = cond->inputs[2];
+        TB_NodeBranchProj* if_br = cfg_if_branch(n);
+        if (if_br) {
+            // If-logic lowering, just generate a FLAGS and make
+            // the branch compare on that instead.
+            TB_Node* mach_cond = NULL;
+            if (cond->type == x86_setcc) {
+                set_input(f, n, cond->inputs[1], 1);
+                if_br->key = TB_NODE_GET_EXTRA_T(cond, X86Cmov)->cc;
+            } else if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
+                TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cond, TB_NodeCompare)->cmp_dt;
+                TB_Node* a = cond->inputs[1];
+                TB_Node* b = cond->inputs[2];
 
-            // starts at 1 since the keys[0] maps to the "falsey" edge
-            int flip = (br->keys[0].key != 0);
-            if (cmp_dt.type == TB_FLOAT) {
-                mach_cond = tb_alloc_node(f, x86_ucomi, TB_TYPE_I8, 5, sizeof(X86MemOp));
-                set_input(f, mach_cond, a, 4);
-                set_input(f, mach_cond, b, 2);
-            } else {
-                if (a->type == TB_INTEGER_CONST && b->type != TB_INTEGER_CONST) {
-                    flip ^= 1;
-                    SWAP(TB_Node*, a, b);
-                }
-
-                mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 5, sizeof(X86MemOp));
-
-                X86MemOp* op_extra = TB_NODE_GET_EXTRA(mach_cond);
-                op_extra->dt = cmp_dt;
-
-                int32_t x;
-                if ((cmp_dt.type == TB_INT || cmp_dt.type == TB_PTR) && try_for_imm32(cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, b, &x)) {
-                    mach_cond->type = x86_cmpimm;
-                    op_extra->imm = x;
+                int flip = (if_br->key != 0);
+                if (cmp_dt.type == TB_FLOAT) {
+                    mach_cond = tb_alloc_node(f, x86_ucomi, TB_TYPE_I8, 5, sizeof(X86MemOp));
+                    set_input(f, mach_cond, a, 4);
+                    set_input(f, mach_cond, b, 2);
                 } else {
-                    set_input(f, mach_cond, b, 4);
-                }
-                set_input(f, mach_cond, a, 2);
-            }
+                    if (a->type == TB_INTEGER_CONST && b->type != TB_INTEGER_CONST) {
+                        flip ^= 1;
+                        SWAP(TB_Node*, a, b);
+                    }
 
-            Cond cc;
-            switch (cond->type) {
-                case TB_CMP_EQ:  cc = E;  break;
-                case TB_CMP_NE:  cc = NE; break;
-                case TB_CMP_SLT: cc = L;  break;
-                case TB_CMP_SLE: cc = LE; break;
-                case TB_CMP_ULT: cc = B;  break;
-                case TB_CMP_ULE: cc = BE; break;
-                case TB_CMP_FLT: cc = B;  break;
-                case TB_CMP_FLE: cc = BE; break;
-                default: tb_unreachable();
+                    mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 5, sizeof(X86MemOp));
+
+                    X86MemOp* op_extra = TB_NODE_GET_EXTRA(mach_cond);
+                    op_extra->dt = cmp_dt;
+
+                    int32_t x;
+                    if ((cmp_dt.type == TB_INT || cmp_dt.type == TB_PTR) && try_for_imm32(cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, b, &x)) {
+                        mach_cond->type = x86_cmpimm;
+                        op_extra->imm = x;
+                    } else {
+                        set_input(f, mach_cond, b, 4);
+                    }
+                    set_input(f, mach_cond, a, 2);
+                }
+
+                Cond cc;
+                switch (cond->type) {
+                    case TB_CMP_EQ:  cc = E;  break;
+                    case TB_CMP_NE:  cc = NE; break;
+                    case TB_CMP_SLT: cc = L;  break;
+                    case TB_CMP_SLE: cc = LE; break;
+                    case TB_CMP_ULT: cc = B;  break;
+                    case TB_CMP_ULE: cc = BE; break;
+                    case TB_CMP_FLT: cc = B;  break;
+                    case TB_CMP_FLE: cc = BE; break;
+                    default: tb_unreachable();
+                }
+                if_br->key = cc ^ flip;
+            } else {
+                mach_cond = tb_alloc_node(f, x86_cmpimm, TB_TYPE_I8, 5, sizeof(X86MemOp));
+                TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt, .imm = if_br->key);
+                set_input(f, mach_cond, cond, 2);
+                if_br->key = E;
             }
-            br->keys[0].key = cc ^ flip;
+            set_input(f, n, mach_cond, 1);
         } else {
-            mach_cond = tb_alloc_node(f, x86_cmpimm, TB_TYPE_I8, 5, sizeof(X86MemOp));
-            TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt, .imm = br->keys[0].key);
-            set_input(f, mach_cond, cond, 2);
-            br->keys[0].key = E;
+            tb_todo();
         }
-        set_input(f, n, mach_cond, 1);
+
         return n;
     }
 
@@ -938,6 +942,7 @@ static bool node_flags(Ctx* restrict ctx, TB_Node* n) {
         case TB_PHI:
         case TB_PROJ:
         case TB_MACH_PROJ:
+        case TB_BRANCH_PROJ:
         case TB_MACH_FRAME_PTR:
         case TB_SPLITMEM:
         case TB_MERGEMEM:
@@ -1005,6 +1010,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         case TB_LOCAL:
+        case TB_BRANCH_PROJ:
         case TB_MACH_FRAME_PTR:
         return &TB_REG_EMPTY;
 
@@ -1375,6 +1381,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_AFFINE_LOOP:
         case TB_NATURAL_LOOP:
         case TB_PROJ:
+        case TB_BRANCH_PROJ:
         case TB_MACH_PROJ:
         case TB_LOCAL:
         case TB_SPLITMEM:
@@ -1394,7 +1401,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             // fill successors
             bool has_default = false;
             FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_PROJ) {
+                if (USERN(u)->type == TB_BRANCH_PROJ) {
                     int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                     TB_Node* succ_n = cfg_next_bb_after_cproj(USERN(u));
 
@@ -1407,8 +1414,9 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 }
             }
 
-            if (br->succ_count == 2) {
-                Cond cc = br->keys[0].key;
+            TB_NodeBranchProj* if_br = cfg_if_branch(n);
+            if (if_br) {
+                Cond cc = if_br->key;
                 if (ctx->fallthrough == succ[0]) {
                     // if flipping avoids a jmp, do that
                     cc ^= 1;

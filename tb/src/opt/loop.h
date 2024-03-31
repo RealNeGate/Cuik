@@ -198,12 +198,11 @@ static bool affine_indvar(TB_Node* n, TB_Node* header) {
 }
 
 static bool find_indvar(TB_Node* header, TB_Node* latch, TB_Node* exit, TB_InductionVar* restrict var) {
-    TB_NodeBranch* br  = TB_NODE_GET_EXTRA(latch);
     bool exit_when_key = TB_NODE_GET_EXTRA_T(exit, TB_NodeProj)->index;
-    assert(br->succ_count == 2);
+    TB_NodeBranchProj* if_br = cfg_if_branch(latch);
+    assert(if_br);
 
     TB_Node* cond = latch->inputs[1];
-
     if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE) {
         // canonicalize compare, this way it's always shaped such that "true" means continue
         TB_NodeTypeEnum type = cond->type;
@@ -211,8 +210,8 @@ static bool find_indvar(TB_Node* header, TB_Node* latch, TB_Node* exit, TB_Induc
         TB_Node* b = cond->inputs[2];
 
         // flip condition
-        if ((exit_when_key && br->keys[0].key == 0) ||
-            (!exit_when_key && br->keys[0].key == 1)) {
+        if ((exit_when_key && if_br->key == 0) ||
+            (!exit_when_key && if_br->key == 1)) {
             if (type == TB_CMP_EQ) { type = TB_CMP_NE; }
             else if (type == TB_CMP_NE) { type = TB_CMP_EQ; }
             else {
@@ -266,7 +265,7 @@ static bool find_indvar(TB_Node* header, TB_Node* latch, TB_Node* exit, TB_Induc
             .cond = cond,
             .phi  = cond,
             .step = TB_NODE_GET_EXTRA_T(cond->inputs[2]->inputs[2], TB_NodeInt)->value,
-            .end_const = br->keys[0].key,
+            .end_const = if_br->key,
             .pred = IND_NE,
             .backwards = false
         };

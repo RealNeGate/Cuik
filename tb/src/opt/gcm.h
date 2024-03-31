@@ -38,6 +38,55 @@ static TB_BasicBlock* find_lca(TB_BasicBlock* a, TB_BasicBlock* b) {
     return a;
 }
 
+// compact & renumber nodes
+void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp) {
+    CUIK_TIMED_BLOCK("compact") {
+        NL_Table forward = { 0 };
+        CUIK_TIMED_BLOCK("find live") {
+            // BFS walk all the nodes
+            worklist_push(ws, f->root_node);
+            for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+                TB_Node* n = ws->items[i];
+                FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+            }
+        }
+
+        CUIK_TIMED_BLOCK("compact IDs") {
+            f->node_count = dyn_array_length(ws->items);
+            if (f->types) {
+                f->type_cap = tb_next_pow2(f->node_count + 16);
+
+                Lattice** new_types = tb_platform_heap_alloc(f->type_cap * sizeof(Lattice*));
+                FOR_N(i, 0, f->type_cap) { new_types[i] = NULL; }
+
+                FOR_N(i, 0, dyn_array_length(ws->items)) {
+                    uint32_t old_gvn = ws->items[i]->gvn;
+                    new_types[i] = f->types[old_gvn];
+                    ws->items[i]->gvn = i;
+                }
+
+                assert(f->root_node->gvn == 0);
+                tb_platform_heap_free(f->types);
+                f->types = new_types;
+            } else {
+                FOR_N(i, 0, dyn_array_length(ws->items)) {
+                    ws->items[i]->gvn = i;
+                }
+            }
+
+            // invalidate all of the GVN table since it hashes with value numbers
+            nl_hashset_clear(&f->gvn_nodes);
+        }
+
+        CUIK_TIMED_BLOCK("move nodes") {
+
+        }
+
+        nl_table_free(forward);
+        worklist_clear(ws);
+    }
+}
+
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
     CUIK_TIMED_BLOCK("renumber") {
         CUIK_TIMED_BLOCK("find live") {

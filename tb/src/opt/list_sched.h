@@ -36,7 +36,6 @@ static bool is_node_ready(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB
 }
 
 // should probably move this out, it's useful elsewhere
-static bool is_proj(TB_Node* n) { return n->type == TB_PROJ || n->type == TB_MACH_PROJ; }
 static ArenaArray(ReadyNode) ready_up(ArenaArray(ReadyNode) ready, Set* ready_set, TB_Node* n, int prio) {
     TB_OPTDEBUG(SCHEDULE)(printf("        READY    "), tb_print_dumb_node(NULL, n), printf("\n"));
     set_put(ready_set, n->gvn);

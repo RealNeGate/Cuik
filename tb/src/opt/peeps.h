@@ -105,6 +105,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     // misc
     [TB_LOOKUP]         = { NULL,              NULL,               value_lookup     },
     [TB_PROJ]           = { NULL,              NULL,               value_proj       },
+    [TB_BRANCH_PROJ]    = { NULL,              NULL,               value_proj       },
     [TB_SELECT]         = { ideal_select,      NULL,               value_select     },
     [TB_PHI]            = { ideal_phi,         identity_phi,       value_phi        },
     // control flow
@@ -128,5 +129,4 @@ bool cfg_is_region(TB_Node* n)       { return n->type >= TB_REGION && n->type <=
 bool cfg_is_natural_loop(TB_Node* n) { return n->type >= TB_NATURAL_LOOP && n->type <= TB_AFFINE_LOOP; }
 bool cfg_is_terminator(TB_Node* n)   { return node_flags[n->type] & NODE_TERMINATOR; }
 bool cfg_is_endpoint(TB_Node* n)     { return node_flags[n->type] & NODE_END; }
-bool cfg_is_fork(TB_Node* n)         { return node_flags[n->type] & NODE_FORK_CTRL; }
 

@@ -32,7 +32,7 @@ X(SUBSYSTEM,   "subsystem",true,  "set windows subsystem (windows only... of cou
 X(ENTRY,       "e",        true,  "set entrypoint")
 // misc
 X(TARGET,      "target",   true,  "change the target system and arch")
-X(THREADS,     "j",        true,  "enabled multithreaded compilation")
+X(THREADS,     "j",        false, "enabled multithreaded compilation")
 X(TIME,        "T",        false, "profile the compile times")
 X(THINK,       "think",    false, "aids in thinking about serious problems")
 // run

@@ -143,18 +143,18 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
             //
             TB_Node* left = region->inputs[0];
             TB_Node* right = region->inputs[1];
-            if (left->type == TB_PROJ && right->type == TB_PROJ &&
+            if (left->type == TB_BRANCH_PROJ && right->type == TB_BRANCH_PROJ &&
                 left->inputs[0]->type == TB_BRANCH && left->inputs[0] == right->inputs[0]) {
                 TB_Node* branch = left->inputs[0];
-                TB_NodeBranch* header_br = TB_NODE_GET_EXTRA(branch);
 
-                if (header_br->succ_count == 2) {
+                TB_NodeBranchProj* header_br = cfg_if_branch(branch);
+                if (header_br) {
                     assert(branch->input_count == 2);
 
                     TB_Node *values[2];
                     FOR_USERS(u, branch) {
                         TB_Node* proj = USERN(u);
-                        if (proj->type == TB_PROJ) {
+                        if (proj->type == TB_BRANCH_PROJ) {
                             int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
                             // the projection needs to exclusively refer to the region,
                             // if not we can't elide those effects here.
@@ -168,11 +168,9 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
                         }
                     }
 
-                    uint64_t falsey = TB_NODE_GET_EXTRA_T(branch, TB_NodeBranch)->keys[0].key;
+                    // TODO(NeGate): handle non-zero falsey
                     TB_Node* cond = branch->inputs[1];
-
-                    // TODO(NeGate): handle non-zero falseys
-                    if (falsey == 0) {
+                    if (header_br->key == 0) {
                         // header -> merge
                         {
                             TB_Node* parent = branch->inputs[0];
@@ -197,7 +195,7 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
         }
 
         if (region->input_count > 2 && n->dt.type == TB_INT) {
-            if (region->inputs[0]->type != TB_PROJ || region->inputs[0]->inputs[0]->type != TB_BRANCH) {
+            if (region->inputs[0]->type != TB_BRANCH_PROJ || region->inputs[0]->inputs[0]->type != TB_BRANCH) {
                 return NULL;
             }
 
@@ -220,7 +218,7 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
 
             // verify we have a really clean looking diamond shape
             FOR_N(i, 0, n->input_count - 1) {
-                if (region->inputs[i]->type != TB_PROJ || region->inputs[i]->inputs[0] != parent) return NULL;
+                if (region->inputs[i]->type != TB_BRANCH_PROJ || region->inputs[i]->inputs[0] != parent) return NULL;
                 if (n->inputs[1 + i]->type != TB_INTEGER_CONST) return NULL;
             }
 
@@ -232,17 +230,18 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
             l->entry_count = br->succ_count;
             FOR_N(i, 0, n->input_count - 1) {
                 TB_Node* k = region->inputs[i];
-                int index = TB_NODE_GET_EXTRA_T(k, TB_NodeProj)->index;
-                assert(index < br->succ_count);
+                assert(k->type == TB_BRANCH_PROJ);
 
-                if (index == 0) {
-                    l->entries[index].key = 0; // default value, doesn't matter
+                TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(k);
+                assert(p->index < br->succ_count);
+                if (p->index == 0) {
+                    l->entries[p->index].key = 0; // default value, doesn't matter
                 } else {
-                    l->entries[index].key = br->keys[index - 1].key;
+                    l->entries[p->index].key = p->key;
                 }
 
                 TB_NodeInt* v = TB_NODE_GET_EXTRA(n->inputs[1 + i]);
-                l->entries[index].val = v->value;
+                l->entries[p->index].val = v->value;
             }
 
             // kill branch, we don't really need it anymore
@@ -261,7 +260,8 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
 
     if (br->succ_count == 2) {
-        if (n->input_count == 2 && br->keys[0].key == 0) {
+        TB_NodeBranchProj* if_br = cfg_if_branch(n);
+        if (if_br && if_br->key == 0) {
             TB_Node* cmp_node = n->inputs[1];
             TB_NodeTypeEnum cmp_type = cmp_node->type;
 
@@ -269,15 +269,17 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
             // if (a && b) A else B => if (a ? b : 0) A else B
             //
             // TODO(NeGate): implement form which works on an arbitrary falsey
-            if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_BRANCH && is_empty_bb(f, n)) {
-                uint64_t falsey = br->keys[0].key;
+            if (n->inputs[0]->type == TB_BRANCH_PROJ && n->inputs[0]->inputs[0]->type == TB_BRANCH && is_empty_bb(f, n)) {
+                TB_NodeBranchProj* br_path = TB_NODE_GET_EXTRA(n->inputs[0]);
+
+                int index = br_path->index;
+                uint64_t falsey = br_path->key;
                 TB_Node* pred_branch = n->inputs[0]->inputs[0];
 
-                int index = TB_NODE_GET_EXTRA_T(n->inputs[0], TB_NodeProj)->index;
-
                 // needs one pred
-                uint64_t pred_falsey;
-                if (is_if_branch(pred_branch, &pred_falsey) && pred_falsey == 0) {
+                TB_NodeBranchProj* pred_if_br = cfg_if_branch(pred_branch);
+                if (pred_if_br && pred_if_br->key == 0) {
+                    uint64_t pred_falsey = pred_if_br->key;
                     TB_NodeBranch* pred_br_info = TB_NODE_GET_EXTRA(pred_branch);
 
                     // check our parent's aux path
@@ -358,7 +360,6 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
                 TB_NODE_SET_EXTRA(new_cmp, TB_NodeCompare, .cmp_dt = TB_NODE_GET_EXTRA_T(cmp_node, TB_NodeCompare)->cmp_dt);
 
                 // flip
-                br->keys[0].taken = br->total_hits - br->keys[0].taken;
                 FOR_USERS(u, n) {
                     TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
                     p->index = !p->index;
@@ -373,11 +374,10 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
             if ((cmp_type == TB_CMP_NE || cmp_type == TB_CMP_EQ) && cmp_node->inputs[2]->type == TB_INTEGER_CONST) {
                 uint64_t imm = TB_NODE_GET_EXTRA_T(cmp_node->inputs[2], TB_NodeInt)->value;
                 set_input(f, n, cmp_node->inputs[1], 1);
-                br->keys[0].key = imm;
+                if_br->key = imm;
 
                 // flip successors
                 if (cmp_type == TB_CMP_EQ) {
-                    br->keys[0].taken = br->total_hits - br->keys[0].taken;
                     FOR_USERS(u, n) {
                         TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
                         p->index = !p->index;
@@ -404,7 +404,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     }
 
     FOR_USERS(u, n) {
-        if (USERN(u)->type == TB_PROJ) {
+        if (is_proj(USERN(u))) {
             int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
             if (index > 0) { l->elems[index] = lattice_from_dt(f, USERN(u)->dt); }
         }
@@ -438,15 +438,12 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
     }
 
     if (key->tag == LATTICE_INT && key->_int.min == key->_int.max) {
-        int64_t key_const = key->_int.max;
+        int64_t key_const = key->_int.min;
         ptrdiff_t taken = 0;
 
-        FOR_N(i, 0, br->succ_count - 1) {
-            int64_t case_key = br->keys[i].key;
-            if (key_const == case_key) {
-                taken = i + 1;
-                break;
-            }
+        FOR_USERS(u, n) {
+            TB_NodeBranchProj* path = TB_NODE_GET_EXTRA(USERN(u));
+            if (key_const == path->key) { taken = path->index; break; }
         }
 
         return lattice_branch_goto(f, br->succ_count, taken);
@@ -460,7 +457,7 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
             TB_Node* end = USERN(u);
             if (same_sorta_branch(end, n)) {
                 FOR_USERS(succ_user, end) {
-                    assert(USERN(succ_user)->type == TB_PROJ);
+                    assert(USERN(succ_user)->type == TB_BRANCH_PROJ);
                     int index = TB_NODE_GET_EXTRA_T(USERN(succ_user), TB_NodeProj)->index;
                     TB_Node* succ = cfg_next_bb_after_cproj(USERN(succ_user));
 
@@ -488,7 +485,7 @@ static TB_Node* identity_safepoint(TB_Function* f, TB_Node* n) {
 static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
     // fold out diamond shaped patterns
     TB_Node* same = n->inputs[0];
-    if (same->type == TB_PROJ && same->inputs[0]->type == TB_BRANCH) {
+    if (same->type == TB_BRANCH_PROJ && same->inputs[0]->type == TB_BRANCH) {
         same = same->inputs[0];
 
         // if it has phis... quit
@@ -497,7 +494,7 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
         }
 
         FOR_N(i, 1, n->input_count) {
-            if (n->inputs[i]->type != TB_PROJ || n->inputs[i]->inputs[0] != same) {
+            if (n->inputs[i]->type != TB_BRANCH_PROJ || n->inputs[i]->inputs[0] != same) {
                 return n;
             }
         }

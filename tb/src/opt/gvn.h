@@ -13,10 +13,8 @@ static size_t extra_bytes(TB_Node* n) {
             return sizeof(TB_NodeLookup) + (l->entry_count * sizeof(TB_LookupEntry));
         }
 
-        case TB_BRANCH: {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-            return sizeof(TB_NodeBranch) + ((br->succ_count - 1) * sizeof(int64_t));
-        }
+        case TB_BRANCH:
+        return sizeof(TB_NodeBranch);
 
         case TB_SAFEPOINT_POLL:
         return sizeof(TB_NodeSafepoint);
@@ -129,6 +127,9 @@ static size_t extra_bytes(TB_Node* n) {
 
         case TB_PROJ:
         return sizeof(TB_NodeProj);
+
+        case TB_BRANCH_PROJ:
+        return sizeof(TB_NodeBranchProj);
 
         case TB_MACH_COPY:
         return sizeof(TB_NodeMachCopy);

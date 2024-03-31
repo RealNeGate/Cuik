@@ -171,23 +171,9 @@ static bool is_empty_bb(TB_Function* f, TB_Node* end) {
 }
 
 static bool same_sorta_branch(TB_Node* n, TB_Node* n2) {
-    assert(n->type == TB_BRANCH && n2->type == TB_BRANCH);
-    TB_NodeBranch* br  = TB_NODE_GET_EXTRA(n);
-    TB_NodeBranch* br2 = TB_NODE_GET_EXTRA(n2);
-    if (br->succ_count != br2->succ_count) { return false; }
-    FOR_N(i, 0, br->succ_count - 1) {
-        if (br->keys[i].key != br2->keys[i].key) { return false; }
-    }
-    return true;
-}
-
-static bool is_if_branch(TB_Node* n, uint64_t* falsey) {
-    if (n->type == TB_BRANCH && n->input_count == 2 && TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->succ_count == 2) {
-        *falsey = TB_NODE_GET_EXTRA_T(n, TB_NodeBranch)->keys[0].key;
-        return true;
-    }
-
-    return false;
+    TB_NodeBranchProj* br  = cfg_if_branch(n);
+    TB_NodeBranchProj* br2 = cfg_if_branch(n2);
+    return br && br2 && br->key == br2->key;
 }
 
 // incremental dominators, plays nice with peepholes and has
@@ -322,7 +308,7 @@ static Lattice* value_root(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_proj(TB_Function* f, TB_Node* n) {
-    assert(n->type == TB_PROJ);
+    assert(is_proj(n));
     Lattice* l = latuni_get(f, n->inputs[0]);
     if (l == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
@@ -764,7 +750,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                         set_input(f, use_n, last, use_i);
                     }
                     use_n->input_count--;
-                } else if (use_n->type == TB_PROJ) {
+                } else if (is_proj(use_n)) {
                     TB_Node* replacement = use_n->dt.type == TB_CONTROL
                         ? dead
                         : make_poison(f, use_n->dt);
@@ -836,7 +822,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                 User* u = n->users;
                 while (u != NULL) {
                     TB_Node* un = USERN(u);
-                    if (un->type == TB_PROJ) {
+                    if (is_proj(un)) {
                         assert(USERI(u) == 0);
                         int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
                         TB_Node* in = l->elems[index] == &CTRL_IN_THE_SKY ? ctrl : dead;
@@ -877,7 +863,8 @@ static void print_lattice(Lattice* l) {
         case LATTICE_XNAN32:   printf("~NaN32");                    break;
         case LATTICE_NAN64:    printf("NaN64");                     break;
         case LATTICE_XNAN64:   printf("~NaN64");                    break;
-        case LATTICE_PTR:      printf("allptr");                    break;
+        case LATTICE_ALLPTR:   printf("allptr");                    break;
+        case LATTICE_ANYPTR:   printf("anyptr");                    break;
         case LATTICE_PTRCON:   printf("%s", l->_ptr->name);         break;
         case LATTICE_ANYMEM:   printf("anymem");                    break;
         case LATTICE_ALLMEM:   printf("allmem");                    break;
@@ -1135,202 +1122,6 @@ void tb_pass_sroa(TB_Function* f) {
     }
 }
 
-typedef union {
-    uint64_t i;
-    User* ctrl;
-} Value;
-
-typedef struct {
-    TB_Worklist* ws;
-    Value* vals;
-    bool* ready;
-    int phi_i;
-} Interp;
-
-static Value* in_val(Interp* vm, TB_Node* n, int i) { return &vm->vals[n->inputs[i]->gvn]; }
-static Value eval(Interp* vm, TB_Node* n) {
-    printf("  EVAL v%u\n", n->gvn);
-    switch (n->type) {
-        case TB_INTEGER_CONST: return (Value){ .i = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value };
-
-        case TB_ADD: {
-            uint64_t a = in_val(vm, n, 1)->i;
-            uint64_t b = in_val(vm, n, 2)->i;
-            return (Value){ .i = a + b };
-        }
-
-        case TB_CMP_SLT: {
-            uint64_t a = in_val(vm, n, 1)->i;
-            uint64_t b = in_val(vm, n, 2)->i;
-            return (Value){ .i = a < b };
-        }
-
-        case TB_BRANCH: {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-            uint64_t key = in_val(vm, n, 1)->i;
-            int index = 0;
-
-            FOR_N(i, 0, br->succ_count - 1) {
-                if (key == br->keys[i].key) {
-                    index = i + 1;
-                    break;
-                }
-            }
-
-            User* ctrl = proj_with_index(n, index);
-            return (Value){ .ctrl = ctrl };
-        }
-
-        case TB_REGION:
-        case TB_NATURAL_LOOP:
-        case TB_AFFINE_LOOP:
-        return (Value){ .ctrl = cfg_next_user(n) };
-
-        case TB_PROJ:
-        if (n->dt.type == TB_MEMORY) {
-            return (Value){ .i = 0 };
-        } else if (n->dt.type == TB_CONTROL) {
-            return (Value){ .ctrl = cfg_next_user(n) };
-        } else {
-            tb_todo();
-        }
-
-        // control nodes
-        case TB_ROOT: {
-            uint64_t v = in_val(vm, n, 3)->i;
-
-            printf("END %"PRIu64"\n", v);
-            return (Value){ .ctrl = NULL };
-        }
-
-        default: tb_todo();
-    }
-}
-
-static bool is_ready(Interp* vm, TB_Node* n) {
-    FOR_N(i, 1, n->input_count) {
-        if (!vm->ready[n->inputs[i]->gvn]) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-static void dirty_deps(Interp* vm, TB_Node* n) {
-    printf("    DIRTY v%u\n", n->gvn);
-    vm->ready[n->gvn] = false;
-
-    FOR_USERS(u, n) {
-        TB_Node* un = USERN(u);
-        if (un->type != TB_PHI && vm->ready[un->gvn]) {
-            dirty_deps(vm, un);
-        }
-    }
-}
-
-void dummy_interp(TB_Function* f) {
-    TB_Arena* arena = f->tmp_arena;
-    TB_Node* ip = cfg_next_control(f->root_node);
-
-    Interp vm = {
-        .ws = f->worklist,
-        .vals = tb_arena_alloc(arena, f->node_count * sizeof(Value)),
-        .ready = tb_arena_alloc(arena, f->node_count * sizeof(bool))
-    };
-
-    int last_edge = 0;
-    while (ip) {
-        printf("IP = v%u\n", ip->gvn);
-
-        worklist_clear(vm.ws);
-
-        // push all direct users of the parent's users (our antideps)
-        FOR_USERS(u, ip->inputs[last_edge]) {
-            TB_Node* un = USERN(u);
-            if (is_ready(&vm, un)) { worklist_push(vm.ws, un); }
-        }
-
-        if (!cfg_is_region(ip)) {
-            FOR_N(i, 1, ip->input_count) {
-                worklist_push(vm.ws, ip->inputs[i]);
-            }
-        }
-
-        if (is_ready(&vm, ip)) {
-            worklist_push(vm.ws, ip);
-        }
-
-        size_t i = 0;
-        for (; i < dyn_array_length(vm.ws->items); i++) {
-            TB_Node* n = vm.ws->items[i];
-            if (n->type == TB_PHI) continue;
-
-            vm.vals[n->gvn] = eval(&vm, n);
-            vm.ready[n->gvn] = true;
-
-            FOR_USERS(u, n) {
-                TB_Node* un = USERN(u);
-                if (is_ready(&vm, un)) { worklist_push(vm.ws, un); }
-            }
-
-            // advance now
-            if (n == ip) {
-                dyn_array_set_length(vm.ws->items, i + 1);
-                break;
-            }
-        }
-
-        if (cfg_is_region(ip)) {
-            vm.vals[ip->gvn] = eval(&vm, ip);
-            vm.ready[ip->gvn] = true;
-        } else {
-            assert(is_ready(&vm, ip));
-        }
-
-        User* succ = vm.vals[ip->gvn].ctrl;
-        if (succ == NULL) {
-            break;
-        }
-
-        last_edge = USERI(succ);
-        ip        = USERN(succ);
-
-        if (cfg_is_region(ip)) {
-            FOR_USERS(u, ip) {
-                TB_Node* phi = USERN(u);
-                if (phi->type == TB_PHI) {
-                    TB_Node* in = phi->inputs[1 + last_edge];
-                    if (is_ready(&vm, in)) {
-                        worklist_push(vm.ws, in);
-                    }
-                }
-            }
-
-            for (; i < dyn_array_length(vm.ws->items); i++) {
-                TB_Node* n = vm.ws->items[i];
-                if (n->type == TB_PHI) continue;
-
-                vm.vals[n->gvn] = eval(&vm, n);
-                vm.ready[n->gvn] = true;
-            }
-
-            FOR_USERS(u, ip) {
-                TB_Node* phi = USERN(u);
-                if (phi->type == TB_PHI) {
-                    printf("  PHI = v%u (v%u)\n", phi->gvn, phi->inputs[1 + last_edge]->gvn);
-
-                    Value* v = &vm.vals[phi->inputs[1 + last_edge]->gvn];
-                    vm.vals[phi->gvn] = *v;
-
-                    dirty_deps(&vm, phi);
-                    vm.ready[phi->gvn] = true;
-                }
-            }
-        }
-    }
-}
-
 static void push_non_bottoms(TB_Function* f, TB_Node* n) {
     // if it's a bottom there's no more steps it can take, don't recompute it
     Lattice* l = latuni_get(f, n);
@@ -1424,7 +1215,8 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
     f->tmp_arena = tmp;
     f->worklist  = ws;
 
-    TB_ArenaSavepoint sp = tb_arena_save(tmp);
+    TB_ArenaSavepoint sp = tb_arena_save(ir);
+    TB_ArenaSavepoint tmp_sp = tb_arena_save(tmp);
 
     assert(worklist_count(ws) == 0);
     CUIK_TIMED_BLOCK("push_all_nodes") {
@@ -1498,8 +1290,12 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
     if (!preserve_types) {
         tb_opt_free_types(f);
     }
-    // some of the inlining heuristics are based on node count
+    // avoids bloating up my arenas with freed nodes
     tb_renumber_nodes(f, ws);
+    // now that we've flip flopped, let's free up any IR arena space
+    // we can guarentee has been shuffled around.
+    // TB_ArenaSavepoint sp = tb_arena_save(ir);
+    // TB_ArenaSavepoint tmp_sp = tb_arena_save(tmp);
 
     #ifdef TB_OPTDEBUG_STATS
     tb_opt_dump_stats(f);
@@ -1544,7 +1340,8 @@ static bool alloc_types(TB_Function* f) {
         nl_hashset_put2(&f->type_interner, &XNAN64_IN_THE_SKY,   lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &ANYMEM_IN_THE_SKY,   lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &ALLMEM_IN_THE_SKY,   lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &PTR_IN_THE_SKY,      lattice_hash, lattice_cmp);
+        nl_hashset_put2(&f->type_interner, &ANYPTR_IN_THE_SKY,   lattice_hash, lattice_cmp);
+        nl_hashset_put2(&f->type_interner, &ALLPTR_IN_THE_SKY,   lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &FALSE_IN_THE_SKY,    lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &TRUE_IN_THE_SKY,     lattice_hash, lattice_cmp);
         nl_hashset_put2(&f->type_interner, &BOOL_IN_THE_SKY,     lattice_hash, lattice_cmp);

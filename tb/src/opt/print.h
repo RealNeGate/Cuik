@@ -222,16 +222,14 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
                 // fill successors
                 FOR_USERS(u, n) {
-                    if (USERN(u)->type == TB_PROJ) {
+                    if (USERN(u)->type == TB_BRANCH_PROJ) {
                         int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                         succ[index] = USERN(u);
                     }
                 }
 
-                if (br->succ_count == 1) {
-                    printf("  goto ");
-                    print_branch_edge(ctx, succ[0], false);
-                } else if (br->succ_count == 2) {
+                assert(br->succ_count >= 2);
+                if (br->succ_count == 2) {
                     int bits = n->inputs[1]->dt.type == TB_PTR ? 64 : n->inputs[1]->dt.data;
 
                     printf("  if ");
@@ -239,10 +237,12 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                         if (i != 1) printf(", ");
                         print_ref_to_node(ctx, n->inputs[i], false);
                     }
-                    if (br->keys[0].key == 0) {
+
+                    int64_t key = TB_NODE_GET_EXTRA_T(succ[i], TB_NodeBranchProj)->key;
+                    if (key == 0) {
                         printf(" then ");
                     } else {
-                        printf(" != %"PRId64" then ", tb__sxt(br->keys[0].key, bits, 64));
+                        printf(" != %"PRId64" then ", key);
                     }
                     print_branch_edge(ctx, succ[0], false);
                     printf(" else ");
@@ -256,7 +256,9 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     printf("%s=> {\n", n->input_count > 1 ? " " : "");
 
                     FOR_N(i, 0, br->succ_count) {
-                        if (i != 0) printf("    %"PRId64": ", br->keys[i - 1].key);
+                        int64_t key = TB_NODE_GET_EXTRA_T(succ[i], TB_NodeBranchProj)->key;
+
+                        if (i != 0) printf("    %"PRId64": ", key);
                         else printf("    default: ");
 
                         print_branch_edge(ctx, succ[i], false);

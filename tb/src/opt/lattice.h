@@ -14,7 +14,8 @@ static Lattice XNAN32_IN_THE_SKY = { LATTICE_XNAN32 };
 static Lattice XNAN64_IN_THE_SKY = { LATTICE_XNAN64 };
 static Lattice ANYMEM_IN_THE_SKY = { LATTICE_ANYMEM };
 static Lattice ALLMEM_IN_THE_SKY = { LATTICE_ALLMEM };
-static Lattice PTR_IN_THE_SKY    = { LATTICE_PTR    };
+static Lattice ALLPTR_IN_THE_SKY = { LATTICE_ALLPTR };
+static Lattice ANYPTR_IN_THE_SKY = { LATTICE_ANYPTR };
 static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = {  0, 0, 1, 0 } };
 static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = {  1, 1, 0, 1 } };
 static Lattice BOOL_IN_THE_SKY   = { LATTICE_INT, ._int = { -1, 0, 0, 0 } };
@@ -56,9 +57,10 @@ static uint32_t lattice_hash(void* a) {
         case LATTICE_FLT32: case LATTICE_FLT64:
         case LATTICE_NAN32: case LATTICE_XNAN32:
         case LATTICE_NAN64: case LATTICE_XNAN64:
+        case LATTICE_ALLPTR:case LATTICE_ANYPTR:
         case LATTICE_NULL:  case LATTICE_XNULL:
-        case LATTICE_CTRL:  case LATTICE_PTR:
         case LATTICE_ALLMEM:case LATTICE_ANYMEM:
+        case LATTICE_CTRL:
         break;
 
         default: tb_todo();
@@ -191,7 +193,7 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
         }
 
         case TB_PTR: {
-            return &PTR_IN_THE_SKY;
+            return &ALLPTR_IN_THE_SKY;
         }
 
         case TB_MEMORY: {
@@ -226,14 +228,14 @@ static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
     // count projs
     int projs = 0;
     FOR_USERS(u, n) {
-        if (USERN(u)->type == TB_PROJ) projs++;
+        if (is_proj(USERN(u))) { projs++; }
     }
 
     size_t size = sizeof(Lattice) + projs*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(f->arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = projs };
     FOR_USERS(u, n) {
-        if (USERN(u)->type != TB_PROJ) continue;
+        if (!is_proj(USERN(u))) { continue; }
         int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
         l->elems[index] = lattice_from_dt(f, USERN(u)->dt);
     }
@@ -300,14 +302,16 @@ static Lattice* lattice_alias(TB_Function* f, int alias_idx) {
 
 static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
     switch (type->tag) {
-        case LATTICE_BOT: {
-            return &TOP_IN_THE_SKY;
-        }
+        case LATTICE_BOT: return &TOP_IN_THE_SKY;
+        case LATTICE_TOP: return &BOT_IN_THE_SKY;
 
         case LATTICE_INT: {
             LatticeInt i = type->_int;
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { i.max, i.min, ~i.known_zeros, ~i.known_ones, INT_WIDEN_LIMIT - i.widen } });
         }
+
+        case LATTICE_ALLPTR: return &ANYPTR_IN_THE_SKY;
+        case LATTICE_ANYPTR: return &ALLPTR_IN_THE_SKY;
 
         case LATTICE_ALLMEM: return &ANYMEM_IN_THE_SKY;
         case LATTICE_ANYMEM: return &ALLMEM_IN_THE_SKY;
@@ -346,8 +350,7 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
             }
         }
 
-        default:
-        return type;
+        default: return type; // lands on the centerline
     }
 }
 
@@ -409,33 +412,19 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             return &BOT_IN_THE_SKY;
         }
 
-        // all cases that reached down here are bottoms
-        case LATTICE_PTR:
-        case LATTICE_NULL:
-        return &PTR_IN_THE_SKY;
-
+        // so long as it's a ptr-y thing, allptr will be below it
+        case LATTICE_ALLPTR: return b->tag <= LATTICE_PTRCON ? &ALLPTR_IN_THE_SKY : &BOT_IN_THE_SKY;
+        // anyptr is gonna be above whatever else might get throw here
+        case LATTICE_ANYPTR: return b;
+        // null ^ ~null = ptr       null ^ sym = ptr
+        case LATTICE_NULL:   return b->tag <= LATTICE_PTRCON ? &ALLPTR_IN_THE_SKY : &BOT_IN_THE_SKY;
         // ~null ^ sym = ~null
-        case LATTICE_XNULL: {
-            if (b->tag == LATTICE_PTRCON) {
-                return a;
-            } else {
-                return &BOT_IN_THE_SKY;
-            }
-        }
-
-        // symA ^ symB = ~null
-        case LATTICE_PTRCON: {
-            if (b->tag == LATTICE_PTRCON) {
-                assert(a->_ptr != b->_ptr);
-                return &XNULL_IN_THE_SKY;
-            } else {
-                return &BOT_IN_THE_SKY;
-            }
-        }
+        case LATTICE_XNULL:  return b->tag <= LATTICE_PTRCON ? a : &BOT_IN_THE_SKY;
+        // symA ^ symB = ~null (they're different due to the early out)
+        case LATTICE_PTRCON: return b->tag <= LATTICE_PTRCON ? &XNULL_IN_THE_SKY : &BOT_IN_THE_SKY;
 
         // already handled ctrl ^ ctrl, top ^ any, bot ^ any so everything else is bot
-        case LATTICE_CTRL:
-        return &BOT_IN_THE_SKY;
+        case LATTICE_CTRL: return &BOT_IN_THE_SKY;
 
         case LATTICE_ALLMEM: return &ALLMEM_IN_THE_SKY;
         case LATTICE_ANYMEM: return b;

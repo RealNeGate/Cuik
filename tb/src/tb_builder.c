@@ -17,6 +17,7 @@ static TB_Node* transfer_ctrl(TB_Function* f, TB_Node* n) {
     if (f->line_loc) {
         nl_table_put(&f->locations, n, f->line_loc);
     }
+    assert(prev);
     return prev;
 }
 
@@ -957,14 +958,17 @@ TB_Node* tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if
     TB_Node* mem_state = peek_mem(f);
 
     // generate control projections
-    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(TB_BranchKey));
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch));
     set_input(f, n, transfer_ctrl(f, NULL), 0);
     set_input(f, n, cond, 1);
 
     FOR_N(i, 0, 2) {
         TB_Node* target = i ? if_false : if_true;
 
-        TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
+        TB_Node* cproj = tb_alloc_node(f, TB_BRANCH_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeBranchProj));
+        set_input(f, cproj, n, 0);
+        TB_NODE_SET_EXTRA(cproj, TB_NodeBranchProj, .index = i, .taken = 50, .key = 0);
+
         add_input_late(f, target, cproj);
         add_memory_edge(f, n, mem_state, target);
     }
@@ -972,8 +976,6 @@ TB_Node* tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
     br->total_hits = 100;
     br->succ_count  = 2;
-    br->keys[0].key = 0;
-    br->keys[0].taken = 50;
     return n;
 }
 
@@ -981,42 +983,47 @@ TB_Node* tb_inst_if2(TB_Function* f, TB_Node* cond, TB_Node* projs[2]) {
     TB_Node* mem_state = peek_mem(f);
 
     // generate control projections
-    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + sizeof(TB_BranchKey));
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch));
     set_input(f, n, transfer_ctrl(f, NULL), 0);
     set_input(f, n, cond, 1);
 
     FOR_N(i, 0, 2) {
-        projs[i] = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
+        TB_Node* cproj = tb_alloc_node(f, TB_BRANCH_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeBranchProj));
+        set_input(f, cproj, n, 0);
+        TB_NODE_SET_EXTRA(cproj, TB_NodeBranchProj, .index = i, .taken = 50, .key = 0);
+        projs[i] = cproj;
     }
 
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
     br->total_hits = 100;
     br->succ_count = 2;
-    br->keys[0].key = 0;
-    br->keys[0].taken = 50;
     return n;
 }
 
 // n is a TB_BRANCH with two successors, taken is the number of times it's true
 void tb_inst_set_branch_freq(TB_Function* f, TB_Node* n, int total_hits, int taken) {
-    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-    assert(br->succ_count == 2 && "only works on if-branches");
-    br->total_hits = total_hits;
-    br->keys[0].taken = total_hits - taken;
+    tb_todo();
 }
 
 TB_Node* tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_label, size_t entry_count, const TB_SwitchEntry* entries) {
     TB_Node* mem_state = peek_mem(f);
 
     // generate control projections
-    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch) + (sizeof(TB_BranchKey) * entry_count));
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch));
     set_input(f, n, transfer_ctrl(f, NULL), 0);
     set_input(f, n, key, 1);
 
     FOR_N(i, 0, 1 + entry_count) {
         TB_Node* target = i ? entries[i - 1].value : default_label;
 
-        TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
+        TB_Node* cproj = tb_alloc_node(f, TB_BRANCH_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeBranchProj));
+        set_input(f, cproj, n, 0);
+        if (i > 0) {
+            TB_NODE_SET_EXTRA(cproj, TB_NodeBranchProj, .index = i, .taken = 10, .key = entries[i].key);
+        } else {
+            TB_NODE_SET_EXTRA(cproj, TB_NodeBranchProj, .index = i, .taken = 10, .key = 0);
+        }
+
         add_input_late(f, target, cproj);
         add_memory_edge(f, n, mem_state, target);
     }
@@ -1024,10 +1031,6 @@ TB_Node* tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* d
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
     br->total_hits = (1 + entry_count) * 10;
     br->succ_count = 1 + entry_count;
-    FOR_N(i, 0, entry_count) {
-        br->keys[i].key = entries[i].key;
-        br->keys[i].taken = 10;
-    }
     return n;
 }
 

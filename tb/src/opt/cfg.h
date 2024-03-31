@@ -55,20 +55,11 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
         .succ_i = succ_count,
     };
 
-    if (end->type == TB_BRANCH) {
+    if (cfg_is_fork(end)) {
         FOR_USERS(u, end) {
-            if (USERN(u)->type == TB_PROJ) {
+            if (cfg_is_cproj(USERN(u))) {
                 int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
                 top->succ[index] = cfg_next_bb_after_cproj(USERN(u));
-            }
-        }
-
-        TB_NodeBranch* br = TB_NODE_GET_EXTRA(end);
-        if (br->succ_count == 2) {
-            // make the hot path the fallthrough
-            float taken = (float)br->keys[0].taken / (float)br->total_hits;
-            if (taken < 0.5f) {
-                SWAP(TB_Node*, top->succ[0], top->succ[1]);
             }
         }
     } else if (!cfg_is_endpoint(end)) {
@@ -154,11 +145,6 @@ static int resolve_dom_depth(TB_CFG* cfg, TB_Node* bb) {
     // it's one more than it's parent
     nl_map_get_checked(cfg->node_to_block, bb).dom_depth = parent + 1;
     return parent + 1;
-}
-
-static TB_BasicBlock* get_pred_bb(TB_CFG* cfg, TB_Node* n, int i) {
-    n = get_pred(n, i);
-    return &nl_map_get_checked(cfg->node_to_block, n);
 }
 
 // Cooper, Keith D., Harvey, Timothy J. and Kennedy, Ken. "A simple, fast dominance algorithm." (2006)

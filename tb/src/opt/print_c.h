@@ -509,10 +509,9 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     }
                 }
 
-                if (succ_count == 1) {
-                    c_fmt_branch_edge(ctx, succ[0], false);
-                } else if (succ_count == 2) {
-                    if (br->keys[0].key == 0) {
+                TB_NodeBranchProj* if_br = cfg_if_branch(n);
+                if (if_br) {
+                    if (if_br->key == 0) {
                         c_fmt_spaces(ctx);
                         nl_buffer_format(ctx->buf, "if (");
                         FOR_N(i, 1, n->input_count) {
@@ -537,7 +536,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                             if (i != 1) nl_buffer_format(ctx->buf, ", ");
                             c_fmt_ref_to_node(ctx, n->inputs[i]);
                         }
-                        nl_buffer_format(ctx->buf, " == (uint64_t) %"PRIi64, br->keys[0].key);
+                        nl_buffer_format(ctx->buf, " == (uint64_t) %"PRIi64, if_br->key);
                         nl_buffer_format(ctx->buf, ") {\n");
                         ctx->depth += 1;
                         c_fmt_branch_edge(ctx, succ[1], false);
@@ -559,8 +558,11 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     }
                     nl_buffer_format(ctx->buf, ") {\n");
                     FOR_N(i, 1, succ_count) {
+                        TB_Node* proj = USERN(proj_with_index(n, i));
+                        TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(proj);
+
                         c_fmt_spaces(ctx);
-                        nl_buffer_format(ctx->buf, "case %"PRIi64"llu:\n", br->keys[i-1].key);
+                        nl_buffer_format(ctx->buf, "case %"PRIi64"llu:\n", p->key);
                         ctx->depth += 1;
                         c_fmt_branch_edge(ctx, succ[i], false);
                         ctx->depth -= 1;
