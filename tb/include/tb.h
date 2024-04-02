@@ -207,7 +207,7 @@ static_assert(sizeof(TB_DataType) == 2, "im expecting this to be a uint16_t");
 #define TB_IS_INTEGER_TYPE(x)  ((x).type == TB_INT)
 #define TB_IS_FLOAT_TYPE(x)    ((x).type == TB_FLOAT32 || (x).type == TB_FLOAT64)
 #define TB_IS_POINTER_TYPE(x)  ((x).type == TB_PTR)
-#define TB_IS_SCALAR_TYPE(x)        ((x).type <= TB_PTR)
+#define TB_IS_SCALAR_TYPE(x)   ((x).type <= TB_PTR)
 
 // accessors
 #define TB_GET_INT_BITWIDTH(x) ((x).data)
