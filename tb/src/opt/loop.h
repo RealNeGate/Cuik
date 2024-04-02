@@ -21,7 +21,7 @@ static TB_Node* loop_clone_node(TB_Function* f, TB_Node* region, TB_Node* n, int
         FOR_N(i, 1, n->input_count) {
             TB_Node* in = loop_clone_node(f, region, n->inputs[i], phi_index);
             cloned->inputs[i] = in;
-            add_user(f, cloned, in, i, NULL);
+            add_user(f, cloned, in, i);
         }
 
         if (n->inputs[0]) { cloned = tb__gvn(f, cloned, extra); }
@@ -57,7 +57,7 @@ static TB_Node* upcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
 
 static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* op) {
     TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
-    ArenaArray(TB_User) uses = aarray_create(f->tmp_arena, TB_User, 16);
+    ArenaArray(TB_User) uses = aarray_create(f->tmp_arena, TB_User, phi->user_count);
 
     // -1 means signed, 1 means unsigned, 0 means don't care
     int best_uses = 0;
@@ -67,7 +67,7 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
     int phi_uses = 0;
     FOR_USERS(u, phi) {
         TB_Node* use_n = USERN(u);
-        aarray_push(uses, u);
+        aarray_push(uses, *u);
 
         if (use_n == phi) continue;
         if (use_n == cond) continue;
@@ -99,8 +99,8 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
 
     size_t new_node_mark = f->node_count;
     aarray_for(i, uses) {
-        TB_Node* use_n = USERN(uses[i]);
-        int use_i      = USERI(uses[i]);
+        TB_Node* use_n = USERN(&uses[i]);
+        int use_i      = USERI(&uses[i]);
 
         if (use_n == cond && cond != phi) {
             assert(use_i == 1);
@@ -422,14 +422,15 @@ void tb_opt_loops(TB_Function* f) {
                     loop->header->type = TB_REGION;
                     loop->header->input_count = 1;
                     // remove phis
-                    for (User* use = loop->header->users; use != NULL;) {
-                        User* next = use->next;
+                    for (size_t i = 0; i < loop->header->user_count;) {
+                        TB_User* use = &loop->header->users[i];
                         if (USERN(use)->type == TB_PHI) {
                             assert(USERI(use) == 0);
                             assert(USERN(use)->input_count == 3);
                             subsume_node(f, USERN(use), USERN(use)->inputs[1]);
+                        } else {
+                            i += 1;
                         }
-                        use = next;
                     }
                     TB_Node* succ = cfg_next_control(loop->exit);
                     TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));

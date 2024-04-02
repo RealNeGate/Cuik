@@ -34,12 +34,8 @@ static int debug_type_size(TB_ABI abi, TB_DebugType* t) {
         case TB_DEBUG_TYPE_ARRAY:    return 8;
         case TB_DEBUG_TYPE_POINTER:  return 8;
 
-        case TB_DEBUG_TYPE_FLOAT: {
-            switch (t->float_fmt) {
-                case TB_FLT_32: return 4;
-                case TB_FLT_64: return 8;
-            }
-        }
+        case TB_DEBUG_TYPE_FLOAT32:  return 4;
+        case TB_DEBUG_TYPE_FLOAT64:  return 8;
 
         case TB_DEBUG_TYPE_STRUCT:
         case TB_DEBUG_TYPE_UNION:
@@ -71,7 +67,7 @@ static RegClass classify_reg(TB_ABI abi, TB_DebugType* t) {
         case TB_ABI_WIN64: {
             int s = debug_type_size(abi, t);
             if (s == 1 || s == 2 || s == 4 || s == 8) {
-                return t->tag == TB_DEBUG_TYPE_FLOAT ? RG_SSE : RG_INTEGER;
+                return (t->tag == TB_DEBUG_TYPE_FLOAT32 && t->tag <= TB_DEBUG_TYPE_FLOAT64) ? RG_SSE : RG_INTEGER;
             }
 
             return RG_MEMORY;
@@ -80,7 +76,7 @@ static RegClass classify_reg(TB_ABI abi, TB_DebugType* t) {
         case TB_ABI_SYSTEMV: {
             int s = debug_type_size(abi, t);
             if (s <= 8) {
-                return t->tag == TB_DEBUG_TYPE_FLOAT ? RG_SSE : RG_INTEGER;
+                return (t->tag == TB_DEBUG_TYPE_FLOAT32 && t->tag <= TB_DEBUG_TYPE_FLOAT64) ? RG_SSE : RG_INTEGER;
             }
 
             return RG_MEMORY;
@@ -101,7 +97,8 @@ static TB_DataType debug_type_to_tb(TB_DebugType* t) {
         case TB_DEBUG_TYPE_ARRAY:    return TB_TYPE_PTR;
         case TB_DEBUG_TYPE_POINTER:  return TB_TYPE_PTR;
 
-        case TB_DEBUG_TYPE_FLOAT: return (TB_DataType){ { TB_FLOAT, t->float_fmt } };
+        case TB_DEBUG_TYPE_FLOAT32:  return TB_TYPE_F32;
+        case TB_DEBUG_TYPE_FLOAT64:  return TB_TYPE_F64;
 
         default: tb_assert(0, "todo"); return TB_TYPE_VOID;
     }
@@ -116,8 +113,8 @@ static TB_DataType reg_class_to_tb(TB_ABI abi, RegClass rg, TB_DebugType* type) 
         }
 
         case RG_SSE: {
-            assert(type->tag == TB_DEBUG_TYPE_FLOAT);
-            return (TB_DataType){ { TB_FLOAT, type->float_fmt } };
+            assert(type->tag >= TB_DEBUG_TYPE_FLOAT32 && type->tag <= TB_DEBUG_TYPE_FLOAT64);
+            return (TB_DataType){ { TB_FLOAT32 + type->float_fmt } };
         }
 
         default: tb_assert(0, "todo"); return TB_TYPE_VOID;

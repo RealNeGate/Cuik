@@ -11,7 +11,7 @@ enum {
 #define USERN(u) ((u)->_n)    // node
 #define USERI(u) ((u)->_slot) // index
 
-#define FOR_USERS(u, n) for (TB_User u = n->users; u; u = u->next)
+#define FOR_USERS(u, n) for (TB_User *u = (n)->users, *_end_ = &u[(n)->user_count]; u != _end_; u++)
 
 ////////////////////////////////
 // Constant prop
@@ -202,6 +202,10 @@ static bool is_mem_only_in_op(TB_Node* n) {
     return n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
 }
 
+static bool single_use(TB_Node* n) {
+    return n->user_count == 1;
+}
+
 ////////////////////////////////
 // CFG analysis
 ////////////////////////////////
@@ -213,7 +217,7 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
 
     assert(proj->users && "missing successor after cproj");
     TB_Node* r = USERN(proj->users);
-    if (proj->users->next != NULL || r->type != TB_REGION) {
+    if (!single_use(proj) || r->type != TB_REGION) {
         // multi-user proj, this means it's basically a BB
         return proj;
     }
@@ -230,7 +234,7 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
     return r;
 }
 
-static TB_User proj_with_index(TB_Node* n, int i) {
+static TB_User* proj_with_index(TB_Node* n, int i) {
     FOR_USERS(u, n) {
         TB_NodeProj* p = TB_NODE_GET_EXTRA(USERN(u));
         if (p->index == i) { return u; }
@@ -239,7 +243,7 @@ static TB_User proj_with_index(TB_Node* n, int i) {
     return NULL;
 }
 
-static TB_User cfg_next_user(TB_Node* n) {
+static TB_User* cfg_next_user(TB_Node* n) {
     FOR_USERS(u, n) {
         if (cfg_is_control(USERN(u))) { return u; }
     }

@@ -26,13 +26,11 @@ static SDG_TypeIndex sdg_get_type(SDG_Types* types, TB_DebugType* type) {
             assert(0 && "Unsupported int type");
         }
 
-        case TB_DEBUG_TYPE_FLOAT: {
-            switch (type->float_fmt) {
-                case TB_FLT_32: return (type->type_id = T_REAL32);
-                case TB_FLT_64: return (type->type_id = T_REAL64);
-                default: assert(0 && "Unknown float type");
-            }
-        }
+        case TB_DEBUG_TYPE_FLOAT32:
+        return (type->type_id = T_REAL32);
+
+        case TB_DEBUG_TYPE_FLOAT64:
+        return (type->type_id = T_REAL64);
 
         case TB_DEBUG_TYPE_FUNCTION: {
             tb_todo();
@@ -67,12 +65,8 @@ static SDG_TypeIndex sdg_get_type_from_dt(TB_DataType dt) {
             if (dt.data <= 64) return SDG_PRIM_UINT64;
             return SDG_PRIM_VOID;
         }
-        case TB_FLOAT: {
-            if (dt.data == TB_FLT_32) return SDG_PRIM_FLOAT;
-            if (dt.data == TB_FLT_64) return SDG_PRIM_DOUBLE;
-
-            assert(0 && "Unknown float type");
-        }
+        case TB_FLOAT32: return SDG_PRIM_FLOAT;
+        case TB_FLOAT64: return SDG_PRIM_DOUBLE;
         case TB_PTR: {
             return SDG_PRIM_POINTER | SDG_PRIM_VOID;
         }

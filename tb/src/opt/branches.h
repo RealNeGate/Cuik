@@ -6,17 +6,16 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
     if (n->input_count == 0) {
         return NULL;
     } else if (n->input_count == 1) {
-        // single entry regions are useless...
-        // check for any phi nodes, because we're single entry they're all degens
-        User* use = n->users;
-        while (use != NULL) {
-            User* next = use->next;
+        // remove phis, because we're single entry they're all degens
+        for (size_t i = 0; i < n->user_count;) {
+            TB_User* use = &n->users[i];
             if (USERN(use)->type == TB_PHI) {
                 assert(USERI(use) == 0);
                 assert(USERN(use)->input_count == 2);
                 subsume_node(f, USERN(use), USERN(use)->inputs[1]);
+            } else {
+                i += 1;
             }
-            use = next;
         }
 
         // we might want this as an identity
@@ -41,7 +40,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
             } else if (cfg_is_region(n->inputs[i])) {
                 #if 1
                 // pure regions can be collapsed into direct edges
-                if (n->inputs[i]->users->next == NULL && n->inputs[i]->input_count > 0) {
+                if (n->inputs[i]->user_count == 1 && n->inputs[i]->input_count > 0) {
                     assert(USERN(n->inputs[i]->users) == n);
                     changes = true;
 
@@ -65,7 +64,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
 
                         FOR_N(j, 0, pred->input_count - 1) {
                             new_inputs[old_count + j] = pred->inputs[j + 1];
-                            add_user(f, n, pred->inputs[j + 1], old_count + j, NULL);
+                            add_user(f, n, pred->inputs[j + 1], old_count + j);
                         }
                     }
 
@@ -88,7 +87,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
 
                             FOR_N(j, 0, pred->input_count - 1) {
                                 new_inputs[phi_ins + j] = phi_val;
-                                add_user(f, phi, phi_val, phi_ins + j, NULL);
+                                add_user(f, phi, phi_val, phi_ins + j);
                             }
                         }
                     }
@@ -158,7 +157,7 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
                             int index = TB_NODE_GET_EXTRA_T(proj, TB_NodeProj)->index;
                             // the projection needs to exclusively refer to the region,
                             // if not we can't elide those effects here.
-                            if (proj->users->next != NULL || USERN(proj->users) != region) {
+                            if (proj->user_count > 1 || USERN(proj->users) != region) {
                                 return NULL;
                             }
 
@@ -283,11 +282,11 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
                     TB_NodeBranch* pred_br_info = TB_NODE_GET_EXTRA(pred_branch);
 
                     // check our parent's aux path
-                    TB_User  other_proj   = proj_with_index(pred_branch, 1 - index);
+                    TB_User* other_proj   = proj_with_index(pred_branch, 1 - index);
                     TB_Node* shared_edge  = cfg_next_bb_after_cproj(USERN(other_proj));
 
                     // check our aux path
-                    TB_User  other_proj2  = proj_with_index(n, 1 - index);
+                    TB_User* other_proj2  = proj_with_index(n, 1 - index);
                     TB_Node* shared_edge2 = cfg_next_bb_after_cproj(USERN(other_proj2));
 
                     // if they're the same then we've got a shortcircuit eval setup
@@ -323,7 +322,7 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
 
                             // we wanna normalize into a comparison (not a boolean -> boolean)
                             if (!(cmp->dt.type == TB_INT && cmp->dt.data == 1)) {
-                                assert(cmp->dt.type != TB_FLOAT && "TODO");
+                                assert(!TB_IS_FLOAT_TYPE(cmp->dt) && "TODO");
                                 TB_Node* imm = make_int_node(f, cmp->dt, pred_falsey);
 
                                 TB_Node* new_node = tb_alloc_node(f, TB_CMP_NE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
@@ -397,7 +396,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
 
     TB_Arena* arena = get_permanent_arena(f->super.module);
     size_t size = sizeof(Lattice) + c->proj_count*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(f->arena, size);
+    Lattice* l = tb_arena_alloc(arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = c->proj_count };
 
     FOR_N(i, 1, c->proj_count) {

@@ -109,8 +109,8 @@ static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
 
 TB_Node* tb_alloc_node_dyn(TB_Function* f, int type, TB_DataType dt, int input_count, int input_cap, size_t extra) {
     assert(input_count < UINT16_MAX && "too many inputs!");
-
     TB_Node* n = alloc_from_node_arena(f, sizeof(TB_Node) + extra);
+
     n->type = type;
     n->input_cap = input_cap;
     n->input_count = input_count;
@@ -125,10 +125,15 @@ TB_Node* tb_alloc_node_dyn(TB_Function* f, int type, TB_DataType dt, int input_c
         n->inputs = NULL;
     }
 
+    // most nodes don't have many users, although the ones which do will have a shit load (root node)
+    n->user_count = 0;
+    n->user_cap   = 4;
+    n->users = alloc_from_node_arena(f, 4 * sizeof(TB_User));
+    memset(n->users, 0xF0, 4 * sizeof(TB_User));
+
     if (extra > 0) {
         memset(n->extra, 0, extra);
     }
-
     return n;
 }
 
@@ -174,7 +179,7 @@ TB_Node* tb_inst_ptr2int(TB_Function* f, TB_Node* src, TB_DataType dt) {
 }
 
 TB_Node* tb_inst_int2float(TB_Function* f, TB_Node* src, TB_DataType dt, bool is_signed) {
-    assert(dt.type == TB_FLOAT);
+    assert(TB_IS_FLOAT_TYPE(dt));
     assert(src->dt.type == TB_INT);
 
     if (src->type == TB_INTEGER_CONST) {
@@ -930,7 +935,7 @@ void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
     }
 
     n->inputs[n->input_count] = in;
-    add_user(f, n, in, n->input_count, NULL);
+    add_user(f, n, in, n->input_count);
     n->input_count += 1;
 }
 

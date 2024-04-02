@@ -431,9 +431,12 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(dt.data), lattice_int_max(dt.data) } });
         }
 
-        case TB_FLOAT: {
-            assert(dt.data == TB_FLT_32 || dt.data == TB_FLT_64);
-            return dt.data == TB_FLT_64 ? &FLT64_IN_THE_SKY : &FLT32_IN_THE_SKY;
+        case TB_FLOAT32: {
+            return &FLT32_IN_THE_SKY;
+        }
+
+        case TB_FLOAT64: {
+            return &FLT64_IN_THE_SKY;
         }
 
         case TB_PTR: {

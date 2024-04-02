@@ -54,12 +54,8 @@ static uint16_t get_codeview_type(TB_DataType dt) {
             if (dt.data <= 64) return 0x0023; // T_UQUAD
             return 0x0023; // T_64PUCHAR
         }
-        case TB_FLOAT: {
-            if (dt.data == TB_FLT_32) return 0x0040; // T_REAL32
-            if (dt.data == TB_FLT_64) return 0x0041; // T_REAL64
-
-            assert(0 && "Unknown float type");
-        }
+        case TB_FLOAT32: return 0x0040; // T_REAL32
+        case TB_FLOAT64: return 0x0041; // T_REAL64
         case TB_PTR: {
             return 0x0023; // T_64PUCHAR
         }
@@ -89,13 +85,11 @@ static uint16_t convert_to_codeview_type(TB_Arena* tmp_arena, CV_Builder* builde
             assert(0 && "Unsupported int type");
         }
 
-        case TB_DEBUG_TYPE_FLOAT: {
-            switch (type->float_fmt) {
-                case TB_FLT_32: return (type->type_id = T_REAL32);
-                case TB_FLT_64: return (type->type_id = T_REAL64);
-                default: assert(0 && "Unknown float type");
-            }
-        }
+        case TB_DEBUG_TYPE_FLOAT32:
+        return (type->type_id = T_REAL32);
+
+        case TB_DEBUG_TYPE_FLOAT64:
+        return (type->type_id = T_REAL64);
 
         case TB_DEBUG_TYPE_ARRAY:
         return (type->type_id = tb_codeview_builder_add_array(builder, convert_to_codeview_type(tmp_arena, builder, type->array.base), debug_type_size(TB_ABI_WIN64, type->array.base) * type->array.count));

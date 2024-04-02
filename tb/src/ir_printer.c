@@ -142,9 +142,12 @@ static void tb_print_type(TB_DataType dt, TB_PrintCallback callback, void* user_
             else P("ptr%d", dt.data);
             break;
         }
-        case TB_FLOAT: {
-            if (dt.data == TB_FLT_32) P("f32");
-            if (dt.data == TB_FLT_64) P("f64");
+        case TB_FLOAT32: {
+            P("f32");
+            break;
+        }
+        case TB_FLOAT64: {
+            P("f64");
             break;
         }
         case TB_TUPLE: {

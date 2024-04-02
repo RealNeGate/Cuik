@@ -358,10 +358,9 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                     spill->mask = ctx->constraint(ctx, n, NULL);
 
                     // aggressive split
-                    User* u = n->users;
-                    while (u) {
-                        TB_Node* use_n = USERN(u);
-                        int use_i      = USERI(u);
+                    for (size_t i = 0; i < n->user_count; i++) {
+                        TB_Node* use_n = USERN(&n->users[i]);
+                        int use_i      = USERI(&n->users[i]);
 
                         RegMask* in_mask = constraint_in(ctx, use_n, use_i);
 
@@ -375,8 +374,8 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                         #if TB_PACKED_USERS
                         #error todo
                         #else
-                        u->_n = reload_n;
-                        u->_slot = 1;
+                        n->users[i]._n    = reload_n;
+                        n->users[i]._slot = 1;
                         #endif
                         reload_n->inputs[1] = n;
 
@@ -384,8 +383,6 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                         tb__insert_before(ctx, ctx->f, reload_n, use_n);
                         VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
                         reload_vreg->mask = in_mask;
-
-                        u = u->next;
                     }
                 }
 

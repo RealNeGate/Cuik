@@ -75,11 +75,11 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
         break;
 
         case KIND_FLOAT:
-        result = tb_debug_get_float(mod, TB_FLT_32);
+        result = tb_debug_get_float32(mod);
         break;
 
         case KIND_DOUBLE:
-        result = tb_debug_get_float(mod, TB_FLT_64);
+        result = tb_debug_get_float64(mod);
         break;
 
         case KIND_ENUM:
@@ -172,9 +172,9 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
     } else if (src->kind != KIND_BOOL && dst->kind == KIND_BOOL) {
         TB_DataType dt = reg->dt;
         TB_Node* comparand;
-        if (dt.type == TB_FLOAT && dt.data == TB_FLT_32) {
+        if (dt.type == TB_FLOAT32) {
             comparand = tb_inst_float32(func, 0.0f);
-        } else if (dt.type == TB_FLOAT && dt.data == TB_FLT_64) {
+        } else if (dt.type == TB_FLOAT64) {
             comparand = tb_inst_float64(func, 0.0);
         } else {
             comparand = tb_inst_uint(func, dt, 0);
@@ -216,13 +216,13 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
     } else if (src->kind == KIND_FLOAT && dst->kind == KIND_DOUBLE) {
         TB_DataType dt = reg->dt;
 
-        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_64)) {
+        if (dt.type != TB_FLOAT64) {
             reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
         }
     } else if (src->kind == KIND_DOUBLE && dst->kind == KIND_FLOAT) {
         TB_DataType dt = reg->dt;
 
-        if (!(dt.type == TB_FLOAT && dt.data == TB_FLT_32)) {
+        if (dt.type != TB_FLOAT32) {
             reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
         }
     } else if (cuik_type_is_float(src) && cuik_type_is_integer(dst)) {

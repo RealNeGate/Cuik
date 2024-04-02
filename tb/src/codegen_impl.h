@@ -307,7 +307,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 int vreg_id = 0;
                 if (def_mask != &TB_REG_EMPTY) {
                     if (n->type == TB_MACH_MOVE) {
-                        assert(n->users->next == NULL);
+                        assert(single_use(n));
                         assert(USERN(n->users)->type == TB_PHI);
 
                         // these are phi moves, they should share the vreg of phi
@@ -556,21 +556,9 @@ static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_ali
             *out_align = is_big_int ? 8 : ((dt.data + 7) / 8);
             break;
         }
-        case TB_FLOAT: {
-            int s = 0;
-            if (dt.data == TB_FLT_32) s = 4;
-            else if (dt.data == TB_FLT_64) s = 8;
-            else tb_unreachable();
-
-            *out_size = s;
-            *out_align = s;
-            break;
-        }
-        case TB_PTR: {
-            *out_size = 8;
-            *out_align = 8;
-            break;
-        }
+        case TB_FLOAT32: *out_size = *out_align = 4; break;
+        case TB_FLOAT64: *out_size = *out_align = 8; break;
+        case TB_PTR:     *out_size = *out_align = 8; break;
         default: tb_unreachable();
     }
 }

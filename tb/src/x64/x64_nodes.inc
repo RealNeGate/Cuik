@@ -16,7 +16,7 @@ X(movzx16)
 X(movsx32)
 // float/vector ops
 X(vmov) X(vadd) X(vmul) X(vsub) X(vdiv)
-X(vmin) X(vmax) X(vxor)
+X(vmin) X(vmax) X(vxor) X(vzero)
 // scalar only float ops
 X(ucomi)
 // simple-high level ops

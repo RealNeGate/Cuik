@@ -65,11 +65,8 @@ static const char *c_fmt_type_name(TB_DataType dt) {
             else tb_todo();
             break;
         }
-        case TB_FLOAT: {
-            if (dt.data == TB_FLT_32) return  "float";
-            if (dt.data == TB_FLT_64) return  "double";
-            break;
-        }
+        case TB_FLOAT32: return "float";
+        case TB_FLOAT64: return "double";
         default: tb_todo();
     }
     return NULL;
@@ -92,11 +89,8 @@ static const char *c_fmt_type_name_signed(TB_DataType dt) {
             else tb_todo();
             break;
         }
-        case TB_FLOAT: {
-            if (dt.data == TB_FLT_32) return  "float";
-            if (dt.data == TB_FLT_64) return  "double";
-            break;
-        }
+        case TB_FLOAT32: return "float";
+        case TB_FLOAT64: return "double";
         default: tb_todo();
     }
     return NULL;
@@ -124,10 +118,8 @@ static bool c_fmt_will_inline(TB_Node *n) {
         break;
     }
 
-    size_t len = 0;
-    for (User *head = n->users; head != NULL; head = head->next) {
-        len += 1;
-
+    size_t len = n->user_count;
+    FOR_USERS(head, n) {
         // counts as two uses in the C code
         if (USERN(head)->type == TB_ROL) len += 1;
     }
@@ -770,7 +762,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
             case TB_BITCAST: {
                 TB_Node *src = n->inputs[n->input_count-1];
-                if (src->dt.type == TB_FLOAT && n->dt.type == TB_FLOAT) {
+                if (TB_IS_FLOAT_TYPE(src->dt) && TB_IS_FLOAT_TYPE(n->dt)) {
                     c_fmt_spaces(ctx);
                     nl_buffer_format(ctx->buf, "{\n");
                     ctx->depth += 1;

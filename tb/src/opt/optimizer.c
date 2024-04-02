@@ -15,7 +15,7 @@
 #include <log.h>
 
 // helps us do some matching later
-static User* remove_user(TB_Function* f, TB_Node* n, int slot);
+static void remove_user(TB_Function* f, TB_Node* n, int slot);
 static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 static void violent_kill(TB_Function* f, TB_Node* n);
 static bool alloc_types(TB_Function* f);
@@ -129,10 +129,8 @@ static int bits_in_data_type(int pointer_size, TB_DataType dt) {
     switch (dt.type) {
         case TB_INT: return dt.data;
         case TB_PTR: return pointer_size;
-        case TB_FLOAT:
-        if (dt.data == TB_FLT_32) return 32;
-        if (dt.data == TB_FLT_64) return 64;
-        return 0;
+        case TB_FLOAT32: return 32;
+        case TB_FLOAT64: return 64;
         default: return 0;
     }
 }
@@ -150,10 +148,6 @@ static TB_Node* mem_user(TB_Function* f, TB_Node* n, int slot) {
     }
 
     return NULL;
-}
-
-static bool single_use(TB_Node* n) {
-    return n->users->next == NULL;
 }
 
 static bool is_empty_bb(TB_Function* f, TB_Node* end) {
@@ -264,17 +258,17 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
     nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
 
     // remove users
-    FOR_REV_N(i, 0, n->input_count) {
-        User* u = remove_user(f, n, i);
-        if (u) { tb_arena_free(f->arena, u, sizeof(User)); }
-
+    FOR_REV_N(i, 0, n->user_count) {
+        remove_user(f, n, i);
         n->inputs[i] = NULL;
     }
 
-    // try free
+    tb_arena_free(f->arena, n->users, n->user_cap * sizeof(TB_User));
     tb_arena_free(f->arena, n->inputs, n->input_cap * sizeof(TB_Node*));
     tb_arena_free(f->arena, n, sizeof(TB_Node) + extra);
 
+    n->user_cap = n->user_count = 0;
+    n->users = NULL;
     n->input_count = 0;
     n->type = TB_NULL;
 }
@@ -458,16 +452,15 @@ TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra) {
     TB_Node* k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
     if (k && k != n) {
         // remove users
-        FOR_REV_N(i, 0, n->input_count) {
-            User* u = remove_user(f, n, i);
-            if (u) { tb_arena_free(f->arena, u, sizeof(User)); }
-
+        FOR_N(i, 0, n->input_count) {
+            remove_user(f, n, i);
             n->inputs[i] = NULL;
         }
 
-        // try free
+        tb_arena_free(f->arena, n->users, n->user_cap * sizeof(TB_User));
         tb_arena_free(f->arena, n->inputs, n->input_cap * sizeof(TB_Node*));
         tb_arena_free(f->arena, n, sizeof(TB_Node) + extra);
+        n->type = TB_NULL;
         return k;
     } else {
         return n;
@@ -535,27 +528,24 @@ void tb_kill_node(TB_Function* f, TB_Node* n) {
     n->type = TB_NULL;
 }
 
-static User* remove_user(TB_Function* f, TB_Node* n, int slot) {
+static void remove_user(TB_Function* f, TB_Node* n, int slot) {
     // early out: there was no previous input
-    if (n->inputs[slot] == NULL) return NULL;
+    if (n->inputs[slot] == NULL) { return; }
 
     TB_Node* old = n->inputs[slot];
-    User* old_use = old->users;
-    if (old_use == NULL) return NULL;
+    TB_User* old_use = old->users;
 
-    // remove old user (this must succeed unless our users go desync'd)
-    for (User* prev = NULL; old_use; prev = old_use, old_use = old_use->next) {
-        if (USERI(old_use) == slot && USERN(old_use) == n) {
-            // remove
-            if (prev != NULL) { prev->next = old_use->next; }
-            else { old->users = old_use->next; }
+    // remove-swap
+    FOR_N(i, 0, old->user_count) {
+        if (USERN(&old_use[i]) == n && USERI(&old_use[i]) == slot) {
+            old->user_count -= 1;
+            old_use[i] = old_use[old->user_count];
 
             // push to worklist, we've got a dead node
-            if (old->users == NULL && f->worklist) {
+            if (old->user_count == 0 && f->worklist) {
                 worklist_push(f->worklist, old);
             }
-
-            return old_use;
+            return;
         }
     }
 
@@ -563,28 +553,71 @@ static User* remove_user(TB_Function* f, TB_Node* n, int slot) {
 }
 
 void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
-    // assert(slot < n->input_count);
-
     // try to recycle the user
-    User* old_use = remove_user(f, n, slot);
-
+    // assert(slot < n->input_count);
+    remove_user(f, n, slot);
     n->inputs[slot] = in;
-    if (in != NULL) {
-        add_user(f, n, in, slot, old_use);
-    }
+    if (in != NULL) { add_user(f, n, in, slot); }
 }
 
 // we sometimes get the choice to recycle users because we just deleted something
-void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot, User* recycled) {
-    User* use = recycled ? recycled : TB_ARENA_ALLOC(f->arena, User);
-    #if TB_PACKED_USERS
-    #error todo
-    #else
-    use->next = in->users;
-    use->_n = n;
-    use->_slot = slot;
-    #endif
-    in->users = use;
+void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
+    if (in->user_count >= in->user_cap) {
+        // resize
+        TB_User* users = tb_arena_alloc(f->arena, in->user_cap * 2 * sizeof(TB_User));
+        memcpy(users, in->users, in->user_count * sizeof(TB_User));
+
+        // in debug builds we'll fill the old array if easily detectable garbage to notice
+        // pointer invalidation issues
+        #ifndef NDEBUG
+        memset(in->users, 0xF0, in->user_cap * sizeof(TB_User));
+        memset(users + in->user_count, 0xF0, (in->user_cap*2 - in->user_count) * sizeof(TB_User));
+        #endif
+
+        in->user_cap *= 2;
+        in->users = users;
+    }
+
+    in->users[in->user_count]._n    = n;
+    in->users[in->user_count]._slot = slot;
+    in->user_count += 1;
+}
+
+void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
+    if (new_n->user_count + n->user_count >= new_n->user_cap) {
+        size_t new_cap = tb_next_pow2(new_n->user_count + n->user_count + 4);
+
+        // resize
+        TB_User* users = tb_arena_alloc(f->arena, new_cap * sizeof(TB_User));
+        memcpy(users, new_n->users, new_n->user_count * sizeof(TB_User));
+
+        // in debug builds we'll fill the old array if easily detectable garbage to notice
+        // pointer invalidation issues
+        #ifndef NDEBUG
+        memset(new_n->users, 0xF0, new_n->user_cap * sizeof(TB_User));
+        memset(users + new_n->user_count, 0xF0, (new_cap - new_n->user_count) * sizeof(TB_User));
+        #endif
+
+        new_n->user_cap = new_cap;
+        new_n->users = users;
+    }
+
+    FOR_N(i, 0, n->user_count) {
+        TB_Node* un = USERN(&n->users[i]);
+        int ui      = USERI(&n->users[i]);
+        tb_assert(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
+
+        tb__gvn_remove(f, un);
+        un->inputs[ui] = new_n;
+        new_n->users[new_n->user_count + i] = n->users[i];
+    }
+    new_n->user_count += n->user_count;
+    n->user_count = 0;
+}
+
+void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
+    subsume_node2(f, n, new_n);
+    tb_kill_node(f, n);
 }
 
 static void cool_print_type(TB_Node* n) {
@@ -710,16 +743,16 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
             tb_kill_node(f, n);
             return dead_node(f);
         } else if (n->input_count == 1) {
-            // check for any phi nodes, because we're single entry they're all degens
-            User* u = n->users;
-            while (u != NULL) {
-                TB_Node* un = USERN(u);
-                User* next = u->next;
-                if (un->type == TB_PHI) {
-                    assert(un->input_count == 2);
-                    subsume_node(f, un, un->inputs[1]);
+            // remove phis, because we're single entry they're all degens
+            for (size_t i = 0; i < n->user_count;) {
+                TB_User* use = &n->users[i];
+                if (USERN(use)->type == TB_PHI) {
+                    assert(USERI(use) == 0);
+                    assert(USERN(use)->input_count == 2);
+                    subsume_node(f, USERN(use), USERN(use)->inputs[1]);
+                } else {
+                    i += 1;
                 }
-                u = next;
             }
 
             f->invalidated_loops = true;
@@ -739,9 +772,9 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         // have to be dead.
         if (n->dt.type == TB_TUPLE) {
             TB_Node* dead = dead_node(f);
-            while (n->users) {
-                TB_Node* use_n = USERN(n->users);
-                int use_i      = USERI(n->users);
+            while (n->user_count > 0) {
+                TB_Node* use_n = USERN(&n->users[n->user_count - 1]);
+                int use_i      = USERI(&n->users[n->user_count - 1]);
 
                 if (use_n->type == TB_CALLGRAPH) {
                     TB_Node* last = use_n->inputs[use_n->input_count - 1];
@@ -819,19 +852,17 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                 TB_Node* dead = dead_node(f);
                 TB_Node* ctrl = n->inputs[0];
 
-                User* u = n->users;
-                while (u != NULL) {
-                    TB_Node* un = USERN(u);
+                for (size_t i = 0; i < n->user_count;) {
+                    TB_Node* un = USERN(&n->users[i]);
                     if (is_proj(un)) {
-                        assert(USERI(u) == 0);
-                        int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+                        assert(USERI(&n->users[i]) == 0);
+                        int index   = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
                         TB_Node* in = l->elems[index] == &CTRL_IN_THE_SKY ? ctrl : dead;
 
                         set_input(f, un, NULL, 0);
                         subsume_node(f, un, in);
-                        u = n->users;
                     } else {
-                        u = u->next;
+                        i += 1;
                     }
                 }
 
@@ -1059,27 +1090,6 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
 
     DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
     return n;
-}
-
-void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
-    while (n->users != NULL) {
-        User* u     = n->users;
-        TB_Node* un = USERN(u);
-        int ui      = USERI(u);
-        tb_assert(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
-
-        tb__gvn_remove(f, un);
-
-        // set_input will delete 'use' so we can't use it afterwards
-        User* next = u->next;
-        set_input(f, un, new_n, ui);
-        u = next;
-    }
-}
-
-void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
-    subsume_node2(f, n, new_n);
-    tb_kill_node(f, n);
 }
 
 void tb_opt_dump_stats(TB_Function* f) {
@@ -1350,10 +1360,10 @@ void tb_opt_peeps(TB_Function* f) {
             DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
             // must've dead sometime between getting scheduled and getting here.
-            if (n->type != TB_PROJ && n->users == NULL) {
+            if (n->type != TB_PROJ && n->user_count == 0) {
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_kill_node(f, n);
-            } else {
+            } else if (n->type != TB_NULL) {
                 tb_opt_peep_node(f, n);
             }
         }
@@ -1528,7 +1538,7 @@ static TB_Node* inline_clone_node(TB_Function* f, TB_Node* call_site, TB_Node** 
         TB_Node* in = inline_clone_node(f, call_site, clones, n->inputs[i]);
 
         cloned->inputs[i] = in;
-        add_user(f, cloned, in, i, NULL);
+        add_user(f, cloned, in, i);
     }
 
     #if TB_OPTDEBUG_INLINE
@@ -1578,20 +1588,15 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
         TB_Node* ret = kid_root->inputs[1];
         assert(ret->type == TB_RETURN);
 
-        User* u = call_site->users;
-        while (u) {
-            TB_Node* use_n = USERN(u);
-            int use_i      = USERI(u);
-
-            // replace returning projection with one of our return vals
-            if (use_n->type == TB_PROJ) {
-                int index = TB_NODE_GET_EXTRA_T(use_n, TB_NodeProj)->index;
+        for (size_t i = 0; i < call_site->user_count;) {
+            TB_Node* un = USERN(&call_site->users[i]);
+            if (is_proj(un)) {
+                int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
                 if (index >= 2) { index += 1; }
 
-                subsume_node(f, use_n, ret->inputs[index]);
-                u = call_site->users;
+                subsume_node(f, un, ret->inputs[index]);
             } else {
-                u = u->next;
+                i += 1;
             }
         }
 

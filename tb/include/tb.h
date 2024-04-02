@@ -174,8 +174,8 @@ typedef enum TB_DataTypeEnum {
     //   i(0-64)
     TB_INT,
     // Floating point numbers
-    //   f{32,64}
-    TB_FLOAT,
+    TB_FLOAT32,
+    TB_FLOAT64,
     // Pointers
     TB_PTR,
     // represents control flow for REGION, BRANCH
@@ -205,8 +205,9 @@ static_assert(sizeof(TB_DataType) == 2, "im expecting this to be a uint16_t");
 #define TB_IS_VOID_TYPE(x)     ((x).type == TB_INT && (x).data == 0)
 #define TB_IS_BOOL_TYPE(x)     ((x).type == TB_INT && (x).data == 1)
 #define TB_IS_INTEGER_TYPE(x)  ((x).type == TB_INT)
-#define TB_IS_FLOAT_TYPE(x)    ((x).type == TB_FLOAT)
+#define TB_IS_FLOAT_TYPE(x)    ((x).type == TB_FLOAT32 || (x).type == TB_FLOAT64)
 #define TB_IS_POINTER_TYPE(x)  ((x).type == TB_PTR)
+#define TB_IS_SCALAR_TYPE(x)        ((x).type <= TB_PTR)
 
 // accessors
 #define TB_GET_INT_BITWIDTH(x) ((x).data)
@@ -310,8 +311,8 @@ typedef enum TB_NodeTypeEnum {
     ////////////////////////////////
     //   nothing special, it's just a function call, 3rd argument here is the
     //   target pointer (or syscall number) and the rest are just data args.
-    TB_CALL,           // (Control, Memory, Data, Data...) -> (Control, Memory, Data)
-    TB_SYSCALL,        // (Control, Memory, Data, Data...) -> (Control, Memory, Data)
+    TB_CALL,           // (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
+    TB_SYSCALL,        // (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
     //   performs call while recycling the stack frame somewhat
     TB_TAILCALL,       // (Control, Memory, RPC, Data, Data...) -> ()
     //   safepoint polls are the same except they only trigger if the poll site
@@ -455,6 +456,9 @@ typedef enum TB_NodeTypeEnum {
     TB_MACH_COPY,
     // just... it, idk, it's the frame ptr
     TB_MACH_FRAME_PTR,
+    // isn't the pointer value itself, just a placeholder for
+    // referring to a global.
+    TB_MACH_SYMBOL,
 
     // limit on generic nodes
     TB_NODE_TYPE_MAX,
@@ -568,31 +572,27 @@ typedef struct {
 } TB_NodeLocation;
 
 typedef struct TB_Node TB_Node;
-typedef struct User User;
-struct User {
-    User* next;
+
+typedef struct {
     TB_Node* _n;
     int _slot;
-};
+} TB_User;
 
-typedef User* TB_User;
-
+// my annotations about size are based on 64bit machines
 struct TB_Node {
     TB_NodeType type;
+    TB_DataType dt;
 
     uint16_t input_cap;
     uint16_t input_count;
 
-    TB_DataType dt;
+    uint16_t user_cap;
+    uint16_t user_count;
 
     // makes it easier to track in graph walks
     uint32_t gvn;
-
-    // these are unordered and usually just
-    // help perform certain transformations or
-    // analysis (not necessarily semantics)
-    User* users;
-
+    // use-def edges, unordered
+    TB_User* users;
     // ordered def-use edges, jolly ol' semantics
     TB_Node** inputs;
 
@@ -783,35 +783,35 @@ typedef struct {
 // *******************************
 #ifdef __cplusplus
 
-#define TB_TYPE_TUPLE   TB_DataType{ { TB_TUPLE } }
-#define TB_TYPE_CONTROL TB_DataType{ { TB_CONTROL } }
-#define TB_TYPE_VOID    TB_DataType{ { TB_INT,   0 } }
-#define TB_TYPE_I8      TB_DataType{ { TB_INT,   8 } }
-#define TB_TYPE_I16     TB_DataType{ { TB_INT,   16 } }
-#define TB_TYPE_I32     TB_DataType{ { TB_INT,   32 } }
-#define TB_TYPE_I64     TB_DataType{ { TB_INT,   64 } }
-#define TB_TYPE_F32     TB_DataType{ { TB_FLOAT, TB_FLT_32 } }
-#define TB_TYPE_F64     TB_DataType{ { TB_FLOAT, TB_FLT_64 } }
-#define TB_TYPE_BOOL    TB_DataType{ { TB_INT,   1 } }
-#define TB_TYPE_PTR     TB_DataType{ { TB_PTR,   0 } }
-#define TB_TYPE_MEMORY  TB_DataType{ { TB_MEMORY,0 } }
+#define TB_TYPE_TUPLE   TB_DataType{ { TB_TUPLE      } }
+#define TB_TYPE_CONTROL TB_DataType{ { TB_CONTROL    } }
+#define TB_TYPE_VOID    TB_DataType{ { TB_INT,    0  } }
+#define TB_TYPE_I8      TB_DataType{ { TB_INT,    8  } }
+#define TB_TYPE_I16     TB_DataType{ { TB_INT,    16 } }
+#define TB_TYPE_I32     TB_DataType{ { TB_INT,    32 } }
+#define TB_TYPE_I64     TB_DataType{ { TB_INT,    64 } }
+#define TB_TYPE_F32     TB_DataType{ { TB_FLOAT32    } }
+#define TB_TYPE_F64     TB_DataType{ { TB_FLOAT64    } }
+#define TB_TYPE_BOOL    TB_DataType{ { TB_INT,    1  } }
+#define TB_TYPE_PTR     TB_DataType{ { TB_PTR,    0  } }
+#define TB_TYPE_MEMORY  TB_DataType{ { TB_MEMORY, 0  } }
 #define TB_TYPE_INTN(N) TB_DataType{ { TB_INT,   (N) } }
 #define TB_TYPE_PTRN(N) TB_DataType{ { TB_PTR,   (N) } }
 
 #else
 
-#define TB_TYPE_TUPLE   (TB_DataType){ { TB_TUPLE } }
-#define TB_TYPE_CONTROL (TB_DataType){ { TB_CONTROL } }
-#define TB_TYPE_VOID    (TB_DataType){ { TB_INT,   0 } }
-#define TB_TYPE_I8      (TB_DataType){ { TB_INT,   8 } }
-#define TB_TYPE_I16     (TB_DataType){ { TB_INT,   16 } }
-#define TB_TYPE_I32     (TB_DataType){ { TB_INT,   32 } }
-#define TB_TYPE_I64     (TB_DataType){ { TB_INT,   64 } }
-#define TB_TYPE_F32     (TB_DataType){ { TB_FLOAT, TB_FLT_32 } }
-#define TB_TYPE_F64     (TB_DataType){ { TB_FLOAT, TB_FLT_64 } }
-#define TB_TYPE_BOOL    (TB_DataType){ { TB_INT,   1 } }
-#define TB_TYPE_PTR     (TB_DataType){ { TB_PTR,   0 } }
-#define TB_TYPE_MEMORY  (TB_DataType){ { TB_MEMORY,0 } }
+#define TB_TYPE_TUPLE   (TB_DataType){ { TB_TUPLE      } }
+#define TB_TYPE_CONTROL (TB_DataType){ { TB_CONTROL    } }
+#define TB_TYPE_VOID    (TB_DataType){ { TB_INT,    0  } }
+#define TB_TYPE_I8      (TB_DataType){ { TB_INT,    8  } }
+#define TB_TYPE_I16     (TB_DataType){ { TB_INT,    16 } }
+#define TB_TYPE_I32     (TB_DataType){ { TB_INT,    32 } }
+#define TB_TYPE_I64     (TB_DataType){ { TB_INT,    64 } }
+#define TB_TYPE_F32     (TB_DataType){ { TB_FLOAT32    } }
+#define TB_TYPE_F64     (TB_DataType){ { TB_FLOAT64    } }
+#define TB_TYPE_BOOL    (TB_DataType){ { TB_INT,    1  } }
+#define TB_TYPE_PTR     (TB_DataType){ { TB_PTR,    0  } }
+#define TB_TYPE_MEMORY  (TB_DataType){ { TB_MEMORY, 0  } }
 #define TB_TYPE_INTN(N) (TB_DataType){ { TB_INT,   (N) } }
 #define TB_TYPE_PTRN(N) (TB_DataType){ { TB_PTR,   (N) } }
 
@@ -1108,7 +1108,8 @@ TB_API void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent
 TB_API TB_DebugType* tb_debug_get_void(TB_Module* m);
 TB_API TB_DebugType* tb_debug_get_bool(TB_Module* m);
 TB_API TB_DebugType* tb_debug_get_integer(TB_Module* m, bool is_signed, int bits);
-TB_API TB_DebugType* tb_debug_get_float(TB_Module* m, TB_FloatFormat fmt);
+TB_API TB_DebugType* tb_debug_get_float32(TB_Module* m);
+TB_API TB_DebugType* tb_debug_get_float64(TB_Module* m);
 TB_API TB_DebugType* tb_debug_create_ptr(TB_Module* m, TB_DebugType* base);
 TB_API TB_DebugType* tb_debug_create_array(TB_Module* m, TB_DebugType* base, size_t count);
 TB_API TB_DebugType* tb_debug_create_alias(TB_Module* m, TB_DebugType* base, ptrdiff_t len, const char* tag);

@@ -1,4 +1,10 @@
 
+typedef struct {
+    int index;
+    int count;
+    TB_User* users;
+} Anti;
+
 typedef struct SchedNode SchedNode;
 struct SchedNode {
     SchedNode* parent;
@@ -9,7 +15,7 @@ struct SchedNode {
 
     int anti_i;
     int anti_count;
-    TB_User antis[];
+    Anti antis[];
 };
 
 typedef struct {
@@ -42,10 +48,10 @@ static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n
 
     if (n->type == TB_MERGEMEM) {
         FOR_N(i, 2, n->input_count) {
-            s->antis[i - 2] = n->inputs[i]->users;
+            s->antis[i - 2] = (Anti){ 0, n->inputs[i]->user_count, n->inputs[i]->users };
         }
     } else if (anti_count == 1) {
-        s->antis[0] = n->inputs[1]->users;
+        s->antis[0] = (Anti){ 0, n->inputs[1]->user_count, n->inputs[1]->users };
     }
 
     return s;
@@ -81,13 +87,13 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
             ptrdiff_t search = nl_map_get(cfg->node_to_block, USERN(u));
             if (search >= 0) continue;
 
-            TB_User succ = cfg_next_user(end);
+            TB_User* succ = cfg_next_user(end);
             if (cfg_is_region(USERN(succ))) {
                 fill_phis(arena, &phis, USERN(succ), USERI(succ));
             }
         }
     } else if (!cfg_is_endpoint(end)) {
-        TB_User succ = cfg_next_user(end);
+        TB_User* succ = cfg_next_user(end);
         if (cfg_is_region(USERN(succ))) {
             fill_phis(arena, &phis, USERN(succ), USERI(succ));
         }
@@ -107,7 +113,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
     size_t leftovers = 0;
     size_t leftover_count = 1ull << bb->items.exp;
 
-    while (top != NULL) retry: {
+    while (top != NULL) {
         TB_Node* n = top->n;
 
         // resolve inputs first
@@ -121,17 +127,16 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
 
         // resolve anti-deps
         if (top->anti_i < top->anti_count) {
-            if (top->antis[top->anti_i] != NULL) {
-                TB_User next  = top->antis[top->anti_i]->next;
-                TB_Node* anti = USERN(top->antis[top->anti_i]);
-                int slot      = USERI(top->antis[top->anti_i]);
-
-                if (anti != n && slot == 1 && sched_in_bb(f, ws, bb, anti)) {
-                    top = sched_make_node(arena, top, anti);
+            Anti* anti = &top->antis[top->anti_i];
+            if (anti->index < anti->count) {
+                TB_User* use = &anti->users[anti->index++];
+                if (USERN(use) != n && USERI(use) == 1 && sched_in_bb(f, ws, bb, USERN(use))) {
+                    top = sched_make_node(arena, top, USERN(use));
                 }
 
-                top->antis[top->anti_i] = next;
-                if (next == NULL) { top->anti_i++; }
+                if (anti->index == anti->count) {
+                    top->anti_i++;
+                }
                 continue;
             }
         }

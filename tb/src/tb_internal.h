@@ -153,7 +153,8 @@ struct TB_DebugType {
 
         TB_DEBUG_TYPE_UINT,
         TB_DEBUG_TYPE_INT,
-        TB_DEBUG_TYPE_FLOAT,
+        TB_DEBUG_TYPE_FLOAT32,
+        TB_DEBUG_TYPE_FLOAT64,
 
         TB_DEBUG_TYPE_ARRAY,
         TB_DEBUG_TYPE_POINTER,
@@ -722,7 +723,7 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 ////////////////////////////////
 void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot);
 void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in);
-void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot, User* recycled);
+void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot);
 void print_node_sexpr(TB_Node* n, int depth);
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);

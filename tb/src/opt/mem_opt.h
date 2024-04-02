@@ -160,7 +160,7 @@ static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {
             split->alias_cnt -= 1;
             split->alias_idx[j] = split->alias_idx[split->alias_cnt];
 
-            TB_User proj = proj_with_index(split_node, split->alias_cnt);
+            TB_User* proj = proj_with_index(split_node, split->alias_cnt);
             TB_NODE_SET_EXTRA(USERN(proj), TB_NodeProj, .index = j);
 
             tb_kill_node(f, n->inputs[i]);

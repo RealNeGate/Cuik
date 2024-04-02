@@ -167,7 +167,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                 curr = next_mem_user(curr);
             } else {
                 // this is some random split, we'll just assume proj0 is the "leftovers" path
-                TB_User u = proj_with_index(curr, 0);
+                TB_User* u = proj_with_index(curr, 0);
                 curr = USERN(u);
             }
             latest[0] = curr;

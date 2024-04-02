@@ -46,11 +46,8 @@ static uint8_t get_wasm_type(TB_DataType dt) {
             if (dt.data <= 64) return 0x7E;
             break;
         }
-        case TB_FLOAT: {
-            if (dt.data == TB_FLT_32) return 0x7D;
-            if (dt.data == TB_FLT_64) return 0x7C;
-            break;
-        }
+        case TB_FLOAT32: return 0x7D;
+        case TB_FLOAT64: return 0x7C;
         case TB_PTR: return 0x7F;
     }
 

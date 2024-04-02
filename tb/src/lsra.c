@@ -683,7 +683,7 @@ static int allocate_blocked_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
 
         // split before first use that requires a register
         int earliest = INT_MAX;
-        for (User* u = vreg->n->users; u; u = u->next) {
+        FOR_USERS(u, vreg->n) {
             TB_Node* use_n = USERN(u);
             int use_i      = USERI(u);
 
@@ -872,10 +872,9 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
     // i'd rather NULL it before using it
     vreg = NULL;
 
-    User* u = spill_n->users;
-    while (u != NULL) {
-        TB_Node* use_n = USERN(u);
-        int use_i      = USERI(u);
+    for (size_t i = 0; i < spill_n->user_count;) {
+        TB_Node* use_n = USERN(&spill_n->users[i]);
+        int use_i      = USERI(&spill_n->users[i]);
         int use_t      = ra->time[use_n->gvn];
 
         RegMask* in_mask = constraint_in(ctx, use_n, use_i);
@@ -905,9 +904,8 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
 
             aarray_insert(ra->time, reload_n->gvn, good_before_spot);
             add_to_unhandled(ctx, ra, reload_vreg - ctx->vregs, good_before_spot);
-            u = spill_n->users;
         } else {
-            u = u->next;
+            i += 1;
         }
     }
 
@@ -973,10 +971,10 @@ static bool rematerialize(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int 
     }
 
     // remat for every use site... not the best move
-    User* u = n->users;
-    while (u != NULL) {
-        TB_Node* use_n = USERN(u);
-        int use_i      = USERI(u);
+    for (size_t i = 0; i < n->user_count;) {
+        TB_Node* use_n = USERN(&n->users[i]);
+        int use_i      = USERI(&n->users[i]);
+
         RegMask* in_mask = constraint_in(ctx, use_n, use_i);
         if (ra->time[use_n->gvn] >= pos && in_mask != &TB_REG_EMPTY) {
             // reload per use site
@@ -1014,9 +1012,8 @@ static bool rematerialize(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int 
 
             aarray_insert(ra->time, reload_n->gvn, good_before_spot);
             add_to_unhandled(ctx, ra, reload_vreg - ctx->vregs, good_before_spot);
-            u = n->users;
         } else {
-            u = u->next;
+            i += 1;
         }
     }
 
@@ -1062,13 +1059,12 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
 
     // replace all uses of the og node if they
     // happen past the split point.
-    for (User* u = n->users; u != NULL;) {
-        TB_Node* un = USERN(u);
+    for (size_t i = 0; i < n->user_count;) {
+        TB_Node* un = USERN(&n->users[i]);
         if (ra->time[un->gvn] >= pos) {
-            set_input(f, un, spill_n, USERI(u));
-            u = n->users;
+            set_input(f, un, spill_n, USERI(&n->users[i]));
         } else {
-            u = u->next;
+            i += 1;
         }
     }
 
@@ -1129,7 +1125,7 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
     // reload before next use that requires the original mask
     if (!reg_mask_is_not_empty(new_mask) && new_mask->may_spill) {
         int earliest = INT_MAX;
-        for (User* u = spill_n->users; u; u = u->next) {
+        FOR_USERS(u, spill_n) {
             TB_Node* use_n = USERN(u);
             int use_i      = USERI(u);
 

@@ -43,13 +43,14 @@ TB_API TB_DebugType* tb_debug_get_integer(TB_Module* m, bool is_signed, int bits
     tb_todo();
 }
 
-TB_API TB_DebugType* tb_debug_get_float(TB_Module* m, TB_FloatFormat fmt) {
-    static TB_DebugType types[] = {
-        [TB_FLT_32] = { TB_DEBUG_TYPE_FLOAT, .float_fmt = TB_FLT_32 },
-        [TB_FLT_64] = { TB_DEBUG_TYPE_FLOAT, .float_fmt = TB_FLT_64 },
-    };
+TB_API TB_DebugType* tb_debug_get_float32(TB_Module* m) {
+    static TB_DebugType type = { TB_DEBUG_TYPE_FLOAT32 };
+    return &type;
+}
 
-    return &types[fmt];
+TB_API TB_DebugType* tb_debug_get_float64(TB_Module* m) {
+    static TB_DebugType type = { TB_DEBUG_TYPE_FLOAT64 };
+    return &type;
 }
 
 TB_API TB_DebugType* tb_debug_create_ptr(TB_Module* m, TB_DebugType* base) {

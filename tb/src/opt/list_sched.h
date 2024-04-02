@@ -106,7 +106,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     TB_Node* cmp = NULL;
 
     // TODO(NeGate): we shouldn't do this on VLIWs, ideally we schedule predication earlier there
-    if (end->type == TB_BRANCH && f->scheduled[end->inputs[1]->gvn] == bb && end->inputs[1]->users->next == NULL &&
+    if (end->type == TB_BRANCH && f->scheduled[end->inputs[1]->gvn] == bb && end->inputs[1]->user_count == 1 &&
         end->inputs[1]->type != TB_PROJ && end->inputs[1]->type != TB_MACH_PROJ) {
         cmp = end->inputs[1];
     }

@@ -16,9 +16,12 @@ static void print_type(TB_DataType dt) {
             else printf("ptr%d", dt.data);
             break;
         }
-        case TB_FLOAT: {
-            if (dt.data == TB_FLT_32) printf("f32");
-            if (dt.data == TB_FLT_64) printf("f64");
+        case TB_FLOAT32: {
+            printf("f32");
+            break;
+        }
+        case TB_FLOAT64: {
+            printf("f64");
             break;
         }
         case TB_TUPLE: {

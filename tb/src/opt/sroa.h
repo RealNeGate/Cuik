@@ -39,14 +39,14 @@ static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* c
 }
 
 // false means failure to SROA
-static bool add_configs(TB_Function* f, User* use, TB_Node* base_address, size_t base_offset, size_t* config_count, AggregateConfig* configs, int pointer_size) {
-    for (; use; use = use->next) {
+static bool add_configs(TB_Function* f, TB_Node* addr, TB_Node* base_address, size_t base_offset, size_t* config_count, AggregateConfig* configs, int pointer_size) {
+    FOR_USERS(use, addr) {
         TB_Node* n = USERN(use);
 
         if (n->type == TB_MEMBER_ACCESS && USERI(use) == 1) {
             // same rules, different offset
             int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
-            if (!add_configs(f, n->users, base_address, base_offset + offset, config_count, configs, pointer_size)) {
+            if (!add_configs(f, n, base_address, base_offset + offset, config_count, configs, pointer_size)) {
                 return false;
             }
             continue;
@@ -91,7 +91,7 @@ static size_t sroa_rewrite(TB_Function* f, int pointer_size, TB_Node* start, TB_
 
     size_t config_count = 0;
     AggregateConfig* configs = tb_arena_alloc(f->tmp_arena, SROA_LIMIT * sizeof(AggregateConfig));
-    if (!add_configs(f, n->users, n, 0, &config_count, configs, pointer_size)) {
+    if (!add_configs(f, n, n, 0, &config_count, configs, pointer_size)) {
         return 1;
     }
 

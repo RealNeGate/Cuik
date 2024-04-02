@@ -484,7 +484,7 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
     }
 
     // (select.f32 (v43: cmp.lt.f32 ...) (v41: load.f32 ...) (v42: load.f32 ...))
-    if (n->dt.type == TB_FLOAT && src->type == TB_CMP_FLT) {
+    if (TB_IS_FLOAT_TYPE(n->dt) && src->type == TB_CMP_FLT) {
         TB_Node* a = src->inputs[1];
         TB_Node* b = src->inputs[2];
 
