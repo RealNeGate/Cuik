@@ -1062,20 +1062,18 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
 }
 
 void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
-    CUIK_TIMED_BLOCK("subsume") {
-        while (n->users != NULL) {
-            User* u     = n->users;
-            TB_Node* un = USERN(u);
-            int ui      = USERI(u);
-            tb_assert(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
+    while (n->users != NULL) {
+        User* u     = n->users;
+        TB_Node* un = USERN(u);
+        int ui      = USERI(u);
+        tb_assert(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
 
-            tb__gvn_remove(f, un);
+        tb__gvn_remove(f, un);
 
-            // set_input will delete 'use' so we can't use it afterwards
-            User* next = u->next;
-            set_input(f, un, new_n, ui);
-            u = next;
-        }
+        // set_input will delete 'use' so we can't use it afterwards
+        User* next = u->next;
+        set_input(f, un, new_n, ui);
+        u = next;
     }
 }
 
@@ -1215,8 +1213,7 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
     f->tmp_arena = tmp;
     f->worklist  = ws;
 
-    TB_ArenaSavepoint sp = tb_arena_save(ir);
-    TB_ArenaSavepoint tmp_sp = tb_arena_save(tmp);
+    TB_ArenaSavepoint sp = tb_arena_save(tmp);
 
     assert(worklist_count(ws) == 0);
     CUIK_TIMED_BLOCK("push_all_nodes") {
@@ -1292,10 +1289,6 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
     }
     // avoids bloating up my arenas with freed nodes
     tb_renumber_nodes(f, ws);
-    // now that we've flip flopped, let's free up any IR arena space
-    // we can guarentee has been shuffled around.
-    // TB_ArenaSavepoint sp = tb_arena_save(ir);
-    // TB_ArenaSavepoint tmp_sp = tb_arena_save(tmp);
 
     #ifdef TB_OPTDEBUG_STATS
     tb_opt_dump_stats(f);
@@ -1321,30 +1314,10 @@ static bool alloc_types(TB_Function* f) {
 
     CUIK_TIMED_BLOCK("allocate type array") {
         size_t count = (f->node_count + 63ull) & ~63ull;
-        f->type_interner = nl_hashset_alloc(64);
         f->type_cap = count;
         f->types = tb_platform_heap_alloc(count * sizeof(Lattice*));
         // when latuni_get sees a NULL, it'll replace it with the correct bottom type
         FOR_N(i, 0, count) { f->types[i] = NULL; }
-
-        nl_hashset_put2(&f->type_interner, &BOT_IN_THE_SKY,      lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &TOP_IN_THE_SKY,      lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &CTRL_IN_THE_SKY,     lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &NULL_IN_THE_SKY,     lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &XNULL_IN_THE_SKY,    lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &FLT32_IN_THE_SKY,    lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &FLT64_IN_THE_SKY,    lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &NAN32_IN_THE_SKY,    lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &NAN64_IN_THE_SKY,    lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &XNAN32_IN_THE_SKY,   lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &XNAN64_IN_THE_SKY,   lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &ANYMEM_IN_THE_SKY,   lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &ALLMEM_IN_THE_SKY,   lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &ANYPTR_IN_THE_SKY,   lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &ALLPTR_IN_THE_SKY,   lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &FALSE_IN_THE_SKY,    lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &TRUE_IN_THE_SKY,     lattice_hash, lattice_cmp);
-        nl_hashset_put2(&f->type_interner, &BOOL_IN_THE_SKY,     lattice_hash, lattice_cmp);
 
         // place ROOT type
         f->root_mem = lattice_alias(f, 0);
@@ -1355,7 +1328,6 @@ static bool alloc_types(TB_Function* f) {
 
 TB_API void tb_opt_free_types(TB_Function* f) {
     if (f->types != NULL) {
-        nl_hashset_free(f->type_interner);
         tb_platform_heap_free(f->types);
         f->types = NULL;
     }
@@ -1481,18 +1453,17 @@ bool tb_module_ipo(TB_Module* m) {
         TB_ThreadInfo* info = atomic_load_explicit(&m->first_info_in_module, memory_order_relaxed);
         while (info != NULL) {
             TB_Symbol** syms = (TB_Symbol**) info->symbols.data;
-            if (syms == NULL) continue;
+            if (syms != NULL) {
+                FOR_N(i, 0, 1ull << info->symbols.exp) {
+                    TB_Symbol* s = syms[i];
+                    if (s == NULL || s == NL_HASHSET_TOMB) continue;
+                    if (atomic_load_explicit(&s->tag, memory_order_relaxed) != TB_SYMBOL_FUNCTION) continue;
 
-            FOR_N(i, 0, 1ull << info->symbols.exp) {
-                TB_Symbol* s = syms[i];
-                if (s == NULL || s == NL_HASHSET_TOMB) continue;
-                if (atomic_load_explicit(&s->tag, memory_order_relaxed) != TB_SYMBOL_FUNCTION) continue;
-
-                if (nl_table_get(&scc.nodes, s) == NULL) {
-                    scc_walk(&scc, &ipo, (TB_Function*) s);
+                    if (nl_table_get(&scc.nodes, s) == NULL) {
+                        scc_walk(&scc, &ipo, (TB_Function*) s);
+                    }
                 }
             }
-
             info = info->next_in_module;
         }
         tb_arena_restore(scc.arena, sp);

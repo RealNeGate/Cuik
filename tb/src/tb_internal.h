@@ -65,8 +65,8 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS    0
 #define TB_OPTDEBUG_PASSES   0
-#define TB_OPTDEBUG_PEEP     1
-#define TB_OPTDEBUG_SCCP     1
+#define TB_OPTDEBUG_PEEP     0
+#define TB_OPTDEBUG_SCCP     0
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
@@ -397,10 +397,6 @@ struct TB_Function {
         // it's what the peepholes are iterating on
         TB_Worklist* worklist;
 
-        // tracks the fancier type system:
-        //   hash-consing because there's a lot of
-        //   redundant types we might construct.
-        NL_HashSet type_interner;
         // track a lattice per node (basically all get one so a compact array works)
         size_t type_cap;
         Lattice** types;
@@ -499,6 +495,20 @@ typedef struct {
     TB_External** data;
 } ExportList;
 
+// lock-free hashset
+typedef struct LatticeTable {
+    _Atomic(struct LatticeTable*) prev;
+
+    uint32_t exp;
+
+    // tracks how many entries have
+    // been moved once we're resizing
+    _Atomic uint32_t moved;
+    _Atomic uint32_t move_done;
+    _Atomic uint32_t count;
+    _Atomic(uintptr_t) data[];
+} LatticeTable;
+
 struct TB_Module {
     bool is_jit;
     bool visited; // used by the linker
@@ -527,6 +537,10 @@ struct TB_Module {
     // of a _tls_index
     TB_Symbol* tls_index_extern;
     TB_Symbol* chkstk_extern;
+
+    struct {
+        _Atomic(LatticeTable*) table;
+    } lattice;
 
     _Atomic uint32_t uses_chkstk;
     _Atomic uint32_t compiled_function_count;
@@ -716,6 +730,7 @@ void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos);
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data);
+void tb__lattice_init(TB_Module* m);
 
 // out_bytes needs at least 16 bytes
 void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);

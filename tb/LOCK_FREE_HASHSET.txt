@@ -1,0 +1,27 @@
+Starting with a simple void*[cap], we can easily just CAS from NULL -> taken and if anyone
+fights us they'd lose and either accept that we won and share that slot or move along if they
+weren't comparable.
+
+States per entry:
+
+
+             NULL -> p (p is an entry)
+
+
+If we plan to resize we need to introduce a new table that'll be bigger, for this to work
+we add an intermediate state called RESERVED(p), it holds a pointer so if another thread
+did a lookup while we were reserving they'd know to wait on us because we're working on
+equivalent entries. now that we can get other threads to wait while we search the earlier
+tables we can take our sweet time searching and either resolve into a previous entry or
+untag the reserved slot and just hand them p.
+
+
+             NULL -> RESERVED(p) --> p
+                                \
+                                 \-> old_p
+
+
+As we do lookups, there's two ways that items will be moved up, either on-demand as we do
+lookups (hare) or slowly each lookup will copy any entries from the previous table into the latest
+one (tortoise).
+

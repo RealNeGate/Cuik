@@ -17,6 +17,7 @@
 //   MAF  - monotone analysis framework
 //   SCC  - strongly connected components
 //   MOP  - meet over all paths
+//   NMT  - not-marked through (pauseless paper)
 #ifndef TB_CORE_H
 #define TB_CORE_H
 

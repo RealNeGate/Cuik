@@ -187,6 +187,7 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
         }
     }
 
+    tb__lattice_init(m);
     return m;
 }
 

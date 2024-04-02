@@ -355,10 +355,8 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
         }
 
         if (dataflow) {
-            worklist_clear_visited(ws);
-
             size_t bb_count = cfg.block_count;
-            dyn_array_set_length(ws->items, bb_count);
+            worklist_clear(ws);
 
             CUIK_TIMED_BLOCK("dataflow") {
                 FOR_N(i, 0, cfg.block_count) {

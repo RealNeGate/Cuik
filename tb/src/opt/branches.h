@@ -395,6 +395,7 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
 static Lattice* value_call(TB_Function* f, TB_Node* n) {
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
 
+    TB_Arena* arena = get_permanent_arena(f->super.module);
     size_t size = sizeof(Lattice) + c->proj_count*sizeof(Lattice*);
     Lattice* l = tb_arena_alloc(f->arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = c->proj_count };
@@ -413,13 +414,9 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     // control just flows through
     l->elems[0] = latuni_get(f, n->inputs[0]);
 
-    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-    if (k) {
-        tb_arena_free(f->arena, l, size);
-        return k;
-    } else {
-        return l;
-    }
+    Lattice* k = lattice_raw_intern(f->super.module, l, false);
+    if (k != l) { tb_arena_free(arena, l, size); }
+    return k;
 }
 
 static Lattice* value_branch(TB_Function* f, TB_Node* n) {

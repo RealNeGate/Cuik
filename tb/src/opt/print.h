@@ -118,7 +118,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         } else {
             printf("sym%p", sym);
         }
-    } else if (n->type == TB_PROJ && n->dt.type == TB_CONTROL) {
+    } else if (cfg_is_cproj(n)) {
         if (n->inputs[0]->type == TB_ROOT) {
             print_ref_to_node(ctx, n->inputs[0], def);
         } else {
@@ -200,8 +200,8 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
         // skip these
         if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST ||
             n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
-            n->type == TB_PROJ || n->type == TB_MACH_PROJ || n->type == TB_REGION ||
-            n->type == TB_NATURAL_LOOP || n->type == TB_AFFINE_LOOP ||
+            n->type == TB_PROJ || n->type == TB_BRANCH_PROJ || n->type == TB_MACH_PROJ ||
+            n->type == TB_REGION || n->type == TB_NATURAL_LOOP || n->type == TB_AFFINE_LOOP ||
             n->type == TB_NULL || n->type == TB_PHI) {
             continue;
         }
@@ -233,12 +233,8 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     int bits = n->inputs[1]->dt.type == TB_PTR ? 64 : n->inputs[1]->dt.data;
 
                     printf("  if ");
-                    FOR_N(i, 1, n->input_count) {
-                        if (i != 1) printf(", ");
-                        print_ref_to_node(ctx, n->inputs[i], false);
-                    }
-
-                    int64_t key = TB_NODE_GET_EXTRA_T(succ[i], TB_NodeBranchProj)->key;
+                    print_ref_to_node(ctx, n->inputs[1], false);
+                    int64_t key = TB_NODE_GET_EXTRA_T(succ[1], TB_NodeBranchProj)->key;
                     if (key == 0) {
                         printf(" then ");
                     } else {
@@ -249,10 +245,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     print_branch_edge(ctx, succ[1], false);
                 } else {
                     printf("  br ");
-                    FOR_N(i, 1, n->input_count) {
-                        if (i != 1) printf(", ");
-                        print_ref_to_node(ctx, n->inputs[i], false);
-                    }
+                    print_ref_to_node(ctx, n->inputs[1], false);
                     printf("%s=> {\n", n->input_count > 1 ? " " : "");
 
                     FOR_N(i, 0, br->succ_count) {

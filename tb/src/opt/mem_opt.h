@@ -128,21 +128,18 @@ static TB_Node* identity_load(TB_Function* f, TB_Node* n) {
 
 static Lattice* value_split_mem(TB_Function* f, TB_Node* n) {
     TB_NodeMemSplit* s = TB_NODE_GET_EXTRA(n);
+    TB_Arena* arena = get_permanent_arena(f->super.module);
 
     size_t size = sizeof(Lattice) + s->alias_cnt*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(f->tmp_arena, size);
+    Lattice* l = tb_arena_alloc(arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = s->alias_cnt };
     FOR_N(i, 0, s->alias_cnt) {
         l->elems[i] = lattice_alias(f, s->alias_idx[i]);
     }
 
-    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-    if (k) {
-        tb_arena_free(f->tmp_arena, l, size);
-        return k;
-    } else {
-        return l;
-    }
+    Lattice* k = lattice_raw_intern(f->super.module, l, false);
+    if (k != l) { tb_arena_free(arena, l, size); }
+    return k;
 }
 
 static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {

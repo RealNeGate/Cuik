@@ -1,6 +1,8 @@
 #include <hashes.h>
 #include <math.h>
 
+static Lattice TOMBSTONE         = { 0 };
+
 static Lattice TOP_IN_THE_SKY    = { LATTICE_TOP    };
 static Lattice BOT_IN_THE_SKY    = { LATTICE_BOT    };
 static Lattice CTRL_IN_THE_SKY   = { LATTICE_CTRL   };
@@ -106,6 +108,260 @@ static bool lattice_cmp(void* a, void* b) {
     }
 }
 
+static uintptr_t lattice_raw_get_entry(LatticeTable* table, size_t i) {
+    // either NULL or complete can go thru without waiting
+    uintptr_t decision;
+    while (decision = atomic_load(&table->data[i]), decision & 1) {
+        // idk if i should do a nicer wait than a spin-lock
+    }
+    return decision;
+}
+
+static Lattice* lattice_raw_lookup(LatticeTable* table, uint32_t h, Lattice* l) {
+    size_t mask = (1 << table->exp) - 1;
+    size_t first = h & mask, i = first;
+    do {
+        uintptr_t entry = atomic_load(&table->data[i]);
+        if (entry == 0) {
+            return NULL;
+        }
+
+        Lattice* entry_p = (Lattice*) (entry & ~1ull);
+        if (lattice_cmp(entry_p, l)) {
+            if ((entry & 1) == 0) {
+                // not reserved, yay
+                return entry_p;
+            }
+
+            return (Lattice*) lattice_raw_get_entry(table, i);
+        }
+
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    return NULL;
+}
+
+// only done during initialization
+static void lattice_raw_insert(LatticeTable* table, Lattice* l) {
+    uint32_t h = lattice_hash(l);
+    size_t mask = (1 << table->exp) - 1;
+    size_t first = h & mask, i = first;
+    do {
+        uintptr_t entry = atomic_load_explicit(&table->data[i], memory_order_relaxed);
+        if (entry == 0) {
+            atomic_store_explicit(&table->data[i], (uintptr_t) l, memory_order_relaxed);
+            atomic_fetch_add_explicit(&table->count, 1, memory_order_relaxed);
+            return;
+        }
+
+        assert(!lattice_cmp((Lattice*) entry, l));
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    tb_todo();
+}
+
+static Lattice* lattice_raw_intern(TB_Module* mod, Lattice* l, bool inner) {
+    // cuikperf_region_start("intern", NULL);
+    LatticeTable* latest = atomic_load(&mod->lattice.table);
+
+    #if 0
+    printf("TABLE:\n");
+    for (LatticeTable* c = latest; c; c = c->prev) {
+        uint32_t threshold = ((1 << c->exp) * 3) / 4;
+        printf("{cnt=%d, threshold=%d}\n", c->count, threshold);
+    }
+    #endif
+
+    // if there's previous tables, we'd ideally want them gone soon
+    // let's pick 32 entries from the table and shuffle them up.
+    LatticeTable* prev = atomic_load(&latest->prev);
+    if (prev && !inner) {
+        // printf("%p: MIGRATE\n", latest);
+
+        size_t cap = 1ull << prev->exp;
+        uint32_t done;
+
+        // snatch up some number of items
+        uint32_t old, new;
+        do {
+            old = atomic_load(&prev->moved);
+            if (old == cap) {
+                done = atomic_load(&prev->move_done);
+                goto skip;
+            }
+            new = TB_MIN(old + 32, cap);
+        } while (!atomic_compare_exchange_strong(&prev->moved, &(uint32_t){ old }, new));
+
+        // printf("%p: %p: MOVING %u .. %u items (of %zu)\n", latest, prev, old, new, cap);
+        FOR_N(i, old, new) {
+            uintptr_t decision = lattice_raw_get_entry(prev, i);
+            if (decision != 0) {
+                lattice_raw_intern(mod, (Lattice*) decision, true);
+
+                // now the data here is marked as stale, this isn't necessary btw
+                // prev->data[i] = (uintptr_t) &TOMBSTONE;
+            }
+        }
+
+        done = atomic_fetch_add(&prev->move_done, new - old);
+        done += new - old;
+
+        skip:;
+        assert(done <= cap);
+        if (done == cap) {
+            // dettach now
+            // printf("%p: prev is now %p\n", latest, prev->prev);
+            latest->prev = prev->prev;
+
+            // TODO(NeGate): we're leaking the memory rn
+        }
+    }
+
+    uint32_t threshold = ((1 << latest->exp) * 3) / 4;
+    if (latest->count >= threshold) CUIK_TIMED_BLOCK("new table") {
+        // make resized table, we'll amortize the moves upward
+        size_t new_cap = 1ull << (latest->exp + 1);
+        // printf("TRY ALLOC! %u (exp=%zu, after %p)\n", latest->exp, new_cap, latest);
+
+        LatticeTable* new_top = tb_platform_heap_alloc(sizeof(LatticeTable) + new_cap*sizeof(uintptr_t));
+        *new_top = (LatticeTable){ .exp = latest->exp + 1 };
+        memset(new_top->data, 0, new_cap*sizeof(uintptr_t));
+
+        // printf("ALLOC! %p\n", new_top);
+
+        // CAS latest -> new_table, if another thread wins the race we'll use its table
+        LatticeTable* top = atomic_load_explicit(&mod->lattice.table, memory_order_relaxed);
+        new_top->prev = top;
+        if (!atomic_compare_exchange_strong(&mod->lattice.table, &top, new_top)) {
+            assert(top != latest);
+            latest = top;
+
+            // printf("INSTA-FREE! %p\n", new_top);
+            tb_platform_heap_free(new_top);
+        } else {
+            latest = new_top;
+        }
+    }
+
+    uint32_t h = lattice_hash(l);
+    uintptr_t reserved_form = (uintptr_t)l | 1;
+    Lattice* result = NULL;
+    for (;;) {
+        size_t mask = (1 << latest->exp) - 1;
+        size_t first = h & mask, i = first;
+
+        do { // insertion
+            uintptr_t entry = 0;
+
+            // if we spot a NULL, the entry has never been in this table, that doesn't mean
+            // it's not appeared already so we'll only reserve the slot until we figure that
+            // out.
+            if (atomic_compare_exchange_strong(&latest->data[i], &entry, reserved_form)) {
+                // find out if there's already an entry, it's possible that this entry is already
+                // reserved which is annoying because now we're waiting for some other thread to
+                // sort itself out (given it's making forward progress we shouldn't be able to
+                // dead-lock here).
+                void* old = NULL;
+                LatticeTable* curr = atomic_load(&latest->prev);
+                while (curr != NULL && old == NULL) {
+                    old = lattice_raw_lookup(curr, h, l);
+                    curr = atomic_load(&curr->prev);
+                }
+
+                // count doesn't care that it's a migration, it's at least not replacing an existing
+                // slot in this version of the table.
+                atomic_fetch_add_explicit(&latest->count, 1, memory_order_relaxed);
+
+                if (old != NULL) {
+                    atomic_exchange(&latest->data[i], (uintptr_t) old);
+                    result = old;
+                    break;
+                } else {
+                    // no entry was found, good (reserved -> l)
+                    atomic_exchange(&latest->data[i], (uintptr_t) l);
+                    result = l;
+                    break;
+                }
+            }
+
+            Lattice* entry_p = (Lattice*) (entry & ~1ull);
+            if (lattice_cmp(entry_p, l)) {
+                if ((entry & 1) == 0) {
+                    // not reserved, yay
+                    result = entry_p;
+                    break;
+                }
+
+                // printf("RESERVED? %p (wait we're holding)\n", entry_p);
+
+                // ok if it's a reserved form and it matches us, we'll just wait for the other thread
+                // to decide on things.
+                uintptr_t decision = lattice_raw_get_entry(latest, i);
+                result = (Lattice*) decision;
+                break;
+            }
+
+            i = (i + 1) & mask;
+        } while (i != first);
+
+        // if the table changed before our eyes, it means someone resized which sucks
+        // but it just means we need to retry
+        LatticeTable* new_latest = atomic_load(&mod->lattice.table);
+        if (latest == new_latest) {
+            // cuikperf_region_end();
+            return result;
+        }
+        latest = new_latest;
+    }
+}
+
+static Lattice* lattice_intern(TB_Function* f, Lattice l) {
+    assert(l.tag != LATTICE_TUPLE);
+
+    // thread-local but permanent so we can keeps it's items alive the entire
+    // module's lifetime but also quickly unwind if the allocation didn't go thru.
+    TB_Arena* arena = get_permanent_arena(f->super.module);
+    Lattice* k = tb_arena_alloc(arena, sizeof(Lattice));
+    memcpy(k, &l, sizeof(l));
+
+    Lattice* interned = lattice_raw_intern(f->super.module, k, false);
+    if (interned != k) {
+        // fast unwind, we finna use the old val
+        tb_arena_free(arena, k, sizeof(Lattice));
+    }
+    return interned;
+}
+
+void tb__lattice_init(TB_Module* m) {
+    int initial_exp = 5;
+
+    LatticeTable* latest = tb_platform_heap_alloc(sizeof(LatticeTable) + (1<<initial_exp)*sizeof(uintptr_t));
+    *latest = (LatticeTable){ .exp = initial_exp };
+    memset(latest->data, 0, (1<<initial_exp)*sizeof(uintptr_t));
+    m->lattice.table = latest;
+
+    lattice_raw_insert(latest, &BOT_IN_THE_SKY);
+    lattice_raw_insert(latest, &TOP_IN_THE_SKY);
+    lattice_raw_insert(latest, &CTRL_IN_THE_SKY);
+    lattice_raw_insert(latest, &NULL_IN_THE_SKY);
+    lattice_raw_insert(latest, &XNULL_IN_THE_SKY);
+    lattice_raw_insert(latest, &FLT32_IN_THE_SKY);
+    lattice_raw_insert(latest, &FLT64_IN_THE_SKY);
+    lattice_raw_insert(latest, &NAN32_IN_THE_SKY);
+    lattice_raw_insert(latest, &NAN64_IN_THE_SKY);
+    lattice_raw_insert(latest, &XNAN32_IN_THE_SKY);
+    lattice_raw_insert(latest, &XNAN64_IN_THE_SKY);
+    lattice_raw_insert(latest, &ANYMEM_IN_THE_SKY);
+    lattice_raw_insert(latest, &ALLMEM_IN_THE_SKY);
+    lattice_raw_insert(latest, &ANYPTR_IN_THE_SKY);
+    lattice_raw_insert(latest, &ALLPTR_IN_THE_SKY);
+    lattice_raw_insert(latest, &FALSE_IN_THE_SKY);
+    lattice_raw_insert(latest, &TRUE_IN_THE_SKY);
+    lattice_raw_insert(latest, &BOOL_IN_THE_SKY);
+}
+
 static bool lattice_is_const_int(Lattice* l) { return l->_int.min == l->_int.max; }
 static bool lattice_is_const(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
 
@@ -133,18 +389,6 @@ Lattice* latuni_get(TB_Function* f, TB_Node* n) {
     if (UNLIKELY(n->gvn >= f->type_cap)) { latuni_grow(f, n->gvn); }
     if (f->types[n->gvn] == NULL) { f->types[n->gvn] = lattice_from_dt(f, n->dt); }
     return f->types[n->gvn];
-}
-
-static Lattice* lattice_intern(TB_Function* f, Lattice l) {
-    assert(l.tag != LATTICE_TUPLE);
-    Lattice* k = nl_hashset_get2(&f->type_interner, &l, lattice_hash, lattice_cmp);
-    if (k != NULL) { return k; }
-
-    // allocate new node
-    k = tb_arena_alloc(f->arena, sizeof(Lattice));
-    memcpy(k, &l, sizeof(l));
-    nl_hashset_put2(&f->type_interner, k, lattice_hash, lattice_cmp);
-    return k;
 }
 
 static bool lattice_top_or_bot(Lattice* l) {
@@ -206,24 +450,23 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
 }
 
 static Lattice* lattice_branch_goto(TB_Function* f, int succ_count, int taken) {
+    TB_Arena* arena = get_permanent_arena(f->super.module);
+
     size_t size = sizeof(Lattice) + succ_count*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(f->arena, size);
+    Lattice* l = tb_arena_alloc(arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = succ_count };
     FOR_N(i, 0, succ_count) {
         l->elems[i] = i == taken ? &CTRL_IN_THE_SKY : &TOP_IN_THE_SKY;
     }
 
-    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-    if (k) {
-        tb_arena_free(f->arena, l, size);
-        return k;
-    } else {
-        return l;
-    }
+    Lattice* k = lattice_raw_intern(f->super.module, l, false);
+    if (k != l) { tb_arena_free(arena, l, size); }
+    return k;
 }
 
 static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
     assert(n->dt.type == TB_TUPLE);
+    TB_Arena* arena = get_permanent_arena(f->super.module);
 
     // count projs
     int projs = 0;
@@ -232,7 +475,7 @@ static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
     }
 
     size_t size = sizeof(Lattice) + projs*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(f->arena, size);
+    Lattice* l = tb_arena_alloc(arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = projs };
     FOR_USERS(u, n) {
         if (!is_proj(USERN(u))) { continue; }
@@ -240,13 +483,9 @@ static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
         l->elems[index] = lattice_from_dt(f, USERN(u)->dt);
     }
 
-    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-    if (k) {
-        tb_arena_free(f->arena, l, size);
-        return k;
-    } else {
-        return l;
-    }
+    Lattice* k = lattice_raw_intern(f->super.module, l, false);
+    if (k != l) { tb_arena_free(arena, l, size); }
+    return k;
 }
 
 #define MASK_UPTO(pos) (UINT64_MAX >> (64 - pos))
@@ -282,22 +521,20 @@ static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max) {
 }
 
 static Lattice* lattice_alias(TB_Function* f, int alias_idx) {
+    TB_Arena* arena = get_permanent_arena(f->super.module);
+
     size_t alias_n = (alias_idx + 64) / 64;
     size_t size = sizeof(Lattice) + alias_n*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(f->arena, size);
+    Lattice* l = tb_arena_alloc(arena, size);
     *l = (Lattice){ LATTICE_MEM_SLICE, ._alias_n = alias_n };
 
     // just flip aliases
     FOR_N(i, 0, alias_n) { l->alias[i] = 0; }
     l->alias[alias_idx / 64] |= 1ull << (alias_idx % 64);
 
-    Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-    if (k) {
-        tb_arena_free(f->arena, l, size);
-        return k;
-    } else {
-        return l;
-    }
+    Lattice* k = lattice_raw_intern(f->super.module, l, false);
+    if (k != l) { tb_arena_free(arena, l, size); }
+    return k;
 }
 
 static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
@@ -317,37 +554,31 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
         case LATTICE_ANYMEM: return &ALLMEM_IN_THE_SKY;
 
         case LATTICE_MEM_SLICE: {
+            TB_Arena* arena = get_permanent_arena(f->super.module);
             size_t size = sizeof(Lattice) + type->_alias_n*sizeof(Lattice*);
-            Lattice* l = tb_arena_alloc(f->arena, size);
+            Lattice* l = tb_arena_alloc(arena, size);
             *l = (Lattice){ LATTICE_TUPLE, ._alias_n = type->_alias_n };
 
             // just flip aliases
             FOR_N(i, 0, type->_alias_n) { l->alias[i] = ~type->alias[i]; }
 
-            Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-            if (k) {
-                tb_arena_free(f->arena, l, size);
-                return k;
-            } else {
-                return l;
-            }
+            Lattice* k = lattice_raw_intern(f->super.module, l, false);
+            if (k != l) { tb_arena_free(arena, l, size); }
+            return k;
         }
 
         case LATTICE_TUPLE: {
+            TB_Arena* arena = get_permanent_arena(f->super.module);
             size_t size = sizeof(Lattice) + type->_elem_count*sizeof(Lattice*);
-            Lattice* l = tb_arena_alloc(f->arena, size);
+            Lattice* l = tb_arena_alloc(arena, size);
             *l = (Lattice){ LATTICE_TUPLE, ._elem_count = type->_elem_count };
             FOR_N(i, 0, type->_elem_count) {
                 l->elems[i] = lattice_dual(f, type->elems[i]);
             }
 
-            Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-            if (k) {
-                tb_arena_free(f->arena, l, size);
-                return k;
-            } else {
-                return l;
-            }
+            Lattice* k = lattice_raw_intern(f->super.module, l, false);
+            if (k != l) { tb_arena_free(arena, l, size); }
+            return k;
         }
 
         default: return type; // lands on the centerline
@@ -432,21 +663,18 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
             if (b->tag != LATTICE_MEM_SLICE) { return &BOT_IN_THE_SKY; }
             size_t alias_n = TB_MAX(a->_alias_n, b->_alias_n);
 
+            TB_Arena* arena = get_permanent_arena(f->super.module);
             size_t size = sizeof(Lattice) + alias_n*sizeof(Lattice*);
-            Lattice* l = tb_arena_alloc(f->arena, size);
+            Lattice* l = tb_arena_alloc(arena, size);
             *l = (Lattice){ LATTICE_MEM_SLICE, ._alias_n = alias_n };
 
             FOR_N(i, 0, a->_alias_n) { l->alias[i] = a->alias[i]; }
             FOR_N(i, a->_alias_n, alias_n) { l->alias[i] = 0; }
             FOR_N(i, 0, b->_alias_n) { l->alias[i] |= b->alias[i]; }
 
-            Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-            if (k) {
-                tb_arena_free(f->arena, l, size);
-                return k;
-            } else {
-                return l;
-            }
+            Lattice* k = lattice_raw_intern(f->super.module, l, false);
+            if (k != l) { tb_arena_free(arena, l, size); }
+            return k;
         }
 
         case LATTICE_TUPLE: {
@@ -454,20 +682,17 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
                 return &BOT_IN_THE_SKY;
             }
 
+            TB_Arena* arena = get_permanent_arena(f->super.module);
             size_t size = sizeof(Lattice) + a->_elem_count*sizeof(Lattice*);
-            Lattice* l = tb_arena_alloc(f->arena, size);
+            Lattice* l = tb_arena_alloc(arena, size);
             *l = (Lattice){ LATTICE_TUPLE, ._elem_count = a->_elem_count };
             FOR_N(i, 0, a->_elem_count) {
                 l->elems[i] = lattice_meet(f, a->elems[i], b->elems[i]);
             }
 
-            Lattice* k = nl_hashset_put2(&f->type_interner, l, lattice_hash, lattice_cmp);
-            if (k) {
-                tb_arena_free(f->arena, l, size);
-                return k;
-            } else {
-                return l;
-            }
+            Lattice* k = lattice_raw_intern(f->super.module, l, false);
+            if (k != l) { tb_arena_free(arena, l, size); }
+            return k;
         }
 
         default: tb_todo();

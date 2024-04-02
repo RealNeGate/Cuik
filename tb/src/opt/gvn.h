@@ -147,7 +147,8 @@ static size_t extra_bytes(TB_Node* n) {
 
 uint32_t gvn_hash(void* a) {
     uint32_t h;
-    CUIK_TIMED_BLOCK("hash") {
+    // CUIK_TIMED_BLOCK("hash")
+    {
         TB_Node* n = a;
         size_t extra = extra_bytes(n);
         h = n->type + n->dt.raw + n->input_count + extra;

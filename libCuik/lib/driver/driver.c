@@ -377,9 +377,11 @@ static void ld_invoke(BuildStepInfo* info) {
         if (args->optimize) {
             int t = 0;
             do {
-                log_debug("Optimizing in functions... t=%d", ++t);
-                cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, local_opt_func);
-                log_debug("Interprocedural opts...");
+                CUIK_TIMED_BLOCK("Local opts") {
+                    log_debug("Optimizing in functions... t=%d", ++t);
+                    cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, local_opt_func);
+                    log_debug("Interprocedural opts...");
+                }
             } while (tb_module_ipo(mod));
         }
 
