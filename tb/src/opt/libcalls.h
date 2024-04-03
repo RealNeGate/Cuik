@@ -36,9 +36,13 @@ static TB_Node* ideal_libcall(TB_Function* f, TB_Node* n) {
         // returns the destination pointer, convert any users of that to dst
         // and CALL has a projection we wanna get rid of
         TB_NodeCall* c = TB_NODE_GET_EXTRA_T(n, TB_NodeCall);
-        subsume_node(f, c->projs[0], ctrl);
-        subsume_node(f, c->projs[1], n2);
-        subsume_node(f, c->projs[2], dst_ptr);
+
+        TB_Node* proj0 = USERN(proj_with_index(n, 0));
+        subsume_node(f, proj0, ctrl);
+        TB_Node* proj1 = USERN(proj_with_index(n, 1));
+        subsume_node(f, proj1, n2);
+        TB_Node* proj2 = USERN(proj_with_index(n, 2));
+        subsume_node(f, proj2, dst_ptr);
 
         return dst_ptr;
     }

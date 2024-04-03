@@ -475,16 +475,13 @@ TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, s
     TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
     c->proj_count = 3;
     c->proto = NULL;
-    c->projs[0] = cproj;
-    c->projs[1] = mproj;
-    c->projs[2] = dproj;
     return dproj;
 }
 
 TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node* target, size_t param_count, TB_Node** params) {
     size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
 
-    TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
+    TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall));
     set_input(f, n, target, 2);
     FOR_N(i, 0, param_count) {
         set_input(f, n, params[i], i + 3);
@@ -502,26 +499,28 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
     TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
     set_input(f, n, append_mem(f, mproj), 1);
 
+    // leaked into the IR arena, don't care rn
+    TB_Node** projs = tb_arena_alloc(f->arena, sizeof(TB_Node*)*proj_count);
+
     // create data projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
     FOR_N(i, 0, proto->return_count) {
-        c->projs[i + 2] = tb__make_proj(f, rets[i].dt, n, i + 2);
+        projs[i + 2] = tb__make_proj(f, rets[i].dt, n, i + 2);
     }
 
     // we'll slot a NULL so it's easy to tell when it's empty
     if (proto->return_count == 0) {
-        c->projs[2] = NULL;
+        projs[2] = NULL;
     }
 
-    c->projs[0] = cproj;
-    c->projs[1] = mproj;
-
+    projs[0] = cproj;
+    projs[1] = mproj;
     add_input_late(f, get_callgraph(f), n);
 
     if (proto->return_count == 1) {
-        return (TB_MultiOutput){ .count = proto->return_count, .single = c->projs[2] };
+        return (TB_MultiOutput){ .count = proto->return_count, .single = projs[2] };
     } else {
-        return (TB_MultiOutput){ .count = proto->return_count, .multiple = c->projs + 2 };
+        return (TB_MultiOutput){ .count = proto->return_count, .multiple = &projs[2] };
     }
 }
 

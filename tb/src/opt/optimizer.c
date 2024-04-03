@@ -925,6 +925,7 @@ static void print_lattice(Lattice* l) {
             printf("]");
             break;
         }
+
         case LATTICE_INT: {
             printf("[");
             if (l->_int.min == l->_int.max) {

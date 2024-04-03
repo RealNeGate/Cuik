@@ -607,7 +607,7 @@ void tb_builder_static_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, TB_
     {
         size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
 
-        TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + nargs, sizeof(TB_NodeCall) + (sizeof(TB_Node*)*proj_count));
+        TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + nargs, sizeof(TB_NodeCall));
         set_input(f, n, target_node, 2);
         FOR_N(i, 0, nargs) {
             set_input(f, n, g->vals[g->val_cnt + i], i + 3);
@@ -628,25 +628,12 @@ void tb_builder_static_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, TB_
         // create data projections
         TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
         FOR_N(i, 0, proto->return_count) {
-            c->projs[i + 2] = tb__make_proj(f, rets[i].dt, n, i + 2);
+            TB_Node* proj = tb__make_proj(f, rets[i].dt, n, i + 2);
+            push(g, proj);
         }
-
-        // we'll slot a NULL so it's easy to tell when it's empty
-        if (proto->return_count == 0) {
-            c->projs[2] = NULL;
-        }
-
-        c->projs[0] = cproj;
-        c->projs[1] = mproj;
 
         g->vals[mem_var] = mproj;
         add_input_late(f, get_callgraph(f), n);
-
-        // push all returns
-        assert(proto->return_count < 2);
-        FOR_N(i, 0, proto->return_count) {
-            push(g, c->projs[2 + i]);
-        }
     }
 }
 

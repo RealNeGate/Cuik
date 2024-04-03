@@ -701,7 +701,6 @@ typedef struct {
 typedef struct {
     TB_FunctionPrototype* proto;
     int proj_count;
-    TB_Node* projs[];
 } TB_NodeCall;
 
 typedef struct {
@@ -888,6 +887,11 @@ TB_API TB_Assembly* tb_output_get_asm(TB_FunctionOutput* out);
 TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip);
 
 ////////////////////////////////
+// Disassembler
+////////////////////////////////
+TB_API ptrdiff_t tb_print_disassembly_inst(TB_Arch arch, size_t length, const void* ptr);
+
+////////////////////////////////
 // JIT compilation
 ////////////////////////////////
 typedef struct TB_JIT TB_JIT;
@@ -938,11 +942,6 @@ TB_API bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size
 // returns true if we stepped off the end and returned through the trampoline
 TB_API bool tb_jit_thread_step(TB_CPUContext* cpu, uint64_t* ret, uintptr_t pc_start, uintptr_t pc_end);
 #endif
-
-////////////////////////////////
-// Disassembler
-////////////////////////////////
-TB_API ptrdiff_t tb_print_disassembly_inst(TB_Arch arch, size_t length, const void* ptr);
 
 ////////////////////////////////
 // Exporter
