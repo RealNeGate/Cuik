@@ -203,7 +203,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         // dead node elim
         CUIK_TIMED_BLOCK("dead node elim") {
             for (TB_Node* n; n = worklist_pop(ws), n;) {
-                if (n->users == NULL) { tb_kill_node(f, n); }
+                if (n->user_count == 0) { tb_kill_node(f, n); }
             }
         }
 

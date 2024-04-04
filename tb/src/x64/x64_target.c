@@ -1234,21 +1234,31 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 TB_FunctionPrototype* proto = ctx->f->prototype;
                 assert(proto->return_count <= 2 && "At most 2 return values :(");
 
-                FOR_N(i, 3, n->input_count) {
+                FOR_N(i, 3, 3 + proto->return_count) {
                     TB_Node* in = n->inputs[i];
-                    if ((i - 3) < proto->return_count) {
-                        TB_DataType dt = in->dt;
-                        if (TB_IS_FLOAT_TYPE(dt)) { ins[i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << (i-3)); }
-                        else { ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << ret_gprs[i-3]); }
+                    TB_DataType dt = in->dt;
+                    if (TB_IS_FLOAT_TYPE(dt)) {
+                        ins[i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << (i-3));
                     } else {
-                        if (n->inputs[i]->type == TB_MACH_PROJ) {
-                            ins[i] = TB_NODE_GET_EXTRA_T(n->inputs[i], TB_NodeMachProj)->def;
-                        } else if (n->inputs[i]->type == TB_MACH_COPY) {
-                            ins[i] = TB_NODE_GET_EXTRA_T(n->inputs[i], TB_NodeMachCopy)->def;
-                        } else {
-                            tb_todo();
-                        }
+                        ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << ret_gprs[i-3]);
                     }
+                }
+
+                uint32_t callee_saved_gpr = ~param_descs[ctx->abi_index].caller_saved_gprs;
+                callee_saved_gpr &= ~(1u << RSP);
+                if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
+                    callee_saved_gpr &= ~(1 << RBP);
+                }
+
+                size_t j = 3 + proto->return_count;
+                FOR_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
+                    if ((callee_saved_gpr >> i) & 1) {
+                        ins[j++] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << i);
+                    }
+                }
+
+                FOR_N(i, param_descs[ctx->abi_index].caller_saved_xmms, ctx->num_regs[REG_CLASS_XMM]) {
+                    ins[j++] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << i);
                 }
             }
             return &TB_REG_EMPTY;

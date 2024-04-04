@@ -311,6 +311,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         VReg* tmp_vreg = tb__set_node_vreg(ctx, tmp);
                         tmp_vreg->mask = ctx->normie_mask[def_mask->class];
                         tmp_vreg->active_range = &NULL_RANGE;
+                        tmp_vreg->hint_vreg = fixed_vreg;
 
                         nl_table_put(&ra.fwd_table, (void*) (uintptr_t) n->gvn, (void*) (uintptr_t) tmp->gvn);
                         aarray_insert(ra.time, tmp->gvn, timeline);
@@ -663,10 +664,10 @@ static int allocate_blocked_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
         }
     }
 
-    // pick highest use pos
+    // pick furthest block pos
     int highest = 0;
     FOR_N(i, 1, reg_count) {
-        if (use_pos[i] > use_pos[highest]) { highest = i; }
+        if (ra->block_pos[i] > ra->block_pos[highest]) { highest = i; }
     }
 
     int pos = use_pos[highest];
@@ -704,15 +705,21 @@ static int allocate_blocked_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
         // split active or inactive interval reg
         if (set_get(&ra->active_set[class], highest)) {
             int to_split = ra->active[class][highest];
-            split_intersecting(ctx, ra, &ctx->vregs[to_split], spill_rm, start);
+            int split_pos = ctx->vregs[to_split].saved_range->start + 1;
+            if (split_pos + 1 > start) {
+                split_pos = start;
+            }
+
+            split_intersecting(ctx, ra, &ctx->vregs[to_split], spill_rm, split_pos);
         }
 
         // split any inactive interval for reg at the end of it's lifetime hole
         dyn_array_for(i, ra->inactive) {
             VReg* other = &ctx->vregs[ra->inactive[i]];
             Range* r = other->active_range;
-            if (other->class == class && other->assigned == highest && r->start <= pos+1 && pos <= r->end) {
-                split_intersecting(ctx, ra, other, spill_rm, start);
+            if (other->class == class && other->assigned == highest && other->n != NULL) {
+                int p = vreg_intersect(vreg, other);
+                if (p >= 0) { split_intersecting(ctx, ra, other, spill_rm, p); }
             }
         }
     }
@@ -774,6 +781,9 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
 
         return highest;
     } else {
+        return allocate_blocked_reg(ctx, ra, vreg, vreg_id);
+
+        #if 0
         // TODO(NeGate): split at optimal position before current
         vreg->class    = rc;
         vreg->assigned = highest;
@@ -782,9 +792,11 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
 
         // steal the reg
         RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
+
         // spill_entire_life(ctx, ra, vreg, spill_rm);
-        split_intersecting(ctx, ra, vreg, spill_rm, pos);
+        split_intersecting(ctx, ra, vreg, spill_rm, TB_MAX(pos - 2, vreg->saved_range->start + 1));
         return highest;
+        #endif
     }
 }
 
@@ -1030,31 +1042,38 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
     assert(vreg->active_range);
 
     TB_BasicBlock* bb = NULL;
+    MachineBB* mbb = NULL;
     TB_Function* f = ctx->f;
     FOR_N(i, 0, ctx->bb_count) {
-        MachineBB* mbb = &ctx->machine_bbs[i];
+        mbb = &ctx->machine_bbs[i];
         if (pos <= mbb->end_t) { bb = f->scheduled[mbb->n->gvn]; break; }
     }
     assert(bb != NULL);
 
+    TB_Node* n = vreg->n;
+    int class = vreg->class;
+    int vreg_id = vreg - ctx->vregs;
+    assert(n != NULL);
+
     // move to odd position before
     pos = (pos - 1) | 1;
 
-    int class = vreg->class;
-    int vreg_id = vreg - ctx->vregs;
+    // def in the same block as use? move spill right after def
+    if (!reg_mask_is_not_empty(new_mask) && new_mask->may_spill && f->scheduled[n->gvn] == bb) {
+        if (pos > ra->time[n->gvn] + 1) {
+            pos = ra->time[n->gvn] + 1;
+        }
+    }
 
     if (vreg->assigned >= 0) {
-        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: split ", vreg_id), print_reg_name(class, vreg->assigned), printf(" at t=%d\x1b[0m\n", pos));
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: %%%u: split ", vreg_id, n->gvn), print_reg_name(class, vreg->assigned), printf(" at t=%d\x1b[0m\n", pos));
     } else {
-        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: split *undecided* at t=%d\x1b[0m\n", vreg_id, pos));
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   v%d: %%%u: split *undecided* at t=%d\x1b[0m\n", vreg_id, n->gvn, pos));
     }
 
     RegMask* old_mask = vreg->mask;
 
     // insert move (the control flow aware moves are inserted later)
-    TB_Node* n = vreg->n;
-    assert(n != NULL);
-
     TB_Node* spill_n = tb_alloc_node(f, TB_MACH_COPY, vreg->n->dt, 2, sizeof(TB_NodeMachCopy));
 
     // replace all uses of the og node if they
@@ -1125,9 +1144,9 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
     // reload before next use that requires the original mask
     if (!reg_mask_is_not_empty(new_mask) && new_mask->may_spill) {
         int earliest = INT_MAX;
-        FOR_USERS(u, spill_n) {
-            TB_Node* use_n = USERN(u);
-            int use_i      = USERI(u);
+        for (size_t i = 0; i < spill_n->user_count; i++) {
+            TB_Node* use_n = USERN(&spill_n->users[i]);
+            int use_i      = USERI(&spill_n->users[i]);
 
             RegMask* in_mask = constraint_in(ctx, use_n, use_i);
             RegMask* intersect = tb__reg_mask_meet(ctx, in_mask, new_mask);
@@ -1138,6 +1157,7 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
         }
 
         if (earliest != INT_MAX) {
+            assert(pos + 1 < earliest && "no way there's room to spill and reload in one slot index");
             VReg* reload = split_intersecting(ctx, ra, spill_vreg, old_mask, earliest);
             reload->hint_vreg = ctx->vregs[vreg_id].hint_vreg;
         }
