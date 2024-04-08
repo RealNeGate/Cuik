@@ -52,7 +52,7 @@ static TB_Node* loop_clone_node(TB_Function* f, TB_Node* header, TB_Node* n) {
 }
 
 static uint64_t* iconst(TB_Node* n) {
-    return n->type == TB_INTEGER_CONST ? &TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value : NULL;
+    return n->type == TB_ICONST ? &TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value : NULL;
 }
 
 static void swap_nodes(TB_Function* f, TB_Node* n, int i, int j) {
@@ -238,11 +238,11 @@ static const char* ind_pred_names[] = { "ne", "slt", "sle", "ult", "ule" };
 //   i  = phi(init, i2)
 //   i2 = i + step where step is constant
 static bool affine_indvar(TB_Node* n, TB_Node* header) {
-    return n->type == TB_ADD && n->dt.type == TB_INT
+    return n->type == TB_ADD && n->dt.type == TB_TAG_INT
         && n->inputs[1]->type == TB_PHI
         && n->inputs[1]->inputs[0] == header
         && n->inputs[1]->inputs[2] == n
-        && n->inputs[2]->type == TB_INTEGER_CONST;
+        && n->inputs[2]->type == TB_ICONST;
 }
 
 static bool find_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* restrict var) {

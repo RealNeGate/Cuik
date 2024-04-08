@@ -125,10 +125,10 @@ int worklist_count(TB_Worklist* ws) {
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt) {
     switch (dt.type) {
-        case TB_INT: return dt.data;
-        case TB_PTR: return pointer_size;
-        case TB_FLOAT32: return 32;
-        case TB_FLOAT64: return 64;
+        case TB_TAG_INT: return dt.data;
+        case TB_TAG_PTR: return pointer_size;
+        case TB_TAG_F32: return 32;
+        case TB_TAG_F64: return 64;
         default: return 0;
     }
 }
@@ -139,7 +139,7 @@ static int bytes_in_data_type(int pointer_size, TB_DataType dt) {
 
 static TB_Node* mem_user(TB_Function* f, TB_Node* n, int slot) {
     FOR_USERS(u, n) {
-        if ((USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_MEMORY) ||
+        if ((USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_TAG_MEMORY) ||
             (USERI(u) == slot && is_mem_out_op(USERN(u)))) {
             return USERN(u);
         }
@@ -277,21 +277,21 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_f32(TB_Function* f, TB_Node* n) {
-    assert(n->type == TB_FLOAT32_CONST);
+    assert(n->type == TB_F32CONST);
     TB_NodeFloat32* num = TB_NODE_GET_EXTRA(n);
     return lattice_intern(f, (Lattice){ LATTICE_FLTCON32, ._f32 = num->value });
 }
 
 static Lattice* value_f64(TB_Function* f, TB_Node* n) {
-    assert(n->type == TB_FLOAT64_CONST);
+    assert(n->type == TB_F64CONST);
     TB_NodeFloat64* num = TB_NODE_GET_EXTRA(n);
     return lattice_intern(f, (Lattice){ LATTICE_FLTCON64, ._f64 = num->value });
 }
 
 static Lattice* value_int(TB_Function* f, TB_Node* n) {
-    assert(n->type == TB_INTEGER_CONST);
+    assert(n->type == TB_ICONST);
     TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
-    if (n->dt.type == TB_PTR) {
+    if (n->dt.type == TB_TAG_PTR) {
         return num->value ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
     } else {
         uint64_t mask = tb__mask(n->dt.data);
@@ -338,7 +338,7 @@ static Lattice* value_ptr_vals(TB_Function* f, TB_Node* n) {
 static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
     TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
     TB_DataType dt = n->dt;
-    assert(dt.type == TB_INT);
+    assert(dt.type == TB_TAG_INT);
 
     LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
     FOR_N(i, 1, n->input_count) {
@@ -532,7 +532,7 @@ TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x) {
     uint64_t mask = tb__mask(dt.data);
     x &= mask;
 
-    TB_Node* n = tb_alloc_node(f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
+    TB_Node* n = tb_alloc_node(f, TB_ICONST, dt, 1, sizeof(TB_NodeInt));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     i->value = x;
 
@@ -693,7 +693,7 @@ static Lattice* value_of(TB_Function* f, TB_Node* n) {
     // no type provided? just make a not-so-form fitting bottom type
     if (type == NULL) {
         Lattice* old_type = latuni_get(f, n);
-        return n->dt.type == TB_TUPLE ? lattice_tuple_from_node(f, n) : lattice_from_dt(f, n->dt);
+        return n->dt.type == TB_TAG_TUPLE ? lattice_tuple_from_node(f, n) : lattice_from_dt(f, n->dt);
     } else {
         return type;
     }
@@ -703,7 +703,7 @@ static Lattice* value_of(TB_Function* f, TB_Node* n) {
 static bool is_dead_ctrl(TB_Function* f, TB_Node* n) { return latuni_get(f, n) == &TOP_IN_THE_SKY; }
 static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
     // already a constant?
-    if (n->type == TB_SYMBOL || n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST) {
+    if (n->type == TB_SYMBOL || n->type == TB_ICONST || n->type == TB_F32CONST || n->type == TB_F64CONST) {
         return NULL;
     }
 
@@ -760,7 +760,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
 
         // control-dependent nodes which become considered dead will also
         // have to be dead.
-        if (n->dt.type == TB_TUPLE) {
+        if (n->dt.type == TB_TAG_TUPLE) {
             TB_Node* dead = dead_node(f);
             while (n->user_count > 0) {
                 TB_Node* use_n = USERN(&n->users[n->user_count - 1]);
@@ -774,7 +774,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                     }
                     use_n->input_count--;
                 } else if (is_proj(use_n)) {
-                    TB_Node* replacement = use_n->dt.type == TB_CONTROL
+                    TB_Node* replacement = use_n->dt.type == TB_TAG_CONTROL
                         ? dead
                         : make_poison(f, use_n->dt);
 
@@ -785,7 +785,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
             }
 
             return dead;
-        } else if (n->dt.type == TB_CONTROL) {
+        } else if (n->dt.type == TB_TAG_CONTROL) {
             return dead_node(f);
         } else {
             return make_poison(f, n->dt);
@@ -809,7 +809,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         }
 
         case LATTICE_FLTCON32: {
-            TB_Node* k = tb_alloc_node(f, TB_FLOAT32_CONST, n->dt, 1, sizeof(TB_NodeFloat32));
+            TB_Node* k = tb_alloc_node(f, TB_F32CONST, n->dt, 1, sizeof(TB_NodeFloat32));
             set_input(f, k, f->root_node, 0);
             TB_NODE_SET_EXTRA(k, TB_NodeFloat32, .value = l->_f32);
             latuni_set(f, k, l);
@@ -817,7 +817,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         }
 
         case LATTICE_FLTCON64: {
-            TB_Node* k = tb_alloc_node(f, TB_FLOAT64_CONST, n->dt, 1, sizeof(TB_NodeFloat64));
+            TB_Node* k = tb_alloc_node(f, TB_F64CONST, n->dt, 1, sizeof(TB_NodeFloat64));
             set_input(f, k, f->root_node, 0);
             TB_NODE_SET_EXTRA(n, TB_NodeFloat64, .value = l->_f64);
             latuni_set(f, n, l);

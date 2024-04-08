@@ -172,17 +172,17 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
     } else if (src->kind != KIND_BOOL && dst->kind == KIND_BOOL) {
         TB_DataType dt = reg->dt;
         TB_Node* comparand;
-        if (dt.type == TB_FLOAT32) {
+        if (dt.type == TB_TAG_F32) {
             comparand = tb_inst_float32(func, 0.0f);
-        } else if (dt.type == TB_FLOAT64) {
+        } else if (dt.type == TB_TAG_F64) {
             comparand = tb_inst_float64(func, 0.0);
         } else {
             comparand = tb_inst_uint(func, dt, 0);
         }
 
-        if (dt.type == TB_INT && tb_node_is_constant_zero(reg)) {
+        if (dt.type == TB_TAG_INT && tb_node_is_constant_zero(reg)) {
             reg = tb_inst_uint(func, TB_TYPE_BOOL, 0);
-        } else if (dt.type == TB_INT && tb_node_is_constant_non_zero(reg)) {
+        } else if (dt.type == TB_TAG_INT && tb_node_is_constant_non_zero(reg)) {
             reg = tb_inst_uint(func, TB_TYPE_BOOL, 1);
         } else {
             reg = tb_inst_cmp_ne(func, reg, comparand);
@@ -216,12 +216,12 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
     } else if (src->kind == KIND_FLOAT && dst->kind == KIND_DOUBLE) {
         TB_DataType dt = reg->dt;
 
-        if (dt.type != TB_FLOAT64) {
+        if (dt.type != TB_TAG_F64) {
             reg = tb_inst_fpxt(func, reg, TB_TYPE_F64);
         }
     } else if (src->kind == KIND_DOUBLE && dst->kind == KIND_FLOAT) {
         TB_DataType dt = reg->dt;
-        if (dt.type != TB_FLOAT32) {
+        if (dt.type != TB_TAG_F32) {
             reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
         }
     } else if (cuik_type_is_float(src) && cuik_type_is_integer(dst)) {
@@ -1713,7 +1713,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                         r = v.reg;
                     } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                         assert(type->size <= 8);
-                        TB_DataType dt = { { TB_INT, type->size * 8 } };
+                        TB_DataType dt = { { TB_TAG_INT, type->size * 8 } };
 
                         r = tb_inst_load(func, dt, v.reg, type->align, false);
                     }

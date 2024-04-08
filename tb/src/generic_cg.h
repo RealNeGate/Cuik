@@ -725,7 +725,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
 
         if (bb_start->type == TB_REGION) {
             for (User* use = find_users(ctx->p, bb_start); use; use = use->next) {
-                if (use->n->type == TB_PHI && use->n->dt.type != TB_MEMORY) {
+                if (use->n->type == TB_PHI && use->n->dt.type != TB_TAG_MEMORY) {
                     ValueDesc* val = &ctx->values[use->n->gvn];
 
                     // copy PHI into temporary
@@ -789,7 +789,7 @@ static void isel_region(Ctx* restrict ctx, TB_Node* bb_start, TB_Node* end, size
                 );
 
                 SUBMIT(inst_line(n));
-            } else if (n->type != TB_MULPAIR && (n->dt.type == TB_TUPLE || n->dt.type == TB_CONTROL || n->dt.type == TB_MEMORY)) {
+            } else if (n->type != TB_MULPAIR && (n->dt.type == TB_TAG_TUPLE || n->dt.type == TB_TAG_CONTROL || n->dt.type == TB_TAG_MEMORY)) {
                 TB_OPTDEBUG(CODEGEN)(
                     printf("  EFFECT %u: ", n->gvn),
                     print_node_sexpr(n, 0),
@@ -962,7 +962,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
             for (User* use = find_users(p, bb); use; use = use->next) {
                 TB_Node* n = use->n;
-                if (n->type == TB_PHI && n->dt.type != TB_MEMORY) {
+                if (n->type == TB_PHI && n->dt.type != TB_TAG_MEMORY) {
                     worklist_test_n_set(&ctx.worklist, n);
                     ctx.values[n->gvn].uses = INT_MAX;
                     ctx.values[n->gvn].vreg = -1;
@@ -1078,7 +1078,7 @@ static void compile_function(TB_Passes* restrict p, TB_FunctionOutput* restrict 
 
 static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_align) {
     switch (dt.type) {
-        case TB_INT: {
+        case TB_TAG_INT: {
             // above 64bits we really dont care that much about natural alignment
             bool is_big_int = dt.data > 64;
 
@@ -1099,7 +1099,7 @@ static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_ali
             *out_align = s;
             break;
         }
-        case TB_PTR: {
+        case TB_TAG_PTR: {
             *out_size = 8;
             *out_align = 8;
             break;

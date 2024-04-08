@@ -224,7 +224,7 @@ static uint64_t lattice_uint_max(int bits) { return UINT64_MAX >> (64 - bits); }
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
     switch (dt.type) {
-        case TB_INT: {
+        case TB_TAG_INT: {
             assert(dt.data <= 64);
             if (dt.data == 0) {
                 return &BOT_IN_THE_SKY;
@@ -235,23 +235,23 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(dt.data), lattice_int_max(dt.data) } });
         }
 
-        case TB_FLOAT32: {
+        case TB_TAG_F32: {
             return &FLT32_IN_THE_SKY;
         }
 
-        case TB_FLOAT64: {
+        case TB_TAG_F64: {
             return &FLT64_IN_THE_SKY;
         }
 
-        case TB_PTR: {
+        case TB_TAG_PTR: {
             return &ALLPTR_IN_THE_SKY;
         }
 
-        case TB_MEMORY: {
+        case TB_TAG_MEMORY: {
             return &ALLMEM_IN_THE_SKY;
         }
 
-        case TB_CONTROL: return &CTRL_IN_THE_SKY;
+        case TB_TAG_CONTROL: return &CTRL_IN_THE_SKY;
         default: return &BOT_IN_THE_SKY;
     }
 }
@@ -272,7 +272,7 @@ static Lattice* lattice_branch_goto(TB_Function* f, int succ_count, int taken) {
 }
 
 static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
-    assert(n->dt.type == TB_TUPLE);
+    assert(n->dt.type == TB_TAG_TUPLE);
     TB_Arena* arena = get_permanent_arena(f->super.module);
 
     // count projs

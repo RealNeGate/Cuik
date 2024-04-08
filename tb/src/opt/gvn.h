@@ -2,9 +2,9 @@
 
 static size_t extra_bytes(TB_Node* n) {
     switch (n->type) {
-        case TB_INTEGER_CONST: return sizeof(TB_NodeInt);
-        case TB_FLOAT32_CONST: return sizeof(TB_NodeFloat32);
-        case TB_FLOAT64_CONST: return sizeof(TB_NodeFloat64);
+        case TB_ICONST: return sizeof(TB_NodeInt);
+        case TB_F32CONST: return sizeof(TB_NodeFloat32);
+        case TB_F64CONST: return sizeof(TB_NodeFloat64);
         case TB_SYMBOL:        return sizeof(TB_NodeSymbol);
         case TB_LOCAL:         return sizeof(TB_NodeLocal);
 
@@ -49,7 +49,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_UINT2FLOAT:
         case TB_FLOAT_TRUNC:
         case TB_FLOAT2UINT:
-        case TB_INT2FLOAT:
+        case TB_TAG_INT2FLOAT:
         case TB_FLOAT2INT:
         case TB_FLOAT_EXT:
         case TB_SIGN_EXT:

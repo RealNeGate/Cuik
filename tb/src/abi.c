@@ -114,7 +114,7 @@ static TB_DataType reg_class_to_tb(TB_ABI abi, RegClass rg, TB_DebugType* type) 
 
         case RG_SSE: {
             assert(type->tag >= TB_DEBUG_TYPE_FLOAT32 && type->tag <= TB_DEBUG_TYPE_FLOAT64);
-            return (TB_DataType){ { TB_FLOAT32 + (type->tag - TB_DEBUG_TYPE_FLOAT32) } };
+            return (TB_DataType){ { TB_TAG_F32 + (type->tag - TB_DEBUG_TYPE_FLOAT32) } };
         }
 
         default: tb_assert(0, "todo"); return TB_TYPE_VOID;

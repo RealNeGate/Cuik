@@ -23,10 +23,10 @@ enum {
 };
 
 // true for 64bit
-static bool legalize_int(TB_DataType dt) { return dt.type == TB_PTR || (dt.type == TB_INT && dt.data > 32); }
+static bool legalize_int(TB_DataType dt) { return dt.type == TB_TAG_PTR || (dt.type == TB_TAG_INT && dt.data > 32); }
 
 static bool try_for_imm12(int bits, TB_Node* n, int32_t* out_x) {
-    if (n->type != TB_INTEGER_CONST) {
+    if (n->type != TB_ICONST) {
         return false;
     }
 
@@ -93,7 +93,7 @@ static RegMask isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         tile_broadcast_ins(ctx, dst, n, 1, n->input_count, ctx->normie_mask[1]);
         return ctx->normie_mask[1];
 
-        case TB_INTEGER_CONST:
+        case TB_ICONST:
         return ctx->normie_mask[1];
 
         case TB_MUL:
@@ -149,7 +149,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 break;
             }
 
-            case TB_INTEGER_CONST: {
+            case TB_ICONST: {
                 bool is_64bit = false;
                 GPR dst = gpr_at(t->interval);
                 uint64_t imm = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
@@ -181,7 +181,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 GPR dst = gpr_at(t->interval);
                 GPR lhs = gpr_at(t->ins[0].src);
                 if (t->flags & TILE_HAS_IMM) {
-                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
+                    assert(n->inputs[2]->type == TB_ICONST);
                     TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
 
                     int amt = 31 - i->value;
@@ -204,7 +204,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 GPR lhs = gpr_at(t->ins[0].src);
 
                 if (t->flags & TILE_HAS_IMM) {
-                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
+                    assert(n->inputs[2]->type == TB_ICONST);
                     TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]);
                     emit_dp_imm(e, op, dst, lhs, i->value, 0, is_64bit);
                 } else {

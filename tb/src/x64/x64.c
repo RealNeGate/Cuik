@@ -78,8 +78,8 @@ static void mark_callee_saved_constraints(Ctx* restrict ctx, uint64_t callee_sav
 
 // *out_mask of 0 means no mask
 static TB_X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
-    assert(dt.type == TB_INT || dt.type == TB_PTR);
-    if (dt.type == TB_PTR) return *out_mask = 0, TB_X86_TYPE_QWORD;
+    assert(dt.type == TB_TAG_INT || dt.type == TB_TAG_PTR);
+    if (dt.type == TB_TAG_PTR) return *out_mask = 0, TB_X86_TYPE_QWORD;
 
     TB_X86_DataType t = TB_X86_TYPE_NONE;
     int bits = 0;
@@ -128,7 +128,7 @@ static bool is_terminator(int t) {
 }
 
 static bool try_for_imm32(Ctx* restrict ctx, int bits, TB_Node* n, int32_t* out_x) {
-    if (n->type != TB_INTEGER_CONST) {
+    if (n->type != TB_ICONST) {
         return false;
     }
 
@@ -352,7 +352,7 @@ static Inst* isel_addr2(Ctx* restrict ctx, TB_Node* n, int dst, int store_op, in
 
 static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
     bool invert = false;
-    if (n->type == TB_CMP_EQ && n->dt.type == TB_INT && n->dt.data == 1 && n->inputs[2]->type == TB_INTEGER_CONST) {
+    if (n->type == TB_CMP_EQ && n->dt.type == TB_TAG_INT && n->dt.data == 1 && n->inputs[2]->type == TB_ICONST) {
         TB_NodeInt* b = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt);
         if (b->value == 0) {
             invert = true;
@@ -382,7 +382,7 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
             bool invert = false;
             int32_t x;
             int lhs = input_reg(ctx, n->inputs[1]);
-            if (try_for_imm32(ctx, cmp_dt.type == TB_PTR ? 64 : cmp_dt.data, n->inputs[2], &x)) {
+            if (try_for_imm32(ctx, cmp_dt.type == TB_TAG_PTR ? 64 : cmp_dt.data, n->inputs[2], &x)) {
                 use(ctx, n->inputs[2]);
 
                 if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
@@ -430,13 +430,13 @@ static Cond isel_cmp(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static bool should_rematerialize(TB_Node* n) {
-    if ((n->type == TB_INT2FLOAT || n->type == TB_INT2PTR) && n->inputs[1]->type == TB_INTEGER_CONST) {
+    if ((n->type == TB_TAG_INT2FLOAT || n->type == TB_TAG_INT2PTR) && n->inputs[1]->type == TB_ICONST) {
         return true;
     }
 
     return (n->type == TB_PROJ && (n->dt.type == TB_CONT || n->inputs[0]->type == TB_START)) ||
-        n->type == TB_FLOAT32_CONST || n->type == TB_FLOAT64_CONST ||
-        n->type == TB_INTEGER_CONST || n->type == TB_MEMBER_ACCESS ||
+        n->type == TB_F32CONST || n->type == TB_F64CONST ||
+        n->type == TB_ICONST || n->type == TB_MEMBER_ACCESS ||
         n->type == TB_LOCAL || n->type == TB_SYMBOL;
 }
 
@@ -574,11 +574,11 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
 
-        case TB_INTEGER_CONST: {
+        case TB_ICONST: {
             uint64_t x = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
 
             // mask off bits
-            uint64_t bits_in_type = n->dt.type == TB_PTR ? 64 : n->dt.data;
+            uint64_t bits_in_type = n->dt.type == TB_TAG_PTR ? 64 : n->dt.data;
             if (bits_in_type < 64) {
                 x &= (1ull << bits_in_type) - 1;
             }
@@ -656,7 +656,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             //   with garbage bits at the top as long as we
             //   don't read them.
             TB_DataType dt = n->dt;
-            assert(dt.type == TB_INT);
+            assert(dt.type == TB_TAG_INT);
             if (dt.data < 16) {
                 dt.data = 16;
             }
@@ -772,7 +772,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             bool is_div    = (type == TB_UDIV || type == TB_SDIV);
 
             TB_DataType dt = n->dt;
-            assert(dt.type == TB_INT);
+            assert(dt.type == TB_TAG_INT);
 
             int op = MOV;
             if (dt.data <= 8)       op = is_signed ? MOVSXB : MOVZXB;
@@ -821,7 +821,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
 
-        case TB_FLOAT32_CONST: {
+        case TB_F32CONST: {
             assert(n->dt.type == TB_FLOAT);
             uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
 
@@ -833,7 +833,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
             break;
         }
-        case TB_FLOAT64_CONST: {
+        case TB_F64CONST: {
             assert(n->dt.type == TB_FLOAT);
             uint64_t imm = (Cvt_F64U64){ .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat64)->value }.i;
 
@@ -903,9 +903,9 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             break;
         }
         case TB_UINT2FLOAT:
-        case TB_INT2FLOAT: {
+        case TB_TAG_INT2FLOAT: {
             TB_DataType src_dt = n->inputs[1]->dt;
-            assert(src_dt.type == TB_INT);
+            assert(src_dt.type == TB_TAG_INT);
 
             // it's either 32bit or 64bit conversion
             //   CVTSI2SS r/m32, xmm1
@@ -946,10 +946,10 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             TB_DataType src_dt = n->inputs[1]->dt;
             int src = input_reg(ctx, n->inputs[1]);
 
-            if (src_dt.type == TB_FLOAT && n->dt.type == TB_INT) {
+            if (src_dt.type == TB_FLOAT && n->dt.type == TB_TAG_INT) {
                 // float -> int
                 SUBMIT(inst_op_rr(MOV_F2I, n->dt, dst, src));
-            } else if (src_dt.type == TB_INT && n->dt.type == TB_FLOAT) {
+            } else if (src_dt.type == TB_TAG_INT && n->dt.type == TB_FLOAT) {
                 // int -> float
                 SUBMIT(inst_op_rr(MOV_I2F, src_dt, dst, src));
             } else {
@@ -959,7 +959,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
 
         // downcasting
-        case TB_PTR2INT:
+        case TB_TAG_PTR2INT:
         case TB_TRUNCATE: {
             int src = input_reg(ctx, n->inputs[1]);
 
@@ -972,14 +972,14 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
         }
 
         // upcasting
-        case TB_INT2PTR:
+        case TB_TAG_INT2PTR:
         case TB_SIGN_EXT:
         case TB_ZERO_EXT: {
             TB_Node* src = n->inputs[1];
 
             TB_DataType src_dt = src->dt;
             bool sign_ext = (type == TB_SIGN_EXT);
-            int bits_in_type = src_dt.type == TB_PTR ? 64 : src_dt.data;
+            int bits_in_type = src_dt.type == TB_TAG_PTR ? 64 : src_dt.data;
 
             int32_t imm;
             if (try_for_imm32(ctx, bits_in_type, src, &imm)) {
@@ -1265,7 +1265,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             // we wanna figure out how many bits per table entry
-            assert(n->dt.type == TB_INT);
+            assert(n->dt.type == TB_TAG_INT);
             size_t bits = tb_next_pow2((n->dt.data + 7) / 8) * 8;
             if (ctx->p->universe.arena != NULL) {
                 // lattice is the superior type, trust it over the
@@ -1606,7 +1606,7 @@ static void isel(Ctx* restrict ctx, TB_Node* n, const int dst) {
             }
 
             int32_t imm;
-            if (try_for_imm32(ctx, src->dt.type == TB_PTR ? 64 : src->dt.data, src, &imm)) {
+            if (try_for_imm32(ctx, src->dt.type == TB_TAG_PTR ? 64 : src->dt.data, src, &imm)) {
                 use(ctx, src);
 
                 Inst* st_inst = isel_addr2(ctx, addr, dst, store_op, -1);

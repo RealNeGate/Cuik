@@ -72,7 +72,7 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
             worklist_push(ws, f->root_node);
             for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
                 TB_Node* n = ws->items[i];
-                if (n->dt.type == TB_TUPLE) {
+                if (n->dt.type == TB_TAG_TUPLE) {
                     // place projections first
                     FOR_USERS(u, n) if (is_proj(USERN(u))) {
                         worklist_push(ws, USERN(u));
@@ -271,7 +271,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
 
                         f->scheduled[n->gvn] = best;
                         // unpinned nodes getting moved means their users need to move too
-                        if (n->dt.type == TB_TUPLE) {
+                        if (n->dt.type == TB_TAG_TUPLE) {
                             FOR_USERS(u, n) if (is_proj(USERN(u))) {
                                 f->scheduled[USERN(u)->gvn] = best;
                             }
@@ -295,7 +295,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                 DO_IF(TB_OPTDEBUG_GCM)(printf("%s: try late v%u\n", f->super.name, n->gvn));
 
                 TB_BasicBlock* lca = NULL;
-                if (n->dt.type == TB_TUPLE) {
+                if (n->dt.type == TB_TAG_TUPLE) {
                     FOR_USERS(use, n) {
                         // to avoid projections stopping the sinking of nodes, we walk past
                         // them whenever decision making here
@@ -337,7 +337,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                             f->scheduled[n->gvn] = better;
 
                             // unpinned nodes getting moved means their users need to move too
-                            if (n->dt.type == TB_TUPLE) {
+                            if (n->dt.type == TB_TAG_TUPLE) {
                                 FOR_USERS(u, n) if (is_proj(USERN(u))) {
                                     f->scheduled[USERN(u)->gvn] = better;
                                 }

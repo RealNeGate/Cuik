@@ -19,7 +19,7 @@ static bool is_node_ready(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB
     }
 
     // anti-deps
-    if (is_mem_out_op(n) || n->dt.type == TB_MEMORY) {
+    if (is_mem_out_op(n) || n->dt.type == TB_TAG_MEMORY) {
         FOR_USERS(u, n->inputs[1]) {
             TB_Node* un = USERN(u);
             if (n != un && USERI(u) == 1) {
@@ -41,7 +41,7 @@ static ArenaArray(ReadyNode) ready_up(ArenaArray(ReadyNode) ready, Set* ready_se
     set_put(ready_set, n->gvn);
 
     // projections are readied but not in the ready list
-    if (n->dt.type == TB_TUPLE) FOR_USERS(u, n) {
+    if (n->dt.type == TB_TAG_TUPLE) FOR_USERS(u, n) {
         if (is_proj(USERN(u))) { set_put(ready_set, USERN(u)->gvn); }
     }
 
@@ -135,7 +135,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             worklist_push(ws, n);
 
             // make sure to place all projections directly after their tuple node
-            if (n->dt.type == TB_TUPLE) {
+            if (n->dt.type == TB_TAG_TUPLE) {
                 assert(!cfg_is_fork(n) && "branches should only show up as the end node which can't be here");
                 FOR_USERS(u, n) if (is_proj(USERN(u))) {
                     assert(USERI(u) == 0);

@@ -161,7 +161,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
             latest[0] = curr;
         }
 
-        if (curr->dt.type == TB_TUPLE) {
+        if (curr->dt.type == TB_TAG_TUPLE) {
             // skip to mproj
             if (curr->type != TB_SPLITMEM) {
                 curr = next_mem_user(curr);
@@ -250,7 +250,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                     set_input(f, use_n, latest[0], use_i);
                     latuni_set(f, use_n, NULL);
 
-                    assert(use_n->dt.type == TB_MEMORY);
+                    assert(use_n->dt.type == TB_TAG_MEMORY);
                     new_latest[0] = use_n;
 
                     // make extra alias phis

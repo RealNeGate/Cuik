@@ -45,7 +45,7 @@ static void md5sum_file(uint8_t out_bytes[16], const char* filepath) {
 
 static uint16_t get_codeview_type(TB_DataType dt) {
     switch (dt.type) {
-        case TB_INT: {
+        case TB_TAG_INT: {
             if (dt.data <= 0)  return 0x0003; // T_VOID
             if (dt.data <= 1)  return 0x0030; // T_BOOL08
             if (dt.data <= 8)  return 0x0020; // T_UCHAR
@@ -54,9 +54,9 @@ static uint16_t get_codeview_type(TB_DataType dt) {
             if (dt.data <= 64) return 0x0023; // T_UQUAD
             return 0x0023; // T_64PUCHAR
         }
-        case TB_FLOAT32: return 0x0040; // T_REAL32
-        case TB_FLOAT64: return 0x0041; // T_REAL64
-        case TB_PTR: {
+        case TB_TAG_F32: return 0x0040; // T_REAL32
+        case TB_TAG_F64: return 0x0041; // T_REAL64
+        case TB_TAG_PTR: {
             return 0x0023; // T_64PUCHAR
         }
         default: assert(0 && "TODO: missing type in CodeView output");

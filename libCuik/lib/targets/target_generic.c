@@ -140,7 +140,7 @@ static Cuik_Type* expect_pointer(TranslationUnit* tu, Cuik_Expr* e, Cuik_Expr* a
 
 #ifdef CUIK_USE_TB
 static int get_memory_order_val(TB_Node* n) {
-    assert(n->type == TB_INTEGER_CONST && "get_memory_order_val got bad input?");
+    assert(n->type == TB_ICONST && "get_memory_order_val got bad input?");
     return TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
 }
 

@@ -1,6 +1,6 @@
 
 static bool get_int_const(TB_Node* n, uint64_t* imm) {
-    if (n->type == TB_INTEGER_CONST) {
+    if (n->type == TB_ICONST) {
         TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
         *imm = i->value;
         return true;
@@ -21,10 +21,10 @@ static TB_Node* ideal_bitcast(TB_Function* f, TB_Node* n) {
     }
 
     // int -> smaller int means truncate
-    if (src->dt.type == TB_INT && n->dt.type == TB_INT && src->dt.data > n->dt.data) {
+    if (src->dt.type == TB_TAG_INT && n->dt.type == TB_TAG_INT && src->dt.data > n->dt.data) {
         n->type = TB_TRUNCATE;
         return n;
-    } else if (src->type == TB_INTEGER_CONST) {
+    } else if (src->type == TB_ICONST) {
         return make_int_node(f, n->dt, TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value);
     }
 
@@ -39,17 +39,17 @@ static bool sign_check(TB_Node* n) {
 
 static bool is_non_zero(TB_Node* n) {
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    return n->type == TB_INTEGER_CONST && i->value != 0;
+    return n->type == TB_ICONST && i->value != 0;
 }
 
 static bool is_zero(TB_Node* n) {
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    return n->type == TB_INTEGER_CONST && i->value == 0;
+    return n->type == TB_ICONST && i->value == 0;
 }
 
 static bool is_one(TB_Node* n) {
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    return n->type == TB_INTEGER_CONST && i->value == 1;
+    return n->type == TB_ICONST && i->value == 1;
 }
 
 static bool inverted_cmp(TB_Node* n, TB_Node* n2) {
@@ -122,7 +122,7 @@ static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    if (n->dt.type == TB_INT) {
+    if (n->dt.type == TB_TAG_INT) {
         int64_t mask = tb__mask(n->dt.data);
         int64_t min = tb__sxt(a->_int.min & mask, n->dt.data, 64);
         int64_t max = tb__sxt(a->_int.max & mask, n->dt.data, 64);
@@ -261,7 +261,7 @@ static Lattice* value_bitcast(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    if (a->tag == LATTICE_INT && a->_int.min == a->_int.max && n->dt.type == TB_PTR) {
+    if (a->tag == LATTICE_INT && a->_int.min == a->_int.max && n->dt.type == TB_TAG_PTR) {
         // bitcast with a constant leads to fun cool stuff (usually we get constant zeros for NULL)
         return a->_int.min ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
     }
@@ -413,7 +413,7 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
     if (a == &BOT_IN_THE_SKY || b == &BOT_IN_THE_SKY) { return &BOT_IN_THE_SKY; }
 
     TB_DataType dt = n->inputs[1]->dt;
-    if (dt.type == TB_INT) {
+    if (dt.type == TB_TAG_INT) {
         Lattice* cmp = value_sub(f, n);
 
         // ok it's really annoying that i have to deal with the "idk bro" case in the middle
@@ -441,7 +441,7 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             case TB_CMP_ULE:
             break;
         }
-    } else if (dt.type == TB_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
+    } else if (dt.type == TB_TAG_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
         a = lattice_meet(f, a, &XNULL_IN_THE_SKY);
         b = lattice_meet(f, b, &XNULL_IN_THE_SKY);
 
@@ -475,8 +475,8 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
     // ideally immediates are on the right side and i'd rather than over
     // having less-than operators
     if ((src->type == TB_CMP_SLT || src->type == TB_CMP_ULT) &&
-        src->inputs[1]->type == TB_INTEGER_CONST &&
-        src->inputs[2]->type != TB_INTEGER_CONST
+        src->inputs[1]->type == TB_ICONST &&
+        src->inputs[2]->type != TB_ICONST
     ) {
         TB_Node* new_cmp = tb_alloc_node(f, src->type == TB_CMP_SLT ? TB_CMP_SLE : TB_CMP_ULE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
         set_input(f, new_cmp, src->inputs[2], 1);
@@ -491,8 +491,8 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
 
     // select(y <= x, a, b) => select(x < y, b, a) flipped conditions
     if ((src->type == TB_CMP_SLE || src->type == TB_CMP_ULE) &&
-        src->inputs[1]->type == TB_INTEGER_CONST &&
-        src->inputs[2]->type != TB_INTEGER_CONST
+        src->inputs[1]->type == TB_ICONST &&
+        src->inputs[2]->type != TB_ICONST
     ) {
         TB_Node* new_cmp = tb_alloc_node(f, src->type == TB_CMP_SLE ? TB_CMP_SLT : TB_CMP_ULT, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
         set_input(f, new_cmp, src->inputs[2], 1);
@@ -506,7 +506,7 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
     }
 
     // T(some_bool ? 1 : 0) => movzx(T, some_bool)
-    if (src->dt.type == TB_INT && src->dt.data == 1) {
+    if (src->dt.type == TB_TAG_INT && src->dt.data == 1) {
         uint64_t on_true, on_false;
         bool true_imm = get_int_const(n->inputs[2], &on_true);
         bool false_imm = get_int_const(n->inputs[3], &on_false);
@@ -558,7 +558,7 @@ static bool nice_ass_trunc(TB_NodeTypeEnum t) { return t == TB_AND || t == TB_XO
 static TB_Node* ideal_truncate(TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
-    if (src->type == TB_ZERO_EXT && src->inputs[1]->dt.type == TB_INT && n->dt.type == TB_INT) {
+    if (src->type == TB_ZERO_EXT && src->inputs[1]->dt.type == TB_TAG_INT && n->dt.type == TB_TAG_INT) {
         int now = n->dt.data;
         int before = src->inputs[1]->dt.data;
 
@@ -615,13 +615,13 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
     // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))
     if (src->type == TB_PHI) {
         FOR_N(i, 1, src->input_count) {
-            if (src->inputs[i]->type != TB_INTEGER_CONST) return NULL;
+            if (src->inputs[i]->type != TB_ICONST) return NULL;
         }
 
         // generate extension nodes
         TB_DataType dt = n->dt;
         FOR_N(i, 1, src->input_count) {
-            assert(src->inputs[i]->type == TB_INTEGER_CONST);
+            assert(src->inputs[i]->type == TB_ICONST);
 
             TB_Node* ext_node = tb_alloc_node(f, ext_type, dt, 2, 0);
             set_input(f, ext_node, src->inputs[i], 1);
@@ -656,9 +656,9 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
 
 static int node_pos(TB_Node* n) {
     switch (n->type) {
-        case TB_INTEGER_CONST:
-        case TB_FLOAT32_CONST:
-        case TB_FLOAT64_CONST:
+        case TB_ICONST:
+        case TB_F32CONST:
+        case TB_F64CONST:
         return 1;
 
         case TB_SHR:
@@ -725,7 +725,7 @@ static TB_Node* ideal_int_binop(TB_Function* f, TB_Node* n) {
     }
 
     if (type == TB_OR) {
-        assert(n->dt.type == TB_INT);
+        assert(n->dt.type == TB_TAG_INT);
         int bits = n->dt.data;
 
         // (or (shl a 24) (shr a 40)) => (rol a 24)
@@ -880,7 +880,7 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
 
     // if we have a constant denominator we may be able to reduce the division into a
     // multiply and shift-right
-    if (n->inputs[2]->type != TB_INTEGER_CONST) return NULL;
+    if (n->inputs[2]->type != TB_ICONST) return NULL;
 
     // https://gist.github.com/B-Y-P/5872dbaaf768c204480109007f64a915
     TB_DataType dt = n->dt;
@@ -1032,7 +1032,7 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
                     src = src->inputs[1];
                 }
 
-                if (src->dt.type == TB_INT && src->dt.data == 1) {
+                if (src->dt.type == TB_TAG_INT && src->dt.data == 1) {
                     return src;
                 }
 
@@ -1075,7 +1075,7 @@ static TB_Node* ideal_array_ptr(TB_Function* f, TB_Node* n) {
     TB_Node* index = n->inputs[2];
 
     // (array A B 4) => (member A B*4) where B is constant
-    if (index->type == TB_INTEGER_CONST) {
+    if (index->type == TB_ICONST) {
         int64_t src_i = TB_NODE_GET_EXTRA_T(index, TB_NodeInt)->value;
 
         int64_t offset = src_i * stride;
@@ -1086,7 +1086,7 @@ static TB_Node* ideal_array_ptr(TB_Function* f, TB_Node* n) {
     }
 
     // (array A (shl B C) D) => (array A B C<<D)
-    if (index->type == TB_SHL && index->inputs[2]->type == TB_INTEGER_CONST) {
+    if (index->type == TB_SHL && index->inputs[2]->type == TB_ICONST) {
         uint64_t scale = TB_NODE_GET_EXTRA_T(index->inputs[2], TB_NodeInt)->value;
         set_input(f, n, index->inputs[1], 2);
         TB_NODE_SET_EXTRA(n, TB_NodeArray, .stride = stride << scale);
@@ -1094,7 +1094,7 @@ static TB_Node* ideal_array_ptr(TB_Function* f, TB_Node* n) {
     }
 
     // (array A (mul B C) D) => (array A B C*D)
-    if (index->type == TB_MUL && index->inputs[2]->type == TB_INTEGER_CONST) {
+    if (index->type == TB_MUL && index->inputs[2]->type == TB_ICONST) {
         uint64_t factor = TB_NODE_GET_EXTRA_T(index->inputs[2], TB_NodeInt)->value;
         set_input(f, n, index->inputs[1], 2);
         TB_NODE_SET_EXTRA(n, TB_NodeArray, .stride = stride * factor);
@@ -1122,7 +1122,7 @@ static TB_Node* ideal_array_ptr(TB_Function* f, TB_Node* n) {
             mark_node(f, new_n);
             mark_node(f, new_member);
             return new_member;
-        } else if (add_rhs->type == TB_SHL && add_rhs->inputs[2]->type == TB_INTEGER_CONST) {
+        } else if (add_rhs->type == TB_SHL && add_rhs->inputs[2]->type == TB_ICONST) {
             // (array A (add B (shl C D)) E) => (array (array A B 1<<D) B E)
             TB_Node* second_index = add_rhs->inputs[1];
             uint64_t amt = 1ull << TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;

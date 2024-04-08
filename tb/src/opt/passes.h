@@ -141,17 +141,17 @@ static uint64_t tb__mask(uint64_t bits) {
 }
 
 static bool cfg_is_cproj(TB_Node* n) {
-    return is_proj(n) && n->dt.type == TB_CONTROL;
+    return is_proj(n) && n->dt.type == TB_TAG_CONTROL;
 }
 
 static bool cfg_is_mproj(TB_Node* n) {
-    return n->type == TB_PROJ && n->dt.type == TB_MEMORY;
+    return n->type == TB_PROJ && n->dt.type == TB_TAG_MEMORY;
 }
 
 // includes tuples which have control flow
 static bool cfg_is_control(TB_Node* n) {
-    if (n->dt.type == TB_CONTROL) { return true; }
-    if (n->dt.type == TB_TUPLE) {
+    if (n->dt.type == TB_TAG_CONTROL) { return true; }
+    if (n->dt.type == TB_TAG_TUPLE) {
         FOR_USERS(u, n) {
             if (cfg_is_cproj(USERN(u))) { return true; }
         }
@@ -188,7 +188,7 @@ static TB_NodeBranchProj* cfg_if_branch(TB_Node* n) {
 }
 
 static bool is_mem_out_op(TB_Node* n) {
-    return n->dt.type == TB_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_TAILCALL) || n->type == TB_SPLITMEM || n->type == TB_MERGEMEM;
+    return n->dt.type == TB_TAG_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_TAILCALL) || n->type == TB_SPLITMEM || n->type == TB_MERGEMEM;
 }
 
 static bool is_pinned(TB_Node* n) {
@@ -229,7 +229,7 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
 
     if (r->type == TB_REGION) {
         FOR_USERS(u, r) {
-            if (USERN(u)->type == TB_PHI && USERN(u)->dt.type != TB_MEMORY) {
+            if (USERN(u)->type == TB_PHI && USERN(u)->dt.type != TB_TAG_MEMORY) {
                 return proj;
             }
         }

@@ -550,7 +550,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
 static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_align) {
     switch (dt.type) {
-        case TB_INT: {
+        case TB_TAG_INT: {
             // above 64bits we really dont care that much about natural alignment
             bool is_big_int = dt.data > 64;
 
@@ -561,9 +561,9 @@ static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_ali
             *out_align = is_big_int ? 8 : ((dt.data + 7) / 8);
             break;
         }
-        case TB_FLOAT32: *out_size = *out_align = 4; break;
-        case TB_FLOAT64: *out_size = *out_align = 8; break;
-        case TB_PTR:     *out_size = *out_align = 8; break;
+        case TB_TAG_F32: *out_size = *out_align = 4; break;
+        case TB_TAG_F64: *out_size = *out_align = 8; break;
+        case TB_TAG_PTR:     *out_size = *out_align = 8; break;
         default: tb_unreachable();
     }
 }

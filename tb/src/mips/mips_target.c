@@ -58,7 +58,7 @@ static bool fits_into_int16(uint64_t x) {
 }
 
 static bool try_for_imm16(int bits, TB_Node* n, int32_t* out_x) {
-    if (n->type != TB_INTEGER_CONST) {
+    if (n->type != TB_ICONST) {
         return false;
     }
 
@@ -98,8 +98,8 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
 
 static int bits_in_type(Ctx* restrict ctx, TB_DataType dt) {
     switch (dt.type) {
-        case TB_INT: return dt.data;
-        case TB_PTR: return 64;
+        case TB_TAG_INT: return dt.data;
+        case TB_TAG_PTR: return 64;
         default: tb_todo();
     }
 }
@@ -109,14 +109,14 @@ static RegMask normie_mask(Ctx* restrict ctx, TB_DataType dt) {
 }
 
 static bool is_regpair(Ctx* restrict ctx, TB_DataType dt) {
-    return ctx->abi_index == 0 && dt.type == TB_INT && dt.data > 32;
+    return ctx->abi_index == 0 && dt.type == TB_TAG_INT && dt.data > 32;
 }
 
 static int reg_count(Ctx* restrict ctx, TB_Node* n) {
-    if (n->dt.type == TB_INT) {
+    if (n->dt.type == TB_TAG_INT) {
         assert(n->dt.data <= 64);
         return ctx->abi_index == 0 && n->dt.data > 32 ? 2 : 1;
-    } else if (n->dt.type == TB_PTR) {
+    } else if (n->dt.type == TB_TAG_PTR) {
         return 1;
     } else if (n->dt.type == TB_FLOAT) {
         return 1;
@@ -140,7 +140,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         case TB_MERGEMEM:
         case TB_UNREACHABLE:
         case TB_DEBUGBREAK:
-        case TB_INTEGER_CONST:
+        case TB_ICONST:
         break;
 
         case TB_LOCAL:
@@ -148,7 +148,7 @@ static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
         break;
 
         case TB_PHI:
-        if (n->dt.type == TB_INT || n->dt.type == TB_PTR || n->dt.type == TB_FLOAT) {
+        if (n->dt.type == TB_TAG_INT || n->dt.type == TB_TAG_PTR || n->dt.type == TB_FLOAT) {
             RegMask rm = normie_mask(ctx, n->dt);
             rm.may_spill = true;
             OUT1(rm);
@@ -657,7 +657,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 break;
             }
 
-            case TB_INTEGER_CONST: {
+            case TB_ICONST: {
                 GPR dst = gpr_at(t->outs[0]);
                 uint64_t imm = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
 
@@ -698,7 +698,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 GPR dst = gpr_at(t->outs[0]);
                 GPR lhs = gpr_at(t->ins[0].src);
                 if (t->flags & TILE_HAS_IMM) {
-                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
+                    assert(n->inputs[2]->type == TB_ICONST);
                     uint64_t i = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
                     if (n->type == TB_SUB) {
                         // no SUBI, we just negate and do ADDI
@@ -735,7 +735,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 GPR dst = gpr_at(t->outs[0]);
                 GPR lhs = gpr_at(t->ins[0].src);
                 if (t->flags & TILE_HAS_IMM) {
-                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
+                    assert(n->inputs[2]->type == TB_ICONST);
                     uint64_t x = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
                     rtype(e, iops[n->type - TB_SHL], dst, 0, lhs, x);
                 } else {
@@ -751,7 +751,7 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
                 GPR tmp = gpr_at(t->ins[1].src);
 
                 if (t->flags & TILE_HAS_IMM) {
-                    assert(n->inputs[2]->type == TB_INTEGER_CONST);
+                    assert(n->inputs[2]->type == TB_ICONST);
                     uint64_t x = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
 
                     int32_t y = 32 - x;

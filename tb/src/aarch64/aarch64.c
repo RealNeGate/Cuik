@@ -78,7 +78,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
 
     switch (type) {
-        case TB_INTEGER_CONST: {
+        case TB_ICONST: {
             assert(n->integer.num_words == 1);
             GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, AARCH64_REG_CLASS_GPR);
 
@@ -100,7 +100,7 @@ static int isel(Ctx* restrict ctx, Sequence* restrict seq, TB_Node* n) {
             GAD_VAL b = ctx->values[n->i_arith.b];
             GAD_VAL dst = GAD_FN(regalloc)(ctx, f, r, AARCH64_REG_CLASS_GPR);
 
-            bool is_64bit = n->dt.type == TB_PTR || (n->dt.type == TB_INT && n->dt.data == 64);
+            bool is_64bit = n->dt.type == TB_TAG_PTR || (n->dt.type == TB_TAG_INT && n->dt.data == 64);
             emit_dp_r(&ctx->emit, ADD, dst.reg, a.reg, b.reg, 0, 0, is_64bit);
             return dst;
         }
@@ -172,7 +172,7 @@ static int get_data_type_size(const TB_DataType dt) {
     assert(dt.width <= 2 && "Vector width too big!");
 
     switch (dt.type) {
-        case TB_INT: {
+        case TB_TAG_INT: {
             // round up bits to a byte
             bool is_big_int = dt.data > 64;
             int bits = is_big_int ? ((dt.data + 7) / 8) : tb_next_pow2(dt.data);
@@ -187,7 +187,7 @@ static int get_data_type_size(const TB_DataType dt) {
 
             return s << dt.width;
         }
-        case TB_PTR: {
+        case TB_TAG_PTR: {
             return 8;
         }
         default: {

@@ -19,7 +19,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     if (types && types[n->gvn] != NULL && types[n->gvn] != &TOP_IN_THE_SKY) {
         print_lattice(types[n->gvn]);
     } else {
-        if (n->dt.type == TB_TUPLE) {
+        if (n->dt.type == TB_TAG_TUPLE) {
             // print with multiple returns
             TB_Node* projs[32] = { 0 };
             FOR_USERS(u, n) {
@@ -65,19 +65,19 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         } else {
             printf("%p ", sym);
         }
-    } else if (n->type == TB_INTEGER_CONST) {
+    } else if (n->type == TB_ICONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
         if (num->value < 0xFFFF) {
-            int bits = n->dt.type == TB_PTR ? 64 : n->dt.data;
+            int bits = n->dt.type == TB_TAG_PTR ? 64 : n->dt.data;
             printf("%"PRId64" ", tb__sxt(num->value, bits, 64));
         } else {
             printf("%#0"PRIx64" ", num->value);
         }
-    } else if (n->type == TB_FLOAT32_CONST) {
+    } else if (n->type == TB_F32CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
         printf("%f ", f->value);
-    } else if (n->type == TB_FLOAT64_CONST) {
+    } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
         printf("%f ", f->value);
     }

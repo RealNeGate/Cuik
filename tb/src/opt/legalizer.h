@@ -19,7 +19,7 @@ struct LegalizeCtx {
 
 static bool legalize_64bit_machine(LegalizeCtx* ctx, TB_DataType dt, LegalType* out) {
     // if it's not 1,8,16,32 or 64 bit we need to legalize
-    if (dt.type == TB_INT && dt.data != 1 && dt.data != 8 && dt.data != 16 && dt.data != 32 && dt.data != 64) {
+    if (dt.type == TB_TAG_INT && dt.data != 1 && dt.data != 8 && dt.data != 16 && dt.data != 32 && dt.data != 64) {
         out->dt = TB_TYPE_I64;
         out->size = 8;
         out->splits = (dt.data + 63) / 64;
@@ -31,7 +31,7 @@ static bool legalize_64bit_machine(LegalizeCtx* ctx, TB_DataType dt, LegalType* 
 
 static bool legalize_32bit_machine(LegalizeCtx* ctx, TB_DataType dt, LegalType* out) {
     // if it's not 1,8,16 or 32 bit we need to legalize
-    if (dt.type == TB_INT && dt.data != 1 && dt.data != 8 && dt.data != 16 && dt.data != 32) {
+    if (dt.type == TB_TAG_INT && dt.data != 1 && dt.data != 8 && dt.data != 16 && dt.data != 32) {
         out->dt = TB_TYPE_I32;
         out->size = 4;
         out->splits = (dt.data + 31) / 32;
@@ -55,7 +55,7 @@ static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Arena* tmp_arena, TB_Node* n
     TB_Node** pieces = tb_arena_alloc(tmp_arena, valid.splits * sizeof(TB_Node*));
 
     TB_Function* f = ctx->f;
-    if (n->type == TB_INTEGER_CONST) {
+    if (n->type == TB_ICONST) {
         uint64_t imm = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
         uint64_t mask = tb__mask(valid.size*8);
 

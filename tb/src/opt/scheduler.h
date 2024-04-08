@@ -30,11 +30,11 @@ static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n
     if (n->type == TB_MERGEMEM) {
         anti_count = n->input_count - 2;
     } else if (n->type != TB_PHI && n->type != TB_PROJ) {
-        if (is_mem_out_op(n) || n->dt.type == TB_MEMORY) {
+        if (is_mem_out_op(n) || n->dt.type == TB_TAG_MEMORY) {
             anti_count = 1;
-        } else if (n->dt.type == TB_TUPLE) {
+        } else if (n->dt.type == TB_TAG_TUPLE) {
             FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_MEMORY) {
+                if (USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_TAG_MEMORY) {
                     assert(USERI(u) == 0);
                     anti_count += 1;
                 }
@@ -154,7 +154,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
                 phi_curr += 1;
 
                 // reserve PHI space
-                if (phi_vals && val->dt.type != TB_MEMORY) {
+                if (phi_vals && val->dt.type != TB_TAG_MEMORY) {
                     PhiVal p;
                     p.phi = phi;
                     p.n   = val;
@@ -190,7 +190,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
         top = parent;
 
         // push outputs (projections, if they apply)
-        if (n->dt.type == TB_TUPLE && !cfg_is_fork(n) && n->type != TB_ROOT) {
+        if (n->dt.type == TB_TAG_TUPLE && !cfg_is_fork(n) && n->type != TB_ROOT) {
             FOR_USERS(u, n) {
                 if (is_proj(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
                     dyn_array_put(ws->items, USERN(u));

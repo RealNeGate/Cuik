@@ -103,12 +103,12 @@ TB_Node* tb_builder_pop(TB_GraphBuilder* g) {
 
 void tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x) {
     assert(TB_IS_POINTER_TYPE(dt) || TB_IS_INTEGER_TYPE(dt));
-    if (dt.type == TB_INT && dt.data < 64) {
+    if (dt.type == TB_TAG_INT && dt.data < 64) {
         uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
         x &= mask;
     }
 
-    TB_Node* n = tb_alloc_node(g->f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
+    TB_Node* n = tb_alloc_node(g->f, TB_ICONST, dt, 1, sizeof(TB_NodeInt));
     set_input(g->f, n, g->f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = x);
     push(g, n);
@@ -117,21 +117,21 @@ void tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x) {
 void tb_builder_sint(TB_GraphBuilder* g, TB_DataType dt, int64_t x) {
     assert(TB_IS_POINTER_TYPE(dt) || TB_IS_INTEGER_TYPE(dt));
 
-    TB_Node* n = tb_alloc_node(g->f, TB_INTEGER_CONST, dt, 1, sizeof(TB_NodeInt));
+    TB_Node* n = tb_alloc_node(g->f, TB_ICONST, dt, 1, sizeof(TB_NodeInt));
     set_input(g->f, n, g->f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeInt, .value = x);
     push(g, n);
 }
 
 void tb_builder_float32(TB_GraphBuilder* g, float imm) {
-    TB_Node* n = tb_alloc_node(g->f, TB_FLOAT32_CONST, TB_TYPE_F32, 1, sizeof(TB_NodeFloat32));
+    TB_Node* n = tb_alloc_node(g->f, TB_F32CONST, TB_TYPE_F32, 1, sizeof(TB_NodeFloat32));
     set_input(g->f, n, g->f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeFloat32, .value = imm);
     push(g, n);
 }
 
 void tb_builder_float64(TB_GraphBuilder* g, double imm) {
-    TB_Node* n = tb_alloc_node(g->f, TB_FLOAT64_CONST, TB_TYPE_F64, 1, sizeof(TB_NodeFloat64));
+    TB_Node* n = tb_alloc_node(g->f, TB_F64CONST, TB_TYPE_F64, 1, sizeof(TB_NodeFloat64));
     set_input(g->f, n, g->f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeFloat64, .value = imm);
     push(g, n);
@@ -195,8 +195,8 @@ void tb_builder_cmp(TB_GraphBuilder* g, int type, bool flip, TB_DataType dt) {
 void tb_builder_array(TB_GraphBuilder* g, int64_t stride) {
     TB_Node* index = pop(g);
     TB_Node* base  = pop(g);
-    tb_assert(base->dt.type == TB_PTR,  "base on ARRAY must be an integer");
-    tb_assert(index->dt.type == TB_INT, "index on ARRAY must be an integer");
+    tb_assert(base->dt.type == TB_TAG_PTR,  "base on ARRAY must be an integer");
+    tb_assert(index->dt.type == TB_TAG_INT, "index on ARRAY must be an integer");
 
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 3, sizeof(TB_NodeArray));
@@ -244,7 +244,7 @@ void tb_builder_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_CharUn
 
     TB_Node* val  = pop(g);
     TB_Node* addr = pop(g);
-    assert(g->vals[mem_var]->dt.type == TB_MEMORY);
+    assert(g->vals[mem_var]->dt.type == TB_TAG_MEMORY);
 
     if (offset) {
         TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));

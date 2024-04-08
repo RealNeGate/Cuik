@@ -26,7 +26,7 @@ static KnownPointer known_pointer(TB_Node* n) {
 static TB_Node* data_phi_from_memory_phi(TB_Function* f, TB_Node* n, TB_Node* addr, TB_Node* mem) {
     // convert memory phis into data phis
     assert(mem->type == TB_PHI);
-    assert(mem->dt.type == TB_MEMORY && "memory input should be memory");
+    assert(mem->dt.type == TB_TAG_MEMORY && "memory input should be memory");
 
     TB_DataType dt = n->dt;
 

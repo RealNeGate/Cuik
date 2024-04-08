@@ -80,7 +80,7 @@ WasmElem* new_elem(int tag, TB_Node* body) {
 
 static uint8_t get_wasm_type(TB_DataType dt) {
     switch (dt.type) {
-        case TB_INT: {
+        case TB_TAG_INT: {
             if (dt.data <= 8)  return 0x7F;
             if (dt.data <= 16) return 0x7F;
             if (dt.data <= 32) return 0x7F;
@@ -92,7 +92,7 @@ static uint8_t get_wasm_type(TB_DataType dt) {
             if (dt.data == TB_FLT_64) return 0x7C;
             break;
         }
-        case TB_PTR: return 0x7F;
+        case TB_TAG_PTR: return 0x7F;
     }
 
     assert(0 && "TODO");
@@ -155,9 +155,9 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
         ctx->stack[0] = bot;
 
         switch (bot->type) {
-            case TB_INTEGER_CONST:
-            case TB_FLOAT32_CONST:
-            case TB_FLOAT64_CONST:
+            case TB_ICONST:
+            case TB_F32CONST:
+            case TB_F64CONST:
             break;
 
             // integer ops
@@ -232,14 +232,14 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
             }
 
             switch (n->type) {
-                case TB_INTEGER_CONST: {
+                case TB_ICONST: {
                     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
                     EMIT1(&ctx->emit, 0x41);
                     emit_uint(ctx, i->value);
                     break;
                 }
 
-                case TB_FLOAT32_CONST: {
+                case TB_F32CONST: {
                     TB_NodeFloat32* i = TB_NODE_GET_EXTRA(n);
 
                     uint32_t x;
@@ -250,7 +250,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                     break;
                 }
 
-                case TB_FLOAT64_CONST: {
+                case TB_F64CONST: {
                     TB_NodeFloat64* i = TB_NODE_GET_EXTRA(n);
 
                     uint64_t x;
@@ -270,7 +270,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                 case TB_MUL: {
                     static const uint8_t ops[] = { 0x71, 0x72, 0x73, 0x6A, 0x6B, 0x6C };
 
-                    assert(n->dt.type == TB_INT);
+                    assert(n->dt.type == TB_TAG_INT);
                     int base = n->dt.data > 32 ? 0x7C - 0x6A : 0;
                     EMIT1(&ctx->emit, base + ops[n->type - TB_AND]);
                     break;
@@ -301,7 +301,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
 
                 case TB_LOAD: {
                     TB_CharUnits align = TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->align;
-                    if (n->dt.type == TB_INT) {
+                    if (n->dt.type == TB_TAG_INT) {
                         if (0) {}
                         else if (n->dt.data <= 8)  { EMIT1(&ctx->emit, 0x2D); } // i32.load8_u
                         else if (n->dt.data <= 16) { EMIT1(&ctx->emit, 0x2E); } // i32.load16_u
@@ -324,7 +324,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                 case TB_STORE: {
                     TB_CharUnits align = TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->align;
                     TB_DataType dt = n->dt;
-                    if (dt.type == TB_INT) {
+                    if (dt.type == TB_TAG_INT) {
                         if (0) {}
                         else if (dt.data <= 8)  { EMIT1(&ctx->emit, 0x3A); } // i32.store8_u
                         else if (dt.data <= 16) { EMIT1(&ctx->emit, 0x3B); } // i32.store16_u
@@ -389,8 +389,8 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
                     // position of the 32bit ops, we'll relocate for 64bit ones (same offsets)
                     static const uint8_t ops[] = { 0x46, 0x47, 0x48, 0x4C, 0x49, 0x4D };
 
-                    if (n->dt.type == TB_INT || n->dt.type == TB_PTR) {
-                        int bits = n->dt.type == TB_INT ? n->dt.data : 32;
+                    if (n->dt.type == TB_TAG_INT || n->dt.type == TB_TAG_PTR) {
+                        int bits = n->dt.type == TB_TAG_INT ? n->dt.data : 32;
                         int base = bits > 32 ? 0x51 - 0x46 : 0;
 
                         EMIT1(&ctx->emit, base + ops[n->type - TB_CMP_EQ]);
@@ -409,7 +409,7 @@ static void compile_bb(Ctx* ctx, TB_Node* bb_start, int depth) {
             }
         }
 
-        if (bot->dt.type == TB_INT || bot->dt.type == TB_PTR || bot->dt.type == TB_FLOAT) {
+        if (bot->dt.type == TB_TAG_INT || bot->dt.type == TB_TAG_PTR || bot->dt.type == TB_FLOAT) {
             int dst = spill_tos(ctx, bot);
             EMIT1(&ctx->emit, 0x21);
             emit_uint(ctx, dst);
@@ -824,7 +824,7 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
 
 static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_align) {
     switch (dt.type) {
-        case TB_INT: {
+        case TB_TAG_INT: {
             // above 64bits we really dont care that much about natural alignment
             bool is_big_int = dt.data > 64;
 
@@ -845,7 +845,7 @@ static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_ali
             *out_align = s;
             break;
         }
-        case TB_PTR: {
+        case TB_TAG_PTR: {
             *out_size = 8;
             *out_align = 8;
             break;

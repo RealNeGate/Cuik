@@ -6,33 +6,33 @@ typedef struct {
 
 static void print_type(TB_DataType dt) {
     switch (dt.type) {
-        case TB_INT: {
+        case TB_TAG_INT: {
             if (dt.data == 0) printf("void");
             else printf("i%d", dt.data);
             break;
         }
-        case TB_PTR: {
+        case TB_TAG_PTR: {
             if (dt.data == 0) printf("ptr");
             else printf("ptr%d", dt.data);
             break;
         }
-        case TB_FLOAT32: {
+        case TB_TAG_F32: {
             printf("f32");
             break;
         }
-        case TB_FLOAT64: {
+        case TB_TAG_F64: {
             printf("f64");
             break;
         }
-        case TB_TUPLE: {
+        case TB_TAG_TUPLE: {
             printf("tuple");
             break;
         }
-        case TB_CONTROL: {
+        case TB_TAG_CONTROL: {
             printf("ctrl");
             break;
         }
-        case TB_MEMORY: {
+        case TB_TAG_MEMORY: {
             printf("mem");
             break;
         }
@@ -108,10 +108,10 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             if (n->type == TB_NATURAL_LOOP) printf(" !natural");
             if (n->type == TB_AFFINE_LOOP) printf(" !affine");
         }
-    } else if (n->type == TB_FLOAT32_CONST) {
+    } else if (n->type == TB_F32CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
         printf("%f", f->value);
-    } else if (n->type == TB_FLOAT64_CONST) {
+    } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
         printf("%f", f->value);
     } else if (n->type == TB_SYMBOL) {
@@ -136,11 +136,11 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                 printf("*DEAD*");
             }
         }
-    } else if (n->type == TB_INTEGER_CONST) {
+    } else if (n->type == TB_ICONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
         if (num->value < 0xFFFF) {
-            int bits = n->dt.type == TB_PTR ? 64 : n->dt.data;
+            int bits = n->dt.type == TB_TAG_PTR ? 64 : n->dt.data;
             printf("%"PRId64, tb__sxt(num->value, bits, 64));
         } else {
             printf("%#0"PRIx64, num->value);
@@ -201,8 +201,8 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
         TB_Node* n = ws->items[i];
 
         // skip these
-        if (n->type == TB_INTEGER_CONST || n->type == TB_FLOAT32_CONST ||
-            n->type == TB_FLOAT64_CONST || n->type == TB_SYMBOL ||
+        if (n->type == TB_ICONST || n->type == TB_F32CONST ||
+            n->type == TB_F64CONST || n->type == TB_SYMBOL ||
             n->type == TB_PROJ || n->type == TB_BRANCH_PROJ || n->type == TB_MACH_PROJ ||
             n->type == TB_REGION || n->type == TB_NATURAL_LOOP || n->type == TB_AFFINE_LOOP ||
             n->type == TB_NULL || n->type == TB_PHI) {
@@ -245,7 +245,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
                 assert(br->succ_count >= 2);
                 if (br->succ_count == 2) {
-                    int bits = n->inputs[1]->dt.type == TB_PTR ? 64 : n->inputs[1]->dt.data;
+                    int bits = n->inputs[1]->dt.type == TB_TAG_PTR ? 64 : n->inputs[1]->dt.data;
 
                     printf("  if ");
                     print_ref_to_node(ctx, n->inputs[1], false);
@@ -294,7 +294,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
             }
 
             default: {
-                if (n->dt.type == TB_TUPLE) {
+                if (n->dt.type == TB_TAG_TUPLE) {
                     // print with multiple returns
                     TB_Node* projs[32] = { 0 };
                     FOR_USERS(u, n) {
@@ -306,7 +306,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
                     printf("  ");
 
-                    size_t first = projs[0] && projs[0]->dt.type == TB_CONTROL ? 1 : 0;
+                    size_t first = projs[0] && projs[0]->dt.type == TB_TAG_CONTROL ? 1 : 0;
                     FOR_N(i, first, 32) {
                         if (projs[i] == NULL) break;
                         if (i > first) printf(", ");

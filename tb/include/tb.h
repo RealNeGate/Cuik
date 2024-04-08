@@ -171,24 +171,19 @@ typedef enum TB_MemoryOrder {
 typedef enum TB_DataTypeEnum {
     // Integers, note void is an i0 and bool is an i1
     //   i(0-64)
-    TB_INT,
+    TB_TAG_INT,
     // Floating point numbers
-    TB_FLOAT32,
-    TB_FLOAT64,
+    TB_TAG_F32,
+    TB_TAG_F64,
     // Pointers
-    TB_PTR,
+    TB_TAG_PTR,
     // represents control flow for REGION, BRANCH
-    TB_CONTROL,
+    TB_TAG_CONTROL,
     // represents memory (and I/O)
-    TB_MEMORY,
+    TB_TAG_MEMORY,
     // Tuples, these cannot be used in memory ops, just accessed via projections
-    TB_TUPLE,
+    TB_TAG_TUPLE,
 } TB_DataTypeEnum;
-
-typedef enum TB_FloatFormat {
-    // IEEE 754 floats
-    TB_FLT_32, TB_FLT_64
-} TB_FloatFormat;
 
 typedef union TB_DataType {
     struct {
@@ -201,12 +196,12 @@ typedef union TB_DataType {
 static_assert(sizeof(TB_DataType) == 2, "im expecting this to be a uint16_t");
 
 // classify data types
-#define TB_IS_VOID_TYPE(x)     ((x).type == TB_INT && (x).data == 0)
-#define TB_IS_BOOL_TYPE(x)     ((x).type == TB_INT && (x).data == 1)
-#define TB_IS_INTEGER_TYPE(x)  ((x).type == TB_INT)
-#define TB_IS_FLOAT_TYPE(x)    ((x).type == TB_FLOAT32 || (x).type == TB_FLOAT64)
-#define TB_IS_POINTER_TYPE(x)  ((x).type == TB_PTR)
-#define TB_IS_SCALAR_TYPE(x)   ((x).type <= TB_PTR)
+#define TB_IS_VOID_TYPE(x)     ((x).type == TB_TAG_INT && (x).data == 0)
+#define TB_IS_BOOL_TYPE(x)     ((x).type == TB_TAG_INT && (x).data == 1)
+#define TB_IS_INTEGER_TYPE(x)  ((x).type == TB_TAG_INT)
+#define TB_IS_FLOAT_TYPE(x)    ((x).type == TB_TAG_F32 || (x).type == TB_TAG_F64)
+#define TB_IS_POINTER_TYPE(x)  ((x).type == TB_TAG_PTR)
+#define TB_IS_SCALAR_TYPE(x)   ((x).type <= TB_TAG_PTR)
 
 // accessors
 #define TB_GET_INT_BITWIDTH(x) ((x).data)
@@ -234,9 +229,9 @@ typedef enum TB_NodeTypeEnum {
     ////////////////////////////////
     // CONSTANTS
     ////////////////////////////////
-    TB_INTEGER_CONST,
-    TB_FLOAT32_CONST,
-    TB_FLOAT64_CONST,
+    TB_ICONST,
+    TB_F32CONST,
+    TB_F64CONST,
 
     ////////////////////////////////
     // PROJECTIONS
@@ -386,7 +381,7 @@ typedef enum TB_NodeTypeEnum {
     TB_ZERO_EXT,
     TB_UINT2FLOAT,
     TB_FLOAT2UINT,
-    TB_INT2FLOAT,
+    TB_TAG_INT2FLOAT,
     TB_FLOAT2INT,
     TB_BITCAST,
 
@@ -641,7 +636,7 @@ typedef struct { // TB_BRANCH_PROJ
     int64_t key;
 } TB_NodeBranchProj;
 
-typedef struct { // TB_INTEGER_CONST
+typedef struct { // TB_ICONST
     uint64_t value;
 } TB_NodeInt;
 
@@ -793,37 +788,37 @@ typedef struct {
 // *******************************
 #ifdef __cplusplus
 
-#define TB_TYPE_TUPLE   TB_DataType{ { TB_TUPLE      } }
-#define TB_TYPE_CONTROL TB_DataType{ { TB_CONTROL    } }
-#define TB_TYPE_VOID    TB_DataType{ { TB_INT,    0  } }
-#define TB_TYPE_I8      TB_DataType{ { TB_INT,    8  } }
-#define TB_TYPE_I16     TB_DataType{ { TB_INT,    16 } }
-#define TB_TYPE_I32     TB_DataType{ { TB_INT,    32 } }
-#define TB_TYPE_I64     TB_DataType{ { TB_INT,    64 } }
-#define TB_TYPE_F32     TB_DataType{ { TB_FLOAT32    } }
-#define TB_TYPE_F64     TB_DataType{ { TB_FLOAT64    } }
-#define TB_TYPE_BOOL    TB_DataType{ { TB_INT,    1  } }
-#define TB_TYPE_PTR     TB_DataType{ { TB_PTR,    0  } }
-#define TB_TYPE_MEMORY  TB_DataType{ { TB_MEMORY, 0  } }
-#define TB_TYPE_INTN(N) TB_DataType{ { TB_INT,   (N) } }
-#define TB_TYPE_PTRN(N) TB_DataType{ { TB_PTR,   (N) } }
+#define TB_TYPE_TUPLE   TB_DataType{ { TB_TAG_TUPLE      } }
+#define TB_TYPE_CONTROL TB_DataType{ { TB_TAG_CONTROL    } }
+#define TB_TYPE_VOID    TB_DataType{ { TB_TAG_INT,    0  } }
+#define TB_TYPE_I8      TB_DataType{ { TB_TAG_INT,    8  } }
+#define TB_TYPE_I16     TB_DataType{ { TB_TAG_INT,    16 } }
+#define TB_TYPE_I32     TB_DataType{ { TB_TAG_INT,    32 } }
+#define TB_TYPE_I64     TB_DataType{ { TB_TAG_INT,    64 } }
+#define TB_TYPE_F32     TB_DataType{ { TB_TAG_F32    } }
+#define TB_TYPE_F64     TB_DataType{ { TB_TAG_F64    } }
+#define TB_TYPE_BOOL    TB_DataType{ { TB_TAG_INT,    1  } }
+#define TB_TYPE_PTR     TB_DataType{ { TB_TAG_PTR,    0  } }
+#define TB_TYPE_MEMORY  TB_DataType{ { TB_TAG_MEMORY, 0  } }
+#define TB_TYPE_INTN(N) TB_DataType{ { TB_TAG_INT,   (N) } }
+#define TB_TYPE_PTRN(N) TB_DataType{ { TB_TAG_PTR,   (N) } }
 
 #else
 
-#define TB_TYPE_TUPLE   (TB_DataType){ { TB_TUPLE      } }
-#define TB_TYPE_CONTROL (TB_DataType){ { TB_CONTROL    } }
-#define TB_TYPE_VOID    (TB_DataType){ { TB_INT,    0  } }
-#define TB_TYPE_I8      (TB_DataType){ { TB_INT,    8  } }
-#define TB_TYPE_I16     (TB_DataType){ { TB_INT,    16 } }
-#define TB_TYPE_I32     (TB_DataType){ { TB_INT,    32 } }
-#define TB_TYPE_I64     (TB_DataType){ { TB_INT,    64 } }
-#define TB_TYPE_F32     (TB_DataType){ { TB_FLOAT32    } }
-#define TB_TYPE_F64     (TB_DataType){ { TB_FLOAT64    } }
-#define TB_TYPE_BOOL    (TB_DataType){ { TB_INT,    1  } }
-#define TB_TYPE_PTR     (TB_DataType){ { TB_PTR,    0  } }
-#define TB_TYPE_MEMORY  (TB_DataType){ { TB_MEMORY, 0  } }
-#define TB_TYPE_INTN(N) (TB_DataType){ { TB_INT,   (N) } }
-#define TB_TYPE_PTRN(N) (TB_DataType){ { TB_PTR,   (N) } }
+#define TB_TYPE_TUPLE   (TB_DataType){ { TB_TAG_TUPLE      } }
+#define TB_TYPE_CONTROL (TB_DataType){ { TB_TAG_CONTROL    } }
+#define TB_TYPE_VOID    (TB_DataType){ { TB_TAG_INT,    0  } }
+#define TB_TYPE_I8      (TB_DataType){ { TB_TAG_INT,    8  } }
+#define TB_TYPE_I16     (TB_DataType){ { TB_TAG_INT,    16 } }
+#define TB_TYPE_I32     (TB_DataType){ { TB_TAG_INT,    32 } }
+#define TB_TYPE_I64     (TB_DataType){ { TB_TAG_INT,    64 } }
+#define TB_TYPE_F32     (TB_DataType){ { TB_TAG_F32    } }
+#define TB_TYPE_F64     (TB_DataType){ { TB_TAG_F64    } }
+#define TB_TYPE_BOOL    (TB_DataType){ { TB_TAG_INT,    1  } }
+#define TB_TYPE_PTR     (TB_DataType){ { TB_TAG_PTR,    0  } }
+#define TB_TYPE_MEMORY  (TB_DataType){ { TB_TAG_MEMORY, 0  } }
+#define TB_TYPE_INTN(N) (TB_DataType){ { TB_TAG_INT,   (N) } }
+#define TB_TYPE_PTRN(N) (TB_DataType){ { TB_TAG_PTR,   (N) } }
 
 #endif
 

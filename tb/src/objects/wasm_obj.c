@@ -39,16 +39,16 @@ static int len_uint(uint64_t x) {
 
 static uint8_t get_wasm_type(TB_DataType dt) {
     switch (dt.type) {
-        case TB_INT: {
+        case TB_TAG_INT: {
             if (dt.data <= 8)  return 0x7F;
             if (dt.data <= 16) return 0x7F;
             if (dt.data <= 32) return 0x7F;
             if (dt.data <= 64) return 0x7E;
             break;
         }
-        case TB_FLOAT32: return 0x7D;
-        case TB_FLOAT64: return 0x7C;
-        case TB_PTR: return 0x7F;
+        case TB_TAG_F32: return 0x7D;
+        case TB_TAG_F64: return 0x7C;
+        case TB_TAG_PTR: return 0x7F;
     }
 
     assert(0 && "TODO");

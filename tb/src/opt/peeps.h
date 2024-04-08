@@ -58,9 +58,9 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
 
 static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     // type                 ideal              identity            value
-    [TB_INTEGER_CONST]  = { NULL,              NULL,               value_int        },
-    [TB_FLOAT32_CONST]  = { NULL,              NULL,               value_f32        },
-    [TB_FLOAT64_CONST]  = { NULL,              NULL,               value_f64        },
+    [TB_ICONST]  = { NULL,              NULL,               value_int        },
+    [TB_F32CONST]  = { NULL,              NULL,               value_f32        },
+    [TB_F64CONST]  = { NULL,              NULL,               value_f64        },
     // memory
     [TB_LOAD]           = { ideal_load,        identity_load,      NULL             },
     [TB_STORE]          = { ideal_store,       NULL,               value_mem        },
