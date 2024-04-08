@@ -165,6 +165,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         // pointer math around stack slots will refer to this
         ctx.frame_ptr = tb_alloc_node(f, TB_MACH_FRAME_PTR, TB_TYPE_PTR, 1, 0);
         set_input(f, ctx.frame_ptr, f->root_node, 0);
+        ctx.frame_ptr = tb_opt_gvn_node(f, ctx.frame_ptr);
 
         // bottom-up rewrite:
         //   we keep the visited bits set once we've rewritten a node, unlike most worklist usage
@@ -178,10 +179,11 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 // replace with machine op
                 TB_Node* k = node_isel(&ctx, f, n);
                 if (k && k != n) {
-                    subsume_node(f, n, k);
-
                     // we could run GVN on machine ops :)
                     k = tb_opt_gvn_node(f, k);
+                    if (k != n) {
+                        subsume_node(f, n, k);
+                    }
 
                     // don't walk the replacement
                     worklist_test_n_set(&walker_ws, k);
@@ -196,14 +198,14 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             worklist_free(&walker_ws);
         }
 
-        if (ctx.frame_ptr->users == NULL) {
+        if (ctx.frame_ptr->user_count == 0) {
             tb_kill_node(f, ctx.frame_ptr);
         }
 
         // dead node elim
         CUIK_TIMED_BLOCK("dead node elim") {
             for (TB_Node* n; n = worklist_pop(ws), n;) {
-                if (n->users == NULL) { tb_kill_node(f, n); }
+                if (n->user_count == 0 && !is_proj(n)) { tb_kill_node(f, n); }
             }
         }
 
@@ -218,6 +220,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
         TB_OPTDEBUG(CODEGEN)(tb_print(f, arena));
+
+        tb_print_dumb(f, false);
+        tb_print(f, arena);
 
         cfg = tb_compute_rpo(f, ws);
         tb_global_schedule(f, ws, cfg, true, node_latency);

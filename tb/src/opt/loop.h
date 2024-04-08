@@ -1,10 +1,23 @@
 
+// Affine loop accessors
+static TB_Node* affine_loop_latch(TB_Node* header) {
+    if (header->type == TB_AFFINE_LOOP &&
+        header->inputs[1]->type == TB_BRANCH_PROJ &&
+        header->inputs[1]->inputs[0]->type == TB_AFFINE_LATCH) {
+        return header->inputs[1]->inputs[0];
+    }
+
+    return NULL;
+}
+
 // clone anything except control edges and phis to region
-static TB_Node* loop_clone_node(TB_Function* f, TB_Node* region, TB_Node* n, int phi_index) {
+static TB_Node* loop_clone_node(TB_Function* f, TB_Node* header, TB_Node* n) {
     TB_Node* cloned = n;
-    if (n->type == TB_PHI && n->inputs[0] == region) {
-        // replace OG with phi's edge
-        cloned = n->inputs[phi_index];
+    if (n->type == TB_PHI) {
+        if (n->inputs[0] == header) {
+            // replace OG with loop phi's initial value
+            cloned = n->inputs[1];
+        }
     } else if (cfg_is_region(n) || n->type == TB_ROOT || (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT)) {
         // doesn't clone
     } else {
@@ -19,7 +32,7 @@ static TB_Node* loop_clone_node(TB_Function* f, TB_Node* region, TB_Node* n, int
 
         // fill cloned edges
         FOR_N(i, 1, n->input_count) {
-            TB_Node* in = loop_clone_node(f, region, n->inputs[i], phi_index);
+            TB_Node* in = loop_clone_node(f, header, n->inputs[i]);
             cloned->inputs[i] = in;
             add_user(f, cloned, in, i);
         }
@@ -29,9 +42,9 @@ static TB_Node* loop_clone_node(TB_Function* f, TB_Node* region, TB_Node* n, int
 
     #if TB_OPTDEBUG_LOOP
     printf("CLONE: ");
-    print_node_sexpr(n, 0);
+    tb_print_dumb_node(NULL, n);
     printf(" => ");
-    print_node_sexpr(cloned, 0);
+    tb_print_dumb_node(NULL, cloned);
     printf("\n");
     #endif
 
@@ -48,24 +61,49 @@ static void swap_nodes(TB_Function* f, TB_Node* n, int i, int j) {
     set_input(f, n, old, j);
 }
 
-static TB_Node* upcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
-    TB_Node* cast = tb_alloc_node(f, TB_ZERO_EXT, dt, 2, 0);
-    set_input(f, cast, src, 1);
-    mark_node(f, cast);
-    return cast;
+static TB_Node* branch_cproj(TB_Function* f, TB_Node* n, uint64_t taken, int64_t key, int index) {
+    TB_Node* cproj = tb_alloc_node(f, TB_BRANCH_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeBranchProj));
+    set_input(f, cproj, n, 0);
+    TB_NODE_SET_EXTRA(cproj, TB_NodeBranchProj, .index = index, .taken = taken, .key = key);
+    return cproj;
 }
 
-static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* op) {
+static void hoist_ops(TB_Function* f, TB_Node* ctrl, TB_Node* earlier) {
+    for (size_t i = 0; i < ctrl->user_count;) {
+        TB_Node* un = USERN(&ctrl->users[i]);
+        int ui      = USERI(&ctrl->users[i]);
+        if (un->type == TB_LOAD && ui == 0) {
+            set_input(f, un, earlier, 0);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+static void replace_phis(TB_Function* f, TB_Node* phi) {
+    for (size_t i = 0; i < phi->user_count;) {
+        TB_Node* un = USERN(&phi->users[i]);
+        int ui      = USERI(&phi->users[i]);
+        if (un != phi && un != phi->inputs[2]) {
+            set_input(f, un, phi->inputs[2], ui);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* op, TB_Node* limit) {
+    assert(op->dt.raw == phi->dt.raw);
     TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
     ArenaArray(TB_User) uses = aarray_create(f->tmp_arena, TB_User, phi->user_count);
 
     // -1 means signed, 1 means unsigned, 0 means don't care
     int best_uses = 0;
-    TB_DataType best_dt = phi->dt;
+    TB_DataType best_dt = op->dt;
 
     // in the simple case we wanna see if our induction var is usually casted
     int phi_uses = 0;
-    FOR_USERS(u, phi) {
+    FOR_USERS(u, op) {
         TB_Node* use_n = USERN(u);
         aarray_push(uses, *u);
 
@@ -73,8 +111,7 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
         if (use_n == cond) continue;
         if (use_n == op) continue;
 
-        int node_uses = 0;
-        FOR_USERS(u2, USERN(u)) { node_uses += 1; }
+        int node_uses = USERN(u)->user_count;
 
         // if we've got any casts, let's try to see which is most common
         if (use_n->type == TB_SIGN_EXT || use_n->type == TB_ZERO_EXT) {
@@ -87,65 +124,72 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
         }
     }
 
-    if (best_uses <= phi_uses) {
+    if (best_uses < phi_uses) {
         tb_arena_restore(f->tmp_arena, sp);
         return false;
     }
 
-    // replace all uses with a different size
-    TB_Node* cast = tb_alloc_node(f, TB_TRUNCATE, phi->dt, 2, 0);
-    set_input(f, cast, phi, 1);
-    mark_node(f, cast);
+    TB_DataType old_dt = phi->dt;
 
-    size_t new_node_mark = f->node_count;
-    aarray_for(i, uses) {
-        TB_Node* use_n = USERN(&uses[i]);
-        int use_i      = USERI(&uses[i]);
+    // induction var can trivially scale up, the leftover users can
+    // use the truncate
+    phi->dt = best_dt;
+    op->dt  = best_dt;
+    latuni_set(f, op,  NULL);
+    latuni_set(f, phi, NULL);
 
-        if (use_n == cond && cond != phi) {
-            assert(use_i == 1);
-            TB_NODE_SET_EXTRA(cond, TB_NodeCompare, .cmp_dt = best_dt);
+    // upscale init
+    TB_Node* scaled_init = tb_alloc_node(f, TB_ZERO_EXT, best_dt, 2, 0);
+    set_input(f, scaled_init, phi->inputs[1], 1);
+    set_input(f, phi, scaled_init, 1);
+    mark_node(f, scaled_init);
 
-            // upcast the other comparand
-            TB_Node* b_cast = upcast(f, cond->inputs[2], best_dt);
-            set_input(f, cond, b_cast, 2);
-            mark_users(f, cond);
-            mark_node(f, cond);
-        } else if (use_n == op) {
-            assert(use_i == 1);
-            op->dt = best_dt;
-            latuni_set(f, op, NULL);
+    // upscale limit
+    if (limit != NULL) {
+        // TODO(NeGate): does signedness matter here?
+        TB_Node* scaled_limit = tb_alloc_node(f, TB_ZERO_EXT, best_dt, 2, 0);
+        set_input(f, scaled_limit, limit, 1);
+        mark_node(f, scaled_limit);
 
-            TB_Node* b_cast = upcast(f, op->inputs[2], best_dt);
-            set_input(f, op, b_cast, 2);
-            mark_users(f, op);
-            mark_node(f, op);
-        } else if (use_n != cast) {
-            if (use_n->dt.raw == best_dt.raw && (use_n->type == TB_ZERO_EXT || use_n->type == TB_SIGN_EXT)) {
-                // no cast necessary
-                mark_users(f, use_n);
-                subsume_node2(f, use_n, phi);
-            } else {
-                // generic upgrade
-                set_input(f, use_n, cast, use_i);
-                mark_users(f, use_n);
-            }
+        assert(cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE);
+        TB_NODE_SET_EXTRA(cond, TB_NodeCompare, .cmp_dt = best_dt);
+
+        // if the limit is on the left, the add+phi are on the right (and vice versa)
+        if (cond->inputs[1] == limit) {
+            set_input(f, cond, scaled_limit, 1);
+        } else {
+            assert(cond->inputs[2] == limit);
+            set_input(f, cond, scaled_limit, 2);
         }
     }
 
-    if (cast->users == NULL) {
-        tb_kill_node(f, cast);
-    } else {
-        mark_users(f, cast);
+    TB_Node* phi_cast = tb_alloc_node(f, TB_TRUNCATE, old_dt, 2, 0);
+    mark_node(f, phi_cast);
+
+    // replace all uses with a different size with a dumb truncate (peeps will clean up most likely)
+    for (size_t i = 0; i < phi->user_count;) {
+        TB_Node* un = USERN(&phi->users[i]);
+        int ui      = USERI(&phi->users[i]);
+        if (un == op || un == phi || un == cond) { i += 1; continue; }
+        set_input(f, un, phi_cast, ui);
     }
+    set_input(f, phi_cast, phi, 1);
+    mark_users(f, phi_cast);
 
-    // upscale init var
-    TB_Node* init_cast = upcast(f, phi->inputs[1], best_dt);
-    set_input(f, phi, init_cast, 1);
-    mark_node(f, phi);
+    TB_Node* op_cast = tb_alloc_node(f, TB_TRUNCATE, old_dt, 2, 0);
+    mark_node(f, op_cast);
 
-    phi->dt = best_dt;
-    latuni_set(f, phi, NULL);
+    for (size_t i = 0; i < op->user_count;) {
+        TB_Node* un = USERN(&op->users[i]);
+        int ui      = USERI(&op->users[i]);
+        if (un == op || un == phi || un == cond) { i += 1; continue; }
+        set_input(f, un, op_cast, ui);
+    }
+    set_input(f, op_cast, op, 1);
+    mark_users(f, op_cast);
+
+    mark_node_n_users(f, op);
+    mark_node_n_users(f, phi);
     tb_arena_restore(f->tmp_arena, sp);
     return true;
 }
@@ -163,7 +207,7 @@ static bool indvar_strength_reduction(TB_Function* f, TB_Node* phi, TB_Node* con
 }
 
 static TB_Node* get_simple_loop_exit(TB_CFG* cfg, TB_Node* header, TB_Node* latch) {
-    if (latch->type != TB_BRANCH || TB_NODE_GET_EXTRA_T(latch, TB_NodeBranch)->succ_count != 2) {
+    if ((latch->type != TB_BRANCH && latch->type != TB_AFFINE_LATCH) || TB_NODE_GET_EXTRA_T(latch, TB_NodeBranch)->succ_count != 2) {
         return NULL;
     }
 
@@ -172,7 +216,7 @@ static TB_Node* get_simple_loop_exit(TB_CFG* cfg, TB_Node* header, TB_Node* latc
     TB_Node* exit = NULL;
     TB_Node* backedge_bb = cfg_get_pred(cfg, header, 1);
     FOR_USERS(u, latch) {
-        if (USERN(u)->type != TB_PROJ) { continue; }
+        if (USERN(u)->type != TB_BRANCH_PROJ) { continue; }
         int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
         assert(index < 2);
 
@@ -189,16 +233,20 @@ static TB_Node* get_simple_loop_exit(TB_CFG* cfg, TB_Node* header, TB_Node* latc
 
 static const char* ind_pred_names[] = { "ne", "slt", "sle", "ult", "ule" };
 
-// i = phi(init, i + step) where step is constant.
+// since we're looking at the rotated form:
+//
+//   i  = phi(init, i2)
+//   i2 = i + step where step is constant
 static bool affine_indvar(TB_Node* n, TB_Node* header) {
-    return n->type == TB_PHI && n->dt.type == TB_INT
-        && n->inputs[0] == header && n->inputs[2]->type == TB_ADD
-        && n->inputs[2]->inputs[1] == n
-        && n->inputs[2]->inputs[2]->type == TB_INTEGER_CONST;
+    return n->type == TB_ADD && n->dt.type == TB_INT
+        && n->inputs[1]->type == TB_PHI
+        && n->inputs[1]->inputs[0] == header
+        && n->inputs[1]->inputs[2] == n
+        && n->inputs[2]->type == TB_INTEGER_CONST;
 }
 
-static bool find_indvar(TB_Node* header, TB_Node* latch, TB_Node* exit, TB_InductionVar* restrict var) {
-    bool exit_when_key = TB_NODE_GET_EXTRA_T(exit, TB_NodeProj)->index;
+static bool find_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* restrict var) {
+    bool exit_when_key = !TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
     TB_NodeBranchProj* if_br = cfg_if_branch(latch);
     assert(if_br);
 
@@ -233,8 +281,8 @@ static bool find_indvar(TB_Node* header, TB_Node* latch, TB_Node* exit, TB_Induc
         // shit's scary if both are indvars, it's not "illegal" but also wtf
         bool backwards = false;
         TB_Node *indvar = NULL, *limit = NULL;
-        if (affine_indvar(a, header))      { indvar = a, limit = b; }
-        else if (affine_indvar(b, header)) { indvar = b, limit = a, backwards = true; }
+        if (affine_indvar(a, header))      { indvar = a->inputs[1], limit = b; }
+        else if (affine_indvar(b, header)) { indvar = b->inputs[1], limit = a, backwards = true; }
 
         if (indvar) {
             // we're a real affine loop now!
@@ -329,71 +377,156 @@ void tb_opt_build_loop_tree(TB_Function* f) {
 
             TB_NodeTypeEnum type = TB_NATURAL_LOOP;
 
-            // given the induction var exists and is representable by an affine function we'll reorder things
-            // such that it's the first backedge in the header's preds (inputs[1]) alongside making the header
-            // into a TB_AFFINE_LOOP.
-            //
-            // if we don't have the latch in the header BB... ngmi
+            // if we don't have the latch in the header
             TB_BasicBlock* header_info = &nl_map_get_checked(cfg.node_to_block, header);
 
             TB_InductionVar var;
+            TB_Node* latch = NULL;
+
+            // if there's a latch on the header, move it to the backedge. also not properly
+            // rotated if there's things attached to the backedge cproj, they should've been moved above it.
             TB_Node* exit_proj = get_simple_loop_exit(&cfg, header, header_info->end);
-            if (exit_proj && find_indvar(header, header_info->end, exit_proj, &var)) {
-                type = TB_AFFINE_LOOP;
+            if (exit_proj && (exit_proj->type != TB_BRANCH_PROJ || exit_proj->inputs[0] != header->inputs[1]->inputs[0] || header->inputs[1]->user_count != 1)) {
+                latch = header_info->end;
+                int exit_loop_i = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeProj)->index;
 
-                uint64_t* init = iconst(var.phi->inputs[1]);
-                uint64_t* end  = var.end_cond ? iconst(var.end_cond) : &var.end_const;
+                // let's rotate the loop:
+                //
+                //     header:                    latch:
+                //       ...                        ...
+                //       if (A) body else exit      if (A) header else exit
+                //     body:                      header:
+                //       ...                        ...
+                //       jmp body                   if (A) header else exit
+                //     exit:                      exit:
+                //
+                // construct the ZTC's version of the branch (same as the original latch but
+                // uses the phi's inputs[1] edge instead of the phis directly)
+                TB_Node* ztc_start = header->inputs[0];
+                TB_Node *bot_cloned = NULL, *top_cloned = NULL;
+                for (TB_Node* curr = latch; curr != header; curr = curr->inputs[0]) {
+                    TB_Node* cloned = loop_clone_node(f, header, curr);
+                    mark_users(f, cloned);
 
-                #if TB_OPTDEBUG_LOOP
-                TB_Node *phi = var.phi, *cond = var.cond;
-                int64_t step = var.step;
-
-                if (init) {
-                    printf("  affine loop: %%%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init);
-                } else {
-                    printf("  affine loop: %%%u = %"PRId64"*x + %%%u\n", phi->gvn, step, phi->inputs[1]->gvn);
-                }
-
-                if (end) {
-                    printf("        latch: %s(%%%u, %"PRId64, ind_pred_names[var.pred], phi->gvn, *end);
-                } else {
-                    printf("        latch: %s(%%%u, %%%u", ind_pred_names[var.pred], phi->gvn, var.end_cond->gvn);
-                }
-
-                if (var.backwards) {
-                    printf(", flipped");
-                }
-                printf(")\n");
-
-                // fixed trip count loops aren't *uncommon*
-                if (init && end) {
-                    int64_t trips = (*end - *init) / step;
-                    int64_t rem   = (*end - *init) % step;
-                    if (rem != 0 && var.pred == IND_NE) {
-                        printf("        trips: overshoot\n");
+                    // attach control edge
+                    if (top_cloned) {
+                        set_input(f, top_cloned, cloned, 0);
                     } else {
-                        printf("        trips: %"PRId64" (%"PRId64" ... %"PRId64")\n", trips, *init, *end);
+                        bot_cloned = cloned;
+                    }
+                    top_cloned = cloned;
+                }
+                // make a ZTC branch
+                set_input(f, top_cloned, ztc_start, 0);
+                TB_Node* into_loop = branch_cproj(f, bot_cloned, 90, 0, 1 - exit_loop_i);
+                TB_Node* exit_loop = branch_cproj(f, bot_cloned, 10, 0, exit_loop_i);
+                mark_node(f, into_loop), mark_node(f, exit_loop);
+                // connect up to the loop
+                set_input(f, header, into_loop, 0);
+                // intercept exit path and place a region (merging the ZTC & rotated loop)
+                TB_User* after_exit = cfg_next_user(exit_proj);
+                mark_node_n_users(f, USERN(after_exit));
+                TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
+                set_input(f, join, exit_proj, 0);
+                set_input(f, join, exit_loop, 1);
+                set_input(f, USERN(after_exit), join, USERI(after_exit));
+                mark_node(f, join);
+                // latch gets moved down to the bottom (backedge)
+                TB_Node* into_loop2 = USERN(proj_with_index(latch, 1 - exit_loop_i));
+                {
+                    // latch no longer connected to the top
+                    TB_User* after_into_loop2 = cfg_next_user(into_loop2);
+                    mark_node_n_users(f, USERN(after_into_loop2));
+                    set_input(f, USERN(after_into_loop2), latch->inputs[0], USERI(after_into_loop2));
+                    // backedge has a lovely "new" latch
+                    set_input(f, latch,  header->inputs[1], 0);
+                    set_input(f, header, into_loop2,        1);
+
+                    mark_node_n_users(f, latch);
+                    mark_node_n_users(f, header);
+                }
+                // loads with control deps on the loop's body can also
+                // safe once you're guarenteed to run at least once (ZTC)
+                hoist_ops(f, into_loop2, into_loop);
+                // any operations dependent on our phis will now depend on the backedge form
+                FOR_USERS(u, header) if (USERN(u)->type == TB_PHI) {
+                    replace_phis(f, USERN(u));
+                }
+            } else {
+                // the loop is already rotated if there's a latch at the bottom, maybe
+                // it's marked, maybe it's not.
+                if (header->inputs[1]->type == TB_BRANCH_PROJ) {
+                    TB_Node* exit_proj = get_simple_loop_exit(&cfg, header, header->inputs[1]->inputs[0]);
+                    if (exit_proj) {
+                        latch = exit_proj->inputs[0];
                     }
                 }
-                #endif
+            }
+
+            if (latch != NULL) {
+                TB_InductionVar var;
+                if (find_indvar(header, latch, &var)) {
+                    type = TB_AFFINE_LOOP;
+
+                    uint64_t* init = iconst(var.phi->inputs[1]);
+                    uint64_t* end  = var.end_cond ? iconst(var.end_cond) : &var.end_const;
+
+                    #if TB_OPTDEBUG_LOOP
+                    TB_Node *phi = var.phi, *cond = var.cond;
+                    int64_t step = var.step;
+
+                    if (init) {
+                        printf("  affine loop: %%%u = %"PRId64"*x + %"PRId64"\n", phi->gvn, step, *init);
+                    } else {
+                        printf("  affine loop: %%%u = %"PRId64"*x + %%%u\n", phi->gvn, step, phi->inputs[1]->gvn);
+                    }
+
+                    if (end) {
+                        printf("        latch: %s(%%%u, %"PRId64, ind_pred_names[var.pred], phi->gvn, *end);
+                    } else {
+                        printf("        latch: %s(%%%u, %%%u", ind_pred_names[var.pred], phi->gvn, var.end_cond->gvn);
+                    }
+
+                    if (var.backwards) {
+                        printf(", flipped");
+                    }
+                    printf(")\n");
+
+                    // fixed trip count loops aren't *uncommon*
+                    if (init && end) {
+                        int64_t trips = (*end - *init) / step;
+                        int64_t rem   = (*end - *init) % step;
+                        if (rem != 0 && var.pred == IND_NE) {
+                            printf("        trips: overshoot\n");
+                        } else {
+                            printf("        trips: %"PRId64" (%"PRId64" ... %"PRId64")\n", trips, *init, *end);
+                        }
+                    }
+                    #endif
+                }
             }
 
             if (header->type != type) {
                 header->type = type;
+                mark_node_n_users(f, header);
+
+                // all affine loops have an affine latch
+                if (type == TB_AFFINE_LOOP) {
+                    header->inputs[1]->inputs[0]->type = TB_AFFINE_LATCH;
+                    mark_node_n_users(f, header->inputs[1]->inputs[0]);
+                }
 
                 // ok cool, more loops
                 TB_LoopInfo* new_loop = tb_arena_alloc(f->arena, sizeof(TB_LoopInfo));
                 *new_loop = (TB_LoopInfo){
-                    .next   = loop_list,
-                    .header = header,
-                    .latch  = header_info->end,
-                    .exit   = exit_proj,
+                    .next      = loop_list,
+                    .header    = header,
+                    .exit_proj = exit_proj,
                 };
                 loop_list = new_loop;
             }
         }
     }
-
     f->loop_list = loop_list;
 
     tb_arena_restore(f->tmp_arena, sp);
@@ -403,69 +536,19 @@ void tb_opt_build_loop_tree(TB_Function* f) {
 void tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop", NULL);
 
-    // ind var simplification & loop deletion
-    for (TB_LoopInfo *prev = NULL, *loop = f->loop_list; loop; prev = loop, loop = loop->next) {
-        if (loop->header->type != TB_AFFINE_LOOP) { continue; }
+    // find loops with affine induction vars
+    for (TB_LoopInfo *loop = f->loop_list; loop; loop = loop->next) {
+        if (loop->header->type == TB_AFFINE_LOOP) {
+            TB_Node* latch = affine_loop_latch(loop->header);
 
-        TB_InductionVar var;
-        if (find_indvar(loop->header, loop->latch, loop->exit, &var)) {
-            uint64_t* init = iconst(var.phi->inputs[1]);
-            uint64_t* end  = var.end_cond ? iconst(var.end_cond) : &var.end_const;
-
-            if (init && end) {
-                int64_t trips = (*end - *init) / var.step;
-                if (trips <= 1) {
-                    // the backedge is useless, remove input & jump out at the end
-                    assert(loop->header->input_count == 2);
-                    TB_Node* backedge = loop->header->inputs[1];
-                    set_input(f, loop->header, NULL, 1);
-                    loop->header->type = TB_REGION;
-                    loop->header->input_count = 1;
-                    // remove phis
-                    for (size_t i = 0; i < loop->header->user_count;) {
-                        TB_User* use = &loop->header->users[i];
-                        if (USERN(use)->type == TB_PHI) {
-                            assert(USERI(use) == 0);
-                            assert(USERN(use)->input_count == 3);
-                            subsume_node(f, USERN(use), USERN(use)->inputs[1]);
-                        } else {
-                            i += 1;
-                        }
-                    }
-                    TB_Node* succ = cfg_next_control(loop->exit);
-                    TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
-                    set_input(f, join, loop->exit, 0);
-                    set_input(f, join, backedge,   1);
-
-                    // intercept exit path with a newly made region
-                    if (cfg_is_region(succ)) {
-                        FOR_N(i, 0, succ->input_count) if (succ->inputs[i] == loop->exit) {
-                            set_input(f, succ, join, i);
-                            break;
-                        }
-                    } else {
-                        set_input(f, succ, join, 0);
-                    }
-
-                    // get rid of it
-                    if (prev) { prev->next = loop->next; }
-                    else { f->loop_list = loop->next; }
-
-                    // peeps clean up later (namely stacked region collapsing the new region away)
-                    mark_users(f, join);
-                    mark_node(f, join);
-                    mark_users(f, backedge);
-                    mark_node(f, backedge);
-                    mark_users(f, loop->header);
-                    mark_node(f, loop->header);
+            TB_InductionVar var;
+            if (latch && find_indvar(loop->header, latch, &var)) {
+                // we'll just run these alongside the loop detection but maybe they
+                // should be a separate pass?
+                if (indvar_simplify(f, var.phi, var.cond, var.phi->inputs[2], var.end_cond)) {
+                    TB_OPTDEBUG(PASSES)(printf("      * Simplified induction var on phi %%%d\n", var.phi->gvn));
                 }
             }
-
-            // we'll just run these alongside the loop detection but maybe they
-            // should be a separate pass?
-            /*if (indvar_simplify(f, var.phi, var.cond, var.phi->inputs[2])) {
-                TB_OPTDEBUG(PASSES)(printf("      * Simplified induction var on phi %%%d\n", var.phi->gvn));
-            }*/
         }
     }
 

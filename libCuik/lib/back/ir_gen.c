@@ -221,7 +221,6 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
         }
     } else if (src->kind == KIND_DOUBLE && dst->kind == KIND_FLOAT) {
         TB_DataType dt = reg->dt;
-
         if (dt.type != TB_FLOAT32) {
             reg = tb_inst_trunc(func, reg, TB_TYPE_F32);
         }
@@ -1868,7 +1867,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                 TB_Node* cond = irgen_as_rvalue(tu, func, s->for_.cond);
                 tb_inst_if(func, cond, body, exit);
             } else {
-                tb_inst_goto(func, body);
+                tb_inst_never_branch(func, body, exit);
             }
 
             tb_inst_set_control(func, body);

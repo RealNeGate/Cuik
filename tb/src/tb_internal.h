@@ -33,6 +33,7 @@
 #define NL_HASH_MAP_INLINE
 #include <hash_map.h>
 #include <new_hash_map.h>
+#include <nbhs.h>
 
 #include <perf.h>
 #include <log.h>
@@ -65,8 +66,8 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS    0
 #define TB_OPTDEBUG_PASSES   0
-#define TB_OPTDEBUG_PEEP     0
-#define TB_OPTDEBUG_SCCP     0
+#define TB_OPTDEBUG_PEEP     1
+#define TB_OPTDEBUG_SCCP     1
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
@@ -182,7 +183,6 @@ struct TB_DebugType {
     // tag specific
     union {
         int int_bits;
-        TB_FloatFormat float_fmt;
         TB_DebugType* ptr_to;
         struct {
             TB_DebugType* base;
@@ -325,11 +325,8 @@ typedef struct TB_LoopInfo {
 
     // should always be a region
     TB_Node* header;
-    TB_Node* latch;
-
-    // whichever projection in the header's BB that'll
-    // exit, this is helpful for affine loop crap.
-    TB_Node* exit;
+    // latch's cproj that doesn't lead to the backedge
+    TB_Node* exit_proj;
 } TB_LoopInfo;
 
 typedef enum {
@@ -496,20 +493,6 @@ typedef struct {
     TB_External** data;
 } ExportList;
 
-// lock-free hashset
-typedef struct LatticeTable {
-    _Atomic(struct LatticeTable*) prev;
-
-    uint32_t exp;
-
-    // tracks how many entries have
-    // been moved once we're resizing
-    _Atomic uint32_t moved;
-    _Atomic uint32_t move_done;
-    _Atomic uint32_t count;
-    _Atomic(uintptr_t) data[];
-} LatticeTable;
-
 struct TB_Module {
     bool is_jit;
     bool visited; // used by the linker
@@ -539,9 +522,8 @@ struct TB_Module {
     TB_Symbol* tls_index_extern;
     TB_Symbol* chkstk_extern;
 
-    struct {
-        _Atomic(LatticeTable*) table;
-    } lattice;
+    // interning lattice
+    NBHS lattice_elements;
 
     _Atomic uint32_t uses_chkstk;
     _Atomic uint32_t compiled_function_count;

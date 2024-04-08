@@ -30,8 +30,6 @@ TB_Node* dead_node(TB_Function* f);
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 
-static size_t tb_pass_update_cfg(TB_Function* f, TB_Worklist* ws, bool preserve);
-
 ////////////////////////////////
 // TB_Worklist
 ////////////////////////////////
@@ -228,6 +226,11 @@ static void mark_users(TB_Function* f, TB_Node* n) {
     }
 }
 
+static void mark_node_n_users(TB_Function* f, TB_Node* n) {
+    worklist_push(f->worklist, n);
+    mark_node(f, n);
+}
+
 // unity build with all the passes
 #include "properties.h"
 #include "lattice.h"
@@ -366,6 +369,57 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     TB_Node* r = n->inputs[0];
     if (latuni_get(f, r) == &TOP_IN_THE_SKY) return &TOP_IN_THE_SKY;
 
+    if (r->type == TB_AFFINE_LOOP) {
+        TB_Node* latch = affine_loop_latch(r);
+
+        if (latch) {
+            // when a loop is deleted, you end up with a latch that's constant
+            // so we'll undo the affine loop allegations and just
+            /*Lattice* latch_t = latuni_get(f, latch->inputs[1]);
+            if (lattice_is_const(latch_t)) {
+                bool exit_when_key = !TB_NODE_GET_EXTRA_T(r->inputs[1], TB_NodeProj)->index;
+                TB_Node* exit_proj = USERN(proj_with_index(latch, exit_when_key));
+                int64_t latch_key  = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeBranchProj)->key;
+
+                if ((exit_when_key  && lattice_int_eq(latch_t, latch_key)) ||
+                    (!exit_when_key && lattice_int_ne(latch_t, latch_key))) {
+                    // this is a loop without a real backedge, it'll get packed up soon but
+                    // until then we consider it 1 trip, i can walk through why i guess:
+                    // * affine loops are natural loops (we've rotated them)
+                    // * if you're seeing the phi we're past the ZTC (trips greater than 1)
+                    // * thus a dead latch means 1 trip not 0.
+                    Lattice* init = latuni_get(f, n->inputs[1]);
+                    Lattice* init = latuni_get(f, n->inputs[1]);
+
+                    return latuni_get(f, n->inputs[1]);
+                }
+            }*/
+
+            TB_InductionVar var;
+            if (find_indvar(r, latch, &var)) {
+                if (var.phi == n) {
+                    Lattice* init = latuni_get(f, n->inputs[1]);
+                    Lattice* end = var.end_cond ? latuni_get(f, var.end_cond) : lattice_int_const(f, var.end_const);
+
+                    if (lattice_is_const(init) && lattice_is_const(end)) {
+                        int64_t trips = (end->_int.min - init->_int.min) / var.step;
+                        int64_t rem   = (end->_int.min - init->_int.min) % var.step;
+                        if (rem == 0 || var.pred != IND_NE) {
+                            return lattice_gimme_int(f, init->_int.min, init->_int.min + trips*var.step);
+                        }
+                    } else {
+                        // TODO(NeGate): we vaguely know the range, this is the common case
+                        // so let's handle it. main things we wanna know are whether or not
+                        // the number is ever negative.
+                    }
+                }
+            } else {
+                // affine loop missing latch? ok then it's 1 trips
+                return latuni_get(f, n->inputs[1]);
+            }
+        }
+    }
+
     Lattice* old = latuni_get(f, n);
     if (old->tag == LATTICE_INT && old->_int.widen >= INT_WIDEN_LIMIT) {
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data), lattice_int_max(n->dt.data), .widen = INT_WIDEN_LIMIT } });
@@ -413,6 +467,7 @@ static bool can_gvn(TB_Node* n) {
         case TB_WRITE:
         case TB_RETURN:
         case TB_BRANCH:
+        case TB_AFFINE_LATCH:
         case TB_SYSCALL:
         case TB_TAILCALL:
         case TB_CALLGRAPH:
@@ -620,71 +675,6 @@ void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     tb_kill_node(f, n);
 }
 
-static void cool_print_type(TB_Node* n) {
-    TB_DataType dt = n->dt;
-    if (n->type != TB_ROOT && !cfg_is_region(n) && !(n->type == TB_BRANCH && n->input_count == 1)) {
-        if (n->type == TB_STORE) {
-            dt = n->inputs[3]->dt;
-        } else if (n->type == TB_BRANCH) {
-            dt = n->inputs[1]->dt;
-        } else if (n->type == TB_ROOT) {
-            dt = n->input_count > 1 ? n->inputs[1]->dt : TB_TYPE_VOID;
-        } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
-            dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
-        }
-        printf(".");
-        print_type(dt);
-    }
-}
-
-void print_node_sexpr(TB_Node* n, int depth) {
-    if (n->type == TB_INTEGER_CONST) {
-        TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
-        if (n->dt.type == TB_PTR) {
-            printf("%#"PRIx64, num->value);
-        } else {
-            printf("%"PRId64, tb__sxt(num->value, n->dt.data, 64));
-        }
-    } else if (n->type == TB_SYMBOL) {
-        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
-        if (sym->name[0]) {
-            printf("%s", sym->name);
-        } else {
-            printf("sym%p", sym);
-        }
-    } else if (depth >= 1) {
-        printf("(v%u: %s", n->gvn, tb_node_get_name(n));
-        cool_print_type(n);
-        printf(" ...)");
-    } else {
-        depth -= (n->type == TB_PROJ);
-
-        printf("(v%u: %s", n->gvn, tb_node_get_name(n));
-        cool_print_type(n);
-        FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
-            if (i == 0) printf(" @");
-            else printf(" ");
-
-            print_node_sexpr(n->inputs[i], depth + 1);
-        }
-
-        switch (n->type) {
-            case TB_ARRAY_ACCESS:
-            printf(" %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride);
-            break;
-
-            case TB_MEMBER_ACCESS:
-            printf(" %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
-            break;
-
-            case TB_PROJ:
-            printf(" %d", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
-            break;
-        }
-        printf(")");
-    }
-}
-
 // Returns NULL or a modified node (could be the same node, we can stitch it back into place)
 static TB_Node* idealize(TB_Function* f, TB_Node* n) {
     NodeIdealize ideal = node_vtables[n->type].idealize;
@@ -764,7 +754,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
             return NULL;
         }
     } else if (n->type != TB_ROOT && n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
-        if (n->type == TB_BRANCH) {
+        if (n->type == TB_BRANCH || n->type == TB_AFFINE_LATCH) {
             f->invalidated_loops = true;
         }
 
@@ -838,7 +828,9 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         return make_int_node(f, n->dt, 0);
 
         case LATTICE_TUPLE: {
-            if (n->type != TB_BRANCH) return NULL;
+            if (n->type != TB_BRANCH && n->type != TB_AFFINE_LATCH) {
+                return NULL;
+            }
 
             // check if tuple is constant path
             int trues = 0;
@@ -930,8 +922,6 @@ static void print_lattice(Lattice* l) {
             printf("[");
             if (l->_int.min == l->_int.max) {
                 printf("%"PRId64, l->_int.min);
-            } else if (l->_int.min == 0 && l->_int.max == 1) {
-                printf("bool");
             } else if (l->_int.min == INT16_MIN && l->_int.max == INT16_MAX) {
                 printf("i8");
             } else if (l->_int.min == INT16_MIN && l->_int.max == INT16_MAX) {
@@ -970,7 +960,7 @@ static int node_sort_cmp(const void* a, const void* b) {
 
 static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
     // if both nodes are the same datatype, we should join the elements to avoid
-    // weird backtracking when dealing with the pessimistic solver
+    // weird backtracking when dealing with the pessimistic solver.
     if (k->dt.raw == n->dt.raw) {
         Lattice* new_t = latuni_get(f, k);
         Lattice* old_t = latuni_get(f, n);
@@ -982,7 +972,11 @@ static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
 // because certain optimizations apply when things are the same
 // we mark ALL users including the ones who didn't get changed
 // when subsuming.
-TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
+static TB_Node* peephole(TB_Function* f, TB_Node* n) {
+    DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+
+    bool progress = false;
+
     // idealize can modify the node, make sure it's not in the GVN pool at the time
     if (can_gvn(n)) {
         nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
@@ -1005,6 +999,7 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
 
         // mark post subsume since previous users of n might have
         // name equality based opts.
+        progress = true;
         mark_users(f, n);
 
         // try again, maybe we get another transformation
@@ -1090,7 +1085,12 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     }
 
     DO_IF(TB_OPTDEBUG_PEEP)(printf("\n"));
-    return n;
+    return progress ? n : NULL;
+}
+
+TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
+    TB_Node* k = peephole(f, n);
+    return k ? k : n;
 }
 
 void tb_opt_dump_stats(TB_Function* f) {
@@ -1193,29 +1193,24 @@ void tb_opt_cprop(TB_Function* f) {
     }
 
     // Pass 2: ok replace with constants now
-    //   we need a separate worklist for SCCP
-    TB_Worklist ws = { 0 };
-    worklist_alloc(&ws, f->node_count);
-
-    // root node can't constant fold btw
-    worklist_push(&ws, f->root_node);
-
-    for (size_t i = 0; i < dyn_array_length(ws.items); i++) {
-        TB_Node* n = ws.items[i];
+    //   fills up the entire worklist again
+    worklist_push(f->worklist, f->root_node);
+    for (size_t i = 0; i < dyn_array_length(f->worklist->items); i++) {
+        TB_Node* n = f->worklist->items[i];
         TB_Node* k = try_as_const(f, n, latuni_get(f, n));
         DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
         if (k != NULL) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.opto_constants++);
-            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), print_node_sexpr(k, 0), printf("\x1b[0m\n"));
+            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
+            mark_users(f, k);
+            mark_node(f, k);
             subsume_node(f, n, k);
-            mark_users(f, n);
             n = k;
         }
         DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
-        FOR_USERS(u, n) { worklist_push(&ws, USERN(u)); }
+        FOR_USERS(u, n) { mark_node(f, USERN(u)); }
     }
-    worklist_free(&ws);
 }
 
 void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool preserve_types) {
@@ -1255,17 +1250,26 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
 
     TB_OPTDEBUG(PASSES)(printf("FUNCTION %s:\n", f->super.name));
 
+    int k;
     int rounds = 0;
-    while (worklist_count(f->worklist)) {
-        TB_OPTDEBUG(PASSES)(printf("  * ROUND %d:\n", rounds++));
+    while (worklist_count(f->worklist) > 0) {
+        TB_OPTDEBUG(PASSES)(printf("  * ROUND %d:\n", ++rounds));
+        TB_OPTDEBUG(PASSES)(printf("    * Minor rewrites\n"));
 
-        TB_OPTDEBUG(PASSES)(printf("    * Simple-rewrites\n"));
-        while (worklist_count(f->worklist)) {
-            TB_OPTDEBUG(PASSES)(printf("      * Peeps\n"));
-            tb_opt_peeps(f);
+        // minor opts
+        while (worklist_count(f->worklist) > 0) {
+            TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
+            // combined pessimistic solver
+            if (k = tb_opt_peeps(f), k > 0) {
+                TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d nodes\n", k));
+            }
 
-            // mostly just SSA construction from local vars
-            if (tb_opt_locals(f)) { TB_OPTDEBUG(PASSES)(printf("      * Locals\n")); }
+            // locals scans the TB_LOCAL nodes, it might introduce peephole
+            // work when it returns true.
+            TB_OPTDEBUG(PASSES)(printf("      * Locals\n"));
+            if (k = tb_opt_locals(f), k > 0) {
+                TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
+            }
         }
 
         // const prop leaves work for the peephole optimizer and
@@ -1273,9 +1277,10 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
         // track when it makes CFG changes.
         TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
         tb_opt_cprop(f);
-        if (worklist_count(f->worklist) > 0) {
-            TB_OPTDEBUG(PASSES)(printf("      * Peeps\n"));
-            tb_opt_peeps(f);
+
+        TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
+        if (k = tb_opt_peeps(f), k > 0) {
+            TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d nodes\n", k));
         }
 
         // only wanna build a loop tree if there's
@@ -1293,6 +1298,10 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
         TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
         tb_opt_loops(f);
     }
+
+    tb_print(f, f->tmp_arena);
+    __debugbreak();
+
     nl_table_free(f->node2loop);
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {
@@ -1344,8 +1353,7 @@ TB_API void tb_opt_free_types(TB_Function* f) {
     }
 }
 
-// combined pessimistic solver
-void tb_opt_peeps(TB_Function* f) {
+int tb_opt_peeps(TB_Function* f) {
     if (alloc_types(f)) {
         FOR_N(i, 0, dyn_array_length(f->worklist->items)) {
             TB_Node* n = f->worklist->items[i];
@@ -1354,21 +1362,24 @@ void tb_opt_peeps(TB_Function* f) {
         f->types[f->root_node->gvn] = lattice_tuple_from_node(f, f->root_node);
     }
 
+    int changes = 0;
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
         while ((n = worklist_pop(f->worklist))) {
-            DO_IF(TB_OPTDEBUG_STATS)(f->stats.peeps++);
-            DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
             // must've dead sometime between getting scheduled and getting here.
-            if (n->type != TB_PROJ && n->user_count == 0) {
+            if (!is_proj(n) && n->user_count == 0) {
+                DO_IF(TB_OPTDEBUG_STATS)(f->stats.peeps++);
+                DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_kill_node(f, n);
-            } else if (n->type != TB_NULL) {
-                tb_opt_peep_node(f, n);
+            } else if (n->type != TB_NULL && peephole(f, n)) {
+                changes += 1;
             }
         }
     }
+
+    return changes;
 }
 
 typedef struct {

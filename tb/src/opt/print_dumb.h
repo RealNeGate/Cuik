@@ -46,6 +46,13 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
     } else if (n->type == TB_MACH_PROJ) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->index);
+    } else if (n->type == TB_MACH_SYMBOL) {
+        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
+        if (sym->name[0]) {
+            printf("%s ", sym->name);
+        } else {
+            printf("sym%p ", sym);
+        }
     } else if (n->type == TB_MEMBER_ACCESS) {
         printf("%"PRIi64" ", TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
     } else if (n->type == TB_STORE) {

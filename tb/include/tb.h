@@ -17,7 +17,6 @@
 //   MAF  - monotone analysis framework
 //   SCC  - strongly connected components
 //   MOP  - meet over all paths
-//   NMT  - not-marked through (pauseless paper)
 #ifndef TB_CORE_H
 #define TB_CORE_H
 
@@ -297,6 +296,13 @@ typedef enum TB_NodeTypeEnum {
     //   it's possible to not pass a key and the default successor is always called, this is
     //   a GOTO. tb_inst_goto, tb_inst_if can handle common cases for you.
     TB_BRANCH,      // (Control, Data) -> (Control...)
+    //   just a branch but tagged as the latch to some affine loop.
+    TB_AFFINE_LATCH,// (Control, Data) -> (Control...)
+    //   this is a fake branch which acts as a backedge for infinite loops, this keeps the
+    //   graph from getting disconnected with the endpoint.
+    //
+    //   CProj0 is the taken path, CProj1 is exits the loop.
+    TB_NEVER_BRANCH,// (Control) -> (Control...)
     //   debugbreak will trap in a continuable manner.
     TB_DEBUGBREAK,  // (Control, Memory) -> (Control)
     //   trap will not be continuable but will stop execution.
@@ -374,6 +380,7 @@ typedef enum TB_NodeTypeEnum {
 
     // Conversions
     TB_TRUNCATE,
+    TB_FLOAT_TRUNC,
     TB_FLOAT_EXT,
     TB_SIGN_EXT,
     TB_ZERO_EXT,
@@ -623,6 +630,10 @@ typedef struct { // TB_MACH_PROJ
     int index;
     RegMask* def;
 } TB_NodeMachProj;
+
+typedef struct { // TB_MACH_SYMBOL
+    TB_Symbol* sym;
+} TB_NodeMachSymbol;
 
 typedef struct { // TB_BRANCH_PROJ
     int index;
@@ -1339,12 +1350,13 @@ TB_API TB_Node* tb_inst_incomplete_phi(TB_Function* f, TB_DataType dt, TB_Node* 
 TB_API bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* region, TB_Node* val);
 
 TB_API TB_Node* tb_inst_phi2(TB_Function* f, TB_Node* region, TB_Node* a, TB_Node* b);
-TB_API void tb_inst_goto(TB_Function* f, TB_Node* target);
 TB_API TB_Node* tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* true_case, TB_Node* false_case);
 TB_API TB_Node* tb_inst_branch(TB_Function* f, TB_DataType dt, TB_Node* key, TB_Node* default_case, size_t entry_count, const TB_SwitchEntry* keys);
 TB_API void tb_inst_unreachable(TB_Function* f);
 TB_API void tb_inst_debugbreak(TB_Function* f);
 TB_API void tb_inst_trap(TB_Function* f);
+TB_API void tb_inst_goto(TB_Function* f, TB_Node* target);
+TB_API void tb_inst_never_branch(TB_Function* f, TB_Node* if_true, TB_Node* if_false);
 
 TB_API const char* tb_node_get_name(TB_Node* n);
 

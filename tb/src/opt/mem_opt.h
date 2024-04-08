@@ -137,7 +137,7 @@ static Lattice* value_split_mem(TB_Function* f, TB_Node* n) {
         l->elems[i] = lattice_alias(f, s->alias_idx[i]);
     }
 
-    Lattice* k = lattice_raw_intern(f->super.module, l, false);
+    Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
     if (k != l) { tb_arena_free(arena, l, size); }
     return k;
 }

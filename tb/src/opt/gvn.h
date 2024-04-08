@@ -14,6 +14,7 @@ static size_t extra_bytes(TB_Node* n) {
         }
 
         case TB_BRANCH:
+        case TB_AFFINE_LATCH:
         return sizeof(TB_NodeBranch);
 
         case TB_SAFEPOINT_POLL:
@@ -43,8 +44,10 @@ static size_t extra_bytes(TB_Node* n) {
         return sizeof(TB_NodeArray);
 
         case TB_CALLGRAPH:
+        case TB_NEVER_BRANCH:
         case TB_TRUNCATE:
         case TB_UINT2FLOAT:
+        case TB_FLOAT_TRUNC:
         case TB_FLOAT2UINT:
         case TB_INT2FLOAT:
         case TB_FLOAT2INT:
@@ -80,6 +83,9 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_MACH_MOVE:
         case TB_MACH_FRAME_PTR:
         return 0;
+
+        case TB_MACH_SYMBOL:
+        return sizeof(TB_NodeMachSymbol);
 
         case TB_SPLITMEM:
         return sizeof(TB_NodeMemSplit);

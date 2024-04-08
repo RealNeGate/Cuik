@@ -40,13 +40,6 @@ struct TB_GraphBuilder {
     TB_Node** vals;
 };
 
-static TB_Node* branch_cproj(TB_Function* f, TB_Node* n, uint64_t taken, int64_t key, int index) {
-    TB_Node* cproj = tb_alloc_node(f, TB_BRANCH_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeBranchProj));
-    set_input(f, cproj, n, 0);
-    TB_NODE_SET_EXTRA(cproj, TB_NodeBranchProj, .index = index, .taken = taken, .key = key);
-    return cproj;
-}
-
 static TB_Node* xfer_ctrl(TB_GraphBuilder* g, TB_Node* n) {
     TB_Node* prev = g->bot_ctrl;
     g->bot_ctrl = n;

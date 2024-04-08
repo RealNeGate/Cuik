@@ -51,6 +51,7 @@ const char* tb_node_get_name(TB_Node* n) {
 
         case TB_ZERO_EXT: return "zxt";
         case TB_SIGN_EXT: return "sxt";
+        case TB_FLOAT_TRUNC: return "fptrunc";
         case TB_FLOAT_EXT: return "fpxt";
         case TB_TRUNCATE: return "trunc";
         case TB_BITCAST: return "bitcast";
@@ -114,11 +115,14 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_CALL:     return "call";
         case TB_SYSCALL:  return "syscall";
         case TB_BRANCH:   return "branch";
+        case TB_AFFINE_LATCH: return "affine_latch";
+        case TB_NEVER_BRANCH: return "never_branch";
         case TB_TAILCALL: return "tailcall";
 
         case TB_MACH_MOVE:  return "mach_move";
         case TB_MACH_COPY:  return "mach_copy";
         case TB_MACH_PROJ:  return "mach_proj";
+        case TB_MACH_SYMBOL:return "mach_symbol";
         case TB_MACH_FRAME_PTR: return "mach_frameptr";
 
         default: {
@@ -183,6 +187,11 @@ static void print_proj(TB_PrintCallback callback, void* user_data, TB_Node* n, T
                     P("%c", 'a'+(index - 3));
                 }
             }
+            break;
+        }
+
+        case TB_NEVER_BRANCH: {
+            P(index ? "never" : "taken");
             break;
         }
 

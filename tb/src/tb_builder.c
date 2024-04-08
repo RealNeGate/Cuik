@@ -167,7 +167,14 @@ static TB_Node* tb_unary(TB_Function* f, int type, TB_DataType dt, TB_Node* src)
 }
 
 TB_Node* tb_inst_trunc(TB_Function* f, TB_Node* src, TB_DataType dt) {
-    return tb_unary(f, TB_TRUNCATE, dt, src);
+    if (src->dt.type == TB_FLOAT64 && dt.type == TB_FLOAT32) {
+        return tb_unary(f, TB_FLOAT_TRUNC, dt, src);
+    } else {
+        assert((src->dt.type == TB_INT || src->dt.type == TB_PTR)
+            && (dt.type == TB_INT || dt.type == TB_PTR));
+
+        return tb_unary(f, TB_TRUNCATE, dt, src);
+    }
 }
 
 TB_Node* tb_inst_int2ptr(TB_Function* f, TB_Node* src) {
@@ -956,6 +963,22 @@ void tb_inst_goto(TB_Function* f, TB_Node* target) {
     assert(n->dt.type == TB_CONTROL);
     add_input_late(f, target, n);
     add_memory_edge(f, n, mem_state, target);
+}
+
+void tb_inst_never_branch(TB_Function* f, TB_Node* if_true, TB_Node* if_false) {
+    TB_Node* mem_state = peek_mem(f);
+
+    // generate control projections
+    TB_Node* n = tb_alloc_node(f, TB_NEVER_BRANCH, TB_TYPE_TUPLE, 1, 0);
+    set_input(f, n, transfer_ctrl(f, NULL), 0);
+
+    FOR_N(i, 0, 2) {
+        TB_Node* target = i ? if_false : if_true;
+        TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, i);
+
+        add_input_late(f, target, cproj);
+        add_memory_edge(f, n, mem_state, target);
+    }
 }
 
 TB_Node* tb_inst_if(TB_Function* f, TB_Node* cond, TB_Node* if_true, TB_Node* if_false) {

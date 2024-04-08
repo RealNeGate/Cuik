@@ -38,53 +38,31 @@ static TB_BasicBlock* find_lca(TB_BasicBlock* a, TB_BasicBlock* b) {
     return a;
 }
 
-// compact & renumber nodes
-void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp) {
-    CUIK_TIMED_BLOCK("compact") {
-        NL_Table forward = { 0 };
-        CUIK_TIMED_BLOCK("find live") {
-            // BFS walk all the nodes
-            worklist_push(ws, f->root_node);
-            for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-                TB_Node* n = ws->items[i];
-                FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* y) {
+    TB_BasicBlock* use_block = f->scheduled[y->gvn];
+    if (use_block == NULL) { return NULL; } // dead
+
+    DO_IF(TB_OPTDEBUG_GCM)(printf("  user v%u @ bb%d\n", y->gvn, use_block->id));
+    if (y->type == TB_PHI) {
+        TB_Node* use_node = y->inputs[0];
+        assert(cfg_is_region(use_node));
+
+        if (y->input_count != use_node->input_count + 1) {
+            tb_panic("phi has parent with mismatched predecessors");
+        }
+
+        ptrdiff_t j = 1;
+        for (; j < y->input_count; j++) {
+            if (y->inputs[j] == n) {
+                break;
             }
         }
+        assert(j >= 0);
 
-        CUIK_TIMED_BLOCK("compact IDs") {
-            f->node_count = dyn_array_length(ws->items);
-            if (f->types) {
-                f->type_cap = tb_next_pow2(f->node_count + 16);
-
-                Lattice** new_types = tb_platform_heap_alloc(f->type_cap * sizeof(Lattice*));
-                FOR_N(i, 0, f->type_cap) { new_types[i] = NULL; }
-
-                FOR_N(i, 0, dyn_array_length(ws->items)) {
-                    uint32_t old_gvn = ws->items[i]->gvn;
-                    new_types[i] = f->types[old_gvn];
-                    ws->items[i]->gvn = i;
-                }
-
-                assert(f->root_node->gvn == 0);
-                tb_platform_heap_free(f->types);
-                f->types = new_types;
-            } else {
-                FOR_N(i, 0, dyn_array_length(ws->items)) {
-                    ws->items[i]->gvn = i;
-                }
-            }
-
-            // invalidate all of the GVN table since it hashes with value numbers
-            nl_hashset_clear(&f->gvn_nodes);
-        }
-
-        CUIK_TIMED_BLOCK("move nodes") {
-
-        }
-
-        nl_table_free(forward);
-        worklist_clear(ws);
+        TB_BasicBlock* bb = f->scheduled[use_node->inputs[j - 1]->gvn];
+        if (bb) { use_block = bb; }
     }
+    return use_block;
 }
 
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
@@ -94,6 +72,13 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
             worklist_push(ws, f->root_node);
             for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
                 TB_Node* n = ws->items[i];
+                if (n->dt.type == TB_TUPLE) {
+                    // place projections first
+                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                        worklist_push(ws, USERN(u));
+                    }
+                }
+
                 FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
             }
         }
@@ -237,15 +222,20 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                         // push next unvisited in
                         TB_Node* in = n->inputs[--top->i];
 
-                        // pinned nodes can't be rescheduled
-                        if (in && !is_pinned(in) && !worklist_test_n_set(ws, in)) {
-                            TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-                            Elem* new_top = tb_arena_alloc(tmp_arena, sizeof(Elem));
-                            new_top->parent = top;
-                            new_top->sp = sp;
-                            new_top->n = in;
-                            new_top->i = in->input_count;
-                            top = new_top;
+                        if (in) {
+                            // projections don't get scheduled, their tuple nodes do
+                            if (is_proj(in)) { in = in->inputs[0]; }
+
+                            // pinned nodes can't be rescheduled
+                            if (!is_pinned(in) && !worklist_test_n_set(ws, in)) {
+                                TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+                                Elem* new_top = tb_arena_alloc(tmp_arena, sizeof(Elem));
+                                new_top->parent = top;
+                                new_top->sp = sp;
+                                new_top->n = in;
+                                new_top->i = in->input_count;
+                                top = new_top;
+                            }
                         }
                         continue;
                     }
@@ -262,6 +252,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                                 continue;
                             }
 
+                            assert(n->inputs[i]->gvn < f->scheduled_n);
                             TB_BasicBlock* bb = f->scheduled[n->inputs[i]->gvn];
                             if (bb == NULL) {
                                 // input has no scheduling... weird?
@@ -279,6 +270,13 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                         DO_IF(TB_OPTDEBUG_GCM)(printf("%s: v%u into .bb%d\n", f->super.name, n->gvn, best->id));
 
                         f->scheduled[n->gvn] = best;
+                        // unpinned nodes getting moved means their users need to move too
+                        if (n->dt.type == TB_TUPLE) {
+                            FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                                f->scheduled[USERN(u)->gvn] = best;
+                            }
+                        }
+
                         nl_hashset_put2(&best->items, n, node_hash, node_cmp);
                         dyn_array_put(ws->items, n);
                     }
@@ -296,35 +294,26 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                 TB_Node* n = ws->items[i];
                 DO_IF(TB_OPTDEBUG_GCM)(printf("%s: try late v%u\n", f->super.name, n->gvn));
 
-                // we're gonna find the least common ancestor
                 TB_BasicBlock* lca = NULL;
-                FOR_USERS(use, n) {
-                    TB_Node* y = USERN(use);
-                    TB_BasicBlock* use_block = f->scheduled[y->gvn];
-                    if (use_block == NULL) { continue; } // dead
-
-                    DO_IF(TB_OPTDEBUG_GCM)(printf("  user v%u @ bb%d\n", y->gvn, use_block->id));
-                    if (y->type == TB_PHI) {
-                        TB_Node* use_node = y->inputs[0];
-                        assert(cfg_is_region(use_node));
-
-                        if (y->input_count != use_node->input_count + 1) {
-                            tb_panic("phi has parent with mismatched predecessors");
-                        }
-
-                        ptrdiff_t j = 1;
-                        for (; j < y->input_count; j++) {
-                            if (y->inputs[j] == n) {
-                                break;
+                if (n->dt.type == TB_TUPLE) {
+                    FOR_USERS(use, n) {
+                        // to avoid projections stopping the sinking of nodes, we walk past
+                        // them whenever decision making here
+                        if (is_proj(USERN(use))) {
+                            FOR_USERS(use2, USERN(use)) {
+                                TB_BasicBlock* use_block = find_use_block(f, n, USERN(use2));
+                                if (use_block){ lca = find_lca(lca, use_block); }
                             }
+                        } else {
+                            TB_BasicBlock* use_block = find_use_block(f, n, USERN(use));
+                            if (use_block){ lca = find_lca(lca, use_block); }
                         }
-                        assert(j >= 0);
-
-                        TB_BasicBlock* bb = f->scheduled[use_node->inputs[j - 1]->gvn];
-                        if (bb) { use_block = bb; }
                     }
-
-                    lca = find_lca(lca, use_block);
+                } else {
+                    FOR_USERS(use, n) {
+                        TB_BasicBlock* use_block = find_use_block(f, n, USERN(use));
+                        if (use_block){ lca = find_lca(lca, use_block); }
+                    }
                 }
 
                 if (lca != NULL) {
@@ -346,6 +335,14 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                             );
 
                             f->scheduled[n->gvn] = better;
+
+                            // unpinned nodes getting moved means their users need to move too
+                            if (n->dt.type == TB_TUPLE) {
+                                FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                                    f->scheduled[USERN(u)->gvn] = better;
+                                }
+                            }
+
                             nl_hashset_remove2(&old->items, n, node_hash, node_cmp);
                             nl_hashset_put2(&better->items, n, node_hash, node_cmp);
                         }
@@ -434,9 +431,9 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
 
                         // walk all successors
                         TB_Node* end = bb->end;
-                        if (end->type == TB_BRANCH) {
+                        if (cfg_is_fork(end)) {
                             FOR_USERS(u, end) {
-                                if (USERN(u)->type == TB_PROJ) {
+                                if (cfg_is_cproj(USERN(u))) {
                                     // union with successor's lives
                                     TB_Node* succ = cfg_next_bb_after_cproj(USERN(u));
                                     TB_BasicBlock* succ_bb = f->scheduled[succ->gvn];

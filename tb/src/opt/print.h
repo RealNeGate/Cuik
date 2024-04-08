@@ -218,6 +218,18 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
             case TB_DEBUGBREAK:  printf("  debugbreak"); break;
             case TB_UNREACHABLE: printf("  unreachable"); break;
 
+            case TB_NEVER_BRANCH: {
+                TB_Node* taken = USERN(proj_with_index(n, 0));
+                TB_Node* never = USERN(proj_with_index(n, 1));
+
+                printf("  goto ");
+                print_branch_edge(ctx, taken, false);
+                printf(" // never branch ");
+                print_branch_edge(ctx, never, false);
+                break;
+            }
+
+            case TB_AFFINE_LATCH:
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
                 TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
@@ -421,6 +433,16 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                         printf("!size(%u) !align(%u)", l->size, l->align);
                         if (l->type) {
                             printf(" !var(%s)", l->name);
+                        }
+                        break;
+                    }
+
+                    case TB_MACH_SYMBOL: {
+                        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
+                        if (sym->name[0]) {
+                            printf("%s", sym->name);
+                        } else {
+                            printf("sym%p", sym);
                         }
                         break;
                     }

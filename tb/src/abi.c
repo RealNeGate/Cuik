@@ -67,7 +67,7 @@ static RegClass classify_reg(TB_ABI abi, TB_DebugType* t) {
         case TB_ABI_WIN64: {
             int s = debug_type_size(abi, t);
             if (s == 1 || s == 2 || s == 4 || s == 8) {
-                return (t->tag == TB_DEBUG_TYPE_FLOAT32 && t->tag <= TB_DEBUG_TYPE_FLOAT64) ? RG_SSE : RG_INTEGER;
+                return (t->tag >= TB_DEBUG_TYPE_FLOAT32 && t->tag <= TB_DEBUG_TYPE_FLOAT64) ? RG_SSE : RG_INTEGER;
             }
 
             return RG_MEMORY;
@@ -76,7 +76,7 @@ static RegClass classify_reg(TB_ABI abi, TB_DebugType* t) {
         case TB_ABI_SYSTEMV: {
             int s = debug_type_size(abi, t);
             if (s <= 8) {
-                return (t->tag == TB_DEBUG_TYPE_FLOAT32 && t->tag <= TB_DEBUG_TYPE_FLOAT64) ? RG_SSE : RG_INTEGER;
+                return (t->tag >= TB_DEBUG_TYPE_FLOAT32 && t->tag <= TB_DEBUG_TYPE_FLOAT64) ? RG_SSE : RG_INTEGER;
             }
 
             return RG_MEMORY;
@@ -114,7 +114,7 @@ static TB_DataType reg_class_to_tb(TB_ABI abi, RegClass rg, TB_DebugType* type) 
 
         case RG_SSE: {
             assert(type->tag >= TB_DEBUG_TYPE_FLOAT32 && type->tag <= TB_DEBUG_TYPE_FLOAT64);
-            return (TB_DataType){ { TB_FLOAT32 + type->float_fmt } };
+            return (TB_DataType){ { TB_FLOAT32 + (type->tag - TB_DEBUG_TYPE_FLOAT32) } };
         }
 
         default: tb_assert(0, "todo"); return TB_TYPE_VOID;

@@ -16,6 +16,9 @@
 #define NL_HASH_SET_IMPL
 #include <new_hash_map.h>
 
+#define NBHS_IMPL
+#include <nbhs.h>
+
 #define NL_CHUNKED_ARRAY_IMPL
 #include <chunked_array.h>
 

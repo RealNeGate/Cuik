@@ -7,7 +7,7 @@ X(xorimm) X(cmpimm) X(movimm) X(testimm)
 // shift ops with immediates
 X(shlimm) X(shrimm) X(sarimm) X(rolimm) X(rorimm)
 // misc
-X(lea) X(setcc) X(cmovcc) X(imulimm)
+X(lea) X(setcc) X(cmovcc) X(imulimm) X(div) X(idiv)
 // casts
 X(movsx8)
 X(movzx8)

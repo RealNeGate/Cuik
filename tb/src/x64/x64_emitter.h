@@ -198,9 +198,9 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
         }
     }
 
-    if (a->type == VAL_GLOBAL && disp_patch + 4 != e->count) {
+    /* if (a->type == VAL_GLOBAL && disp_patch + 4 != e->count) {
         RELOC4(e, disp_patch, (disp_patch + 4) - e->count);
-    }
+    } */
 }
 
 static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_X86_DataType dt) {

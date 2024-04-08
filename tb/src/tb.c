@@ -264,6 +264,7 @@ void tb_module_destroy(TB_Module* m) {
         info = next;
     }
 
+    nbhs_free(&m->lattice_elements);
     dyn_array_destroy(m->files);
     tb_platform_heap_free(m);
 }

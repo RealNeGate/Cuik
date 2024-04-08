@@ -185,6 +185,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         _0F(0x11)        = OP_MODRM | OP_SSE,
         // nop r/m
         _0F(0x1F)        = OP_MODRM,
+        // SSE: ucomi
+        _0F(0x2E)        = OP_MODRM | OP_SSE,
         // imul reg, r/m
         _0F(0xAF)        = OP_MODRM,
         // cmovcc reg, r/m
@@ -237,14 +239,14 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         UNPACK_233(mod, rx, rm, modrm);
 
         if (props & OP_FAKERX) {
-            if (op == 0xF6) {
-                props |= OP_IMM8;
-            } else if (op == 0xF7) {
-                props |= OP_IMM;
+            if (rx <= 1) {
+                // TEST r/m, imm
+                if (op == 0xF6)      { props |= OP_IMM8; }
+                else if (op == 0xF7) { props |= OP_IMM; }
             }
 
             regs |= 0xFF0000; // no rx since it's reserved
-            op |= rx << 12;
+            op  |= rx << 12;
         } else {
             // unpack rx
             regs |= ((rex&4 ? 8 : 0) | rx) << 16;
@@ -281,6 +283,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
             }
 
             // unpack displacement
+            inst->disp_pos = current;
             if (mod == MOD_INDIRECT_DISP8) {
                 inst->disp = (int8_t) data[current++];
             } else if (mod == MOD_INDIRECT_DISP32 || (regs & 0xFFFF) == 0xFFFF) {
@@ -783,8 +786,8 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case _0F(0x5E): return "div";
         case _0F(0x5F): return "max";
         case _0F(0xC2): return "cmp";
-        case _0F(0x2A): return "___";
-        case _0F(0x2C): return "___";
+        case _0F(0x2A): return "cvtsi";
+        case _0F(0x2C): return "cvtsi";
         case _0F(0x2E): return "ucomi";
         case _0F(0x51): return "sqrt";
         case _0F(0x52): return "rsqrt";

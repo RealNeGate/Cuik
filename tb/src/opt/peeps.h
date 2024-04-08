@@ -42,6 +42,8 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_TAILCALL]       = NODE_CTRL | NODE_TERMINATOR | NODE_END,
 
     [TB_BRANCH]         = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
+    [TB_AFFINE_LATCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
+    [TB_NEVER_BRANCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
 
     [TB_CALL]           = NODE_CTRL,
     [TB_SYSCALL]        = NODE_CTRL,
@@ -73,9 +75,9 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_MEMBER_ACCESS]  = { ideal_member_ptr,  identity_member_ptr,NULL             },
     [TB_ARRAY_ACCESS]   = { ideal_array_ptr,   NULL,               NULL             },
     // arithmetic
-    [TB_ADD]            = { ideal_int_binop,   identity_int_binop, value_arith      },
-    [TB_SUB]            = { ideal_int_binop,   identity_int_binop, value_arith      },
-    [TB_MUL]            = { ideal_int_binop,   identity_int_binop, value_arith      },
+    [TB_ADD]            = { ideal_int_binop,   identity_int_binop, value_add_mul    },
+    [TB_SUB]            = { ideal_int_binop,   identity_int_binop, value_sub        },
+    [TB_MUL]            = { ideal_int_binop,   identity_int_binop, value_add_mul    },
     [TB_UDIV]           = { ideal_int_div,     identity_int_binop, NULL             },
     [TB_SDIV]           = { ideal_int_div,     identity_int_binop, NULL             },
     [TB_UMOD]           = { ideal_int_mod,     identity_int_binop, NULL             },
@@ -114,6 +116,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_NATURAL_LOOP]   = { ideal_region,      identity_region,    value_region,    },
     [TB_AFFINE_LOOP]    = { ideal_region,      identity_region,    value_region,    },
     [TB_BRANCH]         = { ideal_branch,      NULL,               value_branch,    },
+    [TB_AFFINE_LATCH]   = { ideal_branch,      NULL,               value_branch,    },
     [TB_SAFEPOINT_POLL] = { NULL,              identity_safepoint, value_ctrl,      },
     [TB_CALL]           = { ideal_libcall,     NULL,               value_call,      },
     [TB_TAILCALL]       = { NULL,              NULL,               value_ctrl,      },
@@ -125,8 +128,25 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_ROOT]           = { NULL,              NULL,               value_root,      },
 };
 
-bool cfg_is_region(TB_Node* n)       { return n->type >= TB_REGION && n->type <= TB_AFFINE_LOOP; }
-bool cfg_is_natural_loop(TB_Node* n) { return n->type >= TB_NATURAL_LOOP && n->type <= TB_AFFINE_LOOP; }
-bool cfg_is_terminator(TB_Node* n)   { return node_flags[n->type] & NODE_TERMINATOR; }
-bool cfg_is_endpoint(TB_Node* n)     { return node_flags[n->type] & NODE_END; }
+bool cfg_is_region(TB_Node* n) {
+    return n->type >= TB_REGION && n->type <= TB_AFFINE_LOOP;
+}
+
+bool cfg_is_natural_loop(TB_Node* n) {
+    return n->type >= TB_NATURAL_LOOP && n->type <= TB_AFFINE_LOOP;
+}
+
+bool cfg_is_fork(TB_Node* n) {
+    return n->type < TB_NODE_TYPE_MAX ? node_flags[n->type] & NODE_FORK_CTRL : false;
+}
+
+bool cfg_is_terminator(TB_Node* n) {
+    // TODO(NeGate): currently no machine specific terminators but this is a bad design
+    return n->type < TB_NODE_TYPE_MAX ? node_flags[n->type] & NODE_TERMINATOR : false;
+}
+
+bool cfg_is_endpoint(TB_Node* n) {
+    // TODO(NeGate): currently no machine specific endpoints but this is a bad design
+    return n->type < TB_NODE_TYPE_MAX ? node_flags[n->type] & NODE_END : false;
+}
 

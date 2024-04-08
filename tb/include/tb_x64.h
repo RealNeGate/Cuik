@@ -75,6 +75,7 @@ typedef struct {
     // bitpacking amirite
     TB_X86_Segment segment     : 4;
     uint8_t length             : 4;
+    uint8_t disp_pos           : 4;
 
     // immediate operand
     int64_t imm;

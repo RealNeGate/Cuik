@@ -42,9 +42,16 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Node* end = end_of_bb(bb);
-    size_t succ_count = end->type == TB_BRANCH ? TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count : 1;
-    if (cfg_is_endpoint(end)) {
-        succ_count = 0;
+
+    size_t succ_count = 0;
+    if (end->type == TB_BRANCH) {
+        succ_count = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count;
+    } else if (end->dt.type == TB_TUPLE) {
+        FOR_USERS(u, end) if (cfg_is_cproj(USERN(u))) {
+            succ_count += 1;
+        }
+    } else if (!cfg_is_endpoint(end)) {
+        succ_count = 1;
     }
 
     Block* top = tb_arena_alloc(arena, sizeof(Block) + succ_count*sizeof(TB_Node*));
@@ -56,6 +63,8 @@ static Block* create_block(TB_Arena* arena, TB_Node* bb) {
     };
 
     if (cfg_is_fork(end)) {
+        // this does imply the successors take up the bottom indices on the tuple... idk if thats
+        // necessarily a problem tho.
         FOR_USERS(u, end) {
             if (cfg_is_cproj(USERN(u))) {
                 int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;

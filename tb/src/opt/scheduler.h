@@ -79,9 +79,9 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
     size_t phi_curr = 0;
     ArenaArray(SchedPhi) phis = aarray_create(arena, SchedPhi, 32);
 
-    if (end->type == TB_BRANCH) {
+    if (cfg_is_fork(end)) {
         FOR_USERS(u, end) {
-            if (USERN(u)->type != TB_PROJ) continue;
+            if (!cfg_is_cproj(USERN(u))) continue;
 
             // we might have some memory phis over here if the projections aren't bbs
             ptrdiff_t search = nl_map_get(cfg->node_to_block, USERN(u));
@@ -105,7 +105,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
     // reserve projections for the top
     TB_Node* start = bb->id == 0 ? f->root_node : NULL;
     if (start) FOR_USERS(u, start) {
-        if ((USERN(u)->type == TB_PROJ || USERN(u)->type == TB_MACH_PROJ) && !worklist_test_n_set(ws, USERN(u))) {
+        if (is_proj(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
             dyn_array_put(ws->items, USERN(u));
         }
     }
@@ -119,8 +119,12 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
         // resolve inputs first
         if (n->type != TB_PHI && top->index < n->input_count) {
             TB_Node* in = n->inputs[top->index++];
-            if (in != NULL && sched_in_bb(f, ws, bb, in)) {
-                top = sched_make_node(arena, top, in);
+            if (in != NULL) {
+                // projections don't get scheduled, their tuple node does
+                if (is_proj(in)) { in = in->inputs[0]; }
+                if (sched_in_bb(f, ws, bb, in)) {
+                    top = sched_make_node(arena, top, in);
+                }
             }
             continue;
         }
@@ -186,9 +190,9 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
         top = parent;
 
         // push outputs (projections, if they apply)
-        if (n->dt.type == TB_TUPLE && n->type != TB_BRANCH && n->type != TB_ROOT) {
+        if (n->dt.type == TB_TUPLE && !cfg_is_fork(n) && n->type != TB_ROOT) {
             FOR_USERS(u, n) {
-                if ((USERN(u)->type == TB_PROJ || USERN(u)->type == TB_MACH_PROJ) && !worklist_test_n_set(ws, USERN(u))) {
+                if (is_proj(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
                     dyn_array_put(ws->items, USERN(u));
                 }
             }
