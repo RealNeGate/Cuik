@@ -92,40 +92,46 @@ static void replace_phis(TB_Function* f, TB_Node* phi) {
     }
 }
 
-static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* op, TB_Node* limit) {
-    assert(op->dt.raw == phi->dt.raw);
-    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
-    ArenaArray(TB_User) uses = aarray_create(f->tmp_arena, TB_User, phi->user_count);
+typedef struct {
+    int leftovers;
+    int uses;
+    TB_DataType dt;
+} UseCast;
 
-    // -1 means signed, 1 means unsigned, 0 means don't care
-    int best_uses = 0;
-    TB_DataType best_dt = op->dt;
-
-    // in the simple case we wanna see if our induction var is usually casted
-    int phi_uses = 0;
+static void indvar_scan_uses(TB_Function* f, UseCast* best, TB_Node* phi, TB_Node* cond, TB_Node* op, int steps) {
     FOR_USERS(u, op) {
         TB_Node* use_n = USERN(u);
-        aarray_push(uses, *u);
 
         if (use_n == phi) continue;
         if (use_n == cond) continue;
         if (use_n == op) continue;
 
-        int node_uses = USERN(u)->user_count;
-
-        // if we've got any casts, let's try to see which is most common
-        if (use_n->type == TB_SIGN_EXT || use_n->type == TB_ZERO_EXT) {
-            if (node_uses > best_uses) {
-                best_uses = node_uses;
-                best_dt = use_n->dt;
+        if (use_n->type == TB_ADD || use_n->type == TB_SUB) {
+            // arithmetic is something we can walk past
+            if (steps < 2) {
+                indvar_scan_uses(f, best, phi, cond, use_n, steps + 1);
+            } else {
+                best->leftovers += 1;
+            }
+        } else if (use_n->type == TB_SIGN_EXT || use_n->type == TB_ZERO_EXT) {
+            // if we've got any casts, let's try to see which is most common
+            int node_uses = USERN(u)->user_count;
+            if (node_uses > best->uses) {
+                best->uses = node_uses;
+                best->dt = use_n->dt;
             }
         } else {
-            phi_uses += 1;
+            best->leftovers += 1;
         }
     }
+}
 
-    if (best_uses < phi_uses) {
-        tb_arena_restore(f->tmp_arena, sp);
+static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* op, TB_Node* limit) {
+    assert(op->dt.raw == phi->dt.raw);
+    UseCast best = { 0, 0, op->dt };
+
+    indvar_scan_uses(f, &best, phi, cond, op, 0);
+    if (best.uses < best.leftovers || best.dt.raw == phi->dt.raw) {
         return false;
     }
 
@@ -133,13 +139,13 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
 
     // induction var can trivially scale up, the leftover users can
     // use the truncate
-    phi->dt = best_dt;
-    op->dt  = best_dt;
+    phi->dt = best.dt;
+    op->dt  = best.dt;
     latuni_set(f, op,  NULL);
     latuni_set(f, phi, NULL);
 
     // upscale init
-    TB_Node* scaled_init = tb_alloc_node(f, TB_ZERO_EXT, best_dt, 2, 0);
+    TB_Node* scaled_init = tb_alloc_node(f, TB_ZERO_EXT, best.dt, 2, 0);
     set_input(f, scaled_init, phi->inputs[1], 1);
     set_input(f, phi, scaled_init, 1);
     mark_node(f, scaled_init);
@@ -147,12 +153,12 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
     // upscale limit
     if (limit != NULL) {
         // TODO(NeGate): does signedness matter here?
-        TB_Node* scaled_limit = tb_alloc_node(f, TB_ZERO_EXT, best_dt, 2, 0);
+        TB_Node* scaled_limit = tb_alloc_node(f, TB_ZERO_EXT, best.dt, 2, 0);
         set_input(f, scaled_limit, limit, 1);
         mark_node(f, scaled_limit);
 
         assert(cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE);
-        TB_NODE_SET_EXTRA(cond, TB_NodeCompare, .cmp_dt = best_dt);
+        TB_NODE_SET_EXTRA(cond, TB_NodeCompare, .cmp_dt = best.dt);
 
         // if the limit is on the left, the add+phi are on the right (and vice versa)
         if (cond->inputs[1] == limit) {
@@ -190,7 +196,6 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node
 
     mark_node_n_users(f, op);
     mark_node_n_users(f, phi);
-    tb_arena_restore(f->tmp_arena, sp);
     return true;
 }
 

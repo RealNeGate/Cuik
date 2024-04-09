@@ -65,6 +65,10 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         } else {
             printf("%p ", sym);
         }
+    } else if (n->type >= TB_AND && n->type <= TB_SMOD) {
+        TB_NodeBinopInt* b = TB_NODE_GET_EXTRA(n);
+        if (b->ab & TB_ARITHMATIC_NSW) printf(" nsw");
+        if (b->ab & TB_ARITHMATIC_NUW) printf(" nuw");
     } else if (n->type == TB_ICONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
