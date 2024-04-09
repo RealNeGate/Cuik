@@ -1299,9 +1299,6 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
         tb_opt_loops(f);
     }
 
-    tb_print(f, f->tmp_arena);
-    __debugbreak();
-
     nl_table_free(f->node2loop);
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {

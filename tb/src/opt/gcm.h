@@ -38,7 +38,7 @@ static TB_BasicBlock* find_lca(TB_BasicBlock* a, TB_BasicBlock* b) {
     return a;
 }
 
-static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* y) {
+static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* actual_n, TB_Node* y) {
     TB_BasicBlock* use_block = f->scheduled[y->gvn];
     if (use_block == NULL) { return NULL; } // dead
 
@@ -53,7 +53,7 @@ static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* y) {
 
         ptrdiff_t j = 1;
         for (; j < y->input_count; j++) {
-            if (y->inputs[j] == n) {
+            if (y->inputs[j] == actual_n) {
                 break;
             }
         }
@@ -301,17 +301,17 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                         // them whenever decision making here
                         if (is_proj(USERN(use))) {
                             FOR_USERS(use2, USERN(use)) {
-                                TB_BasicBlock* use_block = find_use_block(f, n, USERN(use2));
+                                TB_BasicBlock* use_block = find_use_block(f, n, USERN(use), USERN(use2));
                                 if (use_block){ lca = find_lca(lca, use_block); }
                             }
                         } else {
-                            TB_BasicBlock* use_block = find_use_block(f, n, USERN(use));
+                            TB_BasicBlock* use_block = find_use_block(f, n, n, USERN(use));
                             if (use_block){ lca = find_lca(lca, use_block); }
                         }
                     }
                 } else {
                     FOR_USERS(use, n) {
-                        TB_BasicBlock* use_block = find_use_block(f, n, USERN(use));
+                        TB_BasicBlock* use_block = find_use_block(f, n, n, USERN(use));
                         if (use_block){ lca = find_lca(lca, use_block); }
                     }
                 }

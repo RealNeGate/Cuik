@@ -970,7 +970,7 @@ static bool rematerialize(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int 
 
     // cut off range
     Range* prev = NULL;
-    for (Range* r = vreg->active_range; r; prev = r, r = r->next) {
+    for (Range* r = vreg->saved_range; r; prev = r, r = r->next) {
         if (r->end >= pos) {
             if (pos < r->start) { // clean split?
                 assert(prev);
@@ -1108,13 +1108,16 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
 
     // split ranges
     Range* prev = NULL;
-    for (Range* r = vreg->active_range; r; prev = r, r = r->next) {
+    for (Range* r = vreg->saved_range; r; prev = r, r = r->next) {
         if (r->end >= pos) {
             bool clean_split = pos < r->start;
 
             // spill_vreg will keep r, if the split's unclean we'll hand a split copy to
             // spill_vreg (and then that piece will point to NULL_RANGE)
             if (clean_split) {
+                if (prev == NULL) {
+                    dump_sched(ctx, ra);
+                }
                 assert(prev);
                 prev->next = &NULL_RANGE;
             } else {
@@ -1125,12 +1128,12 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
                 rg->end   = pos;
 
                 if (prev) { prev->next = rg; }
-                else { vreg->active_range = rg; }
+                else { vreg->active_range = vreg->saved_range = rg; }
 
                 // spill_vreg's new start position is split
                 r->start = pos;
             }
-            spill_vreg->active_range = r;
+            spill_vreg->saved_range = spill_vreg->active_range = r;
             break;
         }
     }

@@ -221,9 +221,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
         TB_OPTDEBUG(CODEGEN)(tb_print(f, arena));
 
-        tb_print_dumb(f, false);
-        tb_print(f, arena);
-
         cfg = tb_compute_rpo(f, ws);
         tb_global_schedule(f, ws, cfg, true, node_latency);
 
