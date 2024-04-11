@@ -385,7 +385,7 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void tb__gvn_remove(TB_Function* f, TB_Node* n);
 
 // Scheduler's cost model crap (talk about these in codegen_impl.h)
-typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n);
+typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n, TB_Node* end);
 typedef uint64_t (*TB_GetUnitMask)(TB_Function* f, TB_Node* n);
 
 // Local scheduler

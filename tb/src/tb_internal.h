@@ -301,6 +301,10 @@ struct TB_BasicBlock {
     TB_Node* end;
     int id, dom_depth;
 
+    // shitty estimate for now
+    float freq;
+    TB_BasicBlock* loop;
+
     // used by codegen to track the associated machine BB
     int order;
 

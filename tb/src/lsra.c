@@ -2,6 +2,7 @@
 //   https://ssw.jku.at/Research/Papers/Wimmer04Master/Wimmer04Master.pdf
 #include "codegen.h"
 #include <limits.h>
+#include <float.h>
 
 #define FOREACH_SET(it, set) \
 FOR_N(_i, 0, ((set).capacity + 63) / 64) FOR_BIT(it, _i*64, (set).data[_i])
@@ -198,6 +199,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     //
     // new GVN -> old GVN
     ra.fwd_table = nl_table_alloc(32);
+    ra.failures = aarray_create(arena, AllocFailure, 32);
 
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {
@@ -228,6 +230,15 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     if (in_mask == &TB_REG_EMPTY) continue;
 
                     VReg* in_def = node_vreg(ctx, in);
+
+                    #if 1
+                    RegMask* glb = tb__reg_mask_meet(ctx, in_def->mask, in_mask);
+                    if (glb == &TB_REG_EMPTY) {
+                        // hard-split
+                        aarray_push(ra.failures, (AllocFailure){ FAILURE_SPILL_SELF, -1, in_def - ctx->vregs });
+                    }
+                    in_def->mask = glb;
+                    #else
                     int hint = fixed_reg_mask(in_mask);
                     if (hint >= 0 && in_def->mask->class == in_mask->class) {
                         in_def->hint_vreg = ra.fixed[in_mask->class] + hint;
@@ -268,6 +279,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         timeline += 2;
                         j += 1;
                     }
+                    #endif
                 }
 
                 int vreg_id = ctx->vreg_map[n->gvn];
@@ -307,11 +319,14 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 if (vreg_id > 0) {
                     VReg* vreg = &ctx->vregs[vreg_id];
                     RegMask* def_mask = vreg->mask;
+
                     vreg->active_range = &NULL_RANGE;
+                    vreg->spill_cost = NAN;
 
                     // if we're writing to a fixed interval, insert copy
                     // such that we only guarentee a fixed location at the
                     // def site.
+                    #if 0
                     int reg = fixed_reg_mask(def_mask);
                     if (reg >= 0 && n->type != TB_MACH_COPY) {
                         int fixed_vreg = ra.fixed[def_mask->class] + reg;
@@ -335,6 +350,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         timeline += 2;
                         j += 1;
                     }
+                    #endif
                 }
             }
 
@@ -428,7 +444,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         }
 
                         add_range(&ra, in_def, bb_start, use_time);
-                        // add_use_pos(&ra, in_def, use_time, in_mask->may_spill);
                     }
 
                     if (n->type == TB_MACH_MOVE) {
@@ -457,7 +472,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
     CUIK_TIMED_BLOCK("linear scan") {
         int old_spills = ctx->num_spills;
-        ra.failures = aarray_create(arena, AllocFailure, 32);
 
         int rounds = 0;
         for (;;) {
@@ -470,95 +484,95 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
             ctx->num_spills = old_spills;
 
-            // run linear scan all the way through, we'll accumulate things to
-            // split and handle them in bulk
-            cuikperf_region_start("main loop", NULL);
-            int unhandled_i = dyn_array_length(ra.unhandled);
-            while (unhandled_i--) {
-                // int vreg_id = dyn_array_pop(ra.unhandled);
-                int vreg_id = ra.unhandled[unhandled_i];
-                VReg* vreg  = &ctx->vregs[vreg_id];
+            if (aarray_length(ra.failures) == 0) {
+                // run linear scan all the way through, we'll accumulate things to
+                // split and handle them in bulk
+                cuikperf_region_start("main loop", NULL);
+                int unhandled_i = dyn_array_length(ra.unhandled);
+                while (unhandled_i--) {
+                    // int vreg_id = dyn_array_pop(ra.unhandled);
+                    int vreg_id = ra.unhandled[unhandled_i];
+                    VReg* vreg  = &ctx->vregs[vreg_id];
 
-                int start = vreg->active_range->start;
-                int end   = vreg->end_time;
+                    int start = vreg->active_range->start;
+                    int end   = vreg->end_time;
 
-                #if TB_OPTDEBUG_REGALLOC
-                printf("  # V%-4d t=[%-4d - %4d) ", vreg_id, start, end);
-                tb__print_regmask(vreg->mask);
-                printf("    ");
-                if (vreg->n) { tb_print_dumb_node(NULL, vreg->n); }
-                printf("\n");
+                    #if TB_OPTDEBUG_REGALLOC
+                    printf("  # V%-4d t=[%-4d - %4d) ", vreg_id, start, end);
+                    tb__print_regmask(vreg->mask);
+                    printf("    ");
+                    if (vreg->n) { tb_print_dumb_node(NULL, vreg->n); }
+                    printf("\n");
 
-                // print entire range
-                printf("  # ");
-                for (Range* r = vreg->active_range; r != &NULL_RANGE; r = r->next) {
-                    printf("[%-4d - %-4d)  ", r->start, r->end);
-                }
-                printf("\n");
-                #endif
+                    // print entire range
+                    printf("  # ");
+                    for (Range* r = vreg->active_range; r != &NULL_RANGE; r = r->next) {
+                        printf("[%-4d - %-4d)  ", r->start, r->end);
+                    }
+                    printf("\n");
+                    #endif
 
-                assert(start != INT_MAX);
-                if (vreg->saved_range == NULL) {
-                    vreg->saved_range = vreg->active_range;
-                }
-                update_intervals(ctx, &ra, start);
+                    assert(start != INT_MAX);
+                    if (vreg->saved_range == NULL) {
+                        vreg->saved_range = vreg->active_range;
+                    }
+                    update_intervals(ctx, &ra, start);
 
-                int reg = vreg->assigned;
-                if (reg >= 0) {
-                    move_to_active(&ra, vreg, vreg_id);
-                } else if (reg_mask_is_not_empty(vreg->mask)) {
-                    // allocate free register
-                    reg = allocate_free_reg(ctx, &ra, vreg, vreg_id);
-                    vreg = &ctx->vregs[vreg_id];
-
-                    // add to active set
+                    int reg = vreg->assigned;
                     if (reg >= 0) {
-                        assert(reg < ctx->num_regs[vreg->mask->class]);
-                        vreg->class    = vreg->mask->class;
-                        vreg->assigned = reg;
                         move_to_active(&ra, vreg, vreg_id);
-                    }
-                } else if (vreg->mask->may_spill) {
-                    // allocate stack slot
-                    ctx->num_spills += 1;
-                    TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [BP - %d]\n", 8 + ctx->num_spills*8));
-                    vreg->class    = REG_CLASS_STK;
-                    vreg->assigned = STACK_BASE_REG_NAMES + ctx->num_spills;
-                } else {
-                    // not spillable, not colorable in regs... wtf are you
-                    abort();
-                }
+                    } else if (reg_mask_is_not_empty(vreg->mask)) {
+                        // allocate free register
+                        reg = allocate_free_reg(ctx, &ra, vreg, vreg_id);
+                        vreg = &ctx->vregs[vreg_id];
 
-                // display active set
-                #if TB_OPTDEBUG_REGALLOC
-                static const char* classes[] = { "STK", "FLAGS", "GPR", "VEC" };
-                FOR_N(rc, 1, ctx->num_classes) {
-                    printf("  \x1b[32m%s { ", classes[rc]);
-                    FOREACH_SET(reg, ra.active_set[rc]) {
-                        int other_id = ra.active[rc][reg];
-                        printf("V%d:", other_id);
-                        print_reg_name(rc, reg);
-                        printf(" ");
+                        // add to active set
+                        if (reg >= 0) {
+                            assert(reg < ctx->num_regs[vreg->mask->class]);
+                            vreg->class    = vreg->mask->class;
+                            vreg->assigned = reg;
+                            move_to_active(&ra, vreg, vreg_id);
+                        }
+                    } else if (vreg->mask->may_spill) {
+                        // allocate stack slot
+                        ctx->num_spills += 1;
+                        TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [BP - %d]\n", 8 + ctx->num_spills*8));
+                        vreg->class    = REG_CLASS_STK;
+                        vreg->assigned = STACK_BASE_REG_NAMES + ctx->num_spills;
+                    } else {
+                        // not spillable, not colorable in regs... wtf are you
+                        abort();
                     }
-                    printf("}\x1b[0m\n");
+
+                    // display active set
+                    #if TB_OPTDEBUG_REGALLOC
+                    static const char* classes[] = { "STK", "FLAGS", "GPR", "VEC" };
+                    FOR_N(rc, 1, ctx->num_classes) {
+                        printf("  \x1b[32m%s { ", classes[rc]);
+                        FOREACH_SET(reg, ra.active_set[rc]) {
+                            int other_id = ra.active[rc][reg];
+                            printf("V%d:", other_id);
+                            print_reg_name(rc, reg);
+                            printf(" ");
+                        }
+                        printf("}\x1b[0m\n");
+                    }
+                    #endif
                 }
-                #endif
+                cuikperf_region_end();
             }
-            cuikperf_region_end();
 
             size_t spills_accum = aarray_length(ra.failures);
             if (spills_accum == 0) { break; }
 
             cuikperf_region_start("alloc fail", NULL);
 
-            // undo all non-fixed regs
-            FOR_N(i, 0, dyn_array_length(ra.unhandled)) {
-                int vreg_id = ra.unhandled[i];
-                VReg* vreg  = &ctx->vregs[vreg_id];
-                if (!vreg_is_fixed(ctx, &ra, vreg_id)) {
-                    vreg->class    = vreg->mask->class;
-                    vreg->assigned = -1;
-                }
+            // undo all assignments
+            FOR_N(i, 1, aarray_length(ctx->vregs)) {
+                VReg* vreg  = &ctx->vregs[i];
+                vreg->assigned   = -1;
+                vreg->class      = 0;
+                vreg->spill_cost = NAN;
 
                 if (vreg->saved_range) {
                     vreg->active_range = vreg->saved_range;
@@ -572,10 +586,15 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
             // split ranges
             FOR_N(i, 0, spills_accum) {
                 VReg* vreg = &ctx->vregs[ra.failures[i].id];
-                if (ra.failures[i].mode == FAILURE_SPILL_OTHERS) {
-                    tb_todo();
-                } else {
+                assert(ra.failures[i].mode == FAILURE_SPILL_SELF);
+
+                int t = ra.failures[i].time;
+                if (t >= 0) {
                     split_intersecting(ctx, &ra, vreg, ra.failures[i].mask, ra.failures[i].time);
+                } else {
+                    RegMask* out = ctx->constraint(ctx, vreg->n, NULL);
+                    spill_entire_life(ctx, &ra, vreg, out);
+                    dump_sched(ctx, &ra);
                 }
             }
 
@@ -681,140 +700,23 @@ static int next_use(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int pos) {
     return earliest;
 }
 
-static int allocate_blocked_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int vreg_id) {
-    int class = vreg_class(vreg);
-    int start = vreg->saved_range->start;
-
-    int* use_pos = ra->free_until;
-    RegMask* mask = vreg->mask;
-
-    size_t reg_count = ra->num_regs[class];
-    FOR_N(i, 0, reg_count) { ra->block_pos[i] = INT_MAX; }
-
-    // mark active
-    uint64_t word_count = (ra->num_regs[class] + 63) / 64;
-    FOR_N(i, 0, word_count) {
-        uint64_t in_use = ra->active_set[class].data[i];
-        uint64_t usable = mask->mask[i];
-
-        size_t j = i*64, k = j + 64;
-        for (; j < k && j < reg_count; j++) {
-            if (in_use & 1) {
-                int in_use_id = ra->active[class][j];
-                if (vreg_is_fixed(ctx, ra, in_use_id)) {
-                    ra->block_pos[j] = use_pos[j] = 0;
-                } else {
-                    use_pos[j] = next_use(ctx, ra, &ctx->vregs[in_use_id], start);
-                }
-            } else if ((usable & 1) == 0) {
-                ra->block_pos[j] = use_pos[j] = 0;
-            } else {
-                use_pos[j] = INT_MAX;
-            }
-            usable >>= 1, in_use >>= 1;
-        }
+static float get_spill_cost(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg) {
+    if (!isnan(vreg->spill_cost)) {
+        return vreg->spill_cost;
+    } else if (vreg->n->type == TB_ICONST) {
+        // these can rematerialize
+        return (vreg->spill_cost = -1.0f);
     }
 
-    // mark inactive
-    dyn_array_for(i, ra->inactive) {
-        VReg* other = &ctx->vregs[ra->inactive[i]];
+    float c = 0.0f;
 
-        // if their regmasks don't intersect, we don't care
-        if (tb__reg_mask_meet(ctx, mask, other->mask) != &TB_REG_EMPTY) {
-            int reg = other->assigned;
-            assert(reg >= 0 && reg < reg_count);
-
-            if (vreg_is_fixed(ctx, ra, ra->inactive[i])) {
-                int bp = ra->block_pos[reg];
-                if (bp > 0) {
-                    int p = vreg_intersect(vreg, other);
-                    if (p >= 0 && p < bp) { ra->block_pos[reg] = p; }
-                }
-            } else if (use_pos[reg] > 0) {
-                int p = next_use(ctx, ra, other, start);
-                if (p < use_pos[reg]) { use_pos[reg] = p; }
-            }
-        }
+    // sum of (block_freq * uses_in_block)
+    FOR_USERS(u, vreg->n) {
+        TB_Node* un = USERN(u);
+        c += ctx->f->scheduled[un->gvn]->freq;
     }
 
-    // pick furthest block pos
-    int highest = 0;
-    FOR_N(i, 1, reg_count) {
-        if (ra->block_pos[i] > ra->block_pos[highest]) { highest = i; }
-    }
-
-    int pos = use_pos[highest];
-    int first_use = next_use(ctx, ra, vreg, 0);
-
-    RegMask* spill_rm = ctx->has_flags && class == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
-    AllocFailure f = { FAILURE_SPILL_OTHERS, start, vreg_id, spill_rm };
-    aarray_push(ra->failures, f);
-
-    // we stole highest
-    TB_OPTDEBUG(REGALLOC)(printf("  #   assign to "), print_reg_name(class, highest), printf(" (except we stole it)\n"));
-    return highest;
-
-    #if 0
-    bool spilled = false;
-    RegMask* spill_rm = ctx->has_flags && class == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
-    if (first_use > pos) {
-        // spill interval
-        ctx->num_spills += 1;
-        TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [BP - %d]\n", 8 + ctx->num_spills*8));
-        vreg->class    = REG_CLASS_STK;
-        vreg->assigned = STACK_BASE_REG_NAMES + ctx->num_spills;
-
-        // split before first use that requires a register
-        int earliest = INT_MAX;
-        FOR_USERS(u, vreg->n) {
-            TB_Node* use_n = USERN(u);
-            int use_i      = USERI(u);
-
-            RegMask* in_mask = constraint_in(ctx, use_n, use_i);
-            if (!in_mask->may_spill) {
-                int t = ra->time[use_n->gvn];
-                if (t < earliest) { earliest = t; }
-            }
-        }
-
-        if (earliest != INT_MAX) {
-            split_intersecting(ctx, ra, vreg, ctx->normie_mask[class], earliest);
-        }
-        spilled = true;
-    } else {
-        TB_OPTDEBUG(REGALLOC)(printf("  #   assign to "), print_reg_name(class, highest), printf("\n"));
-
-        // split active or inactive interval reg
-        if (set_get(&ra->active_set[class], highest)) {
-            int to_split = ra->active[class][highest];
-            int split_pos = ctx->vregs[to_split].saved_range->start + 1;
-            if (split_pos + 1 > start) {
-                split_pos = start;
-            }
-
-            split_intersecting(ctx, ra, &ctx->vregs[to_split], spill_rm, split_pos);
-        }
-
-        // split any inactive interval for reg at the end of it's lifetime hole
-        dyn_array_for(i, ra->inactive) {
-            VReg* other = &ctx->vregs[ra->inactive[i]];
-            Range* r = other->active_range;
-            if (other->class == class && other->assigned == highest && other->n != NULL) {
-                int p = vreg_intersect(vreg, other);
-                if (p >= 0) { split_intersecting(ctx, ra, other, spill_rm, p); }
-            }
-        }
-    }
-
-    // split active reg if it intersects with fixed interval
-    VReg* fixed_vreg = &ctx->vregs[ra->fixed[class] + highest];
-    if (fixed_vreg->active_range != &NULL_RANGE) {
-        int p = vreg_intersect(vreg, fixed_vreg);
-        if (p >= 0) { split_intersecting(ctx, ra, vreg, spill_rm, p); }
-    }
-
-    return spilled ? -1 : highest;
-    #endif
+    return (vreg->spill_cost = c);
 }
 
 // returns -1 if no registers are available
@@ -843,10 +745,33 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
     }
 
     int pos = ra->free_until[highest];
-    if (pos == 0 || vreg->end_time > pos) {
+    if (pos == 0) {
         // ok let's steal a blocked reg, one that's not fixed
-        return allocate_blocked_reg(ctx, ra, vreg, vreg_id);
-    } else if () {
+        float best_cost = FLT_MAX;
+        int best = -1;
+        FOR_N(i, 0, ra->num_regs[rc]) if (set_get(&ra->active_set[rc], i)) {
+            int id = ra->active[rc][i];
+            float c = get_spill_cost(ctx, ra, &ctx->vregs[id]);
+            if (c < best_cost) {
+                best_cost = c;
+                best = id;
+            }
+        }
+
+        assert(best >= 0);
+        highest = ctx->vregs[best].assigned;
+
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   spill v%u (", vreg_id), print_reg_name(rc, highest), printf(" was split such that it's at least first half is free)\x1b[0m\n"));
+
+        int p = ctx->vregs[best].saved_range->start + 1;
+        p = TB_MIN(p, vreg->saved_range->start - 2);
+
+        RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
+        aarray_push(ra->failures, (AllocFailure){ FAILURE_SPILL_SELF, p, best, spill_rm });
+
+        __debugbreak();
+        return highest;
+    } else if (vreg->end_time <= pos) {
         // we can steal it completely
         TB_OPTDEBUG(REGALLOC)(printf("  #   assign to "), print_reg_name(rc, highest));
 
@@ -862,6 +787,15 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
             TB_OPTDEBUG(REGALLOC)(printf("\n"));
         }
 
+        return highest;
+    } else {
+        // fits into a register for the first half... eh, good enough
+        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   spill v%u (", vreg_id), print_reg_name(rc, highest), printf(" was free for the first half of the lifetime)\x1b[0m\n"));
+
+        int p = TB_MAX(pos - 2, vreg->saved_range->start + 1);
+        RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
+
+        aarray_push(ra->failures, (AllocFailure){ FAILURE_SPILL_SELF, p, vreg_id, spill_rm });
         return highest;
     }
 }
@@ -1057,6 +991,7 @@ static bool rematerialize(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int 
         if (ra->time[use_n->gvn] >= pos && in_mask != &TB_REG_EMPTY) {
             // reload per use site
             TB_Node* reload_n = tb_alloc_node(f, TB_ICONST, n->dt, 1, sizeof(TB_NodeInt));
+            set_input(f, reload_n, f->root_node, 0);
             set_input(f, use_n, reload_n, use_i);
             TB_NODE_SET_EXTRA(reload_n, TB_NodeInt, .value = value);
 
@@ -1228,6 +1163,9 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
         }
 
         if (earliest != INT_MAX) {
+            if (pos + 1 >= earliest) {
+                dump_sched(ctx, ra);
+            }
             assert(pos + 1 < earliest && "no way there's room to spill and reload in one slot index");
             VReg* reload = split_intersecting(ctx, ra, spill_vreg, old_mask, earliest);
             reload->hint_vreg = ctx->vregs[vreg_id].hint_vreg;

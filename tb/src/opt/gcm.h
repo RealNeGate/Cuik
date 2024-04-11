@@ -17,7 +17,7 @@ typedef struct Elem {
 static TB_BasicBlock* try_to_hoist(TB_Function* f, TB_GetLatency get_lat, TB_Node* n, TB_BasicBlock* early, TB_BasicBlock* late) {
     if (get_lat == NULL) return late;
 
-    int lat = get_lat(f, n);
+    int lat = get_lat(f, n, NULL);
     return lat >= 2 ? late->dom : late;
 }
 

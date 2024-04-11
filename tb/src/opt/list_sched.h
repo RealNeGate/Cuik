@@ -89,8 +89,10 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         }
     }
 
-    int cycle = 0;
+    // wanna move the increment op to the end of an affine loop
     TB_Node* end = bb->end;
+
+    int cycle = 0;
     Set ready_set = set_create_in_arena(tmp_arena, f->node_count);
     ArenaArray(InFlight) active = aarray_create(tmp_arena, InFlight, 32);
     ArenaArray(ReadyNode) ready = aarray_create(tmp_arena, ReadyNode, 32);
@@ -99,7 +101,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     nl_hashset_for(e, &bb->items) {
         TB_Node* n = *e;
         if (!worklist_test(ws, n) && end != n && f->scheduled[n->gvn] == bb && is_node_ready(f, ws, bb, n)) {
-            ready = ready_up(ready, &ready_set, n, get_lat(f, n));
+            ready = ready_up(ready, &ready_set, n, get_lat(f, n, end));
         }
     }
 
@@ -128,7 +130,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             aarray_pop(ready);
 
             int unit_i = tb_ffs64(avail) - 1;
-            in_use_mask |= unit_i;
+            in_use_mask |= 1ull << unit_i;
             stall = false;
 
             assert(!is_proj(n));
@@ -144,12 +146,14 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                 }
             }
 
-            int end_cycle = cycle + get_lat(f, n);
+            int end_cycle = cycle + get_lat(f, n, end);
             TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, n), printf(" (on machine %d, until t=%d)\n", unit_i, end_cycle));
             aarray_push(active, (InFlight){ n, end_cycle, unit_i });
         }
 
-        TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: STALL\n", cycle));
+        if (stall) {
+            TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: STALL\n", cycle));
+        }
         cycle += 1;
 
         for (size_t i = 0; i < aarray_length(active);) {
@@ -168,11 +172,11 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                         // projections are where all the real users ended up
                         FOR_USERS(proj_u, un) {
                             if (USERN(proj_u) != end && USERN(proj_u) != cmp && can_ready_user(f, ws, bb, &ready_set, USERN(proj_u))) {
-                                ready = ready_up(ready, &ready_set, USERN(proj_u), get_lat(f, USERN(proj_u)));
+                                ready = ready_up(ready, &ready_set, USERN(proj_u), get_lat(f, USERN(proj_u), end));
                             }
                         }
                     } else if (un != end && un != cmp && can_ready_user(f, ws, bb, &ready_set, un)) {
-                        ready = ready_up(ready, &ready_set, un, get_lat(f, un));
+                        ready = ready_up(ready, &ready_set, un, get_lat(f, un, end));
                     }
                 }
             }
@@ -182,7 +186,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     if (cmp) {
         TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, cmp), printf("\n"));
         worklist_push(ws, cmp);
-        cycle += get_lat(f, cmp);
+        cycle += get_lat(f, cmp, end);
     }
 
     TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, end), printf("\n"));

@@ -46,7 +46,7 @@ static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb);
 // Scheduling bits:
 //   simple latency until the results of a node are useful (list scheduler will
 //   generally prioritize dispatching higher latency ops first).
-static int node_latency(TB_Function* f, TB_Node* n);
+static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end);
 //   on VLIWs it's important that we keep track of which functional units a specific
 //   node can even run on, use the bits to represent that (at most you can make 64
 //   functional units in the current design but i don't think i need more than 10 rn)
@@ -236,6 +236,45 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         cfg = tb_compute_rpo(f, ws);
         tb_global_schedule(f, ws, cfg, true, node_latency);
 
+        // compute dumb loop nests (we're inside another loop if it dominates us
+        // and we dominate it's backedge)
+        FOR_N(i, 0, cfg.block_count) {
+            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
+            bb->loop = cfg_is_natural_loop(bb->start) ? bb : NULL;
+            bb->freq = 1.0f;
+        }
+
+        FOR_REV_N(i, 1, cfg.block_count) {
+            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
+
+            if (bb->loop == NULL) {
+                // scan for potential parent loop
+                TB_BasicBlock* dom = bb->dom;
+                while (dom != dom->dom) {
+                    if (dom->loop) {
+                        // ok we found a loop, now guarentee we're dominating it's backedge
+                        TB_Node* backedge = cfg_get_pred(&cfg, dom->loop->start, 1);
+                        if (slow_dommy(&cfg, bb->start, backedge)) {
+                            bb->loop = dom->loop;
+                            break;
+                        }
+                    }
+                    dom = dom->dom;
+                }
+            }
+        }
+
+        // really dumb block frequencies (eventually we want heuristics around exit paths)
+        FOR_N(i, 0, cfg.block_count) {
+            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
+
+            TB_BasicBlock* loop = bb->loop;
+            while (loop) {
+                bb->freq *= 10.0f;
+                loop = loop->dom ? loop->dom->loop : NULL;
+            }
+        }
+
         log_phase_end(f, og_size, "GCM");
     }
 
@@ -363,7 +402,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     CUIK_TIMED_BLOCK("gather RA constraints") {
         FOR_N(i, 0, bb_count) {
             MachineBB* mbb = &ctx.machine_bbs[i];
-            TB_OPTDEBUG(CODEGEN)(printf("BB %zu\n", i));
+
+            TB_BasicBlock* bb = f->scheduled[mbb->n->gvn];
+            TB_OPTDEBUG(CODEGEN)(printf("BB %zu (freq=%.2f)\n", i, bb->freq));
 
             aarray_for(j, mbb->items) {
                 TB_Node* n = mbb->items[j];

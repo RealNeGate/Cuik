@@ -2084,7 +2084,7 @@ static bool flags_producer(TB_Node* n) {
 
 // don't care about functional units on x86
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) { return 1; }
-static int node_latency(TB_Function* f, TB_Node* n) {
+static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
     switch (n->type) {
         case x86_movsx8: case x86_movsx16: case x86_movsx32:
         case x86_movzx8: case x86_movzx16: {
@@ -2102,6 +2102,13 @@ static int node_latency(TB_Function* f, TB_Node* n) {
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
+
+            if (end && end->type == TB_AFFINE_LATCH) {
+                TB_Node* cond = end->inputs[1];
+                if ((cond->type == x86_cmp || cond->type == x86_cmpimm) && cond->inputs[2] == n) {
+                    return 0;
+                }
+            }
 
             int clk;
             switch (n->type) {

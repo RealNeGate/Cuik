@@ -105,6 +105,10 @@ struct VReg {
 
     RegMask* mask;
 
+    // spill cost (sum of block_freq * uses_in_block)
+    //   NaN if not computed yet
+    float spill_cost;
+
     // only matters for linear-scan
     struct {
         int end_time, hint_vreg;
