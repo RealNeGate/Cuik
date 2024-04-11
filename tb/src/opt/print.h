@@ -78,15 +78,15 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         }
     } else if (cfg_is_region(n)) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-        if (r->tag != NULL) {
-            printf(".%s", r->tag);
-        } else {
-            ptrdiff_t i = try_find_traversal_index(&ctx->cfg, n);
-            if (i >= 0) {
-                printf(".bb%zu", i);
+        ptrdiff_t i = try_find_traversal_index(&ctx->cfg, n);
+        if (i >= 0) {
+            if (r->tag != NULL) {
+                printf(".bb%zu.%s", i, r->tag);
             } else {
-                printf("*DEAD*");
+                printf(".bb%zu", i);
             }
+        } else {
+            printf("*DEAD*");
         }
 
         if (def) {

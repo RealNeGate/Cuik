@@ -67,14 +67,13 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         }
     } else if (n->type >= TB_AND && n->type <= TB_SMOD) {
         TB_NodeBinopInt* b = TB_NODE_GET_EXTRA(n);
-        if (b->ab & TB_ARITHMATIC_NSW) printf(" nsw");
-        if (b->ab & TB_ARITHMATIC_NUW) printf(" nuw");
+        if (b->ab & TB_ARITHMATIC_NSW) printf("nsw ");
+        if (b->ab & TB_ARITHMATIC_NUW) printf("nuw ");
     } else if (n->type == TB_ICONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
         if (num->value < 0xFFFF) {
-            int bits = n->dt.type == TB_TAG_PTR ? 64 : n->dt.data;
-            printf("%"PRId64" ", tb__sxt(num->value, bits, 64));
+            printf("%"PRId64" ", num->value);
         } else {
             printf("%#0"PRIx64" ", num->value);
         }
@@ -98,32 +97,14 @@ static void dumb_walk(TB_Function* f, Lattice** types, TB_Node* n, uint64_t* vis
     }
     visited[n->gvn / 64] |= (1ull << (n->gvn % 64));
 
-    if (n->type == TB_PHI) {
-        FOR_N(i, 1, n->input_count) {
-            dumb_walk(f, types, n->inputs[i], visited);
-        }
-        dumb_walk(f, types, n->inputs[0], visited);
-    } else {
-        FOR_REV_N(i, 0, n->input_count) if (n->inputs[i]) {
-            TB_Node* in = n->inputs[i];
-            if (is_proj(in)) { in = in->inputs[0]; }
-            dumb_walk(f, types, in, visited);
-        }
-
-        tb_print_dumb_node(types, n);
-        printf("\n");
-
-        if (cfg_is_region(n)) {
-            // we want the phis to appear below the region node, looks nice
-            FOR_USERS(u, n) if (USERN(u)->type == TB_PHI) {
-                assert(USERI(u) == 0);
-                uint32_t un_gvn = USERN(u)->gvn;
-                visited[un_gvn / 64] |= (1ull << (un_gvn % 64));
-                tb_print_dumb_node(types, USERN(u));
-                printf("\n");
-            }
-        }
+    FOR_REV_N(i, 0, n->input_count) if (n->inputs[i]) {
+        TB_Node* in = n->inputs[i];
+        if (is_proj(in)) { in = in->inputs[0]; }
+        dumb_walk(f, types, in, visited);
     }
+
+    tb_print_dumb_node(types, n);
+    printf("\n");
 }
 
 void tb_print_dumb(TB_Function* f, bool use_fancy_types) {

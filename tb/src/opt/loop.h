@@ -11,44 +11,60 @@ static TB_Node* affine_loop_latch(TB_Node* header) {
 }
 
 // clone anything except control edges and phis to region
-static TB_Node* loop_clone_node(TB_Function* f, TB_Node* header, TB_Node* n) {
-    TB_Node* cloned = n;
+static TB_Node* loop_clone_node(TB_Function* f, TB_Node** cloned, size_t pre_clone_index, TB_Node* header, TB_Node* n) {
+    if (n->gvn >= pre_clone_index) {
+        return n;
+    } else if (cloned[n->gvn]) {
+        return cloned[n->gvn];
+    }
+
+    TB_Node* k = n;
     if (n->type == TB_PHI) {
         if (n->inputs[0] == header) {
             // replace OG with loop phi's initial value
-            cloned = n->inputs[1];
+            k = n->inputs[1];
         }
     } else if (cfg_is_region(n) || n->type == TB_ROOT || (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT)) {
         // doesn't clone
     } else {
         size_t extra = extra_bytes(n);
-        cloned = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
+        k = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
 
         // clone extra data (i hope it's that easy lol)
-        memcpy(cloned->extra, n->extra, extra);
-
-        // mark new node
-        mark_node(f, cloned);
+        memcpy(k->extra, n->extra, extra);
 
         // fill cloned edges
-        FOR_N(i, 1, n->input_count) {
-            TB_Node* in = loop_clone_node(f, header, n->inputs[i]);
-            cloned->inputs[i] = in;
-            add_user(f, cloned, in, i);
+        FOR_N(i, 1, n->input_count) if (n->inputs[i]) {
+            TB_Node* in = loop_clone_node(f, cloned, pre_clone_index, header, n->inputs[i]);
+            k->inputs[i] = in;
+            add_user(f, k, in, i);
+
+            // uncloned form should refer to the "next" edge on the phi
+            if (n->inputs[i]->type == TB_PHI && n->inputs[i]->inputs[0] == header) {
+                set_input(f, n, n->inputs[i]->inputs[2], i);
+            }
         }
 
-        if (n->inputs[0]) { cloned = tb__gvn(f, cloned, extra); }
+        // keep original ctrl edge, we may replace it later tho
+        if (n->inputs[0]) {
+            k->inputs[0] = n->inputs[0];
+            add_user(f, k, n->inputs[0], 0);
+        }
+
+        // mark new node
+        mark_node(f, k);
     }
+    cloned[n->gvn] = k;
 
     #if TB_OPTDEBUG_LOOP
     printf("CLONE: ");
     tb_print_dumb_node(NULL, n);
     printf(" => ");
-    tb_print_dumb_node(NULL, cloned);
+    tb_print_dumb_node(NULL, k);
     printf("\n");
     #endif
 
-    return cloned;
+    return k;
 }
 
 static uint64_t* iconst(TB_Node* n) {
@@ -80,12 +96,39 @@ static void hoist_ops(TB_Function* f, TB_Node* ctrl, TB_Node* earlier) {
     }
 }
 
-static void replace_phis(TB_Function* f, TB_Node* phi) {
+static void mark_reachable(TB_Function* f, uint32_t* before, TB_Node* n) {
+    assert(n->gvn < f->node_count);
+    if (before[n->gvn / 32] & (1u << (n->gvn % 32))) {
+        return;
+    } else if (n->type == TB_ROOT) {
+        // don't go past root, you'll wrap around and it'll be
+        // nasty
+        return;
+    } else if (cfg_is_region(n)) {
+        FOR_USERS(u, n) if (USERN(u)->type == TB_PHI) {
+            mark_reachable(f, before, USERN(u));
+        }
+    }
+
+    #if TB_OPTDEBUG_LOOP
+    printf("REACH: ");
+    tb_print_dumb_node(NULL, n);
+    printf("\n");
+    #endif
+
+    before[n->gvn / 32] |= (1u << (n->gvn % 32));
+    FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
+        mark_reachable(f, before, n->inputs[i]);
+    }
+}
+
+static void replace_phis(TB_Function* f, uint32_t* before, TB_Node* phi, TB_Node* new_phi) {
     for (size_t i = 0; i < phi->user_count;) {
         TB_Node* un = USERN(&phi->users[i]);
         int ui      = USERI(&phi->users[i]);
-        if (un != phi && un != phi->inputs[2]) {
-            set_input(f, un, phi->inputs[2], ui);
+        if ((before[un->gvn / 32] & (1u << (un->gvn % 32))) == 0) {
+            printf("PHI %%%-3u was used past the loop at %%%-3u (%%%-3u -> %%%-3u)\n", phi->gvn, un->gvn, un->inputs[ui]->gvn, new_phi->gvn);
+            set_input(f, un, new_phi, ui);
         } else {
             i += 1;
         }
@@ -392,34 +435,45 @@ void tb_opt_build_loop_tree(TB_Function* f) {
             // rotated if there's things attached to the backedge cproj, they should've been moved above it.
             TB_Node* exit_proj = get_simple_loop_exit(&cfg, header, header_info->end);
             if (exit_proj && (exit_proj->type != TB_BRANCH_PROJ || exit_proj->inputs[0] != header->inputs[1]->inputs[0] || header->inputs[1]->user_count != 1)) {
+                TB_OPTDEBUG(PASSES)(printf("      * Rotating loop %%%u\n", header->gvn));
+
                 latch = header_info->end;
                 int exit_loop_i = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeProj)->index;
+                TB_ArenaSavepoint sp2 = tb_arena_save(f->tmp_arena);
+
+                TB_Node** cloned;
+                CUIK_TIMED_BLOCK("alloc cloned table") {
+                    cloned = tb_arena_alloc(f->tmp_arena, f->node_count * sizeof(TB_Node*));
+                    memset(cloned, 0, f->node_count * sizeof(TB_Node*));
+                }
 
                 // let's rotate the loop:
                 //
-                //     header:                    latch:
-                //       ...                        ...
-                //       if (A) body else exit      if (A) header else exit
-                //     body:                      header:
+                //     header:                    ztc:
+                //       i = phi(init, next)        ...
+                //       ...                        if (A) header else exit
+                //       if (A) body else exit    header:
+                //     body:                        i = phi(init, next)
                 //       ...                        ...
                 //       jmp body                   if (A) header else exit
                 //     exit:                      exit:
                 //
                 // construct the ZTC's version of the branch (same as the original latch but
                 // uses the phi's inputs[1] edge instead of the phis directly)
+                size_t pre_clone_index = f->node_count;
                 TB_Node* ztc_start = header->inputs[0];
                 TB_Node *bot_cloned = NULL, *top_cloned = NULL;
                 for (TB_Node* curr = latch; curr != header; curr = curr->inputs[0]) {
-                    TB_Node* cloned = loop_clone_node(f, header, curr);
-                    mark_users(f, cloned);
+                    TB_Node* k = loop_clone_node(f, cloned, pre_clone_index, header, curr);
+                    mark_users(f, k);
 
                     // attach control edge
                     if (top_cloned) {
-                        set_input(f, top_cloned, cloned, 0);
+                        set_input(f, top_cloned, k, 0);
                     } else {
-                        bot_cloned = cloned;
+                        bot_cloned = k;
                     }
-                    top_cloned = cloned;
+                    top_cloned = k;
                 }
                 // make a ZTC branch
                 set_input(f, top_cloned, ztc_start, 0);
@@ -453,16 +507,47 @@ void tb_opt_build_loop_tree(TB_Function* f) {
                 // loads with control deps on the loop's body can also
                 // safe once you're guarenteed to run at least once (ZTC)
                 hoist_ops(f, into_loop2, into_loop);
-                // any operations dependent on our phis will now depend on the backedge form
-                FOR_USERS(u, header) if (USERN(u)->type == TB_PHI) {
-                    replace_phis(f, USERN(u));
+                // sometimes there's things leftover which are still dependent on the latch's backedge
+                for (size_t i = 0; i < into_loop2->user_count;) {
+                    TB_Node* un = USERN(&into_loop2->users[i]);
+                    int ui      = USERI(&into_loop2->users[i]);
+                    if (ui == 0 && un != header) {
+                        set_input(f, un, into_loop, ui);
+                    } else {
+                        i += 1;
+                    }
                 }
+                // some loop phis escape the loop, we wanna tie these to the exit phis not the
+                // loop body phis (since we've constructed two exit paths now).
+                CUIK_TIMED_BLOCK("discover loop reachability") {
+                    uint32_t* before = tb_arena_alloc(f->tmp_arena, ((f->node_count + 31) / 32) * sizeof(uint32_t));
+                    memset(before, 0, ((f->node_count + 31) / 32) * sizeof(uint32_t));
+
+                    // TODO(NeGate): there's probably a faster way to solve for this btw
+                    mark_reachable(f, before, header);
+
+                    FOR_USERS(u, header) if (USERN(u)->type == TB_PHI) {
+                        assert(USERI(u) == 0);
+                        TB_Node* phi = USERN(u);
+                        TB_Node* new_phi = tb_alloc_node(f, TB_PHI, phi->dt, 3, 0);
+                        set_input(f, new_phi, join,           0);
+                        set_input(f, new_phi, phi->inputs[1], 1);
+                        set_input(f, new_phi, phi->inputs[2], 2);
+
+                        replace_phis(f, before, phi, new_phi);
+                    }
+                }
+                tb_arena_restore(f->tmp_arena, sp2);
+
+                TB_OPTDEBUG(PASSES)(printf("        * Added extra latch %%%u\n", latch->gvn));
+                TB_OPTDEBUG(PASSES)(printf("        * Added extra join %%%u\n", join->gvn));
             } else {
                 // the loop is already rotated if there's a latch at the bottom, maybe
                 // it's marked, maybe it's not.
                 if (header->inputs[1]->type == TB_BRANCH_PROJ) {
                     TB_Node* exit_proj = get_simple_loop_exit(&cfg, header, header->inputs[1]->inputs[0]);
                     if (exit_proj) {
+                        TB_OPTDEBUG(PASSES)(printf("      * Found rotated loop %%%u\n", header->gvn));
                         latch = exit_proj->inputs[0];
                     }
                 }
@@ -532,6 +617,8 @@ void tb_opt_build_loop_tree(TB_Function* f) {
             }
         }
     }
+
+    tb_free_cfg(&cfg);
     f->loop_list = loop_list;
 
     tb_arena_restore(f->tmp_arena, sp);

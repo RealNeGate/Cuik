@@ -7,6 +7,21 @@
 FOR_N(_i, 0, ((set).capacity + 63) / 64) FOR_BIT(it, _i*64, (set).data[_i])
 
 typedef struct {
+    enum {
+        // we need to spill something to accomodate for vreg
+        FAILURE_SPILL_OTHERS,
+        // we're spilling vreg to accomodate for something
+        FAILURE_SPILL_SELF
+    } mode;
+
+    // latest split site
+    int time;
+    int id;
+
+    RegMask* mask;
+} AllocFailure;
+
+typedef struct {
     Ctx* ctx;
     TB_Arena* arena;
 
@@ -19,6 +34,8 @@ typedef struct {
     int* block_pos;
     int* fixed;
     NL_Table fwd_table;
+
+    ArenaArray(AllocFailure) failures;
 
     // Row numbers per node
     ArenaArray(int) time;   // [gvn]
@@ -439,76 +456,132 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
     }
 
     CUIK_TIMED_BLOCK("linear scan") {
-        // run linear scan all the way through, we'll accumulate things to
-        // split and handle them in bulk
-        while (dyn_array_length(ra.unhandled)) {
-            int vreg_id = dyn_array_pop(ra.unhandled);
-            VReg* vreg  = &ctx->vregs[vreg_id];
+        int old_spills = ctx->num_spills;
+        ra.failures = aarray_create(arena, AllocFailure, 32);
 
-            int start = vreg->active_range->start;
-            int end   = vreg->end_time;
-
+        int rounds = 0;
+        for (;;) {
             #if TB_OPTDEBUG_REGALLOC
-            printf("  # V%-4d t=[%-4d - %4d) ", vreg_id, start, end);
-            tb__print_regmask(vreg->mask);
-            printf("    ");
-            if (vreg->n) { tb_print_dumb_node(NULL, vreg->n); }
-            printf("\n");
-
-            // print entire range
-            printf("  # ");
-            for (Range* r = vreg->active_range; r != &NULL_RANGE; r = r->next) {
-                printf("[%-4d - %-4d)  ", r->start, r->end);
-            }
-            printf("\n");
+            rounds += 1;
+            printf("  ###############################\n");
+            printf("  #  ROUND %-4d                 #\n", rounds);
+            printf("  ###############################\n");
             #endif
 
-            assert(start != INT_MAX);
-            if (vreg->saved_range == NULL) {
-                vreg->saved_range = vreg->active_range;
-            }
-            update_intervals(ctx, &ra, start);
+            ctx->num_spills = old_spills;
 
-            int reg = vreg->assigned;
-            if (reg >= 0) {
-                move_to_active(&ra, vreg, vreg_id);
-            } else if (reg_mask_is_not_empty(vreg->mask)) {
-                // allocate free register
-                reg = allocate_free_reg(ctx, &ra, vreg, vreg_id);
-                vreg = &ctx->vregs[vreg_id];
+            // run linear scan all the way through, we'll accumulate things to
+            // split and handle them in bulk
+            cuikperf_region_start("main loop", NULL);
+            int unhandled_i = dyn_array_length(ra.unhandled);
+            while (unhandled_i--) {
+                // int vreg_id = dyn_array_pop(ra.unhandled);
+                int vreg_id = ra.unhandled[unhandled_i];
+                VReg* vreg  = &ctx->vregs[vreg_id];
 
-                // add to active set
+                int start = vreg->active_range->start;
+                int end   = vreg->end_time;
+
+                #if TB_OPTDEBUG_REGALLOC
+                printf("  # V%-4d t=[%-4d - %4d) ", vreg_id, start, end);
+                tb__print_regmask(vreg->mask);
+                printf("    ");
+                if (vreg->n) { tb_print_dumb_node(NULL, vreg->n); }
+                printf("\n");
+
+                // print entire range
+                printf("  # ");
+                for (Range* r = vreg->active_range; r != &NULL_RANGE; r = r->next) {
+                    printf("[%-4d - %-4d)  ", r->start, r->end);
+                }
+                printf("\n");
+                #endif
+
+                assert(start != INT_MAX);
+                if (vreg->saved_range == NULL) {
+                    vreg->saved_range = vreg->active_range;
+                }
+                update_intervals(ctx, &ra, start);
+
+                int reg = vreg->assigned;
                 if (reg >= 0) {
-                    assert(reg < ctx->num_regs[vreg->mask->class]);
-                    vreg->class    = vreg->mask->class;
-                    vreg->assigned = reg;
                     move_to_active(&ra, vreg, vreg_id);
+                } else if (reg_mask_is_not_empty(vreg->mask)) {
+                    // allocate free register
+                    reg = allocate_free_reg(ctx, &ra, vreg, vreg_id);
+                    vreg = &ctx->vregs[vreg_id];
+
+                    // add to active set
+                    if (reg >= 0) {
+                        assert(reg < ctx->num_regs[vreg->mask->class]);
+                        vreg->class    = vreg->mask->class;
+                        vreg->assigned = reg;
+                        move_to_active(&ra, vreg, vreg_id);
+                    }
+                } else if (vreg->mask->may_spill) {
+                    // allocate stack slot
+                    ctx->num_spills += 1;
+                    TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [BP - %d]\n", 8 + ctx->num_spills*8));
+                    vreg->class    = REG_CLASS_STK;
+                    vreg->assigned = STACK_BASE_REG_NAMES + ctx->num_spills;
+                } else {
+                    // not spillable, not colorable in regs... wtf are you
+                    abort();
                 }
-            } else if (vreg->mask->may_spill) {
-                // allocate stack slot
-                ctx->num_spills += 1;
-                TB_OPTDEBUG(REGALLOC)(printf("  #   assign to [BP - %d]\n", 8 + ctx->num_spills*8));
-                vreg->class    = REG_CLASS_STK;
-                vreg->assigned = STACK_BASE_REG_NAMES + ctx->num_spills;
-            } else {
-                // not spillable, not colorable in regs... wtf are you
-                abort();
+
+                // display active set
+                #if TB_OPTDEBUG_REGALLOC
+                static const char* classes[] = { "STK", "FLAGS", "GPR", "VEC" };
+                FOR_N(rc, 1, ctx->num_classes) {
+                    printf("  \x1b[32m%s { ", classes[rc]);
+                    FOREACH_SET(reg, ra.active_set[rc]) {
+                        int other_id = ra.active[rc][reg];
+                        printf("V%d:", other_id);
+                        print_reg_name(rc, reg);
+                        printf(" ");
+                    }
+                    printf("}\x1b[0m\n");
+                }
+                #endif
+            }
+            cuikperf_region_end();
+
+            size_t spills_accum = aarray_length(ra.failures);
+            if (spills_accum == 0) { break; }
+
+            cuikperf_region_start("alloc fail", NULL);
+
+            // undo all non-fixed regs
+            FOR_N(i, 0, dyn_array_length(ra.unhandled)) {
+                int vreg_id = ra.unhandled[i];
+                VReg* vreg  = &ctx->vregs[vreg_id];
+                if (!vreg_is_fixed(ctx, &ra, vreg_id)) {
+                    vreg->class    = vreg->mask->class;
+                    vreg->assigned = -1;
+                }
+
+                if (vreg->saved_range) {
+                    vreg->active_range = vreg->saved_range;
+                }
             }
 
-            // display active set
-            #if TB_OPTDEBUG_REGALLOC
-            static const char* classes[] = { "STK", "FLAGS", "GPR", "VEC" };
             FOR_N(rc, 1, ctx->num_classes) {
-                printf("  \x1b[32m%s { ", classes[rc]);
-                FOREACH_SET(reg, ra.active_set[rc]) {
-                    int other_id = ra.active[rc][reg];
-                    printf("V%d:", other_id);
-                    print_reg_name(rc, reg);
-                    printf(" ");
-                }
-                printf("}\x1b[0m\n");
+                set_clear(&ra.active_set[rc]);
             }
-            #endif
+
+            // split ranges
+            FOR_N(i, 0, spills_accum) {
+                VReg* vreg = &ctx->vregs[ra.failures[i].id];
+                if (ra.failures[i].mode == FAILURE_SPILL_OTHERS) {
+                    tb_todo();
+                } else {
+                    split_intersecting(ctx, &ra, vreg, ra.failures[i].mask, ra.failures[i].time);
+                }
+            }
+
+            dyn_array_clear(ra.inactive);
+            aarray_clear(ra.failures);
+            cuikperf_region_end();
         }
     }
 
@@ -673,6 +746,15 @@ static int allocate_blocked_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
     int pos = use_pos[highest];
     int first_use = next_use(ctx, ra, vreg, 0);
 
+    RegMask* spill_rm = ctx->has_flags && class == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
+    AllocFailure f = { FAILURE_SPILL_OTHERS, start, vreg_id, spill_rm };
+    aarray_push(ra->failures, f);
+
+    // we stole highest
+    TB_OPTDEBUG(REGALLOC)(printf("  #   assign to "), print_reg_name(class, highest), printf(" (except we stole it)\n"));
+    return highest;
+
+    #if 0
     bool spilled = false;
     RegMask* spill_rm = ctx->has_flags && class == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
     if (first_use > pos) {
@@ -732,6 +814,7 @@ static int allocate_blocked_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
     }
 
     return spilled ? -1 : highest;
+    #endif
 }
 
 // returns -1 if no registers are available
@@ -760,10 +843,10 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
     }
 
     int pos = ra->free_until[highest];
-    if (UNLIKELY(pos == 0)) {
+    if (pos == 0 || vreg->end_time > pos) {
         // ok let's steal a blocked reg, one that's not fixed
         return allocate_blocked_reg(ctx, ra, vreg, vreg_id);
-    } else if (vreg->end_time <= pos) {
+    } else if () {
         // we can steal it completely
         TB_OPTDEBUG(REGALLOC)(printf("  #   assign to "), print_reg_name(rc, highest));
 
@@ -780,23 +863,6 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
         }
 
         return highest;
-    } else {
-        return allocate_blocked_reg(ctx, ra, vreg, vreg_id);
-
-        #if 0
-        // TODO(NeGate): split at optimal position before current
-        vreg->class    = rc;
-        vreg->assigned = highest;
-
-        TB_OPTDEBUG(REGALLOC)(printf("  #   spill v%u (stole ", vreg_id), print_reg_name(rc, highest), printf(")\n"));
-
-        // steal the reg
-        RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
-
-        // spill_entire_life(ctx, ra, vreg, spill_rm);
-        split_intersecting(ctx, ra, vreg, spill_rm, TB_MAX(pos - 2, vreg->saved_range->start + 1));
-        return highest;
-        #endif
     }
 }
 
@@ -1144,6 +1210,8 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
     assert(spill_vreg->active_range != &NULL_RANGE);
     vreg = NULL;
 
+    int spill_vreg_id = spill_vreg - ctx->vregs;
+
     // reload before next use that requires the original mask
     if (!reg_mask_is_not_empty(new_mask) && new_mask->may_spill) {
         int earliest = INT_MAX;
@@ -1167,7 +1235,7 @@ static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg
     }
 
     cuikperf_region_end();
-    return &ctx->vregs[vreg_id];
+    return &ctx->vregs[spill_vreg_id];
 }
 
 ////////////////////////////////

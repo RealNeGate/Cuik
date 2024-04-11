@@ -172,6 +172,9 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                     TB_BasicBlock* bb = NULL;
                     if ((n->type == TB_MACH_PROJ || n->type == TB_PROJ) && n->inputs[0]->type == TB_ROOT) {
                         bb = start_bb;
+                    } else if (n->type == TB_PHI) {
+                        assert(f->scheduled[n->inputs[0]->gvn] != NULL && "where tf is the BB?");
+                        bb = f->scheduled[n->inputs[0]->gvn];
                     } else if (n->type != TB_ROOT) {
                         TB_Node* curr = n;
                         do {

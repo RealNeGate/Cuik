@@ -160,7 +160,7 @@ static Lattice* value_sub(TB_Function* f, TB_Node* n) {
         // Ahh sweet, Hacker's delight horrors beyond my comprehension
         uint64_t u = (amin ^ bmax) | (amin ^ min);
         uint64_t v = (amax ^ bmin) | (amax ^ max);
-        if ((u & v) & imin) {
+        if (~(u & v) & imin) {
             min = imin, max = imax;
         }
     }

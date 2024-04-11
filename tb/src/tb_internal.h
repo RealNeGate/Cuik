@@ -72,10 +72,11 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_ISEL     0
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
-#define TB_OPTDEBUG_REGALLOC 0
+#define TB_OPTDEBUG_REGALLOC 1
 #define TB_OPTDEBUG_GVN      0
 #define TB_OPTDEBUG_SCHEDULE 0
 // for toggling ANSI colors
@@ -415,7 +416,7 @@ struct TB_Function {
 
         // nice stats
         struct {
-            #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
+            #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_ISEL
             int time;
             #endif
 

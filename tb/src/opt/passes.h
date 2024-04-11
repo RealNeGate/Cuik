@@ -214,6 +214,16 @@ static bool single_use(TB_Node* n) {
 ////////////////////////////////
 // CFG analysis
 ////////////////////////////////
+static bool cfg_has_non_mem_phis(TB_Node* n) {
+    if (n->type != TB_REGION) { return false; }
+    FOR_USERS(u, n) {
+        if (USERN(u)->type == TB_PHI && USERN(u)->dt.type != TB_TAG_MEMORY) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // if we see a branch projection, it may either be a BB itself
 // or if it enters a REGION directly, then that region is the BB.
 static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
@@ -227,10 +237,22 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
         return proj;
     }
 
+    int blocks_with_phis = 0;
+    FOR_USERS(u, n) {
+        TB_Node* path = USERN(u);
+        if (cfg_is_cproj(path) && single_use(path)) {
+            TB_Node* next = USERN(path->users);
+            if (cfg_has_non_mem_phis(next)) {
+                blocks_with_phis++;
+            }
+        }
+    }
+
     if (r->type == TB_REGION) {
         FOR_USERS(u, r) {
             if (USERN(u)->type == TB_PHI && USERN(u)->dt.type != TB_TAG_MEMORY) {
-                return proj;
+                // there's only one block with phis... we're that block so maybe it's ok
+                return blocks_with_phis == 1 ? r : proj;
             }
         }
     }

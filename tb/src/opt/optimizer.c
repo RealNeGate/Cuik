@@ -242,6 +242,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "loop.h"
 #include "branches.h"
 #include "print.h"
+#include "verify.h"
 #include "print_dumb.h"
 #include "print_c.h"
 #include "gcm.h"
@@ -618,18 +619,21 @@ void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
 // we sometimes get the choice to recycle users because we just deleted something
 void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
     if (in->user_count >= in->user_cap) {
+        size_t new_cap = ((size_t) in->user_cap) * 2;
+        assert(new_cap < UINT16_MAX);
+
         // resize
-        TB_User* users = tb_arena_alloc(f->arena, in->user_cap * 2 * sizeof(TB_User));
+        TB_User* users = tb_arena_alloc(f->arena, new_cap * sizeof(TB_User));
         memcpy(users, in->users, in->user_count * sizeof(TB_User));
 
         // in debug builds we'll fill the old array if easily detectable garbage to notice
         // pointer invalidation issues
         #ifndef NDEBUG
         memset(in->users, 0xF0, in->user_cap * sizeof(TB_User));
-        memset(users + in->user_count, 0xF0, (in->user_cap*2 - in->user_count) * sizeof(TB_User));
+        memset(users + in->user_count, 0xF0, (new_cap - in->user_count) * sizeof(TB_User));
         #endif
 
-        in->user_cap *= 2;
+        in->user_cap = new_cap;
         in->users = users;
     }
 
@@ -641,6 +645,7 @@ void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
 void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     if (new_n->user_count + n->user_count >= new_n->user_cap) {
         size_t new_cap = tb_next_pow2(new_n->user_count + n->user_count + 4);
+        assert(new_cap < UINT16_MAX);
 
         // resize
         TB_User* users = tb_arena_alloc(f->arena, new_cap * sizeof(TB_User));
@@ -1201,7 +1206,7 @@ void tb_opt_cprop(TB_Function* f) {
         DO_IF(TB_OPTDEBUG_SCCP)(printf("CONST t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
         if (k != NULL) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.opto_constants++);
-            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
+            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m"));
 
             mark_users(f, k);
             mark_node(f, k);
@@ -1256,6 +1261,8 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
         TB_OPTDEBUG(PASSES)(printf("  * ROUND %d:\n", ++rounds));
         TB_OPTDEBUG(PASSES)(printf("    * Minor rewrites\n"));
 
+        tb_verify(f, f->tmp_arena);
+
         // minor opts
         while (worklist_count(f->worklist) > 0) {
             TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
@@ -1271,6 +1278,8 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
             }
         }
+
+        tb_verify(f, f->tmp_arena);
 
         // const prop leaves work for the peephole optimizer and
         // sometimes might invalidate the loop tree so we should
@@ -1290,14 +1299,20 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
             nl_table_clear(&f->node2loop);
             f->invalidated_loops = false;
 
+            tb_verify(f, f->tmp_arena);
+
             TB_OPTDEBUG(PASSES)(printf("    * Update loop tree\n"));
             tb_opt_build_loop_tree(f);
+
+            tb_verify(f, f->tmp_arena);
         }
 
         // mostly just detecting loops and upcasting indvars
         TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
         tb_opt_loops(f);
     }
+
+    tb_print(f, f->tmp_arena);
 
     nl_table_free(f->node2loop);
     // if we're doing IPO then it's helpful to keep these

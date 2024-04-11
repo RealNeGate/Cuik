@@ -1489,6 +1489,9 @@ TB_API TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n);
 // Trust me bro, just use my configs
 TB_API void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool preserve_types);
 
+// Asserts on all kinds of broken behavior, dumps to stderr (i will change that later)
+TB_API void tb_verify(TB_Function* f, TB_Arena* tmp);
+
 // print in SSA-CFG looking form (with BB params for the phis)
 TB_API void tb_print(TB_Function* f, TB_Arena* tmp);
 // prints IR as GraphViz's DOT

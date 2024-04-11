@@ -166,15 +166,17 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         ctx.frame_ptr = tb_alloc_node(f, TB_MACH_FRAME_PTR, TB_TYPE_PTR, 1, 0);
         set_input(f, ctx.frame_ptr, f->root_node, 0);
         ctx.frame_ptr = tb_opt_gvn_node(f, ctx.frame_ptr);
+        ctx.walker_ws = &walker_ws;
 
         // bottom-up rewrite:
         //   we keep the visited bits set once we've rewritten a node, unlike most worklist usage
         //   which unsets a bit once it's popped from the items array.
         CUIK_TIMED_BLOCK("rewriting") {
             worklist_push(&walker_ws, f->root_node);
-
             while (dyn_array_length(walker_ws.items) > 0) {
                 TB_Node* n = dyn_array_pop(walker_ws.items);
+
+                TB_OPTDEBUG(ISEL)(printf("ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
                 // replace with machine op
                 TB_Node* k = node_isel(&ctx, f, n);
@@ -185,14 +187,24 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                         subsume_node(f, n, k);
                     }
 
+                    TB_OPTDEBUG(ISEL)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m"));
+
                     // don't walk the replacement
                     worklist_test_n_set(&walker_ws, k);
                     n = k;
                 }
+                TB_OPTDEBUG(ISEL)(printf("\n"));
 
                 // replace all input edges
                 FOR_REV_N(i, 0, n->input_count) if (n->inputs[i]) {
                     worklist_push(&walker_ws, n->inputs[i]);
+                }
+
+                // mark phis if we're on a region
+                if (cfg_is_region(n)) {
+                    FOR_USERS(u, n) if (USERN(u)->type == TB_PHI) {
+                        worklist_push(&walker_ws, USERN(u));
+                    }
                 }
             }
             worklist_free(&walker_ws);
@@ -372,7 +384,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
                 FOR_N(j, 1, n->input_count) {
                     if (n->inputs[j] && ctx.ins[j] != &TB_REG_EMPTY) {
-                        printf("    IN[%zu]  = ", j), tb__print_regmask(ctx.ins[j]), printf(" v%d\n", n->inputs[j]->gvn);
+                        printf("    IN[%zu]  = ", j), tb__print_regmask(ctx.ins[j]), printf(" %%%d\n", n->inputs[j]->gvn);
                     }
                 }
 

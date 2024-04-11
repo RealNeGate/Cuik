@@ -172,6 +172,7 @@ struct Ctx {
     // Basic blocks
     int bb_count;
     MachineBB* machine_bbs;
+    TB_Worklist* walker_ws;
 
     // used when calling node_constraint since it needs an array, we
     // figure out the max input count of all nodes before allocating it.
