@@ -41,15 +41,6 @@ static bool legalize_32bit_machine(LegalizeCtx* ctx, TB_DataType dt, LegalType* 
     return false;
 }
 
-static TB_Node* make_member(TB_Function* f, TB_Node* src, int32_t offset) {
-    if (offset == 0) { return src; }
-
-    TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
-    set_input(f, n, src, 1);
-    TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
-    return tb__gvn(f, n, 0);
-}
-
 static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Arena* tmp_arena, TB_Node* n, LegalType valid) {
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
     TB_Node** pieces = tb_arena_alloc(tmp_arena, valid.splits * sizeof(TB_Node*));
@@ -69,7 +60,7 @@ static TB_Node** legalize_node(LegalizeCtx* ctx, TB_Arena* tmp_arena, TB_Node* n
 
         int32_t off  = 0;
         FOR_N(i, 0, valid.splits) {
-            TB_Node* addr = make_member(f, n->inputs[2], off);
+            TB_Node* addr = tb_inst_member_access(f, n->inputs[2], off);
             off += valid.size;
 
             // make split load
@@ -121,7 +112,7 @@ static TB_Node* walk_node(LegalizeCtx* ctx, TB_Node* n) {
         TB_Node* prev_st = n->inputs[1];
         int32_t off  = 0;
         FOR_N(i, 0, valid.splits - 1) {
-            TB_Node* addr = make_member(f, n->inputs[2], off);
+            TB_Node* addr = tb_inst_member_access(f, n->inputs[2], off);
             off += valid.size;
 
             // make split stores
@@ -138,7 +129,7 @@ static TB_Node* walk_node(LegalizeCtx* ctx, TB_Node* n) {
 
         // we'll replace our original store with the first load (so all the
         // stores are in order)
-        TB_Node* addr = make_member(f, n->inputs[2], off);
+        TB_Node* addr = tb_inst_member_access(f, n->inputs[2], off);
         set_input(f, n, prev_st,              1);
         set_input(f, n, addr,                 2);
         set_input(f, n, op[valid.splits - 1], 3);

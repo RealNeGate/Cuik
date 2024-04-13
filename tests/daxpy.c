@@ -36,7 +36,7 @@ void daxpy2(long long n, double a, double* x, double* y, bool enable) {
 }
 #endif
 
-#if 1
+#if 0
 void matmul(float* c, float* a, float* b) {
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
@@ -64,19 +64,6 @@ int foo(int n) {
     return i;
 }
 #endif
-
-/*
-
-ztc:
-  if 0 < 10 then header else exit
-header:
-  i  = phi(0, i2)
-  i2 = i + 1
-  ...
-  if i2 < 10 then header else exit
-exit:
-
-*/
 
 /*
 matmul:                                 // @matmul

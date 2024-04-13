@@ -34,6 +34,7 @@
 #include "opt/passes.h"
 #include "emitter.h"
 #include <log.h>
+#include <math.h>
 #include <arena_array.h>
 
 enum {
@@ -231,6 +232,25 @@ static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {
 
 static VReg* vreg_at(Ctx* ctx, int id)       { return id > 0 ? &ctx->vregs[id] : NULL; }
 static VReg* node_vreg(Ctx* ctx, TB_Node* n) { return n && ctx->vreg_map[n->gvn] > 0 ? &ctx->vregs[ctx->vreg_map[n->gvn]] : NULL; }
+
+static float get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
+    if (!isnan(vreg->spill_cost)) {
+        return vreg->spill_cost;
+    } else if (vreg->n->type == TB_ICONST) {
+        // these can rematerialize
+        return (vreg->spill_cost = -1.0f);
+    }
+
+    float c = 0.0f;
+
+    // sum of (block_freq * uses_in_block)
+    FOR_USERS(u, vreg->n) {
+        TB_Node* un = USERN(u);
+        c += ctx->f->scheduled[un->gvn]->freq;
+    }
+
+    return (vreg->spill_cost = c);
+}
 
 static bool reg_mask_eq(RegMask* a, RegMask* b) {
     if (a->count != b->count) { return false; }

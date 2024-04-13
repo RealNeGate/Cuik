@@ -37,12 +37,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_SMOD:
         return sizeof(TB_NodeBinopInt);
 
-        case TB_MEMBER_ACCESS:
-        return sizeof(TB_NodeMember);
-
-        case TB_ARRAY_ACCESS:
-        return sizeof(TB_NodeArray);
-
         case TB_CALLGRAPH:
         case TB_NEVER_BRANCH:
         case TB_TRUNCATE:
@@ -67,6 +61,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_CTZ:
         case TB_ADC:
         case TB_VA_START:
+        case TB_PTR_OFFSET:
         case TB_POISON:
         case TB_SELECT:
         case TB_MERGEMEM:

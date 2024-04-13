@@ -18,7 +18,11 @@ static TB_BasicBlock* try_to_hoist(TB_Function* f, TB_GetLatency get_lat, TB_Nod
     if (get_lat == NULL) return late;
 
     int lat = get_lat(f, n, NULL);
-    return lat >= 2 ? late->dom : late;
+    if (lat >= 3 && late->loop) {
+        return early;
+    }
+
+    return late;
 }
 
 // schedule nodes such that they appear the least common
@@ -333,7 +337,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool datafl
                         if (old != better) {
                             TB_OPTDEBUG(GCM)(
                                 printf("  LATE  v%u into .bb%d: ", n->gvn, lca->id),
-                                print_node_sexpr(n, 0),
+                                tb_print_dumb_node(NULL, n),
                                 printf("\n")
                             );
 

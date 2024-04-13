@@ -210,7 +210,7 @@ static void mark_users(TB_Function* f, TB_Node* n) {
         TB_NodeTypeEnum type = USERN(u)->type;
 
         // tuples changing means their projections did too.
-        if (type == TB_PROJ || type == TB_MEMBER_ACCESS) {
+        if (type == TB_PROJ || type == TB_PTR_OFFSET) {
             mark_users(f, USERN(u));
         }
 
@@ -372,51 +372,47 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
 
     if (r->type == TB_AFFINE_LOOP) {
         TB_Node* latch = affine_loop_latch(r);
-
         if (latch) {
-            // when a loop is deleted, you end up with a latch that's constant
-            // so we'll undo the affine loop allegations and just
-            /*Lattice* latch_t = latuni_get(f, latch->inputs[1]);
-            if (lattice_is_const(latch_t)) {
-                bool exit_when_key = !TB_NODE_GET_EXTRA_T(r->inputs[1], TB_NodeProj)->index;
-                TB_Node* exit_proj = USERN(proj_with_index(latch, exit_when_key));
-                int64_t latch_key  = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeBranchProj)->key;
-
-                if ((exit_when_key  && lattice_int_eq(latch_t, latch_key)) ||
-                    (!exit_when_key && lattice_int_ne(latch_t, latch_key))) {
-                    // this is a loop without a real backedge, it'll get packed up soon but
-                    // until then we consider it 1 trip, i can walk through why i guess:
-                    // * affine loops are natural loops (we've rotated them)
-                    // * if you're seeing the phi we're past the ZTC (trips greater than 1)
-                    // * thus a dead latch means 1 trip not 0.
-                    Lattice* init = latuni_get(f, n->inputs[1]);
-                    Lattice* init = latuni_get(f, n->inputs[1]);
-
-                    return latuni_get(f, n->inputs[1]);
-                }
-            }*/
-
-            TB_InductionVar var;
-            if (find_indvar(r, latch, &var)) {
-                if (var.phi == n) {
-                    Lattice* init = latuni_get(f, n->inputs[1]);
+            // we wanna know loop bounds
+            uint64_t trips_min = 1, trips_max = UINT64_MAX;
+            uint64_t* step_ptr = find_affine_indvar(n, r);
+            if (step_ptr) {
+                TB_InductionVar var;
+                if (find_latch_indvar(r, latch, &var)) {
+                    Lattice* init = latuni_get(f, var.phi->inputs[1]);
                     Lattice* end = var.end_cond ? latuni_get(f, var.end_cond) : lattice_int_const(f, var.end_const);
 
                     if (lattice_is_const(init) && lattice_is_const(end)) {
                         int64_t trips = (end->_int.min - init->_int.min) / var.step;
                         int64_t rem   = (end->_int.min - init->_int.min) % var.step;
                         if (rem == 0 || var.pred != IND_NE) {
-                            return lattice_gimme_int(f, init->_int.min, init->_int.min + trips*var.step);
+                            trips_max = trips;
                         }
                     } else {
                         // TODO(NeGate): we vaguely know the range, this is the common case
                         // so let's handle it. main things we wanna know are whether or not
                         // the number is ever negative.
                     }
+                } else {
+                    // affine loop missing latch? ok then it's 1 trips
+                    trips_min = trips_max = 1;
                 }
-            } else {
-                // affine loop missing latch? ok then it's 1 trips
-                return latuni_get(f, n->inputs[1]);
+
+                Lattice* init = latuni_get(f, n->inputs[1]);
+                if (lattice_is_const(init)) {
+                    int64_t step = *step_ptr;
+                    uint64_t min = (uint64_t)init->_int.min + (trips_min-1)*step;
+                    uint64_t max = trips_max*step;
+
+                    // overflow checks
+                    if (max >= trips_max && init->_int.min + max >= init->_int.min) {
+                        max += init->_int.min;
+                        int64_t mini = min, maxi = max;
+                        if (step > 0 && min <= max && mini <= maxi) {
+                            return lattice_gimme_int(f, min, max);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1311,9 +1307,6 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
         TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
         tb_opt_loops(f);
     }
-
-    tb_print(f, f->tmp_arena);
-
     nl_table_free(f->node2loop);
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {

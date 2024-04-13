@@ -367,11 +367,8 @@ typedef enum TB_NodeTypeEnum {
     TB_LOCAL,         // () & (Int, Int) -> Ptr
     //   SYMBOL will return a pointer to a TB_Symbol
     TB_SYMBOL,        // () & TB_Symbol* -> Ptr
-    //   offsets pointer by constant value
-    TB_MEMBER_ACCESS, // Ptr & Int -> Ptr
-    //   arguments represent base, index, and stride respectively
-    //   and will perform `base + index*stride`
-    TB_ARRAY_ACCESS,  // (Ptr, Int) & Int -> Ptr
+    //   offsets pointer by byte amount (handles all ptr math you actually want)
+    TB_PTR_OFFSET,    // (Ptr, Int) -> Ptr
 
     // Conversions
     TB_TRUNCATE,
@@ -677,14 +674,6 @@ typedef struct {
 typedef struct {
     double value;
 } TB_NodeFloat64;
-
-typedef struct {
-    int64_t stride;
-} TB_NodeArray;
-
-typedef struct {
-    int64_t offset;
-} TB_NodeMember;
 
 typedef struct {
     // if true, we just duplicate the input memory per projection

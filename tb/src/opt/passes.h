@@ -215,7 +215,7 @@ static bool single_use(TB_Node* n) {
 // CFG analysis
 ////////////////////////////////
 static bool cfg_has_non_mem_phis(TB_Node* n) {
-    if (n->type != TB_REGION) { return false; }
+    if (!cfg_is_region(n)) { return false; }
     FOR_USERS(u, n) {
         if (USERN(u)->type == TB_PHI && USERN(u)->dt.type != TB_TAG_MEMORY) {
             return true;
@@ -232,7 +232,7 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
 
     assert(proj->user_count >= 1 && "missing successor after cproj");
     TB_Node* r = USERN(proj->users);
-    if (!single_use(proj) || r->type != TB_REGION) {
+    if (!single_use(proj) || !cfg_is_region(r)) {
         // multi-user proj, this means it's basically a BB
         return proj;
     }
@@ -248,11 +248,10 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
         }
     }
 
-    if (r->type == TB_REGION) {
+    if (blocks_with_phis > 1) {
         FOR_USERS(u, r) {
             if (USERN(u)->type == TB_PHI && USERN(u)->dt.type != TB_TAG_MEMORY) {
-                // there's only one block with phis... we're that block so maybe it's ok
-                return blocks_with_phis == 1 ? r : proj;
+                return proj;
             }
         }
     }
@@ -278,7 +277,7 @@ static TB_User* cfg_next_user(TB_Node* n) {
 }
 
 static bool cfg_has_phis(TB_Node* n) {
-    if (n->type != TB_REGION) { return false; }
+    if (!cfg_is_region(n)) { return false; }
     FOR_USERS(u, n) {
         if (USERN(u)->type == TB_PHI) { return true; }
     }
@@ -305,7 +304,7 @@ static TB_Node* cfg_get_pred(TB_CFG* cfg, TB_Node* n, int i) {
     n = n->inputs[i];
     for (;;) {
         ptrdiff_t search = nl_map_get(cfg->node_to_block, n);
-        if (search >= 0 || n->type == TB_DEAD || n->type == TB_REGION) {
+        if (search >= 0 || n->type == TB_DEAD || cfg_is_region(n)) {
             return n;
         }
 

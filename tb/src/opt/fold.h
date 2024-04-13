@@ -1013,10 +1013,11 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
             case TB_ADD:
             case TB_SUB:
             case TB_XOR:
+            case TB_PTR_OFFSET:
             return n->inputs[1];
 
             case TB_MUL:
-            return n->inputs[0];
+            return make_int_node(f, n->dt, 0);
 
             case TB_UDIV:
             case TB_SDIV:
@@ -1047,28 +1048,14 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
 ////////////////////////////////
 // Pointer idealizations
 ////////////////////////////////
-static TB_Node* identity_member_ptr(TB_Function* f, TB_Node* n) {
-    if (TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset == 0) {
-        return n->inputs[1];
-    }
-    return n;
-}
-
-static TB_Node* ideal_member_ptr(TB_Function* f, TB_Node* n) {
-    int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
-    TB_Node* base  = n->inputs[1];
-
-    if (base->type == TB_MEMBER_ACCESS) {
-        offset += TB_NODE_GET_EXTRA_T(base, TB_NodeMember)->offset;
-        set_input(f, n, base->inputs[1], 1);
-
-        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
-        return n;
-    }
+static TB_Node* ideal_ptr_offset(TB_Function* f, TB_Node* n) {
+    TB_Node* base   = n->inputs[1];
+    TB_Node* offset = n->inputs[2];
 
     return NULL;
 }
 
+#if 0
 static TB_Node* ideal_array_ptr(TB_Function* f, TB_Node* n) {
     int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
     TB_Node* base  = n->inputs[1];
@@ -1141,3 +1128,6 @@ static TB_Node* ideal_array_ptr(TB_Function* f, TB_Node* n) {
 
     return NULL;
 }
+#endif
+
+

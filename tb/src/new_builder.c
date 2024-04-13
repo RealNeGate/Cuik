@@ -199,10 +199,18 @@ void tb_builder_array(TB_GraphBuilder* g, int64_t stride) {
     tb_assert(index->dt.type == TB_TAG_INT, "index on ARRAY must be an integer");
 
     TB_Function* f = g->f;
-    TB_Node* n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 3, sizeof(TB_NodeArray));
-    set_input(f, n, base,  1);
-    set_input(f, n, index, 2);
-    TB_NODE_SET_EXTRA(n, TB_NodeArray, .stride = stride);
+    TB_Node* con = tb_opt_peep_node(f, tb_inst_sint(f, TB_TYPE_I64, stride));
+    TB_Node* scl = index;
+    if (stride != 1) {
+        scl = tb_alloc_node(f, TB_MUL, TB_TYPE_I64, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, scl, index, 1);
+        set_input(f, scl, con,   2);
+        scl = tb_opt_peep_node(f, scl);
+    }
+
+    TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
+    set_input(f, n, base, 1);
+    set_input(f, n, scl,  2);
     push(g, n);
 }
 
@@ -211,22 +219,18 @@ void tb_builder_member(TB_GraphBuilder* g, int64_t offset) {
     TB_Node* base = pop(g);
 
     TB_Function* f = g->f;
-    TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
+    TB_Node* con = tb_opt_peep_node(f, tb_inst_sint(f, TB_TYPE_I64, offset));
+    TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
     set_input(f, n, base, 1);
-    TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
+    set_input(f, n, con,  2);
     push(g, n);
 }
 
 void tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, int32_t offset, TB_CharUnits alignment) {
     TB_Function* f = g->f;
 
+    tb_builder_member(g, offset);
     TB_Node* addr = pop(g);
-    if (offset) {
-        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
-        set_input(f, n, addr, 1);
-        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
-        addr = n;
-    }
 
     TB_Node* n = tb_alloc_node(f, TB_LOAD, dt, 3, sizeof(TB_NodeMemAccess));
     if (ctrl_dep) {
@@ -243,16 +247,10 @@ void tb_builder_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_CharUn
     TB_Function* f = g->f;
 
     TB_Node* val  = pop(g);
+    tb_builder_member(g, offset);
     TB_Node* addr = pop(g);
+
     assert(g->vals[mem_var]->dt.type == TB_TAG_MEMORY);
-
-    if (offset) {
-        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
-        set_input(f, n, addr, 1);
-        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
-        addr = n;
-    }
-
     TB_Node* n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
     set_input(f, n, g->bot_ctrl, 0);
     set_input(f, n, g->vals[mem_var], 1);
@@ -265,13 +263,9 @@ void tb_builder_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_CharUn
 
 void tb_builder_atomic_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, int32_t offset, TB_MemoryOrder order) {
     TB_Function* f = g->f;
+
+    tb_builder_member(g, offset);
     TB_Node* addr = pop(g);
-    if (offset) {
-        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
-        set_input(f, n, addr, 1);
-        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
-        addr = n;
-    }
 
     TB_Node* n = tb_alloc_node(f, TB_ATOMIC_LOAD, TB_TYPE_TUPLE, 3, sizeof(TB_NodeAtomic));
     if (ctrl_dep) {
@@ -288,13 +282,8 @@ void tb_builder_atomic_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_D
 void tb_builder_atomic_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_MemoryOrder order) {
     TB_Function* f = g->f;
     TB_Node* val  = pop(g);
+    tb_builder_member(g, offset);
     TB_Node* addr = pop(g);
-    if (offset) {
-        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
-        set_input(f, n, addr, 1);
-        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
-        addr = n;
-    }
 
     TB_Node* n = tb_alloc_node(f, TB_ATOMIC_XCHG, TB_TYPE_TUPLE, 4, sizeof(TB_NodeAtomic));
     set_input(f, n, g->bot_ctrl, 0);
@@ -310,13 +299,8 @@ void tb_builder_atomic_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB
 void tb_builder_atomic_rmw(TB_GraphBuilder* g, int mem_var, int32_t offset, int op, TB_MemoryOrder order) {
     TB_Function* f = g->f;
     TB_Node* val  = pop(g);
+    tb_builder_member(g, offset);
     TB_Node* addr = pop(g);
-    if (offset) {
-        TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
-        set_input(f, n, addr, 1);
-        TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
-        addr = n;
-    }
 
     TB_Node* n = tb_alloc_node(f, op, TB_TYPE_TUPLE, 4, sizeof(TB_NodeAtomic));
     set_input(f, n, g->bot_ctrl, 0);

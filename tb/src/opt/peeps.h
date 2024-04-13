@@ -58,9 +58,9 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
 
 static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     // type                 ideal              identity            value
-    [TB_ICONST]  = { NULL,              NULL,               value_int        },
-    [TB_F32CONST]  = { NULL,              NULL,               value_f32        },
-    [TB_F64CONST]  = { NULL,              NULL,               value_f64        },
+    [TB_ICONST]         = { NULL,              NULL,               value_int        },
+    [TB_F32CONST]       = { NULL,              NULL,               value_f32        },
+    [TB_F64CONST]       = { NULL,              NULL,               value_f64        },
     // memory
     [TB_LOAD]           = { ideal_load,        identity_load,      NULL             },
     [TB_STORE]          = { ideal_store,       NULL,               value_mem        },
@@ -72,8 +72,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_LOCAL]          = { NULL,              NULL,               value_ptr_vals   },
     [TB_SYMBOL]         = { NULL,              NULL,               value_ptr_vals   },
     // pointer arithmetic
-    [TB_MEMBER_ACCESS]  = { ideal_member_ptr,  identity_member_ptr,NULL             },
-    [TB_ARRAY_ACCESS]   = { ideal_array_ptr,   NULL,               NULL             },
+    [TB_PTR_OFFSET]     = { ideal_ptr_offset,  identity_int_binop, NULL             },
     // arithmetic
     [TB_ADD]            = { ideal_int_binop,   identity_int_binop, value_add_mul    },
     [TB_SUB]            = { ideal_int_binop,   identity_int_binop, value_sub        },

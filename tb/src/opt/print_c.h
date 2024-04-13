@@ -1065,12 +1065,15 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                 break;
             }
 
-            case TB_MEMBER_ACCESS: {
+            case TB_PTR_OFFSET: {
+                TB_Node *off = n->inputs[n->input_count-2];
                 TB_Node *ptr = n->inputs[n->input_count-1];
+
                 c_fmt_output(ctx, n);
                 nl_buffer_format(ctx->buf, "(void*) ((char *) ");
                 c_fmt_ref_to_node(ctx, ptr);
-                nl_buffer_format(ctx->buf, " + %"PRIi64, TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
+                nl_buffer_format(ctx->buf, " + ");
+                c_fmt_ref_to_node(ctx, off);
                 nl_buffer_format(ctx->buf, ");\n");
                 break;
             }
@@ -1103,18 +1106,6 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                 break;
             }
 
-            case TB_ARRAY_ACCESS: {
-                TB_Node *ptr = n->inputs[n->input_count-2];
-                TB_Node *index = n->inputs[n->input_count-1];
-                c_fmt_output(ctx, n);
-                nl_buffer_format(ctx->buf, "(void*) ((char *) ");
-                c_fmt_ref_to_node(ctx, ptr);
-                nl_buffer_format(ctx->buf, " + ");
-                c_fmt_ref_to_node(ctx, index);
-                nl_buffer_format(ctx->buf, " * %"PRIi64, TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride);
-                nl_buffer_format(ctx->buf, ");\n");
-                break;
-            }
             case TB_CALL: {
                 TB_Node *func = n->inputs[2];
 

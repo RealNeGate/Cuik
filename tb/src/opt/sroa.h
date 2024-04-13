@@ -43,9 +43,9 @@ static bool add_configs(TB_Function* f, TB_Node* addr, TB_Node* base_address, si
     FOR_USERS(use, addr) {
         TB_Node* n = USERN(use);
 
-        if (n->type == TB_MEMBER_ACCESS && USERI(use) == 1) {
+        if (n->type == TB_PTR_OFFSET && n->inputs[2]->type == TB_ICONST && USERI(use) == 1) {
             // same rules, different offset
-            int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
+            int64_t offset = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
             if (!add_configs(f, n, base_address, base_offset + offset, config_count, configs, pointer_size)) {
                 return false;
             }

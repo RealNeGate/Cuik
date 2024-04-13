@@ -105,6 +105,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
             // affine loops can't be single edge
             if (cfg_is_natural_loop(n) && n->input_count != 2) {
                 n->type = TB_REGION;
+                mark_users(f, n);
             }
 
             f->invalidated_loops = true;

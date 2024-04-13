@@ -38,8 +38,7 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_SELECT: return "select";
         case TB_LOOKUP: return "lookup";
 
-        case TB_ARRAY_ACCESS: return "array";
-        case TB_MEMBER_ACCESS: return "member";
+        case TB_PTR_OFFSET: return "ptr_offset";
 
         case TB_CYCLE_COUNTER: return "cyclecnt";
         case TB_SAFEPOINT_POLL: return "safepoint.poll";
@@ -313,18 +312,6 @@ static void print_graph_node(TB_Function* f, TB_PrintCallback callback, void* us
                 } else {
                     P("cst: %#0"PRIx64, num->value);
                 }
-                break;
-            }
-
-            case TB_ARRAY_ACCESS: {
-                int64_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
-                P("*%td", stride);
-                break;
-            }
-
-            case TB_MEMBER_ACCESS: {
-                int64_t offset = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
-                P("+%td", offset);
                 break;
             }
 

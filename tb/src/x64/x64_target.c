@@ -243,14 +243,16 @@ static int node_2addr(TB_Node* n) {
     switch (n->type) {
         // ANY_GPR = OP(ANY_GPR, ANY_GPR)
         case x86_add: case x86_or:  case x86_and: case x86_sub:
-        case x86_xor: case x86_cmp: case x86_mov: case x86_test:
-        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
+        case x86_xor: case x86_cmp: case x86_test:
+        case x86_vadd: case x86_vmul: case x86_vsub:
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             return op->mode == MODE_REG ? 4 : 0;
         }
 
+        case x86_mov:
+        case x86_vmov:
         // ANY_GPR = OP(ANY_GPR, IMM)
         case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
         case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
@@ -545,7 +547,13 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             case 32: op_type = x86_mov;     break;
         }
 
-        if (op_type >= 0) {
+        if (op_type == x86_mov) {
+            RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
+            TB_Node* op = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+            set_input(f, op, n->inputs[1], 1);
+            TB_NODE_SET_EXTRA(op, TB_NodeMachCopy, .def = rm, .use = rm);
+            return op;
+        } else if (op_type >= 0) {
             TB_Node* op = tb_alloc_node(f, op_type, n->dt, 5, sizeof(X86MemOp));
             set_input(f, op, n->inputs[1], 2);
             return op;
@@ -865,7 +873,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     if ((n->type >= TB_AND && n->type <= TB_SUB)   ||
         (n->type >= TB_FADD && n->type <= TB_FMAX) ||
         n->type == TB_LOAD || n->type == TB_STORE  ||
-        n->type == TB_MEMBER_ACCESS || n->type == TB_ARRAY_ACCESS) {
+        n->type == TB_PTR_OFFSET) {
         const static int ops[]  = { x86_and, x86_or, x86_xor, x86_add, x86_sub };
         const static int fops[] = { x86_vadd, x86_vsub, x86_vmul, x86_vdiv, x86_vmin, x86_vmax };
 
@@ -964,23 +972,28 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         }
 
         // [... + disp]
-        if (n->type == TB_MEMBER_ACCESS) {
-            op_extra->disp = TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset;
-            n = n->inputs[1];
+        if (n->type == TB_PTR_OFFSET && n->inputs[2]->type == TB_ICONST) {
+            int64_t disp = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
+            if (disp == (int32_t) disp) {
+                op_extra->disp = disp;
+                n = n->inputs[1];
+            }
         }
 
         if (n->type == TB_SYMBOL) {
             n = mach_symbol(f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
-        } else if (n->type == TB_ARRAY_ACCESS) {
-            int32_t stride = TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride;
-            int scale = tb_ffs(stride) - 1;
+        } else if (n->type == TB_PTR_OFFSET) {
+            set_input(f, op, n->inputs[2], 3);
+            if (n->inputs[2]->type == TB_SHL && n->inputs[2]->inputs[2]->type == TB_ICONST) {
+                uint64_t scale = TB_NODE_GET_EXTRA_T(n->inputs[2]->inputs[2], TB_NodeInt)->value;
 
-            // [... + index*scale] given scale is 1,2,4,8
-            if (stride == (1<<scale) && scale <= 3) {
-                set_input(f, op, n->inputs[2], 3);
-                op_extra->scale = scale;
-                n = n->inputs[1];
+                // [... + index*scale] given scale is 1,2,4,8
+                if (scale <= 3) {
+                    set_input(f, op, n->inputs[2]->inputs[1], 3);
+                    op_extra->scale = scale;
+                }
             }
+            n = n->inputs[1];
         }
 
         // sometimes introduced by other isel bits

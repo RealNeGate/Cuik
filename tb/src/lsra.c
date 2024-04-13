@@ -231,7 +231,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                     VReg* in_def = node_vreg(ctx, in);
 
-                    #if 1
+                    #if 0
                     RegMask* glb = tb__reg_mask_meet(ctx, in_def->mask, in_mask);
                     if (glb == &TB_REG_EMPTY) {
                         // hard-split
@@ -326,7 +326,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                     // if we're writing to a fixed interval, insert copy
                     // such that we only guarentee a fixed location at the
                     // def site.
-                    #if 0
+                    #if 1
                     int reg = fixed_reg_mask(def_mask);
                     if (reg >= 0 && n->type != TB_MACH_COPY) {
                         int fixed_vreg = ra.fixed[def_mask->class] + reg;
@@ -590,11 +590,11 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                 int t = ra.failures[i].time;
                 if (t >= 0) {
-                    split_intersecting(ctx, &ra, vreg, ra.failures[i].mask, ra.failures[i].time);
+                    // split_intersecting(ctx, &ra, vreg, ra.failures[i].mask, ra.failures[i].time);
+                    spill_entire_life(ctx, &ra, vreg, ra.failures[i].mask);
                 } else {
                     RegMask* out = ctx->constraint(ctx, vreg->n, NULL);
                     spill_entire_life(ctx, &ra, vreg, out);
-                    dump_sched(ctx, &ra);
                 }
             }
 
@@ -700,25 +700,6 @@ static int next_use(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int pos) {
     return earliest;
 }
 
-static float get_spill_cost(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg) {
-    if (!isnan(vreg->spill_cost)) {
-        return vreg->spill_cost;
-    } else if (vreg->n->type == TB_ICONST) {
-        // these can rematerialize
-        return (vreg->spill_cost = -1.0f);
-    }
-
-    float c = 0.0f;
-
-    // sum of (block_freq * uses_in_block)
-    FOR_USERS(u, vreg->n) {
-        TB_Node* un = USERN(u);
-        c += ctx->f->scheduled[un->gvn]->freq;
-    }
-
-    return (vreg->spill_cost = c);
-}
-
 // returns -1 if no registers are available
 static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int vreg_id) {
     // let's figure out how long
@@ -751,7 +732,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
         int best = -1;
         FOR_N(i, 0, ra->num_regs[rc]) if (set_get(&ra->active_set[rc], i)) {
             int id = ra->active[rc][i];
-            float c = get_spill_cost(ctx, ra, &ctx->vregs[id]);
+            float c = get_spill_cost(ctx, &ctx->vregs[id]);
             if (c < best_cost) {
                 best_cost = c;
                 best = id;
@@ -760,6 +741,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
 
         assert(best >= 0);
         highest = ctx->vregs[best].assigned;
+        ctx->vregs[best].active_range = &NULL_RANGE;
 
         TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   spill v%u (", vreg_id), print_reg_name(rc, highest), printf(" was split such that it's at least first half is free)\x1b[0m\n"));
 
@@ -768,8 +750,6 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
 
         RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
         aarray_push(ra->failures, (AllocFailure){ FAILURE_SPILL_SELF, p, best, spill_rm });
-
-        __debugbreak();
         return highest;
     } else if (vreg->end_time <= pos) {
         // we can steal it completely

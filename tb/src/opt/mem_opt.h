@@ -7,17 +7,13 @@ typedef struct {
 } KnownPointer;
 
 static bool is_local_ptr(TB_Node* n) {
-    // skip past ptr arith
-    while (n->type == TB_MEMBER_ACCESS || n->type == TB_ARRAY_ACCESS) {
-        n = n->inputs[1];
-    }
-
+    while (n->type == TB_PTR_OFFSET) { n = n->inputs[1]; }
     return n->type == TB_LOCAL;
 }
 
 static KnownPointer known_pointer(TB_Node* n) {
-    if (n->type == TB_MEMBER_ACCESS) {
-        return (KnownPointer){ n->inputs[1], TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset };
+    if (n->type == TB_PTR_OFFSET && n->inputs[2]->type == TB_ICONST) {
+        return (KnownPointer){ n->inputs[1], TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value };
     } else {
         return (KnownPointer){ n, 0 };
     }
@@ -78,7 +74,7 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
             return n;
         } else {
             TB_Node* base = addr;
-            while (base->type == TB_MEMBER_ACCESS || base->type == TB_ARRAY_ACCESS) {
+            while (base->type == TB_PTR_OFFSET) {
                 base = base->inputs[1];
             }
 

@@ -434,10 +434,18 @@ TB_Node* tb_inst_array_access(TB_Function* f, TB_Node* base, TB_Node* index, int
         return tb_inst_member_access(f, base, x * stride);
     }
 
-    TB_Node* n = tb_alloc_node(f, TB_ARRAY_ACCESS, TB_TYPE_PTR, 3, sizeof(TB_NodeArray));
+    assert(stride != 0);
+    TB_Node* con = tb_inst_sint(f, TB_TYPE_I64, stride);
+    TB_Node* scl = index;
+    if (stride != 1) {
+        scl = tb_alloc_node(f, TB_MUL, TB_TYPE_I64, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, scl, index, 1);
+        set_input(f, scl, con,   2);
+    }
+
+    TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
     set_input(f, n, base, 1);
-    set_input(f, n, index, 2);
-    TB_NODE_SET_EXTRA(n, TB_NodeArray, .stride = stride);
+    set_input(f, n, scl, 2);
     return tb_opt_gvn_node(f, n);
 }
 
@@ -446,9 +454,10 @@ TB_Node* tb_inst_member_access(TB_Function* f, TB_Node* base, int64_t offset) {
         return base;
     }
 
-    TB_Node* n = tb_alloc_node(f, TB_MEMBER_ACCESS, TB_TYPE_PTR, 2, sizeof(TB_NodeMember));
+    TB_Node* con = tb_inst_sint(f, TB_TYPE_I64, offset);
+    TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
     set_input(f, n, base, 1);
-    TB_NODE_SET_EXTRA(n, TB_NodeMember, .offset = offset);
+    set_input(f, n, con,  2);
     return tb_opt_gvn_node(f, n);
 }
 

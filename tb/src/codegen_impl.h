@@ -445,7 +445,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        // tb__chaitin(&ctx, arena);
+        // tb__chaitin_briggs(&ctx, arena);
         tb__lsra(&ctx, arena);
         nl_hashset_free(ctx.mask_intern);
 

@@ -47,7 +47,7 @@ static bool good_mem_op(TB_Function* f, TB_Node* n) { // ld, st, memcpy, memset
 }
 
 static bool same_base(TB_Node* a, TB_Node* b) {
-    while (b->type == TB_MEMBER_ACCESS || b->type == TB_ARRAY_ACCESS) {
+    while (b->type == TB_PTR_OFFSET) {
         if (a == b) return true;
         b = b->inputs[1];
     }
@@ -64,8 +64,7 @@ static TB_Node* next_mem_user(TB_Node* n) {
 }
 
 static int categorize_alias_idx(LocalSplitter* restrict ctx, TB_Node* n) {
-    // skip any member or array accesses
-    while (n->type == TB_ARRAY_ACCESS || n->type == TB_MEMBER_ACCESS) {
+    while (n->type == TB_PTR_OFFSET) {
         n = n->inputs[1];
     }
 
@@ -370,7 +369,7 @@ int tb_opt_locals(TB_Function* f) {
         RenameMode mode = RENAME_VALUE;
 
         FOR_USERS(mem, addr) {
-            if (USERI(mem) == 1 && (USERN(mem)->type == TB_MEMBER_ACCESS || USERN(mem)->type == TB_ARRAY_ACCESS)) {
+            if (USERI(mem) == 1 && USERN(mem)->type == TB_PTR_OFFSET) {
                 // pointer arith are also fair game, since they'd stay in bounds (given no UB)
                 // mode = RENAME_MEMORY;
                 mode = RENAME_NONE;

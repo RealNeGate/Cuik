@@ -1,4 +1,37 @@
 
+// for the usage histogram
+typedef struct {
+    TB_DataType dt;
+    int step;
+    ArenaArray(TB_User) uses;
+} UsageBin;
+
+typedef struct {
+    TB_Arena* arena;
+    int leftovers;
+    int total_uses;
+    ArenaArray(UsageBin) bins;
+} UsageHisto;
+
+static int usage_bin_cmp(const void* a, const void* b) {
+    UsageBin* const* aa = a;
+    UsageBin* const* bb = b;
+    return aa[0]->uses - bb[0]->uses;
+}
+
+static UsageBin* usage_histo_bin(UsageHisto* histo, TB_DataType dt, int step) {
+    aarray_for(i, histo->bins) {
+        if (histo->bins[i].dt.raw == dt.raw && histo->bins[i].step == step) {
+            return &histo->bins[i];
+        }
+    }
+
+    // add new bin
+    UsageBin b = { dt, step, aarray_create(histo->arena, TB_User, 16) };
+    aarray_push(histo->bins, b);
+    return &histo->bins[aarray_length(histo->bins) - 1];
+}
+
 // Affine loop accessors
 static TB_Node* affine_loop_latch(TB_Node* header) {
     if (header->type == TB_AFFINE_LOOP &&
@@ -127,7 +160,7 @@ static void replace_phis(TB_Function* f, uint32_t* before, TB_Node* phi, TB_Node
         TB_Node* un = USERN(&phi->users[i]);
         int ui      = USERI(&phi->users[i]);
         if ((before[un->gvn / 32] & (1u << (un->gvn % 32))) == 0) {
-            printf("PHI %%%-3u was used past the loop at %%%-3u (%%%-3u -> %%%-3u)\n", phi->gvn, un->gvn, un->inputs[ui]->gvn, new_phi->gvn);
+            // printf("PHI %%%-3u was used past the loop at %%%-3u (%%%-3u -> %%%-3u)\n", phi->gvn, un->gvn, un->inputs[ui]->gvn, new_phi->gvn);
             set_input(f, un, new_phi, ui);
         } else {
             i += 1;
@@ -135,122 +168,127 @@ static void replace_phis(TB_Function* f, uint32_t* before, TB_Node* phi, TB_Node
     }
 }
 
-typedef struct {
-    int leftovers;
-    int uses;
-    TB_DataType dt;
-} UseCast;
-
-static void indvar_scan_uses(TB_Function* f, UseCast* best, TB_Node* phi, TB_Node* cond, TB_Node* op, int steps) {
-    FOR_USERS(u, op) {
+static void indvar_scan_uses(TB_Function* f, UsageHisto* histo, TB_Node* phi, TB_Node* op) {
+    FOR_USERS(u, phi) {
         TB_Node* use_n = USERN(u);
+        if (use_n == phi || use_n == op) { continue; }
 
-        if (use_n == phi) continue;
-        if (use_n == cond) continue;
-        if (use_n == op) continue;
-
-        if (use_n->type == TB_ADD || use_n->type == TB_SUB) {
-            // arithmetic is something we can walk past
-            if (steps < 2) {
-                indvar_scan_uses(f, best, phi, cond, use_n, steps + 1);
-            } else {
-                best->leftovers += 1;
-            }
+        uint64_t* scale;
+        UsageBin* bin = NULL;
+        if (use_n->type == TB_SHL && USERI(u) == 1 && (scale = iconst(use_n->inputs[2]), scale)) {
+            bin = usage_histo_bin(histo, phi->dt, 1ull << *scale);
         } else if (use_n->type == TB_SIGN_EXT || use_n->type == TB_ZERO_EXT) {
-            // if we've got any casts, let's try to see which is most common
-            int node_uses = USERN(u)->user_count;
-            if (node_uses > best->uses) {
-                best->uses = node_uses;
-                best->dt = use_n->dt;
+            bin = usage_histo_bin(histo, use_n->dt, 1);
+        } else {
+            histo->leftovers += 1;
+            histo->total_uses += 1;
+            continue;
+        }
+
+        FOR_USERS(u2, use_n) {
+            TB_Node* use_of_use = USERN(u2);
+            if (use_of_use == phi || use_of_use == op) { continue; }
+            aarray_push(bin->uses, *u2);
+            histo->total_uses += 1;
+        }
+    }
+}
+
+static TB_Node* indvar_apply(TB_Function* f, TB_Node* n, TB_DataType best_dt, int scale) {
+    if (best_dt.raw != n->dt.raw) {
+        TB_Node* k = tb_alloc_node(f, TB_ZERO_EXT, best_dt, 2, 0);
+        set_input(f, k, n, 1);
+        mark_node(f, k);
+        n = k;
+    }
+
+    if (scale != 1) {
+        TB_Node* con = make_int_node(f, best_dt, scale);
+        TB_Node* k = tb_alloc_node(f, TB_MUL, best_dt, 3, 0);
+        set_input(f, k, n,   1);
+        set_input(f, k, con, 2);
+
+        n = tb_opt_peep_node(f, k);
+        mark_node(f, n);
+    }
+
+    return n;
+}
+
+static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* op) {
+    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
+    UsageHisto histo = { f->tmp_arena, 0, 0, aarray_create(f->tmp_arena, UsageBin, 16) };
+
+    indvar_scan_uses(f, &histo, phi, op);
+    qsort(histo.bins, aarray_length(histo.bins), sizeof(UsageBin), usage_bin_cmp);
+
+    #if 0
+    printf("IV %%%u:\n", phi->gvn);
+    {
+        printf("  BASE: ");
+        FOR_N(j, 0, histo.leftovers) { printf("#"); }
+        printf("\n");
+    }
+    aarray_for(i, histo.bins) {
+        printf("  dt=i%d, step=%d: ", histo.bins[i].dt.data, histo.bins[i].step);
+        aarray_for(j, histo.bins[i].uses) { printf("#"); }
+        printf("\n");
+    }
+    #endif
+
+    // walk candidates from highest use to lowest (they're sorted)
+    bool progress = false;
+    int i = aarray_length(histo.bins);
+    while (i--) {
+        UsageBin* best_bin = &histo.bins[i];
+        float use_percent = (float)aarray_length(best_bin->uses) / (float)histo.total_uses;
+        if (use_percent > 0.95f) {
+            TB_DataType best_dt = best_bin->dt;
+            int best_step = best_bin->step;
+            uint64_t* inc = iconst(op->inputs[2]);
+
+            // construct cooler IV
+            TB_Node* scaled_op = tb_alloc_node(f, TB_ADD, best_dt, 3, sizeof(TB_NodeBinopInt));
+            TB_Node* scaled_iv = tb_alloc_node(f, TB_PHI, best_dt, 3, 0);
+            mark_node(f, scaled_iv);
+            mark_node(f, scaled_op);
+
+            TB_Node* scaled_inc = make_int_node(f, best_bin->dt, *inc * best_step);
+            set_input(f, scaled_op, scaled_iv,      1);
+            set_input(f, scaled_op, scaled_inc,     2);
+            mark_node(f, scaled_inc);
+
+            TB_Node* scaled_init = indvar_apply(f, phi->inputs[1], best_bin->dt, best_step);
+            set_input(f, scaled_iv, phi->inputs[0], 0);
+            set_input(f, scaled_iv, scaled_init,    1);
+            set_input(f, scaled_iv, scaled_op,      2);
+            mark_node(f, scaled_init);
+
+            // replace relevant users
+            histo.total_uses -= aarray_length(best_bin->uses);
+            aarray_for(j, best_bin->uses) {
+                TB_User* u = &best_bin->uses[j];
+                set_input(f, USERN(u), scaled_iv, USERI(u));
+                mark_users(f, USERN(u));
             }
-        } else {
-            best->leftovers += 1;
-        }
-    }
-}
 
-static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* op, TB_Node* limit) {
-    assert(op->dt.raw == phi->dt.raw);
-    UseCast best = { 0, 0, op->dt };
-
-    indvar_scan_uses(f, &best, phi, cond, op, 0);
-    if (best.uses < best.leftovers || best.dt.raw == phi->dt.raw) {
-        return false;
-    }
-
-    TB_DataType old_dt = phi->dt;
-
-    // induction var can trivially scale up, the leftover users can
-    // use the truncate
-    phi->dt = best.dt;
-    op->dt  = best.dt;
-    latuni_set(f, op,  NULL);
-    latuni_set(f, phi, NULL);
-
-    // upscale init
-    TB_Node* scaled_init = tb_alloc_node(f, TB_ZERO_EXT, best.dt, 2, 0);
-    set_input(f, scaled_init, phi->inputs[1], 1);
-    set_input(f, phi, scaled_init, 1);
-    mark_node(f, scaled_init);
-
-    // upscale limit
-    if (limit != NULL) {
-        // TODO(NeGate): does signedness matter here?
-        TB_Node* scaled_limit = tb_alloc_node(f, TB_ZERO_EXT, best.dt, 2, 0);
-        set_input(f, scaled_limit, limit, 1);
-        mark_node(f, scaled_limit);
-
-        assert(cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_SLE);
-        TB_NODE_SET_EXTRA(cond, TB_NodeCompare, .cmp_dt = best.dt);
-
-        // if the limit is on the left, the add+phi are on the right (and vice versa)
-        if (cond->inputs[1] == limit) {
-            set_input(f, cond, scaled_limit, 1);
-        } else {
-            assert(cond->inputs[2] == limit);
-            set_input(f, cond, scaled_limit, 2);
+            mark_node_n_users(f, scaled_iv);
+            progress = true;
         }
     }
 
-    TB_Node* phi_cast = tb_alloc_node(f, TB_TRUNCATE, old_dt, 2, 0);
-    mark_node(f, phi_cast);
+    // TODO(NeGate): idk, simplify some IVs
+    // if the only leftover use is 1, we're most likely dealing with an
+    // IV only responsible for iterating to completition, if so we should
+    // simplify the loop counter into:
+    //
+    //   i := 0
+    //   while (i++ < n) {    =>   while (n--) {
+    //     ...                       ...
+    //   }                         }
+    //
 
-    // replace all uses with a different size with a dumb truncate (peeps will clean up most likely)
-    for (size_t i = 0; i < phi->user_count;) {
-        TB_Node* un = USERN(&phi->users[i]);
-        int ui      = USERI(&phi->users[i]);
-        if (un == op || un == phi || un == cond) { i += 1; continue; }
-        set_input(f, un, phi_cast, ui);
-    }
-    set_input(f, phi_cast, phi, 1);
-    mark_users(f, phi_cast);
-
-    TB_Node* op_cast = tb_alloc_node(f, TB_TRUNCATE, old_dt, 2, 0);
-    mark_node(f, op_cast);
-
-    for (size_t i = 0; i < op->user_count;) {
-        TB_Node* un = USERN(&op->users[i]);
-        int ui      = USERI(&op->users[i]);
-        if (un == op || un == phi || un == cond) { i += 1; continue; }
-        set_input(f, un, op_cast, ui);
-    }
-    set_input(f, op_cast, op, 1);
-    mark_users(f, op_cast);
-
-    mark_node_n_users(f, op);
-    mark_node_n_users(f, phi);
-    return true;
-}
-
-// only case we handle rn is making a bigger stride when we proved the induction var never goes past
-static bool indvar_strength_reduction(TB_Function* f, TB_Node* phi, TB_Node* cond, TB_Node* end_cond, TB_Node* op) {
-    uint64_t* init = iconst(phi->inputs[1]);
-    uint64_t* end = end_cond ? iconst(end_cond) : NULL;
-
-    if (init && end) {
-        tb_todo();
-    }
-
+    tb_arena_restore(f->tmp_arena, sp);
     return false;
 }
 
@@ -293,7 +331,19 @@ static bool affine_indvar(TB_Node* n, TB_Node* header) {
         && n->inputs[2]->type == TB_ICONST;
 }
 
-static bool find_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* restrict var) {
+static uint64_t* find_affine_indvar(TB_Node* n, TB_Node* header) {
+    if (n->type == TB_PHI &&
+        n->inputs[0] == header &&
+        n->inputs[2]->type == TB_ADD &&
+        n->inputs[2]->inputs[1] == n &&
+        n->inputs[2]->inputs[2]->type == TB_ICONST) {
+        return &TB_NODE_GET_EXTRA_T(n->inputs[2]->inputs[2], TB_NodeInt)->value;
+    }
+
+    return NULL;
+}
+
+static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* restrict var) {
     bool exit_when_key = !TB_NODE_GET_EXTRA_T(header->inputs[1], TB_NodeProj)->index;
     TB_NodeBranchProj* if_br = cfg_if_branch(latch);
     assert(if_br);
@@ -486,8 +536,8 @@ void tb_opt_build_loop_tree(TB_Function* f) {
                 TB_User* after_exit = cfg_next_user(exit_proj);
                 mark_node_n_users(f, USERN(after_exit));
                 TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
-                set_input(f, join, exit_proj, 0);
-                set_input(f, join, exit_loop, 1);
+                set_input(f, join, exit_loop, 0);
+                set_input(f, join, exit_proj, 1);
                 set_input(f, USERN(after_exit), join, USERI(after_exit));
                 mark_node(f, join);
                 // latch gets moved down to the bottom (backedge)
@@ -555,7 +605,7 @@ void tb_opt_build_loop_tree(TB_Function* f) {
 
             if (latch != NULL) {
                 TB_InductionVar var;
-                if (find_indvar(header, latch, &var)) {
+                if (find_latch_indvar(header, latch, &var)) {
                     type = TB_AFFINE_LOOP;
 
                     uint64_t* init = iconst(var.phi->inputs[1]);
@@ -617,7 +667,6 @@ void tb_opt_build_loop_tree(TB_Function* f) {
             }
         }
     }
-
     tb_free_cfg(&cfg);
     f->loop_list = loop_list;
 
@@ -628,21 +677,23 @@ void tb_opt_build_loop_tree(TB_Function* f) {
 void tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop", NULL);
 
-    // find loops with affine induction vars
-    for (TB_LoopInfo *loop = f->loop_list; loop; loop = loop->next) {
+    /*for (TB_LoopInfo *loop = f->loop_list; loop; loop = loop->next) {
         if (loop->header->type == TB_AFFINE_LOOP) {
-            TB_Node* latch = affine_loop_latch(loop->header);
+            for (size_t i = 0; i < loop->header->user_count; i++) {
+                TB_Node* phi = USERN(&loop->header->users[i]);
+                if (USERI(&loop->header->users[i]) != 0) { continue; }
 
-            TB_InductionVar var;
-            if (latch && find_indvar(loop->header, latch, &var)) {
-                // we'll just run these alongside the loop detection but maybe they
-                // should be a separate pass?
-                if (indvar_simplify(f, var.phi, var.cond, var.phi->inputs[2], var.end_cond)) {
-                    TB_OPTDEBUG(PASSES)(printf("      * Simplified induction var on phi %%%d\n", var.phi->gvn));
+                // stepping induction var? ok cool, we actually care for these
+                uint64_t* step = find_affine_indvar(phi, loop->header);
+                if (step) {
+                    TB_OPTDEBUG(PASSES)(printf("      * Found IV: %%%u = %"PRId64"*trips + %%%u\n", phi->gvn, *step, phi->inputs[1]->gvn));
+                    if (indvar_simplify(f, phi, phi->inputs[2])) {
+                        TB_OPTDEBUG(PASSES)(printf("      * Simplified induction var on phi %%%d\n", var.phi->gvn));
+                    }
                 }
             }
         }
-    }
+    }*/
 
     cuikperf_region_end();
 }

@@ -353,16 +353,6 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     case TB_BITCAST:
                     break;
 
-                    case TB_MEMBER_ACCESS: {
-                        printf(", %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeMember)->offset);
-                        break;
-                    }
-
-                    case TB_ARRAY_ACCESS: {
-                        printf(", %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeArray)->stride);
-                        break;
-                    }
-
                     case TB_PROJ: {
                         printf(", %d", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
                         break;
