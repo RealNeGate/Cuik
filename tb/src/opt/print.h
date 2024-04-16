@@ -4,39 +4,16 @@ typedef struct {
     TB_CFG cfg;
 } PrinterCtx;
 
-static void print_type(TB_DataType dt) {
+static int print_type(TB_DataType dt) {
     switch (dt.type) {
-        case TB_TAG_INT: {
-            if (dt.data == 0) printf("void");
-            else printf("i%d", dt.data);
-            break;
-        }
-        case TB_TAG_PTR: {
-            if (dt.data == 0) printf("ptr");
-            else printf("ptr%d", dt.data);
-            break;
-        }
-        case TB_TAG_F32: {
-            printf("f32");
-            break;
-        }
-        case TB_TAG_F64: {
-            printf("f64");
-            break;
-        }
-        case TB_TAG_TUPLE: {
-            printf("tuple");
-            break;
-        }
-        case TB_TAG_CONTROL: {
-            printf("ctrl");
-            break;
-        }
-        case TB_TAG_MEMORY: {
-            printf("mem");
-            break;
-        }
-        default: tb_todo();
+        case TB_TAG_INT:     return dt.data == 0 ? printf("void") : printf("i%d", dt.data);
+        case TB_TAG_PTR:     return dt.data == 0 ? printf("ptr") : printf("ptr%d", dt.data);
+        case TB_TAG_F32:     return printf("f32");
+        case TB_TAG_F64:     return printf("f64");
+        case TB_TAG_TUPLE:   return printf("tuple");
+        case TB_TAG_CONTROL: return printf("ctrl");
+        case TB_TAG_MEMORY:  return printf("mem");
+        default: tb_todo();  return 0;
     }
 }
 
@@ -497,7 +474,7 @@ void tb_print(TB_Function* f, TB_Arena* tmp) {
     ctx.cfg = tb_compute_rpo(f, &ws);
 
     // schedule nodes
-    tb_global_schedule(f, &ws, ctx.cfg, false, NULL);
+    tb_global_schedule(f, &ws, ctx.cfg, false, false, NULL);
 
     TB_Node* end_bb = NULL;
     FOR_N(i, 0, ctx.cfg.block_count) {

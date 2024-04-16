@@ -81,10 +81,11 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
 
     if (cfg_is_fork(end)) {
         FOR_USERS(u, end) {
-            if (!cfg_is_cproj(USERN(u))) continue;
+            TB_Node* un = USERN(u);
+            if (!cfg_is_cproj(un)) continue;
 
             // we might have some memory phis over here if the projections aren't bbs
-            ptrdiff_t search = nl_map_get(cfg->node_to_block, USERN(u));
+            ptrdiff_t search = nl_map_get(cfg->node_to_block, un);
             if (search >= 0) continue;
 
             TB_User* succ = cfg_next_user(end);

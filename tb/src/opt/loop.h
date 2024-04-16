@@ -215,12 +215,14 @@ static TB_Node* indvar_apply(TB_Function* f, TB_Node* n, TB_DataType best_dt, in
     return n;
 }
 
-static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* op) {
+static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* op, TB_InductionVar* latch_iv) {
     TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
     UsageHisto histo = { f->tmp_arena, 0, 0, aarray_create(f->tmp_arena, UsageBin, 16) };
 
     indvar_scan_uses(f, &histo, phi, op);
     qsort(histo.bins, aarray_length(histo.bins), sizeof(UsageBin), usage_bin_cmp);
+
+    int64_t step = TB_NODE_GET_EXTRA_T(op->inputs[2], TB_NodeInt)->value;
 
     #if 0
     printf("IV %%%u:\n", phi->gvn);
@@ -287,6 +289,40 @@ static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* op) {
     //     ...                       ...
     //   }                         }
     //
+    // it's one less register during the loop and the exact same perf as
+    // incrementing up.
+    if (histo.leftovers == 0 && latch_iv && latch_iv->phi == phi && phi->dt.type == TB_TAG_INT && op->user_count == 2) {
+        TB_Node* latch = affine_loop_latch(phi->inputs[0]);
+        assert(latch);
+
+        TB_Node* one = make_int_node(f, phi->dt, -1);
+        TB_Node* sub = tb_alloc_node(f, TB_ADD, phi->dt, 3, sizeof(TB_NodeBinopInt));
+        TB_Node* new_iv = tb_alloc_node(f, TB_PHI, phi->dt, 3, 0);
+
+        // new_iv = phi(limit, sub)
+        set_input(f, new_iv, phi->inputs[0],     0);
+        set_input(f, new_iv, latch_iv->end_cond, 1);
+        set_input(f, new_iv, sub,                2);
+        mark_node(f, new_iv);
+        // sub = new_iv - 1
+        set_input(f, sub, new_iv, 1);
+        set_input(f, sub, one, 2);
+        mark_node(f, sub);
+        // if (sub) backedge else exit
+        set_input(f, latch, sub, 1);
+
+        TB_Node* backedge_proj = phi->inputs[0]->inputs[1];
+        int exit_proj_i        = TB_NODE_GET_EXTRA_T(backedge_proj, TB_NodeProj)->index;
+        TB_Node* exit_proj     = USERN(proj_with_index(latch, 1 - exit_proj_i));
+
+        // wanna exit on sub=0
+        TB_NODE_SET_EXTRA(exit_proj,     TB_NodeBranchProj, .index = 0, .taken = 10, .key = 0);
+        TB_NODE_SET_EXTRA(backedge_proj, TB_NodeBranchProj, .index = 1, .taken = 90, .key = 0);
+
+        tb_kill_node(f, phi);
+        tb_kill_node(f, op);
+        tb_kill_node(f, latch_iv->cond);
+    }
 
     tb_arena_restore(f->tmp_arena, sp);
     return false;
@@ -585,6 +621,7 @@ void tb_opt_build_loop_tree(TB_Function* f) {
                         set_input(f, new_phi, phi->inputs[2], 2);
 
                         replace_phis(f, before, phi, new_phi);
+                        mark_node(f, new_phi);
                     }
                 }
                 tb_arena_restore(f->tmp_arena, sp2);
@@ -677,8 +714,16 @@ void tb_opt_build_loop_tree(TB_Function* f) {
 void tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop", NULL);
 
-    /*for (TB_LoopInfo *loop = f->loop_list; loop; loop = loop->next) {
+    #if 0
+    for (TB_LoopInfo *loop = f->loop_list; loop; loop = loop->next) {
         if (loop->header->type == TB_AFFINE_LOOP) {
+            TB_InductionVar var;
+            bool has_latch_iv = false;
+            TB_Node* latch = affine_loop_latch(loop->header);
+            if (latch && find_latch_indvar(loop->header, latch, &var)) {
+                has_latch_iv = true;
+            }
+
             for (size_t i = 0; i < loop->header->user_count; i++) {
                 TB_Node* phi = USERN(&loop->header->users[i]);
                 if (USERI(&loop->header->users[i]) != 0) { continue; }
@@ -687,13 +732,14 @@ void tb_opt_loops(TB_Function* f) {
                 uint64_t* step = find_affine_indvar(phi, loop->header);
                 if (step) {
                     TB_OPTDEBUG(PASSES)(printf("      * Found IV: %%%u = %"PRId64"*trips + %%%u\n", phi->gvn, *step, phi->inputs[1]->gvn));
-                    if (indvar_simplify(f, phi, phi->inputs[2])) {
+                    if (indvar_simplify(f, phi, phi->inputs[2], has_latch_iv ? &var : NULL)) {
                         TB_OPTDEBUG(PASSES)(printf("      * Simplified induction var on phi %%%d\n", var.phi->gvn));
                     }
                 }
             }
         }
-    }*/
+    }
+    #endif
 
     cuikperf_region_end();
 }

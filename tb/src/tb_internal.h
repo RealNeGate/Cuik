@@ -563,6 +563,7 @@ struct ICodeGen {
     size_t (*extra_bytes)(TB_Node* n);
     const char* (*node_name)(TB_Node* n);
     void (*print_extra)(TB_Node* n);
+    void (*print_dumb_extra)(TB_Node* n);
 
     void (*get_data_type_size)(TB_DataType dt, size_t* out_size, size_t* out_align);
     // return the number of non-local patches

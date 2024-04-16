@@ -119,7 +119,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 }
 
 static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
-    TB_OPTDEBUG(CODEGEN)(tb_print(f, f->tmp_arena));
+    TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
 
     TB_Arena* arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
@@ -231,49 +231,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         tb_renumber_nodes(f, ws);
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
-        TB_OPTDEBUG(CODEGEN)(tb_print(f, arena));
 
-        cfg = tb_compute_rpo(f, ws);
-        tb_global_schedule(f, ws, cfg, true, node_latency);
-
-        // compute dumb loop nests (we're inside another loop if it dominates us
-        // and we dominate it's backedge)
-        FOR_N(i, 0, cfg.block_count) {
-            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
-            bb->loop = cfg_is_natural_loop(bb->start) ? bb : NULL;
-            bb->freq = 1.0f;
-        }
-
-        FOR_REV_N(i, 1, cfg.block_count) {
-            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
-
-            if (bb->loop == NULL) {
-                // scan for potential parent loop
-                TB_BasicBlock* dom = bb->dom;
-                while (dom != dom->dom) {
-                    if (dom->loop) {
-                        // ok we found a loop, now guarentee we're dominating it's backedge
-                        TB_Node* backedge = cfg_get_pred(&cfg, dom->loop->start, 1);
-                        if (slow_dommy(&cfg, bb->start, backedge)) {
-                            bb->loop = dom->loop;
-                            break;
-                        }
-                    }
-                    dom = dom->dom;
-                }
-            }
-        }
-
-        // really dumb block frequencies (eventually we want heuristics around exit paths)
-        FOR_N(i, 0, cfg.block_count) {
-            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
-
-            TB_BasicBlock* loop = bb->loop;
-            while (loop) {
-                bb->freq *= 10.0f;
-                loop = loop->dom ? loop->dom->loop : NULL;
-            }
-        }
+        ctx.cfg = cfg = tb_compute_rpo(f, ws);
+        tb_global_schedule(f, ws, cfg, true, true, node_latency);
 
         log_phase_end(f, og_size, "GCM");
     }
@@ -438,14 +398,14 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
                 if (vreg_id > 0 && n->type != TB_MACH_MOVE) {
                     RegMask* def_mask = node_constraint(&ctx, n, NULL);
-                    ctx.vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1 };
+                    ctx.vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN };
                 }
             }
         }
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        // tb__chaitin_briggs(&ctx, arena);
+        // tb__chaitin(&ctx, arena);
         tb__lsra(&ctx, arena);
         nl_hashset_free(ctx.mask_intern);
 
@@ -613,7 +573,7 @@ static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_ali
         }
         case TB_TAG_F32: *out_size = *out_align = 4; break;
         case TB_TAG_F64: *out_size = *out_align = 8; break;
-        case TB_TAG_PTR:     *out_size = *out_align = 8; break;
+        case TB_TAG_PTR: *out_size = *out_align = 8; break;
         default: tb_unreachable();
     }
 }

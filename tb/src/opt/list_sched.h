@@ -58,7 +58,7 @@ static ArenaArray(ReadyNode) ready_up(ArenaArray(ReadyNode) ready, Set* ready_se
 }
 
 static bool can_ready_user(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, Set* ready_set, TB_Node* n) {
-    return !set_get(ready_set, n->gvn) && f->scheduled[n->gvn] == bb && is_node_ready(f, ws, bb, n);
+    return !set_get(ready_set, n->gvn) && f->scheduled[n->gvn] == bb && !worklist_test(ws, n) && is_node_ready(f, ws, bb, n);
 }
 
 void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count) {
@@ -75,7 +75,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         FOR_USERS(u, root) {
             if (USERN(u)->type == TB_MACH_PROJ || USERN(u)->type == TB_PROJ) {
                 assert(USERI(u) == 0);
-                TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH: "), tb_print_dumb_node(NULL, USERN(u)), printf("\n"));
+                TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, USERN(u)), printf("\n"));
 
                 worklist_push(ws, USERN(u));
             }
@@ -83,7 +83,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     } else {
         FOR_USERS(u, bb->start) if (USERN(u)->type == TB_PHI) {
             assert(USERI(u) == 0);
-            TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH: "), tb_print_dumb_node(NULL, USERN(u)), printf("\n"));
+            TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, USERN(u)), printf("\n"));
 
             worklist_push(ws, USERN(u));
         }

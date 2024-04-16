@@ -143,6 +143,32 @@ static void print_extra(TB_Node* n) {
     }
 }
 
+static void print_dumb_extra(TB_Node* n) {
+    static const char* modes[] = { "reg", "ld", "st" };
+    switch (n->type) {
+        case x86_movzx8: case x86_movzx16:
+        case x86_movsx8: case x86_movsx16: case x86_movsx32:
+        case x86_add: case x86_or: case x86_and: case x86_sub:
+        case x86_xor: case x86_cmp: case x86_mov: case x86_test: case x86_lea:
+        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
+        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
+        {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            printf("scale=%d disp=%d mode=%s ", 1<<op->scale, op->disp, modes[op->mode]);
+            break;
+        }
+
+        case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
+        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
+        case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
+        {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            printf("scale=%d disp=%d mode=%s imm=%d ", 1<<op->scale, op->disp, modes[op->mode], op->imm);
+            break;
+        }
+    }
+}
+
 typedef struct {
     int64_t min, max;
     bool if_chain;
@@ -248,7 +274,7 @@ static int node_2addr(TB_Node* n) {
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            return op->mode == MODE_REG ? 4 : 0;
+            return op->mode != MODE_ST ? 4 : 0;
         }
 
         case x86_mov:
@@ -768,8 +794,13 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
             int32_t x;
             if ((cmp_dt.type == TB_TAG_INT || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt.type == TB_TAG_PTR ? 64 : cmp_dt.data, b, &x)) {
-                mach_cond->type = x86_cmpimm;
-                op_extra->imm = x;
+                if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
+                    mach_cond->type = x86_test;
+                    set_input(f, mach_cond, a, 4);
+                } else {
+                    mach_cond->type = x86_cmpimm;
+                    op_extra->imm = x;
+                }
             } else {
                 set_input(f, mach_cond, b, 4);
             }
@@ -826,8 +857,13 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
                     int32_t x;
                     if ((cmp_dt.type == TB_TAG_INT || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt.type == TB_TAG_PTR ? 64 : cmp_dt.data, b, &x)) {
-                        mach_cond->type = x86_cmpimm;
-                        op_extra->imm = x;
+                        if (x == 0 && (cond->type == TB_CMP_EQ || cond->type == TB_CMP_NE)) {
+                            mach_cond->type = x86_test;
+                            set_input(f, mach_cond, a, 4);
+                        } else {
+                            mach_cond->type = x86_cmpimm;
+                            op_extra->imm = x;
+                        }
                     } else {
                         set_input(f, mach_cond, b, 4);
                     }
@@ -847,6 +883,12 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     default: tb_unreachable();
                 }
                 if_br->key = cc ^ flip;
+            } else if (if_br->key == 0) {
+                mach_cond = tb_alloc_node(f, x86_test, TB_TYPE_I8, 5, sizeof(X86MemOp));
+                TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt);
+                set_input(f, mach_cond, cond, 2);
+                set_input(f, mach_cond, cond, 4);
+                if_br->key = E;
             } else {
                 mach_cond = tb_alloc_node(f, x86_cmpimm, TB_TYPE_I8, 5, sizeof(X86MemOp));
                 TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt, .imm = if_br->key);
@@ -1084,6 +1126,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case TB_DEBUGBREAK:
         case TB_AFFINE_LOOP:
         case TB_NATURAL_LOOP:
+        case TB_CALLGRAPH:
         if (ins) {
             // region inputs are all control
             FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
@@ -1860,7 +1903,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt;
-            if (n->type == x86_cmp || n->dt.type == TB_TAG_MEMORY) {
+            if (n->type == x86_test || n->type == x86_cmp || n->dt.type == TB_TAG_MEMORY) {
                 dt = legalize_int2(op->dt);
             } else if (n->type == x86_cmpimm) {
                 dt = legalize_int2(n->inputs[2]->dt);
@@ -1870,8 +1913,8 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
             int op_type = ops[n->type - x86_add];
-            if (op_type == CMP) {
-                __(CMP, dt, &rm, &rx);
+            if (op_type == CMP || op_type == TEST) {
+                __(op_type, dt, &rm, &rx);
             } else if (op->mode == MODE_ST) {
                 __(op_type, dt, &rm, &rx);
             } else if (n->type >= x86_addimm && n->type <= x86_rorimm) {
@@ -2105,6 +2148,10 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
             return 2 + (op->mode == MODE_LD ? 3 : 0);
         }
 
+        // doesn't atually load shit so it's cheaper than the other similar ops
+        case x86_lea:
+        return 2;
+
         // load/store ops should count as a bit slower
         case x86_add: case x86_or:  case x86_and: case x86_sub:
         case x86_xor: case x86_cmp: case x86_mov: case x86_test:
@@ -2118,7 +2165,7 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
 
             if (end && end->type == TB_AFFINE_LATCH) {
                 TB_Node* cond = end->inputs[1];
-                if ((cond->type == x86_cmp || cond->type == x86_cmpimm) && cond->inputs[2] == n) {
+                if (flags_producer(cond) && cond->inputs[2] == n) {
                     return 0;
                 }
             }
@@ -3368,6 +3415,7 @@ ICodeGen tb__x64_codegen = {
     .can_gvn = can_gvn,
     .node_name = node_name,
     .print_extra = print_extra,
+    .print_dumb_extra = print_dumb_extra,
     .extra_bytes = extra_bytes,
     .emit_win64eh_unwind_info = emit_win64eh_unwind_info,
     .emit_call_patches  = emit_call_patches,

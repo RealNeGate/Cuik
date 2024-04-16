@@ -1402,7 +1402,7 @@ TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp) {
     ctx.cfg = tb_compute_rpo(f, ws);
 
     // schedule nodes
-    tb_global_schedule(f, ws, ctx.cfg, false, NULL);
+    tb_global_schedule(f, ws, ctx.cfg, false, false, NULL);
 
     // TB_Node* end_bb = NULL;
     FOR_N(i, 0, ctx.cfg.block_count) {

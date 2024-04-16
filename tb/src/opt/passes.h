@@ -8,8 +8,13 @@ enum {
     FAST_IDOM_LIMIT = 20
 };
 
+#if TB_PACKED_USERS
+#define USERN(u) ((TB_Node*) ((u)->_n)) // node
+#define USERI(u) ((int) ((u)->_slot))   // index
+#else
 #define USERN(u) ((u)->_n)    // node
 #define USERI(u) ((u)->_slot) // index
+#endif
 
 #define FOR_USERS(u, n) for (TB_User *u = (n)->users, *_end_ = &u[(n)->user_count]; u != _end_; u++)
 
@@ -131,6 +136,10 @@ typedef struct {
     size_t ws_cnt;
     TB_Function** ws;
 } IPOSolver;
+
+static bool cant_signed_overflow(TB_Node* n) {
+    return TB_NODE_GET_EXTRA_T(n, TB_NodeBinopInt)->ab & TB_ARITHMATIC_NSW;
+}
 
 static bool is_proj(TB_Node* n) {
     return n->type == TB_PROJ || n->type == TB_MACH_PROJ || n->type == TB_BRANCH_PROJ;
@@ -390,10 +399,11 @@ typedef uint64_t (*TB_GetUnitMask)(TB_Function* f, TB_Node* n);
 // Local scheduler
 void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count);
 void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb);
+void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_nodes);
 
 // Global scheduler
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws);
-void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool dataflow, TB_GetLatency get_lat);
+void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_nests, bool dataflow, TB_GetLatency get_lat);
 
 // makes arch-friendly IR
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);

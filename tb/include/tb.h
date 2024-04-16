@@ -573,8 +573,13 @@ typedef struct {
 typedef struct TB_Node TB_Node;
 
 typedef struct {
+    #if TB_PACKED_USERS
+    uint64_t _n    : 48;
+    uint64_t _slot : 16;
+    #else
     TB_Node* _n;
     int _slot;
+    #endif
 } TB_User;
 
 // my annotations about size are based on 64bit machines

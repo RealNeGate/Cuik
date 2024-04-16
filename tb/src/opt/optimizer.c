@@ -365,22 +365,38 @@ static Lattice* value_region(TB_Function* f, TB_Node* n) {
     return &TOP_IN_THE_SKY;
 }
 
+static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int64_t trips_max, int64_t step) {
+    int64_t max;
+    if (!__builtin_mul_overflow(trips_max, step, &max)) { return NULL; }
+    if (!__builtin_add_overflow(max, init->_int.min, &max)) { return NULL; }
+
+    int64_t min = (uint64_t)init->_int.min + (uint64_t) (((uint64_t) trips_min-1)*step);
+    if (step > 0) {
+        if (min <= max) { return lattice_gimme_int(f, min, max); }
+    } else if (step > 0) {
+        if (min >= max) { return lattice_gimme_int(f, max, min); }
+    }
+    return NULL;
+}
+
 static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     // wait for region to check first
     TB_Node* r = n->inputs[0];
     if (latuni_get(f, r) == &TOP_IN_THE_SKY) return &TOP_IN_THE_SKY;
 
+    Lattice* old = latuni_get(f, n);
     if (r->type == TB_AFFINE_LOOP) {
         TB_Node* latch = affine_loop_latch(r);
-        if (latch) {
+        if (latch && n->dt.type == TB_TAG_INT) {
             // we wanna know loop bounds
             uint64_t trips_min = 1, trips_max = UINT64_MAX;
             uint64_t* step_ptr = find_affine_indvar(n, r);
+            Lattice* end = NULL;
             if (step_ptr) {
                 TB_InductionVar var;
                 if (find_latch_indvar(r, latch, &var)) {
                     Lattice* init = latuni_get(f, var.phi->inputs[1]);
-                    Lattice* end = var.end_cond ? latuni_get(f, var.end_cond) : lattice_int_const(f, var.end_const);
+                    end = var.end_cond ? latuni_get(f, var.end_cond) : lattice_int_const(f, var.end_const);
 
                     if (lattice_is_const(init) && lattice_is_const(end)) {
                         int64_t trips = (end->_int.min - init->_int.min) / var.step;
@@ -393,31 +409,36 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                         // so let's handle it. main things we wanna know are whether or not
                         // the number is ever negative.
                     }
+
+                    if (var.phi != n) { end = NULL; }
                 } else {
                     // affine loop missing latch? ok then it's 1 trips
                     trips_min = trips_max = 1;
                 }
+                assert(trips_min <= trips_max);
 
                 Lattice* init = latuni_get(f, n->inputs[1]);
-                if (lattice_is_const(init)) {
-                    int64_t step = *step_ptr;
-                    uint64_t min = (uint64_t)init->_int.min + (trips_min-1)*step;
-                    uint64_t max = trips_max*step;
+                if (lattice_is_const(init) && trips_max <= INT64_MAX) {
+                    Lattice* range = affine_iv(f, init, trips_min, trips_max, *step_ptr);
+                    if (range) { return range; }
+                }
 
-                    // overflow checks
-                    if (max >= trips_max && init->_int.min + max >= init->_int.min) {
-                        max += init->_int.min;
-                        int64_t mini = min, maxi = max;
-                        if (step > 0 && min <= max && mini <= maxi) {
-                            return lattice_gimme_int(f, min, max);
-                        }
+                if (*step_ptr > 0 && cant_signed_overflow(n->inputs[2])) {
+                    // pretty common that iterators won't overflow, thus never goes below init
+                    int64_t min = init->_int.min;
+                    int64_t max = end ? end->_int.max : lattice_int_max(n->dt.data);
+
+                    // join would achieve this effect too btw
+                    if (old == &TOP_IN_THE_SKY) {
+                        return lattice_gimme_int(f, min, max);
+                    } else {
+                        return lattice_gimme_int(f, TB_MAX(min, old->_int.min), TB_MIN(max, old->_int.max));
                     }
                 }
             }
         }
     }
 
-    Lattice* old = latuni_get(f, n);
     if (old->tag == LATTICE_INT && old->_int.widen >= INT_WIDEN_LIMIT) {
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data), lattice_int_max(n->dt.data), .widen = INT_WIDEN_LIMIT } });
     }
@@ -633,8 +654,13 @@ void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
         in->users = users;
     }
 
+    #if TB_PACKED_USERS
+    in->users[in->user_count]._n    = (uintptr_t) n;
+    in->users[in->user_count]._slot = slot;
+    #else
     in->users[in->user_count]._n    = n;
     in->users[in->user_count]._slot = slot;
+    #endif
     in->user_count += 1;
 }
 
@@ -1257,8 +1283,6 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
         TB_OPTDEBUG(PASSES)(printf("  * ROUND %d:\n", ++rounds));
         TB_OPTDEBUG(PASSES)(printf("    * Minor rewrites\n"));
 
-        tb_verify(f, f->tmp_arena);
-
         // minor opts
         while (worklist_count(f->worklist) > 0) {
             TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
@@ -1274,8 +1298,6 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
             }
         }
-
-        tb_verify(f, f->tmp_arena);
 
         // const prop leaves work for the peephole optimizer and
         // sometimes might invalidate the loop tree so we should
@@ -1295,12 +1317,9 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
             nl_table_clear(&f->node2loop);
             f->invalidated_loops = false;
 
-            tb_verify(f, f->tmp_arena);
-
             TB_OPTDEBUG(PASSES)(printf("    * Update loop tree\n"));
             tb_opt_build_loop_tree(f);
-
-            tb_verify(f, f->tmp_arena);
+            tb_opt_peeps(f);
         }
 
         // mostly just detecting loops and upcasting indvars

@@ -1,45 +1,19 @@
 
 void tb_print_dumb_edge(Lattice** types, TB_Node* n) {
     if (n) {
-        if (is_proj(n)) {
-            int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-            n = n->inputs[0];
-
-            printf("%%%u.%d ", n->gvn, index);
-        } else {
-            printf("%%%u ", n->gvn);
-        }
+        printf("%%%u ", n->gvn);
     } else {
         printf("___ ");
     }
 }
 
 void tb_print_dumb_node(Lattice** types, TB_Node* n) {
-    printf("%%%u: ", n->gvn);
+    printf("%%%-4u: ", n->gvn);
     if (types && types[n->gvn] != NULL && types[n->gvn] != &TOP_IN_THE_SKY) {
         print_lattice(types[n->gvn]);
     } else {
-        if (n->dt.type == TB_TAG_TUPLE) {
-            // print with multiple returns
-            TB_Node* projs[32] = { 0 };
-            FOR_USERS(u, n) {
-                if (is_proj(USERN(u))) {
-                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-                    projs[index] = USERN(u);
-                }
-            }
-
-            printf("{ ");
-            FOR_N(i, 0, 32) {
-                if (projs[i] == NULL) break;
-                if (i) printf(", ");
-                printf("%%%u:", projs[i]->gvn);
-                print_type(projs[i]->dt);
-            }
-            printf(" }");
-        } else {
-            print_type(n->dt);
-        }
+        int l = print_type(n->dt);
+        FOR_N(i, l, 5) { printf(" "); }
     }
     printf(" = %s ", tb_node_get_name(n));
     if (is_proj(n)) {
@@ -81,6 +55,10 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
         printf("%f ", f->value);
+    } else if (n->type > 0x100) {
+        int family = n->type / 0x100;
+        assert(family >= 1 && family < TB_ARCH_MAX);
+        tb_codegen_families[family].print_dumb_extra(n);
     }
     printf("( ");
     FOR_N(i, 0, n->input_count) {
@@ -89,39 +67,68 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     printf(")");
 }
 
-static void dumb_walk(TB_Function* f, Lattice** types, TB_Node* n, uint64_t* visited) {
-    if (visited[n->gvn / 64] & (1ull << (n->gvn % 64))) {
-        return;
+static void dumb_walk(TB_Function* f, TB_Worklist* ws, Lattice** types, TB_Node* n) {
+    if (worklist_test_n_set(ws, n)) { return; }
+    if (cfg_is_control(n)) {
+        FOR_USERS(u, n) {
+            if (cfg_is_control(USERN(u))) {
+                dumb_walk(f, ws, types, USERN(u));
+            }
+        }
     }
-    visited[n->gvn / 64] |= (1ull << (n->gvn % 64));
-
-    FOR_REV_N(i, 0, n->input_count) if (n->inputs[i]) {
-        TB_Node* in = n->inputs[i];
-        if (is_proj(in)) { in = in->inputs[0]; }
-        dumb_walk(f, types, in, visited);
+    if (n->dt.type == TB_TAG_TUPLE) {
+        FOR_USERS(u, n) if (USERN(u)->type != TB_PROJ) {
+            dumb_walk(f, ws, types, USERN(u));
+        }
+        FOR_USERS(u, n) if (USERN(u)->type == TB_PROJ) {
+            dumb_walk(f, ws, types, USERN(u));
+        }
+    } else if (cfg_is_region(n)) {
+        FOR_USERS(u, n) if (USERN(u)->type != TB_PHI) {
+            dumb_walk(f, ws, types, USERN(u));
+        }
+        FOR_USERS(u, n) if (USERN(u)->type == TB_PHI) {
+            dumb_walk(f, ws, types, USERN(u));
+        }
+    } else {
+        FOR_USERS(u, n) { dumb_walk(f, ws, types, USERN(u)); }
     }
 
-    tb_print_dumb_node(types, n);
-    printf("\n");
+    if (is_proj(n) || n->type == TB_PHI) { return; }
+    // we wanna place projs & phis underneath the region
+    if (cfg_is_region(n)) {
+        FOR_USERS(u, n) if (USERN(u)->type == TB_PHI) {
+            dyn_array_put(ws->items, USERN(u));
+        }
+    } else if (n->dt.type == TB_TAG_TUPLE) {
+        FOR_USERS(u, n) if (is_proj(USERN(u))) {
+            dyn_array_put(ws->items, USERN(u));
+        }
+    }
+    dyn_array_put(ws->items, n);
 }
 
+static bool cfg_is_fork_proj(TB_Node* n) { return cfg_is_cproj(n) && cfg_is_fork(n->inputs[0]); }
 void tb_print_dumb(TB_Function* f, bool use_fancy_types) {
     printf("=== DUMP %s ===\n", f->super.name);
 
-    uint64_t* visited = tb_platform_heap_alloc(((f->node_count + 63) / 64) * sizeof(uint64_t));
-    memset(visited, 0, ((f->node_count + 63) / 64) * sizeof(uint64_t));
+    TB_Worklist ws = { 0 };
+    worklist_alloc(&ws, f->node_count);
 
     TB_Node* root   = f->root_node;
     Lattice** types = use_fancy_types ? f->types : NULL;
 
-    tb_print_dumb_node(types, root);
-    printf("\n");
+    dumb_walk(f, &ws, types, root);
 
-    visited[root->gvn / 64] |= (1ull << (root->gvn % 64));
-
-    FOR_N(i, 0, root->input_count) {
-        dumb_walk(f, types, root->inputs[i], visited);
+    FOR_REV_N(i, 0, dyn_array_length(ws.items)) {
+        // extra newline on BB boundaries
+        if (i + 1 < dyn_array_length(ws.items) && cfg_is_fork_proj(ws.items[i + 1]) && !cfg_is_fork_proj(ws.items[i])) {
+            printf("\n");
+        } else if (cfg_is_region(ws.items[i])) {
+            printf("\n");
+        }
+        tb_print_dumb_node(types, ws.items[i]);
+        printf("\n");
     }
-
-    tb_platform_heap_free(visited);
+    worklist_free(&ws);
 }
