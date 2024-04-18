@@ -583,6 +583,13 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             TB_Node* op = tb_alloc_node(f, op_type, n->dt, 5, sizeof(X86MemOp));
             set_input(f, op, n->inputs[1], 2);
             return op;
+        } else if (src_bits < 32) {
+            // we can take advantange of the existing 64bit zero extension
+            uint64_t mask = UINT64_MAX >> (64 - src_bits);
+            TB_Node* op = tb_alloc_node(f, x86_andimm, n->dt, 4, sizeof(X86MemOp));
+            set_input(f, op, n->inputs[1], 2);
+            TB_NODE_SET_EXTRA(op, X86MemOp, .imm = mask);
+            return op;
         } else {
             // uint64_t mask = UINT64_MAX >> (64 - src_bits);
             tb_todo();
