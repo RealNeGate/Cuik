@@ -1083,7 +1083,6 @@ static bool node_flags(Ctx* restrict ctx, TB_Node* n) {
         case x86_movsx32:
         case TB_MACH_MOVE:
         case TB_MACH_COPY:
-        case TB_ICONST:
         case TB_NEVER_BRANCH:
         // actually uses flags, that's handled in node_constraint
         case TB_BRANCH:
@@ -1094,6 +1093,11 @@ static bool node_flags(Ctx* restrict ctx, TB_Node* n) {
         case x86_cmp: case x86_cmpimm:
         case x86_test: case x86_testimm:
         return false;
+
+        case TB_ICONST: {
+            uint64_t x = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
+            return x == 0;
+        }
 
         default:
         return true;
@@ -2155,7 +2159,7 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
         // load/store ops should count as a bit slower
         case x86_add: case x86_or:  case x86_and: case x86_sub:
         case x86_xor: case x86_cmp: case x86_mov: case x86_test:
-        case x86_vmov: case x86_vadd:  case x86_vmul: case x86_vsub:
+        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
         case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:

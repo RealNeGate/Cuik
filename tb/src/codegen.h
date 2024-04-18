@@ -274,6 +274,14 @@ static bool reg_mask_is_not_empty(RegMask* mask) {
     return false;
 }
 
+static bool reg_mask_is_stack(RegMask* mask) {
+    return mask->class == REG_CLASS_STK || (!reg_mask_is_not_empty(mask) && mask->may_spill);
+}
+
+static bool reg_mask_is_spill(RegMask* mask) {
+    return mask->class != REG_CLASS_STK && (!reg_mask_is_not_empty(mask) && mask->may_spill);
+}
+
 static int fixed_reg_mask(RegMask* mask) {
     if (mask->class == REG_CLASS_STK) {
         assert(mask->count == 1);

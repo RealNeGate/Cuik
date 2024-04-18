@@ -400,7 +400,7 @@ static int simplify(Ctx* restrict ctx, Chaitin* restrict ra, int* stk, int cap) 
             #endif
 
             // note the stack has infinite colors so it never spills
-            if (vreg->mask->class == REG_CLASS_STK || d < ctx->num_regs[vreg->mask->class]) {
+            if (reg_mask_is_stack(vreg->mask) || d < ctx->num_regs[vreg->mask->class]) {
                 // don't wanna add twice but also we've got a lot of fucking visited sets now lol
                 if (!test_n_set(visited_lo, vreg_id)) {
                     TB_OPTDEBUG(REGALLOC)(printf("#   colorable!\n"));
@@ -663,7 +663,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
             #endif
 
             // coloring stack slots
-            if (!reg_mask_is_not_empty(vreg->mask) && vreg->mask->may_spill) {
+            if (reg_mask_is_spill(vreg->mask)) {
                 ptrdiff_t empty_slot = set_pop_any(&live_stack);
                 if (empty_slot + 1 > highest_stack_slot) {
                     highest_stack_slot = empty_slot + 1;

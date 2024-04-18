@@ -19,6 +19,7 @@ typedef struct {
     int time;
     int id;
 
+    Range* spill_range;
     RegMask* mask;
 } AllocFailure;
 
@@ -60,7 +61,7 @@ static void update_intervals(Ctx* restrict ctx, LSRA* restrict ra, int time);
 static void cuiksort_defs(Ctx* ctx, int* intervals, ptrdiff_t lo, ptrdiff_t hi);
 static bool update_interval(Ctx* restrict ctx, LSRA* restrict ra, int vreg_id, bool is_active, int time, int inactive_index);
 static void split_ranges(Ctx* restrict ctx, LSRA* restrict ra);
-static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, RegMask* new_mask);
+static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, RegMask* new_mask, Range* spill_range);
 static VReg* split_intersecting(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, RegMask* new_mask, int pos);
 static bool rematerialize(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int pos);
 static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int vreg_id);
@@ -178,7 +179,8 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         .class = i,
                         .assigned = j,
                         .mask = mask,
-                        .active_range = &NULL_RANGE
+                        .active_range = &NULL_RANGE,
+                        .spill_cost = INFINITY,
                     });
             }
 
@@ -231,14 +233,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
 
                     VReg* in_def = node_vreg(ctx, in);
 
-                    #if 0
-                    RegMask* glb = tb__reg_mask_meet(ctx, in_def->mask, in_mask);
-                    if (glb == &TB_REG_EMPTY) {
-                        // hard-split
-                        aarray_push(ra.failures, (AllocFailure){ FAILURE_SPILL_SELF, -1, in_def - ctx->vregs });
-                    }
-                    in_def->mask = glb;
-                    #else
                     int hint = fixed_reg_mask(in_mask);
                     if (hint >= 0 && in_def->mask->class == in_mask->class) {
                         in_def->hint_vreg = ra.fixed[in_mask->class] + hint;
@@ -279,7 +273,6 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                         timeline += 2;
                         j += 1;
                     }
-                    #endif
                 }
 
                 int vreg_id = ctx->vreg_map[n->gvn];
@@ -299,7 +292,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                             tmps->elems[k - in_count] = ra.fixed[in_mask->class] + fixed;
                         } else {
                             tmps->elems[k - in_count] = aarray_length(ctx->vregs);
-                            aarray_push(ctx->vregs, (VReg){ .n = n, .mask = in_mask, .assigned = -1 });
+                            aarray_push(ctx->vregs, (VReg){ .n = n, .mask = in_mask, .assigned = -1, .spill_cost = INFINITY });
                         }
                     }
                 }
@@ -588,14 +581,7 @@ void tb__lsra(Ctx* restrict ctx, TB_Arena* arena) {
                 VReg* vreg = &ctx->vregs[ra.failures[i].id];
                 assert(ra.failures[i].mode == FAILURE_SPILL_SELF);
 
-                int t = ra.failures[i].time;
-                if (t >= 0) {
-                    // split_intersecting(ctx, &ra, vreg, ra.failures[i].mask, ra.failures[i].time);
-                    spill_entire_life(ctx, &ra, vreg, ra.failures[i].mask);
-                } else {
-                    RegMask* out = ctx->constraint(ctx, vreg->n, NULL);
-                    spill_entire_life(ctx, &ra, vreg, out);
-                }
+                spill_entire_life(ctx, &ra, vreg, ra.failures[i].mask, ra.failures[i].spill_range);
             }
 
             dyn_array_clear(ra.inactive);
@@ -700,6 +686,23 @@ static int next_use(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int pos) {
     return earliest;
 }
 
+static void mark_as_spill(Ctx* restrict ctx, LSRA* restrict ra, int rc, int vreg_id) {
+    VReg* vreg = &ctx->vregs[vreg_id];
+    Range* spill_range = vreg->saved_range;
+
+    Range* rg = tb_arena_alloc(ra->arena, sizeof(Range));
+    rg->next  = &NULL_RANGE;
+    rg->start = ra->time[vreg->n->gvn];
+    rg->end   = rg->start + 1;
+
+    // new range is just at the def site
+    vreg->saved_range = vreg->active_range = rg;
+
+    int p = 0;
+    RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
+    aarray_push(ra->failures, (AllocFailure){ FAILURE_SPILL_SELF, p, vreg_id, spill_range, spill_rm });
+}
+
 // returns -1 if no registers are available
 static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, int vreg_id) {
     // let's figure out how long
@@ -726,7 +729,7 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
     }
 
     int pos = ra->free_until[highest];
-    if (pos == 0) {
+    if (pos == 0 || vreg->end_time > pos) {
         // ok let's steal a blocked reg, one that's not fixed
         float best_cost = FLT_MAX;
         int best = -1;
@@ -739,19 +742,25 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
             }
         }
 
-        assert(best >= 0);
-        highest = ctx->vregs[best].assigned;
-        ctx->vregs[best].active_range = &NULL_RANGE;
+        if (best < 0 && vreg->end_time > pos) {
+            // failure to find something that'll fit? ok we'll spill
+            TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   spill V%u\x1b[0m\n", vreg_id));
+            mark_as_spill(ctx, ra, rc, vreg_id);
+            return -1;
+        } else {
+            assert(best >= 0);
+            highest = ctx->vregs[best].assigned;
+            ctx->vregs[best].active_range = &NULL_RANGE;
 
-        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   spill v%u (", vreg_id), print_reg_name(rc, highest), printf(" was split such that it's at least first half is free)\x1b[0m\n"));
+            TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   spill V%u (", best), print_reg_name(rc, highest), printf("\x1b[0m\n"));
 
-        int p = ctx->vregs[best].saved_range->start + 1;
-        p = TB_MIN(p, vreg->saved_range->start - 2);
+            // int p = ctx->vregs[best].saved_range->start + 1;
+            // p = TB_MIN(p, vreg->saved_range->start - 2);
 
-        RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
-        aarray_push(ra->failures, (AllocFailure){ FAILURE_SPILL_SELF, p, best, spill_rm });
-        return highest;
-    } else if (vreg->end_time <= pos) {
+            mark_as_spill(ctx, ra, rc, best);
+            return highest;
+        }
+    } else {
         // we can steal it completely
         TB_OPTDEBUG(REGALLOC)(printf("  #   assign to "), print_reg_name(rc, highest));
 
@@ -767,15 +776,6 @@ static int allocate_free_reg(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, i
             TB_OPTDEBUG(REGALLOC)(printf("\n"));
         }
 
-        return highest;
-    } else {
-        // fits into a register for the first half... eh, good enough
-        TB_OPTDEBUG(REGALLOC)(printf("  \x1b[33m#   spill v%u (", vreg_id), print_reg_name(rc, highest), printf(" was free for the first half of the lifetime)\x1b[0m\n"));
-
-        int p = TB_MAX(pos - 2, vreg->saved_range->start + 1);
-        RegMask* spill_rm = ctx->has_flags && rc == 1 ? ctx->normie_mask[2] : intern_regmask(ctx, 1, true, 0);
-
-        aarray_push(ra->failures, (AllocFailure){ FAILURE_SPILL_SELF, p, vreg_id, spill_rm });
         return highest;
     }
 }
@@ -809,7 +809,7 @@ static void add_to_unhandled(Ctx* restrict ctx, LSRA* restrict ra, int vreg_id, 
 }
 
 // spills for basically the entire lifetime, we don't wanna be doing this but it's a fast compiling low-quality option
-static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, RegMask* new_mask) {
+static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, RegMask* new_mask, Range* spill_range) {
     cuikperf_region_start("spill", NULL);
     int class = vreg->class;
     int vreg_id = vreg - ctx->vregs;
@@ -825,8 +825,7 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
     TB_NODE_SET_EXTRA(spill_n, TB_NodeMachCopy, .def = new_mask, .use = vreg->mask);
 
     TB_BasicBlock* bb = f->scheduled[n->gvn];
-    int def_t = ra->time[n->gvn];
-    int pos = (def_t - 1) | 1;
+    int pos = ra->time[n->gvn];
 
     // might invalidate vreg ptr
     aarray_insert(ra->time, spill_n->gvn, pos);
@@ -846,19 +845,12 @@ static void spill_entire_life(Ctx* restrict ctx, LSRA* restrict ra, VReg* vreg, 
         .mask = new_mask,
         .n = spill_n,
         .end_time = vreg->end_time,
+        .spill_cost = INFINITY,
+        .active_range = spill_range
     };
-    vreg->end_time = pos;
 
+    vreg->end_time = pos + 1;
     add_to_unhandled(ctx, ra, spill_vreg - ctx->vregs, pos);
-
-    // pre-spill range is just a tiny piece
-    assert(vreg->active_range != &NULL_RANGE);
-    Range* rg = tb_arena_alloc(ra->arena, sizeof(Range));
-    rg->next  = &NULL_RANGE;
-    rg->start = def_t;
-    rg->end   = pos;
-    spill_vreg->active_range = vreg->saved_range;
-    vreg->saved_range = vreg->active_range = rg;
 
     // it's probably gonna get invalidated by the new vreg adds so
     // i'd rather NULL it before using it
