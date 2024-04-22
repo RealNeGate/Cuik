@@ -6,8 +6,7 @@
 #ifdef TB_HAS_X64
 enum {
     // register classes
-    REG_CLASS_FLAGS = 1,
-    REG_CLASS_GPR,
+    REG_CLASS_GPR = 1,
     REG_CLASS_XMM,
     REG_CLASS_COUNT,
 };
@@ -31,6 +30,7 @@ typedef struct {
     } mode;
     Scale scale;
     TB_DataType dt;
+    char cond;
     int32_t disp;
     int32_t imm;
 } X86MemOp;
@@ -58,6 +58,25 @@ static bool can_gvn(TB_Node* n) {
     return true;
 }
 
+uint32_t node_flags(TB_Node* n) {
+    X86NodeType type = n->type;
+    switch (type) {
+        case x86_cmpjcc:
+        case x86_cmpimmjcc:
+        case x86_testjcc:
+        case x86_testimmjcc:
+        return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH;
+
+        default: return 0;
+    }
+}
+
+static bool flags_producer(TB_Node* n) {
+    return n->type == x86_ucomi
+        || n->type == x86_cmp || n->type == x86_cmpimm
+        || n->type == x86_test || n->type == x86_testimm;
+}
+
 static size_t extra_bytes(TB_Node* n) {
     X86NodeType type = n->type;
     switch (type) {
@@ -75,6 +94,8 @@ static size_t extra_bytes(TB_Node* n) {
         case x86_addimm: case x86_orimm: case x86_andimm: case x86_subimm:
         case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
+        case x86_cmpjcc: case x86_cmpimmjcc:
+        case x86_testjcc: case x86_testimmjcc:
         return sizeof(X86MemOp);
 
         case x86_call:
@@ -82,7 +103,6 @@ static size_t extra_bytes(TB_Node* n) {
         return sizeof(X86Call);
 
         case x86_cmovcc:
-        case x86_setcc:
         return sizeof(X86Cmov);
 
         default:
@@ -189,10 +209,6 @@ static const struct ParamDesc {
     { INT_MAX, 6, 4, 5, SYSV_ABI_CALLER_SAVED,    { RDI, RSI, RDX, RCX, R8, R9 } },
     // syscall
     { INT_MAX, 6, 4, 5, SYSCALL_ABI_CALLER_SAVED, { RDI, RSI, RDX, R10, R8, R9 } },
-};
-
-enum {
-    NO_RCX     = ~((1 << RCX)),
 };
 
 // *out_mask of 0 means no mask
@@ -312,19 +328,18 @@ static int node_2addr(TB_Node* n) {
         case TB_MACH_MOVE:
         case TB_FLOAT_EXT:
         return 1;
-    }
 
-    return n->type >= TB_AND && n->type <= TB_CMP_FLE;
+        default:
+        return n->type >= TB_AND && n->type <= TB_CMP_FLE ? 1 : -1;
+    }
 }
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->abi_index = abi == TB_ABI_SYSTEMV ? 1 : 0;
-    ctx->has_flags = true;
 
     // currently only using 16 GPRs and 16 XMMs, AVX gives us
     // 32 YMMs (which double as XMMs) and later on APX will do
     // 32 GPRs.
-    ctx->num_regs[REG_CLASS_FLAGS] = 1;
     ctx->num_regs[REG_CLASS_GPR] = 16;
     ctx->num_regs[REG_CLASS_XMM] = 16;
 
@@ -336,7 +351,6 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         ctx->stack_header = 8;
     }
 
-    ctx->normie_mask[REG_CLASS_FLAGS] = new_regmask(ctx->f, REG_CLASS_FLAGS, false, 1);
     ctx->normie_mask[REG_CLASS_GPR]   = new_regmask(ctx->f, REG_CLASS_GPR,   false, all_gprs);
     ctx->normie_mask[REG_CLASS_XMM]   = new_regmask(ctx->f, REG_CLASS_XMM,   false, 0xFFFF);
 
@@ -782,36 +796,37 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         TB_Node* a = n->inputs[1];
         TB_Node* b = n->inputs[2];
 
-        TB_Node* mach_cond;
+        TB_Node* mach_cmp;
         int flip = 0;
+        X86MemOp* op_extra;
         if (TB_IS_FLOAT_TYPE(cmp_dt)) {
-            mach_cond = tb_alloc_node(f, x86_ucomi, TB_TYPE_I8, 5, sizeof(X86MemOp));
-            set_input(f, mach_cond, a, 4);
-            set_input(f, mach_cond, b, 2);
+            mach_cmp = tb_alloc_node(f, x86_ucomi, n->dt, 5, sizeof(X86MemOp));
+            op_extra = TB_NODE_GET_EXTRA(mach_cmp);
+
+            set_input(f, mach_cmp, a, 4);
+            set_input(f, mach_cmp, b, 2);
         } else {
             if (a->type == TB_ICONST && b->type != TB_ICONST) {
                 flip ^= 1;
                 SWAP(TB_Node*, a, b);
             }
 
-            mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 5, sizeof(X86MemOp));
-
-            X86MemOp* op_extra = TB_NODE_GET_EXTRA(mach_cond);
-            op_extra->dt = cmp_dt;
+            mach_cmp = tb_alloc_node(f, x86_cmp, n->dt, 5, sizeof(X86MemOp));
+            op_extra = TB_NODE_GET_EXTRA(mach_cmp);
 
             int32_t x;
             if ((cmp_dt.type == TB_TAG_INT || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt.type == TB_TAG_PTR ? 64 : cmp_dt.data, b, &x)) {
                 if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-                    mach_cond->type = x86_test;
-                    set_input(f, mach_cond, a, 4);
+                    mach_cmp->type = x86_test;
+                    set_input(f, mach_cmp, a, 4);
                 } else {
-                    mach_cond->type = x86_cmpimm;
+                    mach_cmp->type = x86_cmpimm;
                     op_extra->imm = x;
                 }
             } else {
-                set_input(f, mach_cond, b, 4);
+                set_input(f, mach_cmp, b, 4);
             }
-            set_input(f, mach_cond, a, 2);
+            set_input(f, mach_cmp, a, 2);
         }
 
         Cond cc;
@@ -827,10 +842,9 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             default: tb_unreachable();
         }
 
-        TB_Node* op = tb_alloc_node(f, x86_setcc, n->dt, 2, sizeof(X86Cmov));
-        set_input(f, op, mach_cond, 1);
-        TB_NODE_SET_EXTRA(op, X86Cmov, .cc = cc);
-        return op;
+        op_extra->dt = cmp_dt;
+        op_extra->cond = cc;
+        return mach_cmp;
     } else if (n->type == TB_BRANCH || n->type == TB_AFFINE_LATCH) {
         TB_Node* cond = n->inputs[1];
         TB_NodeBranchProj* if_br = cfg_if_branch(n);
@@ -838,17 +852,16 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             // If-logic lowering, just generate a FLAGS and make
             // the branch compare on that instead.
             TB_Node* mach_cond = NULL;
-            if (cond->type == x86_setcc) {
-                set_input(f, n, cond->inputs[1], 1);
-                if_br->key = TB_NODE_GET_EXTRA_T(cond, X86Cmov)->cc;
-            } else if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
+            if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
                 TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cond, TB_NodeCompare)->cmp_dt;
                 TB_Node* a = cond->inputs[1];
                 TB_Node* b = cond->inputs[2];
 
                 int flip = (if_br->key != 0);
+                X86MemOp* op_extra;
                 if (TB_IS_FLOAT_TYPE(cmp_dt)) {
-                    mach_cond = tb_alloc_node(f, x86_ucomi, TB_TYPE_I8, 5, sizeof(X86MemOp));
+                    mach_cond = tb_alloc_node(f, x86_ucomijcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
+                    op_extra = TB_NODE_GET_EXTRA(mach_cond);
                     set_input(f, mach_cond, a, 4);
                     set_input(f, mach_cond, b, 2);
                 } else {
@@ -857,10 +870,8 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                         SWAP(TB_Node*, a, b);
                     }
 
-                    mach_cond = tb_alloc_node(f, x86_cmp, TB_TYPE_I8, 5, sizeof(X86MemOp));
-
-                    X86MemOp* op_extra = TB_NODE_GET_EXTRA(mach_cond);
-                    op_extra->dt = cmp_dt;
+                    mach_cond = tb_alloc_node(f, x86_cmpjcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
+                    op_extra = TB_NODE_GET_EXTRA(mach_cond);
 
                     int32_t x;
                     if ((cmp_dt.type == TB_TAG_INT || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt.type == TB_TAG_PTR ? 64 : cmp_dt.data, b, &x)) {
@@ -868,7 +879,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                             mach_cond->type = x86_test;
                             set_input(f, mach_cond, a, 4);
                         } else {
-                            mach_cond->type = x86_cmpimm;
+                            mach_cond->type = x86_cmpimmjcc;
                             op_extra->imm = x;
                         }
                     } else {
@@ -889,25 +900,27 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     case TB_CMP_FLE: cc = BE; break;
                     default: tb_unreachable();
                 }
+                op_extra->dt = cmp_dt;
                 if_br->key = cc ^ flip;
             } else if (if_br->key == 0) {
-                mach_cond = tb_alloc_node(f, x86_test, TB_TYPE_I8, 5, sizeof(X86MemOp));
+                mach_cond = tb_alloc_node(f, x86_testjcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
                 TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt);
                 set_input(f, mach_cond, cond, 2);
                 set_input(f, mach_cond, cond, 4);
                 if_br->key = E;
             } else {
-                mach_cond = tb_alloc_node(f, x86_cmpimm, TB_TYPE_I8, 5, sizeof(X86MemOp));
+                mach_cond = tb_alloc_node(f, x86_cmpimmjcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
                 TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt, .imm = if_br->key);
                 set_input(f, mach_cond, cond, 2);
                 if_br->key = E;
             }
-            set_input(f, n, mach_cond, 1);
+
+            set_input(f, mach_cond, n->inputs[0], 0);
+            return mach_cond;
         } else {
             tb_todo();
+            return n;
         }
-
-        return n;
     }
 
     int32_t x;
@@ -1047,8 +1060,8 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
         // sometimes introduced by other isel bits
         if (n->type == x86_lea && n->inputs[3] == NULL) {
-            n = n->inputs[2];
             op_extra->disp += TB_NODE_GET_EXTRA_T(n, X86MemOp)->disp;
+            n = n->inputs[2];
         }
 
         if (n->type == TB_SYMBOL && n->inputs[3] == NULL) {
@@ -1064,51 +1077,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     }
 
     return NULL;
-}
-
-static bool node_flags(Ctx* restrict ctx, TB_Node* n) {
-    switch (n->type) {
-        // regions & misc nodes don't even generate ops
-        case TB_PHI:
-        case TB_PROJ:
-        case TB_MACH_PROJ:
-        case TB_BRANCH_PROJ:
-        case TB_MACH_FRAME_PTR:
-        case TB_MACH_SYMBOL:
-        case TB_SPLITMEM:
-        case TB_MERGEMEM:
-        case TB_REGION:
-        case TB_AFFINE_LOOP:
-        case TB_NATURAL_LOOP:
-        // moves don't affect FLAGS
-        case x86_mov:
-        case x86_movimm:
-        case x86_movsx8:
-        case x86_movzx8:
-        case x86_movsx16:
-        case x86_movzx16:
-        case x86_movsx32:
-        case TB_MACH_MOVE:
-        case TB_MACH_COPY:
-        case TB_NEVER_BRANCH:
-        // actually uses flags, that's handled in node_constraint
-        case TB_BRANCH:
-        case TB_RETURN:
-        case TB_AFFINE_LATCH:
-        // actually produces FLAGS we care about
-        case x86_ucomi:
-        case x86_cmp: case x86_cmpimm:
-        case x86_test: case x86_testimm:
-        return false;
-
-        case TB_ICONST: {
-            uint64_t x = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
-            return x == 0;
-        }
-
-        default:
-        return true;
-    }
 }
 
 static int node_tmp_count(Ctx* restrict ctx, TB_Node* n) {
@@ -1224,6 +1192,24 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_vzero:
         return ctx->normie_mask[REG_CLASS_XMM];
 
+        case x86_cmpjcc:
+        case x86_testjcc:
+        case x86_cmpimmjcc:
+        case x86_testimmjcc: {
+            RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
+            if (ins) {
+                ins[1] = &TB_REG_EMPTY;
+                FOR_N(i, 2, n->input_count) {
+                    ins[i] = n->inputs[i] ? rm : &TB_REG_EMPTY;
+                }
+
+                if (n->inputs[2] && (n->inputs[2]->type == TB_MACH_FRAME_PTR || n->inputs[2]->type == TB_MACH_SYMBOL)) {
+                    ins[2] = &TB_REG_EMPTY;
+                }
+            }
+            return &TB_REG_EMPTY;
+        }
+
         case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         case x86_ucomi:
@@ -1254,7 +1240,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             if (op->mode == MODE_ST) {
                 return &TB_REG_EMPTY;
             } else if (n->type == x86_ucomi) {
-                return ctx->normie_mask[REG_CLASS_FLAGS];
+                return ctx->normie_mask[REG_CLASS_GPR];
             } else {
                 return ctx->normie_mask[REG_CLASS_XMM];
             }
@@ -1305,8 +1291,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             if (op->mode == MODE_ST) {
                 return &TB_REG_EMPTY;
-            } else if (n->type == x86_cmp || n->type == x86_cmpimm) {
-                return ctx->normie_mask[REG_CLASS_FLAGS];
             } else {
                 return ctx->normie_mask[REG_CLASS_GPR];
             }
@@ -1375,11 +1359,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return rm;
         }
 
-        case x86_setcc: {
-            if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_FLAGS]; }
-            return ctx->normie_mask[REG_CLASS_GPR];
-        }
-
         case x86_cmovcc:
         {
             int cc = TB_NODE_GET_EXTRA_T(n, X86Cmov)->cc;
@@ -1406,13 +1385,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
         case TB_NEVER_BRANCH:
         return &TB_REG_EMPTY;
-
-        case TB_BRANCH:
-        case TB_AFFINE_LATCH:
-        {
-            if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_FLAGS]; }
-            return &TB_REG_EMPTY;
-        }
 
         case TB_RETURN:
         {
@@ -1532,10 +1504,6 @@ static int stk_offset(Ctx* ctx, int reg) {
     }
 }
 
-static bool is_flags_vreg(Ctx* ctx, TB_Node* n) {
-    return ctx->vregs[ctx->vreg_map[n->gvn]].class == REG_CLASS_FLAGS;
-}
-
 static Val op_at(Ctx* ctx, TB_Node* n) {
     assert(ctx->vreg_map[n->gvn] > 0);
     VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
@@ -1556,7 +1524,7 @@ static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ) {
 
 static Val parse_cisc_operand(Ctx* restrict ctx, TB_Node* n, Val* rhs, X86MemOp* op) {
     if (rhs) {
-        if (n->type >= x86_addimm && n->type <= x86_rorimm) {
+        if ((n->type >= x86_addimm && n->type <= x86_rorimm) || n->type == x86_imulimm || n->type == x86_cmpimmjcc || n->type == x86_testimmjcc) {
             *rhs = (Val){ VAL_IMM, .imm = op->imm };
         } else if (n->inputs[4]) {
             *rhs = op_at(ctx, n->inputs[4]);
@@ -1625,51 +1593,6 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             break;
         }
 
-        case TB_AFFINE_LATCH:
-        case TB_BRANCH: {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-
-            // the arena on the function should also be available at this time, we're
-            // in the TB_Passes
-            TB_Arena* arena = ctx->f->arena;
-            TB_ArenaSavepoint sp = tb_arena_save(arena);
-            int* succ = tb_arena_alloc(arena, br->succ_count * sizeof(int));
-
-            // fill successors
-            bool has_default = false;
-            FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_BRANCH_PROJ) {
-                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-                    TB_Node* succ_n = cfg_next_bb_after_cproj(USERN(u));
-
-                    if (index == 0) {
-                        has_default = !cfg_is_unreachable(succ_n);
-                    }
-
-                    MachineBB* mbb = node_to_bb(ctx, succ_n);
-                    succ[index] = mbb->id;
-                }
-            }
-
-            TB_NodeBranchProj* if_br = cfg_if_branch(n);
-            if (if_br) {
-                Cond cc = if_br->key;
-                if (ctx->fallthrough == succ[0]) {
-                    // if flipping avoids a jmp, do that
-                    cc ^= 1;
-                    SWAP(int, succ[0], succ[1]);
-                }
-
-                __(JO+cc, TB_X86_QWORD, Vlbl(succ[0]));
-                if (ctx->fallthrough != succ[1]) {
-                    __(JMP, TB_X86_QWORD, Vlbl(succ[1]));
-                }
-            } else {
-                tb_todo();
-            }
-            break;
-        }
-
         case TB_SYMBOL: {
             TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
 
@@ -1697,42 +1620,21 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
         case TB_MACH_MOVE:
         case TB_MACH_COPY: {
-            if (is_flags_vreg(ctx, n)) {
-                // FLAGS -> FLAGS is a nop since there's only one flags reg
-                if (!is_flags_vreg(ctx, n->inputs[1])) {
-                    COMMENT("reload FLAGS");
+            TB_X86_DataType dt = legalize(n->dt);
 
-                    // GPR -> FLAGS
-                    int reg = op_gpr_at(ctx, n->inputs[1]);
-                    EMIT1(e, 0x48 + (reg >= 8)); // REX.W (optional B)
-                    EMIT1(e, 0x50 + reg);        // pop r64
-                    EMIT1(e, 0x9D);              // popf
-                }
-            } else if (is_flags_vreg(ctx, n->inputs[1])) {
-                COMMENT("spilled FLAGS");
+            Val dst = op_at(ctx, n);
+            Val src = op_at(ctx, n->inputs[1]);
+            if (!is_value_match(&dst, &src)) {
+                COMMENT("%%%u = copy(%%%u)", n->gvn, n->inputs[1]->gvn);
 
-                // FLAGS -> GPR
-                int reg = op_gpr_at(ctx, n);
-                EMIT1(e, 0x9C);              // pushf
-                EMIT1(e, 0x48 + (reg >= 8)); // REX.W (optional B)
-                EMIT1(e, 0x58 + reg);        // pop r64
-            } else {
-                TB_X86_DataType dt = legalize(n->dt);
-
-                Val dst = op_at(ctx, n);
-                Val src = op_at(ctx, n->inputs[1]);
-                if (!is_value_match(&dst, &src)) {
-                    COMMENT("%%%u = copy(%%%u)", n->gvn, n->inputs[1]->gvn);
-
-                    if (dst.type == VAL_GPR && src.type == VAL_XMM) {
-                        __(MOV_I2F, dt, &dst, &src);
-                    } else if (dst.type == VAL_XMM && src.type == VAL_GPR) {
-                        TB_X86_DataType src_dt = legalize(n->inputs[1]->dt);
-                        __(MOV_F2I, src_dt, &dst, &src);
-                    } else {
-                        int op = dt < TB_X86_F32x1 ? MOV : FP_MOV;
-                        __(op, dt, &dst, &src);
-                    }
+                if (dst.type == VAL_GPR && src.type == VAL_XMM) {
+                    __(MOV_I2F, dt, &dst, &src);
+                } else if (dst.type == VAL_XMM && src.type == VAL_GPR) {
+                    TB_X86_DataType src_dt = legalize(n->inputs[1]->dt);
+                    __(MOV_F2I, src_dt, &dst, &src);
+                } else {
+                    int op = dt < TB_X86_F32x1 ? MOV : FP_MOV;
+                    __(op, dt, &dst, &src);
                 }
             }
             break;
@@ -1772,12 +1674,6 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             }
             EMIT1(e, 0xC3);
             ctx->epilogue_length = e->count - pos;
-            break;
-        }
-
-        case x86_ucomi: {
-            Val b, a = parse_cisc_operand(ctx, n, &b, TB_NODE_GET_EXTRA(n));
-            inst2sse(e, FP_UCOMI, &a, &b, legalize_float(n->inputs[4]->dt));
             break;
         }
 
@@ -1868,7 +1764,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             const static int ops[] = {
-                FP_MOV, FP_ADD, FP_MUL, FP_SUB, FP_DIV, FP_MIN, FP_MAX, FP_XOR, FP_UCOMI
+                FP_MOV, FP_ADD, FP_MUL, FP_SUB, FP_DIV, FP_MIN, FP_MAX, FP_XOR
             };
 
             TB_X86_DataType dt;
@@ -1895,17 +1791,17 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         }
 
         case x86_lea:
-        case x86_add: case x86_or:  case x86_and: case x86_sub:
-        case x86_xor: case x86_cmp: case x86_mov: case x86_test:
+        case x86_add: case x86_or:  case x86_and:
+        case x86_sub: case x86_xor: case x86_mov:
         case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
-        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm:
-        case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
+        case x86_xorimm: case x86_movimm: case x86_shlimm: case x86_shrimm:
+        case x86_sarimm: case x86_rolimm: case x86_rorimm:
         {
             const static int ops[] = {
                 // binop
-                ADD, OR, AND, SUB, XOR, CMP, MOV, TEST,
+                ADD, OR, AND, SUB, XOR, -1, MOV, TEST,
                 // binop with immediates
-                ADD, OR, AND, SUB, XOR, CMP, MOV, TEST,
+                ADD, OR, AND, SUB, XOR, -1, MOV, TEST,
                 // shifts
                 SHL, SHR, SAR, ROL, ROR,
                 // misc (except for imul because it's weird)
@@ -1924,9 +1820,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
             int op_type = ops[n->type - x86_add];
-            if (op_type == CMP || op_type == TEST) {
-                __(op_type, dt, &rm, &rx);
-            } else if (op->mode == MODE_ST) {
+            if (op->mode == MODE_ST) {
                 __(op_type, dt, &rm, &rx);
             } else if (n->type >= x86_addimm && n->type <= x86_rorimm) {
                 assert(n->type != x86_lea);
@@ -1977,11 +1871,84 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             break;
         }
 
-        case x86_setcc: {
-            int cc = TB_NODE_GET_EXTRA_T(n, X86Cmov)->cc;
-            Val dst  = op_at(ctx, n);
+        case x86_ucomi:
+        case x86_ucomijcc:
+        case x86_cmp:
+        case x86_test:
+        case x86_cmpimm:
+        case x86_testimm:
+        case x86_cmpjcc:
+        case x86_testjcc:
+        case x86_cmpimmjcc:
+        case x86_testimmjcc: {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            TB_X86_DataType dt = legalize(op->dt);
 
-            __(SETO + cc, TB_X86_BYTE, &dst);
+            int cc = op->cond;
+            int op_type = -1;
+            switch (n->type) {
+                case x86_cmp:        op_type = CMP;    break;
+                case x86_cmpimm:     op_type = CMP;    break;
+                case x86_cmpjcc:     op_type = CMP;    break;
+                case x86_cmpimmjcc:  op_type = CMP;    break;
+                case x86_test:       op_type = TEST;   break;
+                case x86_testimm:    op_type = TEST;   break;
+                case x86_testjcc:    op_type = TEST;   break;
+                case x86_testimmjcc: op_type = TEST;   break;
+                case x86_ucomi:      op_type = FP_UCOMI; break;
+                case x86_ucomijcc:   op_type = FP_UCOMI; break;
+            }
+
+            Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
+            __(op_type, dt, &rm, &rx);
+            if (n->type >= x86_cmpjcc && n->type <= x86_testimmjcc) {
+                int succ_count = 0;
+                FOR_USERS(u, n) {
+                    if (cfg_is_cproj(USERN(u))) { succ_count++; }
+                }
+
+                // the arena on the function should also be available at this time, we're
+                // in the TB_Passes
+                TB_Arena* arena = ctx->f->arena;
+                TB_ArenaSavepoint sp = tb_arena_save(arena);
+                int* succ = tb_arena_alloc(arena, succ_count * sizeof(int));
+
+                // fill successors
+                bool has_default = false;
+                FOR_USERS(u, n) {
+                    if (USERN(u)->type == TB_BRANCH_PROJ) {
+                        int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                        TB_Node* succ_n = cfg_next_bb_after_cproj(USERN(u));
+
+                        if (index == 0) {
+                            has_default = !cfg_is_unreachable(succ_n);
+                        }
+
+                        MachineBB* mbb = node_to_bb(ctx, succ_n);
+                        succ[index] = mbb->id;
+                    }
+                }
+
+                TB_NodeBranchProj* if_br = cfg_if_branch(n);
+                if (if_br) {
+                    Cond cc = if_br->key;
+                    if (ctx->fallthrough == succ[0]) {
+                        // if flipping avoids a jmp, do that
+                        cc ^= 1;
+                        SWAP(int, succ[0], succ[1]);
+                    }
+
+                    __(JO+cc, TB_X86_QWORD, Vlbl(succ[0]));
+                    if (ctx->fallthrough != succ[1]) {
+                        __(JMP, TB_X86_QWORD, Vlbl(succ[1]));
+                    }
+                } else {
+                    tb_todo();
+                }
+            } else {
+                Val dst = op_at(ctx, n);
+                __(SETO + cc, TB_X86_BYTE, &dst);
+            }
             break;
         }
 
@@ -1989,8 +1956,8 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             TB_X86_DataType dt = legalize_int2(n->dt);
             int cc = TB_NODE_GET_EXTRA_T(n, X86Cmov)->cc;
 
-            Val dst  = op_at(ctx, n);
-            Val lhs  = op_at(ctx, n->inputs[3]);
+            Val dst = op_at(ctx, n);
+            Val lhs = op_at(ctx, n->inputs[3]);
             if (!is_value_match(&dst, &lhs)) {
                 __(MOV, dt, &dst, &lhs);
             }
@@ -2141,12 +2108,6 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         tb_todo();
         break;
     }
-}
-
-static bool flags_producer(TB_Node* n) {
-    return n->type == x86_ucomi
-        || n->type == x86_cmp || n->type == x86_cmpimm
-        || n->type == x86_test || n->type == x86_testimm;
 }
 
 // don't care about functional units on x86
@@ -3427,6 +3388,7 @@ ICodeGen tb__x64_codegen = {
     .node_name = node_name,
     .print_extra = print_extra,
     .print_dumb_extra = print_dumb_extra,
+    .flags = node_flags,
     .extra_bytes = extra_bytes,
     .emit_win64eh_unwind_info = emit_win64eh_unwind_info,
     .emit_call_patches  = emit_call_patches,

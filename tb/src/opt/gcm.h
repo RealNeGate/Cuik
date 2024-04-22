@@ -301,13 +301,13 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
             // compute dumb loop nests (we're inside another loop if it dominates us
             // and we dominate it's backedge)
             FOR_N(i, 0, cfg.block_count) {
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
+                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, rpo_nodes[i]);
                 bb->loop = cfg_is_natural_loop(bb->start) ? bb : NULL;
                 bb->freq = 1.0f;
             }
 
             FOR_REV_N(i, 1, cfg.block_count) {
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
+                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, rpo_nodes[i]);
 
                 if (bb->loop == NULL) {
                     // scan for potential parent loop
@@ -328,7 +328,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
 
             // really dumb block frequencies (eventually we want heuristics around exit paths)
             FOR_N(i, 0, cfg.block_count) {
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
+                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, rpo_nodes[i]);
 
                 TB_BasicBlock* loop = bb->loop;
                 while (loop) {
@@ -511,6 +511,13 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                     if (old != lca && lca->dom_depth > old->dom_depth) {
                         // some ops deserve hoisting more than others (cough cough loads)
                         TB_BasicBlock* better = try_to_hoist(f, get_lat, n, old, lca);
+
+                        // we don't wanna hoist the branch's compare, on our FLAGS ass platforms that'll cause
+                        // FLAGS spilling.
+                        if ((lca->end->type == TB_BRANCH || lca->end->type == TB_AFFINE_LATCH) && lca->end->inputs[1] == n) {
+                            better = lca;
+                        }
+
                         if (old != better) {
                             TB_OPTDEBUG(GCM)(
                                 printf("  LATE  v%u into .bb%d: ", n->gvn, lca->id),

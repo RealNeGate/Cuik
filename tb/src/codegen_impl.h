@@ -16,8 +16,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
 //   can be used to define clobbers or scratch depending on if they're later
 //   defined as fixed RegMasks or not.
 static int node_tmp_count(Ctx* restrict ctx, TB_Node* n);
-//   returns true if it clobbers the FLAGS register.
-static bool node_flags(Ctx* ctx, TB_Node* n);
 //   when we represent 2addr ops in the SSA, we define which edge is potentially
 //   shared such that lifetimes don't freak out about the fact that there's a
 //   hypothetical move before the op (which means that it'll interfere with its
@@ -58,14 +56,13 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
 static const char* reg_class_name(int class) {
     switch (class) {
         case 0: return "STK";
-        case 1: return "FLAGS";
-        case 2: return "GPR";
-        case 3: return "XMM";
+        case 1: return "GPR";
+        case 2: return "XMM";
         default: return NULL;
     }
 }
 
-void tb__print_regmask(RegMask* mask) {
+static void tb__print_regmask(RegMask* mask) {
     assert(mask->count == 1 && "TODO");
     if (mask->class == REG_CLASS_STK) {
         if (mask->mask[0] == 0) {
@@ -73,12 +70,8 @@ void tb__print_regmask(RegMask* mask) {
         } else {
             printf("[SP + %"PRId64"]", mask->mask[0]*8);
         }
-    } else if (mask->class == REG_CLASS_FLAGS) {
-        if (mask->mask[0] == 0) {
-            printf("[SPILL]");
-        } else {
-            printf("[FLAGS]");
-        }
+    } else if (mask->mask[0] == 0) {
+        printf("[SPILL]");
     } else {
         int i = 0;
         bool comma = false;
@@ -119,7 +112,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 }
 
 static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
-    TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
+    // TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
 
     TB_Arena* arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
@@ -130,7 +123,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         .tmp_count   = node_tmp_count,
         .constraint  = node_constraint,
         .node_2addr  = node_2addr,
-        .flags       = node_flags,
         .num_classes = REG_CLASS_COUNT,
         .emit = {
             .output = func_out,
@@ -175,6 +167,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             worklist_push(&walker_ws, f->root_node);
             while (dyn_array_length(walker_ws.items) > 0) {
                 TB_Node* n = dyn_array_pop(walker_ws.items);
+                tb__gvn_remove(f, n);
 
                 TB_OPTDEBUG(ISEL)(printf("ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
@@ -231,6 +224,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         tb_renumber_nodes(f, ws);
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
+        TB_OPTDEBUG(CODEGEN)(tb_print(f, f->tmp_arena));
 
         ctx.cfg = cfg = tb_compute_rpo(f, ws);
         tb_global_schedule(f, ws, cfg, true, true, node_latency);
@@ -251,17 +245,18 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         // define all PHIs early and sort BB order
         FOR_N(i, 0, cfg.block_count) {
-            TB_Node* end = nl_map_get_checked(cfg.node_to_block, bbs[i]).end;
+            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, bbs[i]);
+            TB_Node* end = bb->end;
             if (end->type == TB_RETURN) {
                 stop_bb = i;
             } else {
-                machine_bbs[bb_count++] = (MachineBB){ i };
+                machine_bbs[bb_count++] = (MachineBB){ i, .bb = bb };
             }
         }
 
         // enter END block at the... end
         if (stop_bb >= 0) {
-            machine_bbs[bb_count++] = (MachineBB){ stop_bb };
+            machine_bbs[bb_count++] = (MachineBB){ stop_bb, .bb = f->scheduled[bbs[stop_bb]->gvn] };
         }
 
         log_phase_end(f, og_size, "BB-sched");
@@ -271,7 +266,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     size_t vreg_cap = 0;
     CUIK_TIMED_BLOCK("local schedule") {
         // zero out the root & callgraph node
-        ctx.vreg_map = aarray_create(arena, int, tb_next_pow2(f->node_count + 16));
+        ctx.vreg_map = aarray_create(f->arena, int, tb_next_pow2(f->node_count + 16));
         aarray_set_length(ctx.vreg_map, f->node_count);
 
         FOR_N(i, 0, f->node_count) { ctx.vreg_map[i] = 0; }
@@ -299,7 +294,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             // a bit of slack for spills
             size_t item_count = dyn_array_length(ws->items) - base;
-            ArenaArray(TB_Node*) items = aarray_create(arena, TB_Node*, item_count + 16);
+            ArenaArray(TB_Node*) items = aarray_create(f->arena, TB_Node*, item_count + 16);
             aarray_set_length(items, item_count);
 
             // copy out sched
@@ -355,7 +350,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         log_phase_end(f, og_size, "local-sched & ra constraints");
 
         // setup for the next phase
-        ctx.vregs = aarray_create(arena, VReg, tb_next_pow2(vreg_count + 16));
+        ctx.vregs = aarray_create(f->arena, VReg, tb_next_pow2(vreg_count + 16));
         aarray_set_length(ctx.vregs, vreg_count);
     }
 
@@ -392,8 +387,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 FOR_N(j, n->input_count, n->input_count + tmps) {
                     printf("    TMP[%zu] = ", j), tb__print_regmask(ctx.ins[j]), printf("\n");
                 }
-
-                if (node_flags(&ctx, n)) { printf("    CLOBBER FLAGS\n"); }
                 #endif
 
                 if (vreg_id > 0 && n->type != TB_MACH_MOVE) {

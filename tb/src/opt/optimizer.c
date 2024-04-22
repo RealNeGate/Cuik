@@ -20,6 +20,7 @@ static void remove_input(TB_Function* f, TB_Node* n, size_t i);
 static void violent_kill(TB_Function* f, TB_Node* n);
 static bool alloc_types(TB_Function* f);
 
+static bool can_gvn(TB_Node* n);
 static void print_lattice(Lattice* l);
 
 static Lattice* value_of(TB_Function* f, TB_Node* n);
@@ -253,7 +254,9 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "legalizer.h"
 
 void tb__gvn_remove(TB_Function* f, TB_Node* n) {
-    nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
+    if (can_gvn(n)) {
+        nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
+    }
 }
 
 static void violent_kill(TB_Function* f, TB_Node* n) {
@@ -359,7 +362,7 @@ static Lattice* value_region(TB_Function* f, TB_Node* n) {
     // technically just the MOP logic but folded out
     FOR_N(i, 0, n->input_count) {
         Lattice* edge = latuni_get(f, n->inputs[i]);
-        if (edge == &CTRL_IN_THE_SKY) { return &CTRL_IN_THE_SKY; }
+        if (edge == &LIVE_IN_THE_SKY) { return &LIVE_IN_THE_SKY; }
     }
 
     return &TOP_IN_THE_SKY;
@@ -439,26 +442,43 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
         }
     }
 
-    if (old->tag == LATTICE_INT && old->_int.widen >= INT_WIDEN_LIMIT) {
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data), lattice_int_max(n->dt.data), .widen = INT_WIDEN_LIMIT } });
-    }
-
-    Lattice* l = old;
+    Lattice* l = &TOP_IN_THE_SKY;
     FOR_N(i, 1, n->input_count) {
         Lattice* ctrl = latuni_get(f, r->inputs[i - 1]);
-        if (ctrl == &CTRL_IN_THE_SKY) {
+        if (ctrl == &LIVE_IN_THE_SKY) {
             Lattice* edge = latuni_get(f, n->inputs[i]);
             l = lattice_meet(f, l, edge);
         }
     }
 
-    // downward progress will widen...
-    Lattice* glb = lattice_meet(f, old, l);
-    if (old != l && glb == l) {
-        Lattice new_l = *l;
-        new_l._int.widen = TB_MAX(old->_int.widen, l->_int.widen) + 1;
-        return lattice_intern(f, new_l);
+    if (old->tag == LATTICE_INT) {
+        // we wanna preserve widening count regardless (on pessimistic stuff
+        // it would never widen so it'll stay as 0, on optimistic stuff old values
+        // might have a widening that the meet of the phi doesn't include, we account
+        // for that here)
+        if (l->tag == LATTICE_INT && l->_int.widen < old->_int.widen) {
+            Lattice new_l = *l;
+            new_l._int.widen = old->_int.widen;
+            l = lattice_intern(f, new_l);
+        }
+
+        // downward progress will widen...
+        if (old != l) {
+            Lattice* glb = lattice_meet(f, old, l);
+            if (glb == l && l->tag == LATTICE_INT) {
+                // we've hit the widening limit, since MAFs scale with the lattice height we limit how
+                // many steps our ints can take since the lattice itself has a height of 18 quintillion...
+                if (l->_int.widen >= INT_WIDEN_LIMIT) {
+                    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data), lattice_int_max(n->dt.data), .widen = INT_WIDEN_LIMIT } });
+                }
+
+                Lattice new_l = *l;
+                new_l._int.widen = TB_MAX(old->_int.widen, l->_int.widen) + 1;
+                return lattice_intern(f, new_l);
+            }
+        }
     }
+
     return l;
 }
 
@@ -563,7 +583,7 @@ TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x) {
 TB_Node* dead_node(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_DEAD, TB_TYPE_VOID, 1, 0);
     set_input(f, n, f->root_node, 0);
-    latuni_set(f, n, &TOP_IN_THE_SKY);
+    latuni_set(f, n, &DEAD_IN_THE_SKY);
     return tb__gvn(f, n, 0);
 }
 
@@ -576,13 +596,12 @@ TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i) {
 
 static void remove_input(TB_Function* f, TB_Node* n, size_t i) {
     // remove swap
-    n->input_count--;
-    if (n->input_count > 0) {
-        if (n->input_count != i) {
-            set_input(f, n, n->inputs[n->input_count], i);
-        }
-        set_input(f, n, NULL, n->input_count);
+    size_t last = n->input_count - 1;
+    if (i != last) {
+        set_input(f, n, n->inputs[last], i);
     }
+    set_input(f, n, NULL, last);
+    n->input_count = last;
 }
 
 void tb_kill_node(TB_Function* f, TB_Node* n) {
@@ -627,7 +646,7 @@ static void remove_user(TB_Function* f, TB_Node* n, int slot) {
 
 void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
     // try to recycle the user
-    // assert(slot < n->input_count);
+    assert(slot < n->input_count);
     remove_user(f, n, slot);
     n->inputs[slot] = in;
     if (in != NULL) { add_user(f, n, in, slot); }
@@ -665,6 +684,7 @@ void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
 }
 
 void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
+    assert(new_n != n);
     if (new_n->user_count + n->user_count >= new_n->user_cap) {
         size_t new_cap = tb_next_pow2(new_n->user_count + n->user_count + 4);
         assert(new_cap < UINT16_MAX);
@@ -685,15 +705,18 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     }
 
     FOR_N(i, 0, n->user_count) {
-        TB_Node* un = USERN(&n->users[i]);
-        int ui      = USERI(&n->users[i]);
+        TB_User u = n->users[i];
+        TB_Node* un = USERN(&u);
+        int ui      = USERI(&u);
         tb_assert(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
 
-        tb__gvn_remove(f, un);
+        assert(ui < un->input_count);
+        remove_user(f, un, ui);
         un->inputs[ui] = new_n;
-        new_n->users[new_n->user_count + i] = n->users[i];
+
+        // we've resized in bulk, so no need to check in this loop
+        new_n->users[new_n->user_count++] = u;
     }
-    new_n->user_count += n->user_count;
     n->user_count = 0;
 }
 
@@ -727,7 +750,11 @@ static Lattice* value_of(TB_Function* f, TB_Node* n) {
 }
 
 // converts constant Lattice into constant node
-static bool is_dead_ctrl(TB_Function* f, TB_Node* n) { return latuni_get(f, n) == &TOP_IN_THE_SKY; }
+static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
+    Lattice* l = latuni_get(f, n);
+    return l == &TOP_IN_THE_SKY || l == &DEAD_IN_THE_SKY;
+}
+
 static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
     // already a constant?
     if (n->type == TB_SYMBOL || n->type == TB_ICONST || n->type == TB_F32CONST || n->type == TB_F64CONST) {
@@ -757,7 +784,6 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
 
         if (n->input_count == 0) {
             f->invalidated_loops = true;
-            tb_kill_node(f, n);
             return dead_node(f);
         } else if (n->input_count == 1) {
             // remove phis, because we're single entry they're all degens
@@ -862,7 +888,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
             // check if tuple is constant path
             int trues = 0;
             FOR_N(i, 0, l->_elem_count) {
-                if (l->elems[i] == &CTRL_IN_THE_SKY) {
+                if (l->elems[i] == &LIVE_IN_THE_SKY) {
                     trues++;
                 }
             }
@@ -876,7 +902,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                     if (is_proj(un)) {
                         assert(USERI(&n->users[i]) == 0);
                         int index   = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
-                        TB_Node* in = l->elems[index] == &CTRL_IN_THE_SKY ? ctrl : dead;
+                        TB_Node* in = l->elems[index] == &LIVE_IN_THE_SKY ? ctrl : dead;
 
                         set_input(f, un, NULL, 0);
                         subsume_node(f, un, in);
@@ -902,7 +928,8 @@ static void print_lattice(Lattice* l) {
     switch (l->tag) {
         case LATTICE_BOT:      printf("bot");                       break;
         case LATTICE_TOP:      printf("top");                       break;
-        case LATTICE_CTRL:     printf("ctrl");                      break;
+        case LATTICE_LIVE:     printf("live");                      break;
+        case LATTICE_DEAD:     printf("dead");                      break;
         case LATTICE_FLT32:    printf("f32");                       break;
         case LATTICE_FLT64:    printf("f64");                       break;
         case LATTICE_FLTCON32: printf("[f32: %f]", l->_f32);        break;
@@ -948,7 +975,11 @@ static void print_lattice(Lattice* l) {
         case LATTICE_INT: {
             printf("[");
             if (l->_int.min == l->_int.max) {
-                printf("%"PRId64, l->_int.min);
+                if (llabs(l->_int.min) > 10000) {
+                    printf("%#"PRIx64, l->_int.min);
+                } else {
+                    printf("%"PRId64, l->_int.min);
+                }
             } else if (l->_int.min == INT16_MIN && l->_int.max == INT16_MAX) {
                 printf("i8");
             } else if (l->_int.min == INT16_MIN && l->_int.max == INT16_MAX) {
@@ -957,8 +988,8 @@ static void print_lattice(Lattice* l) {
                 printf("i32");
             } else if (l->_int.min == INT64_MIN && l->_int.max == INT64_MAX) {
                 printf("i64");
-            } else if (l->_int.min > l->_int.max) {
-                printf("%"PRIu64",%"PRIu64, l->_int.min, l->_int.max);
+            } else if (l->_int.min > l->_int.max || llabs(l->_int.min) > 10000 || llabs(l->_int.max) > 10000) {
+                printf("%#"PRIx64",%#"PRIx64, l->_int.min, l->_int.max);
             } else {
                 printf("%"PRId64",%"PRId64, l->_int.min, l->_int.max);
             }
@@ -1288,7 +1319,7 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
             TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
             // combined pessimistic solver
             if (k = tb_opt_peeps(f), k > 0) {
-                TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d nodes\n", k));
+                TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
             }
 
             // locals scans the TB_LOCAL nodes, it might introduce peephole
@@ -1307,7 +1338,7 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
 
         TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
         if (k = tb_opt_peeps(f), k > 0) {
-            TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d nodes\n", k));
+            TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
         }
 
         // only wanna build a loop tree if there's
@@ -1319,7 +1350,9 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool p
 
             TB_OPTDEBUG(PASSES)(printf("    * Update loop tree\n"));
             tb_opt_build_loop_tree(f);
-            tb_opt_peeps(f);
+            if (k = tb_opt_peeps(f), k > 0) {
+                TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
+            }
         }
 
         // mostly just detecting loops and upcasting indvars
@@ -1390,14 +1423,15 @@ int tb_opt_peeps(TB_Function* f) {
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;
         while ((n = worklist_pop(f->worklist))) {
-
             // must've dead sometime between getting scheduled and getting here.
+            if (n->type == TB_NULL) { continue; }
+
             if (!is_proj(n) && n->user_count == 0) {
                 DO_IF(TB_OPTDEBUG_STATS)(f->stats.peeps++);
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_kill_node(f, n);
-            } else if (n->type != TB_NULL && peephole(f, n)) {
+            } else if (peephole(f, n)) {
                 changes += 1;
             }
         }

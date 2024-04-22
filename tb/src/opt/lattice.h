@@ -5,7 +5,8 @@ static Lattice TOMBSTONE         = { 0 };
 
 static Lattice TOP_IN_THE_SKY    = { LATTICE_TOP    };
 static Lattice BOT_IN_THE_SKY    = { LATTICE_BOT    };
-static Lattice CTRL_IN_THE_SKY   = { LATTICE_CTRL   };
+static Lattice LIVE_IN_THE_SKY   = { LATTICE_LIVE   };
+static Lattice DEAD_IN_THE_SKY   = { LATTICE_DEAD   };
 static Lattice XNULL_IN_THE_SKY  = { LATTICE_XNULL  };
 static Lattice NULL_IN_THE_SKY   = { LATTICE_NULL   };
 static Lattice FLT32_IN_THE_SKY  = { LATTICE_FLT32  };
@@ -18,9 +19,9 @@ static Lattice ANYMEM_IN_THE_SKY = { LATTICE_ANYMEM };
 static Lattice ALLMEM_IN_THE_SKY = { LATTICE_ALLMEM };
 static Lattice ALLPTR_IN_THE_SKY = { LATTICE_ALLPTR };
 static Lattice ANYPTR_IN_THE_SKY = { LATTICE_ANYPTR };
-static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = {  0, 0, 1, 0 } };
-static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = {  1, 1, 0, 1 } };
-static Lattice BOOL_IN_THE_SKY   = { LATTICE_INT, ._int = { -1, 0, 0, 0 } };
+static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = {  0, 0, UINT64_MAX, 0 } };
+static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = { -1,-1, 0, UINT64_MAX } };
+static Lattice BOOL_IN_THE_SKY   = { LATTICE_INT, ._int = { -1, 0, 0, 0          } };
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt);
 
@@ -62,7 +63,7 @@ static uint32_t lattice_hash(const void* a) {
         case LATTICE_ALLPTR:case LATTICE_ANYPTR:
         case LATTICE_NULL:  case LATTICE_XNULL:
         case LATTICE_ALLMEM:case LATTICE_ANYMEM:
-        case LATTICE_CTRL:
+        case LATTICE_LIVE:  case LATTICE_DEAD:
         break;
 
         default: tb_todo();
@@ -141,7 +142,8 @@ void tb__lattice_init(TB_Module* m) {
 
     nbhs_raw_insert(&m->lattice_elements, &BOT_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &TOP_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &CTRL_IN_THE_SKY);
+    nbhs_raw_insert(&m->lattice_elements, &LIVE_IN_THE_SKY);
+    nbhs_raw_insert(&m->lattice_elements, &DEAD_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &NULL_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &XNULL_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &FLT32_IN_THE_SKY);
@@ -235,23 +237,11 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(dt.data), lattice_int_max(dt.data) } });
         }
 
-        case TB_TAG_F32: {
-            return &FLT32_IN_THE_SKY;
-        }
-
-        case TB_TAG_F64: {
-            return &FLT64_IN_THE_SKY;
-        }
-
-        case TB_TAG_PTR: {
-            return &ALLPTR_IN_THE_SKY;
-        }
-
-        case TB_TAG_MEMORY: {
-            return &ALLMEM_IN_THE_SKY;
-        }
-
-        case TB_TAG_CONTROL: return &CTRL_IN_THE_SKY;
+        case TB_TAG_F32:     return &FLT32_IN_THE_SKY;
+        case TB_TAG_F64:     return &FLT64_IN_THE_SKY;
+        case TB_TAG_PTR:     return &ALLPTR_IN_THE_SKY;
+        case TB_TAG_MEMORY:  return &ALLMEM_IN_THE_SKY;
+        case TB_TAG_CONTROL: return &LIVE_IN_THE_SKY;
         default: return &BOT_IN_THE_SKY;
     }
 }
@@ -263,7 +253,7 @@ static Lattice* lattice_branch_goto(TB_Function* f, int succ_count, int taken) {
     Lattice* l = tb_arena_alloc(arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = succ_count };
     FOR_N(i, 0, succ_count) {
-        l->elems[i] = i == taken ? &CTRL_IN_THE_SKY : &TOP_IN_THE_SKY;
+        l->elems[i] = i == taken ? &LIVE_IN_THE_SKY : &DEAD_IN_THE_SKY;
     }
 
     Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
@@ -352,6 +342,11 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
     switch (type->tag) {
         case LATTICE_BOT: return &TOP_IN_THE_SKY;
         case LATTICE_TOP: return &BOT_IN_THE_SKY;
+
+        // putting ctrl on the centerline is weird which is why ~ctrl
+        // exists lol.
+        case LATTICE_LIVE: return &DEAD_IN_THE_SKY;
+        case LATTICE_DEAD: return &LIVE_IN_THE_SKY;
 
         case LATTICE_INT: {
             LatticeInt i = type->_int;
@@ -466,7 +461,9 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
         case LATTICE_PTRCON: return b->tag <= LATTICE_PTRCON ? &XNULL_IN_THE_SKY : &BOT_IN_THE_SKY;
 
         // already handled ctrl ^ ctrl, top ^ any, bot ^ any so everything else is bot
-        case LATTICE_CTRL: return &BOT_IN_THE_SKY;
+        case LATTICE_LIVE: return b == &DEAD_IN_THE_SKY ? &LIVE_IN_THE_SKY : &BOT_IN_THE_SKY;
+        // only leftover case here is gonna be live ^ dead
+        case LATTICE_DEAD: return b;
 
         case LATTICE_ALLMEM: return &ALLMEM_IN_THE_SKY;
         case LATTICE_ANYMEM: return b;

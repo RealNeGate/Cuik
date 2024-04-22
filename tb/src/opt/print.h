@@ -271,7 +271,9 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
             }
 
             default: {
-                if (n->dt.type == TB_TAG_TUPLE) {
+                if (cfg_is_branch(n)) {
+                    printf("  %s ", tb_node_get_name(n));
+                } else if (n->dt.type == TB_TAG_TUPLE) {
                     // print with multiple returns
                     TB_Node* projs[32] = { 0 };
                     FOR_USERS(u, n) {

@@ -40,7 +40,6 @@ static TB_Node* end_of_bb(TB_Node* n) {
 
 static Block* create_block(TB_Arena* arena, TB_Node* bb) {
     TB_ArenaSavepoint sp = tb_arena_save(arena);
-
     TB_Node* end = end_of_bb(bb);
 
     size_t succ_count = 0;

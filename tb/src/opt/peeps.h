@@ -22,18 +22,6 @@ typedef struct {
     NodeValueOf  value;
 } NodeVtable;
 
-enum {
-    // part of the SoN's embedded CFG, generally produce more CONTROL
-    // and taken in CONTROL (with the exception of the entry and exits).
-    NODE_CTRL       = 1,
-    // CFG node with no successors
-    NODE_END        = 2,
-    // CFG node which terminates a BB (usually branch or exit)
-    NODE_TERMINATOR = 4,
-    // tuple nodes which may produce several control edges
-    NODE_FORK_CTRL  = 8,
-};
-
 static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_ROOT]           =             NODE_TERMINATOR | NODE_END,
     [TB_RETURN]         = NODE_CTRL | NODE_TERMINATOR | NODE_END,
@@ -41,8 +29,8 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_UNREACHABLE]    = NODE_CTRL | NODE_TERMINATOR | NODE_END,
     [TB_TAILCALL]       = NODE_CTRL | NODE_TERMINATOR | NODE_END,
 
-    [TB_BRANCH]         = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
-    [TB_AFFINE_LATCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
+    [TB_BRANCH]         = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH,
+    [TB_AFFINE_LATCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH,
     [TB_NEVER_BRANCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
 
     [TB_CALL]           = NODE_CTRL,
@@ -135,17 +123,18 @@ bool cfg_is_natural_loop(TB_Node* n) {
     return n->type >= TB_NATURAL_LOOP && n->type <= TB_AFFINE_LOOP;
 }
 
-bool cfg_is_fork(TB_Node* n) {
-    return n->type < TB_NODE_TYPE_MAX ? node_flags[n->type] & NODE_FORK_CTRL : false;
+uint32_t cfg_flags(TB_Node* n) {
+    if (n->type >= TB_NODE_TYPE_MAX) {
+        int family = n->type / 0x100;
+        assert(family >= 1 && family < TB_ARCH_MAX);
+        return tb_codegen_families[family].flags(n);
+    } else {
+        return node_flags[n->type];
+    }
 }
 
-bool cfg_is_terminator(TB_Node* n) {
-    // TODO(NeGate): currently no machine specific terminators but this is a bad design
-    return n->type < TB_NODE_TYPE_MAX ? node_flags[n->type] & NODE_TERMINATOR : false;
-}
-
-bool cfg_is_endpoint(TB_Node* n) {
-    // TODO(NeGate): currently no machine specific endpoints but this is a bad design
-    return n->type < TB_NODE_TYPE_MAX ? node_flags[n->type] & NODE_END : false;
-}
+bool cfg_is_branch(TB_Node* n)     { return cfg_flags(n) & NODE_BRANCH; }
+bool cfg_is_fork(TB_Node* n)       { return cfg_flags(n) & NODE_FORK_CTRL; }
+bool cfg_is_terminator(TB_Node* n) { return cfg_flags(n) & NODE_TERMINATOR; }
+bool cfg_is_endpoint(TB_Node* n)   { return cfg_flags(n) & NODE_END; }
 

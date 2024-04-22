@@ -73,10 +73,10 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
 #define TB_OPTDEBUG_ISEL     0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
-#define TB_OPTDEBUG_REGALLOC 0
+#define TB_OPTDEBUG_REGALLOC 1
 #define TB_OPTDEBUG_GVN      0
 #define TB_OPTDEBUG_SCHEDULE 0
 // for toggling ANSI colors
@@ -554,12 +554,27 @@ typedef struct {
     uint8_t data[];
 } TB_TemporaryStorage;
 
+enum {
+    // part of the SoN's embedded CFG, generally produce more CONTROL
+    // and taken in CONTROL (with the exception of the entry and exits).
+    NODE_CTRL       = 1,
+    // CFG node with no successors
+    NODE_END        = 2,
+    // CFG node which terminates a BB (usually branch or exit)
+    NODE_TERMINATOR = 4,
+    // tuple nodes which may produce several control edges
+    NODE_FORK_CTRL  = 8,
+    // uses TB_BRANCH_PROJ for the cprojs
+    NODE_BRANCH     = 16,
+};
+
 struct ICodeGen {
     // what does CHAR_BIT mean on said platform
     int minimum_addressable_size, pointer_size;
 
     // Mach nodes info
     bool (*can_gvn)(TB_Node* n);
+    uint32_t (*flags)(TB_Node* n);
     size_t (*extra_bytes)(TB_Node* n);
     const char* (*node_name)(TB_Node* n);
     void (*print_extra)(TB_Node* n);

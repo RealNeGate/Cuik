@@ -46,6 +46,9 @@ void tb_verify(TB_Function* f, TB_Arena* tmp) {
         if (n->type != TB_PHI && !cfg_is_region(n)) {
             memset(visited, 0, ((f->node_count + 31) / 32) * sizeof(uint32_t));
             cycle_check(f, n, visited, progress);
+        } else if (n->type == TB_PHI) {
+            assert(cfg_is_region(n->inputs[0]));
+            assert(n->input_count == 1 + n->inputs[0]->input_count);
         }
     }
 

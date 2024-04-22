@@ -44,7 +44,7 @@ enum {
 
     // all we can fit into 3bits, but also... 8 classes is a lot.
     //
-    // * x86 has 3 currently: Stack, GPR, Vector, and FLAGS.
+    // * x86 has 3 currently: Stack, GPR, Vector.
     MAX_REG_CLASSES = 8,
 };
 
@@ -74,6 +74,7 @@ typedef struct {
 
     TB_Node* n;
     TB_Node* end_n;
+    TB_BasicBlock* bb;
 
     // local schedule
     ArenaArray(TB_Node*) items;
@@ -92,11 +93,6 @@ typedef struct {
     MachineBB* v;
 } NodeToBB;
 
-typedef struct Range {
-    struct Range* next;
-    int start, end;
-} Range;
-
 typedef struct VReg VReg;
 struct VReg {
     TB_Node* n;
@@ -111,11 +107,10 @@ struct VReg {
     float spill_cost;
     int hint_vreg;
 
-    // only matters for linear-scan
+    // only matters for chaitin
     struct {
-        int end_time;
-        Range* active_range;
-        Range* saved_range;
+        // debug purposes only
+        int coalesced;
     };
 };
 
@@ -124,7 +119,6 @@ typedef int (*TmpCount)(Ctx* restrict ctx, TB_Node* n);
 
 // ins can be NULL
 typedef RegMask* (*NodeConstraint)(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
-typedef bool (*NodeFlags)(Ctx* restrict ctx, TB_Node* n);
 
 // if we're doing 2addr ops like x86 the real operations are mutating:
 //
@@ -159,7 +153,6 @@ struct Ctx {
     // user callbacks
     TmpCount tmp_count;
     NodeConstraint constraint;
-    NodeFlags flags;
     TB_2Addr node_2addr;
 
     // target-dependent index
@@ -191,8 +184,6 @@ struct Ctx {
     NL_Table tmps_map;        // TB_Node* -> Tmps*
 
     // Regalloc
-    bool has_flags; // if true, the reg class 1 is reserved for it
-
     int num_spills;
     int stack_slot_size;
     int stack_header;

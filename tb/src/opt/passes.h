@@ -89,10 +89,13 @@ struct Lattice {
         // control tokens:
         //    top
         //     |
-        //   ctrl
+        //   dead
+        //     |
+        //   live
         //     |
         //    bot
-        LATTICE_CTRL,
+        LATTICE_LIVE,
+        LATTICE_DEAD,
     } tag;
     union {
         size_t _alias_n;    // LATTICE_MEM_SLICE
@@ -113,6 +116,7 @@ struct Lattice {
 ////////////////////////////////
 bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);
+bool cfg_is_branch(TB_Node* n);
 bool cfg_is_fork(TB_Node* n);
 bool cfg_is_terminator(TB_Node* n);
 bool cfg_is_endpoint(TB_Node* n);
@@ -181,10 +185,19 @@ static bool cfg_is_bb_entry(TB_Node* n) {
 
 // returns a BranchProj's falsey proj, if it's an if-like TB_BRANCH
 static TB_NodeBranchProj* cfg_if_branch(TB_Node* n) {
-    assert(n->type == TB_BRANCH || n->type == TB_AFFINE_LATCH);
-    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-    if (br->succ_count != 2) { return NULL; }
+    size_t succ_count = 0;
+    if (n->type == TB_BRANCH || n->type == TB_AFFINE_LATCH) {
+        TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+        succ_count = br->succ_count;
+    } else if (cfg_is_branch(n)) {
+        FOR_USERS(u, n) {
+            if (USERN(u)->type == TB_BRANCH_PROJ) { succ_count++; }
+        }
+    } else {
+        tb_todo();
+    }
 
+    if (succ_count != 2) { return NULL; }
     FOR_USERS(u, n) {
         if (USERN(u)->type == TB_BRANCH_PROJ) {
             TB_NodeBranchProj* proj = TB_NODE_GET_EXTRA(USERN(u));
@@ -201,7 +214,7 @@ static bool is_mem_out_op(TB_Node* n) {
 }
 
 static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || is_proj(n);
+    return (n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || is_proj(n) || cfg_is_control(n);
 }
 
 static bool is_mem_end_op(TB_Node* n) {

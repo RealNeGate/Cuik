@@ -30,13 +30,18 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                 // both the region and phi are doing remove swap so the order should
                 // stay fine across them.
                 changes = true;
-                remove_input(f, n, i);
 
                 FOR_USERS(use, n) {
-                    if (USERN(use)->type == TB_PHI && USERI(use) == 0) {
-                        remove_input(f, USERN(use), i + 1);
+                    TB_Node* phi = USERN(use);
+                    if (phi->type == TB_PHI) {
+                        assert(USERI(use) == 0);
+                        assert(phi->input_count == 1 + n->input_count);
+                        remove_input(f, phi, i + 1);
                     }
                 }
+
+                remove_input(f, n, i);
+                continue;
             } else if (n->type == TB_REGION && n->inputs[i]->type == TB_REGION) {
                 #if 1
                 // pure regions can be collapsed into direct edges
@@ -97,7 +102,6 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                 }
                 #endif
             }
-
             i += 1;
         }
 
@@ -109,7 +113,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
             }
 
             f->invalidated_loops = true;
-            return n->input_count == 1 ? n->inputs[0] : n;
+            return n;
         }
     }
 
@@ -463,7 +467,7 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
         return lattice_branch_goto(f, br->succ_count, taken);
     } else {
         // check for redundant conditions
-        FOR_USERS(u, n->inputs[1]) {
+        /* FOR_USERS(u, n->inputs[1]) {
             if (USERN(u)->type != TB_BRANCH || USERI(u) != 1 || USERN(u) == n) {
                 continue;
             }
@@ -481,7 +485,7 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
                     }
                 }
             }
-        }
+        } */
     }
 
     return NULL;

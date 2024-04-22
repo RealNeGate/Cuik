@@ -15,9 +15,18 @@ static bool get_int_const(TB_Node* n, uint64_t* imm) {
 static TB_Node* ideal_bitcast(TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
-    if (src->type == TB_BITCAST) {
+    if (n->dt.raw == src->dt.raw) {
+        return src;
+    } else if (src->type == TB_BITCAST) {
         set_input(f, n, src->inputs[1], 1);
         return n;
+    }
+
+    // single use load? ok replace the load
+    if (src->type == TB_LOAD && src->user_count == 1) {
+        src->dt = n->dt;
+        latuni_set(f, src, NULL);
+        return src;
     }
 
     // int -> smaller int means truncate
@@ -442,13 +451,10 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             break;
         }
     } else if (dt.type == TB_TAG_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-        a = lattice_meet(f, a, &XNULL_IN_THE_SKY);
-        b = lattice_meet(f, b, &XNULL_IN_THE_SKY);
-
         if (n->type == TB_CMP_EQ) {
-            return a == b ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY;
+            return a == b ? &TRUE_IN_THE_SKY : &BOOL_IN_THE_SKY;
         } else {
-            return a != b ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY;
+            return a == b ? &FALSE_IN_THE_SKY : &BOOL_IN_THE_SKY;
         }
     }
 
@@ -995,6 +1001,14 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
                 return n->inputs[1];
             }
         }
+    } else if (n->type == TB_CMP_NE) {
+        if (n->inputs[1] == n->inputs[2]) {
+            return make_int_node(f, TB_TYPE_BOOL, 0);
+        }
+    } else if (n->type == TB_CMP_EQ) {
+        if (n->inputs[1] == n->inputs[2]) {
+            return make_int_node(f, TB_TYPE_BOOL, 1);
+        }
     }
 
     uint64_t b;
@@ -1051,6 +1065,23 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
 static TB_Node* ideal_ptr_offset(TB_Function* f, TB_Node* n) {
     TB_Node* base   = n->inputs[1];
     TB_Node* offset = n->inputs[2];
+
+    // reassociate:
+    //   off(off(a, b), c) => off(a, b + c)
+    if (base->type == TB_PTR_OFFSET) {
+        TB_Node* rhs = tb_alloc_node(f, TB_ADD, offset->dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, rhs, base->inputs[2], 1);
+        set_input(f, rhs, offset,          2);
+        mark_node(f, rhs);
+
+        // give it a good type to avoid monotonicity problems
+        Lattice* rhs_type = value_of(f, rhs);
+        latuni_set(f, rhs, rhs_type);
+
+        set_input(f, n, base->inputs[1], 1);
+        set_input(f, n, rhs,             2);
+        return n;
+    }
 
     return NULL;
 }

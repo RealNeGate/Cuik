@@ -235,6 +235,18 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                     }
                 }
             }
+
+            // push all anti-deps
+            if (is_mem_in_op(n) || (n->input_count >= 2 && n->inputs[1] && n->inputs[1]->dt.type == TB_TAG_MEMORY)) {
+                FOR_USERS(u, n->inputs[1]) {
+                    TB_Node* un = USERN(u);
+                    if (n != un && USERI(u) == 1) {
+                        if (un != end && can_ready_user(f, ws, bb, &sched.ready_set, un)) {
+                            ready_up(&sched, un, end);
+                        }
+                    }
+                }
+            }
         }
     }
 
