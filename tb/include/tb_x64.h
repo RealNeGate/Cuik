@@ -4,6 +4,23 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifndef TB_API
+#  ifdef __cplusplus
+#    define TB_EXTERN extern "C"
+#  else
+#    define TB_EXTERN
+#  endif
+#  ifdef TB_DLL
+#    ifdef TB_IMPORT_DLL
+#      define TB_API TB_EXTERN __declspec(dllimport)
+#    else
+#      define TB_API TB_EXTERN __declspec(dllexport)
+#    endif
+#  else
+#    define TB_API TB_EXTERN
+#  endif
+#endif
+
 typedef enum {
     // r/m is a memory operand
     TB_X86_INSTR_INDIRECT = (1u << 0u),
@@ -81,10 +98,10 @@ typedef struct {
     int64_t imm;
 } TB_X86_Inst;
 
-void tb_x86_print_inst(FILE* fp, TB_X86_Inst* inst);
-bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data);
-const char* tb_x86_reg_name(int8_t reg, TB_X86_DataType dt);
-const char* tb_x86_type_name(TB_X86_DataType dt);
-const char* tb_x86_mnemonic(TB_X86_Inst* inst);
+TB_API void tb_x86_print_inst(FILE* fp, TB_X86_Inst* inst);
+TB_API bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data);
+TB_API const char* tb_x86_reg_name(int8_t reg, TB_X86_DataType dt);
+TB_API const char* tb_x86_type_name(TB_X86_DataType dt);
+TB_API const char* tb_x86_mnemonic(TB_X86_Inst* inst);
 
 #endif /* TB_X64_H */
