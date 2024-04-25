@@ -39,6 +39,7 @@ static bool test_n_reset(uint32_t* arr, int i) {
 }
 
 static void ifg_edge(Chaitin* ra, int i, int j) {
+    if (i < j) { SWAP(int, i, j); }
     ra->ifg[i*ra->ifg_stride + j/64] |= 1ull << (j % 64);
 }
 
@@ -53,15 +54,18 @@ static void ifg_remove(Chaitin* ra, int i, int j) {
 }
 
 static void ifg_dump(Chaitin* ra) {
+    printf("###############################\n");
+    printf("# interference                #\n");
+    printf("###############################\n");
     FOR_N(i, 0, ra->ifg_len) {
+        printf("V%03zu: ", i);
         FOR_N(j, 0, ra->ifg_stride) {
             uint64_t bits = ra->ifg[i*ra->ifg_stride + j];
-            if (bits == 0) continue;
-
-            FOR_N(k, 0, 64) if ((bits >> k) & 1) {
-                if (i < j*64 + k) { printf("V%zu -- V%zu\n", j*64 + k, i); }
+            FOR_N(k, 0, 64) {
+                printf("%c", (bits >> k) & 1 ? '*' : ' ');
             }
         }
+        printf("\n");
     }
 }
 
@@ -77,17 +81,26 @@ static void ifg_dump_edge(Chaitin* ra, int i) {
     }
 }
 
-static void ifg_union(Chaitin* ra, int i, int other) {
-    assert(i != other);
-    FOR_N(j, 0, ra->ifg_stride) {
-        uint64_t bits = ra->ifg[i*ra->ifg_stride + j];
-        if (bits == 0) continue;
+static void ifg_square(Chaitin* ra) {
+    // compute degree & fill in the rest of the interference graph
+    FOR_N(i, 0, ra->ifg_len) {
+        FOR_N(j, 0, ra->ifg_stride) {
+            uint64_t bits = ra->ifg[i*ra->ifg_stride + j];
+            if (bits == 0) continue;
 
-        FOR_N(k, 0, 64) if ((bits >> k) & 1) {
-            int l = j*64 + k;
-            ifg_edge(ra, i, l);
-            ifg_edge(ra, l, i);
+            FOR_N(k, 0, 64) if ((bits >> k) & 1) {
+                int l = j*64 + k;
+                ra->ifg[l*ra->ifg_stride + i/64] |= 1ull << (i % 64);
+            }
         }
+    }
+
+    FOR_N(i, 0, ra->ifg_len) {
+        int sum = 0;
+        FOR_N(j, 0, ra->ifg_stride) {
+            sum += tb_popcount64(ra->ifg[i*ra->ifg_stride + j]);
+        }
+        ra->degree[i] = sum;
     }
 }
 
@@ -105,6 +118,7 @@ static int ifg_remove_edges(Chaitin* ra, int* ws, int ws_cnt, uint32_t* visited,
             }
             // TB_OPTDEBUG(REGALLOC)(printf("  remove V%zu\n", id));
 
+            assert(ra->degree[id] > 0);
             ifg_remove(ra, id, i);
             ra->degree[id] -= 1;
         }
@@ -156,7 +170,8 @@ MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
 }
 
 void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
-    MachineBB* mbb = tb__insert(ctx, f, f->scheduled[before_n->gvn], n);
+    TB_BasicBlock* bb = f->scheduled[before_n->gvn];
+    MachineBB* mbb = tb__insert(ctx, f, bb, n);
 
     size_t i = 0, cnt = aarray_length(mbb->items);
     while (i < cnt && mbb->items[i] != before_n) { i++; }
@@ -164,10 +179,12 @@ void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) 
     aarray_push(mbb->items, 0);
     memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
     mbb->items[i] = n;
+    nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
 }
 
 void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
-    MachineBB* mbb = tb__insert(ctx, f, f->scheduled[n->gvn], n);
+    TB_BasicBlock* bb = f->scheduled[n->gvn];
+    MachineBB* mbb = &ctx->machine_bbs[bb->order];
 
     size_t i = 0, cnt = aarray_length(mbb->items);
     while (i < cnt && mbb->items[i] != n) { i++; }
@@ -175,10 +192,12 @@ void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     memmove(&mbb->items[i], &mbb->items[i + 1], (cnt - (i + 1)) * sizeof(TB_Node*));
     aarray_pop(mbb->items);
     f->scheduled[n->gvn] = NULL;
+    nl_hashset_remove2(&bb->items, n, tb__node_hash, tb__node_cmp);
 }
 
 void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
-    MachineBB* mbb = tb__insert(ctx, f, f->scheduled[after_n->gvn], n);
+    TB_BasicBlock* bb = f->scheduled[after_n->gvn];
+    MachineBB* mbb = tb__insert(ctx, f, bb, n);
 
     size_t i = 0, cnt = aarray_length(mbb->items);
     while (i < cnt && mbb->items[i] != after_n) { i++; }
@@ -189,6 +208,7 @@ void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
     aarray_push(mbb->items, NULL);
     memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
     mbb->items[i] = n;
+    nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
 }
 
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b) {
@@ -220,7 +240,6 @@ static void interfere_live(Ctx* restrict ctx, Chaitin* ra, Set* live, int vreg_i
         if (kn && set_get(live, kn->gvn) && reg_mask_may_intersect(vreg_mask, ctx->vregs[k].mask)) {
             // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%td\n", vreg_id, k));
             ifg_edge(ra, vreg_id, k);
-            ifg_edge(ra, k, vreg_id);
         }
     }
 }
@@ -240,7 +259,6 @@ static void interfere_mask(Ctx* restrict ctx, Chaitin* ra, int vreg_id) {
                 if (mask & 1) {
                     int in_vreg_id = ra->fixed[def_mask->class] + j;
                     // TB_OPTDEBUG(REGALLOC)(printf("  V%d -- V%d\n", vreg_id, in_vreg_id));
-                    ifg_edge(ra, vreg_id, in_vreg_id);
                     ifg_edge(ra, in_vreg_id, vreg_id);
                 }
                 mask >>= 1;
@@ -263,8 +281,8 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
     // fixed vregs interfere with their fellow fixed vregs
     FOR_N(i, 0, ctx->num_classes) {
         int base = ra->fixed[i];
-        FOR_N(j, 0, ctx->num_regs[i]) FOR_N(k, 0, ctx->num_regs[i]) if (j != k) {
-            ifg_edge(ra, base + j, base + k);
+        FOR_N(j, 0, ctx->num_regs[i]) FOR_N(k, j + 1, ctx->num_regs[i]) {
+            ifg_edge(ra, base + k, base + j);
         }
     }
 
@@ -299,7 +317,6 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
                         if (in_vreg && reg_mask_may_intersect(def_mask, in_vreg->mask)) {
                             int in_vreg_id = in_vreg - ctx->vregs;
                             // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%d\n", vreg_id, in_vreg_id));
-                            ifg_edge(ra, vreg_id, in_vreg_id);
                             ifg_edge(ra, in_vreg_id, vreg_id);
                         }
                     }
@@ -350,17 +367,10 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
         }
     }
 
-    // compute degree
-    FOR_N(i, 0, ra->ifg_len) {
-        int sum = 0;
-        FOR_N(j, 0, ra->ifg_stride) {
-            sum += tb_popcount64(ra->ifg[i*ra->ifg_stride + j]);
-        }
-        ra->degree[i] = sum;
-    }
+    ifg_square(ra);
 
     // conservative coalescing
-    FOR_N(i, 0, ctx->bb_count) {
+    /*FOR_N(i, 0, ctx->bb_count) {
         MachineBB* mbb = &ctx->machine_bbs[i];
         TB_BasicBlock* bb = f->scheduled[mbb->n->gvn];
 
@@ -376,6 +386,8 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
 
                 TB_Node* in = n->inputs[shared_edge];
                 VReg* in_vreg = node_vreg(ctx, in);
+                if (in_vreg == vreg) { continue; }
+
                 if (in_vreg && vreg->mask->class != REG_CLASS_STK && in_vreg->mask->class == vreg->mask->class) {
                     RegMask* intersect = tb__reg_mask_meet(ctx, vreg->mask, in_vreg->mask);
                     int k_limit = ctx->num_regs[vreg->mask->class];
@@ -389,7 +401,7 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
                 }
             }
         }
-    }
+    }*/
 }
 
 static void chaitin_print_vreg(Ctx* restrict ctx, Chaitin* restrict ra, VReg* vreg) {
@@ -541,65 +553,6 @@ static int simplify(Ctx* restrict ctx, Chaitin* restrict ra, int* stk, int cap) 
     }
 }
 
-static void chaitin_rematerialize(Ctx* ctx, TB_Node* n) {
-    assert(n->input_count == 1 && "for now remat only happens for simple stuff like constants");
-
-    size_t extra = extra_bytes(n);
-    TB_Function* f = ctx->f;
-    TB_Node* root = f->root_node;
-    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
-
-    // don't want weird pointer invalidation crap
-    size_t user_count = n->user_count;
-    TB_User* users = tb_arena_alloc(f->tmp_arena, n->user_count * sizeof(TB_User));
-    memcpy(users, n->users, n->user_count * sizeof(TB_User));
-
-    // aggressive reload
-    for (size_t i = 0; i < user_count; i++) {
-        TB_Node* use_n = USERN(&users[i]);
-        int use_i      = USERI(&users[i]);
-
-        // it's never in[0] lmao
-        assert(use_i != 0);
-
-        // remat per use site
-        TB_Node* k = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
-        memcpy(k->extra, n->extra, extra);
-        k->inputs[0] = root;
-        add_user(f, k, root, 0);
-
-        // schedule the split right before use
-        tb__insert_before(ctx, ctx->f, k, use_n);
-        VReg* reload_vreg = tb__set_node_vreg(ctx, k);
-        reload_vreg->mask = ctx->constraint(ctx, k, NULL);
-
-        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   v%zu: remat (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, k->gvn));
-    }
-    tb_arena_restore(f->tmp_arena, sp);
-
-    // delete the original def
-    ctx->vreg_map[n->gvn] = 0;
-    tb__remove_node(ctx, f, n);
-    tb_kill_node(f, n);
-
-    cuikperf_region_end();
-}
-
-static void redo_dataflow(Ctx* restrict ctx, Chaitin* ra, TB_Arena* arena) {
-    TB_Function* f = ctx->f;
-    TB_Node** rpo_nodes = f->worklist->items;
-    size_t bb_count     = ctx->cfg.block_count;
-    FOR_N(i, 0, bb_count) {
-        TB_Node* n = rpo_nodes[i];
-        TB_BasicBlock* bb = f->scheduled[n->gvn];
-        bb->gen      = set_create_in_arena(arena, f->node_count);
-        bb->kill     = set_create_in_arena(arena, f->node_count);
-        bb->live_in  = set_create_in_arena(arena, f->node_count);
-        bb->live_out = set_create_in_arena(arena, f->node_count);
-    }
-    tb_dataflow(f, arena, ctx->cfg, rpo_nodes);
-}
-
 void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
     TB_Function* f = ctx->f;
     Chaitin ra = { .ctx = ctx, .arena = arena };
@@ -651,8 +604,15 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                 FOR_N(k, in_count, in_count + tmp_count) {
                     RegMask* in_mask = ins[k];
                     assert(in_mask != &TB_REG_EMPTY);
-                    tmps->elems[k - in_count] = aarray_length(ctx->vregs);
-                    aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = INFINITY });
+
+                    int fixed = fixed_reg_mask(in_mask);
+                    if (fixed >= 0) {
+                        // insert new range to the existing vreg
+                        tmps->elems[k - in_count] = ra.fixed[in_mask->class] + fixed;
+                    } else {
+                        tmps->elems[k - in_count] = aarray_length(ctx->vregs);
+                        aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = INFINITY });
+                    }
                 }
             }
         }
@@ -684,7 +644,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                 tb_arena_restore(arena, sp);
 
                 // recompute liveness
-                redo_dataflow(ctx, &ra, arena);
+                redo_dataflow(ctx, arena);
             }
             continue;
         }
@@ -704,6 +664,8 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
 
         ra.ifg    = ifg_copy;
         ra.degree = deg_copy;
+
+        ifg_dump(&ra);
 
         int highest_stack_slot = 0;
         Set live_stack = set_create_in_arena(arena, ra.max_spills);
@@ -744,18 +706,20 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
                 if (bits == 0) continue;
 
                 FOR_N(k, 0, 64) if ((bits >> k) & 1) {
-                    VReg* other = &ctx->vregs[j*64 + k];
+                    int other_id = j*64 + k;
+                    VReg* other = &ctx->vregs[other_id];
                     assert(other->mask->class == def_class);
 
                     int assigned = other->assigned;
                     if (assigned >= 0) {
                         mask &= ~(1ull << assigned);
-                        // TB_OPTDEBUG(REGALLOC)(printf("  => %#08"PRIx64" (we can't be R%d)\n", mask, assigned));
-                        if (mask == 0) { break; }
+                        TB_OPTDEBUG(REGALLOC)(printf("  => %#08"PRIx64" (we can't be R%d because V%d)\n", mask, assigned, other_id));
+                        if (mask == 0) { goto leave; }
                     }
                 }
             }
 
+            leave:
             if (mask == 0) {
                 TB_OPTDEBUG(REGALLOC)(printf("#   assigned UNCOLORED\n"));
 
@@ -803,10 +767,12 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
             TB_Node* n  = ctx->vregs[vreg_id].n;
             RegMask* vreg_mask = ctx->vregs[vreg_id].mask;
 
+            TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m# V%d: SPILL (%%%u)\x1b[0m\n", vreg_id, n->gvn));
+
             // rematerialization candidates will delete the original def and for now, they'll
             // reload per use site (although we might wanna coalesce some later on).
             if (n->type == TB_ICONST || n->type == TB_F32CONST || n->type == TB_F64CONST) {
-                chaitin_rematerialize(ctx, n);
+                rematerialize(ctx, n);
             } else {
                 ctx->vregs[vreg_id].mask = ctx->constraint(ctx, n, NULL);
                 ctx->vregs[vreg_id].spill_cost = NAN;
@@ -830,6 +796,6 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
 
         // recompute liveness
         dump_sched(ctx);
-        redo_dataflow(ctx, &ra, arena);
+        redo_dataflow(ctx, arena);
     }
 }

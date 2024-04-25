@@ -234,7 +234,10 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
                 return &BOOL_IN_THE_SKY;
             }
 
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(dt.data), lattice_int_max(dt.data) } });
+            uint64_t imin  =  lattice_int_min(dt.data);
+            uint64_t imax  =  lattice_int_max(dt.data);
+            uint64_t zeros = ~lattice_uint_max(dt.data);
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { imin, imax, zeros } });
         }
 
         case TB_TAG_F32:     return &FLT32_IN_THE_SKY;
@@ -311,14 +314,42 @@ static Lattice* lattice_int_const(TB_Function* f, uint64_t con) {
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { con, con, ~con, con } });
 }
 
-static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max) {
+static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int bits) {
     assert(min <= max);
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max } });
+
+    uint64_t umin = min;
+    uint64_t umax = max;
+    if (umin > umax) {
+        umin = 0, umax = lattice_uint_max(bits);
+    }
+
+    uint64_t zeros = ~umin | ~lattice_uint_max(bits);
+    uint64_t ones  =  umin;
+
+    if (umin != umax) {
+        // wherever the highest differing bit is we just clear everything below that
+        int msb_diff = 64 - __builtin_clzll(umin ^ umax);
+        zeros &= ~(UINT64_MAX >> (64 - msb_diff));
+        ones  &= ~(UINT64_MAX >> (64 - msb_diff));
+    }
+
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max) {
+static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max, int bits) {
     assert(min <= max);
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max } });
+
+    uint64_t zeros = ~min | ~lattice_uint_max(bits);
+    uint64_t ones  =  min;
+
+    if (min != max) {
+        // wherever the highest differing bit is we just clear everything below that
+        int msb_diff = 64 - __builtin_clzll(min ^ max);
+        zeros &= ~(UINT64_MAX >> (64 - msb_diff));
+        ones  &= ~(UINT64_MAX >> (64 - msb_diff));
+    }
+
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
 static Lattice* lattice_alias(TB_Function* f, int alias_idx) {

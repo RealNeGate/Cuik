@@ -207,7 +207,7 @@ struct Ctx {
 
 extern RegMask TB_REG_EMPTY;
 
-void tb__lsra(Ctx* restrict ctx, TB_Arena* arena);
+void tb__rogers(Ctx* restrict ctx, TB_Arena* arena);
 void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena);
 
 void tb__print_regmask(RegMask* mask);
@@ -216,6 +216,7 @@ void tb__print_regmask(RegMask* mask);
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b);
 MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n);
 void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
+void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n);
 void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n);
 

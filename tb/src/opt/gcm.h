@@ -1,8 +1,8 @@
 #include <chunked_array.h>
 
 // for more consistent hashing than a pointer
-uint32_t node_hash(void* a) { return ((TB_Node*) a)->gvn; }
-bool node_cmp(void* a, void* b) { return a == b; }
+uint32_t tb__node_hash(void* a) { return ((TB_Node*) a)->gvn; }
+bool tb__node_cmp(void* a, void* b) { return a == b; }
 
 // Scheduling: "Global Code Motion Global Value Numbering", Cliff Click 1995
 // https://courses.cs.washington.edu/courses/cse501/06wi/reading/click-pldi95.pdf
@@ -132,14 +132,15 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_node
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_Worklist* ws = f->worklist;
-    size_t old = dyn_array_length(ws->items);
+    worklist_clear_visited(ws);
 
+    size_t old = dyn_array_length(ws->items);
     CUIK_TIMED_BLOCK("dataflow") {
         FOR_N(i, 0, cfg.block_count) {
             TB_Node* n = rpo_nodes[i];
             TB_BasicBlock* bb = f->scheduled[n->gvn];
 
-            bb->gen = set_create_in_arena(arena, node_count);
+            bb->gen  = set_create_in_arena(arena, node_count);
             bb->kill = set_create_in_arena(arena, node_count);
         }
 
@@ -250,6 +251,32 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_node
                 }
             }
         }
+
+        #if TB_OPTDEBUG_DATAFLOW
+        // log live ins and outs
+        FOR_N(i, 0, cfg.block_count) {
+            TB_Node* n = rpo_nodes[i];
+            TB_BasicBlock* bb = f->scheduled[n->gvn];
+
+            printf("BB%zu:\n  live-ins:", i);
+            FOR_N(j, 0, node_count) if (set_get(&bb->live_in, j)) {
+                printf(" %%%zu", j);
+            }
+            printf("\n  live-outs:");
+            FOR_N(j, 0, node_count) if (set_get(&bb->live_out, j)) {
+                printf(" %%%zu", j);
+            }
+            printf("\n  gen:");
+            FOR_N(j, 0, node_count) if (set_get(&bb->gen, j)) {
+                printf(" %%%zu", j);
+            }
+            printf("\n  kill:");
+            FOR_N(j, 0, node_count) if (set_get(&bb->kill, j)) {
+                printf(" %%%zu", j);
+            }
+            printf("\n");
+        }
+        #endif
     }
     tb_arena_restore(arena, sp);
 }
@@ -290,7 +317,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                 TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, n);
 
                 bb->items = nl_hashset_alloc(32);
-                nl_hashset_put2(&bb->items, n, node_hash, node_cmp);
+                nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
                 f->scheduled[rpo_nodes[i]->gvn] = bb;
             }
 
@@ -368,7 +395,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                     }
 
                     if (bb) {
-                        nl_hashset_put2(&bb->items, n, node_hash, node_cmp);
+                        nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
                         f->scheduled[n->gvn] = bb;
                         aarray_push(pins, n);
 
@@ -461,7 +488,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                             }
                         }
 
-                        nl_hashset_put2(&best->items, n, node_hash, node_cmp);
+                        nl_hashset_put2(&best->items, n, tb__node_hash, tb__node_cmp);
                         dyn_array_put(ws->items, n);
                     }
 
@@ -534,8 +561,8 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                                 }
                             }
 
-                            nl_hashset_remove2(&old->items, n, node_hash, node_cmp);
-                            nl_hashset_put2(&better->items, n, node_hash, node_cmp);
+                            nl_hashset_remove2(&old->items, n, tb__node_hash, tb__node_cmp);
+                            nl_hashset_put2(&better->items, n, tb__node_hash, tb__node_cmp);
                         }
                     }
                 }
@@ -546,32 +573,6 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
             worklist_clear(ws);
             tb_dataflow(f, tmp_arena, cfg, rpo_nodes);
         }
-
-        #if TB_OPTDEBUG_DATAFLOW
-        // log live ins and outs
-        FOR_N(i, 0, cfg.block_count) {
-            TB_Node* n = rpo_nodes[i];
-            TB_BasicBlock* bb = p->scheduled[n->gvn];
-
-            printf("BB%zu:\n  live-ins:", i);
-            FOR_N(j, 0, node_count) if (set_get(&bb->live_in, j)) {
-                printf(" v%zu", j);
-            }
-            printf("\n  live-outs:");
-            FOR_N(j, 0, node_count) if (set_get(&bb->live_out, j)) {
-                printf(" v%zu", j);
-            }
-            printf("\n  gen:");
-            FOR_N(j, 0, node_count) if (set_get(&bb->gen, j)) {
-                printf(" v%zu", j);
-            }
-            printf("\n  kill:");
-            FOR_N(j, 0, node_count) if (set_get(&bb->kill, j)) {
-                printf(" v%zu", j);
-            }
-            printf("\n");
-        }
-        #endif
 
         CUIK_TIMED_BLOCK("copy CFG back in") {
             memcpy(ws->items, rpo_nodes, cfg.block_count * sizeof(TB_Node*));

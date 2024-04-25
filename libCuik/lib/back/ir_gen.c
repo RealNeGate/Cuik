@@ -1974,7 +1974,7 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
     }
 }
 
-TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena* arena, Stmt* restrict s) {
+TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena* ir, TB_Arena* tmp, Stmt* restrict s) {
     assert(s->flags & STMT_FLAGS_HAS_IR_BACKING);
     if (s->op == STMT_FUNC_DECL) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
@@ -1999,8 +1999,10 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             section = tb_module_create_section(m, -1, ".text", TB_MODULE_SECTION_EXEC, TB_COMDAT_MATCH_ANY);
         }
 
+        tb_function_set_arenas(func, ir, tmp);
+
         size_t param_count;
-        parameter_map = tb_function_set_prototype_from_dbg(func, section, dbg_type, arena, &param_count);
+        parameter_map = tb_function_set_prototype_from_dbg(func, section, dbg_type, &param_count);
 
         if (cuik_canonical_type(type->func.return_type)->kind != KIND_VOID) {
             TB_DebugType* dbg_ret = tb_debug_func_returns(dbg_type)[0];

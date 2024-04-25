@@ -147,6 +147,8 @@ static void sys_invoke(BuildStepInfo* info) {
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
 static _Thread_local TB_Worklist* ir_worklist;
+
+// optimizer will flow from arena[1] -> arena[2]
 static void local_opt_func(TB_Function* f, void* arg) {
     if (ir_worklist == NULL) {
         // we just leak these btw, i don't care yet
@@ -161,7 +163,8 @@ static void local_opt_func(TB_Function* f, void* arg) {
         MyArenas* arenas = get_ir_arena();
         float start = tb_arena_current_size(arenas->ir);
 
-        tb_opt(f, ir_worklist, arenas->ir, arenas->tmp, false);
+        tb_function_set_arenas(f, arenas->ir, arenas->tmp);
+        tb_opt(f, ir_worklist, false);
 
         float end = tb_arena_current_size(arenas->ir);
         log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
@@ -191,8 +194,10 @@ static void apply_func(TB_Function* f, void* arg) {
             // printf("%s", str);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
+                tb_function_set_arenas(f, arenas->ir, arenas->tmp);
+
                 TB_FeatureSet features = { 0 };
-                TB_FunctionOutput* out = tb_codegen(f, ir_worklist, arenas->ir, arenas->tmp, arenas->code, &features, print_asm);
+                TB_FunctionOutput* out = tb_codegen(f, ir_worklist, arenas->code, &features, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");
@@ -831,7 +836,7 @@ static void irgen_job(void* arg) {
         TB_Symbol* s;
         CUIK_TIMED_BLOCK_ARGS("irgen", name) {
             float start = tb_arena_current_size(arenas->ir);
-            s = cuikcg_top_level(task.tu, mod, arenas->ir, task.stmts[i]);
+            s = cuikcg_top_level(task.tu, mod, arenas->ir, arenas->tmp, task.stmts[i]);
             float end = tb_arena_current_size(arenas->ir);
 
             log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);

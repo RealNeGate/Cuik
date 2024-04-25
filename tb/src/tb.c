@@ -191,21 +191,23 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     return m;
 }
 
-TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, TB_Arena* code, const TB_FeatureSet* features, bool emit_asm) {
-    f->worklist = ws;
-    f->arena = ir;
-    f->tmp_arena = tmp;
+TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm) {
+    assert(f->arena && "missing IR arena?");
+    assert(f->tmp_arena && "missing tmp arena?");
+
+    if (code_arena == NULL) {
+        code_arena = f->arena;
+    }
 
     TB_Module* m = f->super.module;
+    f->worklist = ws;
 
-    TB_FunctionOutput* func_out = tb_arena_alloc(code, sizeof(TB_FunctionOutput));
+    TB_FunctionOutput* func_out = tb_arena_alloc(code_arena, sizeof(TB_FunctionOutput));
     *func_out = (TB_FunctionOutput){ .parent = f, .section = f->section, .linkage = f->linkage };
-    m->codegen->compile_function(f, func_out, features, code, emit_asm);
+    m->codegen->compile_function(f, func_out, features, code_arena, emit_asm);
     atomic_fetch_add(&m->compiled_function_count, 1);
 
     f->output = func_out;
-    f->arena = NULL;
-    f->tmp_arena = NULL;
     f->worklist = NULL;
 
     return func_out;
@@ -332,15 +334,16 @@ const char* tb_symbol_get_name(TB_Symbol* s) {
     return s->name;
 }
 
-void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p, TB_Arena* arena) {
-    assert(f->prototype == NULL);
-    size_t param_count = p->param_count;
+void tb_function_set_arenas(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2) {
+    f->arena     = arena1;
+    f->tmp_arena = arena2;
+}
 
-    if (arena == NULL) {
-        f->arena = tb_arena_create(TB_ARENA_SMALL_CHUNK_SIZE);
-    } else {
-        f->arena = arena;
-    }
+void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p) {
+    assert(f->prototype == NULL);
+    assert(f->arena     && "missing arenas, call tb_function_set_arenas");
+    assert(f->tmp_arena && "missing arenas, call tb_function_set_arenas");
+    size_t param_count = p->param_count;
 
     f->gvn_nodes = nl_hashset_alloc(32);
     f->locations = nl_table_alloc(16);
@@ -542,7 +545,7 @@ void tb_free_thread_resources(void) {
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos) {
     TB_Module* m = func_out->parent->super.module;
-    TB_SymbolPatch* p = TB_ARENA_ALLOC(get_permanent_arena(m), TB_SymbolPatch);
+    TB_SymbolPatch* p = tb_arena_alloc(get_permanent_arena(m), sizeof(TB_SymbolPatch));
 
     // function local, no need to synchronize
     *p = (TB_SymbolPatch){ .target = target, .pos = pos };

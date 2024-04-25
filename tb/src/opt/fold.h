@@ -165,39 +165,41 @@ static Lattice* value_sub(TB_Function* f, TB_Node* n) {
     assert(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
     int64_t min = ssub(amin, bmax, mask);
     int64_t max = ssub(amax, bmin, mask);
+    bool overflow = false;
     if (amin != amax || bmin != bmax) {
         // Ahh sweet, Hacker's delight horrors beyond my comprehension
         uint64_t u = (amin ^ bmax) | (amin ^ min);
         uint64_t v = (amax ^ bmin) | (amax ^ max);
         if (~(u & v) & imin) {
+            overflow = true;
             min = imin, max = imax;
         }
     }
 
-    if (min > max) {
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { imin | ~mask, imax } });
+    // sign extend our integers now
+    min |= min & imin ? ~mask : 0;
+    max |= max & imin ? ~mask : 0;
+
+    if (min == max) {
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
     } else {
-        // sign extend our integers now
-        min |= min & imin ? ~mask : 0;
-        max |= max & imin ? ~mask : 0;
+        // based on: https://llvm.org/doxygen/KnownBits_8cpp_source.html#l00021
+        // known carry bits
+        uint64_t known_carry_ones  = ~(sadd(max, 1, mask) ^ a->_int.known_zeros ^ b->_int.known_ones);
+        uint64_t known_carry_zeros =   sadd(min, 1, mask) ^ a->_int.known_ones  ^ b->_int.known_zeros;
+        // only trust which the bits in the intersection of all known bits
+        uint64_t known = (a->_int.known_zeros | a->_int.known_ones)
+            & (b->_int.known_zeros | b->_int.known_ones)
+            & (known_carry_zeros | known_carry_ones);
 
-        if (min == max) {
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
-        } else {
-            // based on: https://llvm.org/doxygen/KnownBits_8cpp_source.html#l00021
-            // known carry bits
-            uint64_t known_carry_ones  = ~(sadd(max, 1, mask) ^ a->_int.known_zeros ^ b->_int.known_ones);
-            uint64_t known_carry_zeros =   sadd(min, 1, mask) ^ a->_int.known_ones  ^ b->_int.known_zeros;
-            // only trust which the bits in the intersection of all known bits
-            uint64_t known = (a->_int.known_zeros | a->_int.known_ones)
-                & (b->_int.known_zeros | b->_int.known_ones)
-                & (known_carry_zeros | known_carry_ones);
-
-            uint64_t zeros = ~sadd(max, 1, mask) & known;
-            uint64_t ones  =  sadd(min, 1, mask) & known;
-
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        if (overflow) {
+            known = 0;
         }
+
+        uint64_t zeros = ~sadd(max, 1, mask) & known;
+        uint64_t ones  =  sadd(min, 1, mask) & known;
+
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
     }
 }
 
@@ -215,6 +217,7 @@ static Lattice* value_add_mul(TB_Function* f, TB_Node* n) {
     int64_t bmin = b->_int.min, bmax = b->_int.max;
 
     assert(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
+    bool overflow = false;
     int64_t min, max;
     switch (n->type) {
         case TB_ADD:
@@ -226,41 +229,41 @@ static Lattice* value_add_mul(TB_Function* f, TB_Node* n) {
             uint64_t u = amin & bmin & ~min;
             uint64_t v = ~(amax | bmax) & max;
             // just checking the sign bits
-            if ((u | v) & imin) { min = imin, max = imax; }
+            if ((u | v) & imin) {
+                overflow = true;
+                min = imin, max = imax;
+            }
         }
         break;
 
         case TB_MUL:
-        min = 0, max = -1;
-        // overflow |= l_mul_overflow(a->_int.min, b->_int.min, mask, &min);
-        // overflow |= l_mul_overflow(a->_int.max, b->_int.max, mask, &max);
-        break;
+        return NULL;
     }
 
-    if (min > max) {
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { imin | ~mask, imax } });
+    // sign extend our integers now
+    min |= min & imin ? ~mask : 0;
+    max |= max & imin ? ~mask : 0;
+
+    if (min == max) {
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
     } else {
-        // sign extend our integers now
-        min |= min & imin ? ~mask : 0;
-        max |= max & imin ? ~mask : 0;
+        // based on: https://llvm.org/doxygen/KnownBits_8cpp_source.html#l00021
+        // known carry bits
+        uint64_t known_carry_ones  = ~(max ^ a->_int.known_zeros ^ b->_int.known_zeros);
+        uint64_t known_carry_zeros =   min ^ a->_int.known_ones  ^ b->_int.known_ones;
+        // only trust which the bits in the intersection of all known bits
+        uint64_t known = (a->_int.known_zeros | a->_int.known_ones)
+            & (b->_int.known_zeros | b->_int.known_ones)
+            & (known_carry_zeros | known_carry_ones);
 
-        if (min == max) {
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
-        } else {
-            // based on: https://llvm.org/doxygen/KnownBits_8cpp_source.html#l00021
-            // known carry bits
-            uint64_t known_carry_ones  = ~(max ^ a->_int.known_zeros ^ b->_int.known_zeros);
-            uint64_t known_carry_zeros =   min ^ a->_int.known_ones  ^ b->_int.known_ones;
-            // only trust which the bits in the intersection of all known bits
-            uint64_t known = (a->_int.known_zeros | a->_int.known_ones)
-                & (b->_int.known_zeros | b->_int.known_ones)
-                & (known_carry_zeros | known_carry_ones);
-
-            uint64_t zeros = ~max & known;
-            uint64_t ones  =  min & known;
-
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        if (overflow) {
+            known = 0;
         }
+
+        uint64_t zeros = ~max & known;
+        uint64_t ones  =  min & known;
+
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones & mask } });
     }
 }
 
@@ -301,7 +304,7 @@ static Lattice* value_negate(TB_Function* f, TB_Node* n) {
         max = max_inc;
     }
 
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, .widen = a->_int.widen } });
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, ~mask, 0, .widen = a->_int.widen } });
 }
 
 static Lattice* value_bits(TB_Function* f, TB_Node* n) {
@@ -311,12 +314,22 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
+    int64_t min = a->_int.min;
+    int64_t max = a->_int.max;
+
     uint64_t zeros, ones;
     switch (n->type) {
         case TB_AND:
         // 0 if either is zero, 1 if both are 1
         zeros = a->_int.known_zeros | b->_int.known_zeros;
         ones  = a->_int.known_ones  & b->_int.known_ones;
+
+        min = (min & ~zeros) | ones;
+        max = (max & ~zeros) | ones;
+        if (min > max) {
+            min = lattice_int_min(n->dt.data);
+            max = lattice_int_max(n->dt.data);
+        }
         break;
 
         case TB_OR:
@@ -335,7 +348,8 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         default: tb_todo();
     }
 
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data), lattice_int_max(n->dt.data), zeros, ones } });
+    uint64_t mask = tb__mask(n->dt.data);
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones } });
 }
 
 static Lattice* value_shift(TB_Function* f, TB_Node* n) {
@@ -408,7 +422,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
             default: tb_todo();
         }
 
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones } });
     } else {
         return NULL;
     }
@@ -616,6 +630,13 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
             n->type = TB_ZERO_EXT;
             return n;
         }
+    } else if (ext_type == TB_ZERO_EXT && src->type == TB_TRUNCATE && src->inputs[1]->dt.raw == n->dt.raw) {
+        TB_Node* con = make_int_node(f, n->dt, lattice_uint_max(src->dt.data));
+
+        TB_Node* and = tb_alloc_node(f, TB_AND, n->dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, and, src->inputs[1], 1);
+        set_input(f, and, con,            2);
+        return and;
     }
 
     // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))
@@ -640,7 +661,7 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
     }
 
     // Cast(NiceAssBinop(a, b)) => NiceAssBinop(Cast(a), Cast(b))
-    if (nice_ass_trunc(src->type)) {
+    /*if (nice_ass_trunc(src->type)) {
         TB_Node* left = tb_alloc_node(f, ext_type, n->dt, 2, 0);
         set_input(f, left, src->inputs[1], 1);
         mark_node(f, left);
@@ -655,7 +676,7 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
         set_input(f, new_binop, left, 1);
         set_input(f, new_binop, right, 2);
         return new_binop;
-    }
+    }*/
 
     return NULL;
 }
@@ -729,6 +750,40 @@ static TB_Node* ideal_int_binop(TB_Function* f, TB_Node* n) {
         set_input(f, n, con,          2);
         return n;
     }
+
+    /* if (a->type == TB_TRUNCATE) {
+        if (cool_ass_binop(n)) {
+            TB_Node* ext = tb_alloc_node(f, TB_ZERO_EXT, a->inputs[1]->dt, 2, 0);
+            set_input(f, ext, b, 1);
+            latuni_set(f, ext, value_of(f, ext));
+            mark_node(f, ext);
+
+            set_input(f, n, ext, 2);
+            set_input(f, n, a->inputs[1], 1);
+
+            TB_Node* trunc = tb_alloc_node(f, TB_TRUNCATE, n->dt, 2, 0);
+            subsume_node2(f, n, trunc);
+            mark_users(f, trunc);
+            set_input(f, trunc, n, 1);
+
+            n->dt = a->inputs[1]->dt;
+
+            latuni_set(f, n, value_of(f, n));
+            latuni_set(f, trunc, value_of(f, trunc));
+            return n;
+        } else if (type >= TB_CMP_EQ && type <= TB_CMP_SLE) {
+            TB_Node* ext = tb_alloc_node(f, TB_ZERO_EXT, a->inputs[1]->dt, 2, 0);
+            set_input(f, ext, b, 1);
+            latuni_set(f, ext, value_of(f, ext));
+            mark_node(f, ext);
+
+            set_input(f, n, ext, 2);
+            set_input(f, n, a->inputs[1], 1);
+
+            TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = a->inputs[1]->dt);
+            return n;
+        }
+    } */
 
     if (type == TB_OR) {
         assert(n->dt.type == TB_TAG_INT);
@@ -992,12 +1047,12 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
         Lattice* bb = latuni_get(f, n->inputs[2]);
         uint64_t mask = tb__mask(n->dt.data);
 
-        if (aa != &TOP_IN_THE_SKY && bb->tag == LATTICE_INT && bb->_int.min == bb->_int.max) {
-            uint32_t src = aa->_int.known_zeros;
-            uint32_t chopped = ~bb->_int.min & mask;
+        if (aa != &TOP_IN_THE_SKY && bb->tag == LATTICE_INT) {
+            uint64_t possible_ones = (aa->_int.known_ones | ~aa->_int.known_zeros) & mask;
+            uint64_t affected      = (bb->_int.known_zeros | ~bb->_int.known_ones) & mask;
 
-            // if the known zeros is more than those chopped then the mask is useless
-            if ((src & chopped) == chopped) {
+            // possible ones don't intersect with the mask? lmao
+            if ((possible_ones & affected) == 0) {
                 return n->inputs[1];
             }
         }

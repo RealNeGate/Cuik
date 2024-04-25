@@ -19,7 +19,7 @@ void* tb_jit_stack_create(void);
 #include "new_builder.c"
 
 // Regalloc
-#include "lsra.c"
+#include "rogers_ra.c"
 #include "chaitin.c"
 
 // Parsers

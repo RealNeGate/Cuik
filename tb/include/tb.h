@@ -845,6 +845,7 @@ TB_API void tb_module_destroy(TB_Module* m);
 // dont and the tls_index is used, it'll crash
 TB_API void tb_module_set_tls_index(TB_Module* m, ptrdiff_t len, const char* name);
 
+// not thread-safe
 TB_API TB_ModuleSectionHandle tb_module_create_section(TB_Module* m, ptrdiff_t len, const char* name, TB_ModuleSectionFlags flags, TB_ComdatType comdat);
 
 typedef struct {
@@ -1057,7 +1058,7 @@ TB_API TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc
 // into the correct ABI and exposing sane looking nodes to the parameters.
 //
 // returns the parameters
-TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Arena* arena, size_t* out_param_count);
+TB_API TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, size_t* out_param_count);
 TB_API TB_FunctionPrototype* tb_prototype_from_dbg(TB_Module* m, TB_DebugType* dbg);
 
 // used for ABI parameter passing
@@ -1160,8 +1161,11 @@ TB_API void tb_symbol_set_name(TB_Symbol* s, ptrdiff_t len, const char* name);
 TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr);
 TB_API const char* tb_symbol_get_name(TB_Symbol* s);
 
+// functions have two arenas for the majority of their allocations.
+TB_API void tb_function_set_arenas(TB_Function* f, TB_Arena* a1, TB_Arena* a2);
+
 // if arena is NULL, defaults to module arena which is freed on tb_free_thread_resources
-TB_API void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p, TB_Arena* arena);
+TB_API void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p);
 TB_API TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f);
 
 // if len is -1, it's null terminated
@@ -1480,8 +1484,9 @@ TB_API TB_Node* tb_opt_gvn_node(TB_Function* f, TB_Node* n);
 // returns isomorphic node that's run it's peepholes.
 TB_API TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n);
 
-// Trust me bro, just use my configs
-TB_API void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool preserve_types);
+// Uses the two function arenas pretty heavily, may even flip their purposes (as a form
+// of GC compacting)
+TB_API void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types);
 
 // Asserts on all kinds of broken behavior, dumps to stderr (i will change that later)
 TB_API void tb_verify(TB_Function* f, TB_Arena* tmp);
@@ -1501,7 +1506,9 @@ TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp);
 //   output goes at the top of the code_arena, feel free to place multiple functions
 //   into the same code arena (although arenas aren't thread-safe you'll want one per thread
 //   at least)
-TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
+//
+//   if code_arena is NULL, the IR arena will be used.
+TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
 
 // interprocedural optimizer iter
 TB_API bool tb_module_ipo(TB_Module* m);

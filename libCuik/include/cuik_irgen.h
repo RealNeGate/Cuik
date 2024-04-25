@@ -23,4 +23,4 @@ CUIK_API void cuikcg_allocate_ir(TranslationUnit* restrict tu, Cuik_IThreadpool*
 CUIK_API void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m, bool debug);
 
 // returns NULL on failure
-CUIK_API TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena* arena, Stmt* restrict s);
+CUIK_API TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena* ir, TB_Arena* tmp, Stmt* restrict s);

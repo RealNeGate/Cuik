@@ -71,12 +71,6 @@ uint32_t node_flags(TB_Node* n) {
     }
 }
 
-static bool flags_producer(TB_Node* n) {
-    return n->type == x86_ucomi
-        || n->type == x86_cmp || n->type == x86_cmpimm
-        || n->type == x86_test || n->type == x86_testimm;
-}
-
 static size_t extra_bytes(TB_Node* n) {
     X86NodeType type = n->type;
     switch (type) {
@@ -741,7 +735,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
             if (TB_IS_FLOAT_TYPE(n->inputs[i]->dt)) {
                 if (xmms_used < abi->xmm_count) {
-                    op_extra->clobber_xmm &= ~(1u << xmms_used);
                     xmms_used += 1;
                 } else if (param_num + 1 > ctx->num_regs[REG_CLASS_STK]) {
                     ctx->num_regs[REG_CLASS_STK] = param_num + 1;
@@ -749,7 +742,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             } else {
                 assert(n->inputs[i]->dt.type == TB_TAG_INT || n->inputs[i]->dt.type == TB_TAG_PTR);
                 if (gprs_used < abi->gpr_count) {
-                    op_extra->clobber_gpr &= ~(1u << abi->gprs[gprs_used]);
                     gprs_used += 1;
                 } else if (param_num + 1 > ctx->num_regs[REG_CLASS_STK]) {
                     ctx->num_regs[REG_CLASS_STK] = param_num + 1;
@@ -757,18 +749,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
 
             set_input(f, op, n->inputs[i], i);
-        }
-
-        FOR_USERS(u, n) {
-            TB_Node* un = USERN(u);
-            if (un->type != TB_PROJ) continue;
-            int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
-            if (index >= 2) {
-                if (TB_IS_FLOAT_TYPE(un->dt))
-                { op_extra->clobber_xmm &= ~(1u << (index - 2)); }
-                else
-                { op_extra->clobber_gpr &= ~(1u << (index == 2 ? RAX : RDX)); }
-            }
         }
 
         return op;
@@ -2134,12 +2114,8 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-
-            if (end && end->type == TB_AFFINE_LATCH) {
-                TB_Node* cond = end->inputs[1];
-                if (flags_producer(cond) && cond->inputs[2] == n) {
-                    return 0;
-                }
+            if (end && end->type >= x86_cmpjcc && end->type <= x86_testimmjcc && end->inputs[2] == n) {
+                return 0;
             }
 
             int clk;

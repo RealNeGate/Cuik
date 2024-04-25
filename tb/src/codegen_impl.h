@@ -112,7 +112,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 }
 
 static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
-    // TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
+    TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
 
     TB_Arena* arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
@@ -399,7 +399,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     CUIK_TIMED_BLOCK("regalloc") {
         // tb__chaitin(&ctx, arena);
-        tb__lsra(&ctx, arena);
+        tb__rogers(&ctx, arena);
         nl_hashset_free(ctx.mask_intern);
 
         log_phase_end(f, og_size, "RA");
@@ -446,7 +446,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
 
                 if (vreg) {
-                    printf("    OUT    = %s:R%d\n", reg_class_name(vreg->class), vreg->assigned);
+                    printf("    OUT    = %s:R%d \x1b[32m# VREG=%d\x1b[0m\n", reg_class_name(vreg->class), vreg->assigned, def_id);
                 }
 
                 FOR_N(j, 1, n->input_count) {

@@ -73,10 +73,10 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
 #define TB_OPTDEBUG_ISEL     0
-#define TB_OPTDEBUG_CODEGEN  1
+#define TB_OPTDEBUG_CODEGEN  0
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
-#define TB_OPTDEBUG_REGALLOC 1
+#define TB_OPTDEBUG_REGALLOC 0
 #define TB_OPTDEBUG_GVN      0
 #define TB_OPTDEBUG_SCHEDULE 0
 // for toggling ANSI colors
@@ -704,6 +704,10 @@ inline static bool tb_is_power_of_two(uint64_t x) {
 #define TB_LIKELY(x)   __builtin_expect(!!(x), 1)
 #define TB_UNLIKELY(x) __builtin_expect(!!(x), 0)
 #endif
+
+// for more consistent hashing than a pointer
+uint32_t tb__node_hash(void* a);
+bool tb__node_cmp(void* a, void* b);
 
 TB_Node* tb_alloc_node_dyn(TB_Function* f, int type, TB_DataType dt, int input_count, int input_cap, size_t extra);
 TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count, size_t extra);

@@ -2,8 +2,7 @@
 // for the usage histogram
 typedef struct {
     TB_DataType dt;
-    int step;
-    ArenaArray(TB_User) uses;
+    int uses;
 } UsageBin;
 
 typedef struct {
@@ -19,15 +18,15 @@ static int usage_bin_cmp(const void* a, const void* b) {
     return aa[0]->uses - bb[0]->uses;
 }
 
-static UsageBin* usage_histo_bin(UsageHisto* histo, TB_DataType dt, int step) {
+static UsageBin* usage_histo_bin(UsageHisto* histo, TB_DataType dt) {
     aarray_for(i, histo->bins) {
-        if (histo->bins[i].dt.raw == dt.raw && histo->bins[i].step == step) {
+        if (histo->bins[i].dt.raw == dt.raw) {
             return &histo->bins[i];
         }
     }
 
     // add new bin
-    UsageBin b = { dt, step, aarray_create(histo->arena, TB_User, 16) };
+    UsageBin b = { dt };
     aarray_push(histo->bins, b);
     return &histo->bins[aarray_length(histo->bins) - 1];
 }
@@ -168,164 +167,148 @@ static void replace_phis(TB_Function* f, uint32_t* before, TB_Node* phi, TB_Node
     }
 }
 
-static void indvar_scan_uses(TB_Function* f, UsageHisto* histo, TB_Node* phi, TB_Node* op) {
-    FOR_USERS(u, phi) {
+static bool indvar_scan_uses(TB_Function* f, UsageHisto* histo, TB_Node* used, TB_Node* phi, TB_Node* op, int depth) {
+    bool found = false;
+    FOR_USERS(u, used) {
         TB_Node* use_n = USERN(u);
         if (use_n == phi || use_n == op) { continue; }
 
         uint64_t* scale;
         UsageBin* bin = NULL;
-        if (use_n->type == TB_SHL && USERI(u) == 1 && (scale = iconst(use_n->inputs[2]), scale)) {
-            bin = usage_histo_bin(histo, phi->dt, 1ull << *scale);
-        } else if (use_n->type == TB_SIGN_EXT || use_n->type == TB_ZERO_EXT) {
-            bin = usage_histo_bin(histo, use_n->dt, 1);
+        if (use_n->type == TB_SIGN_EXT || use_n->type == TB_ZERO_EXT) {
+            bin = usage_histo_bin(histo, use_n->dt);
+            found = true;
         } else {
-            histo->leftovers += 1;
-            histo->total_uses += 1;
+            // scan users for anything interesting
+            if (depth < 3) {
+                if (indvar_scan_uses(f, histo, use_n, phi, op, depth + 1)) {
+                    found = true;
+                } else {
+                    histo->leftovers += 1;
+                    histo->total_uses += 1;
+                }
+            }
             continue;
         }
-
         FOR_USERS(u2, use_n) {
             TB_Node* use_of_use = USERN(u2);
             if (use_of_use == phi || use_of_use == op) { continue; }
-            aarray_push(bin->uses, *u2);
+            bin->uses += 1;
             histo->total_uses += 1;
         }
     }
+    return found;
 }
 
-static TB_Node* indvar_apply(TB_Function* f, TB_Node* n, TB_DataType best_dt, int scale) {
-    if (best_dt.raw != n->dt.raw) {
-        TB_Node* k = tb_alloc_node(f, TB_ZERO_EXT, best_dt, 2, 0);
-        set_input(f, k, n, 1);
-        mark_node(f, k);
-        n = k;
-    }
-
-    if (scale != 1) {
-        TB_Node* con = make_int_node(f, best_dt, scale);
-        TB_Node* k = tb_alloc_node(f, TB_MUL, best_dt, 3, 0);
-        set_input(f, k, n,   1);
-        set_input(f, k, con, 2);
-
-        n = tb_opt_peep_node(f, k);
-        mark_node(f, n);
-    }
-
-    return n;
+static TB_Node* indvar_apply(TB_Function* f, TB_Node* n, TB_DataType best_dt) {
+    assert(best_dt.raw != n->dt.raw);
+    TB_Node* k = tb_alloc_node(f, TB_ZERO_EXT, best_dt, 2, 0);
+    set_input(f, k, n, 1);
+    mark_node(f, k);
+    return tb__gvn(f, k, 0);
 }
 
 static bool indvar_simplify(TB_Function* f, TB_Node* phi, TB_Node* op, TB_InductionVar* latch_iv) {
     TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
     UsageHisto histo = { f->tmp_arena, 0, 0, aarray_create(f->tmp_arena, UsageBin, 16) };
 
-    indvar_scan_uses(f, &histo, phi, op);
-    qsort(histo.bins, aarray_length(histo.bins), sizeof(UsageBin), usage_bin_cmp);
-
+    indvar_scan_uses(f, &histo, phi, phi, op, 0);
     int64_t step = TB_NODE_GET_EXTRA_T(op->inputs[2], TB_NodeInt)->value;
 
-    #if 0
+    #if 1
     printf("IV %%%u:\n", phi->gvn);
     {
-        printf("  BASE: ");
+        printf("  BASE:   ");
         FOR_N(j, 0, histo.leftovers) { printf("#"); }
         printf("\n");
     }
     aarray_for(i, histo.bins) {
-        printf("  dt=i%d, step=%d: ", histo.bins[i].dt.data, histo.bins[i].step);
-        aarray_for(j, histo.bins[i].uses) { printf("#"); }
+        printf("  dt=i%d: ", histo.bins[i].dt.data);
+        FOR_N(j, 0, histo.bins[i].uses) { printf("#"); }
         printf("\n");
     }
     #endif
 
-    // walk candidates from highest use to lowest (they're sorted)
-    bool progress = false;
-    int i = aarray_length(histo.bins);
-    while (i--) {
-        UsageBin* best_bin = &histo.bins[i];
-        float use_percent = (float)aarray_length(best_bin->uses) / (float)histo.total_uses;
-        if (use_percent > 0.95f) {
-            TB_DataType best_dt = best_bin->dt;
-            int best_step = best_bin->step;
-            uint64_t* inc = iconst(op->inputs[2]);
+    if (aarray_length(histo.bins) == 0) {
+        return false;
+    }
 
-            // construct cooler IV
-            TB_Node* scaled_op = tb_alloc_node(f, TB_ADD, best_dt, 3, sizeof(TB_NodeBinopInt));
-            TB_Node* scaled_iv = tb_alloc_node(f, TB_PHI, best_dt, 3, 0);
-            mark_node(f, scaled_iv);
-            mark_node(f, scaled_op);
-
-            TB_Node* scaled_inc = make_int_node(f, best_bin->dt, *inc * best_step);
-            set_input(f, scaled_op, scaled_iv,      1);
-            set_input(f, scaled_op, scaled_inc,     2);
-            mark_node(f, scaled_inc);
-
-            TB_Node* scaled_init = indvar_apply(f, phi->inputs[1], best_bin->dt, best_step);
-            set_input(f, scaled_iv, phi->inputs[0], 0);
-            set_input(f, scaled_iv, scaled_init,    1);
-            set_input(f, scaled_iv, scaled_op,      2);
-            mark_node(f, scaled_init);
-
-            // replace relevant users
-            histo.total_uses -= aarray_length(best_bin->uses);
-            aarray_for(j, best_bin->uses) {
-                TB_User* u = &best_bin->uses[j];
-                set_input(f, USERN(u), scaled_iv, USERI(u));
-                mark_users(f, USERN(u));
-            }
-
-            mark_node_n_users(f, scaled_iv);
-            progress = true;
+    // find most uses
+    int best_i = 0;
+    FOR_N(i, 1, aarray_length(histo.bins)) {
+        if (histo.bins[i].uses > histo.bins[best_i].uses) {
+            best_i = i;
         }
     }
 
-    // TODO(NeGate): idk, simplify some IVs
-    // if the only leftover use is 1, we're most likely dealing with an
-    // IV only responsible for iterating to completition, if so we should
-    // simplify the loop counter into:
-    //
-    //   i := 0
-    //   while (i++ < n) {    =>   while (n--) {
-    //     ...                       ...
-    //   }                         }
-    //
-    // it's one less register during the loop and the exact same perf as
-    // incrementing up.
-    if (histo.leftovers == 0 && latch_iv && latch_iv->phi == phi && phi->dt.type == TB_TAG_INT && op->user_count == 2) {
-        TB_Node* latch = affine_loop_latch(phi->inputs[0]);
-        assert(latch);
+    UsageBin* best_bin = &histo.bins[best_i];
+    float use_percent = (float)best_bin->uses / (float)histo.total_uses;
+    assert(best_bin->dt.type == TB_TAG_INT);
 
-        TB_Node* one = make_int_node(f, phi->dt, -1);
-        TB_Node* sub = tb_alloc_node(f, TB_ADD, phi->dt, 3, sizeof(TB_NodeBinopInt));
-        TB_Node* new_iv = tb_alloc_node(f, TB_PHI, phi->dt, 3, 0);
+    if (use_percent > 0.95f && best_bin->dt.data > phi->dt.data) {
+        TB_DataType best_dt = best_bin->dt;
+        uint64_t* inc = iconst(op->inputs[2]);
 
-        // new_iv = phi(limit, sub)
-        set_input(f, new_iv, phi->inputs[0],     0);
-        set_input(f, new_iv, latch_iv->end_cond, 1);
-        set_input(f, new_iv, sub,                2);
-        mark_node(f, new_iv);
-        // sub = new_iv - 1
-        set_input(f, sub, new_iv, 1);
-        set_input(f, sub, one, 2);
-        mark_node(f, sub);
-        // if (sub) backedge else exit
-        set_input(f, latch, sub, 1);
+        // downscaled form
+        TB_Node* trunc_phi = tb_alloc_node(f, TB_TRUNCATE, phi->dt, 2, 0);
+        mark_node_n_users(f, trunc_phi);
 
-        TB_Node* backedge_proj = phi->inputs[0]->inputs[1];
-        int exit_proj_i        = TB_NODE_GET_EXTRA_T(backedge_proj, TB_NodeProj)->index;
-        TB_Node* exit_proj     = USERN(proj_with_index(latch, 1 - exit_proj_i));
+        TB_Node* trunc_op = tb_alloc_node(f, TB_TRUNCATE, op->dt, 2, 0);
+        mark_node_n_users(f, trunc_op);
 
-        // wanna exit on sub=0
-        TB_NODE_SET_EXTRA(exit_proj,     TB_NodeBranchProj, .index = 0, .taken = 10, .key = 0);
-        TB_NODE_SET_EXTRA(backedge_proj, TB_NodeBranchProj, .index = 1, .taken = 90, .key = 0);
+        // upscale op
+        TB_Node* scaled_inc = make_int_node(f, best_bin->dt, *inc);
+        set_input(f, op, scaled_inc, 2);
+        latuni_set(f, scaled_inc, value_of(f, scaled_inc));
+        mark_node(f, scaled_inc);
 
-        tb_kill_node(f, phi);
-        tb_kill_node(f, op);
-        tb_kill_node(f, latch_iv->cond);
+        // upscale phi
+        TB_Node* scaled_init = indvar_apply(f, phi->inputs[1], best_bin->dt);
+        latuni_set(f, scaled_init, value_of(f, scaled_init));
+        set_input(f, phi, scaled_init, 1);
+
+        phi->dt = best_dt;
+        op->dt  = best_dt;
+
+        // replace old uses with truncated forms, the peeps can fold away
+        // casts like this.
+        for (size_t i = 0; i < op->user_count;) {
+            TB_User* u = &op->users[i];
+            if (USERN(u) != phi) {
+                mark_users(f, USERN(u));
+                set_input(f, USERN(u), trunc_op, USERI(u));
+            } else {
+                i += 1;
+            }
+        }
+
+        for (size_t i = 0; i < phi->user_count;) {
+            TB_User* u = &phi->users[i];
+            if (USERN(u) != op) {
+                mark_users(f, USERN(u));
+                set_input(f, USERN(u), trunc_phi, USERI(u));
+            } else {
+                i += 1;
+            }
+        }
+
+        set_input(f, trunc_phi, phi, 1);
+        set_input(f, trunc_op, op, 1);
+
+        // we run a bunch of constant prop here to avoid forward progress asserts
+        latuni_set(f, phi, value_of(f, phi));
+        latuni_set(f, op, value_of(f, op));
+        latuni_set(f, trunc_phi, value_of(f, trunc_phi));
+        latuni_set(f, trunc_op, value_of(f, trunc_op));
+
+        mark_node_n_users(f, op);
+        mark_node_n_users(f, phi);
+        tb_arena_restore(f->tmp_arena, sp);
+        return true;
+    } else {
+        tb_arena_restore(f->tmp_arena, sp);
+        return false;
     }
-
-    tb_arena_restore(f->tmp_arena, sp);
-    return false;
 }
 
 static TB_Node* get_simple_loop_exit(TB_CFG* cfg, TB_Node* header, TB_Node* latch) {
@@ -712,9 +695,10 @@ void tb_opt_build_loop_tree(TB_Function* f) {
 }
 
 void tb_opt_loops(TB_Function* f) {
-    cuikperf_region_start("loop", NULL);
-
     #if 0
+    cuikperf_region_start("loop", NULL);
+    tb_print_dumb(f, false);
+
     for (TB_LoopInfo *loop = f->loop_list; loop; loop = loop->next) {
         if (loop->header->type == TB_AFFINE_LOOP) {
             TB_InductionVar var;
@@ -739,7 +723,8 @@ void tb_opt_loops(TB_Function* f) {
             }
         }
     }
-    #endif
 
+    tb_print_dumb(f, false);
     cuikperf_region_end();
+    #endif
 }

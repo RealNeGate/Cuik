@@ -368,16 +368,16 @@ static Lattice* value_region(TB_Function* f, TB_Node* n) {
     return &TOP_IN_THE_SKY;
 }
 
-static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int64_t trips_max, int64_t step) {
+static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int64_t trips_max, int64_t step, int bits) {
     int64_t max;
     if (!__builtin_mul_overflow(trips_max, step, &max)) { return NULL; }
     if (!__builtin_add_overflow(max, init->_int.min, &max)) { return NULL; }
 
     int64_t min = (uint64_t)init->_int.min + (uint64_t) (((uint64_t) trips_min-1)*step);
     if (step > 0) {
-        if (min <= max) { return lattice_gimme_int(f, min, max); }
+        if (min <= max) { return lattice_gimme_int(f, min, max, bits); }
     } else if (step > 0) {
-        if (min >= max) { return lattice_gimme_int(f, max, min); }
+        if (min >= max) { return lattice_gimme_int(f, max, min, bits); }
     }
     return NULL;
 }
@@ -422,7 +422,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
 
                 Lattice* init = latuni_get(f, n->inputs[1]);
                 if (lattice_is_const(init) && trips_max <= INT64_MAX) {
-                    Lattice* range = affine_iv(f, init, trips_min, trips_max, *step_ptr);
+                    Lattice* range = affine_iv(f, init, trips_min, trips_max, *step_ptr, n->dt.data);
                     if (range) { return range; }
                 }
 
@@ -431,11 +431,11 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                     int64_t min = init->_int.min;
                     int64_t max = end ? end->_int.max : lattice_int_max(n->dt.data);
 
-                    // join would achieve this effect too btw
+                    // JOIN would achieve this effect too btw
                     if (old == &TOP_IN_THE_SKY) {
-                        return lattice_gimme_int(f, min, max);
+                        return lattice_gimme_int(f, min, max, n->dt.data);
                     } else {
-                        return lattice_gimme_int(f, TB_MAX(min, old->_int.min), TB_MIN(max, old->_int.max));
+                        return lattice_gimme_int(f, TB_MAX(min, old->_int.min), TB_MIN(max, old->_int.max), n->dt.data);
                     }
                 }
             }
@@ -469,7 +469,12 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                 // we've hit the widening limit, since MAFs scale with the lattice height we limit how
                 // many steps our ints can take since the lattice itself has a height of 18 quintillion...
                 if (l->_int.widen >= INT_WIDEN_LIMIT) {
-                    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { lattice_int_min(n->dt.data), lattice_int_max(n->dt.data), .widen = INT_WIDEN_LIMIT } });
+                    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
+                                .min         =  lattice_int_min(n->dt.data),
+                                .max         =  lattice_int_max(n->dt.data),
+                                .known_zeros = ~lattice_uint_max(n->dt.data),
+                                .widen       =  INT_WIDEN_LIMIT
+                            } });
                 }
 
                 Lattice new_l = *l;
@@ -742,7 +747,6 @@ static Lattice* value_of(TB_Function* f, TB_Node* n) {
 
     // no type provided? just make a not-so-form fitting bottom type
     if (type == NULL) {
-        Lattice* old_type = latuni_get(f, n);
         return n->dt.type == TB_TAG_TUPLE ? lattice_tuple_from_node(f, n) : lattice_from_dt(f, n->dt);
     } else {
         return type;
@@ -1071,6 +1075,11 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
         Lattice* old_type = latuni_get(f, n);
         Lattice* new_type = value_of(f, n);
 
+        // validate int
+        if (new_type->tag == LATTICE_INT) {
+            assert((new_type->_int.known_ones & new_type->_int.known_zeros) == 0 && "overlapping known bits?");
+        }
+
         // monotonic moving up
         Lattice* glb = lattice_meet(f, old_type, new_type);
         if (glb != old_type) {
@@ -1271,20 +1280,17 @@ void tb_opt_cprop(TB_Function* f) {
     }
 }
 
-void tb_opt(TB_Function* f, TB_Worklist* ws, TB_Arena* ir, TB_Arena* tmp, bool preserve_types) {
+void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     assert(f->root_node && "missing root node");
-    f->arena     = ir;
-    f->tmp_arena = tmp;
     f->worklist  = ws;
 
+    TB_Arena* tmp = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(tmp);
 
     assert(worklist_count(ws) == 0);
     CUIK_TIMED_BLOCK("push_all_nodes") {
         // generate work list (put everything)
-        worklist_test_n_set(ws, f->root_node);
-        dyn_array_put(ws->items, f->root_node);
-
+        worklist_push(ws, f->root_node);
         for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
             TB_Node* n = ws->items[i];
             FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
