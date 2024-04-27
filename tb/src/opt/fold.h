@@ -232,6 +232,18 @@ static Lattice* value_add_mul(TB_Function* f, TB_Node* n) {
             if ((u | v) & imin) {
                 overflow = true;
                 min = imin, max = imax;
+
+                #if 0
+                if (cant_signed_overflow(n)) {
+                    if (lattice_int_gt(b, 0)) {
+                        min = TB_MAX(a->_int.min, b->_int.min);
+                        max = imax;
+                    } else if (lattice_int_lt(b, 0)) {
+                        min = imin;
+                        max = TB_MIN(a->_int.max, b->_int.max);
+                    }
+                }
+                #endif
             }
         }
         break;
@@ -461,7 +473,17 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             break;
 
             case TB_CMP_ULT:
+            if (lattice_is_unsigned(a) && lattice_is_unsigned(b)) {
+                if (lattice_int_lt(cmp, 0)) { return lattice_int_const(f,-1); }
+                if (lattice_int_ge(cmp, 0)) { return lattice_int_const(f, 0); }
+            }
+            break;
+
             case TB_CMP_ULE:
+            if (lattice_is_unsigned(a) && lattice_is_unsigned(b)) {
+                if (lattice_int_le(cmp, 0)) { return lattice_int_const(f,-1); }
+                if (lattice_int_gt(cmp, 0)) { return lattice_int_const(f, 0); }
+            }
             break;
         }
     } else if (dt.type == TB_TAG_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {

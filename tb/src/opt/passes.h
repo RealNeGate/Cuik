@@ -416,6 +416,7 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_node
 
 // Global scheduler
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws);
+void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp);
 void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_nests, bool dataflow, TB_GetLatency get_lat);
 
 // makes arch-friendly IR

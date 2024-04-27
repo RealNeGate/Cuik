@@ -17,6 +17,11 @@ typedef struct Elem {
 static TB_BasicBlock* try_to_hoist(TB_Function* f, TB_GetLatency get_lat, TB_Node* n, TB_BasicBlock* early, TB_BasicBlock* late) {
     if (get_lat == NULL) return late;
 
+    // phi copies should be kept in the same block
+    if (n->type == TB_MACH_COPY && n->inputs[1]->type == TB_PHI) {
+        return early;
+    }
+
     int lat = get_lat(f, n, NULL);
     if (lat >= 2) {
         TB_BasicBlock* best = late;
@@ -74,6 +79,89 @@ static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* actual
         if (bb) { use_block = bb; }
     }
     return use_block;
+}
+
+void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp) {
+    TB_Node** fwd = tb_arena_alloc(f->arena, f->node_count * sizeof(TB_Node*));
+    memset(fwd, 0, f->node_count * sizeof(TB_Node*));
+
+    SWAP(TB_Arena*, f->arena, f->tmp_arena);
+
+    CUIK_TIMED_BLOCK("compact") {
+        CUIK_TIMED_BLOCK("mark") {
+            // BFS walk all the nodes
+            worklist_push(ws, f->root_node);
+            for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+                TB_Node* n = ws->items[i];
+
+                // allocate space for moved node
+                size_t extra = extra_bytes(n);
+                TB_Node* k = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
+                k->gvn = i;
+                memcpy(k->extra, n->extra, extra);
+                fwd[n->gvn] = k;
+
+                // place projections first & sequentially
+                if (n->dt.type == TB_TAG_TUPLE) {
+                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                        worklist_push(ws, USERN(u));
+                    }
+                }
+
+                FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+            }
+        }
+
+        CUIK_TIMED_BLOCK("compact nodes") {
+            f->node_count = dyn_array_length(ws->items);
+            if (f->types) {
+                f->type_cap = tb_next_pow2(f->node_count + 16);
+
+                Lattice** new_types = tb_platform_heap_alloc(f->type_cap * sizeof(Lattice*));
+                FOR_N(i, 0, f->type_cap) { new_types[i] = NULL; }
+
+                FOR_N(i, 0, dyn_array_length(ws->items)) {
+                    TB_Node* old = ws->items[i];
+                    TB_Node* n = fwd[old->gvn];
+                    FOR_N(j, 0, old->input_count) {
+                        TB_Node* in = old->inputs[j];
+                        if (in) { set_input(f, n, fwd[in->gvn], j); }
+                    }
+                    new_types[i] = f->types[old->gvn];
+                }
+
+                assert(f->root_node->gvn == 0);
+                tb_platform_heap_free(f->types);
+                f->types = new_types;
+            } else {
+                FOR_N(i, 0, dyn_array_length(ws->items)) {
+                    TB_Node* old = ws->items[i];
+                    TB_Node* n = fwd[old->gvn];
+                    // printf("%p(%%%u) -> %p(%%%u)\n", old, old->gvn, n, n->gvn);
+                    FOR_N(j, 0, old->input_count) {
+                        TB_Node* in = old->inputs[j];
+                        if (in) {
+                            // printf("  %p(%%%u) -> %p(%%%u)\n", in, in->gvn, fwd[in->gvn], fwd[in->gvn]->gvn);
+                            set_input(f, n, fwd[in->gvn], j);
+                        }
+                    }
+                }
+            }
+
+            // invalidate all of the GVN table since it hashes with value numbers
+            f->root_node = fwd[f->root_node->gvn];
+            FOR_N(i, 0, f->param_count) {
+                f->params[i] = fwd[f->params[i]->gvn];
+            }
+
+            nl_hashset_clear(&f->gvn_nodes);
+        }
+
+        worklist_clear(ws);
+    }
+
+    // ok we can reclaim all these nodes at least
+    tb_arena_restore(f->tmp_arena, sp);
 }
 
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
@@ -179,7 +267,7 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_node
 
                     FOR_N(i, 1, n->input_count) {
                         TB_Node* in = n->inputs[i];
-                        if (in && !set_get(&bb->kill, in->gvn)) {
+                        if (in && (in->type == TB_PHI || !set_get(&bb->kill, in->gvn))) {
                             set_put(&bb->gen, in->gvn);
                         }
                     }

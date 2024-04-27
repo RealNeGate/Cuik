@@ -1285,7 +1285,8 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     f->worklist  = ws;
 
     TB_Arena* tmp = f->tmp_arena;
-    TB_ArenaSavepoint sp = tb_arena_save(tmp);
+    TB_ArenaSavepoint tmp_sp = tb_arena_save(tmp);
+    TB_ArenaSavepoint ir_sp  = tb_arena_save(f->arena);
 
     assert(worklist_count(ws) == 0);
     CUIK_TIMED_BLOCK("push_all_nodes") {
@@ -1366,18 +1367,18 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_opt_loops(f);
     }
     nl_table_free(f->node2loop);
+    tb_arena_restore(tmp, tmp_sp);
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {
         tb_opt_free_types(f);
     }
     // avoids bloating up my arenas with freed nodes
-    tb_renumber_nodes(f, ws);
+    tb_compact_nodes(f, ws, ir_sp);
 
     #ifdef TB_OPTDEBUG_STATS
     tb_opt_dump_stats(f);
     #endif
 
-    tb_arena_restore(tmp, sp);
     f->worklist = NULL;
 }
 

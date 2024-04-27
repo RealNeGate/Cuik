@@ -162,6 +162,7 @@ void tb__lattice_init(TB_Module* m) {
 }
 
 static bool lattice_is_const(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
+static bool lattice_is_unsigned(Lattice* l) { return l->tag == LATTICE_INT && (uint64_t)l->_int.min <= (uint64_t)l->_int.max; }
 
 // all of these functions return false if the lattice isn't a constant.
 static bool lattice_int_eq(Lattice* l, int64_t x) { return l->_int.min == l->_int.max && l->_int.min == x; }

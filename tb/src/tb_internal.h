@@ -389,11 +389,6 @@ struct TB_Function {
 
     // Optimizer related data
     struct {
-        // we use this to verify that we're on the same thread
-        // for the entire duration of the TB_Function... we'll
-        // get rid of this limitation soon.
-        TB_ThreadInfo* pinned_thread;
-
         // how we track duplicates for GVN, it's possible to run while building the IR.
         NL_HashSet gvn_nodes;
 
