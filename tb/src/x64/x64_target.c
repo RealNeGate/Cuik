@@ -1359,6 +1359,17 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return &TB_REG_EMPTY;
         }
 
+        case TB_MEMCPY:
+        {
+            if (ins) {
+                ins[1] = &TB_REG_EMPTY;
+                ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI);
+                ins[3] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSI);
+                ins[4] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
+            }
+            return &TB_REG_EMPTY;
+        }
+
         case TB_NEVER_BRANCH:
         return &TB_REG_EMPTY;
 
@@ -2005,6 +2016,12 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_MEMSET: {
             EMIT1(e, 0xF3);
             EMIT1(e, 0xAA);
+            break;
+        }
+
+        case TB_MEMCPY: {
+            EMIT1(e, 0xF3);
+            EMIT1(e, 0xA4);
             break;
         }
 
