@@ -1540,7 +1540,7 @@ static void emit_location(TranslationUnit* tu, TB_Function* func, SourceLoc loc)
             cached_file = tb_get_source_file(tu->ir_mod, -1, rloc.file->filename);
         }
 
-        tb_inst_location(func, cached_file, rloc.line, rloc.column);
+        tb_inst_location(func, cached_file, rloc.line, 0); // rloc.column);
     }
 }
 
@@ -2019,7 +2019,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
             if (rloc.file->filename[0] != '<') {
                 TB_SourceFile* f = tb_get_source_file(tu->ir_mod, -1, rloc.file->filename);
-                tb_inst_set_exit_location(func, f, rloc.line, rloc.column);
+                tb_inst_set_exit_location(func, f, rloc.line, 0); // rloc.column);
             }
         }
 

@@ -2080,9 +2080,17 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             break;
         }
 
-        case TB_DEBUG_LOCATION:
-        EMIT1(e, 0x90);
-        break;
+        case TB_DEBUG_LOCATION: {
+            TB_NodeDbgLoc* loc = TB_NODE_GET_EXTRA(n);
+            TB_Location l = {
+                .file = loc->file,
+                .line = loc->line,
+                .column = loc->column,
+                .pos = e->count
+            };
+            dyn_array_put(ctx->locations, l);
+            break;
+        }
 
         default:
         tb_todo();
