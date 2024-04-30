@@ -713,9 +713,10 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
         TB_User u = n->users[i];
         TB_Node* un = USERN(&u);
         int ui      = USERI(&u);
-        tb_assert(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
 
-        assert(ui < un->input_count);
+        TB_ASSERT_MSG(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
+        TB_ASSERT(ui < un->input_count);
+
         remove_user(f, un, ui);
         un->inputs[ui] = new_n;
 
@@ -794,8 +795,8 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
             for (size_t i = 0; i < n->user_count;) {
                 TB_User* use = &n->users[i];
                 if (USERN(use)->type == TB_PHI) {
-                    assert(USERI(use) == 0);
-                    assert(USERN(use)->input_count == 2);
+                    TB_ASSERT(USERI(use) == 0);
+                    TB_ASSERT(USERN(use)->input_count == 2);
                     subsume_node(f, USERN(use), USERN(use)->inputs[1]);
                 } else {
                     i += 1;
@@ -904,7 +905,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
                 for (size_t i = 0; i < n->user_count;) {
                     TB_Node* un = USERN(&n->users[i]);
                     if (is_proj(un)) {
-                        assert(USERI(&n->users[i]) == 0);
+                        TB_ASSERT(USERI(&n->users[i]) == 0);
                         int index   = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
                         TB_Node* in = l->elems[index] == &LIVE_IN_THE_SKY ? ctrl : dead;
 
@@ -1077,7 +1078,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
 
         // validate int
         if (new_type->tag == LATTICE_INT) {
-            assert((new_type->_int.known_ones & new_type->_int.known_zeros) == 0 && "overlapping known bits?");
+            TB_ASSERT_MSG((new_type->_int.known_ones & new_type->_int.known_zeros) == 0, "overlapping known bits?");
         }
 
         // monotonic moving up
@@ -1085,7 +1086,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
         if (glb != old_type) {
             TB_OPTDEBUG(PEEP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
             TB_OPTDEBUG(PEEP)(printf("  "), print_lattice(old_type), printf("  =//=>  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
-            assert(0 && "forward progress assert!");
+            TB_ASSERT_MSG(0, "forward progress assert!");
         }
         #else
         Lattice* new_type = value_of(f, n);
@@ -1192,7 +1193,7 @@ void tb_pass_sroa(TB_Function* f) {
         // i think the SROA'd pieces can't themselves split more? that should something we check
         size_t local_count = dyn_array_length(ws->items);
         for (size_t i = 0; i < local_count; i++) {
-            assert(ws->items[i]->type == TB_LOCAL);
+            TB_ASSERT(ws->items[i]->type == TB_LOCAL);
             sroa_rewrite(f, pointer_size, root, ws->items[i]);
         }
     }
@@ -1217,7 +1218,7 @@ static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
         if (glb != new_type) {
             TB_OPTDEBUG(PEEP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
             TB_OPTDEBUG(PEEP)(printf("  "), print_lattice(old_type), printf("  =//=>  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
-            assert(0 && "forward progress assert!");
+            TB_ASSERT_MSG(0, "forward progress assert!");
         }
         #endif
 
@@ -1241,7 +1242,7 @@ static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
 }
 
 void tb_opt_cprop(TB_Function* f) {
-    assert(worklist_count(f->worklist) == 0);
+    TB_ASSERT(worklist_count(f->worklist) == 0);
 
     alloc_types(f);
     //   reset all types into TOP
@@ -1281,14 +1282,14 @@ void tb_opt_cprop(TB_Function* f) {
 }
 
 void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
-    assert(f->root_node && "missing root node");
+    TB_ASSERT_MSG(f->root_node, "missing root node");
     f->worklist  = ws;
 
     TB_Arena* tmp = f->tmp_arena;
     TB_ArenaSavepoint tmp_sp = tb_arena_save(tmp);
     TB_ArenaSavepoint ir_sp  = tb_arena_save(f->arena);
 
-    assert(worklist_count(ws) == 0);
+    TB_ASSERT(worklist_count(ws) == 0);
     CUIK_TIMED_BLOCK("push_all_nodes") {
         // generate work list (put everything)
         worklist_push(ws, f->root_node);
@@ -1465,7 +1466,7 @@ typedef struct {
 
 static TB_Function* static_call_site(TB_Node* n) {
     // is this call site a static function call
-    assert(n->type == TB_CALL || n->type == TB_TAILCALL);
+    TB_ASSERT(n->type == TB_CALL || n->type == TB_TAILCALL);
     if (n->inputs[2]->type != TB_SYMBOL) return NULL;
 
     TB_Symbol* target = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeSymbol)->sym;
@@ -1486,7 +1487,7 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f) {
 
     // consider the successors
     TB_Node* callgraph = f->root_node->inputs[0];
-    assert(callgraph->type == TB_CALLGRAPH);
+    TB_ASSERT(callgraph->type == TB_CALLGRAPH);
     FOR_N(i, 1, callgraph->input_count) {
         TB_Node* call = callgraph->inputs[i];
         TB_Function* target = static_call_site(call);
@@ -1505,7 +1506,7 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f) {
     if (n->low_link == n->index) {
         TB_Function* kid_f;
         do {
-            assert(scc->stk_cnt > 0);
+            TB_ASSERT(scc->stk_cnt > 0);
             kid_f = scc->stk[--scc->stk_cnt];
 
             SCCNode* kid_n = nl_table_get(&scc->nodes, kid_f);
@@ -1566,7 +1567,7 @@ bool tb_module_ipo(TB_Module* m) {
         TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s\n", f->super.name));
 
         TB_Node* callgraph = f->root_node->inputs[0];
-        assert(callgraph->type == TB_CALLGRAPH);
+        TB_ASSERT(callgraph->type == TB_CALLGRAPH);
 
         size_t i = 1;
         while (i < callgraph->input_count) {
@@ -1597,7 +1598,7 @@ static TB_Node* inline_clone_node(TB_Function* f, TB_Node* call_site, TB_Node** 
         int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
         clones[n->gvn] = call_site->inputs[index];
 
-        assert(clones[n->gvn]);
+        TB_ASSERT(clones[n->gvn]);
         return clones[n->gvn];
     } else if (clones[n->gvn] != NULL) {
         return clones[n->gvn];
@@ -1659,11 +1660,11 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
     {
         // TODO(NeGate): region-ify the exit point
         TB_Node* kid_root = clones[kid->root_node->gvn];
-        assert(kid_root->type == TB_ROOT);
-        assert(kid_root->input_count == 2);
+        TB_ASSERT(kid_root->type == TB_ROOT);
+        TB_ASSERT(kid_root->input_count == 2);
 
         TB_Node* ret = kid_root->inputs[1];
-        assert(ret->type == TB_RETURN);
+        TB_ASSERT(ret->type == TB_RETURN);
 
         for (size_t i = 0; i < call_site->user_count;) {
             TB_Node* un = USERN(&call_site->users[i]);
@@ -1683,7 +1684,7 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_
 
     // kill edge in callgraph
     TB_Node* callgraph = f->root_node->inputs[0];
-    assert(callgraph->type == TB_CALLGRAPH);
+    TB_ASSERT(callgraph->type == TB_CALLGRAPH);
 
     FOR_N(i, 1, callgraph->input_count) {
         if (callgraph->inputs[i] == call_site) {

@@ -14,9 +14,6 @@ TB_API TB_Node* tb_inst_root_node(TB_Function* f) { return f->root_node; }
 static TB_Node* transfer_ctrl(TB_Function* f, TB_Node* n) {
     TB_Node* prev = f->trace.bot_ctrl;
     f->trace.bot_ctrl = n;
-    if (f->line_loc) {
-        nl_table_put(&f->locations, n, f->line_loc);
-    }
     assert(prev);
     return prev;
 }
@@ -51,9 +48,6 @@ static TB_Node* peek_mem(TB_Function* f) { return f->trace.mem; }
 static TB_Node* append_mem(TB_Function* f, TB_Node* new_mem) {
     TB_Node* old = f->trace.mem;
     f->trace.mem = new_mem;
-    if (f->line_loc) {
-        nl_table_put(&f->locations, new_mem, f->line_loc);
-    }
     return old;
 }
 
@@ -87,19 +81,28 @@ void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent) {
 }
 
 void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
-    TB_NodeLocation* loc = tb_arena_alloc(f->arena, sizeof(TB_NodeLocation));
-    loc->file = file;
-    loc->line = line;
-    loc->column = column;
-    f->line_loc = loc;
+    if (f->last_loc) {
+        // don't place if the line entry already exists
+        TB_NodeDbgLoc* last_loc = TB_NODE_GET_EXTRA(f->last_loc);
+        if (last_loc->file == file && last_loc->line == line && last_loc->column == column) {
+            return;
+        }
+    }
+
+    TB_Node* n = tb_alloc_node(f, TB_DEBUG_LOCATION, TB_TYPE_TUPLE, 2, sizeof(TB_NodeDbgLoc));
+    TB_NODE_SET_EXTRA(n, TB_NodeDbgLoc, .file = file, .line = line, .column = column);
+
+    // control proj
+    TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+    set_input(f, n, transfer_ctrl(f, cproj), 0);
+
+    // memory proj
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
+    set_input(f, n, append_mem(f, mproj), 1);
+    f->last_loc = n;
 }
 
 void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
-    TB_NodeLocation* loc = tb_arena_alloc(f->arena, sizeof(TB_NodeLocation));
-    loc->file = file;
-    loc->line = line;
-    loc->column = column;
-    nl_table_put(&f->locations, f->root_node->inputs[0], loc);
 }
 
 static void* alloc_from_node_arena(TB_Function* f, size_t necessary_size) {
@@ -148,7 +151,7 @@ static TB_Node* tb_bin_arith(TB_Function* f, int type, TB_ArithmeticBehavior ari
     set_input(f, n, a, 1);
     set_input(f, n, b, 2);
     TB_NODE_SET_EXTRA(n, TB_NodeBinopInt, .ab = arith_behavior);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 static TB_Node* tb_bin_farith(TB_Function* f, int type, TB_Node* a, TB_Node* b) {
@@ -157,13 +160,13 @@ static TB_Node* tb_bin_farith(TB_Function* f, int type, TB_Node* a, TB_Node* b) 
     TB_Node* n = tb_alloc_node(f, type, a->dt, 3, 0);
     set_input(f, n, a, 1);
     set_input(f, n, b, 2);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 static TB_Node* tb_unary(TB_Function* f, int type, TB_DataType dt, TB_Node* src) {
     TB_Node* n = tb_alloc_node(f, type, dt, 2, 0);
     set_input(f, n, src, 1);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_trunc(TB_Function* f, TB_Node* src, TB_DataType dt) {
@@ -290,7 +293,7 @@ TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment
     TB_Node* n = tb_alloc_node(f, TB_LOCAL, TB_TYPE_PTR, 1, sizeof(TB_NodeLocal));
     set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeLocal, .size = size, .align = alignment);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 void tb_inst_safepoint_poll(TB_Function* f, void* tag, TB_Node* addr, int input_count, TB_Node** inputs) {
@@ -320,7 +323,7 @@ TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnit
         set_input(f, n, peek_mem(f), 1);
         set_input(f, n, addr, 2);
         TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = alignment);
-        return tb_opt_gvn_node(f, n);
+        return n;
     }
 }
 
@@ -446,7 +449,7 @@ TB_Node* tb_inst_array_access(TB_Function* f, TB_Node* base, TB_Node* index, int
     TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
     set_input(f, n, base, 1);
     set_input(f, n, scl, 2);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_member_access(TB_Function* f, TB_Node* base, int64_t offset) {
@@ -458,7 +461,7 @@ TB_Node* tb_inst_member_access(TB_Function* f, TB_Node* base, int64_t offset) {
     TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
     set_input(f, n, base, 1);
     set_input(f, n, con,  2);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
@@ -569,28 +572,28 @@ TB_Node* tb_inst_not(TB_Function* f, TB_Node* src) {
 TB_Node* tb_inst_bswap(TB_Function* f, TB_Node* src) {
     TB_Node* n = tb_alloc_node(f, TB_BSWAP, src->dt, 2, 0);
     set_input(f, n, src, 1);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_clz(TB_Function* f, TB_Node* src) {
     assert(TB_IS_INTEGER_TYPE(src->dt));
     TB_Node* n = tb_alloc_node(f, TB_CLZ, TB_TYPE_I32, 2, 0);
     set_input(f, n, src, 1);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_ctz(TB_Function* f, TB_Node* src) {
     assert(TB_IS_INTEGER_TYPE(src->dt));
     TB_Node* n = tb_alloc_node(f, TB_CTZ, TB_TYPE_I32, 2, 0);
     set_input(f, n, src, 1);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_popcount(TB_Function* f, TB_Node* src) {
     assert(TB_IS_INTEGER_TYPE(src->dt));
     TB_Node* n = tb_alloc_node(f, TB_POPCNT, TB_TYPE_I32, 2, 0);
     set_input(f, n, src, 1);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_neg(TB_Function* f, TB_Node* src) {
@@ -620,7 +623,7 @@ TB_Node* tb_inst_select(TB_Function* f, TB_Node* cond, TB_Node* a, TB_Node* b) {
     set_input(f, n, cond, 1);
     set_input(f, n, a, 2);
     set_input(f, n, b, 3);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_and(TB_Function* f, TB_Node* a, TB_Node* b) {
@@ -787,7 +790,7 @@ TB_Node* tb_inst_va_start(TB_Function* f, TB_Node* a) {
 
     TB_Node* n = tb_alloc_node(f, TB_VA_START, TB_TYPE_PTR, 2, 0);
     set_input(f, n, a, 1);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_x86_ldmxcsr(TB_Function* f, TB_Node* a) {
@@ -795,26 +798,26 @@ TB_Node* tb_inst_x86_ldmxcsr(TB_Function* f, TB_Node* a) {
 
     TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_LDMXCSR, TB_TYPE_I32, 2, 0);
     set_input(f, n, a, 1);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_cycle_counter(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_CYCLE_COUNTER, TB_TYPE_I64, 1, 0);
     set_input(f, n, f->trace.bot_ctrl, 0);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_prefetch(TB_Function* f, TB_Node* addr, int level) {
     TB_Node* n = tb_alloc_node(f, TB_PREFETCH, TB_TYPE_MEMORY, 2, sizeof(TB_NodePrefetch));
     set_input(f, n, addr, 1);
     TB_NODE_SET_EXTRA(n, TB_NodePrefetch, .level = level);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_x86_stmxcsr(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_STMXCSR, TB_TYPE_I32, 1, 0);
     set_input(f, n, f->trace.bot_ctrl, 0);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_x86_sqrt(TB_Function* f, TB_Node* a) {
@@ -832,7 +835,7 @@ TB_Node* tb_inst_cmp(TB_Function* f, TB_NodeType type, TB_Node* a, TB_Node* b) {
     set_input(f, n, a, 1);
     set_input(f, n, b, 2);
     TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = a->dt);
-    return tb_opt_gvn_node(f, n);
+    return n;
 }
 
 TB_Node* tb_inst_cmp_eq(TB_Function* f, TB_Node* a, TB_Node* b) {
@@ -881,18 +884,18 @@ TB_Node* tb_inst_incomplete_phi(TB_Function* f, TB_DataType dt, TB_Node* region,
     return n;
 }
 
-bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* region, TB_Node* val) {
-    assert(region->type != TB_REGION && "umm... im expecting a region not whatever that was");
+bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* ctrl, TB_Node* val) {
     TB_Node* phi_region = phi->inputs[0];
 
     // the slot to fill is based on the predecessor list of the region
     FOR_N(i, 0, phi_region->input_count) {
         TB_Node* pred = phi_region->inputs[i];
-        while (pred->type != TB_REGION) pred = pred->inputs[0];
-
-        if (pred == region) {
-            set_input(f, phi, val, i + 1);
-            return true;
+        while (pred->type != TB_REGION) {
+            pred = pred->inputs[0];
+            if (pred == ctrl) {
+                set_input(f, phi, val, i + 1);
+                return true;
+            }
         }
     }
 

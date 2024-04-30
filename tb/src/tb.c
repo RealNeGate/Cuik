@@ -346,7 +346,6 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
     size_t param_count = p->param_count;
 
     f->gvn_nodes = nl_hashset_alloc(32);
-    f->locations = nl_table_alloc(16);
 
     f->section = section;
     f->node_count = 0;

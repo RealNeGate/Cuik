@@ -18,7 +18,6 @@ X(DEPFILE,     "MF",       true,  "write depout from -MD into a file")
 X(OPTLVL,      "O",        false,  "no optimizations")
 // backend
 X(EMITIR,      "emit-ir",  false, "print IR into stdout")
-X(EMITDOT,     "emit-dot", false, "print graphviz into stdout")
 X(OUTPUT,      "o",        true,  "set the output filepath")
 X(OBJECT,      "c",        false, "output object file")
 X(ASSEMBLY,    "S",        false, "output assembly to stdout")

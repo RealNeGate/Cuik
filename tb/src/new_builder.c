@@ -61,7 +61,7 @@ static void push(TB_GraphBuilder* g, TB_Node* n) {
 }
 
 static TB_Node* pop(TB_GraphBuilder* g) {
-    assert(g->val_cnt > 0 && "nothing on the value stack!!!");
+    TB_ASSERT(g->val_cnt > 0 && "nothing on the value stack!!!");
     return g->vals[--g->val_cnt];
 }
 
@@ -71,7 +71,7 @@ TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena) {
     g->vals = tb_platform_heap_alloc(g->val_cap * sizeof(TB_Node*));
 
     // both RPC and memory are mutable vars
-    assert(g->val_cap >= 2 + f->param_count);
+    TB_ASSERT(g->val_cap >= 2 + f->param_count);
     g->val_cnt = 2 + f->param_count;
     FOR_N(i, 0, 2 + f->param_count) {
         g->vals[i] = f->params[1 + i];
@@ -89,7 +89,7 @@ int tb_builder_save(TB_GraphBuilder* g) {
 }
 
 void tb_builder_restore(TB_GraphBuilder* g, int v) {
-    assert(g->val_cnt >= v);
+    TB_ASSERT(g->val_cnt >= v);
     g->val_cnt = v;
 }
 
@@ -102,7 +102,7 @@ TB_Node* tb_builder_pop(TB_GraphBuilder* g) {
 }
 
 void tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x) {
-    assert(TB_IS_POINTER_TYPE(dt) || TB_IS_INTEGER_TYPE(dt));
+    TB_ASSERT(TB_IS_POINTER_TYPE(dt) || TB_IS_INTEGER_TYPE(dt));
     if (dt.type == TB_TAG_INT && dt.data < 64) {
         uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
         x &= mask;
@@ -115,7 +115,7 @@ void tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x) {
 }
 
 void tb_builder_sint(TB_GraphBuilder* g, TB_DataType dt, int64_t x) {
-    assert(TB_IS_POINTER_TYPE(dt) || TB_IS_INTEGER_TYPE(dt));
+    TB_ASSERT(TB_IS_POINTER_TYPE(dt) || TB_IS_INTEGER_TYPE(dt));
 
     TB_Node* n = tb_alloc_node(g->f, TB_ICONST, dt, 1, sizeof(TB_NodeInt));
     set_input(g->f, n, g->f->root_node, 0);
@@ -151,7 +151,7 @@ void tb_builder_string(TB_GraphBuilder* g, ptrdiff_t len, const char* str) {
 }
 
 void tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type) {
-    assert(type >= TB_TRUNCATE && type <= TB_BITCAST);
+    TB_ASSERT(type >= TB_TRUNCATE && type <= TB_BITCAST);
     TB_Node* a = pop(g);
 
     TB_Function* f = g->f;
@@ -161,7 +161,7 @@ void tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type) {
 }
 
 void tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_ArithmeticBehavior ab) {
-    assert(type >= TB_AND && type <= TB_SMOD);
+    TB_ASSERT(type >= TB_AND && type <= TB_SMOD);
     TB_Node* b = pop(g);
     TB_Node* a = pop(g);
 
@@ -176,8 +176,8 @@ void tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_ArithmeticBehavior ab
 void tb_builder_cmp(TB_GraphBuilder* g, int type, bool flip, TB_DataType dt) {
     TB_Node* b = pop(g);
     TB_Node* a = pop(g);
-    tb_assert(type >= TB_CMP_EQ && type <= TB_CMP_FLE, "'type' wasn't a comparison node type (see TB_NodeTypeEnum)");
-    tb_assert(TB_DATA_TYPE_EQUALS(a->dt, b->dt), "datatype mismatch");
+    TB_ASSERT_MSG(type >= TB_CMP_EQ && type <= TB_CMP_FLE, "'type' wasn't a comparison node type (see TB_NodeTypeEnum)");
+    TB_ASSERT_MSG(TB_DATA_TYPE_EQUALS(a->dt, b->dt), "datatype mismatch");
 
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, type, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
@@ -195,8 +195,8 @@ void tb_builder_cmp(TB_GraphBuilder* g, int type, bool flip, TB_DataType dt) {
 void tb_builder_array(TB_GraphBuilder* g, int64_t stride) {
     TB_Node* index = pop(g);
     TB_Node* base  = pop(g);
-    tb_assert(base->dt.type == TB_TAG_PTR,  "base on ARRAY must be an integer");
-    tb_assert(index->dt.type == TB_TAG_INT, "index on ARRAY must be an integer");
+    TB_ASSERT_MSG(base->dt.type == TB_TAG_PTR,  "base on ARRAY must be an integer");
+    TB_ASSERT_MSG(index->dt.type == TB_TAG_INT, "index on ARRAY must be an integer");
 
     TB_Function* f = g->f;
     TB_Node* con = tb_opt_peep_node(f, tb_inst_sint(f, TB_TYPE_I64, stride));
@@ -250,7 +250,7 @@ void tb_builder_store(TB_GraphBuilder* g, int mem_var, int32_t offset, TB_CharUn
     tb_builder_member(g, offset);
     TB_Node* addr = pop(g);
 
-    assert(g->vals[mem_var]->dt.type == TB_TAG_MEMORY);
+    TB_ASSERT(g->vals[mem_var]->dt.type == TB_TAG_MEMORY);
     TB_Node* n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
     set_input(f, n, g->bot_ctrl, 0);
     set_input(f, n, g->vals[mem_var], 1);
@@ -323,12 +323,12 @@ int tb_builder_var(TB_GraphBuilder* g) {
 }
 
 void tb_builder_get_var(TB_GraphBuilder* g, int id) {
-    assert(id < g->val_cnt);
+    TB_ASSERT(id < g->val_cnt);
     push(g, g->vals[id]);
 }
 
 void tb_builder_set_var(TB_GraphBuilder* g, int id) {
-    assert(id < g->val_cnt - 1);
+    TB_ASSERT(id < g->val_cnt - 1);
     g->vals[id] = pop(g);
 }
 
@@ -376,7 +376,7 @@ void tb_builder_if(TB_GraphBuilder* g, int total_hits, int taken) {
 }
 
 void tb_builder_else(TB_GraphBuilder* g) {
-    assert(g->top && "we're not inside of an if block");
+    TB_ASSERT(g->top && "we're not inside of an if block");
     TB_GraphCtrl* ctrl = g->top;
 
     if (g->bot_ctrl) {
@@ -400,7 +400,7 @@ static void block_jmp(TB_GraphBuilder* g, TB_Node* bot, int depth) {
     }
 
     TB_Node* target = ctrl->kind == B_LOOP ? ctrl->header : ctrl->join;
-    assert(ctrl->val_cnt == g->val_cnt);
+    TB_ASSERT(ctrl->val_cnt == g->val_cnt);
     add_input_late(g->f, target, bot);
 
     // add edges to phis
@@ -442,7 +442,7 @@ void tb_builder_end(TB_GraphBuilder* g) {
             break;
         }
         case B_IF: {
-            assert(g->top_ctrl && "we're not inside of an if block");
+            TB_ASSERT(g->top_ctrl && "we're not inside of an if block");
             if (!ctrl->has_else) {
                 // goto false => join
                 add_input_late(g->f, ctrl->join, ctrl->paths[1]);
@@ -455,8 +455,8 @@ void tb_builder_end(TB_GraphBuilder* g) {
 
             // insert phis
             TB_Node* join = ctrl->join;
-            assert(join->type == TB_REGION);
-            assert(g->val_cnt == ctrl->val_cnt && "paths on branch mismatch in outgoing variables?");
+            TB_ASSERT(join->type == TB_REGION);
+            TB_ASSERT(g->val_cnt == ctrl->val_cnt && "paths on branch mismatch in outgoing variables?");
 
             if (join->input_count > 0) {
                 FOR_N(i, 0, g->val_cnt) {
@@ -567,7 +567,7 @@ void tb_builder_block(TB_GraphBuilder* g) {
 }
 
 void tb_builder_static_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, TB_Symbol* target, int mem_var, int nargs) {
-    assert(g->val_cnt >= nargs);
+    TB_ASSERT(g->val_cnt >= nargs);
     TB_Function* f = g->f;
 
     TB_Node* target_node;
@@ -618,24 +618,24 @@ void tb_builder_ret(TB_GraphBuilder* g, int count) {
     TB_Function* f = g->f;
     TB_Node* mem_state = g->vals[0];
 
-    assert(g->val_cnt >= count);
+    TB_ASSERT(g->val_cnt >= count);
     g->val_cnt -= count;
     TB_Node** args = &g->vals[g->val_cnt];
 
     // allocate return node
     TB_Node* ret = f->root_node->inputs[1];
-    assert(ret->type == TB_RETURN);
+    TB_ASSERT(ret->type == TB_RETURN);
     TB_Node* ctrl = ret->inputs[0];
-    assert(ctrl->type == TB_REGION);
+    TB_ASSERT(ctrl->type == TB_REGION);
 
     // add to PHIs
-    assert(ret->input_count >= 3 + count);
+    TB_ASSERT(ret->input_count >= 3 + count);
     add_input_late(f, ret->inputs[1], mem_state);
 
     size_t i = 3;
     for (; i < count + 3; i++) {
         TB_Node* v = args[i - 3];
-        assert(ret->inputs[i]->dt.raw == v->dt.raw && "datatype mismatch");
+        TB_ASSERT(ret->inputs[i]->dt.raw == v->dt.raw && "datatype mismatch");
         add_input_late(f, ret->inputs[i], v);
     }
 

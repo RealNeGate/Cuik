@@ -73,10 +73,10 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
 #define TB_OPTDEBUG_ISEL     0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
-#define TB_OPTDEBUG_REGALLOC 0
+#define TB_OPTDEBUG_REGALLOC 1
 #define TB_OPTDEBUG_GVN      0
 #define TB_OPTDEBUG_SCHEDULE 0
 // for toggling ANSI colors
@@ -383,9 +383,7 @@ struct TB_Function {
 
     // for legacy builder
     TB_Trace trace;
-
-    TB_NodeLocation* line_loc;
-    NL_Table locations; // TB_Node* -> TB_NodeLocation*
+    TB_Node* last_loc;
 
     // Optimizer related data
     struct {
@@ -621,9 +619,11 @@ typedef struct {
 #endif
 
 #ifndef NDEBUG
-#define tb_assert(condition, ...) ((condition) ? 0 : (fprintf(stderr, __FILE__ ":" STR(__LINE__) ": assertion failed: " #condition "\n  "), fprintf(stderr, __VA_ARGS__), abort(), 0))
+#define TB_ASSERT_MSG(cond, ...) ((cond) ? 0 : (fprintf(stderr, __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), fprintf(stderr, __VA_ARGS__), __builtin_trap(), 0))
+#define TB_ASSERT(cond)          ((cond) ? 0 : (fprintf(stderr, __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), __builtin_trap(), 0))
 #else
-#define tb_assert(condition, ...) (0)
+#define TB_ASSERT_MSG(cond, ...) (0)
+#define TB_ASSERT(cond) (0)
 #endif
 
 #if defined(_WIN32) && !defined(__GNUC__)

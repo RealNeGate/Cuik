@@ -185,9 +185,7 @@ static void apply_func(TB_Function* f, void* arg) {
         MyArenas* arenas = get_ir_arena();
         float start = tb_arena_current_size(arenas->a[arena_i]);
 
-        if (args->emit_dot) {
-            tb_print_dot(f, tb_default_print_callback, stdout);
-        } else if (args->emit_ir) {
+        if (args->emit_ir) {
             tb_print(f, arenas->a[!arena_i]);
 
             // char* str = tb_print_c(f, ir_worklist, arenas->tmp);
@@ -656,7 +654,7 @@ void cuik_step_free(Cuik_BuildStep* s) {
 }
 
 bool cuik_driver_does_codegen(const Cuik_DriverArgs* args) {
-    return !args->emit_dot && !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
+    return !args->emit_ir && !args->test_preproc && !args->preprocess && !args->syntax_only && !args->ast;
 }
 
 void cuikpp_dump_tokens(TokenStream* s) {

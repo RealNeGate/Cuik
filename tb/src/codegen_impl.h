@@ -430,9 +430,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             ctx.current_emit_bb = mbb;
             ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
-            // line info is BB-local
-            TB_NodeLocation* last_loc = NULL;
-
             // mark label
             on_basic_block(&ctx, e, bbid);
             TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));

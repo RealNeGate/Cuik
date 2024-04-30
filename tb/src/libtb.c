@@ -6,7 +6,6 @@ void* tb_jit_stack_create(void);
 #include "abi.c"
 #include "tb_builder.c"
 #include "debug_builder.c"
-#include "ir_printer.c"
 #include "exporter.c"
 #include "symbols.c"
 #include "disasm.c"

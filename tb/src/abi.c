@@ -100,7 +100,7 @@ static TB_DataType debug_type_to_tb(TB_DebugType* t) {
         case TB_DEBUG_TYPE_FLOAT32:  return TB_TYPE_F32;
         case TB_DEBUG_TYPE_FLOAT64:  return TB_TYPE_F64;
 
-        default: tb_assert(0, "todo"); return TB_TYPE_VOID;
+        default: TB_ASSERT(0); return TB_TYPE_VOID;
     }
 }
 
@@ -117,7 +117,7 @@ static TB_DataType reg_class_to_tb(TB_ABI abi, RegClass rg, TB_DebugType* type) 
             return (TB_DataType){ { TB_TAG_F32 + (type->tag - TB_DEBUG_TYPE_FLOAT32) } };
         }
 
-        default: tb_assert(0, "todo"); return TB_TYPE_VOID;
+        default: TB_ASSERT(0); return TB_TYPE_VOID;
     }
 }
 
@@ -131,8 +131,8 @@ TB_PassingRule tb_get_passing_rule_from_dbg(TB_Module* mod, TB_DebugType* param_
 }
 
 TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, size_t* out_param_count) {
-    tb_assert(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
-    tb_assert(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
+    TB_ASSERT_MSG(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
+    TB_ASSERT_MSG(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
 
     TB_ABI abi = f->super.module->target_abi;
     TB_FunctionPrototype* p = tb_prototype_from_dbg(f->super.module, dbg);

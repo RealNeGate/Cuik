@@ -4,6 +4,131 @@ typedef struct {
     TB_CFG cfg;
 } PrinterCtx;
 
+static const char* tb_node_get_name(TB_Node* n) {
+    switch (n->type) {
+        case TB_NULL: return "FREED";
+        case TB_UNREACHABLE: return "unreachable";
+
+        case TB_BRANCH_PROJ:   return "br_proj";
+
+        case TB_ROOT:   return "root";
+        case TB_RETURN: return "return";
+        case TB_PROJ:   return "proj";
+        case TB_REGION: return "region";
+        case TB_NATURAL_LOOP: return "loop";
+        case TB_AFFINE_LOOP: return "loop.affine";
+        case TB_CALLGRAPH: return "callgraph";
+
+        case TB_LOCAL: return "local";
+
+        case TB_VA_START: return "vastart";
+        case TB_DEBUGBREAK: return "dbgbrk";
+
+        case TB_POISON: return "poison";
+        case TB_DEAD: return "dead";
+        case TB_ICONST: return "int";
+        case TB_F32CONST: return "float32";
+        case TB_F64CONST: return "float64";
+
+        case TB_PHI: return "phi";
+        case TB_SELECT: return "select";
+        case TB_LOOKUP: return "lookup";
+
+        case TB_PTR_OFFSET: return "ptr_offset";
+
+        case TB_CYCLE_COUNTER: return "cyclecnt";
+        case TB_DEBUG_LOCATION: return "dbgloc";
+        case TB_SAFEPOINT_POLL: return "safepoint.poll";
+
+        case TB_MEMSET: return "memset";
+        case TB_MEMCPY: return "memcpy";
+        case TB_SPLITMEM: return "split";
+        case TB_MERGEMEM: return "merge";
+
+        case TB_ZERO_EXT: return "zxt";
+        case TB_SIGN_EXT: return "sxt";
+        case TB_FLOAT_TRUNC: return "fptrunc";
+        case TB_FLOAT_EXT: return "fpxt";
+        case TB_TRUNCATE: return "trunc";
+        case TB_BITCAST: return "bitcast";
+        case TB_UINT2FLOAT: return "uint2float";
+        case TB_TAG_INT2FLOAT: return "int2float";
+        case TB_FLOAT2UINT: return "float2uint";
+        case TB_FLOAT2INT: return "float2int";
+        case TB_SYMBOL: return "symbol";
+
+        case TB_CMP_NE: return "cmp.ne";
+        case TB_CMP_EQ: return "cmp.eq";
+        case TB_CMP_ULT: return "cmp.ult";
+        case TB_CMP_ULE: return "cmp.ule";
+        case TB_CMP_SLT: return "cmp.slt";
+        case TB_CMP_SLE: return "cmp.sle";
+        case TB_CMP_FLT: return "cmp.lt";
+        case TB_CMP_FLE: return "cmp.le";
+
+        case TB_ATOMIC_LOAD: return "atomic.load";
+        case TB_ATOMIC_XCHG: return "atomic.xchg";
+        case TB_ATOMIC_ADD: return "atomic.add";
+        case TB_ATOMIC_SUB: return "atomic.sub";
+        case TB_ATOMIC_AND: return "atomic.and";
+        case TB_ATOMIC_XOR: return "atomic.xor";
+        case TB_ATOMIC_OR: return "atomic.or";
+        case TB_ATOMIC_CAS: return "atomic.cas";
+
+        case TB_CLZ: return "clz";
+        case TB_CTZ: return "ctz";
+        case TB_NEG: return "neg";
+        case TB_AND: return "and";
+        case TB_OR: return "or";
+        case TB_XOR: return "xor";
+        case TB_ADD: return "add";
+        case TB_SUB: return "sub";
+        case TB_MUL: return "mul";
+        case TB_UDIV: return "udiv";
+        case TB_SDIV: return "sdiv";
+        case TB_UMOD: return "umod";
+        case TB_SMOD: return "smod";
+        case TB_SHL: return "shl";
+        case TB_SHR: return "shr";
+        case TB_ROL: return "rol";
+        case TB_ROR: return "ror";
+        case TB_SAR: return "sar";
+        case TB_ADC: return "adc";
+
+        case TB_FADD: return "fadd";
+        case TB_FSUB: return "fsub";
+        case TB_FMUL: return "fmul";
+        case TB_FDIV: return "fdiv";
+        case TB_FMAX: return "fmax";
+        case TB_FMIN: return "fmin";
+
+        case TB_MULPAIR:  return "mulpair";
+        case TB_LOAD:     return "load";
+        case TB_STORE:    return "store";
+        case TB_READ:     return "read";
+        case TB_WRITE:    return "write";
+
+        case TB_CALL:     return "call";
+        case TB_SYSCALL:  return "syscall";
+        case TB_BRANCH:   return "branch";
+        case TB_AFFINE_LATCH: return "affine_latch";
+        case TB_NEVER_BRANCH: return "never_branch";
+        case TB_TAILCALL: return "tailcall";
+
+        case TB_MACH_MOVE:  return "mach_move";
+        case TB_MACH_COPY:  return "mach_copy";
+        case TB_MACH_PROJ:  return "mach_proj";
+        case TB_MACH_SYMBOL:return "mach_symbol";
+        case TB_MACH_FRAME_PTR: return "mach_frameptr";
+
+        default: {
+            int family = n->type / 0x100;
+            TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
+            return tb_codegen_families[family].node_name(n);
+        }
+    }
+}
+
 static int print_type(TB_DataType dt) {
     switch (dt.type) {
         case TB_TAG_INT:     return dt.data == 0 ? printf("void") : printf("i%d", dt.data);
@@ -152,7 +277,7 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
                     printf(", ");
                 }
 
-                assert(phi_i >= 0);
+                TB_ASSERT(phi_i >= 0);
                 print_ref_to_node(ctx, USERN(u)->inputs[phi_i], false);
             }
         }
@@ -169,7 +294,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
     #ifndef NDEBUG
     TB_BasicBlock* expected = &nl_map_get_checked(ctx->cfg.node_to_block, bb_start);
-    assert(expected == bb);
+    TB_ASSERT(expected == bb);
     #endif
 
     tb_greedy_scheduler(f, &ctx->cfg, ws, NULL, bb);
@@ -184,11 +309,6 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
             n->type == TB_REGION || n->type == TB_NATURAL_LOOP || n->type == TB_AFFINE_LOOP ||
             n->type == TB_NULL || n->type == TB_PHI) {
             continue;
-        }
-
-        TB_NodeLocation* v;
-        if (v = nl_table_get(&f->locations, n), v) {
-            printf("  # location %s:%d\n", v->file->path, v->line);
         }
 
         switch (n->type) {
@@ -220,7 +340,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     }
                 }
 
-                assert(br->succ_count >= 2);
+                TB_ASSERT(br->succ_count >= 2);
                 if (br->succ_count == 2) {
                     int bits = n->inputs[1]->dt.type == TB_TAG_PTR ? 64 : n->inputs[1]->dt.data;
 
@@ -397,6 +517,12 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     case TB_SPLITMEM:
                     break;
 
+                    case TB_DEBUG_LOCATION: {
+                        TB_NodeDbgLoc* loc = TB_NODE_GET_EXTRA(n);
+                        printf(" // %s:%d", loc->file->path, loc->line);
+                        break;
+                    }
+
                     case TB_LOCAL: {
                         TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
                         printf("!size(%u) !align(%u)", l->size, l->align);
@@ -434,9 +560,9 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     default: {
                         int family = n->type / 0x100;
                         if (family == 0) {
-                            tb_assert(extra_bytes(n) == 0, "TODO");
+                            TB_ASSERT_MSG(extra_bytes(n) == 0, "TODO");
                         } else {
-                            assert(family >= 1 && family < TB_ARCH_MAX);
+                            TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
                             tb_codegen_families[family].print_extra(n);
                         }
                         break;
@@ -459,6 +585,10 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 }
 
 void tb_print(TB_Function* f, TB_Arena* tmp) {
+    if (tmp == NULL) {
+        tmp = f->tmp_arena;
+    }
+
     size_t old_scheduled_n = f->scheduled_n;
     TB_BasicBlock** old_scheduled = f->scheduled;
     TB_ArenaSavepoint sp = tb_arena_save(tmp);

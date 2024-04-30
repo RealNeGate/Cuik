@@ -23,7 +23,7 @@ static SDG_TypeIndex sdg_get_type(SDG_Types* types, TB_DebugType* type) {
             if (type->int_bits <= 16) return is_signed ? SDG_PRIM_INT16 : SDG_PRIM_UINT16;
             if (type->int_bits <= 32) return is_signed ? SDG_PRIM_INT32 : SDG_PRIM_UINT32;
             if (type->int_bits <= 64) return is_signed ? SDG_PRIM_INT64 : SDG_PRIM_UINT64;
-            assert(0 && "Unsupported int type");
+            TB_ASSERT(0 && "Unsupported int type");
         }
 
         case TB_DEBUG_TYPE_FLOAT32:
@@ -70,7 +70,7 @@ static SDG_TypeIndex sdg_get_type_from_dt(TB_DataType dt) {
         case TB_TAG_PTR: {
             return SDG_PRIM_POINTER | SDG_PRIM_VOID;
         }
-        default: return tb_assert(0, "todo: missing type in CodeView output");
+        default: return TB_ASSERT_MSG(0, "todo: missing type in CodeView output");
     }
 }
 

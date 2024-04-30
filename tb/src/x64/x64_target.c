@@ -291,7 +291,7 @@ static int node_2addr(TB_Node* n) {
         case x86_vmov:
         // ANY_GPR = OP(ANY_GPR, IMM)
         case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
-        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
+        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm:
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
         case x86_movzx8: case x86_movzx16: case x86_movsx8: case x86_movsx16: case x86_movsx32:
         {
@@ -303,8 +303,9 @@ static int node_2addr(TB_Node* n) {
         case x86_cmovcc:
         return 2;
 
-        // ANY_GPR = OP(ANY_GPR, CL)
+        // ANY_GPR = OP(ANY_GPR, ...)
         case TB_SHL: case TB_SHR: case TB_ROL: case TB_ROR: case TB_SAR:
+        case TB_MUL: case x86_imulimm:
         return 1;
 
         case TB_ATOMIC_LOAD:
@@ -1076,6 +1077,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case TB_AFFINE_LOOP:
         case TB_NATURAL_LOOP:
         case TB_CALLGRAPH:
+        case TB_DEBUG_LOCATION:
         if (ins) {
             // region inputs are all control
             FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
@@ -1243,7 +1245,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_xor: case x86_cmp: case x86_mov: case x86_test:
         // ANY_GPR = OP(ANY_GPR, IMM)
         case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
-        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
+        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm:
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
         {
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
@@ -1302,6 +1304,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
             return &TB_REG_EMPTY;
         }
+
+        case x86_imulimm:
+        if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
+        return ctx->normie_mask[REG_CLASS_GPR];
 
         case TB_MUL:
         {
@@ -2073,6 +2079,10 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             tb_emit_symbol_patch(e->output, op_extra->sym, e->count - 4);
             break;
         }
+
+        case TB_DEBUG_LOCATION:
+        EMIT1(e, 0x90);
+        break;
 
         default:
         tb_todo();

@@ -210,7 +210,7 @@ static TB_NodeBranchProj* cfg_if_branch(TB_Node* n) {
 }
 
 static bool is_mem_out_op(TB_Node* n) {
-    return n->dt.type == TB_TAG_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_TAILCALL) || n->type == TB_SPLITMEM || n->type == TB_MERGEMEM;
+    return n->dt.type == TB_TAG_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_TAILCALL) || n->type == TB_SPLITMEM || n->type == TB_MERGEMEM || n->type == TB_DEBUG_LOCATION;
 }
 
 static bool is_pinned(TB_Node* n) {

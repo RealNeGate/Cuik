@@ -20,6 +20,9 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_SAFEPOINT_POLL:
         return sizeof(TB_NodeSafepoint);
 
+        case TB_DEBUG_LOCATION:
+        return sizeof(TB_NodeDbgLoc);
+
         case TB_AND:
         case TB_OR:
         case TB_XOR:
