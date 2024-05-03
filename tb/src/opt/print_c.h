@@ -1096,7 +1096,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
             case TB_FLOAT2UINT:
             case TB_FLOAT2INT:
             case TB_UINT2FLOAT:
-            case TB_TAG_INT2FLOAT:
+            case TB_INT2FLOAT:
             case TB_TRUNCATE: {
                 TB_Node *input = n->inputs[n->input_count-1];
                 c_fmt_output(ctx, n);

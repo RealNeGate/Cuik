@@ -4,7 +4,7 @@ typedef struct {
     TB_CFG cfg;
 } PrinterCtx;
 
-static const char* tb_node_get_name(TB_Node* n) {
+const char* tb_node_get_name(TB_Node* n) {
     switch (n->type) {
         case TB_NULL: return "FREED";
         case TB_UNREACHABLE: return "unreachable";
@@ -52,7 +52,7 @@ static const char* tb_node_get_name(TB_Node* n) {
         case TB_TRUNCATE: return "trunc";
         case TB_BITCAST: return "bitcast";
         case TB_UINT2FLOAT: return "uint2float";
-        case TB_TAG_INT2FLOAT: return "int2float";
+        case TB_INT2FLOAT: return "int2float";
         case TB_FLOAT2UINT: return "float2uint";
         case TB_FLOAT2INT: return "float2int";
         case TB_SYMBOL: return "symbol";

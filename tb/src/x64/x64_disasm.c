@@ -153,8 +153,12 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         [0x9C]          = OP_0ARY,
         // popf
         [0x9D]          = OP_0ARY,
-        // stosb
-        [0xAA]          = OP_0ARY,
+        // movs
+        [0xA4 ... 0xA5] = OP_0ARY,
+        // stos
+        [0xAA ... 0xAB] = OP_0ARY,
+        // scas
+        [0xAE ... 0xAF] = OP_0ARY,
         // int3
         [0xCC]          = OP_0ARY,
         // sar r/m, CL

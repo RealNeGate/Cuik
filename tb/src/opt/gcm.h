@@ -569,9 +569,11 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                         DO_IF(TB_OPTDEBUG_GCM)(printf("%s: %%%u into .bb%d\n", f->super.name, n->gvn, best->id));
 
                         f->scheduled[n->gvn] = best;
+
                         // unpinned nodes getting moved means their users need to move too
                         if (n->dt.type == TB_TAG_TUPLE) {
                             FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                                nl_hashset_put2(&best->items, USERN(u), tb__node_hash, tb__node_cmp);
                                 f->scheduled[USERN(u)->gvn] = best;
                             }
                         }
@@ -645,7 +647,11 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                             // unpinned nodes getting moved means their users need to move too
                             if (n->dt.type == TB_TAG_TUPLE) {
                                 FOR_USERS(u, n) if (is_proj(USERN(u))) {
-                                    f->scheduled[USERN(u)->gvn] = better;
+                                    TB_Node* un = USERN(u);
+                                    nl_hashset_remove2(&old->items, un, tb__node_hash, tb__node_cmp);
+                                    nl_hashset_put2(&better->items, un, tb__node_hash, tb__node_cmp);
+
+                                    f->scheduled[un->gvn] = better;
                                 }
                             }
 

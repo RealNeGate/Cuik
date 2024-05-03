@@ -20,6 +20,7 @@ X(testjcc)
 X(ucomijcc)
 X(cmpimmjcc)
 X(testimmjcc)
+X(AAAAAHHHH)
 // float/vector ops
 X(vmov) X(vadd) X(vmul) X(vsub) X(vdiv)
 X(vmin) X(vmax) X(vxor) X(vzero)

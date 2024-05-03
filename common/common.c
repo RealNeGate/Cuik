@@ -89,8 +89,11 @@ TB_Arena* tb_arena_create(size_t chunk_size) {
 
     // allocate initial chunk
     TB_Arena* arena = cuik__valloc(chunk_size);
-    arena->watermark  = arena->data;
-    arena->high_point = &arena->data[chunk_size - sizeof(TB_Arena)];
+    arena->avail = arena->data;
+    arena->limit = &arena->data[chunk_size - sizeof(TB_Arena)];
+    #ifndef NDEBUG
+    arena->highest = arena->avail;
+    #endif
     arena->top = arena;
     return arena;
 }
@@ -106,33 +109,50 @@ void tb_arena_destroy(TB_Arena* restrict arena) {
 
 void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
     TB_Arena* top = arena->top;
-    if (LIKELY(top->watermark + size <= top->high_point)) {
-        char* ptr = top->watermark;
-        top->watermark += size;
-        return ptr;
+
+    char* p = top->avail;
+    if (LIKELY((top->avail + size) <= top->limit)) {
+        top->avail += size;
+
+        #ifndef NDEBUG
+        if (p > top->highest) {
+            top->highest = p;
+        }
+        #endif
+        return p;
     } else {
         // slow path, we need to allocate more pages
         size_t chunk_size = tb_arena_chunk_size(arena);
-        assert(size < chunk_size - sizeof(TB_Arena));
 
-        TB_Arena* c = cuik__valloc(chunk_size);
-        c->next = NULL;
-        c->watermark  = c->data + size;
-        c->high_point = &c->data[chunk_size - sizeof(TB_Arena)];
+        TB_Arena* c = top->next;
+        if (c != NULL) {
+            assert(tb_arena_chunk_size(arena));
+            c->avail   = c->data + size;
+            c->highest = c->avail;
+        } else {
+            assert(size < chunk_size - sizeof(TB_Arena));
+            c = cuik__valloc(chunk_size);
+            c->next    = NULL;
+            c->avail   = c->data + size;
+            c->limit   = &c->data[chunk_size - sizeof(TB_Arena)];
+            #ifndef NDEBUG
+            c->highest = c->avail;
+            #endif
 
-        // append to top
-        arena->top->next = c;
+            // append to top
+            arena->top->next = c;
+        }
+
         arena->top = c;
-
         return c->data;
     }
 }
 
 TB_API void* tb_arena_realloc(TB_Arena* restrict arena, void* old, size_t size) {
     char* p = old;
-    if (p + size == arena->watermark) {
+    if (p + size == arena->avail) {
         // try to resize
-        arena->watermark = old;
+        arena->avail = old;
     }
 
     char* dst = tb_arena_unaligned_alloc(arena, size);
@@ -144,17 +164,17 @@ TB_API void* tb_arena_realloc(TB_Arena* restrict arena, void* old, size_t size) 
 
 void tb_arena_pop(TB_Arena* restrict arena, void* ptr, size_t size) {
     char* p = ptr;
-    assert(p + size == arena->watermark); // cannot pop from arena if it's not at the top
+    assert(p + size == arena->avail); // cannot pop from arena if it's not at the top
 
-    arena->watermark = p;
+    arena->avail = p;
 }
 
 bool tb_arena_free(TB_Arena* restrict arena, void* ptr, size_t size) {
     size = (size + TB_ARENA_ALIGNMENT - 1) & ~(TB_ARENA_ALIGNMENT - 1);
 
     char* p = ptr;
-    if (p + size == arena->watermark) {
-        arena->watermark = p;
+    if (p + size == arena->avail) {
+        arena->avail = p;
         return true;
     } else {
         return false;
@@ -162,32 +182,23 @@ bool tb_arena_free(TB_Arena* restrict arena, void* ptr, size_t size) {
 }
 
 void tb_arena_realign(TB_Arena* restrict arena) {
-    ptrdiff_t pos = arena->watermark - arena->top->data;
+    ptrdiff_t pos = arena->avail - arena->top->data;
     pos = (pos + TB_ARENA_ALIGNMENT - 1) & ~(TB_ARENA_ALIGNMENT - 1);
 
-    arena->watermark = &arena->top->data[pos];
+    arena->avail = &arena->top->data[pos];
 }
 
 TB_ArenaSavepoint tb_arena_save(TB_Arena* arena) {
-    return (TB_ArenaSavepoint){ arena->top, arena->watermark };
+    return (TB_ArenaSavepoint){ arena->top, arena->avail };
 }
 
 void tb_arena_restore(TB_Arena* arena, TB_ArenaSavepoint sp) {
-    // kill any chunks which are ahead of the top
-    TB_Arena* c = sp.top->next;
-    while (c != NULL) {
-        TB_Arena* next = c->next;
-        cuik__vfree(c, tb_arena_chunk_size(c));
-        c = next;
-    }
-
     arena->top = sp.top;
-    arena->top->next = NULL;
-    arena->watermark = sp.watermark;
+    arena->avail = sp.avail;
 }
 
 void* tb_arena_alloc(TB_Arena* restrict arena, size_t size) {
-    uintptr_t wm = (uintptr_t) arena->watermark;
+    uintptr_t wm = (uintptr_t) arena->avail;
     assert((wm & ~0xFull) == wm);
 
     size = (size + TB_ARENA_ALIGNMENT - 1) & ~(TB_ARENA_ALIGNMENT - 1);
@@ -196,35 +207,42 @@ void* tb_arena_alloc(TB_Arena* restrict arena, size_t size) {
 
 void tb_arena_clear(TB_Arena* arena) {
     if (arena != NULL) {
-        arena->watermark = arena->data;
+        arena->avail = &arena->data[0];
         arena->top = arena;
-
-        // remove extra chunks
-        TB_Arena* c = arena->next;
-        while (c != NULL) {
-            TB_Arena* next = c->next;
-            cuik__vfree(c, tb_arena_chunk_size(c));
-            c = next;
-        }
-
-        arena->next = NULL;
     }
 }
 
 bool tb_arena_is_empty(TB_Arena* arena) {
-    return arena->top != arena || (arena->watermark - arena->data) > 0;
+    return arena->top != arena || (arena->avail - arena->data) > 0;
 }
 
+#ifndef NDEBUG
+void tb_arena_reset_peak(TB_Arena* restrict arena) {
+    TB_Arena* top_next = arena->top->next;
+    for (TB_Arena* c = arena; c != top_next; c = c->next) {
+        c->highest = c->avail;
+    }
+}
+
+size_t tb_arena_peak_size(TB_Arena* arena) {
+    size_t total = 0;
+    TB_Arena* top_next = arena->top->next;
+    for (TB_Arena* c = arena; c != top_next; c = c->next) {
+        total += c->highest - (char*) c;
+    }
+    return total;
+}
+#endif
+
 size_t tb_arena_chunk_size(TB_Arena* arena) {
-    return arena->high_point - (char*) arena;
+    return arena->limit - (char*) arena;
 }
 
 size_t tb_arena_current_size(TB_Arena* arena) {
     size_t total = 0;
-    TB_Arena* c = arena;
-    while (c != NULL) {
-        total += arena->watermark - (char*) arena;
-        c = c->next;
+    TB_Arena* top_next = arena->top->next;
+    for (TB_Arena* c = arena; c != top_next; c = c->next) {
+        total += c->avail - (char*) c;
     }
     return total;
 }

@@ -89,6 +89,11 @@ void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column)
         }
     }
 
+    if (f->trace.bot_ctrl->type == TB_PROJ && f->trace.bot_ctrl->inputs[0]->type == TB_DEBUG_LOCATION) {
+        // if there's already a line entry, throw this one away (should we replace the original? idk)
+        return;
+    }
+
     TB_Node* n = tb_alloc_node(f, TB_DEBUG_LOCATION, TB_TYPE_TUPLE, 2, sizeof(TB_NodeDbgLoc));
     TB_NODE_SET_EXTRA(n, TB_NodeDbgLoc, .file = file, .line = line, .column = column);
 
@@ -213,7 +218,7 @@ TB_Node* tb_inst_int2float(TB_Function* f, TB_Node* src, TB_DataType dt, bool is
         }
     }
 
-    return tb_unary(f, is_signed ? TB_TAG_INT2FLOAT : TB_UINT2FLOAT, dt, src);
+    return tb_unary(f, is_signed ? TB_INT2FLOAT : TB_UINT2FLOAT, dt, src);
 }
 
 TB_Node* tb_inst_float2int(TB_Function* f, TB_Node* src, TB_DataType dt, bool is_signed) {
@@ -611,6 +616,8 @@ TB_Node* tb_inst_neg(TB_Function* f, TB_Node* src) {
     } else if (src->type == TB_F64CONST) {
         double x = TB_NODE_GET_EXTRA_T(src, TB_NodeFloat64)->value;
         return tb_inst_float64(f, -x);
+    } else if (TB_IS_FLOAT_TYPE(src->dt)) {
+        return tb_unary(f, TB_FNEG, src->dt, src);
     } else {
         return tb_unary(f, TB_NEG, src->dt, src);
     }
@@ -890,12 +897,14 @@ bool tb_inst_add_phi_operand(TB_Function* f, TB_Node* phi, TB_Node* ctrl, TB_Nod
     // the slot to fill is based on the predecessor list of the region
     FOR_N(i, 0, phi_region->input_count) {
         TB_Node* pred = phi_region->inputs[i];
-        while (pred->type != TB_REGION) {
-            pred = pred->inputs[0];
+        for (;;) {
             if (pred == ctrl) {
                 set_input(f, phi, val, i + 1);
                 return true;
+            } else if (cfg_is_region(pred)) {
+                break;
             }
+            pred = pred->inputs[0];
         }
     }
 

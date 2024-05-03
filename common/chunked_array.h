@@ -34,7 +34,7 @@ NL_ChunkedArr nl_chunked_arr_alloc(TB_Arena* arena) {
     TB_ArenaSavepoint sp = tb_arena_save(arena);
     tb_arena_realign(arena);
 
-    ptrdiff_t leftovers = arena->high_point - (arena->watermark + sizeof(NL_ChunkedArr));
+    ptrdiff_t leftovers = arena->limit - (arena->avail + sizeof(NL_ChunkedArr));
     if (leftovers < 64) {
         size_t chunk_size = tb_arena_chunk_size(arena);
         leftovers = chunk_size - (sizeof(NL_ArrChunk) + sizeof(TB_Arena));

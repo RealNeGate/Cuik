@@ -155,7 +155,7 @@ static void* tb_cgemit_reserve(TB_CGEmitter* restrict e, size_t count) {
         size_t old_cap = e->capacity;
         void* old = e->data;
 
-        e->capacity = (e->arena->top->high_point - e->arena->top->watermark) & ~0xF;
+        e->capacity = (e->arena->top->limit - e->arena->top->avail) & ~0xF;
         e->data = tb_arena_alloc(e->arena, e->capacity);
         memcpy(e->data, old, old_cap);
     }

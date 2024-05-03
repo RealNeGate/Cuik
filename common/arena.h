@@ -34,16 +34,20 @@ struct TB_Arena {
     // we only care about this for the root arena chunk but whatever
     TB_Arena* top;
 
-    // top of the allocation space
-    char* watermark;
-    char* high_point; // &top->data[chunk_size]
+    char* avail;
+    char* limit;
+
+    #ifndef NDEBUG
+    char* highest;
+    char* _pad;
+    #endif
 
     char data[];
 };
 
 typedef struct TB_ArenaSavepoint {
     TB_Arena* top;
-    char* watermark;
+    char* avail;
 } TB_ArenaSavepoint;
 
 #define TB_ARENA_FOR(it, arena) for (TB_Arena* it = (arena); it != NULL; it = it->next)
@@ -65,6 +69,11 @@ TB_API void tb_arena_pop(TB_Arena* restrict arena, void* ptr, size_t size);
 
 // in case you wanna mix unaligned and aligned arenas
 TB_API void tb_arena_realign(TB_Arena* restrict arena);
+
+#ifndef NDEBUG
+TB_API void tb_arena_reset_peak(TB_Arena* restrict arena);
+TB_API size_t tb_arena_peak_size(TB_Arena* arena);
+#endif
 
 TB_API size_t tb_arena_chunk_size(TB_Arena* arena);
 TB_API size_t tb_arena_current_size(TB_Arena* arena);

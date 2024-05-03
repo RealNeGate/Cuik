@@ -46,7 +46,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_UINT2FLOAT:
         case TB_FLOAT_TRUNC:
         case TB_FLOAT2UINT:
-        case TB_TAG_INT2FLOAT:
+        case TB_INT2FLOAT:
         case TB_FLOAT2INT:
         case TB_FLOAT_EXT:
         case TB_SIGN_EXT:
@@ -77,6 +77,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_READ:
         case TB_WRITE:
         case TB_ROOT:
+        case TB_TRAP:
         case TB_RETURN:
         case TB_MACH_MOVE:
         case TB_MACH_FRAME_PTR:

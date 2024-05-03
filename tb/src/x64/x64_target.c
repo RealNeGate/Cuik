@@ -65,6 +65,7 @@ uint32_t node_flags(TB_Node* n) {
         case x86_cmpimmjcc:
         case x86_testjcc:
         case x86_testimmjcc:
+        case x86_AAAAAHHHH:
         return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH;
 
         default: return 0;
@@ -329,6 +330,10 @@ static int node_2addr(TB_Node* n) {
     }
 }
 
+static bool node_remat(TB_Node* n) {
+    return n->type == x86_lea;
+}
+
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->abi_index = abi == TB_ABI_SYSTEMV ? 1 : 0;
 
@@ -353,10 +358,12 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     TB_Node** params = ctx->f->params;
     TB_Node* root_ctrl = params[0];
 
+    ctx->param_count = ctx->f->param_count;
+
     // walk the entry to find any parameter stack slots
     FOR_N(i, 0, ctx->f->param_count) {
         TB_Node* proj = params[3 + i];
-        if (proj->user_count == 0 || single_use(proj) || USERI(proj->users) == 0) { continue; }
+        if (proj->user_count != 1 || USERI(proj->users) == 0) { continue; }
         TB_Node* store_op = USERN(proj->users);
         if (store_op->type != TB_STORE) { continue; }
         TB_Node* addr = store_op->inputs[2];
@@ -452,37 +459,36 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     if (n->type == TB_PROJ) {
         return n;
     } else if (n->type == TB_ROOT) {
-        assert(n->input_count == 2);
-        assert(n->inputs[1]->type == TB_RETURN);
         TB_Node* ret = n->inputs[1];
+        if (ret->type == TB_RETURN) {
+            // add some callee-saved mach projections
+            int j = 3 + f->prototype->param_count;
 
-        // add some callee-saved mach projections
-        int j = 3 + f->prototype->param_count;
+            uint32_t callee_saved_gpr = ~param_descs[ctx->abi_index].caller_saved_gprs;
+            callee_saved_gpr &= ~(1u << RSP);
+            if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
+                callee_saved_gpr &= ~(1 << RBP);
+            }
 
-        uint32_t callee_saved_gpr = ~param_descs[ctx->abi_index].caller_saved_gprs;
-        callee_saved_gpr &= ~(1u << RSP);
-        if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
-            callee_saved_gpr &= ~(1 << RBP);
-        }
+            FOR_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
+                if ((callee_saved_gpr >> i) & 1) {
+                    RegMask* rm = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << i);
+                    TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+                    TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = j++, .def = rm);
 
-        FOR_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
-            if ((callee_saved_gpr >> i) & 1) {
-                RegMask* rm = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << i);
-                TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+                    set_input(f, proj, n, 0);
+                    add_input_late(f, ret, proj);
+                }
+            }
+
+            FOR_N(i, param_descs[ctx->abi_index].caller_saved_xmms, ctx->num_regs[REG_CLASS_XMM]) {
+                RegMask* rm = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << i);
+                TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_F64, 1, sizeof(TB_NodeMachProj));
                 TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = j++, .def = rm);
 
                 set_input(f, proj, n, 0);
                 add_input_late(f, ret, proj);
             }
-        }
-
-        FOR_N(i, param_descs[ctx->abi_index].caller_saved_xmms, ctx->num_regs[REG_CLASS_XMM]) {
-            RegMask* rm = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << i);
-            TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_F64, 1, sizeof(TB_NodeMachProj));
-            TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = j++, .def = rm);
-
-            set_input(f, proj, n, 0);
-            add_input_late(f, ret, proj);
         }
 
         return n;
@@ -847,7 +853,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     int32_t x;
                     if ((cmp_dt.type == TB_TAG_INT || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt.type == TB_TAG_PTR ? 64 : cmp_dt.data, b, &x)) {
                         if (x == 0 && (cond->type == TB_CMP_EQ || cond->type == TB_CMP_NE)) {
-                            mach_cond->type = x86_test;
+                            mach_cond->type = x86_testjcc;
                             set_input(f, mach_cond, a, 4);
                         } else {
                             mach_cond->type = x86_cmpimmjcc;
@@ -889,7 +895,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             set_input(f, mach_cond, n->inputs[0], 0);
             return mach_cond;
         } else {
-            tb_todo();
+            n->type = x86_AAAAAHHHH;
             return n;
         }
     }
@@ -1138,10 +1144,21 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 if (i == 2) {
                     // RPC is inaccessible for now
                     return &TB_REG_EMPTY;
-                } else if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) {
-                    return intern_regmask(ctx, REG_CLASS_XMM, false, 1u << (i - 3));
                 } else {
-                    return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << params->gprs[i - 3]);
+                    int param_id = i - 3;
+                    if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) {
+                        if (param_id >= params->xmm_count) {
+                            return intern_regmask(ctx, REG_CLASS_STK, false, param_id);
+                        }
+
+                        return intern_regmask(ctx, REG_CLASS_XMM, false, 1u << param_id);
+                    } else {
+                        if (param_id >= params->gpr_count) {
+                            return intern_regmask(ctx, REG_CLASS_STK, false, param_id);
+                        }
+
+                        return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << params->gprs[param_id]);
+                    }
                 }
             } else if (n->inputs[0]->type == x86_call || n->inputs[0]->type == x86_static_call) {
                 assert(i == 2 || i == 3);
@@ -1163,6 +1180,12 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
         case x86_vzero:
         return ctx->normie_mask[REG_CLASS_XMM];
+
+        case x86_AAAAAHHHH:
+        if (ins) {
+            ins[1] = ctx->normie_mask[REG_CLASS_GPR];
+        }
+        return &TB_REG_EMPTY;
 
         case x86_cmpjcc:
         case x86_testjcc:
@@ -1230,7 +1253,12 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return ctx->normie_mask[REG_CLASS_XMM];
         }
 
-        case TB_TAG_INT2FLOAT:
+        case TB_NEG: {
+            if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
+
+        case TB_INT2FLOAT:
         case TB_UINT2FLOAT: {
             if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_XMM]; }
             return ctx->normie_mask[REG_CLASS_GPR];
@@ -1426,6 +1454,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[1] = &TB_REG_EMPTY;
                 ins[2] = n->type == x86_static_call ? &TB_REG_EMPTY : ctx->normie_mask[REG_CLASS_GPR];
 
+                int base_stack = ctx->param_count;
                 FOR_N(i, 3, n->input_count) {
                     int param_num = i - 3;
 
@@ -1438,7 +1467,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                             ins[i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << xmms_used);
                             xmms_used += 1;
                         } else {
-                            tb_todo();
+                            ins[i] = intern_regmask(ctx, REG_CLASS_STK, false, base_stack + param_num);
                         }
                     } else {
                         assert(n->inputs[i]->dt.type == TB_TAG_INT || n->inputs[i]->dt.type == TB_TAG_PTR);
@@ -1446,7 +1475,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                             ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << abi->gprs[gprs_used]);
                             gprs_used += 1;
                         } else {
-                            ins[i] = intern_regmask(ctx, REG_CLASS_STK, false, param_num);
+                            ins[i] = intern_regmask(ctx, REG_CLASS_STK, false, base_stack + param_num);
                         }
                     }
                 }
@@ -1486,8 +1515,12 @@ static int stk_offset(Ctx* ctx, int reg) {
     if (reg >= STACK_BASE_REG_NAMES) {
         int pos = (reg-STACK_BASE_REG_NAMES)*8;
         return ctx->stack_usage - (8 + pos);
+    } else if (reg >= ctx->param_count) {
+        // param passing slots
+        return (reg - ctx->param_count)*8;
     } else {
-        return reg*8;
+        // argument slots
+        return ctx->stack_header + reg*8;
     }
 }
 
@@ -1709,8 +1742,19 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             break;
         }
 
+        case TB_NEG: {
+            TB_X86_DataType dt = legalize_int2(n->dt);
+            Val dst = op_at(ctx, n);
+            Val src = op_at(ctx, n->inputs[1]);
+            if (!is_value_match(&dst, &src)) {
+                __(MOV, dt, &dst, &src);
+            }
+            __(NEG, dt, &dst, &dst);
+            break;
+        }
+
         case TB_UINT2FLOAT:
-        case TB_TAG_INT2FLOAT: {
+        case TB_INT2FLOAT: {
             TB_DataType src_dt = n->inputs[1]->dt;
             assert(src_dt.type == TB_TAG_INT);
 
@@ -1855,6 +1899,38 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 __(MOV, dt, &dst, &lhs);
             }
             __(IMUL, dt, &dst, &rhs);
+            break;
+        }
+
+        case x86_AAAAAHHHH: {
+            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+
+            // the arena on the function should also be available at this time, we're
+            // in the TB_Passes
+            TB_Arena* arena = ctx->f->arena;
+            TB_ArenaSavepoint sp = tb_arena_save(arena);
+            TB_Node** succ = tb_arena_alloc(arena, br->succ_count * sizeof(TB_Node*));
+
+            // fill successors
+            bool has_default = false;
+            FOR_USERS(u, n) {
+                if (USERN(u)->type == TB_BRANCH_PROJ) {
+                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                    succ[index] = USERN(u);
+                }
+            }
+
+            Val key = op_at(ctx, n->inputs[1]);
+            FOR_N(i, 1, br->succ_count) {
+                uint64_t imm = TB_NODE_GET_EXTRA_T(succ[i], TB_NodeBranchProj)->key;
+                MachineBB* succ_bb = node_to_bb(ctx, cfg_next_bb_after_cproj(succ[i]));
+
+                __(CMP, TB_X86_QWORD, &key, Vimm(imm));
+                __(JE, TB_X86_QWORD, Vlbl(succ_bb->id));
+            }
+
+            MachineBB* succ_bb = node_to_bb(ctx, cfg_next_bb_after_cproj(succ[0]));
+            __(JMP, TB_X86_QWORD, Vlbl(succ_bb->id));
             break;
         }
 
