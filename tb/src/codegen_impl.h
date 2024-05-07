@@ -214,7 +214,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     int bb_count = 0;
     MachineBB* restrict machine_bbs = tb_arena_alloc(arena, cfg.block_count * sizeof(MachineBB));
-    TB_Node** bbs = ws->items;
+
+    TB_Node** rpo_nodes = ctx.rpo_nodes = tb_arena_alloc(arena, cfg.block_count * sizeof(MachineBB));
+    memcpy(rpo_nodes, ws->items, cfg.block_count * sizeof(MachineBB));
+    dyn_array_set_length(ws->items, 0);
 
     int stop_bb = -1;
     CUIK_TIMED_BLOCK("BB scheduling") {
@@ -225,7 +228,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         // define all PHIs early and sort BB order
         FOR_N(i, 0, cfg.block_count) {
-            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, bbs[i]);
+            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, rpo_nodes[i]);
             TB_Node* end = bb->end;
             if (end->type == TB_RETURN) {
                 stop_bb = i;
@@ -236,7 +239,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         // enter END block at the... end
         if (stop_bb >= 0) {
-            machine_bbs[bb_count++] = (MachineBB){ stop_bb, .bb = f->scheduled[bbs[stop_bb]->gvn] };
+            machine_bbs[bb_count++] = (MachineBB){ stop_bb, .bb = f->scheduled[rpo_nodes[stop_bb]->gvn] };
         }
 
         log_phase_end(f, og_size, "BB-sched");
@@ -255,25 +258,23 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         int max_ins = 0;
         size_t vreg_count = 1; // 0 is reserved as the NULL vreg
-        assert(dyn_array_length(ws->items) == cfg.block_count);
+        assert(dyn_array_length(ws->items) == 0);
         FOR_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
-            TB_Node* bb_start = bbs[bbid];
+            TB_Node* bb_start = rpo_nodes[bbid];
             TB_BasicBlock* bb = f->scheduled[bb_start->gvn];
 
             bb->order = i;
             node_to_bb_put(&ctx, bb_start, &machine_bbs[i]);
 
             // compute local schedule
-            size_t base = dyn_array_length(ws->items);
-
-            // tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
             CUIK_TIMED_BLOCK("local sched") {
+                // tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
                 tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency, node_unit_mask, FUNCTIONAL_UNIT_COUNT);
             }
 
             // a bit of slack for spills
-            size_t item_count = dyn_array_length(ws->items) - base;
+            size_t item_count = dyn_array_length(ws->items);
             ArenaArray(TB_Node*) items = aarray_create(f->arena, TB_Node*, item_count + 16);
             aarray_set_length(items, item_count);
 
@@ -313,8 +314,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 }
                 ctx.vreg_map[n->gvn] = vreg_id;
             }
-
-            dyn_array_set_length(ws->items, base);
+            dyn_array_clear(ws->items);
 
             machine_bbs[i].n = bb_start;
             machine_bbs[i].end_n = bb->end;
@@ -499,7 +499,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         FOR_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
-            TB_Node* bb = bbs[bbid];
+            TB_Node* bb = rpo_nodes[bbid];
 
             uint32_t start = ctx.emit.labels[bbid] & ~0x80000000;
             uint32_t end   = ctx.emit.count;

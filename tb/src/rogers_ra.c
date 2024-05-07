@@ -55,15 +55,14 @@ static void redo_dataflow(Ctx* restrict ctx, TB_Arena* arena) {
     TB_Function* f = ctx->f;
     // dump_sched(ctx);
 
-    TB_Node** rpo_nodes = f->worklist->items;
     size_t bb_count     = ctx->cfg.block_count;
     FOR_N(i, 0, bb_count) {
-        TB_Node* n = rpo_nodes[i];
+        TB_Node* n = ctx->rpo_nodes[i];
         TB_BasicBlock* bb = f->scheduled[n->gvn];
         bb->live_in  = set_create_in_arena(arena, f->node_count);
         bb->live_out = set_create_in_arena(arena, f->node_count);
     }
-    tb_dataflow(f, arena, ctx->cfg, rpo_nodes);
+    tb_dataflow(f, arena, ctx->cfg, ctx->rpo_nodes);
 }
 
 static RegMask* constraint_in(Ctx* ctx, TB_Node* n, int i) {
@@ -218,7 +217,7 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
             TB_NODE_SET_EXTRA(reload_n[i], TB_NodeMachCopy, .def = NULL, .use = spill_mask);
 
             TB_Node* at = NULL;
-            TB_BasicBlock* bb = f->scheduled[f->worklist->items[i]->gvn];
+            TB_BasicBlock* bb = f->scheduled[ctx->rpo_nodes[i]->gvn];
             MachineBB* mbb = &ctx->machine_bbs[bb->order];
             FOR_N(j, 0, aarray_length(mbb->items)) {
                 TB_Node* n = mbb->items[j];
