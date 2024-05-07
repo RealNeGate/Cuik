@@ -179,7 +179,6 @@ struct Ctx {
     // Basic blocks
     int bb_count;
     MachineBB* machine_bbs;
-    TB_Worklist* walker_ws;
 
     // used when calling node_constraint since it needs an array, we
     // figure out the max input count of all nodes before allocating it.
@@ -235,6 +234,7 @@ static VReg* node_vreg(Ctx* ctx, TB_Node* n) { return n && ctx->vreg_map[n->gvn]
 static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
     switch (n->type) {
         // these can rematerialize
+        case TB_POISON:
         case TB_ICONST:
         case TB_F32CONST:
         case TB_F64CONST:

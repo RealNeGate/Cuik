@@ -300,7 +300,7 @@ static Lattice* value_int(TB_Function* f, TB_Node* n) {
     } else {
         uint64_t mask = tb__mask(n->dt.data);
         int64_t x = tb__sxt(num->value & mask, n->dt.data, 64);
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { x, x, ~x, x } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { x, x, ~x | ~mask, x & mask } });
     }
 }
 
@@ -380,6 +380,22 @@ static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int6
         if (min >= max) { return lattice_gimme_int(f, max, min, bits); }
     }
     return NULL;
+}
+
+static TB_Node* ideal_location(TB_Function* f, TB_Node* n) {
+    assert(n->type == TB_DEBUG_LOCATION);
+    if (n->user_count == 0) { return NULL; }
+
+    TB_Node* cproj = USERN(proj_with_index(n, 0));
+    TB_Node* mproj = USERN(proj_with_index(n, 1));
+
+    set_input(f, cproj, NULL, 0);
+    set_input(f, mproj, NULL, 0);
+
+    subsume_node(f, cproj, n->inputs[0]);
+    subsume_node(f, mproj, n->inputs[1]);
+
+    return n;
 }
 
 static Lattice* value_phi(TB_Function* f, TB_Node* n) {
@@ -1096,7 +1112,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m"));
 
         TB_Node* k = try_as_const(f, n, new_type);
-        if (k != NULL) {
+        if (k && k != n) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.constants++);
             DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
@@ -1333,6 +1349,7 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             // locals scans the TB_LOCAL nodes, it might introduce peephole
             // work when it returns true.
             TB_OPTDEBUG(PASSES)(printf("      * Locals\n"));
+            DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOCALS ===\n"));
             if (k = tb_opt_locals(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
             }
@@ -1357,6 +1374,7 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             f->invalidated_loops = false;
 
             TB_OPTDEBUG(PASSES)(printf("    * Update loop tree\n"));
+            DO_IF(TB_OPTDEBUG_PEEP)(printf("=== FIND LOOPS ===\n"));
             tb_opt_build_loop_tree(f);
             if (k = tb_opt_peeps(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
@@ -1365,6 +1383,7 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
         // mostly just detecting loops and upcasting indvars
         TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
         tb_opt_loops(f);
     }
     nl_table_free(f->node2loop);
@@ -1374,7 +1393,8 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_opt_free_types(f);
     }
     // avoids bloating up my arenas with freed nodes
-    tb_compact_nodes(f, ws, ir_sp);
+    tb_renumber_nodes(f, ws);
+    // tb_compact_nodes(f, ws, ir_sp);
 
     #ifdef TB_OPTDEBUG_STATS
     tb_opt_dump_stats(f);

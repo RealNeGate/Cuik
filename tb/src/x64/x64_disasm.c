@@ -184,6 +184,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         ////////////////////////////////
         // ESCAPE OPS
         ////////////////////////////////
+        // ud2
+        _0F(0x0B)        = OP_0ARY,
         // SSE: movu
         _0F(0x10)        = OP_MODRM | OP_SSE | OP_DIR,
         _0F(0x11)        = OP_MODRM | OP_SSE,

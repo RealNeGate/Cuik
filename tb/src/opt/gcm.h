@@ -404,6 +404,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                 TB_Node* n = rpo_nodes[i];
                 TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, n);
 
+                assert(n->type != TB_NULL);
                 bb->items = nl_hashset_alloc(32);
                 nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
                 f->scheduled[rpo_nodes[i]->gvn] = bb;
@@ -483,7 +484,9 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                     }
 
                     if (bb) {
+                        assert(n->type != TB_NULL);
                         nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
+                        assert(n->gvn < f->scheduled_n);
                         f->scheduled[n->gvn] = bb;
                         aarray_push(pins, n);
 
@@ -512,6 +515,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                 top->sp = sp;
                 top->n = pin_n;
                 top->i = pin_n->input_count;
+                assert(pin_n->type != TB_NULL);
 
                 // DFS nodes by inputs
                 while (top) {
@@ -527,6 +531,8 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
 
                             // pinned nodes can't be rescheduled
                             if (!is_pinned(in) && !worklist_test_n_set(ws, in)) {
+                                assert(in->type != TB_NULL);
+
                                 TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
                                 Elem* new_top = tb_arena_alloc(tmp_arena, sizeof(Elem));
                                 new_top->parent = top;
@@ -573,6 +579,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                         // unpinned nodes getting moved means their users need to move too
                         if (n->dt.type == TB_TAG_TUPLE) {
                             FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                                assert(USERN(u)->type != TB_NULL);
                                 nl_hashset_put2(&best->items, USERN(u), tb__node_hash, tb__node_cmp);
                                 f->scheduled[USERN(u)->gvn] = best;
                             }
@@ -593,7 +600,8 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
         CUIK_TIMED_BLOCK("late schedule") {
             FOR_REV_N(i, 0, dyn_array_length(ws->items)) {
                 TB_Node* n = ws->items[i];
-                DO_IF(TB_OPTDEBUG_GCM)(printf("%s: try late v%u\n", f->super.name, n->gvn));
+                assert(n->type != TB_NULL);
+                DO_IF(TB_OPTDEBUG_GCM)(printf("%s: try late %%%u\n", f->super.name, n->gvn));
 
                 TB_BasicBlock* lca = NULL;
                 if (n->dt.type == TB_TAG_TUPLE) {
@@ -603,17 +611,17 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                         if (is_proj(USERN(use))) {
                             FOR_USERS(use2, USERN(use)) {
                                 TB_BasicBlock* use_block = find_use_block(f, n, USERN(use), USERN(use2));
-                                if (use_block){ lca = find_lca(lca, use_block); }
+                                if (use_block) { lca = find_lca(lca, use_block); }
                             }
                         } else {
                             TB_BasicBlock* use_block = find_use_block(f, n, n, USERN(use));
-                            if (use_block){ lca = find_lca(lca, use_block); }
+                            if (use_block) { lca = find_lca(lca, use_block); }
                         }
                     }
                 } else {
                     FOR_USERS(use, n) {
                         TB_BasicBlock* use_block = find_use_block(f, n, n, USERN(use));
-                        if (use_block){ lca = find_lca(lca, use_block); }
+                        if (use_block) { lca = find_lca(lca, use_block); }
                     }
                 }
 
@@ -629,15 +637,9 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                         // some ops deserve hoisting more than others (cough cough loads)
                         TB_BasicBlock* better = try_to_hoist(f, get_lat, n, old, lca);
 
-                        // we don't wanna hoist the branch's compare, on our FLAGS ass platforms that'll cause
-                        // FLAGS spilling.
-                        if ((lca->end->type == TB_BRANCH || lca->end->type == TB_AFFINE_LATCH) && lca->end->inputs[1] == n) {
-                            better = lca;
-                        }
-
                         if (old != better) {
                             TB_OPTDEBUG(GCM)(
-                                printf("  LATE  v%u into .bb%d: ", n->gvn, lca->id),
+                                printf("  LATE  %%%u into .bb%d: ", n->gvn, lca->id),
                                 tb_print_dumb_node(NULL, n),
                                 printf("\n")
                             );

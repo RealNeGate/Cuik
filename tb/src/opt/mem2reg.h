@@ -38,7 +38,7 @@ static int bits_in_data_type(int pointer_size, TB_DataType dt);
 static bool good_mem_op(TB_Function* f, TB_Node* n) { // ld, st, memcpy, memset
     if (n->type == TB_LOAD) {
         return true;
-    } else if (n->type >= TB_STORE && n->type <= TB_MEMSET) {
+    } else if (n->type == TB_STORE) { // && n->type <= TB_MEMSET) {
         Lattice* l = latuni_get(f, n);
         return l == &ALLMEM_IN_THE_SKY || l == f->root_mem;
     } else {

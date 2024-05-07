@@ -99,6 +99,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_SELECT]         = { ideal_select,      NULL,               value_select     },
     [TB_PHI]            = { ideal_phi,         identity_phi,       value_phi        },
     // control flow
+    [TB_DEBUG_LOCATION] = { ideal_location,    NULL,               NULL             },
     [TB_RETURN]         = { ideal_return,      NULL,               value_ctrl       },
     [TB_REGION]         = { ideal_region,      identity_region,    value_region,    },
     [TB_NATURAL_LOOP]   = { ideal_region,      identity_region,    value_region,    },

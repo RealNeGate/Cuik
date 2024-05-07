@@ -1,6 +1,7 @@
 
 void tb_print_dumb_edge(Lattice** types, TB_Node* n) {
     if (n) {
+        assert(n->type != TB_NULL);
         printf("%%%u ", n->gvn);
     } else {
         printf("___ ");
@@ -49,6 +50,9 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         } else {
             printf("%#0"PRIx64" ", num->value);
         }
+    } else if (n->type == TB_LOCAL) {
+        TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
+        printf("size=%u align=%u ", l->size, l->align);
     } else if (n->type == TB_F32CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
         printf("%f ", f->value);

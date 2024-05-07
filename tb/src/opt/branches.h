@@ -327,6 +327,12 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
                             TB_Node* cmp = pred_branch->inputs[1];
 
                             // remove first branch
+                            while (pred_branch->user_count > 0) {
+                                TB_Node* un = USERN(&pred_branch->users[pred_branch->user_count - 1]);
+                                assert(is_proj(un));
+
+                                tb_kill_node(f, un);
+                            }
                             tb_kill_node(f, pred_branch);
                             set_input(f, n, before, 0);
 
@@ -505,6 +511,9 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
     TB_Node* same = n->inputs[0];
     if (same->type == TB_BRANCH_PROJ && same->user_count == 1 && same->inputs[0]->type == TB_BRANCH) {
         same = same->inputs[0];
+        if (same->user_count != n->input_count) {
+            return n;
+        }
 
         // if it has phis... quit
         FOR_USERS(u, n) {
@@ -517,10 +526,10 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
             }
         }
 
-        TB_Node* before = same->inputs[0];
-
         // kill projections
+        TB_Node* before = same->inputs[0];
         FOR_USERS(u, before) {
+            assert(cfg_is_cproj(USERN(u)));
             tb_kill_node(f, USERN(u));
         }
         tb_kill_node(f, same);

@@ -155,7 +155,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     // fill up initial ready list (everything used by the live-ins)
     nl_hashset_for(e, &bb->items) {
         TB_Node* n = *e;
-        if (!worklist_test(ws, n) && end != n && f->scheduled[n->gvn] == bb && is_node_ready(f, ws, bb, n)) {
+        if (!worklist_test(ws, n) && f->scheduled[n->gvn] == bb && is_node_ready(f, ws, bb, n)) {
             ready_up(&sched, n, end);
         }
     }
@@ -192,8 +192,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             worklist_push(ws, n);
 
             // make sure to place all projections directly after their tuple node
-            if (n->dt.type == TB_TAG_TUPLE) {
-                assert(!cfg_is_fork(n) && "branches should only show up as the end node which can't be here");
+            if (n->dt.type == TB_TAG_TUPLE && !cfg_is_fork(n)) {
                 FOR_USERS(u, n) if (is_proj(USERN(u))) {
                     assert(USERI(u) == 0);
                     assert(!worklist_test(ws, USERN(u)));
@@ -220,19 +219,17 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: RETIRE   ", cycle), tb_print_dumb_node(NULL, n), printf("\n"));
 
             // instruction's retired, time to ready up users
-            if (n != end) {
-                FOR_USERS(u, n) {
-                    TB_Node* un = USERN(u);
-                    if (is_proj(un)) {
-                        // projections are where all the real users ended up
-                        FOR_USERS(proj_u, un) {
-                            if (USERN(proj_u) != end && can_ready_user(f, ws, bb, &sched.ready_set, USERN(proj_u))) {
-                                ready_up(&sched, USERN(proj_u), end);
-                            }
+            FOR_USERS(u, n) {
+                TB_Node* un = USERN(u);
+                if (is_proj(un)) {
+                    // projections are where all the real users ended up
+                    FOR_USERS(proj_u, un) {
+                        if (can_ready_user(f, ws, bb, &sched.ready_set, USERN(proj_u))) {
+                            ready_up(&sched, USERN(proj_u), end);
                         }
-                    } else if (un != end && can_ready_user(f, ws, bb, &sched.ready_set, un)) {
-                        ready_up(&sched, un, end);
                     }
+                } else if (can_ready_user(f, ws, bb, &sched.ready_set, un)) {
+                    ready_up(&sched, un, end);
                 }
             }
 
@@ -250,8 +247,6 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         }
     }
 
-    TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, end), printf("\n"));
-    worklist_push(ws, end);
     tb_arena_restore(tmp_arena, sp);
 }
 

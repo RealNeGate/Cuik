@@ -65,6 +65,7 @@ uint32_t node_flags(TB_Node* n) {
         case x86_cmpimmjcc:
         case x86_testjcc:
         case x86_testimmjcc:
+        case x86_ucomijcc:
         case x86_AAAAAHHHH:
         return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH;
 
@@ -91,6 +92,7 @@ static size_t extra_bytes(TB_Node* n) {
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
         case x86_cmpjcc: case x86_cmpimmjcc:
         case x86_testjcc: case x86_testimmjcc:
+        case x86_ucomijcc:
         return sizeof(X86MemOp);
 
         case x86_call:
@@ -1048,6 +1050,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             set_input(f, op, ctx->frame_ptr, 2);
             op_extra->disp += TB_NODE_GET_EXTRA_T(n, TB_NodeLocal)->stack_pos;
         } else {
+            assert(n);
             set_input(f, op, n, 2);
         }
         return op;
@@ -1062,6 +1065,12 @@ static int node_tmp_count(Ctx* restrict ctx, TB_Node* n) {
             X86Call* op_extra = TB_NODE_GET_EXTRA(n);
             return tb_popcount(op_extra->clobber_gpr) + op_extra->clobber_xmm;
         }
+
+        case TB_MEMSET:
+        return 2;
+
+        case TB_MEMCPY:
+        return 3;
 
         case x86_idiv: case x86_div: // clobber RDX
         return 1;
@@ -1089,6 +1098,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
         }
         return &TB_REG_EMPTY;
+
+        case TB_POISON: {
+            if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) {
+                return ctx->normie_mask[REG_CLASS_XMM];
+            }
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
 
         case TB_CYCLE_COUNTER: {
             ins[1] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
@@ -1190,8 +1206,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_cmpjcc:
         case x86_testjcc:
         case x86_cmpimmjcc:
-        case x86_testimmjcc: {
+        case x86_testimmjcc:
+        case x86_ucomijcc: {
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
+            if (n->type == x86_ucomijcc) {
+                rm = ctx->normie_mask[REG_CLASS_XMM];
+            }
+
             if (ins) {
                 ins[1] = &TB_REG_EMPTY;
                 FOR_N(i, 2, n->input_count) {
@@ -1383,6 +1404,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI);
                 ins[3] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
                 ins[4] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
+                ins[5] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI);
+                ins[6] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
             }
             return &TB_REG_EMPTY;
         }
@@ -1394,6 +1417,9 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI);
                 ins[3] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSI);
                 ins[4] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
+                ins[5] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI);
+                ins[6] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSI);
+                ins[7] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
             }
             return &TB_REG_EMPTY;
         }
@@ -1513,8 +1539,8 @@ static int op_xmm_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_
 
 static int stk_offset(Ctx* ctx, int reg) {
     if (reg >= STACK_BASE_REG_NAMES) {
-        int pos = (reg-STACK_BASE_REG_NAMES)*8;
-        return ctx->stack_usage - (8 + pos);
+        int pos = -(8 + ((reg + 1) - STACK_BASE_REG_NAMES) * 8);
+        return ctx->stack_usage + pos;
     } else if (reg >= ctx->param_count) {
         // param passing slots
         return (reg - ctx->param_count)*8;
@@ -1590,6 +1616,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
     switch (n->type) {
         // some ops don't do shit lmao
         case TB_PHI:
+        case TB_POISON:
         case TB_REGION:
         case TB_AFFINE_LOOP:
         case TB_NATURAL_LOOP:

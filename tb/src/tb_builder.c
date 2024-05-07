@@ -315,7 +315,7 @@ void tb_inst_safepoint_poll(TB_Function* f, void* tag, TB_Node* addr, int input_
 TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnits alignment, bool is_volatile) {
     assert(addr);
 
-    if (is_volatile) {
+    if (0 && is_volatile) {
         TB_Node* n = tb_alloc_node(f, TB_READ, TB_TYPE_TUPLE, 3, 0);
         set_input(f, n, f->trace.bot_ctrl, 0);
         set_input(f, n, peek_mem(f), 1);
@@ -336,7 +336,7 @@ void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, 
     assert(TB_DATA_TYPE_EQUALS(dt, val->dt));
 
     TB_Node* n;
-    if (is_volatile) {
+    if (0 && is_volatile) {
         n = tb_alloc_node(f, TB_WRITE, TB_TYPE_MEMORY, 4, 0);
     } else {
         n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
@@ -1107,7 +1107,7 @@ void tb_inst_ret(TB_Function* f, size_t count, TB_Node** values) {
         log_warn("%s: ir: generated poison due to inconsistent number of returned values", f->super.name);
 
         TB_Node* poison = tb_alloc_node(f, TB_POISON, ret->inputs[i]->dt, 1, 0);
-        set_input(f, poison, ret, 0);
+        set_input(f, poison, f->root_node, 0);
 
         poison = tb__gvn(f, poison, 0);
         add_input_late(f, ret->inputs[i], poison);

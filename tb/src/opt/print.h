@@ -26,6 +26,7 @@ const char* tb_node_get_name(TB_Node* n) {
 
         case TB_POISON: return "poison";
         case TB_DEAD: return "dead";
+        case TB_TRAP: return "trap";
         case TB_ICONST: return "int";
         case TB_F32CONST: return "float32";
         case TB_F64CONST: return "float64";
@@ -564,6 +565,37 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                         } else {
                             TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
                             tb_codegen_families[family].print_extra(n);
+                        }
+
+                        if (cfg_is_branch(n)) {
+                            TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
+                            TB_Node** restrict succ = tb_arena_alloc(f->tmp_arena, n->user_count * sizeof(TB_Node**));
+
+                            // fill successors
+                            int limit = 0;
+                            FOR_USERS(u, n) {
+                                if (USERN(u)->type == TB_BRANCH_PROJ) {
+                                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                                    if (index + 1 > limit) {
+                                        limit = index + 1;
+                                    }
+                                    succ[index] = USERN(u);
+                                }
+                            }
+
+                            printf(" => {\n");
+                            FOR_N(i, 0, limit) {
+                                int64_t key = TB_NODE_GET_EXTRA_T(succ[i], TB_NodeBranchProj)->key;
+
+                                if (i != 0) printf("    %"PRId64": ", key);
+                                else printf("    default: ");
+
+                                print_branch_edge(ctx, succ[i], false);
+                                printf("\n");
+                            }
+                            printf("  }");
+                            printf(" // branch %%%u", n->gvn);
+                            tb_arena_restore(f->tmp_arena, sp);
                         }
                         break;
                     }

@@ -199,7 +199,7 @@ static Lattice* value_sub(TB_Function* f, TB_Node* n) {
         uint64_t zeros = ~sadd(max, 1, mask) & known;
         uint64_t ones  =  sadd(min, 1, mask) & known;
 
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones & mask } });
     }
 }
 
@@ -433,6 +433,13 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
 
             default: tb_todo();
         }
+
+        int64_t lower = lattice_int_min(n->dt.data) | ~mask;
+        int64_t upper = lattice_int_max(n->dt.data);
+
+        if (min > max) { return NULL; }
+        if (min < lower) { min = lower; }
+        if (max > upper) { max = upper; }
 
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones } });
     } else {

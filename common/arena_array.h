@@ -21,7 +21,7 @@ static void* aarray__reserve(void* ptr, size_t type_size, size_t min_size) {
         size_t old = header->capacity;
         header->capacity = min_size * 2;
 
-        AArray* new_ptr = tb_arena_realloc(header->arena, header, sizeof(AArray) + (type_size * header->capacity));
+        AArray* new_ptr = tb_arena_realloc(header->arena, header, sizeof(AArray) + (type_size * old), sizeof(AArray) + (type_size * header->capacity));
         if (!new_ptr) {
             fprintf(stderr, "error: out of memory!");
             abort();
