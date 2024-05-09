@@ -8,7 +8,7 @@ static void cycle_check(TB_Function* f, TB_Node* n, uint32_t* visited, uint32_t*
     if (b_get(visited, n->gvn)) {
         if (b_get(progress, n->gvn)) {
             tb_print(f, f->tmp_arena);
-            __debugbreak();
+            abort();
         }
     } else {
         b_set(visited, n->gvn);

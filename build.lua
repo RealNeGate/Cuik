@@ -269,11 +269,7 @@ local objs = {}
 for i, f in ipairs(src) do
 	local out = "bin/objs/"..filename(f)..".o"
 	ninja:write("build "..out..": cc "..f)
-	if out == "bin/objs/libcuik.o" or out == "bin/objs/x64_desc.o" or out == "bin/objs/aarch64_desc.o" then
-		ninja:write(" | libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h\n")
-	else
-		ninja:write("\n")
-	end
+	ninja:write(" | libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h\n")
 	objs[#objs + 1] = out
 end
 

@@ -429,3 +429,5 @@ int tb_opt_locals(TB_Function* f);
 
 Lattice* latuni_get(TB_Function* f, TB_Node* n);
 
+void tb__print_regmask(RegMask* mask);
+

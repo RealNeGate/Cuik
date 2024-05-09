@@ -100,7 +100,6 @@ X(MOV,       "mov",         BINOP,      0x88, 0xC6, 0x00)
 X(TEST,      "test",        BINOP,      0x84, 0xF6, 0x00)
 
 // misc integer ops
-X(MOVABS,    "mov",         BINOP_PLUS, 0xB8)
 X(XCHG,      "xchg",        BINOP,      0x86)
 X(LEA,       "lea",         BINOP,      0x8D)
 X(XADD,      "xadd",        BINOP_EXT,  0xC0)

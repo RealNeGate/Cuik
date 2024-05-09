@@ -145,6 +145,15 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                     continue;
                 }
 
+                // memory out nodes are "notorious" for having unused loads, we wanna pruned these
+                if (n->dt.type == TB_TAG_MEMORY) {
+                    FOR_USERS(u, n) {
+                        if (USERN(u)->user_count == 0) {
+                            worklist_push(ws, USERN(u));
+                        }
+                    }
+                }
+
                 // replace with machine op
                 tb__gvn_remove(f, n);
                 TB_Node* k = node_isel(&ctx, f, n);
@@ -280,7 +289,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             // copy out sched
             FOR_N(i, 0, item_count) {
-                TB_Node* n = ws->items[cfg.block_count + i];
+                TB_Node* n = ws->items[i];
                 items[i] = n;
 
                 // if there's a def, let's make a vreg

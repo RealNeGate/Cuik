@@ -29,7 +29,7 @@ static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const ch
 }
 #endif /* CUIK_USE_TB */
 
-static Cuik_Target* cuik_target_wasm32(Cuik_System system, Cuik_Environment env) {
+Cuik_Target* cuik_target_wasm32(Cuik_System system, Cuik_Environment env) {
     BuiltinTable builtins;
     nl_map_create(builtins, 128);
     target_generic_fill_builtin_table(&builtins);

@@ -21,6 +21,13 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
     } else if (n->type == TB_MACH_PROJ) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->index);
+    } else if (n->type == TB_MACH_COPY) {
+        TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
+        printf("def=");
+        tb__print_regmask(cpy->def);
+        printf(", use=");
+        tb__print_regmask(cpy->use);
+        printf(" ");
     } else if (n->type == TB_MACH_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
         if (sym->name[0]) {

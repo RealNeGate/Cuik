@@ -79,15 +79,6 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     assert(type < COUNTOF(inst_table));
 
     const InstDesc* restrict inst = &inst_table[type];
-    if (type == MOVABS) {
-        assert(a->type == VAL_GPR && b->type == VAL_ABS);
-
-        EMIT1(e, rex(true, 0, a->reg, 0));
-        EMIT1(e, inst->op + (a->reg & 0b111));
-        EMIT8(e, b->abs);
-        return;
-    }
-
     bool dir = b->type == VAL_MEM || b->type == VAL_GLOBAL;
     if (dir || inst->op == 0x63 || inst->op == 0x69 || inst->op == 0x6E || (type >= CMOVO && type <= CMOVG) || inst->op == 0xAF || inst->cat == INST_BINOP_EXT2) {
         SWAP(const Val*, a, b);

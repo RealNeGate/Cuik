@@ -223,8 +223,6 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_node
     worklist_clear_visited(ws);
 
     size_t old = dyn_array_length(ws->items);
-    assert(old >= cfg.block_count);
-
     CUIK_TIMED_BLOCK("dataflow") {
         FOR_N(i, 0, cfg.block_count) {
             TB_Node* n = rpo_nodes[i];

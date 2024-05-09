@@ -36,7 +36,7 @@ typedef enum {
 } XMM;
 
 typedef enum {
-    VAL_NONE, VAL_FLAGS, VAL_GPR, VAL_XMM, VAL_IMM, VAL_MEM, VAL_GLOBAL, VAL_ABS, VAL_LABEL
+    VAL_NONE, VAL_FLAGS, VAL_GPR, VAL_XMM, VAL_IMM, VAL_MEM, VAL_GLOBAL, VAL_LABEL
 } ValType;
 
 typedef enum {
@@ -68,8 +68,6 @@ typedef struct Val {
     int32_t imm;
 
     union {
-        // for VAL_ABS this is used
-        uint64_t abs;
         // for VAL_GLOBAL this is used as the base
         TB_Symbol* symbol;
         // for VAL_LABEL

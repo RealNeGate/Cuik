@@ -276,53 +276,6 @@ static const char* reg_class_name(int class) {
     }
 }
 
-static void tb__print_regmask(RegMask* mask) {
-    assert(mask->count == 1 && "TODO");
-    if (mask->class == REG_CLASS_STK) {
-        if (mask->mask[0] == 0) {
-            printf("[any spill]");
-        } else if (mask->mask[0] >= STACK_BASE_REG_NAMES) {
-            printf("[SPILL%"PRId64"]", mask->mask[0] - STACK_BASE_REG_NAMES);
-        } else {
-            printf("[STK%"PRId64"]", mask->mask[0]);
-        }
-    } else if (mask->mask[0] == 0) {
-        printf("[SPILL]");
-    } else {
-        int i = 0;
-        bool comma = false;
-        uint64_t bits = mask->mask[0];
-
-        printf("[%s:", reg_class_name(mask->class));
-        while (bits) {
-            // skip zeros
-            int skip = __builtin_ffs(bits) - 1;
-            i += skip, bits >>= skip;
-
-            if (!comma) {
-                comma = true;
-            } else {
-                printf(", ");
-            }
-
-            // find sequence of ones
-            int len = __builtin_ffs(~bits) - 1;
-            printf("R%d", i);
-            if (len > 1) {
-                printf(" .. R%d", i+len-1);
-            }
-
-            // skip ones
-            bits >>= len, i += len;
-        }
-
-        if (mask->may_spill) {
-            printf(" | SPILL");
-        }
-        printf("]");
-    }
-}
-
 static bool reg_mask_eq(RegMask* a, RegMask* b) {
     if (a->count != b->count) { return false; }
     FOR_N(i, 0, a->count) {

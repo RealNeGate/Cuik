@@ -1655,10 +1655,15 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             TB_X86_DataType dt = legalize_int2(n->dt);
             GPR dst = op_gpr_at(ctx, n);
             if (x == 0) {
-                if (dt != TB_X86_QWORD) { dt = TB_X86_DWORD; }
-                __(XOR, dt, Vgpr(dst), Vgpr(dst));
+                __(XOR, TB_X86_DWORD, Vgpr(dst), Vgpr(dst));
             } else if (hi == 0 || dt == TB_X86_QWORD) {
-                __(MOVABS, dt, Vgpr(dst), Vabs(x));
+                EMIT1(e, rex(dt == TB_X86_QWORD, 0, dst, 0));
+                EMIT1(e, 0xB8 + (dst & 0b111));
+                if (dt != TB_X86_QWORD) {
+                    EMIT4(e, x);
+                } else {
+                    EMIT8(e, x);
+                }
             } else {
                 __(MOV, dt, Vgpr(dst), Vimm(x));
             }
