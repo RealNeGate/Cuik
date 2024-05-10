@@ -772,7 +772,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
             // rematerialization candidates will delete the original def and for now, they'll
             // reload per use site (although we might wanna coalesce some later on).
             if (n->type == TB_ICONST || n->type == TB_F32CONST || n->type == TB_F64CONST) {
-                rematerialize(ctx, n);
+                rematerialize(ctx, NULL, n);
             } else {
                 ctx->vregs[vreg_id].mask = ctx->constraint(ctx, n, NULL);
                 ctx->vregs[vreg_id].spill_cost = NAN;

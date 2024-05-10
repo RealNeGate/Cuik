@@ -117,7 +117,7 @@ static RegMask* constraint_in(Ctx* ctx, TB_Node* n, int i) {
     return ctx->ins[i];
 }
 
-static void rematerialize(Ctx* ctx, TB_Node* n) {
+static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
     // assert(n->input_count == 1 && "for now remat only happens for simple stuff like constants");
 
     size_t extra = extra_bytes(n);
@@ -164,6 +164,15 @@ static void rematerialize(Ctx* ctx, TB_Node* n) {
         if (remat->type == TB_MACH_COPY) {
             TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(remat);
             cpy->def = reload_vreg->mask;
+        }
+
+        // if we're going into a fixed-dst copy, we should hint towards that vreg
+        if (fixed_vregs && use_n->type == TB_MACH_COPY) {
+            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
+            int fixed = fixed_reg_mask(cpy->def);
+            if (fixed >= 0) {
+                reload_vreg->hint_vreg = fixed_vregs[cpy->def->class] + fixed;
+            }
         }
 
         TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: remat (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
@@ -337,7 +346,7 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
             if (split) {
                 // construct separate reloads
                 assert(reload->type == TB_MACH_COPY);
-                rematerialize(ctx, reload);
+                rematerialize(ctx, ra->fixed, reload);
             } else {
                 TB_NODE_SET_EXTRA(reload_n[i], TB_NodeMachCopy, .def = reload_vreg->mask, .use = spill_mask);
             }
@@ -649,7 +658,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             // reload per use site (although we might wanna coalesce some later on).
             size_t old_node_count = f->node_count;
             if (can_remat(ctx, n)) {
-                rematerialize(ctx, n);
+                rematerialize(ctx, ra.fixed, n);
             } else {
                 RegMask* old_rm = ctx->vregs[vreg_id].mask;
 
@@ -793,24 +802,19 @@ static int last_use_in_bb(TB_BasicBlock** scheduled, Rogers* restrict ra, TB_Bas
 }
 
 static bool interfere_with_def(TB_BasicBlock** scheduled, Rogers* restrict ra, TB_BasicBlock* bb, TB_Node* def, TB_Node* other) {
-    // live-in & live-out => INTERFERE
-    // _______ & live-out => INTERFERE if their.def_t < our.def_t
-    // live-in & ________ => INTERFERE if our.def_t   < their.last_use
-    if (set_get(&bb->live_in, other->gvn)) {
-        if (set_get(&bb->live_out, other->gvn)) {
-            return true;
-        }
+    int other_start = 0;
+    int other_end   = INT_MAX;
 
-        int def_t = ra->order[def->gvn];
-        FOR_USERS(u, other) {
-            TB_Node* un = USERN(u);
-            if (scheduled[un->gvn] == bb && ra->order[un->gvn] > def_t) {
-                return true;
-            }
-        }
+    if (!set_get(&bb->live_in, other->gvn)) {
+        other_start = ra->order[other->gvn];
     }
 
-    return false;
+    if (!set_get(&bb->live_out, other->gvn)) {
+        other_end = last_use_in_bb(scheduled, ra, bb, other);
+    }
+
+    int def_t = ra->order[def->gvn];
+    return def_t >= other_start && def_t <= other_end;
 }
 
 static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, uint64_t in_use) {
