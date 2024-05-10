@@ -17,20 +17,21 @@ enum {
 
 #include "../codegen_impl.h"
 
+enum {
+    MODE_REG,
+    MODE_LD, // reg <- mem
+    MODE_ST, // mem <- reg
+};
 // node with X86MemOp (mov, add, and...) will have this layout of inputs:
 //   [1] mem
 //   [2] base (or first src)
 //   [3] idx
 //   [4] val
 typedef struct {
-    enum {
-        MODE_REG,
-        MODE_LD, // reg <- mem
-        MODE_ST, // mem <- reg
-    } mode;
-    Scale scale;
+    uint8_t mode : 2;
+    Scale scale  : 2;
+    char cond    : 4;
     TB_DataType dt;
-    char cond;
     int32_t disp;
     int32_t imm;
 } X86MemOp;

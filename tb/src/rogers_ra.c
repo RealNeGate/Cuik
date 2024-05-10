@@ -100,7 +100,7 @@ static void dump_sched(Ctx* restrict ctx) {
 
 static void redo_dataflow(Ctx* restrict ctx, TB_Arena* arena) {
     TB_Function* f = ctx->f;
-    dump_sched(ctx);
+    // dump_sched(ctx);
 
     size_t bb_count     = ctx->cfg.block_count;
     FOR_N(i, 0, bb_count) {
