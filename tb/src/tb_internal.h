@@ -622,8 +622,8 @@ typedef struct {
 #define TB_ASSERT_MSG(cond, ...) ((cond) ? 0 : (fprintf(stderr, __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), fprintf(stderr, __VA_ARGS__), __builtin_trap(), 0))
 #define TB_ASSERT(cond)          ((cond) ? 0 : (fprintf(stderr, __FILE__ ":" STR(__LINE__) ": assertion failed: " #cond "\n  "), __builtin_trap(), 0))
 #else
-#define TB_ASSERT_MSG(cond, ...) (0)
-#define TB_ASSERT(cond) (0)
+#define TB_ASSERT_MSG(cond, ...) ((cond) ? 0 : (__builtin_unreachable(), 0))
+#define TB_ASSERT(cond)          ((cond) ? 0 : (__builtin_unreachable(), 0))
 #endif
 
 #if defined(_WIN32) && !defined(__GNUC__)

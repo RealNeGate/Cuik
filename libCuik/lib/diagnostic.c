@@ -99,7 +99,7 @@ CUIK_API void cuikdg_dump_to_stderr(TokenStream* tokens) {
 CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
     TB_Arena* arena = tokens->diag->buffer;
     for (TB_Arena* c = arena; c; c = c->next) {
-        fwrite(c->data, c->watermark - c->data, 1, out);
+        fwrite(c->data, c->avail - c->data, 1, out);
     }
 }
 

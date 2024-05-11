@@ -554,7 +554,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
             size_t chunk_size = tb_arena_chunk_size(chunk);
 
             Symbol* syms = (Symbol*) chunk->data;
-            Symbol* end_syms = (Symbol*) chunk->watermark;
+            Symbol* end_syms = (Symbol*) chunk->avail;
 
             size_t count = end_syms - syms;
             for (size_t i = 0; i < count; i++) {

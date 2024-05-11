@@ -89,8 +89,11 @@ void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column)
         }
     }
 
-    if (f->trace.bot_ctrl->type == TB_PROJ && f->trace.bot_ctrl->inputs[0]->type == TB_DEBUG_LOCATION) {
-        // if there's already a line entry, throw this one away (should we replace the original? idk)
+    // if there's already a line entry, throw this one away (should we replace the original? idk)
+    if (f->trace.bot_ctrl->type == TB_PROJ && f->trace.bot_ctrl->inputs[0]->type == TB_DEBUG_LOCATION &&
+        // if it's the first debug location, we wanna keep that one because it's placed above the prologue
+        f->trace.bot_ctrl->inputs[0]->inputs[0] != f->params[0]
+    ) {
         return;
     }
 
