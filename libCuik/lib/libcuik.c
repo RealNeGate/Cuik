@@ -34,6 +34,7 @@
 // IR Gen
 #ifdef CUIK_USE_TB
 #include "back/ir_gen.c"
+#include "back/ir_gen2.c"
 #endif
 
 // Linker support

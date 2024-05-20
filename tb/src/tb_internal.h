@@ -325,13 +325,8 @@ typedef struct TB_LoopInfo {
     struct TB_LoopInfo* parent;
     // so we can actually find all loops
     struct TB_LoopInfo* next;
-
-    int depth;
-
     // should always be a region
     TB_Node* header;
-    // latch's cproj that doesn't lead to the backedge
-    TB_Node* exit_proj;
 } TB_LoopInfo;
 
 typedef enum {
@@ -420,7 +415,7 @@ struct TB_Function {
             #if TB_OPTDEBUG_STATS
             int initial;
             int gvn_hit, gvn_tries;
-            int peeps, identities, rewrites, constants, opto_constants;
+            int *peeps, *identities, *rewrites, *constants, *opto_constants, *killed;
             #endif
         } stats;
     };
@@ -472,6 +467,7 @@ struct TB_ThreadInfo {
     TB_ThreadInfo* next;
 
     mtx_t* lock;
+    DynArray(TB_Symbol*) symbols;
 
     // used for moving the start of the
     // linked list forward.
@@ -479,11 +475,6 @@ struct TB_ThreadInfo {
 
     TB_Arena* perm_arena;
     TB_Arena* tmp_arena;
-
-    // live symbols (globals, functions and externals)
-    //   we'll be iterating these during object/executable
-    //   export to get all the symbols compiled.
-    NL_HashSet symbols;
 };
 
 typedef struct {
@@ -542,11 +533,6 @@ typedef struct {
     TB_ObjectSection* data;
 } TB_SectionGroup;
 
-typedef struct {
-    uint32_t used;
-    uint8_t data[];
-} TB_TemporaryStorage;
-
 enum {
     // part of the SoN's embedded CFG, generally produce more CONTROL
     // and taken in CONTROL (with the exception of the entry and exits).
@@ -569,7 +555,7 @@ struct ICodeGen {
     bool (*can_gvn)(TB_Node* n);
     uint32_t (*flags)(TB_Node* n);
     size_t (*extra_bytes)(TB_Node* n);
-    const char* (*node_name)(TB_Node* n);
+    const char* (*node_name)(int n_type);
     void (*print_extra)(TB_Node* n);
     void (*print_dumb_extra)(TB_Node* n);
 

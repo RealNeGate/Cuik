@@ -108,8 +108,8 @@ static size_t extra_bytes(TB_Node* n) {
     }
 }
 
-static const char* node_name(TB_Node* n) {
-    switch (n->type) {
+static const char* node_name(int n_type) {
+    switch (n_type) {
         case x86_int3: return "int3";
         #define X(name) case x86_ ## name: return STR(x86_ ## name);
         #include "x64_nodes.inc"
@@ -317,10 +317,10 @@ static int node_2addr(TB_Node* n) {
 
         case TB_ATOMIC_XCHG:
         case TB_ATOMIC_ADD:
-        case TB_ATOMIC_SUB:
         case TB_ATOMIC_AND:
         case TB_ATOMIC_XOR:
         case TB_ATOMIC_OR:
+        case TB_ATOMIC_PTROFF:
         return 3;
 
         case TB_MACH_COPY:
@@ -389,10 +389,21 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         TB_Node* n = USERN(u);
         if (n->type != TB_LOCAL) { continue; }
         TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
-        if (local->stack_pos < 0) { continue; }
-        // each stack slot is 8bytes
-        ctx->num_spills = align_up(ctx->num_spills + (local->size+7)/8, (local->align+7)/8);
-        local->stack_pos = -(8 + ctx->num_spills*8);
+        if (local->stack_pos >= 0) {
+            // each stack slot is 8bytes
+            ctx->num_spills = align_up(ctx->num_spills + (local->size+7)/8, (local->align+7)/8);
+            local->stack_pos = -(8 + ctx->num_spills*8);
+        }
+
+        if (local->type) {
+            assert(local->name);
+            TB_StackSlot s = {
+                .name = local->name,
+                .type = local->type,
+                .storage = { local->stack_pos },
+            };
+            dyn_array_put(ctx->debug_stack_slots, s);
+        }
     }
 }
 
@@ -1187,7 +1198,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             } else if (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div) {
                 assert(i < 2);
                 return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i ? RDX : RAX));
-            } else if (n->inputs[0]->type >= TB_ATOMIC_LOAD && n->inputs[0]->type <= TB_ATOMIC_OR) {
+            } else if (n->inputs[0]->type >= TB_ATOMIC_LOAD && n->inputs[0]->type <= TB_ATOMIC_PTROFF) {
                 return i == 1 && n->users ? ctx->normie_mask[REG_CLASS_GPR] : &TB_REG_EMPTY;
             } else {
                 tb_todo();
@@ -1343,10 +1354,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case TB_ATOMIC_LOAD:
         case TB_ATOMIC_XCHG:
         case TB_ATOMIC_ADD:
-        case TB_ATOMIC_SUB:
         case TB_ATOMIC_AND:
         case TB_ATOMIC_XOR:
-        case TB_ATOMIC_OR: {
+        case TB_ATOMIC_OR:
+        case TB_ATOMIC_PTROFF: {
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
             if (ins) {
                 ins[0] = ins[1] = &TB_REG_EMPTY;
@@ -2148,14 +2159,14 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_ATOMIC_LOAD:
         case TB_ATOMIC_XCHG:
         case TB_ATOMIC_ADD:
-        case TB_ATOMIC_SUB:
         case TB_ATOMIC_AND:
         case TB_ATOMIC_XOR:
-        case TB_ATOMIC_OR: {
+        case TB_ATOMIC_OR:
+        case TB_ATOMIC_PTROFF: {
             // tbl is for normal locking operations which don't care about the result,
             // fetch will need to worry about it which means slightly different codegen.
-            const static int tbl[]       = { MOV,  ADD,  SUB,  AND, XOR, OR };
-            const static int fetch_tbl[] = { XCHG, XADD, XADD, 0,   0,   0  };
+            const static int tbl[]       = { MOV,  ADD,  AND, XOR, OR, ADD  };
+            const static int fetch_tbl[] = { XCHG, XADD, 0,   0,   0,  XADD };
 
             TB_Node* dproj = USERN(proj_with_index(n, 1));
 
@@ -2271,10 +2282,10 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
         case TB_ATOMIC_LOAD:
         case TB_ATOMIC_XCHG:
         case TB_ATOMIC_ADD:
-        case TB_ATOMIC_SUB:
         case TB_ATOMIC_AND:
         case TB_ATOMIC_XOR:
         case TB_ATOMIC_OR:
+        case TB_ATOMIC_PTROFF:
         return 20;
 
         case TB_MACH_MOVE:
@@ -2314,19 +2325,6 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         #endif
     }
     ctx->stack_usage = stack_usage;
-
-    FOR_USERS(u, root) {
-        TB_Node* n = USERN(u);
-        if (n->type != TB_LOCAL) continue;
-        TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-        if (l->type == NULL) continue;
-        TB_StackSlot s = {
-            .name = l->name,
-            .type = l->type,
-            .storage = { ctx->stack_usage + l->stack_pos },
-        };
-        dyn_array_put(ctx->debug_stack_slots, s);
-    }
 
     // save frame pointer (if applies)
     if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {

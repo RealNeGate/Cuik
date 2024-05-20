@@ -238,6 +238,11 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "cfg.h"
 #include "gvn.h"
 #include "fold.h"
+
+// Standard node rules
+#include "peep_int.h"
+#include "peep_mem.h"
+
 #include "mem_opt.h"
 #include "sroa.h"
 #include "loop.h"
@@ -264,16 +269,17 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
     size_t extra = extra_bytes(n);
     nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
 
-    // remove users
-    FOR_REV_N(i, 0, n->user_count) {
+    FOR_N(i, 0, n->input_count) {
         remove_user(f, n, i);
         n->inputs[i] = NULL;
     }
 
-    tb_arena_free(f->arena, n->users, n->user_cap * sizeof(TB_User));
-    tb_arena_free(f->arena, n->inputs, n->input_cap * sizeof(TB_Node*));
-    tb_arena_free(f->arena, n, sizeof(TB_Node) + extra);
+    TB_Arena* arena = n->type == TB_SYMBOL_TABLE ? f->tmp_arena : f->arena;
+    tb_arena_free(arena, n->users, n->user_cap * sizeof(TB_User));
+    tb_arena_free(arena, n->inputs, n->input_cap * sizeof(TB_Node*));
+    tb_arena_free(arena, n, sizeof(TB_Node) + extra);
 
+    assert(n->user_count == 0);
     n->user_cap = n->user_count = 0;
     n->users = NULL;
     n->input_count = 0;
@@ -535,10 +541,10 @@ static bool can_gvn(TB_Node* n) {
         case TB_ATOMIC_LOAD:
         case TB_ATOMIC_XCHG:
         case TB_ATOMIC_ADD:
-        case TB_ATOMIC_SUB:
         case TB_ATOMIC_AND:
         case TB_ATOMIC_XOR:
         case TB_ATOMIC_OR:
+        case TB_ATOMIC_PTROFF:
         case TB_ATOMIC_CAS:
         case TB_SAFEPOINT_POLL:
         return false;
@@ -1048,6 +1054,10 @@ static void migrate_type(TB_Function* f, TB_Node* n, TB_Node* k) {
     }
 }
 
+#if TB_OPTDEBUG_STATS
+static void inc_nums(int* arr, int i) { if (i < TB_NODE_TYPE_MAX) { arr[i]++; } }
+#endif
+
 // because certain optimizations apply when things are the same
 // we mark ALL users including the ones who didn't get changed
 // when subsuming.
@@ -1063,10 +1073,11 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
 
     // idealize node (this can technically run an arbitrary number of times
     // but in practice we should only hit a node like once or twice)
+    TB_NodeTypeEnum old_n_type = n->type;
     TB_Node* k = idealize(f, n);
     DO_IF(TB_OPTDEBUG_PEEP)(int loop_count=0);
     while (k != NULL) {
-        DO_IF(TB_OPTDEBUG_STATS)(f->stats.rewrites++);
+        DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.rewrites, old_n_type));
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m"));
 
         // transfer users from n -> k
@@ -1082,6 +1093,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
         mark_users(f, n);
 
         // try again, maybe we get another transformation
+        old_n_type = n->type;
         k = idealize(f, n);
         DO_IF(TB_OPTDEBUG_PEEP)(if (++loop_count > 5) { log_warn("%p: we looping a lil too much dawg...", n); });
     }
@@ -1111,9 +1123,10 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
         // print fancy type
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m"));
 
+        old_n_type = n->type;
         TB_Node* k = try_as_const(f, n, new_type);
         if (k && k != n) {
-            DO_IF(TB_OPTDEBUG_STATS)(f->stats.constants++);
+            DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.constants, old_n_type));
             DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
             migrate_type(f, n, k);
@@ -1126,9 +1139,10 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
     }
 
     // convert into matching identity
+    old_n_type = n->type;
     k = identity(f, n);
     if (n != k) {
-        DO_IF(TB_OPTDEBUG_STATS)(f->stats.identities++);
+        DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.identities, old_n_type));
         DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[33m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
         migrate_type(f, n, k);
@@ -1175,24 +1189,6 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
 TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     TB_Node* k = peephole(f, n);
     return k ? k : n;
-}
-
-void tb_opt_dump_stats(TB_Function* f) {
-    #if TB_OPTDEBUG_STATS
-    int total_constants = f->stats.constants + f->stats.opto_constants;
-    int final_count = f->node_count;
-    double factor = ((double) final_count / (double) f->stats.initial) * 100.0;
-
-    printf("%s: stats:\n", f->super.name);
-    printf("  %4d   -> %4d nodes (%.2f%%)\n", f->stats.initial, final_count, factor);
-    printf("  %4d GVN hit    %4d GVN attempts\n", f->stats.gvn_hit, f->stats.gvn_tries);
-    printf("  %4d peepholes  %4d rewrites    %4d identities\n", f->stats.peeps, f->stats.rewrites, f->stats.identities);
-    printf("  %4d constants  %4d of which were optimistic\n", total_constants, f->stats.opto_constants);
-
-    #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
-    printf("  %4d ticks\n", f->stats.time);
-    #endif
-    #endif
 }
 
 void tb_pass_sroa(TB_Function* f) {
@@ -1297,12 +1293,26 @@ void tb_opt_cprop(TB_Function* f) {
     }
 }
 
+static void* zalloc(size_t s) {
+    void* ptr = tb_platform_heap_alloc(s);
+    memset(ptr, 0, s);
+    return ptr;
+}
+
 void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     TB_ASSERT_MSG(f->root_node, "missing root node");
     f->worklist  = ws;
 
-    TB_Arena* tmp = f->tmp_arena;
-    TB_ArenaSavepoint tmp_sp = tb_arena_save(tmp);
+    #if TB_OPTDEBUG_STATS
+    f->stats.peeps = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
+    f->stats.identities = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
+    f->stats.rewrites = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
+    f->stats.constants = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
+    f->stats.opto_constants = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
+    f->stats.killed = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
+    #endif
+
+    TB_ArenaSavepoint tmp_sp = tb_arena_save(f->tmp_arena);
     TB_ArenaSavepoint ir_sp  = tb_arena_save(f->arena);
 
     TB_ASSERT(worklist_count(ws) == 0);
@@ -1387,21 +1397,69 @@ void tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         tb_opt_loops(f);
     }
     nl_table_free(f->node2loop);
-    tb_arena_restore(tmp, tmp_sp);
+    tb_arena_restore(f->tmp_arena, tmp_sp);
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {
         tb_opt_free_types(f);
     }
     // avoids bloating up my arenas with freed nodes
-    tb_renumber_nodes(f, ws);
-    // tb_compact_nodes(f, ws, ir_sp);
+    tb_compact_nodes(f, ws, ir_sp);
 
-    #ifdef TB_OPTDEBUG_STATS
+    #if TB_OPTDEBUG_STATS
     tb_opt_dump_stats(f);
+
+    tb_platform_heap_free(f->stats.identities);
+    tb_platform_heap_free(f->stats.rewrites);
+    tb_platform_heap_free(f->stats.constants);
+    tb_platform_heap_free(f->stats.opto_constants);
+    tb_platform_heap_free(f->stats.killed);
     #endif
 
     f->worklist = NULL;
 }
+
+#if TB_OPTDEBUG_STATS
+static void dump_nums(int* arr) {
+    FOR_N(i, 0, TB_NODE_TYPE_MAX) if (arr[i]) {
+        printf("%s: %d\n", tb_node_get_name(i), arr[i]);
+    }
+}
+void tb_opt_dump_stats(TB_Function* f) {
+    int final_count = f->node_count;
+    double factor = ((double) final_count / (double) f->stats.initial) * 100.0;
+
+    printf("%s: stats:\n", f->super.name);
+    printf("  %4d   -> %4d nodes (%.2f%%)\n", f->stats.initial, final_count, factor);
+    printf("  %4d GVN hit    %4d GVN attempts\n", f->stats.gvn_hit, f->stats.gvn_tries);
+
+    printf("                 Identity  Rewrite      CCP     SCCP     Kill\n");
+    FOR_N(i, 1, TB_NODE_TYPE_MAX) {
+        int c[5];
+        c[0] = f->stats.identities[i];
+        c[1] = f->stats.rewrites[i];
+        c[2] = f->stats.constants[i];
+        c[3] = f->stats.opto_constants[i];
+        c[4] = f->stats.killed[i];
+
+        printf("%-16s: ", tb_node_get_name(i));
+        FOR_N(j, 0, 5) {
+            if (c[j]) {
+                printf("\x1b[32m%6d*\x1b[0m  ", c[j]);
+            } else {
+                printf("%6d   ", 0);
+            }
+        }
+        printf("\n");
+    }
+
+    // printf("  %4d peepholes  %4d rewrites    %4d identities\n", f->stats.peeps, f->stats.rewrites, f->stats.identities);
+    // printf("  %4d constants  %4d of which were optimistic\n", total_constants, f->stats.opto_constants);
+
+    #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
+    printf("  %4d ticks\n", f->stats.time);
+    #endif
+}
+#endif
 
 TB_API TB_Worklist* tb_worklist_alloc(void) {
     TB_Worklist* ws = tb_platform_heap_alloc(sizeof(TB_Worklist));
@@ -1455,7 +1513,7 @@ int tb_opt_peeps(TB_Function* f) {
             if (n->type == TB_NULL) { continue; }
 
             if (!is_proj(n) && n->user_count == 0) {
-                DO_IF(TB_OPTDEBUG_STATS)(f->stats.peeps++);
+                DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.killed, n->type));
                 DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[196mKILL\x1b[0m\n"));
                 tb_kill_node(f, n);
@@ -1560,16 +1618,14 @@ bool tb_module_ipo(TB_Module* m) {
         // build strongly connected components
         TB_ThreadInfo* info = atomic_load_explicit(&m->first_info_in_module, memory_order_relaxed);
         while (info != NULL) {
-            TB_Symbol** syms = (TB_Symbol**) info->symbols.data;
-            if (syms != NULL) {
-                FOR_N(i, 0, 1ull << info->symbols.exp) {
-                    TB_Symbol* s = syms[i];
-                    if (s == NULL || s == NL_HASHSET_TOMB) continue;
-                    if (atomic_load_explicit(&s->tag, memory_order_relaxed) != TB_SYMBOL_FUNCTION) continue;
+            DynArray(TB_Symbol*) syms = info->symbols;
+            dyn_array_for(i, syms) {
+                TB_Symbol* s = syms[i];
 
-                    if (nl_table_get(&scc.nodes, s) == NULL) {
-                        scc_walk(&scc, &ipo, (TB_Function*) s);
-                    }
+                if (atomic_load_explicit(&s->tag, memory_order_relaxed) == TB_SYMBOL_FUNCTION &&
+                    nl_table_get(&scc.nodes, s) == NULL)
+                {
+                    scc_walk(&scc, &ipo, (TB_Function*) s);
                 }
             }
             info = info->next_in_module;

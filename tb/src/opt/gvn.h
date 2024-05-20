@@ -2,11 +2,11 @@
 
 static size_t extra_bytes(TB_Node* n) {
     switch (n->type) {
-        case TB_ICONST: return sizeof(TB_NodeInt);
+        case TB_ICONST:   return sizeof(TB_NodeInt);
         case TB_F32CONST: return sizeof(TB_NodeFloat32);
         case TB_F64CONST: return sizeof(TB_NodeFloat64);
-        case TB_SYMBOL:        return sizeof(TB_NodeSymbol);
-        case TB_LOCAL:         return sizeof(TB_NodeLocal);
+        case TB_SYMBOL:   return sizeof(TB_NodeSymbol);
+        case TB_LOCAL:    return sizeof(TB_NodeLocal);
 
         case TB_LOOKUP: {
             TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
@@ -83,6 +83,9 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_MACH_FRAME_PTR:
         return 0;
 
+        case TB_SYMBOL_TABLE:
+        return sizeof(TB_NodeSymbolTable);
+
         case TB_MACH_SYMBOL:
         return sizeof(TB_NodeMachSymbol);
 
@@ -110,10 +113,10 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_ATOMIC_LOAD:
         case TB_ATOMIC_XCHG:
         case TB_ATOMIC_ADD:
-        case TB_ATOMIC_SUB:
         case TB_ATOMIC_AND:
         case TB_ATOMIC_XOR:
         case TB_ATOMIC_OR:
+        case TB_ATOMIC_PTROFF:
         case TB_ATOMIC_CAS:
         return sizeof(TB_NodeAtomic);
 

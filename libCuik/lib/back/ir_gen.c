@@ -689,13 +689,13 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
 
             Cuik_Type* type = cuik_canonical_type(stmt->decl.type);
             if (stmt->op == STMT_LABEL) {
-                if (stmt->backing.r == NULL) {
-                    stmt->backing.r = tb_inst_region(func);
+                if (stmt->backing.n == NULL) {
+                    stmt->backing.n = tb_inst_region(func);
                 }
 
                 return (IRVal){
                     .value_type = LVALUE_LABEL,
-                    .reg = stmt->backing.r,
+                    .reg = stmt->backing.n,
                 };
             } else if (stmt->op == STMT_FUNC_DECL || type->kind == KIND_FUNC || stmt->op == STMT_GLOBAL_DECL || (stmt->op == STMT_DECL && stmt->decl.attrs.is_static)) {
                 if (stmt->backing.s == NULL) {
@@ -718,7 +718,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
             } else {
                 return (IRVal){
                     .value_type = LVALUE,
-                    .reg = stmt->backing.r,
+                    .reg = stmt->backing.n,
                 };
             }
         }
@@ -1208,7 +1208,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
 
                 loaded = is_inc
                     ? tb_inst_atomic_add(func, address.reg, stride, TB_MEM_ORDER_SEQ_CST)
-                    : tb_inst_atomic_sub(func, address.reg, stride, TB_MEM_ORDER_SEQ_CST);
+                    : tb_inst_atomic_add(func, address.reg, tb_inst_neg(func, stride), TB_MEM_ORDER_SEQ_CST);
 
                 // for pre-op atomics we can just stop here since we've done the arithmatic.
                 //
@@ -1261,7 +1261,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
         case EXPR_XOR_ASSIGN:
         case EXPR_SHL_ASSIGN:
         case EXPR_SHR_ASSIGN: {
-            Cuik_Type* type = cuik_canonical_type(GET_TYPE());
+            Cuik_Type* type  = cuik_canonical_type(GET_TYPE());
             bool is_volatile = CUIK_QUAL_TYPE_HAS(GET_TYPE(), CUIK_QUAL_VOLATILE);
 
             IRVal lhs = GET_ARG(0);
@@ -1323,7 +1323,8 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                             .reg = op,
                         };
                     } else if (e->op == EXPR_MINUS_ASSIGN) {
-                        TB_Node* op = tb_inst_atomic_sub(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
+                        r = tb_inst_neg(func, r);
+                        TB_Node* op = tb_inst_atomic_add(func, lhs.reg, r, TB_MEM_ORDER_SEQ_CST);
                         op = tb_inst_sub(func, op, r, 0);
 
                         return (IRVal){
@@ -1365,8 +1366,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
 
                 TB_Node* data = NULL;
                 if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
-                    if (e->op != EXPR_ASSIGN) abort();
-
+                    assert(e->op == EXPR_ASSIGN);
                     assert(!is_volatile && "volatile assign with struct doesn't work");
                     TB_Node* size_reg = tb_inst_uint(func, TB_TYPE_I64, type->size);
                     tb_inst_memcpy(func, lhs.reg, rhs.reg, size_reg, type->align);
@@ -1549,6 +1549,7 @@ static TB_Node* irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Cuik_Exp
     return cvt2rval(tu, func, &v);
 }
 
+#if 0
 static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s) {
     if (s == NULL) return;
 
@@ -1562,12 +1563,12 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
             break;
         }
         case STMT_LABEL: {
-            if (s->backing.r == 0) {
-                s->backing.r = tb_inst_region(func);
+            if (s->backing.n == 0) {
+                s->backing.n = tb_inst_region(func);
                 emit_location(tu, func, s->loc.start);
             }
 
-            fallthrough_label(func, s->backing.r);
+            fallthrough_label(func, s->backing.n);
             break;
         }
         case STMT_GOTO: {
@@ -2004,6 +2005,9 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
         size_t param_count;
         parameter_map = tb_function_set_prototype_from_dbg(func, section, dbg_type, &param_count);
 
+        TB_GraphBuilder* g = tb_builder_enter(f, arena);
+        tb_builder_exit(g);
+
         if (cuik_canonical_type(type->func.return_type)->kind != KIND_VOID) {
             TB_DebugType* dbg_ret = tb_debug_func_returns(dbg_type)[0];
             func_return_rule = tb_get_passing_rule_from_dbg(tu->ir_mod, dbg_ret, true);
@@ -2074,6 +2078,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
 
     return NULL;
 }
+#endif
 
 TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {
     return tu->ir_mod;

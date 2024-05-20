@@ -178,7 +178,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     // Write type table
-    size_t file_count = nl_map__get_header(m->files)->count;
+    size_t file_count = m->files ? nl_map__get_header(m->files)->count : 0;
     uint32_t* file_table_offset = tb_arena_alloc(arena, file_count * sizeof(uint32_t));
 
     TB_Emitter debugs_out = { 0 };
@@ -510,7 +510,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
                             CV_RegRel32 l = {
                                 .reclen = sizeof(CV_RegRel32) + (var_name_len + 1) - 2,
                                 .rectyp = S_REGREL32,
-                                .off = stack_pos,
+                                .off = out_f->stack_usage + stack_pos,
                                 .typind = type_index,
                                 // AMD64_RBP is 334, AMD64_RSP is 335
                                 .reg = 335,

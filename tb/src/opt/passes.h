@@ -249,10 +249,10 @@ static bool cfg_has_non_mem_phis(TB_Node* n) {
 // if we see a branch projection, it may either be a BB itself
 // or if it enters a REGION directly, then that region is the BB.
 static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
-    assert(cfg_is_cproj(proj) && cfg_is_fork(proj->inputs[0]));
+    TB_ASSERT(cfg_is_cproj(proj) && cfg_is_fork(proj->inputs[0]));
     TB_Node* n = proj->inputs[0];
 
-    assert(proj->user_count >= 1 && "missing successor after cproj");
+    TB_ASSERT_MSG(proj->user_count >= 1, "missing successor after cproj");
     TB_Node* r = USERN(proj->users);
     if (!single_use(proj) || !cfg_is_region(r)) {
         // multi-user proj, this means it's basically a BB

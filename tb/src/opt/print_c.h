@@ -1236,7 +1236,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
             }
 
             default: {
-                fprintf(stderr, "internal unimplemented node type: %s\n", tb_node_get_name(n));
+                fprintf(stderr, "internal unimplemented node type: %s\n", tb_node_get_name(n->type));
                 fflush(stderr);
                 __builtin_trap();
                 break;
@@ -1284,91 +1284,94 @@ TB_API char *tb_c_prelude(TB_Module *mod) {
     nl_buffer_format(buf, "void *memcpy(void *dest, const void *src, size_t n);\n");
     nl_buffer_format(buf, "void *memset(void *str, int c, size_t n);\n");
     nl_buffer_format(buf, "\n");
-    NL_HashSet* syms = &tb_thread_info(mod)->symbols;
-    nl_hashset_for(sym_vp, syms) {
-        TB_Symbol *sym = *sym_vp;
-        if (sym->name == NULL ||sym->name[0] == '\0') {
-            continue;
-        }
-        switch ((int) sym->tag) {
-            case TB_SYMBOL_EXTERNAL: {
-                if (mod->is_jit) {
-                    nl_buffer_format(buf, "static void *%s = (void *) 0x%zx;\n", sym->name, (size_t) sym->address);
-                } else {
-                    nl_buffer_format(buf, "extern void %s(void);\n", sym->name);
-                }
-                break;
+    for (TB_ThreadInfo* info = atomic_load_explicit(&mod->first_info_in_module, memory_order_relaxed); info; info = info->next_in_module) {
+        // unpack symbols
+        DynArray(TB_Symbol*) syms = info->symbols;
+        dyn_array_for(i, syms) {
+            TB_Symbol* sym = syms[i];
+            if (sym->name == NULL ||sym->name[0] == '\0') {
+                continue;
             }
-            case TB_SYMBOL_GLOBAL: {
-                TB_Global *g = (void *) sym;
-                if (g->linkage == TB_LINKAGE_PRIVATE) {
-                    nl_buffer_format(buf, "static ");
-                    sym->symbol_id = ++n_private_syms;
-                } else {
-                    sym->symbol_id = 0;
-                }
-                if (g->obj_count == 0) {
-                    nl_buffer_format(buf, "uint8_t tb2c_sym%zu_%s[%zu];\n", (size_t) sym->symbol_id, sym->name, (size_t) g->size);
-                } else {
-                    uint8_t *data_buf = tb_platform_heap_alloc(sizeof(uint8_t) * g->size);
-                    memset(data_buf, 0, sizeof(uint8_t) * g->size);
-                    FOR_N(k, 0, g->obj_count) {
-                        if (g->objects[k].type == TB_INIT_OBJ_REGION) {
-                            assert(g->objects[k].offset + g->objects[k].region.size <= g->size);
-                            memcpy(&data_buf[g->pos + g->objects[k].offset], g->objects[k].region.ptr, g->objects[k].region.size);
-                        }
-                    }
-                    nl_buffer_format(buf, "uint8_t tb2c_sym%zu_%s[%zu] = {\n", (size_t) sym->symbol_id, sym->name, (size_t) g->size);
-                    for (size_t i = 0; i < g->size; i++) {
-                        nl_buffer_format(buf, "  0x%02x,\n", data_buf[i]);
-                    }
-                    nl_buffer_format(buf, "};\n");
-                }
-                // nl_buffer_format(buf, "// global: %s\n", sym->name);
-                break;
-            }
-            case TB_SYMBOL_FUNCTION: {
-                TB_Function *f = (void *) sym;
-                TB_FunctionPrototype* p = f->prototype;
-                if (p->return_count == 0) {
-                    nl_buffer_format(buf, "typedef void tb2c_%s_ret_t;\n", sym->name);
-                } else if (p->return_count == 1) {
-                    if (p->params[p->param_count].dt.type == TB_TAG_INT && p->params[p->param_count].dt.data == 32 && !strcmp(sym->name, "main")) {
-                        nl_buffer_format(buf, "#define tb2c_%s_ret_t int\n", sym->name);
-                        nl_buffer_format(buf, "#define main(...) main(int v4, char **v5)\n");
+            switch ((int) sym->tag) {
+                case TB_SYMBOL_EXTERNAL: {
+                    if (mod->is_jit) {
+                        nl_buffer_format(buf, "static void *%s = (void *) 0x%zx;\n", sym->name, (size_t) sym->address);
                     } else {
-                        nl_buffer_format(buf, "typedef %s tb2c_%s_ret_t;\n", c_fmt_type_name(p->params[p->param_count].dt), sym->name);
+                        nl_buffer_format(buf, "extern void %s(void);\n", sym->name);
                     }
-                } else {
-                    nl_buffer_format(buf, "typedef struct {\n");
-
-                    size_t index = 0;
-                    FOR_N(i, 0, p->return_count) {
-                        nl_buffer_format(buf, "  %s v%zu;\n", c_fmt_type_name(p->params[p->param_count + i].dt), index);
-                        index += 1;
+                    break;
+                }
+                case TB_SYMBOL_GLOBAL: {
+                    TB_Global *g = (void *) sym;
+                    if (g->linkage == TB_LINKAGE_PRIVATE) {
+                        nl_buffer_format(buf, "static ");
+                        sym->symbol_id = ++n_private_syms;
+                    } else {
+                        sym->symbol_id = 0;
                     }
-                    nl_buffer_format(buf, "} tb2c_%s_ret_t;\n", sym->name);
-                }
-                if (f->linkage == TB_LINKAGE_PRIVATE) {
-                    nl_buffer_format(buf, "static ");
-                }
-                nl_buffer_format(buf, "tb2c_%s_ret_t %s(", sym->name, sym->name);
-                TB_Node** params = f->params;
-                size_t count = 0;
-                FOR_N(i, 3, 3 + f->param_count) {
-                    if (params[i] != NULL && params[i]->dt.type != TB_TAG_MEMORY && params[i]->dt.type != TB_TAG_CONTROL && params[i]->dt.type != TB_TAG_TUPLE) {
-                        if (count != 0) {
-                            nl_buffer_format(buf, ", ");
+                    if (g->obj_count == 0) {
+                        nl_buffer_format(buf, "uint8_t tb2c_sym%zu_%s[%zu];\n", (size_t) sym->symbol_id, sym->name, (size_t) g->size);
+                    } else {
+                        uint8_t *data_buf = tb_platform_heap_alloc(sizeof(uint8_t) * g->size);
+                        memset(data_buf, 0, sizeof(uint8_t) * g->size);
+                        FOR_N(k, 0, g->obj_count) {
+                            if (g->objects[k].type == TB_INIT_OBJ_REGION) {
+                                assert(g->objects[k].offset + g->objects[k].region.size <= g->size);
+                                memcpy(&data_buf[g->pos + g->objects[k].offset], g->objects[k].region.ptr, g->objects[k].region.size);
+                            }
                         }
-                        nl_buffer_format(buf, "%s v%u", c_fmt_type_name(params[i]->dt), params[i]->gvn);
-                        count += 1;
+                        nl_buffer_format(buf, "uint8_t tb2c_sym%zu_%s[%zu] = {\n", (size_t) sym->symbol_id, sym->name, (size_t) g->size);
+                        for (size_t i = 0; i < g->size; i++) {
+                            nl_buffer_format(buf, "  0x%02x,\n", data_buf[i]);
+                        }
+                        nl_buffer_format(buf, "};\n");
                     }
+                    // nl_buffer_format(buf, "// global: %s\n", sym->name);
+                    break;
                 }
-                if (count == 0) {
-                    nl_buffer_format(buf, "void");
+                case TB_SYMBOL_FUNCTION: {
+                    TB_Function *f = (void *) sym;
+                    TB_FunctionPrototype* p = f->prototype;
+                    if (p->return_count == 0) {
+                        nl_buffer_format(buf, "typedef void tb2c_%s_ret_t;\n", sym->name);
+                    } else if (p->return_count == 1) {
+                        if (p->params[p->param_count].dt.type == TB_TAG_INT && p->params[p->param_count].dt.data == 32 && !strcmp(sym->name, "main")) {
+                            nl_buffer_format(buf, "#define tb2c_%s_ret_t int\n", sym->name);
+                            nl_buffer_format(buf, "#define main(...) main(int v4, char **v5)\n");
+                        } else {
+                            nl_buffer_format(buf, "typedef %s tb2c_%s_ret_t;\n", c_fmt_type_name(p->params[p->param_count].dt), sym->name);
+                        }
+                    } else {
+                        nl_buffer_format(buf, "typedef struct {\n");
+
+                        size_t index = 0;
+                        FOR_N(i, 0, p->return_count) {
+                            nl_buffer_format(buf, "  %s v%zu;\n", c_fmt_type_name(p->params[p->param_count + i].dt), index);
+                            index += 1;
+                        }
+                        nl_buffer_format(buf, "} tb2c_%s_ret_t;\n", sym->name);
+                    }
+                    if (f->linkage == TB_LINKAGE_PRIVATE) {
+                        nl_buffer_format(buf, "static ");
+                    }
+                    nl_buffer_format(buf, "tb2c_%s_ret_t %s(", sym->name, sym->name);
+                    TB_Node** params = f->params;
+                    size_t count = 0;
+                    FOR_N(i, 3, 3 + f->param_count) {
+                        if (params[i] != NULL && params[i]->dt.type != TB_TAG_MEMORY && params[i]->dt.type != TB_TAG_CONTROL && params[i]->dt.type != TB_TAG_TUPLE) {
+                            if (count != 0) {
+                                nl_buffer_format(buf, ", ");
+                            }
+                            nl_buffer_format(buf, "%s v%u", c_fmt_type_name(params[i]->dt), params[i]->gvn);
+                            count += 1;
+                        }
+                    }
+                    if (count == 0) {
+                        nl_buffer_format(buf, "void");
+                    }
+                    nl_buffer_format(buf, ");\n");
+                    break;
                 }
-                nl_buffer_format(buf, ");\n");
-                break;
             }
         }
     }

@@ -214,7 +214,9 @@ BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* f
         TB_Node* src = RVAL(2);
         int order = get_memory_order_val(RVAL(3));
 
-        return ZZZ(tb_inst_atomic_sub(func, dst, src, order));
+        src = tb_inst_neg(func, src);
+
+        return ZZZ(tb_inst_atomic_add(func, dst, src, order));
     } else if (strcmp(name, "__builtin_mul_overflow") == 0) {
         Cuik_Type* type = cuik_canonical_type(args[0].cast_type);
         TB_DataType dt = ctype_to_tbtype(type);

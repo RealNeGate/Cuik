@@ -16,7 +16,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         int l = print_type(n->dt);
         FOR_N(i, l, 5) { printf(" "); }
     }
-    printf(" = %s ", tb_node_get_name(n));
+    printf(" = %s ", tb_node_get_name(n->type));
     if (is_proj(n)) {
         printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
     } else if (n->type == TB_MACH_PROJ) {

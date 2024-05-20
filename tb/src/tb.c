@@ -246,9 +246,7 @@ void tb_module_destroy(TB_Module* m) {
     while (info != NULL) {
         TB_ThreadInfo* next = info->next_in_module;
 
-        // free symbols
-        nl_hashset_free(info->symbols);
-
+        dyn_array_destroy(info->symbols);
         tb_arena_destroy(info->tmp_arena);
         tb_arena_destroy(info->perm_arena);
 

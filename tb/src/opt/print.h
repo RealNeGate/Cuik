@@ -4,8 +4,8 @@ typedef struct {
     TB_CFG cfg;
 } PrinterCtx;
 
-const char* tb_node_get_name(TB_Node* n) {
-    switch (n->type) {
+const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
+    switch (n_type) {
         case TB_NULL: return "FREED";
         case TB_UNREACHABLE: return "unreachable";
 
@@ -18,6 +18,7 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_NATURAL_LOOP: return "loop";
         case TB_AFFINE_LOOP: return "loop.affine";
         case TB_CALLGRAPH: return "callgraph";
+        case TB_SYMBOL_TABLE: return "symbol_table";
 
         case TB_LOCAL: return "local";
 
@@ -38,6 +39,8 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_PTR_OFFSET: return "ptr_offset";
 
         case TB_CYCLE_COUNTER: return "cyclecnt";
+        case TB_PREFETCH: return "prefetch";
+        case TB_INLINE_ASM: return "inlineasm";
         case TB_DEBUG_LOCATION: return "dbgloc";
         case TB_SAFEPOINT_POLL: return "safepoint.poll";
 
@@ -46,6 +49,8 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_SPLITMEM: return "split";
         case TB_MERGEMEM: return "merge";
 
+        case TB_BSWAP: return "bswap";
+        case TB_POPCNT: return "popcnt";
         case TB_ZERO_EXT: return "zxt";
         case TB_SIGN_EXT: return "sxt";
         case TB_FLOAT_TRUNC: return "fptrunc";
@@ -70,10 +75,10 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_ATOMIC_LOAD: return "atomic.load";
         case TB_ATOMIC_XCHG: return "atomic.xchg";
         case TB_ATOMIC_ADD: return "atomic.add";
-        case TB_ATOMIC_SUB: return "atomic.sub";
         case TB_ATOMIC_AND: return "atomic.and";
         case TB_ATOMIC_XOR: return "atomic.xor";
         case TB_ATOMIC_OR: return "atomic.or";
+        case TB_ATOMIC_PTROFF: return "atomic.ptroff";
         case TB_ATOMIC_CAS: return "atomic.cas";
 
         case TB_CLZ: return "clz";
@@ -102,8 +107,11 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_FDIV: return "fdiv";
         case TB_FMAX: return "fmax";
         case TB_FMIN: return "fmin";
+        case TB_FNEG: return "fneg";
 
         case TB_MULPAIR:  return "mulpair";
+        case TB_SDIVMOD:  return "sdivmod";
+        case TB_UDIVMOD:  return "udivmod";
         case TB_LOAD:     return "load";
         case TB_STORE:    return "store";
         case TB_READ:     return "read";
@@ -116,16 +124,21 @@ const char* tb_node_get_name(TB_Node* n) {
         case TB_NEVER_BRANCH: return "never_branch";
         case TB_TAILCALL: return "tailcall";
 
-        case TB_MACH_MOVE:  return "mach_move";
-        case TB_MACH_COPY:  return "mach_copy";
-        case TB_MACH_PROJ:  return "mach_proj";
-        case TB_MACH_SYMBOL:return "mach_symbol";
+        case TB_MACH_MOVE: return "mach_move";
+        case TB_MACH_COPY: return "mach_copy";
+        case TB_MACH_PROJ: return "mach_proj";
+        case TB_MACH_SYMBOL: return "mach_symbol";
         case TB_MACH_FRAME_PTR: return "mach_frameptr";
 
+        case TB_X86INTRIN_LDMXCSR: return "x86_ldmxcsr";
+        case TB_X86INTRIN_STMXCSR: return "x86_stmxcsr";
+        case TB_X86INTRIN_SQRT:  return "x86_sqrt";
+        case TB_X86INTRIN_RSQRT: return "x86_rsqrt";
+
         default: {
-            int family = n->type / 0x100;
+            int family = n_type / 0x100;
             TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
-            return tb_codegen_families[family].node_name(n);
+            return tb_codegen_families[family].node_name(n_type);
         }
     }
 }
@@ -393,7 +406,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
             default: {
                 if (cfg_is_branch(n)) {
-                    printf("  %s ", tb_node_get_name(n));
+                    printf("  %s ", tb_node_get_name(n->type));
                 } else if (n->dt.type == TB_TAG_TUPLE) {
                     // print with multiple returns
                     TB_Node* projs[32] = { 0 };
@@ -412,7 +425,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                         if (i > first) printf(", ");
                         printf("%%%u", projs[i]->gvn);
                     }
-                    printf(" = %s.(", tb_node_get_name(n));
+                    printf(" = %s.(", tb_node_get_name(n->type));
                     FOR_N(i, first, 32) {
                         if (projs[i] == NULL) break;
                         if (i > first) printf(", ");
@@ -421,7 +434,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     printf(")");
                 } else {
                     // print as normal instruction
-                    printf("  %%%u = %s.", n->gvn, tb_node_get_name(n));
+                    printf("  %%%u = %s.", n->gvn, tb_node_get_name(n->type));
 
                     TB_DataType dt = n->dt;
                     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
@@ -492,10 +505,10 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
                     case TB_ATOMIC_LOAD:
                     case TB_ATOMIC_XCHG:
                     case TB_ATOMIC_ADD:
-                    case TB_ATOMIC_SUB:
                     case TB_ATOMIC_AND:
                     case TB_ATOMIC_XOR:
                     case TB_ATOMIC_OR:
+                    case TB_ATOMIC_PTROFF:
                     case TB_ATOMIC_CAS: {
                         static const char* order_names[] = {
                             "relaxed", "consume", "acquire",

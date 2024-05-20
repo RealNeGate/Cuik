@@ -94,16 +94,11 @@ ExportList tb_module_layout_sections(TB_Module* m) {
 
     // unpack function data into the streams we actually care for.
     // avoids needing to walk so many sparse data structures later on.
-    TB_ThreadInfo* info = atomic_load_explicit(&m->first_info_in_module, memory_order_relaxed);
-    while (info != NULL) {
-        TB_ThreadInfo* next = info->next_in_module;
-
+    for (TB_ThreadInfo* info = atomic_load_explicit(&m->first_info_in_module, memory_order_relaxed); info; info = info->next_in_module) {
         // unpack symbols
-        TB_Symbol** syms = (TB_Symbol**) info->symbols.data;
-        if (syms) FOR_N(i, 0, 1ull << info->symbols.exp) {
+        DynArray(TB_Symbol*) syms = info->symbols;
+        dyn_array_for(i, syms) {
             TB_Symbol* s = syms[i];
-            if (s == NULL || s == NL_HASHSET_TOMB) continue;
-
             switch (atomic_load_explicit(&s->tag, memory_order_relaxed)) {
                 case TB_SYMBOL_FUNCTION: {
                     TB_Function* f = (TB_Function*) s;
@@ -134,8 +129,6 @@ ExportList tb_module_layout_sections(TB_Module* m) {
                 default: break;
             }
         }
-
-        info = next;
     }
 
     dyn_array_for(i, m->sections) {

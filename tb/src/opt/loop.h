@@ -681,7 +681,6 @@ void tb_opt_build_loop_tree(TB_Function* f) {
                 *new_loop = (TB_LoopInfo){
                     .next      = loop_list,
                     .header    = header,
-                    .exit_proj = exit_proj,
                 };
                 loop_list = new_loop;
             }

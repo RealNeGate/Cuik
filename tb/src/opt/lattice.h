@@ -138,7 +138,7 @@ static Lattice* lattice_intern(TB_Function* f, Lattice l) {
 }
 
 void tb__lattice_init(TB_Module* m) {
-    m->lattice_elements = nbhs_alloc(64, lattice_hs_alloc, lattice_hs_free, lattice_cmp, lattice_hash);
+    m->lattice_elements = nbhs_alloc(256, lattice_hs_alloc, lattice_hs_free, lattice_cmp, lattice_hash);
 
     nbhs_raw_insert(&m->lattice_elements, &BOT_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &TOP_IN_THE_SKY);

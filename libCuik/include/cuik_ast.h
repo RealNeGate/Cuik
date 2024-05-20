@@ -494,17 +494,15 @@ struct Stmt {
         // Used by the backend for backend-y things
         union {
             #ifdef CUIK_USE_TB
-            TB_Node* r;
+            TB_Node* n;
             TB_Node* loop[2];
             TB_Function* f;
             TB_Symbol* s;
             TB_Global* g;
             TB_External* e;
+            #endif /* CUIK_USE_TB */
 
             void* user_data;
-            #else
-            void* user_data;
-            #endif /* CUIK_USE_TB */
         } backing;
     };
     union {

@@ -63,28 +63,28 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     // pointer arithmetic
     [TB_PTR_OFFSET]     = { ideal_ptr_offset,  identity_int_binop, NULL             },
     // arithmetic
-    [TB_ADD]            = { ideal_int_binop,   identity_int_binop, value_add_mul    },
-    [TB_SUB]            = { ideal_int_binop,   identity_int_binop, value_sub        },
-    [TB_MUL]            = { ideal_int_binop,   identity_int_binop, value_add_mul    },
+    [TB_ADD]            = { ideal_arith,       identity_int_binop, value_arith      },
+    [TB_SUB]            = { ideal_arith,       identity_int_binop, value_arith      },
+    [TB_MUL]            = { ideal_arith,       identity_int_binop, value_arith      },
     [TB_UDIV]           = { ideal_int_div,     identity_int_binop, NULL             },
     [TB_SDIV]           = { ideal_int_div,     identity_int_binop, NULL             },
     [TB_UMOD]           = { ideal_int_mod,     identity_int_binop, NULL             },
     [TB_SMOD]           = { ideal_int_mod,     identity_int_binop, NULL             },
     // comparisons
-    [TB_CMP_EQ]         = { ideal_int_binop,   identity_int_binop, value_cmp        },
-    [TB_CMP_NE]         = { ideal_int_binop,   identity_int_binop, value_cmp        },
-    [TB_CMP_SLT]        = { ideal_int_binop,   identity_int_binop, value_cmp        },
-    [TB_CMP_SLE]        = { ideal_int_binop,   identity_int_binop, value_cmp        },
-    [TB_CMP_ULT]        = { ideal_int_binop,   identity_int_binop, value_cmp        },
-    [TB_CMP_ULE]        = { ideal_int_binop,   identity_int_binop, value_cmp        },
+    [TB_CMP_EQ]         = { ideal_cmp,         identity_int_binop, value_cmp        },
+    [TB_CMP_NE]         = { ideal_cmp,         identity_int_binop, value_cmp        },
+    [TB_CMP_SLT]        = { ideal_cmp,         identity_int_binop, value_cmp        },
+    [TB_CMP_SLE]        = { ideal_cmp,         identity_int_binop, value_cmp        },
+    [TB_CMP_ULT]        = { ideal_cmp,         identity_int_binop, value_cmp        },
+    [TB_CMP_ULE]        = { ideal_cmp,         identity_int_binop, value_cmp        },
     // bitwise ops
-    [TB_AND]            = { ideal_int_binop,   identity_int_binop, value_bits       },
-    [TB_OR]             = { ideal_int_binop,   identity_int_binop, value_bits       },
-    [TB_XOR]            = { ideal_int_binop,   identity_int_binop, value_bits       },
+    [TB_AND]            = { ideal_bits,        identity_int_binop, value_bits       },
+    [TB_OR]             = { ideal_bits,        identity_int_binop, value_bits       },
+    [TB_XOR]            = { ideal_bits,        identity_int_binop, value_bits       },
     // shift
-    [TB_SHL]            = { ideal_int_binop,   identity_int_binop, value_shift      },
-    [TB_SHR]            = { ideal_int_binop,   identity_int_binop, value_shift      },
-    [TB_SAR]            = { ideal_int_binop,   identity_int_binop, value_shift      },
+    [TB_SHL]            = { ideal_shift,       identity_int_binop, value_shift      },
+    [TB_SHR]            = { ideal_shift,       identity_int_binop, value_shift      },
+    [TB_SAR]            = { NULL,              identity_int_binop, value_shift      },
     // unary
     [TB_NEG]            = { NULL,              NULL,               value_negate     },
     // casts

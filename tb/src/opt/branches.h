@@ -61,7 +61,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                         //
                         // NOTE(NeGate): we might waste quite a bit of space because of the arena
                         // alloc and realloc
-                        TB_Node** new_inputs = alloc_from_node_arena(f, new_count * sizeof(TB_Node*));
+                        TB_Node** new_inputs = tb_arena_alloc(f->arena, new_count * sizeof(TB_Node*));
                         memcpy(new_inputs, n->inputs, old_count * sizeof(TB_Node*));
                         n->inputs = new_inputs;
                         n->input_count = new_count;
@@ -84,7 +84,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                             size_t phi_ins = phi->input_count;
                             size_t new_phi_ins = phi_ins + (pred->input_count - 1);
 
-                            TB_Node** new_inputs = alloc_from_node_arena(f, new_phi_ins * sizeof(TB_Node*));
+                            TB_Node** new_inputs = tb_arena_alloc(f->arena, new_phi_ins * sizeof(TB_Node*));
                             memcpy(new_inputs, phi->inputs, phi_ins * sizeof(TB_Node*));
                             phi->inputs = new_inputs;
                             phi->input_count = new_phi_ins;
