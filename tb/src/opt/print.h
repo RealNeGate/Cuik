@@ -9,7 +9,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_NULL: return "FREED";
         case TB_UNREACHABLE: return "unreachable";
 
-        case TB_BRANCH_PROJ:   return "br_proj";
+        case TB_BRANCH_PROJ: return "br_proj";
 
         case TB_ROOT:   return "root";
         case TB_RETURN: return "return";
@@ -667,6 +667,8 @@ void tb_print(TB_Function* f, TB_Arena* tmp) {
     if (end_bb != NULL) {
         print_bb(&ctx, &ws, end_bb);
     }
+
+    tb_clear_anti_deps(f, &ws);
     worklist_free(&ws);
     tb_free_cfg(&ctx.cfg);
 

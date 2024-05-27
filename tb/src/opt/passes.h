@@ -415,15 +415,13 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
 void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_nodes);
 
 // Global scheduler
+void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws);
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws);
 void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp);
 void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_nests, bool dataflow, TB_GetLatency get_lat);
 
 // makes arch-friendly IR
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);
-void tb_opt_build_loop_tree(TB_Function* f);
-void tb_opt_loops(TB_Function* f);
-
 int tb_opt_peeps(TB_Function* f);
 int tb_opt_locals(TB_Function* f);
 

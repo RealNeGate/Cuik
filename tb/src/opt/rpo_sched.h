@@ -1,10 +1,4 @@
 
-typedef struct {
-    int index;
-    int count;
-    TB_User* users;
-} Anti;
-
 typedef struct SchedNode SchedNode;
 struct SchedNode {
     SchedNode* parent;
@@ -12,10 +6,6 @@ struct SchedNode {
 
     TB_Node* n;
     int index;
-
-    int anti_i;
-    int anti_count;
-    Anti antis[];
 };
 
 typedef struct {
@@ -25,35 +15,8 @@ typedef struct {
 
 static SchedNode* sched_make_node(TB_Arena* arena, SchedNode* parent, TB_Node* n) {
     TB_ArenaSavepoint sp = tb_arena_save(arena);
-
-    int anti_count = 0;
-    if (n->type == TB_MERGEMEM) {
-        anti_count = n->input_count - 2;
-    } else if (n->type != TB_PHI && n->type != TB_PROJ) {
-        if (is_mem_out_op(n) || n->dt.type == TB_TAG_MEMORY) {
-            anti_count = 1;
-        } else if (n->dt.type == TB_TAG_TUPLE) {
-            FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_TAG_MEMORY) {
-                    assert(USERI(u) == 0);
-                    anti_count += 1;
-                }
-            }
-            assert(anti_count < 2);
-        }
-    }
-
-    SchedNode* s = tb_arena_alloc(arena, sizeof(SchedNode) + anti_count*sizeof(TB_User));
-    *s = (SchedNode){ .parent = parent, .sp = sp, .n = n, .index = 0, .anti_count = anti_count };
-
-    if (n->type == TB_MERGEMEM) {
-        FOR_N(i, 2, n->input_count) {
-            s->antis[i - 2] = (Anti){ 0, n->inputs[i]->user_count, n->inputs[i]->users };
-        }
-    } else if (anti_count == 1) {
-        s->antis[0] = (Anti){ 0, n->inputs[1]->user_count, n->inputs[1]->users };
-    }
-
+    SchedNode* s = tb_arena_alloc(arena, sizeof(SchedNode));
+    *s = (SchedNode){ .parent = parent, .sp = sp, .n = n, .index = 0 };
     return s;
 }
 
@@ -117,8 +80,8 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
     while (top != NULL) {
         TB_Node* n = top->n;
 
-        // resolve inputs first
-        if (n->type != TB_PHI && top->index < n->input_count) {
+        // resolve inputs first (including the extra edges because that's where anti-deps go)
+        if (n->type != TB_PHI && top->index < n->input_cap) {
             TB_Node* in = n->inputs[top->index++];
             if (in != NULL) {
                 // projections don't get scheduled, their tuple node does
@@ -128,22 +91,6 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
                 }
             }
             continue;
-        }
-
-        // resolve anti-deps
-        if (top->anti_i < top->anti_count) {
-            Anti* anti = &top->antis[top->anti_i];
-            if (anti->index < anti->count) {
-                TB_User* use = &anti->users[anti->index++];
-                if (USERN(use) != n && USERI(use) == 1 && sched_in_bb(f, ws, bb, USERN(use))) {
-                    top = sched_make_node(arena, top, USERN(use));
-                }
-
-                if (anti->index == anti->count) {
-                    top->anti_i++;
-                }
-                continue;
-            }
         }
 
         // resolve phi edges & leftovers when we're at the endpoint

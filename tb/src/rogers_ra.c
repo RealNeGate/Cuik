@@ -203,8 +203,11 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
     for (size_t i = 0; i < user_count; i++) {
         TB_Node* use_n = USERN(&users[i]);
         int use_i      = USERI(&users[i]);
-        // it's never in[0] lmao
-        if (use_i == 0) { continue; }
+
+        // it's never in[0] or the extra deps
+        if (use_i == 0 || use_i >= use_n->input_count) {
+            continue;
+        }
 
         RegMask* in_mask = constraint_in(ctx, use_n, use_i);
         if (conflict) {
@@ -255,12 +258,17 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
     TB_BasicBlock** scheduled = f->scheduled;
     FOR_USERS(u, n) {
         TB_Node* use_n = USERN(u);
+        int use_i      = USERI(u);
+
         TB_BasicBlock* bb = scheduled[use_n->gvn];
         int use_t         = ra->order[use_n->gvn];
         assert(use_t > 0);
 
-        // if it's already a machine copy, inserting an extra one is useless
-        if (use_n->type == TB_MACH_COPY) {
+        if (use_i >= use_n->input_count) {
+            // extra edges aren't for values
+            continue;
+        } else if (use_n->type == TB_MACH_COPY) {
+            // if it's already a machine copy, inserting an extra one is useless
             TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%d: folded reload (%%%u)\x1b[0m\n", ctx->vreg_map[use_n->gvn], use_n->gvn));
 
             TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
@@ -306,18 +314,19 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
     }
 
     for (size_t i = 0; i < n->user_count;) {
-        TB_User* u        = &n->users[i];
-        TB_BasicBlock* bb = f->scheduled[USERN(u)->gvn];
+        TB_Node* use_n = USERN(&n->users[i]);
+        int use_i      = USERI(&n->users[i]);
+        TB_BasicBlock* bb = f->scheduled[use_n->gvn];
 
-        if (USERN(u)->type == TB_MACH_COPY) {
+        if (use_n->type == TB_MACH_COPY || use_i >= use_n->input_count) {
             i += 1;
             continue;
         }
 
         TB_Node* reload = reload_n[bb->order];
-        if (USERN(u) != reload) {
+        if (use_n != reload) {
             assert(reload);
-            set_input(f, USERN(u), reload, USERI(u));
+            set_input(f, use_n, reload, use_i);
         } else {
             i += 1;
         }

@@ -75,7 +75,24 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     FOR_N(i, 0, n->input_count) {
         tb_print_dumb_edge(types, n->inputs[i]);
     }
+
+    bool first = true;
+    FOR_N(i, n->input_count, n->input_cap) if (n->inputs[i]) {
+        if (first) { printf("| "), first = false; }
+        tb_print_dumb_edge(types, n->inputs[i]);
+    }
+
     printf(")");
+
+    #if 0
+    printf("   { ");
+    FOR_USERS(u, n) {
+        TB_Node* un = USERN(u);
+        int ui      = USERI(u);
+        printf("%%%u:%d ", un->gvn, ui);
+    }
+    printf("}");
+    #endif
 }
 
 static void dumb_walk(TB_Function* f, TB_Worklist* ws, Lattice** types, TB_Node* n) {

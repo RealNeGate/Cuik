@@ -23,14 +23,8 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
     return target_generic_create_prototype(win64_should_pass_via_reg, tu, type);
 }
 
-static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, IRVal* args) {
-    BuiltinResult r = target_generic_compile_builtin(tu, func, name, arg_count, args);
-    if (r.failure) {
-        assert(0 && "unimplemented builtin!");
-        return 0;
-    } else {
-        return r.r;
-    }
+static TB_Node* compile_builtin(TranslationUnit* tu, TB_GraphBuilder* g, const char* name, int arg_count, ValDesc* args) {
+    return NULL;
 }
 #endif /* CUIK_USE_TB */
 

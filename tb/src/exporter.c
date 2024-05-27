@@ -99,7 +99,7 @@ ExportList tb_module_layout_sections(TB_Module* m) {
         DynArray(TB_Symbol*) syms = info->symbols;
         dyn_array_for(i, syms) {
             TB_Symbol* s = syms[i];
-            switch (atomic_load_explicit(&s->tag, memory_order_relaxed)) {
+            switch (s->tag) {
                 case TB_SYMBOL_FUNCTION: {
                     TB_Function* f = (TB_Function*) s;
                     TB_ModuleSection* sec = &m->sections[f->section];

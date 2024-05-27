@@ -78,9 +78,9 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_CMP_ULT]        = { ideal_cmp,         identity_int_binop, value_cmp        },
     [TB_CMP_ULE]        = { ideal_cmp,         identity_int_binop, value_cmp        },
     // bitwise ops
-    [TB_AND]            = { ideal_bits,        identity_int_binop, value_bits       },
-    [TB_OR]             = { ideal_bits,        identity_int_binop, value_bits       },
-    [TB_XOR]            = { ideal_bits,        identity_int_binop, value_bits       },
+    [TB_AND]            = { ideal_bits,        identity_bits,      value_bits       },
+    [TB_OR]             = { ideal_bits,        identity_bits,      value_bits       },
+    [TB_XOR]            = { ideal_bits,        identity_bits,      value_bits       },
     // shift
     [TB_SHL]            = { ideal_shift,       identity_int_binop, value_shift      },
     [TB_SHR]            = { ideal_shift,       identity_int_binop, value_shift      },

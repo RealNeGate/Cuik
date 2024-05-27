@@ -12,24 +12,11 @@ typedef struct {
 } ReadyNode;
 
 static bool is_node_ready(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
-    FOR_N(i, 0, n->input_count) {
+    // we also care about extra edges here so we're iterating on input_cap
+    FOR_N(i, 0, n->input_cap) {
         TB_Node* in = n->inputs[i];
         if (in && f->scheduled[in->gvn] == bb && !worklist_test(ws, in)) {
             return false;
-        }
-    }
-
-    // anti-deps
-    if (is_mem_out_op(n) || n->dt.type == TB_TAG_MEMORY) {
-        FOR_USERS(u, n->inputs[1]) {
-            TB_Node* un = USERN(u);
-            if (n != un && USERI(u) == 1) {
-                // wait for anti-deps (maybe we should
-                // add these as true deps)
-                if (f->scheduled[un->gvn] == bb && !worklist_test(ws, un)) {
-                    return false;
-                }
-            }
         }
     }
 
@@ -113,19 +100,20 @@ static int best_ready_node(ListSched* sched, uint64_t in_use_mask) {
 }
 
 void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count) {
-    assert(phi_vals == NULL && "TODO");
+    TB_ASSERT(phi_vals == NULL && "TODO");
     TB_Arena* tmp_arena = f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
 
     TB_OPTDEBUG(SCHEDULE)(printf("BB %d\n", bb->id));
     worklist_push(ws, bb->start);
+    TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, bb->start), printf("\n"));
 
     // first block has access to root's users
-    if (bb->id == 0) {
-        TB_Node* root = f->root_node;
-        FOR_USERS(u, root) {
+    if (bb->id == 0 || bb->start->dt.type == TB_TAG_TUPLE) {
+        TB_Node* tup = bb->id == 0 ? f->root_node : bb->start;
+        FOR_USERS(u, tup) {
             if (is_proj(USERN(u))) {
-                assert(USERI(u) == 0);
+                TB_ASSERT(USERI(u) == 0);
                 TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, USERN(u)), printf("\n"));
 
                 worklist_push(ws, USERN(u));
@@ -133,7 +121,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         }
     } else {
         FOR_USERS(u, bb->start) if (USERN(u)->type == TB_PHI) {
-            assert(USERI(u) == 0);
+            TB_ASSERT(USERI(u) == 0);
             TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, USERN(u)), printf("\n"));
 
             worklist_push(ws, USERN(u));
@@ -188,7 +176,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
 
             remove_ready(&sched, idx);
 
-            assert(!is_proj(n));
+            TB_ASSERT(!is_proj(n));
             worklist_push(ws, n);
 
             // make sure to place all projections directly after their tuple node
@@ -230,18 +218,6 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                     }
                 } else if (can_ready_user(f, ws, bb, &sched.ready_set, un)) {
                     ready_up(&sched, un, end);
-                }
-            }
-
-            // push all anti-deps
-            if (is_mem_in_op(n) || (n->input_count >= 2 && n->inputs[1] && n->inputs[1]->dt.type == TB_TAG_MEMORY)) {
-                FOR_USERS(u, n->inputs[1]) {
-                    TB_Node* un = USERN(u);
-                    if (n != un && USERI(u) == 1) {
-                        if (un != end && can_ready_user(f, ws, bb, &sched.ready_set, un)) {
-                            ready_up(&sched, un, end);
-                        }
-                    }
                 }
             }
         }

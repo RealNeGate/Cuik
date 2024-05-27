@@ -126,11 +126,10 @@ TB_Node* tb_alloc_node_dyn(TB_Function* f, int type, TB_DataType dt, int input_c
     n->input_count = input_count;
     n->dt = dt;
     n->gvn = f->node_count++;
-    n->users = NULL;
 
     if (input_cap > 0) {
         n->inputs = tb_arena_alloc(arena, input_cap * sizeof(TB_Node*));
-        memset(n->inputs, 0, input_count * sizeof(TB_Node*));
+        FOR_N(i, 0, input_cap) { n->inputs[i] = NULL; }
     } else {
         n->inputs = NULL;
     }
@@ -481,7 +480,7 @@ TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
 }
 
 TB_Node* tb_inst_syscall(TB_Function* f, TB_DataType dt, TB_Node* syscall_num, size_t param_count, TB_Node** params) {
-    TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall) + sizeof(TB_Node*[3]));
+    TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 3 + param_count, sizeof(TB_NodeCall));
     set_input(f, n, syscall_num, 2);
     FOR_N(i, 0, param_count) {
         set_input(f, n, params[i], i + 3);
@@ -939,28 +938,6 @@ void tb_inst_set_region_name(TB_Function* f, TB_Node* n, ptrdiff_t len, const ch
     char* newstr = tb_arena_alloc(f->arena, len + 1);
     memcpy(newstr, name, len + 1);
     r->tag = newstr;
-}
-
-// this has to move things which is not nice...
-void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
-    // btw this is unnecessary, i'm just afraid of calling this function
-    // on random nodes, technically it would work just fine.
-    // assert(n->type == TB_REGION || n->type == TB_PHI || n->type == TB_ROOT || n->type == TB_CALLGRAPH || n->type == TB_MERGEMEM || n->type == TB_RETURN);
-
-    if (n->input_count >= n->input_cap) {
-        size_t new_cap = n->input_count * 2;
-        TB_Node** new_inputs = tb_arena_alloc(f->arena, new_cap * sizeof(TB_Node*));
-        if (n->inputs != NULL) {
-            memcpy(new_inputs, n->inputs, n->input_count * sizeof(TB_Node*));
-        }
-
-        n->inputs = new_inputs;
-        n->input_cap = new_cap;
-    }
-
-    n->inputs[n->input_count] = in;
-    add_user(f, n, in, n->input_count);
-    n->input_count += 1;
 }
 
 static void add_memory_edge(TB_Function* f, TB_Node* n, TB_Node* mem_state, TB_Node* target) {

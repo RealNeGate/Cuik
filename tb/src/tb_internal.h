@@ -398,7 +398,6 @@ struct TB_Function {
         // some xforms like removing branches can
         // invalidate the loop tree.
         TB_LoopInfo* loop_list;
-        NL_Table node2loop; // TB_Node* -> TB_LoopInfo*
         bool invalidated_loops;
 
         // we throw the results of scheduling here:
@@ -713,6 +712,10 @@ void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot);
 void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in);
 void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot);
 void print_node_sexpr(TB_Node* n, int depth);
+
+// extra edges go after n->input_count, are unordered and NULL just means free space
+void tb_node_add_extra(TB_Function* f, TB_Node* n, TB_Node* in);
+void tb_node_clear_extras(TB_Function* f, TB_Node* n);
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);

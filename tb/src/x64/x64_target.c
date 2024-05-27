@@ -578,68 +578,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         set_input(f, cpy, in, 1);
         TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = def_rm, .use = use_rm);
         return cpy;
-    } else if (n->type == TB_ZERO_EXT) {
-        TB_DataType src_dt = n->inputs[1]->dt;
-        assert(src_dt.type == TB_TAG_INT);
-        int src_bits = src_dt.data;
-
-        // as long as any of these zero-extend to 32bits from a smaller size they're
-        // capable of being a 64bit zero extend since 32bit ops will auto zero ext to 64bit.
-        int op_type = -1;
-        switch (src_bits) {
-            case 8:  op_type = x86_movzx8;  break;
-            case 16: op_type = x86_movzx16; break;
-            case 32: op_type = x86_mov;     break;
-        }
-
-        if (op_type == x86_mov) {
-            RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
-            TB_Node* op = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
-            set_input(f, op, n->inputs[1], 1);
-            TB_NODE_SET_EXTRA(op, TB_NodeMachCopy, .def = rm, .use = rm);
-            return op;
-        } else if (op_type >= 0) {
-            TB_Node* op = tb_alloc_node(f, op_type, n->dt, 5, sizeof(X86MemOp));
-            set_input(f, op, n->inputs[1], 2);
-            return op;
-        } else if (src_bits < 32) {
-            // we can take advantange of the existing 64bit zero extension
-            uint64_t mask = UINT64_MAX >> (64 - src_bits);
-            TB_Node* op = tb_alloc_node(f, x86_andimm, n->dt, 4, sizeof(X86MemOp));
-            set_input(f, op, n->inputs[1], 2);
-            TB_NODE_SET_EXTRA(op, X86MemOp, .imm = mask);
-            return op;
-        } else {
-            // uint64_t mask = UINT64_MAX >> (64 - src_bits);
-            tb_todo();
-        }
-    } else if (n->type == TB_SIGN_EXT) {
-        TB_DataType src_dt = n->inputs[1]->dt;
-        assert(src_dt.type == TB_TAG_INT);
-        int src_bits = src_dt.data;
-
-        int op_type = -1;
-        switch (src_bits) {
-            case 8:  op_type = x86_movsx8;  break;
-            case 16: op_type = x86_movsx16; break;
-            case 32: op_type = x86_movsx32; break;
-        }
-
-        if (op_type >= 0) {
-            TB_Node* op = tb_alloc_node(f, op_type, n->dt, 5, sizeof(X86MemOp));
-            set_input(f, op, n->inputs[1], 2);
-            return op;
-        } else {
-            // unconventional sizes do:
-            //   SHL dst, x
-            //   SAR dst, x (or SHR if zero ext)
-            //
-            // where x is 'reg_width - val_width'
-            // int dst_bits = dt == TB_X86_TYPE_QWORD ? 64 : 32;
-            // int ext = is_signed ? SAR : SHR;
-            // Val imm = val_imm(dst_bits - bits_in_type);
-            tb_todo();
-        }
     } else if (n->type == TB_LOCAL) {
         // we don't directly ref the Local, this is the accessor op whenever we're
         // not folding into some other op nicely.
@@ -926,6 +864,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     if ((n->type >= TB_AND && n->type <= TB_SUB)   ||
         (n->type >= TB_FADD && n->type <= TB_FMAX) ||
         n->type == TB_LOAD || n->type == TB_STORE  ||
+        n->type == TB_SIGN_EXT || n->type == TB_ZERO_EXT ||
         n->type == TB_PTR_OFFSET) {
         const static int ops[]  = { x86_and, x86_or, x86_xor, x86_add, x86_sub };
         const static int fops[] = { x86_vadd, x86_vsub, x86_vmul, x86_vdiv, x86_vmin, x86_vmax };
@@ -1009,10 +948,74 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 op->type = fops[n->type - TB_FADD];
                 set_input(f, op, n->inputs[1], 4);
                 n = n->inputs[2];
+            } else if (n->type == TB_SIGN_EXT) {
+                TB_DataType src_dt = n->inputs[1]->dt;
+                assert(src_dt.type == TB_TAG_INT);
+                int src_bits = src_dt.data;
+
+                op_extra->mode = MODE_REG;
+                n = n->inputs[1];
+                set_input(f, op, n, 2);
+
+                switch (src_bits) {
+                    case 8:  op->type = x86_movsx8;  break;
+                    case 16: op->type = x86_movsx16; break;
+                    case 32: op->type = x86_movsx32; break;
+                }
+
+                if (op->type == x86_lea) {
+                    // unconventional sizes do:
+                    //   SHL dst, x
+                    //   SAR dst, x (or SHR if zero ext)
+                    //
+                    // where x is 'reg_width - val_width'
+                    // int dst_bits = dt == TB_X86_TYPE_QWORD ? 64 : 32;
+                    // int ext = is_signed ? SAR : SHR;
+                    // Val imm = val_imm(dst_bits - bits_in_type);
+                    tb_todo();
+                }
+            } else if (n->type == TB_ZERO_EXT) {
+                TB_DataType src_dt = n->inputs[1]->dt;
+                assert(src_dt.type == TB_TAG_INT);
+                int src_bits = src_dt.data;
+
+                op_extra->mode = MODE_REG;
+                n = n->inputs[1];
+                set_input(f, op, n, 2);
+
+                // as long as any of these zero-extend to 32bits from a smaller size they're
+                // capable of being a 64bit zero extend since 32bit ops will auto zero ext to 64bit.
+                int op_type = -1;
+                switch (src_bits) {
+                    case 8:  op->type = x86_movzx8;  break;
+                    case 16: op->type = x86_movzx16; break;
+                    case 32: {
+                        RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
+
+                        // mach copy actually just handles these sorts of things mostly
+                        TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+                        set_input(f, cpy, n, 1);
+                        TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = rm, .use = rm);
+                        return cpy;
+                    }
+                }
+
+                if (op->type == x86_lea) {
+                    if (src_bits < 32) {
+                        // we can take advantange of the existing 64bit zero extension
+                        uint64_t mask = UINT64_MAX >> (64 - src_bits);
+                        op->type = x86_andimm;
+                        TB_NODE_SET_EXTRA(op, X86MemOp, .imm = mask);
+                        return op;
+                    } else {
+                        // uint64_t mask = UINT64_MAX >> (64 - src_bits);
+                        tb_todo();
+                    }
+                }
             }
 
-            // folded load now
             if (n->type == TB_LOAD) {
+                // folded load now
                 op_extra->mode = MODE_LD;
                 if (op->type == x86_lea) {
                     op->type = TB_IS_FLOAT_TYPE(n->dt) ? x86_vmov : x86_mov;
@@ -1033,11 +1036,10 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
         }
 
-        if (n->type == TB_SYMBOL) {
-            n = mach_symbol(f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
-        } else if (n->type == TB_PTR_OFFSET) {
+        if (n->type == TB_PTR_OFFSET) {
             set_input(f, op, n->inputs[2], 3);
-            if (n->inputs[2]->type == TB_SHL && n->inputs[2]->inputs[2]->type == TB_ICONST) {
+            if (n->inputs[2]->type == TB_SHL &&
+                n->inputs[2]->inputs[2]->type == TB_ICONST) {
                 uint64_t scale = TB_NODE_GET_EXTRA_T(n->inputs[2]->inputs[2], TB_NodeInt)->value;
 
                 // [... + index*scale] given scale is 1,2,4,8
@@ -1046,23 +1048,38 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     op_extra->scale = scale;
                 }
             }
+
             n = n->inputs[1];
         }
 
-        // sometimes introduced by other isel bits
+        // sometimes introduced by other isel bits.
         if (n->type == x86_lea && n->inputs[3] == NULL) {
             op_extra->disp += TB_NODE_GET_EXTRA_T(n, X86MemOp)->disp;
             n = n->inputs[2];
         }
 
-        if (n->type == TB_SYMBOL && n->inputs[3] == NULL) {
-            TB_Node* base = mach_symbol(f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
-            set_input(f, op, base, 2);
-        } else if (n->type == TB_LOCAL) {
+        if (n->type == TB_SYMBOL) {
+            if (op->inputs[3] != NULL) {
+                // ok, if we need to make a symbol but also need indexing math
+                TB_Node* sym = mach_symbol(f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
+
+                TB_Node* op = tb_alloc_node(f, x86_lea, TB_TYPE_PTR, 5, sizeof(X86MemOp));
+                X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
+                op_extra->mode = MODE_LD;
+                set_input(f, op, sym, 2);
+                n = op;
+            } else {
+                TB_Node* base = mach_symbol(f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
+                set_input(f, op, base, 2);
+            }
+        }
+
+        if (n->type == TB_LOCAL) {
             set_input(f, op, ctx->frame_ptr, 2);
             op_extra->disp += TB_NODE_GET_EXTRA_T(n, TB_NodeLocal)->stack_pos;
         } else {
-            assert(n);
+            TB_ASSERT(n);
+            TB_ASSERT(n != op);
             set_input(f, op, n, 2);
         }
         return op;

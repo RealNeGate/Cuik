@@ -72,7 +72,7 @@ static TB_Node* loop_clone_node(TB_Function* f, TB_Node** cloned, size_t pre_clo
             add_user(f, k, in, i);
 
             // uncloned form should refer to the "next" edge on the phi
-            if (n->inputs[i]->type == TB_PHI && n->inputs[i]->inputs[0] == header) {
+            if (n->inputs[i]->type == TB_PHI && n->inputs[i]->inputs[0] == header && n != n->inputs[i]->inputs[2]) {
                 set_input(f, n, n->inputs[i]->inputs[2], i);
             }
         }
@@ -425,11 +425,11 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
             return true;
         }
     } else if (affine_indvar(cond, header) && exit_when_key) {
-        assert(cond->inputs[2]->type == TB_ADD);
+        assert(cond->type == TB_ADD);
         *var = (TB_InductionVar){
             .cond = cond,
             .phi  = cond,
-            .step = TB_NODE_GET_EXTRA_T(cond->inputs[2]->inputs[2], TB_NodeInt)->value,
+            .step = TB_NODE_GET_EXTRA_T(cond->inputs[2], TB_NodeInt)->value,
             .end_const = if_br->key,
             .pred = IND_NE,
             .backwards = false
@@ -440,8 +440,9 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
     return false;
 }
 
-void tb_opt_build_loop_tree(TB_Function* f) {
-    cuikperf_region_start("loop tree", NULL);
+bool tb_opt_find_loops(TB_Function* f) {
+    cuikperf_region_start("find & canonicalize loops", NULL);
+    bool progress = false;
 
     TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
     TB_CFG cfg = tb_compute_rpo(f, f->worklist);
@@ -607,6 +608,7 @@ void tb_opt_build_loop_tree(TB_Function* f) {
                         mark_node(f, new_phi);
                     }
                 }
+                progress = true;
                 tb_arena_restore(f->tmp_arena, sp2);
 
                 TB_OPTDEBUG(PASSES)(printf("        * Added extra latch %%%u\n", latch->gvn));
@@ -666,24 +668,26 @@ void tb_opt_build_loop_tree(TB_Function* f) {
                 }
             }
 
+            // first time we've seen this loop
             if (header->type != type) {
+                progress = true;
                 header->type = type;
-                mark_node_n_users(f, header);
-
-                // all affine loops have an affine latch
-                if (type == TB_AFFINE_LOOP) {
-                    header->inputs[1]->inputs[0]->type = TB_AFFINE_LATCH;
-                    mark_node_n_users(f, header->inputs[1]->inputs[0]);
-                }
-
-                // ok cool, more loops
-                TB_LoopInfo* new_loop = tb_arena_alloc(f->arena, sizeof(TB_LoopInfo));
-                *new_loop = (TB_LoopInfo){
-                    .next      = loop_list,
-                    .header    = header,
-                };
-                loop_list = new_loop;
             }
+
+            // all affine loops have an affine latch
+            if (type == TB_AFFINE_LOOP) {
+                header->inputs[1]->inputs[0]->type = TB_AFFINE_LATCH;
+                mark_node_n_users(f, header->inputs[1]->inputs[0]);
+            }
+            mark_node_n_users(f, header);
+
+            // ok cool, more loops
+            TB_LoopInfo* new_loop = tb_arena_alloc(f->arena, sizeof(TB_LoopInfo));
+            *new_loop = (TB_LoopInfo){
+                .next      = loop_list,
+                .header    = header,
+            };
+            loop_list = new_loop;
         }
     }
     tb_free_cfg(&cfg);
@@ -691,9 +695,10 @@ void tb_opt_build_loop_tree(TB_Function* f) {
 
     tb_arena_restore(f->tmp_arena, sp);
     cuikperf_region_end();
+    return progress;
 }
 
-void tb_opt_loops(TB_Function* f) {
+bool tb_opt_loops(TB_Function* f) {
     #if 0
     cuikperf_region_start("loop", NULL);
     tb_print_dumb(f, false);
@@ -726,4 +731,6 @@ void tb_opt_loops(TB_Function* f) {
     tb_print_dumb(f, false);
     cuikperf_region_end();
     #endif
+    return false;
 }
+

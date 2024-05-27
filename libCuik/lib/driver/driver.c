@@ -186,6 +186,7 @@ static void apply_func(TB_Function* f, void* arg) {
         float start = tb_arena_current_size(arenas->a[arena_i]);
 
         if (args->emit_ir) {
+            tb_print_dumb(f, false);
             tb_print(f, arenas->a[!arena_i]);
 
             // char* str = tb_print_c(f, ir_worklist, arenas->tmp);
@@ -378,7 +379,10 @@ static void ld_invoke(BuildStepInfo* info) {
 
     CUIK_TIMED_BLOCK("Backend") {
         if (args->optimize) {
-            int t = 0;
+            arena_i = !arena_i;
+            cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, local_opt_func);
+
+            /*int t = 0;
             do {
                 CUIK_TIMED_BLOCK("Local opts") {
                     log_debug("Optimizing in functions... t=%d", ++t);
@@ -386,7 +390,7 @@ static void ld_invoke(BuildStepInfo* info) {
                     cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, local_opt_func);
                     log_debug("Interprocedural opts...");
                 }
-            } while (tb_module_ipo(mod));
+            } while (tb_module_ipo(mod));*/
         }
 
         if (args->emit_ir) {

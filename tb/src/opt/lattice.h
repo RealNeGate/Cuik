@@ -235,10 +235,9 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
                 return &BOOL_IN_THE_SKY;
             }
 
-            uint64_t imin  =  lattice_int_min(dt.data);
-            uint64_t imax  =  lattice_int_max(dt.data);
-            uint64_t zeros = ~lattice_uint_max(dt.data);
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { imin, imax, zeros } });
+            uint64_t imin = lattice_int_min(dt.data);
+            uint64_t imax = lattice_int_max(dt.data);
+            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { imin, imax } });
         }
 
         case TB_TAG_F32:     return &FLT32_IN_THE_SKY;
@@ -311,7 +310,7 @@ static LatticeInt lattice_into_unsigned(LatticeInt i, int bits) {
     }
 }
 
-static Lattice* lattice_int_const(TB_Function* f, uint64_t con) {
+static Lattice* lattice_int_const(TB_Function* f, int64_t con) {
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { con, con, ~con, con } });
 }
 
@@ -324,7 +323,7 @@ static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int 
         umin = 0, umax = lattice_uint_max(bits);
     }
 
-    uint64_t zeros = ~umin | ~lattice_uint_max(bits);
+    uint64_t zeros = ~umin;
     uint64_t ones  =  umin;
 
     if (umin != umax) {
@@ -340,7 +339,7 @@ static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int 
 static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max, int bits) {
     assert(min <= max);
 
-    uint64_t zeros = ~min | ~lattice_uint_max(bits);
+    uint64_t zeros = ~min;
     uint64_t ones  =  min;
 
     if (min != max) {

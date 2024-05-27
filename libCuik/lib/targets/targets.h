@@ -48,7 +48,7 @@ struct Cuik_Target {
 
     #ifdef CUIK_USE_TB
     // when one of the builtins are triggered we call this to generate it's code
-    TB_Node* (*compile_builtin)(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, IRVal* args);
+    TB_Node* (*compile_builtin)(TranslationUnit* tu, TB_GraphBuilder* g, const char* name, int arg_count, ValDesc* args);
     #endif /* CUIK_USE_TB */
 };
 
@@ -64,16 +64,7 @@ struct Cuik_Target {
 void cuik_target_build(Cuik_Target* target);
 
 #ifdef CUIK_USE_TB
-typedef struct {
-    TB_Node* r;
-    bool failure;
-} BuiltinResult;
-
-BuiltinResult target_generic_compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, IRVal* args);
-
 typedef bool (*ShouldPassViaReg)(TranslationUnit* tu, Cuik_Type* type);
-
-int target_generic_pass_parameter(ShouldPassViaReg fn, TranslationUnit* tu, TB_Function* func, IRVal arg, bool is_vararg, TB_Node** out_param);
 TB_FunctionPrototype* target_generic_create_prototype(ShouldPassViaReg fn, TranslationUnit* tu, Cuik_Type* type);
 #endif
 

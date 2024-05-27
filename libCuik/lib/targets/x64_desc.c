@@ -31,22 +31,17 @@ static TB_FunctionPrototype* create_prototype(TranslationUnit* tu, Cuik_Type* ty
     return target_generic_create_prototype(win64_should_pass_via_reg, tu, type);
 }
 
-static TB_Node* compile_builtin(TranslationUnit* tu, TB_Function* func, const char* name, int arg_count, IRVal* args) {
-    BuiltinResult r = target_generic_compile_builtin(tu, func, name, arg_count, args);
-    if (!r.failure) {
-        return r.r;
-    }
-
+static TB_Node* compile_builtin(TranslationUnit* tu, TB_GraphBuilder* g, const char* name, int arg_count, ValDesc* args) {
     // x64 specific builtins
     if (strcmp(name, "_mm_setcsr") == 0) {
-        return tb_inst_x86_ldmxcsr(func, cvt2rval(tu, func, &args[1]));
+        return tb_builder_x86_ldmxcsr(g, as_rval(tu, g, &args[1]));
     } else if (strcmp(name, "_mm_getcsr") == 0) {
-        return tb_inst_x86_stmxcsr(func);
+        return tb_builder_x86_stmxcsr(g);
     } else if (strcmp(name, "__rdtsc") == 0) {
-        return tb_inst_cycle_counter(func);
+        return tb_builder_cycle_counter(g);
     } else if (strcmp(name, "__readgsqword") == 0) {
         // TODO(NeGate): implement readgs/writegs with all the type variants
-        return tb_inst_uint(func, TB_TYPE_I16, 0);
+        return tb_builder_uint(g, TB_TYPE_I16, 0);
     } else {
         assert(0 && "unimplemented builtin!");
         return 0;

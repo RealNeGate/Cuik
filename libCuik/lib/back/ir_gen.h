@@ -19,6 +19,21 @@ typedef enum IRValType {
     LVALUE_LABEL,
 } IRValType;
 
+typedef struct {
+    IRValType kind : 16;
+    int mem_var    : 16;
+    struct {
+        uint16_t offset;
+        uint16_t width;
+    } bits;
+    union {
+        TB_Node* n;
+        Subexpr* e;
+    };
+    Cuik_QualType type;
+    Cuik_QualType cast_type;
+} ValDesc;
+
 typedef struct IRVal {
     IRValType value_type;
     Cuik_QualType type, cast_type;
@@ -79,6 +94,8 @@ static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
 TB_Node* cvt2rval(TranslationUnit* tu, TB_Function* func, IRVal* v);
 int count_max_tb_init_objects(InitNode* root_node);
 TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t);
+
+TB_Node* as_rval(TranslationUnit* tu, TB_GraphBuilder* g, const ValDesc* v);
 
 static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s);
 static TB_Node* irgen_as_rvalue(TranslationUnit* tu, TB_Function* func, Cuik_Expr* e);

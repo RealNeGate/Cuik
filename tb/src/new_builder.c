@@ -35,7 +35,7 @@ static TB_Node* xfer_mem(TB_GraphBuilder* g, TB_Node* n, int mem_var) {
     return old;
 }
 
-TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Worklist* ws) {
+static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_FunctionPrototype* p, TB_Worklist* ws) {
     TB_ASSERT_MSG(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
     TB_ASSERT_MSG(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
 
@@ -48,7 +48,9 @@ TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena1, TB_Arena* ar
     f->worklist  = ws;
 
     TB_ABI abi = f->super.module->target_abi;
-    TB_FunctionPrototype* p = tb_prototype_from_dbg(f->super.module, dbg);
+    if (p == NULL) {
+        p = tb_prototype_from_dbg(f->super.module, dbg);
+    }
 
     // apply prototype
     tb_function_set_prototype(f, section, p);
@@ -82,7 +84,7 @@ TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena1, TB_Arena* ar
             RegClass rg = classify_reg(abi, type);
             if (rg != RG_MEMORY) {
                 TB_Node* slot = tb_builder_local(g, size, align);
-                tb_builder_store(g, 0, slot, v, align);
+                tb_builder_store(g, 0, false, slot, v, align, false);
                 v = slot;
             }
 
@@ -96,6 +98,14 @@ TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena1, TB_Arena* ar
         }
     }
     return g;
+}
+
+TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2, TB_ModuleSectionHandle section, TB_FunctionPrototype* proto, TB_Worklist* ws) {
+    return builder_enter_raw(f, arena1, arena2, section, NULL, proto, ws);
+}
+
+TB_GraphBuilder* tb_builder_enter_from_dbg(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Worklist* ws) {
+    return builder_enter_raw(f, arena1, arena2, section, dbg, NULL, ws);
 }
 
 void tb_builder_exit(TB_GraphBuilder* g) {
@@ -205,7 +215,7 @@ TB_Node* tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_Node* a, TB_Node*
 }
 
 TB_Node* tb_builder_binop_float(TB_GraphBuilder* g, int type, TB_Node* a, TB_Node* b) {
-    TB_ASSERT(type >= TB_FADD && type <= TB_FMAX);
+    TB_ASSERT_MSG(type >= TB_FADD && type <= TB_FMAX, "type wasn't a float op");
 
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, type, a->dt, 3, 0);
@@ -214,19 +224,44 @@ TB_Node* tb_builder_binop_float(TB_GraphBuilder* g, int type, TB_Node* a, TB_Nod
     return g->peep(f, n);
 }
 
-TB_Node* tb_builder_cmp(TB_GraphBuilder* g, int type, bool flip, TB_Node* a, TB_Node* b) {
+TB_Node* tb_builder_select(TB_GraphBuilder* g, TB_Node* cond, TB_Node* a, TB_Node* b) {
+    TB_ASSERT_MSG(TB_DATA_TYPE_EQUALS(a->dt, b->dt), "datatype mismatch");
+
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_SELECT, a->dt, 4, 0);
+    set_input(f, n, cond, 1);
+    set_input(f, n, a, 2);
+    set_input(f, n, b, 3);
+    return g->peep(f, n);
+}
+
+TB_Node* tb_builder_unary(TB_GraphBuilder* g, int type, TB_Node* src) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, type, src->dt, 2, 0);
+    set_input(f, n, src, 1);
+    return g->peep(f, n);
+}
+
+TB_Node* tb_builder_not(TB_GraphBuilder* g, TB_Node* src) {
+    return tb_builder_binop_int(g, TB_XOR, src, tb_builder_sint(g, src->dt, -1), 0);
+}
+
+TB_Node* tb_builder_neg(TB_GraphBuilder* g, TB_Node* src) {
+    if (TB_IS_FLOAT_TYPE(src->dt)) {
+        return tb_builder_unary(g, TB_FNEG, src);
+    } else {
+        return tb_builder_unary(g, TB_NEG, src);
+    }
+}
+
+TB_Node* tb_builder_cmp(TB_GraphBuilder* g, int type, TB_Node* a, TB_Node* b) {
     TB_ASSERT_MSG(type >= TB_CMP_EQ && type <= TB_CMP_FLE, "'type' wasn't a comparison node type (see TB_NodeTypeEnum)");
     TB_ASSERT_MSG(TB_DATA_TYPE_EQUALS(a->dt, b->dt), "datatype mismatch");
 
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, type, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
-    if (flip) {
-        set_input(f, n, b, 1);
-        set_input(f, n, a, 2);
-    } else {
-        set_input(f, n, a, 1);
-        set_input(f, n, b, 2);
-    }
+    set_input(f, n, a, 1);
+    set_input(f, n, b, 2);
     TB_NODE_SET_EXTRA(n, TB_NodeCompare, .cmp_dt = a->dt);
     return g->peep(f, n);
 }
@@ -261,7 +296,7 @@ TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t offset
     return g->peep(f, n);
 }
 
-TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_Node* addr, TB_CharUnits align) {
+TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_Node* addr, TB_CharUnits align, bool is_volatile) {
     TB_Function* f = g->f;
     assert(addr->dt.type == TB_TAG_PTR);
 
@@ -275,7 +310,7 @@ TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Data
     return g->peep(f, n);
 }
 
-void tb_builder_store(TB_GraphBuilder* g, int mem_var, TB_Node* addr, TB_Node* val, TB_CharUnits align) {
+void tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile) {
     TB_Function* f = g->f;
     TB_ASSERT(addr->dt.type == TB_TAG_PTR);
 
@@ -287,7 +322,7 @@ void tb_builder_store(TB_GraphBuilder* g, int mem_var, TB_Node* addr, TB_Node* v
     TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
 }
 
-void tb_builder_memcpy(TB_GraphBuilder* g, int mem_var, TB_Node* dst, TB_Node* src, TB_Node* size, TB_CharUnits align) {
+void tb_builder_memcpy(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* src, TB_Node* size, TB_CharUnits align, bool is_volatile) {
     TB_Function* f = g->f;
     TB_ASSERT(dst->dt.type == TB_TAG_PTR);
     TB_ASSERT(src->dt.type == TB_TAG_PTR);
@@ -301,7 +336,25 @@ void tb_builder_memcpy(TB_GraphBuilder* g, int mem_var, TB_Node* dst, TB_Node* s
     TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
 }
 
-TB_Node* tb_builder_atomic_load(TB_GraphBuilder* g, int mem_var, TB_DataType dt, TB_MemoryOrder order, TB_Node* addr) {
+void tb_builder_memset(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align, bool is_volatile) {
+    TB_Function* f = g->f;
+    TB_ASSERT(dst->dt.type == TB_TAG_PTR);
+    TB_ASSERT_MSG(val->dt.type == TB_TAG_INT && val->dt.data == 8, "memset's val needs to be byte sized");
+
+    TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
+    set_input(f, n, g->curr->inputs[0], 0);
+    set_input(f, n, xfer_mem(g, n, mem_var), 1);
+    set_input(f, n, dst,  2);
+    set_input(f, n, val,  3);
+    set_input(f, n, size, 4);
+    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
+}
+
+void tb_builder_memzero(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* size, TB_CharUnits align, bool is_volatile) {
+    tb_builder_memset(g, mem_var, ctrl_dep, dst, tb_builder_uint(g, TB_TYPE_I8, 0), size, align, is_volatile);
+}
+
+TB_Node* tb_builder_atomic_load(TB_GraphBuilder* g, int mem_var, TB_DataType dt, TB_Node* addr, TB_MemoryOrder order) {
     TB_Function* f = g->f;
     TB_ASSERT(addr->dt.type == TB_TAG_PTR);
 
@@ -316,7 +369,7 @@ TB_Node* tb_builder_atomic_load(TB_GraphBuilder* g, int mem_var, TB_DataType dt,
     return tb__make_proj(f, dt, n, 1);
 }
 
-TB_Node* tb_builder_atomic_store(TB_GraphBuilder* g, int mem_var, TB_MemoryOrder order, TB_Node* addr, TB_Node* val) {
+TB_Node* tb_builder_atomic_store(TB_GraphBuilder* g, int mem_var, TB_Node* addr, TB_Node* val, TB_MemoryOrder order) {
     TB_Function* f = g->f;
     TB_ASSERT(addr->dt.type == TB_TAG_PTR);
 
@@ -332,7 +385,7 @@ TB_Node* tb_builder_atomic_store(TB_GraphBuilder* g, int mem_var, TB_MemoryOrder
     return tb__make_proj(f, val->dt, n, 1);
 }
 
-TB_Node* tb_builder_atomic_rmw(TB_GraphBuilder* g, int mem_var, int op, TB_MemoryOrder order, TB_Node* addr, TB_Node* val) {
+TB_Node* tb_builder_atomic_rmw(TB_GraphBuilder* g, int mem_var, int op, TB_Node* addr, TB_Node* val, TB_MemoryOrder order) {
     TB_Function* f = g->f;
     TB_ASSERT(addr->dt.type == TB_TAG_PTR);
 
@@ -348,11 +401,6 @@ TB_Node* tb_builder_atomic_rmw(TB_GraphBuilder* g, int mem_var, int op, TB_Memor
     return tb__make_proj(f, val->dt, n, 1);
 }
 
-void tb_builder_debugbreak(TB_GraphBuilder* g) {
-    TB_Node* n = tb_alloc_node(g->f, TB_DEBUGBREAK, TB_TYPE_CONTROL, 1, 0);
-    set_input(g->f, n, xfer_ctrl(g, n), 0);
-}
-
 int tb_builder_decl(TB_GraphBuilder* g) {
     tb_todo();
     return 0;
@@ -362,29 +410,12 @@ TB_Node* tb_builder_get_var(TB_GraphBuilder* g, int id) {
     TB_ASSERT(2 + id < g->curr->input_count);
 
     TB_Node* curr = g->curr;
-    TB_Node* r = curr->inputs[1];
-    if (r->type == TB_NATURAL_LOOP) {
-        TB_ASSERT(curr->inputs[2 + id]->type == TB_PHI && curr->inputs[2 + id]->inputs[0] == r);
-
-        #if 0
-        // we optimistically assume the defs need no phis until referenced
-        // once that happens we'll just make one (lazy phis).
-        if (curr->inputs[2 + id]->type != TB_PHI || curr->inputs[2 + id]->inputs[0] != r) {
-            TB_Function* f = g->f;
-            TB_Node* old = curr->inputs[2 + id];
-
-            TB_Node* n = tb_alloc_node_dyn(f, TB_PHI, old->dt, 2, 3, 0);
-            set_input(f, n, r,   0);
-            set_input(f, n, old, 1);
-            set_input(f, curr, n, 2 + id);
-        }
-        #endif
-    }
-
     return curr->inputs[2 + id];
 }
 
 void tb_builder_set_var(TB_GraphBuilder* g, int id, TB_Node* src) {
+    TB_NodeSymbolTable* extra = TB_NODE_GET_EXTRA(g->curr);
+    TB_ASSERT(!extra->complete);
     set_input(g->f, g->curr, src, 2 + id);
 }
 
@@ -461,6 +492,17 @@ void tb_builder_label_set(TB_GraphBuilder* g, TB_Node* label) {
     } else {
         g->curr = label;
     }
+}
+
+TB_Node* tb_builder_label_clone(TB_GraphBuilder* g, TB_Node* label) {
+    TB_Function* f = g->f;
+    TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, label->input_count, sizeof(TB_NodeSymbolTable));
+    FOR_N(j, 0, label->input_count) if (label->inputs[j]) {
+        set_input(f, syms, label->inputs[j], j);
+    }
+    TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = false);
+
+    return syms;
 }
 
 void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]) {
@@ -577,7 +619,13 @@ TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int m
     TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
     set_input(f, n, xfer_mem(g, mproj, mem_var), 1);
 
+    add_input_late(f, get_callgraph(f), n);
+
     // create data projections
+    if (proto->return_count == 0) {
+        return NULL;
+    }
+
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
     TB_Node** rets_arr = tb_arena_alloc(g->arena, proto->return_count * sizeof(TB_Node*));
 
@@ -585,8 +633,55 @@ TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int m
         rets_arr[i] = tb__make_proj(f, rets[i].dt, n, i + 2);
     }
 
-    add_input_late(f, get_callgraph(f), n);
     return rets_arr;
+}
+
+TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_Node* target, int nargs, TB_Node** args) {
+    TB_Function* f = g->f;
+
+    TB_Node* n = tb_alloc_node(f, TB_SYSCALL, TB_TYPE_TUPLE, 3 + nargs, sizeof(TB_NodeCall));
+    set_input(f, n, target, 2);
+    FOR_N(i, 0, nargs) {
+        set_input(f, n, args[i], i + 3);
+    }
+
+    TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+    c->proj_count = 3;
+
+    // control proj
+    TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+    set_input(f, n, xfer_ctrl(g, cproj), 0);
+
+    // memory proj
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
+    set_input(f, n, xfer_mem(g, mproj, mem_var), 1);
+
+    add_input_late(f, get_callgraph(f), n);
+    return tb__make_proj(f, dt, n, 2);
+}
+
+void tb_builder_unreachable(TB_GraphBuilder* g, int mem_var) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 2, 0);
+    set_input(f, n, xfer_ctrl(g, n), 0);
+    set_input(f, n, peek_mem(g, mem_var), 1);
+    add_input_late(f, f->root_node, n);
+    g->curr = NULL;
+}
+
+void tb_builder_trap(TB_GraphBuilder* g, int mem_var) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_TRAP, TB_TYPE_CONTROL, 2, 0);
+    set_input(f, n, xfer_ctrl(g, n), 0);
+    set_input(f, n, peek_mem(g, mem_var), 1);
+    add_input_late(f, f->root_node, n);
+    g->curr = NULL;
+}
+
+void tb_builder_debugbreak(TB_GraphBuilder* g, int mem_var) {
+    TB_Node* n = tb_alloc_node(g->f, TB_DEBUGBREAK, TB_TYPE_CONTROL, 2, 0);
+    set_input(g->f, n, xfer_ctrl(g, n), 0);
+    set_input(g->f, n, peek_mem(g, mem_var), 1);
 }
 
 void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int count, TB_Node** args) {
@@ -629,3 +724,33 @@ void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int count, TB_Node** args) 
     g->curr = NULL;
 }
 
+TB_Node* tb_builder_x86_ldmxcsr(TB_GraphBuilder* g, TB_Node* a) {
+    assert(a->dt.type == TB_TAG_INT && a->dt.data == 32);
+
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_LDMXCSR, TB_TYPE_I32, 2, 0);
+    set_input(f, n, a, 1);
+    return n;
+}
+
+TB_Node* tb_builder_cycle_counter(TB_GraphBuilder* g) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_CYCLE_COUNTER, TB_TYPE_I64, 1, 0);
+    set_input(f, n, f->trace.bot_ctrl, 0);
+    return n;
+}
+
+TB_Node* tb_builder_prefetch(TB_GraphBuilder* g, TB_Node* addr, int level) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_PREFETCH, TB_TYPE_MEMORY, 2, sizeof(TB_NodePrefetch));
+    set_input(f, n, addr, 1);
+    TB_NODE_SET_EXTRA(n, TB_NodePrefetch, .level = level);
+    return n;
+}
+
+TB_Node* tb_builder_x86_stmxcsr(TB_GraphBuilder* g) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_STMXCSR, TB_TYPE_I32, 1, 0);
+    set_input(f, n, f->trace.bot_ctrl, 0);
+    return n;
+}

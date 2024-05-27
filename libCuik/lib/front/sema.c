@@ -949,6 +949,8 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                 ptrdiff_t search = nl_map_get_cstr(tu->target->builtin_func_map, name);
                 assert(search >= 0 && "Builtin symbol somehow isn't builtin?");
 
+                SET_CAST(0, cuik_uncanonical_type(func_type));
+
                 int arg_count = e->call.param_count;
                 Cuik_Type* ty = sema_builtin(
                     tu, _, tu->target->builtin_func_map[search].v, arg_count + 1, args

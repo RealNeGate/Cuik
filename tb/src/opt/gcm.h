@@ -61,11 +61,8 @@ static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* actual
     DO_IF(TB_OPTDEBUG_GCM)(printf("  user v%u @ bb%d\n", y->gvn, use_block->id));
     if (y->type == TB_PHI) {
         TB_Node* use_node = y->inputs[0];
-        assert(cfg_is_region(use_node));
-
-        if (y->input_count != use_node->input_count + 1) {
-            tb_panic("phi has parent with mismatched predecessors");
-        }
+        TB_ASSERT(cfg_is_region(use_node));
+        TB_ASSERT_MSG(y->input_count == use_node->input_count + 1, "phi has parent with mismatched predecessors");
 
         ptrdiff_t j = 1;
         for (; j < y->input_count; j++) {
@@ -73,7 +70,7 @@ static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* actual
                 break;
             }
         }
-        assert(j >= 0);
+        TB_ASSERT(j >= 0 && j < y->input_count);
 
         TB_BasicBlock* bb = f->scheduled[use_node->inputs[j - 1]->gvn];
         if (bb) { use_block = bb; }
@@ -83,10 +80,9 @@ static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* actual
 
 void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp) {
     TB_Node** fwd = tb_arena_alloc(f->arena, f->node_count * sizeof(TB_Node*));
-    memset(fwd, 0, f->node_count * sizeof(TB_Node*));
+    FOR_N(i, 0, f->node_count) { fwd[i] = NULL; }
 
     SWAP(TB_Arena*, f->arena, f->tmp_arena);
-
     CUIK_TIMED_BLOCK("compact") {
         CUIK_TIMED_BLOCK("mark") {
             // BFS walk all the nodes
@@ -94,9 +90,9 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp) {
             for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
                 TB_Node* n = ws->items[i];
 
-                // allocate space for moved node
+                // allocate moved node
                 size_t extra = extra_bytes(n);
-                TB_Node* k = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
+                TB_Node* k = tb_alloc_node_dyn(f, n->type, n->dt, n->input_count, n->input_cap, extra);
                 k->gvn = i;
                 memcpy(k->extra, n->extra, extra);
                 fwd[n->gvn] = k;
@@ -113,7 +109,7 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp) {
         }
 
         CUIK_TIMED_BLOCK("compact nodes") {
-            f->node_count = dyn_array_length(ws->items);
+            TB_Node* new_root = NULL;
             if (f->types) {
                 f->type_cap = tb_next_pow2(f->node_count + 16);
 
@@ -121,42 +117,50 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp) {
                 FOR_N(i, 0, f->type_cap) { new_types[i] = NULL; }
 
                 FOR_N(i, 0, dyn_array_length(ws->items)) {
-                    TB_Node* old = ws->items[i];
-                    TB_Node* n = fwd[old->gvn];
-                    FOR_N(j, 0, old->input_count) {
-                        TB_Node* in = old->inputs[j];
-                        if (in) { set_input(f, n, fwd[in->gvn], j); }
-                    }
-                    new_types[i] = f->types[old->gvn];
+                    TB_Node* n = ws->items[i];
+                    TB_Node* k = fwd[n->gvn];
+                    new_types[k->gvn] = f->types[n->gvn];
                 }
 
                 assert(f->root_node->gvn == 0);
                 tb_platform_heap_free(f->types);
                 f->types = new_types;
-            } else {
-                FOR_N(i, 0, dyn_array_length(ws->items)) {
-                    TB_Node* old = ws->items[i];
-                    TB_Node* n = fwd[old->gvn];
-                    // printf("%p(%%%u) -> %p(%%%u)\n", old, old->gvn, n, n->gvn);
-                    FOR_N(j, 0, old->input_count) {
-                        TB_Node* in = old->inputs[j];
-                        if (in) {
-                            // printf("  %p(%%%u) -> %p(%%%u)\n", in, in->gvn, fwd[in->gvn], fwd[in->gvn]->gvn);
-                            set_input(f, n, fwd[in->gvn], j);
-                        }
-                    }
+            }
+
+            FOR_N(i, 0, dyn_array_length(ws->items)) {
+                TB_Node* n = ws->items[i];
+                TB_Node* k = fwd[n->gvn];
+
+                // connect new node to new inputs
+                FOR_N(j, 0, n->input_cap) if (n->inputs[j]) {
+                    TB_Node* moved_k = fwd[n->inputs[j]->gvn];
+                    set_input(f, k, moved_k, j);
                 }
             }
 
-            // invalidate all of the GVN table since it hashes with value numbers
+            // redo the params list now
             f->root_node = fwd[f->root_node->gvn];
-            FOR_N(i, 0, f->param_count) {
-                f->params[i] = fwd[f->params[i]->gvn];
+
+            size_t param_count = 3 + f->param_count;
+            FOR_N(i, 0, param_count) {
+                f->params[i] = NULL;
+            }
+
+            FOR_USERS(u, f->root_node) {
+                TB_Node* un = USERN(u);
+                if (is_proj(un)) {
+                    TB_ASSERT(USERI(u) == 0);
+                    int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+                    if (index < param_count) {
+                        f->params[index] = un;
+                    }
+                }
             }
 
             nl_hashset_clear(&f->gvn_nodes);
         }
 
+        f->node_count = dyn_array_length(ws->items);
         worklist_clear(ws);
     }
 
@@ -369,6 +373,24 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_node
     tb_arena_restore(arena, sp);
 }
 
+void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws) {
+    worklist_clear(ws);
+    worklist_push(ws, f->root_node);
+    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+        TB_Node* n = ws->items[i];
+
+        if (is_mem_out_op(n) || n->dt.type == TB_TAG_MEMORY) {
+            // the anti-deps are applied to the tuple node (projs can't have extra inputs anyways)
+            TB_Node* k = is_proj(n) ? n->inputs[0] : n;
+            if (k->type != TB_ROOT) {
+                tb_node_clear_extras(f, k);
+            }
+        }
+
+        FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+    }
+}
+
 void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_nests, bool dataflow, TB_GetLatency get_lat) {
     assert(f->scheduled == NULL && "make sure when you're done with the schedule, you throw away the old one");
     TB_Arena* tmp_arena = f->tmp_arena;
@@ -470,7 +492,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                     if ((n->type == TB_MACH_PROJ || n->type == TB_PROJ) && n->inputs[0]->type == TB_ROOT) {
                         bb = start_bb;
                     } else if (n->type == TB_PHI) {
-                        assert(f->scheduled[n->inputs[0]->gvn] != NULL && "where tf is the BB?");
+                        TB_ASSERT(f->scheduled[n->inputs[0]->gvn] != NULL && "where tf is the BB?");
                         bb = f->scheduled[n->inputs[0]->gvn];
                     } else if (n->type != TB_ROOT) {
                         TB_Node* curr = n;
@@ -484,13 +506,29 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                     }
 
                     if (bb) {
-                        assert(n->type != TB_NULL);
+                        TB_ASSERT(n->type != TB_NULL);
                         nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
-                        assert(n->gvn < f->scheduled_n);
+                        TB_ASSERT(n->gvn < f->scheduled_n);
                         f->scheduled[n->gvn] = bb;
                         aarray_push(pins, n);
 
                         DO_IF(TB_OPTDEBUG_GCM)(printf("%s: %%%u pinned to .bb%d\n", f->super.name, n->gvn, bb->id));
+                    }
+                }
+
+                // insert anti-dep edges
+                if (is_mem_out_op(n) || n->dt.type == TB_TAG_MEMORY) {
+                    // clear old anti-deps
+                    TB_Node* k = is_proj(n) ? n->inputs[0] : n;
+                    if (k->type != TB_ROOT) {
+                        tb_node_clear_extras(f, k);
+
+                        FOR_USERS(u, k->inputs[1]) {
+                            TB_Node* un = USERN(u);
+                            if (k != un && USERI(u) == 1) {
+                                tb_node_add_extra(f, k, un);
+                            }
+                        }
                     }
                 }
 
@@ -515,7 +553,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                 top->sp = sp;
                 top->n = pin_n;
                 top->i = pin_n->input_count;
-                assert(pin_n->type != TB_NULL);
+                TB_ASSERT(pin_n->type != TB_NULL);
 
                 // DFS nodes by inputs
                 while (top) {
@@ -531,7 +569,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
 
                             // pinned nodes can't be rescheduled
                             if (!is_pinned(in) && !worklist_test_n_set(ws, in)) {
-                                assert(in->type != TB_NULL);
+                                TB_ASSERT(in->type != TB_NULL);
 
                                 TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
                                 Elem* new_top = tb_arena_alloc(tmp_arena, sizeof(Elem));
@@ -557,7 +595,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                                 continue;
                             }
 
-                            assert(n->inputs[i]->gvn < f->scheduled_n);
+                            TB_ASSERT(n->inputs[i]->gvn < f->scheduled_n);
                             TB_BasicBlock* bb = f->scheduled[n->inputs[i]->gvn];
                             if (bb == NULL) {
                                 // input has no scheduling... weird?
@@ -579,7 +617,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                         // unpinned nodes getting moved means their users need to move too
                         if (n->dt.type == TB_TAG_TUPLE) {
                             FOR_USERS(u, n) if (is_proj(USERN(u))) {
-                                assert(USERN(u)->type != TB_NULL);
+                                TB_ASSERT(USERN(u)->type != TB_NULL);
                                 nl_hashset_put2(&best->items, USERN(u), tb__node_hash, tb__node_cmp);
                                 f->scheduled[USERN(u)->gvn] = best;
                             }
@@ -600,7 +638,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
         CUIK_TIMED_BLOCK("late schedule") {
             FOR_REV_N(i, 0, dyn_array_length(ws->items)) {
                 TB_Node* n = ws->items[i];
-                assert(n->type != TB_NULL);
+                TB_ASSERT(n->type != TB_NULL);
                 DO_IF(TB_OPTDEBUG_GCM)(printf("%s: try late %%%u\n", f->super.name, n->gvn));
 
                 TB_BasicBlock* lca = NULL;
@@ -627,9 +665,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
 
                 if (lca != NULL) {
                     TB_BasicBlock* old = f->scheduled[n->gvn];
-                    // i dont think it should be possible to schedule something here
-                    // which didn't already get scheduled in EARLY
-                    assert(old && "huh?");
+                    TB_ASSERT_MSG(old, "we made it to late sched without an early sched?");
 
                     // replace old BB entry, also if old is a natural loop we might
                     // be better off hoisting the values if possible.
