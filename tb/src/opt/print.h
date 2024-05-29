@@ -194,12 +194,12 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         }
     } else if (cfg_is_region(n)) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-        ptrdiff_t i = try_find_traversal_index(&ctx->cfg, n);
+        int i = find_traversal_index(&ctx->cfg, n);
         if (i >= 0) {
             if (r->tag != NULL) {
-                printf(".bb%zu.%s", i, r->tag);
+                printf("%%%d.%s", n->gvn, r->tag);
             } else {
-                printf(".bb%zu", i);
+                printf("%%%d", n->gvn);
             }
         } else {
             printf("*DEAD*");
@@ -220,7 +220,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                     print_type2(USERN(u)->dt);
                 }
             }
-            printf(") // region %%%u", n->gvn);
+            printf(")");
             if (n->type == TB_NATURAL_LOOP) printf(" !natural");
             if (n->type == TB_AFFINE_LOOP) printf(" !affine");
         }
@@ -241,9 +241,9 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         if (n->inputs[0]->type == TB_ROOT) {
             print_ref_to_node(ctx, n->inputs[0], def);
         } else {
-            ptrdiff_t i = try_find_traversal_index(&ctx->cfg, n);
+            int i = find_traversal_index(&ctx->cfg, n);
             if (i >= 0) {
-                printf(".bb%zu", i);
+                printf(".bb%d", i);
                 if (def) {
                     // printf("()");
                     printf("() // cproj %%%u", n->gvn);

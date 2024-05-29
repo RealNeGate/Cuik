@@ -28,6 +28,7 @@
 
 #include "tb_platform.h"
 #include "dyn_array.h"
+#include "arena_array.h"
 #include "builtins.h"
 
 #define NL_HASH_MAP_INLINE
@@ -295,18 +296,17 @@ struct TB_Worklist {
 // kept around at all times like an SSA-CFG compiler.
 typedef struct TB_BasicBlock TB_BasicBlock;
 struct TB_BasicBlock {
-    TB_BasicBlock* dom;
-
     TB_Node* start;
     TB_Node* end;
-    int id, dom_depth;
 
-    // shitty estimate for now
-    float freq;
-    TB_BasicBlock* loop;
-
+    int rpo_i;
     // used by codegen to track the associated machine BB
-    int order;
+    int machine_i;
+
+    float freq;
+    int dom_depth;
+    TB_BasicBlock* dom;
+    TB_BasicBlock* loop;
 
     // dataflow
     Set gen, kill;
@@ -317,7 +317,9 @@ struct TB_BasicBlock {
 
 typedef struct TB_CFG {
     size_t block_count;
-    NL_Map(TB_Node*, TB_BasicBlock) node_to_block;
+    int* rpo_walk;
+    ArenaArray(TB_BasicBlock) blocks; // pre-order nodes
+    NL_Map(TB_Node*, TB_BasicBlock*) node_to_block;
 } TB_CFG;
 
 typedef struct TB_LoopInfo {

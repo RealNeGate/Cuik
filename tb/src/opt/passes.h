@@ -334,21 +334,34 @@ static TB_Node* cfg_get_pred(TB_CFG* cfg, TB_Node* n, int i) {
     }
 }
 
+static TB_BasicBlock* cfg_get_pred_bb(TB_CFG* cfg, TB_Node* n, int i) {
+    n = n->inputs[i];
+    for (;;) {
+        ptrdiff_t search = nl_map_get(cfg->node_to_block, n);
+        if (search >= 0) {
+            return cfg->node_to_block[search].v;
+        } else if (n->type == TB_DEAD || cfg_is_region(n)) {
+            return NULL;
+        }
+
+        n = n->inputs[0];
+    }
+}
+
 // shorthand because we use it a lot
 static TB_Node* idom(TB_CFG* cfg, TB_Node* n) {
-    if (cfg->node_to_block == NULL) return NULL;
-
+    TB_ASSERT(cfg->node_to_block == NULL);
     ptrdiff_t search = nl_map_get(cfg->node_to_block, n);
     if (search < 0) {
         return NULL;
     }
 
-    TB_BasicBlock* dom = cfg->node_to_block[search].v.dom;
+    TB_BasicBlock* dom = cfg->node_to_block[search].v->dom;
     return dom ? dom->start : NULL;
 }
 
 static int dom_depth(TB_CFG* cfg, TB_Node* n) {
-    return nl_map_get_checked(cfg->node_to_block, n).dom_depth;
+    return nl_map_get_checked(cfg->node_to_block, n)->dom_depth;
 }
 
 static bool slow_dommy2(TB_BasicBlock* expected_dom, TB_BasicBlock* bb) {

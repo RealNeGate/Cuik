@@ -407,7 +407,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
             // live ins & outs will outlive this function so we wanna alloc before the savepoint
             FOR_N(i, 0, cfg.block_count) {
                 TB_Node* n = ws->items[i];
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, n);
+                TB_BasicBlock* bb = nl_map_get_checked(cfg.node_to_block, n);
 
                 bb->live_in = set_create_in_arena(tmp_arena, node_count);
                 bb->live_out = set_create_in_arena(tmp_arena, node_count);
@@ -424,7 +424,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
 
             FOR_N(i, 0, cfg.block_count) {
                 TB_Node* n = rpo_nodes[i];
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, n);
+                TB_BasicBlock* bb = nl_map_get_checked(cfg.node_to_block, n);
 
                 assert(n->type != TB_NULL);
                 bb->items = nl_hashset_alloc(32);
