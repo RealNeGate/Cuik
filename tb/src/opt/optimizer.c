@@ -1324,7 +1324,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     TB_OPTDEBUG(PASSES)(printf("FUNCTION %s:\n", f->super.name));
 
     bool progress = false;
-    tb_print_dumb(f, false);
 
     int k;
     int rounds = 0;

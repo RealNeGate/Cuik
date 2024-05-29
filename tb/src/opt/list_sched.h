@@ -175,22 +175,26 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             stall = false;
 
             remove_ready(&sched, idx);
-
             TB_ASSERT(!is_proj(n));
-            worklist_push(ws, n);
-
-            // make sure to place all projections directly after their tuple node
-            if (n->dt.type == TB_TAG_TUPLE && !cfg_is_fork(n)) {
-                FOR_USERS(u, n) if (is_proj(USERN(u))) {
-                    assert(USERI(u) == 0);
-                    assert(!worklist_test(ws, USERN(u)));
-                    worklist_push(ws, USERN(u));
-                }
-            }
 
             int end_cycle = cycle + get_lat(f, n, end);
-            TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, n), printf(" (on machine %d, until t=%d)\n", unit_i, end_cycle));
             aarray_push(active, (InFlight){ n, end_cycle, unit_i });
+
+            if (n != end) {
+                worklist_push(ws, n);
+
+                // make sure to place all projections directly after their tuple node
+                if (n->dt.type == TB_TAG_TUPLE) {
+                    TB_ASSERT(!cfg_is_fork(n));
+                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                        assert(USERI(u) == 0);
+                        assert(!worklist_test(ws, USERN(u)));
+                        worklist_push(ws, USERN(u));
+                    }
+                }
+
+                TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, n), printf(" (on machine %d, until t=%d)\n", unit_i, end_cycle));
+            }
         }
 
         if (stall) {
@@ -221,6 +225,12 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                 }
             }
         }
+    }
+
+    // place end node
+    if (end != bb->start) {
+        TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, end), printf("\n"));
+        worklist_push(ws, end);
     }
 
     tb_arena_restore(tmp_arena, sp);

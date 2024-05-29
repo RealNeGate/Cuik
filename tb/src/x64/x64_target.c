@@ -288,7 +288,7 @@ static int node_2addr(TB_Node* n) {
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            return op->mode != MODE_ST ? 4 : 0;
+            return op->mode != MODE_ST ? 2 : 0;
         }
 
         case x86_mov:
@@ -304,6 +304,7 @@ static int node_2addr(TB_Node* n) {
         }
 
         // ANY_GPR = OP(COND, shared: ANY_GPR, ANY_GPR)
+        case x86_lea:
         case x86_cmovcc:
         return 2;
 

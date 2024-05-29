@@ -65,7 +65,7 @@ struct Lattice {
         LATTICE_FLTCON32, LATTICE_FLTCON64, // _f32 and _f64
 
         // pointers:
-        //      top
+        //    anyptr
         //     /   \
         //    /     \
         //   /     /|\
@@ -74,7 +74,7 @@ struct Lattice {
         //   |    \ | /
         //   \    ~null
         //    \   /
-        //     ptr
+        //    allptr
         LATTICE_ALLPTR,
         LATTICE_ANYPTR,
         LATTICE_NULL,

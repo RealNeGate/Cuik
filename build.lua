@@ -242,6 +242,10 @@ rule("run", {
 command("bin/objs/lexgen"..exe_ext, "libCuik/meta/lexgen.c", cc.." $in -O1 -o $out")
 command("libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
 
+-- TB metaprogram
+command("bin/objs/tbmeta"..exe_ext, "tb/meta/dsl.c", cc.." $in -O0 -g -o $out")
+-- command("tb/meta/cool.lua", "bin/objs/tbmeta"..exe_ext, "bin/objs/tbmeta"..exe_ext)
+
 -- package freestanding headers into C file
 local x = {}
 if is_windows then

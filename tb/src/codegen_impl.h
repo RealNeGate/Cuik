@@ -210,7 +210,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     CUIK_TIMED_BLOCK("global sched") {
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
-        // tb_renumber_nodes(f, ws);
+        tb_renumber_nodes(f, ws);
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
         TB_OPTDEBUG(CODEGEN)(tb_print(f, f->tmp_arena));

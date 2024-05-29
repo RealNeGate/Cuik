@@ -61,7 +61,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_LOCAL]          = { NULL,              NULL,               value_ptr_vals   },
     [TB_SYMBOL]         = { NULL,              NULL,               value_ptr_vals   },
     // pointer arithmetic
-    [TB_PTR_OFFSET]     = { ideal_ptr_offset,  identity_int_binop, NULL             },
+    [TB_PTR_OFFSET]     = { ideal_ptr_offset,  NULL,               NULL             },
     // arithmetic
     [TB_ADD]            = { ideal_arith,       identity_int_binop, value_arith      },
     [TB_SUB]            = { ideal_arith,       identity_int_binop, value_arith      },
