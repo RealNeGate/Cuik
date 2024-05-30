@@ -194,15 +194,10 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         }
     } else if (cfg_is_region(n)) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
-        int i = find_traversal_index(&ctx->cfg, n);
-        if (i >= 0) {
-            if (r->tag != NULL) {
-                printf("%%%d.%s", n->gvn, r->tag);
-            } else {
-                printf("%%%d", n->gvn);
-            }
+        if (r->tag != NULL) {
+            printf("%%%u.%s", n->gvn, r->tag);
         } else {
-            printf("*DEAD*");
+            printf("%%%u", n->gvn);
         }
 
         if (def) {
@@ -241,16 +236,8 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         if (n->inputs[0]->type == TB_ROOT) {
             print_ref_to_node(ctx, n->inputs[0], def);
         } else {
-            int i = find_traversal_index(&ctx->cfg, n);
-            if (i >= 0) {
-                printf(".bb%d", i);
-                if (def) {
-                    // printf("()");
-                    printf("() // cproj %%%u", n->gvn);
-                }
-            } else {
-                printf("*DEAD*");
-            }
+            printf("%%%u", n->gvn);
+            if (def) { printf("()"); }
         }
     } else if (n->type == TB_ICONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
@@ -299,21 +286,14 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
     printf(")");
 }
 
-static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
-    print_ref_to_node(ctx, bb_start, true);
+static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
+    print_ref_to_node(ctx, bb->start, true);
     printf("\n");
 
     TB_Function* f = ctx->f;
-    TB_BasicBlock* bb = f->scheduled[bb_start->gvn];
-
-    #ifndef NDEBUG
-    TB_BasicBlock* expected = &nl_map_get_checked(ctx->cfg.node_to_block, bb_start);
-    TB_ASSERT(expected == bb);
-    #endif
-
     tb_greedy_scheduler(f, &ctx->cfg, ws, NULL, bb);
 
-    FOR_N(i, ctx->cfg.block_count, dyn_array_length(ws->items)) {
+    FOR_N(i, 0, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];
 
         // skip these
@@ -619,8 +599,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_Node* bb_start) {
 
         printf("\n");
     }
-
-    dyn_array_set_length(ws->items, ctx->cfg.block_count);
+    dyn_array_clear(ws->items);
 
     if (!cfg_is_terminator(bb->end)) {
         printf("  goto ");
@@ -648,20 +627,20 @@ void tb_print(TB_Function* f, TB_Arena* tmp) {
 
     PrinterCtx ctx = { 0 };
     ctx.f   = f;
-    ctx.cfg = tb_compute_rpo(f, &ws);
+    ctx.cfg = tb_compute_cfg(f, &ws, f->tmp_arena, TB_CFG_DOMS);
 
     // schedule nodes
     tb_global_schedule(f, &ws, ctx.cfg, false, false, NULL);
 
-    TB_Node* end_bb = NULL;
-    FOR_N(i, 0, ctx.cfg.block_count) {
-        TB_Node* end = nl_map_get_checked(ctx.cfg.node_to_block, ws.items[i]).end;
-        if (end->type == TB_RETURN) {
-            end_bb = ws.items[i];
+    TB_BasicBlock* end_bb = NULL;
+    aarray_for(i, ctx.cfg.blocks) {
+        TB_BasicBlock* bb = &ctx.cfg.blocks[i];
+        if (bb->end->type == TB_RETURN) {
+            end_bb = bb;
             continue;
         }
 
-        print_bb(&ctx, &ws, ws.items[i]);
+        print_bb(&ctx, &ws, bb);
     }
 
     if (end_bb != NULL) {

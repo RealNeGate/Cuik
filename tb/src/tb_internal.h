@@ -316,7 +316,6 @@ struct TB_BasicBlock {
 };
 
 typedef struct TB_CFG {
-    size_t block_count;
     int* rpo_walk;
     ArenaArray(TB_BasicBlock) blocks; // pre-order nodes
     NL_Map(TB_Node*, TB_BasicBlock*) node_to_block;

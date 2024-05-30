@@ -397,8 +397,13 @@ bool cfg_is_endpoint(TB_Node* n);
 // internal debugging mostly
 void tb_print_dumb_node(Lattice** types, TB_Node* n);
 
-// pushes RPO walk into worklist items, also modifies the visited set.
-TB_CFG tb_compute_rpo(TB_Function* f, TB_Worklist* ws);
+typedef enum {
+    TB_CFG_DOMS  = 1,
+    TB_CFG_LOOPS = 2,
+} TB_CFGFlags;
+
+// computes basic blocks but also dominators and loop nests if necessary.
+TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp_arena, int flags);
 void tb_free_cfg(TB_CFG* cfg);
 //   postorder walk -> dominators
 void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg);
@@ -425,7 +430,7 @@ typedef uint64_t (*TB_GetUnitMask)(TB_Function* f, TB_Node* n);
 // Local scheduler
 void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count);
 void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb);
-void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_nodes);
+void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg);
 
 // Global scheduler
 void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws);

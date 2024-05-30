@@ -447,12 +447,11 @@ static void c_fmt_branch_edge(CFmtState* ctx, TB_Node* n, bool fallthru) {
     nl_buffer_format(ctx->buf, "goto bb%u;\n", target->gvn);
 }
 
-static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_Node* bb_start) {
+static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
     size_t declared_vars_length = dyn_array_length(&ctx->declared_vars);
-    nl_buffer_format(ctx->buf, "bb%u:\n", bb_start->gvn);
+    nl_buffer_format(ctx->buf, "bb%u:\n", bb->start->gvn);
 
-    TB_BasicBlock* bb = ctx->f->scheduled[bb_start->gvn];
-    CFmtBlockRange *range = c_fmt_get_block_range(ctx, ws, bb_start);
+    CFmtBlockRange *range = c_fmt_get_block_range(ctx, ws, bb->start);
 
     TB_Node* prev_effect = NULL;
     FOR_N(i, range->low, range->high) {
@@ -1399,18 +1398,16 @@ TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp) {
     ctx.declared_types = nl_hashset_alloc(4);
     ctx.visited_blocks = dyn_array_create(size_t, 8);
     ctx.declared_vars = nl_hashset_alloc(16);
-    ctx.block_ranges = nl_table_alloc(ctx.cfg.block_count);
+    ctx.block_ranges = nl_table_alloc(aarray_length(ctx.cfg.blocks));
 
-    // nl_hashset_clear(&ctx.visited_blocks);
-    ctx.cfg = tb_compute_rpo(f, ws);
+    ctx.cfg = tb_compute_cfg(f, ws, f->tmp_arena, TB_CFG_DOMS);
 
     // schedule nodes
     tb_global_schedule(f, ws, ctx.cfg, false, false, NULL);
 
-    // TB_Node* end_bb = NULL;
-    FOR_N(i, 0, ctx.cfg.block_count) {
+    aarray_for(i, ctx.cfg.blocks) {
         ctx.depth += 1;
-        c_fmt_bb(&ctx, ws, ws->items[i]);
+        c_fmt_bb(&ctx, ws, &ctx.cfg.blocks[i]);
         ctx.depth -= 1;
     }
     tb_free_cfg(&ctx.cfg);

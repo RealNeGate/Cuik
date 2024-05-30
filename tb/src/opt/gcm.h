@@ -122,7 +122,7 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp) {
                     new_types[k->gvn] = f->types[n->gvn];
                 }
 
-                assert(f->root_node->gvn == 0);
+                TB_ASSERT(f->root_node->gvn == 0);
                 tb_platform_heap_free(f->types);
                 f->types = new_types;
             }
@@ -200,7 +200,7 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
                     ws->items[i]->gvn = i;
                 }
 
-                assert(f->root_node->gvn == 0);
+                TB_ASSERT(f->root_node->gvn == 0);
                 tb_platform_heap_free(f->types);
                 f->types = new_types;
             } else {
@@ -217,8 +217,8 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
     }
 }
 
-void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_nodes) {
-    size_t bb_count   = cfg.block_count;
+void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
+    size_t bb_count   = aarray_length(cfg.blocks);
     size_t node_count = f->node_count;
 
     TB_ArenaSavepoint sp = tb_arena_save(arena);
@@ -228,18 +228,16 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_node
 
     size_t old = dyn_array_length(ws->items);
     CUIK_TIMED_BLOCK("dataflow") {
-        FOR_N(i, 0, cfg.block_count) {
-            TB_Node* n = rpo_nodes[i];
-            TB_BasicBlock* bb = f->scheduled[n->gvn];
-
+        aarray_for(i, cfg.blocks) {
+            TB_BasicBlock* bb = &cfg.blocks[i];
             bb->gen  = set_create_in_arena(arena, node_count);
             bb->kill = set_create_in_arena(arena, node_count);
         }
 
         CUIK_TIMED_BLOCK("local") {
             // we're doing dataflow analysis without the local schedule :)
-            FOR_N(i, 0, bb_count) {
-                TB_BasicBlock* bb = f->scheduled[rpo_nodes[i]->gvn];
+            aarray_for(i, cfg.blocks) {
+                TB_BasicBlock* bb = &cfg.blocks[cfg.rpo_walk[i]];
                 nl_hashset_for(e, &bb->items) {
                     TB_Node* n = *e;
 
@@ -263,8 +261,8 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_node
                 }
             }
 
-            FOR_N(i, 0, bb_count) {
-                TB_BasicBlock* bb = f->scheduled[rpo_nodes[i]->gvn];
+            aarray_for(i, cfg.blocks) {
+                TB_BasicBlock* bb = &cfg.blocks[cfg.rpo_walk[i]];
                 nl_hashset_for(e, &bb->items) {
                     TB_Node* n = *e;
                     if (n->type == TB_PHI) continue;
@@ -282,14 +280,12 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg, TB_Node** rpo_node
         // generate global live sets
         CUIK_TIMED_BLOCK("global") {
             // all BB go into the worklist
-            FOR_REV_N(i, 0, bb_count) {
-                TB_Node* n = rpo_nodes[i];
+            aarray_for(i, cfg.blocks) {
+                TB_BasicBlock* bb = &cfg.blocks[cfg.rpo_walk[i]];
 
                 // in(bb) = use(bb)
-                TB_BasicBlock* bb = f->scheduled[n->gvn];
                 set_copy(&bb->live_in, &bb->gen);
-
-                worklist_push(ws, n);
+                worklist_push(ws, bb->start);
             }
 
             Set visited = set_create_in_arena(arena, bb_count);
@@ -405,75 +401,26 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
 
         if (dataflow) {
             // live ins & outs will outlive this function so we wanna alloc before the savepoint
-            FOR_N(i, 0, cfg.block_count) {
-                TB_Node* n = ws->items[i];
-                TB_BasicBlock* bb = nl_map_get_checked(cfg.node_to_block, n);
-
+            aarray_for(i, cfg.blocks) {
+                TB_BasicBlock* bb = &cfg.blocks[i];
                 bb->live_in = set_create_in_arena(tmp_arena, node_count);
                 bb->live_out = set_create_in_arena(tmp_arena, node_count);
             }
         }
 
         TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-        TB_Node** rpo_nodes = tb_arena_alloc(tmp_arena, cfg.block_count * sizeof(TB_Node*));
-        memcpy(rpo_nodes, ws->items, cfg.block_count * sizeof(TB_Node*));
 
         CUIK_TIMED_BLOCK("dominators") {
-            // jarvis pull up the dommies
-            tb_compute_dominators(f, ws, cfg);
+            aarray_for(i, cfg.blocks) {
+                TB_BasicBlock* bb = &cfg.blocks[i];
 
-            FOR_N(i, 0, cfg.block_count) {
-                TB_Node* n = rpo_nodes[i];
-                TB_BasicBlock* bb = nl_map_get_checked(cfg.node_to_block, n);
-
-                assert(n->type != TB_NULL);
+                TB_ASSERT(bb->start->type != TB_NULL);
                 bb->items = nl_hashset_alloc(32);
-                nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
-                f->scheduled[rpo_nodes[i]->gvn] = bb;
+                nl_hashset_put2(&bb->items, bb->start, tb__node_hash, tb__node_cmp);
+                f->scheduled[bb->start->gvn] = bb;
             }
 
             worklist_clear(ws);
-        }
-
-        CUIK_TIMED_BLOCK("loop nest") if (loop_nests) {
-            // compute dumb loop nests (we're inside another loop if it dominates us
-            // and we dominate it's backedge)
-            FOR_N(i, 0, cfg.block_count) {
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, rpo_nodes[i]);
-                bb->loop = cfg_is_natural_loop(bb->start) ? bb : NULL;
-                bb->freq = 1.0f;
-            }
-
-            FOR_REV_N(i, 1, cfg.block_count) {
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, rpo_nodes[i]);
-
-                if (bb->loop == NULL) {
-                    // scan for potential parent loop
-                    TB_BasicBlock* dom = bb->dom;
-                    while (dom != dom->dom) {
-                        if (dom->loop) {
-                            // ok we found a loop, now guarentee we're dominating it's backedge
-                            TB_Node* backedge = cfg_get_pred(&cfg, dom->loop->start, 1);
-                            if (slow_dommy(&cfg, bb->start, backedge)) {
-                                bb->loop = dom->loop;
-                                break;
-                            }
-                        }
-                        dom = dom->dom;
-                    }
-                }
-            }
-
-            // really dumb block frequencies (eventually we want heuristics around exit paths)
-            FOR_N(i, 0, cfg.block_count) {
-                TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, rpo_nodes[i]);
-
-                TB_BasicBlock* loop = bb->loop;
-                while (loop) {
-                    bb->freq *= 10.0f;
-                    loop = loop->dom ? loop->dom->loop : NULL;
-                }
-            }
         }
 
         TB_BasicBlock* start_bb   = &nl_map_get_checked(cfg.node_to_block, rpo_nodes[0]);

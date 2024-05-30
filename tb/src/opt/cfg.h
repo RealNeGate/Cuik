@@ -1,4 +1,6 @@
 
+static void compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg);
+
 typedef struct Block {
     struct Block* parent;
     TB_ArenaSavepoint sp;
@@ -6,13 +8,6 @@ typedef struct Block {
     int succ_i;
     TB_Node* succ[];
 } Block;
-
-void tb_free_cfg(TB_CFG* cfg) {
-    aarray_for(i, cfg->blocks) {
-        nl_hashset_free(cfg->blocks[i].items);
-    }
-    nl_map_free(cfg->node_to_block);
-}
 
 static TB_Node* cfg_next_control0(TB_Node* n) {
     FOR_USERS(u, n) {
@@ -74,7 +69,7 @@ static Block* create_block(TB_Arena* arena, TB_Node* end, int id) {
     return top;
 }
 
-TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena) {
+TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, TB_CFGFlags flags) {
     cuikperf_region_start("CFG", NULL);
     assert(dyn_array_length(ws->items) == 0);
 
@@ -101,9 +96,6 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena) {
         }
 
         TB_BasicBlock bb = { .start = n, .end = end, .dom_depth = -1 };
-        if (aarray_length(cfg.blocks) == 0) {
-            bb.dom_depth = 0;
-        }
         aarray_push(cfg.blocks, bb);
     }
 
@@ -122,7 +114,7 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena) {
     cfg.rpo_walk = tb_arena_alloc(arena, block_count * sizeof(int));
 
     // push initial block
-    Block* top = create_block(f->tmp_arena, blocks[0].end, 0);
+    Block* top = create_block(f->tmp_arena, cfg.blocks[0].end, 0);
     worklist_test_n_set(ws, f->params[0]);
 
     while (top != NULL) {
@@ -131,13 +123,13 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena) {
             // push next unvisited succ
             TB_Node* succ = top->succ[--top->succ_i];
             if (!worklist_test_n_set(ws, succ)) {
-                Block* new_top = create_block(f->tmp_arena, succ);
+                TB_BasicBlock* succ_bb = nl_map_get_checked(cfg.node_to_block, succ);
+                Block* new_top = create_block(f->tmp_arena, succ_bb->end, succ_bb - cfg.blocks);
                 new_top->parent = top;
                 top = new_top;
             }
         } else {
             Block* parent = top->parent;
-            Block b = *top;
 
             assert(block_i > 0);
             cfg.rpo_walk[--block_i] = top->bb_id;
@@ -148,39 +140,43 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena) {
         cuikperf_region_end();
     }
 
-    CUIK_TIMED_BLOCK("dom depths") {
-        FOR_N(i, 0, cfg.block_count) {
-            TB_BasicBlock* bb = &nl_map_get_checked(cfg.node_to_block, ws->items[i]);
-            if (i == 0) {
-                bb->dom_depth = 0;
-            }
-            bb->id = i;
+    if (flags & TB_CFG_DOMS) {
+        cuikperf_region_start("doms", NULL);
+        compute_dominators(f, ws, cfg);
+        cuikperf_region_end();
+
+        if (flags & TB_CFG_LOOPS) {
+            cuikperf_region_start("loops", NULL);
+            __debugbreak();
+            // compute_dominators(f, ws, cfg);
+            cuikperf_region_end();
         }
+    } else {
+        TB_ASSERT_MSG(~flags & TB_CFG_LOOPS, "cannot compute loop nests without dominators");
     }
 
     cuikperf_region_end();
     return cfg;
 }
 
-static int resolve_dom_depth(TB_CFG* cfg, TB_Node* bb) {
-    if (dom_depth(cfg, bb) >= 0) {
-        return dom_depth(cfg, bb);
+void tb_free_cfg(TB_CFG* cfg) {
+    aarray_for(i, cfg->blocks) {
+        nl_hashset_free(cfg->blocks[i].items);
     }
-
-    int parent = resolve_dom_depth(cfg, idom(cfg, bb));
-
-    // it's one more than it's parent
-    nl_map_get_checked(cfg->node_to_block, bb).dom_depth = parent + 1;
-    return parent + 1;
+    nl_map_free(cfg->node_to_block);
 }
 
+////////////////////////////////
+// Dominators
+////////////////////////////////
 // Cooper, Keith D., Harvey, Timothy J. and Kennedy, Ken. "A simple, fast dominance algorithm." (2006)
 //   https://repository.rice.edu/items/99a574c3-90fe-4a00-adf9-ce73a21df2ed
-void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
+static void compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
     size_t block_count = aarray_length(cfg.blocks);
     TB_BasicBlock* blocks = &cfg.blocks[0];
 
     // entry block dominates itself
+    blocks[0].dom_depth = 0;
     blocks[0].dom = &blocks[0];
 
     bool changed = true;
@@ -188,7 +184,7 @@ void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
         changed = false;
 
         // for all nodes, b, in reverse postorder (except entry block)
-        FOR_N(i, 1, cfg.block_count) {
+        FOR_N(i, 1, block_count) {
             TB_BasicBlock* bb = &blocks[cfg.rpo_walk[i]];
             TB_BasicBlock* new_idom = NULL;
             TB_Node* b = bb->start;
@@ -205,7 +201,7 @@ void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
                 if (new_idom == NULL) {
                     new_idom = idom_p;
                 } else {
-                    TB_ASSERT(p->input_count > 0);
+                    TB_ASSERT(p->start->input_count > 0);
                     int a = p->rpo_i;
                     if (a >= 0) {
                         int b = new_idom->rpo_i;
@@ -227,8 +223,8 @@ void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
             }
 
             assert(new_idom != NULL);
-            if (b->dom != new_idom) {
-                b->dom  = new_idom;
+            if (bb->dom != new_idom) {
+                bb->dom = new_idom;
                 changed = true;
             }
         }
@@ -236,8 +232,15 @@ void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
 
     // generate depth values
     CUIK_TIMED_BLOCK("generate dom tree") {
-        FOR_REV_N(i, 1, cfg.block_count) {
-            resolve_dom_depth(&cfg, blocks[i]);
+        aarray_for(i, cfg.blocks) {
+            TB_BasicBlock* bb = &cfg.blocks[cfg.rpo_walk[i]];
+
+            TB_BasicBlock* curr = bb;
+            int depth = 0;
+            while (curr->dom_depth < 0) {
+                curr = curr->dom, depth++;
+            }
+            bb->dom_depth = depth + curr->dom_depth;
         }
     }
 }

@@ -445,13 +445,11 @@ bool tb_opt_find_loops(TB_Function* f) {
     bool progress = false;
 
     TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
-    TB_CFG cfg = tb_compute_rpo(f, f->worklist);
+    TB_CFG cfg = tb_compute_cfg(f, f->worklist, f->tmp_arena, TB_CFG_DOMS | TB_CFG_LOOPS);
     tb_compute_dominators(f, f->worklist, cfg);
 
-    TB_Node** blocks = tb_arena_alloc(f->tmp_arena, cfg.block_count * sizeof(TB_Node*));
-    memcpy(blocks, &f->worklist->items[0], cfg.block_count * sizeof(TB_Node*));
-    worklist_clear(f->worklist);
-
+    #if 0
+    worklist_push(f->worklist, );
     TB_LoopInfo* loop_list = NULL;
 
     // canonicalize regions into natural loop headers (or affine loops)
@@ -496,7 +494,7 @@ bool tb_opt_find_loops(TB_Function* f) {
             TB_NodeTypeEnum type = TB_NATURAL_LOOP;
 
             // if we don't have the latch in the header
-            TB_BasicBlock* header_info = &nl_map_get_checked(cfg.node_to_block, header);
+            TB_BasicBlock* header_info = nl_map_get_checked(cfg.node_to_block, header);
 
             TB_InductionVar var;
             TB_Node* latch = NULL;
@@ -692,6 +690,7 @@ bool tb_opt_find_loops(TB_Function* f) {
     }
     tb_free_cfg(&cfg);
     f->loop_list = loop_list;
+    #endif
 
     tb_arena_restore(f->tmp_arena, sp);
     cuikperf_region_end();
