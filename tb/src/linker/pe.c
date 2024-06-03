@@ -65,14 +65,14 @@ void pe_append_object(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name
     tb_coff_parse_init(&parser);
 
     // We don't *really* care about this info beyond nicer errors
-    TB_LinkerObject* obj_file = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerObject));
+    TB_LinkerObject* obj_file = tb_arena_alloc(&info->perm_arena, sizeof(TB_LinkerObject));
     *obj_file = (TB_LinkerObject){ .len = obj_name.length, .name = (char*) obj_name.data };
 
-    TB_ArenaSavepoint sp = tb_arena_save(info->tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(&info->tmp_arena);
 
     // Apply all sections (generate lookup for sections based on ordinals)
     TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
-    TB_ObjectSection* sections = tb_arena_alloc(info->tmp_arena, parser.section_count * sizeof(TB_ObjectSection));
+    TB_ObjectSection* sections = tb_arena_alloc(&info->tmp_arena, parser.section_count * sizeof(TB_ObjectSection));
     FOR_N(i, 0, parser.section_count) {
         TB_ObjectSection* restrict s = &sections[i];
         tb_coff_parse_section(&parser, i, s);
@@ -186,7 +186,7 @@ void pe_append_object(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name
 
     // append all symbols
     size_t sym_count = 0;
-    TB_ObjectSymbol* syms = tb_arena_alloc(info->tmp_arena, sizeof(TB_ObjectSymbol) * parser.symbol_count);
+    TB_ObjectSymbol* syms = tb_arena_alloc(&info->tmp_arena, sizeof(TB_ObjectSymbol) * parser.symbol_count);
 
     COFF_AuxSectionSymbol* comdat_aux = NULL;
     CUIK_TIMED_BLOCK("apply symbols") {
@@ -217,7 +217,7 @@ void pe_append_object(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name
                 TB_LinkerSectionPiece* p = sec->user_data;
                 assert(p != NULL);
                 if (sym->type == TB_OBJECT_SYMBOL_STATIC) {
-                    s = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerSymbol));
+                    s = tb_arena_alloc(&info->perm_arena, sizeof(TB_LinkerSymbol));
                     *s = (TB_LinkerSymbol){ .name = name };
                     s->tag = TB_LINKER_SYMBOL_NORMAL;
                     s->normal.piece = p;
@@ -343,7 +343,7 @@ void pe_append_object(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice obj_name
         }
     }
 
-    tb_arena_restore(info->tmp_arena, sp);
+    tb_arena_restore(&info->tmp_arena, sp);
 }
 
 static void pe_append_library(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice ar_name, TB_Slice ar_file) {
@@ -354,8 +354,8 @@ static void pe_append_library(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Slice 
         return;
     }
 
-    TB_Arena* perm_arena = info->perm_arena;
-    TB_Arena* arena = info->tmp_arena;
+    TB_Arena* perm_arena = &info->perm_arena;
+    TB_Arena* arena = &info->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
 
     TB_ArchiveEntry* entries = tb_arena_alloc(arena, ar_parser.member_count * sizeof(TB_ArchiveEntry));
@@ -436,7 +436,7 @@ static void pe_append_module(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Module*
     dyn_array_put(info->ir_modules, m);
 
     // We don't *really* care about this info beyond nicer errors
-    TB_LinkerObject* obj_file = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerObject));
+    TB_LinkerObject* obj_file = tb_arena_alloc(&info->perm_arena, sizeof(TB_LinkerObject));
     *obj_file = (TB_LinkerObject){ .module = m };
 
     // Convert module into sections which we can then append to the output
@@ -724,7 +724,7 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
     }
 
     TB_LinkerThreadInfo* info = linker_thread_info(l);
-    uint8_t* output = tb_arena_alloc(info->perm_arena, total_size);
+    uint8_t* output = tb_arena_alloc(&info->perm_arena, total_size);
 
     COFF_ImportDirectory* import_dirs = (COFF_ImportDirectory*) &output[0];
     uint64_t* iat = (uint64_t*) &output[import_dir_size];
@@ -826,7 +826,7 @@ static void* gen_reloc_section(TB_Linker* l) {
 
     if (reloc_sec_size) {
         TB_LinkerThreadInfo* info = linker_thread_info(l);
-        void* reloc = tb_arena_alloc(info->perm_arena, reloc_sec_size);
+        void* reloc = tb_arena_alloc(&info->perm_arena, reloc_sec_size);
 
         TB_LinkerSection* reloc_sec = tb_linker_find_or_create_section(l, ".reloc", IMAGE_SCN_MEM_READ | IMAGE_SCN_CNT_INITIALIZED_DATA);
         l->main_reloc = tb_linker_append_piece(info, reloc_sec, PIECE_NORMAL, reloc_sec_size, reloc, 0);

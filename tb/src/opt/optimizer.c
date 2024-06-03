@@ -34,7 +34,7 @@ TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 static void node_resize_inputs(TB_Function* f, TB_Node* n, size_t cnt) {
     if (cnt >= n->input_cap) {
         size_t new_cap = tb_next_pow2(cnt + 1);
-        TB_Node** new_inputs = tb_arena_alloc(f->arena, new_cap * sizeof(TB_Node*));
+        TB_Node** new_inputs = tb_arena_alloc(&f->arena, new_cap * sizeof(TB_Node*));
         if (n->inputs != NULL) {
             memcpy(new_inputs, n->inputs, cnt * sizeof(TB_Node*));
         }
@@ -245,7 +245,7 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
         n->inputs[i] = NULL;
     }
 
-    TB_Arena* arena = n->type == TB_SYMBOL_TABLE ? f->tmp_arena : f->arena;
+    TB_Arena* arena = &f->arena;
     tb_arena_free(arena, n->users, n->user_cap * sizeof(TB_User));
     tb_arena_free(arena, n->inputs, n->input_cap * sizeof(TB_Node*));
     tb_arena_free(arena, n, sizeof(TB_Node) + extra);
@@ -547,9 +547,9 @@ TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra) {
             n->inputs[i] = NULL;
         }
 
-        tb_arena_free(f->arena, n->users, n->user_cap * sizeof(TB_User));
-        tb_arena_free(f->arena, n->inputs, n->input_cap * sizeof(TB_Node*));
-        tb_arena_free(f->arena, n, sizeof(TB_Node) + extra);
+        tb_arena_free(&f->arena, n->users, n->user_cap * sizeof(TB_User));
+        tb_arena_free(&f->arena, n->inputs, n->input_cap * sizeof(TB_Node*));
+        tb_arena_free(&f->arena, n, sizeof(TB_Node) + extra);
         n->type = TB_NULL;
         return k;
     } else {
@@ -602,6 +602,11 @@ static void remove_input(TB_Function* f, TB_Node* n, size_t i) {
 }
 
 void tb_kill_node(TB_Function* f, TB_Node* n) {
+    f->dead_node_bytes += sizeof(TB_Node);
+    f->dead_node_bytes += n->input_cap*sizeof(TB_Node*);
+    f->dead_node_bytes += n->user_cap*sizeof(TB_User);
+    f->dead_node_bytes += extra_bytes(n);
+
     // remove from GVN if we're murdering it
     if (can_gvn(n)) {
         nl_hashset_remove2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
@@ -656,7 +661,7 @@ void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
         assert(new_cap < UINT16_MAX);
 
         // resize
-        TB_User* users = tb_arena_alloc(f->arena, new_cap * sizeof(TB_User));
+        TB_User* users = tb_arena_alloc(&f->arena, new_cap * sizeof(TB_User));
         memcpy(users, in->users, in->user_count * sizeof(TB_User));
 
         // in debug builds we'll fill the old array if easily detectable garbage to notice
@@ -687,7 +692,7 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
         assert(new_cap < UINT16_MAX);
 
         // resize
-        TB_User* users = tb_arena_alloc(f->arena, new_cap * sizeof(TB_User));
+        TB_User* users = tb_arena_alloc(&f->arena, new_cap * sizeof(TB_User));
         memcpy(users, new_n->users, new_n->user_count * sizeof(TB_User));
 
         // in debug builds we'll fill the old array if easily detectable garbage to notice
@@ -1283,7 +1288,12 @@ static void* zalloc(size_t s) {
 
 bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     TB_ASSERT_MSG(f->root_node, "missing root node");
-    f->worklist  = ws;
+    f->worklist = ws;
+
+    // the temp arena might've been freed, let's restore it
+    if (f->tmp_arena.top == NULL) {
+        tb_arena_create(&f->tmp_arena);
+    }
 
     #if TB_OPTDEBUG_STATS
     f->stats.peeps = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
@@ -1293,9 +1303,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     f->stats.opto_constants = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
     f->stats.killed = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
     #endif
-
-    TB_ArenaSavepoint tmp_sp = tb_arena_save(f->tmp_arena);
-    TB_ArenaSavepoint ir_sp  = tb_arena_save(f->arena);
 
     TB_ASSERT(worklist_count(ws) == 0);
     CUIK_TIMED_BLOCK("push_all_nodes") {
@@ -1318,15 +1325,14 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         TB_OPTDEBUG(STATS)(f->stats.initial = worklist_count(ws));
     }
     TB_OPTDEBUG(PEEP)(log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(f->worklist), f->node_count));
-
     f->invalidated_loops = true;
 
     TB_OPTDEBUG(PASSES)(printf("FUNCTION %s:\n", f->super.name));
-
-    bool progress = false;
+    TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
 
     int k;
     int rounds = 0;
+    bool progress = false;
     while (worklist_count(f->worklist) > 0) {
         TB_OPTDEBUG(PASSES)(printf("  * ROUND %d:\n", ++rounds));
         TB_OPTDEBUG(PASSES)(printf("    * Minor rewrites\n"));
@@ -1361,33 +1367,24 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
         }
 
-        // only wanna build a loop tree if there's
-        // major changes to the CFG, most rounds of peeps
-        // wouldn't invalidate it.
-        if (f->invalidated_loops) {
-            f->invalidated_loops = false;
-
-            TB_OPTDEBUG(PASSES)(printf("    * Update loop tree\n"));
-            DO_IF(TB_OPTDEBUG_PEEP)(printf("=== FIND LOOPS ===\n"));
-            if (tb_opt_find_loops(f)) { progress = true; }
-            if (k = tb_opt_peeps(f), k > 0) {
-                TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
-            }
-        }
-
-        // mostly just detecting loops and upcasting indvars
+        // currently only rotating loops
         TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
         DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
-        if (tb_opt_loops(f)) { progress = true; }
+        if (tb_opt_loops(f)) {
+            progress = true;
+        }
     }
-    tb_arena_restore(f->tmp_arena, tmp_sp);
+    TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {
         tb_opt_free_types(f);
     }
     // avoids bloating up my arenas with freed nodes
-    f->loop_list = NULL;
-    tb_compact_nodes(f, ws, ir_sp);
+    float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
+    if (dead_factor > 0.2f) {
+        tb_compact_nodes(f, ws);
+    }
+    tb_arena_destroy(&f->tmp_arena);
 
     #if TB_OPTDEBUG_STATS
     tb_opt_dump_stats(f);

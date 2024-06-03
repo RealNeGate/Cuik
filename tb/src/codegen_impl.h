@@ -2,7 +2,7 @@
 // will include this to define their own copy of the codegen.
 #include "codegen.h"
 
-#define COMMENT(...) (e->has_comments ? tb_emit_comment(e, ctx->f->tmp_arena, __VA_ARGS__) : (void)0)
+#define COMMENT(...) (e->has_comments ? tb_emit_comment(e, &ctx->f->tmp_arena, __VA_ARGS__) : (void)0)
 
 // Instruction selection:
 //   returns an equivalent but machine-friendly node (one you're willing to
@@ -56,18 +56,21 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
 
 static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
-    log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(f->tmp_arena) / 1024.0f, (tb_arena_current_size(f->arena) - og_size) / 1024.0f, label);
+    log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena) - og_size) / 1024.0f, label);
 }
 
 static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
     cuikperf_region_start("compile", f->super.name);
-    TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
+    TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f));
 
-    TB_Arena* arena = f->tmp_arena;
-    TB_ArenaSavepoint sp = tb_arena_save(arena);
+    // the temp arena might've been freed, let's restore it
+    if (f->tmp_arena.top == NULL) {
+        tb_arena_create(&f->tmp_arena);
+    }
 
     #ifndef NDEBUG
-    tb_arena_reset_peak(arena);
+    f->arena.allocs = f->arena.alloc_bytes = 0;
+    f->tmp_arena.allocs = f->tmp_arena.alloc_bytes = 0;
     #endif
 
     Ctx ctx = {
@@ -80,7 +83,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         .num_classes = REG_CLASS_COUNT,
         .emit = {
             .output = func_out,
-            .arena = arena,
+            .arena = &f->tmp_arena,
             .has_comments = true,
         }
     };
@@ -96,21 +99,21 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     // legalize step takes out any of our 16bit and 8bit math ops
     // tb_pass_legalize(p, f->super.module->target_arch);
-    size_t og_size = tb_arena_current_size(f->arena);
+    size_t og_size = tb_arena_current_size(&f->arena);
 
     ctx.mask_intern = nl_hashset_alloc(200);
     nl_hashset_put2(&ctx.mask_intern, &TB_REG_EMPTY, rm_hash, rm_compare);
 
     CUIK_TIMED_BLOCK("isel") {
-        log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(arena) / 1024.0f);
+        log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f);
 
         // pointer math around stack slots will refer to this
         ctx.frame_ptr = tb_alloc_node(f, TB_MACH_FRAME_PTR, TB_TYPE_PTR, 1, 0);
         set_input(f, ctx.frame_ptr, f->root_node, 0);
         ctx.frame_ptr = tb_opt_gvn_node(f, ctx.frame_ptr);
 
-        TB_ArenaSavepoint pins_sp = tb_arena_save(arena);
-        ArenaArray(TB_Node*) pins = aarray_create(arena, TB_Node*, (f->node_count / 32) + 16);
+        TB_ArenaSavepoint pins_sp = tb_arena_save(&f->tmp_arena);
+        ArenaArray(TB_Node*) pins = aarray_create(&f->tmp_arena, TB_Node*, (f->node_count / 32) + 16);
 
         TB_Worklist walker_ws = { 0 };
         worklist_alloc(&walker_ws, f->node_count);
@@ -202,7 +205,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             }
         }
 
-        tb_arena_restore(arena, pins_sp);
+        tb_arena_restore(&f->tmp_arena, pins_sp);
         log_phase_end(f, og_size, "isel");
     }
 
@@ -212,34 +215,34 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         // compact if we didn't spend like 40% of our value numbers on dead shit.
         tb_renumber_nodes(f, ws);
 
-        TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f, false));
-        TB_OPTDEBUG(CODEGEN)(tb_print(f, f->tmp_arena));
+        TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f));
+        TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
-        ctx.cfg = cfg = tb_compute_cfg(f, ws, f->tmp_arena, TB_CFG_DOMS | TB_CFG_LOOPS);
+        ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, TB_CFG_DOMS | TB_CFG_LOOPS);
         tb_global_schedule(f, ws, cfg, true, true, node_latency);
 
         log_phase_end(f, og_size, "GCM");
     }
 
     size_t bb_count = aarray_length(cfg.blocks);
-    MachineBB* restrict machine_bbs = tb_arena_alloc(arena, bb_count * sizeof(MachineBB));
+    MachineBB* restrict machine_bbs = tb_arena_alloc(&f->tmp_arena, bb_count * sizeof(MachineBB));
 
     int stop_bb = -1;
     CUIK_TIMED_BLOCK("BB scheduling") {
         size_t cap = ((bb_count * 4) / 3);
         ctx.node_to_bb.exp = 64 - __builtin_clzll((cap < 4 ? 4 : cap) - 1);
-        ctx.node_to_bb.entries = tb_arena_alloc(arena, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
+        ctx.node_to_bb.entries = tb_arena_alloc(&f->tmp_arena, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
         memset(ctx.node_to_bb.entries, 0, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
 
         size_t j = 0;
         FOR_N(i, 0, bb_count) {
-            TB_BasicBlock* bb = &cfg.blocks[cfg.rpo_walk[i]];
+            TB_BasicBlock* bb = &cfg.blocks[i];
             TB_Node* end = bb->end;
             if (end->type == TB_RETURN) {
                 stop_bb = i;
             } else {
                 bb->machine_i = j;
-                machine_bbs[j++] = (MachineBB){ cfg.rpo_walk[i], .bb = bb };
+                machine_bbs[j++] = (MachineBB){ i, .bb = bb };
             }
         }
 
@@ -256,7 +259,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     size_t node_count = f->node_count;
     size_t vreg_cap = 0;
     CUIK_TIMED_BLOCK("local schedule") {
-        ctx.vreg_map = aarray_create(f->arena, int, tb_next_pow2(f->node_count + 16));
+        ctx.vreg_map = aarray_create(&f->arena, int, tb_next_pow2(f->node_count + 16));
         aarray_set_length(ctx.vreg_map, f->node_count);
 
         FOR_N(i, 0, f->node_count) { ctx.vreg_map[i] = 0; }
@@ -279,7 +282,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             // a bit of slack for spills
             size_t item_count = dyn_array_length(ws->items);
-            ArenaArray(TB_Node*) items = aarray_create(f->arena, TB_Node*, item_count + 16);
+            ArenaArray(TB_Node*) items = aarray_create(&f->arena, TB_Node*, item_count + 16);
             aarray_set_length(items, item_count);
 
             // copy out sched
@@ -326,7 +329,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
         ctx.bb_count = bb_count;
         ctx.machine_bbs = machine_bbs;
-        ctx.ins = tb_arena_alloc(arena, max_ins * sizeof(RegMask*));
+        ctx.ins = tb_arena_alloc(&f->tmp_arena, max_ins * sizeof(RegMask*));
 
         // ops with temporaries are *relatively* uncommon (mostly calls)
         ctx.tmps_map = nl_table_alloc((vreg_count / 16) + 4);
@@ -334,7 +337,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         log_phase_end(f, og_size, "local-sched & ra constraints");
 
         // setup for the next phase
-        ctx.vregs = aarray_create(f->arena, VReg, tb_next_pow2(vreg_count + 16));
+        ctx.vregs = aarray_create(&f->arena, VReg, tb_next_pow2(vreg_count + 16));
         aarray_set_length(ctx.vregs, vreg_count);
     }
 
@@ -382,8 +385,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        // tb__chaitin(&ctx, arena);
-        tb__rogers(&ctx, arena);
+        tb__rogers(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);
@@ -392,13 +394,14 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("emit") {
-        // allocate entire top of the code arena (we'll trim it later if possible)
-        ctx.emit.capacity = code_arena->limit - code_arena->avail;
+        // most functions are probably decently small, it's ok tho if it needs to
+        // resize it can do that pretty quickly
+        ctx.emit.capacity = 1024;
         ctx.emit.data = tb_arena_alloc(code_arena, ctx.emit.capacity);
 
         // allocate more stuff now that we've run stats on the IR
         ctx.emit.label_count = bb_count;
-        ctx.emit.labels = tb_arena_alloc(arena, bb_count * sizeof(uint32_t));
+        ctx.emit.labels = tb_arena_alloc(&f->tmp_arena, bb_count * sizeof(uint32_t));
         memset(ctx.emit.labels, 0, bb_count * sizeof(uint32_t));
 
         TB_CGEmitter* e = &ctx.emit;
@@ -479,7 +482,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     // trim code arena (it fits in a single chunk so just arena free the top)
-    code_arena->avail = (char*) &ctx.emit.data[ctx.emit.count];
+    code_arena->top->avail = (char*) &ctx.emit.data[ctx.emit.count];
     tb_arena_realign(code_arena);
 
     // TODO(NeGate): move the assembly output to code arena
@@ -518,12 +521,12 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     cuikperf_region_end();
 
     #ifndef NDEBUG
-    log_debug("%s: peak  ir_arena=%.1f KiB", f->super.name, tb_arena_peak_size(f->arena) / 1024.0f);
-    log_debug("%s: peak tmp_arena=%.1f KiB", f->super.name, tb_arena_peak_size(arena) / 1024.0f);
+    log_debug("%s: total allocs on ir_arena=%.1f KiB", f->super.name, f->arena.alloc_bytes / 1024.0f);
+    log_debug("%s: total allocs on tmp_arena=%.1f KiB", f->super.name, f->tmp_arena.alloc_bytes / 1024.0f);
     log_debug("%s: code_arena=%.1f KiB", f->super.name, tb_arena_current_size(code_arena) / 1024.0f);
     #endif
 
-    tb_arena_restore(arena, sp);
+    tb_arena_clear(&f->tmp_arena);
     f->scheduled = NULL;
 
     // we're done, clean up

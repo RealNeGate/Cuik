@@ -87,10 +87,10 @@ static bool add_configs(TB_Function* f, TB_Node* addr, TB_Node* base_address, si
 }
 
 static size_t sroa_rewrite(TB_Function* f, int pointer_size, TB_Node* start, TB_Node* n) {
-    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     size_t config_count = 0;
-    AggregateConfig* configs = tb_arena_alloc(f->tmp_arena, SROA_LIMIT * sizeof(AggregateConfig));
+    AggregateConfig* configs = tb_arena_alloc(&f->tmp_arena, SROA_LIMIT * sizeof(AggregateConfig));
     if (!add_configs(f, n, n, 0, &config_count, configs, pointer_size)) {
         return 1;
     }
@@ -118,6 +118,6 @@ static size_t sroa_rewrite(TB_Function* f, int pointer_size, TB_Node* start, TB_
         mark_users(f, n);
     }
 
-    tb_arena_restore(f->tmp_arena, sp);
+    tb_arena_restore(&f->tmp_arena, sp);
     return config_count > 1 ? 1 + config_count : 1;
 }

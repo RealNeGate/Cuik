@@ -298,7 +298,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             int param_num = e->param_num;
             Cuik_Type* arg_type = cuik_canonical_type(function_type->func.param_list[param_num].type);
             assert(arg_type != NULL);
-            return (ValDesc){ LVALUE, .mem_var = 1, .n = tb_builder_get_var(g, 2 + param_num) };
+            return (ValDesc){ LVALUE, .mem_var = 1, .n = tb_builder_param_addr(g, param_num) };
         }
 
         case EXPR_SUBSCRIPT: {
@@ -1073,7 +1073,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
     }
 }
 
-TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena* ir, TB_Arena* tmp, Stmt* restrict s) {
+TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s) {
     assert(s->flags & STMT_FLAGS_HAS_IR_BACKING);
     if (s->op == STMT_FUNC_DECL) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
@@ -1081,7 +1081,6 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
 
         cached_file = NULL;
         cached_filepath = NULL;
-        muh_tmp_arena = tmp;
 
         TB_Function* func = s->backing.f;
 
@@ -1107,8 +1106,11 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             function_type = type;
             function_name = s->decl.name;
 
-            TB_GraphBuilder* g = tb_builder_enter_from_dbg(func, ir, tmp, section, dbg_type, NULL);
+            TB_GraphBuilder* g = tb_builder_enter_from_dbg(func, section, dbg_type, NULL);
+
+            muh_tmp_arena = tb_function_get_arena(func, 1);
             cg_stmt(tu, g, s->decl.initial_as_stmt);
+            muh_tmp_arena = NULL;
 
             // we can reach the end, place the implicit return
             if (tb_builder_label_get(g) != NULL) {
@@ -1121,6 +1123,10 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
             }
 
             tb_builder_exit(g);
+
+            // we wanna allow other functions to recycle these scratch threads
+            TB_Arena* tmp = tb_function_get_arena(func, 1);
+            if (tb_arena_is_empty(tmp)) { tb_arena_destroy(tmp); }
 
             function_name = NULL;
             function_type = 0;
@@ -1161,7 +1167,6 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, TB_Arena
         }
         #endif
 
-        muh_tmp_arena = NULL;
         return (TB_Symbol*) func;
     } else if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) && s->backing.s) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);

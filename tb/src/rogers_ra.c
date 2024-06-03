@@ -102,14 +102,12 @@ static void redo_dataflow(Ctx* restrict ctx, TB_Arena* arena) {
     TB_Function* f = ctx->f;
     // dump_sched(ctx);
 
-    size_t bb_count     = ctx->cfg.block_count;
-    FOR_N(i, 0, bb_count) {
-        TB_Node* n = ctx->rpo_nodes[i];
-        TB_BasicBlock* bb = f->scheduled[n->gvn];
+    aarray_for(i, ctx->cfg.blocks) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         bb->live_in  = set_create_in_arena(arena, f->node_count);
         bb->live_out = set_create_in_arena(arena, f->node_count);
     }
-    tb_dataflow(f, arena, ctx->cfg, ctx->rpo_nodes);
+    tb_dataflow(f, arena, ctx->cfg);
 }
 
 static RegMask* constraint_in(Ctx* ctx, TB_Node* n, int i) {
@@ -123,11 +121,11 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
     size_t extra = extra_bytes(n);
     TB_Function* f = ctx->f;
     TB_Node* root = f->root_node;
-    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     // don't want weird pointer invalidation crap
     size_t user_count = n->user_count;
-    TB_User* users = tb_arena_alloc(f->tmp_arena, n->user_count * sizeof(TB_User));
+    TB_User* users = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_User));
     memcpy(users, n->users, n->user_count * sizeof(TB_User));
 
     // aggressive reload
@@ -177,7 +175,7 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
 
         TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: remat (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
     }
-    tb_arena_restore(f->tmp_arena, sp);
+    tb_arena_restore(&f->tmp_arena, sp);
 
     // delete the original def
     ctx->vreg_map[n->gvn] = 0;
@@ -192,11 +190,11 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
 
     to_spill->mask = spill_mask;
 
-    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     // don't want weird pointer invalidation crap
     size_t user_count = n->user_count;
-    TB_User* users = tb_arena_alloc(f->tmp_arena, n->user_count * sizeof(TB_User));
+    TB_User* users = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_User));
     memcpy(users, n->users, n->user_count * sizeof(TB_User));
 
     // aggressive reload
@@ -239,7 +237,7 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
 
         TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: reload (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, reload_n->gvn));
     }
-    tb_arena_restore(f->tmp_arena, sp);
+    tb_arena_restore(&f->tmp_arena, sp);
 }
 
 static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, RegMask* spill_mask, size_t old_node_count) {
@@ -250,9 +248,9 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
     to_spill->mask = spill_mask;
 
     size_t bb_count = ctx->bb_count;
-    TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
-    int* reload_t = tb_arena_alloc(f->tmp_arena, bb_count * sizeof(int));
+    int* reload_t = tb_arena_alloc(&f->tmp_arena, bb_count * sizeof(int));
     FOR_N(i, 0, bb_count) { reload_t[i] = 0; }
 
     TB_BasicBlock** scheduled = f->scheduled;
@@ -277,12 +275,13 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
         }
 
         // earliest point within the BB
-        if (reload_t[bb->id] == 0 || use_t < reload_t[bb->id]) {
-            reload_t[bb->id] = use_t;
+        int bb_id = bb - ctx->cfg.blocks;
+        if (reload_t[bb_id] == 0 || use_t < reload_t[bb_id]) {
+            reload_t[bb_id] = use_t;
         }
     }
 
-    TB_Node** reload_n = tb_arena_alloc(f->tmp_arena, bb_count * sizeof(TB_Node*));
+    TB_Node** reload_n = tb_arena_alloc(&f->tmp_arena, bb_count * sizeof(TB_Node*));
 
     // insert reload nodes in each relevant BB
     FOR_N(i, 0, bb_count) {
@@ -293,8 +292,8 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
             TB_NODE_SET_EXTRA(reload_n[i], TB_NodeMachCopy, .def = NULL, .use = spill_mask);
 
             TB_Node* at = NULL;
-            TB_BasicBlock* bb = f->scheduled[ctx->rpo_nodes[i]->gvn];
-            MachineBB* mbb = &ctx->machine_bbs[bb->order];
+            TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+            MachineBB* mbb = &ctx->machine_bbs[bb->machine_i];
             FOR_N(j, 0, aarray_length(mbb->items)) {
                 TB_Node* n = mbb->items[j];
                 if (n->gvn < old_node_count && ra->order[n->gvn] == reload_t[i]) {
@@ -323,7 +322,7 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
             continue;
         }
 
-        TB_Node* reload = reload_n[bb->order];
+        TB_Node* reload = reload_n[bb->machine_i];
         if (use_n != reload) {
             assert(reload);
             set_input(f, use_n, reload, use_i);
@@ -380,7 +379,7 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
         }
     }
 
-    tb_arena_restore(f->tmp_arena, sp);
+    tb_arena_restore(&f->tmp_arena, sp);
 }
 
 static bool reg_mask_may_intersect(RegMask* a, RegMask* b) {
@@ -598,7 +597,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         // RA calls might add dead nodes but we don't care
         f->worklist = ws;
 
-        tb_arena_restore(f->tmp_arena, sp);
+        tb_arena_restore(&f->tmp_arena, sp);
         cuikperf_region_end();
     }
 
@@ -1199,7 +1198,8 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                     if (last_use > def_t) {
                         pause = true;
                     } else {
-                        FOR_N(k, bb->id, ctx->bb_count) {
+                        size_t bb_id = bb - ctx->cfg.blocks;
+                        FOR_N(k, bb_id, ctx->bb_count) {
                             MachineBB* other = &ctx->machine_bbs[k];
                             if (set_get(&other->bb->live_in, in->gvn)) {
                                 // move to future active

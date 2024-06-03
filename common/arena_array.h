@@ -33,7 +33,7 @@ static void* aarray__reserve(void* ptr, size_t type_size, size_t min_size) {
 }
 
 #define ArenaArray(T) T*
-#define aarray_create(arena, T, cap) aarray__create(arena, sizeof(T), cap)
+#define aarray_create(arena, T, cap) (T*) aarray__create(arena, sizeof(T), cap)
 #define aarray_length(arr)           ((((AArray*) (arr)) - 1)->length)
 #define aarray_set_length(arr, len)  ((((AArray*) (arr)) - 1)->length = (len))
 #define aarray_clear(arr)            ((((AArray*) (arr)) - 1)->length = 0)
@@ -43,4 +43,5 @@ static void* aarray__reserve(void* ptr, size_t type_size, size_t min_size) {
 #define aarray_top(arr)              ((arr)[(((AArray*)(arr)) - 1)->length - 1])
 #define aarray_reserve(arr, i)       ((arr) = aarray__reserve(arr, sizeof(*(arr)), (i)), aarray_length(arr) = (i))
 #define aarray_for(i, arr)           for (ptrdiff_t i = 0, end_ = aarray_length(arr); i < end_; i++)
+#define aarray_for_rev(i, arr)       for (ptrdiff_t i = aarray_length(arr); i--;)
 #define aarray_remove(arr, i)        ((arr)[i] = (arr)[(((AArray*)(arr)) - 1)->length -= 1])

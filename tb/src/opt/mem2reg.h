@@ -84,11 +84,9 @@ static TB_Node* node_or_poison(TB_Function* f, TB_Node* n, TB_DataType dt) {
 }
 
 static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node* curr, TB_Node** latest) {
-    TB_Arena* tmp_arena = f->tmp_arena;
-
     int user_cnt = 0;
     MemOp* users = NULL;
-    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     // walk past each memory effect and categorize it
     while (curr) {
@@ -97,9 +95,9 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
         int user_cap = 0;
         FOR_USERS(u, curr) { user_cap++; }
 
-        sp = tb_arena_save(tmp_arena);
+        sp = tb_arena_save(&f->tmp_arena);
         user_cnt = 0;
-        users = tb_arena_alloc(tmp_arena, user_cap * sizeof(MemOp));
+        users = tb_arena_alloc(&f->tmp_arena, user_cap * sizeof(MemOp));
         FOR_USERS(u, curr) {
             TB_Node* use_n = USERN(u);
             int use_i = USERI(u);
@@ -209,7 +207,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
         // importantly another "latest" array
         if (user_cnt == 1 && users[0].reason == MEM_FORK) {
             curr = users[0].n;
-            tb_arena_restore(tmp_arena, sp);
+            tb_arena_restore(&f->tmp_arena, sp);
         } else {
             break;
         }
@@ -222,14 +220,14 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
 
         switch (reason) {
             case MEM_FORK: {
-                TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-                TB_Node** new_latest = tb_arena_alloc(tmp_arena, (1 + ctx->local_count) * sizeof(TB_Node*));
+                TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+                TB_Node** new_latest = tb_arena_alloc(&f->tmp_arena, (1 + ctx->local_count) * sizeof(TB_Node*));
                 FOR_N(i, 0, 1 + ctx->local_count) {
                     new_latest[i] = latest[i];
                 }
 
                 fixup_mem_node(f, ctx, use_n, new_latest);
-                tb_arena_restore(tmp_arena, sp);
+                tb_arena_restore(&f->tmp_arena, sp);
                 break;
             }
 
@@ -242,7 +240,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                     nl_table_put(&ctx->phi2local, use_n, &RENAME_DUMMY);
 
                     // convert single phi into parallel phis (use_n will become the leftovers mem)
-                    TB_Node** new_latest = tb_arena_alloc(tmp_arena, (1 + ctx->local_count) * sizeof(TB_Node*));
+                    TB_Node** new_latest = tb_arena_alloc(&f->tmp_arena, (1 + ctx->local_count) * sizeof(TB_Node*));
 
                     // convert single phi into multiple parallel phis (first one will be replaced
                     // with the root mem)
@@ -338,18 +336,17 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
         }
     }
 
-    tb_arena_restore(tmp_arena, sp);
+    tb_arena_restore(&f->tmp_arena, sp);
 }
 
 int tb_opt_locals(TB_Function* f) {
-    TB_Arena* tmp_arena = f->tmp_arena;
     cuikperf_region_start("locals", NULL);
     assert(dyn_array_length(f->worklist->items) == 0);
 
     // find all locals
     LocalSplitter ctx = { 0 };
-    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-    ArenaArray(TB_Node*) locals = aarray_create(tmp_arena, TB_Node*, 32);
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+    ArenaArray(TB_Node*) locals = aarray_create(&f->tmp_arena, TB_Node*, 32);
 
     FOR_USERS(u, f->root_node) {
         if (USERN(u)->type == TB_LOCAL && TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeLocal)->alias_index == 0) {
@@ -359,7 +356,7 @@ int tb_opt_locals(TB_Function* f) {
     }
 
     // find reasons for renaming
-    ctx.renames = tb_arena_alloc(tmp_arena, ctx.local_count * sizeof(Rename));
+    ctx.renames = tb_arena_alloc(&f->tmp_arena, ctx.local_count * sizeof(Rename));
     int splits_needed = 1;
 
     size_t j = 0;
@@ -403,7 +400,7 @@ int tb_opt_locals(TB_Function* f) {
     }
 
     if (!needs_to_rewrite) {
-        tb_arena_restore(tmp_arena, sp);
+        tb_arena_restore(&f->tmp_arena, sp);
         cuikperf_region_end();
         return 0;
     }
@@ -414,7 +411,7 @@ int tb_opt_locals(TB_Function* f) {
     // let's rewrite values & memory
     TB_Node* first_mem = next_mem_user(f->params[1]);
     if (first_mem) {
-        TB_Node** latest = tb_arena_alloc(tmp_arena, (1 + ctx.local_count) * sizeof(TB_Node*));
+        TB_Node** latest = tb_arena_alloc(&f->tmp_arena, (1 + ctx.local_count) * sizeof(TB_Node*));
         FOR_N(i, 1, 1 + ctx.local_count) { latest[i] = NULL; }
 
         // we need some locals split up
@@ -482,7 +479,7 @@ int tb_opt_locals(TB_Function* f) {
     }
 
     nl_table_free(ctx.phi2local);
-    tb_arena_restore(tmp_arena, sp);
+    tb_arena_restore(&f->tmp_arena, sp);
     cuikperf_region_end();
     return ctx.local_count;
 }

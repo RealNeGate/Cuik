@@ -24,8 +24,8 @@ TB_LinkerThreadInfo* linker_thread_info(TB_Linker* l) {
     *info = (TB_LinkerThreadInfo){ .owner = l };
 
     // allocate memory for it
-    info->perm_arena = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
-    info->tmp_arena = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
+    tb_arena_create(&info->perm_arena);
+    tb_arena_create(&info->tmp_arena);
 
     // thread local so it doesn't need to synchronize
     info->next = chain;
@@ -354,7 +354,7 @@ TB_LinkerSection* tb_linker_find_or_create_section(TB_Linker* l, TB_LinkerIntern
     }
 
     TB_LinkerThreadInfo* info = linker_thread_info(l);
-    s = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerSection));
+    s = tb_arena_alloc(&info->perm_arena, sizeof(TB_LinkerSection));
     *s = (TB_LinkerSection){ .name = name, .flags = flags };
 
     nl_table_put(&l->sections, name, s);
@@ -363,7 +363,7 @@ TB_LinkerSection* tb_linker_find_or_create_section(TB_Linker* l, TB_LinkerIntern
 
 TB_LinkerSectionPiece* tb_linker_append_piece(TB_LinkerThreadInfo* info, TB_LinkerSection* section, int kind, size_t size, const void* data, TB_LinkerObject* obj) {
     // allocate some space for it, we might wanna make the total_size increment atomic
-    TB_LinkerSectionPiece* piece = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerSectionPiece));
+    TB_LinkerSectionPiece* piece = tb_arena_alloc(&info->perm_arena, sizeof(TB_LinkerSectionPiece));
     *piece = (TB_LinkerSectionPiece){
         .kind   = kind,
         .parent = section,
@@ -397,11 +397,11 @@ TB_LinkerSymbol* tb_linker_new_symbol(TB_Linker* l, TB_LinkerInternStr name) {
     cuikperf_region_start("append sym", NULL);
 
     TB_LinkerThreadInfo* info = linker_thread_info(l);
-    TB_LinkerSymbol* sym = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerSymbol));
+    TB_LinkerSymbol* sym = tb_arena_alloc(&info->perm_arena, sizeof(TB_LinkerSymbol));
 
     TB_LinkerSymbol* old;
     if (old = nl_table_put(&l->symbols, name, sym), old) {
-        tb_arena_free(info->perm_arena, sym, sizeof(TB_LinkerSymbol));
+        tb_arena_free(&info->perm_arena, sym, sizeof(TB_LinkerSymbol));
         sym = old;
 
         if (old->tag != TB_LINKER_SYMBOL_UNKNOWN) {
@@ -434,7 +434,7 @@ TB_LinkerInternStr tb_linker_intern_string(TB_Linker* l, size_t len, const char*
         // linear probe
         if (LIKELY(l->interner.arr[i] == NULL)) {
             TB_LinkerThreadInfo* info = linker_thread_info(l);
-            TB_LinkerInternStr newstr = tb_arena_alloc(info->perm_arena, len + 5);
+            TB_LinkerInternStr newstr = tb_arena_alloc(&info->perm_arena, len + 5);
             uint32_t len32 = len;
             memcpy(newstr, &len32, 4);
             memcpy(newstr + 4, str, len);
@@ -488,7 +488,7 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
 
                 TB_LinkerSymbol* ls = NULL;
                 if (globals[i]->linkage == TB_LINKAGE_PRIVATE) {
-                    ls = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerSymbol));
+                    ls = tb_arena_alloc(&info->perm_arena, sizeof(TB_LinkerSymbol));
                     *ls = (TB_LinkerSymbol){ .name = interned };
                 } else {
                     ls = tb_linker_new_symbol(l, interned);

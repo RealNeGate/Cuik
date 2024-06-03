@@ -79,6 +79,7 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
 #define TB_OPTDEBUG_GVN      0
+#define TB_OPTDEBUG_COMPACT  0
 #define TB_OPTDEBUG_SCHEDULE 0
 // for toggling ANSI colors
 #define TB_OPTDEBUG_ANSI     1
@@ -292,21 +293,43 @@ struct TB_Worklist {
     uint64_t* visited;
 };
 
+typedef struct TB_LoopTree TB_LoopTree;
+typedef struct TB_BasicBlock TB_BasicBlock;
+
+struct TB_LoopTree {
+    TB_LoopTree* parent;
+    TB_LoopTree* next; // next sibling
+    TB_LoopTree* kid;
+
+    TB_BasicBlock* header;
+
+    bool is_natural;
+    int id;
+    int depth;
+
+    // in u64s
+    int body_offset;
+    int body_count;
+
+    // bitset for blocks in the body
+    uint64_t body[];
+};
+
 // we have analysis stuff for computing BBs from our graphs, these aren't
 // kept around at all times like an SSA-CFG compiler.
-typedef struct TB_BasicBlock TB_BasicBlock;
 struct TB_BasicBlock {
     TB_Node* start;
     TB_Node* end;
 
-    int rpo_i;
     // used by codegen to track the associated machine BB
     int machine_i;
 
     float freq;
     int dom_depth;
     TB_BasicBlock* dom;
-    TB_BasicBlock* loop;
+
+    // loop tree
+    TB_LoopTree* loop;
 
     // dataflow
     Set gen, kill;
@@ -316,19 +339,14 @@ struct TB_BasicBlock {
 };
 
 typedef struct TB_CFG {
-    int* rpo_walk;
-    ArenaArray(TB_BasicBlock) blocks; // pre-order nodes
+    // not actually a loop lmao, i just need something at the
+    // top of the loop tree
+    TB_LoopTree* root_loop;
+
+    ArenaArray(TB_LoopTree*) loops;
+    ArenaArray(TB_BasicBlock) blocks; // RPO ordering
     NL_Map(TB_Node*, TB_BasicBlock*) node_to_block;
 } TB_CFG;
-
-typedef struct TB_LoopInfo {
-    // it's a tree
-    struct TB_LoopInfo* parent;
-    // so we can actually find all loops
-    struct TB_LoopInfo* next;
-    // should always be a region
-    TB_Node* header;
-} TB_LoopInfo;
 
 typedef enum {
     IND_NE, IND_SLT, IND_SLE, IND_ULT, IND_ULE,
@@ -369,10 +387,13 @@ struct TB_Function {
 
     struct {
         // stores nodes, user lists & lattice elems.
-        TB_Arena* arena;
+        TB_Arena arena;
         // all the random allocs within passes
-        TB_Arena* tmp_arena;
+        TB_Arena tmp_arena;
     };
+
+    // used for the copy-compact decision making, not perfectly accurate
+    size_t dead_node_bytes;
 
     size_t node_count;
     TB_Node* root_node;
@@ -398,13 +419,16 @@ struct TB_Function {
 
         // some xforms like removing branches can
         // invalidate the loop tree.
-        TB_LoopInfo* loop_list;
         bool invalidated_loops;
 
         // we throw the results of scheduling here:
         //   [value number] -> TB_BasicBlock*
         size_t scheduled_n;
         TB_BasicBlock** scheduled;
+
+        // used during loop opts mostly, it's just SoN doms
+        size_t doms_n;
+        TB_Node** doms;
 
         // nice stats
         struct {
@@ -473,8 +497,8 @@ struct TB_ThreadInfo {
     // linked list forward.
     TB_ThreadInfo** chain;
 
-    TB_Arena* perm_arena;
-    TB_Arena* tmp_arena;
+    TB_Arena perm_arena;
+    TB_Arena tmp_arena;
 };
 
 typedef struct {
@@ -738,9 +762,9 @@ static bool is_same_location(TB_Location* a, TB_Location* b) {
 }
 
 static TB_Arena* get_temporary_arena(TB_Module* key) {
-    return tb_thread_info(key)->tmp_arena;
+    return &tb_thread_info(key)->tmp_arena;
 }
 
 static TB_Arena* get_permanent_arena(TB_Module* key) {
-    return tb_thread_info(key)->perm_arena;
+    return &tb_thread_info(key)->perm_arena;
 }

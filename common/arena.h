@@ -1,5 +1,6 @@
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 #ifndef TB_API
@@ -20,43 +21,55 @@
 #endif
 
 enum {
-    TB_ARENA_SMALL_CHUNK_SIZE  =         4 * 1024,
-    TB_ARENA_MEDIUM_CHUNK_SIZE =       512 * 1024,
-    TB_ARENA_LARGE_CHUNK_SIZE  = 64 * 1024 * 1024,
-
-    TB_ARENA_ALIGNMENT = 16,
+    // usually chunks are small unless it asks for a lot of memory (big arrays usually)
+    TB_ARENA_NORMAL_CHUNK_SIZE = 32 * 1024,
+    // this is the backing data for chunks, if we've got 32KiB chunks in 2MiB blocks that's 64 chunks per block.
+    TB_ARENA_BLOCK_SIZE = 2 * 1024 * 1024,
+    // just a decent alignment amount, in practice 8 would prolly be fine
+    TB_ARENA_ALIGNMENT  = 16,
 };
 
-typedef struct TB_Arena TB_Arena;
-struct TB_Arena {
-    TB_Arena* next;
+typedef struct TB_ArenaFreeList TB_ArenaFreeList;
+struct TB_ArenaFreeList {
+    TB_ArenaFreeList* next;
+    size_t size;
+    char data[];
+};
 
-    // we only care about this for the root arena chunk but whatever
-    TB_Arena* top;
-
+typedef struct TB_ArenaChunk TB_ArenaChunk;
+struct TB_ArenaChunk {
+    TB_ArenaChunk* prev;
     char* avail;
     char* limit;
-
-    #ifndef NDEBUG
-    char* highest;
-    char* _pad;
-    #endif
+    char* pad;
 
     char data[];
 };
 
+#ifndef TB_OPAQUE_ARENA_DEF
+#define TB_OPAQUE_ARENA_DEF
+typedef struct TB_ArenaChunk TB_ArenaChunk;
+typedef struct {
+    TB_ArenaChunk* top;
+
+    #ifndef NDEBUG
+    uint32_t allocs;
+    uint32_t alloc_bytes;
+    #endif
+} TB_Arena;
+
 typedef struct TB_ArenaSavepoint {
-    TB_Arena* top;
+    TB_ArenaChunk* top;
     char* avail;
 } TB_ArenaSavepoint;
-
-#define TB_ARENA_FOR(it, arena) for (TB_Arena* it = (arena); it != NULL; it = it->next)
+#endif // TB_OPAQUE_ARENA_DEF
 
 #define TB_ARENA_ALLOC(arena, T) tb_arena_alloc(arena, sizeof(T))
 #define TB_ARENA_ARR_ALLOC(arena, count, T) tb_arena_alloc(arena, (count) * sizeof(T))
 
-TB_API TB_Arena* tb_arena_create(size_t chunk_size);
+TB_API void tb_arena_create(TB_Arena* restrict arena);
 TB_API void tb_arena_destroy(TB_Arena* restrict arena);
+TB_API void tb_arena_clear(TB_Arena* restrict arena);
 
 TB_API void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size);
 TB_API void* tb_arena_alloc(TB_Arena* restrict arena, size_t size);
@@ -70,17 +83,11 @@ TB_API void tb_arena_pop(TB_Arena* restrict arena, void* ptr, size_t size);
 // in case you wanna mix unaligned and aligned arenas
 TB_API void tb_arena_realign(TB_Arena* restrict arena);
 
-#ifndef NDEBUG
-TB_API void tb_arena_reset_peak(TB_Arena* restrict arena);
-TB_API size_t tb_arena_peak_size(TB_Arena* arena);
-#endif
-
-TB_API size_t tb_arena_chunk_size(TB_Arena* arena);
+TB_API size_t tb_arena_chunk_size(TB_ArenaChunk* arena);
 TB_API size_t tb_arena_current_size(TB_Arena* arena);
 
 // savepoints
+TB_API TB_ArenaSavepoint tb_arena_base(TB_Arena* arena);
 TB_API TB_ArenaSavepoint tb_arena_save(TB_Arena* arena);
 TB_API void tb_arena_restore(TB_Arena* arena, TB_ArenaSavepoint sp);
-
-// resets to only having one chunk
-TB_API void tb_arena_clear(TB_Arena* arena);
+TB_API bool tb_arena_is_top(TB_Arena* arena, TB_ArenaSavepoint sp);

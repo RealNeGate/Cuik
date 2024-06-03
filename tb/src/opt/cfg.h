@@ -4,7 +4,8 @@ static void compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg);
 typedef struct Block {
     struct Block* parent;
     TB_ArenaSavepoint sp;
-    int bb_id;
+    TB_Node* start;
+    TB_Node* end;
     int succ_i;
     TB_Node* succ[];
 } Block;
@@ -32,8 +33,9 @@ static TB_Node* end_of_bb(TB_Node* n) {
     return n;
 }
 
-static Block* create_block(TB_Arena* arena, TB_Node* end, int id) {
+static Block* create_block(TB_Arena* arena, TB_Node* n) {
     TB_ArenaSavepoint sp = tb_arena_save(arena);
+    TB_Node* end = end_of_bb(n);
 
     size_t succ_count = 0;
     if (end->type == TB_BRANCH) {
@@ -48,8 +50,9 @@ static Block* create_block(TB_Arena* arena, TB_Node* end, int id) {
 
     Block* top = tb_arena_alloc(arena, sizeof(Block) + succ_count*sizeof(TB_Node*));
     *top = (Block){
-        .sp  = sp,
-        .bb_id = id,
+        .sp     = sp,
+        .start  = n,
+        .end    = end,
         .succ_i = succ_count,
     };
 
@@ -73,48 +76,14 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, TB_CFGFl
     cuikperf_region_start("CFG", NULL);
     assert(dyn_array_length(ws->items) == 0);
 
-    ////////////////////////////////
-    // pre-order DFS
-    ////////////////////////////////
     TB_CFG cfg = { 0 };
-    worklist_push(ws, f->params[0]);
-
-    TB_Node* n;
-    while (n = worklist_pop(ws), n) {
-        TB_Node* end = end_of_bb(n);
-
-        if (cfg_is_fork(end)) {
-            // this does imply the successors take up the bottom indices on the tuple... idk if thats
-            // necessarily a problem tho.
-            FOR_USERS(u, end) {
-                if (cfg_is_cproj(USERN(u))) {
-                    worklist_push(ws, cfg_next_bb_after_cproj(USERN(u)));
-                }
-            }
-        } else if (!cfg_is_endpoint(end)) {
-            worklist_push(ws, USERN(cfg_next_user(end)));
-        }
-
-        TB_BasicBlock bb = { .start = n, .end = end, .dom_depth = -1 };
-        aarray_push(cfg.blocks, bb);
-    }
-
-    size_t block_count = aarray_length(cfg.blocks);
-    nl_map_create(cfg.node_to_block, block_count);
-    aarray_for(i, cfg.blocks) {
-        nl_map_put(cfg.node_to_block, cfg.blocks[i].start, &cfg.blocks[i]);
-    }
-
-    __debugbreak();
+    cfg.blocks = aarray_create(arena, TB_BasicBlock, 32);
 
     ////////////////////////////////
-    // RPO walk
+    // post-order DFS
     ////////////////////////////////
-    size_t block_i = block_count;
-    cfg.rpo_walk = tb_arena_alloc(arena, block_count * sizeof(int));
-
     // push initial block
-    Block* top = create_block(f->tmp_arena, cfg.blocks[0].end, 0);
+    Block* top = create_block(&f->tmp_arena, f->params[0]);
     worklist_test_n_set(ws, f->params[0]);
 
     while (top != NULL) {
@@ -123,21 +92,35 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, TB_CFGFl
             // push next unvisited succ
             TB_Node* succ = top->succ[--top->succ_i];
             if (!worklist_test_n_set(ws, succ)) {
-                TB_BasicBlock* succ_bb = nl_map_get_checked(cfg.node_to_block, succ);
-                Block* new_top = create_block(f->tmp_arena, succ_bb->end, succ_bb - cfg.blocks);
+                Block* new_top = create_block(&f->tmp_arena, succ);
                 new_top->parent = top;
                 top = new_top;
             }
         } else {
             Block* parent = top->parent;
 
-            assert(block_i > 0);
-            cfg.rpo_walk[--block_i] = top->bb_id;
+            TB_BasicBlock bb = { .start = top->start, .end = top->end, .dom_depth = -1, .freq = 1.0f };
+            aarray_push(cfg.blocks, bb);
 
-            tb_arena_restore(f->tmp_arena, top->sp);
+            tb_arena_restore(&f->tmp_arena, top->sp);
             top = parent; // off to wherever we left off
         }
         cuikperf_region_end();
+    }
+    worklist_clear_visited(ws);
+
+    // just reverse the items here... im too lazy to flip all my uses
+    cuikperf_region_start("reverse", NULL);
+    size_t block_count = aarray_length(cfg.blocks);
+    FOR_N(i, 0, block_count / 2) {
+        SWAP(TB_BasicBlock, cfg.blocks[i], cfg.blocks[(block_count - 1) - i]);
+    }
+    cuikperf_region_end();
+
+    // by this point, the cfg.blocks array is fixed in address (no more insertions thus no more resize)
+    nl_map_create(cfg.node_to_block, block_count);
+    aarray_for(i, cfg.blocks) {
+        nl_map_put(cfg.node_to_block, cfg.blocks[i].start, &cfg.blocks[i]);
     }
 
     if (flags & TB_CFG_DOMS) {
@@ -145,14 +128,11 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, TB_CFGFl
         compute_dominators(f, ws, cfg);
         cuikperf_region_end();
 
-        if (flags & TB_CFG_LOOPS) {
-            cuikperf_region_start("loops", NULL);
-            __debugbreak();
-            // compute_dominators(f, ws, cfg);
-            cuikperf_region_end();
+        TB_OPTDEBUG(LOOP)(printf("\n%s: Doms:\n", f->super.name));
+        FOR_N(i, 0, block_count) {
+            TB_BasicBlock* bb = &cfg.blocks[i];
+            TB_OPTDEBUG(LOOP)(printf("  BB%zu(%%%u - %%%u, dom: BB%zu)\n", i, bb->start->gvn, bb->end->gvn, bb->dom - cfg.blocks));
         }
-    } else {
-        TB_ASSERT_MSG(~flags & TB_CFG_LOOPS, "cannot compute loop nests without dominators");
     }
 
     cuikperf_region_end();
@@ -185,7 +165,7 @@ static void compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
 
         // for all nodes, b, in reverse postorder (except entry block)
         FOR_N(i, 1, block_count) {
-            TB_BasicBlock* bb = &blocks[cfg.rpo_walk[i]];
+            TB_BasicBlock* bb = &blocks[i];
             TB_BasicBlock* new_idom = NULL;
             TB_Node* b = bb->start;
 
@@ -199,22 +179,22 @@ static void compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
                 if (idom_p == NULL) { continue; }
 
                 if (new_idom == NULL) {
-                    new_idom = idom_p;
+                    new_idom = p;
                 } else {
                     TB_ASSERT(p->start->input_count > 0);
-                    int a = p->rpo_i;
+                    int a = p - blocks;
                     if (a >= 0) {
-                        int b = new_idom->rpo_i;
+                        int b = new_idom - blocks;
                         TB_ASSERT(b >= 0);
 
                         while (a != b) {
                             // while (finger1 < finger2)
                             //   finger1 = doms[finger1]
-                            while (a > b) { a = blocks[cfg.rpo_walk[a]].dom->rpo_i; }
+                            while (a > b) { a = blocks[a].dom - blocks; }
 
                             // while (finger2 < finger1)
                             //   finger2 = doms[finger2]
-                            while (b > a) { a = blocks[cfg.rpo_walk[b]].dom->rpo_i; }
+                            while (b > a) { b = blocks[b].dom - blocks; }
                         }
 
                         new_idom = &blocks[a];
@@ -233,7 +213,7 @@ static void compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg) {
     // generate depth values
     CUIK_TIMED_BLOCK("generate dom tree") {
         aarray_for(i, cfg.blocks) {
-            TB_BasicBlock* bb = &cfg.blocks[cfg.rpo_walk[i]];
+            TB_BasicBlock* bb = &cfg.blocks[i];
 
             TB_BasicBlock* curr = bb;
             int depth = 0;

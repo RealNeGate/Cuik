@@ -54,7 +54,7 @@ struct Cuik_BuildStep {
             Cuik_DriverArgs* args;
             const char* source;
 
-            TB_Arena* arena;
+            TB_Arena arena;
             Cuik_CPP* cpp;
             TranslationUnit* tu;
         } cc;
@@ -69,24 +69,6 @@ struct Cuik_BuildStep {
         } sys;
     };
 };
-
-// good names are for losers anyways *copium*
-// it's just a one-off struct only used in this file
-typedef struct {
-    TB_Arena* a[2];
-    TB_Arena* code;
-} MyArenas;
-
-static MyArenas* get_ir_arena(void) {
-    static _Thread_local MyArenas arenas;
-    if (arenas.a[0] == NULL) {
-        arenas.a[0] = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
-        arenas.a[1] = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
-        arenas.code = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
-    }
-
-    return &arenas;
-}
 
 static void step_error(Cuik_BuildStep* s) {
     if (s->anti_dep != NULL) {
@@ -146,9 +128,17 @@ static void sys_invoke(BuildStepInfo* info) {
 static void irgen(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, CompilationUnit* restrict cu, TB_Module* mod);
 
 static _Thread_local TB_Worklist* ir_worklist;
-static _Atomic bool arena_i = true;
 
-// optimizer will flow from arena[1] -> arena[2]
+static TB_Arena* get_code_arena(void) {
+    static _Thread_local bool init;
+    static _Thread_local TB_Arena muh_code_arena;
+    if (!init) {
+        init = true;
+        tb_arena_create(&muh_code_arena);
+    }
+    return &muh_code_arena;
+}
+
 static void local_opt_func(TB_Function* f, void* arg) {
     if (ir_worklist == NULL) {
         // we just leak these btw, i don't care yet
@@ -160,14 +150,17 @@ static void local_opt_func(TB_Function* f, void* arg) {
 
     const char* name = ((TB_Symbol*) f)->name;
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
-        MyArenas* arenas = get_ir_arena();
-        float start = tb_arena_current_size(arenas->a[arena_i]);
+        #if TB_ENABLE_LOG
+        TB_Arena *a1 = tb_function_get_arena(f, 0), *a2 = tb_function_get_arena(f, 1);
+        float s1 = tb_arena_current_size(a1), s2 = tb_arena_current_size(a2);
+        #endif
 
-        tb_function_set_arenas(f, arenas->a[arena_i], arenas->a[!arena_i]);
         tb_opt(f, ir_worklist, false);
 
-        float end = tb_arena_current_size(arenas->a[arena_i]);
-        log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
+        #if TB_ENABLE_LOG
+        float e1 = tb_arena_current_size(a1), e2 = tb_arena_current_size(a2);
+        log_debug("%s: arena1=%.1f KiB (%+.1f KiB), arena2=%.1f KiB (%+.1f KiB)", name, e1 / 1024.0f, (e1 - s1) / 1024.0f, e2 / 1024.0f, (e2 - e2) / 1024.0f);
+        #endif
     }
 }
 
@@ -182,21 +175,22 @@ static void apply_func(TB_Function* f, void* arg) {
 
     const char* name = ((TB_Symbol*) f)->name;
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
-        MyArenas* arenas = get_ir_arena();
-        float start = tb_arena_current_size(arenas->a[arena_i]);
+        #if TB_ENABLE_LOG
+        TB_Arena *a1 = tb_function_get_arena(f, 0);
+        float s1 = tb_arena_current_size(a1);
+        #endif
 
         if (args->emit_ir) {
-            tb_print_dumb(f, false);
-            tb_print(f, arenas->a[!arena_i]);
+            tb_print_dumb(f);
+            tb_print(f);
 
             // char* str = tb_print_c(f, ir_worklist, arenas->tmp);
             // printf("%s", str);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
-                tb_function_set_arenas(f, arenas->a[arena_i], arenas->a[!arena_i]);
-
                 TB_FeatureSet features = { 0 };
-                TB_FunctionOutput* out = tb_codegen(f, ir_worklist, arenas->code, &features, print_asm);
+                TB_Arena* code_arena = get_code_arena();
+                TB_FunctionOutput* out = tb_codegen(f, ir_worklist, code_arena, &features, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");
@@ -204,8 +198,10 @@ static void apply_func(TB_Function* f, void* arg) {
             }
         }
 
-        float end = tb_arena_current_size(arenas->a[arena_i]);
-        log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
+        #if TB_ENABLE_LOG
+        float e1 = tb_arena_current_size(a1);
+        log_debug("%s: compiling, IR=%.1f KiB (%+.1f KiB)", name, e1 / 1024.0f, (e1 - s1) / 1024.0f);
+        #endif
     }
 }
 #endif
@@ -269,9 +265,9 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 
     Cuik_ParseResult result;
     CUIK_TIMED_BLOCK_ARGS("parse", s->cc.source) {
-        s->cc.arena = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
+        tb_arena_create(&s->cc.arena);
 
-        result = cuikparse_run(args->version, tokens, args->target, s->cc.arena, false);
+        result = cuikparse_run(args->version, tokens, args->target, &s->cc.arena, false);
         s->cc.tu = result.tu;
 
         if (result.error_count > 0) {
@@ -351,7 +347,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
         }
 
         CUIK_TIMED_BLOCK("Free arena") {
-            tb_arena_destroy(s->cc.arena);
+            tb_arena_destroy(&s->cc.arena);
         }
     }
 
@@ -379,18 +375,16 @@ static void ld_invoke(BuildStepInfo* info) {
 
     CUIK_TIMED_BLOCK("Backend") {
         if (args->optimize) {
-            arena_i = !arena_i;
             cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, local_opt_func);
 
-            /*int t = 0;
+            int t = 0;
             do {
                 CUIK_TIMED_BLOCK("Local opts") {
                     log_debug("Optimizing in functions... t=%d", ++t);
-                    arena_i = !arena_i;
                     cuiksched_per_function(s->tp, args->threads, s->ld.cu, mod, args, local_opt_func);
                     log_debug("Interprocedural opts...");
                 }
-            } while (tb_module_ipo(mod));*/
+            } while (tb_module_ipo(mod));
         }
 
         if (args->emit_ir) {
@@ -444,8 +438,8 @@ static void ld_invoke(BuildStepInfo* info) {
 
         TB_Linker* l = tb_linker_create(exe, args->target->arch);
 
-        TB_Arena* arena = get_ir_arena()->code;
-        TB_ArenaSavepoint sp = tb_arena_save(arena);
+        TB_Arena* code_arena = get_code_arena();
+        TB_ArenaSavepoint sp = tb_arena_save(code_arena);
 
         // locate libraries and feed them into TB... in theory this process
         // can be somewhat multithreaded so we might wanna consider that.
@@ -499,13 +493,13 @@ static void ld_invoke(BuildStepInfo* info) {
             }
         }*/
 
-        TB_ExportBuffer buffer = tb_linker_export(l, arena);
+        TB_ExportBuffer buffer = tb_linker_export(l, code_arena);
         if (!tb_export_buffer_to_file(buffer, output_path.data)) {
             goto error;
         }
 
         error:
-        tb_arena_restore(arena, sp);
+        tb_arena_restore(code_arena, sp);
         step_error(s);
         tb_module_destroy(mod);
         goto done;
@@ -517,10 +511,10 @@ static void ld_invoke(BuildStepInfo* info) {
             cuik_path_set_ext(&obj_path, &output_path, 2, ".o");
         }
 
-        TB_Arena* arena = get_ir_arena()->code;
-        TB_ArenaSavepoint sp = tb_arena_save(arena);
+        TB_Arena* code_arena = get_code_arena();
+        TB_ArenaSavepoint sp = tb_arena_save(code_arena);
 
-        TB_ExportBuffer buffer = tb_module_object_export(mod, arena, debug_fmt);
+        TB_ExportBuffer buffer = tb_module_object_export(mod, code_arena, debug_fmt);
         tb_module_destroy(mod);
 
         // copy into file
@@ -528,7 +522,7 @@ static void ld_invoke(BuildStepInfo* info) {
             step_error(s);
             goto done;
         }
-        tb_arena_restore(arena, sp);
+        tb_arena_restore(code_arena, sp);
 
         if (args->flavor == TB_FLAVOR_OBJECT) {
             goto done;
@@ -828,8 +822,6 @@ static void irgen_job(void* arg) {
     TB_Module* mod = task.mod;
 
     CompilationUnit* cu = task.tu->parent;
-    MyArenas* arenas = get_ir_arena();
-
     for (size_t i = 0; i < task.count; i++) {
         if ((task.stmts[i]->flags & STMT_FLAGS_HAS_IR_BACKING) == 0) {
             continue;
@@ -838,14 +830,16 @@ static void irgen_job(void* arg) {
         const char* name = task.stmts[i]->decl.name;
         TB_Symbol* s;
         CUIK_TIMED_BLOCK_ARGS("irgen", name) {
-            float start = tb_arena_current_size(arenas->a[arena_i]);
-            s = cuikcg_top_level(task.tu, mod, arenas->a[arena_i], arenas->a[!arena_i], task.stmts[i]);
-            float end = tb_arena_current_size(arenas->a[arena_i]);
-
-            log_debug("%s: func=%.1f KiB, total=%.1f KiB", name, (end - start) / 1024.0f, end / 1024.0f);
+            s = cuikcg_top_level(task.tu, mod, task.stmts[i]);
         }
 
         if (s != NULL && s->tag == TB_SYMBOL_FUNCTION) {
+            #if TB_ENABLE_LOG
+            TB_Function* f = (TB_Function*) s;
+            float size = tb_arena_current_size(tb_function_get_arena(f, 0));
+            log_debug("%s: generated IR, size=%.1f KiB", name, size / 1024.0f);
+            #endif
+
             cuik_lock_compilation_unit(cu);
             dyn_array_put(cu->worklist, (TB_Function*) s);
             cuik_unlock_compilation_unit(cu);

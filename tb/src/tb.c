@@ -69,8 +69,8 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
         *info = (TB_ThreadInfo){ .owner = m, .chain = &chain, .lock = &lock };
 
         // allocate memory for it
-        info->perm_arena = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
-        info->tmp_arena = tb_arena_create(TB_ARENA_LARGE_CHUNK_SIZE);
+        tb_arena_create(&info->perm_arena);
+        tb_arena_create(&info->tmp_arena);
 
         // thread local so it doesn't need to synchronize
         info->next = chain;
@@ -192,11 +192,8 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
 }
 
 TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm) {
-    assert(f->arena && "missing IR arena?");
-    assert(f->tmp_arena && "missing tmp arena?");
-
     if (code_arena == NULL) {
-        code_arena = f->arena;
+        code_arena = &f->arena;
     }
 
     TB_Module* m = f->super.module;
@@ -236,8 +233,9 @@ TB_Assembly* tb_output_get_asm(TB_FunctionOutput* out) {
     return out->asm_out;
 }
 
-TB_Arena* tb_function_get_arena(TB_Function* f) {
-    return f->arena;
+TB_Arena* tb_function_get_arena(TB_Function* f, int i) {
+    TB_ASSERT(i == 0 || i == 1);
+    return i ? &f->tmp_arena : &f->arena;
 }
 
 void tb_module_destroy(TB_Module* m) {
@@ -247,8 +245,8 @@ void tb_module_destroy(TB_Module* m) {
         TB_ThreadInfo* next = info->next_in_module;
 
         dyn_array_destroy(info->symbols);
-        tb_arena_destroy(info->tmp_arena);
-        tb_arena_destroy(info->perm_arena);
+        tb_arena_destroy(&info->tmp_arena);
+        tb_arena_destroy(&info->perm_arena);
 
         // unlink, this needs to be synchronized in case another thread is
         // accessing while we're freeing.
@@ -332,25 +330,21 @@ const char* tb_symbol_get_name(TB_Symbol* s) {
     return s->name;
 }
 
-void tb_function_set_arenas(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2) {
-    f->arena     = arena1;
-    f->tmp_arena = arena2;
-}
-
 void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p) {
-    assert(f->prototype == NULL);
-    assert(f->arena     && "missing arenas, call tb_function_set_arenas");
-    assert(f->tmp_arena && "missing arenas, call tb_function_set_arenas");
+    TB_ASSERT(f->prototype == NULL);
     size_t param_count = p->param_count;
 
     f->gvn_nodes = nl_hashset_alloc(32);
+
+    tb_arena_create(&f->arena);
+    tb_arena_create(&f->tmp_arena);
 
     f->section = section;
     f->node_count = 0;
     TB_Node* root = f->root_node = tb_alloc_node_dyn(f, TB_ROOT, TB_TYPE_TUPLE, 2, 4, 0);
 
     f->param_count = param_count;
-    f->params = tb_arena_alloc(f->arena, (3 + param_count) * sizeof(TB_Node*));
+    f->params = tb_arena_alloc(&f->arena, (3 + param_count) * sizeof(TB_Node*));
 
     // fill in acceleration structure
     f->params[0] = tb__make_proj(f, TB_TYPE_CONTROL, f->root_node, 0);
@@ -442,7 +436,7 @@ TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_De
 }
 
 void tb_global_set_storage(TB_Module* m, TB_ModuleSectionHandle section, TB_Global* global, size_t size, size_t align, size_t max_objects) {
-    assert(size > 0 && align > 0 && tb_is_power_of_two(align));
+    TB_ASSERT(size > 0 && align > 0 && tb_is_power_of_two(align));
     global->parent = section;
     global->pos = 0;
     global->size = size;

@@ -835,13 +835,30 @@ typedef struct {
 #endif
 
 // defined in common/arena.h
-typedef struct TB_Arena TB_Arena;
+#ifndef TB_OPAQUE_ARENA_DEF
+#define TB_OPAQUE_ARENA_DEF
+typedef struct TB_ArenaChunk TB_ArenaChunk;
+typedef struct {
+    TB_ArenaChunk* top;
 
-// 0 for default
-TB_API TB_Arena* tb_arena_create(size_t chunk_size);
+    #ifndef NDEBUG
+    uint32_t allocs;
+    uint32_t alloc_bytes;
+    #endif
+} TB_Arena;
+
+typedef struct TB_ArenaSavepoint {
+    TB_ArenaChunk* top;
+    char* avail;
+} TB_ArenaSavepoint;
+#endif // TB_OPAQUE_ARENA_DEF
+
+TB_API void tb_arena_create(TB_Arena* restrict arena);
 TB_API void tb_arena_destroy(TB_Arena* restrict arena);
-TB_API bool tb_arena_is_empty(TB_Arena* restrict arena);
 TB_API void tb_arena_clear(TB_Arena* restrict arena);
+TB_API bool tb_arena_is_empty(TB_Arena* restrict arena);
+TB_API TB_ArenaSavepoint tb_arena_save(TB_Arena* arena);
+TB_API void tb_arena_restore(TB_Arena* arena, TB_ArenaSavepoint sp);
 
 ////////////////////////////////
 // Module management
@@ -1169,16 +1186,13 @@ TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int l
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage);
 
-TB_API TB_Arena* tb_function_get_arena(TB_Function* f);
+TB_API TB_Arena* tb_function_get_arena(TB_Function* f, int i);
 
 // if len is -1, it's null terminated
 TB_API void tb_symbol_set_name(TB_Symbol* s, ptrdiff_t len, const char* name);
 
 TB_API void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr);
 TB_API const char* tb_symbol_get_name(TB_Symbol* s);
-
-// functions have two arenas for the majority of their allocations.
-TB_API void tb_function_set_arenas(TB_Function* f, TB_Arena* a1, TB_Arena* a2);
 
 // if arena is NULL, defaults to module arena which is freed on tb_free_thread_resources
 TB_API void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* p);
@@ -1406,17 +1420,14 @@ TB_API TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n);
 // returns true if any graph rewrites were performed.
 TB_API bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types);
 
-// Asserts on all kinds of broken behavior, dumps to stderr (i will change that later)
-TB_API void tb_verify(TB_Function* f, TB_Arena* tmp);
-
 // print in SSA-CFG looking form (with BB params for the phis), if tmp is NULL it'll use the
 // function's tmp arena
-TB_API void tb_print(TB_Function* f, TB_Arena* tmp);
-TB_API void tb_print_dumb(TB_Function* f, bool use_fancy_types);
+TB_API void tb_print(TB_Function* f);
+TB_API void tb_print_dumb(TB_Function* f);
 
 // super special experimental stuff (no touchy yet)
 TB_API char* tb_c_prelude(TB_Module* mod);
-TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp);
+TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws);
 
 // codegen:
 //   output goes at the top of the code_arena, feel free to place multiple functions
@@ -1437,9 +1448,13 @@ enum { TB_GRAPH_BUILDER_PARAMS = 0 };
 
 // if ws != NULL, i'll run the peepholes while you're constructing nodes. why? because it
 // avoids making junk nodes before they become a problem for memory bandwidth.
-TB_API TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2, TB_ModuleSectionHandle section, TB_FunctionPrototype* proto, TB_Worklist* ws);
-TB_API TB_GraphBuilder* tb_builder_enter_from_dbg(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Worklist* ws);
+TB_API TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* proto, TB_Worklist* ws);
+
+// parameter's addresses are available through the tb_builder_param_addr, they're not tracked as mutable vars.
+TB_API TB_GraphBuilder* tb_builder_enter_from_dbg(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Worklist* ws);
+
 TB_API void tb_builder_exit(TB_GraphBuilder* g);
+TB_API TB_Node* tb_builder_param_addr(TB_GraphBuilder* g, int i);
 
 TB_API TB_Node* tb_builder_bool(TB_GraphBuilder* g, bool x);
 TB_API TB_Node* tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x);

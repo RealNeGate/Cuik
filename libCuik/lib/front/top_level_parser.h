@@ -549,10 +549,9 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         // faster than walking the hash map, cache locality amirite)
         _Static_assert(sizeof(Symbol) == ((sizeof(Symbol) + 15ull) & ~15ull), "needs to be 16byte aligned to be walked in the arena easily");
 
-        TB_Arena* base = parser.symbols->globals_arena;
-        TB_ARENA_FOR(chunk, parser.symbols->globals_arena) {
+        // the order of this is kinda nasty, maybe i should rework it to match the parse order?
+        for (TB_ArenaChunk* chunk = parser.symbols->globals_arena.top; chunk; chunk = chunk->prev) {
             size_t chunk_size = tb_arena_chunk_size(chunk);
-
             Symbol* syms = (Symbol*) chunk->data;
             Symbol* end_syms = (Symbol*) chunk->avail;
 

@@ -486,8 +486,8 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
 
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-                TB_ArenaSavepoint sp = tb_arena_save(ctx->f->tmp_arena);
-                TB_Node** restrict succ = tb_arena_alloc(ctx->f->arena, br->succ_count * sizeof(TB_Node**));
+                TB_ArenaSavepoint sp = tb_arena_save(&ctx->f->tmp_arena);
+                TB_Node** restrict succ = tb_arena_alloc(&ctx->f->arena, br->succ_count * sizeof(TB_Node**));
 
                 size_t succ_count = 0;
 
@@ -566,7 +566,7 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     c_fmt_spaces(ctx);
                     nl_buffer_format(ctx->buf, "}\n");
                 }
-                tb_arena_restore(ctx->f->tmp_arena, sp);
+                tb_arena_restore(&ctx->f->tmp_arena, sp);
                 break;
             }
 
@@ -1257,8 +1257,6 @@ static void c_fmt_bb(CFmtState* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
 TB_API char *tb_c_prelude(TB_Module *mod) {
     size_t n_private_syms = 0;
 
-    void *arena = tb_arena_create(TB_ARENA_MEDIUM_CHUNK_SIZE);
-
     nl_buffer_t *buf = nl_buffer_new();
 
     nl_buffer_format(buf, "typedef signed char int8_t;\n");
@@ -1376,17 +1374,13 @@ TB_API char *tb_c_prelude(TB_Module *mod) {
     }
 
     char *ret = nl_buffer_get(buf);
-
-    // tb_arena_destroy(arena);
-
     return ret;
 }
 
-TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp) {
+TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws) {
     const char *name = f->super.name;
     cuikperf_region_start("print_c", NULL);
 
-    f->tmp_arena = tmp;
     f->worklist  = ws;
 
     CFmtState ctx = { name, f, f->super.module };
@@ -1400,7 +1394,7 @@ TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp) {
     ctx.declared_vars = nl_hashset_alloc(16);
     ctx.block_ranges = nl_table_alloc(aarray_length(ctx.cfg.blocks));
 
-    ctx.cfg = tb_compute_cfg(f, ws, f->tmp_arena, TB_CFG_DOMS);
+    ctx.cfg = tb_compute_cfg(f, ws, &f->tmp_arena, TB_CFG_DOMS);
 
     // schedule nodes
     tb_global_schedule(f, ws, ctx.cfg, false, false, NULL);

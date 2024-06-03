@@ -115,11 +115,7 @@ void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int line, in
 
 TB_Node* tb_alloc_node_dyn(TB_Function* f, int type, TB_DataType dt, int input_count, int input_cap, size_t extra) {
     assert(input_count < UINT16_MAX && "too many inputs!");
-
-    // symbol table is a bookkeeping node so storing it separately makes
-    // it easier to free during construction.
-    TB_Arena* arena = type == TB_SYMBOL_TABLE ? f->tmp_arena : f->arena;
-    TB_Node* n = tb_arena_alloc(arena, sizeof(TB_Node) + extra);
+    TB_Node* n = tb_arena_alloc(&f->arena, sizeof(TB_Node) + extra);
 
     n->type = type;
     n->input_cap = input_cap;
@@ -128,7 +124,7 @@ TB_Node* tb_alloc_node_dyn(TB_Function* f, int type, TB_DataType dt, int input_c
     n->gvn = f->node_count++;
 
     if (input_cap > 0) {
-        n->inputs = tb_arena_alloc(arena, input_cap * sizeof(TB_Node*));
+        n->inputs = tb_arena_alloc(&f->arena, input_cap * sizeof(TB_Node*));
         FOR_N(i, 0, input_cap) { n->inputs[i] = NULL; }
     } else {
         n->inputs = NULL;
@@ -137,7 +133,7 @@ TB_Node* tb_alloc_node_dyn(TB_Function* f, int type, TB_DataType dt, int input_c
     // most nodes don't have many users, although the ones which do will have a shit load (root node)
     n->user_count = 0;
     n->user_cap   = 4;
-    n->users = tb_arena_alloc(arena, 4 * sizeof(TB_User));
+    n->users = tb_arena_alloc(&f->arena, 4 * sizeof(TB_User));
     memset(n->users, 0xF0, 4 * sizeof(TB_User));
 
     if (extra > 0) {
@@ -525,7 +521,7 @@ TB_MultiOutput tb_inst_call(TB_Function* f, TB_FunctionPrototype* proto, TB_Node
     set_input(f, n, append_mem(f, mproj), 1);
 
     // leaked into the IR arena, don't care rn
-    TB_Node** projs = tb_arena_alloc(f->arena, sizeof(TB_Node*)*proj_count);
+    TB_Node** projs = tb_arena_alloc(&f->arena, sizeof(TB_Node*)*proj_count);
 
     // create data projections
     TB_PrototypeParam* rets = TB_PROTOTYPE_RETURNS(proto);
@@ -935,7 +931,7 @@ void tb_inst_set_region_name(TB_Function* f, TB_Node* n, ptrdiff_t len, const ch
 
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
-    char* newstr = tb_arena_alloc(f->arena, len + 1);
+    char* newstr = tb_arena_alloc(&f->arena, len + 1);
     memcpy(newstr, name, len + 1);
     r->tag = newstr;
 }

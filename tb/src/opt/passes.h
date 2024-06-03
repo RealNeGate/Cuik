@@ -365,27 +365,16 @@ static int dom_depth(TB_CFG* cfg, TB_Node* n) {
 }
 
 static bool slow_dommy2(TB_BasicBlock* expected_dom, TB_BasicBlock* bb) {
-    while (bb != NULL && expected_dom != bb) {
-        TB_BasicBlock* new_bb = bb->dom;
-        if (new_bb == NULL || new_bb == bb) {
-            return false;
-        }
-        bb = new_bb;
+    while (bb->dom_depth > expected_dom->dom_depth) {
+        bb = bb->dom;
     }
-
-    return true;
+    return bb == expected_dom;
 }
 
 static bool slow_dommy(TB_CFG* cfg, TB_Node* expected_dom, TB_Node* bb) {
-    while (bb != NULL && expected_dom != bb) {
-        TB_Node* new_bb = idom(cfg, bb);
-        if (new_bb == NULL || new_bb == bb) {
-            return false;
-        }
-        bb = new_bb;
-    }
-
-    return true;
+    TB_BasicBlock* a = nl_map_get_checked(cfg->node_to_block, expected_dom);
+    TB_BasicBlock* b = nl_map_get_checked(cfg->node_to_block, bb);
+    return slow_dommy2(a, b);
 }
 
 // lovely properties
@@ -405,8 +394,6 @@ typedef enum {
 // computes basic blocks but also dominators and loop nests if necessary.
 TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp_arena, int flags);
 void tb_free_cfg(TB_CFG* cfg);
-//   postorder walk -> dominators
-void tb_compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg);
 
 // TB_Worklist API
 void worklist_alloc(TB_Worklist* restrict ws, size_t initial_cap);
@@ -435,7 +422,7 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg);
 // Global scheduler
 void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws);
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws);
-void tb_compact_nodes(TB_Function* f, TB_Worklist* ws, TB_ArenaSavepoint sp);
+void tb_compact_nodes(TB_Function* f, TB_Worklist* ws);
 void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_nests, bool dataflow, TB_GetLatency get_lat);
 
 // makes arch-friendly IR

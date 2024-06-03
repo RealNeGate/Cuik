@@ -22,15 +22,16 @@ enum {
     MODE_LD, // reg <- mem
     MODE_ST, // mem <- reg
 };
+
 // node with X86MemOp (mov, add, and...) will have this layout of inputs:
 //   [1] mem
 //   [2] base (or first src)
 //   [3] idx
 //   [4] val
 typedef struct {
-    uint8_t mode : 2;
-    Scale scale  : 2;
-    char cond    : 4;
+    uint8_t mode  : 2;
+    uint8_t scale : 2;
+    char cond     : 4;
     TB_DataType dt;
     int32_t disp;
     int32_t imm;
@@ -146,7 +147,7 @@ static void print_extra(TB_Node* n) {
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf(", scale=%d, disp=%d, mode=%s", 1<<op->scale, op->disp, modes[op->mode]);
+            printf(", scale=%d, disp=%d, mode=%s", 1u<<op->scale, op->disp, modes[op->mode]);
             break;
         }
 
@@ -155,7 +156,7 @@ static void print_extra(TB_Node* n) {
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf(", scale=%d, disp=%d, mode=%s, imm=%d", 1<<op->scale, op->disp, modes[op->mode], op->imm);
+            printf(", scale=%d, disp=%d, mode=%s, imm=%d", 1u<<op->scale, op->disp, modes[op->mode], op->imm);
             break;
         }
     }
@@ -172,7 +173,7 @@ static void print_dumb_extra(TB_Node* n) {
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf("scale=%d disp=%d mode=%s ", 1<<op->scale, op->disp, modes[op->mode]);
+            printf("scale=%d disp=%d mode=%s ", 1u<<op->scale, op->disp, modes[op->mode]);
             break;
         }
 
@@ -181,7 +182,7 @@ static void print_dumb_extra(TB_Node* n) {
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf("scale=%d disp=%d mode=%s imm=%d ", 1<<op->scale, op->disp, modes[op->mode], op->imm);
+            printf("scale=%d disp=%d mode=%s imm=%d ", 1u<<op->scale, op->disp, modes[op->mode], op->imm);
             break;
         }
     }
@@ -1967,9 +1968,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case x86_AAAAAHHHH: {
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
 
-            // the arena on the function should also be available at this time, we're
-            // in the TB_Passes
-            TB_Arena* arena = ctx->f->arena;
+            TB_Arena* arena = &ctx->f->arena;
             TB_ArenaSavepoint sp = tb_arena_save(arena);
             TB_Node** succ = tb_arena_alloc(arena, br->succ_count * sizeof(TB_Node*));
 
@@ -2034,7 +2033,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
                 // the arena on the function should also be available at this time, we're
                 // in the TB_Passes
-                TB_Arena* arena = ctx->f->arena;
+                TB_Arena* arena = &ctx->f->arena;
                 TB_ArenaSavepoint sp = tb_arena_save(arena);
                 int* succ = tb_arena_alloc(arena, succ_count * sizeof(int));
 

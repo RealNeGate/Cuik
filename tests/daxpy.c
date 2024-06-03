@@ -55,7 +55,9 @@ void daxpy2(long long n, double a, double* x, double* y) {
 }
 #endif
 
-#if 1
+#if 0
+void bar();
+#else
 typedef unsigned long long size_t;
 
 void bar(int i);
@@ -68,10 +70,16 @@ void matmul(float* c, float* a, float* b) {
             }
             c[j*4 + i] = sum;
         }
-        bar(0);
+
+        if (a) {
+            bar(0);
+        }
+        bar(1);
     }
 }
-#else
+#endif
+
+#if 0
 int foo(int x, int y) {
     return x + y*4;
 }

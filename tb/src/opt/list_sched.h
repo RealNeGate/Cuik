@@ -101,17 +101,16 @@ static int best_ready_node(ListSched* sched, uint64_t in_use_mask) {
 
 void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count) {
     TB_ASSERT(phi_vals == NULL && "TODO");
-    TB_Arena* tmp_arena = f->tmp_arena;
-    TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     TB_OPTDEBUG(SCHEDULE)(printf("BB %d\n", bb->id));
     worklist_push(ws, bb->start);
     TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, bb->start), printf("\n"));
 
     // first block has access to root's users
-    if (bb->id == 0 || bb->start->dt.type == TB_TAG_TUPLE) {
-        TB_Node* tup = bb->id == 0 ? f->root_node : bb->start;
-        FOR_USERS(u, tup) {
+    int id = bb - cfg->blocks;
+    if (id == 0) {
+        FOR_USERS(u, f->root_node) {
             if (is_proj(USERN(u))) {
                 TB_ASSERT(USERI(u) == 0);
                 TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, USERN(u)), printf("\n"));
@@ -132,13 +131,13 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     TB_Node* end = bb->end;
 
     int cycle = 0;
-    ArenaArray(InFlight) active = aarray_create(tmp_arena, InFlight, 32);
+    ArenaArray(InFlight) active = aarray_create(&f->tmp_arena, InFlight, 32);
 
     ListSched sched = {
         .f = f, .get_lat = get_lat, .get_unit_mask = get_unit_mask
     };
-    sched.ready_set = set_create_in_arena(tmp_arena, f->node_count);
-    sched.ready     = aarray_create(tmp_arena, ReadyNode, 32);
+    sched.ready_set = set_create_in_arena(&f->tmp_arena, f->node_count);
+    sched.ready     = aarray_create(&f->tmp_arena, ReadyNode, 32);
 
     // fill up initial ready list (everything used by the live-ins)
     nl_hashset_for(e, &bb->items) {
@@ -233,7 +232,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         worklist_push(ws, end);
     }
 
-    tb_arena_restore(tmp_arena, sp);
+    tb_arena_restore(&f->tmp_arena, sp);
 }
 
 

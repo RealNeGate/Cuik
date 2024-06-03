@@ -34,7 +34,7 @@ static void fill_phis(TB_Arena* arena, ArenaArray(SchedPhi)* phis, TB_Node* succ
 
 // basically just topological sort, no fancy shit
 void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb) {
-    TB_Arena* arena = f->tmp_arena;
+    TB_Arena* arena = &f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
     TB_Node* end = bb->end;
 
@@ -67,10 +67,11 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
     worklist_test_n_set(ws, end);
 
     // reserve projections for the top
-    TB_Node* start = bb->id == 0 ? f->root_node : NULL;
-    if (start) FOR_USERS(u, start) {
-        if (is_proj(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
-            dyn_array_put(ws->items, USERN(u));
+    if (bb == &cfg->blocks[0]) {
+        FOR_USERS(u, f->root_node) {
+            if (is_proj(USERN(u)) && !worklist_test_n_set(ws, USERN(u))) {
+                dyn_array_put(ws->items, USERN(u));
+            }
         }
     }
 

@@ -155,7 +155,7 @@ void tb__dump(MachineBB* mbb) {
 
 MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     if (f->node_count >= f->scheduled_n) {
-        TB_BasicBlock** new_sched = tb_arena_alloc(f->arena, 2 * f->scheduled_n * sizeof(TB_BasicBlock*));
+        TB_BasicBlock** new_sched = tb_arena_alloc(&f->arena, 2 * f->scheduled_n * sizeof(TB_BasicBlock*));
         memcpy(new_sched, f->scheduled, f->scheduled_n * sizeof(TB_BasicBlock*));
         FOR_N(i, f->scheduled_n, 2 * f->scheduled_n) {
             new_sched[i] = NULL;
@@ -166,7 +166,7 @@ MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
 
     assert(bb);
     f->scheduled[n->gvn] = bb;
-    return &ctx->machine_bbs[bb->order];
+    return &ctx->machine_bbs[bb->machine_i];
 }
 
 void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
@@ -184,7 +184,7 @@ void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) 
 
 void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     TB_BasicBlock* bb = f->scheduled[n->gvn];
-    MachineBB* mbb = &ctx->machine_bbs[bb->order];
+    MachineBB* mbb = &ctx->machine_bbs[bb->machine_i];
 
     size_t i = 0, cnt = aarray_length(mbb->items);
     while (i < cnt && mbb->items[i] != n) { i++; }

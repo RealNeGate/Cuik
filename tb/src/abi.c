@@ -146,7 +146,7 @@ TB_Node** tb_function_set_prototype_from_dbg(TB_Function* f, TB_ModuleSectionHan
     // reassemble values
     TB_Node** params = NULL;
     if (dbg->func.param_count > 0) {
-        params = tb_arena_alloc(f->arena, sizeof(TB_Node*) * param_count);
+        params = tb_arena_alloc(&f->arena, sizeof(TB_Node*) * param_count);
 
         bool has_aggregate_return = dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
         FOR_N(i, 0, param_count) {

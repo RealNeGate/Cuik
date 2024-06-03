@@ -323,8 +323,8 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
             case TB_AFFINE_LATCH:
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-                TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
-                TB_Node** restrict succ = tb_arena_alloc(f->tmp_arena, br->succ_count * sizeof(TB_Node**));
+                TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+                TB_Node** restrict succ = tb_arena_alloc(&f->tmp_arena, br->succ_count * sizeof(TB_Node**));
 
                 // fill successors
                 FOR_USERS(u, n) {
@@ -366,7 +366,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     printf("  }");
                 }
                 printf(" // branch %%%u", n->gvn);
-                tb_arena_restore(f->tmp_arena, sp);
+                tb_arena_restore(&f->tmp_arena, sp);
                 break;
             }
 
@@ -561,8 +561,8 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                         }
 
                         if (cfg_is_branch(n)) {
-                            TB_ArenaSavepoint sp = tb_arena_save(f->tmp_arena);
-                            TB_Node** restrict succ = tb_arena_alloc(f->tmp_arena, n->user_count * sizeof(TB_Node**));
+                            TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+                            TB_Node** restrict succ = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_Node**));
 
                             // fill successors
                             int limit = 0;
@@ -588,7 +588,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                             }
                             printf("  }");
                             printf(" // branch %%%u", n->gvn);
-                            tb_arena_restore(f->tmp_arena, sp);
+                            tb_arena_restore(&f->tmp_arena, sp);
                         }
                         break;
                     }
@@ -608,16 +608,11 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
     }
 }
 
-void tb_print(TB_Function* f, TB_Arena* tmp) {
-    if (tmp == NULL) {
-        tmp = f->tmp_arena;
-    }
-
+void tb_print(TB_Function* f) {
     size_t old_scheduled_n = f->scheduled_n;
     TB_BasicBlock** old_scheduled = f->scheduled;
-    TB_ArenaSavepoint sp = tb_arena_save(tmp);
-    TB_Arena* old = f->tmp_arena;
-    f->tmp_arena = tmp;
+
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
     f->scheduled = NULL;
 
     cuikperf_region_start("print", NULL);
@@ -627,7 +622,7 @@ void tb_print(TB_Function* f, TB_Arena* tmp) {
 
     PrinterCtx ctx = { 0 };
     ctx.f   = f;
-    ctx.cfg = tb_compute_cfg(f, &ws, f->tmp_arena, TB_CFG_DOMS);
+    ctx.cfg = tb_compute_cfg(f, &ws, &f->tmp_arena, TB_CFG_DOMS);
 
     // schedule nodes
     tb_global_schedule(f, &ws, ctx.cfg, false, false, NULL);
@@ -650,11 +645,9 @@ void tb_print(TB_Function* f, TB_Arena* tmp) {
     tb_clear_anti_deps(f, &ws);
     worklist_free(&ws);
     tb_free_cfg(&ctx.cfg);
+    tb_arena_restore(&f->tmp_arena, sp);
+    cuikperf_region_end();
 
     f->scheduled_n = old_scheduled_n;
     f->scheduled = old_scheduled;
-    f->tmp_arena = old;
-
-    tb_arena_restore(tmp, sp);
-    cuikperf_region_end();
 }

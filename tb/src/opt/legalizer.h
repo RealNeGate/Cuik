@@ -104,7 +104,7 @@ static TB_Node* walk_node(LegalizeCtx* ctx, TB_Node* n) {
     LegalType valid;
     if (n->type == TB_STORE && ctx->fn(ctx, n->inputs[3]->dt, &valid)) {
         // split store
-        TB_Node** op = legalize_node(ctx, ctx->f->tmp_arena, n->inputs[3], valid);
+        TB_Node** op = legalize_node(ctx, &ctx->f->tmp_arena, n->inputs[3], valid);
 
         int32_t align = TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->align;
         if (align < valid.size) { align = valid.size; }

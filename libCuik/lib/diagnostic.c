@@ -65,7 +65,7 @@ static int sprintfcb(Cuik_Diagnostics* d, char const *fmt, ...) {
 
     va_list ap;
     va_start(ap, fmt);
-    int r = stbsp_vsprintfcb(sprintf_callback, d->buffer, tmp, fmt, ap);
+    int r = stbsp_vsprintfcb(sprintf_callback, &d->buffer, tmp, fmt, ap);
     va_end(ap);
     return r;
 }
@@ -79,12 +79,12 @@ Cuik_Diagnostics* cuikdg_make(Cuik_DiagCallback callback, void* userdata) {
     Cuik_Diagnostics* d = cuik_calloc(1, sizeof(Cuik_Diagnostics));
     d->callback = callback;
     d->userdata = userdata;
-    d->buffer = tb_arena_create(TB_ARENA_MEDIUM_CHUNK_SIZE);
+    tb_arena_create(&d->buffer);
     return d;
 }
 
 void cuikdg_free(Cuik_Diagnostics* diag) {
-    tb_arena_destroy(diag->buffer);
+    tb_arena_destroy(&diag->buffer);
     cuik_free(diag);
 }
 
@@ -96,11 +96,13 @@ CUIK_API void cuikdg_dump_to_stderr(TokenStream* tokens) {
     cuikdg_dump_to_file(tokens, stderr);
 }
 
-CUIK_API void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
-    TB_Arena* arena = tokens->diag->buffer;
-    for (TB_Arena* c = arena; c; c = c->next) {
-        fwrite(c->data, c->avail - c->data, 1, out);
-    }
+static void print_chunk(TB_ArenaChunk* c, FILE* out) {
+    if (c->prev) { print_chunk(c->prev, out); }
+    fwrite(c->data, c->avail - c->data, 1, out);
+}
+
+void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
+    print_chunk(tokens->diag->buffer.top, out);
 }
 
 // we use the call stack so we can print in reverse order
@@ -235,7 +237,7 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     } else {
         sprintfcb(d, "%s%s\x1b[0m: ", report_colors[type], report_names[type]);
     }
-    stbsp_vsprintfcb(sprintf_callback, d->buffer, tmp, fmt, ap);
+    stbsp_vsprintfcb(sprintf_callback, &d->buffer, tmp, fmt, ap);
 
     // location summary
     if (loc_start.raw != 0) {
@@ -269,10 +271,12 @@ static void diag(DiagType type, TokenStream* tokens, SourceRange loc, const char
     if (loc_start.raw != 0) {
         sprintfcb(tokens->diag, "     |\n");
     } else {
-        *(char*)tb_arena_unaligned_alloc(tokens->diag->buffer, 1) = '\n';
+        *(char*)tb_arena_unaligned_alloc(&tokens->diag->buffer, 1) = '\n';
     }
 
-    if (d->callback) d->callback(d, d->userdata, type);
+    if (d->callback) {
+        d->callback(d, d->userdata, type);
+    }
 
     if (type == DIAG_ERR) {
         atomic_fetch_add(&tokens->diag->error_tally, 1);
@@ -320,14 +324,14 @@ void diag_header(TokenStream* tokens, DiagType type, const char* fmt, ...) {
         sprintfcb(tokens->diag, "%s%s\x1b[0m: ", report_colors[type], report_names[type]);
     }
     stbsp_vsprintfcb(sprintf_callback, &tokens->diag->buffer, tmp, fmt, ap);
-    *(char*)tb_arena_unaligned_alloc(tokens->diag->buffer, 1) = '\n';
+    *(char*)tb_arena_unaligned_alloc(&tokens->diag->buffer, 1) = '\n';
     va_end(ap);
 }
 
 static void diag_writer_write_upto(DiagWriter* writer, size_t pos) {
     if (writer->cursor < pos) {
         int l = pos - writer->cursor;
-        memset(tb_arena_unaligned_alloc(writer->tokens->diag->buffer, l), ' ', l);
+        memset(tb_arena_unaligned_alloc(&writer->tokens->diag->buffer, l), ' ', l);
 
         //printf("%.*s", (int)(pos - writer->cursor), writer->line_start + writer->cursor);
         writer->cursor = pos;

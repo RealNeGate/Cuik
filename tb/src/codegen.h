@@ -323,7 +323,7 @@ static int fixed_reg_mask(RegMask* mask) {
 }
 
 static RegMask* new_regmask(TB_Function* f, int reg_class, bool may_spill, uint64_t mask) {
-    RegMask* rm = tb_arena_alloc(f->arena, sizeof(RegMask) + sizeof(uint64_t));
+    RegMask* rm = tb_arena_alloc(&f->arena, sizeof(RegMask) + sizeof(uint64_t));
     rm->may_spill = may_spill;
     rm->class = reg_class;
     rm->count = 1;
@@ -357,7 +357,7 @@ static RegMask* intern_regmask(Ctx* ctx, int reg_class, bool may_spill, uint64_t
     RegMask* new_rm = new_regmask(ctx->f, reg_class, may_spill, mask);
     RegMask* old_rm = nl_hashset_put2(&ctx->mask_intern, new_rm, rm_hash, rm_compare);
     if (old_rm != NULL) {
-        tb_arena_free(ctx->f->arena, new_rm, sizeof(RegMask));
+        tb_arena_free(&ctx->f->arena, new_rm, sizeof(RegMask));
         return old_rm;
     }
     return new_rm;

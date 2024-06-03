@@ -16,6 +16,9 @@ struct TB_GraphBuilder {
     //   in[2..] rest of the defs
     TB_Node* curr;
     TB_Node* start_syms;
+
+    size_t param_count;
+    TB_Node** params;
 };
 
 static TB_Node* xfer_ctrl(TB_GraphBuilder* g, TB_Node* n) {
@@ -35,17 +38,9 @@ static TB_Node* xfer_mem(TB_GraphBuilder* g, TB_Node* n, int mem_var) {
     return old;
 }
 
-static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_FunctionPrototype* p, TB_Worklist* ws) {
+static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_FunctionPrototype* p, TB_Worklist* ws) {
     TB_ASSERT_MSG(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
     TB_ASSERT_MSG(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
-
-    TB_GraphBuilder* g = tb_arena_alloc(arena2, sizeof(TB_GraphBuilder));
-    *g = (TB_GraphBuilder){ .f = f, .arena = arena2 };
-    g->peep = ws ? tb_opt_peep_node : tb_opt_gvn_node;
-
-    f->arena     = arena1;
-    f->tmp_arena = arena2;
-    f->worklist  = ws;
 
     TB_ABI abi = f->super.module->target_abi;
     if (p == NULL) {
@@ -53,10 +48,15 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_Arena* arena1, TB_A
     }
 
     // apply prototype
+    f->worklist = ws;
     tb_function_set_prototype(f, section, p);
 
+    TB_GraphBuilder* g = tb_arena_alloc(&f->tmp_arena, sizeof(TB_GraphBuilder));
+    *g = (TB_GraphBuilder){ .f = f, .arena = &f->tmp_arena };
+    g->peep = ws ? tb_opt_peep_node : tb_opt_gvn_node;
+
     // both RPC and memory are mutable vars
-    int def_count = 4 + (dbg ? dbg->func.param_count : f->param_count);
+    int def_count = 4 + (dbg ? 0 : f->param_count);
     TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, def_count, sizeof(TB_NodeSymbolTable));
     set_input(f, syms, f->params[0], 0);
     set_input(f, syms, f->params[0], 1);
@@ -67,6 +67,11 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_Arena* arena1, TB_A
     if (dbg) {
         size_t param_count = dbg->func.param_count;
         TB_DebugType** param_list = dbg->func.params;
+
+        if (param_count) {
+            g->params = tb_arena_alloc(&f->tmp_arena, param_count * sizeof(TB_Node*));
+            g->param_count = param_count;
+        }
 
         // reassemble values
         bool has_aggregate_return = dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
@@ -90,7 +95,9 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_Arena* arena1, TB_A
 
             // mark debug info
             tb_function_attrib_variable(f, v, NULL, name_len, name, type);
-            set_input(f, syms, v, 4 + i);
+            g->params[i] = v;
+
+            // set_input(f, syms, v, 4 + i);
         }
     } else {
         FOR_N(i, 0, f->param_count) {
@@ -100,12 +107,16 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_Arena* arena1, TB_A
     return g;
 }
 
-TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2, TB_ModuleSectionHandle section, TB_FunctionPrototype* proto, TB_Worklist* ws) {
-    return builder_enter_raw(f, arena1, arena2, section, NULL, proto, ws);
+TB_Node* tb_builder_param_addr(TB_GraphBuilder* g, int i) {
+    return g->params[i];
 }
 
-TB_GraphBuilder* tb_builder_enter_from_dbg(TB_Function* f, TB_Arena* arena1, TB_Arena* arena2, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Worklist* ws) {
-    return builder_enter_raw(f, arena1, arena2, section, dbg, NULL, ws);
+TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* proto, TB_Worklist* ws) {
+    return builder_enter_raw(f, section, NULL, proto, ws);
+}
+
+TB_GraphBuilder* tb_builder_enter_from_dbg(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Worklist* ws) {
+    return builder_enter_raw(f, section, dbg, NULL, ws);
 }
 
 void tb_builder_exit(TB_GraphBuilder* g) {
@@ -116,6 +127,11 @@ void tb_builder_exit(TB_GraphBuilder* g) {
     if (g->curr) {
         tb_builder_label_kill(g, g->curr);
     }
+
+    if (g->params) {
+        tb_arena_free(g->arena, g->params, g->param_count * sizeof(TB_Node*));
+    }
+    tb_arena_free(g->arena, g, sizeof(TB_GraphBuilder));
 }
 
 TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align) {
@@ -547,8 +563,6 @@ void tb_builder_br(TB_GraphBuilder* g, TB_Node* target) {
     TB_ASSERT(syms->input_count == target->input_count);
 
     TB_Node* top_ctrl = target->inputs[1];
-    bool is_loop = cfg_is_natural_loop(top_ctrl);
-
     FOR_N(i, 2, target->input_count) {
         TB_Node* target_def = target->inputs[i];
         if (target_def == NULL) {
@@ -556,7 +570,9 @@ void tb_builder_br(TB_GraphBuilder* g, TB_Node* target) {
         } else if (target->inputs[i]->type == TB_PHI && target->inputs[i]->inputs[0] == top_ctrl) {
             // already phi-ified, keep appending to it
             add_input_late(f, target_def, syms->inputs[i]);
-        } else if (is_loop || target_def != syms->inputs[i]) {
+        } else if (target_def != syms->inputs[i]) {
+            TB_ASSERT(!TB_NODE_GET_EXTRA_T(target, TB_NodeSymbolTable)->complete);
+
             // we didn't have a phi but finally found a reason for one
             TB_Node* n = tb_alloc_node(f, TB_PHI, target_def->dt, 2 + top_ctrl->input_count, 0);
             set_input(f, n, top_ctrl, 0);
@@ -577,12 +593,13 @@ TB_Node* tb_builder_loop(TB_GraphBuilder* g) {
     TB_Function* f = g->f;
     TB_Node* curr = g->curr;
 
-    TB_Node* r = tb_alloc_node_dyn(f, TB_NATURAL_LOOP, TB_TYPE_CONTROL, 1, 2, sizeof(TB_NodeRegion));
+    TB_Node* r = tb_alloc_node_dyn(f, TB_REGION, TB_TYPE_CONTROL, 1, 2, sizeof(TB_NodeRegion));
     set_input(f, r, curr->inputs[0], 0);
 
     TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, curr->input_count, sizeof(TB_NodeSymbolTable));
     set_input(f, syms, r, 0);
     set_input(f, syms, r, 1);
+    TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = true);
 
     // pre-emptively enter phis
     FOR_N(i, 2, curr->input_count) {

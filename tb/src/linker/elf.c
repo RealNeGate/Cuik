@@ -16,7 +16,7 @@ static void elf_append_module(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Module
     }
 
     // We don't *really* care about this info beyond nicer errors
-    TB_LinkerObject* obj_file = tb_arena_alloc(info->perm_arena, sizeof(TB_LinkerObject));
+    TB_LinkerObject* obj_file = tb_arena_alloc(&info->perm_arena, sizeof(TB_LinkerObject));
     *obj_file = (TB_LinkerObject){ .module = m };
 
     DynArray(TB_ModuleSection) sections = m->sections;
