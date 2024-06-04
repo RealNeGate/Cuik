@@ -581,7 +581,6 @@ struct ICodeGen {
     size_t (*extra_bytes)(TB_Node* n);
     const char* (*node_name)(int n_type);
     void (*print_extra)(TB_Node* n);
-    void (*print_dumb_extra)(TB_Node* n);
 
     void (*get_data_type_size)(TB_DataType dt, size_t* out_size, size_t* out_align);
     // return the number of non-local patches
@@ -736,11 +735,12 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot);
 void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in);
 void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot);
-void print_node_sexpr(TB_Node* n, int depth);
 
 // extra edges go after n->input_count, are unordered and NULL just means free space
 void tb_node_add_extra(TB_Function* f, TB_Node* n, TB_Node* in);
 void tb_node_clear_extras(TB_Function* f, TB_Node* n);
+
+TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra);
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 void tb_symbol_append(TB_Module* m, TB_Symbol* s);
@@ -755,7 +755,6 @@ void tb__md5sum(uint8_t* out_bytes, uint8_t* initial_msg, size_t initial_len);
 uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits);
 
 char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src);
-TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra);
 
 static bool is_same_location(TB_Location* a, TB_Location* b) {
     return a->file == b->file && a->line == b->line && a->column == b->column;

@@ -1,9 +1,9 @@
+#ifdef TB_HAS_X64
 #include "x64.h"
 #include <tb_x64.h>
 #include "x64_emitter.h"
 #include "x64_disasm.c"
 
-#ifdef TB_HAS_X64
 enum {
     // register classes
     REG_CLASS_GPR = 1,
@@ -157,32 +157,6 @@ static void print_extra(TB_Node* n) {
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             printf(", scale=%d, disp=%d, mode=%s, imm=%d", 1u<<op->scale, op->disp, modes[op->mode], op->imm);
-            break;
-        }
-    }
-}
-
-static void print_dumb_extra(TB_Node* n) {
-    static const char* modes[] = { "reg", "ld", "st" };
-    switch (n->type) {
-        case x86_movzx8: case x86_movzx16:
-        case x86_movsx8: case x86_movsx16: case x86_movsx32:
-        case x86_add: case x86_or: case x86_and: case x86_sub:
-        case x86_xor: case x86_cmp: case x86_mov: case x86_test: case x86_lea:
-        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
-        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
-        {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf("scale=%d disp=%d mode=%s ", 1u<<op->scale, op->disp, modes[op->mode]);
-            break;
-        }
-
-        case x86_addimm: case x86_orimm:  case x86_andimm: case x86_subimm:
-        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
-        case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
-        {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf("scale=%d disp=%d mode=%s imm=%d ", 1u<<op->scale, op->disp, modes[op->mode], op->imm);
             break;
         }
     }
@@ -356,8 +330,8 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         ctx->stack_header = 8;
     }
 
-    ctx->normie_mask[REG_CLASS_GPR]   = new_regmask(ctx->f, REG_CLASS_GPR,   false, all_gprs);
-    ctx->normie_mask[REG_CLASS_XMM]   = new_regmask(ctx->f, REG_CLASS_XMM,   false, 0xFFFF);
+    ctx->normie_mask[REG_CLASS_GPR] = new_regmask(ctx->f, REG_CLASS_GPR, false, all_gprs);
+    ctx->normie_mask[REG_CLASS_XMM] = new_regmask(ctx->f, REG_CLASS_XMM, false, 0xFFFF);
 
     TB_FunctionPrototype* proto = ctx->f->prototype;
     TB_Node** params = ctx->f->params;
@@ -2641,7 +2615,6 @@ ICodeGen tb__x64_codegen = {
     .can_gvn = can_gvn,
     .node_name = node_name,
     .print_extra = print_extra,
-    .print_dumb_extra = print_dumb_extra,
     .flags = node_flags,
     .extra_bytes = extra_bytes,
     .emit_win64eh_unwind_info = emit_win64eh_unwind_info,

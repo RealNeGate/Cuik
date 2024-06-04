@@ -69,7 +69,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     } else if (n->type > 0x100) {
         int family = n->type / 0x100;
         assert(family >= 1 && family < TB_ARCH_MAX);
-        tb_codegen_families[family].print_dumb_extra(n);
+        tb_codegen_families[family].print_extra(n);
     }
     printf("( ");
     FOR_N(i, 0, n->input_count) {
