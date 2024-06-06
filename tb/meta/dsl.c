@@ -249,6 +249,15 @@ static void compile_func(Val v);
 static void compile_expr(Val v) {
     Obj* o = val_unpack(v);
     if (val_eq(o->car, s_let)) {
+        Val name = val_unpack(o->cdr)->car;
+        Val init = val_unpack(val_unpack(o->cdr)->cdr)->car;
+
+        printf("auto ");
+        print(name);
+        printf(" = ");
+        compile_expr(init);
+        printf(";\n");
+
         __debugbreak();
     } else if (val_eq(o->car, s_quote)) {
         // don't evaluate, just refer to the list
@@ -279,16 +288,34 @@ static void compile_expr(Val v) {
         }
 
         __debugbreak();
+    } else if (v.tag == VAL_SYM) {
+        const char* str = o->data;
+        __debugbreak();
     } else if (v.tag == VAL_REF) {
-        print(v);
-        printf("\n");
+        // function calls, builtins, and array accesses
+        Val target = o->car;
+        print(target);
 
-        int n = 0;
-        while (o != NIL) {
-            compile_expr(o->car);
-            o = val_unpack(o->cdr);
-            n += 1;
+        bool builtin = false;
+        if (target.tag == VAL_SYM) {
+            const char* str = val_unpack(target)->data;
+            if (strcmp(str, "get-type") == 0) {
+                printf("latuni_get(_f_, ");
+                builtin = true;
+            }
         }
+
+        if (!builtin) {
+            compile_expr(target);
+            printf("(");
+        }
+
+        Obj* args = val_unpack(o->cdr);
+        while (args != NIL) {
+            compile_expr(args->car);
+            args = val_unpack(args->cdr);
+        }
+        printf(")");
     }
 }
 
@@ -299,7 +326,7 @@ static void compile_func(Val v) {
     }
 
     static int lambda_cnt = 0;
-    printf("static void lambda%d(TB_Function* f", lambda_cnt++);
+    printf("static void lambda%d(TB_Function* _f_", lambda_cnt++);
 
     Obj* args = val_unpack(val_unpack(o->cdr)->car);
     while (args != NIL) {
