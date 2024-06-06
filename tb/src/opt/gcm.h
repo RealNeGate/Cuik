@@ -135,7 +135,10 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
                     TB_Node* moved_k = fwd[n->inputs[j]->gvn];
                     TB_ASSERT(moved_k != NULL);
 
+                    #ifndef NDEBUG
                     set_input(f, n, NULL, j);
+                    #endif
+
                     set_input(f, k, moved_k, j);
                 }
 
@@ -143,13 +146,14 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
             }
 
             // redo the params list now
+            TB_ASSERT(f->root_node->gvn == 0);
             f->root_node = fwd[f->root_node->gvn];
 
+            #ifndef NDEBUG
             FOR_N(i, 0, dyn_array_length(ws->items)) {
-                #ifndef NDEBUG
                 memset(ws->items[i], 0xAF, sizeof(TB_Node));
-                #endif
             }
+            #endif
 
             size_t param_count = 3 + f->param_count;
             f->params = tb_arena_alloc(&f->arena, param_count * sizeof(TB_Node*));

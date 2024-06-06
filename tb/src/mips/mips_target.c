@@ -1,24 +1,6 @@
-#include "../tb_internal.h"
-
 #ifdef TB_HAS_MIPS
-// NOTE(NeGate): THIS IS VERY INCOMPLETE
+#include "../tb_internal.h"
 #include "../emitter.h"
-
-enum {
-    //   OP reg, imm
-    TILE_HAS_IMM = 1,
-};
-
-enum {
-    // register classes
-    REG_CLASS_GPR = 1,
-    REG_CLASS_COUNT,
-};
-
-typedef struct {
-    TB_Node* base;
-    int offset;
-} AuxAddress;
 
 typedef enum {
     ZR,                             // zero reg.
@@ -50,7 +32,115 @@ static const char* gpr_names[32] = {
     "ra",
 };
 
+enum {
+    // register classes
+    REG_CLASS_GPR = 1,
+    REG_CLASS_COUNT,
+};
+
+enum {
+    FUNCTIONAL_UNIT_COUNT = 1,
+};
+
 #include "../codegen_impl.h"
+
+typedef struct {
+    int32_t offset;
+} MIPSMemOp;
+
+// machine node types
+typedef enum MIPSNodeType {
+    mips_nop = TB_MACH_MIPS,
+
+    #define R(name, op, funct) mips_ ## name,
+    #define I(name, op)        mips_ ## name,
+    #define J(name, op)        mips_ ## name,
+    #include "mips_nodes.inc"
+} MIPSNodeType;
+
+static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
+    TB_Arch arch = ctx->module->target_arch;
+    TB_ASSERT(arch == TB_ARCH_MIPS32 || arch == TB_ARCH_MIPS64);
+
+    ctx->abi_index = arch == TB_ARCH_MIPS64;
+    ctx->stack_slot_size = arch == TB_ARCH_MIPS64 ? 8 : 4;
+
+    uint32_t not_tmps = (1 << ZR) | (1 << AT) | (1 << SP) | (1 << K0) | (1 << K1) | (1 << GP);
+
+    ctx->num_regs[REG_CLASS_GPR] = 32;
+    ctx->normie_mask[REG_CLASS_GPR] = REGMASK(GPR, UINT32_MAX & ~not_tmps);
+
+    #if 0
+    uint32_t volatile_gprs = (((UINT32_MAX >> 7) << 1) & ~(0xFF << S0)) | (1u << RA);
+    ctx->callee_saved[REG_CLASS_GPR] = ~volatile_gprs;
+    #endif
+}
+
+static bool can_gvn(TB_Node* n) {
+    return true;
+}
+
+uint32_t node_flags(TB_Node* n) {
+    return 0;
+}
+
+static size_t extra_bytes(TB_Node* n) {
+    X86NodeType type = n->type;
+    switch (type) {
+        case x86_int3:
+        case x86_vzero:
+        return 0;
+
+        case x86_idiv: case x86_div:
+        case x86_movzx8: case x86_movzx16:
+        case x86_movsx8: case x86_movsx16: case x86_movsx32:
+        case x86_add: case x86_or: case x86_and: case x86_sub:
+        case x86_xor: case x86_cmp: case x86_mov: case x86_test: case x86_lea:
+        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
+        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor: case x86_ucomi:
+        case x86_addimm: case x86_orimm: case x86_andimm: case x86_subimm:
+        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
+        case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
+        case x86_cmpjcc: case x86_cmpimmjcc:
+        case x86_testjcc: case x86_testimmjcc:
+        case x86_ucomijcc:
+        return sizeof(X86MemOp);
+
+        case x86_call:
+        case x86_static_call:
+        return sizeof(X86Call);
+
+        case x86_cmovcc:
+        return sizeof(X86Cmov);
+
+        default:
+        tb_todo();
+    }
+}
+
+static const char* node_name(int n_type) {
+    switch (n_type) {
+        case mips_nop: return "nop";
+        #define R(name, op, funct) return #name;
+        #define I(name, op)        return #name;
+        #define J(name, op)        return #name;
+        #include "mips_nodes.inc"
+        default: return NULL;
+    }
+}
+
+static void print_extra(TB_Node* n) {
+}
+
+static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
+    return n;
+}
+
+#endif
+
+#if 0
+// NOTE(NeGate): THIS IS VERY INCOMPLETE
+
 
 static bool fits_into_int16(uint64_t x) {
     uint64_t hi = x >> 16ull;
@@ -75,25 +165,6 @@ static bool try_for_imm16(int bits, TB_Node* n, int32_t* out_x) {
 
     *out_x = i->value;
     return true;
-}
-
-static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
-    TB_Arch arch = ctx->module->target_arch;
-    assert(arch == TB_ARCH_MIPS32 || arch == TB_ARCH_MIPS64);
-
-    ctx->sched = greedy_scheduler;
-    ctx->regalloc = tb__lsra;
-    ctx->abi_index = arch == TB_ARCH_MIPS64;
-    ctx->stack_slot_size = arch == TB_ARCH_MIPS64 ? 8 : 4;
-
-    uint32_t not_tmps = (1 << ZR) | (1 << AT) | (1 << SP) | (1 << K0) | (1 << K1) | (1 << GP);
-
-    ctx->num_regs[REG_CLASS_GPR] = 32;
-    ctx->normie_mask[REG_CLASS_GPR] = REGMASK(GPR, UINT32_MAX & ~not_tmps);
-
-    uint32_t volatile_gprs = ((UINT32_MAX >> 7) << 1) & ~(0xFF << S0);
-    volatile_gprs |= 1u << RA;
-    ctx->callee_saved[REG_CLASS_GPR] = ~volatile_gprs;
 }
 
 static int bits_in_type(Ctx* restrict ctx, TB_DataType dt) {

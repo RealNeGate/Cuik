@@ -218,7 +218,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f));
         TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
-        ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, TB_CFG_DOMS | TB_CFG_LOOPS);
+        ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, TB_CFG_DOMS);
         tb_global_schedule(f, ws, cfg, true, true, node_latency);
 
         log_phase_end(f, og_size, "GCM");
@@ -266,7 +266,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         int max_ins = 0;
         size_t vreg_count = 1; // 0 is reserved as the NULL vreg
-        assert(dyn_array_length(ws->items) == 0);
+        TB_ASSERT(dyn_array_length(ws->items) == 0);
         FOR_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
             TB_BasicBlock* bb = &cfg.blocks[bbid];
@@ -298,13 +298,13 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
                 // these ops are guarenteed to fit since new nodes aren't being added and the
                 // size was fine when we started.
-                assert(n->gvn < aarray_length(ctx.vreg_map));
+                TB_ASSERT(n->gvn < aarray_length(ctx.vreg_map));
 
                 int vreg_id = 0;
                 if (def_mask != &TB_REG_EMPTY) {
                     if (n->type == TB_MACH_MOVE) {
-                        assert(single_use(n));
-                        assert(USERN(n->users)->type == TB_PHI);
+                        TB_ASSERT(single_use(n));
+                        TB_ASSERT(USERN(n->users)->type == TB_PHI);
 
                         // these are phi moves, they should share the vreg of phi
                         TB_Node* phi = USERN(n->users);
@@ -354,7 +354,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
                 // all vreg writes here are in-bounds but later work will grow vregs
                 // so don't be assuming it everywhere.
-                assert(vreg_id >= 0 && vreg_id < aarray_length(ctx.vregs));
+                TB_ASSERT(vreg_id >= 0 && vreg_id < aarray_length(ctx.vregs));
 
                 #if TB_OPTDEBUG_CODEGEN
                 int tmps = node_tmp_count(&ctx, n);
@@ -469,7 +469,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         CUIK_TIMED_BLOCK("jump tables") {
             dyn_array_for(i, ctx.jump_table_patches) {
                 uint32_t target = ctx.emit.labels[ctx.jump_table_patches[i].target];
-                assert((target & 0x80000000) && "target label wasn't resolved... what?");
+                TB_ASSERT((target & 0x80000000) && "target label wasn't resolved... what?");
                 *ctx.jump_table_patches[i].pos = target & ~0x80000000;
             }
         }
@@ -527,6 +527,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     #endif
 
     tb_arena_clear(&f->tmp_arena);
+
+    f->scheduled_n = 0;
     f->scheduled = NULL;
 
     // we're done, clean up

@@ -479,7 +479,8 @@ typedef enum TB_NodeTypeEnum {
 
     // each family of machine nodes gets 256 nodes
     // first machine op, we have some generic ops here:
-    TB_MACH_X86 = TB_ARCH_X86_64 * 0x100,
+    TB_MACH_X86  = TB_ARCH_X86_64 * 0x100,
+    TB_MACH_MIPS = TB_ARCH_MIPS32 * 0x100,
 } TB_NodeTypeEnum;
 typedef uint16_t TB_NodeType;
 static_assert(sizeof(TB_NODE_TYPE_MAX) < 0x100, "this is the bound where machine nodes start");

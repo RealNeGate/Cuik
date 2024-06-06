@@ -145,19 +145,10 @@ static void tb_resolve_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t 
 
 static void* tb_cgemit_reserve(TB_CGEmitter* restrict e, size_t count) {
     if (e->count + count >= e->capacity) {
-        // we don't really want massive code buffers... functions shouldn't really be that big
-        size_t chunk_size = tb_arena_chunk_size(e->arena->top);
-        if (e->capacity >= chunk_size - sizeof(TB_Arena)) {
-            tb_panic("could not allocate code buffer (too big lmao)\n");
-        }
+        size_t new_cap = tb_next_pow2(e->count + count);
 
-        // reallocate arena
-        size_t old_cap = e->capacity;
-        void* old = e->data;
-
-        e->capacity = (e->arena->top->limit - e->arena->top->avail) & ~0xF;
-        e->data = tb_arena_alloc(e->arena, e->capacity);
-        memcpy(e->data, old, old_cap);
+        e->data = tb_arena_realloc(e->arena, e->data, e->capacity, new_cap);
+        e->capacity = new_cap;
     }
 
     return &e->data[e->count];
