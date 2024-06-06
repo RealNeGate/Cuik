@@ -2622,6 +2622,4 @@ ICodeGen tb__x64_codegen = {
     .get_data_type_size = get_data_type_size,
     .compile_function   = compile_function,
 };
-#else
-ICodeGen tb__x64_codegen;
 #endif

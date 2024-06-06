@@ -6,8 +6,8 @@ typedef enum {
     ZR,                             // zero reg.
     AT,                             // reserved for assembler.
     V0, V1,                         // returns.
-    A0, A1, A2, A3,                 // call params.
-    T0, T1, T2, T3, T4, T5, T6, T7, // temporaries (volatile)
+    A0, A1, A2, A3, A4, A5, A6, A7, // call params.
+    T4, T5, T6, T7,                 // temporaries (volatile)
     S0, S1, S2, S3, S4, S5, S6, S7, // temporaries (non-volatile)
     T8, T9,                         // temporaries (volatile)
     K0, K1,                         // kernel regs.
@@ -21,8 +21,8 @@ static const char* gpr_names[32] = {
     "zr",
     "at",
     "v0", "v1",
-    "a0", "a1", "a2", "a3",
-    "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7",
+    "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+    "t4", "t5", "t6", "t7",
     "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7",
     "t8", "t9",
     "k0", "k1",
@@ -35,6 +35,7 @@ static const char* gpr_names[32] = {
 enum {
     // register classes
     REG_CLASS_GPR = 1,
+    REG_CLASS_FPR,
     REG_CLASS_COUNT,
 };
 
@@ -45,16 +46,16 @@ enum {
 #include "../codegen_impl.h"
 
 typedef struct {
-    int32_t offset;
-} MIPSMemOp;
+    int32_t imm;
+} MIPSImm;
 
 // machine node types
 typedef enum MIPSNodeType {
     mips_nop = TB_MACH_MIPS,
 
-    #define R(name, op, funct) mips_ ## name,
-    #define I(name, op)        mips_ ## name,
-    #define J(name, op)        mips_ ## name,
+    #define R(name, op, funct, ty) mips_ ## name,
+    #define I(name, op, ty)        mips_ ## name,
+    #define J(name, op, ty)        mips_ ## name,
     #include "mips_nodes.inc"
 } MIPSNodeType;
 
@@ -68,7 +69,9 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     uint32_t not_tmps = (1 << ZR) | (1 << AT) | (1 << SP) | (1 << K0) | (1 << K1) | (1 << GP);
 
     ctx->num_regs[REG_CLASS_GPR] = 32;
-    ctx->normie_mask[REG_CLASS_GPR] = REGMASK(GPR, UINT32_MAX & ~not_tmps);
+    ctx->num_regs[REG_CLASS_FPR] = 32;
+    ctx->normie_mask[REG_CLASS_GPR] = new_regmask(ctx->f, REG_CLASS_GPR, false, UINT32_MAX & ~not_tmps);
+    ctx->normie_mask[REG_CLASS_FPR] = new_regmask(ctx->f, REG_CLASS_GPR, false, UINT32_MAX);
 
     #if 0
     uint32_t volatile_gprs = (((UINT32_MAX >> 7) << 1) & ~(0xFF << S0)) | (1u << RA);
@@ -80,121 +83,330 @@ static bool can_gvn(TB_Node* n) {
     return true;
 }
 
-uint32_t node_flags(TB_Node* n) {
+static uint32_t node_flags(TB_Node* n) {
     return 0;
 }
 
 static size_t extra_bytes(TB_Node* n) {
-    X86NodeType type = n->type;
-    switch (type) {
-        case x86_int3:
-        case x86_vzero:
-        return 0;
-
-        case x86_idiv: case x86_div:
-        case x86_movzx8: case x86_movzx16:
-        case x86_movsx8: case x86_movsx16: case x86_movsx32:
-        case x86_add: case x86_or: case x86_and: case x86_sub:
-        case x86_xor: case x86_cmp: case x86_mov: case x86_test: case x86_lea:
-        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
-        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor: case x86_ucomi:
-        case x86_addimm: case x86_orimm: case x86_andimm: case x86_subimm:
-        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
-        case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
-        case x86_cmpjcc: case x86_cmpimmjcc:
-        case x86_testjcc: case x86_testimmjcc:
-        case x86_ucomijcc:
-        return sizeof(X86MemOp);
-
-        case x86_call:
-        case x86_static_call:
-        return sizeof(X86Call);
-
-        case x86_cmovcc:
-        return sizeof(X86Cmov);
-
-        default:
-        tb_todo();
+    switch (n->type) {
+        case mips_nop: return 0;
+        #define R(name, op, funct, ty) case mips_ ## name: return sizeof(ty);
+        #define I(name, op, ty)        case mips_ ## name: return sizeof(ty);
+        #define J(name, op, ty)        case mips_ ## name: return sizeof(ty);
+        #include "mips_nodes.inc"
+        default: return 0;
     }
 }
 
 static const char* node_name(int n_type) {
     switch (n_type) {
         case mips_nop: return "nop";
-        #define R(name, op, funct) return #name;
-        #define I(name, op)        return #name;
-        #define J(name, op)        return #name;
+        #define R(name, op, funct, ty) case mips_ ## name: return #name;
+        #define I(name, op, ty)        case mips_ ## name: return #name;
+        #define J(name, op, ty)        case mips_ ## name: return #name;
         #include "mips_nodes.inc"
         default: return NULL;
     }
 }
 
 static void print_extra(TB_Node* n) {
+    switch (n->type) {
+        // Print offset for memory ops
+        #define FOO_void(name)
+        #define FOO_MIPSImm(name) case mips_ ## name:
+
+        #define R(name, op, funct, ty) CONCAT(FOO_, ty)(name)
+        #define I(name, op, ty)        CONCAT(FOO_, ty)(name)
+        #define J(name, op, ty)        CONCAT(FOO_, ty)(name)
+        #include "mips_nodes.inc"
+        {
+            MIPSImm* op = TB_NODE_GET_EXTRA(n);
+            printf("imm=%"PRId32" ", op->imm);
+            break;
+        }
+
+        default: break;
+    }
 }
 
-static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
-    return n;
+static int node_tmp_count(Ctx* restrict ctx, TB_Node* n) {
+    return 0;
 }
-
-#endif
-
-#if 0
-// NOTE(NeGate): THIS IS VERY INCOMPLETE
-
 
 static bool fits_into_int16(uint64_t x) {
     uint64_t hi = x >> 16ull;
     return hi == 0 || hi == 0xFFFFFFFFFFFF;
 }
 
-static bool try_for_imm16(int bits, TB_Node* n, int32_t* out_x) {
+static bool try_for_imm16(TB_Node* n, int32_t* out_x) {
     if (n->type != TB_ICONST) {
         return false;
     }
 
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    if (bits > 16) {
-        bool sign = (i->value >> 15ull) & 1;
-        uint64_t top = i->value >> 16ull;
+    bool sign     = (i->value >> 15ull) & 1;
+    uint64_t top  = i->value >> 16ull;
 
-        // if the sign matches the rest of the top bits, we can sign extend just fine
-        if (top != (sign ? 0xFFFFFFFF : 0)) {
-            return false;
-        }
+    // if the sign matches the rest of the top bits, we can sign extend just fine
+    if (top != (sign ? 0xFFFFFFFF : 0)) {
+        return false;
     }
 
     *out_x = i->value;
     return true;
 }
 
-static int bits_in_type(Ctx* restrict ctx, TB_DataType dt) {
-    switch (dt.type) {
-        case TB_TAG_INT: return dt.data;
-        case TB_TAG_PTR: return 64;
-        default: tb_todo();
+static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
+    // integer ops need to be converted into 32bit or 64bit ops
+    if (n->type >= TB_AND && n->type <= TB_ROR) {
+        TB_Node* a = n->inputs[1];
+        TB_Node* b = n->inputs[2];
+
+        // below 32bit? zero extend up
+        bool is_64bit = n->dt.type == TB_TAG_INT && n->dt.data == 64;
+
+        int32_t rhs;
+        if (try_for_imm16(b, &rhs)) {
+            TB_Node* op = tb_alloc_node(f, mips_nop, is_64bit ? TB_TYPE_I64 : TB_TYPE_I32, 2, sizeof(MIPSImm));
+            set_input(f, op, n->inputs[1], 1);
+
+            if (n->type == TB_SUB) {
+                rhs = -rhs;
+            }
+
+            switch (n->type) {
+                case TB_ADD: op->type = is_64bit ? mips_daddiu : mips_addiu; break;
+                case TB_SUB: op->type = is_64bit ? mips_daddiu : mips_addiu; break;
+                case TB_SHL: op->type = is_64bit ? mips_dsll : mips_sll;     break;
+                case TB_SHR: op->type = is_64bit ? mips_dsrl : mips_srl;     break;
+                default: tb_todo();
+            }
+            TB_NODE_SET_EXTRA(op, MIPSImm, .imm = rhs);
+            return op;
+        }
+
+        /*switch (n->type) {
+            case TB_ADD: n->type = is_64bit ? mips_daddu : mips_addu; break;
+            case TB_SUB: n->type = is_64bit ? mips_dsubu : mips_subu; break;
+            case TB_SHL: n->type = is_64bit ? mips_dsllv : mips_slv;  break;
+            case TB_SHR: n->type = is_64bit ? mips_dslrv : mips_srv;  break;
+            default: tb_todo();
+        }*/
+        tb_todo();
+
+        return n;
+    }
+
+    // float ops
+    if (n->type >= TB_FADD && n->type <= TB_FDIV) {
+        tb_todo();
+
+        // a*b + c => madd
+        if (n->type == TB_FADD && n->inputs[1]->type == TB_FMUL) {
+            TB_Node* op = tb_alloc_node(f, n->dt.type == TB_TAG_F64 ? mips_maddd : mips_madds, n->dt, 4, 0);
+            set_input(f, op, n->inputs[1]->inputs[1], 1);
+            set_input(f, op, n->inputs[1]->inputs[2], 2);
+            set_input(f, op, n->inputs[2],            3);
+            return op;
+        }
+
+        return n;
+    }
+
+    // it's just addition but with pointer types
+    if (n->type == TB_PTR_OFFSET) {
+        n->type = mips_daddu;
+        return n;
+    }
+
+    // MIPS really only has offsets for loads and stores (in the base ISA, MIPS II has
+    // indexed loads which we don't support)
+    if (n->type == TB_LOAD || n->type == TB_STORE) {
+        int32_t offset = 0;
+        TB_Node* addr  = n->inputs[2];
+        if (addr->type == TB_PTR_OFFSET && try_for_imm16(addr->inputs[2], &offset)) {
+            addr = addr->inputs[1];
+        }
+
+        bool store = n->type == TB_STORE;
+        TB_DataType dt = store ? n->inputs[3]->dt : n->dt;
+
+        int op_type = 0;
+        if (dt.type == TB_TAG_F64) { op_type = store ? mips_sdc1 : mips_ldc1; }
+        else { tb_todo(); }
+
+        TB_Node* op = tb_alloc_node(f, op_type, store ? TB_TYPE_MEMORY : dt, store ? 4 : 3, sizeof(MIPSImm));
+        set_input(f, op, n->inputs[0], 0);
+        set_input(f, op, n->inputs[1], 1);
+        set_input(f, op, addr,         2);
+        if (store) {
+            set_input(f, op, n->inputs[3], 3);
+        }
+        TB_NODE_SET_EXTRA(op, MIPSImm, .imm = offset);
+        return op;
+    }
+
+    return n;
+}
+
+static bool node_remat(TB_Node* n) { return false; }
+
+// 3 address ops, we don't really need this
+static int node_2addr(TB_Node* n) { return -1; }
+
+// don't care about functional units on x86
+static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) { return 1; }
+static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
+    return 1;
+}
+
+static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
+    switch (n->type) {
+        case TB_REGION:
+        case TB_SPLITMEM:
+        case TB_MERGEMEM:
+        case TB_TRAP:
+        case TB_DEBUGBREAK:
+        case TB_AFFINE_LOOP:
+        case TB_NATURAL_LOOP:
+        case TB_CALLGRAPH:
+        case TB_DEBUG_LOCATION:
+        if (ins) {
+            // region inputs are all control
+            FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
+        }
+        return &TB_REG_EMPTY;
+
+        case TB_LOCAL:
+        case TB_SYMBOL:
+        case TB_BRANCH_PROJ:
+        case TB_MACH_SYMBOL:
+        case TB_MACH_FRAME_PTR:
+        return &TB_REG_EMPTY;
+
+        case TB_MACH_COPY: {
+            TB_NodeMachCopy* move = TB_NODE_GET_EXTRA(n);
+            if (ins) { ins[1] = move->use; }
+            return move->def;
+        }
+
+        case TB_MACH_PROJ: {
+            return TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def;
+        }
+
+        case TB_MACH_MOVE: {
+            RegMask* rm = ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_FPR : REG_CLASS_GPR];
+            if (ins) { ins[1] = rm; }
+            return rm;
+        }
+
+        case TB_PHI: {
+            if (ins) {
+                FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
+            }
+
+            if (n->dt.type == TB_TAG_MEMORY) return &TB_REG_EMPTY;
+            if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) return ctx->normie_mask[REG_CLASS_FPR];
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
+
+        case TB_PROJ: {
+            if (n->dt.type == TB_TAG_MEMORY || n->dt.type == TB_TAG_CONTROL) {
+                return &TB_REG_EMPTY;
+            }
+
+            int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+            if (n->inputs[0]->type == TB_ROOT) {
+                assert(i >= 2);
+                if (i == 2) {
+                    // RPC is inaccessible for now
+                    return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RA);
+                } else {
+                    int param_id = i - 3;
+
+                    // Parameters past the first 8 go into the stack
+                    if (param_id >= 8) {
+                        return intern_regmask(ctx, REG_CLASS_STK, false, param_id);
+                    }
+
+                    // int/ptr params: a0...a7
+                    // float params:   f12...f19
+                    if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) {
+                        return intern_regmask(ctx, REG_CLASS_FPR, false, 1u << (param_id + 12));
+                    } else {
+                        return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (param_id + A0));
+                    }
+                }
+            } else {
+                tb_todo();
+                return &TB_REG_EMPTY;
+            }
+        }
+
+        default:
+        tb_todo();
+        return NULL;
     }
 }
 
-static RegMask normie_mask(Ctx* restrict ctx, TB_DataType dt) {
-    return ctx->normie_mask[REG_CLASS_GPR];
-}
-
-static bool is_regpair(Ctx* restrict ctx, TB_DataType dt) {
-    return ctx->abi_index == 0 && dt.type == TB_TAG_INT && dt.data > 32;
-}
-
-static int reg_count(Ctx* restrict ctx, TB_Node* n) {
-    if (n->dt.type == TB_TAG_INT) {
-        assert(n->dt.data <= 64);
-        return ctx->abi_index == 0 && n->dt.data > 32 ? 2 : 1;
-    } else if (n->dt.type == TB_TAG_PTR) {
-        return 1;
-    } else if (n->dt.type == TB_FLOAT) {
-        return 1;
-    } else {
-        return 0;
+static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ) {
+    if (ctx->fallthrough != succ->id) {
+        EMIT1(e, 0xE9); EMIT4(e, 0);
+        tb_emit_rel32(e, &e->labels[succ->id], GET_CODE_POS(e) - 4);
     }
 }
+
+static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg) {
+}
+
+static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb) {
+}
+
+static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
+}
+
+static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
+}
+
+static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end) {
+}
+
+static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f) {
+    return 0;
+}
+
+ICodeGen tb__mips32_codegen = {
+    .minimum_addressable_size = 8,
+    .pointer_size = 32,
+    .can_gvn = can_gvn,
+    .node_name = node_name,
+    .print_extra = print_extra,
+    .flags = node_flags,
+    .extra_bytes = extra_bytes,
+    .emit_win64eh_unwind_info = NULL,
+    .emit_call_patches  = emit_call_patches,
+    .get_data_type_size = get_data_type_size,
+    .compile_function   = compile_function,
+};
+
+ICodeGen tb__mips64_codegen = {
+    .minimum_addressable_size = 8,
+    .pointer_size = 64,
+    .can_gvn = can_gvn,
+    .node_name = node_name,
+    .print_extra = print_extra,
+    .flags = node_flags,
+    .extra_bytes = extra_bytes,
+    .emit_win64eh_unwind_info = NULL,
+    .emit_call_patches  = emit_call_patches,
+    .get_data_type_size = get_data_type_size,
+    .compile_function   = compile_function,
+};
+#endif
+
+#if 0
+// NOTE(NeGate): THIS IS VERY INCOMPLETE
+
 
 #define OUT1(m) (dst->outs[0]->dt = n->dt, dst->outs[0]->mask = (m))
 static void isel_node(Ctx* restrict ctx, Tile* dst, TB_Node* n) {
@@ -840,9 +1052,6 @@ static void emit_tile(Ctx* restrict ctx, TB_CGEmitter* e, Tile* t) {
     }
 }
 
-static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
-}
-
 typedef struct {
     const char* name;
     int op;
@@ -956,26 +1165,4 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
     }
 }
 #undef E
-
-static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f) {
-    return 0;
-}
-
-ICodeGen tb__mips32_codegen = {
-    .minimum_addressable_size = 8,
-    .pointer_size = 32,
-    .emit_win64eh_unwind_info = NULL,
-    .emit_call_patches  = emit_call_patches,
-    .get_data_type_size = get_data_type_size,
-    .compile_function   = compile_function,
-};
-
-ICodeGen tb__mips64_codegen = {
-    .minimum_addressable_size = 8,
-    .pointer_size = 64,
-    .emit_win64eh_unwind_info = NULL,
-    .emit_call_patches  = emit_call_patches,
-    .get_data_type_size = get_data_type_size,
-    .compile_function   = compile_function,
-};
 #endif
