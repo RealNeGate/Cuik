@@ -73,11 +73,11 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
-#define TB_OPTDEBUG_ISEL     0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_ISEL     1
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
-#define TB_OPTDEBUG_REGALLOC 0
+#define TB_OPTDEBUG_REGALLOC 1
 #define TB_OPTDEBUG_GVN      0
 #define TB_OPTDEBUG_COMPACT  0
 #define TB_OPTDEBUG_SCHEDULE 0
@@ -255,24 +255,28 @@ typedef struct TB_FunctionOutput {
 
     TB_Linkage linkage;
 
-    uint64_t ordinal;
     uint8_t prologue_length;
     uint8_t epilogue_length;
     uint8_t nop_pads;
 
     TB_Assembly* asm_out;
+
+    // if there's a TB_ENTRY_FORK, we've got multiple entries and this
+    // holds the offsets. if entry_offsets is NULL, the only offset is 0.
+    uint32_t* entry_offsets;
+
+    uint64_t ordinal;
     uint64_t stack_usage;
 
     uint8_t* code;
-    size_t code_pos; // relative to the export-specific text section
-    size_t code_size;
+    uint32_t code_size;
+    uint32_t code_pos; // relative to the export-specific text section
 
     // export-specific
-    uint32_t wasm_type;
-    uint32_t unwind_info;
-    uint32_t unwind_size;
-
-    DynArray(TB_StackSlot) stack_slots;
+    union {
+        uint32_t win32_unwind_info;
+        uint32_t wasm_type;
+    };
 
     // Part of the debug info
     DynArray(TB_Location) locations;
@@ -283,6 +287,8 @@ typedef struct TB_FunctionOutput {
 
     TB_SymbolPatch* first_patch;
     TB_SymbolPatch* last_patch;
+
+    DynArray(TB_StackSlot) stack_slots;
 } TB_FunctionOutput;
 
 struct TB_Worklist {

@@ -701,6 +701,34 @@ void tb_builder_debugbreak(TB_GraphBuilder* g, int mem_var) {
     set_input(g->f, n, peek_mem(g, mem_var), 1);
 }
 
+void tb_builder_entry_fork(TB_GraphBuilder* g, int count, TB_Node* paths[]) {
+    TB_Function* f = g->f;
+    TB_ASSERT_MSG(g->curr->inputs[0] == f->params[0], "entry fork can only be applied right after the entry's cproj");
+
+    TB_Node* n = tb_alloc_node(f, TB_ENTRY_FORK, TB_TYPE_TUPLE, 2, 0);
+    set_input(f, n, xfer_ctrl(g, n), 0);
+    set_input(f, n, peek_mem(g, 0), 1);
+
+    TB_Node* curr = g->curr;
+    g->curr = NULL;
+
+    FOR_N(i, 0, count) {
+        TB_Node* cproj = tb_alloc_node(f, TB_PROJ, TB_TYPE_CONTROL, 1, sizeof(TB_NodeProj));
+        set_input(f, cproj, n, 0);
+        TB_NODE_SET_EXTRA(cproj, TB_NodeProj, .index = i);
+
+        TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, curr->input_count, sizeof(TB_NodeSymbolTable));
+        set_input(f, syms, cproj, 0);
+        set_input(f, syms, cproj, 1);
+        TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = true);
+
+        FOR_N(j, 2, curr->input_count) {
+            set_input(f, syms, curr->inputs[j], j);
+        }
+        paths[i] = syms;
+    }
+}
+
 void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int count, TB_Node** args) {
     TB_Function* f = g->f;
 

@@ -270,7 +270,7 @@ size_t tb__apply_section_contents(TB_Linker* l, uint8_t* output, size_t write_po
                                     *p_out32++ = rva + out_f->code_pos + out_f->code_size;
 
                                     // refers to rdata section
-                                    *p_out32++ = rdata_rva + out_f->unwind_info;
+                                    *p_out32++ = rdata_rva + out_f->win32_unwind_info;
                                 }
                             }
                         }

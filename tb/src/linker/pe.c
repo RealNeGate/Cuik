@@ -462,7 +462,7 @@ static void pe_append_module(TB_Linker* l, TB_LinkerThreadInfo* info, TB_Module*
                 DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
                 dyn_array_for(j, funcs) {
                     TB_FunctionOutput* out_f = funcs[j];
-                    out_f->unwind_info = xdata.count;
+                    out_f->win32_unwind_info = xdata.count;
                     code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->stack_usage);
                 }
             }

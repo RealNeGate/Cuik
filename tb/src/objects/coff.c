@@ -66,15 +66,14 @@ static void generate_unwind_info(TB_Arena* dst_arena, COFF_UnwindInfo* restrict 
     dyn_array_for(i, funcs) {
         TB_FunctionOutput* out_f = funcs[i];
 
-        out_f->unwind_info = xdata.count;
+        uint32_t unwind_offset = xdata.count;
         code_gen->emit_win64eh_unwind_info(&xdata, out_f, out_f->stack_usage);
-        out_f->unwind_size = xdata.count - out_f->unwind_info;
 
         // write pdata
         size_t j = i*3;
         pdata[j+0] = 0;
         pdata[j+1] = out_f->code_size - out_f->nop_pads;
-        pdata[j+2] = out_f->unwind_info;
+        pdata[j+2] = unwind_offset;
 
         // pdata has relocations
         uint32_t sym = out_f->parent->super.symbol_id;

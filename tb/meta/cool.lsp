@@ -1,15 +1,11 @@
 
 
-(defnode TB_PTR_OFFSET
-  ; identity rewrite
-  :identity (lambda ((n Node)) (
-    (let rhs (get-type (n 2)))
+(case n
+	(TB_CYCLE_COUNTER
+		(emit #x0F #x31) ; rdtsc
+		(shl  rdx  32  )
+		(or   rax  rdx ))
+	(x86_vzero
+		(vxor xmm0 xmm0 :ps)))
 
-    ; ptr + 0 => ptr
-    (if (is-con rhs 0) (n 1))
-  ))
-
-  ; bottom type tells the worst case lattice position
-  :bottom (lambda (n) (lattice-allptr))
-)
 

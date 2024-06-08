@@ -148,7 +148,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                     continue;
                 }
 
-                // memory out nodes are "notorious" for having unused loads, we wanna pruned these
+                // memory out nodes are *notorious* for having unused loads, we wanna pruned these
                 if (n->dt.type == TB_TAG_MEMORY) {
                     FOR_USERS(u, n) {
                         if (USERN(u)->user_count == 0) {

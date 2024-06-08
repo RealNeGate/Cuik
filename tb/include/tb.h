@@ -309,6 +309,9 @@ typedef enum TB_NodeTypeEnum {
     //
     //   CProj0 is the taken path, CProj1 is exits the loop.
     TB_NEVER_BRANCH,// (Control) -> (Control...)
+    //   this is a fake branch that lets us define multiple entry points into the function for whatever
+    //   reason.
+    TB_ENTRY_FORK,
     //   debugbreak will trap in a continuable manner.
     TB_DEBUGBREAK,  // (Control, Memory) -> (Control)
     //   trap will not be continuable but will stop execution.
@@ -1543,7 +1546,7 @@ TB_API void tb_builder_label_kill(TB_GraphBuilder* g, TB_Node* label);
 TB_API void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]);
 //   unconditional jump to target
 TB_API void tb_builder_br(TB_GraphBuilder* g, TB_Node* target);
-//   natural loop
+//   forward and backward branch target
 TB_API TB_Node* tb_builder_loop(TB_GraphBuilder* g);
 
 // technically TB has multiple returns, in practice it's like 2 regs before
@@ -1552,6 +1555,9 @@ TB_API void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int arg_count, TB_No
 TB_API void tb_builder_unreachable(TB_GraphBuilder* g, int mem_var);
 TB_API void tb_builder_trap(TB_GraphBuilder* g, int mem_var);
 TB_API void tb_builder_debugbreak(TB_GraphBuilder* g, int mem_var);
+
+// allows you to define multiple entry points
+TB_API void tb_builder_entry_fork(TB_GraphBuilder* g, int count, TB_Node* paths[]);
 
 // general intrinsics
 TB_API TB_Node* tb_builder_cycle_counter(TB_GraphBuilder* g);
