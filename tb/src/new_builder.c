@@ -132,6 +132,12 @@ void tb_builder_exit(TB_GraphBuilder* g) {
         tb_arena_free(g->arena, g->params, g->param_count * sizeof(TB_Node*));
     }
     tb_arena_free(g->arena, g, sizeof(TB_GraphBuilder));
+
+    TB_Function* f = g->f;
+    if (f->worklist) {
+        worklist_clear(f->worklist);
+        tb_opt(f, f->worklist, false);
+    }
 }
 
 TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align) {
