@@ -614,6 +614,11 @@ void tb_print(TB_Function* f) {
     size_t old_scheduled_n = f->scheduled_n;
     TB_BasicBlock** old_scheduled = f->scheduled;
 
+    // the temp arena might've been freed, let's restore it
+    if (f->tmp_arena.top == NULL) {
+        tb_arena_create(&f->tmp_arena);
+    }
+
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
     f->scheduled = NULL;
 

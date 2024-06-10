@@ -263,11 +263,7 @@ static int node_2addr(TB_Node* n) {
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            switch (op->mode) {
-                case MODE_ST:  return -1;
-                case MODE_REG: return 2;
-                default: return 4;
-            }
+            return op->mode == MODE_ST ? -1 : 4;
         }
 
         case x86_mov:
