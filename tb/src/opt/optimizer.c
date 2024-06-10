@@ -117,7 +117,7 @@ static TB_Node* mem_user(TB_Function* f, TB_Node* n, int slot) {
 }
 
 static bool is_empty_bb(TB_Function* f, TB_Node* end) {
-    assert(end->type == TB_BRANCH || end->type == TB_UNREACHABLE);
+    TB_ASSERT(cfg_is_terminator(end));
     if (!cfg_is_bb_entry(end->inputs[0])) {
         return false;
     }

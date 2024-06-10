@@ -52,7 +52,10 @@ static TB_BasicBlock* find_lca(TB_BasicBlock* a, TB_BasicBlock* b) {
     return a;
 }
 
-static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* actual_n, TB_Node* y) {
+static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* actual_n, TB_User* use) {
+    TB_Node* y = USERN(use);
+    if (USERI(use) >= y->input_count) { return NULL; } // extra deps not counted
+
     TB_BasicBlock* use_block = f->scheduled[y->gvn];
     if (use_block == NULL) { return NULL; } // dead
 
@@ -62,13 +65,8 @@ static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* actual
         TB_ASSERT(cfg_is_region(use_node));
         TB_ASSERT_MSG(y->input_count == use_node->input_count + 1, "phi has parent with mismatched predecessors");
 
-        ptrdiff_t j = 1;
-        for (; j < y->input_count; j++) {
-            if (y->inputs[j] == actual_n) {
-                break;
-            }
-        }
-        TB_ASSERT(j >= 0 && j < y->input_count);
+        ptrdiff_t j = USERI(use);
+        TB_ASSERT(y->inputs[j] == actual_n);
 
         TB_BasicBlock* bb = f->scheduled[use_node->inputs[j - 1]->gvn];
         if (bb) { use_block = bb; }
@@ -603,17 +601,17 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                         // them whenever decision making here
                         if (is_proj(USERN(use))) {
                             FOR_USERS(use2, USERN(use)) {
-                                TB_BasicBlock* use_block = find_use_block(f, n, USERN(use), USERN(use2));
+                                TB_BasicBlock* use_block = find_use_block(f, n, USERN(use), use2);
                                 if (use_block) { lca = find_lca(lca, use_block); }
                             }
                         } else {
-                            TB_BasicBlock* use_block = find_use_block(f, n, n, USERN(use));
+                            TB_BasicBlock* use_block = find_use_block(f, n, n, use);
                             if (use_block) { lca = find_lca(lca, use_block); }
                         }
                     }
                 } else {
                     FOR_USERS(use, n) {
-                        TB_BasicBlock* use_block = find_use_block(f, n, n, USERN(use));
+                        TB_BasicBlock* use_block = find_use_block(f, n, n, use);
                         if (use_block) { lca = find_lca(lca, use_block); }
                     }
                 }
