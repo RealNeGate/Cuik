@@ -765,7 +765,9 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
         block = ctx->f->scheduled[last->gvn];
         FOR_USERS(u, first) {
             TB_Node* un = USERN(u);
-            if (block == ctx->f->scheduled[un->gvn] && ra->order[un->gvn] > ra->order[last->gvn]) {
+            if (USERI(u) < un->input_count &&
+                block == ctx->f->scheduled[un->gvn] &&
+                ra->order[un->gvn] > ra->order[last->gvn]) {
                 return true;
             }
         }
@@ -777,7 +779,9 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
         block = ctx->f->scheduled[rhs->gvn];
         FOR_USERS(u, lhs) {
             TB_Node* un = USERN(u);
-            if (block == ctx->f->scheduled[un->gvn] && ra->order[un->gvn] > ra->order[rhs->gvn]) {
+            if (USERI(u) < un->input_count &&
+                block == ctx->f->scheduled[un->gvn] &&
+                ra->order[un->gvn] > ra->order[rhs->gvn]) {
                 return true;
             }
         }
@@ -802,7 +806,9 @@ static int last_use_in_bb(TB_BasicBlock** scheduled, Rogers* restrict ra, TB_Bas
     int l = 0;
     FOR_USERS(u, n) {
         TB_Node* un = USERN(u);
-        if (scheduled[un->gvn] == bb && l < ra->order[un->gvn]) {
+        if (USERI(u) < un->input_count &&
+            scheduled[un->gvn] == bb &&
+            l < ra->order[un->gvn]) {
             l = ra->order[un->gvn];
         }
     }
@@ -1195,7 +1201,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                     set_remove(&ra->live_out, in->gvn);
 
                     bool pause = false;
-                    if (last_use > def_t) {
+                    if (last_use >= def_t) {
                         pause = true;
                     } else {
                         size_t bb_id = bb - ctx->cfg.blocks;

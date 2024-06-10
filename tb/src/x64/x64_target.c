@@ -147,7 +147,7 @@ static void print_extra(TB_Node* n) {
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf(", scale=%d, disp=%d, mode=%s", 1u<<op->scale, op->disp, modes[op->mode]);
+            printf("scale=%d, disp=%d, mode=%s", 1u<<op->scale, op->disp, modes[op->mode]);
             break;
         }
 
@@ -156,7 +156,7 @@ static void print_extra(TB_Node* n) {
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf(", scale=%d, disp=%d, mode=%s, imm=%d", 1u<<op->scale, op->disp, modes[op->mode], op->imm);
+            printf("scale=%d, disp=%d, mode=%s, imm=%d", 1u<<op->scale, op->disp, modes[op->mode], op->imm);
             break;
         }
     }
@@ -263,7 +263,11 @@ static int node_2addr(TB_Node* n) {
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            return op->mode != MODE_ST ? 2 : 0;
+            switch (op->mode) {
+                case MODE_ST:  return -1;
+                case MODE_REG: return 2;
+                default: return 4;
+            }
         }
 
         case x86_mov:

@@ -557,6 +557,8 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                             TB_ASSERT_MSG(extra_bytes(n) == 0, "TODO");
                         } else {
                             TB_ASSERT(family >= 1 && family < TB_ARCH_MAX);
+
+                            printf(", ");
                             tb_codegen_families[family].print_extra(n);
                         }
 

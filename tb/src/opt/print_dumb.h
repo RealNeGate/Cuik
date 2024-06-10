@@ -59,7 +59,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         }
     } else if (n->type == TB_LOCAL) {
         TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-        printf("size=%u align=%u ", l->size, l->align);
+        printf("size=%u, align=%u ", l->size, l->align);
     } else if (n->type == TB_F32CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
         printf("%f ", f->value);
@@ -70,6 +70,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         int family = n->type / 0x100;
         assert(family >= 1 && family < TB_ARCH_MAX);
         tb_codegen_families[family].print_extra(n);
+        printf(" ");
     }
     printf("( ");
     FOR_N(i, 0, n->input_count) {
