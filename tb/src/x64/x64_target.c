@@ -31,7 +31,7 @@ enum {
 typedef struct {
     uint8_t mode  : 2;
     uint8_t scale : 2;
-    char cond     : 4;
+    uint8_t cond  : 4;
     TB_DataType dt;
     int32_t disp;
     int32_t imm;
@@ -2507,7 +2507,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
 
         TB_X86_Inst inst;
         if (!tb_x86_disasm(&inst, end - pos, &e->data[pos])) {
-            E("  ERROR\n");
+            E("  ERROR %#02x\n", e->data[pos]);
             pos += 1; // skip ahead once... cry
             continue;
         }

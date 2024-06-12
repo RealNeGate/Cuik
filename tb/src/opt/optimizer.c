@@ -61,7 +61,9 @@ void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
     node_resize_inputs(f, n, n->input_count);
 
     n->inputs[n->input_count] = in;
-    add_user(f, n, in, n->input_count);
+    if (in) {
+        add_user(f, n, in, n->input_count);
+    }
     n->input_count += 1;
 }
 

@@ -39,9 +39,6 @@ static TB_Node* xfer_mem(TB_GraphBuilder* g, TB_Node* n, int mem_var) {
 }
 
 static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_FunctionPrototype* p, TB_Worklist* ws) {
-    TB_ASSERT_MSG(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
-    TB_ASSERT_MSG(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
-
     TB_ABI abi = f->super.module->target_abi;
     if (p == NULL) {
         p = tb_prototype_from_dbg(f->super.module, dbg);
@@ -63,6 +60,9 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
     set_input(f, syms, f->params[1], 2);
     set_input(f, syms, f->params[2], 3);
     g->curr = g->start_syms = syms;
+
+    TB_NodeSymbolTable* extra = TB_NODE_GET_EXTRA(syms);
+    extra->complete = true;
 
     if (dbg) {
         size_t param_count = dbg->func.param_count;
@@ -101,7 +101,7 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
         }
     } else {
         FOR_N(i, 0, f->param_count) {
-            set_input(f, syms, f->params[2 + i], 4 + i);
+            set_input(f, syms, f->params[3 + i], 4 + i);
         }
     }
     return g;
@@ -116,6 +116,8 @@ TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_ModuleSectionHandle section
 }
 
 TB_GraphBuilder* tb_builder_enter_from_dbg(TB_Function* f, TB_ModuleSectionHandle section, TB_DebugType* dbg, TB_Worklist* ws) {
+    TB_ASSERT_MSG(dbg->tag == TB_DEBUG_TYPE_FUNCTION, "type has to be a function");
+    TB_ASSERT_MSG(dbg->func.return_count <= 1, "C can't do multiple returns and thus we can't lower it into C from here, try tb_function_set_prototype and do it manually");
     return builder_enter_raw(f, section, dbg, NULL, ws);
 }
 
@@ -424,8 +426,9 @@ TB_Node* tb_builder_atomic_rmw(TB_GraphBuilder* g, int mem_var, int op, TB_Node*
 }
 
 int tb_builder_decl(TB_GraphBuilder* g) {
-    tb_todo();
-    return 0;
+    int id = g->curr->input_count - 2;
+    add_input_late(g->f, g->curr, NULL);
+    return id;
 }
 
 TB_Node* tb_builder_get_var(TB_GraphBuilder* g, int id) {
@@ -437,7 +440,7 @@ TB_Node* tb_builder_get_var(TB_GraphBuilder* g, int id) {
 
 void tb_builder_set_var(TB_GraphBuilder* g, int id, TB_Node* src) {
     TB_NodeSymbolTable* extra = TB_NODE_GET_EXTRA(g->curr);
-    TB_ASSERT(!extra->complete);
+    TB_ASSERT(extra->complete);
     set_input(g->f, g->curr, src, 2 + id);
 }
 
