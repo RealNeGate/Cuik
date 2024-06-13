@@ -180,6 +180,9 @@ void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
     } else {
         // slow path, we need to allocate more pages
         size_t chunk_size = tb_arena_chunk_size(top);
+        while (size > chunk_size - sizeof(TB_ArenaChunk)) {
+            chunk_size *= 2;
+        }
 
         TB_ArenaChunk* c = top->prev;
         assert(size < chunk_size - sizeof(TB_ArenaChunk));
