@@ -248,8 +248,8 @@ TB_ArenaSavepoint tb_arena_save(TB_Arena* arena) {
 
 void tb_arena_restore(TB_Arena* arena, TB_ArenaSavepoint sp) {
     // free all the chunks above
-    TB_ArenaChunk* curr = arena->top->prev;
-    while (curr) {
+    TB_ArenaChunk* curr = arena->top;
+    while (curr != sp.top) {
         TB_ArenaChunk* prev = curr->prev;
         free_block(curr, tb_arena_chunk_size(curr));
         curr = prev;

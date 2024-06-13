@@ -1896,7 +1896,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 if (!is_value_match(&dst, &rm)) {
                     __(MOV, dt, &dst, &rm);
                 }
-                __(op_type, dt, &rm, &rx);
+                __(op_type, dt, &dst, &rx);
             } else {
                 Val dst = op_at(ctx, n);
                 if (rx.type != VAL_NONE) {
