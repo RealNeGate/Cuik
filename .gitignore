@@ -83,3 +83,5 @@ build.ninja
 *.lib
 *.spall
 tests/collection/foo.txt
+tests/gold/cuik.txt
+tests/gold/clang.txt
