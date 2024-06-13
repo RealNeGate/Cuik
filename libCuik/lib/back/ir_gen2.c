@@ -1,6 +1,22 @@
 // Using the new TB builder because it's better :p
 static thread_local TB_Arena* muh_tmp_arena;
 
+static void emit_loc(TranslationUnit* tu, TB_GraphBuilder* g, SourceLoc loc) {
+    if (!tu->has_tb_debug_info) {
+        return;
+    }
+
+    ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
+    if (rloc.file->filename[0] != '<') {
+        if (rloc.file->filename != cached_filepath) {
+            cached_filepath = rloc.file->filename;
+            cached_file = tb_get_source_file(tu->ir_mod, -1, rloc.file->filename);
+        }
+
+        tb_builder_loc(g, 0, cached_file, rloc.line, 0);
+    }
+}
+
 static void assign_to_lval(TB_GraphBuilder* g, Cuik_Type* type, const ValDesc* dst, TB_Node* src, bool is_volatile) {
     if (dst->kind == LVALUE_BITS && dst->bits.width != (type->size * 8)) {
         // NOTE(NeGate): the semantics around volatile bitfields are janky at best
@@ -306,6 +322,25 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             TB_Node* index = as_rval(tu, g, &args[1]);
             int64_t stride = cuik_canonical_type(qt)->size;
             return (ValDesc){ LVALUE, .n = tb_builder_ptr_array(g, base, index, stride ? stride : 1) };
+        }
+        case EXPR_DOT_R: {
+            assert(args[0].kind == LVALUE);
+
+            Member* member = e->dot_arrow.member;
+            assert(member != NULL);
+
+            if (member->is_bitfield) {
+                return (ValDesc){
+                    LVALUE_BITS,
+                    .bits = {
+                        .offset = member->bit_offset,
+                        .width = member->bit_width,
+                    },
+                    .n = tb_builder_ptr_member(g, args[0].n, e->dot_arrow.offset)
+                };
+            } else {
+                return (ValDesc){ LVALUE, .n = tb_builder_ptr_member(g, args[0].n, e->dot_arrow.offset) };
+            }
         }
 
         case EXPR_PLUS:
@@ -788,6 +823,45 @@ static TB_Node* cg_rval(TranslationUnit* tu, TB_GraphBuilder* g, Cuik_Expr* rest
 static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
     if (s == NULL) { return; }
 
+    // if there's no symbol table here, we're in completely dead code so unless the statement
+    // can produce a label, it should be skipped over.
+    if (tb_builder_label_get(g) == NULL) {
+        switch (s->op) {
+            // no child stmts, thus no labels
+            case STMT_EXPR:
+            case STMT_DECL:
+            case STMT_RETURN:
+            return;
+
+            // don't compile, just walk kid stmts
+            case STMT_IF:
+            cg_stmt(tu, g, s->if_.body);
+            cg_stmt(tu, g, s->if_.next);
+            return;
+            case STMT_WHILE:
+            cg_stmt(tu, g, s->while_.body);
+            return;
+            case STMT_DO_WHILE:
+            cg_stmt(tu, g, s->do_while.body);
+            return;
+            case STMT_FOR:
+            cg_stmt(tu, g, s->for_.body);
+            return;
+
+            // compiled the same regardless of being the previous code being dead
+            case STMT_COMPOUND:
+            case STMT_CASE:
+            case STMT_LABEL:
+            break;
+
+            default: TODO();
+        }
+    }
+
+    if (s->op != STMT_COMPOUND && s->op != STMT_LABEL && s->op != STMT_CASE) {
+        emit_loc(tu, g, s->loc.start);
+    }
+
     switch (s->op) {
         case STMT_DECL: {
             Attribs attrs = s->decl.attrs;
@@ -846,9 +920,9 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             }
 
             TB_Node* addr = tb_builder_local(g, size, align);
-            /* if (tu->has_tb_debug_info && s->decl.name != NULL) {
-                tb_function_attrib_variable(func, addr, current_scope, len, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
-            } */
+            if (tu->has_tb_debug_info && s->decl.name != NULL) {
+                tb_builder_local_dbg(g, addr, len, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
+            }
 
             if (s->decl.initial) {
                 Subexpr* e = get_root_subexpr(s->decl.initial);

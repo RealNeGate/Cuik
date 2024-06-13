@@ -153,6 +153,12 @@ TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits al
     return n;
 }
 
+void tb_builder_local_dbg(TB_GraphBuilder* g, TB_Node* n, ptrdiff_t len, const char* name, TB_DebugType* type) {
+    TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
+    l->name = tb__arena_strdup(g->f->super.module, len, name);
+    l->type = type;
+}
+
 TB_Node* tb_builder_bool(TB_GraphBuilder* g, bool x) {
     TB_Node* n = tb_alloc_node(g->f, TB_ICONST, TB_TYPE_BOOL, 1, sizeof(TB_NodeInt));
     set_input(g->f, n, g->f->root_node, 0);
@@ -213,7 +219,7 @@ TB_Node* tb_builder_string(TB_GraphBuilder* g, ptrdiff_t len, const char* str) {
     char* dst = tb_global_add_region(f->super.module, dummy, 0, len);
     memcpy(dst, str, len);
 
-    return g->peep(f, tb_inst_get_symbol_address(f, (TB_Symbol*) dummy));
+    return g->peep(f, tb_builder_symbol(g, (TB_Symbol*) dummy));
 }
 
 TB_Node* tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type, TB_Node* src) {
@@ -295,7 +301,7 @@ TB_Node* tb_builder_ptr_array(TB_GraphBuilder* g, TB_Node* base, TB_Node* index,
     TB_ASSERT_MSG(index->dt.type == TB_TAG_INT, "index on ARRAY must be an integer");
 
     TB_Function* f = g->f;
-    TB_Node* con = tb_inst_sint(f, TB_TYPE_I64, stride);
+    TB_Node* con = tb_builder_sint(g, TB_TYPE_I64, stride);
     TB_Node* scl = index;
     if (stride != 1) {
         scl = tb_builder_binop_int(g, TB_MUL, index, con, 0);
@@ -620,6 +626,32 @@ TB_Node* tb_builder_loop(TB_GraphBuilder* g) {
 
     g->curr = syms;
     return syms;
+}
+
+void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file, int line, int column) {
+    TB_Function* f = g->f;
+    TB_Node* old_ctrl = g->curr->inputs[0];
+    TB_Node* old_mem  = g->curr->inputs[2 + mem_var];
+
+    // if there's already a line entry, throw this one away (should we replace the original? idk)
+    if (old_ctrl->type == TB_PROJ && old_ctrl->inputs[0]->type == TB_DEBUG_LOCATION &&
+        old_mem->type == TB_PROJ  && old_mem->inputs[0] == old_ctrl->inputs[0] &&
+        // if it's the first debug location, we wanna keep that one because it's placed above the prologue
+        old_ctrl->inputs[0]->inputs[0] != f->params[0]
+    ) {
+        return;
+    }
+
+    TB_Node* n = tb_alloc_node(f, TB_DEBUG_LOCATION, TB_TYPE_TUPLE, 2, sizeof(TB_NodeDbgLoc));
+    TB_NODE_SET_EXTRA(n, TB_NodeDbgLoc, .file = file, .line = line, .column = column);
+
+    // control proj
+    TB_Node* cproj = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+    set_input(f, n, xfer_ctrl(g, cproj), 0);
+
+    // memory proj
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
+    set_input(f, n, xfer_mem(g, mproj, mem_var), 1);
 }
 
 TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int nargs, TB_Node** args) {

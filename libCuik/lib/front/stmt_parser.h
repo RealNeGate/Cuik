@@ -435,8 +435,6 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
                 .body = body,
             };
         }
-
-        return n;
     } else if (peek == TOKEN_KW_for) {
         n = alloc_stmt(parser);
         tokens_next(s);
@@ -549,8 +547,6 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
                 .body = body,
             };
         }
-
-        return n;
     } else if (peek == TOKEN_KW_goto) {
         n = alloc_stmt(parser);
         tokens_next(s);

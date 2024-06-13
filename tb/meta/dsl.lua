@@ -89,7 +89,7 @@ function is_keyword(str)
     return type(str) == "string" and str:starts_with(":")
 end
 
-local src  = read_all("tb/meta/cool.lsp")
+local src  = read_all("tb/meta/hello.lsp")
 local root = {}
 parse(src, 1, root)
 
@@ -151,112 +151,43 @@ function common_type(a, b)
 end
 
 local out = buffer.new(size)
+local types = {}
 
--- ty is the expression type, like the expectation
---   "val" for operands (registers, immediates, memory)
+function typecheck(n)
+    if type(n) == "table" then
+        if n[1] == "let" then
+            -- immutable defs
+            local defs = n[2]
+            for i=1,#defs do
+                local init = typecheck(defs[i][2])
+                types[defs[i]] = init
+
+                print("yoink", i, inspect(defs[i]), defs[i][1], defs[i][2])
+            end
+        end
+    else
+        print(inspect(n))
+    end
+end
+
 function expr(n, depth, ty)
-    if type(n) == "number" then
-        out:put(n)
-    elseif type(n) == "string" then
-        if n:starts_with("xmm") then
-            local i = tonumber(n:sub(4))
-            out:put(i)
-            out:put(" /* xmm */")
-            return 5
-        else
-            local r = reg_names[n]
-                if r then
-                out:put(r)
-                out:put(" /* ")
-                out:put(n)
-                out:put(" */")
-                return reg_classes[n]
-            else
-                out:put(n)
+    if type(n) == "table" then
+        if n[1] == "let" then
+            -- immutable defs
+            local defs = n[2]
+            for i=1,#defs do
+                local init = expr(defs[i][2])
+
+                print("yoink", i, inspect(defs[i]), defs[i][1], defs[i][2])
             end
         end
-    elseif type(n) == "table" then
-        if n[1] == "case" then
-            out:put("switch (")
-            expr(n[2], depth)
-            out:put(") {\n")
-
-            depth = depth + 1
-            for i=3,#n do
-                local case = n[i]
-
-                for k=1,depth do out:put("  ") end
-                out:put("case ")
-                out:put(case[1])
-                out:put(":{\n")
-
-                for j=2,#case do
-                    for k=0,depth do out:put("  ") end
-                    expr(case[j], depth + 1)
-                    out:put(";\n")
-                end
-
-                for k=1,depth do out:put("  ") end
-                out:put("}break;\n")
-            end
-            depth = depth - 1
-
-            for k=1,depth do out:put("  ") end
-            out:put("}")
-        elseif n[1] == "emit" then
-            -- reserve space
-            out:put("do { uint8_t* $p = tb_cgemit_reserve($emitter, ")
-            out:put(#n - 1)
-            out:put("); ")
-
-            for i=2,#n do
-                out:put("*$p++ = ")
-                expr(n[i], depth)
-                out:put("; ")
-            end
-
-            -- commit
-            out:put("$emitter->count += ")
-            out:put(#n - 1)
-            out:put("; } while (0)")
-        else
-            local name = mnemonics[n[1]]
-            if name then
-                local dt = -1
-                local cnt = #n - 1
-
-                for i=2,#n do if is_keyword(n[i]) then
-                    local s = n[i]:sub(2)
-                    if vec_type[s] then
-                        dt = vec_type[s]
-                    end
-                    cnt = cnt - 1
-                end end
-
-                out:put("inst")
-                out:put(cnt)
-                out:put("($emitter, ")
-                out:put(name)
-
-                for i=2,#n do if not is_keyword(n[i]) then
-                    out:put(", ")
-
-                    local op_dt = expr(n[i], depth, "val")
-                    dt = common_type(dt, op_dt)
-                end end
-
-                out:put(", ")
-                out:put(dt)
-                out:put(" /* ")
-                out:put(op_size_names[dt])
-                out:put(" */)")
-            end
-        end
+    else
+        print(inspect(n))
     end
 end
 
 for k,v in ipairs(root) do
-    expr(v, 0)
+    typecheck(v, 0)
     out:put(";\n")
 end
 

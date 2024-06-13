@@ -586,7 +586,12 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
         while (dyn_array_length(ws->items) > old) {
             TB_Node* n = worklist_pop(ws);
-            if (!interfere(ctx, &ra, n, n->inputs[1])) {
+            assert(n->type == TB_MACH_COPY);
+            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
+
+            // if the def_mask got tightened, we needed the copy
+            RegMask* def_mask = ctx->vregs[n->gvn].mask;
+            if (!interfere(ctx, &ra, n, n->inputs[1]) && def_mask == cpy->def) {
                 // delete copy
                 tb__remove_node(ctx, f, n);
                 subsume_node(f, n, n->inputs[1]);
@@ -1201,7 +1206,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                     set_remove(&ra->live_out, in->gvn);
 
                     bool pause = false;
-                    if (last_use >= def_t) {
+                    if (last_use > def_t) {
                         pause = true;
                     } else {
                         size_t bb_id = bb - ctx->cfg.blocks;

@@ -1,0 +1,5 @@
+
+
+(defun main ()
+  (print "hello"))
+
