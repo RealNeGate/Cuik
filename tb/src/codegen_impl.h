@@ -118,6 +118,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         TB_Worklist walker_ws = { 0 };
         worklist_alloc(&walker_ws, f->node_count);
 
+        ctx.walker_ws = &walker_ws;
+
         // find all nodes
         worklist_clear(ws);
         worklist_push(ws, f->root_node);
@@ -157,13 +159,14 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                     }
                 }
 
+                tb__gvn_remove(f, n);
+
                 // replace with machine op
                 TB_Node* k = node_isel(&ctx, f, n);
+                if (k && k != n) {
+                    // we can GVN machine nodes :)
+                    k = tb_opt_gvn_node(f, k);
 
-                // sometimes new machine nodes get introduced which we GVN... usually LEAs on x86
-                k = tb_opt_gvn_node(f, k ? k : n);
-
-                if (k != n) {
                     TB_OPTDEBUG(ISEL)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m"));
 
                     subsume_node(f, n, k);

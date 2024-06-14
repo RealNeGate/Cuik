@@ -154,6 +154,7 @@ struct Ctx {
     TB_FeatureSet features;
     TB_Node* frame_ptr;
     TB_CFG cfg;
+    TB_Worklist* walker_ws;
 
     // user callbacks
     TmpCount tmp_count;

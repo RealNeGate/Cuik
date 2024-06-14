@@ -215,27 +215,54 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
 
         // if it's already a machine copy, inserting an extra one is useless
         if (use_n->type == TB_MACH_COPY) {
-            TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%d: folded reload (%%%u)\x1b[0m\n", ctx->vreg_map[use_n->gvn], use_n->gvn));
-
             TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
-            cpy->use = spill_mask;
-            continue;
+            if (!reg_mask_is_stack(in_mask) || !reg_mask_is_stack(spill_mask)) {
+                TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%d: folded reload (%%%u)\x1b[0m\n", ctx->vreg_map[use_n->gvn], use_n->gvn));
+                cpy->use = spill_mask;
+                continue;
+            }
         }
 
         assert(in_mask != NULL);
+        if (reg_mask_is_stack(in_mask) || reg_mask_is_stack(spill_mask)) {
+            // stack-stack moves require an intermediate copy to a register
+            //   whichever register we'll use to transfer, for now we'll assume any normie[1] is fine
+            RegMask* xfer_mask = ctx->normie_mask[1];
+            //   src stk -> reg
+            TB_Node* to_reg = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+            set_input(f, to_reg, n, 1);
+            TB_NODE_SET_EXTRA(to_reg, TB_NodeMachCopy, .def = xfer_mask, .use = spill_mask);
+            //   reg -> dst stk
+            TB_Node* to_stk = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+            set_input(f, use_n, to_stk, use_i);
+            set_input(f, to_stk, to_reg, 1);
+            TB_NODE_SET_EXTRA(to_stk, TB_NodeMachCopy, .def = in_mask, .use = xfer_mask);
 
-        // reload per use site
-        TB_Node* reload_n = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
-        set_input(f, use_n, reload_n, use_i);
-        set_input(f, reload_n, n, 1);
-        TB_NODE_SET_EXTRA(reload_n, TB_NodeMachCopy, .def = in_mask, .use = spill_mask);
+            // schedule the split right before use
+            tb__insert_before(ctx, ctx->f, to_reg, use_n);
+            tb__insert_before(ctx, ctx->f, to_stk, use_n);
 
-        // schedule the split right before use
-        tb__insert_before(ctx, ctx->f, reload_n, use_n);
-        VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
-        reload_vreg->mask = in_mask;
+            VReg* to_reg_vreg = tb__set_node_vreg(ctx, to_reg);
+            to_reg_vreg->mask = xfer_mask;
 
-        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: reload (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, reload_n->gvn));
+            VReg* to_stk_vreg = tb__set_node_vreg(ctx, to_stk);
+            to_stk_vreg->mask = in_mask;
+
+            // TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: stack-stack reload (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, reload_n->gvn));
+        } else {
+            // reload per use site
+            TB_Node* reload_n = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+            set_input(f, use_n, reload_n, use_i);
+            set_input(f, reload_n, n, 1);
+            TB_NODE_SET_EXTRA(reload_n, TB_NodeMachCopy, .def = in_mask, .use = spill_mask);
+
+            // schedule the split right before use
+            tb__insert_before(ctx, ctx->f, reload_n, use_n);
+            VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
+            reload_vreg->mask = in_mask;
+
+            TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: reload (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, reload_n->gvn));
+        }
     }
     tb_arena_restore(&f->tmp_arena, sp);
 }

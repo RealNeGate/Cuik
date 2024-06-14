@@ -438,18 +438,13 @@ static bool is_tls_symbol(TB_Symbol* sym) {
     }
 }
 
-static TB_Node* mach_symbol(TB_Function* f, TB_Symbol* s) {
+static TB_Node* mach_symbol(Ctx* restrict ctx, TB_Function* f, TB_Symbol* s) {
     TB_Node* n = tb_alloc_node(f, TB_MACH_SYMBOL, TB_TYPE_PTR, 1, sizeof(TB_NodeMachSymbol));
     set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeMachSymbol, .sym = s);
 
     TB_Node* k = tb__gvn(f, n, sizeof(TB_NodeMachSymbol));
-    if (n != k) {
-        printf("GVN! %s (n=%p, k=%p)\n", s->name, n, k);
-    } else {
-        printf("GVN fail! %s (n=%p)\n", s->name, n);
-    }
-
+    worklist_test_n_set(ctx->walker_ws, k);
     return k;
 }
 
@@ -528,7 +523,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             return k;
         } else {
             TB_Global* g = tb__small_data_intern(ctx->module, sizeof(float), &imm);
-            TB_Node* base = mach_symbol(f, &g->super);
+            TB_Node* base = mach_symbol(ctx, f, &g->super);
 
             TB_Node* op = tb_alloc_node(f, x86_vmov, TB_TYPE_F32, 5, sizeof(X86MemOp));
             X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
@@ -544,7 +539,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             return k;
         } else {
             TB_Global* g = tb__small_data_intern(ctx->module, sizeof(double), &imm);
-            TB_Node* base = mach_symbol(f, &g->super);
+            TB_Node* base = mach_symbol(ctx, f, &g->super);
 
             TB_Node* op = tb_alloc_node(f, x86_vmov, TB_TYPE_F64, 5, sizeof(X86MemOp));
             X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
@@ -569,16 +564,19 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
         op_extra->mode = MODE_LD;
         op_extra->disp = TB_NODE_GET_EXTRA_T(n, TB_NodeLocal)->stack_pos;
+        op = tb__gvn(f, op, sizeof(X86MemOp));
 
         subsume_node2(f, n, op);
         set_input(f, op, ctx->frame_ptr, 2);
         return n;
     } else if (n->type == TB_SYMBOL) {
-        TB_Node* sym = mach_symbol(f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
+        TB_Node* sym = mach_symbol(ctx, f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
 
         TB_Node* op = tb_alloc_node(f, x86_lea, TB_TYPE_PTR, 5, sizeof(X86MemOp));
         X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
         op_extra->mode = MODE_LD;
+        op = tb__gvn(f, op, sizeof(X86MemOp));
+
         subsume_node2(f, n, op);
         set_input(f, op, sym, 2);
         return n;
@@ -1011,29 +1009,41 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
         }
 
-        // [... + disp]
-        if (n->type == TB_PTR_OFFSET && n->inputs[2]->type == TB_ICONST) {
-            int64_t disp = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
-            if (disp == (int32_t) disp) {
-                op_extra->disp = disp;
-                n = n->inputs[1];
-            }
-        }
-
+        // (PtrOffset a (Add b c)) => [... + disp]
+        // (PtrOffset a b)         => [... + disp]
         if (n->type == TB_PTR_OFFSET) {
-            set_input(f, op, n->inputs[2], 3);
-            if (n->inputs[2]->type == TB_SHL &&
-                n->inputs[2]->inputs[2]->type == TB_ICONST) {
-                uint64_t scale = TB_NODE_GET_EXTRA_T(n->inputs[2]->inputs[2], TB_NodeInt)->value;
+            TB_Node* base = n->inputs[1];
+            TB_Node* idx  = n->inputs[2];
 
-                // [... + index*scale] given scale is 1,2,4,8
-                if (scale <= 3) {
-                    set_input(f, op, n->inputs[2]->inputs[1], 3);
-                    op_extra->scale = scale;
+            if (idx->type == TB_ICONST) {
+                // [... + disp]
+                int64_t disp = TB_NODE_GET_EXTRA_T(idx, TB_NodeInt)->value;
+                if (disp == (int32_t) disp) {
+                    op_extra->disp = disp;
                 }
-            }
+            } else {
+                // [... + disp]
+                if (idx->type == TB_ADD && idx->inputs[2]->type == TB_ICONST) {
+                    int64_t disp = TB_NODE_GET_EXTRA_T(idx->inputs[2], TB_NodeInt)->value;
+                    if (disp == (int32_t) disp) {
+                        op_extra->disp = disp;
+                        idx = idx->inputs[1];
+                    }
+                }
 
-            n = n->inputs[1];
+                if (idx && idx->type == TB_SHL && idx->inputs[2]->type == TB_ICONST) {
+                    uint64_t scale = TB_NODE_GET_EXTRA_T(n->inputs[2]->inputs[2], TB_NodeInt)->value;
+
+                    // [... + index*scale] given scale is 1,2,4,8
+                    if (scale <= 3) {
+                        idx = idx->inputs[1];
+                        op_extra->scale = scale;
+                    }
+                }
+
+                set_input(f, op, idx, 3);
+            }
+            n = base;
         }
 
         // sometimes introduced by other isel bits.
@@ -1045,15 +1055,19 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         if (n->type == TB_SYMBOL) {
             if (op->inputs[3] != NULL) {
                 // ok, if we need to make a symbol but also need indexing math
-                TB_Node* sym = mach_symbol(f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
+                TB_Node* sym = mach_symbol(ctx, f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
 
                 TB_Node* op = tb_alloc_node(f, x86_lea, TB_TYPE_PTR, 5, sizeof(X86MemOp));
                 X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
                 op_extra->mode = MODE_LD;
                 set_input(f, op, sym, 2);
+
+                op = tb__gvn(f, op, sizeof(X86MemOp));
+                worklist_test_n_set(ctx->walker_ws, op);
+
                 n = op;
             } else {
-                TB_Node* base = mach_symbol(f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
+                TB_Node* base = mach_symbol(ctx, f, TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym);
                 set_input(f, op, base, 2);
             }
         }
