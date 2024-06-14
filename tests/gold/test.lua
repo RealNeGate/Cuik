@@ -24,7 +24,7 @@ end
 for i=1,#x do
     print("Testing... "..x[i])
     print("* Cuik")
-    os.execute(string.format("../../bin/cuik %s && %s > cuik.txt", x[i], exe_name))
+    os.execute(string.format("cuik %s && %s > cuik.txt", x[i], exe_name))
     print("* Clang")
     os.execute(string.format("clang %s && %s > clang.txt", x[i], exe_name))
     print("* Diff")
@@ -34,7 +34,7 @@ end
 for i=1,#x do
     print("Testing optimized... "..x[i])
     print("* Cuik")
-    os.execute(string.format("../../bin/cuik %s -O && %s > cuik.txt", x[i], exe_name))
+    os.execute(string.format("cuik %s -O && %s > cuik.txt", x[i], exe_name))
     print("* Clang")
     os.execute(string.format("clang %s && %s > clang.txt", x[i], exe_name))
     print("* Diff")

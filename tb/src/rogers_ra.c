@@ -618,7 +618,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
             // if the def_mask got tightened, we needed the copy
             RegMask* def_mask = ctx->vregs[n->gvn].mask;
-            if (!interfere(ctx, &ra, n, n->inputs[1]) && def_mask == cpy->def) {
+            if (!interfere(ctx, &ra, n, n->inputs[1])) {
                 // delete copy
                 tb__remove_node(ctx, f, n);
                 subsume_node(f, n, n->inputs[1]);

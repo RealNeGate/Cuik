@@ -818,12 +818,12 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt);
                 set_input(f, mach_cond, cond, 2);
                 set_input(f, mach_cond, cond, 4);
-                if_br->key = E;
+                if_br->key = NE;
             } else {
                 mach_cond = tb_alloc_node(f, x86_cmpimmjcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
                 TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt, .imm = if_br->key);
                 set_input(f, mach_cond, cond, 2);
-                if_br->key = E;
+                if_br->key = NE;
             }
 
             set_input(f, mach_cond, n->inputs[0], 0);
