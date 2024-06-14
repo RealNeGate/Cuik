@@ -72,7 +72,7 @@ static Block* create_block(TB_Arena* arena, TB_Node* n) {
     return top;
 }
 
-TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, TB_CFGFlags flags) {
+TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, bool dominators) {
     cuikperf_region_start("CFG", NULL);
     assert(dyn_array_length(ws->items) == 0);
 
@@ -123,16 +123,18 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, TB_CFGFl
         nl_map_put(cfg.node_to_block, cfg.blocks[i].start, &cfg.blocks[i]);
     }
 
-    if (flags & TB_CFG_DOMS) {
+    if (dominators) {
         cuikperf_region_start("doms", NULL);
         compute_dominators(f, ws, cfg);
         cuikperf_region_end();
 
-        TB_OPTDEBUG(LOOP)(printf("\n%s: Doms:\n", f->super.name));
+        #if TB_OPTDEBUG_LOOP
+        printf("\n%s: Doms:\n", f->super.name);
         FOR_N(i, 0, block_count) {
             TB_BasicBlock* bb = &cfg.blocks[i];
-            TB_OPTDEBUG(LOOP)(printf("  BB%zu(%%%u - %%%u, dom: BB%zu)\n", i, bb->start->gvn, bb->end->gvn, bb->dom - cfg.blocks));
+            printf("  BB%zu(%%%u - %%%u, dom: BB%zu)\n", i, bb->start->gvn, bb->end->gvn, bb->dom - cfg.blocks);
         }
+        #endif
     }
 
     cuikperf_region_end();

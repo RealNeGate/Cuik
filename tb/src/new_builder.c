@@ -130,10 +130,8 @@ void tb_builder_exit(TB_GraphBuilder* g) {
         tb_builder_label_kill(g, g->curr);
     }
 
-    if (g->params) {
-        tb_arena_free(g->arena, g->params, g->param_count * sizeof(TB_Node*));
-    }
-    tb_arena_free(g->arena, g, sizeof(TB_GraphBuilder));
+    // needs to be empty for the optimizer not to act up
+    tb_arena_clear(g->arena);
 
     TB_Function* f = g->f;
     if (f->worklist) {

@@ -1394,7 +1394,7 @@ TB_API char* tb_print_c(TB_Function* f, TB_Worklist* ws) {
     ctx.declared_vars = nl_hashset_alloc(16);
     ctx.block_ranges = nl_table_alloc(aarray_length(ctx.cfg.blocks));
 
-    ctx.cfg = tb_compute_cfg(f, ws, &f->tmp_arena, TB_CFG_DOMS);
+    ctx.cfg = tb_compute_cfg(f, ws, &f->tmp_arena, true);
 
     // schedule nodes
     tb_global_schedule(f, ws, ctx.cfg, false, false, NULL);

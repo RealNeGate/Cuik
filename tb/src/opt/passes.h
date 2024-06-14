@@ -386,13 +386,8 @@ bool cfg_is_endpoint(TB_Node* n);
 // internal debugging mostly
 void tb_print_dumb_node(Lattice** types, TB_Node* n);
 
-typedef enum {
-    TB_CFG_DOMS  = 1,
-    TB_CFG_LOOPS = 2,
-} TB_CFGFlags;
-
 // computes basic blocks but also dominators and loop nests if necessary.
-TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp_arena, int flags);
+TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* tmp_arena, bool dominators);
 void tb_free_cfg(TB_CFG* cfg);
 
 // TB_Worklist API

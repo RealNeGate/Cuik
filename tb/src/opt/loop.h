@@ -401,7 +401,7 @@ bool tb_opt_loops(TB_Function* f) {
     bool progress = false;
 
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
-    TB_CFG cfg = tb_compute_cfg(f, f->worklist, &f->tmp_arena, TB_CFG_DOMS);
+    TB_CFG cfg = tb_compute_cfg(f, f->worklist, &f->tmp_arena, true);
 
     CUIK_TIMED_BLOCK("find loops") {
         TB_OPTDEBUG(LOOP)(printf("\n%s: Loop Finding:\n", f->super.name));

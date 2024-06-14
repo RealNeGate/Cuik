@@ -16,12 +16,17 @@ else
     cmd:close()
 end
 
+local exe_name = "a"
+if not is_windows then
+    exe_name = "./a.out"
+end
+
 for i=1,#x do
     print("Testing... "..x[i])
     print("* Cuik")
-    os.execute(string.format("cuik %s && a > cuik.txt", x[i]))
+    os.execute(string.format("../../bin/cuik %s && %s > cuik.txt", x[i], exe_name))
     print("* Clang")
-    os.execute(string.format("clang %s && a > clang.txt", x[i]))
+    os.execute(string.format("clang %s && %s > clang.txt", x[i], exe_name))
     print("* Diff")
     os.execute("git diff --no-index cuik.txt clang.txt")
 end
@@ -29,9 +34,9 @@ end
 for i=1,#x do
     print("Testing optimized... "..x[i])
     print("* Cuik")
-    os.execute(string.format("cuik %s -O && a > cuik.txt", x[i]))
+    os.execute(string.format("../../bin/cuik %s -O && %s > cuik.txt", x[i], exe_name))
     print("* Clang")
-    os.execute(string.format("clang %s && a > clang.txt", x[i]))
+    os.execute(string.format("clang %s && %s > clang.txt", x[i], exe_name))
     print("* Diff")
     os.execute("git diff --no-index cuik.txt clang.txt")
 end

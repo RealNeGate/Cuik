@@ -629,7 +629,7 @@ void tb_print(TB_Function* f) {
 
     PrinterCtx ctx = { 0 };
     ctx.f   = f;
-    ctx.cfg = tb_compute_cfg(f, &ws, &f->tmp_arena, TB_CFG_DOMS);
+    ctx.cfg = tb_compute_cfg(f, &ws, &f->tmp_arena, true);
 
     // schedule nodes
     tb_global_schedule(f, &ws, ctx.cfg, false, false, NULL);

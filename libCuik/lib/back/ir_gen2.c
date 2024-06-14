@@ -47,7 +47,7 @@ static void assign_to_lval(TB_GraphBuilder* g, Cuik_Type* type, const ValDesc* d
     tb_builder_store(g, 0, false, dst->n, src, type->align, is_volatile);
 }
 
-static TB_Node* as_rval(TranslationUnit* tu, TB_GraphBuilder* g, const ValDesc* v) {
+TB_Node* as_rval(TranslationUnit* tu, TB_GraphBuilder* g, const ValDesc* v) {
     Cuik_Type* dst = cuik_canonical_type(v->cast_type);
     Cuik_Type* src = cuik_canonical_type(v->type);
     bool is_volatile = CUIK_QUAL_TYPE_HAS(v->type, CUIK_QUAL_VOLATILE);
@@ -518,7 +518,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 // * Native support (just have some instructions for it).
                 // * Unsupported op but supported size (we can emulate with a CAS).
                 // * Unsupported size (we defer to a library call with a dumb lock).
-                __debugbreak();
+                TODO();
             } else if (e->op == EXPR_ASSIGN) {
                 TB_Node* rhs = as_rval(tu, g, &args[1]);
                 assign_to_lval(g, type, &args[0], rhs, is_volatile);
@@ -683,8 +683,6 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                     src = tb_builder_unary(g, TB_NEG, src);
                     return (ValDesc){ RVALUE, .n = tb_builder_atomic_rmw(g, 0, TB_ATOMIC_ADD, dst, src, order) };
                 } else {
-                    __debugbreak();
-
                     // TB_Node* val = tu->target->compile_builtin(tu, g, name, arg_count, args);
                     // return (ValDesc){ RVALUE, .n = val };
                     TODO();
@@ -927,7 +925,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             if (s->decl.initial) {
                 Subexpr* e = get_root_subexpr(s->decl.initial);
                 if (e->op == EXPR_INITIALIZER) {
-                    __debugbreak();
+                    TODO();
                     // gen_local_initializer(tu, func, addr, type, e->init.root);
                 } else {
                     bool is_volatile = s->decl.type.raw & CUIK_QUAL_VOLATILE;

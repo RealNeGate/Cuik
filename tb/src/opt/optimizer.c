@@ -493,6 +493,7 @@ static Lattice* value_select(TB_Function* f, TB_Node* n) {
 static bool can_gvn(TB_Node* n) {
     switch (n->type) {
         case TB_LOCAL:
+        case TB_MACH_MOVE:
         return false;
 
         // control producing nodes can't really GVN, it doesn't make sense if

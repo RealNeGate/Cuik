@@ -224,12 +224,15 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
                 }
                 assert(symbol_id != 0);
 
+                int32_t addend;
+                memcpy(&addend, &func_out->code[p->pos], sizeof(addend));
+
                 TB_ELF_RelocType type = p->target->tag == TB_SYMBOL_GLOBAL ? TB_ELF_X86_64_PC32 : TB_ELF_X86_64_PLT32;
                 *rels++ = (TB_Elf64_Rela){
                     .offset = actual_pos,
                     // check when we should prefer R_X86_64_GOTPCREL
                     .info   = TB_ELF64_R_INFO(symbol_id, type),
-                    .addend = -4
+                    .addend = addend - 4
                 };
             }
         }

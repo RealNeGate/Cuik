@@ -442,7 +442,15 @@ static TB_Node* mach_symbol(TB_Function* f, TB_Symbol* s) {
     TB_Node* n = tb_alloc_node(f, TB_MACH_SYMBOL, TB_TYPE_PTR, 1, sizeof(TB_NodeMachSymbol));
     set_input(f, n, f->root_node, 0);
     TB_NODE_SET_EXTRA(n, TB_NodeMachSymbol, .sym = s);
-    return tb__gvn(f, n, sizeof(TB_NodeMachSymbol));
+
+    TB_Node* k = tb__gvn(f, n, sizeof(TB_NodeMachSymbol));
+    if (n != k) {
+        printf("GVN! %s (n=%p, k=%p)\n", s->name, n, k);
+    } else {
+        printf("GVN fail! %s (n=%p)\n", s->name, n);
+    }
+
+    return k;
 }
 
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
@@ -2200,6 +2208,22 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
 
         case x86_static_call: {
             X86Call* op_extra = TB_NODE_GET_EXTRA(n);
+
+            // on SysV, AL stores the number of float params
+            if (ctx->abi_index == 1) {
+                int float_params = 0;
+                FOR_N(i, 3, n->input_count) {
+                    if (TB_IS_FLOAT_TYPE(n->inputs[i]->dt)) {
+                        float_params++;
+                    }
+                }
+
+                if (float_params == 0) {
+                    __(XOR, TB_X86_DWORD, Vgpr(RAX), Vgpr(RAX));
+                } else {
+                    __(MOV, TB_X86_BYTE, Vgpr(RAX), Vimm(float_params));
+                }
+            }
 
             // CALL rel32
             EMIT1(e, 0xE8);

@@ -158,16 +158,15 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 }
 
                 // replace with machine op
-                tb__gvn_remove(f, n);
                 TB_Node* k = node_isel(&ctx, f, n);
-                if (k && k != n) {
-                    // we could run GVN on machine ops :)
-                    k = tb_opt_gvn_node(f, k);
-                    if (k != n) {
-                        subsume_node(f, n, k);
-                    }
 
+                // sometimes new machine nodes get introduced which we GVN... usually LEAs on x86
+                k = tb_opt_gvn_node(f, k ? k : n);
+
+                if (k != n) {
                     TB_OPTDEBUG(ISEL)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m"));
+
+                    subsume_node(f, n, k);
 
                     // don't walk the replacement
                     worklist_test_n_set(&walker_ws, k);
@@ -218,7 +217,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f));
         TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
-        ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, TB_CFG_DOMS);
+        ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, true);
         tb_global_schedule(f, ws, cfg, true, true, node_latency);
 
         log_phase_end(f, og_size, "GCM");
