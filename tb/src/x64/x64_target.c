@@ -184,30 +184,16 @@ static const struct ParamDesc {
     { INT_MAX, 6, 4, 5, SYSCALL_ABI_CALLER_SAVED, { RDI, RSI, RDX, R10, R8, R9 } },
 };
 
-// *out_mask of 0 means no mask
-static TB_X86_DataType legalize_int(TB_DataType dt, uint64_t* out_mask) {
-    assert(dt.type == TB_TAG_INT || dt.type == TB_TAG_PTR);
-    if (dt.type == TB_TAG_PTR) return *out_mask = 0, TB_X86_QWORD;
-
-    TB_X86_DataType t = TB_X86_NONE;
-    int bits = 0;
-
-    if (dt.data <= 8) bits = 8, t = TB_X86_BYTE;
-    else if (dt.data <= 16) bits = 16, t = TB_X86_WORD;
-    else if (dt.data <= 32) bits = 32, t = TB_X86_DWORD;
-    else if (dt.data <= 64) bits = 64, t = TB_X86_QWORD;
-
-    assert(bits != 0 && "TODO: large int support");
-    assert(dt.data != 0);
-    uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
-
-    *out_mask = (dt.data == bits) ? 0 : mask;
-    return t;
-}
-
-static TB_X86_DataType legalize_int2(TB_DataType dt) {
-    uint64_t m;
-    return legalize_int(dt, &m);
+static TB_X86_DataType legalize_int(TB_DataType dt) {
+    switch (dt.type) {
+        case TB_TAG_I1:  return TB_X86_BYTE;
+        case TB_TAG_I8:  return TB_X86_BYTE;
+        case TB_TAG_I16: return TB_X86_WORD;
+        case TB_TAG_I32: return TB_X86_DWORD;
+        case TB_TAG_I64: return TB_X86_QWORD;
+        case TB_TAG_PTR: return TB_X86_QWORD;
+        default: tb_todo();
+    }
 }
 
 static TB_X86_DataType legalize_float(TB_DataType dt) {
@@ -221,8 +207,7 @@ static TB_X86_DataType legalize(TB_DataType dt) {
     } else if (dt.type == TB_TAG_F64) {
         return TB_X86_F64x1;
     } else {
-        uint64_t m;
-        return legalize_int(dt, &m);
+        return legalize_int(dt);
     }
 }
 
@@ -231,13 +216,13 @@ static bool fits_into_int32(uint64_t x) {
     return hi == 0 || hi == 0xFFFFFFFF;
 }
 
-static bool try_for_imm32(int bits, TB_Node* n, int32_t* out_x) {
+static bool try_for_imm32(TB_DataType dt, TB_Node* n, int32_t* out_x) {
     if (n->type != TB_ICONST) {
         return false;
     }
 
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    if (bits > 32) {
+    if (dt.type == TB_TAG_I64) {
         bool sign = (i->value >> 31ull) & 1;
         uint64_t top = i->value >> 32ull;
 
@@ -671,7 +656,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     ctx->num_regs[REG_CLASS_STK] = param_num + 1;
                 }
             } else {
-                assert(n->inputs[i]->dt.type == TB_TAG_INT || n->inputs[i]->dt.type == TB_TAG_PTR);
+                TB_ASSERT(TB_IS_INTEGER_TYPE(n->inputs[i]->dt) || n->inputs[i]->dt.type == TB_TAG_PTR);
                 if (gprs_used < abi->gpr_count) {
                     gprs_used += 1;
                 } else if (param_num + 1 > ctx->num_regs[REG_CLASS_STK]) {
@@ -726,7 +711,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             op_extra = TB_NODE_GET_EXTRA(mach_cmp);
 
             int32_t x;
-            if ((cmp_dt.type == TB_TAG_INT || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt.type == TB_TAG_PTR ? 64 : cmp_dt.data, b, &x)) {
+            if ((TB_IS_INTEGER_TYPE(cmp_dt) || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt, b, &x)) {
                 if (x == 0 && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
                     mach_cmp->type = x86_test;
                     set_input(f, mach_cmp, a, 4);
@@ -785,7 +770,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     op_extra = TB_NODE_GET_EXTRA(mach_cond);
 
                     int32_t x;
-                    if ((cmp_dt.type == TB_TAG_INT || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt.type == TB_TAG_PTR ? 64 : cmp_dt.data, b, &x)) {
+                    if ((TB_IS_INTEGER_TYPE(cmp_dt) || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt, b, &x)) {
                         if (x == 0 && (cond->type == TB_CMP_EQ || cond->type == TB_CMP_NE)) {
                             mach_cond->type = x86_testjcc;
                             set_input(f, mach_cond, a, 4);
@@ -834,14 +819,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         }
     }
 
-    int32_t x;
-    if (n->type == TB_MUL && try_for_imm32(n->dt.data, n->inputs[2], &x)) {
-        TB_Node* op = tb_alloc_node(f, x86_imulimm, n->dt, 2, sizeof(X86MemOp));
-        set_input(f, op, n->inputs[1], 1);
-        TB_NODE_SET_EXTRA(op, X86MemOp, .imm = x);
-        return op;
-    }
-
     // any of these ops might be the starting point to complex addressing modes
     if ((n->type >= TB_AND && n->type <= TB_SUB)   ||
         (n->type >= TB_FADD && n->type <= TB_FMAX) ||
@@ -851,11 +828,18 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         const static int ops[]  = { x86_and, x86_or, x86_xor, x86_add, x86_sub };
         const static int fops[] = { x86_vadd, x86_vsub, x86_vmul, x86_vdiv, x86_vmin, x86_vmax };
 
-        // folded binop with immediate
         int32_t x;
+        if (n->type == TB_MUL && try_for_imm32(n->dt, n->inputs[2], &x)) {
+            TB_Node* op = tb_alloc_node(f, x86_imulimm, n->dt, 2, sizeof(X86MemOp));
+            set_input(f, op, n->inputs[1], 1);
+            TB_NODE_SET_EXTRA(op, X86MemOp, .imm = x);
+            return op;
+        }
+
+        // folded binop with immediate
         if (n->type >= TB_AND && n->type <= TB_SUB) {
-            assert(n->dt.type == TB_TAG_INT);
-            if (try_for_imm32(n->dt.data, n->inputs[2], &x)) {
+            TB_ASSERT(TB_IS_INTEGER_TYPE(n->dt));
+            if (try_for_imm32(n->dt, n->inputs[2], &x)) {
                 X86NodeType type = ops[n->type - TB_AND] + (x86_andimm - x86_and);
 
                 TB_Node* op = tb_alloc_node(f, type, n->dt, 5, sizeof(X86MemOp));
@@ -896,7 +880,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
             int32_t x;
             if (op->type >= x86_add && op->type <= x86_test &&
-                try_for_imm32(rhs->dt.type == TB_TAG_PTR ? 64 : rhs->dt.data, rhs, &x)) {
+                try_for_imm32(rhs->dt, rhs, &x)) {
                 op_extra->imm = x;
                 op->type += (x86_andimm - x86_and);
             } else {
@@ -908,7 +892,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             if (n->type == TB_ADD && n->inputs[2]->type == TB_SHL &&
                 n->inputs[2]->inputs[2]->type == TB_ICONST &&
                 // LEA on x64 is allowed for 32bit and 64bit ops
-                n->dt.type == TB_TAG_INT && (n->dt.data == 32 || n->dt.data == 64)
+                (n->dt.type == TB_TAG_I32 || n->dt.type == TB_TAG_I64)
             ) {
                 TB_NodeInt* i = TB_NODE_GET_EXTRA(n->inputs[2]->inputs[2]);
                 if (i->value >= 1 && i->value <= 3) {
@@ -932,34 +916,19 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 n = n->inputs[2];
             } else if (n->type == TB_SIGN_EXT) {
                 TB_DataType src_dt = n->inputs[1]->dt;
-                assert(src_dt.type == TB_TAG_INT);
-                int src_bits = src_dt.data;
 
                 op_extra->mode = MODE_REG;
                 n = n->inputs[1];
                 set_input(f, op, n, 2);
 
-                switch (src_bits) {
-                    case 8:  op->type = x86_movsx8;  break;
-                    case 16: op->type = x86_movsx16; break;
-                    case 32: op->type = x86_movsx32; break;
-                }
-
-                if (op->type == x86_lea) {
-                    // unconventional sizes do:
-                    //   SHL dst, x
-                    //   SAR dst, x (or SHR if zero ext)
-                    //
-                    // where x is 'reg_width - val_width'
-                    // int dst_bits = dt == TB_X86_TYPE_QWORD ? 64 : 32;
-                    // int ext = is_signed ? SAR : SHR;
-                    // Val imm = val_imm(dst_bits - bits_in_type);
-                    tb_todo();
+                switch (src_dt.type) {
+                    case TB_TAG_I8:  op->type = x86_movsx8;  break;
+                    case TB_TAG_I16: op->type = x86_movsx16; break;
+                    case TB_TAG_I32: op->type = x86_movsx32; break;
+                    default: tb_todo();
                 }
             } else if (n->type == TB_ZERO_EXT) {
                 TB_DataType src_dt = n->inputs[1]->dt;
-                assert(src_dt.type == TB_TAG_INT);
-                int src_bits = src_dt.data;
 
                 op_extra->mode = MODE_REG;
                 n = n->inputs[1];
@@ -968,10 +937,10 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 // as long as any of these zero-extend to 32bits from a smaller size they're
                 // capable of being a 64bit zero extend since 32bit ops will auto zero ext to 64bit.
                 int op_type = -1;
-                switch (src_bits) {
-                    case 8:  op->type = x86_movzx8;  break;
-                    case 16: op->type = x86_movzx16; break;
-                    case 32: {
+                switch (src_dt.type) {
+                    case TB_TAG_I8:  op->type = x86_movzx8;  break;
+                    case TB_TAG_I16: op->type = x86_movzx16; break;
+                    case TB_TAG_I32: {
                         RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
 
                         // mach copy actually just handles these sorts of things mostly
@@ -980,19 +949,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                         TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = rm, .use = rm);
                         return cpy;
                     }
-                }
-
-                if (op->type == x86_lea) {
-                    if (src_bits < 32) {
-                        // we can take advantange of the existing 64bit zero extension
-                        uint64_t mask = UINT64_MAX >> (64 - src_bits);
-                        op->type = x86_andimm;
-                        TB_NODE_SET_EXTRA(op, X86MemOp, .imm = mask);
-                        return op;
-                    } else {
-                        // uint64_t mask = UINT64_MAX >> (64 - src_bits);
-                        tb_todo();
-                    }
+                    default: tb_todo();
                 }
             }
 
@@ -1523,7 +1480,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                             ins[i] = intern_regmask(ctx, REG_CLASS_STK, false, base_stack + param_num);
                         }
                     } else {
-                        assert(n->inputs[i]->dt.type == TB_TAG_INT || n->inputs[i]->dt.type == TB_TAG_PTR);
+                        TB_ASSERT(TB_IS_INTEGER_TYPE(n->inputs[i]->dt) || n->inputs[i]->dt.type == TB_TAG_PTR);
                         if (gprs_used < abi->gpr_count) {
                             ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << abi->gprs[gprs_used]);
                             gprs_used += 1;
@@ -1679,7 +1636,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             uint64_t x = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
             uint32_t hi = x >> 32ull;
 
-            TB_X86_DataType dt = legalize_int2(n->dt);
+            TB_X86_DataType dt = legalize_int(n->dt);
             GPR dst = op_gpr_at(ctx, n);
             if (x == 0) {
                 __(XOR, TB_X86_DWORD, Vgpr(dst), Vgpr(dst));
@@ -1773,11 +1730,11 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case x86_idiv: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             // cqo/cdq (sign extend RAX into RDX)
-            if (n->dt.data > 32) { EMIT1(e, 0x48); }
+            if (n->dt.type == TB_TAG_I64) { EMIT1(e, 0x48); }
             EMIT1(e, 0x99);
             // idiv
             Val rhs = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
-            TB_X86_DataType dt = legalize_int2(op->dt);
+            TB_X86_DataType dt = legalize_int(op->dt);
             __(IDIV, dt, &rhs);
             break;
         }
@@ -1789,7 +1746,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             EMIT1(e, 0xD2);
             // div
             Val rhs = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
-            TB_X86_DataType dt = legalize_int2(op->dt);
+            TB_X86_DataType dt = legalize_int(op->dt);
             __(DIV, dt, &rhs);
             break;
         }
@@ -1802,7 +1759,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         }
 
         case TB_NEG: {
-            TB_X86_DataType dt = legalize_int2(n->dt);
+            TB_X86_DataType dt = legalize_int(n->dt);
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
             if (!is_value_match(&dst, &src)) {
@@ -1815,12 +1772,12 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_UINT2FLOAT:
         case TB_INT2FLOAT: {
             TB_DataType src_dt = n->inputs[1]->dt;
-            assert(src_dt.type == TB_TAG_INT);
+            TB_ASSERT(TB_IS_INTEGER_TYPE(src_dt));
 
             // it's either 32bit or 64bit conversion
             //   CVTSI2SS r/m32, xmm1
             //   CVTSI2SD r/m64, xmm1
-            bool is_64bit = src_dt.data > 32;
+            bool is_64bit = src_dt.type == TB_TAG_I64;
 
             TB_X86_DataType dt = legalize_float(n->dt);
             Val dst = op_at(ctx, n);
@@ -1901,11 +1858,11 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt;
             if (n->type == x86_test || n->type == x86_cmp || n->dt.type == TB_TAG_MEMORY) {
-                dt = legalize_int2(op->dt);
+                dt = legalize_int(op->dt);
             } else if (n->type == x86_cmpimm) {
-                dt = legalize_int2(n->inputs[2]->dt);
+                dt = legalize_int(n->inputs[2]->dt);
             } else {
-                dt = legalize_int2(n->dt);
+                dt = legalize_int(n->dt);
             }
 
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
@@ -1933,7 +1890,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         }
 
         case x86_imulimm: {
-            TB_X86_DataType dt = legalize_int2(n->dt);
+            TB_X86_DataType dt = legalize_int(n->dt);
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
 
             Val dst = op_at(ctx, n);
@@ -1948,7 +1905,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         }
 
         case TB_MUL: {
-            TB_X86_DataType dt = legalize_int2(n->dt);
+            TB_X86_DataType dt = legalize_int(n->dt);
 
             Val dst  = op_at(ctx, n);
             Val lhs  = op_at(ctx, n->inputs[1]);
@@ -2073,7 +2030,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         }
 
         case x86_cmovcc: {
-            TB_X86_DataType dt = legalize_int2(n->dt);
+            TB_X86_DataType dt = legalize_int(n->dt);
             int cc = TB_NODE_GET_EXTRA_T(n, X86Cmov)->cc;
 
             Val dst = op_at(ctx, n);
@@ -2100,7 +2057,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_ROL:
         case TB_ROR:
         case TB_SAR: {
-            TB_X86_DataType dt = legalize_int2(n->dt);
+            TB_X86_DataType dt = legalize_int(n->dt);
 
             Val dst = op_at(ctx, n);
             Val lhs = op_at(ctx, n->inputs[1]);
@@ -2133,7 +2090,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 MOVSXD,
             };
 
-            TB_X86_DataType dt = legalize_int2(n->inputs[2]->dt);
+            TB_X86_DataType dt = legalize_int(n->inputs[2]->dt);
             if (n->type == x86_movsx8 || n->type == x86_movsx16) {
                 dt = TB_X86_DWORD;
             }
@@ -2184,7 +2141,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
             TB_Node* dproj = USERN(proj_with_index(n, 1));
 
             TB_NodeAtomic* a = TB_NODE_GET_EXTRA(n);
-            TB_X86_DataType dt = legalize_int2(dproj->dt);
+            TB_X86_DataType dt = legalize_int(dproj->dt);
 
             Val addr = op_at(ctx, n->inputs[2]);
             Val src  = op_at(ctx, n->inputs[3]);
@@ -2657,7 +2614,6 @@ ICodeGen tb__x64_codegen = {
     .extra_bytes = extra_bytes,
     .emit_win64eh_unwind_info = emit_win64eh_unwind_info,
     .emit_call_patches  = emit_call_patches,
-    .get_data_type_size = get_data_type_size,
     .compile_function   = compile_function,
 };
 #endif

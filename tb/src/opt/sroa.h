@@ -39,14 +39,14 @@ static ptrdiff_t compatible_with_configs(size_t config_count, AggregateConfig* c
 }
 
 // false means failure to SROA
-static bool add_configs(TB_Function* f, TB_Node* addr, TB_Node* base_address, size_t base_offset, size_t* config_count, AggregateConfig* configs, int pointer_size) {
+static bool add_configs(TB_Function* f, TB_Node* addr, TB_Node* base_address, size_t base_offset, size_t* config_count, AggregateConfig* configs) {
     FOR_USERS(use, addr) {
         TB_Node* n = USERN(use);
 
         if (n->type == TB_PTR_OFFSET && n->inputs[2]->type == TB_ICONST && USERI(use) == 1) {
             // same rules, different offset
             int64_t offset = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
-            if (!add_configs(f, n, base_address, base_offset + offset, config_count, configs, pointer_size)) {
+            if (!add_configs(f, n, base_address, base_offset + offset, config_count, configs)) {
                 return false;
             }
             continue;
@@ -65,7 +65,7 @@ static bool add_configs(TB_Function* f, TB_Node* addr, TB_Node* base_address, si
 
         TB_DataType dt = n->type == TB_LOAD ? n->dt : n->inputs[3]->dt;
         TB_Node* address = n->inputs[2];
-        int size = (bits_in_data_type(pointer_size, dt) + 7) / 8;
+        int size = tb_data_type_byte_size(f->super.module, dt.type);
 
         // see if it's a compatible configuration
         int match = compatible_with_configs(*config_count, configs, base_offset, size, dt);
@@ -86,12 +86,12 @@ static bool add_configs(TB_Function* f, TB_Node* addr, TB_Node* base_address, si
     return true;
 }
 
-static size_t sroa_rewrite(TB_Function* f, int pointer_size, TB_Node* start, TB_Node* n) {
+static size_t sroa_rewrite(TB_Function* f, TB_Node* start, TB_Node* n) {
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     size_t config_count = 0;
     AggregateConfig* configs = tb_arena_alloc(&f->tmp_arena, SROA_LIMIT * sizeof(AggregateConfig));
-    if (!add_configs(f, n, n, 0, &config_count, configs, pointer_size)) {
+    if (!add_configs(f, n, n, 0, &config_count, configs)) {
         return 1;
     }
 

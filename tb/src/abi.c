@@ -90,8 +90,18 @@ static TB_DataType debug_type_to_tb(TB_DebugType* t) {
     switch (t->tag) {
         case TB_DEBUG_TYPE_VOID: return TB_TYPE_VOID;
         case TB_DEBUG_TYPE_BOOL: return TB_TYPE_I8;
-        case TB_DEBUG_TYPE_UINT: return TB_TYPE_INTN(t->int_bits);
-        case TB_DEBUG_TYPE_INT:  return TB_TYPE_INTN(t->int_bits);
+
+        case TB_DEBUG_TYPE_UINT:
+        case TB_DEBUG_TYPE_INT: {
+            switch (t->int_bits) {
+                case 1:  return TB_TYPE_BOOL;
+                case 8:  return TB_TYPE_I8;
+                case 16: return TB_TYPE_I16;
+                case 32: return TB_TYPE_I32;
+                case 64: return TB_TYPE_I64;
+                default: TB_ASSERT(0); return TB_TYPE_VOID;
+            }
+        }
 
         case TB_DEBUG_TYPE_FUNCTION: return TB_TYPE_PTR;
         case TB_DEBUG_TYPE_ARRAY:    return TB_TYPE_PTR;
@@ -108,13 +118,19 @@ static TB_DataType reg_class_to_tb(TB_ABI abi, RegClass rg, TB_DebugType* type) 
     switch (rg) {
         case RG_MEMORY:  return TB_TYPE_PTR;
         case RG_INTEGER: {
-            if (type->tag == TB_DEBUG_TYPE_POINTER) return TB_TYPE_PTR;
-            return TB_TYPE_INTN(debug_type_size(abi, type) * 8);
+            if (type->tag == TB_DEBUG_TYPE_POINTER) { return TB_TYPE_PTR; }
+            switch (debug_type_size(abi, type)) {
+                case 1:  return TB_TYPE_I8;
+                case 2:  return TB_TYPE_I16;
+                case 4:  return TB_TYPE_I32;
+                case 8:  return TB_TYPE_I64;
+                default: TB_ASSERT(0); return TB_TYPE_VOID;
+            }
         }
 
         case RG_SSE: {
             assert(type->tag >= TB_DEBUG_TYPE_FLOAT32 && type->tag <= TB_DEBUG_TYPE_FLOAT64);
-            return (TB_DataType){ { TB_TAG_F32 + (type->tag - TB_DEBUG_TYPE_FLOAT32) } };
+            return (TB_DataType){ .type = type->tag == TB_DEBUG_TYPE_FLOAT32 ? TB_TAG_F32 : TB_TAG_F64 };
         }
 
         default: TB_ASSERT(0); return TB_TYPE_VOID;

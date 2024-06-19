@@ -147,7 +147,7 @@ TB_Node* tb_alloc_node(TB_Function* f, int type, TB_DataType dt, int input_count
 }
 
 static TB_Node* tb_bin_arith(TB_Function* f, int type, TB_ArithmeticBehavior arith_behavior, TB_Node* a, TB_Node* b) {
-    assert(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
+    TB_ASSERT(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
     TB_Node* n = tb_alloc_node(f, type, a->dt, 3, sizeof(TB_NodeBinopInt));
     set_input(f, n, a, 1);
@@ -157,7 +157,7 @@ static TB_Node* tb_bin_arith(TB_Function* f, int type, TB_ArithmeticBehavior ari
 }
 
 static TB_Node* tb_bin_farith(TB_Function* f, int type, TB_Node* a, TB_Node* b) {
-    assert(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
+    TB_ASSERT(TB_DATA_TYPE_EQUALS(a->dt, b->dt));
 
     TB_Node* n = tb_alloc_node(f, type, a->dt, 3, 0);
     set_input(f, n, a, 1);
@@ -171,13 +171,22 @@ static TB_Node* tb_unary(TB_Function* f, int type, TB_DataType dt, TB_Node* src)
     return n;
 }
 
+static uint64_t tb_zero_ext(TB_Module* m, TB_DataType dt, uint64_t imm) {
+    int bits = tb_data_type_bit_size(m, dt.type);
+    uint64_t mask = ~UINT64_C(0) >> (64 - bits);
+    return imm & mask;
+}
+
+static uint64_t tb_sign_ext(TB_Module* m, TB_DataType dt, uint64_t imm) {
+    int bits = tb_data_type_bit_size(m, dt.type);
+    return tb__sxt(imm, bits, 64);
+}
+
 TB_Node* tb_inst_trunc(TB_Function* f, TB_Node* src, TB_DataType dt) {
     if (src->dt.type == TB_TAG_F64 && dt.type == TB_TAG_F32) {
         return tb_unary(f, TB_FLOAT_TRUNC, dt, src);
     } else {
-        assert((src->dt.type == TB_TAG_INT || src->dt.type == TB_TAG_PTR)
-            && (dt.type == TB_TAG_INT || dt.type == TB_TAG_PTR));
-
+        TB_ASSERT(TB_IS_INT_OR_PTR(src->dt) && TB_IS_INT_OR_PTR(dt));
         return tb_unary(f, TB_TRUNCATE, dt, src);
     }
 }
@@ -192,12 +201,12 @@ TB_Node* tb_inst_ptr2int(TB_Function* f, TB_Node* src, TB_DataType dt) {
 
 TB_Node* tb_inst_int2float(TB_Function* f, TB_Node* src, TB_DataType dt, bool is_signed) {
     assert(TB_IS_FLOAT_TYPE(dt));
-    assert(src->dt.type == TB_TAG_INT);
+    assert(TB_IS_INTEGER_TYPE(src->dt));
 
     if (src->type == TB_ICONST) {
         uint64_t y = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
         if (is_signed) {
-            y = tb__sxt(y, src->dt.data, 64);
+            y = tb_sign_ext(f->super.module, src->dt, y);
         }
 
         if (dt.type == TB_TAG_F32) {
@@ -229,7 +238,7 @@ TB_Node* tb_inst_fpxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
 TB_Node* tb_inst_sxt(TB_Function* f, TB_Node* src, TB_DataType dt) {
     if (src->type == TB_ICONST) {
         uint64_t y = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
-        y = tb__sxt(y, src->dt.data, 64);
+        y = tb_sign_ext(f->super.module, src->dt, y);
         return tb_inst_uint(f, dt, y);
     }
 
@@ -249,7 +258,7 @@ TB_Node* tb_inst_bitcast(TB_Function* f, TB_Node* src, TB_DataType dt) {
     // shaw uses bitcast for zero extends sometimes, i don't feel like changing minivm
     // so i'll just extend the semantics of bitcast to consider zero extension the behavior
     // when scaling up.
-    if (src->dt.type == TB_TAG_INT && dt.type == TB_TAG_INT && src->dt.data < dt.data) {
+    if (TB_IS_INTEGER_TYPE(src->dt) && TB_IS_INTEGER_TYPE(dt) && src->dt.type < dt.type) {
         return tb_unary(f, TB_ZERO_EXT, dt, src);
     }
 
@@ -346,8 +355,8 @@ void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, 
 }
 
 void tb_inst_memset(TB_Function* f, TB_Node* addr, TB_Node* val, TB_Node* size, TB_CharUnits align) {
-    assert(TB_IS_POINTER_TYPE(addr->dt));
-    assert(TB_IS_INTEGER_TYPE(val->dt) && val->dt.data == 8);
+    TB_ASSERT(TB_IS_POINTER_TYPE(addr->dt));
+    TB_ASSERT(val->dt.type == TB_TAG_I8);
 
     TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
     set_input(f, n, f->trace.bot_ctrl, 0);
@@ -383,12 +392,8 @@ TB_Node* tb_inst_bool(TB_Function* f, bool imm) {
 }
 
 TB_Node* tb_inst_uint(TB_Function* f, TB_DataType dt, uint64_t imm) {
-    assert(TB_IS_POINTER_TYPE(dt) || TB_IS_INTEGER_TYPE(dt));
-
-    if (dt.type == TB_TAG_INT && dt.data < 64) {
-        uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
-        imm &= mask;
-    }
+    TB_ASSERT(TB_IS_INT_OR_PTR(dt));
+    imm = tb_zero_ext(f->super.module, dt, imm);
 
     TB_Node* n = tb_alloc_node(f, TB_ICONST, dt, 1, sizeof(TB_NodeInt));
     set_input(f, n, f->root_node, 0);
@@ -397,7 +402,7 @@ TB_Node* tb_inst_uint(TB_Function* f, TB_DataType dt, uint64_t imm) {
 }
 
 TB_Node* tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm) {
-    assert(TB_IS_POINTER_TYPE(dt) || (TB_IS_INTEGER_TYPE(dt) && (dt.data <= 64)));
+    TB_ASSERT(TB_IS_INT_OR_PTR(dt));
 
     TB_Node* n = tb_alloc_node(f, TB_ICONST, dt, 1, sizeof(TB_NodeInt));
     set_input(f, n, f->root_node, 0);
@@ -439,7 +444,7 @@ TB_Node* tb_inst_array_access(TB_Function* f, TB_Node* base, TB_Node* index, int
         return tb_inst_member_access(f, base, x * stride);
     }
 
-    assert(stride != 0);
+    TB_ASSERT(stride != 0);
     TB_Node* con = tb_inst_sint(f, TB_TYPE_I64, stride);
     TB_Node* scl = index;
     if (stride != 1) {
@@ -467,7 +472,7 @@ TB_Node* tb_inst_member_access(TB_Function* f, TB_Node* base, int64_t offset) {
 }
 
 TB_Node* tb_inst_get_symbol_address(TB_Function* f, TB_Symbol* target) {
-    assert(target != NULL);
+    TB_ASSERT(target != NULL);
 
     TB_Node* n = tb_alloc_node(f, TB_SYMBOL, TB_TYPE_PTR, 1, sizeof(TB_NodeSymbol));
     set_input(f, n, f->root_node, 0);
@@ -578,21 +583,21 @@ TB_Node* tb_inst_bswap(TB_Function* f, TB_Node* src) {
 }
 
 TB_Node* tb_inst_clz(TB_Function* f, TB_Node* src) {
-    assert(TB_IS_INTEGER_TYPE(src->dt));
+    TB_ASSERT(TB_IS_INTEGER_TYPE(src->dt));
     TB_Node* n = tb_alloc_node(f, TB_CLZ, TB_TYPE_I32, 2, 0);
     set_input(f, n, src, 1);
     return n;
 }
 
 TB_Node* tb_inst_ctz(TB_Function* f, TB_Node* src) {
-    assert(TB_IS_INTEGER_TYPE(src->dt));
+    TB_ASSERT(TB_IS_INTEGER_TYPE(src->dt));
     TB_Node* n = tb_alloc_node(f, TB_CTZ, TB_TYPE_I32, 2, 0);
     set_input(f, n, src, 1);
     return n;
 }
 
 TB_Node* tb_inst_popcount(TB_Function* f, TB_Node* src) {
-    assert(TB_IS_INTEGER_TYPE(src->dt));
+    TB_ASSERT(TB_IS_INTEGER_TYPE(src->dt));
     TB_Node* n = tb_alloc_node(f, TB_POPCNT, TB_TYPE_I32, 2, 0);
     set_input(f, n, src, 1);
     return n;
@@ -602,7 +607,8 @@ TB_Node* tb_inst_neg(TB_Function* f, TB_Node* src) {
     TB_DataType dt = src->dt;
     if (src->type == TB_ICONST) {
         uint64_t x = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
-        uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
+        int bits = tb_data_type_bit_size(f->super.module, dt.type);
+        uint64_t mask = ~UINT64_C(0) >> (64 - bits);
 
         // two's complement negate is just invert and add 1
         uint64_t negated = (~x + 1) & mask;
@@ -785,7 +791,7 @@ TB_Node* tb_inst_fdiv(TB_Function* f, TB_Node* a, TB_Node* b) {
 }
 
 TB_Node* tb_inst_va_start(TB_Function* f, TB_Node* a) {
-    assert(a->type == TB_LOCAL);
+    TB_ASSERT(a->type == TB_LOCAL);
 
     TB_Node* n = tb_alloc_node(f, TB_VA_START, TB_TYPE_PTR, 2, 0);
     set_input(f, n, a, 1);
@@ -793,7 +799,7 @@ TB_Node* tb_inst_va_start(TB_Function* f, TB_Node* a) {
 }
 
 TB_Node* tb_inst_x86_ldmxcsr(TB_Function* f, TB_Node* a) {
-    assert(a->dt.type == TB_TAG_INT && a->dt.data == 32);
+    TB_ASSERT(a->dt.type == TB_TAG_I32);
 
     TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_LDMXCSR, TB_TYPE_I32, 2, 0);
     set_input(f, n, a, 1);

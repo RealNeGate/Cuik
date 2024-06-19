@@ -56,20 +56,15 @@ static SDG_TypeIndex sdg_get_type(SDG_Types* types, TB_DebugType* type) {
 static SDG_TypeIndex sdg_get_type_from_dt(TB_DataType dt) {
     // assert(dt.width == 0 && "TODO: implement vector types in CodeView output");
     switch (dt.type) {
-        case TB_TAG_INT: {
-            if (dt.data <= 0)  return SDG_PRIM_VOID;
-            if (dt.data <= 1)  return SDG_PRIM_BOOL8;
-            if (dt.data <= 8)  return SDG_PRIM_UINT8;
-            if (dt.data <= 16) return SDG_PRIM_UINT16;
-            if (dt.data <= 32) return SDG_PRIM_UINT32;
-            if (dt.data <= 64) return SDG_PRIM_UINT64;
-            return SDG_PRIM_VOID;
-        }
-        case TB_TAG_F32: return SDG_PRIM_FLOAT;
-        case TB_TAG_F64: return SDG_PRIM_DOUBLE;
-        case TB_TAG_PTR: {
-            return SDG_PRIM_POINTER | SDG_PRIM_VOID;
-        }
+        case TB_TAG_VOID: return SDG_PRIM_VOID;
+        case TB_TAG_I1:   return SDG_PRIM_BOOL8;
+        case TB_TAG_I8:   return SDG_PRIM_UINT8;
+        case TB_TAG_I16:  return SDG_PRIM_UINT16;
+        case TB_TAG_I32:  return SDG_PRIM_UINT32;
+        case TB_TAG_I64:  return SDG_PRIM_UINT64;
+        case TB_TAG_F32:  return SDG_PRIM_FLOAT;
+        case TB_TAG_F64:  return SDG_PRIM_DOUBLE;
+        case TB_TAG_PTR:  return SDG_PRIM_POINTER | SDG_PRIM_VOID;
         default: return TB_ASSERT_MSG(0, "todo: missing type in CodeView output");
     }
 }

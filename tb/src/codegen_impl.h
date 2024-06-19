@@ -544,23 +544,3 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     func_out->epilogue_length = ctx.epilogue_length;
     func_out->nop_pads = ctx.nop_pads;
 }
-
-static void get_data_type_size(TB_DataType dt, size_t* out_size, size_t* out_align) {
-    switch (dt.type) {
-        case TB_TAG_INT: {
-            // above 64bits we really dont care that much about natural alignment
-            bool is_big_int = dt.data > 64;
-
-            // round up bits to a byte
-            int bits = is_big_int ? ((dt.data + 7) / 8) : tb_next_pow2(dt.data - 1);
-
-            *out_size  = ((bits+7) / 8);
-            *out_align = is_big_int ? 8 : ((dt.data + 7) / 8);
-            break;
-        }
-        case TB_TAG_F32: *out_size = *out_align = 4; break;
-        case TB_TAG_F64: *out_size = *out_align = 8; break;
-        case TB_TAG_PTR: *out_size = *out_align = 8; break;
-        default: tb_unreachable();
-    }
-}

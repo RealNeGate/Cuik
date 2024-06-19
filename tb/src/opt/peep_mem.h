@@ -2,7 +2,7 @@
 static bool is_cool(uint64_t x) { return x == 1 || x == 2 || x == 4 || x == 8; }
 static TB_Node* ideal_memset(TB_Function* f, TB_Node* n) {
     // convert small memsets into stores
-    uint64_t count, val;
+    /* uint64_t count, val;
     if (get_int_const(n->inputs[4], &count) && get_int_const(n->inputs[3], &val) && is_cool(count)) {
         // fill rest of the bytes
         FOR_N(i, 1, count) {
@@ -15,14 +15,14 @@ static TB_Node* ideal_memset(TB_Function* f, TB_Node* n) {
         n->input_count = 4;
         n->type = TB_STORE;
         return n;
-    }
+    } */
 
     return NULL;
 }
 
 static TB_Node* ideal_memcpy(TB_Function* f, TB_Node* n) {
     // convert small memsets into ld+st pairs
-    uint64_t count, val;
+    /* uint64_t count, val;
     if (get_int_const(n->inputs[4], &count) && is_cool(count)) {
         TB_Node* ctrl = n->inputs[0];
         TB_Node* mem  = n->inputs[1];
@@ -41,7 +41,7 @@ static TB_Node* ideal_memcpy(TB_Function* f, TB_Node* n) {
         set_input(f, n, NULL, 4);
         n->input_count = 4;
         return n;
-    }
+    } */
 
     return NULL;
 }

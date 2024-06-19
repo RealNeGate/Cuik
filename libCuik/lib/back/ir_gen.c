@@ -180,9 +180,9 @@ static TB_Node* cast_reg(TB_Function* func, TB_Node* reg, const Cuik_Type* src, 
             comparand = tb_inst_uint(func, dt, 0);
         }
 
-        if (dt.type == TB_TAG_INT && tb_node_is_constant_zero(reg)) {
+        if (TB_IS_INTEGER_TYPE(dt) && tb_node_is_constant_zero(reg)) {
             reg = tb_inst_uint(func, TB_TYPE_BOOL, 0);
-        } else if (dt.type == TB_TAG_INT && tb_node_is_constant_non_zero(reg)) {
+        } else if (TB_IS_INTEGER_TYPE(dt) && tb_node_is_constant_non_zero(reg)) {
             reg = tb_inst_uint(func, TB_TYPE_BOOL, 1);
         } else {
             reg = tb_inst_cmp_ne(func, reg, comparand);
@@ -377,7 +377,15 @@ static int pass_parameter(TranslationUnit* tu, TB_Function* func, TB_PassingRule
             if (arg_type->kind == KIND_STRUCT || arg_type->kind == KIND_UNION) {
                 TB_Node* addr = cvt2lval(tu, func, &arg);
 
-                TB_DataType dt = TB_TYPE_INTN(arg_type->size*8);
+                TB_DataType dt;
+                switch (arg_type->size) {
+                    case 1: dt = TB_TYPE_I8;  break;
+                    case 2: dt = TB_TYPE_I16; break;
+                    case 4: dt = TB_TYPE_I32; break;
+                    case 8: dt = TB_TYPE_I64; break;
+                    default: TODO();
+                }
+
                 out_param[0] = tb_inst_load(func, dt, addr, arg_type->align, false);
                 return 1;
             } else {
@@ -1711,7 +1719,14 @@ static void irgen_stmt(TranslationUnit* tu, TB_Function* func, Stmt* restrict s)
                         r = v.reg;
                     } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                         assert(type->size <= 8);
-                        TB_DataType dt = { { TB_TAG_INT, type->size * 8 } };
+                        TB_DataType dt;
+                        switch (type->size) {
+                            case 1: dt = TB_TYPE_I8;  break;
+                            case 2: dt = TB_TYPE_I16; break;
+                            case 4: dt = TB_TYPE_I32; break;
+                            case 8: dt = TB_TYPE_I64; break;
+                            default: TODO();
+                        }
 
                         r = tb_inst_load(func, dt, v.reg, type->align, false);
                     }

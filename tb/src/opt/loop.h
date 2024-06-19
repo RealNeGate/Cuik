@@ -207,7 +207,8 @@ static const char* ind_pred_names[] = { "ne", "slt", "sle", "ult", "ule" };
 //   i  = phi(init, i2)
 //   i2 = i + step where step is constant
 static bool affine_indvar(TB_Node* n, TB_Node* header) {
-    return n->type == TB_ADD && n->dt.type == TB_TAG_INT
+    return (n->type == TB_ADD || n->type == TB_PTR_OFFSET)
+        && TB_IS_INT_OR_PTR(n->dt)
         && n->inputs[1]->type == TB_PHI
         && n->inputs[1]->inputs[0] == header
         && n->inputs[1]->inputs[2] == n

@@ -165,9 +165,10 @@ TB_Node* tb_builder_bool(TB_GraphBuilder* g, bool x) {
 }
 
 TB_Node* tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x) {
-    TB_ASSERT(TB_IS_POINTER_TYPE(dt) || TB_IS_INTEGER_TYPE(dt));
-    if (dt.type == TB_TAG_INT && dt.data < 64) {
-        uint64_t mask = ~UINT64_C(0) >> (64 - dt.data);
+    TB_ASSERT(TB_IS_INT_OR_PTR(dt));
+    int bits = tb_data_type_bit_size(g->f->super.module, dt.type);
+    if (bits < 64) {
+        uint64_t mask = ~UINT64_C(0) >> (64 - bits);
         x &= mask;
     }
 
@@ -231,7 +232,7 @@ TB_Node* tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type, TB_Node* 
 
 TB_Node* tb_builder_binop_int(TB_GraphBuilder* g, int type, TB_Node* a, TB_Node* b, TB_ArithmeticBehavior ab) {
     TB_ASSERT_MSG(TB_DATA_TYPE_EQUALS(a->dt, b->dt), "datatype mismatch");
-    TB_ASSERT_MSG(a->dt.type == TB_TAG_INT, "datatype wasn't an integer");
+    TB_ASSERT_MSG(TB_IS_INTEGER_TYPE(a->dt), "datatype wasn't an integer");
     TB_ASSERT_MSG(type >= TB_AND && type <= TB_SMOD, "'type' wasn't an integer binop type (see TB_NodeTypeEnum)");
 
     TB_Function* f = g->f;
@@ -295,8 +296,8 @@ TB_Node* tb_builder_cmp(TB_GraphBuilder* g, int type, TB_Node* a, TB_Node* b) {
 }
 
 TB_Node* tb_builder_ptr_array(TB_GraphBuilder* g, TB_Node* base, TB_Node* index, int64_t stride) {
-    TB_ASSERT_MSG(base->dt.type == TB_TAG_PTR,  "base on ARRAY must be an integer");
-    TB_ASSERT_MSG(index->dt.type == TB_TAG_INT, "index on ARRAY must be an integer");
+    TB_ASSERT_MSG(base->dt.type == TB_TAG_PTR,   "base on ARRAY must be an integer");
+    TB_ASSERT_MSG(TB_IS_INTEGER_TYPE(index->dt), "index on ARRAY must be an integer");
 
     TB_Function* f = g->f;
     TB_Node* con = tb_builder_sint(g, TB_TYPE_I64, stride);
@@ -367,7 +368,7 @@ void tb_builder_memcpy(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* 
 void tb_builder_memset(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align, bool is_volatile) {
     TB_Function* f = g->f;
     TB_ASSERT(dst->dt.type == TB_TAG_PTR);
-    TB_ASSERT_MSG(val->dt.type == TB_TAG_INT && val->dt.data == 8, "memset's val needs to be byte sized");
+    TB_ASSERT_MSG(val->dt.type == TB_TAG_I8, "memset's val needs to be byte sized");
 
     TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
     set_input(f, n, g->curr->inputs[0], 0);
@@ -809,7 +810,7 @@ void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int count, TB_Node** args) 
 }
 
 TB_Node* tb_builder_x86_ldmxcsr(TB_GraphBuilder* g, TB_Node* a) {
-    assert(a->dt.type == TB_TAG_INT && a->dt.data == 32);
+    TB_ASSERT(a->dt.type == TB_TAG_I32);
 
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, TB_X86INTRIN_LDMXCSR, TB_TYPE_I32, 2, 0);

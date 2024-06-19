@@ -22,21 +22,7 @@ int foo3(int a, int b, int c) {
 
 
 
-void daxpy(long long n, double a, double* restrict x, double* y) {
-    for (long long i = 0; i < n; i++) {
-        y[i] = a*x[i] + y[i];
-    }
-}
-
-
-
-
-
-
-
-#endif
-
-#if 0
+#if 1
 void daxpy2(long long n, double a, double* x, double* y) {
     for (int i = 0; i != enable; i++) {
         // manual 4-way unroll
@@ -53,6 +39,20 @@ void daxpy2(long long n, double a, double* x, double* y) {
         }
     }
 }
+#else
+void daxpy(long long n, double a, double* restrict x, double* y) {
+    for (long long i = 0; i < n; i++) {
+        y[i] = a*x[i] + y[i];
+    }
+}
+#endif
+
+
+
+
+
+
+
 #endif
 
 #if 0

@@ -92,6 +92,36 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     return info;
 }
 
+int tb_data_type_bit_size(TB_Module* m, uint8_t type) {
+    static const int arr[16] = {
+        [TB_TAG_I1]   = 1,
+        [TB_TAG_I8]   = 8,
+        [TB_TAG_I16]  = 16,
+        [TB_TAG_I32]  = 32,
+        [TB_TAG_I64]  = 64,
+        [TB_TAG_F32]  = 32,
+        [TB_TAG_F64]  = 64,
+        [TB_TAG_V64]  = 64,
+        [TB_TAG_V128] = 128,
+        [TB_TAG_V256] = 256,
+        [TB_TAG_V512] = 512,
+    };
+
+    if (type == TB_TAG_PTR) {
+        TB_ASSERT(m);
+        return m->codegen->pointer_size;
+    }
+
+    TB_ASSERT(type < 16);
+    TB_ASSERT_MSG(arr[type], "this type has no size");
+    return arr[type];
+}
+
+int tb_data_type_byte_size(TB_Module* m, uint8_t type) {
+    int s = tb_data_type_bit_size(m, type);
+    return (s + m->codegen->minimum_addressable_size - 1) / m->codegen->minimum_addressable_size;
+}
+
 // we don't modify these strings
 char* tb__arena_strdup(TB_Module* m, ptrdiff_t len, const char* src) {
     if (len < 0) len = src ? strlen(src) : 0;

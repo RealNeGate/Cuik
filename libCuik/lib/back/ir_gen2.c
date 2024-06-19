@@ -205,7 +205,14 @@ static int pass_param(TranslationUnit* tu, TB_GraphBuilder* g, TB_PassingRule ru
             if (arg_type->kind == KIND_STRUCT || arg_type->kind == KIND_UNION) {
                 assert(arg.kind == LVALUE);
                 TB_Node* addr  = arg.n;
-                TB_DataType dt = TB_TYPE_INTN(arg_type->size*8);
+                TB_DataType dt;
+                switch (arg_type->size) {
+                    case 1: dt = TB_TYPE_I8;  break;
+                    case 2: dt = TB_TYPE_I16; break;
+                    case 4: dt = TB_TYPE_I32; break;
+                    case 8: dt = TB_TYPE_I64; break;
+                    default: TODO();
+                }
                 out_param[0]   = tb_builder_load(g, 0, true, dt, addr, arg_type->align, false);
                 return 1;
             } else {
@@ -497,6 +504,50 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             }
 
             return (ValDesc){ RVALUE, .n = is_pre ? operation : loaded };
+        }
+
+        case EXPR_PTRADD:
+        case EXPR_PTRSUB: {
+            TB_Node* l = as_rval(tu, g, &args[e->ptrop.flipped]);
+            TB_Node* r = as_rval(tu, g, &args[!e->ptrop.flipped]);
+            Cuik_Type* type = cuik_canonical_type(qt);
+
+            // pointer arithmatic
+            int64_t dir = e->op == EXPR_PTRADD ? 1 : -1;
+            int64_t stride = cuik_canonical_type(type->ptr_to)->size;
+
+            assert(stride);
+            return (ValDesc){ RVALUE, .n = tb_builder_ptr_array(g, l, r, dir * stride) };
+        }
+        case EXPR_PTRDIFF: {
+            TB_Node* l = as_rval(tu, g, &args[0]);
+            TB_Node* r = as_rval(tu, g, &args[1]);
+
+            Cuik_Type* type = cuik_canonical_type(args[0].cast_type);
+            int stride = cuik_canonical_type(type->ptr_to)->size;
+
+            // TODO(NeGate): consider a ptrdiff operation in TB
+            l = tb_builder_cast(g, TB_TYPE_I64, TB_BITCAST, l);
+            r = tb_builder_cast(g, TB_TYPE_I64, TB_BITCAST, r);
+
+            // pointer diff can't overflow
+            TB_Node* diff = tb_builder_binop_int(g, TB_SUB, l, r, TB_ARITHMATIC_NSW | TB_ARITHMATIC_NUW);
+
+            // early opt because it's kinda annoying to see so many division ops,
+            // the optimizer can do this and more but we don't run it during -O0...
+            //
+            // wouldn't it be nice to just have an always on optimizer, one thats
+            // debuggable even in optimized form... yea crazy i know :p
+            uint64_t log2 = __builtin_ffsll(stride) - 1;
+            if (stride > 1) {
+                if (stride == 1ull << log2) {
+                    diff = tb_builder_binop_int(g, TB_SAR,  diff, tb_builder_uint(g, diff->dt, stride), 0);
+                } else {
+                    diff = tb_builder_binop_int(g, TB_SDIV, diff, tb_builder_uint(g, diff->dt, stride), 0);
+                }
+            }
+
+            return (ValDesc){ RVALUE, .n = diff };
         }
 
         case EXPR_ASSIGN:
@@ -1124,7 +1175,14 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                         ret    = v.n;
                     } else if (type->kind == KIND_STRUCT || type->kind == KIND_UNION) {
                         assert(type->size <= 8);
-                        TB_DataType dt = { { TB_TAG_INT, type->size * 8 } };
+                        TB_DataType dt;
+                        switch (type->size) {
+                            case 1: dt = TB_TYPE_I8;  break;
+                            case 2: dt = TB_TYPE_I16; break;
+                            case 4: dt = TB_TYPE_I32; break;
+                            case 8: dt = TB_TYPE_I64; break;
+                            default: TODO();
+                        }
 
                         ret = tb_builder_load(g, 0, true, dt, v.n, type->align, false);
                         pushed = true;

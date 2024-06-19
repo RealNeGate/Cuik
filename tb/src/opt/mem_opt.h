@@ -44,15 +44,14 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
 
         // if all paths are dominated by a load of some address then it's safe
         // to relax ctrl deps.
-        ICodeGen* cg = f->super.module->codegen;
-        int bits_read = bits_in_data_type(cg->pointer_size, n->dt);
+        int bits_read = tb_data_type_bit_size(f->super.module, n->dt.type);
 
         // find other users of the address which read the same size (or more)
         FOR_USERS(u, addr) {
             TB_NodeTypeEnum type = 0;
             if (USERN(u) != n && USERI(u) == 2 && USERN(u)->type == TB_LOAD) {
                 TB_DataType mem_dt = n->type == TB_LOAD ? n->dt : n->inputs[3]->dt;
-                int other_bits_read = bits_in_data_type(cg->pointer_size, mem_dt);
+                int other_bits_read = tb_data_type_bit_size(f->super.module, mem_dt.type);
                 if (bits_read <= other_bits_read) {
                     TB_Node* other_ctrl = USERN(u)->inputs[0];
                     if (other_ctrl == NULL || (fast_dommy(other_ctrl, ctrl) && other_ctrl != ctrl)) {
@@ -135,8 +134,8 @@ static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {
     return progress ? n : NULL;
 }
 
-static bool no_alias_with(KnownPointer us, int us_bytes, TB_Node* them, int ptr_size) {
-    int them_bytes = bytes_in_data_type(ptr_size, them->inputs[3]->dt);
+static bool no_alias_with(TB_Module* m, KnownPointer us, int us_bytes, TB_Node* them) {
+    int them_bytes = tb_data_type_byte_size(m, them->inputs[3]->dt.type);
     KnownPointer them_addr = known_pointer(them->inputs[2]);
 
     if (them_addr.base == us.base) {
@@ -154,8 +153,7 @@ static TB_Node* ideal_store(TB_Function* f, TB_Node* n) {
     TB_DataType dt = val->dt;
 
     // store is next to a non-aliasing adjacent store (or merge to non-adjacent stores)
-    ICodeGen* cg = f->super.module->codegen;
-    int curr_bytes = bytes_in_data_type(cg->pointer_size, val->dt);
+    int curr_bytes = tb_data_type_byte_size(f->super.module, val->dt.type);
     KnownPointer curr_ptr = known_pointer(addr);
 
     #if 0

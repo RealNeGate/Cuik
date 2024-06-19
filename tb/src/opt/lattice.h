@@ -22,6 +22,10 @@ static Lattice ANYPTR_IN_THE_SKY = { LATTICE_ANYPTR };
 static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = {  0, 0, UINT64_MAX, 0 } };
 static Lattice TRUE_IN_THE_SKY   = { LATTICE_INT, ._int = { -1,-1, 0, UINT64_MAX } };
 static Lattice BOOL_IN_THE_SKY   = { LATTICE_INT, ._int = { -1, 0, 0, 0          } };
+static Lattice I8_IN_THE_SKY     = { LATTICE_INT, ._int = { INT8_MIN,  INT8_MAX  } };
+static Lattice I16_IN_THE_SKY    = { LATTICE_INT, ._int = { INT16_MIN, INT16_MAX } };
+static Lattice I32_IN_THE_SKY    = { LATTICE_INT, ._int = { INT32_MIN, INT32_MAX } };
+static Lattice I64_IN_THE_SKY    = { LATTICE_INT, ._int = { INT64_MIN, INT64_MAX } };
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt);
 
@@ -159,6 +163,10 @@ void tb__lattice_init(TB_Module* m) {
     nbhs_raw_insert(&m->lattice_elements, &FALSE_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &TRUE_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &BOOL_IN_THE_SKY);
+    nbhs_raw_insert(&m->lattice_elements, &I8_IN_THE_SKY);
+    nbhs_raw_insert(&m->lattice_elements, &I16_IN_THE_SKY);
+    nbhs_raw_insert(&m->lattice_elements, &I32_IN_THE_SKY);
+    nbhs_raw_insert(&m->lattice_elements, &I64_IN_THE_SKY);
 }
 
 static bool lattice_is_const(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
@@ -227,25 +235,17 @@ static uint64_t lattice_uint_max(int bits) { return UINT64_MAX >> (64 - bits); }
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
     switch (dt.type) {
-        case TB_TAG_INT: {
-            assert(dt.data <= 64);
-            if (dt.data == 0) {
-                return &BOT_IN_THE_SKY;
-            } else if (dt.data == 1) {
-                return &BOOL_IN_THE_SKY;
-            }
-
-            uint64_t imin = lattice_int_min(dt.data);
-            uint64_t imax = lattice_int_max(dt.data);
-            return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { imin, imax } });
-        }
-
+        case TB_TAG_I1:      return &BOOL_IN_THE_SKY;
+        case TB_TAG_I8:      return &I8_IN_THE_SKY;
+        case TB_TAG_I16:     return &I16_IN_THE_SKY;
+        case TB_TAG_I32:     return &I32_IN_THE_SKY;
+        case TB_TAG_I64:     return &I64_IN_THE_SKY;
         case TB_TAG_F32:     return &FLT32_IN_THE_SKY;
         case TB_TAG_F64:     return &FLT64_IN_THE_SKY;
         case TB_TAG_PTR:     return &ALLPTR_IN_THE_SKY;
         case TB_TAG_MEMORY:  return &ALLMEM_IN_THE_SKY;
         case TB_TAG_CONTROL: return &LIVE_IN_THE_SKY;
-        default: return &BOT_IN_THE_SKY;
+        default:             return &BOT_IN_THE_SKY;
     }
 }
 
@@ -314,7 +314,7 @@ static Lattice* lattice_int_const(TB_Function* f, int64_t con) {
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { con, con, ~con, con } });
 }
 
-static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int bits) {
+static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uint64_t zeros, uint64_t ones, int bits) {
     assert(min <= max);
 
     uint64_t umin = min;
@@ -323,8 +323,8 @@ static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int 
         umin = 0, umax = lattice_uint_max(bits);
     }
 
-    uint64_t zeros = ~umin;
-    uint64_t ones  =  umin;
+    zeros |= ~umin;
+    ones  |=  umin;
 
     if (umin != umax) {
         // wherever the highest differing bit is we just clear everything below that
@@ -334,6 +334,10 @@ static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int 
     }
 
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+}
+
+static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int bits) {
+    return lattice_gimme_int2(f, min, max, 0, 0, bits);
 }
 
 static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max, int bits) {

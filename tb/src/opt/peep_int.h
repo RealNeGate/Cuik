@@ -66,7 +66,8 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
 // im afraid of signed overflow UB
 static int64_t sadd(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a + (uint64_t)b) & mask; }
 static int64_t ssub(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a - (uint64_t)b) & mask; }
-static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, int bits, Lattice* a, Lattice* b) {
+static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b) {
+    int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
     int64_t imin = lattice_int_min(bits);
     int64_t imax = lattice_int_max(bits);
@@ -152,7 +153,7 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    return value_arith_raw(f, n->type, n->dt.data, a, b);
+    return value_arith_raw(f, n->type, n->dt, a, b);
 }
 
 ////////////////////////////////
@@ -204,8 +205,7 @@ static TB_Node* ideal_shift(TB_Function* f, TB_Node* n) {
     uint64_t ab_amt, amt;
     if (type == TB_SHL && a->type == TB_ADD &&
         get_int_const(a->inputs[2], &ab_amt) &&
-        get_int_const(b, &amt) &&
-        ab_amt + amt < n->dt.data)
+        get_int_const(b, &amt))
     {
         TB_Node* lhs = tb_alloc_node(f, TB_SHL, n->dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, lhs, a->inputs[1], 1);
@@ -239,8 +239,8 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
         return NULL;
     }
 
-    uint64_t bits = n->dt.data;
-    uint64_t mask = tb__mask(n->dt.data);
+    int bits = tb_data_type_bit_size(NULL, n->dt.type);
+    uint64_t mask = tb__mask(bits);
 
     // shift that's in-bounds can tell us quite a few nice details
     if (b->_int.max <= bits) {
@@ -265,8 +265,8 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     // the range info, we still have known bits tho)
                     if (((new_min >> bmin) & mask) != min ||
                         ((new_max >> bmin) & mask) != max) {
-                        new_min = lattice_int_min(n->dt.data) | ~mask;
-                        new_max = lattice_int_max(n->dt.data);
+                        new_min = lattice_int_min(bits) | ~mask;
+                        new_max = lattice_int_max(bits);
                     }
 
                     // we know exactly where the bits went
@@ -288,7 +288,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                 // if we know how many bits we shifted then we know where
                 // our known ones ones went
                 if (b->_int.min == b->_int.max) {
-                    ones  = (a->_int.known_ones & mask)  >> b->_int.min;
+                    ones  = (a->_int.known_ones  & mask) >> b->_int.min;
                     zeros = (a->_int.known_zeros & mask) >> b->_int.min;
                     zeros |= ~(mask >> b->_int.min);
                 }
@@ -298,12 +298,13 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
             default: tb_todo();
         }
 
-        int64_t lower = lattice_int_min(n->dt.data) | ~mask;
-        int64_t upper = lattice_int_max(n->dt.data);
+        int64_t lower = lattice_int_min(bits) | ~mask;
+        int64_t upper = lattice_int_max(bits);
 
         if (min > max) {
-            max = lattice_int_min(n->dt.data);
-            min = lattice_int_max(n->dt.data);
+            int bits = tb_data_type_bit_size(NULL, n->dt.type);
+            min = lattice_int_min(bits);
+            max = lattice_int_max(bits);
         }
         if (min < lower) { min = lower; }
         if (max > upper) { max = upper; }
@@ -341,7 +342,7 @@ static TB_Node* ideal_bits(TB_Function* f, TB_Node* n) {
         set_input(f, abb, b, 2);
 
         Lattice* l = value_of(f, abb);
-        assert(l->tag == LATTICE_INT && l->_int.min == l->_int.max);
+        TB_ASSERT(l->tag == LATTICE_INT && l->_int.min == l->_int.max);
 
         violent_kill(f, abb);
 
@@ -352,8 +353,8 @@ static TB_Node* ideal_bits(TB_Function* f, TB_Node* n) {
     }
 
     if (type == TB_OR) {
-        assert(n->dt.type == TB_TAG_INT);
-        int bits = n->dt.data;
+        TB_ASSERT(TB_IS_INTEGER_TYPE(n->dt));
+        int bits = tb_data_type_bit_size(NULL, n->dt.type);
 
         // (or (shl a 24) (shr a 40)) => (rol a 24)
         if (a->type == TB_SHL && b->type == TB_SHR) {
@@ -381,8 +382,9 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    int64_t min = lattice_int_min(n->dt.data);
-    int64_t max = lattice_int_max(n->dt.data);
+    int bits = tb_data_type_bit_size(NULL, n->dt.type);
+    int64_t min = lattice_int_min(bits);
+    int64_t max = lattice_int_max(bits);
 
     uint64_t zeros, ones;
     switch (n->type) {
@@ -394,8 +396,8 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         min = (a->_int.min & ~zeros) | ones;
         max = (a->_int.max & ~zeros) | ones;
         if (min > max) {
-            min = lattice_int_min(n->dt.data);
-            max = lattice_int_max(n->dt.data);
+            min = lattice_int_min(bits);
+            max = lattice_int_max(bits);
         }
         break;
 
@@ -415,7 +417,7 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         default: tb_todo();
     }
 
-    uint64_t mask = tb__mask(n->dt.data);
+    uint64_t mask = tb__mask(bits);
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones & mask } });
 }
 
@@ -438,7 +440,9 @@ static TB_Node* identity_bits(TB_Function* f, TB_Node* n) {
     if (n->type == TB_AND) {
         Lattice* aa = latuni_get(f, n->inputs[1]);
         Lattice* bb = latuni_get(f, n->inputs[2]);
-        uint64_t mask = tb__mask(n->dt.data);
+
+        int bits = tb_data_type_bit_size(NULL, n->dt.type);
+        uint64_t mask = tb__mask(bits);
 
         if (aa != &TOP_IN_THE_SKY && bb->tag == LATTICE_INT) {
             uint64_t possible_ones = (aa->_int.known_ones | ~aa->_int.known_zeros) & mask;
@@ -509,12 +513,11 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
     }
 
     TB_DataType dt = n->inputs[1]->dt;
-    if (dt.type == TB_TAG_INT) {
-        Lattice* cmp = value_arith_raw(f, TB_SUB, dt.data, a, b);
+    if (TB_IS_INTEGER_TYPE(dt)) {
+        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, a, b);
 
         // ok it's really annoying that i have to deal with the "idk bro" case in the middle
-        // of each but that's why it looks like this... if you were curious (which you aren't,
-        // nobody's reading this code lmao)
+        // of each but that's why it looks like this... if you were curious (which you aren't :p)
         switch (n->type) {
             case TB_CMP_EQ:  // cmp == 0
             if (lattice_int_eq(cmp, 0)) { return lattice_int_const(f,-1); }

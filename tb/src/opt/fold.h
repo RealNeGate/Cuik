@@ -30,7 +30,7 @@ static TB_Node* ideal_bitcast(TB_Function* f, TB_Node* n) {
     }
 
     // int -> smaller int means truncate
-    if (src->dt.type == TB_TAG_INT && n->dt.type == TB_TAG_INT && src->dt.data > n->dt.data) {
+    if (TB_IS_INTEGER_TYPE(src->dt) && TB_IS_INTEGER_TYPE(n->dt) && src->dt.type > n->dt.type) {
         n->type = TB_TRUNCATE;
         return n;
     } else if (src->type == TB_ICONST) {
@@ -66,8 +66,10 @@ static Lattice* value_sext(TB_Function* f, TB_Node* n) {
     int64_t max    = a->_int.max;
     uint64_t zeros = a->_int.known_zeros;
     uint64_t ones  = a->_int.known_ones;
-    int old_bits   = n->inputs[1]->dt.data;
-    uint64_t mask  = tb__mask(n->dt.data) & ~tb__mask(old_bits);
+
+    int old_bits = tb_data_type_bit_size(NULL, n->inputs[1]->dt);
+    int bits     = tb_data_type_bit_size(NULL, n->dt);
+    uint64_t mask  = tb__mask(bits) & ~tb__mask(old_bits);
 
     if (min >= 0 || (zeros >> (old_bits - 1))) { // known non-negative
         int64_t type_max = lattice_int_max(old_bits);
@@ -93,11 +95,14 @@ static Lattice* value_zext(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
 
-    int old_bits  = n->inputs[1]->dt.data;
-    uint64_t mask = ~tb__mask(old_bits);
-    Lattice* full_zxt_range = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { 0, lattice_uint_max(old_bits), mask } });
+    int dst_bits = tb_data_type_bit_size(NULL, n->dt.type);
+    int src_bits = tb_data_type_bit_size(NULL, n->inputs[1]->dt.type);
 
-    if (a->_int.min >= 0 || (a->_int.known_zeros >> (old_bits - 1))) { // known non-negative
+    uint64_t mask = ~tb__mask(src_bits);
+    TB_ASSERT(src_bits != 64);
+
+    Lattice* full_zxt_range = lattice_gimme_int(f, 0, lattice_uint_max(src_bits), src_bits);
+    if (a->_int.min >= 0 || (a->_int.known_zeros >> (src_bits - 1))) { // known non-negative
         return lattice_join(f, full_zxt_range, a);
     }
 
@@ -110,15 +115,16 @@ static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    if (n->dt.type == TB_TAG_INT) {
-        int64_t mask = tb__mask(n->dt.data);
-        int64_t min = tb__sxt(a->_int.min & mask, n->dt.data, 64);
-        int64_t max = tb__sxt(a->_int.max & mask, n->dt.data, 64);
+    if (TB_IS_INTEGER_TYPE(n->dt)) {
+        int bits = tb_data_type_bit_size(NULL, n->dt.type);
+        int64_t mask = tb__mask(bits);
+        int64_t min = tb_sign_ext(NULL, n->dt, a->_int.min & mask);
+        int64_t max = tb_sign_ext(NULL, n->dt, a->_int.max & mask);
         if (min > max) { return NULL; }
 
         uint64_t zeros = (a->_int.known_zeros & mask) | ~mask;
         uint64_t ones  =  a->_int.known_ones  & mask;
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        return lattice_gimme_int2(f, min, max, zeros, ones, bits);
     } else {
         return NULL;
     }
@@ -143,7 +149,8 @@ static Lattice* value_negate(TB_Function* f, TB_Node* n) {
     if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
     if (a->tag != LATTICE_INT) { return NULL; }
 
-    uint64_t mask = tb__mask(n->dt.data);
+    int bits = tb_data_type_bit_size(NULL, n->dt.type);
+    uint64_t mask = tb__mask(bits);
     uint64_t min = ~a->_int.min & mask;
     uint64_t max = ~a->_int.max & mask;
     if (min > max) { return NULL; }
@@ -215,7 +222,7 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
     }
 
     // T(some_bool ? 1 : 0) => movzx(T, some_bool)
-    if (src->dt.type == TB_TAG_INT && src->dt.data == 1) {
+    if (src->dt.type == TB_TAG_I1) {
         uint64_t on_true, on_false;
         bool true_imm = get_int_const(n->inputs[2], &on_true);
         bool false_imm = get_int_const(n->inputs[3], &on_false);
@@ -266,9 +273,9 @@ static bool nice_ass_trunc(TB_NodeTypeEnum t) { return t == TB_AND || t == TB_XO
 static TB_Node* ideal_truncate(TB_Function* f, TB_Node* n) {
     TB_Node* src = n->inputs[1];
 
-    if (src->type == TB_ZERO_EXT && src->inputs[1]->dt.type == TB_TAG_INT && n->dt.type == TB_TAG_INT) {
-        int now = n->dt.data;
-        int before = src->inputs[1]->dt.data;
+    if (src->type == TB_ZERO_EXT && TB_IS_INTEGER_TYPE(src->inputs[1]->dt) && TB_IS_INTEGER_TYPE(n->dt)) {
+        int now = tb_data_type_bit_size(NULL, n->dt.type);
+        int before = tb_data_type_bit_size(NULL, src->inputs[1]->dt.type);
 
         if (now != before) {
             // we're extending the original value
@@ -319,7 +326,8 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
             return n;
         }
     } else if (ext_type == TB_ZERO_EXT && src->type == TB_TRUNCATE && src->inputs[1]->dt.raw == n->dt.raw) {
-        TB_Node* con = make_int_node(f, n->dt, lattice_uint_max(src->dt.data));
+        int bits = tb_data_type_bit_size(NULL, n->dt.type);
+        TB_Node* con = make_int_node(f, n->dt, lattice_uint_max(bits));
 
         TB_Node* and = tb_alloc_node(f, TB_AND, n->dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, and, src->inputs[1], 1);
@@ -425,6 +433,9 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         }
     }
 
+    return NULL;
+
+    #if 0
     // idk how to handle this yet
     if (is_signed) return NULL;
 
@@ -490,6 +501,7 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         mark_node(f, ext_node);
         return trunc_node;
     }
+    #endif
 }
 
 ////////////////////////////////
@@ -504,11 +516,13 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
     if (n->type == TB_AND) {
         Lattice* aa = latuni_get(f, n->inputs[1]);
         Lattice* bb = latuni_get(f, n->inputs[2]);
-        uint64_t mask = tb__mask(n->dt.data);
+
+        int bits = tb_data_type_bit_size(NULL, n->dt.type);
+        uint64_t mask = tb__mask(bits);
 
         if (aa != &TOP_IN_THE_SKY && bb->tag == LATTICE_INT) {
-            uint64_t possible_ones = (aa->_int.known_ones | ~aa->_int.known_zeros) & mask;
-            uint64_t affected      = (bb->_int.known_zeros | ~bb->_int.known_ones) & mask;
+            uint64_t possible_ones = (aa->_int.known_ones  | ~aa->_int.known_zeros) & mask;
+            uint64_t affected      = (bb->_int.known_zeros | ~bb->_int.known_ones)  & mask;
 
             // possible ones don't intersect with the mask? lmao
             if ((possible_ones & affected) == 0) {
@@ -561,7 +575,7 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
                     src = src->inputs[1];
                 }
 
-                if (src->dt.type == TB_TAG_INT && src->dt.data == 1) {
+                if (src->dt.type == TB_TAG_I1) {
                     return src;
                 }
 

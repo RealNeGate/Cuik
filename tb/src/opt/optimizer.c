@@ -93,20 +93,6 @@ void tb_node_clear_extras(TB_Function* f, TB_Node* n) {
     }
 }
 
-static int bits_in_data_type(int pointer_size, TB_DataType dt) {
-    switch (dt.type) {
-        case TB_TAG_INT: return dt.data;
-        case TB_TAG_PTR: return pointer_size;
-        case TB_TAG_F32: return 32;
-        case TB_TAG_F64: return 64;
-        default: return 0;
-    }
-}
-
-static int bytes_in_data_type(int pointer_size, TB_DataType dt) {
-    return (bits_in_data_type(pointer_size, dt) + 7) / 8;
-}
-
 static TB_Node* mem_user(TB_Function* f, TB_Node* n, int slot) {
     FOR_USERS(u, n) {
         if ((USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_TAG_MEMORY) ||
@@ -223,13 +209,11 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "print.h"
 #include "verify.h"
 #include "print_dumb.h"
-#include "print_c.h"
 #include "gcm.h"
 #include "libcalls.h"
 #include "mem2reg.h"
 #include "rpo_sched.h"
 #include "list_sched.h"
-#include "legalizer.h"
 
 void tb__gvn_remove(TB_Function* f, TB_Node* n) {
     if (can_gvn(n)) {
@@ -277,7 +261,7 @@ static Lattice* value_int(TB_Function* f, TB_Node* n) {
     if (n->dt.type == TB_TAG_PTR) {
         return num->value ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
     } else {
-        int64_t x = tb__sxt(num->value, n->dt.data, 64);
+        int64_t x = tb__sxt(num->value, tb_data_type_bit_size(f->super.module, n->dt.type), 64);
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { x, x, ~x, x } });
     }
 }
@@ -312,7 +296,7 @@ static Lattice* value_ptr_vals(TB_Function* f, TB_Node* n) {
     if (n->type == TB_LOCAL) {
         return &XNULL_IN_THE_SKY;
     } else {
-        assert(n->type == TB_SYMBOL);
+        TB_ASSERT(n->type == TB_SYMBOL);
         return lattice_intern(f, (Lattice){ LATTICE_PTRCON, ._ptr = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym });
     }
 }
@@ -320,7 +304,7 @@ static Lattice* value_ptr_vals(TB_Function* f, TB_Node* n) {
 static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
     TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
     TB_DataType dt = n->dt;
-    assert(dt.type == TB_TAG_INT);
+    TB_ASSERT(TB_IS_INTEGER_TYPE(dt));
 
     LatticeInt a = { l->entries[0].val, l->entries[0].val, l->entries[0].val, ~l->entries[0].val };
     FOR_N(i, 1, n->input_count) {
@@ -384,12 +368,14 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     Lattice* old = latuni_get(f, n);
     if (r->type == TB_AFFINE_LOOP) {
         TB_Node* latch = affine_loop_latch(r);
-        if (latch && n->dt.type == TB_TAG_INT) {
+        if (latch && TB_IS_INTEGER_TYPE(n->dt)) {
             // we wanna know loop bounds
             uint64_t trips_min = 1, trips_max = UINT64_MAX;
             uint64_t* step_ptr = find_affine_indvar(n, r);
             Lattice* end = NULL;
             if (step_ptr) {
+                int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
+
                 TB_InductionVar var;
                 if (find_latch_indvar(r, latch, &var)) {
                     Lattice* init = latuni_get(f, var.phi->inputs[1]);
@@ -416,20 +402,20 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
 
                 Lattice* init = latuni_get(f, n->inputs[1]);
                 if (lattice_is_const(init) && trips_max <= INT64_MAX) {
-                    Lattice* range = affine_iv(f, init, trips_min, trips_max, *step_ptr, n->dt.data);
+                    Lattice* range = affine_iv(f, init, trips_min, trips_max, *step_ptr, bits);
                     if (range) { return range; }
                 }
 
                 if (*step_ptr > 0 && cant_signed_overflow(n->inputs[2])) {
                     // pretty common that iterators won't overflow, thus never goes below init
                     int64_t min = init->_int.min;
-                    int64_t max = end ? end->_int.max : lattice_int_max(n->dt.data);
+                    int64_t max = end ? end->_int.max : lattice_int_max(bits);
 
                     // JOIN would achieve this effect too btw
                     if (old == &TOP_IN_THE_SKY) {
-                        return lattice_gimme_int(f, min, max, n->dt.data);
+                        return lattice_gimme_int(f, min, max, bits);
                     } else {
-                        return lattice_gimme_int(f, TB_MAX(min, old->_int.min), TB_MIN(max, old->_int.max), n->dt.data);
+                        return lattice_gimme_int(f, TB_MAX(min, old->_int.min), TB_MIN(max, old->_int.max), bits);
                     }
                 }
             }
@@ -463,10 +449,11 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                 // we've hit the widening limit, since MAFs scale with the lattice height we limit how
                 // many steps our ints can take since the lattice itself has a height of 18 quintillion...
                 if (l->_int.widen >= INT_WIDEN_LIMIT) {
+                    int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
                     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
-                                .min         =  lattice_int_min(n->dt.data),
-                                .max         =  lattice_int_max(n->dt.data),
-                                .known_zeros = ~lattice_uint_max(n->dt.data),
+                                .min         =  lattice_int_min(bits),
+                                .max         =  lattice_int_max(bits),
+                                .known_zeros = ~lattice_uint_max(bits),
                                 .widen       =  INT_WIDEN_LIMIT
                             } });
                 }
@@ -567,8 +554,8 @@ TB_Node* make_poison(TB_Function* f, TB_DataType dt) {
 }
 
 TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x) {
-    uint64_t mask = tb__mask(dt.data);
-    x &= mask;
+    int bits = tb_data_type_bit_size(f->super.module, dt.type);
+    x &= tb__mask(bits);
 
     TB_Node* n = tb_alloc_node(f, TB_ICONST, dt, 1, sizeof(TB_NodeInt));
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
@@ -858,7 +845,8 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
             }
 
             // all bits are known
-            uint64_t mask = tb__mask(n->dt.data);
+            int bits = tb_data_type_bit_size(f->super.module, n->dt.type);
+            uint64_t mask = tb__mask(bits);
             if ((l->_int.known_zeros | l->_int.known_ones) == UINT64_MAX) {
                 return make_int_node(f, n->dt, l->_int.known_ones);
             }
@@ -1188,7 +1176,7 @@ void tb_pass_sroa(TB_Function* f) {
         size_t local_count = dyn_array_length(ws->items);
         for (size_t i = 0; i < local_count; i++) {
             TB_ASSERT(ws->items[i]->type == TB_LOCAL);
-            sroa_rewrite(f, pointer_size, root, ws->items[i]);
+            sroa_rewrite(f, root, ws->items[i]);
         }
     }
 }

@@ -145,10 +145,18 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
 
 static int print_type(TB_DataType dt) {
     switch (dt.type) {
-        case TB_TAG_INT:     return dt.data == 0 ? printf("void") : printf("i%d", dt.data);
-        case TB_TAG_PTR:     return dt.data == 0 ? printf("ptr") : printf("ptr%d", dt.data);
+        case TB_TAG_VOID:    return printf("i8");
+        case TB_TAG_I8:      return printf("i8");
+        case TB_TAG_I16:     return printf("i16");
+        case TB_TAG_I32:     return printf("i32");
+        case TB_TAG_I64:     return printf("i64");
+        case TB_TAG_PTR:     return dt.elem_or_addrspace == 0 ? printf("ptr") : printf("ptr%d", dt.elem_or_addrspace);
         case TB_TAG_F32:     return printf("f32");
         case TB_TAG_F64:     return printf("f64");
+        case TB_TAG_V64:     return printf("v64["),  print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
+        case TB_TAG_V128:    return printf("v128["), print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
+        case TB_TAG_V256:    return printf("v256["), print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
+        case TB_TAG_V512:    return printf("v512["), print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
         case TB_TAG_TUPLE:   return printf("tuple");
         case TB_TAG_CONTROL: return printf("ctrl");
         case TB_TAG_MEMORY:  return printf("mem");
@@ -243,7 +251,7 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
         if (num->value < 0xFFFF) {
-            int bits = n->dt.type == TB_TAG_PTR ? 64 : n->dt.data;
+            int bits = tb_data_type_bit_size(ctx->f->super.module, n->dt.type);
             printf("%"PRId64, tb__sxt(num->value, bits, 64));
         } else {
             printf("%#0"PRIx64, num->value);
@@ -336,7 +344,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
 
                 TB_ASSERT(br->succ_count >= 2);
                 if (br->succ_count == 2) {
-                    int bits = n->inputs[1]->dt.type == TB_TAG_PTR ? 64 : n->inputs[1]->dt.data;
+                    int bits = tb_data_type_bit_size(f->super.module, n->inputs[1]->dt.type);
 
                     printf("  if ");
                     print_ref_to_node(ctx, n->inputs[1], false);

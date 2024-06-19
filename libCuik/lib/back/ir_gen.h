@@ -67,8 +67,15 @@ static TB_DataType ctype_to_tbtype(const Cuik_Type* t) {
         case KIND_SHORT:
         case KIND_INT:
         case KIND_LONG:
-        case KIND_LLONG:
-        return TB_TYPE_INTN(t->size * 8);
+        case KIND_LLONG: {
+            switch (t->size) {
+                case 1: return TB_TYPE_I8;
+                case 2: return TB_TYPE_I16;
+                case 4: return TB_TYPE_I32;
+                case 8: return TB_TYPE_I64;
+                default: abort();
+            }
+        }
 
         case KIND_FLOAT:
         return TB_TYPE_F32;
