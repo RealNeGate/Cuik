@@ -39,8 +39,12 @@ static bool good_mem_op(TB_Function* f, TB_Node* n) { // ld, st, memcpy, memset
     if (n->type == TB_LOAD) {
         return true;
     } else if (n->type == TB_STORE) { // && n->type <= TB_MEMSET) {
-        Lattice* l = latuni_get(f, n);
-        return l == &ALLMEM_IN_THE_SKY || l == f->root_mem;
+        TB_Node* base = n;
+        while (base->type == TB_PTR_OFFSET) {
+            base = base->inputs[1];
+        }
+
+        return base->type != TB_LOCAL || !TB_NODE_GET_EXTRA_T(base, TB_NodeLocal)->has_split;
     } else {
         return false;
     }
@@ -48,7 +52,7 @@ static bool good_mem_op(TB_Function* f, TB_Node* n) { // ld, st, memcpy, memset
 
 static bool same_base(TB_Node* a, TB_Node* b) {
     while (b->type == TB_PTR_OFFSET) {
-        if (a == b) return true;
+        if (a == b) { return true; }
         b = b->inputs[1];
     }
 
@@ -349,7 +353,7 @@ int tb_opt_locals(TB_Function* f) {
     ArenaArray(TB_Node*) locals = aarray_create(&f->tmp_arena, TB_Node*, 32);
 
     FOR_USERS(u, f->root_node) {
-        if (USERN(u)->type == TB_LOCAL && TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeLocal)->alias_index == 0) {
+        if (USERN(u)->type == TB_LOCAL && !TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeLocal)->has_split) {
             aarray_push(locals, USERN(u));
             ctx.local_count++;
         }
@@ -382,11 +386,7 @@ int tb_opt_locals(TB_Function* f) {
             // allocate new alias index
             if (mode == RENAME_MEMORY) {
                 TB_NodeLocal* local = TB_NODE_GET_EXTRA(addr);
-                if (local->alias_index != 0) {
-                    ctx.renames[j].alias_idx = local->alias_index;
-                } else {
-                    ctx.renames[j].alias_idx = local->alias_index = f->alias_n++;
-                }
+                local->has_split = true;
                 splits_needed += 1;
                 needs_to_rewrite = true;
             } else if (mode == RENAME_VALUE) {
@@ -416,7 +416,7 @@ int tb_opt_locals(TB_Function* f) {
 
         // we need some locals split up
         if (splits_needed > 1) {
-            TB_Node* split = tb_alloc_node(f, TB_SPLITMEM, TB_TYPE_TUPLE, 2, sizeof(TB_NodeMemSplit) + splits_needed*sizeof(int));
+            TB_Node* split = tb_alloc_node(f, TB_SPLITMEM, TB_TYPE_TUPLE, 2, 0);
 
             // move initial effect to split's proj0
             latest[0] = make_proj_node(f, TB_TYPE_MEMORY, split, 0);
@@ -425,13 +425,8 @@ int tb_opt_locals(TB_Function* f) {
             set_input(f, split, f->params[0], 0);
             set_input(f, split, f->params[1], 1);
 
-            TB_NodeMemSplit* split_info = TB_NODE_GET_EXTRA(split);
-            split_info->alias_cnt = splits_needed;
-            split_info->alias_idx[0] = 0;
-
             int j = 1;
             FOR_N(i, 0, ctx.local_count) if (ctx.renames[i].alias_idx >= 0) {
-                split_info->alias_idx[j] = ctx.renames[i].alias_idx;
                 latest[1 + i] = make_proj_node(f, TB_TYPE_MEMORY, split, j);
                 j += 1;
 

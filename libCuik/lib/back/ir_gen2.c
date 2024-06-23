@@ -1,5 +1,6 @@
 // Using the new TB builder because it's better :p
 static thread_local TB_Arena* muh_tmp_arena;
+static thread_local int* muh_param_memory_vars;
 
 static void emit_loc(TranslationUnit* tu, TB_GraphBuilder* g, SourceLoc loc) {
     if (!tu->has_tb_debug_info) {
@@ -23,7 +24,7 @@ static void assign_to_lval(TB_GraphBuilder* g, Cuik_Type* type, const ValDesc* d
         assert(is_volatile);
 
         TB_DataType dt = ctype_to_tbtype(type);
-        TB_Node* old_value = tb_builder_load(g, 0, true, dt, dst->n, type->align, false);
+        TB_Node* old_value = tb_builder_load(g, dst->mem_var, true, dt, dst->n, type->align, false);
 
         // mask out the space for our bitfield member
         uint64_t clear_mask = ~((UINT64_MAX >> (64ull - dst->bits.width)) << dst->bits.offset);
@@ -44,7 +45,7 @@ static void assign_to_lval(TB_GraphBuilder* g, Cuik_Type* type, const ValDesc* d
         assert(dst->kind == LVALUE);
     }
 
-    tb_builder_store(g, 0, false, dst->n, src, type->align, is_volatile);
+    tb_builder_store(g, dst->mem_var, false, dst->n, src, type->align, is_volatile);
 }
 
 TB_Node* as_rval(TranslationUnit* tu, TB_GraphBuilder* g, const ValDesc* v) {
@@ -213,7 +214,7 @@ static int pass_param(TranslationUnit* tu, TB_GraphBuilder* g, TB_PassingRule ru
                     case 8: dt = TB_TYPE_I64; break;
                     default: TODO();
                 }
-                out_param[0]   = tb_builder_load(g, 0, true, dt, addr, arg_type->align, false);
+                out_param[0] = tb_builder_load(g, 0, true, dt, addr, arg_type->align, false);
                 return 1;
             } else {
                 out_param[0] = as_rval(tu, g, &arg);
@@ -313,7 +314,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 assert(stmt->backing.s != NULL);
                 return (ValDesc){ LVALUE, .n = tb_builder_symbol(g, stmt->backing.s) };
             } else {
-                return (ValDesc){ LVALUE, .n = stmt->backing.n };
+                return (ValDesc){ LVALUE, .mem_var = stmt->decl.local_ordinal, .n = stmt->backing.n };
             }
         }
 
@@ -321,14 +322,14 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             int param_num = e->param_num;
             Cuik_Type* arg_type = cuik_canonical_type(function_type->func.param_list[param_num].type);
             assert(arg_type != NULL);
-            return (ValDesc){ LVALUE, .mem_var = 1, .n = tb_builder_param_addr(g, param_num) };
+            return (ValDesc){ LVALUE, .mem_var = muh_param_memory_vars[param_num], .n = tb_builder_param_addr(g, param_num) };
         }
 
         case EXPR_SUBSCRIPT: {
             TB_Node* base  = as_rval(tu, g, &args[0]);
             TB_Node* index = as_rval(tu, g, &args[1]);
             int64_t stride = cuik_canonical_type(qt)->size;
-            return (ValDesc){ LVALUE, .n = tb_builder_ptr_array(g, base, index, stride ? stride : 1) };
+            return (ValDesc){ LVALUE, .mem_var = args[0].mem_var, .n = tb_builder_ptr_array(g, base, index, stride ? stride : 1) };
         }
         case EXPR_DOT_R: {
             assert(args[0].kind == LVALUE);
@@ -819,7 +820,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
         case EXPR_DEREF: {
             TB_Node* src = as_rval(tu, g, &args[0]);
             bool is_func = cuik_canonical_type(qt)->kind == KIND_FUNC;
-            return (ValDesc){ is_func ? RVALUE : LVALUE, .n = src };
+            return (ValDesc){ is_func ? RVALUE : LVALUE, .mem_var = args[0].mem_var, .n = src };
         }
 
         case EXPR_ADDR: {
@@ -1010,8 +1011,41 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             Stmt** kids  = s->compound.kids;
             size_t count = s->compound.kids_count;
 
+            int split_count = 0;
+            int split_i     = -1;
+            TB_Node* split = NULL;
+
+            // check for any restricted ptrs
+            for (size_t i = 0; i < count; i++) {
+                if (kids[i]->op == STMT_DECL) {
+                    Cuik_Type* decl_type = cuik_canonical_type(kids[i]->decl.type);
+                    if (decl_type->kind == KIND_PTR && (decl_type->ptr_to.raw & CUIK_QUAL_RESTRICT)) {
+                        split_count += 1;
+                    }
+                }
+            }
+
+            if (split_count > 0) {
+                split_i = tb_builder_split_mem(g, 0, split_count, &split);
+                split_count = 0;
+
+                for (size_t i = 0; i < count; i++) {
+                    if (kids[i]->op == STMT_DECL) {
+                        Cuik_Type* decl_type = cuik_canonical_type(kids[i]->decl.type);
+                        if (decl_type->kind == KIND_PTR && (decl_type->ptr_to.raw & CUIK_QUAL_RESTRICT)) {
+                            kids[i]->decl.local_ordinal = split_i + split_count;
+                            split_count += 1;
+                        }
+                    }
+                }
+            }
+
             for (size_t i = 0; i < count; i++) {
                 cg_stmt(tu, g, kids[i]);
+            }
+
+            if (split_count > 0) {
+                tb_builder_merge_mem(g, 0, split_count, split_i, split);
             }
             break;
         }
@@ -1239,7 +1273,41 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
             TB_GraphBuilder* g = tb_builder_enter_from_dbg(func, section, dbg_type, NULL);
 
             muh_tmp_arena = tb_function_get_arena(func, 1);
-            cg_stmt(tu, g, s->decl.initial_as_stmt);
+            muh_param_memory_vars = tb_arena_alloc(muh_tmp_arena, function_type->func.param_count * sizeof(int));
+            {
+                int split_count = 0;
+                int split_i     = -1;
+                TB_Node* split = NULL;
+
+                // check for any restricted ptrs
+                for (size_t i = 0; i < function_type->func.param_count; i++) {
+                    Cuik_QualType arg_qt = function_type->func.param_list[i].type;
+                    if (cuik_canonical_type(arg_qt)->kind == KIND_PTR && (arg_qt.raw & CUIK_QUAL_RESTRICT)) {
+                        split_count += 1;
+                    }
+                }
+
+                if (split_count > 0) {
+                    split_i = tb_builder_split_mem(g, 0, split_count, &split);
+                    split_count = 0;
+
+                    for (size_t i = 0; i < function_type->func.param_count; i++) {
+                        Cuik_QualType arg_qt = function_type->func.param_list[i].type;
+                        if (cuik_canonical_type(arg_qt)->kind == KIND_PTR && (arg_qt.raw & CUIK_QUAL_RESTRICT)) {
+                            muh_param_memory_vars[i] = split_i + split_count;
+                            split_count += 1;
+                        } else {
+                            muh_param_memory_vars[i] = 0;
+                        }
+                    }
+                }
+
+                cg_stmt(tu, g, s->decl.initial_as_stmt);
+
+                if (split_count > 0) {
+                    tb_builder_merge_mem(g, 0, split_count, split_i, split);
+                }
+            }
             muh_tmp_arena = NULL;
 
             // we can reach the end, place the implicit return

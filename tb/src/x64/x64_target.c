@@ -63,15 +63,35 @@ static bool can_gvn(TB_Node* n) {
 uint32_t node_flags(TB_Node* n) {
     X86NodeType type = n->type;
     switch (type) {
+        case x86_idiv: case x86_div:
+        case x86_movzx8: case x86_movzx16:
+        case x86_movsx8: case x86_movsx16: case x86_movsx32:
+        case x86_add: case x86_or: case x86_and: case x86_sub:
+        case x86_xor: case x86_cmp: case x86_mov: case x86_test: case x86_lea:
+        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
+        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor: case x86_ucomi:
+        case x86_addimm: case x86_orimm: case x86_andimm: case x86_subimm:
+        case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
+        case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
+        return n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT) : NODE_MEMORY_IN;
+
+        case x86_call:
+        case x86_static_call:
+        return NODE_MEMORY_IN | NODE_MEMORY_OUT;
+
+        case x86_cmovcc:
+        return NODE_MEMORY_IN;
+
         case x86_cmpjcc:
         case x86_cmpimmjcc:
         case x86_testjcc:
         case x86_testimmjcc:
         case x86_ucomijcc:
         case x86_AAAAAHHHH:
-        return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH;
+        return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH | NODE_MEMORY_IN;
 
-        default: return 0;
+        default:
+        return 0;
     }
 }
 
@@ -186,7 +206,6 @@ static const struct ParamDesc {
 
 static TB_X86_DataType legalize_int(TB_DataType dt) {
     switch (dt.type) {
-        case TB_TAG_I1:  return TB_X86_BYTE;
         case TB_TAG_I8:  return TB_X86_BYTE;
         case TB_TAG_I16: return TB_X86_WORD;
         case TB_TAG_I32: return TB_X86_DWORD;
@@ -388,13 +407,28 @@ static bool addr_split_heuristic(int arr_uses, int stride, int scale) {
     return cost*arr_uses > 10;
 }
 
+static bool same_mem_edge(TB_Node* ld_mem, TB_Node* st_mem) {
+    /* if (ld_mem == st_mem) {
+        return true;
+    }
+
+    // load might be above the split
+    if (st_mem->type == TB_SPLITMEM) {
+        return st_mem->inputs[1] == ld_mem;
+    } else {
+        return false;
+    } */
+
+    return ld_mem == st_mem;
+}
+
 // store(binop(load(a), b))
 static bool can_folded_store(TB_Node* mem, TB_Node* addr, TB_Node* n) {
     if ((n->type >= TB_AND  && n->type <= TB_SUB) ||
         (n->type >= TB_FADD && n->type <= TB_FMAX)) {
         return
             n->inputs[1]->type == TB_LOAD &&
-            n->inputs[1]->inputs[1] == mem &&
+            same_mem_edge(n->inputs[1]->inputs[1], mem) &&
             n->inputs[1]->inputs[2] == addr &&
             single_use(n) &&
             single_use(n->inputs[1]);

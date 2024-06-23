@@ -76,9 +76,9 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
     }
 
     size_t leftovers = 0;
-    size_t leftover_count = 1ull << bb->items.exp;
+    size_t leftover_count = aarray_length(bb->items);
 
-    while (top != NULL) {
+    while (top != NULL) try_again: {
         TB_Node* n = top->n;
 
         // resolve inputs first (including the extra edges because that's where anti-deps go)
@@ -118,17 +118,12 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
                 continue;
             }
 
-            // resolve leftover nodes placed here by GCM
-            while (leftovers < leftover_count && (bb->items.data[leftovers] == NULL || bb->items.data[leftovers] == NL_HASHSET_TOMB)) {
-                leftovers++;
-            }
-
-            if (leftovers < leftover_count) {
-                if (!worklist_test_n_set(ws, bb->items.data[leftovers])) {
-                    top = sched_make_node(arena, top, bb->items.data[leftovers]);
+            while (leftovers < leftover_count) {
+                size_t i = leftovers++;
+                if (!worklist_test_n_set(ws, bb->items[i])) {
+                    top = sched_make_node(arena, top, bb->items[i]);
+                    goto try_again;
                 }
-                leftovers += 1;
-                continue;
             }
         }
 

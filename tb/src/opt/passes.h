@@ -82,9 +82,7 @@ struct Lattice {
         LATTICE_PTRCON,
 
         // memory types
-        LATTICE_ALLMEM,    // bottom type for memory
-        LATTICE_ANYMEM,    // top type for memory
-        LATTICE_MEM_SLICE, // some set of bits where 1 means aliased.
+        LATTICE_MEMORY,
 
         // control tokens:
         //    top
@@ -98,7 +96,6 @@ struct Lattice {
         LATTICE_DEAD,
     } tag;
     union {
-        size_t _alias_n;    // LATTICE_MEM_SLICE
         size_t _elem_count; // LATTICE_TUPLE
         LatticeInt _int;    // LATTICE_INT
         TB_Symbol* _ptr;    // LATTICE_PTRCON
@@ -106,7 +103,6 @@ struct Lattice {
         double _f64;        // LATTICE_FLTCON64
     };
     union {
-        uint64_t alias[0];
         Lattice* elems[0];
     };
 };
@@ -120,6 +116,9 @@ bool cfg_is_branch(TB_Node* n);
 bool cfg_is_fork(TB_Node* n);
 bool cfg_is_terminator(TB_Node* n);
 bool cfg_is_endpoint(TB_Node* n);
+
+bool tb_node_has_mem_out(TB_Node* n);
+TB_Node* tb_node_mem_in(TB_Node* n);
 
 ////////////////////////////////
 // CFG

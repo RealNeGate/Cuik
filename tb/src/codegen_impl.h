@@ -387,6 +387,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
+        // BB info like the items list will become stable, i don't need it anymore and
+        // thus won't keep updating it.
         tb__rogers(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);

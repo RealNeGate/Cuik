@@ -337,7 +337,7 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
                             set_input(f, n, before, 0);
 
                             // we wanna normalize into a comparison (not a boolean -> boolean)
-                            if (cmp->dt.type != TB_TAG_I1) {
+                            if (cmp->dt.type != TB_TAG_BOOL) {
                                 assert(!TB_IS_FLOAT_TYPE(cmp->dt) && "TODO");
                                 TB_Node* imm = make_int_node(f, cmp->dt, pred_falsey);
 

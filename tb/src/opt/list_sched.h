@@ -140,8 +140,8 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     sched.ready     = aarray_create(&f->tmp_arena, ReadyNode, 32);
 
     // fill up initial ready list (everything used by the live-ins)
-    nl_hashset_for(e, &bb->items) {
-        TB_Node* n = *e;
+    aarray_for(i, bb->items) {
+        TB_Node* n = bb->items[i];
         if (!worklist_test(ws, n) && f->scheduled[n->gvn] == bb && is_node_ready(f, ws, bb, n)) {
             ready_up(&sched, n, end);
         }

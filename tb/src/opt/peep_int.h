@@ -306,8 +306,11 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
             min = lattice_int_min(bits);
             max = lattice_int_max(bits);
         }
-        if (min < lower) { min = lower; }
-        if (max > upper) { max = upper; }
+
+        if (min == max) {
+            zeros = ~min;
+            ones  = min;
+        }
 
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones & mask } });
     } else {
@@ -323,8 +326,8 @@ static TB_Node* ideal_bits(TB_Function* f, TB_Node* n) {
     TB_Node* a = n->inputs[1];
     TB_Node* b = n->inputs[2];
 
-    assert(is_commutative(type));
-    assert(is_associative(type));
+    TB_ASSERT(is_commutative(type));
+    TB_ASSERT(is_associative(type));
 
     // commutativity
     int ap = node_pos(a);

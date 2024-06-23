@@ -67,14 +67,14 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS    0
 #define TB_OPTDEBUG_PASSES   0
-#define TB_OPTDEBUG_PEEP     0
-#define TB_OPTDEBUG_SCCP     0
+#define TB_OPTDEBUG_PEEP     1
+#define TB_OPTDEBUG_SCCP     1
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
 #define TB_OPTDEBUG_ISEL     0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
@@ -341,7 +341,8 @@ struct TB_BasicBlock {
     Set gen, kill;
     Set live_in, live_out;
 
-    NL_HashSet items;
+    // unordered set of all nodes in the BB
+    ArenaArray(TB_Node*) items;
 };
 
 typedef struct TB_CFG {
@@ -419,9 +420,6 @@ struct TB_Function {
         // track a lattice per node (basically all get one so a compact array works)
         size_t type_cap;
         Lattice** types;
-        // represents alias_idx 0
-        int alias_n;
-        Lattice* root_mem;
 
         // some xforms like removing branches can
         // invalidate the loop tree.
@@ -575,6 +573,10 @@ enum {
     NODE_FORK_CTRL  = 8,
     // uses TB_BRANCH_PROJ for the cprojs
     NODE_BRANCH     = 16,
+    // has potential memory input in inputs[1]
+    NODE_MEMORY_IN  = 32,
+    // has memory outputs
+    NODE_MEMORY_OUT = 64,
 };
 
 struct ICodeGen {

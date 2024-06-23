@@ -57,7 +57,7 @@ static SDG_TypeIndex sdg_get_type_from_dt(TB_DataType dt) {
     // assert(dt.width == 0 && "TODO: implement vector types in CodeView output");
     switch (dt.type) {
         case TB_TAG_VOID: return SDG_PRIM_VOID;
-        case TB_TAG_I1:   return SDG_PRIM_BOOL8;
+        case TB_TAG_BOOL: return SDG_PRIM_BOOL8;
         case TB_TAG_I8:   return SDG_PRIM_UINT8;
         case TB_TAG_I16:  return SDG_PRIM_UINT16;
         case TB_TAG_I32:  return SDG_PRIM_UINT32;

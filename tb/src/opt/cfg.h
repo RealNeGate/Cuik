@@ -142,9 +142,6 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, bool dom
 }
 
 void tb_free_cfg(TB_CFG* cfg) {
-    aarray_for(i, cfg->blocks) {
-        nl_hashset_free(cfg->blocks[i].items);
-    }
     nl_map_free(cfg->node_to_block);
 }
 

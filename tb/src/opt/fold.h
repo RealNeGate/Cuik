@@ -222,9 +222,9 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
     }
 
     // T(some_bool ? 1 : 0) => movzx(T, some_bool)
-    if (src->dt.type == TB_TAG_I1) {
+    if (src->dt.type == TB_TAG_BOOL) {
         uint64_t on_true, on_false;
-        bool true_imm = get_int_const(n->inputs[2], &on_true);
+        bool true_imm  = get_int_const(n->inputs[2], &on_true);
         bool false_imm = get_int_const(n->inputs[3], &on_false);
 
         // A ? A : 0 => A (booleans)
@@ -575,7 +575,7 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
                     src = src->inputs[1];
                 }
 
-                if (src->dt.type == TB_TAG_I1) {
+                if (src->dt.type == TB_TAG_BOOL) {
                     return src;
                 }
 

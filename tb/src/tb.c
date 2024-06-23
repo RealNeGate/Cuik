@@ -94,7 +94,7 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
 
 int tb_data_type_bit_size(TB_Module* m, uint8_t type) {
     static const int arr[16] = {
-        [TB_TAG_I1]   = 1,
+        [TB_TAG_BOOL] = 1,
         [TB_TAG_I8]   = 8,
         [TB_TAG_I16]  = 16,
         [TB_TAG_I32]  = 32,

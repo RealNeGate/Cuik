@@ -24,26 +24,41 @@ typedef struct {
 
 static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_ROOT]           =             NODE_TERMINATOR | NODE_END,
-    [TB_RETURN]         = NODE_CTRL | NODE_TERMINATOR | NODE_END,
-    [TB_TRAP]           = NODE_CTRL | NODE_TERMINATOR | NODE_END,
-    [TB_UNREACHABLE]    = NODE_CTRL | NODE_TERMINATOR | NODE_END,
-    [TB_TAILCALL]       = NODE_CTRL | NODE_TERMINATOR | NODE_END,
+    [TB_RETURN]         = NODE_CTRL | NODE_TERMINATOR | NODE_END | NODE_MEMORY_IN,
+    [TB_TRAP]           = NODE_CTRL | NODE_TERMINATOR | NODE_END | NODE_MEMORY_IN,
+    [TB_UNREACHABLE]    = NODE_CTRL | NODE_TERMINATOR | NODE_END | NODE_MEMORY_IN,
+    [TB_TAILCALL]       = NODE_CTRL | NODE_TERMINATOR | NODE_END | NODE_MEMORY_IN,
 
     [TB_BRANCH]         = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH,
     [TB_AFFINE_LATCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH,
     [TB_NEVER_BRANCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
     [TB_ENTRY_FORK]     = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
 
-    [TB_DEBUG_LOCATION] = NODE_CTRL,
-    [TB_CALL]           = NODE_CTRL,
-    [TB_SYSCALL]        = NODE_CTRL,
+    [TB_LOAD]           = NODE_MEMORY_IN,
+    [TB_STORE]          = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_SPLITMEM]       = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_MERGEMEM]       = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_MEMSET]         = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_MEMCPY]         = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_ATOMIC_LOAD]    = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_ATOMIC_XCHG]    = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_ATOMIC_ADD]     = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_ATOMIC_AND]     = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_ATOMIC_XOR]     = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_ATOMIC_OR]      = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_ATOMIC_PTROFF]  = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_ATOMIC_CAS]     = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+
+    [TB_DEBUG_LOCATION] = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_CALL]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_SYSCALL]        = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_REGION]         = NODE_CTRL,
     [TB_NATURAL_LOOP]   = NODE_CTRL,
     [TB_AFFINE_LOOP]    = NODE_CTRL,
-    [TB_SAFEPOINT_POLL] = NODE_CTRL,
-    [TB_DEBUGBREAK]     = NODE_CTRL,
-    [TB_READ]           = NODE_CTRL,
-    [TB_WRITE]          = NODE_CTRL,
+    [TB_SAFEPOINT_POLL] = NODE_CTRL | NODE_MEMORY_IN,
+    [TB_DEBUGBREAK]     = NODE_CTRL | NODE_MEMORY_IN,
+    [TB_READ]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_WRITE]          = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
 };
 
 static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
@@ -54,15 +69,15 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     // memory
     [TB_LOAD]           = { ideal_load,        identity_load,      NULL             },
     [TB_STORE]          = { ideal_store,       NULL,               value_mem        },
-    [TB_MEMSET]         = { ideal_memset,      NULL,               value_mem        },
-    [TB_MEMCPY]         = { ideal_memcpy,      NULL,               value_mem        },
-    [TB_SPLITMEM]       = { NULL,              NULL,               value_split_mem  },
-    [TB_MERGEMEM]       = { ideal_merge_mem,   NULL,               value_merge_mem  },
+    [TB_MEMSET]         = { NULL,              NULL,               value_mem        },
+    [TB_MEMCPY]         = { NULL,              NULL,               value_mem        },
+    [TB_SPLITMEM]       = { ideal_split_mem,   NULL,               value_mem        },
+    [TB_MERGEMEM]       = { ideal_merge_mem,   NULL,               value_mem        },
     // ptr values
     [TB_LOCAL]          = { NULL,              NULL,               value_ptr_vals   },
     [TB_SYMBOL]         = { NULL,              NULL,               value_ptr_vals   },
     // pointer arithmetic
-    [TB_PTR_OFFSET]     = { ideal_ptr_offset,  NULL,               NULL             },
+    [TB_PTR_OFFSET]     = { ideal_ptr_offset,  identity_ptr_offset,NULL             },
     // arithmetic
     [TB_ADD]            = { ideal_arith,       identity_int_binop, value_arith      },
     [TB_SUB]            = { ideal_arith,       identity_int_binop, value_arith      },
@@ -93,6 +108,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_TRUNCATE]       = { ideal_truncate,    NULL,               value_trunc      },
     [TB_ZERO_EXT]       = { ideal_extension,   NULL,               value_zext       },
     [TB_SIGN_EXT]       = { ideal_extension,   NULL,               value_sext       },
+    [TB_INT2FLOAT]      = { NULL,              NULL,               value_int2float  },
     // misc
     [TB_LOOKUP]         = { NULL,              NULL,               value_lookup     },
     [TB_PROJ]           = { NULL,              NULL,               value_proj       },
@@ -136,8 +152,16 @@ uint32_t cfg_flags(TB_Node* n) {
     }
 }
 
-bool cfg_is_branch(TB_Node* n)     { return cfg_flags(n) & NODE_BRANCH; }
-bool cfg_is_fork(TB_Node* n)       { return cfg_flags(n) & NODE_FORK_CTRL; }
-bool cfg_is_terminator(TB_Node* n) { return cfg_flags(n) & NODE_TERMINATOR; }
-bool cfg_is_endpoint(TB_Node* n)   { return cfg_flags(n) & NODE_END; }
+bool cfg_is_branch(TB_Node* n)       { return cfg_flags(n) & NODE_BRANCH; }
+bool cfg_is_fork(TB_Node* n)         { return cfg_flags(n) & NODE_FORK_CTRL; }
+bool cfg_is_terminator(TB_Node* n)   { return cfg_flags(n) & NODE_TERMINATOR; }
+bool cfg_is_endpoint(TB_Node* n)     { return cfg_flags(n) & NODE_END; }
+bool tb_node_has_mem_out(TB_Node* n) { return cfg_flags(n) & NODE_MEMORY_OUT; }
 
+// has potential memory dep on inputs[1]
+TB_Node* tb_node_mem_in(TB_Node* n) {
+    if (cfg_flags(n) & NODE_MEMORY_IN) {
+        return n->inputs[1];
+    }
+    return NULL;
+}

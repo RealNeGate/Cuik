@@ -2,6 +2,7 @@
 //   IR   - intermediate representation
 //   SoN  - sea of nodes (https://www.oracle.com/technetwork/java/javase/tech/c2-ir95-150110.pdf)
 //   SSA  - single static assignment
+//   VN   - value number
 //   GVN  - global value numbering
 //   CSE  - common subexpression elimination
 //   CFG  - control flow graph
@@ -178,8 +179,9 @@ typedef enum TB_MemoryOrder {
 
 typedef enum TB_DataTypeEnum {
     TB_TAG_VOID,
+    // Boolean
+    TB_TAG_BOOL,
     // Integers
-    TB_TAG_I1,
     TB_TAG_I8,
     TB_TAG_I16,
     TB_TAG_I32,
@@ -189,15 +191,16 @@ typedef enum TB_DataTypeEnum {
     // Floating point numbers
     TB_TAG_F32,
     TB_TAG_F64,
-    // Vectors
+    // SIMD vectors, note that not all sizes are supported on all
+    // platforms (unlike every other type)
     TB_TAG_V64,
     TB_TAG_V128,
     TB_TAG_V256,
     TB_TAG_V512,
     // Control token
     TB_TAG_CONTROL,
-    // memory effects (and I/O), you can think of it like a giant magic table addressed
-    // with pointers.
+    // memory effects (and I/O), you can think of it like a giant magic table of
+    // all memory addressed with pointers.
     TB_TAG_MEMORY,
     // Tuples, these cannot be used in memory ops, just accessed via projections
     TB_TAG_TUPLE,
@@ -218,11 +221,11 @@ static_assert(sizeof(TB_DataType) == 1, "im expecting this to be a byte");
 // classify data types
 #define TB_IS_VOID_TYPE(x)     ((x).type == TB_TAG_VOID)
 #define TB_IS_BOOL_TYPE(x)     ((x).type == TB_TAG_BOOL)
-#define TB_IS_INTEGER_TYPE(x)  ((x).type >= TB_TAG_I1  && (x).type <= TB_TAG_I64)
+#define TB_IS_INTEGER_TYPE(x)  ((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_I64)
 #define TB_IS_FLOAT_TYPE(x)    ((x).type == TB_TAG_F32 || (x).type == TB_TAG_F64)
 #define TB_IS_POINTER_TYPE(x)  ((x).type == TB_TAG_PTR)
 #define TB_IS_SCALAR_TYPE(x)   ((x).type <= TB_TAG_F64)
-#define TB_IS_INT_OR_PTR(x)    ((x).type >= TB_TAG_I1  && (x).type <= TB_TAG_PTR)
+#define TB_IS_INT_OR_PTR(x)    ((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_PTR)
 
 // accessors
 #define TB_GET_INT_BITWIDTH(x) ((x).data)
@@ -696,8 +699,7 @@ typedef struct {
 typedef struct {
     TB_CharUnits size, align;
 
-    // 0 if local is used beyond direct memops, 1...n as a unique alias name
-    int alias_index;
+    bool has_split;
 
     // used when machine-ifying it
     int stack_pos;
@@ -714,15 +716,6 @@ typedef struct {
 typedef struct {
     double value;
 } TB_NodeFloat64;
-
-typedef struct {
-    // if true, we just duplicate the input memory per projection
-    // the alias_idx is unused.
-    bool same_edges;
-
-    int alias_cnt;
-    int alias_idx[];
-} TB_NodeMemSplit;
 
 typedef struct {
     TB_Symbol* sym;
@@ -820,7 +813,7 @@ typedef struct {
 #define TB_TYPE_TUPLE   TB_DataType{ { TB_TAG_TUPLE      } }
 #define TB_TYPE_CONTROL TB_DataType{ { TB_TAG_CONTROL    } }
 #define TB_TYPE_VOID    TB_DataType{ { TB_TAG_VOID       } }
-#define TB_TYPE_BOOL    TB_DataType{ { TB_TAG_I1         } }
+#define TB_TYPE_BOOL    TB_DataType{ { TB_TAG_BOOL       } }
 #define TB_TYPE_I8      TB_DataType{ { TB_TAG_I8         } }
 #define TB_TYPE_I16     TB_DataType{ { TB_TAG_I16        } }
 #define TB_TYPE_I32     TB_DataType{ { TB_TAG_I32        } }
@@ -836,7 +829,7 @@ typedef struct {
 #define TB_TYPE_TUPLE   (TB_DataType){ { TB_TAG_TUPLE      } }
 #define TB_TYPE_CONTROL (TB_DataType){ { TB_TAG_CONTROL    } }
 #define TB_TYPE_VOID    (TB_DataType){ { TB_TAG_VOID       } }
-#define TB_TYPE_BOOL    (TB_DataType){ { TB_TAG_I1         } }
+#define TB_TYPE_BOOL    (TB_DataType){ { TB_TAG_BOOL       } }
 #define TB_TYPE_I8      (TB_DataType){ { TB_TAG_I8         } }
 #define TB_TYPE_I16     (TB_DataType){ { TB_TAG_I16        } }
 #define TB_TYPE_I32     (TB_DataType){ { TB_TAG_I32        } }
@@ -1510,10 +1503,8 @@ TB_API TB_Node* tb_builder_atomic_rmw(TB_GraphBuilder* g, int mem_var, int op, T
 TB_API TB_Node* tb_builder_atomic_load(TB_GraphBuilder* g, int mem_var, TB_DataType dt, TB_Node* addr, TB_MemoryOrder order);
 
 // splitting/merging:
-//   splits the in_mem variable into multiple streams of the same "type".
-//
-//   returns the first newly allocated mem var (the rest are consecutive). *out_split will have the split node written to
-//   it (because merge mem needs to know which split it's attached to).
+//   splits the 'in_mem' variable, this writes over in_mem with a split
+//   and 'split_count' number of extra paths at 'variable[returned value]'
 TB_API int tb_builder_split_mem(TB_GraphBuilder* g, int in_mem, int split_count, TB_Node** out_split);
 //   this will merge the memory effects back into out_mem, split_vars being the result of a tb_builder_split_mem(...)
 TB_API void tb_builder_merge_mem(TB_GraphBuilder* g, int out_mem, int split_count, int split_vars, TB_Node* split);

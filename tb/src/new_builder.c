@@ -325,6 +325,34 @@ TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t offset
     return g->peep(f, n);
 }
 
+int tb_builder_split_mem(TB_GraphBuilder* g, int in_mem, int split_count, TB_Node** out_split) {
+    TB_Function* f = g->f;
+
+    TB_Node* n = tb_alloc_node(f, TB_SPLITMEM, TB_TYPE_MEMORY, 2, 0);
+    set_input(f, n, g->curr->inputs[2 + in_mem], 1);
+    *out_split = n;
+
+    int id = g->curr->input_count - 2;
+    FOR_N(i, 0, split_count) {
+        add_input_late(g->f, g->curr, n);
+    }
+    set_input(f, g->curr, n, 2 + in_mem);
+
+    return id;
+}
+
+void tb_builder_merge_mem(TB_GraphBuilder* g, int out_mem, int split_count, int split_vars, TB_Node* split) {
+    TB_Function* f = g->f;
+
+    TB_Node* n = tb_alloc_node(f, TB_MERGEMEM, TB_TYPE_MEMORY, 3 + split_count, 0);
+    set_input(f, n, split, 1);
+    set_input(f, n, g->curr->inputs[2 + out_mem], 2);
+    FOR_N(i, 0, split_count) {
+        set_input(f, n, g->curr->inputs[2 + split_vars + i], 3 + i);
+    }
+    set_input(f, g->curr, n, 2 + out_mem);
+}
+
 TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_Node* addr, TB_CharUnits align, bool is_volatile) {
     TB_Function* f = g->f;
     assert(addr->dt.type == TB_TAG_PTR);

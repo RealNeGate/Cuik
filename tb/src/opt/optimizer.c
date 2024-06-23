@@ -198,6 +198,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 // Standard local rewrites
 #include "peep_int.h"
 #include "peep_mem.h"
+#include "peep_float.h"
 
 // Module-level opts
 #include "ipo.h"
@@ -210,6 +211,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "verify.h"
 #include "print_dumb.h"
 #include "gcm.h"
+#include "slp.h"
 #include "libcalls.h"
 #include "mem2reg.h"
 #include "rpo_sched.h"
@@ -700,6 +702,7 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
         TB_User u = n->users[i];
         TB_Node* un = USERN(&u);
         int ui      = USERI(&u);
+        if (un == new_n) { continue; }
 
         TB_ASSERT_MSG(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
         TB_ASSERT(ui < un->input_cap);
@@ -710,12 +713,13 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
         // we've resized in bulk, so no need to check in this loop
         new_n->users[new_n->user_count++] = u;
     }
-    n->user_count = 0;
 }
 
 void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     subsume_node2(f, n, new_n);
-    tb_kill_node(f, n);
+    if (n->user_count == 0) {
+        tb_kill_node(f, n);
+    }
 }
 
 // Returns NULL or a modified node (could be the same node, we can stitch it back into place)
@@ -936,24 +940,7 @@ static void print_lattice(Lattice* l) {
         case LATTICE_ALLPTR:   printf("allptr");                    break;
         case LATTICE_ANYPTR:   printf("anyptr");                    break;
         case LATTICE_PTRCON:   printf("%s", l->_ptr->name);         break;
-        case LATTICE_ANYMEM:   printf("anymem");                    break;
-        case LATTICE_ALLMEM:   printf("allmem");                    break;
-        case LATTICE_MEM_SLICE: {
-            printf("[mem:");
-            bool comma = false;
-            FOR_N(i, 0, l->_alias_n) {
-                uint64_t bits = l->alias[i], j = 0;
-                while (bits) {
-                    if (bits & 1) {
-                        if (!comma) { comma = true; } else { printf(","); }
-                        printf("%"PRIu64, i*64 + j);
-                    }
-                    bits >>= 1, j++;
-                }
-            }
-            printf("]");
-            break;
-        }
+        case LATTICE_MEMORY:   printf("memory");                    break;
 
         case LATTICE_TUPLE: {
             printf("[");
@@ -1363,7 +1350,14 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
         if (tb_opt_loops(f)) {
             progress = true;
+
+            TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
+            if (k = tb_opt_peeps(f), k > 0) {
+                TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
+            }
         }
+
+        tb_opt_vectorize(f);
     }
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     // if we're doing IPO then it's helpful to keep these
@@ -1454,10 +1448,6 @@ static bool alloc_types(TB_Function* f) {
         f->types = tb_platform_heap_alloc(count * sizeof(Lattice*));
         // when latuni_get sees a NULL, it'll replace it with the correct bottom type
         FOR_N(i, 0, count) { f->types[i] = NULL; }
-
-        // place ROOT type
-        f->root_mem = lattice_alias(f, 0);
-        f->alias_n  = 1;
     }
     return true;
 }

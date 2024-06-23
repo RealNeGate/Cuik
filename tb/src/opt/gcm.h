@@ -52,14 +52,14 @@ static TB_BasicBlock* find_lca(TB_BasicBlock* a, TB_BasicBlock* b) {
     return a;
 }
 
-static TB_BasicBlock* find_use_block(TB_Function* f, TB_Node* n, TB_Node* actual_n, TB_User* use) {
+static TB_BasicBlock* find_use_block(TB_Function* f, TB_CFG* cfg, TB_Node* n, TB_Node* actual_n, TB_User* use) {
     TB_Node* y = USERN(use);
     if (USERI(use) >= y->input_count) { return NULL; } // extra deps not counted
 
     TB_BasicBlock* use_block = f->scheduled[y->gvn];
     if (use_block == NULL) { return NULL; } // dead
 
-    TB_OPTDEBUG(GCM)(printf("  user v%u @ bb%d\n", y->gvn, use_block->id));
+    TB_OPTDEBUG(GCM)(printf("  user v%u @ bb%zu\n", y->gvn, use_block - cfg->blocks));
     if (y->type == TB_PHI) {
         TB_Node* use_node = y->inputs[0];
         TB_ASSERT(cfg_is_region(use_node));
@@ -247,8 +247,8 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
             // we're doing dataflow analysis without the local schedule :)
             aarray_for(i, cfg.blocks) {
                 TB_BasicBlock* bb = &cfg.blocks[i];
-                nl_hashset_for(e, &bb->items) {
-                    TB_Node* n = *e;
+                aarray_for(j, bb->items) {
+                    TB_Node* n = bb->items[j];
 
                     // PHI
                     if (n->type == TB_PHI) {
@@ -272,8 +272,8 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
 
             aarray_for(i, cfg.blocks) {
                 TB_BasicBlock* bb = &cfg.blocks[i];
-                nl_hashset_for(e, &bb->items) {
-                    TB_Node* n = *e;
+                aarray_for(j, bb->items) {
+                    TB_Node* n = bb->items[j];
                     if (n->type == TB_PHI) continue;
 
                     FOR_N(i, 1, n->input_count) {
@@ -396,6 +396,15 @@ void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws) {
     }
 }
 
+static void add_anti_deps(TB_Function* f, TB_Node* ld, TB_Node* mem) {
+    FOR_USERS(u, mem) {
+        TB_Node* un = USERN(u);
+        if (USERI(u) <= un->input_count && tb_node_has_mem_out(un)) {
+            tb_node_add_extra(f, un, ld);
+        }
+    }
+}
+
 void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_nests, bool dataflow, TB_GetLatency get_lat) {
     assert(f->scheduled == NULL && "make sure when you're done with the schedule, you throw away the old one");
 
@@ -405,7 +414,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
         // arraychads stay up
         f->scheduled_n = node_count + 32;
         f->scheduled = tb_arena_alloc(&f->tmp_arena, f->scheduled_n * sizeof(TB_BasicBlock*));
-        memset(f->scheduled, 0, f->scheduled_n * sizeof(TB_BasicBlock*));
+        FOR_N(i, 0, f->scheduled_n) { f->scheduled[i] = NULL; }
 
         if (dataflow) {
             // live ins & outs will outlive this function so we wanna alloc before the savepoint
@@ -416,97 +425,43 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
             }
         }
 
-        TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+        TB_BasicBlock* bb0 = &cfg.blocks[0];
+        CUIK_TIMED_BLOCK("pin BBs") {
+            TB_ASSERT_MSG(f->root_node->gvn == 0, "TB_ROOT can't move from VN 0");
 
-        CUIK_TIMED_BLOCK("dominators") {
+            // pin the ROOT & its projections to the entry block
+            f->scheduled[0] = bb0;
+            FOR_USERS(u, f->root_node) {
+                f->scheduled[USERN(u)->gvn] = bb0;
+            }
+
             aarray_for(i, cfg.blocks) {
                 TB_BasicBlock* bb = &cfg.blocks[i];
-
                 TB_ASSERT(bb->start->type != TB_NULL);
-                bb->items = nl_hashset_alloc(32);
-                nl_hashset_put2(&bb->items, bb->start, tb__node_hash, tb__node_cmp);
+
                 f->scheduled[bb->start->gvn] = bb;
+                bb->items = aarray_create(&f->tmp_arena, TB_Node*, 16);
             }
-
-            worklist_clear(ws);
         }
 
-        ArenaArray(TB_Node*) pins = aarray_create(&f->tmp_arena, TB_Node*, (f->node_count / 32) + 16);
-        CUIK_TIMED_BLOCK("pinned schedule") {
-            // BFS walk all the nodes
-            worklist_push(ws, f->root_node);
-            for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-                TB_Node* n = ws->items[i];
-                if (is_pinned(n)) {
-                    // a region might refer to itself, but a node within a
-                    // BB will refer to it's parent (who should've been scheduled
-                    // by now)
-                    TB_BasicBlock* bb = NULL;
-                    if ((n->type == TB_MACH_PROJ || n->type == TB_PROJ) && n->inputs[0]->type == TB_ROOT) {
-                        bb = &cfg.blocks[0];
-                    } else if (n->type == TB_PHI) {
-                        TB_ASSERT(f->scheduled[n->inputs[0]->gvn] != NULL && "where tf is the BB?");
-                        bb = f->scheduled[n->inputs[0]->gvn];
-                    } else if (n->type != TB_ROOT) {
-                        TB_Node* curr = n;
-                        do {
-                            bb = f->scheduled[curr->gvn];
-                            curr = curr->inputs[0];
-                            if (curr == NULL || curr->type == TB_ROOT) {
-                                break;
-                            }
-                        } while (!bb);
-                    }
+        TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
-                    if (bb) {
-                        TB_ASSERT(n->type != TB_NULL);
-                        nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
-                        TB_ASSERT(n->gvn < f->scheduled_n);
-                        f->scheduled[n->gvn] = bb;
-                        aarray_push(pins, n);
-
-                        TB_OPTDEBUG(GCM)(printf("%s: %%%u pinned to .bb%d\n", f->super.name, n->gvn, bb->id));
-                    }
-                }
-
-                // insert anti-dep edges
-                if (is_mem_out_op(n) || n->dt.type == TB_TAG_MEMORY) {
-                    // clear old anti-deps
-                    TB_Node* k = is_proj(n) ? n->inputs[0] : n;
-                    if (k->type != TB_ROOT) {
-                        tb_node_clear_extras(f, k);
-
-                        FOR_USERS(u, k->inputs[1]) {
-                            TB_Node* un = USERN(u);
-                            if (k != un && USERI(u) == 1) {
-                                tb_node_add_extra(f, k, un);
-                            }
-                        }
-                    }
-                }
-
-                FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
-            }
-
-            TB_OPTDEBUG(GCM)(printf("%s: scheduled %zu nodes (%zu recorded in the graph)\n", f->super.name, dyn_array_length(ws->items), f->node_count));
-        }
-
+        // we don't care about anti-deps here, they'll be inserted during late scheduling
         CUIK_TIMED_BLOCK("early schedule") {
-            // we're gonna use this space to store the DFS order, we'll walk it in reverse for
-            // late sched
             worklist_clear_visited(ws);
-            dyn_array_set_length(ws->items, 0);
-
-            aarray_for(i, pins) {
-                TB_Node* pin_n = pins[i];
+            aarray_for(i, cfg.blocks) {
+                TB_BasicBlock* bb = &cfg.blocks[i];
+                if (worklist_test_n_set(ws, bb->end)) {
+                    continue;
+                }
 
                 TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
                 Elem* top = tb_arena_alloc(&f->tmp_arena, sizeof(Elem));
                 top->parent = NULL;
                 top->sp = sp;
-                top->n = pin_n;
-                top->i = pin_n->input_count;
-                TB_ASSERT(pin_n->type != TB_NULL);
+                top->n = bb->end;
+                top->i = bb->end->input_count;
+                TB_ASSERT(bb->end->type != TB_NULL);
 
                 // DFS nodes by inputs
                 while (top) {
@@ -515,14 +470,18 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                     if (top->i > 0) {
                         // push next unvisited in
                         TB_Node* in = n->inputs[--top->i];
-
                         if (in) {
                             // projections don't get scheduled, their tuple nodes do
                             if (is_proj(in)) { in = in->inputs[0]; }
 
-                            // pinned nodes can't be rescheduled
-                            if (!is_pinned(in) && !worklist_test_n_set(ws, in)) {
+                            // pinned nodes are walked here but not rescheduled
+                            if (!worklist_test_n_set(ws, in)) {
                                 TB_ASSERT(in->type != TB_NULL);
+
+                                if (!is_pinned(n)) {
+                                    // default to earliest block
+                                    f->scheduled[n->gvn] = bb0;
+                                }
 
                                 TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
                                 Elem* new_top = tb_arena_alloc(&f->tmp_arena, sizeof(Elem));
@@ -536,18 +495,22 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                         continue;
                     }
 
-                    if (n != pin_n) { // only pinned node in the stack
+                    if (is_pinned(n)) {
+                        TB_BasicBlock* bb = f->scheduled[n->gvn];
+                        if (bb == NULL) {
+                            // we inherit our BB from the ctrl input
+                            TB_BasicBlock* pin_bb = f->scheduled[n->inputs[0]->gvn];
+                            f->scheduled[n->gvn] = pin_bb;
+
+                            TB_OPTDEBUG(GCM)(printf("%s: %%%u pinned to .bb%zu\n", f->super.name, n->gvn, pin_bb - cfg.blocks));
+                        }
+                    } else {
                         // start at the entry point
                         int best_depth = 0;
                         TB_BasicBlock* best = &cfg.blocks[0];
 
                         // choose deepest block
                         FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
-                            if (n->inputs[i]->type == TB_ROOT) {
-                                TB_OPTDEBUG(GCM)(printf("  in %%%u @ bb0\n", n->inputs[i]->gvn));
-                                continue;
-                            }
-
                             TB_ASSERT(n->inputs[i]->gvn < f->scheduled_n);
                             TB_BasicBlock* bb = f->scheduled[n->inputs[i]->gvn];
                             if (bb == NULL) {
@@ -556,27 +519,24 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                                 continue;
                             }
 
-                            TB_OPTDEBUG(GCM)(printf("  in %%%u @ bb%d\n", n->inputs[i]->gvn, bb->id));
+                            TB_OPTDEBUG(GCM)(printf("  in %%%u @ bb%zu\n", n->inputs[i]->gvn, bb - cfg.blocks));
                             if (best_depth < bb->dom_depth) {
                                 best_depth = bb->dom_depth;
                                 best = bb;
                             }
                         }
 
-                        TB_OPTDEBUG(GCM)(printf("%s: %%%u into .bb%d\n", f->super.name, n->gvn, best->id));
-
+                        TB_OPTDEBUG(GCM)(printf("%s: %%%u into .bb%zu\n", f->super.name, n->gvn, best - cfg.blocks));
                         f->scheduled[n->gvn] = best;
 
                         // unpinned nodes getting moved means their users need to move too
                         if (n->dt.type == TB_TAG_TUPLE) {
                             FOR_USERS(u, n) if (is_proj(USERN(u))) {
                                 TB_ASSERT(USERN(u)->type != TB_NULL);
-                                nl_hashset_put2(&best->items, USERN(u), tb__node_hash, tb__node_cmp);
                                 f->scheduled[USERN(u)->gvn] = best;
                             }
                         }
 
-                        nl_hashset_put2(&best->items, n, tb__node_hash, tb__node_cmp);
                         dyn_array_put(ws->items, n);
                     }
 
@@ -592,6 +552,8 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
             FOR_REV_N(i, 0, dyn_array_length(ws->items)) {
                 TB_Node* n = ws->items[i];
                 TB_ASSERT(n->type != TB_NULL);
+                TB_ASSERT(!is_pinned(n));
+
                 TB_OPTDEBUG(GCM)(printf("%s: try late %%%u\n", f->super.name, n->gvn));
 
                 TB_BasicBlock* lca = NULL;
@@ -601,18 +563,26 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                         // them whenever decision making here
                         if (is_proj(USERN(use))) {
                             FOR_USERS(use2, USERN(use)) {
-                                TB_BasicBlock* use_block = find_use_block(f, n, USERN(use), use2);
+                                TB_BasicBlock* use_block = find_use_block(f, &cfg, n, USERN(use), use2);
                                 if (use_block) { lca = find_lca(lca, use_block); }
                             }
                         } else {
-                            TB_BasicBlock* use_block = find_use_block(f, n, n, use);
+                            TB_BasicBlock* use_block = find_use_block(f, &cfg, n, n, use);
                             if (use_block) { lca = find_lca(lca, use_block); }
                         }
                     }
                 } else {
                     FOR_USERS(use, n) {
-                        TB_BasicBlock* use_block = find_use_block(f, n, n, use);
+                        TB_BasicBlock* use_block = find_use_block(f, &cfg, n, n, use);
                         if (use_block) { lca = find_lca(lca, use_block); }
+                    }
+                }
+
+                // insert anti-deps
+                if (!tb_node_has_mem_out(n)) {
+                    TB_Node* mem = tb_node_mem_in(n);
+                    if (mem != NULL) {
+                        add_anti_deps(f, n, mem);
                     }
                 }
 
@@ -628,7 +598,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
 
                         if (old != better) {
                             TB_OPTDEBUG(GCM)(
-                                printf("  LATE  %%%u into .bb%d: ", n->gvn, lca->id),
+                                printf("  LATE  %%%u into .bb%zu: ", n->gvn, lca - cfg.blocks),
                                 tb_print_dumb_node(NULL, n),
                                 printf("\n")
                             );
@@ -637,20 +607,28 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
 
                             // unpinned nodes getting moved means their users need to move too
                             if (n->dt.type == TB_TAG_TUPLE) {
-                                FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                                FOR_USERS(u, n) {
                                     TB_Node* un = USERN(u);
-                                    nl_hashset_remove2(&old->items, un, tb__node_hash, tb__node_cmp);
-                                    nl_hashset_put2(&better->items, un, tb__node_hash, tb__node_cmp);
-
-                                    f->scheduled[un->gvn] = better;
+                                    if (is_proj(un) && USERI(u) == 0) {
+                                        f->scheduled[un->gvn] = better;
+                                    }
                                 }
                             }
-
-                            nl_hashset_remove2(&old->items, n, tb__node_hash, tb__node_cmp);
-                            nl_hashset_put2(&better->items, n, tb__node_hash, tb__node_cmp);
+                            lca = better;
                         }
                     }
                 }
+
+                // final schedule for a node is decided by this point so we place it into the correct bucket
+                if (n->dt.type == TB_TAG_TUPLE) {
+                    FOR_USERS(u, n) {
+                        TB_Node* un = USERN(u);
+                        if (is_proj(un) && USERI(u) == 0) {
+                            aarray_push(lca->items, un);
+                        }
+                    }
+                }
+                aarray_push(lca->items, n);
             }
         }
 

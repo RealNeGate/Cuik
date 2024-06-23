@@ -15,8 +15,7 @@ static Lattice NAN32_IN_THE_SKY  = { LATTICE_NAN32  };
 static Lattice NAN64_IN_THE_SKY  = { LATTICE_NAN64  };
 static Lattice XNAN32_IN_THE_SKY = { LATTICE_XNAN32 };
 static Lattice XNAN64_IN_THE_SKY = { LATTICE_XNAN64 };
-static Lattice ANYMEM_IN_THE_SKY = { LATTICE_ANYMEM };
-static Lattice ALLMEM_IN_THE_SKY = { LATTICE_ALLMEM };
+static Lattice MEM_IN_THE_SKY    = { LATTICE_MEMORY };
 static Lattice ALLPTR_IN_THE_SKY = { LATTICE_ALLPTR };
 static Lattice ANYPTR_IN_THE_SKY = { LATTICE_ANYPTR };
 static Lattice FALSE_IN_THE_SKY  = { LATTICE_INT, ._int = {  0, 0, UINT64_MAX, 0 } };
@@ -51,11 +50,6 @@ static uint32_t lattice_hash(const void* a) {
         h += (uintptr_t) l->_ptr;
         break;
 
-        case LATTICE_MEM_SLICE:
-        h += l->_alias_n;
-        FOR_N(i, 0, l->_alias_n) { h += l->alias[i]; }
-        break;
-
         case LATTICE_FLTCON32: memcpy(&h, &l->_f32, sizeof(float));  break;
         case LATTICE_FLTCON64: memcpy(&h, &l->_f64, sizeof(double)); break;
 
@@ -66,8 +60,8 @@ static uint32_t lattice_hash(const void* a) {
         case LATTICE_NAN64: case LATTICE_XNAN64:
         case LATTICE_ALLPTR:case LATTICE_ANYPTR:
         case LATTICE_NULL:  case LATTICE_XNULL:
-        case LATTICE_ALLMEM:case LATTICE_ANYMEM:
         case LATTICE_LIVE:  case LATTICE_DEAD:
+        case LATTICE_MEMORY:
         break;
 
         default: tb_todo();
@@ -100,13 +94,6 @@ static bool lattice_cmp(const void* a, const void* b) {
 
         case LATTICE_FLTCON64:
         return memcmp(&aa->_f64, &bb->_f64, sizeof(double)) == 0;
-
-        case LATTICE_MEM_SLICE:
-        if (aa->_alias_n != bb->_alias_n) { return false; }
-        FOR_N(i, 0, aa->_alias_n) {
-            if (aa->alias[i] != bb->alias[i]) { return false; }
-        }
-        return true;
 
         // no fields
         default: return true;
@@ -156,8 +143,7 @@ void tb__lattice_init(TB_Module* m) {
     nbhs_raw_insert(&m->lattice_elements, &NAN64_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &XNAN32_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &XNAN64_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &ANYMEM_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &ALLMEM_IN_THE_SKY);
+    nbhs_raw_insert(&m->lattice_elements, &MEM_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &ANYPTR_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &ALLPTR_IN_THE_SKY);
     nbhs_raw_insert(&m->lattice_elements, &FALSE_IN_THE_SKY);
@@ -235,7 +221,7 @@ static uint64_t lattice_uint_max(int bits) { return UINT64_MAX >> (64 - bits); }
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
     switch (dt.type) {
-        case TB_TAG_I1:      return &BOOL_IN_THE_SKY;
+        case TB_TAG_BOOL:    return &BOOL_IN_THE_SKY;
         case TB_TAG_I8:      return &I8_IN_THE_SKY;
         case TB_TAG_I16:     return &I16_IN_THE_SKY;
         case TB_TAG_I32:     return &I32_IN_THE_SKY;
@@ -243,7 +229,7 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
         case TB_TAG_F32:     return &FLT32_IN_THE_SKY;
         case TB_TAG_F64:     return &FLT64_IN_THE_SKY;
         case TB_TAG_PTR:     return &ALLPTR_IN_THE_SKY;
-        case TB_TAG_MEMORY:  return &ALLMEM_IN_THE_SKY;
+        case TB_TAG_MEMORY:  return &MEM_IN_THE_SKY;
         case TB_TAG_CONTROL: return &LIVE_IN_THE_SKY;
         default:             return &BOT_IN_THE_SKY;
     }
@@ -314,6 +300,14 @@ static Lattice* lattice_int_const(TB_Function* f, int64_t con) {
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { con, con, ~con, con } });
 }
 
+static Lattice* lattice_f32_const(TB_Function* f, float con) {
+    return lattice_intern(f, (Lattice){ LATTICE_FLTCON32, ._f32 = con });
+}
+
+static Lattice* lattice_f64_const(TB_Function* f, double con) {
+    return lattice_intern(f, (Lattice){ LATTICE_FLTCON64, ._f64 = con });
+}
+
 static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uint64_t zeros, uint64_t ones, int bits) {
     assert(min <= max);
 
@@ -356,58 +350,21 @@ static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max, i
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
 }
 
-static Lattice* lattice_alias(TB_Function* f, int alias_idx) {
-    TB_Arena* arena = get_permanent_arena(f->super.module);
-
-    size_t alias_n = (alias_idx + 64) / 64;
-    size_t size = sizeof(Lattice) + alias_n*sizeof(Lattice*);
-    Lattice* l = tb_arena_alloc(arena, size);
-    *l = (Lattice){ LATTICE_MEM_SLICE, ._alias_n = alias_n };
-
-    // just flip aliases
-    FOR_N(i, 0, alias_n) { l->alias[i] = 0; }
-    l->alias[alias_idx / 64] |= 1ull << (alias_idx % 64);
-
-    Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
-    if (k != l) { tb_arena_free(arena, l, size); }
-    return k;
-}
-
 static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
     switch (type->tag) {
         case LATTICE_BOT: return &TOP_IN_THE_SKY;
         case LATTICE_TOP: return &BOT_IN_THE_SKY;
-
         // putting ctrl on the centerline is weird which is why ~ctrl
         // exists lol.
         case LATTICE_LIVE: return &DEAD_IN_THE_SKY;
         case LATTICE_DEAD: return &LIVE_IN_THE_SKY;
-
         case LATTICE_INT: {
             LatticeInt i = type->_int;
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { i.max, i.min, ~i.known_zeros, ~i.known_ones, INT_WIDEN_LIMIT - i.widen } });
         }
-
         case LATTICE_ALLPTR: return &ANYPTR_IN_THE_SKY;
         case LATTICE_ANYPTR: return &ALLPTR_IN_THE_SKY;
-
-        case LATTICE_ALLMEM: return &ANYMEM_IN_THE_SKY;
-        case LATTICE_ANYMEM: return &ALLMEM_IN_THE_SKY;
-
-        case LATTICE_MEM_SLICE: {
-            TB_Arena* arena = get_permanent_arena(f->super.module);
-            size_t size = sizeof(Lattice) + type->_alias_n*sizeof(Lattice*);
-            Lattice* l = tb_arena_alloc(arena, size);
-            *l = (Lattice){ LATTICE_TUPLE, ._alias_n = type->_alias_n };
-
-            // just flip aliases
-            FOR_N(i, 0, type->_alias_n) { l->alias[i] = ~type->alias[i]; }
-
-            Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
-            if (k != l) { tb_arena_free(arena, l, size); }
-            return k;
-        }
-
+        case LATTICE_MEMORY: return &MEM_IN_THE_SKY;
         case LATTICE_TUPLE: {
             TB_Arena* arena = get_permanent_arena(f->super.module);
             size_t size = sizeof(Lattice) + type->_elem_count*sizeof(Lattice*);
@@ -499,26 +456,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
         case LATTICE_LIVE: return b == &DEAD_IN_THE_SKY ? &LIVE_IN_THE_SKY : &BOT_IN_THE_SKY;
         // only leftover case here is gonna be live ^ dead
         case LATTICE_DEAD: return b;
-
-        case LATTICE_ALLMEM: return &ALLMEM_IN_THE_SKY;
-        case LATTICE_ANYMEM: return b;
-        case LATTICE_MEM_SLICE: {
-            if (b->tag != LATTICE_MEM_SLICE) { return &BOT_IN_THE_SKY; }
-            size_t alias_n = TB_MAX(a->_alias_n, b->_alias_n);
-
-            TB_Arena* arena = get_permanent_arena(f->super.module);
-            size_t size = sizeof(Lattice) + alias_n*sizeof(Lattice*);
-            Lattice* l = tb_arena_alloc(arena, size);
-            *l = (Lattice){ LATTICE_MEM_SLICE, ._alias_n = alias_n };
-
-            FOR_N(i, 0, a->_alias_n) { l->alias[i] = a->alias[i]; }
-            FOR_N(i, a->_alias_n, alias_n) { l->alias[i] = 0; }
-            FOR_N(i, 0, b->_alias_n) { l->alias[i] |= b->alias[i]; }
-
-            Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
-            if (k != l) { tb_arena_free(arena, l, size); }
-            return k;
-        }
+        case LATTICE_MEMORY: return &BOT_IN_THE_SKY;
 
         case LATTICE_TUPLE: {
             if (b->tag != LATTICE_TUPLE || a->_elem_count != b->_elem_count) {

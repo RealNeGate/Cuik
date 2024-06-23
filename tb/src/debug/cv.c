@@ -46,7 +46,7 @@ static void md5sum_file(uint8_t out_bytes[16], const char* filepath) {
 static uint16_t get_codeview_type(TB_DataType dt) {
     switch (dt.type) {
         case TB_TAG_VOID: return 0x0003; // T_VOID
-        case TB_TAG_I1:   return 0x0030; // T_BOOL08
+        case TB_TAG_BOOL: return 0x0030; // T_BOOL08
         case TB_TAG_I8:   return 0x0020; // T_UCHAR
         case TB_TAG_I16:  return 0x0073; // T_UINT2
         case TB_TAG_I32:  return 0x0075; // T_UINT4

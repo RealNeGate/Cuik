@@ -179,7 +179,6 @@ void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) 
     aarray_push(mbb->items, 0);
     memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
     mbb->items[i] = n;
-    nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
 }
 
 void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
@@ -192,7 +191,6 @@ void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     memmove(&mbb->items[i], &mbb->items[i + 1], (cnt - (i + 1)) * sizeof(TB_Node*));
     aarray_pop(mbb->items);
     f->scheduled[n->gvn] = NULL;
-    nl_hashset_remove2(&bb->items, n, tb__node_hash, tb__node_cmp);
 }
 
 void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
@@ -208,7 +206,6 @@ void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
     aarray_push(mbb->items, NULL);
     memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
     mbb->items[i] = n;
-    nl_hashset_put2(&bb->items, n, tb__node_hash, tb__node_cmp);
 }
 
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b) {

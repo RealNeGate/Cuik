@@ -81,6 +81,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_RETURN:
         case TB_MACH_MOVE:
         case TB_MACH_FRAME_PTR:
+        case TB_SPLITMEM:
         return 0;
 
         case TB_SYMBOL_TABLE:
@@ -88,9 +89,6 @@ static size_t extra_bytes(TB_Node* n) {
 
         case TB_MACH_SYMBOL:
         return sizeof(TB_NodeMachSymbol);
-
-        case TB_SPLITMEM:
-        return sizeof(TB_NodeMemSplit);
 
         case TB_REGION:
         case TB_NATURAL_LOOP:

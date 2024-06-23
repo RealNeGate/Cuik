@@ -741,6 +741,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         redo_dataflow(ctx, arena);
     }
     cuikperf_region_end();
+    dump_sched(ctx);
 }
 
 static TB_Node* phi_move_in_block(TB_BasicBlock** scheduled, TB_BasicBlock* block, TB_Node* phi) {
