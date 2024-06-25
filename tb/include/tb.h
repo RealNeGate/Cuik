@@ -1432,6 +1432,7 @@ TB_API bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types);
 // function's tmp arena
 TB_API void tb_print(TB_Function* f);
 TB_API void tb_print_dumb(TB_Function* f);
+TB_API void tb_print_svg(TB_Function* f);
 
 // codegen:
 //   output goes at the top of the code_arena, feel free to place multiple functions

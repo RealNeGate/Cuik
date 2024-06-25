@@ -135,7 +135,7 @@ void generate_pack(TB_Function* f, PairSet* pairs, TB_Node* n) {
 }
 
 void tb_opt_vectorize(TB_Function* f) {
-    tb_print_dumb(f);
+    /*tb_print_dumb(f);
 
     // TODO(NeGate): search for reductions & stores throughout
     // the entire graph, for now we're only searching the exit
@@ -148,5 +148,5 @@ void tb_opt_vectorize(TB_Function* f) {
         }
     }
 
-    __debugbreak();
+    __debugbreak();*/
 }

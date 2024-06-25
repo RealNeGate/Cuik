@@ -332,7 +332,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
             case TB_BRANCH: {
                 TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
                 TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
-                TB_Node** restrict succ = tb_arena_alloc(&f->tmp_arena, br->succ_count * sizeof(TB_Node**));
+                TB_Node** restrict succ = tb_arena_alloc(&f->tmp_arena, br->succ_count * sizeof(TB_Node*));
 
                 // fill successors
                 FOR_USERS(u, n) {

@@ -210,6 +210,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "print.h"
 #include "verify.h"
 #include "print_dumb.h"
+#include "print_svg.h"
 #include "gcm.h"
 #include "slp.h"
 #include "libcalls.h"
