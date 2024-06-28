@@ -68,6 +68,7 @@ struct RegMask {
 
 typedef struct {
     int id;
+    int fwd;
 
     // times
     int start_t, end_t;

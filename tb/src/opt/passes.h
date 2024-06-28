@@ -254,11 +254,12 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
     TB_ASSERT_MSG(proj->user_count >= 1, "missing successor after cproj");
     TB_Node* r = USERN(proj->users);
 
-    if (proj->user_count == 1 && cfg_is_region(r)) {
+    /* if (proj->user_count == 1 && cfg_is_region(r)) {
         return r;
     } else {
         return proj;
-    }
+    } */
+    return proj;
 }
 
 static TB_User* proj_with_index(TB_Node* n, int i) {

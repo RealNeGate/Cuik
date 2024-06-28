@@ -411,20 +411,39 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         TB_CGEmitter* e = &ctx.emit;
         pre_emit(&ctx, e, f->root_node);
 
+        // any empty projection blocks will mark which block they want you to jump to, if the
+        // block "forwards" to itself then it's not actually forwarding.
+        FOR_N(i, 0, bb_count) {
+            MachineBB* mbb = &machine_bbs[i];
+            if (aarray_length(mbb->items) == 1 && cfg_is_cproj(mbb->items[0])) {
+                TB_Node* next = cfg_next_control(mbb->items[0]);
+                MachineBB* succ = node_to_bb(&ctx, next);
+                mbb->fwd = succ->id;
+            } else {
+                mbb->fwd = i;
+            }
+        }
+
         FOR_N(i, 0, bb_count) {
             MachineBB* mbb = &machine_bbs[i];
             int bbid = mbb->id;
 
-            if (i + 1 < bb_count) {
-                ctx.fallthrough = machine_bbs[i + 1].id;
-            } else {
-                ctx.fallthrough = INT_MAX;
+            on_basic_block(&ctx, e, bbid);
+
+            // block is empty and every use is jump-threaded
+            if (mbb->id != mbb->fwd) { continue; }
+
+            ctx.fallthrough = INT_MAX;
+            for (int j = i + 1; j < bb_count; j++) {
+                if (machine_bbs[j].fwd == machine_bbs[j].id) {
+                    ctx.fallthrough = machine_bbs[j].id;
+                    break;
+                }
             }
             ctx.current_emit_bb = mbb;
             ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
             // mark label
-            on_basic_block(&ctx, e, bbid);
             TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
 
             aarray_for(i, mbb->items) {
@@ -462,7 +481,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             if (!cfg_is_terminator(mbb->end_n)) {
                 MachineBB* succ = node_to_bb(&ctx, cfg_next_control(mbb->end_n));
-                emit_goto(&ctx, e, succ);
+                emit_goto(&ctx, e, &machine_bbs[succ->fwd]);
             }
         }
 
@@ -510,6 +529,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         FOR_N(i, 0, bb_count) {
             int bbid = machine_bbs[i].id;
+            if (bbid != machine_bbs[i].fwd) { continue; }
+
             uint32_t start = ctx.emit.labels[bbid] & ~0x80000000;
             uint32_t end   = ctx.emit.count;
             if (i + 1 < bb_count) {

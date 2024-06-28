@@ -13,11 +13,21 @@ typedef struct Elem {
 
 // any blocks in the dom tree between and including early and late are valid schedules.
 static TB_BasicBlock* try_to_hoist(TB_Function* f, TB_GetLatency get_lat, TB_Node* n, TB_BasicBlock* early, TB_BasicBlock* late) {
+    TB_ASSERT(early != late);
     if (get_lat == NULL) return late;
 
     // phi copies should be kept in the same block
     if (n->type == TB_MACH_COPY && n->inputs[1]->type == TB_PHI) {
         return early;
+    }
+
+    // if we can keep the phi moves out of the projections we might not need to
+    // compile the projection as a real BB.
+    if (n->type == TB_MACH_MOVE &&
+        late->start == late->end &&
+        late->start->type == TB_BRANCH_PROJ)
+    {
+        return late->dom;
     }
 
     int lat = get_lat(f, n, NULL);

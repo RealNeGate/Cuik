@@ -1580,9 +1580,9 @@ static Val op_at(Ctx* ctx, TB_Node* n) {
 }
 
 static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ) {
-    if (ctx->fallthrough != succ->id) {
+    if (ctx->fallthrough != succ->fwd) {
         EMIT1(e, 0xE9); EMIT4(e, 0);
-        tb_emit_rel32(e, &e->labels[succ->id], GET_CODE_POS(e) - 4);
+        tb_emit_rel32(e, &e->labels[succ->fwd], GET_CODE_POS(e) - 4);
     }
 }
 
@@ -1651,7 +1651,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_NEVER_BRANCH: {
             TB_Node* proj0 = USERN(proj_with_index(n, 0));
             TB_Node* succ_n = cfg_next_bb_after_cproj(proj0);
-            int succ = node_to_bb(ctx, succ_n)->id;
+            int succ = node_to_bb(ctx, succ_n)->fwd;
             if (ctx->fallthrough != succ) {
                 __(JMP, TB_X86_QWORD, Vlbl(succ));
             }
@@ -1974,11 +1974,11 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 MachineBB* succ_bb = node_to_bb(ctx, cfg_next_bb_after_cproj(succ[i]));
 
                 __(CMP, TB_X86_QWORD, &key, Vimm(imm));
-                __(JE, TB_X86_QWORD, Vlbl(succ_bb->id));
+                __(JE, TB_X86_QWORD, Vlbl(succ_bb->fwd));
             }
 
             MachineBB* succ_bb = node_to_bb(ctx, cfg_next_bb_after_cproj(succ[0]));
-            __(JMP, TB_X86_QWORD, Vlbl(succ_bb->id));
+            __(JMP, TB_X86_QWORD, Vlbl(succ_bb->fwd));
             break;
         }
 
@@ -2036,7 +2036,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                         }
 
                         MachineBB* mbb = node_to_bb(ctx, succ_n);
-                        succ[index] = mbb->id;
+                        succ[index] = mbb->fwd;
                     }
                 }
 
