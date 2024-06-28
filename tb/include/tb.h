@@ -619,9 +619,9 @@ struct TB_Node {
 
     // makes it easier to track in graph walks
     uint32_t gvn;
-    // use-def edges, unordered
+    // def-use edges, unordered
     TB_User* users;
-    // ordered def-use edges, jolly ol' semantics.
+    // ordered use-def edges, jolly ol' semantics.
     //   after input_count (and up to input_cap) goes an unordered set of nodes which
     //   act as extra deps, this is where anti-deps and other scheduling related edges
     //   are placed. stole this trick from Cliff... ok if you look at my compiler impl

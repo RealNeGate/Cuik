@@ -1023,7 +1023,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 }
 
                 if (idx && idx->type == TB_SHL && idx->inputs[2]->type == TB_ICONST) {
-                    uint64_t scale = TB_NODE_GET_EXTRA_T(n->inputs[2]->inputs[2], TB_NodeInt)->value;
+                    uint64_t scale = TB_NODE_GET_EXTRA_T(idx->inputs[2], TB_NodeInt)->value;
 
                     // [... + index*scale] given scale is 1,2,4,8
                     if (scale <= 3) {

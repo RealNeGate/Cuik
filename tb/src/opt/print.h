@@ -145,7 +145,8 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
 
 static int print_type(TB_DataType dt) {
     switch (dt.type) {
-        case TB_TAG_VOID:    return printf("i8");
+        case TB_TAG_VOID:    return printf("void");
+        case TB_TAG_BOOL:    return printf("bool");
         case TB_TAG_I8:      return printf("i8");
         case TB_TAG_I16:     return printf("i16");
         case TB_TAG_I32:     return printf("i32");

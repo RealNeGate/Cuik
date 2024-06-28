@@ -406,7 +406,7 @@ static void add_anti_deps(TB_Function* f, TB_Node* ld, TB_Node* mem) {
 }
 
 void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_nests, bool dataflow, TB_GetLatency get_lat) {
-    assert(f->scheduled == NULL && "make sure when you're done with the schedule, you throw away the old one");
+    TB_ASSERT_MSG(f->scheduled == NULL, "make sure when you're done with the schedule, you throw away the old one");
 
     CUIK_TIMED_BLOCK("schedule") {
         size_t node_count = f->node_count;
@@ -426,11 +426,12 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
         }
 
         TB_BasicBlock* bb0 = &cfg.blocks[0];
-        CUIK_TIMED_BLOCK("pin BBs") {
+        TB_ArenaSavepoint sp;
+        ArenaArray(TB_Node*) pins = aarray_create(&f->tmp_arena, TB_Node*, (f->node_count / 32) + 16);
+        CUIK_TIMED_BLOCK("pinned schedule") {
             TB_ASSERT_MSG(f->root_node->gvn == 0, "TB_ROOT can't move from VN 0");
 
-            // pin the ROOT & its projections to the entry block
-            f->scheduled[0] = bb0;
+            // pin the ROOT's projections to the entry block
             FOR_USERS(u, f->root_node) {
                 f->scheduled[USERN(u)->gvn] = bb0;
             }
@@ -441,27 +442,49 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
 
                 f->scheduled[bb->start->gvn] = bb;
                 bb->items = aarray_create(&f->tmp_arena, TB_Node*, 16);
+
+                if (cfg_is_region(bb->start)) {
+                    FOR_USERS(u, bb->start) if (USERN(u)->type == TB_PHI) {
+                        f->scheduled[USERN(u)->gvn] = bb;
+                    }
+                }
+            }
+
+            sp = tb_arena_save(&f->tmp_arena);
+            worklist_push(ws, f->root_node);
+            for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+                TB_Node* n = ws->items[i];
+                if (is_pinned(n) && n->type != TB_ROOT) {
+                    TB_Node* curr = n;
+                    TB_BasicBlock* bb = f->scheduled[n->gvn];
+                    while (bb == NULL) {
+                        bb = f->scheduled[curr->gvn];
+                        curr = curr->inputs[0];
+                    }
+
+                    TB_OPTDEBUG(GCM)(printf("%s: %%%u\n  PIN .bb%zu\n", f->super.name, n->gvn, bb - cfg.blocks));
+                    f->scheduled[n->gvn] = bb;
+                    aarray_push(pins, n);
+                }
+
+                FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
             }
         }
 
-        TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
-
         // we don't care about anti-deps here, they'll be inserted during late scheduling
         CUIK_TIMED_BLOCK("early schedule") {
-            worklist_clear_visited(ws);
-            aarray_for(i, cfg.blocks) {
-                TB_BasicBlock* bb = &cfg.blocks[i];
-                if (worklist_test_n_set(ws, bb->end)) {
-                    continue;
-                }
+            worklist_clear(ws);
+
+            aarray_for(i, pins) {
+                TB_Node* pin_n = pins[i];
 
                 TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
                 Elem* top = tb_arena_alloc(&f->tmp_arena, sizeof(Elem));
                 top->parent = NULL;
                 top->sp = sp;
-                top->n = bb->end;
-                top->i = bb->end->input_count;
-                TB_ASSERT(bb->end->type != TB_NULL);
+                top->n = pin_n;
+                top->i = pin_n->input_count;
+                TB_ASSERT(pin_n->type != TB_NULL);
 
                 // DFS nodes by inputs
                 while (top) {
@@ -474,14 +497,16 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                             // projections don't get scheduled, their tuple nodes do
                             if (is_proj(in)) { in = in->inputs[0]; }
 
-                            // pinned nodes are walked here but not rescheduled
-                            if (!worklist_test_n_set(ws, in)) {
+                            // pinned nodes can't be rescheduled
+                            if (!is_pinned(in) && !worklist_test_n_set(ws, in)) {
                                 TB_ASSERT(in->type != TB_NULL);
 
-                                if (!is_pinned(n)) {
-                                    // default to earliest block
-                                    f->scheduled[n->gvn] = bb0;
+                                /*#if TB_OPTDEBUG_GCM
+                                for (Elem* e = top; e; e = e->parent) {
+                                    printf("  ");
                                 }
+                                printf("PUSH %%%u\n", in->gvn);
+                                #endif*/
 
                                 TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
                                 Elem* new_top = tb_arena_alloc(&f->tmp_arena, sizeof(Elem));
@@ -495,16 +520,10 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                         continue;
                     }
 
-                    if (is_pinned(n)) {
-                        TB_BasicBlock* bb = f->scheduled[n->gvn];
-                        if (bb == NULL) {
-                            // we inherit our BB from the ctrl input
-                            TB_BasicBlock* pin_bb = f->scheduled[n->inputs[0]->gvn];
-                            f->scheduled[n->gvn] = pin_bb;
+                    // only pinned node in this walk
+                    if (n != pin_n) {
+                        TB_OPTDEBUG(GCM)(printf("%s: %%%u\n", f->super.name, n->gvn));
 
-                            TB_OPTDEBUG(GCM)(printf("%s: %%%u pinned to .bb%zu\n", f->super.name, n->gvn, pin_bb - cfg.blocks));
-                        }
-                    } else {
                         // start at the entry point
                         int best_depth = 0;
                         TB_BasicBlock* best = &cfg.blocks[0];
@@ -515,18 +534,18 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                             TB_BasicBlock* bb = f->scheduled[n->inputs[i]->gvn];
                             if (bb == NULL) {
                                 // input has no scheduling... weird?
-                                TB_OPTDEBUG(GCM)(printf("  in %%%u @ dead\n", n->inputs[i]->gvn));
+                                TB_OPTDEBUG(GCM)(printf("  IN %%%u @ dead\n", n->inputs[i]->gvn));
                                 continue;
                             }
 
-                            TB_OPTDEBUG(GCM)(printf("  in %%%u @ bb%zu\n", n->inputs[i]->gvn, bb - cfg.blocks));
+                            TB_OPTDEBUG(GCM)(printf("  IN %%%u @ bb%zu\n", n->inputs[i]->gvn, bb - cfg.blocks));
                             if (best_depth < bb->dom_depth) {
                                 best_depth = bb->dom_depth;
                                 best = bb;
                             }
                         }
 
-                        TB_OPTDEBUG(GCM)(printf("%s: %%%u into .bb%zu\n", f->super.name, n->gvn, best - cfg.blocks));
+                        TB_OPTDEBUG(GCM)(printf("  INTO .bb%zu\n", best - cfg.blocks));
                         f->scheduled[n->gvn] = best;
 
                         // unpinned nodes getting moved means their users need to move too
@@ -543,6 +562,13 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
                     struct Elem* parent = top->parent;
                     tb_arena_restore(&f->tmp_arena, top->sp);
                     top = parent;
+
+                    /*#if TB_OPTDEBUG_GCM
+                    for (Elem* e = top; e; e = e->parent) {
+                        printf("  ");
+                    }
+                    printf("POP %%%u\n", n->gvn);
+                    #endif*/
                 }
             }
         }
@@ -632,8 +658,9 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_n
             }
         }
 
+        worklist_clear(ws);
+
         if (dataflow) {
-            worklist_clear(ws);
             tb_dataflow(f, &f->tmp_arena, cfg);
         }
 

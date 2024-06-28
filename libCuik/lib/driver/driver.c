@@ -182,7 +182,7 @@ static void apply_func(TB_Function* f, void* arg) {
 
         if (args->emit_ir) {
             tb_print_dumb(f);
-            tb_print_svg(f);
+            // tb_print_svg(f);
 
             // tb_print(f);
 

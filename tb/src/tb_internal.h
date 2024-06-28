@@ -67,8 +67,8 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS    0
 #define TB_OPTDEBUG_PASSES   0
-#define TB_OPTDEBUG_PEEP     1
-#define TB_OPTDEBUG_SCCP     1
+#define TB_OPTDEBUG_PEEP     0
+#define TB_OPTDEBUG_SCCP     0
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
@@ -78,6 +78,7 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
+#define TB_OPTDEBUG_SLP      0
 #define TB_OPTDEBUG_GVN      0
 #define TB_OPTDEBUG_COMPACT  0
 #define TB_OPTDEBUG_SCHEDULE 0
@@ -611,6 +612,10 @@ typedef struct {
 } IDebugFormat;
 
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
+
+#ifndef _MSC_VER
+#define __debugbreak() __builtin_debugtrap()
+#endif
 
 // tb_todo means it's something we fill in later
 // tb_unreachable means it's logically impossible to reach

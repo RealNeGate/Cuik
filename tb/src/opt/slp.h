@@ -27,6 +27,10 @@ static bool is_valid_vector_component(TB_DataType dt) {
     return TB_IS_INTEGER_TYPE(dt) || TB_IS_FLOAT_TYPE(dt);
 }
 
+static TB_DataType slp_node_data_type(TB_Node* n) {
+    return n->type == TB_STORE ? n->inputs[3]->dt : n->dt;
+}
+
 static bool isomorphic(TB_Node* a, TB_Node* b) {
     if (a->type == b->type && a->dt.raw == b->dt.raw && a->input_count == b->input_count) {
         if (a->type >= TB_CMP_EQ && a->type <= TB_CMP_FLE) {
@@ -39,10 +43,15 @@ static bool isomorphic(TB_Node* a, TB_Node* b) {
     return false;
 }
 
+static bool independent(TB_Node* a, TB_Node* b) {
+    return a != b;
+}
+
 static bool can_pack(TB_Node* a, TB_Node* b) {
-    if (is_valid_vector_component(a->inputs[3]->dt) &&
-        is_valid_vector_component(b->inputs[3]->dt) &&
-        isomorphic(a, b)) {
+    if (is_valid_vector_component(slp_node_data_type(a)) &&
+        is_valid_vector_component(slp_node_data_type(b)) &&
+        isomorphic(a, b) &&
+        independent(a, b)) {
         // TODO(NeGate): check for independence
         return true;
     }
@@ -59,6 +68,21 @@ static int ref_cmp(const void* a, const void* b) {
     if (aa->offset != bb->offset) { return aa->offset - bb->offset; }
 
     return 0;
+}
+
+static bool slp_in_pairs(PairSet* pairs, TB_Node* n) {
+    for (Pair* p = pairs->first; p; p = p->next) {
+        if (p->lhs == n || p->rhs == n) { return true; }
+    }
+    return false;
+}
+
+static void slp_add_pair(TB_Function* f, PairSet* pairs, TB_Node* lhs, TB_Node* rhs) {
+    Pair* p = tb_arena_alloc(&f->tmp_arena, sizeof(Pair));
+    p->next = pairs->first;
+    p->lhs = lhs;
+    p->rhs = rhs;
+    pairs->first = p;
 }
 
 void generate_pack(TB_Function* f, PairSet* pairs, TB_Node* n) {
@@ -97,7 +121,6 @@ void generate_pack(TB_Function* f, PairSet* pairs, TB_Node* n) {
                 TB_DataType elem_dt = refs[start].mem->inputs[3]->dt;
 
                 // find adjacent stores
-                int m = 1;
                 FOR_N(i, start, end) {
                     MemRef* a = &refs[i];
                     FOR_N(j, start+1, end) {
@@ -107,23 +130,58 @@ void generate_pack(TB_Function* f, PairSet* pairs, TB_Node* n) {
                         if (a->offset + size < b->offset) { break; }
                         if (a->offset + size == b->offset && can_pack(a->mem, b->mem)) {
                             // add to pair
-                            Pair* p = tb_arena_alloc(&f->tmp_arena, sizeof(Pair));
-                            p->next = pairs->first;
-                            p->lhs = a->mem;
-                            p->rhs = b->mem;
-                            pairs->first = p;
-                            m++;
+                            slp_add_pair(f, pairs, a->mem, b->mem);
                         }
                     }
                 }
 
-                printf("=== VECTOR [");
-                print_type(elem_dt);
-                printf(" x %d] ===\n", m);
+                __debugbreak();
 
-                for (Pair* p = pairs->first; p; p = p->next) {
-                    printf("%%%u -- %%%u\n", p->lhs->gvn, p->rhs->gvn);
-                }
+                // extend packs based on use-def
+                bool progress;
+                do {
+                    progress = false;
+
+                    #if TB_OPTDEBUG_SLP
+                    printf("=== PAIRS ===\n");
+                    for (Pair* p = pairs->first; p; p = p->next) {
+                        printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
+                        tb_print_dumb_node(NULL, p->lhs);
+                        printf("\n  ");
+                        tb_print_dumb_node(NULL, p->rhs);
+                        printf("\n\n");
+                    }
+                    printf("\n\n\n");
+                    #endif
+
+                    // check if all input edges do the same op
+                    for (Pair* p = pairs->first; p; p = p->next) {
+                        TB_Node* lhs = p->lhs;
+                        TB_Node* rhs = p->rhs;
+                        TB_ASSERT(lhs->type == rhs->type);
+
+                        // loads always terminate the SIMD chains, they only have an address input and those are scalar
+                        if (lhs->type == TB_LOAD) {
+                            continue;
+                        }
+
+                        // can we pack the normal input ops (doesn't count the memory or address for a store)
+                        FOR_N(j, lhs->type == TB_STORE ? 3 : 1, lhs->input_count) {
+                            TB_Node* a = lhs->inputs[j];
+                            TB_Node* b = rhs->inputs[j];
+                            if (!slp_in_pairs(pairs, a) &&
+                                !slp_in_pairs(pairs, b) &&
+                                can_pack(a, b))
+                            {
+                                slp_add_pair(f, pairs, a, b);
+                                progress = true;
+                            }
+                        }
+                    }
+
+                    __debugbreak();
+                } while (progress);
+
                 __debugbreak();
             }
 
@@ -135,7 +193,7 @@ void generate_pack(TB_Function* f, PairSet* pairs, TB_Node* n) {
 }
 
 void tb_opt_vectorize(TB_Function* f) {
-    /*tb_print_dumb(f);
+    /* tb_print_dumb(f);
 
     // TODO(NeGate): search for reductions & stores throughout
     // the entire graph, for now we're only searching the exit
@@ -148,5 +206,6 @@ void tb_opt_vectorize(TB_Function* f) {
         }
     }
 
-    __debugbreak();*/
+    __debugbreak();
+    tb_arena_clear(&f->tmp_arena); */
 }

@@ -132,7 +132,6 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
             }
         }
 
-        // skip past projections
         TB_Node* st_val = NULL;
         if (curr->type == TB_STORE) {
             int cat = categorize_alias_idx(ctx, curr->inputs[2]);
@@ -164,13 +163,8 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
 
         if (curr->dt.type == TB_TAG_TUPLE) {
             // skip to mproj
-            if (curr->type != TB_SPLITMEM) {
-                curr = next_mem_user(curr);
-            } else {
-                // this is some random split, we'll just assume proj0 is the "leftovers" path
-                TB_User* u = proj_with_index(curr, 0);
-                curr = USERN(u);
-            }
+            TB_ASSERT(curr->type != TB_SPLITMEM);
+            curr = next_mem_user(curr);
             latest[0] = curr;
         }
 
@@ -224,14 +218,18 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
 
         switch (reason) {
             case MEM_FORK: {
-                TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
-                TB_Node** new_latest = tb_arena_alloc(&f->tmp_arena, (1 + ctx->local_count) * sizeof(TB_Node*));
-                FOR_N(i, 0, 1 + ctx->local_count) {
-                    new_latest[i] = latest[i];
-                }
+                if (curr->type == TB_SPLITMEM) {
+                    fixup_mem_node(f, ctx, use_n, latest);
+                } else {
+                    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+                    TB_Node** new_latest = tb_arena_alloc(&f->tmp_arena, (1 + ctx->local_count) * sizeof(TB_Node*));
+                    FOR_N(i, 0, 1 + ctx->local_count) {
+                        new_latest[i] = latest[i];
+                    }
 
-                fixup_mem_node(f, ctx, use_n, new_latest);
-                tb_arena_restore(&f->tmp_arena, sp);
+                    fixup_mem_node(f, ctx, use_n, new_latest);
+                    tb_arena_restore(&f->tmp_arena, sp);
+                }
                 break;
             }
 
@@ -239,19 +237,18 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                 // stitch latest state to phis
                 TB_Node* region = use_n->inputs[0];
 
-                Rename* v = nl_table_get(&ctx->phi2local, use_n);
+                Rename* v = nl_table_get(&ctx->phi2local, region);
                 if (v == NULL) {
-                    nl_table_put(&ctx->phi2local, use_n, &RENAME_DUMMY);
+                    nl_table_put(&ctx->phi2local, region, &RENAME_DUMMY);
+                    nl_table_put(&ctx->phi2local, use_n,  &RENAME_DUMMY);
 
                     // convert single phi into parallel phis (use_n will become the leftovers mem)
                     TB_Node** new_latest = tb_arena_alloc(&f->tmp_arena, (1 + ctx->local_count) * sizeof(TB_Node*));
 
-                    // convert single phi into multiple parallel phis (first one will be replaced
-                    // with the root mem)
                     set_input(f, use_n, latest[0], use_i);
                     latuni_set(f, use_n, NULL);
 
-                    assert(use_n->dt.type == TB_TAG_MEMORY);
+                    TB_ASSERT(use_n->dt.type == TB_TAG_MEMORY);
                     new_latest[0] = use_n;
 
                     // make extra alias phis
@@ -476,5 +473,6 @@ int tb_opt_locals(TB_Function* f) {
     nl_table_free(ctx.phi2local);
     tb_arena_restore(&f->tmp_arena, sp);
     cuikperf_region_end();
+
     return ctx.local_count;
 }

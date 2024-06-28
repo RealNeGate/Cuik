@@ -253,31 +253,12 @@ static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
 
     TB_ASSERT_MSG(proj->user_count >= 1, "missing successor after cproj");
     TB_Node* r = USERN(proj->users);
-    if (!single_use(proj) || !cfg_is_region(r)) {
-        // multi-user proj, this means it's basically a BB
+
+    if (proj->user_count == 1 && cfg_is_region(r)) {
+        return r;
+    } else {
         return proj;
     }
-
-    int blocks_with_phis = 0;
-    FOR_USERS(u, n) {
-        TB_Node* path = USERN(u);
-        if (cfg_is_cproj(path) && single_use(path)) {
-            TB_Node* next = USERN(path->users);
-            if (cfg_has_non_mem_phis(next)) {
-                blocks_with_phis++;
-            }
-        }
-    }
-
-    if (blocks_with_phis > 1) {
-        FOR_USERS(u, r) {
-            if (USERN(u)->type == TB_PHI && USERN(u)->dt.type != TB_TAG_MEMORY) {
-                return proj;
-            }
-        }
-    }
-
-    return r;
 }
 
 static TB_User* proj_with_index(TB_Node* n, int i) {

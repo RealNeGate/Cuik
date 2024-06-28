@@ -142,7 +142,7 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         uint64_t zeros = ~possible_sum_zeros & known;
         uint64_t ones  =  possible_sum_ones  & known;
 
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones & mask } });
+        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
     }
 }
 
@@ -562,4 +562,45 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
     }
 
     return NULL;
+}
+
+////////////////////////////////
+// Extension
+////////////////////////////////
+static Lattice* value_sext(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+
+    #if 1
+    return a;
+    #else
+    if (a->_int.min == a->_int.max) { return a; }
+
+    int64_t min    = a->_int.min;
+    int64_t max    = a->_int.max;
+    uint64_t zeros = a->_int.known_zeros;
+    uint64_t ones  = a->_int.known_ones;
+
+    int old_bits = tb_data_type_bit_size(NULL, n->inputs[1]->dt);
+    int bits     = tb_data_type_bit_size(NULL, n->dt);
+    uint64_t mask  = tb__mask(bits) & ~tb__mask(old_bits);
+
+    if (min >= 0 || (zeros >> (old_bits - 1))) { // known non-negative
+        int64_t type_max = lattice_int_max(old_bits);
+
+        zeros |= mask;
+        if (min < 0) { min = 0; }
+        if (max > type_max) { max = type_max; }
+    } else if (max < 0 || (ones >> (old_bits - 1))) { // known non-positive
+        int64_t type_min = lattice_int_min(old_bits);
+
+        ones |= mask;
+        if (min < type_min) { min = type_min; }
+        if (max > -1) { max = -1; }
+    }
+
+    Lattice* this   = latuni_get(f, n);
+    Lattice* narrow = lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+    return lattice_join(f, this, narrow);
+    #endif
 }
