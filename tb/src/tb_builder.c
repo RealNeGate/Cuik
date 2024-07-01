@@ -270,11 +270,6 @@ TB_Node* tb_inst_param(TB_Function* f, int param_id) {
     return f->params[3 + param_id];
 }
 
-void tb_get_data_type_size(TB_Module* mod, TB_DataType dt, size_t* size, size_t* align) {
-    const ICodeGen* restrict code_gen = tb_codegen_info(mod);
-    code_gen->get_data_type_size(dt, size, align);
-}
-
 void tb_inst_unreachable(TB_Function* f) {
     TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 2, 0);
     set_input(f, n, transfer_ctrl(f, n), 0);

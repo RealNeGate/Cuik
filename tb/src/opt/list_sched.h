@@ -103,7 +103,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     TB_ASSERT(phi_vals == NULL && "TODO");
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
-    TB_OPTDEBUG(SCHEDULE)(printf("BB %d\n", bb->id));
+    TB_OPTDEBUG(SCHEDULE)(printf("BB %zu\n", bb - cfg->blocks));
     worklist_push(ws, bb->start);
     TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, bb->start), printf("\n"));
 

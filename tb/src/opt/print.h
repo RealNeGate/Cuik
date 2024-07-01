@@ -262,9 +262,18 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
     }
 }
 
+static bool is_empty_cproj(PrinterCtx* ctx, TB_Node* n) {
+    if (cfg_is_cproj(n)) {
+        TB_BasicBlock* bb = ctx->f->scheduled[n->gvn];
+        return aarray_length(bb->items) == 1;
+    }
+
+    return false;
+}
+
 // deals with printing BB params
 static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
-    TB_Node* target = fallthru ? cfg_next_control(n) : cfg_next_bb_after_cproj(n);
+    TB_Node* target = fallthru || is_empty_cproj(ctx, n) ? cfg_next_control(n) : n;
     print_ref_to_node(ctx, target, false);
 
     // print phi args
@@ -641,13 +650,15 @@ void tb_print(TB_Function* f) {
     ctx.cfg = tb_compute_cfg(f, &ws, &f->tmp_arena, true);
 
     // schedule nodes
-    tb_global_schedule(f, &ws, ctx.cfg, false, false, NULL);
+    tb_global_schedule(f, &ws, ctx.cfg, true, false, NULL);
 
     TB_BasicBlock* end_bb = NULL;
     aarray_for(i, ctx.cfg.blocks) {
         TB_BasicBlock* bb = &ctx.cfg.blocks[i];
         if (bb->end->type == TB_RETURN) {
             end_bb = bb;
+            continue;
+        } else if (is_empty_cproj(&ctx, bb->start)) {
             continue;
         }
 

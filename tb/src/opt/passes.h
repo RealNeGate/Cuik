@@ -172,7 +172,7 @@ static bool cfg_is_control(TB_Node* n) {
 }
 
 static bool cfg_is_bb_entry(TB_Node* n) {
-    if (n->type == TB_REGION) {
+    if (cfg_is_region(n)) {
         return true;
     } else if (cfg_is_cproj(n) && (n->inputs[0]->type == TB_ROOT || cfg_is_fork(n->inputs[0]))) {
         // Start's control proj or a branch target
@@ -248,13 +248,13 @@ static bool cfg_has_non_mem_phis(TB_Node* n) {
 // if we see a branch projection, it may either be a BB itself
 // or if it enters a REGION directly, then that region is the BB.
 static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
-    TB_ASSERT(cfg_is_cproj(proj) && cfg_is_fork(proj->inputs[0]));
+    /*TB_ASSERT(cfg_is_cproj(proj) && cfg_is_fork(proj->inputs[0]));
     TB_Node* n = proj->inputs[0];
 
     TB_ASSERT_MSG(proj->user_count >= 1, "missing successor after cproj");
     TB_Node* r = USERN(proj->users);
 
-    /* if (proj->user_count == 1 && cfg_is_region(r)) {
+    if (proj->user_count == 1 && cfg_is_region(r)) {
         return r;
     } else {
         return proj;

@@ -293,11 +293,11 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
 
                     // check our parent's aux path
                     TB_User* other_proj   = proj_with_index(pred_branch, 1 - index);
-                    TB_Node* shared_edge  = cfg_next_bb_after_cproj(USERN(other_proj));
+                    TB_Node* shared_edge  = cfg_next_control(USERN(other_proj));
 
                     // check our aux path
                     TB_User* other_proj2  = proj_with_index(n, 1 - index);
-                    TB_Node* shared_edge2 = cfg_next_bb_after_cproj(USERN(other_proj2));
+                    TB_Node* shared_edge2 = cfg_next_control(USERN(other_proj2));
 
                     // if they're the same then we've got a shortcircuit eval setup
                     if (shared_edge == shared_edge2) {

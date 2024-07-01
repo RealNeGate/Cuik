@@ -96,48 +96,47 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     #endif
 }
 
-static void dumb_walk(TB_Function* f, TB_Worklist* ws, Lattice** types, TB_Node* n) {
+static void dumb_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
     if (worklist_test_n_set(ws, n)) { return; }
     if (cfg_is_control(n)) {
         FOR_USERS(u, n) {
             if (cfg_is_control(USERN(u))) {
-                dumb_walk(f, ws, types, USERN(u));
+                dumb_walk(f, ws, USERN(u));
             }
         }
     }
     if (n->dt.type == TB_TAG_TUPLE) {
         FOR_USERS(u, n) if (USERN(u)->type != TB_PROJ) {
-            dumb_walk(f, ws, types, USERN(u));
+            dumb_walk(f, ws, USERN(u));
         }
         FOR_USERS(u, n) if (USERN(u)->type == TB_PROJ) {
-            dumb_walk(f, ws, types, USERN(u));
+            dumb_walk(f, ws, USERN(u));
         }
     } else if (cfg_is_region(n)) {
         FOR_USERS(u, n) if (USERN(u)->type != TB_PHI) {
-            dumb_walk(f, ws, types, USERN(u));
+            dumb_walk(f, ws, USERN(u));
         }
         FOR_USERS(u, n) if (USERN(u)->type == TB_PHI) {
-            dumb_walk(f, ws, types, USERN(u));
+            dumb_walk(f, ws, USERN(u));
         }
     } else {
-        FOR_USERS(u, n) { dumb_walk(f, ws, types, USERN(u)); }
+        FOR_USERS(u, n) { dumb_walk(f, ws, USERN(u)); }
     }
 
-    if (is_proj(n) || n->type == TB_PHI) { return; }
+    if ((n->dt.type != TB_TAG_CONTROL && is_proj(n)) || n->type == TB_PHI) { return; }
     // we wanna place projs & phis underneath the region
     if (cfg_is_region(n)) {
         FOR_USERS(u, n) if (USERN(u)->type == TB_PHI) {
             dyn_array_put(ws->items, USERN(u));
         }
     } else if (n->dt.type == TB_TAG_TUPLE) {
-        FOR_USERS(u, n) if (is_proj(USERN(u))) {
+        FOR_USERS(u, n) if (USERN(u)->dt.type != TB_TAG_CONTROL && is_proj(USERN(u))) {
             dyn_array_put(ws->items, USERN(u));
         }
     }
     dyn_array_put(ws->items, n);
 }
 
-static bool cfg_is_fork_proj(TB_Node* n) { return cfg_is_cproj(n) && cfg_is_fork(n->inputs[0]); }
 void tb_print_dumb(TB_Function* f) {
     printf("=== DUMP %s ===\n", f->super.name);
 
@@ -147,13 +146,11 @@ void tb_print_dumb(TB_Function* f) {
     TB_Node* root   = f->root_node;
     Lattice** types = NULL; // use_fancy_types ? f->types : NULL;
 
-    dumb_walk(f, &ws, types, root);
+    dumb_walk(f, &ws, root);
 
     FOR_REV_N(i, 0, dyn_array_length(ws.items)) {
         // extra newline on BB boundaries
-        if (i + 1 < dyn_array_length(ws.items) && cfg_is_fork_proj(ws.items[i + 1]) && !cfg_is_fork_proj(ws.items[i])) {
-            printf("\n");
-        } else if (cfg_is_region(ws.items[i])) {
+        if (cfg_is_bb_entry(ws.items[i]) && !cfg_is_bb_entry(ws.items[i + 1])) {
             printf("\n");
         }
         tb_print_dumb_node(types, ws.items[i]);

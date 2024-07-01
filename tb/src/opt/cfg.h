@@ -237,3 +237,57 @@ bool tb_is_dominated_by(TB_CFG cfg, TB_Node* expected_dom, TB_Node* n) {
 
     return true;
 }
+
+////////////////////////////////
+// SoN dominance
+////////////////////////////////
+// we access and operate on dominators in the SoN form because it's nicer
+// when modifying the IR (since we don't maintain a CFG).
+//
+//    | |  |
+//    Region     [Region] = dominating terminator node
+//      |
+//     ...       [...]    = NULL
+//      |
+//    Branch     [Branch] = Region
+//    |    |
+//
+static void tb_set_idom(TB_Function* f, TB_Node* n, TB_Node* new_dom) {
+    TB_ASSERT_MSG(n != new_dom, "probably a mistake (the entry dom was defined without this function)");
+    if (n->gvn >= f->doms_n) {
+        size_t new_cap = tb_next_pow2(n->gvn + 16);
+
+        f->doms = tb_arena_realloc(&f->arena, f->doms, f->doms_n * sizeof(TB_Node*), new_cap * sizeof(TB_Node*));
+        FOR_N(i, f->doms_n, new_cap) { f->doms[i] = NULL; }
+
+        f->doms_n = new_cap;
+    }
+    f->doms[n->gvn] = new_dom;
+}
+
+static TB_Node* tb_get_idom(TB_Function* f, TB_Node* n) {
+    // if dom[n] is NULL we just follow the inputs[0]
+    while (f->doms[n->gvn] == NULL) {
+        TB_ASSERT(!cfg_is_region(n));
+        n = n->inputs[0];
+    }
+    return f->doms[n->gvn];
+}
+
+// walks up until the node has a dom entry (it's a start or end node)
+static TB_Node* tb_walk_to_bb_bounds(TB_Function* f, TB_Node* n) {
+    // if dom[n] is NULL we just follow the inputs[0]
+    while (f->doms[n->gvn] == NULL) {
+        TB_ASSERT(!cfg_is_region(n));
+        n = n->inputs[0];
+    }
+    return n;
+}
+
+static bool tb_is_dom_of(TB_Function* f, TB_Node* expected_dom, TB_Node* n) {
+    n = tb_walk_to_bb_bounds(f, n);
+    while (n != expected_dom && n != f->doms[n->gvn]) {
+        n = f->doms[n->gvn];
+    }
+    return n == expected_dom;
+}
