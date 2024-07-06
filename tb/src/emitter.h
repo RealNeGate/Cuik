@@ -51,23 +51,23 @@ typedef struct {
 #define PATCH2(e, p, b) do { uint16_t _b = (b); memcpy(&(e)->data[p], &_b, 2); } while (0)
 #define PATCH4(e, p, b) do { uint32_t _b = (b); memcpy(&(e)->data[p], &_b, 4); } while (0)
 #define GET_CODE_POS(e) ((e)->count)
-#define RELOC4(e, p, b) tb_reloc4(e, p, b)
+#define RELOC4(e, p, b, m) tb_reloc4(e, p, b, m)
 
-static void tb_reloc4(TB_CGEmitter* restrict e, uint32_t p, uint32_t b) {
+static void tb_reloc4(TB_CGEmitter* restrict e, uint32_t p, uint32_t b, uint32_t mask) {
     void* ptr = &e->data[p];
 
-    // i love UBsan...
+    // i love UBsan... (tbf this is the correct way to do things)
     uint32_t tmp;
     memcpy(&tmp, ptr, 4);
-    tmp += b;
+    tmp = (tmp & ~mask) | ((tmp + b) & mask);
     memcpy(ptr, &tmp, 4);
 }
 
 static int tb_emit_get_label(TB_CGEmitter* restrict e, uint32_t pos) {
-    FOR_N(i, 0, e->label_count) {
+    FOR_N(i, 1, e->label_count) {
         assert(e->labels[i] & 0x80000000);
-        if ((e->labels[i] & ~0x80000000) == pos) {
-            return i;
+        if ((e->labels[i] & ~0x80000000) > pos) {
+            return i - 1;
         }
     }
 
@@ -117,25 +117,25 @@ static void tb_asm_print(TB_CGEmitter* restrict e, const char* fmt, ...) {
     e->total_asm += len;
 }
 
-static void tb_emit_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t pos) {
+static void tb_emit_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t pos, uint32_t mask, uint32_t shift) {
     uint32_t curr = *head;
     if (curr & 0x80000000) {
         // the label target is resolved, we need to do the relocation now
-        uint32_t target = curr & 0x7FFFFFFF;
-        PATCH4(e, pos, target - (pos + 4));
+        curr &= ~0x80000000;
+        RELOC4(e, pos, (curr - (pos + 4)) >> shift, mask);
     } else {
-        PATCH4(e, pos, curr);
+        RELOC4(e, pos, curr, mask);
         *head = pos;
     }
 }
 
-static void tb_resolve_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t target) {
+static void tb_resolve_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t target, uint32_t mask, uint32_t shift) {
     // walk previous relocations
     uint32_t curr = *head;
-    while (curr != 0 && (curr & 0x80000000) == 0) {
+    while ((curr & mask) != 0) {
         uint32_t next;
         memcpy(&next, &e->data[curr], 4);
-        PATCH4(e, curr, target - (curr + 4));
+        RELOC4(e, curr, (target - (curr + 4)) >> shift, mask);
         curr = next;
     }
 

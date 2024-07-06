@@ -487,6 +487,8 @@ typedef enum TB_NodeTypeEnum {
     // does the phi move
     TB_MACH_MOVE,
     TB_MACH_COPY,
+    // (Control) -> Control
+    TB_MACH_JUMP,
     // just... it, idk, it's the frame ptr
     TB_MACH_FRAME_PTR,
     // isn't the pointer value itself, just a placeholder for

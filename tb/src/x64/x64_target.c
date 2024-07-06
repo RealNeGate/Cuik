@@ -13,6 +13,7 @@ enum {
 
 enum {
     FUNCTIONAL_UNIT_COUNT = 1,
+    BUNDLE_INST_MAX = 1,
 };
 
 #include "../codegen_impl.h"
@@ -1545,13 +1546,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
     }
 }
 
-static int op_reg_at(Ctx* ctx, TB_Node* n, int class) {
-    assert(ctx->vreg_map[n->gvn] > 0);
-    VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
-    assert(vreg->assigned >= 0);
-    assert(vreg->class == class);
-    return vreg->assigned;
-}
 static int op_gpr_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_GPR); }
 static int op_xmm_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_XMM); }
 
@@ -1576,13 +1570,6 @@ static Val op_at(Ctx* ctx, TB_Node* n) {
     } else {
         assert(vreg->assigned >= 0);
         return (Val) { .type = vreg->class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR, .reg = vreg->assigned };
-    }
-}
-
-static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ) {
-    if (ctx->fallthrough != succ->fwd) {
-        EMIT1(e, 0xE9); EMIT4(e, 0);
-        tb_emit_rel32(e, &e->labels[succ->fwd], GET_CODE_POS(e) - 4);
     }
 }
 
@@ -1630,7 +1617,11 @@ static Val parse_cisc_operand(Ctx* restrict ctx, TB_Node* n, Val* rhs, X86MemOp*
     return rm;
 }
 
-static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg) {
+static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
+    TB_ASSERT(bundle->count == 1);
+    TB_Node* n = bundle->arr[0];
+    VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
+
     switch (n->type) {
         // some ops don't do shit lmao
         case TB_PHI:
@@ -1644,6 +1635,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
         case TB_LOCAL:
         case TB_SPLITMEM:
         case TB_MERGEMEM:
+        case TB_CALLGRAPH:
         case TB_MACH_SYMBOL:
         case TB_MACH_FRAME_PTR:
         break;
@@ -2029,7 +2021,7 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 FOR_USERS(u, n) {
                     if (USERN(u)->type == TB_BRANCH_PROJ) {
                         int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-                        TB_Node* succ_n = cfg_next_bb_after_cproj(USERN(u));
+                        TB_Node* succ_n = USERN(u);
 
                         if (index == 0) {
                             has_default = !cfg_is_unreachable(succ_n);
@@ -2056,9 +2048,19 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
                 } else {
                     tb_todo();
                 }
+                tb_arena_restore(arena, sp);
             } else {
                 Val dst = op_at(ctx, n);
                 __(SETO + cc, TB_X86_BYTE, &dst);
+            }
+            break;
+        }
+
+        case TB_MACH_JUMP: {
+            MachineBB* succ = node_to_bb(ctx, cfg_next_control(n));
+            if (ctx->fallthrough != succ->fwd) {
+                EMIT1(e, 0xE9); EMIT4(e, 0);
+                tb_emit_rel32(e, &e->labels[succ->fwd], GET_CODE_POS(e) - 4, 0xFFFFFFFF, 0);
             }
             break;
         }
@@ -2255,6 +2257,8 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg
     }
 }
 
+static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) { return false; }
+
 // don't care about functional units on x86
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) { return 1; }
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
@@ -2402,7 +2406,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
 }
 
 static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb) {
-    tb_resolve_rel32(e, &e->labels[bb], e->count);
+    tb_resolve_rel32(e, &e->labels[bb], e->count, 0xFFFFFFFF, 0);
 }
 
 static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e) {
@@ -2458,7 +2462,7 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
 }
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
-static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos, int disp_pos, int64_t imm);
+static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos, int disp_pos, int32_t imm);
 
 // #define E(fmt, ...) printf(fmt, ## __VA_ARGS__)
 static void our_print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos) {
@@ -2493,7 +2497,7 @@ static void our_print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86
     }
 }
 
-static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos, int disp_pos, int64_t imm) {
+static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos, int disp_pos, int32_t imm) {
     if (d->patch && d->patch->pos == pos + disp_pos) {
         const TB_Symbol* target = d->patch->target;
 

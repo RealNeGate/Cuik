@@ -147,6 +147,14 @@ typedef struct {
     int elems[]; // vregs
 } Tmps;
 
+// like a VLIW bundle, except it can be used to model delay slots.
+// there's also the degenerate case where the bundle is always 1
+// node (most superscalars are in this camp)
+typedef struct {
+    int count;
+    TB_Node** arr;
+} Bundle;
+
 struct Ctx {
     TB_CGEmitter emit;
 
@@ -267,6 +275,14 @@ static float get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
     }
 
     return (vreg->spill_cost = c + vreg->spill_bias);
+}
+
+static int op_reg_at(Ctx* ctx, TB_Node* n, int class) {
+    assert(ctx->vreg_map[n->gvn] > 0);
+    VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
+    assert(vreg->assigned >= 0);
+    assert(vreg->class == class);
+    return vreg->assigned;
 }
 
 static const char* reg_class_name(int class) {

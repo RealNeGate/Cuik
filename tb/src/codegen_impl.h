@@ -30,10 +30,7 @@ static bool node_remat(TB_Node* n);
 // Code emit:
 //   finally write bytes, this is done post-RA so you're expected to use the VReg data
 //   to know which regs you were assigned.
-static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n, VReg* vreg);
-//   i never actually add "goto" nodes to the graph, they're just implied and this is
-//   the function responsible for that.
-static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ);
+static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle);
 //   this is where I recommend emitting prologue bytes.
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n);
 //   this is called AFTER the emitting of epilogues, those are emitted as normal
@@ -42,6 +39,8 @@ static void post_emit(Ctx* restrict ctx, TB_CGEmitter* e);
 //   called at the start of each BB, it's mostly for bookkeeping about where labels
 //   are placed.
 static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb);
+//   these two sequential nodes might fit into the same bundle (given they're input-independent)
+static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b);
 
 // Scheduling bits:
 //   simple latency until the results of a node are useful (list scheduler will
@@ -54,6 +53,55 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n);
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
+
+// Helpers
+static void dump_sched(Ctx* restrict ctx) {
+    FOR_N(i, 0, ctx->bb_count) {
+        MachineBB* mbb = &ctx->machine_bbs[i];
+        printf("BB %zu:\n", i);
+        aarray_for(i, mbb->items) {
+            printf("  ");
+            tb_print_dumb_node(NULL, mbb->items[i]);
+            printf("\n");
+        }
+    }
+}
+
+static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b) {
+    #if TB_OPTDEBUG_CODEGEN
+    printf("  ========= BUNDLE (%d) =========\n", b->count);
+    FOR_N(i, 0, b->count) {
+        TB_Node* n = b->arr[i];
+        int def_id = ctx->vreg_map[n->gvn];
+        VReg* vreg = def_id > 0 ? &ctx->vregs[def_id] : NULL;
+
+        printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
+
+        if (vreg) {
+            printf("    OUT    = %s:R%d \x1b[32m# VREG=%d\x1b[0m\n", reg_class_name(vreg->class), vreg->assigned, def_id);
+        }
+
+        FOR_N(j, 1, n->input_count) {
+            TB_Node* in = n->inputs[j];
+            int in_id = in ? ctx->vreg_map[in->gvn] : 0;
+            if (in_id > 0) {
+                VReg* other = &ctx->vregs[in_id];
+                printf("    IN[%zu]  = %s:R%d\n", j, reg_class_name(other->class), other->assigned);
+            }
+        }
+
+        Tmps* tmps = nl_table_get(&ctx->tmps_map, n);
+        if (tmps) {
+            FOR_N(j, 0, tmps->count) {
+                VReg* other = &ctx->vregs[tmps->elems[j]];
+                printf("    TMP[%zu] = %s:R%d\n", j, reg_class_name(other->class), other->assigned);
+            }
+        }
+    }
+    #endif
+    bundle_emit(ctx, e, b);
+    b->count = 0;
+}
 
 static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
     log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena) - og_size) / 1024.0f, label);
@@ -221,7 +269,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
         ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, true);
-        tb_global_schedule(f, ws, cfg, true, true, node_latency);
+        tb_global_schedule(f, ws, cfg, false, true, node_latency);
 
         log_phase_end(f, og_size, "GCM");
     }
@@ -398,6 +446,32 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("emit") {
+        // any empty projection blocks will mark which block they want you to jump to, if the
+        // block "forwards" to itself then it's not actually forwarding.
+        FOR_N(i, 0, bb_count) {
+            MachineBB* mbb = &machine_bbs[i];
+            if (aarray_length(mbb->items) == 1 && cfg_is_cproj(mbb->items[0])) {
+                TB_Node* next = cfg_next_control(mbb->items[0]);
+                MachineBB* succ = node_to_bb(&ctx, next);
+                mbb->fwd = succ->id;
+            } else {
+                mbb->fwd = i;
+
+                // insert jump for the fallthru case, this matters most for the platforms which can
+                // bundle jumps (branch delay slots and VLIWs)
+                if (!cfg_is_terminator(mbb->end_n)) {
+                    TB_Node* jmp = tb_alloc_node(f, TB_MACH_JUMP, TB_TYPE_CONTROL, 1, 0);
+                    subsume_node2(f, mbb->end_n, jmp);
+                    set_input(f, jmp, mbb->end_n, 0);
+                    mbb->end_n = jmp;
+
+                    aarray_push(mbb->items, jmp);
+                }
+            }
+        }
+
+        dump_sched(&ctx);
+
         // most functions are probably decently small, it's ok tho if it needs to
         // resize it can do that pretty quickly
         ctx.emit.capacity = 1024;
@@ -411,18 +485,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         TB_CGEmitter* e = &ctx.emit;
         pre_emit(&ctx, e, f->root_node);
 
-        // any empty projection blocks will mark which block they want you to jump to, if the
-        // block "forwards" to itself then it's not actually forwarding.
-        FOR_N(i, 0, bb_count) {
-            MachineBB* mbb = &machine_bbs[i];
-            if (aarray_length(mbb->items) == 1 && cfg_is_cproj(mbb->items[0])) {
-                TB_Node* next = cfg_next_control(mbb->items[0]);
-                MachineBB* succ = node_to_bb(&ctx, next);
-                mbb->fwd = succ->id;
-            } else {
-                mbb->fwd = i;
-            }
-        }
+        Bundle bundle;
+        bundle.count = 0;
+        bundle.arr = tb_arena_alloc(&f->tmp_arena, BUNDLE_INST_MAX * sizeof(Bundle));
 
         FOR_N(i, 0, bb_count) {
             MachineBB* mbb = &machine_bbs[i];
@@ -446,42 +511,42 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             // mark label
             TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
 
+            TB_Node* prev_n = NULL;
             aarray_for(i, mbb->items) {
                 TB_Node* n = mbb->items[i];
-                int def_id = ctx.vreg_map[n->gvn];
-                VReg* vreg = def_id > 0 ? &ctx.vregs[def_id] : NULL;
 
-                #if TB_OPTDEBUG_CODEGEN
-                printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
+                // TODO(NeGate): we should be checking if the bundle can support the resources we're asking for.
+                // an example is that one bundle might only be able to do 2 memory operations so "fits_as_bundle"
+                // would return true for two stores but trying to stretch things to 3 would force a split.
+                bool legal = false;
+                if (bundle.count > 0 && bundle.count < BUNDLE_INST_MAX) {
+                    if (i > 1 && fits_as_bundle(&ctx, bundle.arr[bundle.count - 1], n)) {
+                        legal = true;
 
-                if (vreg) {
-                    printf("    OUT    = %s:R%d \x1b[32m# VREG=%d\x1b[0m\n", reg_class_name(vreg->class), vreg->assigned, def_id);
-                }
-
-                FOR_N(j, 1, n->input_count) {
-                    TB_Node* in = n->inputs[j];
-                    int in_id = in ? ctx.vreg_map[in->gvn] : 0;
-                    if (in_id > 0) {
-                        VReg* vreg = &ctx.vregs[in_id];
-                        printf("    IN[%zu]  = %s:R%d\n", j, reg_class_name(vreg->class), vreg->assigned);
+                        // if n refers to prev then we're dependent, if not then we can't
+                        // be, just because there's nothing between them that could make
+                        // the connection more indirect.
+                        TB_Node* prev = bundle.arr[bundle.count - 1];
+                        FOR_N(i, 0, n->input_count) {
+                            if (n->inputs[i] == prev) {
+                                legal = false;
+                                break;
+                            }
+                        }
                     }
                 }
 
-                Tmps* tmps = nl_table_get(&ctx.tmps_map, n);
-                if (tmps) {
-                    FOR_N(j, 0, tmps->count) {
-                        VReg* vreg = &ctx.vregs[tmps->elems[j]];
-                        printf("    TMP[%zu] = %s:R%d\n", j, reg_class_name(vreg->class), vreg->assigned);
-                    }
+                // flush bundle
+                if (!legal && bundle.count > 0) {
+                    flush_bundle(&ctx, e, &bundle);
                 }
-                #endif
 
-                node_emit(&ctx, e, n, vreg);
+                bundle.arr[bundle.count++] = n;
             }
 
-            if (!cfg_is_terminator(mbb->end_n)) {
-                MachineBB* succ = node_to_bb(&ctx, cfg_next_control(mbb->end_n));
-                emit_goto(&ctx, e, &machine_bbs[succ->fwd]);
+            // TODO(NeGate): the bundle might want to join with the terminator goto
+            if (bundle.count > 0) {
+                flush_bundle(&ctx, e, &bundle);
             }
         }
 

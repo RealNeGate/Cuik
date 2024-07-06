@@ -80,6 +80,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_TRAP:
         case TB_RETURN:
         case TB_MACH_MOVE:
+        case TB_MACH_JUMP:
         case TB_MACH_FRAME_PTR:
         case TB_SPLITMEM:
         return 0;

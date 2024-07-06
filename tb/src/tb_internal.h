@@ -74,7 +74,7 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
 #define TB_OPTDEBUG_ISEL     0
-#define TB_OPTDEBUG_CODEGEN  1
+#define TB_OPTDEBUG_CODEGEN  0
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
@@ -591,7 +591,6 @@ struct ICodeGen {
     const char* (*node_name)(int n_type);
     void (*print_extra)(TB_Node* n);
 
-    void (*get_data_type_size)(TB_DataType dt, size_t* out_size, size_t* out_align);
     // return the number of non-local patches
     size_t (*emit_call_patches)(TB_Module* restrict m, TB_FunctionOutput* out_f);
     // NULLable if doesn't apply

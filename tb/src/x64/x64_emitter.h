@@ -12,12 +12,12 @@ static uint8_t rex(bool is_64bit, uint8_t rx, uint8_t base, uint8_t index) {
 
 static void jmp(TB_CGEmitter* restrict e, int label) {
     EMIT1(e, 0xE9); EMIT4(e, 0);
-    tb_emit_rel32(e, &e->labels[label], GET_CODE_POS(e) - 4);
+    tb_emit_rel32(e, &e->labels[label], GET_CODE_POS(e) - 4, 0xFFFFFFFF, 0);
 }
 
 static void jcc(TB_CGEmitter* restrict e, Cond cc, int label) {
     EMIT1(e, 0x0F); EMIT1(e, 0x80 + cc); EMIT4(e, 0);
-    tb_emit_rel32(e, &e->labels[label], GET_CODE_POS(e) - 4);
+    tb_emit_rel32(e, &e->labels[label], GET_CODE_POS(e) - 4, 0xFFFFFFFF, 0);
 }
 
 static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val* a) {
@@ -305,7 +305,7 @@ static void asm_inst1(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* 
         EMIT4(e, 0);
 
         assert(r->label >= 0 && r->label < e->label_count);
-        tb_emit_rel32(e, &e->labels[r->label], GET_CODE_POS(e) - 4);
+        tb_emit_rel32(e, &e->labels[r->label], GET_CODE_POS(e) - 4, 0xFFFFFFFF, 0);
     } else {
         tb_unreachable();
     }

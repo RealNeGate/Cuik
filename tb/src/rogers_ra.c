@@ -85,7 +85,6 @@ void tb__print_regmask(RegMask* mask) {
     }
 }
 
-// Helpers
 static void dump_sched(Ctx* restrict ctx) {
     FOR_N(i, 0, ctx->bb_count) {
         MachineBB* mbb = &ctx->machine_bbs[i];
@@ -439,8 +438,8 @@ static bool vreg_is_fixed(Ctx* restrict ctx, Rogers* restrict ra, int id) {
 static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
 static void print_reg_name(int rg, int num) {
     if (rg == 1) {
-        // printf("R%d", num);
-        printf("%s", GPR_NAMES[num]);
+        printf("R%d", num);
+        // printf("%s", GPR_NAMES[num]);
     } else if (rg == 2) {
         printf("XMM%d", num);
     } else if (rg == REG_CLASS_STK) {

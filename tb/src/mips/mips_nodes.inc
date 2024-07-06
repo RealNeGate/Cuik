@@ -22,6 +22,7 @@ R(nor,   0b000000, 0b100111, void)
 R(jr,    0b000000, 0b001000, void)
 // special2
 R(mul,   0b011100, 0b000010, void)
+R(adds,  0b010001, 0b000000, void)
 // i-types
 I(addi,   0b001000,          MIPSImm)
 I(daddi,  0b011000,          MIPSImm)
@@ -35,17 +36,20 @@ I(lui,    0b001111,          MIPSImm)
 I(lb,    0b100000,           MIPSImm)
 I(lw,    0b100011,           MIPSImm)
 I(ld,    0b110111,           MIPSImm)
+I(ldc1,  0b110101,           MIPSImm)
 // stores
 I(sb,    0b101000,           MIPSImm)
 I(sh,    0b101001,           MIPSImm)
 I(sw,    0b101011,           MIPSImm)
-// floats
-I(ldc1,  0b110101,           MIPSImm)
 I(sdc1,  0b111101,           MIPSImm)
+// floats
 R(madds, 0b010011, 0b100000, void)
 R(maddd, 0b010011, 0b100001, void)
 // branches
 I(beq,   0b000100,           void)
+I(bne,   0b000101,           void)
+I(blez,  0b000110,           void)
+I(bgtz,  0b000111,           void)
 J(jal,   0b000011,           void)
 #undef R
 #undef I
