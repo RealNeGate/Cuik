@@ -1132,7 +1132,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         case TB_LOCAL:
-        case TB_SYMBOL:
         case TB_BRANCH_PROJ:
         case TB_MACH_SYMBOL:
         case TB_MACH_FRAME_PTR:
@@ -1647,14 +1646,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             if (ctx->fallthrough != succ) {
                 __(JMP, TB_X86_QWORD, Vlbl(succ));
             }
-            break;
-        }
-
-        case TB_SYMBOL: {
-            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
-
-            GPR dst = op_gpr_at(ctx, n);
-            __(LEA, TB_X86_QWORD, Vgpr(dst), Vsym(sym, 0));
             break;
         }
 

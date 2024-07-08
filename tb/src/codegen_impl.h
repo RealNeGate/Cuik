@@ -145,8 +145,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     init_ctx(&ctx, f->super.module->target_abi);
     TB_Worklist* restrict ws = f->worklist;
 
-    // legalize step takes out any of our 16bit and 8bit math ops
-    // tb_pass_legalize(p, f->super.module->target_arch);
     size_t og_size = tb_arena_current_size(&f->arena);
 
     ctx.mask_intern = nl_hashset_alloc(200);
@@ -198,7 +196,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                     continue;
                 }
 
-                // memory out nodes are *notorious* for having unused loads, we wanna pruned these
+                // memory out nodes are *notorious* for having unused loads, we wanna prune these
                 if (n->dt.type == TB_TAG_MEMORY) {
                     FOR_USERS(u, n) {
                         if (USERN(u)->user_count == 0) {
@@ -263,7 +261,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     CUIK_TIMED_BLOCK("global sched") {
         // we're gonna build a bunch of compact tables... they're only
         // compact if we didn't spend like 40% of our value numbers on dead shit.
+        #if !TB_OPTDEBUG_ISEL
         tb_renumber_nodes(f, ws);
+        #endif
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f));
         TB_OPTDEBUG(CODEGEN)(tb_print(f));
@@ -469,8 +469,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 }
             }
         }
-
-        dump_sched(&ctx);
 
         // most functions are probably decently small, it's ok tho if it needs to
         // resize it can do that pretty quickly

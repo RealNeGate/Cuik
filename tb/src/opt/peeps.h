@@ -51,12 +51,12 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_ATOMIC_CAS]     = NODE_MEMORY_IN | NODE_MEMORY_OUT,
 
     [TB_DEBUG_LOCATION] = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
-    [TB_CALL]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
-    [TB_SYSCALL]        = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_CALL]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT,
+    [TB_SYSCALL]        = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT,
     [TB_REGION]         = NODE_CTRL,
     [TB_NATURAL_LOOP]   = NODE_CTRL,
     [TB_AFFINE_LOOP]    = NODE_CTRL,
-    [TB_SAFEPOINT_POLL] = NODE_CTRL | NODE_MEMORY_IN,
+    [TB_SAFEPOINT_POLL] = NODE_CTRL | NODE_MEMORY_IN | NODE_SAFEPOINT,
     [TB_DEBUGBREAK]     = NODE_CTRL | NODE_MEMORY_IN,
     [TB_READ]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_WRITE]          = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
@@ -153,11 +153,12 @@ uint32_t cfg_flags(TB_Node* n) {
     }
 }
 
-bool cfg_is_branch(TB_Node* n)       { return cfg_flags(n) & NODE_BRANCH; }
-bool cfg_is_fork(TB_Node* n)         { return cfg_flags(n) & NODE_FORK_CTRL; }
-bool cfg_is_terminator(TB_Node* n)   { return cfg_flags(n) & NODE_TERMINATOR; }
-bool cfg_is_endpoint(TB_Node* n)     { return cfg_flags(n) & NODE_END; }
-bool tb_node_has_mem_out(TB_Node* n) { return cfg_flags(n) & NODE_MEMORY_OUT; }
+bool cfg_is_branch(TB_Node* n)        { return cfg_flags(n) & NODE_BRANCH; }
+bool cfg_is_fork(TB_Node* n)          { return cfg_flags(n) & NODE_FORK_CTRL; }
+bool cfg_is_terminator(TB_Node* n)    { return cfg_flags(n) & NODE_TERMINATOR; }
+bool cfg_is_endpoint(TB_Node* n)      { return cfg_flags(n) & NODE_END; }
+bool tb_node_is_safepoint(TB_Node* n) { return cfg_flags(n) & NODE_SAFEPOINT; }
+bool tb_node_has_mem_out(TB_Node* n)  { return cfg_flags(n) & NODE_MEMORY_OUT; }
 
 // has potential memory dep on inputs[1]
 TB_Node* tb_node_mem_in(TB_Node* n) {

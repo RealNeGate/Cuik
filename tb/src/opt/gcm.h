@@ -134,7 +134,7 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
                 TB_Node* k = fwd[n->gvn];
 
                 // connect new node to new inputs
-                FOR_N(j, 0, n->input_cap) if (n->inputs[j]) {
+                FOR_N(j, 0, n->input_count) if (n->inputs[j]) {
                     TB_Node* moved_k = fwd[n->inputs[j]->gvn];
                     TB_ASSERT(moved_k != NULL);
 
@@ -143,6 +143,14 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
                     #endif
 
                     set_input(f, k, moved_k, j);
+                }
+
+                // extra deps need special treatment
+                FOR_N(j, n->input_count, n->input_cap) if (n->inputs[j]) {
+                    TB_Node* moved_k = fwd[n->inputs[j]->gvn];
+                    TB_ASSERT(moved_k != NULL);
+
+                    tb_node_add_extra(f, k, moved_k);
                 }
 
                 TB_OPTDEBUG(COMPACT)(printf("%s: %p (%u) -> %p (%u)\n", n, n->gvn, k, k->gvn));
@@ -281,8 +289,8 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                     TB_Node* n = bb->items[j];
                     if (n->type == TB_PHI) continue;
 
-                    FOR_N(i, 1, n->input_count) {
-                        TB_Node* in = n->inputs[i];
+                    FOR_N(k, 1, n->input_count) {
+                        TB_Node* in = n->inputs[k];
                         if (in && (in->type == TB_PHI || !set_get(&bb->kill, in->gvn))) {
                             set_put(&bb->gen, in->gvn);
                         }
@@ -356,9 +364,8 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
 
         #if TB_OPTDEBUG_DATAFLOW
         // log live ins and outs
-        FOR_N(i, 0, cfg.block_count) {
-            TB_Node* n = rpo_nodes[i];
-            TB_BasicBlock* bb = f->scheduled[n->gvn];
+        aarray_for(i, cfg.blocks) {
+            TB_BasicBlock* bb = &cfg.blocks[i];
 
             printf("BB%zu:\n  live-ins:", i);
             FOR_N(j, 0, node_count) if (set_get(&bb->live_in, j)) {

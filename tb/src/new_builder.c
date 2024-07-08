@@ -513,7 +513,7 @@ void tb_builder_label_complete(TB_GraphBuilder* g, TB_Node* label) {
             assert(label->inputs[i]);
 
             #if 1
-            if (label->inputs[i]->type == TB_PHI) {
+            if (label->inputs[i]->type == TB_PHI && label->inputs[i]->inputs[0] == top_ctrl) {
                 TB_Node* k = identity_phi(f, label->inputs[i]);
                 if (k != label->inputs[i]) {
                     subsume_node(f, label->inputs[i], k);
@@ -743,6 +743,15 @@ TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_
 
     add_input_late(f, get_callgraph(f), n);
     return tb__make_proj(f, dt, n, 2);
+}
+
+void tb_builder_safepoint_poll(TB_GraphBuilder* g, int mem_var, void* userdata, TB_Node* poll_site, int arg_count, TB_Node** args) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 2, 0);
+    set_input(f, n, xfer_ctrl(g, n), 0);
+    set_input(f, n, peek_mem(g, mem_var), 1);
+    add_input_late(f, f->root_node, n);
+    g->curr = NULL;
 }
 
 void tb_builder_unreachable(TB_GraphBuilder* g, int mem_var) {

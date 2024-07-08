@@ -117,6 +117,7 @@ bool cfg_is_fork(TB_Node* n);
 bool cfg_is_terminator(TB_Node* n);
 bool cfg_is_endpoint(TB_Node* n);
 
+bool tb_node_is_safepoint(TB_Node* n);
 bool tb_node_has_mem_out(TB_Node* n);
 TB_Node* tb_node_mem_in(TB_Node* n);
 

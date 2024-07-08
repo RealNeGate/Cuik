@@ -95,7 +95,10 @@ static void free_block(void* ptr, size_t size) {
     freelist = ptr;
 }
 
+static int t = 0;
 static void* alloc_block(size_t size) {
+    t += 1;
+
     TB_ArenaFreeList *curr = freelist, *prev = NULL;
     while (curr) {
         TB_ArenaFreeList* next = curr->next;
@@ -110,6 +113,7 @@ static void* alloc_block(size_t size) {
             assert(curr->size >= size + sizeof(TB_ArenaFreeList) && "bigger than a chunk but not enough for an extra free space?");
 
             TB_ArenaFreeList* new_free = (TB_ArenaFreeList*) &curr->data[size - sizeof(TB_ArenaFreeList)];
+            new_free->next = curr->next;
             new_free->size = curr->size - size;
 
             if (prev == NULL) { freelist = new_free; }
@@ -117,7 +121,7 @@ static void* alloc_block(size_t size) {
 
             return curr;
         }
-        curr = next;
+        prev = curr, curr = next;
     }
 
     size_t block_size = align_up_pow2(size, TB_ARENA_BLOCK_SIZE);

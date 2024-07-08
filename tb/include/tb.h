@@ -729,18 +729,21 @@ typedef struct {
 } TB_NodeAtomic;
 
 typedef struct {
+    void* userdata;
+    // all the saved values are at the end of the input list
+    int saved_val_count;
+} TB_NodeSafepoint;
+
+typedef struct {
+    TB_NodeSafepoint super;
     TB_FunctionPrototype* proto;
     int proj_count;
 } TB_NodeCall;
 
 typedef struct {
+    TB_NodeSafepoint super;
     TB_FunctionPrototype* proto;
 } TB_NodeTailcall;
-
-typedef struct {
-    void* userdata;
-    int param_start;
-} TB_NodeSafepoint;
 
 typedef struct {
     const char* tag;
@@ -1517,6 +1520,7 @@ TB_API void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file,
 // function call
 TB_API TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
 TB_API TB_Node*  tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
+TB_API void      tb_builder_safepoint_poll(TB_GraphBuilder* g, int mem_var, void* userdata, TB_Node* poll_site, int arg_count, TB_Node** args);
 
 // locals (variables but as stack vars)
 TB_API TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align);

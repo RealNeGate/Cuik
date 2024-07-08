@@ -67,14 +67,14 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS    0
 #define TB_OPTDEBUG_PASSES   0
-#define TB_OPTDEBUG_PEEP     0
+#define TB_OPTDEBUG_PEEP     1
 #define TB_OPTDEBUG_SCCP     0
 #define TB_OPTDEBUG_LOOP     0
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
-#define TB_OPTDEBUG_ISEL     0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_ISEL     1
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
@@ -393,12 +393,10 @@ struct TB_Function {
     size_t param_count;
     TB_Node** params;
 
-    struct {
-        // stores nodes, user lists & lattice elems.
-        TB_Arena arena;
-        // all the random allocs within passes
-        TB_Arena tmp_arena;
-    };
+    // stores nodes, user lists & lattice elems.
+    TB_Arena arena;
+    // all the random allocs within passes
+    TB_Arena tmp_arena;
 
     // used for the copy-compact decision making, not perfectly accurate
     size_t dead_node_bytes;
@@ -578,6 +576,8 @@ enum {
     NODE_MEMORY_IN  = 32,
     // has memory outputs
     NODE_MEMORY_OUT = 64,
+    // the first few bytes of extra are TB_NodeSafepoint
+    NODE_SAFEPOINT  = 128,
 };
 
 struct ICodeGen {

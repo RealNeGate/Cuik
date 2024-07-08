@@ -117,7 +117,7 @@ int run_objdump(int argc, const char** argv) {
             while (pos < s->raw_data.length) {
                 printf(" %8"PRIx64": ", pos);
 
-                TB_X86_Inst inst;
+                /*TB_X86_Inst inst;
                 if (tb_x86_disasm(&inst, s->raw_data.length - pos, data + pos)) {
                     // print first 10 bytes
                     size_t i = 0;
@@ -135,7 +135,7 @@ int run_objdump(int argc, const char** argv) {
                 } else {
                     printf("ERROR\n");
                     pos += 1;
-                }
+                }*/
             }
             printf("\n");
         } else {

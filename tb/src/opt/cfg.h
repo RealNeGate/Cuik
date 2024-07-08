@@ -274,6 +274,11 @@ static TB_Node* tb_get_idom(TB_Function* f, TB_Node* n) {
     return f->doms[n->gvn];
 }
 
+static TB_Node* tb_get_idom_RAW(TB_Function* f, TB_Node* n) {
+    TB_ASSERT(n->gvn < f->doms_n);
+    return f->doms[n->gvn];
+}
+
 // walks up until the node has a dom entry (it's a start or end node)
 static TB_Node* tb_walk_to_bb_bounds(TB_Function* f, TB_Node* n) {
     // if dom[n] is NULL we just follow the inputs[0]

@@ -99,7 +99,6 @@ static void dump_sched(Ctx* restrict ctx) {
 
 static void redo_dataflow(Ctx* restrict ctx, TB_Arena* arena) {
     TB_Function* f = ctx->f;
-    // dump_sched(ctx);
 
     aarray_for(i, ctx->cfg.blocks) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
@@ -740,7 +739,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         redo_dataflow(ctx, arena);
     }
     cuikperf_region_end();
-    dump_sched(ctx);
 }
 
 static TB_Node* phi_move_in_block(TB_BasicBlock** scheduled, TB_BasicBlock* block, TB_Node* phi) {

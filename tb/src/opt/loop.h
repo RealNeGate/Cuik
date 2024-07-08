@@ -8,6 +8,229 @@ typedef struct {
 } LoopOpt;
 
 ////////////////////////////////
+// Loop finding
+////////////////////////////////
+static TB_LoopTree* loop_uf_find(TB_LoopTree* a) {
+    while (a->parent != a) { a = a->parent; }
+    return a;
+}
+
+static void loop_add_kid(TB_LoopTree* kid, TB_LoopTree* mom) {
+    kid->parent = mom;
+    kid->next   = mom->kid;
+    mom->kid    = kid;
+}
+
+static void loop_add_backedge(TB_CFG* cfg, TB_Arena* arena, TB_BasicBlock* header, TB_BasicBlock* backedge) {
+    bool is_natural = slow_dommy2(header, backedge);
+    TB_OPTDEBUG(LOOP)(printf("  * found backedge BB%zu -> BB%zu (%s)\n", header - cfg->blocks, backedge - cfg->blocks, is_natural ? "reducible" : "irreducible"));
+    if (!is_natural) {
+        return;
+    }
+
+    // blocks in the loop body must appear in this range
+    // but also dominate the backedge block.
+    size_t start_i = header - cfg->blocks, end_i = backedge - cfg->blocks;
+    TB_ASSERT_MSG(end_i > 0, "entry block cannot be a loop... how would it?");
+
+    int new_body_min = start_i / 64;
+    int new_body_max = (end_i + 63) / 64;
+
+    TB_LoopTree* loop = header->loop;
+    if (loop) {
+        int old_body_min = loop->body_offset;
+        int old_body_max = loop->body_offset + loop->body_count;
+
+        // resize loop tree
+        int new_body_count = TB_MAX(new_body_max, old_body_max) - TB_MIN(new_body_min, old_body_min);
+        if (old_body_min != new_body_min || loop->body_count != new_body_count) {
+            tb_todo();
+        }
+    } else {
+        loop = header->loop = tb_arena_alloc(arena, sizeof(TB_LoopTree) + (new_body_max - new_body_min)*sizeof(uint64_t));
+        *loop = (TB_LoopTree){
+            // this means it's a top-level loop, it'll get positioned correctly later
+            .parent      = loop,
+            .header      = header,
+            .is_natural  = is_natural,
+            .id          = 1 + aarray_length(cfg->loops),
+            .body_offset = new_body_min,
+            .body_count  = new_body_max - new_body_min
+        };
+        FOR_N(i, 0, loop->body_count) { loop->body[i] = 0; }
+
+        aarray_push(cfg->loops, loop);
+    }
+
+    TB_OPTDEBUG(LOOP)(printf("  body: "));
+    int body_offset = loop->body_offset;
+    if (is_natural) {
+        TB_OPTDEBUG(LOOP)(printf("BB%zu  ", start_i));
+
+        int local_i = start_i - body_offset*64;
+        loop->body[local_i / 64] |= 1ull << (local_i % 64);
+    }
+
+    FOR_N(i, start_i + 1, end_i) {
+        TB_BasicBlock* bb = &cfg->blocks[i];
+        if (slow_dommy2(bb, backedge)) {
+            TB_OPTDEBUG(LOOP)(printf("BB%zu  ", i));
+
+            int local_i = i - body_offset*64;
+            loop->body[local_i / 64] |= 1ull << (local_i % 64);
+        }
+    }
+    TB_OPTDEBUG(LOOP)(printf("\n"));
+}
+
+static void loop_compute_depth(TB_LoopTree* loop, int d) {
+    while (loop) {
+        #if TB_OPTDEBUG_LOOP
+        FOR_N(i, 0, d) { printf("  "); }
+        printf("  Loop(depth: %d", d);
+        if (loop->header) {
+            printf(", header: %%%u", loop->header->start->gvn);
+        }
+        printf(")\n");
+        #endif
+
+        loop->depth = d;
+        if (loop->kid) {
+            loop_compute_depth(loop->kid, d + 1);
+        }
+        loop = loop->next;
+    }
+}
+
+static void loop_find(TB_Function* f, TB_CFG* restrict cfg, LoopOpt* restrict ctx) {
+    TB_OPTDEBUG(LOOP)(printf("\n%s: Loop Finding:\n", f->super.name));
+    cfg->loops = aarray_create(&f->tmp_arena, TB_LoopTree*, 32);
+    // succ <= i means we've got a cycle edge, if i doms succ it's a natural loop.
+    aarray_for(i, cfg->blocks) {
+        TB_BasicBlock* bb = &cfg->blocks[i];
+        TB_Node* end = bb->end;
+
+        if (cfg_is_fork(end)) {
+            FOR_USERS(u, end) {
+                if (cfg_is_cproj(USERN(u))) {
+                    TB_Node* succ = cfg_next_bb_after_cproj(USERN(u));
+                    TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, succ);
+                    if (succ_bb <= bb) { loop_add_backedge(cfg, &f->tmp_arena, succ_bb, bb); }
+                }
+            }
+        } else if (!cfg_is_endpoint(end)) {
+            TB_Node* succ = USERN(cfg_next_user(end));
+            TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, succ);
+            if (succ_bb <= bb) { loop_add_backedge(cfg, &f->tmp_arena, succ_bb, bb); }
+        }
+    }
+    // union-find to organize the loop tree, any intersecting loops will
+    // be sorted by who doms who
+    CUIK_TIMED_BLOCK("union-find") {
+        TB_OPTDEBUG(LOOP)(printf("\n%s: Union-Find:\n", f->super.name));
+        FOR_N(i, 0, aarray_length(cfg->loops)) {
+            TB_LoopTree* restrict loop = cfg->loops[i];
+
+            TB_OPTDEBUG(LOOP)(printf("  Loop%zu(header: %%%u, body:", i, loop->header->start->gvn));
+            FOR_N(j, 0, loop->body_count) {
+                FOR_BIT(k, j*64, loop->body[j]) {
+                    TB_OPTDEBUG(LOOP)(printf(" BB%zu", loop->body_offset*64 + k));
+                }
+            }
+            TB_OPTDEBUG(LOOP)(printf(")\n"));
+
+            FOR_N(j, i + 1, aarray_length(cfg->loops)) {
+                TB_LoopTree* restrict other = cfg->loops[j];
+                TB_OPTDEBUG(LOOP)(printf("    * Intersect with Loop%zu?\n", j));
+
+                // broad-phase intersection (they're at least in the same 64 block area)
+                int start = TB_MAX(loop->body_offset, other->body_offset);
+                int end   = TB_MIN(loop->body_offset + loop->body_count, other->body_offset + other->body_count);
+                if (start >= end) { continue; }
+
+                // narrow-phase intersection
+                bool intersect = false;
+                FOR_N(k, start, end) {
+                    TB_ASSERT(k >= loop->body_offset && k < loop->body_offset + loop->body_count);
+                    TB_ASSERT(k >= other->body_offset && k < other->body_offset + other->body_count);
+
+                    uint64_t x = loop->body[k - loop->body_offset] & other->body[k - other->body_offset];
+                    if (x) { // intersection? ok time to union
+                        intersect = true;
+                        break;
+                    }
+                }
+
+                if (intersect) {
+                    TB_LoopTree* a = loop_uf_find(loop);
+                    TB_LoopTree* b = loop_uf_find(other);
+
+                    if (a != b) { // not already in the same set
+                        TB_ASSERT(a->header != b->header);
+                        if (slow_dommy2(a->header, b->header)) {
+                            TB_OPTDEBUG(LOOP)(printf("    * Loop%d is inside Loop%d\n", b->id, a->id));
+                            TB_ASSERT(b->parent == b);
+                            loop_add_kid(b, a);
+                        } else if (slow_dommy2(b->header, a->header)) {
+                            TB_OPTDEBUG(LOOP)(printf("    * Loop%d is inside Loop%d\n", a->id, b->id));
+                            TB_ASSERT(a->parent == a);
+                            loop_add_kid(a, b);
+                        }
+                    }
+                }
+            }
+        }
+
+        // anything without a parent will be stitched to the root "loop" (not a real loop, just the function itself)
+        cfg->root_loop = tb_arena_alloc(&f->tmp_arena, sizeof(TB_LoopTree));
+        *cfg->root_loop = (TB_LoopTree){ 0 };
+        FOR_N(i, 0, aarray_length(cfg->loops)) {
+            TB_LoopTree* restrict loop = cfg->loops[i];
+            if (loop->parent == loop) {
+                loop_add_kid(loop, cfg->root_loop);
+            }
+        }
+
+        // loop depths are sometimes used for synthetic frequencies... and that's about it for now?
+        TB_OPTDEBUG(LOOP)(printf("\n%s: Final analysis:\n", f->super.name));
+        loop_compute_depth(cfg->root_loop, 0);
+    }
+    // loop analysis does dominators on the SoN directly, we do this so that we can mutate
+    // the graph while maintaining doms but without the CFG (since it becomes less relevant
+    // once we've spotted the loops).
+    //
+    // i don't fill the doms for the BB's body since it's trivial stuff
+    CUIK_TIMED_BLOCK("SoN doms") {
+        f->doms_n = tb_next_pow2(f->node_count + 16);
+        f->doms   = tb_arena_alloc(&f->arena, f->doms_n * sizeof(TB_Node*));
+        FOR_N(i, 0, f->doms_n) { f->doms[i] = NULL; }
+
+        aarray_for(i, cfg->blocks) {
+            TB_BasicBlock* bb = &cfg->blocks[i];
+
+            // sometimes the start and end nodes are the same, that's fine we're writing
+            // the start info last for that reason
+            f->doms[bb->end->gvn] = bb->start;
+            f->doms[bb->start->gvn] = bb->dom->start;
+        }
+    }
+    // we use this early scheduling to discover if nodes are loop invariant or not
+    CUIK_TIMED_BLOCK("early sched") {
+        TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
+        tb_global_schedule(f, f->worklist, *cfg, false, false, NULL);
+
+        FOR_N(i, 0, f->node_count) { ctx->ctrl[i] = f->scheduled[i] ? f->scheduled[i]->start : NULL; }
+        FOR_N(i, f->node_count, ctx->ctrl_n) { ctx->ctrl[i] = NULL; }
+
+        tb_arena_restore(&f->tmp_arena, sp2);
+
+        // we don't need this variant of it around
+        f->scheduled = NULL;
+        f->scheduled_n = 0;
+    }
+}
+
+////////////////////////////////
 // Loop rotation
 ////////////////////////////////
 static void loop_set_ctrl(LoopOpt* ctx, TB_Node* n, TB_Node* new_ctrl) {
@@ -303,101 +526,22 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
     return false;
 }
 
-static void compute_loop_depth(TB_LoopTree* loop, int d) {
-    while (loop) {
-        #if TB_OPTDEBUG_LOOP
-        FOR_N(i, 0, d) { printf("  "); }
-        printf("  Loop(depth: %d", d);
-        if (loop->header) {
-            printf(", header: %%%u", loop->header->start->gvn);
-        }
-        printf(")\n");
-        #endif
-
-        loop->depth = d;
-        if (loop->kid) {
-            compute_loop_depth(loop->kid, d + 1);
-        }
-        loop = loop->next;
-    }
-}
-
-static TB_LoopTree* loop_uf_find(TB_LoopTree* a) {
-    while (a->parent != a) { a = a->parent; }
-    return a;
-}
-
-static void loop_add_kid(TB_LoopTree* kid, TB_LoopTree* mom) {
-    kid->parent = mom;
-    kid->next   = mom->kid;
-    mom->kid    = kid;
-}
-
-static void add_loop_backedge(TB_CFG* cfg, TB_Arena* arena, TB_BasicBlock* header, TB_BasicBlock* backedge) {
-    bool is_natural = slow_dommy2(header, backedge);
-    TB_OPTDEBUG(LOOP)(printf("  * found backedge BB%zu -> BB%zu (%s)\n", header - cfg->blocks, backedge - cfg->blocks, is_natural ? "reducible" : "irreducible"));
-    if (!is_natural) {
-        return;
-    }
-
-    // blocks in the loop body must appear in this range
-    // but also dominate the backedge block.
-    size_t start_i = header - cfg->blocks, end_i = backedge - cfg->blocks;
-    TB_ASSERT_MSG(end_i > 0, "entry block cannot be a loop... how would it?");
-
-    int new_body_min = start_i / 64;
-    int new_body_max = (end_i + 63) / 64;
-
-    TB_LoopTree* loop = header->loop;
-    if (loop) {
-        int old_body_min = loop->body_offset;
-        int old_body_max = loop->body_offset + loop->body_count;
-
-        // resize loop tree
-        int new_body_count = TB_MAX(new_body_max, old_body_max) - TB_MIN(new_body_min, old_body_min);
-        if (old_body_min != new_body_min || loop->body_count != new_body_count) {
-            tb_todo();
-        }
-    } else {
-        loop = header->loop = tb_arena_alloc(arena, sizeof(TB_LoopTree) + (new_body_max - new_body_min)*sizeof(uint64_t));
-        *loop = (TB_LoopTree){
-            // this means it's a top-level loop, it'll get positioned correctly later
-            .parent      = loop,
-            .header      = header,
-            .is_natural  = is_natural,
-            .id          = 1 + aarray_length(cfg->loops),
-            .body_offset = new_body_min,
-            .body_count  = new_body_max - new_body_min
-        };
-        FOR_N(i, 0, loop->body_count) { loop->body[i] = 0; }
-
-        aarray_push(cfg->loops, loop);
-    }
-
-    TB_OPTDEBUG(LOOP)(printf("  body: "));
-    int body_offset = loop->body_offset;
-    if (is_natural) {
-        TB_OPTDEBUG(LOOP)(printf("BB%zu  ", start_i));
-
-        int local_i = start_i - body_offset*64;
-        loop->body[local_i / 64] |= 1ull << (local_i % 64);
-    }
-
-    FOR_N(i, start_i + 1, end_i) {
-        TB_BasicBlock* bb = &cfg->blocks[i];
-        if (slow_dommy2(bb, backedge)) {
-            TB_OPTDEBUG(LOOP)(printf("BB%zu  ", i));
-
-            int local_i = i - body_offset*64;
-            loop->body[local_i / 64] |= 1ull << (local_i % 64);
+// no clue what to call this function but if all the preds have the same dom, we can use that
+// if not, we'll just pick the "easy" provided answer.
+static TB_Node* easy_dom(TB_Function* f, TB_Node* n, TB_Node* easy) {
+    FOR_N(i, 1, n->input_count) {
+        if (f->doms[n->inputs[i]->gvn] != f->doms[n->inputs[0]->gvn]) {
+            return easy;
         }
     }
-    TB_OPTDEBUG(LOOP)(printf("\n"));
+    return n->inputs[0];
 }
 
 bool tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop opts", NULL);
     bool progress = false;
+
+    tb_print_dumb(f);
 
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
 
@@ -410,131 +554,68 @@ bool tb_opt_loops(TB_Function* f) {
     ctx.ctrl   = tb_arena_alloc(&f->tmp_arena, ctx.ctrl_n * sizeof(TB_Node*));
 
     CUIK_TIMED_BLOCK("find loops") {
-        TB_OPTDEBUG(LOOP)(printf("\n%s: Loop Finding:\n", f->super.name));
-        cfg.loops = aarray_create(&f->tmp_arena, TB_LoopTree*, 32);
-        // succ <= i means we've got a cycle edge, if i doms succ it's a natural loop.
-        aarray_for(i, cfg.blocks) {
-            TB_BasicBlock* bb = &cfg.blocks[i];
-            TB_Node* end = bb->end;
-
-            if (cfg_is_fork(end)) {
-                FOR_USERS(u, end) {
-                    if (cfg_is_cproj(USERN(u))) {
-                        TB_Node* succ = cfg_next_bb_after_cproj(USERN(u));
-                        TB_BasicBlock* succ_bb = nl_map_get_checked(cfg.node_to_block, succ);
-                        if (succ_bb <= bb) { add_loop_backedge(&cfg, &f->tmp_arena, succ_bb, bb); }
-                    }
-                }
-            } else if (!cfg_is_endpoint(end)) {
-                TB_Node* succ = USERN(cfg_next_user(end));
-                TB_BasicBlock* succ_bb = nl_map_get_checked(cfg.node_to_block, succ);
-                if (succ_bb <= bb) { add_loop_backedge(&cfg, &f->tmp_arena, succ_bb, bb); }
-            }
-        }
+        loop_find(f, &cfg, &ctx);
     }
-    // union-find to organize the loop tree, any intersecting loops will
-    // be sorted by who doms who
-    CUIK_TIMED_BLOCK("union-find") {
-        TB_OPTDEBUG(LOOP)(printf("\n%s: Union-Find:\n", f->super.name));
-        FOR_N(i, 0, aarray_length(cfg.loops)) {
-            TB_LoopTree* restrict loop = cfg.loops[i];
 
-            TB_OPTDEBUG(LOOP)(printf("  Loop%zu(header: %%%u, body:", i, loop->header->start->gvn));
-            FOR_N(j, 0, loop->body_count) {
-                FOR_BIT(k, j*64, loop->body[j]) {
-                    TB_OPTDEBUG(LOOP)(printf(" BB%zu", loop->body_offset*64 + k));
-                }
-            }
-            TB_OPTDEBUG(LOOP)(printf(")\n"));
-
-            FOR_N(j, i + 1, aarray_length(cfg.loops)) {
-                TB_LoopTree* restrict other = cfg.loops[j];
-                TB_OPTDEBUG(LOOP)(printf("    * Intersect with Loop%zu?\n", j));
-
-                // broad-phase intersection (they're at least in the same 64 block area)
-                int start = TB_MAX(loop->body_offset, other->body_offset);
-                int end   = TB_MIN(loop->body_offset + loop->body_count, other->body_offset + other->body_count);
-                if (start >= end) { continue; }
-
-                // narrow-phase intersection
-                bool intersect = false;
-                FOR_N(k, start, end) {
-                    TB_ASSERT(k >= loop->body_offset && k < loop->body_offset + loop->body_count);
-                    TB_ASSERT(k >= other->body_offset && k < other->body_offset + other->body_count);
-
-                    uint64_t x = loop->body[k - loop->body_offset] & other->body[k - other->body_offset];
-                    if (x) { // intersection? ok time to union
-                        intersect = true;
-                        break;
-                    }
-                }
-
-                if (intersect) {
-                    TB_LoopTree* a = loop_uf_find(loop);
-                    TB_LoopTree* b = loop_uf_find(other);
-
-                    if (a != b) { // not already in the same set
-                        TB_ASSERT(a->header != b->header);
-                        if (slow_dommy2(a->header, b->header)) {
-                            TB_OPTDEBUG(LOOP)(printf("    * Loop%d is inside Loop%d\n", b->id, a->id));
-                            TB_ASSERT(b->parent == b);
-                            loop_add_kid(b, a);
-                        } else if (slow_dommy2(b->header, a->header)) {
-                            TB_OPTDEBUG(LOOP)(printf("    * Loop%d is inside Loop%d\n", a->id, b->id));
-                            TB_ASSERT(a->parent == a);
-                            loop_add_kid(a, b);
-                        }
-                    }
-                }
-            }
-        }
-
-        // anything without a parent will be stitched to the root "loop" (not a real loop, just the function itself)
-        cfg.root_loop = tb_arena_alloc(&f->tmp_arena, sizeof(TB_LoopTree));
-        *cfg.root_loop = (TB_LoopTree){ 0 };
-        FOR_N(i, 0, aarray_length(cfg.loops)) {
-            TB_LoopTree* restrict loop = cfg.loops[i];
-            if (loop->parent == loop) {
-                loop_add_kid(loop, cfg.root_loop);
-            }
-        }
-
-        // loop depths are sometimes used for synthetic frequencies... and that's about it for now?
-        TB_OPTDEBUG(LOOP)(printf("\n%s: Final analysis:\n", f->super.name));
-        compute_loop_depth(cfg.root_loop, 0);
-    }
-    // loop analysis does dominators on the SoN directly, we do this so that we can mutate
-    // the graph while maintaining doms but without the CFG (since it becomes less relevant
-    // once we've spotted the loops).
-    //
-    // i don't fill the doms for the BB's body since it's trivial stuff
-    CUIK_TIMED_BLOCK("SoN doms") {
-        f->doms_n = tb_next_pow2(f->node_count + 16);
-        f->doms   = tb_arena_alloc(&f->arena, f->doms_n * sizeof(TB_Node*));
-        FOR_N(i, 0, f->doms_n) { f->doms[i] = NULL; }
-
-        aarray_for(i, cfg.blocks) {
-            TB_BasicBlock* bb = &cfg.blocks[i];
-
-            // sometimes the start and end nodes are the same, that's fine we're writing
-            // the start info last for that reason
-            f->doms[bb->end->gvn] = bb->start;
-            f->doms[bb->start->gvn] = bb->dom->start;
-        }
-    }
-    // we use this early scheduling to discover if nodes are loop invariant or not
-    CUIK_TIMED_BLOCK("early sched") {
+    CUIK_TIMED_BLOCK("remove safepoints") {
         TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
-        tb_global_schedule(f, f->worklist, cfg, false, false, NULL);
 
-        FOR_N(i, 0, f->node_count) { ctx.ctrl[i] = f->scheduled[i] ? f->scheduled[i]->start : NULL; }
-        FOR_N(i, f->node_count, ctx.ctrl_n) { ctx.ctrl[i] = NULL; }
+        // dominating safepoint of a block
+        TB_Node** safepoints = tb_arena_alloc(&f->tmp_arena, aarray_length(cfg.blocks) * sizeof(TB_Node*));
+        aarray_for(i, cfg.blocks) {
+            TB_BasicBlock* bb = &cfg.blocks[i];
 
+            // scan for the earliest safepoint
+            TB_Node* curr = bb->end;
+            TB_Node* sfpt = NULL;
+            while (curr != bb->start) {
+                if (tb_node_is_safepoint(curr)) {
+                    sfpt = curr;
+                }
+                curr = curr->inputs[0];
+            }
+            safepoints[i] = sfpt;
+        }
+
+        // note that only safepoint polls can be removed, even if we find a redundant
+        // function call safepoint we can't erase the call (rest of explanation left as
+        // an exercise to the reader).
+        aarray_for(i, cfg.blocks) {
+            TB_BasicBlock* bb = &cfg.blocks[i];
+            TB_Node* sfpt = safepoints[i];
+            if (sfpt == NULL) {
+                // walk doms (stopping at loop headers) to find a dominating safepoint, since
+                // any blocks before i are resolved already we can early-exit in those cases.
+                TB_BasicBlock* dom = bb->dom;
+                while (dom > bb && safepoints[dom - cfg.blocks] == NULL) {
+                    // unresolved so we keep walking up
+                    dom = dom->dom;
+                }
+
+                sfpt = safepoints[dom - cfg.blocks];
+            }
+
+            TB_Node* curr = bb->end;
+            while (curr != bb->start) {
+                TB_Node* prev = curr->inputs[0];
+                if (curr != sfpt && curr->type == TB_SAFEPOINT_POLL) {
+                    TB_Node* next = cfg_next_control(curr);
+
+                    if (curr->dt.type == TB_TAG_TUPLE) {
+                        // this case doesn't exist yet, so i haven't tested it yet
+                        tb_todo();
+
+                        // skip CProj
+                        next = cfg_next_control(curr);
+                    }
+
+                    set_input(f, curr, NULL, 0);
+                    subsume_node(f, next, prev);
+                }
+                curr = prev;
+            }
+        }
         tb_arena_restore(&f->tmp_arena, sp2);
-
-        // we don't need this variant of it around
-        f->scheduled = NULL;
-        f->scheduled_n = 0;
     }
 
     // canonicalize regions into natural loop headers (or affine loops)
@@ -544,7 +625,7 @@ bool tb_opt_loops(TB_Function* f) {
         if (!loop->is_natural) { continue; }
 
         TB_Node* header = loop->header->start;
-        if (!cfg_is_region(header) || header->input_count < 2) { continue; }
+        if (!cfg_is_region(header) && header->input_count >= 2) { continue; }
 
         // find all backedges
         dyn_array_clear(backedges);
@@ -557,12 +638,94 @@ bool tb_opt_loops(TB_Function* f) {
         TB_ASSERT(dyn_array_length(backedges) >= 1);
         TB_OPTDEBUG(LOOP)(printf("found natural loop on .bb%zu (%%%u)\n", i, header->gvn));
 
-        // as part of loop simplification we convert backedges into one, this
-        // makes it easier to analyze the exit condition.
+        // as part of loop simplification we convert backedges (and entries) into one.
         ptrdiff_t single_backedge = backedges[0];
         if (dyn_array_length(backedges) > 1 || header->input_count > 2) {
-            // TODO(NeGate): i haven't thought about if we care much yet...
-            single_backedge = -1;
+            // we're splitting regions, usually the peeps would join these together but that doesn't apply
+            // to loop regions.
+            progress = true;
+
+            // we'll make both regions regardless, the peeps will clean it up.
+            int back_path_count = dyn_array_length(backedges);
+            int entry_path_count = header->input_count - back_path_count;
+            TB_Node* back_region  = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, back_path_count, sizeof(TB_NodeRegion));
+            TB_Node* entry_region = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, entry_path_count, sizeof(TB_NodeRegion));
+
+            size_t phi_count = 0;
+            FOR_USERS(u, header) {
+                if (USERN(u)->type == TB_PHI) { phi_count++; }
+            }
+
+            TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
+
+            // find out which are the entry paths
+            bool* is_backedge = tb_arena_alloc(&f->tmp_arena, back_path_count * sizeof(bool));
+            memset(is_backedge, 0, back_path_count * sizeof(bool));
+            FOR_N(j, 0, back_path_count) {
+                is_backedge[backedges[j]] = true;
+            }
+
+            // clone & sort phi ins into either entry or backedge phi ins
+            int phi_i = 0;
+            FOR_USERS(u, header) {
+                if (USERN(u)->type != TB_PHI) { continue; }
+
+                TB_Node* un = USERN(u);
+                TB_Node* entry_phi = tb_alloc_node(f, TB_PHI, un->dt, 1 + entry_path_count, 0);
+                TB_Node* back_phi = tb_alloc_node(f, TB_PHI, un->dt, 1 + back_path_count, 0);
+                set_input(f, entry_phi, entry_region, 0);
+                set_input(f, back_phi, back_region, 0);
+
+                size_t back_i = 1, entry_i = 1;
+                FOR_N(j, 1, un->input_count) {
+                    if (is_backedge[j]) {
+                        set_input(f, back_phi, un->inputs[j], back_i);
+                        back_i += 1;
+                    } else {
+                        set_input(f, entry_phi, un->inputs[j], entry_i);
+                        entry_i += 1;
+                    }
+                    set_input(f, un, NULL, j);
+                }
+
+                // header phis need to get truncated now
+                set_input(f, un, entry_phi, 1);
+                set_input(f, un, back_phi, 2);
+                un->input_count = 3;
+            }
+
+            // sort preds into regions
+            size_t back_i = 0, entry_i = 0;
+            FOR_N(j, 0, header->input_count) {
+                if (is_backedge[j]) {
+                    set_input(f, back_region, header->inputs[j], back_i);
+                    back_i += 1;
+                } else {
+                    set_input(f, entry_region, header->inputs[j], entry_i);
+                    entry_i += 1;
+                }
+            }
+
+            // hook to loop region
+            set_input(f, header, entry_region, 0);
+            set_input(f, header, back_region,  1);
+            FOR_N(i, 2, header->input_count) {
+                set_input(f, header, NULL, i);
+            }
+            header->input_count = 2;
+
+            // we need to make sure the back region is still dom'd by the header but if we can
+            // get more accurate than that we're better off.
+            tb_set_idom(f, back_region, easy_dom(f, back_region, header));
+            tb_set_idom(f, entry_region, tb_get_idom_RAW(f, header));
+            tb_set_idom(f, header, entry_region);
+
+            mark_node_n_users(f, entry_region);
+            mark_node_n_users(f, back_region);
+            mark_node_n_users(f, header);
+
+            tb_arena_restore(&f->tmp_arena, sp2);
+            single_backedge = 1;
         }
 
         // somehow we couldn't simplify the loop? welp
@@ -748,6 +911,9 @@ bool tb_opt_loops(TB_Function* f) {
         }
     }
     tb_free_cfg(&cfg);
+
+    __debugbreak();
+    tb_print_dumb(f);
 
     f->doms = NULL;
     f->doms_n = 0;

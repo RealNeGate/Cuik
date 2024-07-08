@@ -881,6 +881,8 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             case STMT_EXPR:
             case STMT_DECL:
             case STMT_RETURN:
+            case STMT_BREAK:
+            case STMT_CONTINUE:
             return;
 
             // don't compile, just walk kid stmts
@@ -1182,6 +1184,10 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             tb_builder_label_set(g, exit);
             break;
         }
+
+        case STMT_CONTINUE:
+        tb_builder_br(g, s->continue_.target->backing.loop[0]);
+        break;
 
         case STMT_RETURN: {
             if (s->return_.expr == NULL) {
