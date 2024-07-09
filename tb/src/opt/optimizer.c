@@ -699,11 +699,12 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
         new_n->users = users;
     }
 
+    bool allow_cycle = cfg_is_region(n) || n->type == TB_PHI;
     FOR_N(i, 0, n->user_count) {
         TB_User u = n->users[i];
         TB_Node* un = USERN(&u);
         int ui      = USERI(&u);
-        if (un == new_n) { continue; }
+        if (!allow_cycle && un == new_n) { continue; }
 
         TB_ASSERT_MSG(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
         TB_ASSERT(ui < un->input_cap);
@@ -779,25 +780,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
             }
         }
 
-        if (n->input_count == 0) {
-            f->invalidated_loops = true;
-            return dead_node(f);
-        } else if (n->input_count == 1) {
-            // remove phis, because we're single entry they're all degens
-            for (size_t i = 0; i < n->user_count;) {
-                TB_User* use = &n->users[i];
-                if (USERN(use)->type == TB_PHI) {
-                    TB_ASSERT(USERI(use) == 0);
-                    TB_ASSERT(USERN(use)->input_count == 2);
-                    subsume_node(f, USERN(use), USERN(use)->inputs[1]);
-                } else {
-                    i += 1;
-                }
-            }
-
-            f->invalidated_loops = true;
-            return n->inputs[0];
-        } else if (changes) {
+        if (changes) {
             f->invalidated_loops = true;
             return n;
         } else {
@@ -864,15 +847,15 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
             set_input(f, k, f->root_node, 0);
             TB_NODE_SET_EXTRA(k, TB_NodeFloat32, .value = l->_f32);
             latuni_set(f, k, l);
-            return k;
+            return tb__gvn(f, k, sizeof(TB_NodeFloat32));
         }
 
         case LATTICE_FLTCON64: {
             TB_Node* k = tb_alloc_node(f, TB_F64CONST, n->dt, 1, sizeof(TB_NodeFloat64));
             set_input(f, k, f->root_node, 0);
             TB_NODE_SET_EXTRA(n, TB_NodeFloat64, .value = l->_f64);
-            latuni_set(f, n, l);
-            return n;
+            latuni_set(f, k, l);
+            return tb__gvn(f, k, sizeof(TB_NodeFloat64));
         }
 
         case LATTICE_NULL:
@@ -1083,16 +1066,19 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
 
         old_n_type = n->type;
         TB_Node* k = try_as_const(f, n, new_type);
-        if (k && k != n) {
-            DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.constants, old_n_type));
-            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
+        if (k != NULL) {
+            if (k != n) {
+                DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.constants, old_n_type));
+                DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
-            migrate_type(f, n, k);
-            subsume_node(f, n, k);
-            mark_users(f, k);
-            return k;
-        } else if (latuni_set_progress(f, n, new_type)) {
-            mark_users(f, n);
+                migrate_type(f, n, k);
+                subsume_node(f, n, k);
+                mark_users(f, k);
+            } else if (latuni_set_progress(f, n, new_type)) {
+                mark_users(f, n);
+            }
+
+            n = k;
         }
     }
 
@@ -1249,13 +1235,16 @@ bool tb_opt_cprop(TB_Function* f) {
 
             mark_users(f, k);
             mark_node(f, k);
-            subsume_node(f, n, k);
+            if (n != k) {
+                subsume_node(f, n, k);
+            }
             progress = true;
             n = k;
         }
         DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
         FOR_USERS(u, n) { mark_node(f, USERN(u)); }
     }
+
     return progress;
 }
 
@@ -1329,6 +1318,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             // work when it returns true.
             TB_OPTDEBUG(PASSES)(printf("      * Locals\n"));
             DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOCALS ===\n"));
+
             if (k = tb_opt_locals(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
                 progress = true;

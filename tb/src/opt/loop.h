@@ -61,26 +61,14 @@ static void loop_add_backedge(TB_CFG* cfg, TB_Arena* arena, TB_BasicBlock* heade
 
         aarray_push(cfg->loops, loop);
     }
+}
 
-    TB_OPTDEBUG(LOOP)(printf("  body: "));
-    int body_offset = loop->body_offset;
-    if (is_natural) {
-        TB_OPTDEBUG(LOOP)(printf("BB%zu  ", start_i));
+static void loop_add_body(TB_CFG* cfg, TB_LoopTree* loop, TB_BasicBlock* bb) {
+    int bb_id = bb - cfg->blocks;
+    int local_i = bb_id - loop->body_offset*64;
+    TB_ASSERT((local_i / 64) < loop->body_count);
 
-        int local_i = start_i - body_offset*64;
-        loop->body[local_i / 64] |= 1ull << (local_i % 64);
-    }
-
-    FOR_N(i, start_i + 1, end_i) {
-        TB_BasicBlock* bb = &cfg->blocks[i];
-        if (slow_dommy2(bb, backedge)) {
-            TB_OPTDEBUG(LOOP)(printf("BB%zu  ", i));
-
-            int local_i = i - body_offset*64;
-            loop->body[local_i / 64] |= 1ull << (local_i % 64);
-        }
-    }
-    TB_OPTDEBUG(LOOP)(printf("\n"));
+    loop->body[local_i / 64] |= 1ull << (local_i % 64);
 }
 
 static void loop_compute_depth(TB_LoopTree* loop, int d) {
@@ -102,27 +90,126 @@ static void loop_compute_depth(TB_LoopTree* loop, int d) {
     }
 }
 
+typedef struct {
+    bool on_stack;
+    int index, low_link;
+} LoopSCCNode;
+
+typedef struct {
+    LoopSCCNode* nodes;
+    int index;
+
+    int stk_cnt;
+    TB_BasicBlock** stk;
+} LoopSCC;
+
+// strongly connected components used to find loops & their bodies, if the backedge is dominated by the
+// header we also mark it as natural.
+static void loop_scc_walk(LoopSCC* restrict scc, TB_Arena* arena, TB_CFG* restrict cfg, TB_BasicBlock* bb) {
+    LoopSCCNode* n = &scc->nodes[bb - cfg->blocks];
+    n->index    = scc->index;
+    n->low_link = scc->index;
+    n->on_stack = true;
+    scc->index += 1;
+
+    scc->stk[scc->stk_cnt++] = bb;
+
+    TB_ArenaSavepoint sp = tb_arena_save(arena);
+    TB_Node* end = bb->end;
+
+    size_t succ_count = 0;
+    TB_Node** succ = NULL;
+    if (end->dt.type == TB_TAG_TUPLE) {
+        if (end->type == TB_BRANCH) {
+            succ_count = TB_NODE_GET_EXTRA_T(end, TB_NodeBranch)->succ_count;
+        } else {
+            FOR_USERS(u, end) if (cfg_is_cproj(USERN(u))) {
+                succ_count += 1;
+            }
+        }
+
+        succ = tb_arena_alloc(arena, succ_count * sizeof(TB_Node*));
+        #ifndef NDEBUG
+        memset(succ, 0xF0, succ_count * sizeof(TB_Node*));
+        #endif
+
+        FOR_USERS(u, end) {
+            if (cfg_is_cproj(USERN(u))) {
+                int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                succ[index] = cfg_next_bb_after_cproj(USERN(u));
+            }
+        }
+    } else if (!cfg_is_endpoint(end)) {
+        succ_count = 1;
+        succ = tb_arena_alloc(arena, succ_count * sizeof(TB_Node*));
+        succ[0] = cfg_next_control(end);
+    }
+
+    // walk successors (in order to avoid weird nondeterminism)
+    FOR_N(i, 0, succ_count) {
+        TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, succ[i]);
+        LoopSCCNode* succ_n    = &scc->nodes[succ_bb - cfg->blocks];
+
+        // found a backedge, this will also place a loop info entry
+        // whose body will be filled once the SCC for the header is built.
+        if (succ_bb <= bb) {
+            loop_add_backedge(cfg, arena, succ_bb, bb);
+        }
+
+        if (succ_n->index < 0) {
+            loop_scc_walk(scc, arena, cfg, succ_bb);
+            if (n->low_link > succ_n->low_link) { n->low_link = succ_n->low_link; }
+        } else if (succ_n->on_stack) {
+            if (n->low_link > succ_n->index) { n->low_link = succ_n->index; }
+        }
+    }
+    tb_arena_restore(arena, sp);
+
+    // we're the root, construct an SCC
+    if (n->low_link == n->index) {
+        TB_LoopTree* restrict loop = bb->loop;
+        if (loop != NULL) {
+            TB_OPTDEBUG(LOOP)(printf("  Loop(header: %%%u, body:", bb->start->gvn));
+        }
+
+        TB_BasicBlock* kid_bb;
+        do {
+            TB_ASSERT(scc->stk_cnt > 0);
+            kid_bb = scc->stk[--scc->stk_cnt];
+            scc->nodes[kid_bb - cfg->blocks].on_stack = false;
+
+            if (loop != NULL) {
+                kid_bb->loop = loop;
+                loop_add_body(cfg, loop, kid_bb);
+
+                TB_OPTDEBUG(LOOP)(printf(" BB%zu", kid_bb - cfg->blocks));
+            }
+        } while (kid_bb != bb);
+
+        if (loop != NULL) {
+            TB_OPTDEBUG(LOOP)(printf(")\n"));
+        }
+    }
+}
+
 static void loop_find(TB_Function* f, TB_CFG* restrict cfg, LoopOpt* restrict ctx) {
     TB_OPTDEBUG(LOOP)(printf("\n%s: Loop Finding:\n", f->super.name));
     cfg->loops = aarray_create(&f->tmp_arena, TB_LoopTree*, 32);
-    // succ <= i means we've got a cycle edge, if i doms succ it's a natural loop.
-    aarray_for(i, cfg->blocks) {
-        TB_BasicBlock* bb = &cfg->blocks[i];
-        TB_Node* end = bb->end;
 
-        if (cfg_is_fork(end)) {
-            FOR_USERS(u, end) {
-                if (cfg_is_cproj(USERN(u))) {
-                    TB_Node* succ = cfg_next_bb_after_cproj(USERN(u));
-                    TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, succ);
-                    if (succ_bb <= bb) { loop_add_backedge(cfg, &f->tmp_arena, succ_bb, bb); }
-                }
-            }
-        } else if (!cfg_is_endpoint(end)) {
-            TB_Node* succ = USERN(cfg_next_user(end));
-            TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, succ);
-            if (succ_bb <= bb) { loop_add_backedge(cfg, &f->tmp_arena, succ_bb, bb); }
+    // SCC
+    size_t block_count = aarray_length(cfg->blocks);
+    {
+        LoopSCC scc;
+        scc.index   = 0;
+        scc.stk_cnt = 0;
+        scc.nodes   = tb_arena_alloc(&f->tmp_arena, block_count * sizeof(LoopSCCNode));
+        scc.stk     = tb_arena_alloc(&f->tmp_arena, block_count * sizeof(TB_BasicBlock*));
+
+        aarray_for(i, cfg->blocks) {
+            scc.nodes[i] = (LoopSCCNode){ .index = -1, .low_link = -1 };
         }
+
+        loop_scc_walk(&scc, &f->tmp_arena, cfg, &cfg->blocks[0]);
     }
     // union-find to organize the loop tree, any intersecting loops will
     // be sorted by who doms who
@@ -131,14 +218,7 @@ static void loop_find(TB_Function* f, TB_CFG* restrict cfg, LoopOpt* restrict ct
         FOR_N(i, 0, aarray_length(cfg->loops)) {
             TB_LoopTree* restrict loop = cfg->loops[i];
 
-            TB_OPTDEBUG(LOOP)(printf("  Loop%zu(header: %%%u, body:", i, loop->header->start->gvn));
-            FOR_N(j, 0, loop->body_count) {
-                FOR_BIT(k, j*64, loop->body[j]) {
-                    TB_OPTDEBUG(LOOP)(printf(" BB%zu", loop->body_offset*64 + k));
-                }
-            }
-            TB_OPTDEBUG(LOOP)(printf(")\n"));
-
+            TB_OPTDEBUG(LOOP)(printf("  Loop%zu(header: %%%u)\n", i, loop->header->start->gvn));
             FOR_N(j, i + 1, aarray_length(cfg->loops)) {
                 TB_LoopTree* restrict other = cfg->loops[j];
                 TB_OPTDEBUG(LOOP)(printf("    * Intersect with Loop%zu?\n", j));
@@ -541,10 +621,7 @@ bool tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop opts", NULL);
     bool progress = false;
 
-    tb_print_dumb(f);
-
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
-
     TB_CFG cfg = tb_compute_cfg(f, f->worklist, &f->tmp_arena, true);
 
     LoopOpt ctx;
@@ -678,7 +755,7 @@ bool tb_opt_loops(TB_Function* f) {
 
                 size_t back_i = 1, entry_i = 1;
                 FOR_N(j, 1, un->input_count) {
-                    if (is_backedge[j]) {
+                    if (is_backedge[j - 1]) {
                         set_input(f, back_phi, un->inputs[j], back_i);
                         back_i += 1;
                     } else {
@@ -726,6 +803,8 @@ bool tb_opt_loops(TB_Function* f) {
 
             tb_arena_restore(&f->tmp_arena, sp2);
             single_backedge = 1;
+
+            __debugbreak();
         }
 
         // somehow we couldn't simplify the loop? welp
@@ -911,9 +990,6 @@ bool tb_opt_loops(TB_Function* f) {
         }
     }
     tb_free_cfg(&cfg);
-
-    __debugbreak();
-    tb_print_dumb(f);
 
     f->doms = NULL;
     f->doms_n = 0;

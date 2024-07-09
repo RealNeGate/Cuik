@@ -1,4 +1,15 @@
 
+static Lattice* value_fpext(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
+    if (a->tag == LATTICE_FLTCON32) {
+        TB_ASSERT(n->dt.type == TB_TAG_F64);
+        return lattice_f64_const(f, (double) a->_f32);
+    }
+
+    return NULL;
+}
+
 static Lattice* value_int2float(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }

@@ -109,6 +109,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_TRUNCATE]       = { ideal_truncate,    NULL,               value_trunc      },
     [TB_ZERO_EXT]       = { ideal_extension,   NULL,               value_zext       },
     [TB_SIGN_EXT]       = { ideal_extension,   NULL,               value_sext       },
+    [TB_FLOAT_EXT]      = { NULL,              NULL,               value_fpext      },
     [TB_INT2FLOAT]      = { NULL,              NULL,               value_int2float  },
     // misc
     [TB_LOOKUP]         = { NULL,              NULL,               value_lookup     },

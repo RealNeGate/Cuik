@@ -5,22 +5,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
     // if a region is dead, start a violent death chain
     if (n->input_count == 0) {
         return NULL;
-    } else if (n->input_count == 1) {
-        // remove phis, because we're single entry they're all degens
-        for (size_t i = 0; i < n->user_count;) {
-            TB_User* use = &n->users[i];
-            if (USERN(use)->type == TB_PHI) {
-                assert(USERI(use) == 0);
-                assert(USERN(use)->input_count == 2);
-                subsume_node(f, USERN(use), USERN(use)->inputs[1]);
-            } else {
-                i += 1;
-            }
-        }
-
-        // we might want this as an identity
-        return n->inputs[0];
-    } else {
+    } else if (n->input_count > 1) {
         bool changes = false;
 
         size_t i = 0, extra_edges = 0;
@@ -118,6 +103,59 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
     }
 
     return NULL;
+}
+
+static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
+    // fold out diamond shaped patterns
+    TB_Node* same = n->inputs[0];
+    if (same->type == TB_BRANCH_PROJ && same->user_count == 1 && same->inputs[0]->type == TB_BRANCH) {
+        same = same->inputs[0];
+        if (same->user_count != n->input_count) {
+            return n;
+        }
+
+        // if it has phis... quit
+        FOR_USERS(u, n) {
+            if (USERN(u)->type == TB_PHI) { return n; }
+        }
+
+        FOR_N(i, 1, n->input_count) {
+            if (n->inputs[i]->type != TB_BRANCH_PROJ || n->inputs[i]->user_count != 1 || n->inputs[i]->inputs[0] != same) {
+                return n;
+            }
+        }
+
+        // kill projections
+        TB_Node* before = same->inputs[0];
+        FOR_USERS(u, before) {
+            assert(cfg_is_cproj(USERN(u)));
+            tb_kill_node(f, USERN(u));
+        }
+        tb_kill_node(f, same);
+        return before;
+    }
+
+    if (n->input_count == 0) {
+        f->invalidated_loops = true;
+        return dead_node(f);
+    } else if (n->input_count == 1) {
+        // remove phis, because we're single entry they're all degens
+        for (size_t i = 0; i < n->user_count;) {
+            TB_User* use = &n->users[i];
+            if (USERN(use)->type == TB_PHI) {
+                TB_ASSERT(USERI(use) == 0);
+                TB_ASSERT(USERN(use)->input_count == 2);
+                subsume_node(f, USERN(use), USERN(use)->inputs[1]);
+            } else {
+                i += 1;
+            }
+        }
+
+        f->invalidated_loops = true;
+        return n->inputs[0];
+    }
+
+    return n;
 }
 
 static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
@@ -504,39 +542,6 @@ static TB_Node* identity_safepoint(TB_Function* f, TB_Node* n) {
     } else {
         return n;
     }
-}
-
-static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
-    // fold out diamond shaped patterns
-    TB_Node* same = n->inputs[0];
-    if (same->type == TB_BRANCH_PROJ && same->user_count == 1 && same->inputs[0]->type == TB_BRANCH) {
-        same = same->inputs[0];
-        if (same->user_count != n->input_count) {
-            return n;
-        }
-
-        // if it has phis... quit
-        FOR_USERS(u, n) {
-            if (USERN(u)->type == TB_PHI) { return n; }
-        }
-
-        FOR_N(i, 1, n->input_count) {
-            if (n->inputs[i]->type != TB_BRANCH_PROJ || n->inputs[i]->user_count != 1 || n->inputs[i]->inputs[0] != same) {
-                return n;
-            }
-        }
-
-        // kill projections
-        TB_Node* before = same->inputs[0];
-        FOR_USERS(u, before) {
-            assert(cfg_is_cproj(USERN(u)));
-            tb_kill_node(f, USERN(u));
-        }
-        tb_kill_node(f, same);
-        return before;
-    }
-
-    return n;
 }
 
 static TB_Node* identity_phi(TB_Function* f, TB_Node* n) {
