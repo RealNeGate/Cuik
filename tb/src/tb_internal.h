@@ -323,9 +323,11 @@ struct TB_BasicBlock {
     TB_Node* start;
     TB_Node* end;
 
-    // used by codegen to track the associated machine BB
     int pre_index;
-    int machine_i;
+
+    // during codegen, if the block is empty this is the
+    // successive block where we'll actually point to
+    int fwd;
 
     float freq;
     int dom_depth;
@@ -335,7 +337,8 @@ struct TB_BasicBlock {
     Set gen, kill;
     Set live_in, live_out;
 
-    // unordered set of all nodes in the BB
+    // all nodes in the BB, usually unordered (when produced by GCM)
+    // but becomes ordered during codegen
     ArenaArray(TB_Node*) items;
 };
 

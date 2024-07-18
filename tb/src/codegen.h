@@ -67,32 +67,11 @@ struct RegMask {
 };
 
 typedef struct {
-    int id;
-    int fwd;
-
-    // times
-    int start_t, end_t;
-
-    TB_Node* n;
-    TB_Node* end_n;
-    TB_BasicBlock* bb;
-
-    // local schedule
-    ArenaArray(TB_Node*) items;
-} MachineBB;
-
-typedef struct {
     TB_SymbolPatch* patch;
     TB_Location* loc;
     TB_Location* end;
     Comment* comment;
 } Disasm;
-
-// Static-sized hash map
-typedef struct {
-    TB_Node* k;
-    MachineBB* v;
-} NodeToBB;
 
 typedef struct VReg VReg;
 struct VReg {
@@ -180,15 +159,8 @@ struct Ctx {
     uint8_t epilogue_length;
     uint8_t nop_pads;
 
-    // TB_Node* -> MachineBB*
-    struct {
-        size_t exp;
-        NodeToBB* entries;
-    } node_to_bb;
-
     // Basic blocks
     int bb_count;
-    MachineBB* machine_bbs;
     TB_Node** rpo_nodes;
 
     // used when calling node_constraint since it needs an array, we
@@ -216,7 +188,7 @@ struct Ctx {
     DynArray(JumpTablePatch) jump_table_patches;
 
     // Line info
-    MachineBB* current_emit_bb;
+    TB_BasicBlock* current_emit_bb;
     int current_emit_bb_pos;
 
     DynArray(TB_Location) locations;
@@ -229,7 +201,7 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena);
 
 // RA helpers
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b);
-MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n);
+void tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n);
 void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n);
 void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
@@ -380,39 +352,3 @@ static RegMask* intern_regmask(Ctx* ctx, int reg_class, bool may_spill, uint64_t
     }
     return new_rm;
 }
-
-static uint32_t node_to_bb_hash(void* ptr) { return (((uintptr_t) ptr) * 11400714819323198485ull) >> 32ull; }
-static MachineBB* node_to_bb(Ctx* restrict ctx, TB_Node* n) {
-    uint32_t h = node_to_bb_hash(n);
-
-    size_t mask = (1 << ctx->node_to_bb.exp) - 1;
-    size_t first = h & mask, i = first;
-    do {
-        if (ctx->node_to_bb.entries[i].k == n) {
-            return ctx->node_to_bb.entries[i].v;
-        }
-
-        i = (i + 1) & mask;
-    } while (i != first);
-
-    abort();
-}
-
-static void node_to_bb_put(Ctx* restrict ctx, TB_Node* n, MachineBB* bb) {
-    uint32_t h = node_to_bb_hash(n);
-
-    size_t mask = (1 << ctx->node_to_bb.exp) - 1;
-    size_t first = h & mask, i = first;
-    do {
-        if (ctx->node_to_bb.entries[i].k == NULL) {
-            ctx->node_to_bb.entries[i].k = n;
-            ctx->node_to_bb.entries[i].v = bb;
-            return;
-        }
-
-        i = (i + 1) & mask;
-    } while (i != first);
-
-    abort();
-}
-

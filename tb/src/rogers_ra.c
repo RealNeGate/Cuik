@@ -87,11 +87,11 @@ void tb__print_regmask(RegMask* mask) {
 
 static void dump_sched(Ctx* restrict ctx) {
     FOR_N(i, 0, ctx->bb_count) {
-        MachineBB* mbb = &ctx->machine_bbs[i];
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         printf("BB %zu:\n", i);
-        aarray_for(i, mbb->items) {
+        aarray_for(i, bb->items) {
             printf("  ");
-            tb_print_dumb_node(NULL, mbb->items[i]);
+            tb_print_dumb_node(NULL, bb->items[i]);
             printf("\n");
         }
     }
@@ -327,9 +327,8 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
 
             TB_Node* at = NULL;
             TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-            MachineBB* mbb = &ctx->machine_bbs[bb->machine_i];
-            FOR_N(j, 0, aarray_length(mbb->items)) {
-                TB_Node* n = mbb->items[j];
+            FOR_N(j, 0, aarray_length(bb->items)) {
+                TB_Node* n = bb->items[j];
                 if (n->gvn < old_node_count && ra->order[n->gvn] == reload_t[i]) {
                     at = n;
                     break;
@@ -356,7 +355,7 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
             continue;
         }
 
-        TB_Node* reload = reload_n[bb->machine_i];
+        TB_Node* reload = reload_n[bb - ctx->cfg.blocks];
         if (use_n != reload) {
             assert(reload);
             set_input(f, use_n, reload, use_i);
@@ -404,10 +403,10 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
     // recompute order for dirty blocks
     FOR_N(i, 0, bb_count) {
         if (reload_t[i] > 0) {
-            MachineBB* mbb = &ctx->machine_bbs[i];
+            TB_BasicBlock* bb = &ctx->cfg.blocks[i];
             int timeline = 1;
-            for (size_t j = 0; j < aarray_length(mbb->items); j++) {
-                TB_Node* n = mbb->items[j];
+            for (size_t j = 0; j < aarray_length(bb->items); j++) {
+                TB_Node* n = bb->items[j];
                 ra->order[n->gvn] = timeline++;
             }
         }
@@ -515,10 +514,10 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {
         FOR_N(i, 0, ctx->bb_count) {
-            MachineBB* mbb = &ctx->machine_bbs[i];
+            TB_BasicBlock* bb = &ctx->cfg.blocks[i];
             size_t j = 0; // we do insert things while iterating
-            for (; j < aarray_length(mbb->items); j++) {
-                TB_Node* n = mbb->items[j];
+            for (; j < aarray_length(bb->items); j++) {
+                TB_Node* n = bb->items[j];
                 int tmp_count = ctx->tmp_count(ctx, n);
 
                 RegMask** ins = ctx->ins;
@@ -1048,10 +1047,10 @@ static void compute_ordinals(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* a
     ra->order = tb_arena_alloc(arena, ra->order_cap * sizeof(int));
 
     FOR_N(i, 0, ctx->bb_count) {
-        MachineBB* mbb = &ctx->machine_bbs[i];
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         int timeline = 1;
-        for (size_t j = 0; j < aarray_length(mbb->items); j++) {
-            TB_Node* n = mbb->items[j];
+        for (size_t j = 0; j < aarray_length(bb->items); j++) {
+            TB_Node* n = bb->items[j];
             ra->order[n->gvn] = timeline++;
         }
     }
@@ -1071,9 +1070,9 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
     cuikperf_region_start("precolored", NULL);
     dyn_array_clear(ra->spills);
     FOR_N(i, 0, ctx->bb_count) {
-        MachineBB* mbb    = &ctx->machine_bbs[i];
-        for (size_t j = 0; j < aarray_length(mbb->items); j++) {
-            TB_Node* n = mbb->items[j];
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        for (size_t j = 0; j < aarray_length(bb->items); j++) {
+            TB_Node* n = bb->items[j];
             int vreg_id = ctx->vreg_map[n->gvn];
             if (vreg_id > 0) {
                 RegMask* mask = ctx->vregs[vreg_id].mask;
@@ -1138,8 +1137,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
     }
 
     FOR_N(i, 0, ctx->bb_count) {
-        MachineBB* mbb    = &ctx->machine_bbs[i];
-        TB_BasicBlock* bb = mbb->bb;
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         Set* live_in      = &bb->live_in;
         Set* live_out     = &bb->live_out;
 
@@ -1153,8 +1151,8 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
 
             bool pause = false;
             FOR_N(k, i, ctx->bb_count) {
-                MachineBB* other = &ctx->machine_bbs[k];
-                if (set_get(&other->bb->live_in, j)) {
+                TB_BasicBlock* other = &ctx->cfg.blocks[k];
+                if (set_get(&other->live_in, j)) {
                     // move to future active
                     set_put(&ra->future_active, vreg_id);
                     pause = true;
@@ -1191,8 +1189,8 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
         printf("\n");
         #endif
 
-        for (size_t j = 0; j < aarray_length(mbb->items); j++) {
-            TB_Node* n = mbb->items[j];
+        for (size_t j = 0; j < aarray_length(bb->items); j++) {
+            TB_Node* n = bb->items[j];
             int def_t  = ra->order[n->gvn];
             if (is_proj(n) && n->inputs[0] != root) {
                 continue;
@@ -1249,8 +1247,8 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                     } else {
                         size_t bb_id = bb - ctx->cfg.blocks;
                         FOR_N(k, bb_id, ctx->bb_count) {
-                            MachineBB* other = &ctx->machine_bbs[k];
-                            if (set_get(&other->bb->live_in, in->gvn)) {
+                            TB_BasicBlock* other = &ctx->cfg.blocks[k];
+                            if (set_get(&other->live_in, in->gvn)) {
                                 // move to future active
                                 pause = true;
                                 break;

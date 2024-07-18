@@ -219,6 +219,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "mem2reg.h"
 #include "rpo_sched.h"
 #include "list_sched.h"
+#include "bb_placement.h"
 
 static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
     Lattice* l = latuni_get(f, n);
