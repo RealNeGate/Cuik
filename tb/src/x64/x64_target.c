@@ -1642,9 +1642,9 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_NEVER_BRANCH: {
             TB_Node* proj0 = USERN(proj_with_index(n, 0));
             TB_Node* succ_n = cfg_next_bb_after_cproj(proj0);
-            int succ = node_to_bb(ctx, succ_n)->fwd;
-            if (ctx->fallthrough != succ) {
-                __(JMP, TB_X86_QWORD, Vlbl(succ));
+            TB_BasicBlock* succ = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
+            if (ctx->fallthrough != succ->fwd) {
+                __(JMP, TB_X86_QWORD, Vlbl(succ->fwd));
             }
             break;
         }
@@ -1954,13 +1954,13 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             Val key = op_at(ctx, n->inputs[1]);
             FOR_N(i, 1, br->succ_count) {
                 uint64_t imm = TB_NODE_GET_EXTRA_T(succ[i], TB_NodeBranchProj)->key;
-                MachineBB* succ_bb = node_to_bb(ctx, cfg_next_bb_after_cproj(succ[i]));
+                TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ[i]);
 
                 __(CMP, TB_X86_QWORD, &key, Vimm(imm));
                 __(JE, TB_X86_QWORD, Vlbl(succ_bb->fwd));
             }
 
-            MachineBB* succ_bb = node_to_bb(ctx, cfg_next_bb_after_cproj(succ[0]));
+            TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ[0]);
             __(JMP, TB_X86_QWORD, Vlbl(succ_bb->fwd));
             break;
         }
@@ -2018,8 +2018,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                             has_default = !cfg_is_unreachable(succ_n);
                         }
 
-                        MachineBB* mbb = node_to_bb(ctx, succ_n);
-                        succ[index] = mbb->fwd;
+                        TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
+                        succ[index] = succ_bb->fwd;
                     }
                 }
 
@@ -2048,10 +2048,11 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         }
 
         case TB_MACH_JUMP: {
-            MachineBB* succ = node_to_bb(ctx, cfg_next_control(n));
-            if (ctx->fallthrough != succ->fwd) {
+            TB_Node* succ_n = cfg_next_control(n);
+            TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
+            if (ctx->fallthrough != succ_bb->fwd) {
                 EMIT1(e, 0xE9); EMIT4(e, 0);
-                tb_emit_rel32(e, &e->labels[succ->fwd], GET_CODE_POS(e) - 4, 0xFFFFFFFF, 0);
+                tb_emit_rel32(e, &e->labels[succ_bb->fwd], GET_CODE_POS(e) - 4, 0xFFFFFFFF, 0);
             }
             break;
         }

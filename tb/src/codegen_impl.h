@@ -57,11 +57,11 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
 // Helpers
 static void dump_sched(Ctx* restrict ctx) {
     FOR_N(i, 0, ctx->bb_count) {
-        MachineBB* mbb = &ctx->machine_bbs[i];
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         printf("BB %zu:\n", i);
-        aarray_for(i, mbb->items) {
+        aarray_for(i, bb->items) {
             printf("  ");
-            tb_print_dumb_node(NULL, mbb->items[i]);
+            tb_print_dumb_node(NULL, bb->items[i]);
             printf("\n");
         }
     }
@@ -275,36 +275,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     size_t bb_count = aarray_length(cfg.blocks);
-    MachineBB* restrict machine_bbs = tb_arena_alloc(&f->tmp_arena, bb_count * sizeof(MachineBB));
-
-    int stop_bb = -1;
-    CUIK_TIMED_BLOCK("BB scheduling") {
-        size_t cap = ((bb_count * 4) / 3);
-        ctx.node_to_bb.exp = 64 - __builtin_clzll((cap < 4 ? 4 : cap) - 1);
-        ctx.node_to_bb.entries = tb_arena_alloc(&f->tmp_arena, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
-        memset(ctx.node_to_bb.entries, 0, (1u << ctx.node_to_bb.exp) * sizeof(NodeToBB));
-
-        size_t j = 0;
-        FOR_N(i, 0, bb_count) {
-            TB_BasicBlock* bb = &cfg.blocks[i];
-            TB_Node* end = bb->end;
-            if (end->type == TB_RETURN) {
-                stop_bb = i;
-            } else {
-                bb->machine_i = j;
-                machine_bbs[j++] = (MachineBB){ i, .bb = bb };
-            }
-        }
-
-        // enter END block at the... end
-        if (stop_bb >= 0) {
-            cfg.blocks[stop_bb].machine_i = j;
-            machine_bbs[j++] = (MachineBB){ stop_bb, .bb = &cfg.blocks[stop_bb] };
-        }
-
-        TB_ASSERT_MSG(bb_count == j, "did we forget to schedule a BB?");
-        log_phase_end(f, og_size, "BB-sched");
-    }
 
     size_t node_count = f->node_count;
     size_t vreg_cap = 0;
@@ -318,11 +288,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         size_t vreg_count = 1; // 0 is reserved as the NULL vreg
         TB_ASSERT(dyn_array_length(ws->items) == 0);
         FOR_N(i, 0, bb_count) {
-            int bbid = machine_bbs[i].id;
-            TB_BasicBlock* bb = &cfg.blocks[bbid];
-            TB_Node* bb_start = bb->start;
-
-            node_to_bb_put(&ctx, bb_start, &machine_bbs[i]);
+            TB_BasicBlock* bb = &cfg.blocks[i];
 
             // compute local schedule
             CUIK_TIMED_BLOCK("local sched") {
@@ -372,13 +338,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 ctx.vreg_map[n->gvn] = vreg_id;
             }
             dyn_array_clear(ws->items);
-
-            machine_bbs[i].n = bb_start;
-            machine_bbs[i].end_n = bb->end;
-            machine_bbs[i].items = items;
+            bb->items = items;
         }
         ctx.bb_count = bb_count;
-        ctx.machine_bbs = machine_bbs;
         ctx.ins = tb_arena_alloc(&f->tmp_arena, max_ins * sizeof(RegMask*));
 
         // ops with temporaries are *relatively* uncommon (mostly calls)
@@ -393,13 +355,11 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     CUIK_TIMED_BLOCK("gather RA constraints") {
         FOR_N(i, 0, bb_count) {
-            MachineBB* mbb = &ctx.machine_bbs[i];
-
-            TB_BasicBlock* bb = f->scheduled[mbb->n->gvn];
+            TB_BasicBlock* bb = &cfg.blocks[i];
             TB_OPTDEBUG(CODEGEN)(printf("BB %zu (freq=%.2f)\n", i, bb->freq));
 
-            aarray_for(j, mbb->items) {
-                TB_Node* n = mbb->items[j];
+            aarray_for(j, bb->items) {
+                TB_Node* n = bb->items[j];
                 int vreg_id = ctx.vreg_map[n->gvn];
 
                 // all vreg writes here are in-bounds but later work will grow vregs
@@ -435,8 +395,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        // BB info like the items list will become stable, i don't need it anymore and
-        // thus won't keep updating it.
         tb__rogers(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);
@@ -445,31 +403,36 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         log_phase_end(f, og_size, "RA");
     }
 
-    CUIK_TIMED_BLOCK("emit") {
+    int* final_order = tb_arena_alloc(&f->tmp_arena, bb_count * sizeof(int));
+    CUIK_TIMED_BLOCK("BB scheduling") {
         // any empty projection blocks will mark which block they want you to jump to, if the
         // block "forwards" to itself then it's not actually forwarding.
         FOR_N(i, 0, bb_count) {
-            MachineBB* mbb = &machine_bbs[i];
-            if (aarray_length(mbb->items) == 1 && cfg_is_cproj(mbb->items[0])) {
-                TB_Node* next = cfg_next_control(mbb->items[0]);
-                MachineBB* succ = node_to_bb(&ctx, next);
-                mbb->fwd = succ->id;
+            TB_BasicBlock* bb = &cfg.blocks[i];
+            if (aarray_length(bb->items) == 1 && cfg_is_cproj(bb->items[0])) {
+                TB_Node* next = cfg_next_control(bb->items[0]);
+                TB_BasicBlock* succ = nl_map_get_checked(cfg.node_to_block, next);
+                bb->fwd = succ - cfg.blocks;
             } else {
-                mbb->fwd = i;
+                bb->fwd = i;
 
                 // insert jump for the fallthru case, this matters most for the platforms which can
                 // bundle jumps (branch delay slots and VLIWs)
-                if (!cfg_is_terminator(mbb->end_n)) {
+                if (!cfg_is_terminator(bb->end)) {
                     TB_Node* jmp = tb_alloc_node(f, TB_MACH_JUMP, TB_TYPE_CONTROL, 1, 0);
-                    subsume_node2(f, mbb->end_n, jmp);
-                    set_input(f, jmp, mbb->end_n, 0);
-                    mbb->end_n = jmp;
+                    subsume_node2(f, bb->end, jmp);
+                    set_input(f, jmp, bb->end, 0);
+                    bb->end = jmp;
 
-                    aarray_push(mbb->items, jmp);
+                    aarray_push(bb->items, jmp);
                 }
             }
         }
 
+        bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
+    }
+
+    CUIK_TIMED_BLOCK("emit") {
         // most functions are probably decently small, it's ok tho if it needs to
         // resize it can do that pretty quickly
         ctx.emit.capacity = 1024;
@@ -488,30 +451,31 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         bundle.arr = tb_arena_alloc(&f->tmp_arena, BUNDLE_INST_MAX * sizeof(Bundle));
 
         FOR_N(i, 0, bb_count) {
-            MachineBB* mbb = &machine_bbs[i];
-            int bbid = mbb->id;
+            int id = final_order[i];
+            TB_BasicBlock* bb = &cfg.blocks[id];
 
-            on_basic_block(&ctx, e, bbid);
+            on_basic_block(&ctx, e, id);
 
             // block is empty and every use is jump-threaded
-            if (mbb->id != mbb->fwd) { continue; }
+            if (id != bb->fwd) { continue; }
 
             ctx.fallthrough = INT_MAX;
             for (int j = i + 1; j < bb_count; j++) {
-                if (machine_bbs[j].fwd == machine_bbs[j].id) {
-                    ctx.fallthrough = machine_bbs[j].id;
+                int next = final_order[j];
+                if (cfg.blocks[next].fwd == next) {
+                    ctx.fallthrough = next;
                     break;
                 }
             }
-            ctx.current_emit_bb = mbb;
+            ctx.current_emit_bb = bb;
             ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
             // mark label
             TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
 
             TB_Node* prev_n = NULL;
-            aarray_for(i, mbb->items) {
-                TB_Node* n = mbb->items[i];
+            aarray_for(i, bb->items) {
+                TB_Node* n = bb->items[i];
 
                 // TODO(NeGate): we should be checking if the bundle can support the resources we're asking for.
                 // an example is that one bundle might only be able to do 2 memory operations so "fits_as_bundle"
@@ -591,16 +555,16 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         }
 
         FOR_N(i, 0, bb_count) {
-            int bbid = machine_bbs[i].id;
-            if (bbid != machine_bbs[i].fwd) { continue; }
+            int id = final_order[i];
+            if (id != cfg.blocks[i].fwd) { continue; }
 
-            uint32_t start = ctx.emit.labels[bbid] & ~0x80000000;
+            uint32_t start = ctx.emit.labels[id] & ~0x80000000;
             uint32_t end   = ctx.emit.count;
             if (i + 1 < bb_count) {
-                end = ctx.emit.labels[machine_bbs[i + 1].id] & ~0x80000000;
+                end = ctx.emit.labels[final_order[i + 1]] & ~0x80000000;
             }
 
-            disassemble(&ctx.emit, &d, bbid, start, end);
+            disassemble(&ctx.emit, &d, id, start, end);
         }
     }
 

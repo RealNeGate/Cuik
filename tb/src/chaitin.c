@@ -145,15 +145,7 @@ VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
     return &ctx->vregs[i];
 }
 
-void tb__dump(MachineBB* mbb) {
-    printf("DUMP:\n");
-    aarray_for(i, mbb->items) {
-        printf("  v%u\n", mbb->items[i]->gvn);
-    }
-    printf("\n");
-}
-
-MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
+void tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     if (f->node_count >= f->scheduled_n) {
         TB_BasicBlock** new_sched = tb_arena_alloc(&f->arena, 2 * f->scheduled_n * sizeof(TB_BasicBlock*));
         memcpy(new_sched, f->scheduled, f->scheduled_n * sizeof(TB_BasicBlock*));
@@ -165,58 +157,46 @@ MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     }
 
     assert(bb);
-    aarray_push(bb->items, n);
     f->scheduled[n->gvn] = bb;
-    return &ctx->machine_bbs[bb->machine_i];
 }
 
 void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
     TB_BasicBlock* bb = f->scheduled[before_n->gvn];
-    MachineBB* mbb = tb__insert(ctx, f, bb, n);
+    tb__insert(ctx, f, bb, n);
 
-    size_t i = 0, cnt = aarray_length(mbb->items);
-    while (i < cnt && mbb->items[i] != before_n) { i++; }
+    size_t i = 0, cnt = aarray_length(bb->items);
+    while (i < cnt && bb->items[i] != before_n) { i++; }
 
-    aarray_push(mbb->items, 0);
-    memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
-    mbb->items[i] = n;
+    aarray_push(bb->items, 0);
+    memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
+    bb->items[i] = n;
 }
 
 void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     TB_BasicBlock* bb = f->scheduled[n->gvn];
-    MachineBB* mbb = &ctx->machine_bbs[bb->machine_i];
 
-    size_t i = 0, cnt = aarray_length(mbb->items);
-    while (i < cnt && mbb->items[i] != n) { i++; }
+    size_t i = 0, cnt = aarray_length(bb->items);
+    while (i < cnt && bb->items[i] != n) { i++; }
 
-    memmove(&mbb->items[i], &mbb->items[i + 1], (cnt - (i + 1)) * sizeof(TB_Node*));
-    aarray_pop(mbb->items);
+    TB_ASSERT(bb->items[i] == n);
+    memmove(&bb->items[i], &bb->items[i + 1], (cnt - (i + 1)) * sizeof(TB_Node*));
+    aarray_pop(bb->items);
     f->scheduled[n->gvn] = NULL;
-
-    TB_Node* top = bb->items[aarray_length(bb->items) - 1];
-    aarray_for(i, bb->items) {
-        if (bb->items[i] == n) {
-            bb->items[i] = top;
-            aarray_pop(bb->items);
-            return;
-        }
-    }
-    TB_ASSERT_MSG(0, "i wasn't in the schedule?");
 }
 
 void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
     TB_BasicBlock* bb = f->scheduled[after_n->gvn];
-    MachineBB* mbb = tb__insert(ctx, f, bb, n);
+    tb__insert(ctx, f, bb, n);
 
-    size_t i = 0, cnt = aarray_length(mbb->items);
-    while (i < cnt && mbb->items[i] != after_n) { i++; }
+    size_t i = 0, cnt = aarray_length(bb->items);
+    while (i < cnt && bb->items[i] != after_n) { i++; }
 
-    assert(i != cnt);
+    TB_ASSERT(i != cnt);
     i += 1;
 
-    aarray_push(mbb->items, NULL);
-    memmove(&mbb->items[i + 1], &mbb->items[i], (cnt - i) * sizeof(TB_Node*));
-    mbb->items[i] = n;
+    aarray_push(bb->items, NULL);
+    memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
+    bb->items[i] = n;
 }
 
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b) {
@@ -296,14 +276,13 @@ static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
 
     Set live = set_create_in_arena(arena, f->node_count);
     FOR_REV_N(i, 0, ctx->bb_count) {
-        MachineBB* mbb = &ctx->machine_bbs[i];
-        TB_BasicBlock* bb = f->scheduled[mbb->n->gvn];
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
 
         set_copy(&live, &bb->live_out);
 
-        size_t item_count = aarray_length(mbb->items);
+        size_t item_count = aarray_length(bb->items);
         FOR_REV_N(j, 0, item_count) {
-            TB_Node* n = mbb->items[j];
+            TB_Node* n = bb->items[j];
             int vreg_id = ctx->vreg_map[n->gvn];
 
             if (vreg_id > 0) {
@@ -594,11 +573,11 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
     // prolly wanna track all the temporaries early (this doesn't change across
     // coloring attempts)
     FOR_N(i, 0, ctx->bb_count) {
-        MachineBB* mbb = &ctx->machine_bbs[i];
-        for (size_t j = 0; j < aarray_length(mbb->items); j++) {
-            TB_Node* n = mbb->items[j];
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        for (size_t j = 0; j < aarray_length(bb->items); j++) {
+            TB_Node* n    = bb->items[j];
             int tmp_count = ctx->tmp_count(ctx, n);
-            int in_count = n->input_count;
+            int in_count  = n->input_count;
 
             RegMask** ins = ctx->ins;
             ctx->constraint(ctx, n, ins);

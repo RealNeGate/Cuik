@@ -402,6 +402,9 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws);
 void tb_compact_nodes(TB_Function* f, TB_Worklist* ws);
 void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_nests, bool dataflow, TB_GetLatency get_lat);
 
+// BB placement
+void bb_placement_rpo(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
+
 // makes arch-friendly IR
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);
 int tb_opt_peeps(TB_Function* f);
