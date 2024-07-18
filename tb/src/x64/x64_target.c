@@ -65,6 +65,8 @@ uint32_t node_flags(TB_Node* n) {
     X86NodeType type = n->type;
     switch (type) {
         case x86_idiv: case x86_div:
+        return (n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT) : NODE_MEMORY_IN);
+
         case x86_movzx8: case x86_movzx16:
         case x86_movsx8: case x86_movsx16: case x86_movsx32:
         case x86_add: case x86_or: case x86_and: case x86_sub:
@@ -101,6 +103,7 @@ static size_t extra_bytes(TB_Node* n) {
     switch (type) {
         case x86_int3:
         case x86_vzero:
+        case x86_sxt_a2d:
         return 0;
 
         case x86_idiv: case x86_div:
@@ -292,6 +295,9 @@ static int node_2addr(TB_Node* n) {
         case TB_SHL: case TB_SHR: case TB_ROL: case TB_ROR: case TB_SAR:
         case TB_MUL: case x86_imulimm:
         return 1;
+
+        case x86_div: case x86_idiv:
+        return 4;
 
         case TB_ATOMIC_LOAD:
         return 0;
@@ -605,11 +611,24 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         bool is_signed = (n->type == TB_SDIV || n->type == TB_SMOD);
         bool is_div    = (n->type == TB_UDIV || n->type == TB_SDIV);
 
-        TB_Node* op = tb_alloc_node(f, is_signed ? x86_idiv : x86_div, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
+        TB_Node* in_rdx;
+        if (is_signed) {
+            in_rdx = tb_alloc_node(f, x86_sxt_a2d, n->dt, 2, 0);
+            set_input(f, in_rdx, n->inputs[1], 1);
+        } else {
+            // xor edx, edx
+            in_rdx = tb_alloc_node(f, TB_ICONST, n->dt, 1, sizeof(TB_NodeInt));
+            TB_NODE_SET_EXTRA(in_rdx, TB_NodeInt, .value = 0);
+            in_rdx = tb__gvn(f, in_rdx, sizeof(TB_NodeInt));
+        }
+
+        TB_Node* op = tb_alloc_node(f, is_signed ? x86_idiv : x86_div, TB_TYPE_TUPLE, 6, sizeof(X86MemOp));
         // dividend
         set_input(f, op, n->inputs[2], 2);
-        // divisor (into RAX, and RDX gets zero'd)
+        // divisor low (into RAX)
         set_input(f, op, n->inputs[1], 4);
+        // divisor high (into RDX)
+        set_input(f, op, in_rdx, 5);
 
         X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
         op_extra->dt = n->dt;
@@ -1091,9 +1110,7 @@ static int node_tmp_count(Ctx* restrict ctx, TB_Node* n) {
         case TB_MEMCPY:
         return 3;
 
-        case x86_idiv: case x86_div: // clobber RDX
-        return 1;
-
+        case x86_idiv: case x86_div:
         case TB_CYCLE_COUNTER: // clobber RDX & RAX
         return 2;
 
@@ -1108,12 +1125,12 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case TB_MERGEMEM:
         case TB_TRAP:
         case TB_DEBUGBREAK:
+        case TB_UNREACHABLE:
         case TB_AFFINE_LOOP:
         case TB_NATURAL_LOOP:
         case TB_CALLGRAPH:
         case TB_DEBUG_LOCATION:
         if (ins) {
-            // region inputs are all control
             FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
         }
         return &TB_REG_EMPTY;
@@ -1335,6 +1352,11 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
         }
 
+        case x86_sxt_a2d: {
+            if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
+            return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX);
+        }
+
         case x86_div:
         case x86_idiv:
         {
@@ -1353,6 +1375,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 // divisor (goes into RDX:RAX but we just fill RDX with a zero or sign extension)
                 ins[4] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
                 ins[5] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX);
+                ins[6] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
+                ins[7] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX);
             }
             return &TB_REG_EMPTY;
         }
@@ -1637,6 +1661,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_CALLGRAPH:
         case TB_MACH_SYMBOL:
         case TB_MACH_FRAME_PTR:
+        case TB_UNREACHABLE:
         break;
 
         case TB_NEVER_BRANCH: {
@@ -1744,11 +1769,15 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_idiv: {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+        case x86_sxt_a2d: {
             // cqo/cdq (sign extend RAX into RDX)
             if (n->dt.type == TB_TAG_I64) { EMIT1(e, 0x48); }
             EMIT1(e, 0x99);
+            break;
+        }
+
+        case x86_idiv: {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
             // idiv
             Val rhs = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
             TB_X86_DataType dt = legalize_int(op->dt);
@@ -1758,9 +1787,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
         case x86_div: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            // xor edx, edx
-            EMIT1(e, 0x31);
-            EMIT1(e, 0xD2);
             // div
             Val rhs = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
             TB_X86_DataType dt = legalize_int(op->dt);

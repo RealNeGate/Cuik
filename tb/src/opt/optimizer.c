@@ -22,6 +22,7 @@ static bool alloc_types(TB_Function* f);
 
 static bool can_gvn(TB_Node* n);
 static void print_lattice(Lattice* l);
+static bool is_dead_ctrl(TB_Function* f, TB_Node* n);
 
 static Lattice* value_of(TB_Function* f, TB_Node* n);
 
@@ -211,12 +212,18 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "verify.h"
 #include "print_dumb.h"
 #include "print_svg.h"
+#include "compact.h"
 #include "gcm.h"
 #include "slp.h"
 #include "libcalls.h"
 #include "mem2reg.h"
 #include "rpo_sched.h"
 #include "list_sched.h"
+
+static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
+    Lattice* l = latuni_get(f, n);
+    return l == &TOP_IN_THE_SKY || l == &DEAD_IN_THE_SKY;
+}
 
 void tb__gvn_remove(TB_Function* f, TB_Node* n) {
     if (can_gvn(n)) {
@@ -288,7 +295,7 @@ static Lattice* value_proj(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_dead(TB_Function* f, TB_Node* n) {
-    return &TOP_IN_THE_SKY;
+    return &DEAD_IN_THE_SKY;
 }
 
 static Lattice* value_ctrl(TB_Function* f, TB_Node* n) {
@@ -324,13 +331,12 @@ static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
 static Lattice* value_region(TB_Function* f, TB_Node* n) {
     assert(cfg_is_region(n));
 
-    // technically just the MOP logic but folded out
     FOR_N(i, 0, n->input_count) {
         Lattice* edge = latuni_get(f, n->inputs[i]);
         if (edge == &LIVE_IN_THE_SKY) { return &LIVE_IN_THE_SKY; }
     }
 
-    return &TOP_IN_THE_SKY;
+    return &DEAD_IN_THE_SKY;
 }
 
 static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int64_t trips_max, int64_t step, int bits) {
@@ -456,7 +462,6 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = {
                                 .min         =  lattice_int_min(bits),
                                 .max         =  lattice_int_max(bits),
-                                .known_zeros = ~lattice_uint_max(bits),
                                 .widen       =  INT_WIDEN_LIMIT
                             } });
                 }
@@ -678,28 +683,56 @@ void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
     in->user_count += 1;
 }
 
-void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
-    assert(new_n != n);
-    if (new_n->user_count + n->user_count >= new_n->user_cap) {
-        size_t new_cap = tb_next_pow2(new_n->user_count + n->user_count + 4);
-        assert(new_cap < UINT16_MAX);
+void node_ensure_users_cap(TB_Function* f, TB_Node* n, size_t extra) {
+    if (n->user_count + extra >= n->user_cap) {
+        size_t new_cap = tb_next_pow2(n->user_count + extra + 4);
+        TB_ASSERT(new_cap < UINT16_MAX);
 
         // resize
         TB_User* users = tb_arena_alloc(&f->arena, new_cap * sizeof(TB_User));
-        memcpy(users, new_n->users, new_n->user_count * sizeof(TB_User));
+        memcpy(users, n->users, n->user_count * sizeof(TB_User));
 
         // in debug builds we'll fill the old array if easily detectable garbage to notice
         // pointer invalidation issues
         #ifndef NDEBUG
-        memset(new_n->users, 0xF0, new_n->user_cap * sizeof(TB_User));
-        memset(users + new_n->user_count, 0xF0, (new_cap - new_n->user_count) * sizeof(TB_User));
+        memset(n->users, 0xF0, n->user_cap * sizeof(TB_User));
+        memset(users + n->user_count, 0xF0, (new_cap - n->user_count) * sizeof(TB_User));
         #endif
 
-        new_n->user_cap = new_cap;
-        new_n->users = users;
+        n->user_cap = new_cap;
+        n->users = users;
     }
+}
+
+void subsume_node_without_phis(TB_Function* f, TB_Node* n, TB_Node* new_n) {
+    TB_ASSERT(new_n != n);
+    node_ensure_users_cap(f, new_n, n->user_count);
+
+    FOR_N(i, 0, n->user_count) {
+        TB_User u = n->users[i];
+        TB_Node* un = USERN(&u);
+        int ui      = USERI(&u);
+        if (un->type == TB_PHI) { continue; }
+
+        TB_ASSERT_MSG(un->inputs[ui] == n, "Mismatch between def-use and use-def data");
+        TB_ASSERT(ui < un->input_cap);
+
+        remove_user(f, un, ui);
+        un->inputs[ui] = new_n;
+
+        // we've resized in bulk, so no need to check in this loop
+        new_n->users[new_n->user_count++] = u;
+    }
+}
+
+void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
+    TB_ASSERT(new_n != n);
+    node_ensure_users_cap(f, new_n, n->user_count);
 
     bool allow_cycle = cfg_is_region(n) || n->type == TB_PHI;
+    // it's also possible to have a legal cycle where we subsume away the entire body of a loop
+    if (cfg_is_region(new_n)) { allow_cycle = true; }
+
     FOR_N(i, 0, n->user_count) {
         TB_User u = n->users[i];
         TB_Node* un = USERN(&u);
@@ -748,45 +781,13 @@ static Lattice* value_of(TB_Function* f, TB_Node* n) {
 }
 
 // converts constant Lattice into constant node
-static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
-    Lattice* l = latuni_get(f, n);
-    return l == &TOP_IN_THE_SKY || l == &DEAD_IN_THE_SKY;
-}
-
 static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
     // already a constant?
     if (n->type == TB_SYMBOL || n->type == TB_ICONST || n->type == TB_F32CONST || n->type == TB_F64CONST) {
         return NULL;
     }
 
-    // Dead node? kill
-    if (cfg_is_region(n)) {
-        // remove dead predeccessors
-        bool changes = false;
-
-        size_t i = 0, extra_edges = 0;
-        while (i < n->input_count) {
-            if (is_dead_ctrl(f, n->inputs[i])) {
-                changes = true;
-                remove_input(f, n, i);
-
-                FOR_USERS(u, n) {
-                    if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
-                        remove_input(f, USERN(u), i + 1);
-                    }
-                }
-            } else {
-                i += 1;
-            }
-        }
-
-        if (changes) {
-            f->invalidated_loops = true;
-            return n;
-        } else {
-            return NULL;
-        }
-    } else if (n->type != TB_ROOT && n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
+    if (n->type != TB_ROOT && !cfg_is_region(n) && n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
         if (n->type == TB_BRANCH || n->type == TB_AFFINE_LATCH) {
             f->invalidated_loops = true;
         }
@@ -1233,8 +1234,7 @@ bool tb_opt_cprop(TB_Function* f) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.opto_constants++);
             DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m"));
 
-            mark_users(f, k);
-            mark_node(f, k);
+            mark_node_n_users(f, k);
             if (n != k) {
                 subsume_node(f, n, k);
             }
@@ -1260,7 +1260,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
     // the temp arena might've been freed, let's restore it
     if (f->tmp_arena.top == NULL) {
-        tb_arena_create(&f->tmp_arena);
+        tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
     #if TB_OPTDEBUG_STATS
@@ -1348,6 +1348,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             }
         }
 
+        // TODO(NeGate): doesn't do anything yet
         tb_opt_vectorize(f);
     }
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));

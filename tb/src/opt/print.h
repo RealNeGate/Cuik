@@ -4,6 +4,12 @@ typedef struct {
     TB_CFG cfg;
 } PrinterCtx;
 
+static int cool_ansi_color(uint32_t x) {
+    int y = x % 14;
+    if (y > 7) { return 90 + (y - 7); }
+    else { return 32 + y; }
+}
+
 const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
     switch (n_type) {
         case TB_NULL: return "FREED";
@@ -191,24 +197,31 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                 if (params[i] == NULL) {
                     printf("_");
                 } else {
+                    TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(params[i]->gvn)));
                     printf("%%%u: ", params[i]->gvn);
+                    TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
                     print_type2(params[i]->dt);
                 }
             }
 
             FOR_USERS(u, n) if (USERN(u)->type == TB_MACH_PROJ) {
-                printf(", %%%u: ", USERN(u)->gvn);
+                printf(", ");
+                TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(USERN(u)->gvn)));
+                printf("%%%u: ", USERN(u)->gvn);
+                TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
                 print_type2(USERN(u)->dt);
             }
             printf(")");
         }
     } else if (cfg_is_region(n)) {
         TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
+        TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
         if (r->tag != NULL) {
             printf("%%%u.%s", n->gvn, r->tag);
         } else {
             printf("%%%u", n->gvn);
         }
+        TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
 
         if (def) {
             bool first = true;
@@ -221,7 +234,9 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
                         printf(", ");
                     }
 
+                    TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(USERN(u)->gvn)));
                     printf("%%%u: ", USERN(u)->gvn);
+                    TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
                     print_type2(USERN(u)->dt);
                 }
             }
@@ -246,7 +261,9 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
         if (n->inputs[0]->type == TB_ROOT) {
             print_ref_to_node(ctx, n->inputs[0], def);
         } else {
+            TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
             printf("%%%u", n->gvn);
+            TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
             if (def) { printf("()"); }
         }
     } else if (n->type == TB_ICONST) {
@@ -259,7 +276,9 @@ static void print_ref_to_node(PrinterCtx* ctx, TB_Node* n, bool def) {
             printf("%#0"PRIx64, num->value);
         }
     } else {
+        TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
         printf("%%%u", n->gvn);
+        TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
     }
 }
 
@@ -384,7 +403,10 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     }
                     printf("  }");
                 }
-                printf(" // branch %%%u", n->gvn);
+                printf(" // branch ");
+                TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
+                printf("%%%u", n->gvn);
+                TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
                 tb_arena_restore(&f->tmp_arena, sp);
                 break;
             }
@@ -422,7 +444,9 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     FOR_N(i, first, 32) {
                         if (projs[i] == NULL) break;
                         if (i > first) printf(", ");
+                        TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(projs[i]->gvn)));
                         printf("%%%u", projs[i]->gvn);
+                        TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
                     }
                     printf(" = %s.(", tb_node_get_name(n->type));
                     FOR_N(i, first, 32) {
@@ -433,7 +457,11 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     printf(")");
                 } else {
                     // print as normal instruction
-                    printf("  %%%u = %s.", n->gvn, tb_node_get_name(n->type));
+                    printf("  ");
+                    TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
+                    printf("%%%u", n->gvn);
+                    TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
+                    printf(" = %s.", tb_node_get_name(n->type));
 
                     TB_DataType dt = n->dt;
                     if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
@@ -607,8 +635,10 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                                 print_branch_edge(ctx, succ[i], false);
                                 printf("\n");
                             }
-                            printf("  }");
-                            printf(" // branch %%%u", n->gvn);
+                            printf("  } // branch ");
+                            TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
+                            printf("%%%u", n->gvn);
+                            TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
                             tb_arena_restore(&f->tmp_arena, sp);
                         }
                         break;
@@ -635,7 +665,7 @@ void tb_print(TB_Function* f) {
 
     // the temp arena might've been freed, let's restore it
     if (f->tmp_arena.top == NULL) {
-        tb_arena_create(&f->tmp_arena);
+        tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);

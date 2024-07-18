@@ -69,8 +69,8 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
         *info = (TB_ThreadInfo){ .owner = m, .chain = &chain, .lock = &lock };
 
         // allocate memory for it
-        tb_arena_create(&info->perm_arena);
-        tb_arena_create(&info->tmp_arena);
+        tb_arena_create(&info->perm_arena, "IR");
+        tb_arena_create(&info->tmp_arena, "Tmp");
 
         // thread local so it doesn't need to synchronize
         info->next = chain;
@@ -317,6 +317,7 @@ TB_SourceFile* tb_get_source_file(TB_Module* m, ptrdiff_t len, const char* path)
         file->len = key.length;
 
         memcpy(file->path, key.data, key.length);
+        file->path[key.length] = 0;
         key.data = file->path;
 
         nl_map_put(m->files, key, file);
@@ -366,8 +367,8 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
 
     f->gvn_nodes = nl_hashset_alloc(32);
 
-    tb_arena_create(&f->arena);
-    tb_arena_create(&f->tmp_arena);
+    tb_arena_create(&f->arena,     "ModulePerm");
+    tb_arena_create(&f->tmp_arena, "ModuleTmp");
 
     f->section = section;
     f->node_count = 0;

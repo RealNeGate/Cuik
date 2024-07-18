@@ -110,6 +110,7 @@ struct Lattice {
 ////////////////////////////////
 // Cool properties
 ////////////////////////////////
+uint32_t cfg_flags(TB_Node* n);
 bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);
 bool cfg_is_branch(TB_Node* n);
@@ -213,10 +214,6 @@ static bool is_mem_out_op(TB_Node* n) {
     return n->dt.type == TB_TAG_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_TAILCALL) || n->type == TB_SPLITMEM || n->type == TB_MERGEMEM || n->type == TB_DEBUG_LOCATION;
 }
 
-static bool is_pinned(TB_Node* n) {
-    return (n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || is_proj(n) || cfg_is_control(n);
-}
-
 static bool is_mem_end_op(TB_Node* n) {
     return n->type == TB_RETURN || n->type == TB_TRAP || n->type == TB_UNREACHABLE;
 }
@@ -233,33 +230,20 @@ static bool single_use(TB_Node* n) {
     return n->user_count == 1;
 }
 
+static bool tb_node_is_pinned(TB_Node* n) {
+    if ((n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || is_proj(n) || cfg_is_control(n)) {
+        return true;
+    }
+
+    return cfg_flags(n) & NODE_PINNED;
+}
+
 ////////////////////////////////
 // CFG analysis
 ////////////////////////////////
-static bool cfg_has_non_mem_phis(TB_Node* n) {
-    if (!cfg_is_region(n)) { return false; }
-    FOR_USERS(u, n) {
-        if (USERN(u)->type == TB_PHI && USERN(u)->dt.type != TB_TAG_MEMORY) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // if we see a branch projection, it may either be a BB itself
 // or if it enters a REGION directly, then that region is the BB.
 static TB_Node* cfg_next_bb_after_cproj(TB_Node* proj) {
-    /*TB_ASSERT(cfg_is_cproj(proj) && cfg_is_fork(proj->inputs[0]));
-    TB_Node* n = proj->inputs[0];
-
-    TB_ASSERT_MSG(proj->user_count >= 1, "missing successor after cproj");
-    TB_Node* r = USERN(proj->users);
-
-    if (proj->user_count == 1 && cfg_is_region(r)) {
-        return r;
-    } else {
-        return proj;
-    } */
     return proj;
 }
 
@@ -385,6 +369,7 @@ TB_Node* worklist_pop(TB_Worklist* ws);
 
 void subsume_node(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n);
+void subsume_node_without_phis(TB_Function* f, TB_Node* n, TB_Node* new_n);
 void tb__gvn_remove(TB_Function* f, TB_Node* n);
 
 // Scheduler's cost model crap (talk about these in codegen_impl.h)
@@ -401,6 +386,7 @@ void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws);
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws);
 void tb_compact_nodes(TB_Function* f, TB_Worklist* ws);
 void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool loop_nests, bool dataflow, TB_GetLatency get_lat);
+void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg);
 
 // makes arch-friendly IR
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);

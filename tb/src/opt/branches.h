@@ -2,33 +2,15 @@
 static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
-    // if a region is dead, start a violent death chain
     if (n->input_count == 0) {
         return NULL;
     } else if (n->input_count > 1) {
+        TB_ASSERT_MSG(n->type == TB_REGION, "joining region stacks doesn't apply to region's subtypes");
+
         bool changes = false;
-
-        size_t i = 0, extra_edges = 0;
+        size_t i = 0;
         while (i < n->input_count) {
-            Lattice* ty = latuni_get(f, n->inputs[i]);
-            if (ty == &TOP_IN_THE_SKY) {
-                // both the region and phi are doing remove swap so the order should
-                // stay fine across them.
-                changes = true;
-
-                FOR_USERS(use, n) {
-                    TB_Node* phi = USERN(use);
-                    if (phi->type == TB_PHI) {
-                        assert(USERI(use) == 0);
-                        assert(phi->input_count == 1 + n->input_count);
-                        remove_input(f, phi, i + 1);
-                    }
-                }
-
-                remove_input(f, n, i);
-                continue;
-            } else if (n->type == TB_REGION && n->inputs[i]->type == TB_REGION) {
-                #if 1
+            if (n->inputs[i]->type == TB_REGION) {
                 // pure regions can be collapsed into direct edges
                 if (n->inputs[i]->user_count == 1 && n->inputs[i]->input_count > 0) {
                     assert(USERN(n->inputs[i]->users) == n);
@@ -81,11 +63,8 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                             }
                         }
                     }
-
-                    extra_edges += 1;
                     continue;
                 }
-                #endif
             }
             i += 1;
         }
@@ -94,7 +73,6 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
             // affine loops can't be single edge
             if (cfg_is_natural_loop(n) && n->input_count != 2) {
                 n->type = TB_REGION;
-                mark_users(f, n);
             }
 
             f->invalidated_loops = true;
@@ -135,11 +113,33 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
         return before;
     }
 
-    if (n->input_count == 0) {
+    // prune dead predeccessors
+    bool changes = false;
+    size_t i = 0, extra_edges = 0;
+    while (i < n->input_count) {
+        if (is_dead_ctrl(f, n->inputs[i])) {
+            changes = true;
+            remove_input(f, n, i);
+
+            FOR_USERS(u, n) {
+                if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
+                    remove_input(f, USERN(u), i + 1);
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    // loops can't be single edge
+    if (n->input_count != 2 && cfg_is_natural_loop(n)) {
+        n->type = TB_REGION;
+    }
+
+    if (n->input_count <= 1) {
         f->invalidated_loops = true;
-        return dead_node(f);
-    } else if (n->input_count == 1) {
-        // remove phis, because we're single entry they're all degens
+
+        // 0 or 1 preds means no phis
         for (size_t i = 0; i < n->user_count;) {
             TB_User* use = &n->users[i];
             if (USERN(use)->type == TB_PHI) {
@@ -151,8 +151,7 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
             }
         }
 
-        f->invalidated_loops = true;
-        return n->inputs[0];
+        return n->input_count == 1 ? n->inputs[0] : dead_node(f);
     }
 
     return n;

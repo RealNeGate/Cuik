@@ -104,8 +104,17 @@ static void redo_dataflow(Ctx* restrict ctx, TB_Arena* arena) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         bb->live_in  = set_create_in_arena(arena, f->node_count);
         bb->live_out = set_create_in_arena(arena, f->node_count);
+        bb->items    = ctx->machine_bbs[bb->machine_i].items;
     }
+
     tb_dataflow(f, arena, ctx->cfg);
+
+    #ifndef NDEBUG
+    aarray_for(i, ctx->cfg.blocks) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        bb->items = NULL;
+    }
+    #endif
 }
 
 static RegMask* constraint_in(Ctx* ctx, TB_Node* n, int i) {
@@ -736,6 +745,10 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         tb_arena_restore(arena, sp);
 
         // recompute liveness
+        if (rounds == 56) {
+            printf("FOO %p\n", ctx->machine_bbs[0].items[41]->inputs[1]);
+            __debugbreak();
+        }
         redo_dataflow(ctx, arena);
     }
     cuikperf_region_end();
@@ -1281,6 +1294,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                         dyn_array_put(ra->spills, k);
                     }
                 }
+
                 TB_OPTDEBUG(REGALLOC)(printf("\n"));
 
                 // temporaries interfere with each other (although in practice, they'll be fixed

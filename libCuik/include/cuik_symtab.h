@@ -78,7 +78,7 @@ Cuik_SymbolTable* cuik_symtab_create(void* not_found) {
     st->local_count = 0;
     st->top = NULL;
     st->not_found = not_found;
-    tb_arena_create(&st->globals_arena);
+    tb_arena_create(&st->globals_arena, NULL);
     return st;
 }
 

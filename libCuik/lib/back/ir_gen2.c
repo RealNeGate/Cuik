@@ -2,6 +2,9 @@
 static thread_local TB_Arena* muh_tmp_arena;
 static thread_local int* muh_param_memory_vars;
 
+// i still hate forward decls
+static TB_Node* cg_rval(TranslationUnit* tu, TB_GraphBuilder* g, Cuik_Expr* restrict e);
+
 static void emit_loc(TranslationUnit* tu, TB_GraphBuilder* g, SourceLoc loc) {
     if (!tu->has_tb_debug_info) {
         return;
@@ -18,6 +21,50 @@ static void emit_loc(TranslationUnit* tu, TB_GraphBuilder* g, SourceLoc loc) {
     }
 }
 
+////////////////////////////////
+// Initializer lists
+////////////////////////////////
+static void eval_local_init(TranslationUnit* tu, TB_GraphBuilder* g, TB_Node* addr, InitNode* n) {
+    if (n->kid != NULL) {
+        for (InitNode* k = n->kid; k != NULL; k = k->next) {
+            eval_local_init(tu, g, addr, k);
+        }
+    } else {
+        Cuik_Type* child_type = cuik_canonical_type(n->type);
+        int offset = n->offset;
+
+        TB_Node* val = cg_rval(tu, g, n->expr);
+        TB_DataType dt = val->dt;
+
+        Cuik_Type* type = cuik_canonical_type(get_root_type(n->expr));
+        if (n->mode == INIT_ARRAY && n->count > 1) {
+            size_t size = child_type->size;
+            size_t count = n->count;
+
+            for (size_t i = 0; i < count; i++) {
+                TB_Node* addr_offset = tb_builder_ptr_member(g, addr, n->offset + (i * size));
+                tb_builder_store(g, 0, true, addr_offset, val, type->align, false);
+            }
+        } else if (type->kind == KIND_ARRAY && child_type->kind == KIND_ARRAY) {
+            TB_Node* addr_offset = tb_builder_ptr_member(g, addr, n->offset);
+            tb_builder_memcpy(g, 0, true, addr_offset, val, tb_builder_uint(g, TB_TYPE_I64, type->size), type->align, false);
+        } else {
+            TB_Node* addr_offset = tb_builder_ptr_member(g, addr, n->offset);
+            tb_builder_store(g, 0, true, addr_offset, val, type->align, false);
+        }
+    }
+}
+
+static void gen_local_init(TranslationUnit* tu, TB_GraphBuilder* g, TB_Node* addr, Cuik_Type* type, InitNode* root_node) {
+    TB_Node* size_reg = tb_builder_uint(g, TB_TYPE_I64, type->size);
+    TB_Node* val_reg = tb_builder_uint(g, TB_TYPE_I8, 0);
+    tb_builder_memset(g, 0, true, addr, val_reg, size_reg, type->align, false);
+    eval_local_init(tu, g, addr, root_node);
+}
+
+////////////////////////////////
+// LVals & RVals
+////////////////////////////////
 static void assign_to_lval(TB_GraphBuilder* g, Cuik_Type* type, const ValDesc* dst, TB_Node* src, bool is_volatile) {
     if (dst->kind == LVALUE_BITS && dst->bits.width != (type->size * 8)) {
         // NOTE(NeGate): the semantics around volatile bitfields are janky at best
@@ -830,6 +877,10 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             return src;
         }
 
+        case EXPR_COMMA: {
+            return args[0];
+        }
+
         case EXPR_CAST: {
             TB_Node* src = as_rval(tu, g, &args[0]);
             Cuik_Type* t = cuik_canonical_type(qt);
@@ -979,8 +1030,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             if (s->decl.initial) {
                 Subexpr* e = get_root_subexpr(s->decl.initial);
                 if (e->op == EXPR_INITIALIZER) {
-                    TODO();
-                    // gen_local_initializer(tu, func, addr, type, e->init.root);
+                    gen_local_init(tu, g, addr, type, e->init.root);
                 } else {
                     bool is_volatile = s->decl.type.raw & CUIK_QUAL_VOLATILE;
                     if (kind == KIND_ARRAY && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
@@ -1161,7 +1211,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
 
             {
                 TB_Node* paths[2];
-                TB_Node* cond = s->for_.cond ? cg_rval(tu, g, s->for_.cond) : tb_builder_uint(g, TB_TYPE_BOOL, 1);
+                TB_Node* cond = s->for_.cond ? cg_rval(tu, g, s->for_.cond) : tb_builder_uint(g, TB_TYPE_I32, 1);
                 tb_builder_if(g, cond, paths);
 
                 tb_builder_label_set(g, paths[1]);
@@ -1305,6 +1355,10 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
                         } else {
                             muh_param_memory_vars[i] = 0;
                         }
+                    }
+                } else {
+                    for (size_t i = 0; i < function_type->func.param_count; i++) {
+                        muh_param_memory_vars[i] = 0;
                     }
                 }
 

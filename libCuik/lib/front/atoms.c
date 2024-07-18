@@ -22,7 +22,7 @@ Atom atoms_put(size_t len, const unsigned char* str) {
     if (interner == NULL) {
         CUIK_TIMED_BLOCK("alloc atoms") {
             interner = cuik__valloc((1u << INTERNER_EXP) * sizeof(Atom));
-            tb_arena_create(&atoms_arena);
+            tb_arena_create(&atoms_arena, "Atoms");
         }
     }
 

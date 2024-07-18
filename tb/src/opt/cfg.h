@@ -1,12 +1,59 @@
 
 static void compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg);
 
+////////////////////////////////
+// Unordered SoN successor iterator
+////////////////////////////////
+#define FOR_SUCC(it, n) for (SuccIter it = succ_iter(n); succ_iter_next(&it);)
+
+typedef struct {
+    TB_Node* n;
+    TB_Node* succ;
+    int index; // -1 if we're not walking CProjs
+} SuccIter;
+
+static SuccIter succ_iter(TB_Node* n) {
+    if (n->dt.type == TB_TAG_TUPLE) {
+        return (SuccIter){ n, NULL, 0 };
+    } else if (!cfg_is_endpoint(n)) {
+        return (SuccIter){ n, NULL, -1 };
+    } else {
+        return (SuccIter){ n, NULL, n->user_count };
+    }
+}
+
+static bool succ_iter_next(SuccIter* restrict it) {
+    TB_Node* n = it->n;
+
+    // not branching? ok pick single next control
+    if (it->index == -1) {
+        it->index = n->user_count; // terminate
+        it->succ = cfg_next_control(n);
+        return true;
+    }
+
+    // if we're in this loop, we know we're scanning for CProjs
+    while (it->index < n->user_count) {
+        TB_Node* un = USERN(&n->users[it->index++]);
+        if (cfg_is_cproj(un)) {
+            it->succ = un;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+////////////////////////////////
+// Constructing CFG
+////////////////////////////////
 typedef struct Block {
     struct Block* parent;
     TB_ArenaSavepoint sp;
     TB_Node* start;
     TB_Node* end;
     int succ_i;
+    int pre_index;
     TB_Node* succ[];
 } Block;
 
@@ -79,11 +126,20 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, bool dom
     TB_CFG cfg = { 0 };
     cfg.blocks = aarray_create(arena, TB_BasicBlock, 32);
 
+    // we need an arena separate from the output arena for the explicit stack.
+    TB_Arena* tmp_arena = &f->tmp_arena;
+    if (arena == tmp_arena) {
+        tmp_arena = &f->arena;
+    }
+
     ////////////////////////////////
     // post-order DFS
     ////////////////////////////////
+    int pre_n = 0;
+
     // push initial block
-    Block* top = create_block(&f->tmp_arena, f->params[0]);
+    Block* top = create_block(tmp_arena, f->params[0]);
+    top->pre_index = pre_n++;
     worklist_test_n_set(ws, f->params[0]);
 
     while (top != NULL) {
@@ -92,21 +148,23 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, bool dom
             // push next unvisited succ
             TB_Node* succ = top->succ[--top->succ_i];
             if (!worklist_test_n_set(ws, succ)) {
-                Block* new_top = create_block(&f->tmp_arena, succ);
+                Block* new_top = create_block(tmp_arena, succ);
                 new_top->parent = top;
+                new_top->pre_index = pre_n++;
                 top = new_top;
             }
         } else {
             Block* parent = top->parent;
 
-            TB_BasicBlock bb = { .start = top->start, .end = top->end, .dom_depth = -1, .freq = 1.0f };
+            TB_BasicBlock bb = { .start = top->start, .end = top->end, .pre_index = pre_n, .dom_depth = -1, .freq = 1.0f };
             aarray_push(cfg.blocks, bb);
 
-            tb_arena_restore(&f->tmp_arena, top->sp);
+            tb_arena_restore(tmp_arena, top->sp);
             top = parent; // off to wherever we left off
         }
         cuikperf_region_end();
     }
+    TB_ASSERT(pre_n == aarray_length(cfg.blocks));
     worklist_clear_visited(ws);
 
     // just reverse the items here... im too lazy to flip all my uses
@@ -132,7 +190,21 @@ TB_CFG tb_compute_cfg(TB_Function* f, TB_Worklist* ws, TB_Arena* arena, bool dom
         printf("\n%s: Doms:\n", f->super.name);
         FOR_N(i, 0, block_count) {
             TB_BasicBlock* bb = &cfg.blocks[i];
-            printf("  BB%zu(%%%u - %%%u, dom: BB%zu)\n", i, bb->start->gvn, bb->end->gvn, bb->dom - cfg.blocks);
+            printf("  BB%zu(%%%u - %%%u, dom: BB%zu) => ", i, bb->start->gvn, bb->end->gvn, bb->dom - cfg.blocks);
+
+            bool comma = false;
+            FOR_SUCC(it, bb->end) {
+                if (comma) {
+                    printf(", ");
+                } else {
+                    comma = true;
+                }
+
+                TB_BasicBlock* succ_bb = nl_map_get_checked(cfg.node_to_block, it.succ);
+                printf("BB%zu", succ_bb - cfg.blocks);
+            }
+
+            printf("\n");
         }
         #endif
     }

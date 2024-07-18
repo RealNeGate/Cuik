@@ -398,7 +398,7 @@ void tb_builder_memset(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* 
     TB_ASSERT(dst->dt.type == TB_TAG_PTR);
     TB_ASSERT_MSG(val->dt.type == TB_TAG_I8, "memset's val needs to be byte sized");
 
-    TB_Node* n = tb_alloc_node(f, TB_MEMCPY, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
+    TB_Node* n = tb_alloc_node(f, TB_MEMSET, TB_TYPE_MEMORY, 5, sizeof(TB_NodeMemAccess));
     set_input(f, n, g->curr->inputs[0], 0);
     set_input(f, n, xfer_mem(g, n, mem_var), 1);
     set_input(f, n, dst,  2);

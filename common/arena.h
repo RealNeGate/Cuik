@@ -53,6 +53,7 @@ typedef struct {
     TB_ArenaChunk* top;
 
     #ifndef NDEBUG
+    const char* tag;
     uint32_t allocs;
     uint32_t alloc_bytes;
     #endif
@@ -67,7 +68,7 @@ typedef struct TB_ArenaSavepoint {
 #define TB_ARENA_ALLOC(arena, T) tb_arena_alloc(arena, sizeof(T))
 #define TB_ARENA_ARR_ALLOC(arena, count, T) tb_arena_alloc(arena, (count) * sizeof(T))
 
-TB_API void tb_arena_create(TB_Arena* restrict arena);
+TB_API void tb_arena_create(TB_Arena* restrict arena, const char* optional_tag);
 TB_API void tb_arena_destroy(TB_Arena* restrict arena);
 TB_API void tb_arena_clear(TB_Arena* restrict arena);
 

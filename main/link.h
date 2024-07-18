@@ -49,7 +49,7 @@ int run_link(int argc, const char** argv) {
     dyn_array_put(libpaths, "./");
 
     TB_Arena arena;
-    tb_arena_create(&arena);
+    tb_arena_create(&arena, NULL);
 
     // find toolchain details from Cuik
     {

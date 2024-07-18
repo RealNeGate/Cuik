@@ -56,7 +56,7 @@ static void node_layout(TB_Node* n, NodeLayout* l, float dst[2]) {
 void tb_print_svg(TB_Function* f) {
     // the temp arena might've been freed, let's restore it
     if (f->tmp_arena.top == NULL) {
-        tb_arena_create(&f->tmp_arena);
+        tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);

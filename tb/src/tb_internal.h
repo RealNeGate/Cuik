@@ -69,12 +69,12 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_PASSES   0
 #define TB_OPTDEBUG_PEEP     0
 #define TB_OPTDEBUG_SCCP     0
-#define TB_OPTDEBUG_LOOP     0
+#define TB_OPTDEBUG_LOOP     1
 #define TB_OPTDEBUG_SROA     0
 #define TB_OPTDEBUG_GCM      0
 #define TB_OPTDEBUG_MEM2REG  0
 #define TB_OPTDEBUG_ISEL     0
-#define TB_OPTDEBUG_CODEGEN  0
+#define TB_OPTDEBUG_CODEGEN  1
 #define TB_OPTDEBUG_DATAFLOW 0
 #define TB_OPTDEBUG_INLINE   0
 #define TB_OPTDEBUG_REGALLOC 0
@@ -83,7 +83,7 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 #define TB_OPTDEBUG_COMPACT  0
 #define TB_OPTDEBUG_SCHEDULE 0
 // for toggling ANSI colors
-#define TB_OPTDEBUG_ANSI     0
+#define TB_OPTDEBUG_ANSI     1
 
 #define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
 
@@ -308,18 +308,13 @@ struct TB_LoopTree {
     TB_LoopTree* next; // next sibling
     TB_LoopTree* kid;
 
-    TB_BasicBlock* header;
+    // start-of-BB nodes btw
+    TB_Node* header;
+    TB_Node* backedge;
 
     bool is_natural;
     int id;
     int depth;
-
-    // in u64s
-    int body_offset;
-    int body_count;
-
-    // bitset for blocks in the body
-    uint64_t body[];
 };
 
 // we have analysis stuff for computing BBs from our graphs, these aren't
@@ -329,14 +324,12 @@ struct TB_BasicBlock {
     TB_Node* end;
 
     // used by codegen to track the associated machine BB
+    int pre_index;
     int machine_i;
 
     float freq;
     int dom_depth;
     TB_BasicBlock* dom;
-
-    // loop tree
-    TB_LoopTree* loop;
 
     // dataflow
     Set gen, kill;
@@ -578,6 +571,8 @@ enum {
     NODE_MEMORY_OUT = 64,
     // the first few bytes of extra are TB_NodeSafepoint
     NODE_SAFEPOINT  = 128,
+    // cannot be scheduled late
+    NODE_PINNED     = 256,
 };
 
 struct ICodeGen {

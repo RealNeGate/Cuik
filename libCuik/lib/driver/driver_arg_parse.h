@@ -155,7 +155,7 @@ CUIK_API void cuik_parse_args(Cuik_Arguments* restrict args, int argc, const cha
 
 CUIK_API bool cuik_parse_driver_args(Cuik_DriverArgs* comp_args, int argc, const char* argv[]) {
     Cuik_Arguments* args = cuik_alloc_args();
-    tb_arena_create(&args->arena);
+    tb_arena_create(&args->arena, "Args");
 
     cuik_parse_args(args, argc, argv);
 

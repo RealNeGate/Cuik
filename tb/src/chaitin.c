@@ -165,7 +165,6 @@ MachineBB* tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     }
 
     assert(bb);
-    aarray_push(bb->items, n);
     f->scheduled[n->gvn] = bb;
     return &ctx->machine_bbs[bb->machine_i];
 }
@@ -192,16 +191,6 @@ void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     memmove(&mbb->items[i], &mbb->items[i + 1], (cnt - (i + 1)) * sizeof(TB_Node*));
     aarray_pop(mbb->items);
     f->scheduled[n->gvn] = NULL;
-
-    TB_Node* top = bb->items[aarray_length(bb->items) - 1];
-    aarray_for(i, bb->items) {
-        if (bb->items[i] == n) {
-            bb->items[i] = top;
-            aarray_pop(bb->items);
-            return;
-        }
-    }
-    TB_ASSERT_MSG(0, "i wasn't in the schedule?");
 }
 
 void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {

@@ -113,7 +113,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     // the temp arena might've been freed, let's restore it
     if (f->tmp_arena.top == NULL) {
-        tb_arena_create(&f->tmp_arena);
+        tb_arena_create(&f->tmp_arena, "Tmp");
     }
 
     #ifndef NDEBUG
@@ -171,7 +171,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         worklist_push(ws, f->root_node);
         for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
             TB_Node* n = ws->items[i];
-            if (is_pinned(n) && !is_proj(n)) {
+            if (tb_node_is_pinned(n) && !is_proj(n)) {
                 aarray_push(pins, n);
             }
 
@@ -266,9 +266,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         #endif
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f));
-        TB_OPTDEBUG(CODEGEN)(tb_print(f));
+        // TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
         ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, true);
+        tb_compute_synthetic_loop_freq(f, &cfg);
         tb_global_schedule(f, ws, cfg, false, true, node_latency);
 
         log_phase_end(f, og_size, "GCM");
@@ -376,6 +377,12 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             machine_bbs[i].n = bb_start;
             machine_bbs[i].end_n = bb->end;
             machine_bbs[i].items = items;
+
+            // whenever the BB items list is needed we'll copy from the machine BBs, this is
+            // because machine BBs will be changing the array and also because it's in the IR
+            // arena not the tmp one (tmp doesn't last across rounds of RA and that would cause
+            // problems if a resize of the item list happened during the RA run)
+            bb->items = NULL;
         }
         ctx.bb_count = bb_count;
         ctx.machine_bbs = machine_bbs;

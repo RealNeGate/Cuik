@@ -94,7 +94,7 @@ static TB_Node* ideal_store(TB_Function* f, TB_Node* n) {
     TB_Node *mem = n->inputs[1], *addr = n->inputs[2], *val = n->inputs[3];
     TB_DataType dt = val->dt;
 
-    #if 1
+    #if 0
     // store is next to a non-aliasing adjacent store (or merge to non-adjacent stores)
     int curr_bytes = tb_data_type_byte_size(f->super.module, val->dt.type);
     KnownPointer curr_ptr = known_pointer(addr);

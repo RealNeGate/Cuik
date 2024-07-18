@@ -134,7 +134,7 @@ static TB_Arena* get_code_arena(void) {
     static _Thread_local TB_Arena muh_code_arena;
     if (!init) {
         init = true;
-        tb_arena_create(&muh_code_arena);
+        tb_arena_create(&muh_code_arena, "Code");
     }
     return &muh_code_arena;
 }
@@ -264,7 +264,7 @@ static void cc_invoke(BuildStepInfo* restrict info) {
 
     Cuik_ParseResult result;
     CUIK_TIMED_BLOCK_ARGS("parse", s->cc.source) {
-        tb_arena_create(&s->cc.arena);
+        tb_arena_create(&s->cc.arena, "Parse");
 
         result = cuikparse_run(args->version, tokens, args->target, &s->cc.arena, false);
         s->cc.tu = result.tu;

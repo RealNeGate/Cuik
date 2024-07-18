@@ -7,7 +7,8 @@ X(xorimm) X(cmpimm) X(movimm) X(testimm)
 // shift ops with immediates
 X(shlimm) X(shrimm) X(sarimm) X(rolimm) X(rorimm)
 // misc
-X(lea) X(cmovcc) X(imulimm) X(div) X(idiv)
+//   sxt_a2d is CDQ and CQO since they sign extend the (e|r)Ax reg to (e|r)Dx
+X(lea) X(cmovcc) X(imulimm) X(div) X(idiv) X(sxt_a2d)
 // casts
 X(movsx8)
 X(movzx8)

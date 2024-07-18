@@ -79,7 +79,7 @@ Cuik_Diagnostics* cuikdg_make(Cuik_DiagCallback callback, void* userdata) {
     Cuik_Diagnostics* d = cuik_calloc(1, sizeof(Cuik_Diagnostics));
     d->callback = callback;
     d->userdata = userdata;
-    tb_arena_create(&d->buffer);
+    tb_arena_create(&d->buffer, "Diagnostic");
     return d;
 }
 
