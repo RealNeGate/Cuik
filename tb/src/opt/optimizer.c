@@ -342,8 +342,8 @@ static Lattice* value_region(TB_Function* f, TB_Node* n) {
 
 static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int64_t trips_max, int64_t step, int bits) {
     int64_t max;
-    if (!__builtin_mul_overflow(trips_max, step, &max)) { return NULL; }
-    if (!__builtin_add_overflow(max, init->_int.min, &max)) { return NULL; }
+    if (__builtin_mul_overflow(trips_max, step, &max)) { return NULL; }
+    if (__builtin_add_overflow(max, init->_int.min, &max)) { return NULL; }
 
     int64_t min = (uint64_t)init->_int.min + (uint64_t) (((uint64_t) trips_min-1)*step);
     if (step > 0) {
@@ -363,6 +363,9 @@ static TB_Node* ideal_location(TB_Function* f, TB_Node* n) {
 
     set_input(f, cproj, NULL, 0);
     set_input(f, mproj, NULL, 0);
+
+    mark_users(f, cproj);
+    mark_users(f, mproj);
 
     subsume_node(f, cproj, n->inputs[0]);
     subsume_node(f, mproj, n->inputs[1]);
@@ -1066,21 +1069,20 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
             }
         }
 
-        old_n_type = n->type;
-        TB_Node* k = try_as_const(f, n, new_type);
-        if (k != NULL) {
-            if (k != n) {
+        if (latuni_set_progress(f, n, new_type)) {
+            mark_users(f, n);
+
+            old_n_type = n->type;
+            TB_Node* k = try_as_const(f, n, new_type);
+            if (k && k != n) {
                 DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.constants, old_n_type));
                 DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[96m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
 
                 migrate_type(f, n, k);
                 subsume_node(f, n, k);
                 mark_users(f, k);
-            } else if (latuni_set_progress(f, n, new_type)) {
-                mark_users(f, n);
+                n = k;
             }
-
-            n = k;
         }
     }
 
@@ -1301,8 +1303,12 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
     int k;
     int rounds = 0;
+
     bool progress = false;
-    while (worklist_count(f->worklist) > 0) {
+    bool major_progress;
+    do {
+        major_progress = false;
+
         TB_OPTDEBUG(PASSES)(printf("  * ROUND %d:\n", ++rounds));
         TB_OPTDEBUG(PASSES)(printf("    * Minor rewrites\n"));
 
@@ -1319,10 +1325,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             // work when it returns true.
             TB_OPTDEBUG(PASSES)(printf("      * Locals\n"));
             DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOCALS ===\n"));
-
             if (k = tb_opt_locals(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
-                progress = true;
             }
         }
 
@@ -1330,18 +1334,20 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         // sometimes might invalidate the loop tree so we should
         // track when it makes CFG changes.
         TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
-        tb_opt_cprop(f);
+        major_progress |= tb_opt_cprop(f);
 
         TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
         if (k = tb_opt_peeps(f), k > 0) {
             TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
         }
 
+        tb_print_dumb(f);
+
         // currently only rotating loops
         TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
         DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
         if (tb_opt_loops(f)) {
-            progress = true;
+            major_progress = true;
 
             TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
             if (k = tb_opt_peeps(f), k > 0) {
@@ -1349,9 +1355,14 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             }
         }
 
+        tb_print_dumb(f);
+        __debugbreak();
+
         // TODO(NeGate): doesn't do anything yet
-        tb_opt_vectorize(f);
-    }
+        // progress |= tb_opt_vectorize(f);
+
+        progress |= major_progress;
+    } while (major_progress);
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {

@@ -421,7 +421,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 // bundle jumps (branch delay slots and VLIWs)
                 if (!cfg_is_terminator(bb->end)) {
                     TB_Node* jmp = tb_alloc_node(f, TB_MACH_JUMP, TB_TYPE_CONTROL, 1, 0);
-                    subsume_node2(f, bb->end, jmp);
+
+                    TB_User* succ = cfg_next_user(bb->end);
+                    set_input(f, USERN(succ), jmp, USERI(succ));
                     set_input(f, jmp, bb->end, 0);
                     bb->end = jmp;
 
@@ -472,7 +474,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
             // mark label
-            TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", bbid));
+            TB_OPTDEBUG(CODEGEN)(printf("BB %d\n", id));
 
             TB_Node* prev_n = NULL;
             aarray_for(i, bb->items) {
@@ -557,7 +559,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         FOR_N(i, 0, bb_count) {
             int id = final_order[i];
-            if (id != cfg.blocks[i].fwd) { continue; }
+            if (id != cfg.blocks[id].fwd) { continue; }
 
             uint32_t start = ctx.emit.labels[id] & ~0x80000000;
             uint32_t end   = ctx.emit.count;
@@ -565,7 +567,15 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 end = ctx.emit.labels[final_order[i + 1]] & ~0x80000000;
             }
 
-            disassemble(&ctx.emit, &d, id, start, end);
+            TB_CGEmitter* e = &ctx.emit;
+            {
+                tb_asm_print(e, ".bb%d:", id);
+                TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[32m"));
+                tb_asm_print(e, " # Freq: %f", cfg.blocks[id].freq);
+                TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[0m"));
+                tb_asm_print(e, "\n");
+            }
+            disassemble(e, &d, id, start, end);
         }
     }
 

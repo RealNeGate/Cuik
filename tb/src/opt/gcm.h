@@ -20,11 +20,33 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
 
     // if we can keep the phi moves out of the projections we might not need to
     // compile the projection as a real BB.
-    if (n->type == TB_MACH_MOVE &&
-        late->start == late->end &&
+    if (late->start == late->end &&
         late->start->type == TB_BRANCH_PROJ)
     {
-        return late->dom;
+        // data phis
+        if (n->type == TB_MACH_MOVE) { return late->dom; }
+
+        #if 0
+        // memory phis don't have proper move ops so we infer
+        // that we're the memory to be moved by checking our users
+        if (n->dt.type == TB_TAG_MEMORY) {
+            TB_User* phi = NULL;
+            FOR_USERS(u, n) {
+                if (USERN(u)->type == TB_PHI) {
+                    if (phi == NULL) { phi = u; }
+                    else { phi = NULL; break; }
+                }
+            }
+
+            if (phi) {
+                TB_Node* r = USERN(phi)->inputs[0];
+                TB_BasicBlock* bb = f->scheduled[r->inputs[USERI(phi) - 1]->gvn];
+
+                __debugbreak();
+                if (bb == late) { return late->dom; }
+            }
+        }
+        #endif
     }
 
     int lat = get_lat(f, n, NULL);
@@ -338,7 +360,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     TB_ASSERT(n->type != TB_NULL);
                     TB_ASSERT(!tb_node_is_pinned(n));
 
-                    TB_OPTDEBUG(GCM)(printf("%s: try late %%%u\n", f->super.name, n->gvn));
+                    TB_OPTDEBUG(GCM)(printf("%s: TRY LATE %%%u\n", f->super.name, n->gvn));
 
                     TB_BasicBlock* lca = NULL;
                     TB_BasicBlock* curr = f->scheduled[n->gvn];
@@ -381,7 +403,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                             TB_BasicBlock* better = sched_into_good_block(f, get_lat, n, curr, lca);
                             if (curr != better) {
                                 TB_OPTDEBUG(GCM)(
-                                    printf("  LATE  %%%u into .bb%zu: ", n->gvn, curr - cfg.blocks),
+                                    printf("  LATE  %%%u into .bb%zu: ", n->gvn, better - cfg.blocks),
                                     tb_print_dumb_node(NULL, n),
                                     printf("\n")
                                 );

@@ -65,7 +65,7 @@ uint32_t node_flags(TB_Node* n) {
     X86NodeType type = n->type;
     switch (type) {
         case x86_idiv: case x86_div:
-        return (n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT) : NODE_MEMORY_IN);
+        return NODE_MEMORY_IN;
 
         case x86_movzx8: case x86_movzx16:
         case x86_movsx8: case x86_movsx16: case x86_movsx32:
@@ -76,11 +76,11 @@ uint32_t node_flags(TB_Node* n) {
         case x86_addimm: case x86_orimm: case x86_andimm: case x86_subimm:
         case x86_xorimm: case x86_cmpimm: case x86_movimm: case x86_testimm: case x86_imulimm:
         case x86_shlimm: case x86_shrimm: case x86_sarimm: case x86_rolimm: case x86_rorimm:
-        return n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT) : NODE_MEMORY_IN;
+        return n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_PINNED) : NODE_MEMORY_IN;
 
         case x86_call:
         case x86_static_call:
-        return NODE_MEMORY_IN | NODE_MEMORY_OUT;
+        return NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_PINNED;
 
         case x86_cmovcc:
         return NODE_MEMORY_IN;
@@ -807,6 +807,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 TB_Node* a = cond->inputs[1];
                 TB_Node* b = cond->inputs[2];
 
+                int cc = -1;
                 int flip = (if_br->key != 0);
                 X86MemOp* op_extra;
                 if (TB_IS_FLOAT_TYPE(cmp_dt)) {
@@ -838,17 +839,18 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     set_input(f, mach_cond, a, 2);
                 }
 
-                Cond cc;
-                switch (cond->type) {
-                    case TB_CMP_EQ:  cc = E;  break;
-                    case TB_CMP_NE:  cc = NE; break;
-                    case TB_CMP_SLT: cc = L;  break;
-                    case TB_CMP_SLE: cc = LE; break;
-                    case TB_CMP_ULT: cc = B;  break;
-                    case TB_CMP_ULE: cc = BE; break;
-                    case TB_CMP_FLT: cc = B;  break;
-                    case TB_CMP_FLE: cc = BE; break;
-                    default: tb_unreachable();
+                if (cc < 0) {
+                    switch (cond->type) {
+                        case TB_CMP_EQ:  cc = E;  break;
+                        case TB_CMP_NE:  cc = NE; break;
+                        case TB_CMP_SLT: cc = L;  break;
+                        case TB_CMP_SLE: cc = LE; break;
+                        case TB_CMP_ULT: cc = B;  break;
+                        case TB_CMP_ULE: cc = BE; break;
+                        case TB_CMP_FLT: cc = B;  break;
+                        case TB_CMP_FLE: cc = BE; break;
+                        default: tb_unreachable();
+                    }
                 }
                 op_extra->dt = cmp_dt;
                 if_br->key = cc ^ flip;
@@ -2546,10 +2548,6 @@ static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* re
 }
 
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end) {
-    if (bb >= 0) {
-        E(".bb%d:\n", bb);
-    }
-
     while (pos < end) {
         while (d->loc != d->end && d->loc->pos == pos) {
             E("  // %s : line %d\n", d->loc->file->path, d->loc->line);

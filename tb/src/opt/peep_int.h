@@ -296,6 +296,8 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                 break;
             }
 
+            case TB_SAR: return NULL;
+
             default: tb_todo();
         }
 
@@ -369,8 +371,8 @@ static TB_Node* ideal_bits(TB_Function* f, TB_Node* n) {
                 shl_amt == bits - shr_amt) {
                 // convert to rotate left
                 n->type = TB_ROL;
-                set_input(f, n, b->inputs[1], 1);
-                set_input(f, n, b->inputs[2], 2);
+                set_input(f, n, a->inputs[1], 1);
+                set_input(f, n, a->inputs[2], 2);
                 return n;
             }
         }
@@ -460,6 +462,136 @@ static TB_Node* identity_bits(TB_Function* f, TB_Node* n) {
     }
 
     return n;
+}
+
+////////////////////////////////
+// Division
+////////////////////////////////
+static TB_Node* make_int_binop(TB_Function* f, int op, TB_DataType dt, TB_Node* a, TB_Node* b) {
+    TB_Node* n = tb_alloc_node(f, op, dt, 3, sizeof(TB_NodeBinopInt));
+    set_input(f, n, a, 1);
+    set_input(f, n, b, 2);
+    return n;
+}
+
+static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
+    bool is_signed = n->type == TB_SDIV;
+
+    // if we have a constant denominator we may be able to reduce the division into a
+    // multiply and shift-right
+    if (n->inputs[2]->type != TB_ICONST) return NULL;
+
+    // https://gist.github.com/B-Y-P/5872dbaaf768c204480109007f64a915
+    TB_DataType dt = n->dt;
+    TB_Node* x = n->inputs[1];
+
+    uint64_t y = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
+    if (y >= (1ull << 63ull)) {
+        // we haven't implemented the large int case
+        return NULL;
+    } else if (y == 0) {
+        return tb_alloc_node(f, TB_POISON, dt, 1, 0);
+    } else if (y == 1) {
+        return x;
+    } else {
+        // (udiv a N) => a >> log2(N) where N is a power of two
+        uint64_t log2 = tb_ffs(y) - 1;
+        if (y == (UINT64_C(1) << log2)) {
+            if (is_signed) {
+                // z := x + (y - 1)
+                TB_Node* add = make_int_binop(f, TB_ADD, dt, x, make_int_node(f, dt, y - 1));
+
+                // x < 0
+                TB_Node* sign = tb_alloc_node(f, TB_CMP_SLT, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+                set_input(f, sign, x, 1);
+                set_input(f, sign, make_int_node(f, dt, 0), 2);
+                TB_NODE_SET_EXTRA(sign, TB_NodeCompare, .cmp_dt = dt);
+
+                // x < 0 ? z : x
+                TB_Node* select = tb_alloc_node(f, TB_SELECT, dt, 4, 0);
+                set_input(f, select, sign, 1);
+                set_input(f, select, add,  2);
+                set_input(f, select, x,    3);
+
+                return make_int_binop(f, TB_SAR, dt, select, make_int_node(f, dt, log2));
+            } else {
+                TB_Node* shr_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
+                set_input(f, shr_node, x, 1);
+                set_input(f, shr_node, make_int_node(f, dt, log2), 2);
+                return shr_node;
+            }
+        }
+    }
+
+    return NULL;
+
+    #if 0
+    // idk how to handle this yet
+    if (is_signed) return NULL;
+
+    uint64_t sh = (64 - tb_clz64(y)) - 1; // sh = ceil(log2(y)) + w - 64
+
+    #ifndef NDEBUG
+    uint64_t sh2 = 0;
+    while(y > (1ull << sh2)){ sh2++; }    // sh' = ceil(log2(y))
+    sh2 += 63 - 64;                       // sh  = ceil(log2(y)) + w - 64
+
+    assert(sh == sh2);
+    #endif
+
+    // 128bit division here can't overflow
+    uint64_t a = tb_div128(1ull << sh, y - 1, y);
+
+    // now we can take a and sh and do:
+    //   x / y  => mulhi(x, a) >> sh
+    int bits = dt.data;
+    if (bits > 32) {
+        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, 0);
+        set_input(f, mul_node, x, 1);
+        set_input(f, mul_node, make_int_node(f, dt, a), 2);
+
+        TB_Node* lo = make_proj_node(f, dt, mul_node, 0);
+        TB_Node* hi = make_proj_node(f, dt, mul_node, 1);
+
+        mark_node(f, mul_node);
+        mark_node(f, lo);
+        mark_node(f, hi);
+
+        TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, sh_node, hi, 1);
+        set_input(f, sh_node, make_int_node(f, dt, sh), 2);
+        TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
+
+        return sh_node;
+    } else {
+        TB_DataType big_dt = TB_TYPE_INTN(bits * 2);
+        sh += bits; // chopping the low half
+
+        a &= (1ull << bits) - 1;
+
+        // extend x
+        TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, big_dt, 2, 0);
+        set_input(f, ext_node, x, 1);
+
+        TB_Node* mul_node = tb_alloc_node(f, TB_MUL, big_dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, mul_node, ext_node, 1);
+        set_input(f, mul_node, make_int_node(f, big_dt, a), 2);
+        TB_NODE_SET_EXTRA(mul_node, TB_NodeBinopInt, .ab = 0);
+
+        TB_Node* sh_node = tb_alloc_node(f, TB_SHR, big_dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, sh_node, mul_node, 1);
+        set_input(f, sh_node, make_int_node(f, big_dt, sh), 2);
+        TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
+
+        TB_Node* trunc_node = tb_alloc_node(f, TB_TRUNCATE, dt, 2, 0);
+        set_input(f, trunc_node, sh_node, 1);
+
+        mark_node(f, mul_node);
+        mark_node(f, sh_node);
+        mark_node(f, ext_node);
+        return trunc_node;
+    }
+    #endif
 }
 
 ////////////////////////////////

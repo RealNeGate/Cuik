@@ -104,17 +104,9 @@ static void redo_dataflow(Ctx* restrict ctx, TB_Arena* arena) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         bb->live_in  = set_create_in_arena(arena, f->node_count);
         bb->live_out = set_create_in_arena(arena, f->node_count);
-        bb->items    = ctx->machine_bbs[bb->machine_i].items;
     }
 
     tb_dataflow(f, arena, ctx->cfg);
-
-    #ifndef NDEBUG
-    aarray_for(i, ctx->cfg.blocks) {
-        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-        bb->items = NULL;
-    }
-    #endif
 }
 
 static RegMask* constraint_in(Ctx* ctx, TB_Node* n, int i) {
@@ -510,6 +502,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     }
 
     ra.spills = dyn_array_create(int, 32);
+    dump_sched(ctx);
 
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {
@@ -744,10 +737,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         tb_arena_restore(arena, sp);
 
         // recompute liveness
-        if (rounds == 56) {
-            printf("FOO %p\n", ctx->machine_bbs[0].items[41]->inputs[1]);
-            __debugbreak();
-        }
         redo_dataflow(ctx, arena);
     }
     cuikperf_region_end();
@@ -760,6 +749,19 @@ static TB_Node* phi_move_in_block(TB_BasicBlock** scheduled, TB_BasicBlock* bloc
         }
     }
     return NULL;
+}
+
+static int last_use_in_bb(TB_BasicBlock** scheduled, Rogers* restrict ra, TB_BasicBlock* bb, TB_Node* n) {
+    int l = 0;
+    FOR_USERS(u, n) {
+        TB_Node* un = USERN(u);
+        if (USERI(u) < un->input_count &&
+            scheduled[un->gvn] == bb &&
+            l < ra->order[un->gvn]) {
+            l = ra->order[un->gvn];
+        }
+    }
+    return l;
 }
 
 static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs, TB_BasicBlock* block) {
@@ -788,10 +790,20 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
             // this point in the pipeline, a phi CANNOT be referenced by the "bottom half", only the
             // potential copy can.
             if (move) {
-                // because we split the lifetimes, the rest of the function should treat
-                // the phi as not being live out.
-                if (lhs == phi) { lhs_live_out = false; }
-                else { rhs_live_out = false; }
+                int other_t = ra->order[other->gvn];
+                if (set_get(&block->live_out, other->gvn)) {
+                    if (other_t >= ra->order[phi->gvn]) {
+                        return true;
+                    }
+                } else {
+                    int kill_site = ra->order[move->gvn];
+                    int other_end = last_use_in_bb(ctx->f->scheduled, ra, block, other);
+                    if (other_t >= ra->order[phi->gvn] && other_t < kill_site) {
+                        return true;
+                    }
+                }
+
+                return false;
             }
         }
     }
@@ -842,19 +854,6 @@ static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_N
 
     return interfere_in_block(ctx, ra, lhs, rhs, lhs_block)
         || interfere_in_block(ctx, ra, rhs, lhs, rhs_block);
-}
-
-static int last_use_in_bb(TB_BasicBlock** scheduled, Rogers* restrict ra, TB_BasicBlock* bb, TB_Node* n) {
-    int l = 0;
-    FOR_USERS(u, n) {
-        TB_Node* un = USERN(u);
-        if (USERI(u) < un->input_count &&
-            scheduled[un->gvn] == bb &&
-            l < ra->order[un->gvn]) {
-            l = ra->order[un->gvn];
-        }
-    }
-    return l;
 }
 
 static bool interfere_with_def(TB_BasicBlock** scheduled, Rogers* restrict ra, TB_BasicBlock* bb, TB_Node* def, TB_Node* other) {

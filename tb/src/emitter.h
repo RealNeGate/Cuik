@@ -63,11 +63,22 @@ static void tb_reloc4(TB_CGEmitter* restrict e, uint32_t p, uint32_t b, uint32_t
     memcpy(ptr, &tmp, 4);
 }
 
+static void tb_reloc4_noadd(TB_CGEmitter* restrict e, uint32_t p, uint32_t b, uint32_t mask) {
+    void* ptr = &e->data[p];
+
+    uint32_t tmp;
+    memcpy(&tmp, ptr, 4);
+    tmp = (tmp & ~mask) | (b & mask);
+    memcpy(ptr, &tmp, 4);
+}
+
 static int tb_emit_get_label(TB_CGEmitter* restrict e, uint32_t pos) {
-    FOR_N(i, 1, e->label_count) {
+    FOR_REV_N(i, 0, e->label_count) {
         assert(e->labels[i] & 0x80000000);
-        if ((e->labels[i] & ~0x80000000) > pos) {
-            return i - 1;
+        if ((e->labels[i] & ~0x80000000) == pos) {
+            return i;
+        } else if ((e->labels[i] & ~0x80000000) < pos) {
+            return i + 1;
         }
     }
 
@@ -135,6 +146,7 @@ static void tb_resolve_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t 
     while ((curr & mask) != 0) {
         uint32_t next;
         memcpy(&next, &e->data[curr], 4);
+        memset(&e->data[curr], 0, 4);
         RELOC4(e, curr, (target - (curr + 4)) >> shift, mask);
         curr = next;
     }
@@ -157,3 +169,4 @@ static void* tb_cgemit_reserve(TB_CGEmitter* restrict e, size_t count) {
 static void tb_cgemit_commit(TB_CGEmitter* restrict e, size_t bytes) {
     e->count += bytes;
 }
+
