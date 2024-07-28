@@ -121,19 +121,13 @@ void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws) {
     }
 }
 
-static TB_BasicBlock* add_anti_deps(TB_Function* f, TB_Node* ld, TB_Node* mem, TB_BasicBlock* early) {
-    TB_BasicBlock* lca = early;
-
+static TB_BasicBlock* add_anti_deps(TB_Function* f, TB_CFG* cfg, TB_Node* ld, TB_Node* mem, TB_BasicBlock* early) {
+    TB_BasicBlock* lca = NULL;
     FOR_USERS(u, mem) {
         TB_Node* un = USERN(u);
         if (USERI(u) <= un->input_count) {
-            if (un->type == TB_PHI) {
-                // doesn't change the phi but does move the load above it
-                int ui = USERI(u);
-                TB_Node* pred = un->inputs[0]->inputs[ui - 1];
-                TB_BasicBlock* bb = f->scheduled[pred->gvn];
-                if (bb) { lca = find_lca(lca, bb); }
-            } else if (tb_node_has_mem_out(un)) {
+            // phis don't actually write to memory so we can move around them
+            if (un->type != TB_PHI && tb_node_has_mem_out(un)) {
                 tb_node_add_extra(f, un, ld);
             }
         }
@@ -335,7 +329,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     if (!tb_node_has_mem_out(n)) {
                         TB_Node* mem = tb_node_mem_in(n);
                         if (mem != NULL) {
-                            curr = add_anti_deps(f, n, mem, curr);
+                            curr = add_anti_deps(f, &cfg, n, mem, curr);
                             f->scheduled[n->gvn] = curr;
                         }
                     }
@@ -369,7 +363,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     if (!tb_node_has_mem_out(n)) {
                         TB_Node* mem = tb_node_mem_in(n);
                         if (mem != NULL) {
-                            lca = add_anti_deps(f, n, mem, curr);
+                            lca = add_anti_deps(f, &cfg, n, mem, curr);
                         }
                     }
 

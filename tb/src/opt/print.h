@@ -681,7 +681,7 @@ void tb_print(TB_Function* f) {
     ctx.cfg = tb_compute_cfg(f, &ws, &f->tmp_arena, true);
 
     // schedule nodes
-    tb_global_schedule(f, &ws, ctx.cfg, true, false, NULL);
+    tb_global_schedule(f, &ws, ctx.cfg, false, false, NULL);
 
     TB_BasicBlock* end_bb = NULL;
     aarray_for(i, ctx.cfg.blocks) {

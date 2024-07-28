@@ -932,10 +932,12 @@ bool tb_opt_loops(TB_Function* f) {
                         }
 
                         // any nodes created during this loop close fixup shouldn't themselves need fixup btw.
+                        bool is_loop_phi = n->type == TB_PHI && n->inputs[0];
                         size_t snapshot_count = f->node_count;
 
                         // lazily constructed
-                        TB_Node* exit_phi = NULL;
+                        //   [0] exit, [1] body
+                        TB_Node* phis[2] = { NULL, NULL };
                         for (size_t i = 0; i < n->user_count;) {
                             TB_Node* un = USERN(&n->users[i]);
                             int ui      = USERI(&n->users[i]);
@@ -943,47 +945,56 @@ bool tb_opt_loops(TB_Function* f) {
                             if (un->gvn < snapshot_count) {
                                 // if it's not within the loop (including the kids), it's used
                                 // after the loop which means it should refer to the "new_phi"
-                                TB_LoopTree* use_loop = nl_table_get(&ctx.loop_map, ctx.ctrl[un->gvn]);
-                                if (use_loop == NULL || !loop_inside(loop, use_loop)) {
-                                    if (exit_phi == NULL) {
+                                TB_Node* bb = ctx.ctrl[un->gvn];
+                                TB_LoopTree* use_loop = nl_table_get(&ctx.loop_map, bb);
+
+                                if (use_loop == NULL || bb != loop->header) {
+                                    int flavor = loop_inside(loop, use_loop) ? 1 : 0;
+
+                                    // we don't "escape" if it's just the loop phis being used in the loop body
+                                    if (flavor != 1 || !is_loop_phi) {
+                                        TB_Node* p = phis[flavor];
+                                        if (p == NULL) {
+                                            #if TB_OPTDEBUG_LOOP
+                                            printf("ESCAPE %s! ", flavor ? "BODY" : "EXIT");
+                                            tb_print_dumb_node(NULL, n);
+                                            printf("\n");
+                                            #endif
+
+                                            // cloned form is the init-case
+                                            TB_ASSERT(n->gvn < cloned_n);
+                                            TB_Node* init_path = cloned[n->gvn];
+
+                                            TB_Node* r = flavor ? header : join;
+                                            TB_ASSERT(r->input_count == 2);
+
+                                            p = phis[flavor] = tb_alloc_node(f, TB_PHI, n->dt, 3, 0);
+                                            set_input(f, p, r,         0);
+                                            set_input(f, p, init_path, 1);
+                                            set_input(f, p, n,         2);
+                                            loop_set_ctrl(&ctx, p, r);
+                                            mark_node(f, p);
+
+                                            latuni_set(f, p, latuni_get(f, n));
+                                        }
+
                                         #if TB_OPTDEBUG_LOOP
-                                        printf("ESCAPE! ");
-                                        tb_print_dumb_node(NULL, n);
-                                        printf("\n");
+                                        printf("   USER(");
+                                        tb_print_dumb_node(NULL, un);
+                                        printf(", %d)\n", ui);
                                         #endif
 
-                                        // cloned form is the init-case
-                                        TB_ASSERT(n->gvn < cloned_n);
-                                        TB_Node* init_path = cloned[n->gvn];
-
-                                        TB_ASSERT(join->input_count == 2);
-                                        exit_phi = tb_alloc_node(f, TB_PHI, n->dt, 3, 0);
-                                        set_input(f, exit_phi, join,      0);
-                                        set_input(f, exit_phi, init_path, 1);
-                                        set_input(f, exit_phi, n,         2);
-                                        loop_set_ctrl(&ctx, exit_phi, join);
-                                        mark_node(f, exit_phi);
-
-                                        latuni_set(f, exit_phi, latuni_get(f, n));
+                                        set_input(f, un, p, ui);
+                                        continue;
                                     }
-
-                                    #if TB_OPTDEBUG_LOOP
-                                    printf("   USER(");
-                                    tb_print_dumb_node(NULL, un);
-                                    printf(", %d)\n", ui);
-                                    #endif
-
-                                    set_input(f, un, exit_phi, ui);
-                                    continue;
                                 }
                             }
 
                             i += 1;
                         }
 
-                        if (exit_phi != NULL) {
-                            mark_node_n_users(f, n);
-                        }
+                        if (phis[0] != NULL) { mark_node_n_users(f, phis[0]); }
+                        if (phis[1] != NULL) { mark_node_n_users(f, phis[1]); }
                     }
                     progress = true;
                     tb_arena_restore(&f->tmp_arena, sp2);

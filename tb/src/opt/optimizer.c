@@ -1341,8 +1341,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
         }
 
-        tb_print_dumb(f);
-
         // currently only rotating loops
         TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
         DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
@@ -1354,9 +1352,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
                 TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
             }
         }
-
-        tb_print_dumb(f);
-        __debugbreak();
 
         // TODO(NeGate): doesn't do anything yet
         // progress |= tb_opt_vectorize(f);
