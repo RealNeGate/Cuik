@@ -23,8 +23,26 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
     if (late->start == late->end &&
         late->start->type == TB_BRANCH_PROJ)
     {
-        // data phis
-        if (n->type == TB_MACH_MOVE) { return late->dom; }
+        // we can only hoist moves if we can guarentee other moves to other blocks
+        // aren't happening since the moves would interfere in that case.
+        if (n->type == TB_MACH_MOVE && cfg_is_region(late->dom->start)) {
+            TB_Node* dst = USERN(get_single_use(n));
+            TB_ASSERT(dst->type == TB_PHI);
+
+            TB_BasicBlock* bb = late->dom;
+            aarray_for(i, bb->items) {
+                TB_Node* move = bb->items[i];
+                if (move->type == TB_MACH_MOVE) {
+                    TB_Node* other_dst = USERN(get_single_use(move));
+                    TB_ASSERT(other_dst->type == TB_PHI);
+                    if (dst->inputs[0] != other_dst->inputs[0]) {
+                        return late;
+                    }
+                }
+            }
+
+            return late->dom;
+        }
 
         #if 0
         // memory phis don't have proper move ops so we infer
@@ -49,6 +67,7 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
         #endif
     }
 
+    skip:;
     int lat = get_lat(f, n, NULL);
     if (lat >= 2) {
         TB_BasicBlock* best = late;

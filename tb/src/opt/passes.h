@@ -230,6 +230,10 @@ static bool single_use(TB_Node* n) {
     return n->user_count == 1;
 }
 
+static TB_User* get_single_use(TB_Node* n) {
+    return n->user_count == 1 ? &n->users[0] : NULL;
+}
+
 static bool tb_node_is_pinned(TB_Node* n) {
     if ((n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || is_proj(n) || cfg_is_control(n)) {
         return true;

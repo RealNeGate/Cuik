@@ -56,9 +56,6 @@ uint64_t xxh_64 (const void *key, int len, uint64_t h) {
         for (int j=0;j<4;j++) s[j] = ((b[j] << 31) | (b[j] >> 33))*p1;
     }
 
-    uint64_t s64 = (s[2] + p5);
-
-    #if 0
     // mix 32-byte state down to 8-byte state, initalize to value for short keys
     uint64_t s64 = (s[2] + p5);
     if (len > 32) {
@@ -90,21 +87,18 @@ uint64_t xxh_64 (const void *key, int len, uint64_t h) {
         uint64_t b = s64 ^ (*tail)*p5;
         s64 = ((b << 11) | (b >> 53))*p1;
     }
-    #endif
 
     // finalization mix
     s64 =  (s64 ^ (s64 >> 33))*p2;
     s64 =  (s64 ^ (s64 >> 29))*p3;
     return (s64 ^ (s64 >> 32));
 }
+#endif
 
-#if 0
 static const char str[] = "Paused my existence sesh to be here";
 int main() {
     uint64_t h = xxh_64(str, sizeof(str)-1, 0);
     printf("hash = %"PRIu64, h);
     return 0;
 }
-#endif
-#endif
 

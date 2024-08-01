@@ -266,7 +266,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         #endif
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f));
-        // TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
         ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, true);
         tb_compute_synthetic_loop_freq(f, &cfg);
@@ -571,7 +570,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             {
                 tb_asm_print(e, ".bb%d:", id);
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[32m"));
-                tb_asm_print(e, " # Freq: %f", cfg.blocks[id].freq);
+                tb_asm_print(e, " // Freq: %f", cfg.blocks[id].freq);
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[0m"));
                 tb_asm_print(e, "\n");
             }

@@ -398,13 +398,6 @@ static Lattice* value_bits(TB_Function* f, TB_Node* n) {
         // 0 if either is zero, 1 if both are 1
         zeros = a->_int.known_zeros | b->_int.known_zeros;
         ones  = a->_int.known_ones  & b->_int.known_ones;
-
-        min = (a->_int.min & ~zeros) | ones;
-        max = (a->_int.max & ~zeros) | ones;
-        if (min > max) {
-            min = lattice_int_min(bits);
-            max = lattice_int_max(bits);
-        }
         break;
 
         case TB_OR:

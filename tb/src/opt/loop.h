@@ -360,6 +360,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             }
         }
         mark_node(f, n);
+        mark_node(f, k);
 
         #if TB_OPTDEBUG_LOOP
         printf("CLONE: ");
@@ -1089,5 +1090,6 @@ bool tb_opt_loops(TB_Function* f) {
 
     tb_arena_clear(&f->tmp_arena);
     cuikperf_region_end();
+
     return progress;
 }

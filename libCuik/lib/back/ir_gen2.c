@@ -1109,16 +1109,16 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             TB_Node* merge = tb_builder_label_make(g);
             tb_builder_if(g, cond, paths);
             { // then
-                tb_builder_label_set(g, paths[1]);
+                tb_builder_label_set(g, paths[0]);
                 cg_stmt(tu, g, s->if_.body);
                 tb_builder_br(g, merge);
-                tb_builder_label_kill(g, paths[1]);
+                tb_builder_label_kill(g, paths[0]);
             }
             { // else
-                tb_builder_label_set(g, paths[0]);
+                tb_builder_label_set(g, paths[1]);
                 cg_stmt(tu, g, s->if_.next);
                 tb_builder_br(g, merge);
-                tb_builder_label_kill(g, paths[0]);
+                tb_builder_label_kill(g, paths[1]);
             }
 
             tb_builder_label_set(g, merge);

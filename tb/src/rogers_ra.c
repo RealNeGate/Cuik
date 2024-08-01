@@ -537,6 +537,22 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                         TB_OPTDEBUG(REGALLOC)(printf("HARD-SPLIT on V%td\n", in_vreg - ctx->vregs));
                         dyn_array_put(ra.spills, in_vreg - ctx->vregs);
                     }
+
+                    int fixed = fixed_reg_mask(new_mask);
+                    if (fixed >= 0) {
+                        uint64_t fixed_mask = 1ull << fixed;
+                        int shared_edge = ctx->node_2addr(in);
+                        if (shared_edge >= 0) {
+                            TB_ASSERT(shared_edge < in->input_count);
+                            FOR_N(m, 1, in->input_count) if (m != shared_edge && in->inputs[m]) {
+                                VReg* m_vreg = node_vreg(ctx, in->inputs[m]);
+                                if (m_vreg && m_vreg->mask->class == in_mask->class) {
+                                    m_vreg->mask = intern_regmask(ctx, m_vreg->mask->class, m_vreg->mask->may_spill, m_vreg->mask->mask[0] & ~fixed_mask);
+                                }
+                            }
+                        }
+                    }
+
                     in_vreg->mask = new_mask;
                 }
 
@@ -571,28 +587,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                     if (n->type == TB_MACH_COPY && n->inputs[1]->type == TB_PHI) {
                         worklist_push(ws, n);
                     }
-
-                    // if we're writing to a fixed interval, insert copy
-                    // such that we only guarentee a fixed location at the
-                    // def site.
-                    /*int reg = fixed_reg_mask(def_mask);
-                    if (reg >= 0 && n->type != TB_MACH_COPY) {
-                        int fixed_vreg = ra.fixed[def_mask->class] + reg;
-                        aarray_insert(ctx->vreg_map, n->gvn, fixed_vreg);
-
-                        // construct copy (either to a fixed interval or a new masked interval)
-                        TB_Node* tmp = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
-                        subsume_node2(f, n, tmp);
-                        set_input(f, tmp, n, 1);
-                        TB_NODE_SET_EXTRA(tmp, TB_NodeMachCopy, .def = ctx->normie_mask[def_mask->class], .use = def_mask);
-
-                        // schedule the split right after def
-                        tb__insert_after(ctx, f, tmp, n);
-                        VReg* tmp_vreg = tb__set_node_vreg(ctx, tmp);
-                        tmp_vreg->mask = ctx->normie_mask[def_mask->class];
-                        tmp_vreg->hint_vreg = fixed_vreg;
-                        j += 1;
-                    }*/
                 }
             }
         }
