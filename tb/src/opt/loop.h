@@ -303,7 +303,7 @@ static bool loop_inside(TB_LoopTree* a, TB_LoopTree* b) {
 }
 
 // returns the cloned loop header (with no preds)
-static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t cloned_n, TB_Node** cloned, TB_Node* header) {
+static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t cloned_n, TB_Node** cloned, TB_Node* header, TB_Node* latch) {
     TB_Function* f = ctx->f;
     ArenaArray(TB_Node*) cloned_list = aarray_create(&f->tmp_arena, TB_Node*, 32);
 
@@ -876,7 +876,7 @@ bool tb_opt_loops(TB_Function* f) {
                     TB_Node* ztc_start = header->inputs[0];
                     // construct the ZTC's version of the branch (same as the original latch but
                     // uses the phi's inputs[1] edge instead of the phis directly)
-                    ArenaArray(TB_Node*) cloned_list = loop_clone_ztc(&ctx, &tmp_ws, cloned_n, cloned, header);
+                    ArenaArray(TB_Node*) cloned_list = loop_clone_ztc(&ctx, &tmp_ws, cloned_n, cloned, header, latch);
                     TB_Node* top_cloned = cloned[header->gvn];
                     TB_Node* bot_cloned = cloned[latch->gvn];
                     // make a ZTC branch
@@ -933,7 +933,7 @@ bool tb_opt_loops(TB_Function* f) {
                         }
 
                         // any nodes created during this loop close fixup shouldn't themselves need fixup btw.
-                        bool is_loop_phi = n->type == TB_PHI && n->inputs[0];
+                        bool is_loop_phi = n->type == TB_PHI && n->inputs[0] == header;
                         size_t snapshot_count = f->node_count;
 
                         // lazily constructed
@@ -972,7 +972,11 @@ bool tb_opt_loops(TB_Function* f) {
                                             p = phis[flavor] = tb_alloc_node(f, TB_PHI, n->dt, 3, 0);
                                             set_input(f, p, r,         0);
                                             set_input(f, p, init_path, 1);
-                                            set_input(f, p, n,         2);
+                                            if (is_loop_phi) {
+                                                set_input(f, p, n->inputs[2], 2);
+                                            } else {
+                                                set_input(f, p, n, 2);
+                                            }
                                             loop_set_ctrl(&ctx, p, r);
                                             mark_node(f, p);
 

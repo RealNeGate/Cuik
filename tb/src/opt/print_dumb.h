@@ -25,9 +25,11 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     }
     printf(" = %s ", tb_node_get_name(n->type));
     if (is_proj(n)) {
-        printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
-    } else if (n->type == TB_MACH_PROJ) {
-        printf("%d ", TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->index);
+        int idx = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+        printf("%d ", idx);
+        if (n->type == TB_BRANCH_PROJ && idx > 0) {
+            printf(", key=%lld ", TB_NODE_GET_EXTRA_T(n, TB_NodeBranchProj)->key);
+        }
     } else if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
         printf("def=");

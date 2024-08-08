@@ -183,6 +183,15 @@ static void print_extra(TB_Node* n) {
             printf("scale=%d, disp=%d, mode=%s, imm=%d", 1u<<op->scale, op->disp, modes[op->mode], op->imm);
             break;
         }
+
+        case x86_cmpjcc: case x86_cmpimmjcc:
+        case x86_testjcc: case x86_testimmjcc:
+        case x86_ucomijcc:
+        {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            printf("scale=%d, disp=%d, mode=%s, imm=%d", 1u<<op->scale, op->disp, modes[op->mode], op->imm);
+            break;
+        }
     }
 }
 
@@ -808,7 +817,20 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 TB_Node* b = cond->inputs[2];
 
                 int cc = -1;
-                int flip = (if_br->key != 0);
+                switch (cond->type) {
+                    case TB_CMP_EQ:  cc = E;  break;
+                    case TB_CMP_NE:  cc = NE; break;
+                    case TB_CMP_SLT: cc = L;  break;
+                    case TB_CMP_SLE: cc = LE; break;
+                    case TB_CMP_ULT: cc = B;  break;
+                    case TB_CMP_ULE: cc = BE; break;
+                    case TB_CMP_FLT: cc = B;  break;
+                    case TB_CMP_FLE: cc = BE; break;
+                    default: tb_unreachable();
+                }
+
+                // proj0 is the true case given key=0
+                int flip = (if_br->key == 0);
                 X86MemOp* op_extra;
                 if (TB_IS_FLOAT_TYPE(cmp_dt)) {
                     mach_cond = tb_alloc_node(f, x86_ucomijcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
@@ -817,7 +839,18 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     set_input(f, mach_cond, b, 2);
                 } else {
                     if (a->type == TB_ICONST && b->type != TB_ICONST) {
-                        flip ^= 1;
+                        // swap operands so the compares get swapped (not inverted)
+                        switch (cond->type) {
+                            case TB_CMP_EQ:  cc = E;  break;
+                            case TB_CMP_NE:  cc = NE; break;
+                            case TB_CMP_SLT: cc = G;  break;
+                            case TB_CMP_SLE: cc = GE; break;
+                            case TB_CMP_ULT: cc = A;  break;
+                            case TB_CMP_ULE: cc = NB; break;
+                            case TB_CMP_FLT: cc = A;  break;
+                            case TB_CMP_FLE: cc = NB; break;
+                            default: tb_unreachable();
+                        }
                         SWAP(TB_Node*, a, b);
                     }
 
@@ -839,19 +872,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     set_input(f, mach_cond, a, 2);
                 }
 
-                if (cc < 0) {
-                    switch (cond->type) {
-                        case TB_CMP_EQ:  cc = E;  break;
-                        case TB_CMP_NE:  cc = NE; break;
-                        case TB_CMP_SLT: cc = L;  break;
-                        case TB_CMP_SLE: cc = LE; break;
-                        case TB_CMP_ULT: cc = B;  break;
-                        case TB_CMP_ULE: cc = BE; break;
-                        case TB_CMP_FLT: cc = B;  break;
-                        case TB_CMP_FLE: cc = BE; break;
-                        default: tb_unreachable();
-                    }
-                }
                 op_extra->dt = cmp_dt;
                 if_br->key = cc ^ flip;
             } else if (if_br->key == 0) {
@@ -2054,15 +2074,15 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 TB_NodeBranchProj* if_br = cfg_if_branch(n);
                 if (if_br) {
                     Cond cc = if_br->key;
-                    if (ctx->fallthrough == succ[0]) {
+                    if (ctx->fallthrough == succ[1]) {
                         // if flipping avoids a jmp, do that
                         cc ^= 1;
                         SWAP(int, succ[0], succ[1]);
                     }
 
-                    __(JO+cc, TB_X86_QWORD, Vlbl(succ[0]));
-                    if (ctx->fallthrough != succ[1]) {
-                        __(JMP, TB_X86_QWORD, Vlbl(succ[1]));
+                    __(JO+cc, TB_X86_QWORD, Vlbl(succ[1]));
+                    if (ctx->fallthrough != succ[0]) {
+                        __(JMP, TB_X86_QWORD, Vlbl(succ[0]));
                     }
                 } else {
                     tb_todo();

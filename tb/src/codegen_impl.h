@@ -131,7 +131,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         .num_classes = REG_CLASS_COUNT,
         .emit = {
             .output = func_out,
-            .arena = &f->tmp_arena,
+            .arena = code_arena,
             .has_comments = true,
         }
     };
@@ -534,7 +534,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     // trim code arena (it fits in a single chunk so just arena free the top)
-    code_arena->top->avail = (char*) &ctx.emit.data[ctx.emit.count];
+    tb_arena_free(code_arena, ctx.emit.data + ctx.emit.count, ctx.emit.capacity - ctx.emit.count);
     tb_arena_realign(code_arena);
 
     // TODO(NeGate): move the assembly output to code arena

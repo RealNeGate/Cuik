@@ -265,6 +265,7 @@ bool tb_arena_free(TB_Arena* restrict arena, void* ptr, size_t size) {
 void tb_arena_realign(TB_Arena* restrict arena) {
     TB_ArenaChunk* top = arena->top;
     ptrdiff_t pos = top->avail - top->data;
+    assert(pos >= 0);
     pos = (pos + TB_ARENA_ALIGNMENT - 1) & ~(TB_ARENA_ALIGNMENT - 1);
     top->avail = &top->data[pos];
 }
