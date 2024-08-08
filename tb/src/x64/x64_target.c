@@ -219,11 +219,12 @@ static const struct ParamDesc {
 
 static TB_X86_DataType legalize_int(TB_DataType dt) {
     switch (dt.type) {
-        case TB_TAG_I8:  return TB_X86_BYTE;
-        case TB_TAG_I16: return TB_X86_WORD;
-        case TB_TAG_I32: return TB_X86_DWORD;
-        case TB_TAG_I64: return TB_X86_QWORD;
-        case TB_TAG_PTR: return TB_X86_QWORD;
+        case TB_TAG_BOOL: return TB_X86_BYTE;
+        case TB_TAG_I8:   return TB_X86_BYTE;
+        case TB_TAG_I16:  return TB_X86_WORD;
+        case TB_TAG_I32:  return TB_X86_DWORD;
+        case TB_TAG_I64:  return TB_X86_QWORD;
+        case TB_TAG_PTR:  return TB_X86_QWORD;
         default: tb_todo();
     }
 }
@@ -1014,10 +1015,14 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 // capable of being a 64bit zero extend since 32bit ops will auto zero ext to 64bit.
                 int op_type = -1;
                 switch (src_dt.type) {
+                    case TB_TAG_BOOL:op->type = x86_movzx8;  break;
                     case TB_TAG_I8:  op->type = x86_movzx8;  break;
                     case TB_TAG_I16: op->type = x86_movzx16; break;
                     case TB_TAG_I32: {
                         RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
+
+                        assert(op->user_count == 0);
+                        tb_kill_node(f, op);
 
                         // mach copy actually just handles these sorts of things mostly
                         TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));

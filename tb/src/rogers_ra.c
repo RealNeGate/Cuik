@@ -502,7 +502,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     }
 
     ra.spills = dyn_array_create(int, 32);
-    dump_sched(ctx);
 
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {

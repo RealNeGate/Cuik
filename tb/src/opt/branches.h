@@ -438,6 +438,11 @@ static TB_Node* ideal_branch(TB_Function* f, TB_Node* n) {
 
                 return n;
             }
+
+            if (cmp_node->type == TB_ZERO_EXT) {
+                set_input(f, n, cmp_node->inputs[1], 1);
+                return n;
+            }
         }
     }
 
