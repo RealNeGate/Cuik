@@ -701,7 +701,7 @@ bool tb_opt_loops(TB_Function* f) {
             TB_Node* curr = bb->end;
             while (curr != bb->start) {
                 TB_Node* prev = curr->inputs[0];
-                if (curr != sfpt && curr->type == TB_SAFEPOINT_POLL) {
+                if (curr != sfpt && curr->type == TB_SAFEPOINT) {
                     subsume_node(f, curr, prev);
                     mark_node_n_users(f, prev);
                     progress = true;

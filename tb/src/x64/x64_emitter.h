@@ -93,7 +93,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
 
     // the destination can only be a GPR, no direction flag
     bool is_gpr_only_dst = (inst->op & 1);
-    bool dir_flag = (dir != is_gpr_only_dst) && inst->op != 0x69;
+    bool dir_flag = (dir != is_gpr_only_dst) && inst->op != 0x69 && inst->op != 0x84;
 
     if (inst->cat != INST_BINOP_EXT3) {
         // Address size prefix

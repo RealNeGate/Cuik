@@ -16,6 +16,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_UNREACHABLE: return "unreachable";
 
         case TB_BRANCH_PROJ: return "br_proj";
+        case TB_MACH_JIT_THREAD_PTR: return "jit_thread_ptr";
 
         case TB_ROOT:   return "root";
         case TB_RETURN: return "return";
@@ -25,6 +26,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_AFFINE_LOOP: return "loop.affine";
         case TB_CALLGRAPH: return "callgraph";
         case TB_SYMBOL_TABLE: return "symbol_table";
+        case TB_FRAME_PTR: return "frame_ptr";
 
         case TB_LOCAL: return "local";
 
@@ -48,7 +50,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_PREFETCH: return "prefetch";
         case TB_INLINE_ASM: return "inlineasm";
         case TB_DEBUG_LOCATION: return "dbgloc";
-        case TB_SAFEPOINT_POLL: return "safepoint.poll";
+        case TB_SAFEPOINT: return "safepoint";
 
         case TB_MEMSET: return "memset";
         case TB_MEMCPY: return "memcpy";
@@ -553,7 +555,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     case TB_CALL:
                     case TB_TAILCALL:
                     case TB_SYSCALL:
-                    case TB_SAFEPOINT_POLL:
+                    case TB_SAFEPOINT:
                     case TB_MERGEMEM:
                     case TB_SPLITMEM:
                     break;

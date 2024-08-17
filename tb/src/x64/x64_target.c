@@ -751,6 +751,15 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         op_extra->mode = MODE_LD;
         op_extra->disp = ctx->stack_header + proto->param_count*8;
         return op;
+    } else if (n->type == TB_FRAME_PTR) {
+        TB_Node* op = tb_alloc_node(f, x86_lea, TB_TYPE_PTR, 5, sizeof(X86MemOp));
+        set_input(f, op, ctx->frame_ptr, 2);
+
+        TB_FunctionPrototype* proto = ctx->f->prototype;
+        X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
+        op_extra->mode = MODE_LD;
+        op_extra->disp = 0;
+        return op;
     } else if (n->type >= TB_CMP_EQ && n->type <= TB_CMP_FLE) {
         TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(n, TB_NodeCompare)->cmp_dt;
         TB_Node* a = n->inputs[1];
@@ -1181,9 +1190,14 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case TB_MACH_FRAME_PTR:
         return &TB_REG_EMPTY;
 
+        case TB_MACH_JIT_THREAD_PTR:
+        return ctx->normie_mask[REG_CLASS_GPR];
+
         case TB_MACH_COPY: {
             TB_NodeMachCopy* move = TB_NODE_GET_EXTRA(n);
-            if (ins) { ins[1] = move->use; }
+            if (ins) {
+                ins[1] = move->use;
+            }
             return move->def;
         }
 
@@ -1195,6 +1209,18 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             RegMask* rm = ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
             if (ins) { ins[1] = rm; }
             return rm;
+        }
+
+        case TB_SAFEPOINT: {
+            if (ins) {
+                TB_NodeSafepoint* sp = TB_NODE_GET_EXTRA(n);
+                ins[1] = &TB_REG_EMPTY;
+                ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+                FOR_N(i, n->input_count - sp->saved_val_count, n->input_count) {
+                    ins[i] = ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
+                }
+            }
+            return &TB_REG_EMPTY;
         }
 
         case TB_PHI: {
@@ -1691,6 +1717,20 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_UNREACHABLE:
         break;
 
+        case TB_SAFEPOINT: {
+            GPR poll = op_gpr_at(ctx, n->inputs[2]);
+            COMMENT("safepoint %p", TB_NODE_GET_EXTRA_T(n, TB_NodeSafepoint)->userdata);
+            __(TEST, TB_X86_QWORD, Vbase(poll, 0), Vgpr(RAX));
+            break;
+        }
+
+        case TB_MACH_JIT_THREAD_PTR: {
+            GPR dst = op_gpr_at(ctx, n);
+            __(MOV, TB_X86_QWORD, Vgpr(dst), Vgpr(RSP));
+            __(AND, TB_X86_QWORD, Vgpr(dst), Vimm(-0x200000));
+            break;
+        }
+
         case TB_NEVER_BRANCH: {
             TB_Node* proj0 = USERN(proj_with_index(n, 0));
             TB_Node* succ_n = cfg_next_bb_after_cproj(proj0);
@@ -1730,7 +1770,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
             if (!is_value_match(&dst, &src)) {
-                COMMENT("%%%u = copy(%%%u)", n->gvn, n->inputs[1]->gvn);
+                // COMMENT("%%%u = copy(%%%u)", n->gvn, n->inputs[1]->gvn);
 
                 if (dst.type == VAL_GPR && src.type == VAL_XMM) {
                     __(MOV_I2F, dt, &dst, &src);
@@ -2308,6 +2348,9 @@ static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) { return f
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) { return 1; }
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
     switch (n->type) {
+        case TB_MACH_JIT_THREAD_PTR:
+        return 2;
+
         case x86_movsx8: case x86_movsx16: case x86_movsx32:
         case x86_movzx8: case x86_movzx16: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
@@ -2574,6 +2617,10 @@ static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* re
 
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end) {
     while (pos < end) {
+        #if ASM_STYLE_PRINT_POS
+        E("%-4x  ", pos);
+        #endif
+
         while (d->loc != d->end && d->loc->pos == pos) {
             E("  // %s : line %d\n", d->loc->file->path, d->loc->line);
             d->loc++;
@@ -2643,7 +2690,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
                 E("%.*s\n", d->comment->line_len, d->comment->line);
                 d->comment = d->comment->next;
                 out_of_line = true;
-            } while  (d->comment && d->comment->pos == pos);
+            } while (d->comment && d->comment->pos == pos);
             TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
         } else {
             E("\n");

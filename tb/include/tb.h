@@ -349,10 +349,7 @@ typedef enum TB_NodeTypeEnum {
     //   this is a safepoint used for traditional C debugging, each of these nodes
     //   annotates a debug line location.
     TB_DEBUG_LOCATION, // (Control, Memory) -> (Control, Memory)
-    //   safepoint polls are the same except they only trigger if the poll site
-    //   says to (platform specific but almost always just the page being made
-    //   unmapped/guard), 3rd argument is the poll site.
-    TB_SAFEPOINT_POLL, // (Control, Memory, Ptr?, Data...) -> (Control)
+    TB_SAFEPOINT,      // (Control, Memory, Node, Data...) -> (Control)
     //   this special op tracks calls such that we can produce our cool call graph, there's
     //   one call graph node per function that never moves.
     TB_CALLGRAPH,      // (Call...) -> Void
@@ -464,6 +461,8 @@ typedef enum TB_NodeTypeEnum {
     TB_CMP_FLT,
     TB_CMP_FLE,
 
+    TB_FRAME_PTR,
+
     // Special ops
     //   add with carry
     TB_ADC,     // (Int, Int, Bool?) -> (Int, Bool)
@@ -491,6 +490,8 @@ typedef enum TB_NodeTypeEnum {
     TB_MACH_JUMP,
     // just... it, idk, it's the frame ptr
     TB_MACH_FRAME_PTR,
+    // thread-local JIT context
+    TB_MACH_JIT_THREAD_PTR,
     // isn't the pointer value itself, just a placeholder for
     // referring to a global.
     TB_MACH_SYMBOL,
@@ -978,6 +979,9 @@ TB_API TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size);
 TB_API void* tb_jit_thread_get_userdata(TB_CPUContext* cpu);
 TB_API void tb_jit_breakpoint(TB_JIT* jit, void* addr);
 
+// changes the pollsite of the thread to fault such that the execution stops.
+TB_API void tb_jit_thread_pause(TB_CPUContext* cpu);
+
 // offsetof pollsite in the CPUContext
 TB_API size_t tb_jit_thread_pollsite(void);
 
@@ -1234,8 +1238,6 @@ TB_API TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits al
 
 TB_API TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnits align, bool is_volatile);
 TB_API void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile);
-
-TB_API void tb_inst_safepoint_poll(TB_Function* f, void* tag, TB_Node* addr, int input_count, TB_Node** inputs);
 
 TB_API TB_Node* tb_inst_bool(TB_Function* f, bool imm);
 TB_API TB_Node* tb_inst_sint(TB_Function* f, TB_DataType dt, int64_t imm);
@@ -1520,12 +1522,15 @@ TB_API void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file,
 
 // function call
 TB_API TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
-TB_API TB_Node*  tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
-TB_API void      tb_builder_safepoint_poll(TB_GraphBuilder* g, int mem_var, void* userdata, TB_Node* poll_site, int arg_count, TB_Node** args);
+TB_API TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
+TB_API void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, void* userdata, TB_Node* poll_site, int arg_count, TB_Node** args);
 
 // locals (variables but as stack vars)
 TB_API TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align);
 TB_API void tb_builder_local_dbg(TB_GraphBuilder* g, TB_Node* n, ptrdiff_t len, const char* name, TB_DebugType* type);
+
+TB_API TB_Node* tb_builder_frame_ptr(TB_GraphBuilder* g);
+TB_API TB_Node* tb_builder_jit_thread_ptr(TB_GraphBuilder* g);
 
 // variables:
 //   just gives you the ability to construct mutable names, from

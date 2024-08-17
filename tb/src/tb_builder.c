@@ -302,17 +302,6 @@ TB_Node* tb_inst_local(TB_Function* f, TB_CharUnits size, TB_CharUnits alignment
     return n;
 }
 
-void tb_inst_safepoint_poll(TB_Function* f, void* tag, TB_Node* addr, int input_count, TB_Node** inputs) {
-    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT_POLL, TB_TYPE_CONTROL, 3 + input_count, sizeof(TB_NodeSafepoint));
-    set_input(f, n, transfer_ctrl(f, n), 0);
-    set_input(f, n, peek_mem_OLD(f), 1);
-    set_input(f, n, addr, 2);
-    FOR_N(i, 0, input_count) {
-        set_input(f, n, inputs[i], i + 3);
-    }
-    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, tag);
-}
-
 TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnits alignment, bool is_volatile) {
     assert(addr);
 

@@ -377,6 +377,8 @@ void* tb_jit_get_code_ptr(TB_Function* f) {
 // Debugger
 ////////////////////////////////
 #if defined(CUIK__IS_X64) && defined(_WIN32)
+static char* poll_site_pages;
+
 struct TB_CPUContext {
     // used for stack crawling
     void* pc;
@@ -395,7 +397,7 @@ struct TB_CPUContext {
     CONTEXT state;
 
     // safepoint page
-    _Alignas(4096) char poll_site[4096];
+    volatile char* poll_site;
 
     char user_data[];
 };
@@ -452,8 +454,17 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
         }
 
         case EXCEPTION_ACCESS_VIOLATION: {
-            // TODO(NeGate): NULLchk segv
-            // void* accessed = (void*) e->ExceptionRecord->ExceptionInformation[1];
+            uintptr_t accessed = e->ExceptionRecord->ExceptionInformation[1];
+
+            if (accessed < 65536) {
+                // TODO(NeGate): NULLchk segv
+            } else if (accessed == (uintptr_t) &poll_site_pages[4096]) {
+                // disarm safepoint
+                cpu->poll_site = &poll_site_pages[0];
+
+                // some handling routines
+            }
+
             printf("PAUSE RIP=%p\n", cpu->pc);
             break;
         }
@@ -472,12 +483,26 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
+static void init_poll_pages(void) {
+    poll_site_pages = tb_platform_valloc(8192);
+    tb_platform_vprotect(poll_site_pages + 4096, 4096, TB_PAGE_RXW);
+}
+
 TB_CPUContext* tb_jit_thread_create(TB_JIT* jit, size_t ud_size) {
     TB_CPUContext* cpu = tb_jit_stack_create();
     cpu->ud_size = ud_size;
     cpu->jit = jit;
     cpu->except = AddVectoredExceptionHandler(1, except_handler);
     memset(cpu->user_data, 0, ud_size);
+
+    #ifndef TB_NO_THREADS
+    call_once(&tb_global_init, init_poll_pages);
+    #else
+    if (init_poll_pages == NULL) {
+        init_poll_pages();
+    }
+    #endif
+
     return cpu;
 }
 
@@ -485,6 +510,11 @@ void* tb_jit_thread_pc(TB_CPUContext* cpu) { return cpu->pc; }
 void* tb_jit_thread_sp(TB_CPUContext* cpu) { return cpu->sp; }
 
 size_t tb_jit_thread_pollsite(void) { return offsetof(TB_CPUContext, poll_site); }
+
+void tb_jit_thread_pause(TB_CPUContext* cpu) {
+    cpu->poll_site = &poll_site_pages[4096];
+    __debugbreak();
+}
 
 void* tb_jit_thread_get_userdata(TB_CPUContext* cpu) {
     return cpu->user_data;

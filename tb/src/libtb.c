@@ -55,6 +55,7 @@ void tb_platform_vfree(void* ptr, size_t size) {
 bool tb_platform_vprotect(void* ptr, size_t size, TB_MemProtect prot) {
     DWORD protect;
     switch (prot) {
+        case TB_PAGE_NONE:protect = PAGE_NOACCESS; break;
         case TB_PAGE_RO:  protect = PAGE_READONLY; break;
         case TB_PAGE_RW:  protect = PAGE_READWRITE; break;
         case TB_PAGE_RX:  protect = PAGE_EXECUTE_READ; break;
@@ -92,6 +93,7 @@ void tb_platform_vfree(void* ptr, size_t size) {
 bool tb_platform_vprotect(void* ptr, size_t size, TB_MemProtect prot) {
     uint32_t protect;
     switch (prot) {
+        case TB_PAGE_NONE:protect = 0; break;
         case TB_PAGE_RO:  protect = PROT_READ; break;
         case TB_PAGE_RW:  protect = PROT_READ | PROT_WRITE; break;
         case TB_PAGE_RX:  protect = PROT_READ | PROT_EXEC; break;

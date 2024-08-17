@@ -239,11 +239,6 @@ typedef struct TB_Comdat {
     uint32_t reloc_count;
 } TB_Comdat;
 
-typedef struct {
-    uint32_t ip; // relative to the function body.
-    TB_Safepoint* sp;
-} TB_SafepointKey;
-
 typedef struct COFF_UnwindInfo COFF_UnwindInfo;
 typedef struct ICodeGen ICodeGen;
 
@@ -281,6 +276,7 @@ typedef struct TB_FunctionOutput {
 
     // Part of the debug info
     DynArray(TB_Location) locations;
+    ArenaArray(TB_Safepoint*) safepoints;
 
     // Relocations
     uint32_t patch_pos;

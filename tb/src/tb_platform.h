@@ -18,6 +18,7 @@
 // Virtual memory management
 ////////////////////////////////
 typedef enum {
+    TB_PAGE_NONE,
     TB_PAGE_RO,
     TB_PAGE_RW,
     TB_PAGE_RX,

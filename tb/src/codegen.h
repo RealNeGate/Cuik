@@ -71,6 +71,8 @@ typedef struct {
     TB_Location* loc;
     TB_Location* end;
     Comment* comment;
+    ArenaArray(TB_Safepoint*) safepoints;
+    int safepoint_i;
 } Disasm;
 
 typedef struct VReg VReg;

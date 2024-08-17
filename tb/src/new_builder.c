@@ -312,6 +312,18 @@ TB_Node* tb_builder_ptr_array(TB_GraphBuilder* g, TB_Node* base, TB_Node* index,
     return g->peep(f, n);
 }
 
+TB_Node* tb_builder_frame_ptr(TB_GraphBuilder* g) {
+    TB_Node* n = tb_alloc_node(g->f, TB_FRAME_PTR, TB_TYPE_PTR, 1, 0);
+    set_input(g->f, n, g->f->root_node, 0);
+    return g->peep(g->f, n);
+}
+
+TB_Node* tb_builder_jit_thread_ptr(TB_GraphBuilder* g) {
+    TB_Node* n = tb_alloc_node(g->f, TB_MACH_JIT_THREAD_PTR, TB_TYPE_PTR, 1, 0);
+    set_input(g->f, n, g->f->root_node, 0);
+    return g->peep(g->f, n);
+}
+
 TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t offset) {
     if (offset == 0) {
         return base;
@@ -745,13 +757,17 @@ TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_
     return tb__make_proj(f, dt, n, 2);
 }
 
-void tb_builder_safepoint_poll(TB_GraphBuilder* g, int mem_var, void* userdata, TB_Node* poll_site, int arg_count, TB_Node** args) {
+void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, void* userdata, TB_Node* poll_site, int arg_count, TB_Node** args) {
     TB_Function* f = g->f;
-    TB_Node* n = tb_alloc_node(f, TB_UNREACHABLE, TB_TYPE_CONTROL, 2, 0);
+    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_CONTROL, 3 + arg_count, sizeof(TB_NodeSafepoint));
     set_input(f, n, xfer_ctrl(g, n), 0);
     set_input(f, n, peek_mem(g, mem_var), 1);
+    set_input(f, n, poll_site, 2);
+    FOR_N(i, 0, arg_count) {
+        set_input(f, n, args[i], i+3);
+    }
     add_input_late(f, f->root_node, n);
-    g->curr = NULL;
+    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, .userdata = userdata, .saved_val_count = arg_count);
 }
 
 void tb_builder_unreachable(TB_GraphBuilder* g, int mem_var) {

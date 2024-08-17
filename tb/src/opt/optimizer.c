@@ -518,7 +518,7 @@ static bool can_gvn(TB_Node* n) {
         case TB_ATOMIC_OR:
         case TB_ATOMIC_PTROFF:
         case TB_ATOMIC_CAS:
-        case TB_SAFEPOINT_POLL:
+        case TB_SAFEPOINT:
         return false;
 
         default: {

@@ -540,7 +540,7 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
 }
 
 static TB_Node* identity_safepoint(TB_Function* f, TB_Node* n) {
-    if (n->inputs[0]->type == TB_SAFEPOINT_POLL) {
+    if (n->inputs[0]->type == TB_SAFEPOINT) {
         // (safepoint (safepoint X)) => (safepoint X)
         return n->inputs[0];
     } else {

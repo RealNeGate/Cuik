@@ -4,6 +4,9 @@
 
 #define COMMENT(...) (e->has_comments ? tb_emit_comment(e, &ctx->f->tmp_arena, __VA_ARGS__) : (void)0)
 
+// ASM-style settings
+#define ASM_STYLE_PRINT_POS 1
+
 // Instruction selection:
 //   returns an equivalent but machine-friendly node (one you're willing to
 //   use during RA & emit).
@@ -53,6 +56,11 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n);
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
+
+typedef struct {
+    TB_Node* n;
+    uint32_t ip;
+} NodeIPPair;
 
 // Helpers
 static void dump_sched(Ctx* restrict ctx) {
@@ -266,6 +274,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         #endif
 
         TB_OPTDEBUG(CODEGEN)(tb_print_dumb(f));
+        TB_OPTDEBUG(CODEGEN)(tb_print(f));
 
         ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, true);
         tb_compute_synthetic_loop_freq(f, &cfg);
@@ -452,6 +461,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         bundle.count = 0;
         bundle.arr = tb_arena_alloc(&f->tmp_arena, BUNDLE_INST_MAX * sizeof(Bundle));
 
+        ArenaArray(NodeIPPair) spft_nodes = aarray_create(&f->tmp_arena, NodeIPPair, 16);
         FOR_N(i, 0, bb_count) {
             int id = final_order[i];
             TB_BasicBlock* bb = &cfg.blocks[id];
@@ -478,6 +488,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             TB_Node* prev_n = NULL;
             aarray_for(i, bb->items) {
                 TB_Node* n = bb->items[i];
+                if (tb_node_is_safepoint(n)) {
+                    NodeIPPair pair = { n, GET_CODE_POS(e) };
+                    aarray_push(spft_nodes, pair);
+                }
 
                 // TODO(NeGate): we should be checking if the bundle can support the resources we're asking for.
                 // an example is that one bundle might only be able to do 2 memory operations so "fits_as_bundle"
@@ -517,7 +531,37 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         post_emit(&ctx, e);
         log_phase_end(f, og_size, "emit");
 
-        // Fill jump table entries
+        // trim code arena
+        tb_arena_free(code_arena, ctx.emit.data + ctx.emit.count, ctx.emit.capacity - ctx.emit.count);
+        tb_arena_realign(code_arena);
+
+        if (aarray_length(spft_nodes) > 0) {
+            CUIK_TIMED_BLOCK("build safepoint table") {
+                ArenaArray(TB_Safepoint*) safepoints = aarray_create(code_arena, TB_Safepoint*, aarray_length(spft_nodes));
+
+                // it's built sorted by PC to make binsearching for it easy... why? i'll probably
+                // care about it for random stack sample crap
+                aarray_for(i, spft_nodes) {
+                    TB_Node* n  = spft_nodes[i].n;
+                    uint32_t ip = spft_nodes[i].ip;
+
+                    TB_NodeSafepoint* n_spft = TB_NODE_GET_EXTRA(n);
+
+                    TB_Safepoint* spft = tb_arena_alloc(code_arena, sizeof(TB_Safepoint) + n_spft->saved_val_count*sizeof(int32_t));
+                    spft->node = n;
+                    spft->userdata = n_spft->userdata;
+                    spft->ip = ip;
+                    FOR_N(i, 0, n_spft->saved_val_count) {
+                        tb_todo();
+                    }
+                    aarray_push(safepoints, spft);
+                }
+
+                func_out->safepoints = safepoints;
+            }
+        }
+
+        // fill jump table entries
         CUIK_TIMED_BLOCK("jump tables") {
             dyn_array_for(i, ctx.jump_table_patches) {
                 uint32_t target = ctx.emit.labels[ctx.jump_table_patches[i].target];
@@ -533,10 +577,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         ctx.locations[0].pos = 0;
     }
 
-    // trim code arena (it fits in a single chunk so just arena free the top)
-    tb_arena_free(code_arena, ctx.emit.data + ctx.emit.count, ctx.emit.capacity - ctx.emit.count);
-    tb_arena_realign(code_arena);
-
     // TODO(NeGate): move the assembly output to code arena
     if (emit_asm) CUIK_TIMED_BLOCK("dissassembly") {
         dyn_array_for(i, ctx.debug_stack_slots) {
@@ -550,6 +590,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             ctx.locations,
             &ctx.locations[dyn_array_length(ctx.locations)],
             ctx.emit.comment_head,
+            func_out->safepoints
         };
 
         if (ctx.prologue_length) {
@@ -568,7 +609,12 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             TB_CGEmitter* e = &ctx.emit;
             {
+                #if ASM_STYLE_PRINT_POS
+                tb_asm_print(e, "%-4x  BB%d:", start, id);
+                #else
                 tb_asm_print(e, ".bb%d:", id);
+                #endif
+
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[32m"));
                 tb_asm_print(e, " // Freq: %f", cfg.blocks[id].freq);
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[0m"));

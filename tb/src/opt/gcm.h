@@ -71,10 +71,11 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
     int lat = get_lat(f, n, NULL);
     if (lat >= 2) {
         TB_BasicBlock* best = late;
-        while (late != early) {
+        for (;;) {
             if (late->freq < best->freq) {
                 best = late;
             }
+            if (late == early) { break; }
             late = late->dom;
         }
         return best;

@@ -504,18 +504,18 @@ TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data) {
 }
 
 TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip) {
-    /*size_t left = 0;
-    size_t right = f->safepoint_count;
+    size_t left = 0;
+    size_t right = dyn_array_length(f->output->safepoints);
 
     uint32_t ip = relative_ip;
-    const TB_SafepointKey* keys = f->output->safepoints;
+    TB_Safepoint** arr = f->output->safepoints;
     while (left < right) {
         size_t middle = (left + right) / 2;
 
-        if (keys[middle].ip == ip) return keys[left].sp;
-        if (keys[middle].ip < ip) left = middle + 1;
+        if (arr[middle]->ip == ip) return arr[middle];
+        if (arr[middle]->ip < ip) left = middle + 1;
         else right = middle;
-    }*/
+    }
 
     return NULL;
 }

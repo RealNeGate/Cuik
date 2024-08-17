@@ -219,11 +219,11 @@ static bool is_mem_end_op(TB_Node* n) {
 }
 
 static bool is_mem_in_op(TB_Node* n) {
-    return is_mem_out_op(n) || n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
+    return is_mem_out_op(n) || n->type == TB_SAFEPOINT || n->type == TB_LOAD;
 }
 
 static bool is_mem_only_in_op(TB_Node* n) {
-    return n->type == TB_SAFEPOINT_POLL || n->type == TB_LOAD;
+    return n->type == TB_SAFEPOINT || n->type == TB_LOAD;
 }
 
 static bool single_use(TB_Node* n) {
@@ -235,7 +235,7 @@ static TB_User* get_single_use(TB_Node* n) {
 }
 
 static bool tb_node_is_pinned(TB_Node* n) {
-    if ((n->type >= TB_ROOT && n->type <= TB_SAFEPOINT_POLL) || is_proj(n) || cfg_is_control(n)) {
+    if ((n->type >= TB_ROOT && n->type <= TB_SAFEPOINT) || is_proj(n) || cfg_is_control(n)) {
         return true;
     }
 
