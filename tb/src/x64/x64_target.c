@@ -2607,10 +2607,14 @@ static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* re
         int bb = tb_emit_get_label(e, target);
         uint32_t landed = e->labels[bb] & 0x7FFFFFFF;
 
+        #if ASM_STYLE_PRINT_POS
+        E("BB%d", bb);
+        #else
+        E(".bb%d", bb);
+        #endif
+
         if (landed != target) {
-            E(".bb%d + %d", bb, (int)target - (int)landed);
-        } else {
-            E(".bb%d", bb);
+            E(" + %d", bb, (int)target - (int)landed);
         }
     }
 }
@@ -2622,20 +2626,19 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         #endif
 
         while (d->loc != d->end && d->loc->pos == pos) {
-            E("  // %s : line %d\n", d->loc->file->path, d->loc->line);
+            E("// %s : line %d\n", d->loc->file->path, d->loc->line);
             d->loc++;
         }
 
         TB_X86_Inst inst;
         if (!tb_x86_disasm(&inst, end - pos, &e->data[pos])) {
-            E("  ERROR %#02x\n", e->data[pos]);
+            E("ERROR %#02x\n", e->data[pos]);
             pos += 1; // skip ahead once... cry
             continue;
         }
 
         uint64_t line_start = e->total_asm;
         const char* mnemonic = tb_x86_mnemonic(&inst);
-        E("  ");
         if (inst.flags & TB_X86_INSTR_REP) {
             E("rep ");
         }

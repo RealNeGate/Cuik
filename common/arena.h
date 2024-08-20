@@ -21,10 +21,12 @@
 #endif
 
 enum {
+    // this is overshooting by a bit but essentially my arena chunks
+    // are in an arena so i should be leaving a bit of slack for the
+    // object headers.
+    TB_ARENA_ALLOC_HEAD_SLACK = 32,
     // usually chunks are small unless it asks for a lot of memory (big arrays usually)
-    TB_ARENA_NORMAL_CHUNK_SIZE = 32 * 1024,
-    // this is the backing data for chunks, if we've got 32KiB chunks in 2MiB blocks that's 64 chunks per block.
-    TB_ARENA_BLOCK_SIZE = 2 * 1024 * 1024,
+    TB_ARENA_NORMAL_CHUNK_SIZE = (32 * 1024),
     // just a decent alignment amount, in practice 8 would prolly be fine
     TB_ARENA_ALIGNMENT  = 16,
 };

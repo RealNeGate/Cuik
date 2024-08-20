@@ -524,6 +524,19 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                     if (in_mask == &TB_REG_EMPTY) { continue; }
 
                     VReg* in_vreg = node_vreg(ctx, in);
+
+                    #ifndef NDEBUG
+                    // common enough error that i figure i should make a proper error
+                    if (in_vreg == NULL) {
+                        printf("RA ERROR in %s (%s:%d):\n  ", f->super.name, __FILE__, __LINE__);
+                        tb_print_dumb_node(NULL, in);
+                        printf("\n  ^^^^^  this node has no vreg even though it's used by %%%u[%zu] in BB%zu:\n  ", n->gvn, k, i);
+                        tb_print_dumb_node(NULL, n);
+                        printf("\n");
+                        tb_integrated_dbg(f, n);
+                    }
+                    #endif
+
                     int hint = fixed_reg_mask(in_mask);
                     if (hint >= 0 && in_vreg->mask->class == in_mask->class) {
                         in_vreg->hint_vreg = ra.fixed[in_mask->class] + hint;

@@ -400,6 +400,9 @@ void tb_opt_legalize(TB_Function* f, TB_Arch arch);
 int tb_opt_peeps(TB_Function* f);
 int tb_opt_locals(TB_Function* f);
 
+// Integrated IR debugger
+void tb_integrated_dbg(TB_Function* f, TB_Node* n);
+
 Lattice* latuni_get(TB_Function* f, TB_Node* n);
 
 void tb__print_regmask(RegMask* mask);

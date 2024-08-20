@@ -81,81 +81,6 @@ void cuik__vfree(void* ptr, size_t size) {
 ////////////////////////////////
 static size_t align_up_pow2(size_t a, size_t b) { return (a + b - 1) & -b; }
 
-// these are backing the arena chunks, since the chunks are
-// small we still wanna avoid making a bunch of OS calls so
-// we cache freed chunks in a shitty freelist, they don't get
-// coalesced and we generally alloc for uniform sizes.
-static _Thread_local TB_ArenaFreeList* freelist;
-
-static void free_block(void* ptr, size_t size, const char* tag) {
-    assert(size > sizeof(TB_ArenaFreeList) && "there's no way the blocks are that small");
-    log_debug("arena: free block %p - %p (%s)", ptr, ((char*) ptr) + size - 1, tag);
-
-    #if 0
-    cuik__vfree(ptr, size);
-    #else
-    #ifndef NDEBUG
-    memset(ptr, 0xF1, size);
-    #endif
-
-    TB_ArenaFreeList* f = ptr;
-    f->size  = size;
-    f->next  = freelist;
-    freelist = ptr;
-    #endif
-}
-
-static void* alloc_block(size_t size, const char* tag) {
-    #if 0
-    char* p = cuik__valloc(size);
-    log_debug("arena: use block %p - %p (%s)", p, ((char*) p) + size - 1, tag);
-    return p;
-    #else
-    TB_ArenaFreeList *curr = freelist, **prev = &freelist;
-    while (curr) {
-        TB_ArenaFreeList* next = curr->next;
-        if (curr->size == size) {
-            // perfect fit
-            *prev = curr->next;
-            log_debug("arena: use block %p - %p (%s)", curr, ((char*) curr) + size - 1, tag);
-            return curr;
-        } else if (curr->size > size) {
-            // this freelist isn't for small allocs so this should never happen
-            assert(curr->size >= size + sizeof(TB_ArenaFreeList) && "bigger than a chunk but not enough for an extra free space?");
-
-            TB_ArenaFreeList* new_free = (TB_ArenaFreeList*) &curr->data[size - sizeof(TB_ArenaFreeList)];
-            new_free->next = curr->next;
-            new_free->size = curr->size - size;
-            *prev = new_free;
-
-            log_debug("arena: use block %p - %p (%s)", curr, ((char*) curr) + size - 1, tag);
-            return curr;
-        }
-        prev = &curr->next, curr = next;
-    }
-
-    size_t block_size = align_up_pow2(size, TB_ARENA_BLOCK_SIZE);
-    log_debug("arena: new block %p (size=%.1f MiB)", block_size / (1024.0f*1024.0f));
-
-    char* p = cuik__valloc(block_size);
-    if (block_size != size) {
-        // the rest of the block can be used by other arenas
-        free_block(&p[size], block_size - size, tag);
-    }
-
-    log_debug("arena: use block %p - %p (%s)", p, ((char*) p) + size - 1, tag);
-    return p;
-    #endif
-}
-
-static TB_ArenaChunk* alloc_chunk(size_t size, const char* tag) {
-    TB_ArenaChunk* chunk = alloc_block(size, tag);
-    chunk->prev  = NULL;
-    chunk->avail = chunk->data;
-    chunk->limit = &chunk->data[size - sizeof(TB_ArenaChunk)];
-    return chunk;
-}
-
 static const char* tb_arena_tag(TB_Arena* arena) {
     #ifndef NDEBUG
     return arena->tag;
@@ -168,14 +93,19 @@ void tb_arena_create(TB_Arena* restrict arena, const char* tag) {
     #ifndef NDEBUG
     arena->tag = tag ? tag : "";
     #endif
-    arena->top = alloc_chunk(TB_ARENA_NORMAL_CHUNK_SIZE, tag);
+
+    size_t chunk_size = TB_ARENA_NORMAL_CHUNK_SIZE - TB_ARENA_ALLOC_HEAD_SLACK;
+    arena->top = cuik_malloc(chunk_size);
+    arena->top->prev = NULL;
+    arena->top->avail = arena->top->data;
+    arena->top->limit = &arena->top->data[chunk_size - sizeof(TB_ArenaChunk)];
 }
 
 void tb_arena_clear(TB_Arena* arena) {
     TB_ArenaChunk* c = arena->top;
     while (c->prev != NULL) {
         TB_ArenaChunk* prev = c->prev;
-        free_block(c, tb_arena_chunk_size(c), tb_arena_tag(arena));
+        cuik_free(c);
         c = prev;
     }
     arena->top->avail = arena->top->data;
@@ -186,7 +116,7 @@ void tb_arena_destroy(TB_Arena* restrict arena) {
     TB_ArenaChunk* c = arena->top;
     while (c != NULL) {
         TB_ArenaChunk* prev = c->prev;
-        free_block(c, tb_arena_chunk_size(c), tb_arena_tag(arena));
+        cuik_free(c);
         c = prev;
     }
     arena->top = NULL;
@@ -205,15 +135,14 @@ void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
         top->avail += size;
         return p;
     } else {
-        // slow path, we need to allocate more pages
-        size_t chunk_size = tb_arena_chunk_size(top);
-        while (size > chunk_size - sizeof(TB_ArenaChunk)) {
+        // slow path, we need to allocate more chunks
+        size_t chunk_size = TB_ARENA_NORMAL_CHUNK_SIZE;
+        while (size > chunk_size - (sizeof(TB_ArenaChunk) + TB_ARENA_ALLOC_HEAD_SLACK)) {
             chunk_size *= 2;
         }
 
         TB_ArenaChunk* c = top->prev;
-        assert(size < chunk_size - sizeof(TB_ArenaChunk));
-        c = alloc_chunk(align_up_pow2(chunk_size, TB_ARENA_NORMAL_CHUNK_SIZE), tb_arena_tag(arena));
+        c = cuik_malloc(sizeof(TB_ArenaChunk) + chunk_size - TB_ARENA_ALLOC_HEAD_SLACK);
         c->prev  = arena->top;
         c->avail = c->data + size;
         c->limit = &c->data[chunk_size - sizeof(TB_ArenaChunk)];
@@ -279,7 +208,7 @@ void tb_arena_restore(TB_Arena* arena, TB_ArenaSavepoint sp) {
     TB_ArenaChunk* curr = arena->top;
     while (curr != sp.top) {
         TB_ArenaChunk* prev = curr->prev;
-        free_block(curr, tb_arena_chunk_size(curr), tb_arena_tag(arena));
+        cuik_free(curr);
         curr = prev;
     }
 

@@ -13,7 +13,7 @@
 #include <stdbool.h>
 #include <time.h>
 
-#define TB_ENABLE_LOG 0
+#define TB_ENABLE_LOG 1
 #define LOG_VERSION "0.1.0"
 
 typedef struct {

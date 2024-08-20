@@ -296,7 +296,16 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                 break;
             }
 
-            case TB_SAR: return NULL;
+            case TB_SAR: {
+                // idk yet
+                zeros = 0, ones = 0;
+
+                if (b->_int.min == b->_int.max) {
+                    min /= (1ll << b->_int.min);
+                    max /= (1ll << b->_int.min);
+                }
+                break;
+            }
 
             default: tb_todo();
         }

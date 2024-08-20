@@ -220,6 +220,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "rpo_sched.h"
 #include "list_sched.h"
 #include "bb_placement.h"
+#include "dbg.h"
 
 static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
     Lattice* l = latuni_get(f, n);
@@ -957,7 +958,7 @@ static void print_lattice(Lattice* l) {
                 printf("i32");
             } else if (l->_int.min == INT64_MIN && l->_int.max == INT64_MAX) {
                 printf("i64");
-            } else if (l->_int.min > l->_int.max || llabs(l->_int.min) > 10000 || llabs(l->_int.max) > 10000) {
+            } else if (l->_int.min > l->_int.max) {
                 printf("%#"PRIx64",%#"PRIx64, l->_int.min, l->_int.max);
             } else {
                 printf("%"PRId64",%"PRId64, l->_int.min, l->_int.max);
@@ -1352,6 +1353,9 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
                 TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
             }
         }
+
+        tb_print_dumb(f);
+        __debugbreak();
 
         // TODO(NeGate): doesn't do anything yet
         // progress |= tb_opt_vectorize(f);
