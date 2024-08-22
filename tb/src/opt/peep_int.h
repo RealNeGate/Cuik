@@ -66,6 +66,7 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
 // im afraid of signed overflow UB
 static int64_t sadd(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a + (uint64_t)b) & mask; }
 static int64_t ssub(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a - (uint64_t)b) & mask; }
+static int64_t smul(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a * (uint64_t)b) & mask; }
 static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
@@ -97,7 +98,6 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         case TB_SUB:
         min = ssub(amin, bmax, mask);
         max = ssub(amax, bmin, mask);
-        bool overflow = false;
         if (amin != amax || bmin != bmax) {
             // Ahh sweet, Hacker's delight horrors beyond my comprehension
             uint64_t u = ~(amin ^ bmax) | ~(amin ^ min);
@@ -111,7 +111,16 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         break;
 
         case TB_MUL:
-        return NULL;
+        if (bmin != bmax) {
+            return NULL;
+        }
+
+        overflow |= __builtin_mul_overflow(amin, bmin, &min);
+        overflow |= __builtin_mul_overflow(amax, bmin, &max);
+        if (overflow) {
+            min = imin, max = imax;
+        }
+        break;
 
         default:
         TB_ASSERT(0);
@@ -246,45 +255,44 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
     // shift that's in-bounds can tell us quite a few nice details
     if (b->_int.max <= bits) {
         uint64_t zeros = 0, ones = 0;
-        uint64_t min = a->_int.min & mask;
-        uint64_t max = a->_int.max & mask;
 
-        // convert the ranges into unsigned values
-        if (min > max) { min = 0, max = mask; }
-
-        uint64_t bmin = b->_int.min & mask;
-        uint64_t bmax = b->_int.max & mask;
-        if (bmin > bmax) { bmin = 0, bmax = mask; }
+        int64_t min  = a->_int.min & mask;
+        int64_t max  = a->_int.max & mask;
+        int64_t bmin = b->_int.min & mask;
+        int64_t bmax = b->_int.max & mask;
 
         switch (n->type) {
             case TB_SHL: {
+                // we at least shifted this many bits therefore we
+                // at least have this many zeros at the bottom
+                zeros |= (1ull << b->_int.min) - 1ull;
+
                 if (bmin == bmax) {
                     uint64_t new_min = (min << bmin) & mask;
                     uint64_t new_max = (max << bmin) & mask;
 
-                    // check if we chop bits off the end (if we do we can't use
-                    // the range info, we still have known bits tho)
-                    if (((new_min >> bmin) & mask) != min ||
-                        ((new_max >> bmin) & mask) != max) {
-                        new_min = lattice_int_min(bits) | ~mask;
-                        new_max = lattice_int_max(bits);
-                    }
-
                     // we know exactly where the bits went
                     ones <<= b->_int.min;
-                    min = new_min, max = new_max;
+
+                    // overflow check
+                    if ((new_min >> bmin) == min && (new_max >> bmin) == max) {
+                        return lattice_gimme_int2(f, new_min, new_max, zeros, ones, bits);
+                    }
                 }
 
-                // we at least shifted this many bits therefore we
-                // at least have this many zeros at the bottom
-                zeros |= (1ull << b->_int.min) - 1ull;
-                break;
+                return lattice_gimme_int2(f, lattice_int_min(bits), lattice_int_max(bits), zeros, ones, bits);
             }
 
             case TB_SHR: {
+                // convert to unsigned range
+                uint64_t new_min = min, new_max = max;
+                if (((new_min >> (bits - 1)) & 1) || (new_max >> (bits - 1)) & 1) {
+                    new_min = 0, new_max = mask;
+                }
+
                 // the largest value is caused by the lowest shift amount
-                min = (min >> b->_int.max);
-                max = (max >> b->_int.min);
+                new_min = (new_min >> b->_int.max) & mask;
+                new_max = (new_max >> b->_int.min) & mask;
 
                 // if we know how many bits we shifted then we know where
                 // our known ones ones went
@@ -293,7 +301,8 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                     zeros = (a->_int.known_zeros & mask) >> b->_int.min;
                     zeros |= ~(mask >> b->_int.min);
                 }
-                break;
+
+                return lattice_gimme_int2(f, new_min, new_max, zeros, ones, bits);
             }
 
             case TB_SAR: {
@@ -301,33 +310,20 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
                 zeros = 0, ones = 0;
 
                 if (b->_int.min == b->_int.max) {
-                    min /= (1ll << b->_int.min);
-                    max /= (1ll << b->_int.min);
+                    min = tb__sxt(min >> b->_int.min, bits - b->_int.min, 64);
+                    max = tb__sxt(max >> b->_int.min, bits - b->_int.min, 64);
+
+                    return lattice_gimme_int2(f, min, max, zeros, ones, bits);
                 }
+
                 break;
             }
 
             default: tb_todo();
         }
-
-        int64_t lower = lattice_int_min(bits) | ~mask;
-        int64_t upper = lattice_int_max(bits);
-
-        if (min > max) {
-            int bits = tb_data_type_bit_size(NULL, n->dt.type);
-            min = lattice_int_min(bits);
-            max = lattice_int_max(bits);
-        }
-
-        if (min == max) {
-            zeros = ~min;
-            ones  = min;
-        }
-
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros | ~mask, ones & mask } });
-    } else {
-        return NULL;
     }
+
+    return NULL;
 }
 
 ////////////////////////////////

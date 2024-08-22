@@ -446,8 +446,12 @@ static bool find_visual_studio_by_fighting_through_microsoft_craziness(Cuik_Wind
     // a useful result, we drop back to the registry-checking method.
 
     bool found_visual_studio_2017 = find_visual_studio_2017_by_fighting_through_microsoft_craziness(result);
-    if (found_visual_studio_2017) return true;
-
+    if (found_visual_studio_2017) {
+        swprintf(result->vs_library_path, MAX_PATH, L"%sLib\\x64\\", result->vc_tools_install);
+        swprintf(result->vs_include_path, MAX_PATH, L"%sInclude\\", result->vc_tools_install);
+        swprintf(result->vs_exe_path, MAX_PATH, L"%Sbin\\amd64\\", result->vc_tools_install);
+        return true;
+    }
 
     // If we get here, we didn't find Visual Studio 2017. Try earlier versions.
 

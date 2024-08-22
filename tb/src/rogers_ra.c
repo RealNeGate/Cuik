@@ -628,6 +628,8 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                 tb__remove_node(ctx, f, n);
                 subsume_node(f, n, n->inputs[1]);
                 changes = true;
+            } else {
+                TB_OPTDEBUG(REGALLOC)(printf("PHI %%%u can't coalesce with %%%u\n", n->inputs[1]->gvn, n->gvn));
             }
         }
 
@@ -782,6 +784,7 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
             phi = lhs, other = rhs;
         }
 
+        block = ctx->f->scheduled[phi->gvn];
         if (set_get(&block->live_out, phi->gvn)) {
             TB_Node* move = phi_move_in_block(ctx->f->scheduled, block, phi);
 
@@ -804,7 +807,7 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
                 } else {
                     int kill_site = ra->order[move->gvn];
                     int other_end = last_use_in_bb(ctx->f->scheduled, ra, block, other);
-                    if (other_t >= ra->order[phi->gvn] && other_t < kill_site) {
+                    if (other_t >= ra->order[phi->gvn] && other_end < kill_site) {
                         return true;
                     }
                 }

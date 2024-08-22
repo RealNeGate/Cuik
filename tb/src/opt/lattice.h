@@ -334,6 +334,22 @@ static Lattice* lattice_gimme_int(TB_Function* f, int64_t min, int64_t max, int 
     return lattice_gimme_int2(f, min, max, 0, 0, bits);
 }
 
+static Lattice* lattice_gimme_uint2(TB_Function* f, uint64_t min, uint64_t max, uint64_t zeros, uint64_t ones, int bits) {
+    assert(min <= max);
+
+    if (min != max) {
+        // wherever the highest differing bit is we just clear everything below that
+        int msb_diff = 64 - __builtin_clzll(min ^ max);
+        zeros |= ~min & ~(UINT64_MAX >> (64 - msb_diff));
+        ones  |=  min & ~(UINT64_MAX >> (64 - msb_diff));
+    } else {
+        zeros |= ~min;
+        ones  |=  min;
+    }
+
+    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+}
+
 static Lattice* lattice_gimme_uint(TB_Function* f, uint64_t min, uint64_t max, int bits) {
     assert(min <= max);
 
@@ -486,3 +502,4 @@ static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b) {
     b = lattice_dual(f, b);
     return lattice_dual(f, lattice_meet(f, a, b));
 }
+

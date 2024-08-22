@@ -182,6 +182,7 @@ static void apply_func(TB_Function* f, void* arg) {
 
         if (args->emit_ir) {
             tb_print_dumb(f);
+            tb_print(f);
 
             // char* str = tb_print_c(f, ir_worklist, arenas->tmp);
             // printf("%s", str);

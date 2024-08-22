@@ -230,6 +230,11 @@ static TB_X86_DataType legalize_int(TB_DataType dt) {
 }
 
 static TB_X86_DataType legalize_float(TB_DataType dt) {
+    if (dt.type == TB_TAG_V128) {
+        assert(dt.elem_or_addrspace == TB_TAG_F32 || dt.elem_or_addrspace == TB_TAG_F64);
+        return dt.elem_or_addrspace == TB_TAG_F64 ? TB_X86_F64x2 : TB_X86_F32x4;
+    }
+
     assert(dt.type == TB_TAG_F32 || dt.type == TB_TAG_F64);
     return (dt.type == TB_TAG_F64 ? TB_X86_F64x1 : TB_X86_F32x1);
 }
@@ -732,8 +737,45 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         }
 
         return op;
+    } else if (n->type == TB_MEMSET) {
+        // for small memsets (16 <= size < 64), we just use XMMs
+        if (n->inputs[3]->type == TB_ICONST && n->inputs[4]->type == TB_ICONST) {
+            int val_byte = TB_NODE_GET_EXTRA_T(n->inputs[3], TB_NodeInt)->value;
+            int size     = TB_NODE_GET_EXTRA_T(n->inputs[4], TB_NodeInt)->value;
+            if (val_byte == 0 && (size == 16 || size == 32 || size == 48 || size == 64)) {
+                TB_Node* mem = n->inputs[1];
+
+                TB_Node* val;
+                if (val_byte == 0) {
+                    val = tb_alloc_node(f, x86_vzero, (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = TB_TAG_F32 } }, 1, sizeof(X86MemOp));
+                    set_input(f, val, f->root_node, 0);
+                } else {
+                    tb_todo();
+                }
+
+                FOR_N(i, 0, size / 16) {
+                    TB_Node* st = tb_alloc_node(f, x86_vmov, TB_TYPE_MEMORY, 5, sizeof(X86MemOp));
+                    if (n->inputs[0]) {
+                        set_input(f, st, n->inputs[0], 0);
+                    }
+                    set_input(f, st, mem,          1);
+                    set_input(f, st, n->inputs[2], 2);
+                    set_input(f, st, val,          4);
+
+                    X86MemOp* st_extra = TB_NODE_GET_EXTRA(st);
+                    st_extra->mode = MODE_ST;
+                    st_extra->disp = i*16;
+
+                    mem = st;
+                }
+
+                return mem;
+            }
+        }
+
+        return n;
     } else if (n->type == TB_VA_START) {
-        assert(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
+        TB_ASSERT(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
 
         // on Win64 va_start just means whatever is one parameter away from
         // the parameter you give it (plus in Win64 the parameters in the stack
@@ -1770,7 +1812,11 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
             if (!is_value_match(&dst, &src)) {
-                // COMMENT("%%%u = copy(%%%u)", n->gvn, n->inputs[1]->gvn);
+                if (dst.type == VAL_MEM && src.type != VAL_MEM) {
+                    COMMENT("spill");
+                } else if (dst.type != VAL_MEM && src.type == VAL_MEM) {
+                    COMMENT("reload");
+                }
 
                 if (dst.type == VAL_GPR && src.type == VAL_XMM) {
                     __(MOV_I2F, dt, &dst, &src);
@@ -2645,12 +2691,22 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         if (inst.flags & TB_X86_INSTR_LOCK) {
             E("lock ");
         }
-        E("%s", mnemonic);
+
+        #if ASM_STYLE_PRINT_POS
         if (inst.dt >= TB_X86_F32x1 && inst.dt <= TB_X86_F64x2) {
             static const char* strs[] = { "ss", "sd", "ps", "pd" };
-            E("%s", strs[inst.dt - TB_X86_F32x1]);
+            E("%s%-5s ", mnemonic, strs[inst.dt - TB_X86_F32x1]);
+        } else {
+            E("%-8s ", mnemonic);
         }
-        E(" ");
+        #else
+        if (inst.dt >= TB_X86_F32x1 && inst.dt <= TB_X86_F64x2) {
+            static const char* strs[] = { "ss", "sd", "ps", "pd" };
+            E("%s%s ", mnemonic, strs[inst.dt - TB_X86_F32x1]);
+        } else {
+            E("%s ", mnemonic);
+        }
+        #endif
 
         uint8_t rx = (inst.regs >> 16) & 0xFF;
         if (inst.flags & TB_X86_INSTR_DIRECTION) {
