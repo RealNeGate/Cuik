@@ -753,18 +753,38 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     tb_todo();
                 }
 
+                // sometimes introduced by other isel bits.
+                TB_Node* addr = n->inputs[2];
+                int32_t disp = 0;
+                if (addr->type == x86_lea && addr->inputs[3] == NULL) {
+                    disp = TB_NODE_GET_EXTRA_T(n, X86MemOp)->disp;
+                    addr = addr->inputs[2];
+                } else if (addr->type == TB_PTR_OFFSET && addr->inputs[2]->type == TB_ICONST) {
+                    // [... + disp]
+                    int64_t raw_disp = TB_NODE_GET_EXTRA_T(addr->inputs[2], TB_NodeInt)->value;
+                    if (raw_disp == (int32_t) raw_disp) {
+                        addr = addr->inputs[1];
+                        disp = raw_disp;
+                    }
+                }
+
+                if (addr->type == TB_LOCAL) {
+                    disp += TB_NODE_GET_EXTRA_T(addr, TB_NodeLocal)->stack_pos;
+                    addr = ctx->frame_ptr;
+                }
+
                 FOR_N(i, 0, size / 16) {
                     TB_Node* st = tb_alloc_node(f, x86_vmov, TB_TYPE_MEMORY, 5, sizeof(X86MemOp));
                     if (n->inputs[0]) {
                         set_input(f, st, n->inputs[0], 0);
                     }
-                    set_input(f, st, mem,          1);
-                    set_input(f, st, n->inputs[2], 2);
-                    set_input(f, st, val,          4);
+                    set_input(f, st, mem,  1);
+                    set_input(f, st, addr, 2);
+                    set_input(f, st, val,  4);
 
                     X86MemOp* st_extra = TB_NODE_GET_EXTRA(st);
                     st_extra->mode = MODE_ST;
-                    st_extra->disp = i*16;
+                    st_extra->disp = disp + i*16;
 
                     mem = st;
                 }
@@ -931,12 +951,12 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt);
                 set_input(f, mach_cond, cond, 2);
                 set_input(f, mach_cond, cond, 4);
-                if_br->key = NE;
+                if_br->key = E;
             } else {
                 mach_cond = tb_alloc_node(f, x86_cmpimmjcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
                 TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt, .imm = if_br->key);
                 set_input(f, mach_cond, cond, 2);
-                if_br->key = NE;
+                if_br->key = E;
             }
 
             set_input(f, mach_cond, n->inputs[0], 0);
@@ -1198,6 +1218,7 @@ static int node_tmp_count(Ctx* restrict ctx, TB_Node* n) {
 
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
     switch (n->type) {
+        case TB_DEAD:
         case TB_REGION:
         case TB_SPLITMEM:
         case TB_MERGEMEM:
@@ -1743,6 +1764,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
     switch (n->type) {
         // some ops don't do shit lmao
         case TB_PHI:
+        case TB_DEAD:
         case TB_POISON:
         case TB_REGION:
         case TB_AFFINE_LOOP:
@@ -2672,8 +2694,14 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         #endif
 
         while (d->loc != d->end && d->loc->pos == pos) {
+            TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
             E("// %s : line %d\n", d->loc->file->path, d->loc->line);
+            TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
             d->loc++;
+
+            #if ASM_STYLE_PRINT_POS
+            E("%-4x  ", pos);
+            #endif
         }
 
         TB_X86_Inst inst;
@@ -2738,12 +2766,12 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         int offset = e->total_asm - line_start;
         if (d->comment && d->comment->pos == pos) {
             TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
-            E("%*s", 40 - offset, "// ");
+            E("      %*s", 40 - offset, "// ");
             bool out_of_line = false;
             do {
                 if (out_of_line) {
                     // tack on a newline
-                    E("%*s  // ", offset, "");
+                    E("      %*s// ", offset, "");
                 }
 
                 E("%.*s\n", d->comment->line_len, d->comment->line);

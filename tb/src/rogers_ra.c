@@ -662,6 +662,9 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     int rounds = 0;
     int old_spills = ctx->num_spills;
 
+    // fast solve, worse results
+    bool preserve_colors = false;
+
     cuikperf_region_start("allocate", NULL);
     for (;;) {
         #if TB_OPTDEBUG_REGALLOC
@@ -681,10 +684,12 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             break;
         } else if (best_spill > 0) {
             // undo assignments
-            FOR_N(i, 1, aarray_length(ctx->vregs)) {
-                if (!vreg_is_fixed(ctx, &ra, i) && ctx->vregs[i].mask->class != REG_CLASS_STK) {
-                    ctx->vregs[i].class    = 0;
-                    ctx->vregs[i].assigned = -1;
+            if (!preserve_colors) {
+                FOR_N(i, 1, aarray_length(ctx->vregs)) {
+                    if (!vreg_is_fixed(ctx, &ra, i) && ctx->vregs[i].mask->class != REG_CLASS_STK) {
+                        ctx->vregs[i].class    = 0;
+                        ctx->vregs[i].assigned = -1;
+                    }
                 }
             }
 
@@ -735,6 +740,14 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                     spill_vreg = tb__set_node_vreg(ctx, spill_n);
                     spill_vreg->spill_cost = INFINITY;
                     better_spill_range(ctx, &ra, spill_vreg, spill_rm, old_node_count);
+
+                    // if we're preserving colors, it means we allocate the spills here
+                    if (preserve_colors) {
+                        int empty_slot = old_spills++;
+                        TB_OPTDEBUG(REGALLOC)(printf("#   assigned to SPILL%u\n", empty_slot));
+                        spill_vreg->class = REG_CLASS_STK;
+                        spill_vreg->assigned = STACK_BASE_REG_NAMES + empty_slot;
+                    }
                 }
             }
         }

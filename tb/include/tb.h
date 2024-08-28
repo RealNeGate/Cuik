@@ -1535,7 +1535,7 @@ TB_API TB_Node* tb_builder_jit_thread_ptr(TB_GraphBuilder* g);
 // variables:
 //   just gives you the ability to construct mutable names, from
 //   there we just slot in the phis and such for you :)
-TB_API int tb_builder_decl(TB_GraphBuilder* g);
+TB_API int tb_builder_decl(TB_GraphBuilder* g, TB_Node* label);
 TB_API TB_Node* tb_builder_get_var(TB_GraphBuilder* g, int id);
 TB_API void tb_builder_set_var(TB_GraphBuilder* g, int id, TB_Node* v);
 
@@ -1545,8 +1545,8 @@ TB_API TB_Node* tb_builder_label_make(TB_GraphBuilder* g);
 //   once a label is complete you can no longer insert jumps to it, the phis
 //   are placed and you can then insert code into the label's body.
 TB_API void tb_builder_label_complete(TB_GraphBuilder* g, TB_Node* label);
-//   begin building on the label (has to be completed now)
-TB_API void tb_builder_label_set(TB_GraphBuilder* g, TB_Node* label);
+//   begin building on the label (has to be completed now), returns old label
+TB_API TB_Node* tb_builder_label_set(TB_GraphBuilder* g, TB_Node* label);
 //   just makes a label from an existing label (used when making the loop body defs)
 TB_API TB_Node* tb_builder_label_clone(TB_GraphBuilder* g, TB_Node* label);
 //   active label

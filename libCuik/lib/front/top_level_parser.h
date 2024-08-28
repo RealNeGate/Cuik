@@ -171,7 +171,6 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
         type = cuik_uncanonical_type(parser->default_int);
     }
-    // diag_note(s, (SourceRange){ loc, tokens_get_last_location(s) }, "Declspec");
 
     // [https://www.sigbus.info/n1570#6.7]
     // normal variable lists, we technically merge the function
@@ -200,6 +199,19 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
         };
 
         dyn_array_put(parser->top_level_stmts, n);
+
+        if (attr.is_noret) {
+            if (cuik_canonical_type(decl.type)->kind != KIND_FUNC) {
+                diag_err(s, decl.loc, "this declaration isn't a function, it can't be no-return");
+            } else {
+                // clone but preserve flags
+                n->decl.type = cuik_make_qual_type(
+                    type_clone(&parser->types, cuik_canonical_type(n->decl.type), decl.name),
+                    cuik_get_quals(n->decl.type)
+                );
+                cuik_canonical_type(n->decl.type)->func.noret = true;
+            }
+        }
 
         Symbol *old_def = NULL, *sym = NULL;
         int ts = 0, te = 0;
@@ -270,6 +282,7 @@ static ParseResult parse_decl(Cuik_Parser* restrict parser, TokenStream* restric
 
                     n->op = STMT_FUNC_DECL;
                     n->decl.attrs.is_root = attr.is_tls || !(attr.is_static || attr.is_inline);
+
                     expr_start = skip_brackets(s, decl.loc, false, &expr_end);
                     if (expr_start < 0) {
                         s->list.current = dyn_array_length(s->list.tokens) - 1;

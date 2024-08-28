@@ -602,6 +602,19 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
         // 8^depth
         int depth = loop ? loop->depth : 0;
         bb->freq = 1 << (depth * 3);
+
+        TB_Node* fallthru = bb->end;
+        if (!cfg_is_terminator(fallthru)) {
+            // if we're forced to jump to a different block, then we
+            // inherit it's frequency if it's low.
+            fallthru = cfg_next_control(fallthru);
+            fallthru = nl_map_get_checked(cfg->node_to_block, fallthru)->end;
+        }
+
+        // return/trap/unreachable paths are always marked as statically unlikely
+        if (fallthru->type == TB_TRAP || fallthru->type == TB_UNREACHABLE || fallthru->type == TB_RETURN) {
+            bb->freq = 1e-4;
+        }
     }
 
     tb_arena_restore(&f->tmp_arena, sp);
@@ -1079,6 +1092,110 @@ bool tb_opt_loops(TB_Function* f) {
                     if (type == TB_AFFINE_LOOP) {
                         header->inputs[1]->inputs[0]->type = TB_AFFINE_LATCH;
                         mark_node_n_users(f, header->inputs[1]->inputs[0]);
+                    }
+                }
+            }
+        }
+    }
+
+    CUIK_TIMED_BLOCK("loop peeps") {
+        tb_opt_peeps(f);
+    }
+
+    CUIK_TIMED_BLOCK("induction vars") {
+        aarray_for(i, cfg.loops) {
+            TB_LoopTree* loop = cfg.loops[i];
+            if (loop->header->type != TB_AFFINE_LOOP) { continue; }
+
+            TB_Node* latch = affine_loop_latch(loop->header);
+            if (latch == NULL) { continue; }
+
+            FOR_USERS(u, loop->header) if (USERN(u)->type == TB_PHI) {
+                TB_Node* n = USERN(u);
+                uint64_t* step_ptr = find_affine_indvar(n, loop->header);
+
+                #if TB_OPTDEBUG_LOOP
+                printf("IV: ");
+                tb_print_dumb_node(NULL, n);
+                printf("\n");
+                FOR_USERS(u2, n) {
+                    printf("  ");
+                    tb_print_dumb_node(NULL, USERN(u2));
+                    printf("\n");
+                }
+                tb_print_dumb_node(NULL, n->inputs[2]);
+                printf("\n");
+                FOR_USERS(u2, n->inputs[2]) {
+                    printf("  ");
+                    tb_print_dumb_node(NULL, USERN(u2));
+                    printf("\n");
+                }
+                #endif
+
+                if (step_ptr) {
+                    TB_Node* stepper = n->inputs[2];
+                    TB_Node* cast    = NULL;
+
+                    FOR_USERS(u2, n) {
+                        if (USERN(u2) == stepper) {
+                            continue;
+                        } else if ((USERN(u2)->type == TB_ZERO_EXT || USERN(u2)->type == TB_SIGN_EXT) && cast == NULL) {
+                            cast = USERN(u2);
+                        } else {
+                            cast = NULL;
+                            break;
+                        }
+                    }
+
+                    TB_Node* cmp = NULL;
+                    FOR_USERS(u2, stepper) {
+                        if (USERN(u2) == latch->inputs[1]) {
+                            cmp = latch->inputs[1];
+                        } else if (USERN(u2) != n) {
+                            cast = NULL;
+                            break;
+                        }
+                    }
+
+                    // we found a single unambiguous cast (beyond the step node), the case
+                    // our IV simplify handles for now.
+                    if (cast != NULL) {
+                        TB_Node* con = make_int_node(f, cast->dt, *step_ptr);
+
+                        TB_Node* new_stepper = tb_alloc_node(f, TB_ADD, cast->dt, 3, sizeof(TB_NodeBinopInt));
+                        set_input(f, new_stepper, n,   1);
+                        set_input(f, new_stepper, con, 2);
+                        TB_NODE_SET_EXTRA(new_stepper, TB_NodeBinopInt, .ab = TB_NODE_GET_EXTRA_T(stepper, TB_NodeBinopInt)->ab);
+                        latuni_set(f, new_stepper, value_of(f, stepper));
+
+                        set_input(f, n, new_stepper, 2);
+
+                        // stepper has one extra use which is the latch, this is easy to extend
+                        if (cmp != NULL) {
+                            TB_ASSERT(cmp->inputs[1] == stepper);
+
+                            TB_Node* ext_limit = tb_alloc_node(f, cast->type, cast->dt, 2, 0);
+                            set_input(f, ext_limit, cmp->inputs[2], 1);
+                            ext_limit = tb__gvn(f, ext_limit, 0);
+                            latuni_set(f, ext_limit, value_of(f, ext_limit));
+
+                            set_input(f, cmp, new_stepper, 1);
+                            set_input(f, cmp, ext_limit,   2);
+                            TB_NODE_SET_EXTRA(cmp, TB_NodeCompare, .cmp_dt = cast->dt);
+
+                            mark_node(f, ext_limit);
+                            mark_node_n_users(f, cmp);
+                        }
+
+                        n->dt = cast->dt;
+
+                        subsume_node(f, cast, n);
+                        tb_kill_node(f, stepper);
+
+                        latuni_set(f, n, value_of(f, n));
+
+                        mark_node_n_users(f, n);
+                        mark_node_n_users(f, new_stepper);
                     }
                 }
             }

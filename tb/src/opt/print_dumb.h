@@ -154,7 +154,7 @@ void tb_print_dumb(TB_Function* f) {
     worklist_alloc(&ws, f->node_count);
 
     TB_Node* root   = f->root_node;
-    Lattice** types = NULL; // use_fancy_types ? f->types : NULL;
+    Lattice** types = NULL; // f->types; // use_fancy_types ? f->types : NULL;
 
     dumb_walk(f, &ws, root);
 

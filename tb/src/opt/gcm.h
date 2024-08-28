@@ -582,7 +582,7 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                 if (changes && !(bb_node->type == TB_PROJ && bb_node->inputs[0]->type == TB_ROOT)) {
                     FOR_N(i, 0, bb_node->input_count) {
                         TB_Node* pred = cfg_get_pred(&cfg, bb_node, i);
-                        if (pred->input_count > 0) {
+                        if (pred->input_count > 0 && pred->type != TB_DEAD) {
                             worklist_push(ws, pred);
                         }
                     }

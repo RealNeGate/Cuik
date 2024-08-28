@@ -394,6 +394,7 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg);
 
 // BB placement
 void bb_placement_rpo(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
+void bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
 
 // makes arch-friendly IR
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);

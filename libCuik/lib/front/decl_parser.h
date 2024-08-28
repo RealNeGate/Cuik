@@ -358,6 +358,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
     // _Alignas(N) or __declspec(align(N))
     // 0 means no forced alignment
     int forced_align = 0;
+    bool noret = false;
     PendingExpr* alignas_pending_expr = NULL;
 
     SourceRange loc = tokens_get_range(s);
@@ -389,7 +390,7 @@ static Cuik_QualType parse_declspec2(Cuik_Parser* restrict parser, TokenStream* 
             case TOKEN_KW_inline:       attr->is_inline  = true; break;
             case TOKEN_KW_auto:         /* lmao */               break;
             case TOKEN_KW_register:     /* lmao */               break;
-            case TOKEN_KW_Noreturn:     /* lmao */               break;
+            case TOKEN_KW_Noreturn:     attr->is_noret = true;   break;
 
             // Qualifiers
             case TOKEN_KW_const:    quals |= CUIK_QUAL_CONST;    break;

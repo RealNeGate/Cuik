@@ -64,11 +64,11 @@ static Lattice* value_zext(TB_Function* f, TB_Node* n) {
     TB_ASSERT(src_bits != 64);
 
     Lattice* full_zxt_range = lattice_gimme_int(f, 0, lattice_uint_max(src_bits), src_bits);
-    if (a->_int.min >= 0 || (a->_int.known_zeros >> (src_bits - 1))) { // known non-negative
+    if (a->_int.min >= 0 || (a->_int.known_zeros >> (src_bits - 1)) & 1) { // known non-negative
         return lattice_join(f, full_zxt_range, a);
+    } else {
+        return full_zxt_range;
     }
-
-    return full_zxt_range;
 }
 
 static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
@@ -263,59 +263,6 @@ static TB_Node* ideal_truncate(TB_Function* f, TB_Node* n) {
         set_input(f, new_binop, left, 1);
         set_input(f, new_binop, right, 2);
         return new_binop;
-    }
-
-    return NULL;
-}
-
-static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
-    TB_NodeTypeEnum ext_type = n->type;
-    TB_Node* src = n->inputs[1];
-
-    if (src->type == ext_type) {
-        do {
-            src = src->inputs[1];
-        } while (src->type == ext_type);
-        set_input(f, n, src, 1);
-        return n;
-    }
-
-    // we'd rather zero extends over sign extends when possible
-    if (ext_type == TB_SIGN_EXT) {
-        Lattice* src_t = latuni_get(f, src);
-        if (lattice_int_ge(src_t, 0)) {
-            n->type = TB_ZERO_EXT;
-            return n;
-        }
-    } else if (ext_type == TB_ZERO_EXT && src->type == TB_TRUNCATE && src->inputs[1]->dt.raw == n->dt.raw) {
-        int bits = tb_data_type_bit_size(NULL, n->dt.type);
-        TB_Node* con = make_int_node(f, n->dt, lattice_uint_max(bits));
-
-        TB_Node* and = tb_alloc_node(f, TB_AND, n->dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, and, src->inputs[1], 1);
-        set_input(f, and, con,            2);
-        return and;
-    }
-
-    // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))
-    if (src->type == TB_PHI) {
-        FOR_N(i, 1, src->input_count) {
-            if (src->inputs[i]->type != TB_ICONST) return NULL;
-        }
-
-        // generate extension nodes
-        TB_DataType dt = n->dt;
-        FOR_N(i, 1, src->input_count) {
-            assert(src->inputs[i]->type == TB_ICONST);
-
-            TB_Node* ext_node = tb_alloc_node(f, ext_type, dt, 2, 0);
-            set_input(f, ext_node, src->inputs[i], 1);
-            set_input(f, src, ext_node, i);
-            mark_node(f, ext_node);
-        }
-
-        src->dt = dt;
-        return src;
     }
 
     return NULL;

@@ -288,6 +288,50 @@ static int get_memory_order_val(TB_Node* n) {
     }
 }
 
+static void cg_logical_op(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, Cuik_QualType qt, TB_Node* paths[2]) {
+    // a && b
+    //
+    //          if (a) { goto try_rhs } else { goto false }
+    // try_rhs: if (b) { goto true    } else { goto false }
+    //
+    //
+    // a || b
+    //
+    //          if (a) { goto true    } else { goto try_rhs }
+    // try_rhs: if (b) { goto true    } else { goto false }
+    int op = e->op;
+    Cuik_Expr* ee = NULL;
+    while (e->op == EXPR_LOGICAL_AND || e->op == EXPR_LOGICAL_OR) {
+        TB_Node* cond = cg_rval(tu, g, e->logical_binop.left);
+
+        TB_Node* paths2[2];
+        tb_builder_if(g, cond, paths2);
+
+        // jump to early outs (and jumps out if false, or jumps out if true)
+        int early_out = e->op == EXPR_LOGICAL_AND;
+        tb_builder_label_set(g, paths2[early_out]);
+        tb_builder_br(g, paths[early_out]);
+        tb_builder_label_kill(g, paths2[early_out]);
+
+        // try RHS
+        tb_builder_label_set(g, paths2[!early_out]);
+        ee = e->logical_binop.right;
+        e = &ee->exprs[ee->count - 1];
+    }
+
+    // final condition acts like a traditional if
+    TB_Node* cond = cg_rval(tu, g, ee);
+
+    TB_Node* paths2[2];
+    tb_builder_if(g, cond, paths2);
+
+    for (int i = 0; i < 2; i++) {
+        tb_builder_label_set(g, paths2[i]);
+        tb_builder_br(g, paths[i]);
+        tb_builder_label_kill(g, paths2[i]);
+    }
+}
+
 static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, Cuik_QualType qt, int arg_count, ValDesc* args) {
     switch (e->op) {
         case EXPR_INT: {
@@ -396,6 +440,34 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             } else {
                 return (ValDesc){ LVALUE, .n = tb_builder_ptr_member(g, args[0].n, e->dot_arrow.offset) };
             }
+        }
+        case EXPR_LOGICAL_AND:
+        case EXPR_LOGICAL_OR: {
+            TB_Node* paths[2];
+            paths[0] = tb_builder_label_make(g);
+            paths[1] = tb_builder_label_make(g);
+
+            TB_Node* merge = tb_builder_label_make(g);
+
+            cg_logical_op(tu, g, e, qt, paths);
+
+            int x = tb_builder_decl(g, paths[0]);
+            int y = tb_builder_decl(g, paths[1]);
+            int z = tb_builder_decl(g, merge);
+            assert(x == y && y == z);
+
+            tb_builder_label_set(g, paths[0]);
+            tb_builder_set_var(g, x, tb_builder_bool(g, true));
+            tb_builder_br(g, merge);
+            tb_builder_label_kill(g, paths[0]);
+
+            tb_builder_label_set(g, paths[1]);
+            tb_builder_set_var(g, y, tb_builder_bool(g, false));
+            tb_builder_br(g, merge);
+            tb_builder_label_kill(g, paths[1]);
+
+            tb_builder_label_set(g, merge);
+            return (ValDesc){ RVALUE, .n = tb_builder_get_var(g, x) };
         }
 
         case EXPR_PLUS:
@@ -841,6 +913,10 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             TB_Node** out = tb_builder_call(g, call_prototype, 0, target_node, real_arg_count, ir_args);
             tb_arena_free(muh_tmp_arena, ir_args, real_arg_count * sizeof(TB_Node*));
 
+            if (func_type->func.noret) {
+                tb_builder_unreachable(g, 0);
+            }
+
             if (out == NULL) {
                 return (ValDesc){ RVALUE, .n = NULL };
             } else if (return_rule == TB_PASSING_INDIRECT) {
@@ -878,7 +954,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
         }
 
         case EXPR_COMMA: {
-            return args[0];
+            return args[1];
         }
 
         case EXPR_CAST: {
@@ -1327,6 +1403,10 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
             function_name = s->decl.name;
 
             TB_GraphBuilder* g = tb_builder_enter_from_dbg(func, section, dbg_type, NULL);
+
+            // TB_Node* paths[2];
+            // tb_builder_entry_fork(g, 2, paths);
+            // make a verified entry
 
             muh_tmp_arena = tb_function_get_arena(func, 1);
             muh_param_memory_vars = tb_arena_alloc(muh_tmp_arena, function_type->func.param_count * sizeof(int));

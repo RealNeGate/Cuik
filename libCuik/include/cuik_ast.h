@@ -209,6 +209,7 @@ struct Cuik_Type {
             Param* param_list;
 
             bool has_varargs : 1;
+            bool noret       : 1;
         } func;
 
         // Structs/Unions

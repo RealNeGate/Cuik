@@ -440,7 +440,18 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             }
         }
 
-        bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
+        // bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
+        bb_placement_trace(&f->tmp_arena, &cfg, final_order);
+
+        TB_OPTDEBUG(PLACEMENT)(printf("Final Schedule:\n"));
+        FOR_N(i, 0, bb_count) {
+            int id = final_order[i];
+
+            // block is empty and every use is jump-threaded
+            if (id != cfg.blocks[id].fwd) { continue; }
+
+            TB_OPTDEBUG(PLACEMENT)(printf("  BB%d (freq=%f)\n", id, cfg.blocks[id].freq));
+        }
     }
 
     CUIK_TIMED_BLOCK("emit") {
@@ -616,7 +627,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 #endif
 
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[32m"));
-                tb_asm_print(e, " // Freq: %f", cfg.blocks[id].freq);
+                tb_asm_print(e, " // Freq: %.4f", cfg.blocks[id].freq);
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[0m"));
                 tb_asm_print(e, "\n");
             }

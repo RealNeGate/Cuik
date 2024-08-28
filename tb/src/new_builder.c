@@ -165,7 +165,7 @@ TB_Node* tb_builder_bool(TB_GraphBuilder* g, bool x) {
 }
 
 TB_Node* tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x) {
-    TB_ASSERT(TB_IS_INT_OR_PTR(dt));
+    TB_ASSERT(TB_IS_INT_OR_PTR(dt) || dt.type == TB_TAG_BOOL);
     int bits = tb_data_type_bit_size(g->f->super.module, dt.type);
     if (bits < 64) {
         uint64_t mask = ~UINT64_C(0) >> (64 - bits);
@@ -179,7 +179,7 @@ TB_Node* tb_builder_uint(TB_GraphBuilder* g, TB_DataType dt, uint64_t x) {
 }
 
 TB_Node* tb_builder_sint(TB_GraphBuilder* g, TB_DataType dt, int64_t x) {
-    TB_ASSERT(TB_IS_POINTER_TYPE(dt) || TB_IS_INTEGER_TYPE(dt));
+    TB_ASSERT(TB_IS_INT_OR_PTR(dt) || dt.type == TB_TAG_BOOL);
 
     TB_Node* n = tb_alloc_node(g->f, TB_ICONST, dt, 1, sizeof(TB_NodeInt));
     set_input(g->f, n, g->f->root_node, 0);
@@ -470,9 +470,10 @@ TB_Node* tb_builder_atomic_rmw(TB_GraphBuilder* g, int mem_var, int op, TB_Node*
     return tb__make_proj(f, val->dt, n, 1);
 }
 
-int tb_builder_decl(TB_GraphBuilder* g) {
-    int id = g->curr->input_count - 2;
-    add_input_late(g->f, g->curr, NULL);
+int tb_builder_decl(TB_GraphBuilder* g, TB_Node* label) {
+    TB_ASSERT(label->type == TB_SYMBOL_TABLE);
+    int id = label->input_count - 2;
+    add_input_late(g->f, label, NULL);
     return id;
 }
 
@@ -522,7 +523,7 @@ void tb_builder_label_complete(TB_GraphBuilder* g, TB_Node* label) {
 
     if (top_ctrl->input_count != 0) {
         FOR_N(i, 2, label->input_count) {
-            assert(label->inputs[i]);
+            if (label->inputs[i] == NULL) { continue; }
 
             #if 1
             if (label->inputs[i]->type == TB_PHI && label->inputs[i]->inputs[0] == top_ctrl) {
@@ -550,7 +551,13 @@ int tb_builder_label_pred_count(TB_GraphBuilder* g, TB_Node* label) {
     }
 }
 
-void tb_builder_label_set(TB_GraphBuilder* g, TB_Node* label) {
+TB_Node* tb_builder_label_set(TB_GraphBuilder* g, TB_Node* label) {
+    TB_Node* old = g->curr;
+    if (label == NULL) {
+        g->curr = NULL;
+        return old;
+    }
+
     assert(label->type == TB_SYMBOL_TABLE);
     TB_NodeSymbolTable* extra = TB_NODE_GET_EXTRA(label);
     if (!extra->complete) {
@@ -562,6 +569,7 @@ void tb_builder_label_set(TB_GraphBuilder* g, TB_Node* label) {
     } else {
         g->curr = label;
     }
+    return old;
 }
 
 TB_Node* tb_builder_label_clone(TB_GraphBuilder* g, TB_Node* label) {
