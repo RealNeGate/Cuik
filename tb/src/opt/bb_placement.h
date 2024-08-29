@@ -24,6 +24,34 @@ void bb_placement_rpo(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
 }
 
 #if 1
+typedef struct Trace {
+    int id;
+    int first_bb;
+    int last_bb;
+} Trace;
+
+typedef struct {
+    TB_CFG* cfg;
+    Trace** block_to_trace;
+
+    // linked list
+    int* next_block;
+} TraceScheduler;
+
+static Trace* trace_of(TraceScheduler* traces, TB_BasicBlock* bb) {
+    return traces->block_to_trace[bb - traces->cfg->blocks];
+}
+
+static void trace_append(TraceScheduler* traces, int a, int b) {
+    TB_ASSERT(traces->block_to_trace[a]->last_bb == a);
+    TB_ASSERT(traces->block_to_trace[b]->first_bb == b);
+
+    traces->next_block[a] =  b;
+    traces->next_block[b] = -1;
+    traces->block_to_trace[b] = traces->block_to_trace[a];
+    traces->block_to_trace[b]->last_bb = b;
+}
+
 static TB_BasicBlock* best_successor_of(TB_CFG* cfg, TB_Node* n) {
     if (cfg_is_endpoint(n)) {
         return NULL;
@@ -62,52 +90,74 @@ static TB_BasicBlock* best_successor_of(TB_CFG* cfg, TB_Node* n) {
 void bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     size_t bb_count = aarray_length(cfg->blocks);
     bool* visited = tb_arena_alloc(arena, bb_count);
-    FOR_N(i, 0, bb_count) { visited[i] = false; }
 
-    int j = 0;
+    TraceScheduler traces = { .cfg = cfg };
+    traces.block_to_trace = tb_arena_alloc(arena, bb_count * sizeof(Trace*));
+    traces.next_block = tb_arena_alloc(arena, bb_count * sizeof(int));
 
-    // start from the entry block, we only expand trace via successors
-    // but there's reasons why expanding by preds would be good, we also
-    // don't try to do fallthru for backedges (succ < bb with our RPOrdering)
+    // initialize the most degen traces
     FOR_N(i, 0, bb_count) {
-        // if we're in a block that's unvisited we can expand out a trace
-        // until we don't think there's a strong case for the trace expanding or
-        // we hit a visited block.
-        if (!visited[i]) {
-            TB_OPTDEBUG(PLACEMENT)(printf("Trace:\n"));
+        Trace* trace = tb_arena_alloc(arena, bb_count * sizeof(Trace));
+        trace->id = trace->first_bb = trace->last_bb = i;
 
-            int curr = i;
-            do {
-                TB_BasicBlock* bb = &cfg->blocks[curr];
+        traces.next_block[i] = -1;
+        traces.block_to_trace[i] = trace;
+    }
 
-                #if TB_OPTDEBUG_PLACEMENT
-                printf("  BB%-3d (freq = %8.4f)  =>", curr, bb->freq);
-                FOR_SUCC(it, bb->end) {
-                    TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, it.succ);
-                    printf("  BB%-3zu", succ_bb - cfg->blocks);
-                }
-                printf("\n");
-                #endif
+    // grow traces by placing likely traces next to them
+    FOR_N(i, 0, bb_count) { visited[i] = false; }
+    FOR_N(i, 0, bb_count) {
+        Trace* trace = traces.block_to_trace[i];
+        // if we've already tried to grow this trace, don't :p
+        if (visited[trace->id]) { continue; }
+        visited[trace->id] = true;
 
-                visited[curr] = true;
-                dst_order[j++] = curr;
+        TB_OPTDEBUG(PLACEMENT)(printf("Grow Trace %d?\n", trace->id));
 
-                // find best successor
-                TB_BasicBlock* succ = best_successor_of(cfg, bb->end);
-                if (succ == NULL) { break; }
+        // extend the end of the trace until we hit an unlikely case or a backedge
+        int curr = trace->last_bb;
+        for (;;) {
+            TB_BasicBlock* bb = &cfg->blocks[trace->last_bb];
 
-                // it's not worth growing the trace if the next block is really low-freq
-                if (succ->freq < 1e-3) { break; }
+            #if TB_OPTDEBUG_PLACEMENT
+            printf("  BB%-3d (freq = %8.4f)  =>", curr, bb->freq);
+            FOR_SUCC(it, bb->end) {
+                TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, it.succ);
+                printf("  BB%-3zu", succ_bb - cfg->blocks);
+            }
+            printf("\n");
+            #endif
 
-                // can't revisit, but also can't do backedges in traces
-                int succ_bb = succ - cfg->blocks;
-                if (succ_bb < curr || visited[succ_bb]) { break; }
+            // find best successor
+            TB_BasicBlock* succ = best_successor_of(cfg, bb->end);
+            if (succ == NULL) { break; }
+            // it's not worth growing the trace if the next block is really low-freq
+            if (succ->freq < 1e-3) { break; }
+            // can't do backedges in traces
+            int succ_bb = succ - cfg->blocks;
+            if (succ_bb <= curr) { break; }
+            // it's only an option if the block is the start of it's trace
+            if (traces.block_to_trace[succ_bb]->first_bb != succ_bb) { break; }
 
-                curr = succ_bb;
-            } while (!visited[curr]);
-
-            // end of trace (might've literally been a single block)
+            trace_append(&traces, curr, succ_bb);
+            curr = succ_bb;
         }
+    }
+
+    // final placement
+    int j = 0;
+    FOR_N(i, 0, bb_count) { visited[i] = false; }
+    FOR_N(i, 0, bb_count) {
+        Trace* trace = traces.block_to_trace[i];
+        // if we've already tried to grow this trace, don't :p
+        if (visited[trace->id]) { continue; }
+        visited[trace->id] = true;
+
+        int curr = trace->first_bb;
+        do {
+            dst_order[j++] = curr;
+            curr = traces.next_block[curr];
+        } while (curr >= 0);
     }
 }
 #endif

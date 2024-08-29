@@ -2181,6 +2181,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
                         TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
                         succ[index] = succ_bb->fwd;
+
+                        printf("RELOC BB%ld => BB%d\n", succ_bb - ctx->cfg.blocks, succ_bb->fwd);
                     }
                 }
 
@@ -2214,6 +2216,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             if (ctx->fallthrough != succ_bb->fwd) {
                 EMIT1(e, 0xE9); EMIT4(e, 0);
                 tb_emit_rel32(e, &e->labels[succ_bb->fwd], GET_CODE_POS(e) - 4, 0xFFFFFFFF, 0);
+                printf("RELOC BB%ld => BB%d\n", succ_bb - ctx->cfg.blocks, succ_bb->fwd);
             }
             break;
         }
@@ -2682,7 +2685,7 @@ static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* re
         #endif
 
         if (landed != target) {
-            E(" + %d", bb, (int)target - (int)landed);
+            E(" + %d # target=%#4x, disp=%d", bb, (int)target - (int)landed, target, imm);
         }
     }
 }
