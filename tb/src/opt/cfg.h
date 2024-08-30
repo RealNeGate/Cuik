@@ -2,49 +2,6 @@
 static void compute_dominators(TB_Function* f, TB_Worklist* ws, TB_CFG cfg);
 
 ////////////////////////////////
-// Unordered SoN successor iterator
-////////////////////////////////
-#define FOR_SUCC(it, n) for (SuccIter it = succ_iter(n); succ_iter_next(&it);)
-
-typedef struct {
-    TB_Node* n;
-    TB_Node* succ;
-    int index; // -1 if we're not walking CProjs
-} SuccIter;
-
-static SuccIter succ_iter(TB_Node* n) {
-    if (n->dt.type == TB_TAG_TUPLE) {
-        return (SuccIter){ n, NULL, 0 };
-    } else if (!cfg_is_endpoint(n)) {
-        return (SuccIter){ n, NULL, -1 };
-    } else {
-        return (SuccIter){ n, NULL, n->user_count };
-    }
-}
-
-static bool succ_iter_next(SuccIter* restrict it) {
-    TB_Node* n = it->n;
-
-    // not branching? ok pick single next control
-    if (it->index == -1) {
-        it->index = n->user_count; // terminate
-        it->succ = cfg_next_control(n);
-        return true;
-    }
-
-    // if we're in this loop, we know we're scanning for CProjs
-    while (it->index < n->user_count) {
-        TB_Node* un = USERN(&n->users[it->index++]);
-        if (cfg_is_cproj(un)) {
-            it->succ = un;
-            return true;
-        }
-    }
-
-    return false;
-}
-
-////////////////////////////////
 // Constructing CFG
 ////////////////////////////////
 typedef struct Block {

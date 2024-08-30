@@ -413,13 +413,30 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         log_phase_end(f, og_size, "RA");
     }
 
-    int* final_order = tb_arena_alloc(&f->tmp_arena, bb_count * sizeof(int));
+    int* final_order = ctx.emit.final_order = tb_arena_alloc(&f->tmp_arena, bb_count * sizeof(int));
+    size_t final_order_count = 0;
+
     CUIK_TIMED_BLOCK("BB scheduling") {
         // any empty projection blocks will mark which block they want you to jump to, if the
         // block "forwards" to itself then it's not actually forwarding.
         FOR_N(i, 0, bb_count) {
             TB_BasicBlock* bb = &cfg.blocks[i];
-            if (aarray_length(bb->items) == 1 && cfg_is_cproj(bb->items[0])) {
+            bool empty = true;
+
+            size_t item_count = aarray_length(bb->items);
+            if (cfg_is_region(bb->items[0])) {
+                // if it's all phis then we've got an empty enough block for forwarding
+                FOR_N(j, 1, item_count) {
+                    if (bb->items[j]->type != TB_PHI) {
+                        empty = false;
+                        break;
+                    }
+                }
+            } else if (item_count > 1 || !cfg_is_cproj(bb->items[0])) {
+                empty = false;
+            }
+
+            if (empty) {
                 TB_Node* next = cfg_next_control(bb->items[0]);
                 TB_BasicBlock* succ = nl_map_get_checked(cfg.node_to_block, next);
                 bb->fwd = succ - cfg.blocks;
@@ -437,22 +454,36 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                     bb->end = jmp;
 
                     aarray_push(bb->items, jmp);
+                    tb__insert(&ctx, f, bb, jmp);
                 }
             }
         }
 
-        // bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
-        bb_placement_trace(&f->tmp_arena, &cfg, final_order);
-
-        TB_OPTDEBUG(PLACEMENT)(printf("Final Schedule:\n"));
+        // sometimes we forward twice (wacky cases around "empty" regions)
         FOR_N(i, 0, bb_count) {
-            int id = final_order[i];
+            TB_BasicBlock* bb = &cfg.blocks[i];
 
-            // block is empty and every use is jump-threaded
-            if (id != cfg.blocks[id].fwd) { continue; }
+            int fwd = bb->fwd;
+            while (fwd != cfg.blocks[fwd].fwd) {
+                fwd = cfg.blocks[fwd].fwd;
+            }
 
-            TB_OPTDEBUG(PLACEMENT)(printf("  BB%d (freq=%f)\n", id, cfg.blocks[id].freq));
+            bb->fwd = fwd;
         }
+
+        final_order_count = bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
+        // final_order_count = bb_placement_trace(&f->tmp_arena, &cfg, final_order);
+
+        ctx.emit.final_order_count = final_order_count;
+
+        #if TB_OPTDEBUG_PLACEMENT
+        printf("Final Schedule:\n");
+        FOR_N(i, 0, final_order_count) {
+            int id = final_order[i];
+            TB_ASSERT(id == cfg.blocks[id].fwd);
+            printf("  BB%d (freq=%f)\n", id, cfg.blocks[id].freq);
+        }
+        #endif
     }
 
     CUIK_TIMED_BLOCK("emit") {
@@ -474,23 +505,17 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         bundle.arr = tb_arena_alloc(&f->tmp_arena, BUNDLE_INST_MAX * sizeof(Bundle));
 
         ArenaArray(NodeIPPair) spft_nodes = aarray_create(&f->tmp_arena, NodeIPPair, 16);
-        FOR_N(i, 0, bb_count) {
+        FOR_N(i, 0, final_order_count) {
             int id = final_order[i];
             TB_BasicBlock* bb = &cfg.blocks[id];
 
             on_basic_block(&ctx, e, id);
 
-            // block is empty and every use is jump-threaded
-            if (id != bb->fwd) { continue; }
-
             ctx.fallthrough = INT_MAX;
-            for (int j = i + 1; j < bb_count; j++) {
-                int next = final_order[j];
-                if (cfg.blocks[next].fwd == next) {
-                    ctx.fallthrough = next;
-                    break;
-                }
+            if (i + 1 < final_order_count) {
+                ctx.fallthrough = final_order[i + 1];
             }
+
             ctx.current_emit_bb = bb;
             ctx.current_emit_bb_pos = GET_CODE_POS(e);
 
@@ -534,7 +559,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 bundle.arr[bundle.count++] = n;
             }
 
-            // TODO(NeGate): the bundle might want to join with the terminator goto
             if (bundle.count > 0) {
                 flush_bundle(&ctx, e, &bundle);
             }
@@ -609,9 +633,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             disassemble(&ctx.emit, &d, -1, 0, ctx.prologue_length);
         }
 
-        FOR_N(i, 0, bb_count) {
+        FOR_N(i, 0, final_order_count) {
             int id = final_order[i];
-            if (id != cfg.blocks[id].fwd) { continue; }
 
             uint32_t start = ctx.emit.labels[id] & ~0x80000000;
             uint32_t end   = ctx.emit.count;
@@ -620,22 +643,49 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             end -= ctx.nop_pads;
             #endif
 
-            if (i + 1 < bb_count) {
+            if (i + 1 < final_order_count) {
                 end = ctx.emit.labels[final_order[i + 1]] & ~0x80000000;
             }
 
             TB_CGEmitter* e = &ctx.emit;
             {
                 #if ASM_STYLE_PRINT_POS
-                tb_asm_print(e, "%-4x  BB%d:", start, id);
-                #else
-                tb_asm_print(e, ".bb%d:", id);
-                #endif
+                tb_asm_print(e, "%-4x  BB%d: ", start, id);
 
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[32m"));
-                tb_asm_print(e, " // Freq: %.4f", cfg.blocks[id].freq);
+                tb_asm_print(e, "// Freq: %.4f, (", cfg.blocks[id].freq);
+                TB_Node* r = cfg.blocks[id].start;
+                if (id != 0) {
+                    FOR_N(i, 0, cfg_is_region(r) ? r->input_count : 1) {
+                        TB_Node* pred = r->inputs[i];
+                        TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+
+                        // if it's forwarded we should walk "before" this block
+                        while (pred_bb && pred_bb->fwd != (pred_bb - cfg.blocks)) {
+                            pred    = pred->inputs[0];
+                            pred_bb = f->scheduled[pred->gvn];
+                        }
+
+                        if (pred_bb) {
+                            tb_asm_print(e, " BB%d", pred_bb->fwd);
+                        }
+                    }
+                }
+                tb_asm_print(e, " ->");
+                FOR_SUCC(it, cfg.blocks[id].end) {
+                    TB_BasicBlock* succ_bb = nl_map_get_checked(cfg.node_to_block, it.succ);
+                    tb_asm_print(e, " BB%d", succ_bb->fwd);
+                }
+                tb_asm_print(e, " )");
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[0m"));
                 tb_asm_print(e, "\n");
+                #else
+                tb_asm_print(e, ".bb%d: ", id);
+                TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[32m"));
+                tb_asm_print(e, "// Freq: %.4f", cfg.blocks[id].freq);
+                TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[0m"));
+                tb_asm_print(e, "\n");
+                #endif
             }
             disassemble(e, &d, id, start, end);
         }

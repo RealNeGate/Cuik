@@ -18,6 +18,36 @@
 #define thread_local _Thread_local
 #endif
 
+////////////////////////////////
+// Random toggles
+////////////////////////////////
+#define TB_OPTDEBUG_STATS     0
+#define TB_OPTDEBUG_PASSES    0
+#define TB_OPTDEBUG_PEEP      0
+#define TB_OPTDEBUG_SCCP      0
+#define TB_OPTDEBUG_LOOP      0
+#define TB_OPTDEBUG_SROA      0
+#define TB_OPTDEBUG_GCM       0
+#define TB_OPTDEBUG_MEM2REG   0
+#define TB_OPTDEBUG_ISEL      0
+#define TB_OPTDEBUG_CODEGEN   0
+#define TB_OPTDEBUG_DATAFLOW  0
+#define TB_OPTDEBUG_PLACEMENT 0
+#define TB_OPTDEBUG_INLINE    0
+#define TB_OPTDEBUG_REGALLOC  0
+#define TB_OPTDEBUG_SLP       0
+#define TB_OPTDEBUG_GVN       0
+#define TB_OPTDEBUG_COMPACT   0
+#define TB_OPTDEBUG_SCHEDULE  0
+// for toggling ANSI colors
+#define TB_OPTDEBUG_ANSI      1
+
+#define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
+
+#define DO_IF(cond) CONCAT(DO_IF_, cond)
+#define DO_IF_0(...)
+#define DO_IF_1(...) __VA_ARGS__
+
 #ifndef _WIN32
 // NOTE(NeGate): I love how we assume that if it's not windows
 // its just posix, these are the only options i guess
@@ -61,36 +91,6 @@ for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bi
 
 #include <threads.h>
 #include <stdatomic.h>
-
-////////////////////////////////
-// Random toggles
-////////////////////////////////
-#define TB_OPTDEBUG_STATS     0
-#define TB_OPTDEBUG_PASSES    0
-#define TB_OPTDEBUG_PEEP      0
-#define TB_OPTDEBUG_SCCP      0
-#define TB_OPTDEBUG_LOOP      0
-#define TB_OPTDEBUG_SROA      0
-#define TB_OPTDEBUG_GCM       0
-#define TB_OPTDEBUG_MEM2REG   0
-#define TB_OPTDEBUG_ISEL      0
-#define TB_OPTDEBUG_CODEGEN   1
-#define TB_OPTDEBUG_DATAFLOW  0
-#define TB_OPTDEBUG_PLACEMENT 1
-#define TB_OPTDEBUG_INLINE    0
-#define TB_OPTDEBUG_REGALLOC  0
-#define TB_OPTDEBUG_SLP       0
-#define TB_OPTDEBUG_GVN       0
-#define TB_OPTDEBUG_COMPACT   0
-#define TB_OPTDEBUG_SCHEDULE  0
-// for toggling ANSI colors
-#define TB_OPTDEBUG_ANSI     1
-
-#define TB_OPTDEBUG(cond) CONCAT(DO_IF_, CONCAT(TB_OPTDEBUG_, cond))
-
-#define DO_IF(cond) CONCAT(DO_IF_, cond)
-#define DO_IF_0(...)
-#define DO_IF_1(...) __VA_ARGS__
 
 typedef struct TB_Emitter {
     size_t capacity, count;

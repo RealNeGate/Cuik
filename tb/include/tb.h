@@ -1555,8 +1555,8 @@ TB_API TB_Node* tb_builder_label_get(TB_GraphBuilder* g);
 TB_API int tb_builder_label_pred_count(TB_GraphBuilder* g, TB_Node* label);
 //   kill node
 TB_API void tb_builder_label_kill(TB_GraphBuilder* g, TB_Node* label);
-//   returns an array of TB_GraphCtrl which represent each path on the
-//   branch, [0] is the false case and [1] is the true case.
+//   writes to the paths array the symbol tables for the branch.
+//   [0] is the true case and [1] is the false case.
 TB_API void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]);
 //   unconditional jump to target
 TB_API void tb_builder_br(TB_GraphBuilder* g, TB_Node* target);

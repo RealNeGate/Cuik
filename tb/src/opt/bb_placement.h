@@ -1,26 +1,31 @@
 // Basic block placement, we've got two options:
+//
 // * RPO-style: just uses the simple RPO walk except we
 //              move the main return block to the bottom.
 //
 // * Trace-style: expand blocks into traces based on branch
 //                frequency to reduce the number of static
 //                misprediction.
-void bb_placement_rpo(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
+//
+// We don't place the "forwarded" blocks because they don't actually appear in the final schedule.
+int bb_placement_rpo(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     size_t bb_count = aarray_length(cfg->blocks);
 
     size_t j = 0;
     FOR_N(i, 0, bb_count) {
+        if (cfg->blocks[i].fwd != i) { continue; }
         if (cfg->blocks[i].end->type != TB_RETURN) {
             dst_order[j++] = i;
         }
     }
 
     FOR_N(i, 0, bb_count) {
+        if (cfg->blocks[i].fwd != i) { continue; }
         if (cfg->blocks[i].end->type == TB_RETURN) {
             dst_order[j++] = i;
         }
     }
-    TB_ASSERT_MSG(bb_count == j, "did we forget to schedule a BB?");
+    return j;
 }
 
 #if 1
@@ -87,7 +92,7 @@ static TB_BasicBlock* best_successor_of(TB_CFG* cfg, TB_Node* n) {
     }
 }
 
-void bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
+int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     size_t bb_count = aarray_length(cfg->blocks);
     bool* visited = tb_arena_alloc(arena, bb_count);
 
@@ -96,18 +101,26 @@ void bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     traces.next_block = tb_arena_alloc(arena, bb_count * sizeof(int));
 
     // initialize the most degen traces
+    size_t trace_count = 0;
     FOR_N(i, 0, bb_count) {
-        Trace* trace = tb_arena_alloc(arena, bb_count * sizeof(Trace));
-        trace->id = trace->first_bb = trace->last_bb = i;
-
+        if (cfg->blocks[i].fwd != i) {
+            // forwarding blocks don't go into traces
+            traces.block_to_trace[i] = NULL;
+        } else {
+            Trace* trace = tb_arena_alloc(arena, bb_count * sizeof(Trace));
+            trace->id = trace_count++;
+            trace->first_bb = trace->last_bb = i;
+            traces.block_to_trace[i] = trace;
+        }
         traces.next_block[i] = -1;
-        traces.block_to_trace[i] = trace;
     }
+    TB_ASSERT(trace_count < bb_count);
 
     // grow traces by placing likely traces next to them
     FOR_N(i, 0, bb_count) { visited[i] = false; }
     FOR_N(i, 0, bb_count) {
         Trace* trace = traces.block_to_trace[i];
+        if (trace == NULL) { continue; }
         // if we've already tried to grow this trace, don't :p
         if (visited[trace->id]) { continue; }
         visited[trace->id] = true;
@@ -123,7 +136,7 @@ void bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
             printf("  BB%-3d (freq = %8.4f)  =>", curr, bb->freq);
             FOR_SUCC(it, bb->end) {
                 TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, it.succ);
-                printf("  BB%-3zu", succ_bb - cfg->blocks);
+                printf("  BB%-3d", succ_bb->fwd);
             }
             printf("\n");
             #endif
@@ -134,7 +147,7 @@ void bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
             // it's not worth growing the trace if the next block is really low-freq
             if (succ->freq < 1e-3) { break; }
             // can't do backedges in traces
-            int succ_bb = succ - cfg->blocks;
+            int succ_bb = succ->fwd;
             if (succ_bb <= curr) { break; }
             // it's only an option if the block is the start of it's trace
             if (traces.block_to_trace[succ_bb]->first_bb != succ_bb) { break; }
@@ -149,16 +162,19 @@ void bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     FOR_N(i, 0, bb_count) { visited[i] = false; }
     FOR_N(i, 0, bb_count) {
         Trace* trace = traces.block_to_trace[i];
+        if (trace == NULL) { continue; }
         // if we've already tried to grow this trace, don't :p
         if (visited[trace->id]) { continue; }
         visited[trace->id] = true;
 
         int curr = trace->first_bb;
         do {
+            TB_ASSERT(cfg->blocks[curr].fwd == curr);
             dst_order[j++] = curr;
             curr = traces.next_block[curr];
         } while (curr >= 0);
     }
+    return j;
 }
 #endif
 

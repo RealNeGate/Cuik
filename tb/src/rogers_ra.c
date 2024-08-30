@@ -622,7 +622,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
 
             // if the def_mask got tightened, we needed the copy
-            RegMask* def_mask = ctx->vregs[n->gvn].mask;
+            RegMask* def_mask = ctx->vregs[ctx->vreg_map[n->gvn]].mask;
             if (!interfere(ctx, &ra, n, n->inputs[1])) {
                 // delete copy
                 tb__remove_node(ctx, f, n);

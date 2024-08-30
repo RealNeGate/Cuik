@@ -37,6 +37,9 @@ typedef struct {
     size_t label_count;
     uint32_t* labels;
 
+    int final_order_count;
+    int* final_order;
+
     bool has_comments;
     Comment* comment_head;
     Comment* comment_tail;
@@ -73,12 +76,13 @@ static void tb_reloc4_noadd(TB_CGEmitter* restrict e, uint32_t p, uint32_t b, ui
 }
 
 static int tb_emit_get_label(TB_CGEmitter* restrict e, uint32_t pos) {
-    FOR_REV_N(i, 0, e->label_count) {
-        assert(e->labels[i] & 0x80000000);
-        if ((e->labels[i] & ~0x80000000) == pos) {
-            return i;
-        } else if ((e->labels[i] & ~0x80000000) < pos) {
-            return i + 1;
+    FOR_REV_N(i, 0, e->final_order_count) {
+        int id = e->final_order[i];
+        TB_ASSERT(e->labels[id] & 0x80000000);
+        if ((e->labels[id] & ~0x80000000) == pos) {
+            return id;
+        } else if ((e->labels[id] & ~0x80000000) < pos) {
+            return id + 1;
         }
     }
 

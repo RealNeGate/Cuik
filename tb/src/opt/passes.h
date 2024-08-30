@@ -347,6 +347,50 @@ static bool slow_dommy(TB_CFG* cfg, TB_Node* expected_dom, TB_Node* bb) {
     return slow_dommy2(a, b);
 }
 
+
+////////////////////////////////
+// Unordered SoN successor iterator
+////////////////////////////////
+#define FOR_SUCC(it, n) for (SuccIter it = succ_iter(n); succ_iter_next(&it);)
+
+typedef struct {
+    TB_Node* n;
+    TB_Node* succ;
+    int index; // -1 if we're not walking CProjs
+} SuccIter;
+
+static SuccIter succ_iter(TB_Node* n) {
+    if (n->dt.type == TB_TAG_TUPLE) {
+        return (SuccIter){ n, NULL, 0 };
+    } else if (!cfg_is_endpoint(n)) {
+        return (SuccIter){ n, NULL, -1 };
+    } else {
+        return (SuccIter){ n, NULL, n->user_count };
+    }
+}
+
+static bool succ_iter_next(SuccIter* restrict it) {
+    TB_Node* n = it->n;
+
+    // not branching? ok pick single next control
+    if (it->index == -1) {
+        it->index = n->user_count; // terminate
+        it->succ = cfg_next_control(n);
+        return true;
+    }
+
+    // if we're in this loop, we know we're scanning for CProjs
+    while (it->index < n->user_count) {
+        TB_Node* un = USERN(&n->users[it->index++]);
+        if (cfg_is_cproj(un)) {
+            it->succ = un;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // lovely properties
 bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);
@@ -393,8 +437,8 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
 void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg);
 
 // BB placement
-void bb_placement_rpo(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
-void bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
+int bb_placement_rpo(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
+int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
 
 // makes arch-friendly IR
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);
