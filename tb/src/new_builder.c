@@ -613,6 +613,19 @@ void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]) {
     br->succ_count = 2;
 }
 
+TB_Node* tb_builder_phi(TB_GraphBuilder* g, int val_count, TB_Node** vals) {
+    TB_ASSERT(cfg_is_region(g->curr->inputs[1]));
+    TB_ASSERT(g->curr->inputs[1]->input_count == val_count);
+
+    TB_Function* f = g->f;
+    TB_Node* phi = tb_alloc_node(f, TB_PHI, vals[0]->dt, 1 + val_count, 0);
+    set_input(f, phi, g->curr->inputs[1], 0);
+    FOR_N(i, 0, val_count) {
+        set_input(f, phi, vals[i], i+1);
+    }
+    return phi;
+}
+
 void tb_builder_br(TB_GraphBuilder* g, TB_Node* target) {
     TB_Function* f = g->f;
     TB_Node* syms = g->curr;

@@ -2223,9 +2223,9 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             int cc = TB_NODE_GET_EXTRA_T(n, X86Cmov)->cc;
 
             Val dst = op_at(ctx, n);
-            Val lhs = op_at(ctx, n->inputs[3]);
-            if (!is_value_match(&dst, &lhs)) {
-                __(MOV, dt, &dst, &lhs);
+            Val rhs = op_at(ctx, n->inputs[4]);
+            if (!is_value_match(&dst, &rhs)) {
+                __(MOV, dt, &dst, &rhs);
             }
 
             Val cmp1 = op_at(ctx, n->inputs[1]);
@@ -2236,8 +2236,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 __(CMP, dt, &cmp1, Vimm(0));
             }
 
-            Val rhs = op_at(ctx, n->inputs[4]);
-            __(CMOVO+cc, dt, &dst, &rhs);
+            Val lhs = op_at(ctx, n->inputs[3]);
+            __(CMOVO+cc, dt, &dst, &lhs);
             break;
         }
 
@@ -2691,6 +2691,8 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
     while (pos < end) {
         #if ASM_STYLE_PRINT_POS
         E("%-4x  ", pos);
+        #else
+        E("  ", pos);
         #endif
 
         while (d->loc != d->end && d->loc->pos == pos) {

@@ -1562,6 +1562,8 @@ TB_API void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]);
 TB_API void tb_builder_br(TB_GraphBuilder* g, TB_Node* target);
 //   forward and backward branch target
 TB_API TB_Node* tb_builder_loop(TB_GraphBuilder* g);
+//   explicit phi construction
+TB_API TB_Node* tb_builder_phi(TB_GraphBuilder* g, int val_count, TB_Node** vals);
 
 // technically TB has multiple returns, in practice it's like 2 regs before
 // ABI runs out of shit.

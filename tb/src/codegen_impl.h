@@ -5,7 +5,8 @@
 #define COMMENT(...) (e->has_comments ? tb_emit_comment(e, &ctx->f->tmp_arena, __VA_ARGS__) : (void)0)
 
 // ASM-style settings
-#define ASM_STYLE_PRINT_POS 1
+#define ASM_STYLE_PRINT_POS 0
+#define ASM_STYLE_PRINT_NOP 0
 
 // Instruction selection:
 //   returns an equivalent but machine-friendly node (one you're willing to
@@ -614,6 +615,11 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             uint32_t start = ctx.emit.labels[id] & ~0x80000000;
             uint32_t end   = ctx.emit.count;
+
+            #if !ASM_STYLE_PRINT_NOP
+            end -= ctx.nop_pads;
+            #endif
+
             if (i + 1 < bb_count) {
                 end = ctx.emit.labels[final_order[i + 1]] & ~0x80000000;
             }

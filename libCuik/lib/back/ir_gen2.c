@@ -760,6 +760,47 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 }
             }
         }
+        case EXPR_TERNARY: {
+            Cuik_Type* type = cuik_canonical_type(qt);
+            TB_DataType dt  = ctype_to_tbtype(type);
+
+            TB_Node* cond  = as_rval(tu, g, &args[0]);
+            TB_Node* merge = tb_builder_label_make(g);
+
+            TB_Node* paths[2];
+            tb_builder_if(g, cond, paths);
+
+            TB_Node* true_val;
+            {
+                tb_builder_label_set(g, paths[0]);
+                true_val = cg_rval(tu, g, e->ternary.left);
+                tb_builder_br(g, merge);
+                tb_builder_label_kill(g, paths[0]);
+            }
+
+            TB_Node* false_val;
+            {
+                tb_builder_label_set(g, paths[1]);
+                false_val = cg_rval(tu, g, e->ternary.right);
+                tb_builder_br(g, merge);
+                tb_builder_label_kill(g, paths[1]);
+            }
+
+            // for whatever reason, neither path on the if joined back so
+            // this is just a dead label.
+            if (merge->inputs[1]->input_count == 0) {
+                tb_builder_label_kill(g, merge);
+                return (ValDesc){ RVALUE };
+            } else if (type->kind == KIND_VOID) {
+                return (ValDesc){ RVALUE };
+            }
+
+            tb_builder_label_set(g, merge);
+            emit_loc(tu, g, e->loc.start);
+
+            TB_Node* vals[2] = { true_val, false_val };
+            return (ValDesc){ RVALUE, .n = tb_builder_phi(g, 2, vals) };
+        }
         case EXPR_NOT: {
             return (ValDesc){ RVALUE, .n = tb_builder_not(g, as_rval(tu, g, &args[0])) };
         }
