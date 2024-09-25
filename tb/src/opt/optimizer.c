@@ -1144,26 +1144,6 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     return k ? k : n;
 }
 
-void tb_pass_sroa(TB_Function* f) {
-    CUIK_TIMED_BLOCK("sroa") {
-        TB_Worklist* ws = f->worklist;
-        int pointer_size = f->super.module->codegen->pointer_size;
-        TB_Node* root = f->root_node;
-
-        // write initial locals
-        FOR_USERS(u, root) {
-            if (USERN(u)->type == TB_LOCAL) { worklist_push(ws, USERN(u)); }
-        }
-
-        // i think the SROA'd pieces can't themselves split more? that should something we check
-        size_t local_count = dyn_array_length(ws->items);
-        for (size_t i = 0; i < local_count; i++) {
-            TB_ASSERT(ws->items[i]->type == TB_LOCAL);
-            sroa_rewrite(f, root, ws->items[i]);
-        }
-    }
-}
-
 static void push_non_bottoms(TB_Function* f, TB_Node* n) {
     // if it's a bottom there's no more steps it can take, don't recompute it
     Lattice* l = latuni_get(f, n);

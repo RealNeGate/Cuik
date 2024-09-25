@@ -71,15 +71,6 @@ bool tb_node_is_constant_zero(TB_Node* n) {
     return n->type == TB_ICONST ? (TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value == 0) : false;
 }
 
-void tb_function_attrib_variable(TB_Function* f, TB_Node* n, TB_Node* parent, ptrdiff_t len, const char* name, TB_DebugType* type) {
-    TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-    l->name = tb__arena_strdup(f->super.module, len, name);
-    l->type = type;
-}
-
-void tb_function_attrib_scope(TB_Function* f, TB_Node* n, TB_Node* parent) {
-}
-
 void tb_inst_location(TB_Function* f, TB_SourceFile* file, int line, int column) {
     if (f->last_loc) {
         // don't place if the line entry already exists

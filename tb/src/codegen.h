@@ -92,6 +92,8 @@ struct VReg {
     float spill_bias;
     int hint_vreg;
 
+    bool marked_spilled;
+
     // only matters for chaitin
     struct {
         // debug purposes only
@@ -185,6 +187,7 @@ struct Ctx {
 
     NL_HashSet mask_intern;
     RegMask* normie_mask[MAX_REG_CLASSES];
+    RegMask* mayspill_mask[MAX_REG_CLASSES];
 
     DynArray(TB_StackSlot) debug_stack_slots;
     DynArray(JumpTablePatch) jump_table_patches;

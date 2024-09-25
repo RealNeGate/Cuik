@@ -1,23 +1,25 @@
 // Glossary (because i don't know where else to put it)
-//   IR   - intermediate representation
-//   SoN  - sea of nodes (https://www.oracle.com/technetwork/java/javase/tech/c2-ir95-150110.pdf)
-//   SSA  - single static assignment
-//   VN   - value number
-//   GVN  - global value numbering
-//   CSE  - common subexpression elimination
-//   CFG  - control flow graph
-//   DSE  - dead store elimination
-//   GCM  - global code motion
-//   SROA - scalar replacement of aggregates
-//   CCP  - conditional constant propagation
-//   SCCP - sparse conditional constant propagation
-//   RPO  - reverse postorder
-//   RA   - register allocation
-//   BB   - basic block
-//   ZTC  - zero trip count
-//   MAF  - monotone analysis framework
-//   SCC  - strongly connected components
-//   MOP  - meet over all paths
+//   IR   - Intermediate Representation
+//   SoN  - Sea Of Nodes (https://www.oracle.com/technetwork/java/javase/tech/c2-ir95-150110.pdf)
+//   SSA  - Single Static Assignment
+//   VN   - Value Number
+//   GVN  - Global Value Numbering
+//   CSE  - Common Subexpression Elimination
+//   CFG  - Control Flow Graph
+//   DSE  - Dead Store Elimination
+//   GCM  - Global Code Motion
+//   SROA - Scalar Replacement Of Aggregates
+//   CCP  - Conditional Constant Propagation
+//   SCCP - Sparse Conditional Constant Propagation
+//   RPO  - Reverse PostOrder
+//   RA   - Register Allocation
+//   BB   - Basic Block
+//   ZTC  - Zero Trip Count
+//   MAF  - Monotone Analysis Framework
+//   SCC  - Strongly Connected Components
+//   MOP  - Meet Over all Paths
+//   IPO  - InterProcedural Optimizations
+//   RPC  - Return Program Counter
 #ifndef TB_CORE_H
 #define TB_CORE_H
 
@@ -353,6 +355,7 @@ typedef enum TB_NodeTypeEnum {
     //   this special op tracks calls such that we can produce our cool call graph, there's
     //   one call graph node per function that never moves.
     TB_CALLGRAPH,      // (Call...) -> Void
+    TB_DEBUG_SCOPES,   // (Parent, Control...)
 
     ////////////////////////////////
     // MEMORY

@@ -358,6 +358,8 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
 
     ctx->normie_mask[REG_CLASS_GPR] = new_regmask(ctx->f, REG_CLASS_GPR, false, all_gprs);
     ctx->normie_mask[REG_CLASS_XMM] = new_regmask(ctx->f, REG_CLASS_XMM, false, 0xFFFF);
+    ctx->mayspill_mask[REG_CLASS_GPR] = new_regmask(ctx->f, REG_CLASS_GPR, true, all_gprs);
+    ctx->mayspill_mask[REG_CLASS_XMM] = new_regmask(ctx->f, REG_CLASS_XMM, true, 0xFFFF);
 
     TB_FunctionPrototype* proto = ctx->f->prototype;
     TB_Node** params = ctx->f->params;
@@ -1269,7 +1271,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         case TB_MACH_MOVE: {
-            RegMask* rm = ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
+            RegMask* rm = ctx->mayspill_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
             if (ins) { ins[1] = rm; }
             return rm;
         }
@@ -1292,8 +1294,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
 
             if (n->dt.type == TB_TAG_MEMORY) return &TB_REG_EMPTY;
-            if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) return ctx->normie_mask[REG_CLASS_XMM];
-            return ctx->normie_mask[REG_CLASS_GPR];
+            if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) return ctx->mayspill_mask[REG_CLASS_XMM];
+            return ctx->mayspill_mask[REG_CLASS_GPR];
         }
 
         case TB_ICONST:
@@ -1309,8 +1311,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 const struct ParamDesc* params = &param_descs[ctx->abi_index];
                 assert(i >= 2);
                 if (i == 2) {
-                    // RPC is inaccessible for now
-                    return &TB_REG_EMPTY;
+                    return intern_regmask(ctx, REG_CLASS_STK, false, STACK_BASE_REG_NAMES);
                 } else {
                     int param_id = i - 3;
                     if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) {
@@ -1591,7 +1592,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 static int ret_gprs[2] = { RAX, RDX };
 
                 ins[1] = &TB_REG_EMPTY; // mem
-                ins[2] = &TB_REG_EMPTY; // rpc
+                ins[2] = intern_regmask(ctx, REG_CLASS_STK, false, STACK_BASE_REG_NAMES); // rpc
 
                 TB_FunctionPrototype* proto = ctx->f->prototype;
                 assert(proto->return_count <= 2 && "At most 2 return values :(");
@@ -1689,7 +1690,10 @@ static int op_gpr_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_
 static int op_xmm_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_XMM); }
 
 static int stk_offset(Ctx* ctx, int reg) {
-    if (reg >= STACK_BASE_REG_NAMES) {
+    if (reg == STACK_BASE_REG_NAMES) {
+        // return address
+        return ctx->stack_usage + (ctx->stack_header - 8);
+    } else if (reg > STACK_BASE_REG_NAMES) {
         int pos = -(8 + ((reg + 1) - STACK_BASE_REG_NAMES) * 8);
         return ctx->stack_usage + pos;
     } else if (reg >= ctx->param_count) {
@@ -2703,6 +2707,8 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
 
             #if ASM_STYLE_PRINT_POS
             E("%-4x  ", pos);
+            #else
+            E("  ");
             #endif
         }
 

@@ -53,12 +53,11 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
     g->peep = ws ? tb_opt_peep_node : tb_opt_gvn_node;
 
     // both RPC and memory are mutable vars
-    int def_count = 4 + (dbg ? 0 : f->param_count);
+    int def_count = 3 + (dbg ? 0 : f->param_count);
     TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, def_count, sizeof(TB_NodeSymbolTable));
     set_input(f, syms, f->params[0], 0);
     set_input(f, syms, f->params[0], 1);
     set_input(f, syms, f->params[1], 2);
-    set_input(f, syms, f->params[2], 3);
     g->curr = g->start_syms = syms;
 
     TB_NodeSymbolTable* extra = TB_NODE_GET_EXTRA(syms);
@@ -96,15 +95,19 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
             // mark debug info
             tb_function_attrib_variable(f, v, NULL, name_len, name, type);
             g->params[i] = v;
-
-            // set_input(f, syms, v, 4 + i);
         }
     } else {
         FOR_N(i, 0, f->param_count) {
-            set_input(f, syms, f->params[3 + i], 4 + i);
+            set_input(f, syms, f->params[3 + i], 3 + i);
         }
     }
     return g;
+}
+
+void tb_function_attrib_variable(TB_Function* f, TB_Node* n, TB_Node* parent, ptrdiff_t len, const char* name, TB_DebugType* type) {
+    TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
+    l->name = tb__arena_strdup(f->super.module, len, name);
+    l->type = type;
 }
 
 TB_Node* tb_builder_param_addr(TB_GraphBuilder* g, int i) {
@@ -223,6 +226,12 @@ TB_Node* tb_builder_string(TB_GraphBuilder* g, ptrdiff_t len, const char* str) {
 
 TB_Node* tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type, TB_Node* src) {
     TB_ASSERT(type >= TB_TRUNCATE && type <= TB_BITCAST);
+
+    if (type == TB_SIGN_EXT && src->type == TB_ICONST) {
+        uint64_t y = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
+        y = tb_sign_ext(g->f->super.module, src->dt, y);
+        return tb_builder_uint(g, dt, y);
+    }
 
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, type, dt, 2, 0);
@@ -521,20 +530,22 @@ void tb_builder_label_complete(TB_GraphBuilder* g, TB_Node* label) {
     TB_Function* f = g->f;
     TB_Node* top_ctrl = label->inputs[1];
 
+    if (cfg_is_region(top_ctrl)) {
+        FOR_USERS(u, top_ctrl) {
+            TB_Node* un = USERN(u);
+            if (un->type == TB_PHI) {
+                TB_ASSERT(USERI(u) == 0);
+                TB_Node* k = identity_phi(f, un);
+                if (k != un) { subsume_node(f, un, k); }
+            }
+        }
+    }
+
     if (top_ctrl->input_count != 0) {
         FOR_N(i, 2, label->input_count) {
-            if (label->inputs[i] == NULL) { continue; }
-
-            #if 1
-            if (label->inputs[i]->type == TB_PHI && label->inputs[i]->inputs[0] == top_ctrl) {
-                TB_Node* k = identity_phi(f, label->inputs[i]);
-                if (k != label->inputs[i]) {
-                    subsume_node(f, label->inputs[i], k);
-                }
+            if (label->inputs[i] != NULL) {
+                g->peep(f, label->inputs[i]);
             }
-            #endif
-
-            g->peep(f, label->inputs[i]);
         }
     }
 }
@@ -846,7 +857,7 @@ void tb_builder_entry_fork(TB_GraphBuilder* g, int count, TB_Node* paths[]) {
 void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int count, TB_Node** args) {
     TB_Function* f = g->f;
 
-    assert(2 + mem_var < g->curr->input_count);
+    TB_ASSERT(2 + mem_var < g->curr->input_count);
     TB_Node* mem_state = g->curr->inputs[2 + mem_var];
 
     // allocate return node

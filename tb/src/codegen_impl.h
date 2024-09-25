@@ -406,6 +406,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     CUIK_TIMED_BLOCK("regalloc") {
         tb__rogers(&ctx, &f->tmp_arena);
+        // tb__chaitin(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);
