@@ -1,40 +1,14 @@
-If you're interested in contributing to this code this is where you'd learn.
-Essentially this is the builtin linker, it can convert TB modules, external
-objects and libraries into executables. Let's walk through making a dummy
-linker.
+Linkers are mostly OS-indepedent ngl, like yea i gotta parse the shitty object files into execs but layouting,
+generating code stubs, and doing relocations are basically the same everywhere once the parsing is done.
 
-First, create a new source file (dummy.c) in the linker directory. We're gonna
-populate it with our dummy vtable (this is how the generic linker piece calls
-into the format-specific details):
+Pipeline:
 
-```
-// in dummy.c
-#define NL_STRING_MAP_IMPL
-#include "linker.h"
+  * Importing (Extremely parallel): Call import functions, each of these will extract the symbols & relocations into memory.
+    The section data isn't read but we do keep track of which files and what ranges they exist in
+    for layouting reasons.
 
-static void append_object(TB_Linker* l, TB_ObjectFile* obj) {
-    // implement this
-}
+  * Layout step (Not so parallel): We use whatever user-defined ordinals to sort the data into a consistent ordering, from there
+    we know the complete size of the final file (useful for file map writing).
 
-static void append_library(TB_Linker* l, TB_Slice ar_file) {
-    // implement this
-}
+  * Export step (Extremely parallel):
 
-static void append_module(TB_Linker* l, TB_Module* m) {
-    // implement this
-}
-
-static TB_Exports export(TB_Linker* l) {
-    // implement this
-    return (TB_Exports){ 0 };
-}
-
-TB_LinkerVtbl tb__linker_dummy = {
-    .append_object  = append_object,
-    .append_library = append_library,
-    .append_module  = append_module,
-    .export         = export
-};
-```
-
-We can start with stubbing out `header`

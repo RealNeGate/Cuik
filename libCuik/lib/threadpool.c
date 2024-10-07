@@ -37,27 +37,15 @@ typedef struct {
 
     // this skeeto guy is kinda sick wit it
     atomic_uint32_t queue;
-    atomic_uint32_t jobs_done;
 
     int thread_count;
     work_t* work;
     thrd_t* threads;
 
-    #ifdef _WIN32
-    HANDLE sem;
-    #else
-    sem_t sem;
-    #endif
+    // just to notify people that
+    // submissions are happening
+    Futex sem;
 } threadpool_t;
-
-static work_t* ask_for_work(threadpool_t* threadpool, uint32_t* save) {
-    uint32_t r = *save = threadpool->queue;
-    uint32_t mask = (1u << QEXP) - 1;
-    uint32_t head = r & mask;
-    uint32_t tail = (r >> 16) & mask;
-
-    return head != tail ? &threadpool->work[tail] : NULL;
-}
 
 static bool do_work(threadpool_t* threadpool) {
     uint32_t save;
@@ -65,18 +53,20 @@ static bool do_work(threadpool_t* threadpool) {
     work_t tmp;
 
     do {
-        job = ask_for_work(threadpool, &save);
-        if (job == NULL) {
+        save = threadpool->queue;
+        uint32_t mask = (1u << QEXP) - 1;
+        uint32_t head = save & mask;
+        uint32_t tail = (save >> 16) & mask;
+        if (head == tail) {
             // take a nap if we ain't find shit
             return true;
         }
 
         // copy out before we commit
-        tmp = *job;
+        tmp = threadpool->work[tail];
     } while (!atomic_compare_exchange_strong(&threadpool->queue, &save, save + 0x10000));
 
     tmp.fn(tmp.arg);
-    threadpool->jobs_done -= 1;
     return false;
 }
 
@@ -88,12 +78,10 @@ static int thread_func(void* arg) {
     #endif
 
     while (threadpool->running) {
+        uint64_t now = threadpool->sem;
         if (do_work(threadpool)) {
-            #ifdef _WIN32
-            WaitForSingleObjectEx(threadpool->sem, -1, false); // wait for jobs
-            #else
-            sem_wait(&threadpool->sem);
-            #endif
+            // just wait for it to increment
+            futex_wait(&threadpool->sem, now);
         }
     }
 
@@ -131,32 +119,15 @@ void threadpool_submit(threadpool_t* threadpool, work_routine fn, size_t arg_siz
     threadpool->work[i].fn = fn;
     memcpy(threadpool->work[i].arg, arg, arg_size);
 
-    threadpool->jobs_done += 1;
     threadpool->queue += 1;
 
-    #ifdef _WIN32
-    ReleaseSemaphore(threadpool->sem, 1, 0);
-    #else
-    sem_post(&threadpool->sem);
-    #endif
+    // wake some thread up
+    threadpool->sem += 1;
+    futex_signal(&threadpool->sem);
 }
 
 void threadpool_work_one_job(threadpool_t* threadpool) {
     do_work(threadpool);
-}
-
-void threadpool_work_while_wait(threadpool_t* threadpool) {
-    while (threadpool->jobs_done > 0) {
-        if (do_work(threadpool)) {
-            thrd_yield();
-        }
-    }
-}
-
-void threadpool_wait(threadpool_t* threadpool) {
-    while (threadpool->jobs_done > 0) {
-        thrd_yield();
-    }
 }
 
 void threadpool_free(threadpool_t* threadpool) {
@@ -188,15 +159,6 @@ Cuik_IThreadpool* cuik_threadpool_create(int worker_count) {
     tp->thread_count = worker_count;
     tp->running = true;
 
-    #if _WIN32
-    tp->sem = CreateSemaphoreExA(0, worker_count, worker_count, 0, 0, SEMAPHORE_ALL_ACCESS);
-    #else
-    if (sem_init(&tp->sem, 0 /* shared between threads */, worker_count) != 0) {
-        fprintf(stderr, "error: could not create semaphore!\n");
-        return NULL;
-    }
-    #endif
-
     for (int i = 0; i < worker_count; i++) {
         if (thrd_create(&tp->threads[i], thread_func, tp) != thrd_success) {
             fprintf(stderr, "error: could not create worker threads!\n");
@@ -215,20 +177,16 @@ void cuik_threadpool_destroy(Cuik_IThreadpool* thread_pool) {
     threadpool_t* tp = (threadpool_t*) thread_pool;
     tp->running = false;
 
+    tp->sem += 1;
+    futex_broadcast(&tp->sem);
+
     #ifdef _WIN32
-    ReleaseSemaphore(tp->sem, tp->thread_count, 0);
     WaitForMultipleObjects(tp->thread_count, tp->threads, TRUE, INFINITE);
 
     for (int i = 0; i < tp->thread_count; i++) {
         thrd_join(tp->threads[i], NULL);
     }
-    CloseHandle(tp->sem);
     #else
-    // wake everyone
-    for (size_t i = 0; i < tp->thread_count; i++) {
-        sem_post(&tp->sem);
-    }
-
     for (int i = 0; i < tp->thread_count; i++) {
         thrd_join(tp->threads[i], NULL);
     }

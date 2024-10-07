@@ -24,10 +24,19 @@ typedef struct {
 NBHS nbhs_alloc(size_t initial_cap, NBHS_AllocZeroMem alloc_mem, NBHS_FreeMem free_mem, NBHS_Compare compare, NBHS_Hash hash);
 void nbhs_free(NBHS* hs);
 void* nbhs_intern(NBHS* hs, void* val);
+void* nbhs_get(NBHS* hs, void* val);
 
 // thread-unsafe insert, useful during init since it's faster
 // than the thread-safe stuff.
 void nbhs_raw_insert(NBHS* hs, void* val);
+void nbhs_resize_barrier(NBHS* hs);
+
+// for spooky stuff
+size_t nbhs_count(NBHS* hs);
+void** nbhs_array(NBHS* hs);
+size_t nbhs_capacity(NBHS* hs);
+
+#define nbhs_for(it, hs) for (void **it = nbhs_array(hs), **_end_ = &it[nbhs_capacity(hs)]; it != _end_; it++) if (*it != NULL)
 
 #endif // NBHS_H
 
@@ -42,9 +51,6 @@ void nbhs_raw_insert(NBHS* hs, void* val);
 #define NBHS__END()       spall_auto_buffer_end()
 #endif
 
-// private constants (idk if i wanna undef these but don't touch i guess?)
-#define NBHS_RESERVE_BIT (1ull << 63ull)
-
 // for the time in the ebr entry
 #define NBHS_LOCKED_BIT (1ull << 63ull)
 
@@ -58,8 +64,7 @@ struct NBHS_Table {
     _Atomic uint32_t moved;
     _Atomic uint32_t move_done;
     _Atomic uint32_t count;
-
-    _Atomic(uintptr_t) data[];
+    _Atomic(void*) data[0];
 };
 
 typedef struct NBHS_EBREntry {
@@ -78,37 +83,15 @@ static _Atomic(NBHS_EBREntry*) nbhs_ebr_list;
 static void* nbhs__alloc_zero_mem(size_t s) { return calloc(1, s); }
 static void nbhs__free_mem(void* ptr, size_t s) { free(ptr); }
 
-static void* nbhs_try_entry(NBHS* hs, NBHS_Table* table, int i, void* val, uintptr_t entry) {
-    void* entry_p = (void*) (entry & ~NBHS_RESERVE_BIT);
-    if (hs->compare(entry_p, val)) {
-        if ((entry & NBHS_RESERVE_BIT) == 0) {
-            // not reserved, yay
-            return entry_p;
-        } else {
-            // either NULL or complete can go thru without waiting
-            uintptr_t decision;
-            while (decision = atomic_load(&table->data[i]), decision & NBHS_RESERVE_BIT) {
-                // idk if i should do a nicer wait than a spin-lock
-            }
-            return (void*) decision;
-        }
-    } else {
-        return NULL;
-    }
-}
-
 static void* nbhs_raw_lookup(NBHS* hs, NBHS_Table* table, uint32_t h, void* val) {
     size_t mask = (1 << table->exp) - 1;
     size_t first = h & mask, i = first;
     do {
-        uintptr_t entry = atomic_load(&table->data[i]);
-        if (entry == 0) {
+        void* entry = atomic_load(&table->data[i]);
+        if (entry == NULL) {
             return NULL;
-        }
-
-        void* k = nbhs_try_entry(hs, table, i, val, entry);
-        if (k != NULL) {
-            return k;
+        } else if (hs->compare(entry, val)) {
+            return entry;
         }
         i = (i + 1) & mask;
     } while (i != first);
@@ -129,7 +112,8 @@ static void* nbhs_raw_intern(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, voi
         // CAS latest -> new_table, if another thread wins the race we'll use its table
         new_top->prev = latest;
         if (!atomic_compare_exchange_strong(&hs->latest, &latest, new_top)) {
-            hs->free_mem(new_top, sizeof(NBHS_Table) + new_cap*sizeof(uintptr_t));
+            hs->free_mem(new_top, sizeof(NBHS_Table) + new_cap*sizeof(void*));
+            prev = atomic_load(&latest->prev);
         } else {
             prev   = latest;
             latest = new_top;
@@ -137,48 +121,39 @@ static void* nbhs_raw_intern(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, voi
     }
 
     // actually lookup & insert
-    uint32_t h = hs->hash(val);
-    uintptr_t reserved_form = (uintptr_t)val | NBHS_RESERVE_BIT;
-    void* result = NULL;
-    for (;;) {
-        size_t mask = (1 << latest->exp) - 1;
-        size_t first = h & mask, i = first;
+    uint32_t exp = latest->exp;
+    size_t mask = (1 << exp) - 1;
 
+    void* result = NULL;
+    uint32_t h = hs->hash(val);
+    for (;;) {
+        size_t first = h & mask, i = first;
         do {
-            uintptr_t entry = atomic_load(&latest->data[i]);
-            if (entry == 0) {
-                // we insert the reserved_form to lock the entry until we've checked
-                // if the entry already existed in the previous table, if there's no
-                // previous table we don't need this.
-                uintptr_t to_write = prev ? reserved_form : (uintptr_t) val;
+            void* entry = atomic_load(&latest->data[i]);
+            if (entry == NULL) {
+                void* to_write = val;
+                if (prev != NULL) {
+                    // should only be one previous table
+                    assert(prev->prev == NULL);
+                    void* old = nbhs_raw_lookup(hs, prev, h, val);
+                    if (old != NULL) {
+                        to_write = old;
+                    }
+                }
+
+                // fight to be the one to land into the modern table
                 if (atomic_compare_exchange_strong(&latest->data[i], &entry, to_write)) {
+                    result = to_write;
+
                     // count doesn't care that it's a migration, it's at least not replacing an existing
                     // slot in this version of the table.
                     atomic_fetch_add_explicit(&latest->count, 1, memory_order_relaxed);
-
-                    if (prev != NULL) {
-                        // should only be one previous table
-                        assert(prev->prev == NULL);
-                        void* old = nbhs_raw_lookup(hs, prev, h, val);
-
-                        if (old != NULL) {
-                            // migrate the entry up
-                            atomic_exchange(&latest->data[i], (uintptr_t) old);
-                            result = old;
-                            break;
-                        }
-                    }
-
-                    // we're the first occurrence
-                    atomic_exchange(&latest->data[i], (uintptr_t) val);
-                    result = val;
                     break;
                 }
             }
 
-            void* k = nbhs_try_entry(hs, latest, i, val, entry);
-            if (k != NULL) {
-                return k;
+            if (hs->compare(entry, val)) {
+                return entry;
             }
 
             i = (i + 1) & mask;
@@ -202,9 +177,9 @@ void nbhs_raw_insert(NBHS* hs, void* val) {
     size_t mask = (1 << table->exp) - 1;
     size_t first = h & mask, i = first;
     do {
-        uintptr_t entry = atomic_load_explicit(&table->data[i], memory_order_relaxed);
-        if (entry == 0) {
-            atomic_store_explicit(&table->data[i], (uintptr_t) val, memory_order_relaxed);
+        void* entry = atomic_load_explicit(&table->data[i], memory_order_relaxed);
+        if (entry == NULL) {
+            atomic_store_explicit(&table->data[i], val, memory_order_relaxed);
             atomic_fetch_add_explicit(&table->count, 1, memory_order_relaxed);
             return;
         }
@@ -216,6 +191,10 @@ void nbhs_raw_insert(NBHS* hs, void* val) {
     abort();
 }
 
+void** nbhs_array(NBHS* hs)    { return (void**) hs->latest->data; }
+size_t nbhs_count(NBHS* hs)    { return hs->latest->count; }
+size_t nbhs_capacity(NBHS* hs) { return 1ull << hs->latest->exp; }
+
 NBHS nbhs_alloc(size_t initial_cap, NBHS_AllocZeroMem alloc_mem, NBHS_FreeMem free_mem, NBHS_Compare compare, NBHS_Hash hash) {
     if (alloc_mem == NULL) {
         assert(free_mem == NULL);
@@ -224,7 +203,7 @@ NBHS nbhs_alloc(size_t initial_cap, NBHS_AllocZeroMem alloc_mem, NBHS_FreeMem fr
     }
 
     size_t exp = 64 - __builtin_clzll(initial_cap - 1);
-    NBHS_Table* table = alloc_mem(sizeof(NBHS_Table) + (1ull << exp)*sizeof(uintptr_t));
+    NBHS_Table* table = alloc_mem(sizeof(NBHS_Table) + (1ull << exp)*sizeof(void*));
     table->exp = exp;
     return (NBHS){
         .alloc_mem  = alloc_mem,
@@ -239,7 +218,7 @@ void nbhs_free(NBHS* hs) {
     NBHS_Table* curr = hs->latest;
     while (curr) {
         NBHS_Table* next = curr->prev;
-        hs->free_mem(curr, sizeof(NBHS_Table) + (1ull*curr->exp)*sizeof(uintptr_t));
+        hs->free_mem(curr, sizeof(NBHS_Table) + (1ull*curr->exp)*sizeof(void*));
         curr = next;
     }
 }
@@ -249,8 +228,154 @@ static void nbhs_enter_critsec(void) { atomic_fetch_add(&nbhs_ebr.time, NBHS_LOC
 // flips the top bit off AND increments time by one
 static void nbhs_exit_critsec(void)  { atomic_fetch_add(&nbhs_ebr.time, NBHS_LOCKED_BIT + 1); }
 
+NBHS_Table* nbhs_move_items(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, int items_to_move) {
+    assert(prev);
+    size_t cap = 1ull << prev->exp;
+
+    // snatch up some number of items
+    uint32_t old, new;
+    do {
+        old = atomic_load(&prev->moved);
+        if (old == cap) { return prev; }
+        // cap the number of items to copy... by the cap
+        new = old + items_to_move;
+        if (new > cap) { new = cap; }
+    } while (!atomic_compare_exchange_strong(&prev->moved, &(uint32_t){ old }, new));
+
+    NBHS__BEGIN("copying old");
+    for (size_t i = old; i < new; i++) {
+        // either NULL or complete can go thru without waiting
+        void* old_p = atomic_load(&prev->data[i]);
+        if (old_p) {
+            // we pass NULL for prev since we already know the entries exist in prev
+            nbhs_raw_intern(hs, latest, NULL, old_p);
+        }
+    }
+    NBHS__END();
+
+    uint32_t done = atomic_fetch_add(&prev->move_done, new - old);
+    done += new - old;
+
+    assert(done <= cap);
+    if (done == cap) {
+        // dettach now
+        NBHS__BEGIN("detach");
+
+        assert(prev->prev == NULL);
+        latest->prev = NULL;
+
+        // since we're freeing at the moment, we don't want to block up other freeing threads
+        nbhs_exit_critsec();
+
+        NBHS__BEGIN("scan");
+        int state_count = nbhs_ebr_count;
+        uint64_t* states = hs->alloc_mem(state_count * sizeof(uint64_t));
+
+        // check current state, once the other threads either advance or aren't in the
+        // lookup function we know we can free.
+        NBHS_EBREntry* us = &nbhs_ebr;
+        for (NBHS_EBREntry* list = atomic_load(&nbhs_ebr_list); list; list = list->next) {
+            // mark sure no ptrs refer to prev
+            if (us != list && list->id < state_count) {
+                states[list->id] = list->time;
+            }
+        }
+
+        // wait on each and every thread to make progress or not be in a critical section at the time.
+        for (NBHS_EBREntry* list = atomic_load(&nbhs_ebr_list); list; list = list->next) {
+            // mark sure no ptrs refer to prev
+            if (us != list && list->id < state_count && (states[list->id] & NBHS_LOCKED_BIT)) {
+                uint64_t before_t = states[list->id], now_t;
+                do {
+                    // idk, maybe this should be a better spinlock
+                    now_t = atomic_load(&list->time);
+                } while (before_t == now_t);
+            }
+        }
+
+        hs->free_mem(states, state_count * sizeof(uint64_t));
+        NBHS__END();
+
+        // no more refs, we can immediately free
+        hs->free_mem(prev, sizeof(NBHS_Table) + (1ull<<prev->exp)*sizeof(void*));
+
+        nbhs_enter_critsec();
+        prev = NULL;
+
+        NBHS__END();
+    }
+    return prev;
+}
+
+void* nbhs_get(NBHS* hs, void* val) {
+    NBHS__BEGIN("intern");
+
+    assert(val);
+    if (!nbhs_ebr_init) {
+        NBHS__BEGIN("init");
+        nbhs_ebr_init = true;
+
+        // add to ebr list, we never free this because i don't care
+        // TODO(NeGate): i do care, this is a nightmare when threads die figure it out
+        NBHS_EBREntry* old;
+        do {
+            old = atomic_load_explicit(&nbhs_ebr_list, memory_order_relaxed);
+            nbhs_ebr.next = old;
+        } while (!atomic_compare_exchange_strong(&nbhs_ebr_list, &old, &nbhs_ebr));
+        nbhs_ebr.id = nbhs_ebr_count++;
+        NBHS__END();
+    }
+
+    // modifying the tables is possible now.
+    nbhs_enter_critsec();
+
+    NBHS_Table* latest = atomic_load(&hs->latest);
+
+    // if there's earlier versions of the table we can move up entries as we go along.
+    NBHS_Table* prev = atomic_load(&latest->prev);
+    if (prev) {
+        prev = nbhs_move_items(hs, latest, prev, 32);
+        if (prev == NULL) {
+            latest = atomic_load(&hs->latest);
+        }
+    }
+
+    // just lookup into the tables, we don't need to reserve
+    // actually lookup & insert
+    uint32_t exp = latest->exp;
+    size_t mask = (1 << exp) - 1;
+
+    void* result = NULL;
+    uint32_t h = hs->hash(val);
+    size_t first = h & mask, i = first;
+    do {
+        void* entry = atomic_load(&latest->data[i]);
+        if (entry == NULL) {
+            if (prev != NULL) {
+                // should only be one previous table
+                assert(prev->prev == NULL);
+                result = nbhs_raw_lookup(hs, prev, h, val);
+            }
+            break;
+        }
+
+        if (hs->compare(entry, val)) {
+            result = entry;
+            break;
+        }
+
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    nbhs_exit_critsec();
+    NBHS__END();
+    return result;
+}
+
 void* nbhs_intern(NBHS* hs, void* val) {
     NBHS__BEGIN("intern");
+
+    assert(val);
     if (!nbhs_ebr_init) {
         NBHS__BEGIN("init");
         nbhs_ebr_init = true;
@@ -273,85 +398,10 @@ void* nbhs_intern(NBHS* hs, void* val) {
     // if there's earlier versions of the table we can move up entries as we go along.
     NBHS_Table* prev = atomic_load(&latest->prev);
     if (prev) {
-        size_t cap = 1ull << prev->exp;
-
-        // snatch up some number of items
-        uint32_t old, new;
-        do {
-            old = atomic_load(&prev->moved);
-            if (old == cap) { goto skip; }
-            // cap the number of items to copy... by the cap
-            new = old + 32;
-            if (new > cap) { new = cap; }
-        } while (!atomic_compare_exchange_strong(&prev->moved, &(uint32_t){ old }, new));
-
-        NBHS__BEGIN("copying old");
-        for (size_t i = old; i < new; i++) {
-            // either NULL or complete can go thru without waiting
-            uintptr_t decision;
-            while (decision = atomic_load(&prev->data[i]), decision & NBHS_RESERVE_BIT) {
-                // idk if i should do a nicer wait than a spin-lock
-            }
-
-            if (decision) {
-                // we pass NULL for prev since we already know the entries exist in prev
-                nbhs_raw_intern(hs, latest, NULL, (void*) decision);
-            }
+        prev = nbhs_move_items(hs, latest, prev, 32);
+        if (prev == NULL) {
+            latest = atomic_load(&hs->latest);
         }
-        NBHS__END();
-
-        uint32_t done = atomic_fetch_add(&prev->move_done, new - old);
-        done += new - old;
-
-        assert(done <= cap);
-        if (done == cap) {
-            // dettach now
-            NBHS__BEGIN("detach");
-
-            assert(prev->prev == NULL);
-            latest->prev = NULL;
-
-            // since we're freeing at the moment, we don't want to block up other freeing threads
-            nbhs_exit_critsec();
-
-            NBHS__BEGIN("scan");
-            int state_count = nbhs_ebr_count;
-            uint64_t* states = hs->alloc_mem(state_count * sizeof(uint64_t));
-
-            // check current state, once the other threads either advance or aren't in the
-            // lookup function we know we can free.
-            NBHS_EBREntry* us = &nbhs_ebr;
-            for (NBHS_EBREntry* list = atomic_load(&nbhs_ebr_list); list; list = list->next) {
-                // mark sure no ptrs refer to prev
-                if (us != list && list->id < state_count) {
-                    states[list->id] = list->time;
-                }
-            }
-
-            // wait on each and every thread to make progress or not be in a critical section at the time.
-            for (NBHS_EBREntry* list = atomic_load(&nbhs_ebr_list); list; list = list->next) {
-                // mark sure no ptrs refer to prev
-                if (us != list && list->id < state_count && (states[list->id] & NBHS_LOCKED_BIT)) {
-                    uint64_t before_t = states[list->id], now_t;
-                    do {
-                        // idk, maybe this should be a better spinlock
-                        now_t = atomic_load(&list->time);
-                    } while (before_t == now_t);
-                }
-            }
-
-            hs->free_mem(states, state_count * sizeof(uint64_t));
-            NBHS__END();
-
-            // no more refs, we can immediately free
-            hs->free_mem(prev, sizeof(NBHS_Table) + (1ull<<prev->exp)*sizeof(uintptr_t));
-
-            nbhs_enter_critsec();
-            prev = NULL;
-
-            NBHS__END();
-        }
-        skip:;
     }
 
     void* result = nbhs_raw_intern(hs, latest, prev, val);
@@ -359,6 +409,35 @@ void* nbhs_intern(NBHS* hs, void* val) {
     nbhs_exit_critsec();
     NBHS__END();
     return result;
+}
+
+// waits for all items to be moved up before continuing
+void nbhs_resize_barrier(NBHS* hs) {
+    NBHS__BEGIN("intern");
+    if (!nbhs_ebr_init) {
+        NBHS__BEGIN("init");
+        nbhs_ebr_init = true;
+
+        // add to ebr list, we never free this because i don't care
+        NBHS_EBREntry* old;
+        do {
+            old = atomic_load_explicit(&nbhs_ebr_list, memory_order_relaxed);
+            nbhs_ebr.next = old;
+        } while (!atomic_compare_exchange_strong(&nbhs_ebr_list, &old, &nbhs_ebr));
+        nbhs_ebr.id = nbhs_ebr_count++;
+        NBHS__END();
+    }
+
+    // enter critical section, modifying the tables is possible now.
+    nbhs_enter_critsec();
+
+    NBHS_Table *prev, *latest = atomic_load(&hs->latest);
+    while (prev = atomic_load(&latest->prev), prev != NULL) {
+        nbhs_move_items(hs, latest, prev, 1ull << prev->exp);
+    }
+
+    nbhs_exit_critsec();
+    NBHS__END();
 }
 
 #endif // NBHS_IMPL

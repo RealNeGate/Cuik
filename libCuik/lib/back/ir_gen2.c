@@ -526,7 +526,10 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
 
         case EXPR_CMPEQ:
         case EXPR_CMPNE: {
-            return (ValDesc){ RVALUE, .n = tb_builder_cmp(g, e->op == EXPR_CMPEQ ? TB_CMP_EQ : TB_CMP_NE, args[0].n, args[1].n) };
+            TB_Node* lhs = as_rval(tu, g, &args[0]);
+            TB_Node* rhs = as_rval(tu, g, &args[1]);
+
+            return (ValDesc){ RVALUE, .n = tb_builder_cmp(g, e->op == EXPR_CMPEQ ? TB_CMP_EQ : TB_CMP_NE, lhs, rhs) };
         }
         case EXPR_CMPGT:
         case EXPR_CMPGE:

@@ -26,6 +26,7 @@ void cuikperf_thread_stop(void);
 
 // Reports a region of time to the profiler callback
 void cuikperf_region_start(const char* fmt, const char* extra);
+void cuikperf_region_start2(const char* fmt, size_t extra_len, const char* extra);
 void cuikperf_region_end(void);
 
 // Usage:

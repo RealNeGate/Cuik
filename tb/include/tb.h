@@ -1019,6 +1019,25 @@ typedef struct {
 TB_API TB_ExportBuffer tb_module_object_export(TB_Module* m, TB_Arena* dst_arena, TB_DebugFormat debug_fmt);
 TB_API bool tb_export_buffer_to_file(TB_ExportBuffer buffer, const char* path);
 
+// Same interface shows up in Cuik
+#ifndef CUIK_ITHREADPOOL
+#define CUIK_ITHREADPOOL
+
+// fellas... is it ok to OOP? just this once?
+typedef void (*Cuik_TaskFn)(void*);
+typedef struct Cuik_IThreadpool {
+    // runs the function fn with arg as the parameter on a thread.
+    //   arg_size from Cuik is always going to be less than 64bytes
+    void (*submit)(void* user_data, Cuik_TaskFn fn, size_t arg_size, void* arg);
+
+    // tries to work one job before returning (can also not work at all)
+    void (*work_one_job)(void* user_data);
+} Cuik_IThreadpool;
+
+// for doing calls on the interfaces
+#define CUIK_CALL(object, action, ...) ((object)->action((object), ##__VA_ARGS__))
+#endif
+
 ////////////////////////////////
 // Linker exporter
 ////////////////////////////////
@@ -1027,26 +1046,11 @@ typedef struct TB_Linker TB_Linker;
 typedef struct TB_LinkerSection TB_LinkerSection;
 typedef struct TB_LinkerSectionPiece TB_LinkerSectionPiece;
 
-typedef struct {
-    enum {
-        TB_LINKER_MSG_NULL,
-
-        // pragma comment(lib, "blah")
-        TB_LINKER_MSG_IMPORT,
-    } tag;
-    union {
-        // pragma lib request
-        TB_Slice import_path;
-    };
-} TB_LinkerMsg;
-
 TB_API TB_ExecutableType tb_system_executable_format(TB_System s);
 
-TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch);
-TB_API TB_ExportBuffer tb_linker_export(TB_Linker* l, TB_Arena* arena);
-TB_API void tb_linker_destroy(TB_Linker* l);
-
-TB_API bool tb_linker_get_msg(TB_Linker* l, TB_LinkerMsg* msg);
+// tp can be NULL, it just means we're single-threaded
+TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch, Cuik_IThreadpool* tp);
+TB_API bool tb_linker_export(TB_Linker* l, const char* file_name);
 
 // windows only
 TB_API void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem);
@@ -1057,12 +1061,12 @@ TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name);
 TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m);
 
 // Adds object file to output
-TB_API void tb_linker_append_object(TB_Linker* l, TB_Slice obj_name, TB_Slice content);
+TB_API void tb_linker_append_object(TB_Linker* l, const char* file_name);
 
 // Adds static library to output
 //   this can include imports (wrappers for DLL symbols) along with
 //   normal sections.
-TB_API void tb_linker_append_library(TB_Linker* l, TB_Slice ar_name, TB_Slice content);
+TB_API void tb_linker_append_library(TB_Linker* l, const char* file_name);
 
 ////////////////////////////////
 // Symbols

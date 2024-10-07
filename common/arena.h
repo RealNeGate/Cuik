@@ -31,13 +31,6 @@ enum {
     TB_ARENA_ALIGNMENT  = 16,
 };
 
-typedef struct TB_ArenaFreeList TB_ArenaFreeList;
-struct TB_ArenaFreeList {
-    TB_ArenaFreeList* next;
-    size_t size;
-    char data[];
-};
-
 typedef struct TB_ArenaChunk TB_ArenaChunk;
 struct TB_ArenaChunk {
     TB_ArenaChunk* prev;

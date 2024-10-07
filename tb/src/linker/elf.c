@@ -1,3 +1,4 @@
+#if 0
 #define NL_STRING_MAP_IMPL
 #include "linker.h"
 #include <tb_elf.h>
@@ -205,11 +206,7 @@ static TB_ExportBuffer elf_export(TB_Linker* l, TB_Arena* arena) {
     // write section contents
     return (TB_ExportBuffer){ .total = output_size, .head = chunk, .tail = chunk };
 }
+#endif
 
-TB_LinkerVtbl tb__linker_elf = {
-    .init           = elf_init,
-    .append_object  = elf_append_object,
-    .append_library = elf_append_library,
-    .append_module  = elf_append_module,
-    .export         = elf_export
-};
+TB_LinkerVtbl tb__linker_elf = {};
+

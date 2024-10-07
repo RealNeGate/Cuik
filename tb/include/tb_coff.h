@@ -215,7 +215,7 @@ bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectS
     if (sec->name[0] == '/') {
         // string table access
         int offset = tb__parse_decimal_int(7, &sec->name[1]);
-        if (file.length > offset) {
+        if (offset >= file.length) {
             return false;
         }
 

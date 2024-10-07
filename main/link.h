@@ -14,42 +14,37 @@ static void add_linker_input(TB_Linker* l, const char* path) {
         char test_path[FILENAME_MAX];
         dyn_array_for(j, libpaths) {
             snprintf(test_path, FILENAME_MAX, "%s/%s", libpaths[j], path);
-            fm = open_file_map(test_path);
-            if (fm.data != NULL) {
-                path_slice = (TB_Slice){ (const uint8_t*) cuik_strdup(test_path), strlen(test_path) };
+
+            FILE* fp = fopen(test_path, "rb");
+            if (fp != NULL) {
+                fclose(fp);
                 break;
             }
+            test_path[0] = 0;
         }
 
-        if (fm.data == NULL) {
+        if (test_path[0] == 0) {
             fprintf(stderr, "could not find library: %s\n", path);
             errors++;
             return;
         }
 
-        tb_linker_append_library(l, path_slice, (TB_Slice){ fm.data, fm.size });
+        tb_linker_append_library(l, test_path);
     } else {
-        // normal object files
-        path_slice = (TB_Slice){ (const uint8_t*) path, strlen(path) };
-        fm = open_file_map(path);
-
-        if (fm.data == NULL) {
-            fprintf(stderr, "could not find object file: %s\n", path);
-            errors++;
-            return;
-        }
-
-        TB_Slice data = { fm.data, fm.size };
-        tb_linker_append_object(l, path_slice, data);
+        tb_linker_append_object(l, path);
     }
 }
 
 // pretends to act like link.exe
 int run_link(int argc, const char** argv) {
     dyn_array_put(libpaths, "./");
+    cuikperf_start("perf.spall");
 
-    TB_Arena arena;
-    tb_arena_create(&arena, NULL);
+    #if CUIK_ALLOW_THREADS
+    Cuik_IThreadpool* tp = cuik_threadpool_create(4);
+    #else
+    Cuik_IThreadpool* tp = NULL;
+    #endif
 
     // find toolchain details from Cuik
     {
@@ -79,37 +74,44 @@ int run_link(int argc, const char** argv) {
         }
     }
 
-    TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64);
+    CUIK_TIMED_BLOCK("linker") {
+        TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64, tp);
 
-    dyn_array_for(i, input_files) {
-        add_linker_input(l, input_files[i]);
-    }
-
-    /*TB_LinkerMsg m;
-    while (tb_linker_get_msg(l, &m)) {
-        if (m.tag == TB_LINKER_MSG_IMPORT) {
-            char path[FILENAME_MAX];
-            assert(m.import_path.length < FILENAME_MAX);
-            memcpy(path, m.import_path.data, m.import_path.length);
-            path[m.import_path.length] = 0;
-
-            add_linker_input(l, path);
+        dyn_array_for(i, input_files) {
+            add_linker_input(l, input_files[i]);
         }
-    }*/
 
-    if (errors) {
-        fprintf(stderr, "library search paths:\n");
-        for (size_t j = 0; j < dyn_array_length(libpaths); j++) {
-            fprintf(stderr, "  %s\n", libpaths[j]);
+        /*TB_LinkerMsg m;
+        while (tb_linker_get_msg(l, &m)) {
+            if (m.tag == TB_LINKER_MSG_IMPORT) {
+                char path[FILENAME_MAX];
+                assert(m.import_path.length < FILENAME_MAX);
+                memcpy(path, m.import_path.data, m.import_path.length);
+                path[m.import_path.length] = 0;
+
+                add_linker_input(l, path);
+            }
+        }*/
+
+        if (errors) {
+            fprintf(stderr, "library search paths:\n");
+            for (size_t j = 0; j < dyn_array_length(libpaths); j++) {
+                fprintf(stderr, "  %s\n", libpaths[j]);
+            }
+            cuikperf_region_end();
+            return EXIT_FAILURE;
         }
-        return EXIT_FAILURE;
+
+        if (!tb_linker_export(l, output_name)) {
+            cuikperf_region_end();
+            return EXIT_FAILURE;
+        }
+
+        #if CUIK_ALLOW_THREADS
+        cuik_threadpool_destroy(tp);
+        #endif
     }
 
-    TB_ExportBuffer buffer = tb_linker_export(l, &arena);
-    if (!tb_export_buffer_to_file(buffer, output_name)) {
-        return EXIT_FAILURE;
-    }
-
-    tb_linker_destroy(l);
+    cuikperf_stop();
     return EXIT_SUCCESS;
 }

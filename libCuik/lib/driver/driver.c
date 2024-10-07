@@ -426,6 +426,10 @@ static void ld_invoke(BuildStepInfo* info) {
     // generate object file
     ////////////////////////////////
     if (args->based && args->flavor != TB_FLAVOR_OBJECT) {
+        fprintf(stderr, "unsupported platform to link with... sorry (contact NeGate)\n");
+        abort();
+
+        #if 0
         TB_ExecutableType exe;
         switch (sys) {
             case CUIK_SYSTEM_WINDOWS: exe = TB_EXECUTABLE_PE;  break;
@@ -503,6 +507,7 @@ static void ld_invoke(BuildStepInfo* info) {
         step_error(s);
         tb_module_destroy(mod);
         goto done;
+        #endif
     } else {
         Cuik_Path obj_path;
         if (args->output_name == NULL) {

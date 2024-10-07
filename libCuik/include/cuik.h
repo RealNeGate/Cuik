@@ -16,9 +16,10 @@ typedef struct TranslationUnit TranslationUnit;
 typedef struct Cuik_Toolchain Cuik_Toolchain;
 typedef struct Cuik_DriverArgs Cuik_DriverArgs;
 
-////////////////////////////////////////////
-// Interfaces
-////////////////////////////////////////////
+// Same interface shows up in TB
+#ifndef CUIK_ITHREADPOOL
+#define CUIK_ITHREADPOOL
+
 // fellas... is it ok to OOP? just this once?
 typedef void (*Cuik_TaskFn)(void*);
 typedef struct Cuik_IThreadpool {
@@ -32,6 +33,7 @@ typedef struct Cuik_IThreadpool {
 
 // for doing calls on the interfaces
 #define CUIK_CALL(object, action, ...) ((object)->action((object), ##__VA_ARGS__))
+#endif
 
 ////////////////////////////////////////////
 // Target descriptor

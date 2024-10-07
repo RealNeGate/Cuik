@@ -209,6 +209,22 @@ void cuikperf_region_start(const char* label, const char* extra) {
     }
 }
 
+void cuikperf_region_start2(const char* label, size_t extra_len, const char* extra) {
+    if (profiling) {
+        uint64_t nanos = cuik_time_in_nanos();
+
+        #ifndef CUIK_USE_SPALL_AUTO
+        #if _WIN32
+        uint32_t tid = GetCurrentThreadId();
+        #else
+        uint32_t tid = pthread_self();
+        #endif
+
+        spall_buffer_begin_args(&ctx, &muh_buffer, label, strlen(label), extra, extra_len, nanos, tid, 0);
+        #endif
+    }
+}
+
 void cuikperf_region_end(void) {
     if (profiling) {
         uint64_t nanos = cuik_time_in_nanos();
