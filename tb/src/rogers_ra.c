@@ -155,7 +155,7 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
         VReg* reload_vreg = tb__set_node_vreg(ctx, remat);
 
         // reloads are unlikely to spill... but not impossible
-        reload_vreg->spill_bias = 1e10;
+        reload_vreg->spill_bias = 1e9;
 
         RegMask* remat_mask = ctx->constraint(ctx, remat, NULL);
         reload_vreg->mask = tb__reg_mask_meet(ctx, in_mask, remat_mask);
@@ -164,6 +164,9 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
         // if it's remat'ing a copy, we should edit the def mask to match the use
         if (remat->type == TB_MACH_COPY) {
             TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(remat);
+
+            // slightly harder to rematerialize than a normal remat because we tightened it
+            reload_vreg->spill_bias = 1e10;
             cpy->def = reload_vreg->mask;
         }
 
@@ -1111,6 +1114,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
     TB_Node* root = ctx->f->root_node;
     compute_ordinals(ctx, ra, arena);
 
+    #if 0
     // consider all precolored vregs as future-active
     cuikperf_region_start("precolored", NULL);
     dyn_array_clear(ra->spills);
@@ -1180,6 +1184,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
     if (dyn_array_length(ra->spills) > 0) {
         return MANY_CONFLICTS;
     }
+    #endif
 
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
