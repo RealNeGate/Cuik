@@ -29,6 +29,15 @@ static int symbol_cmp(const void* a, const void* b) {
     return sym_a->ordinal - sym_b->ordinal;
 }
 
+static int compare_rva(const void* a, const void* b) {
+    const uint32_t* aa = a;
+    const uint32_t* bb = b;
+
+    if (*aa < *bb) return -1;
+    if (*aa > *bb) return 1;
+    return 0;
+}
+
 // true if we replace the old one
 static bool process_comdat(int select, TB_LinkerSectionPiece* old_p, TB_LinkerSectionPiece* new_p) {
     switch (select) {
@@ -112,7 +121,7 @@ static void pe_append_module(TB_Linker* l, TB_Module* m) {
     tb_linker_append_module_symbols(l, m);
 }
 
-void pe_append_object(ImportObjTask* task) {
+void pe_append_object(TPool* pool, ImportObjTask* task) {
     size_t slash = 0;
     FOR_REV_N(i, 0, task->obj_name.length) {
         if (task->obj_name.data[i] == '/' || task->obj_name.data[i] == '\\') {
@@ -144,28 +153,26 @@ void pe_append_object(ImportObjTask* task) {
     TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
     TB_ObjectSection* sections = tb_platform_heap_alloc(parser.section_count * sizeof(TB_ObjectSection));
 
-    uint32_t order_low = tb__murmur3_32(obj_name.data, obj_name.length);
-
+    uint64_t order1 = task->time;
     CUIK_TIMED_BLOCK("parse sections") {
         FOR_N(i, 0, parser.section_count) {
             TB_ObjectSection* restrict s = &sections[i];
             tb_coff_parse_section(&parser, i, s);
 
             // trim the dollar sign (if applies)
-            uint64_t order = 0;
+            uint64_t order0 = 0;
             FOR_N(j, 0, s->name.length) {
                 if (s->name.data[j] == '$') {
                     // convert letters into score
                     FOR_N(k, j + 1, s->name.length) {
-                        order <<= 8;
-                        order += s->name.data[k];
+                        order0 <<= 8;
+                        order0 += s->name.data[k];
                     }
 
                     s->name.length = j;
                     break;
                 }
             }
-            order = (order << 32ull) | order_low;
 
             size_t drectve_len = sizeof(".drectve")-1;
 
@@ -214,7 +221,7 @@ void pe_append_object(ImportObjTask* task) {
                             dyn_array_put(info->alternates, cmd);
                         } */
                     } else {
-                        log_warn("unknown linker directive: %.*s", (int) (end - curr), curr);
+                        // log_warn("unknown linker directive: %.*s", (int) (end - curr), curr);
                         break;
                     }
 
@@ -227,9 +234,9 @@ void pe_append_object(ImportObjTask* task) {
             // remove all the alignment flags, they don't appear in linker sections
             TB_LinkerSection* ls = tb_linker_find_or_create_section(l, s->name.length, (const char*) s->name.data, s->flags & ~0x00F00000);
 
-            if (s->flags & IMAGE_SCN_LNK_REMOVE) {
+            /* if (s->flags & IMAGE_SCN_LNK_REMOVE) {
                 ls->generic_flags |= TB_LINKER_SECTION_DISCARD;
-            }
+            } */
 
             TB_LinkerSectionPiece* p;
             p = tb_linker_append_piece(ls, PIECE_BUFFER, s->raw_data.length, obj_file);
@@ -239,7 +246,8 @@ void pe_append_object(ImportObjTask* task) {
                 p->buffer_size = s->raw_data.length;
             }
             s->user_data = p;
-            p->order = order;
+            p->order[0] = order0;
+            p->order[1] = order1 + i;
             p->flags = (s->flags & IMAGE_SCN_MEM_EXECUTE) ? TB_LINKER_PIECE_CODE : 0;
             if (s->flags & IMAGE_SCN_LNK_COMDAT) {
                 p->flags |= TB_LINKER_PIECE_COMDAT;
@@ -393,9 +401,13 @@ void pe_append_object(ImportObjTask* task) {
 
             dyn_array_put(p->relocs, r);
         }
+
+        if (p && p->relocs) {
+            qsort(p->relocs, dyn_array_length(p->relocs), sizeof(TB_LinkerReloc), compare_rva);
+        }
     }
 
-    if (l->thread_pool != NULL) {
+    if (l->jobs.pool != NULL) {
         l->jobs.done += 1;
         futex_signal(&l->jobs.done);
     }
@@ -403,7 +415,7 @@ void pe_append_object(ImportObjTask* task) {
     cuikperf_region_end();
 }
 
-static void pe_append_library(ImportObjTask* task) {
+static void pe_append_library(TPool* pool, ImportObjTask* task) {
     size_t slash = 0;
     FOR_REV_N(i, 0, task->obj_name.length) {
         if (task->obj_name.data[i] == '/' || task->obj_name.data[i] == '\\') {
@@ -436,31 +448,60 @@ static void pe_append_library(ImportObjTask* task) {
         new_count = tb_archive_parse_entries(&ar_parser, 0, ar_parser.member_count, entries);
     }
 
+    // we get a lot of imports to the same table in the same LIB (think of
+    // kernel32.lib being completely kernel32.dll imports), because of this
+    // we keep the lock open across archive entry iteration for like 1000
+    // ops, it's manual lock elision.
+    int imp_ticker = 0;
+    ImportTable* imp_cache = NULL;
+
     // we can dispatch these object parsing jobs into separate threads
+    uint64_t time = task->time;
+    int obj_file_count = 0;
     FOR_N(i, 0, new_count) {
         TB_ArchiveEntry* restrict e = &entries[i];
+
+        if (imp_cache) {
+            imp_ticker -= 1;
+            if (imp_ticker == 0) {
+                cuikperf_region_end();
+                mtx_unlock(&imp_cache->lock);
+                imp_cache = NULL;
+            }
+        }
+
         if (e->import_name.length) {
             // import from DLL:
             //   we don't lock up to insert a new import table but we
             //   do to fill it up, this is probably fine since the filling
             //   process is most likely done by one thread while multiple
             //   threads might be poking multiple separate import tables.
-            //
-            // TODO(NeGate): use an arena
             ImportTable* imp = tb_arena_alloc(&linker_perm_arena, sizeof(ImportTable));
             *imp = (ImportTable){ .libpath = e->name };
             mtx_init(&imp->lock, mtx_plain);
 
-            ImportTable* old = nbhs_intern(&l->imports, imp);
-            if (old != imp) {
-                tb_arena_free(&linker_perm_arena, imp, sizeof(ImportTable));
-                imp = old;
-            }
+            if (imp_cache == NULL || imp_cache->libpath.length != e->name.length || memcmp(imp_cache->libpath.data, e->name.data, e->name.length) != 0) {
+                if (imp_cache != NULL) {
+                    mtx_unlock(&imp_cache->lock);
+                }
 
-            // insert thunk
-            mtx_lock(&imp->lock);
-            if (imp->thunks == NULL) {
-                imp->thunks = dyn_array_create(TB_LinkerSymbol*, 4096);
+                ImportTable* old = nbhs_intern(&l->imports, imp);
+                if (old != imp) {
+                    tb_arena_free(&linker_perm_arena, imp, sizeof(ImportTable));
+                    imp = old;
+                }
+
+                // insert thunk
+                mtx_lock(&imp->lock);
+                imp_cache = imp;
+                imp_ticker = 1000;
+
+                cuikperf_region_start("lock", NULL);
+                if (imp->thunks == NULL) {
+                    imp->thunks = dyn_array_create(TB_LinkerSymbol*, 4096);
+                }
+            } else {
+                imp = imp_cache;
             }
 
             // make __imp_ form which refers to raw address
@@ -493,19 +534,25 @@ static void pe_append_library(ImportObjTask* task) {
                 TB_ArchiveEntry* entries = tb_platform_heap_alloc(ar_parser.member_count * sizeof(TB_ArchiveEntry));
                 dyn_array_put(imp->thunks, import_sym);
             }
-            mtx_unlock(&imp->lock);
         } else {
-            ImportObjTask task = { l, e->name, e->content };
-            if (l->thread_pool != NULL) {
-                CUIK_CALL(l->thread_pool, submit, (Cuik_TaskFn) l->vtbl.append_object, sizeof(task), &task);
+            ImportObjTask t = { l, e->name, e->content, time + obj_file_count*65536 };
+            obj_file_count += 1;
+
+            if (l->jobs.pool != NULL) {
+                tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_object, sizeof(t), &t);
                 l->jobs.count += 1;
             } else {
-                l->vtbl.append_object(&task);
+                l->vtbl.append_object(NULL, &t);
             }
         }
     }
 
-    if (l->thread_pool != NULL) {
+    if (imp_cache) {
+        mtx_unlock(&imp_cache->lock);
+        cuikperf_region_end();
+    }
+
+    if (l->jobs.pool != NULL) {
         l->jobs.done += 1;
         futex_signal(&l->jobs.done);
     }
@@ -747,17 +794,11 @@ static DynArray(PE_BaseReloc) find_base_relocs(TB_Linker* l, DynArray(TB_LinkerS
     return base_relocs;
 }
 
-static int compare_rva(const void* a, const void* b) {
-    const uint32_t* aa = a;
-    const uint32_t* bb = b;
-    return *aa - *bb;
-}
-
 #define WRITE(data, size) (memcpy(&output[write_pos], data, size), write_pos += (size))
 static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
 
-    if (l->thread_pool != NULL) {
+    if (l->jobs.pool != NULL) {
         // finish up parsing all the object file tasks
         uint64_t old;
         while (old = l->jobs.done, old < l->jobs.count) {
@@ -809,12 +850,13 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         nbhs_resize_barrier(&l->symbols);
         nbhs_resize_barrier(&l->sections);
         nbhs_resize_barrier(&l->imports);
-        nbhs_resize_barrier(&l->unresolved_symbols);
     }
 
     // this will resolve the sections, GC any pieces which aren't used and
     // resolve symbols.
     CUIK_TIMED_BLOCK("Resolve & GC") {
+        tb_linker_push_named(l, "_load_config_used");
+        tb_linker_push_named(l, "_tls_used");
         tb_linker_mark_live(l);
     }
 
@@ -874,12 +916,12 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     }
 
     if (0) {
-        printf("RVA        Name\n");
+        // printf("RVA        Name\n");
         nbhs_for(e, &l->symbols) {
-            TB_LinkerSymbol* sym = *e;
+            TB_LinkerSymbol* sym = tb_linker_symbol_find(*e);
             if (sym->tag == TB_LINKER_SYMBOL_NORMAL && (sym->flags & TB_LINKER_SYMBOL_USED)) {
                 uint64_t rva = tb__get_symbol_rva(l, sym);
-                printf("%#08llx   %.*s\n", rva, (int) sym->name.length, sym->name.data);
+                printf("%#08llx   %.*s (%zu : %zu, %zu)\n", rva, (int) sym->name.length, sym->name.data, sym->normal.piece->order[0], sym->normal.piece->order[1], sym->normal.piece->size);
             }
         }
     }
@@ -1051,12 +1093,12 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     }
 
     TB_LinkerSymbol* tls_used_sym = tb_linker_find_symbol2(l, "_tls_used");
-    if (tls_used_sym) {
+    if (tls_used_sym && (tls_used_sym->flags & TB_LINKER_SYMBOL_USED)) {
         opt_header.data_directories[IMAGE_DIRECTORY_ENTRY_TLS] = (PE_ImageDataDirectory){ tb__get_symbol_rva(l, tls_used_sym), sizeof(PE_TLSDirectory) };
     }
 
     TB_LinkerSymbol* load_config_used_sym = tb_linker_find_symbol2(l, "_load_config_used");
-    if (load_config_used_sym) {
+    if (load_config_used_sym && (load_config_used_sym->flags & TB_LINKER_SYMBOL_USED)) {
         opt_header.data_directories[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG] = (PE_ImageDataDirectory){ tb__get_symbol_rva(l, load_config_used_sym), 0x140 };
     }
 
@@ -1134,7 +1176,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         }
         write_pos = tb__pad_file(output, write_pos, 0x00, 0x200);
 
-        if (l->thread_pool != NULL) {
+        if (l->jobs.pool != NULL) {
             l->jobs.done = 0;
             l->jobs.count = 0;
 
@@ -1146,7 +1188,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
                 while (p != NULL) {
                     if (p->flags & TB_LINKER_PIECE_LIVE) {
                         ExportTask task = { l, output, p };
-                        CUIK_CALL(l->thread_pool, submit, (Cuik_TaskFn) tb_linker_export_piece, sizeof(task), &task);
+                        tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, sizeof(task), &task);
                         c += 1;
                     }
                     p = atomic_load_explicit(&p->next, memory_order_relaxed);
@@ -1156,10 +1198,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             cuikperf_region_end();
 
             // finish up exporting
-            uint64_t old;
-            while (old = l->jobs.done, old < l->jobs.count) {
-                futex_wait(&l->jobs.done, old);
-            }
+            futex_wait_eq(&l->jobs.done, l->jobs.count);
         } else {
             dyn_array_for(i, sections) {
                 size_t section_file_offset = sections[i]->offset;
@@ -1169,7 +1208,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
                 while (p != NULL) {
                     if (p->flags & TB_LINKER_PIECE_LIVE) {
                         ExportTask task = { l, output, p };
-                        tb_linker_export_piece(&task);
+                        tb_linker_export_piece(NULL, &task);
                     }
                     p = atomic_load_explicit(&p->next, memory_order_relaxed);
                 }

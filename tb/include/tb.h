@@ -32,6 +32,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+// from Common
+#include <pool.h>
+
 #define TB_VERSION_MAJOR 0
 #define TB_VERSION_MINOR 4
 #define TB_VERSION_PATCH 0
@@ -1019,25 +1022,6 @@ typedef struct {
 TB_API TB_ExportBuffer tb_module_object_export(TB_Module* m, TB_Arena* dst_arena, TB_DebugFormat debug_fmt);
 TB_API bool tb_export_buffer_to_file(TB_ExportBuffer buffer, const char* path);
 
-// Same interface shows up in Cuik
-#ifndef CUIK_ITHREADPOOL
-#define CUIK_ITHREADPOOL
-
-// fellas... is it ok to OOP? just this once?
-typedef void (*Cuik_TaskFn)(void*);
-typedef struct Cuik_IThreadpool {
-    // runs the function fn with arg as the parameter on a thread.
-    //   arg_size from Cuik is always going to be less than 64bytes
-    void (*submit)(void* user_data, Cuik_TaskFn fn, size_t arg_size, void* arg);
-
-    // tries to work one job before returning (can also not work at all)
-    void (*work_one_job)(void* user_data);
-} Cuik_IThreadpool;
-
-// for doing calls on the interfaces
-#define CUIK_CALL(object, action, ...) ((object)->action((object), ##__VA_ARGS__))
-#endif
-
 ////////////////////////////////
 // Linker exporter
 ////////////////////////////////
@@ -1049,13 +1033,15 @@ typedef struct TB_LinkerSectionPiece TB_LinkerSectionPiece;
 TB_API TB_ExecutableType tb_system_executable_format(TB_System s);
 
 // tp can be NULL, it just means we're single-threaded
-TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch, Cuik_IThreadpool* tp);
+TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch, TPool* tp);
 TB_API bool tb_linker_export(TB_Linker* l, const char* file_name);
 
 // windows only
 TB_API void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem);
 
 TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name);
+
+TB_API void tb_linker_add_libpath(TB_Linker* l, const char* path);
 
 // Links compiled module into output
 TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m);

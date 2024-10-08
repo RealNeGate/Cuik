@@ -25,6 +25,10 @@
 #define LOG_USE_COLOR
 #include "log.c"
 
+#ifdef CUIK_ALLOW_THREADS
+#include "pool.c"
+#endif
+
 #include "perf.h"
 
 uint64_t cuik__page_size = 0;
@@ -253,12 +257,6 @@ size_t tb_arena_current_size(TB_Arena* arena) {
 ////////////////////////////////
 // Futex functions
 ////////////////////////////////
-void futex_dec(Futex* f) {
-    if (atomic_fetch_sub(f, 1) == 1) {
-        futex_signal(f);
-    }
-}
-
 #ifdef __linux__
 #include <errno.h>
 #include <linux/futex.h>

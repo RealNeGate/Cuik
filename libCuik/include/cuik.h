@@ -16,25 +16,6 @@ typedef struct TranslationUnit TranslationUnit;
 typedef struct Cuik_Toolchain Cuik_Toolchain;
 typedef struct Cuik_DriverArgs Cuik_DriverArgs;
 
-// Same interface shows up in TB
-#ifndef CUIK_ITHREADPOOL
-#define CUIK_ITHREADPOOL
-
-// fellas... is it ok to OOP? just this once?
-typedef void (*Cuik_TaskFn)(void*);
-typedef struct Cuik_IThreadpool {
-    // runs the function fn with arg as the parameter on a thread.
-    //   arg_size from Cuik is always going to be less than 64bytes
-    void (*submit)(void* user_data, Cuik_TaskFn fn, size_t arg_size, void* arg);
-
-    // tries to work one job before returning (can also not work at all)
-    void (*work_one_job)(void* user_data);
-} Cuik_IThreadpool;
-
-// for doing calls on the interfaces
-#define CUIK_CALL(object, action, ...) ((object)->action((object), ##__VA_ARGS__))
-#endif
-
 ////////////////////////////////////////////
 // Target descriptor
 ////////////////////////////////////////////
@@ -84,14 +65,6 @@ CUIK_API Cuik_Target* cuik_target_host(void);
 // General Cuik stuff
 ////////////////////////////////////////////
 CUIK_API void cuik_init(bool use_crash_handler);
-
-// This should be called before exiting
-CUIK_API void cuik_free_thread_resources(void);
-
-#ifdef CUIK_ALLOW_THREADS
-CUIK_API Cuik_IThreadpool* cuik_threadpool_create(int threads);
-CUIK_API void cuik_threadpool_destroy(Cuik_IThreadpool* thread_pool);
-#endif
 
 ////////////////////////////////////////////
 // Compilation unit management

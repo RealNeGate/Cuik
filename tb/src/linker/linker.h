@@ -22,10 +22,10 @@ typedef enum {
 } TB_LinkerPieceFlags;
 
 typedef struct TB_LinkerReloc {
+    uint32_t src_offset;
+
     uint16_t type;
     uint16_t addend;
-
-    uint32_t src_offset;
 
     // target
     TB_LinkerSymbol* target;
@@ -40,7 +40,10 @@ typedef struct {
 // it's a linked list so i can do dumb insertion while parsing the pieces, once
 // we're doing layouting a sorted array will be constructed.
 struct TB_LinkerSectionPiece {
-    _Atomic(TB_LinkerSectionPiece*) next;
+    union {
+        _Atomic(TB_LinkerSectionPiece*) next;
+        TB_LinkerSectionPiece* next2;
+    };
 
     enum {
         // Write from memory
@@ -59,7 +62,7 @@ struct TB_LinkerSectionPiece {
     // offset wrt the final file.
     size_t offset, size;
     // this is for COFF $ management AND for consistent layout
-    uint64_t order;
+    uint64_t order[2];
     TB_LinkerPieceFlags flags;
 
     // mostly for .pdata crap
@@ -105,7 +108,10 @@ struct TB_LinkerSection {
     size_t size;
 
     _Atomic size_t piece_count;
-    _Atomic(TB_LinkerSectionPiece*) list;
+    union {
+        _Atomic(TB_LinkerSectionPiece*) list;
+        TB_LinkerSectionPiece* list2;
+    };
 };
 
 typedef enum TB_LinkerSymbolTag {
@@ -207,22 +213,25 @@ typedef struct {
     TB_Linker* linker;
     TB_Slice obj_name;
     TB_Slice content;
+    uint64_t time;
 } ImportObjTask;
 
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
-    void (*append_object)(ImportObjTask* task);
-    void (*append_library)(ImportObjTask* task);
+    void (*append_object)(TPool* pool, ImportObjTask* task);
+    void (*append_library)(TPool* pool, ImportObjTask* task);
     bool (*export)(TB_Linker* l, const char* file_name);
 } TB_LinkerVtbl;
 
 typedef struct TB_Linker {
     TB_Arch target_arch;
-    Cuik_IThreadpool* thread_pool;
 
     const char* entrypoint;
     TB_WindowsSubsystem subsystem;
+
+    // used for consistent layouting
+    _Atomic uint64_t time;
 
     TB_LinkerVtbl vtbl;
 
@@ -231,6 +240,8 @@ typedef struct TB_Linker {
     NBHS imports;
 
     NBHS unresolved_symbols;
+
+    DynArray(const char*) libpaths;
 
     // we track which symbols have not been resolved yet
     DynArray(TB_LinkerSectionPiece*) worklist;
@@ -248,8 +259,10 @@ typedef struct TB_Linker {
     uint32_t iat_pos;
 
     _Alignas(64) struct {
+        TPool* pool;
+
         Futex done;
-        uint64_t count;
+        _Atomic uint64_t count;
     } jobs;
 } TB_Linker;
 
@@ -297,7 +310,7 @@ void tb_linker_push_named(TB_Linker* l, const char* name);
 void tb_linker_mark_live(TB_Linker* l);
 
 // General linker job
-void tb_linker_export_piece(ExportTask* task);
+void tb_linker_export_piece(TPool* pool, ExportTask* task);
 
 // do layouting (requires GC step to complete)
 DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l);

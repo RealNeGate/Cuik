@@ -48,11 +48,11 @@ static void muh_hs_free(void* ptr, size_t size) {
     tb_platform_heap_free(ptr);
 }
 
-TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, Cuik_IThreadpool* tp) {
+TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
     TB_Linker* l = tb_platform_heap_alloc(sizeof(TB_Linker));
     memset(l, 0, sizeof(TB_Linker));
     l->target_arch = arch;
-    l->thread_pool = tp;
+    l->jobs.pool = tp;
 
     l->symbols  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
     l->sections = nbhs_alloc(16,  muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
@@ -77,23 +77,32 @@ void tb_linker_set_entrypoint(TB_Linker* l, const char* name) {
     l->entrypoint = name;
 }
 
+static char* linker_newstr(size_t len, const char* path) {
+    char* newstr = tb_platform_heap_alloc(len + 1);
+    memcpy(newstr, path, len);
+    newstr[len] = 0;
+    return newstr;
+}
+
+void tb_linker_add_libpath(TB_Linker* l, const char* path) {
+    dyn_array_put(l->libpaths, linker_newstr(strlen(path), path));
+}
+
 void tb_linker_append_object(TB_Linker* l, const char* file_name) {
     FileMap fm = open_file_map(file_name);
     ImportObjTask task = {
         l,
         { (const uint8_t*) file_name, strlen(file_name) },
-        { fm.data, fm.size }
+        { fm.data, fm.size },
+        atomic_fetch_add(&l->time, 0x100000000)
     };
 
-    if (l->thread_pool != NULL) {
-        CUIK_CALL(l->thread_pool, submit, (Cuik_TaskFn) l->vtbl.append_object, sizeof(task), &task);
+    if (l->jobs.pool != NULL) {
+        tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_object, sizeof(task), &task);
         l->jobs.count += 1;
     } else {
-        l->vtbl.append_object(&task);
+        l->vtbl.append_object(NULL, &task);
     }
-
-    // we close the file map once we're done exporting
-    // close_file_map(&fm);
 }
 
 void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
@@ -103,18 +112,39 @@ void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
 }
 
 void tb_linker_append_library(TB_Linker* l, const char* file_name) {
-    FileMap fm = open_file_map(file_name);
+    FileMap fm;
+    char test_path[FILENAME_MAX];
+    dyn_array_for(j, l->libpaths) {
+        snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+
+        fm = open_file_map(test_path);
+        if (fm.data != NULL) {
+            break;
+        }
+        test_path[0] = 0;
+    }
+
+    if (test_path[0] == 0) {
+        fprintf(stderr, "cuiklink: could not find library: %s\n", file_name);
+        dyn_array_for(j, l->libpaths) {
+            fprintf(stderr, "  searched at %s/%s\n", l->libpaths[j], file_name);
+        }
+        return;
+    }
+
+    char* newstr = linker_newstr(strlen(test_path), test_path);
     ImportObjTask task = {
         l,
         { (const uint8_t*) file_name, strlen(file_name) },
-        { fm.data, fm.size }
+        { fm.data, fm.size },
+        atomic_fetch_add(&l->time, 0x100000000)
     };
 
-    if (l->thread_pool != NULL) {
-        CUIK_CALL(l->thread_pool, submit, (Cuik_TaskFn) l->vtbl.append_library, sizeof(task), &task);
+    if (l->jobs.pool != NULL) {
+        tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_library, sizeof(task), &task);
         l->jobs.count += 1;
     } else {
-        l->vtbl.append_library(&task);
+        l->vtbl.append_library(NULL, &task);
     }
 }
 
@@ -327,7 +357,7 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
         } else {
             // symbol collision if we're overriding something that's
             // not a forward ref.
-            log_debug("Collision at %.*s", (int) sym->name.length, sym->name.data);
+            // log_debug("Collision at %.*s", (int) sym->name.length, sym->name.data);
             old = sym;
         }
     }
@@ -509,7 +539,7 @@ size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* ou
 }
 
 enum { EXPORT_BUFFER_SIZE = 64*1024 };
-void tb_linker_export_piece(ExportTask* task) {
+void tb_linker_export_piece(TPool* pool, ExportTask* task) {
     TB_Linker* l = task->linker;
     TB_LinkerSectionPiece* p = task->piece;
 
@@ -559,7 +589,7 @@ void tb_linker_export_piece(ExportTask* task) {
         head = tail;
     }
 
-    if (l->thread_pool != NULL) {
+    if (l->jobs.pool != NULL) {
         l->jobs.done += 1;
         futex_signal(&l->jobs.done);
     }
@@ -581,12 +611,16 @@ static int compare_linker_sections(const void* a, const void* b) {
     const TB_LinkerSectionPiece* sec_a = *(const TB_LinkerSectionPiece**) a;
     const TB_LinkerSectionPiece* sec_b = *(const TB_LinkerSectionPiece**) b;
 
-    if (sec_a->order < sec_b->order) return -1;
-    if (sec_a->order > sec_b->order) return 1;
+    if (sec_a->order[0] < sec_b->order[0]) return -1;
+    if (sec_a->order[0] > sec_b->order[0]) return 1;
+
+    if (sec_a->order[1] < sec_b->order[1]) return -1;
+    if (sec_a->order[1] > sec_b->order[1]) return 1;
     return 0;
 }
 
 DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
+    nbhs_resize_barrier(&l->unresolved_symbols);
     if (nbhs_count(&l->unresolved_symbols) > 0) {
         nbhs_for(e, &l->unresolved_symbols) {
             TB_Slice* sym_name = *e;
@@ -643,10 +677,6 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
 
         nbhs_for(e, &l->sections) {
             TB_LinkerSection* s = *e;
-        }
-
-        nbhs_for(e, &l->sections) {
-            TB_LinkerSection* s = *e;
             if (s->generic_flags & TB_LINKER_SECTION_DISCARD) {
                 continue;
             }
@@ -685,7 +715,7 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
 
             // convert back into linked list
             CUIK_TIMED_BLOCK("convert into list") {
-                int piece_alignment = 16;
+                int piece_alignment = 4;
                 if (s->name.length == 6 && memcmp(s->name.data, ".pdata", 6) == 0) {
                     piece_alignment = 1;
                 }
@@ -723,6 +753,7 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
 void tb_linker_push_named(TB_Linker* l, const char* name) {
     TB_LinkerSymbol* sym = tb_linker_symbol_find(tb_linker_find_symbol2(l, name));
     if (sym != NULL) {
+        sym->flags |= TB_LINKER_SYMBOL_USED;
         tb_linker_push_piece(l, tb_linker_get_piece(l, sym));
     }
 }
@@ -754,8 +785,9 @@ void tb_linker_mark_live(TB_Linker* l) {
     tb_linker_push_named(l, l->entrypoint);
 
     // mark all non-COMDAT symbols as live
+    int a = 0;
     nbhs_for(e, &l->symbols) {
-        TB_LinkerSymbol* sym = *e;
+        TB_LinkerSymbol* sym = tb_linker_symbol_find(*e);
         if (sym->tag != TB_LINKER_SYMBOL_NORMAL && sym->tag != TB_LINKER_SYMBOL_TB) {
             continue;
         }
@@ -817,10 +849,6 @@ void tb_linker_mark_live(TB_Linker* l) {
                 } else {
                     nbhs_intern(&l->unresolved_symbols, &sym->name);
                 }
-            }
-
-            if (sym->name.length == sizeof("__scrt_exe_initialize_mta") - 1 && memcmp(sym->name.data, "__scrt_exe_initialize_mta", sym->name.length) == 0) {
-                __debugbreak();
             }
 
             sym->flags |= TB_LINKER_SYMBOL_USED;

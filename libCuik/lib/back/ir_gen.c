@@ -2106,7 +2106,7 @@ typedef struct {
     Futex* remaining;
 } IRAllocTask;
 
-static void ir_alloc_task(void* task) {
+static void ir_alloc_task(TPool* tp, void* task) {
     CUIK_TIMED_BLOCK("ir_alloc_task") {
         IRAllocTask t = *(IRAllocTask*) task;
         CompilationUnit* cu = t.tu->parent;
@@ -2181,12 +2181,13 @@ static void ir_alloc_task(void* task) {
         }
 
         if (t.remaining != NULL) {
-            futex_dec(t.remaining);
+            atomic_fetch_sub_explicit(t.remaining, 1, memory_order_acq_rel);
+            futex_signal(t.remaining);
         }
     }
 }
 
-void cuikcg_allocate_ir(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool, TB_Module* m, bool debug) {
+void cuikcg_allocate_ir(TranslationUnit* restrict tu, TPool* tp, TB_Module* m, bool debug) {
     // we actually fill the remaining count while we dispatch tasks, it's ok for it to hit 0
     // occasionally (very rare realistically).
     enum { BATCH_SIZE = 65536 };
@@ -2210,14 +2211,16 @@ void cuikcg_allocate_ir(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict
             .remaining = &remaining,
         };
 
-        if (thread_pool) {
-            CUIK_CALL(thread_pool, submit, ir_alloc_task, sizeof(t), &t);
+        if (tp) {
+            tpool_add_task(tp, ir_alloc_task, sizeof(t), &t);
         } else {
-            ir_alloc_task(&t);
+            ir_alloc_task(NULL, &t);
         }
     }
 
-    if (thread_pool) futex_wait_eq(&remaining, 0);
+    if (tp) {
+        futex_wait_eq(&remaining, 0);
+    }
 }
 
 void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m, bool debug) {
@@ -2231,5 +2234,5 @@ void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m, bool debug) {
         .stmts = tu->top_level_stmts,
         .count = count,
     };
-    ir_alloc_task(&t);
+    ir_alloc_task(NULL, &t);
 }

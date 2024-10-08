@@ -94,7 +94,7 @@ CUIK_API bool cuik_driver_get_output_name(Cuik_DriverArgs* args, int len, char p
 CUIK_API void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_DriverArgs* args);
 
 CUIK_API Cuik_CPP* cuik_driver_preprocess(const char* filepath, const Cuik_DriverArgs* args, bool should_finalize);
-CUIK_API bool cuik_driver_compile(Cuik_IThreadpool* restrict thread_pool, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir, bool destroy_ir, CompilationUnit** out_cu);
+CUIK_API bool cuik_driver_compile(TPool* tp, Cuik_DriverArgs* restrict args, bool destroy_cu_after_ir, bool destroy_ir, CompilationUnit** out_cu);
 
 CUIK_API Cuik_CPP* cuik_driver_preprocess_str(String source, const Cuik_DriverArgs* args, bool should_finalize);
 CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_DriverArgs* args, bool should_finalize);
@@ -159,7 +159,7 @@ CUIK_API TranslationUnit* cuik_driver_cc_get_tu(Cuik_BuildStep* s);
 CUIK_API CompilationUnit* cuik_driver_ld_get_cu(Cuik_BuildStep* s);
 
 // returns true on success
-CUIK_API bool cuik_step_run(Cuik_BuildStep* s, Cuik_IThreadpool* thread_pool);
+CUIK_API bool cuik_step_run(Cuik_BuildStep* s, TPool* tp);
 
 // frees s including all dependencies
 CUIK_API void cuik_step_free(Cuik_BuildStep* s);
@@ -173,5 +173,5 @@ CUIK_API bool cuik_driver_does_codegen(const Cuik_DriverArgs* args);
 #ifdef CUIK_USE_TB
 typedef void (*CuikSched_PerFunction)(TB_Function* f, void* ctx);
 
-CUIK_API void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_threads, CompilationUnit* cu, TB_Module* m, void* ctx, CuikSched_PerFunction func);
+CUIK_API void cuiksched_per_function(TPool* tp, CompilationUnit* cu, TB_Module* m, void* ctx, CuikSched_PerFunction func);
 #endif

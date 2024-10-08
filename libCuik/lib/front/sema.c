@@ -1784,7 +1784,7 @@ static void sema_mark_decl(TranslationUnit* tu, Stmt* restrict s) {
     }
 }
 
-int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool) {
+int cuiksema_run(TranslationUnit* restrict tu) {
     size_t count = dyn_array_length(tu->top_level_stmts);
 
     // simple mark and sweep to remove unused symbols

@@ -187,13 +187,15 @@ int main(int argc, const char** argv) {
     }
 
     // spin up worker threads
-    Cuik_IThreadpool* tp = NULL;
-    #if CUIK_ALLOW_THREADS
-    if (args.threads > 1) {
-        if (args.verbose) printf("Starting with %d threads...\n", args.threads);
+    TPool pool;
 
-        tp = cuik_threadpool_create(args.threads);
+    #if CUIK_ALLOW_THREADS
+    if (args.threads > 0) {
+        if (args.verbose) printf("Starting with %d threads...\n", args.threads);
+        tpool_init(&pool, args.threads);
     }
+    #else
+    args.threads = 0;
     #endif
 
     // compile source files
@@ -205,7 +207,7 @@ int main(int argc, const char** argv) {
 
     // link (if no codegen is performed this doesn't *really* do much)
     Cuik_BuildStep* linked = cuik_driver_ld(&args, obj_count, objs);
-    if (!cuik_step_run(linked, tp)) {
+    if (!cuik_step_run(linked, args.threads > 0 ? &pool : NULL)) {
         status = 1;
     }
 
@@ -213,11 +215,12 @@ int main(int argc, const char** argv) {
     cuik_free(objs);
 
     #if CUIK_ALLOW_THREADS
-    cuik_threadpool_destroy(tp);
+    tpool_destroy(&pool);
     #endif
 
-    if (args.time) cuikperf_stop();
-    cuik_free_thread_resources();
+    if (args.time) {
+        cuikperf_stop();
+    }
 
     done:
     // Free arguments

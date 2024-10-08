@@ -53,7 +53,3 @@
 
 // Must be at the bottom because it does weird windows stuff
 #include "crash_handler.c"
-
-#ifdef CUIK_ALLOW_THREADS
-#include "threadpool.c"
-#endif

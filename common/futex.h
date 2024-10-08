@@ -14,6 +14,5 @@ void futex_wait(Futex* f, int64_t val); // leaves if *f != val
 void futex_wait_eq(Futex* f, int64_t val); // leaves if *f == val
 #endif
 
-void futex_dec(Futex* f);
 void futex_signal(Futex* f);
 void futex_broadcast(Futex* f);

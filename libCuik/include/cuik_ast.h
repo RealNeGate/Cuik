@@ -822,8 +822,7 @@ CUIK_API Cuik_QualType cuik_stmt_decl_type(Stmt* stmt);
 typedef struct TranslationUnit TranslationUnit;
 
 // returns the number of errors in this phase.
-// if thread_pool is non-NULL the type checking will be parallelized
-CUIK_API int cuiksema_run(TranslationUnit* restrict tu, Cuik_IThreadpool* restrict thread_pool);
+CUIK_API int cuiksema_run(TranslationUnit* restrict tu);
 
 ////////////////////////////////////////////
 // Pretty printers

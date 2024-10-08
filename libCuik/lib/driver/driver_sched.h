@@ -1,7 +1,7 @@
 
 #ifdef CUIK_USE_TB
 typedef struct {
-    Futex* remaining;
+    Futex* done;
 
     size_t count;
     TB_Function** arr;
@@ -11,14 +11,14 @@ typedef struct {
     CuikSched_PerFunction func;
 } PerFunction;
 
-static void per_func_task(void* arg) {
+static void per_func_task(TPool* tp, void* arg) {
     PerFunction task = *((PerFunction*) arg);
     for (size_t i = 0; i < task.count; i++) {
         task.func(task.arr[i], task.arg);
     }
 
-    atomic_fetch_add(task.remaining, 1);
-    futex_signal(task.remaining);
+    atomic_fetch_sub(task.done, 1);
+    futex_signal(task.done);
 }
 
 static size_t good_batch_size(size_t n, size_t jobs) {
@@ -36,13 +36,13 @@ static size_t good_batch_size(size_t n, size_t jobs) {
     return 8192;
 }
 
-void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_threads, CompilationUnit* cu, TB_Module* mod, void* arg, CuikSched_PerFunction func) {
+void cuiksched_per_function(TPool* tp, CompilationUnit* cu, TB_Module* mod, void* arg, CuikSched_PerFunction func) {
     TB_SymbolIter it = tb_symbol_iter(mod);
-    if (thread_pool != NULL) {
-        Futex remaining = 0;
+    if (tp != NULL) {
+        Futex done = 0;
         size_t count = 0;
 
-        PerFunction task = { .remaining = &remaining, .arg = arg, .func = func };
+        PerFunction task = { .done = &done, .arg = arg, .func = func };
         size_t func_count = dyn_array_length(cu->worklist);
 
         size_t batch_size = 10000;
@@ -54,11 +54,11 @@ void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_thre
             task.count = end - i;
             task.arr = &cu->worklist[i];
 
-            CUIK_CALL(thread_pool, submit, per_func_task, sizeof(task), &task);
+            tpool_add_task(tp, per_func_task, sizeof(task), &task);
             count++;
         }
 
-        futex_wait_eq(&remaining, count);
+        futex_wait_eq(&done, count);
     } else {
         size_t func_count = dyn_array_length(cu->worklist);
         for (size_t i = 0; i < func_count; i++) {
@@ -67,4 +67,3 @@ void cuiksched_per_function(Cuik_IThreadpool* restrict thread_pool, int num_thre
     }
 }
 #endif
-
