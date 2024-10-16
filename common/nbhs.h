@@ -42,14 +42,19 @@ size_t nbhs_capacity(NBHS* hs);
 
 #ifdef NBHS_IMPL
 
+void cuikperf_region_start(const char* fmt, const char* extra);
+void cuikperf_region_end(void);
+
 // personal debooging stuff
 #if 1
 #define NBHS__BEGIN(name)
 #define NBHS__END()
 #else
-#define NBHS__BEGIN(name) spall_auto_buffer_begin(name, sizeof(name) - 1, NULL, 0)
-#define NBHS__END()       spall_auto_buffer_end()
+#define NBHS__BEGIN(name) cuikperf_region_start(name, NULL)
+#define NBHS__END()       cuikperf_region_end()
 #endif
+
+enum { NBHS_PROBE_LIMIT = 5 };
 
 // for the time in the ebr entry
 #define NBHS_LOCKED_BIT (1ull << 63ull)
@@ -64,7 +69,8 @@ struct NBHS_Table {
     _Atomic uint32_t moved;
     _Atomic uint32_t move_done;
     _Atomic uint32_t count;
-    _Atomic(void*) data[0];
+
+    _Atomic(void*) data[];
 };
 
 typedef struct NBHS_EBREntry {
@@ -100,45 +106,27 @@ static void* nbhs_raw_lookup(NBHS* hs, NBHS_Table* table, uint32_t h, void* val)
 }
 
 static void* nbhs_raw_intern(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, void* val) {
-    // resize on 50% load factor and we're not in the moving process rn
-    uint32_t threshold = (1 << latest->exp) / 2;
-    if (__builtin_expect(latest->count >= threshold && prev == NULL, 0)) {
-        // make resized table, we'll amortize the moves upward
-        size_t new_cap = 1ull << (latest->exp + 1);
-
-        NBHS_Table* new_top = hs->alloc_mem(sizeof(NBHS_Table) + new_cap*sizeof(uintptr_t));
-        new_top->exp  = latest->exp + 1;
-
-        // CAS latest -> new_table, if another thread wins the race we'll use its table
-        new_top->prev = latest;
-        if (!atomic_compare_exchange_strong(&hs->latest, &latest, new_top)) {
-            hs->free_mem(new_top, sizeof(NBHS_Table) + new_cap*sizeof(void*));
-            prev = atomic_load(&latest->prev);
-        } else {
-            prev   = latest;
-            latest = new_top;
-        }
-    }
-
     // actually lookup & insert
-    uint32_t exp = latest->exp;
-    size_t mask = (1 << exp) - 1;
-
     void* result = NULL;
     uint32_t h = hs->hash(val);
-    for (;;) {
+    for (;;) retry: {
+        int probe = 0;
+
+        uint32_t exp = latest->exp;
+        size_t mask = (1ull << exp) - 1;
         size_t first = h & mask, i = first;
         do {
             void* entry = atomic_load(&latest->data[i]);
             if (entry == NULL) {
                 void* to_write = val;
-                if (prev != NULL) {
-                    // should only be one previous table
-                    assert(prev->prev == NULL);
-                    void* old = nbhs_raw_lookup(hs, prev, h, val);
+                NBHS_Table* p = prev;
+                while (p != NULL) {
+                    void* old = nbhs_raw_lookup(hs, p, h, val);
                     if (old != NULL) {
                         to_write = old;
+                        break;
                     }
+                    p = atomic_load_explicit(&p->prev, memory_order_relaxed);
                 }
 
                 // fight to be the one to land into the modern table
@@ -154,6 +142,25 @@ static void* nbhs_raw_intern(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, voi
 
             if (hs->compare(entry, val)) {
                 return entry;
+            }
+
+            if (++probe >= NBHS_PROBE_LIMIT) {
+                // make resized table, we'll amortize the moves upward
+                size_t new_cap = 1ull << (exp + 1);
+
+                NBHS_Table* new_top = hs->alloc_mem(sizeof(NBHS_Table) + new_cap*sizeof(uintptr_t));
+                new_top->exp = exp + 1;
+
+                // CAS latest -> new_table, if another thread wins the race we'll use its table
+                new_top->prev = latest;
+                if (!atomic_compare_exchange_strong(&hs->latest, &latest, new_top)) {
+                    hs->free_mem(new_top, sizeof(NBHS_Table) + new_cap*sizeof(void*));
+                    prev = atomic_load(&latest->prev);
+                } else {
+                    prev   = latest;
+                    latest = new_top;
+                }
+                goto retry;
             }
 
             i = (i + 1) & mask;
@@ -260,9 +267,7 @@ NBHS_Table* nbhs_move_items(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, int 
     if (done == cap) {
         // dettach now
         NBHS__BEGIN("detach");
-
-        assert(prev->prev == NULL);
-        latest->prev = NULL;
+        latest->prev = prev->prev;
 
         // since we're freeing at the moment, we don't want to block up other freeing threads
         nbhs_exit_critsec();
@@ -314,6 +319,7 @@ void* nbhs_get(NBHS* hs, void* val) {
     if (!nbhs_ebr_init) {
         NBHS__BEGIN("init");
         nbhs_ebr_init = true;
+        nbhs_ebr.id = nbhs_ebr_count++;
 
         // add to ebr list, we never free this because i don't care
         // TODO(NeGate): i do care, this is a nightmare when threads die figure it out
@@ -322,7 +328,6 @@ void* nbhs_get(NBHS* hs, void* val) {
             old = atomic_load_explicit(&nbhs_ebr_list, memory_order_relaxed);
             nbhs_ebr.next = old;
         } while (!atomic_compare_exchange_strong(&nbhs_ebr_list, &old, &nbhs_ebr));
-        nbhs_ebr.id = nbhs_ebr_count++;
         NBHS__END();
     }
 
@@ -334,7 +339,7 @@ void* nbhs_get(NBHS* hs, void* val) {
     // if there's earlier versions of the table we can move up entries as we go along.
     NBHS_Table* prev = atomic_load(&latest->prev);
     if (prev) {
-        prev = nbhs_move_items(hs, latest, prev, 32);
+        prev = nbhs_move_items(hs, latest, prev, 64);
         if (prev == NULL) {
             latest = atomic_load(&hs->latest);
         }
@@ -351,10 +356,10 @@ void* nbhs_get(NBHS* hs, void* val) {
     do {
         void* entry = atomic_load(&latest->data[i]);
         if (entry == NULL) {
-            if (prev != NULL) {
-                // should only be one previous table
-                assert(prev->prev == NULL);
+            NBHS_Table* p = prev;
+            while (p != NULL) {
                 result = nbhs_raw_lookup(hs, prev, h, val);
+                p = atomic_load_explicit(&p->prev, memory_order_relaxed);
             }
             break;
         }
@@ -379,6 +384,7 @@ void* nbhs_intern(NBHS* hs, void* val) {
     if (!nbhs_ebr_init) {
         NBHS__BEGIN("init");
         nbhs_ebr_init = true;
+        nbhs_ebr.id = nbhs_ebr_count++;
 
         // add to ebr list, we never free this because i don't care
         NBHS_EBREntry* old;
@@ -386,7 +392,6 @@ void* nbhs_intern(NBHS* hs, void* val) {
             old = atomic_load_explicit(&nbhs_ebr_list, memory_order_relaxed);
             nbhs_ebr.next = old;
         } while (!atomic_compare_exchange_strong(&nbhs_ebr_list, &old, &nbhs_ebr));
-        nbhs_ebr.id = nbhs_ebr_count++;
         NBHS__END();
     }
 
@@ -398,7 +403,7 @@ void* nbhs_intern(NBHS* hs, void* val) {
     // if there's earlier versions of the table we can move up entries as we go along.
     NBHS_Table* prev = atomic_load(&latest->prev);
     if (prev) {
-        prev = nbhs_move_items(hs, latest, prev, 32);
+        prev = nbhs_move_items(hs, latest, prev, 64);
         if (prev == NULL) {
             latest = atomic_load(&hs->latest);
         }
@@ -417,6 +422,7 @@ void nbhs_resize_barrier(NBHS* hs) {
     if (!nbhs_ebr_init) {
         NBHS__BEGIN("init");
         nbhs_ebr_init = true;
+        nbhs_ebr.id = nbhs_ebr_count++;
 
         // add to ebr list, we never free this because i don't care
         NBHS_EBREntry* old;
@@ -424,7 +430,6 @@ void nbhs_resize_barrier(NBHS* hs) {
             old = atomic_load_explicit(&nbhs_ebr_list, memory_order_relaxed);
             nbhs_ebr.next = old;
         } while (!atomic_compare_exchange_strong(&nbhs_ebr_list, &old, &nbhs_ebr));
-        nbhs_ebr.id = nbhs_ebr_count++;
         NBHS__END();
     }
 

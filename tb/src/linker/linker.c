@@ -38,6 +38,19 @@ static bool name_cmp(const void* a, const void* b) {
     return aa->length == bb->length && memcmp(aa->data, bb->data, aa->length) == 0;
 }
 
+static uint32_t str_hash(const void* a) {
+    uint32_t h = 0x811C9DC5;
+    const char* str = a;
+    while (*str) {
+        h = ((uint8_t) *str++ ^ h) * 0x01000193;
+    }
+    return h;
+}
+
+static bool str_cmp(const void* a, const void* b) {
+    return strcmp(a, b) == 0;
+}
+
 static void* muh_hs_alloc(size_t size) {
     void* ptr = tb_platform_heap_alloc(size);
     memset(ptr, 0, size);
@@ -48,19 +61,40 @@ static void muh_hs_free(void* ptr, size_t size) {
     tb_platform_heap_free(ptr);
 }
 
+TB_Slice tb_linker_read_entire_file(FILE* file) {
+    cuikperf_region_start("file", NULL);
+    int descriptor = fileno(file);
+
+    struct stat file_stats;
+    if (fstat(descriptor, &file_stats) == -1) {
+        return (TB_Slice){ 0 };
+    }
+
+    size_t length = file_stats.st_size;
+    void* data = tb_platform_heap_alloc(length);
+
+    fseek(file, 0, SEEK_SET);
+    fread(data, 1, length, file);
+    fclose(file);
+    cuikperf_region_end();
+
+    return (TB_Slice){ data, length };
+}
+
 TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
     TB_Linker* l = tb_platform_heap_alloc(sizeof(TB_Linker));
     memset(l, 0, sizeof(TB_Linker));
     l->target_arch = arch;
     l->jobs.pool = tp;
 
-    l->symbols  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
-    l->sections = nbhs_alloc(16,  muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
-    l->imports  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
-    l->unresolved_symbols = nbhs_alloc(16,  muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
+    l->symbols  = nbhs_alloc(60000, muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
+    l->sections = nbhs_alloc(16,   muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
+    l->imports  = nbhs_alloc(256,  muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
+    l->libs     = nbhs_alloc(32,   muh_hs_alloc, muh_hs_free, str_cmp, str_hash);
+    l->unresolved_symbols = nbhs_alloc(16, muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
 
     switch (exe) {
-        case TB_EXECUTABLE_PE:  l->vtbl = tb__linker_pe; break;
+        case TB_EXECUTABLE_PE: l->vtbl = tb__linker_pe; break;
         // case TB_EXECUTABLE_ELF: l->vtbl = tb__linker_elf; break;
         default: break;
     }
@@ -89,19 +123,21 @@ void tb_linker_add_libpath(TB_Linker* l, const char* path) {
 }
 
 void tb_linker_append_object(TB_Linker* l, const char* file_name) {
-    FileMap fm = open_file_map(file_name);
-    ImportObjTask task = {
-        l,
-        { (const uint8_t*) file_name, strlen(file_name) },
-        { fm.data, fm.size },
-        atomic_fetch_add(&l->time, 0x100000000)
-    };
+    CUIK_TIMED_BLOCK("append_obj") {
+        FileMap fm = open_file_map(file_name);
+        ImportObjTask task = {
+            l,
+            { (const uint8_t*) file_name, strlen(file_name) },
+            { fm.data, fm.size },
+            atomic_fetch_add(&l->time, 0x100000000),
+        };
 
-    if (l->jobs.pool != NULL) {
-        tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_object, sizeof(task), &task);
-        l->jobs.count += 1;
-    } else {
-        l->vtbl.append_object(NULL, &task);
+        if (l->jobs.pool != NULL) {
+            tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_object, sizeof(task), &task);
+            l->jobs.count += 1;
+        } else {
+            l->vtbl.append_object(NULL, &task);
+        }
     }
 }
 
@@ -112,8 +148,25 @@ void tb_linker_append_module(TB_Linker* l, TB_Module* m) {
 }
 
 void tb_linker_append_library(TB_Linker* l, const char* file_name) {
-    FileMap fm;
+    if (!linker_thread_init) {
+        linker_thread_init = true;
+        tb_arena_create(&linker_perm_arena, "LinkerPerm");
+        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
+    }
+
+    size_t len = strlen(file_name);
+    char* str = tb_arena_alloc(&linker_perm_arena, len + 1);
+    memcpy(str, file_name, len);
+    str[len] = 0;
+
+    if (nbhs_intern(&l->libs, str) != str) {
+        tb_arena_free(&linker_perm_arena, str, len + 1);
+        return;
+    }
+
+    cuikperf_region_start("find lib", NULL);
     char test_path[FILENAME_MAX];
+    FileMap fm = open_file_map(test_path);
     dyn_array_for(j, l->libpaths) {
         snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
 
@@ -123,6 +176,7 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
         }
         test_path[0] = 0;
     }
+    cuikperf_region_end();
 
     if (test_path[0] == 0) {
         fprintf(stderr, "cuiklink: could not find library: %s\n", file_name);
@@ -132,12 +186,13 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
         return;
     }
 
-    char* newstr = linker_newstr(strlen(test_path), test_path);
+    size_t newlen = strlen(test_path);
+    char* newstr = linker_newstr(newlen, test_path);
     ImportObjTask task = {
         l,
-        { (const uint8_t*) file_name, strlen(file_name) },
+        { (const uint8_t*) newstr, newlen },
         { fm.data, fm.size },
-        atomic_fetch_add(&l->time, 0x100000000)
+        atomic_fetch_add(&l->time, 0x100000000),
     };
 
     if (l->jobs.pool != NULL) {
@@ -214,23 +269,6 @@ uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym) {
     }
 }
 
-uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s) {
-    if (s->tag == TB_SYMBOL_FUNCTION) {
-        TB_Function* f = (TB_Function*) s;
-        assert(f->output != NULL);
-
-        TB_LinkerSectionPiece* piece = m->sections[f->section].piece;
-        return piece->parent->address + piece->offset + f->output->code_pos;
-    } else if (s->tag == TB_SYMBOL_GLOBAL) {
-        TB_Global* g = (TB_Global*) s;
-        TB_LinkerSectionPiece* piece = m->sections[g->parent].piece;
-        return piece->parent->address + piece->offset + g->pos;
-    } else {
-        tb_todo();
-        return 0;
-    }
-}
-
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align) {
     size_t align_mask = align - 1;
     size_t end = (write_pos + align_mask) & ~align_mask;
@@ -252,8 +290,7 @@ TB_LinkerSection* tb_linker_find_section(TB_Linker* l, const char* name) {
 }
 
 TB_LinkerSection* tb_linker_find_or_create_section(TB_Linker* l, size_t name_len, const char* name, uint32_t flags) {
-    // use an arena
-    TB_LinkerSection* s = tb_platform_heap_alloc(sizeof(TB_LinkerSection));
+    TB_LinkerSection* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSection));
     *s = (TB_LinkerSection){ .name = { (const uint8_t*) name, name_len }, .flags = flags };
 
     TB_LinkerSection* k = nbhs_intern(&l->sections, s);
@@ -265,8 +302,7 @@ TB_LinkerSection* tb_linker_find_or_create_section(TB_Linker* l, size_t name_len
 }
 
 TB_LinkerSectionPiece* tb_linker_append_piece(TB_LinkerSection* section, int kind, size_t size, TB_LinkerObject* obj) {
-    // use an arena
-    TB_LinkerSectionPiece* piece = tb_platform_heap_alloc(sizeof(TB_LinkerSectionPiece));
+    TB_LinkerSectionPiece* piece = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSectionPiece));
     *piece = (TB_LinkerSectionPiece){
         .kind   = kind,
         .parent = section,
@@ -275,6 +311,7 @@ TB_LinkerSectionPiece* tb_linker_append_piece(TB_LinkerSection* section, int kin
     };
     atomic_fetch_add(&section->piece_count, 1);
 
+    // normal LL insert
     TB_LinkerSectionPiece* old_top;
     do {
         old_top = atomic_load(&section->list);
@@ -282,6 +319,29 @@ TB_LinkerSectionPiece* tb_linker_append_piece(TB_LinkerSection* section, int kin
     } while (!atomic_compare_exchange_strong(&section->list, &old_top, piece));
 
     return piece;
+}
+
+void tb_linker_merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_LinkerSection* to) {
+    if (from->list != NULL) {
+        // move all parents (probably slow too, infrequent enough tho)
+        TB_LinkerSectionPiece* list = from->list;
+        TB_LinkerSectionPiece* last = NULL;
+        while (list != NULL) {
+            last = list;
+            list->parent = to;
+            list = atomic_load_explicit(&list->next, memory_order_relaxed);
+        }
+
+        if (last != NULL) {
+            last->next = to->list;
+            to->list = from->list;
+        }
+    }
+
+    to->piece_count += from->piece_count;
+    from->generic_flags |= TB_LINKER_SECTION_DISCARD;
+    from->piece_count = 0;
+    from->list = NULL;
 }
 
 TB_LinkerSymbol* tb_linker_find_symbol(TB_Linker* l, TB_Slice name) {
@@ -317,11 +377,35 @@ TB_LinkerSymbol* tb_linker_new_symbol(TB_Linker* l, size_t len, const char* name
     return s;
 }
 
+void tb_linker_symbol_weak(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerSymbol* alt) {
+    // complete a CAS on the leader where no one writes to weak_sym, that would mean
+    // there's only one alternate name attached to the symbol (as intended).
+    for (;;) {
+        TB_LinkerSymbol* expected = NULL;
+        if (!atomic_compare_exchange_strong(&sym->weak_alt, &expected, alt)) {
+            // TODO(NeGate): write a good error plz
+            // abort();
+        }
+
+        TB_LinkerSymbol* parent = atomic_load_explicit(&sym->parent, memory_order_acquire);
+        if (parent == NULL) {
+            break;
+        }
+        sym = parent;
+    }
+}
+
 void tb_linker_symbol_union(TB_Linker* l, TB_LinkerSymbol* leader, TB_LinkerSymbol* other_guy) {
     TB_LinkerSymbol* old = NULL;
     while (!atomic_compare_exchange_strong(&other_guy->parent, &old, leader)) {
         // we failed to make leader the real leader... ok let's walk up the chain and try again
         other_guy = old, old = NULL;
+    }
+
+    // migrate the weak alternative up
+    TB_LinkerSymbol* weak_alt = atomic_load_explicit(&other_guy->weak_alt, memory_order_acquire);
+    if (weak_alt != NULL) {
+        tb_linker_symbol_weak(l, leader, weak_alt);
     }
 }
 
@@ -353,7 +437,11 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
             tb_linker_symbol_union(l, old, sym);
         } else if ((old->flags & TB_LINKER_SYMBOL_COMDAT)) {
             // COMDAT, we need to decide which of these lives but for now we don't care.
-            tb_linker_symbol_union(l, old, sym);
+            old = sym;
+        } else if (old->tag == TB_LINKER_SYMBOL_LAZY || sym->tag == TB_LINKER_SYMBOL_LAZY) {
+            TB_LinkerSymbol* lazy = old->tag == TB_LINKER_SYMBOL_LAZY ? old : sym;
+            printf("Lazy referenced at %.*s\n", (int) lazy->name.length, lazy->name.data);
+            __debugbreak();
         } else {
             // symbol collision if we're overriding something that's
             // not a forward ref.
@@ -498,7 +586,7 @@ static int32_t resolve_reloc(TB_LinkerSymbol* sym, TB_ObjectRelocType type, uint
 }
 
 size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail) {
-    size_t reloc_len = dyn_array_length(p->relocs);
+    size_t reloc_len = p->reloc_count;
     while (reloc_i < reloc_len) {
         TB_LinkerReloc* restrict rel = &p->relocs[reloc_i];
         int rel_size = rel->type == TB_OBJECT_RELOC_ADDR64 ? 8 : 4;
@@ -541,8 +629,6 @@ size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* ou
 enum { EXPORT_BUFFER_SIZE = 64*1024 };
 void tb_linker_export_piece(TPool* pool, ExportTask* task) {
     TB_Linker* l = task->linker;
-    TB_LinkerSectionPiece* p = task->piece;
-
     cuikperf_region_start("export", NULL);
 
     if (!linker_thread_init) {
@@ -551,42 +637,53 @@ void tb_linker_export_piece(TPool* pool, ExportTask* task) {
         tb_arena_create(&linker_tmp_arena, "LinkerTmp");
     }
 
-    TB_LinkerSection* text  = tb_linker_find_section(l, ".text");
-    uint32_t trampoline_rva = text->address + l->trampoline_pos;
-
-    size_t section_file_offset = p->parent->offset;
-    size_t section_rva = p->parent->address;
-
-    size_t head = 0, reloc_i = 0;
-    while (head < p->size) {
-        uint8_t* out = &task->file[section_file_offset + p->offset + head];
-
-        // copy from input stream
-        size_t tail;
-        CUIK_TIMED_BLOCK("read") {
-            tail = head + EXPORT_BUFFER_SIZE;
-            if (tail > p->size) { tail = p->size; }
-
-            assert(p->kind == PIECE_BUFFER);
-            size_t rem = 0;
-            if (p->buffer) {
-                size_t buffer_tail = tail > p->buffer_size ? p->buffer_size : tail;
-                memcpy(out, &p->buffer[head], buffer_tail - head);
-                rem = buffer_tail - head;
-            }
-
-            // zero the remaining space (or CC if it's code)
-            if (rem < (tail - head)) {
-                int b = (p->flags & TB_LINKER_PIECE_CODE) ? 0xCC : 0;
-                memset(&out[rem], b, (tail - head) - rem);
-            }
+    TB_LinkerSectionPiece* end = task->end;
+    for (TB_LinkerSectionPiece* p = task->start; p != end; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
+        if ((p->flags & TB_LINKER_PIECE_LIVE) == 0 || p->kind == PIECE_BSS) {
+            continue;
         }
 
-        // apply relocations
-        CUIK_TIMED_BLOCK("relocs") {
-            reloc_i = tb_linker_apply_reloc(l, p, out, section_rva, trampoline_rva, reloc_i, head, tail);
+        cuikperf_region_start("piece", NULL);
+
+        TB_LinkerSection* text  = tb_linker_find_section(l, ".text");
+        uint32_t trampoline_rva = text->address + l->trampoline_pos;
+
+        assert(p->kind == PIECE_BUFFER);
+        size_t section_file_offset = p->parent->offset;
+        size_t section_rva = p->parent->address;
+
+        size_t head = 0, reloc_i = 0;
+        while (head < p->size) {
+            uint8_t* out = &task->file[section_file_offset + p->offset + head];
+
+            // copy from input stream
+            size_t tail;
+            CUIK_TIMED_BLOCK("read") {
+                tail = head + EXPORT_BUFFER_SIZE;
+                if (tail > p->size) { tail = p->size; }
+
+                size_t rem = 0;
+                if (p->buffer) {
+                    size_t buffer_tail = tail > p->buffer_size ? p->buffer_size : tail;
+                    memcpy(out, &p->buffer[head], buffer_tail - head);
+                    rem = buffer_tail - head;
+                }
+
+                // zero the remaining space (or CC if it's code)
+                if (rem < (tail - head)) {
+                    int b = (p->flags & TB_LINKER_PIECE_CODE) ? 0xCC : 0;
+                    memset(&out[rem], b, (tail - head) - rem);
+                }
+            }
+
+            // apply relocations
+            CUIK_TIMED_BLOCK("relocs") {
+                reloc_i = tb_linker_apply_reloc(l, p, out, section_rva, trampoline_rva, reloc_i, head, tail);
+            }
+            head = tail;
         }
-        head = tail;
+
+        cuikperf_region_end();
     }
 
     if (l->jobs.pool != NULL) {
@@ -611,11 +708,17 @@ static int compare_linker_sections(const void* a, const void* b) {
     const TB_LinkerSectionPiece* sec_a = *(const TB_LinkerSectionPiece**) a;
     const TB_LinkerSectionPiece* sec_b = *(const TB_LinkerSectionPiece**) b;
 
-    if (sec_a->order[0] < sec_b->order[0]) return -1;
-    if (sec_a->order[0] > sec_b->order[0]) return 1;
+    size_t len = TB_MIN(sec_a->coff_order.length, sec_b->coff_order.length);
+    FOR_N(i, 0, len) {
+        int c = sec_a->coff_order.data[i] - sec_b->coff_order.data[i];
+        if (c != 0) { return c; }
+    }
 
-    if (sec_a->order[1] < sec_b->order[1]) return -1;
-    if (sec_a->order[1] > sec_b->order[1]) return 1;
+    if (sec_a->coff_order.length < sec_b->coff_order.length) { return -1; }
+    if (sec_a->coff_order.length > sec_b->coff_order.length) { return  1; }
+
+    if (sec_a->order < sec_b->order) return -1;
+    if (sec_a->order > sec_b->order) return  1;
     return 0;
 }
 
@@ -715,16 +818,22 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
 
             // convert back into linked list
             CUIK_TIMED_BLOCK("convert into list") {
-                int piece_alignment = 4;
-                if (s->name.length == 6 && memcmp(s->name.data, ".pdata", 6) == 0) {
-                    piece_alignment = 1;
-                }
+                // printf("\nSECTION %.*s\n", (int) s->name.length, s->name.data);
 
                 size_t offset = 0;
                 TB_LinkerSectionPiece* prev = NULL;
                 FOR_N(j, 0, piece_count) {
+                    size_t mask = (1u << array_form[j]->align_log2) - 1;
+                    offset = (offset + mask) & ~mask;
+
+                    /* if (array_form[j]->coff_order.length > 0) {
+                        TB_Slice n = array_form[j]->coff_order;
+                        printf("  PIECE %06zx (align=%06x): %.*s\n", offset, (1u << array_form[j]->align_log2), (int) n.length, n.data);
+                    } else {
+                        printf("  PIECE %06zx (align=%06x)\n", offset, (1u << array_form[j]->align_log2));
+                    } */
+
                     array_form[j]->offset = offset;
-                    array_form[j]->size   = align_up(array_form[j]->size, piece_alignment);
                     offset += array_form[j]->size;
 
                     if (prev) {
@@ -784,9 +893,38 @@ static TB_LinkerSymbol* resolve_external(TB_Linker* l, TB_External* ext) {
 void tb_linker_mark_live(TB_Linker* l) {
     tb_linker_push_named(l, l->entrypoint);
 
-    // mark all non-COMDAT symbols as live
-    int a = 0;
-    nbhs_for(e, &l->symbols) {
+    // mark all pieces in the .CRT because they're special
+    if (l->vtbl.export == tb__linker_pe.export) {
+        nbhs_for(e, &l->sections) {
+            TB_LinkerSection* s = *e;
+            if (s->generic_flags & TB_LINKER_SECTION_DISCARD) { continue; }
+            if (s->name.length != sizeof(".CRT")-1 || memcmp(s->name.data, ".CRT", s->name.length) != 0) { continue; }
+
+            TB_LinkerSectionPiece* p = atomic_load_explicit(&s->list, memory_order_relaxed);
+            for (; p != NULL; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
+                tb_linker_push_piece(l, p);
+            }
+        }
+    }
+
+    // mark all non-COMDAT pieces as live
+    cuikperf_region_start("root scan", NULL);
+    nbhs_for(e, &l->sections) {
+        TB_LinkerSection* s = *e;
+        if (s->generic_flags & TB_LINKER_SECTION_DISCARD) { continue; }
+        // we don't consider .debug as roots because codeview is compiled into the PDB
+        if (s->name.length == sizeof(".debug")-1 && memcmp(s->name.data, ".debug", s->name.length) == 0) { continue; }
+
+        TB_LinkerSectionPiece* p = atomic_load_explicit(&s->list, memory_order_relaxed);
+        for (; p != NULL; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
+            if ((p->flags & TB_LINKER_PIECE_COMDAT) == 0) {
+                tb_linker_push_piece(l, p);
+            }
+        }
+    }
+    cuikperf_region_end();
+
+    /*nbhs_for(e, &l->symbols) {
         TB_LinkerSymbol* sym = tb_linker_symbol_find(*e);
         if (sym->tag != TB_LINKER_SYMBOL_NORMAL && sym->tag != TB_LINKER_SYMBOL_TB) {
             continue;
@@ -803,8 +941,9 @@ void tb_linker_mark_live(TB_Linker* l) {
         if ((p->flags & TB_LINKER_PIECE_COMDAT) == 0) {
             tb_linker_push_piece(l, p);
         }
-    }
+    }*/
 
+    cuikperf_region_start("mark", NULL);
     while (dyn_array_length(l->worklist)) {
         TB_LinkerSectionPiece* p = dyn_array_pop(l->worklist);
         // printf("Walk: %p\n", p);
@@ -839,11 +978,13 @@ void tb_linker_mark_live(TB_Linker* l) {
             }
         }
 
-        // mark any relocations
-        dyn_array_for(i, p->relocs) {
+        // mark any relocations:
+        //   by this point, the symbols aren't being fought for so we really should
+        // use relaxed loads when possible (might matter for ARM but not x86)
+        FOR_N(i, 0, p->reloc_count) {
             TB_LinkerSymbol* sym = tb_linker_symbol_find(p->relocs[i].target);
             if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN) {
-                TB_LinkerSymbol* alt = tb_linker_symbol_find(p->relocs[i].alt);
+                TB_LinkerSymbol* alt = tb_linker_symbol_find(atomic_load_explicit(&sym->weak_alt, memory_order_relaxed));
                 if (alt && alt->tag != TB_LINKER_SYMBOL_UNKNOWN) {
                     sym = alt;
                 } else {
@@ -859,5 +1000,6 @@ void tb_linker_mark_live(TB_Linker* l) {
             p->relocs[i].target = sym;
         }
     }
+    cuikperf_region_end();
 }
 

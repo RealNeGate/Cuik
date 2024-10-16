@@ -9,10 +9,10 @@ int run_link(int argc, const char** argv) {
     cl.toolchain.ctx = cl.toolchain.init();
     cuiklink_apply_toolchain_libs(&cl, false);
 
-    CUIK_TIMED_BLOCK("linker") {
+    CUIK_TIMED_BLOCK("driver") {
         #if CUIK_ALLOW_THREADS
         TPool pool;
-        tpool_init(&pool, 5);
+        tpool_init(&pool, 1);
         TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64, &pool);
         #else
         TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64, NULL);
@@ -22,6 +22,10 @@ int run_link(int argc, const char** argv) {
 
         dyn_array_for(i, cl.libpaths) {
             tb_linker_add_libpath(l, cl.libpaths[i]);
+        }
+
+        dyn_array_for(i, cl.inputs) {
+            tb_linker_append_library(l, cl.inputs[i]);
         }
 
         for (int i = 0; i < argc; i++) {

@@ -166,6 +166,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // shr r/m, CL
         // rol r/m, CL
         // ror r/m, CL
+        [0xD0]          = OP_MODRM | OP_FAKERX | OP_8BIT,
+        [0xD1]          = OP_MODRM | OP_FAKERX,
         [0xD2]          = OP_MODRM | OP_RCX | OP_FAKERX | OP_8BIT,
         [0xD3]          = OP_MODRM | OP_RCX | OP_FAKERX,
         // call rel32
@@ -771,11 +773,11 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0xAA: case 0xAB: return "stos";
         case 0xAE: case 0xAF: return "scas";
 
-        case 0x00C0: case 0x00C1: case 0x00D2: case 0x00D3: return "rol";
-        case 0x10C0: case 0x10C1: case 0x10D2: case 0x10D3: return "ror";
-        case 0x40C0: case 0x40C1: case 0x40D2: case 0x40D3: return "shl";
-        case 0x50C0: case 0x50C1: case 0x50D2: case 0x50D3: return "shr";
-        case 0x70C0: case 0x70C1: case 0x70D2: case 0x70D3: return "sar";
+        case 0x00C0: case 0x00C1: case 0x00D0: case 0x00D1: case 0x00D2: case 0x00D3: return "rol";
+        case 0x10C0: case 0x10C1: case 0x10D0: case 0x10D1: case 0x10D2: case 0x10D3: return "ror";
+        case 0x40C0: case 0x40C1: case 0x40D0: case 0x40D1: case 0x40D2: case 0x40D3: return "shl";
+        case 0x50C0: case 0x50C1: case 0x50D0: case 0x50D1: case 0x50D2: case 0x50D3: return "shr";
+        case 0x70C0: case 0x70C1: case 0x70D0: case 0x70D1: case 0x70D2: case 0x70D3: return "sar";
 
         case 0x00F6: case 0x00F7: return "test";
         case 0x20F6: case 0x20F7: return "not";

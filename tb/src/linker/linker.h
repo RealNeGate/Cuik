@@ -23,13 +23,9 @@ typedef enum {
 
 typedef struct TB_LinkerReloc {
     uint32_t src_offset;
-
     uint16_t type;
     uint16_t addend;
-
-    // target
     TB_LinkerSymbol* target;
-    TB_LinkerSymbol* alt;
 } TB_LinkerReloc;
 
 typedef struct {
@@ -46,6 +42,8 @@ struct TB_LinkerSectionPiece {
     };
 
     enum {
+        // doesn't get written to the image, just describes virtual memory
+        PIECE_BSS,
         // Write from memory
         PIECE_BUFFER,
         // Write TB_ModuleSection
@@ -60,21 +58,21 @@ struct TB_LinkerSectionPiece {
     TB_LinkerObject* obj;
 
     // offset wrt the final file.
-    size_t offset, size;
-    // this is for COFF $ management AND for consistent layout
-    uint64_t order[2];
+    size_t offset, size, align_log2;
+    // for consistent layout (since we're doing so much parallel stuff)
+    uint64_t order;
+    // this is for COFF $ management
+    TB_Slice coff_order;
     TB_LinkerPieceFlags flags;
 
     // mostly for .pdata crap
     TB_LinkerSectionPiece* assoc;
 
     // ordered by address
-    DynArray(TB_LinkerReloc) relocs;
+    size_t reloc_count;
+    TB_LinkerReloc* relocs;
 
     union {
-        // kind=PIECE_NORMAL
-        uint32_t file_pos;
-
         // kind=PIECE_BUFFER
         struct {
             size_t buffer_size;
@@ -108,16 +106,16 @@ struct TB_LinkerSection {
     size_t size;
 
     _Atomic size_t piece_count;
-    union {
-        _Atomic(TB_LinkerSectionPiece*) list;
-        TB_LinkerSectionPiece* list2;
-    };
+    _Atomic(TB_LinkerSectionPiece*) list;
 };
 
 typedef enum TB_LinkerSymbolTag {
     TB_LINKER_SYMBOL_ABSOLUTE = 0,
 
     TB_LINKER_SYMBOL_UNKNOWN,
+
+    // the rest of the object hasn't been loaded... yet
+    TB_LINKER_SYMBOL_LAZY,
 
     // external linkage
     TB_LINKER_SYMBOL_NORMAL,
@@ -165,6 +163,8 @@ struct TB_LinkerSymbol {
     TB_LinkerSymbolTag   tag;
     TB_LinkerSymbolFlags flags;
 
+    _Atomic(TB_LinkerSymbol*) weak_alt;
+
     union {
         // for normal symbols
         struct {
@@ -174,6 +174,10 @@ struct TB_LinkerSymbol {
 
         uint32_t absolute;
         uint32_t imagebase;
+
+        struct {
+            TB_LinkerObject* obj;
+        } lazy;
 
         // for IR module symbols
         struct {
@@ -206,7 +210,8 @@ typedef struct {
 typedef struct {
     TB_Linker* linker;
     uint8_t* file;
-    TB_LinkerSectionPiece* piece;
+    TB_LinkerSectionPiece* start;
+    TB_LinkerSectionPiece* end;
 } ExportTask;
 
 typedef struct {
@@ -238,6 +243,10 @@ typedef struct TB_Linker {
     NBHS symbols;
     NBHS sections;
     NBHS imports;
+
+    // sometimes people ask to import
+    // the same libs a bunch of times.
+    NBHS libs;
 
     NBHS unresolved_symbols;
 

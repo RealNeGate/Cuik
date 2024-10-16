@@ -20,18 +20,22 @@ static FileMap open_file_map(const char* filepath) {
     LARGE_INTEGER size;
     if (!GetFileSizeEx(file, &size)) {
         fprintf(stderr, "Could not read file size! %s", filepath);
+        CloseHandle(file);
         return (FileMap){ INVALID_HANDLE_VALUE };
     }
 
     HANDLE mapping = CreateFileMappingA(file, NULL, PAGE_READONLY, 0, 0, 0);
     if (!mapping) {
         fprintf(stderr, "Could not map file! %s", filepath);
+        CloseHandle(file);
         return (FileMap){ INVALID_HANDLE_VALUE };
     }
 
     void* memory = MapViewOfFileEx(mapping, FILE_MAP_READ, 0, 0, 0, 0);
     if (!memory) {
         fprintf(stderr, "Could not view mapped file! %s", filepath);
+        CloseHandle(mapping);
+        CloseHandle(file);
         return (FileMap){ INVALID_HANDLE_VALUE };
     }
 

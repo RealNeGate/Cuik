@@ -53,7 +53,7 @@ int run_objdump(int argc, const char** argv) {
 
         printf("%3zu %-8s      %08zx %016zx %s", i, name, size, s->virtual_address, flags);
         if (s->flags & TB_COFF_SECTION_ALIGN) {
-            printf(" (align %d)", 1u << (s->flags >> 20));
+            printf(" (align %d)", 1u << ((s->flags >> 20) & 0xF));
         }
         printf("\n");
     }
@@ -117,7 +117,7 @@ int run_objdump(int argc, const char** argv) {
             while (pos < s->raw_data.length) {
                 printf(" %8"PRIx64": ", pos);
 
-                /*TB_X86_Inst inst;
+                TB_X86_Inst inst;
                 if (tb_x86_disasm(&inst, s->raw_data.length - pos, data + pos)) {
                     // print first 10 bytes
                     size_t i = 0;
@@ -133,9 +133,9 @@ int run_objdump(int argc, const char** argv) {
                     tb_x86_print_inst(stdout, &inst);
                     pos += inst.length;
                 } else {
-                    printf("ERROR\n");
+                    printf("%02x                            ERROR\n", data[pos]);
                     pos += 1;
-                }*/
+                }
             }
             printf("\n");
         } else {
