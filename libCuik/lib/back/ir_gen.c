@@ -2199,11 +2199,13 @@ void cuikcg_allocate_ir(TranslationUnit* restrict tu, TPool* tp, TB_Module* m, b
     tu->ir_mod = tu->parent->ir_mod = m;
     tu->has_tb_debug_info = debug;
 
+    IRAllocTask* tasks = cuik_malloc(sizeof(IRAllocTask) * remaining);
+    int j = 0;
     for (size_t i = 0; i < count; i += BATCH_SIZE) {
         size_t end = i + BATCH_SIZE;
         if (end >= count) end = count;
 
-        IRAllocTask t = {
+        tasks[j] = (IRAllocTask){
             .mod = m,
             .tu = tu,
             .stmts = &top_level[i],
@@ -2212,15 +2214,17 @@ void cuikcg_allocate_ir(TranslationUnit* restrict tu, TPool* tp, TB_Module* m, b
         };
 
         if (tp) {
-            tpool_add_task(tp, ir_alloc_task, sizeof(t), &t);
+            tpool_add_task(tp, ir_alloc_task, &tasks[j]);
         } else {
-            ir_alloc_task(NULL, &t);
+            ir_alloc_task(NULL, &tasks[j]);
         }
+        j += 1;
     }
 
     if (tp) {
         futex_wait_eq(&remaining, 0);
     }
+    cuik_free(tasks);
 }
 
 void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m, bool debug) {

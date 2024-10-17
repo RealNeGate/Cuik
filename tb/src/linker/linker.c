@@ -125,7 +125,8 @@ void tb_linker_add_libpath(TB_Linker* l, const char* path) {
 void tb_linker_append_object(TB_Linker* l, const char* file_name) {
     CUIK_TIMED_BLOCK("append_obj") {
         FileMap fm = open_file_map(file_name);
-        ImportObjTask task = {
+        TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
+        *obj_file = (TB_LinkerObject){
             l,
             { (const uint8_t*) file_name, strlen(file_name) },
             { fm.data, fm.size },
@@ -133,10 +134,10 @@ void tb_linker_append_object(TB_Linker* l, const char* file_name) {
         };
 
         if (l->jobs.pool != NULL) {
-            tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_object, sizeof(task), &task);
+            tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_object, obj_file);
             l->jobs.count += 1;
         } else {
-            l->vtbl.append_object(NULL, &task);
+            l->vtbl.append_object(NULL, obj_file);
         }
     }
 }
@@ -168,7 +169,12 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     char test_path[FILENAME_MAX];
     FileMap fm = open_file_map(test_path);
     dyn_array_for(j, l->libpaths) {
-        snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+        int len = snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+        FOR_N(k, strlen(l->libpaths[j]), len) {
+            if (test_path[k] >= 'A' && test_path[k] <= 'Z') {
+                test_path[k] -= 'A' - 'a';
+            }
+        }
 
         fm = open_file_map(test_path);
         if (fm.data != NULL) {
@@ -181,14 +187,22 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     if (test_path[0] == 0) {
         fprintf(stderr, "cuiklink: could not find library: %s\n", file_name);
         dyn_array_for(j, l->libpaths) {
-            fprintf(stderr, "  searched at %s/%s\n", l->libpaths[j], file_name);
+            int len = snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+            FOR_N(k, strlen(l->libpaths[j]), len) {
+                if (test_path[k] >= 'A' && test_path[k] <= 'Z') {
+                    test_path[k] -= 'A' - 'a';
+                }
+            }
+            fprintf(stderr, "  searched at %s\n", test_path);
         }
         return;
     }
 
     size_t newlen = strlen(test_path);
     char* newstr = linker_newstr(newlen, test_path);
-    ImportObjTask task = {
+
+    TB_LinkerObject* lib_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
+    *lib_file = (TB_LinkerObject){
         l,
         { (const uint8_t*) newstr, newlen },
         { fm.data, fm.size },
@@ -196,10 +210,10 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     };
 
     if (l->jobs.pool != NULL) {
-        tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_library, sizeof(task), &task);
+        tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_library, lib_file);
         l->jobs.count += 1;
     } else {
-        l->vtbl.append_library(NULL, &task);
+        l->vtbl.append_library(NULL, lib_file);
     }
 }
 
@@ -440,7 +454,20 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
             old = sym;
         } else if (old->tag == TB_LINKER_SYMBOL_LAZY || sym->tag == TB_LINKER_SYMBOL_LAZY) {
             TB_LinkerSymbol* lazy = old->tag == TB_LINKER_SYMBOL_LAZY ? old : sym;
-            printf("Lazy referenced at %.*s\n", (int) lazy->name.length, lazy->name.data);
+            TB_Slice obj_name = lazy->lazy.obj->name;
+
+            printf("Lazy referenced at %.*s (from %.*s)\n", (int) lazy->name.length, lazy->name.data, (int) obj_name.length, obj_name.data);
+
+            bool expected = false;
+            if (atomic_compare_exchange_strong(&lazy->lazy.obj->loaded, &expected, true)) {
+                if (l->jobs.pool != NULL) {
+                    tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_object, lazy->lazy.obj);
+                    l->jobs.count += 1;
+                } else {
+                    l->vtbl.append_object(NULL, lazy->lazy.obj);
+                }
+            }
+
             __debugbreak();
         } else {
             // symbol collision if we're overriding something that's

@@ -62,16 +62,16 @@ static bool strprefix(const char* str, const char* pre, size_t len) {
 
 // If any of the exported symbols in this object are referenced, we'll load the rest. This avoids
 // loading a shit load of unnecessary object files.
-void pe_append_lazy(TPool* pool, ImportObjTask* task) {
+void pe_append_lazy(TPool* pool, TB_LinkerObject* obj) {
     size_t slash = 0;
-    FOR_REV_N(i, 0, task->obj_name.length) {
-        if (task->obj_name.data[i] == '/' || task->obj_name.data[i] == '\\') {
+    FOR_REV_N(i, 0, obj->name.length) {
+        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
             slash = i + 1;
             break;
         }
     }
 
-    cuikperf_region_start2("lazy", task->obj_name.length - slash, (const char*) task->obj_name.data + slash);
+    cuikperf_region_start2("lazy", obj->name.length - slash, (const char*) obj->name.data + slash);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -85,18 +85,14 @@ void pe_append_lazy(TPool* pool, ImportObjTask* task) {
         tb_arena_create(&linker_tmp_arena, "LinkerTmp");
     }
 
-    TB_Linker* l = task->linker;
-    TB_Slice obj_name = task->obj_name;
-    TB_Slice content = task->content;
+    TB_Linker* l = obj->linker;
+    TB_Slice name = obj->name;
+    TB_Slice content = obj->content;
 
-    TB_COFF_Parser parser = { obj_name, content };
+    TB_COFF_Parser parser = { name, content };
     tb_coff_parse_init(&parser);
 
     TB_ArenaSavepoint sp = tb_arena_save(&linker_tmp_arena);
-
-    // We don't *really* care about this info beyond nicer errors (use an arena tho)
-    TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
-    *obj_file = (TB_LinkerObject){ .name = obj_name };
 
     CUIK_TIMED_BLOCK("apply symbols") {
         size_t i = 0;
@@ -115,7 +111,7 @@ void pe_append_lazy(TPool* pool, ImportObjTask* task) {
                 *s = (TB_LinkerSymbol){
                     .name   = sym.name,
                     .tag    = TB_LINKER_SYMBOL_LAZY,
-                    .lazy   = { obj_file },
+                    .lazy   = { obj },
                 };
 
                 TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
@@ -129,16 +125,16 @@ void pe_append_lazy(TPool* pool, ImportObjTask* task) {
     cuikperf_region_end();
 }
 
-void pe_append_object(TPool* pool, ImportObjTask* task) {
+void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
     size_t slash = 0;
-    FOR_REV_N(i, 0, task->obj_name.length) {
-        if (task->obj_name.data[i] == '/' || task->obj_name.data[i] == '\\') {
+    FOR_REV_N(i, 0, obj->name.length) {
+        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
             slash = i + 1;
             break;
         }
     }
 
-    cuikperf_region_start2("object", task->obj_name.length - slash, (const char*) task->obj_name.data + slash);
+    cuikperf_region_start2("object", obj->name.length - slash, (const char*) obj->name.data + slash);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -146,24 +142,20 @@ void pe_append_object(TPool* pool, ImportObjTask* task) {
         tb_arena_create(&linker_tmp_arena, "LinkerTmp");
     }
 
-    TB_Linker* l = task->linker;
-    TB_Slice obj_name = task->obj_name;
-    TB_Slice content = task->content;
+    TB_Linker* l = obj->linker;
+    TB_Slice name = obj->name;
+    TB_Slice content = obj->content;
 
-    TB_COFF_Parser parser = { obj_name, content };
+    TB_COFF_Parser parser = { name, content };
     tb_coff_parse_init(&parser);
 
     TB_ArenaSavepoint sp = tb_arena_save(&linker_tmp_arena);
-
-    // We don't *really* care about this info beyond nicer errors (use an arena tho)
-    TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
-    *obj_file = (TB_LinkerObject){ .name = obj_name };
 
     // Apply all sections (generate lookup for sections based on ordinals)
     TB_LinkerSectionPiece *text_piece = NULL, *pdata_piece = NULL;
     TB_ObjectSection* sections = tb_arena_alloc(&linker_tmp_arena, parser.section_count * sizeof(TB_ObjectSection));
 
-    uint64_t order = task->time;
+    uint64_t order = obj->time;
     CUIK_TIMED_BLOCK("parse sections") {
         FOR_N(i, 0, parser.section_count) {
             TB_ObjectSection* restrict s = &sections[i];
@@ -256,7 +248,7 @@ void pe_append_object(TPool* pool, ImportObjTask* task) {
             } */
 
             TB_LinkerSectionPiece* p;
-            p = tb_linker_append_piece(ls, PIECE_BSS, s->raw_data.length, obj_file);
+            p = tb_linker_append_piece(ls, PIECE_BSS, s->raw_data.length, obj);
             if ((s->flags & IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0) {
                 p->kind = PIECE_BUFFER;
                 p->buffer = s->raw_data.data;
@@ -434,17 +426,17 @@ void pe_append_object(TPool* pool, ImportObjTask* task) {
     cuikperf_region_end();
 }
 
-static void pe_append_library(TPool* pool, ImportObjTask* task) {
+static void pe_append_library(TPool* pool, TB_LinkerObject* obj) {
     size_t slash = 0;
-    FOR_REV_N(i, 0, task->obj_name.length) {
-        if (task->obj_name.data[i] == '/' || task->obj_name.data[i] == '\\') {
+    FOR_REV_N(i, 0, obj->name.length) {
+        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
             slash = i + 1;
             break;
         }
     }
 
-    cuikperf_region_start2("library", task->obj_name.length - slash, (const char*) task->obj_name.data + slash);
-    log_debug("linking against %.*s", (int) task->obj_name.length, task->obj_name.data);
+    cuikperf_region_start2("library", obj->name.length - slash, (const char*) obj->name.data + slash);
+    log_debug("linking against %.*s", (int) obj->name.length, obj->name.data);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -452,8 +444,8 @@ static void pe_append_library(TPool* pool, ImportObjTask* task) {
         tb_arena_create(&linker_tmp_arena, "LinkerTmp");
     }
 
-    TB_Linker* l = task->linker;
-    TB_Slice ar_file = task->content;
+    TB_Linker* l = obj->linker;
+    TB_Slice ar_file = obj->content;
 
     TB_ArchiveFileParser ar_parser = { 0 };
     if (!tb_archive_parse(ar_file, &ar_parser)) {
@@ -469,20 +461,23 @@ static void pe_append_library(TPool* pool, ImportObjTask* task) {
     }
 
     // we can dispatch these object parsing jobs into separate threads
-    uint64_t time = task->time;
+    uint64_t time = obj->time;
     int obj_file_count = 0;
     FOR_N(i, 0, new_count) {
         TB_ArchiveEntry* restrict e = &entries[i];
         if (e->import_name.length != 0) { continue; }
 
-        ImportObjTask t = { l, e->name, e->content, time + obj_file_count*65536 };
+
+        // We don't *really* care about this info beyond nicer errors (use an arena tho)
+        TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
+        *obj_file = (TB_LinkerObject){ l, e->name, e->content, time + obj_file_count*65536 };
         obj_file_count += 1;
 
         if (l->jobs.pool != NULL) {
-            tpool_add_task(l->jobs.pool, (tpool_task_proc*) pe_append_lazy, sizeof(t), &t);
+            tpool_add_task(l->jobs.pool, (tpool_task_proc*) pe_append_lazy, obj_file);
             l->jobs.count += 1;
         } else {
-            pe_append_lazy(NULL, &t);
+            pe_append_lazy(NULL, obj_file);
         }
     }
 
@@ -948,7 +943,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             TB_LinkerSymbol* sym = tb_linker_symbol_find(*e);
             if (sym->tag == TB_LINKER_SYMBOL_NORMAL && (sym->flags & TB_LINKER_SYMBOL_USED)) {
                 uint64_t rva = tb__get_symbol_rva(l, sym);
-                printf("%#08llx   %.*s\n", rva, (int) sym->name.length, sym->name.data);
+                printf("%#08"PRIx64"   %.*s\n", rva, (int) sym->name.length, sym->name.data);
             }
         }
     }
@@ -1165,6 +1160,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     // do the final exporting, we can thread this
     bool result = true;
     CUIK_TIMED_BLOCK("output") {
+        #ifdef _WIN32
         HANDLE file = CreateFileA(file_name, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
         HANDLE mapping = CreateFileMappingA(file, NULL, PAGE_READWRITE, 0, output_size, NULL);
@@ -1178,6 +1174,19 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             printf("tblink: could not view mapped file! %s", file_name);
             continue; // exitting the TIMED_BLOCK... ik it's nasty
         }
+        #else
+        int fd = open(file_name, O_CREAT | O_WRONLY);
+        if (fd <= 0) {
+            printf("tblink: could not open file! %s", file_name);
+            continue; // exitting the TIMED_BLOCK... ik it's nasty
+        }
+
+        void* output = mmap(NULL, output_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+        if (output == MAP_FAILED) {
+            printf("tblink: could not map file! %s", file_name);
+            continue; // exitting the TIMED_BLOCK... ik it's nasty
+        }
+        #endif
 
         size_t write_pos = 0;
         uint32_t pe_magic = 0x00004550;
@@ -1227,8 +1236,9 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
                     }
 
                     if (accum_size >= 8192) {
-                        ExportTask task = { l, output, accum_start, p };
-                        tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, sizeof(task), &task);
+                        ExportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(ExportTask));
+                        *task = (ExportTask){ l, output, accum_start, p };
+                        tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, task);
                         c += 1;
 
                         accum_size = p->size;
@@ -1240,8 +1250,9 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 
                 // push remaining bits
                 if (accum_start != NULL) {
-                    ExportTask task = { l, output, accum_start, NULL };
-                    tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, sizeof(task), &task);
+                    ExportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(ExportTask));
+                    *task = (ExportTask){ l, output, accum_start, NULL };
+                    tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, task);
                     c += 1;
                 }
 
@@ -1268,9 +1279,14 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             }
         }
 
+        #ifdef _WIN32
         UnmapViewOfFile(output);
         CloseHandle(mapping);
         CloseHandle(file);
+        #else
+        munmap(output, output_size);
+        close(fd);
+        #endif
     }
 
     cuikperf_region_end();

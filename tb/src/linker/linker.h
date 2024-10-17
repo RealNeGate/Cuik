@@ -6,10 +6,16 @@ typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 
 // basically an object file
 typedef struct {
+    TB_Linker* linker;
     TB_Slice name;
+    TB_Slice content;
+    uint64_t time;
 
     // if not-NULL, the sections for the are in a TB_Module.
     TB_Module* module;
+
+    // matters if we're doing lazy loading
+    _Atomic bool loaded;
 } TB_LinkerObject;
 
 typedef enum {
@@ -214,18 +220,11 @@ typedef struct {
     TB_LinkerSectionPiece* end;
 } ExportTask;
 
-typedef struct {
-    TB_Linker* linker;
-    TB_Slice obj_name;
-    TB_Slice content;
-    uint64_t time;
-} ImportObjTask;
-
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
-    void (*append_object)(TPool* pool, ImportObjTask* task);
-    void (*append_library)(TPool* pool, ImportObjTask* task);
+    void (*append_object)(TPool* pool, TB_LinkerObject* task);
+    void (*append_library)(TPool* pool, TB_LinkerObject* task);
     bool (*export)(TB_Linker* l, const char* file_name);
 } TB_LinkerVtbl;
 

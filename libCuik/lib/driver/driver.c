@@ -615,14 +615,17 @@ static void step_submit(Cuik_BuildStep* s, TPool* tp, mtx_t* mutex, bool has_sib
         }
     }
 
-    BuildStepInfo info = { s, mutex };
+    // leaking!!!
+    BuildStepInfo* info = malloc(sizeof(BuildStepInfo));
+    info->step = s;
+    info->mutex = mutex;
     CUIK_TIMED_BLOCK("task invoke") {
         if (tp != NULL && has_siblings) {
             log_debug("Punting build step %p to another thread", s);
-            tpool_add_task(tp, (tpool_task_proc*) s->invoke, sizeof(info), &info);
+            tpool_add_task(tp, (tpool_task_proc*) s->invoke, info);
         } else {
             // we're an only child, there's no reason to multithread
-            s->invoke(NULL, &info);
+            s->invoke(NULL, info);
         }
     }
 }
@@ -877,7 +880,10 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
                 if (end >= top_level_count) end = top_level_count;
 
                 assert(task_count < task_capacity);
-                IRGenTask task = {
+
+                // leaking!!! also shouldn't be allocating as individual pieces!!!
+                IRGenTask* task = cuik_malloc(sizeof(IRGenTask));
+                *task = (IRGenTask){
                     .mod = mod,
                     .tu = tu,
                     .args = args,
@@ -885,7 +891,7 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
                     .count = end - i,
                     .done = &done
                 };
-                tpool_add_task(tp, irgen_job, sizeof(task), &task);
+                tpool_add_task(tp, irgen_job, task);
             }
         }
 

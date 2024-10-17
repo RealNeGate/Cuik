@@ -18,7 +18,7 @@ typedef void tpool_task_proc(TPool *pool, void *data);
 
 typedef struct TPool_Task {
     tpool_task_proc *do_work;
-    char args[56];
+    void *args;
 } TPool_Task;
 
 struct TPool {
@@ -32,7 +32,7 @@ struct TPool {
 };
 
 void tpool_init(TPool *pool, int child_thread_count);
-void tpool_add_task(TPool *pool, tpool_task_proc* fn, size_t val_size, void* val);
+void tpool_add_task(TPool *pool, tpool_task_proc* fn, void* val);
 void tpool_wait(TPool *pool);
 void tpool_destroy(TPool *pool);
 

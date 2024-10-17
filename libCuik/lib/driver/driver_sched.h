@@ -54,7 +54,11 @@ void cuiksched_per_function(TPool* tp, CompilationUnit* cu, TB_Module* mod, void
             task.count = end - i;
             task.arr = &cu->worklist[i];
 
-            tpool_add_task(tp, per_func_task, sizeof(task), &task);
+            // leaking!!! also bad allocation pattern!!!
+            PerFunction* t = cuik_malloc(sizeof(PerFunction));
+            *t = task;
+
+            tpool_add_task(tp, per_func_task, t);
             count++;
         }
 
