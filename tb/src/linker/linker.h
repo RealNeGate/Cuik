@@ -5,18 +5,21 @@
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 
 // basically an object file
-typedef struct {
+typedef struct TB_LinkerObject TB_LinkerObject;
+struct TB_LinkerObject {
     TB_Linker* linker;
     TB_Slice name;
     TB_Slice content;
     uint64_t time;
+
+    TB_LinkerObject* parent;
 
     // if not-NULL, the sections for the are in a TB_Module.
     TB_Module* module;
 
     // matters if we're doing lazy loading
     _Atomic bool loaded;
-} TB_LinkerObject;
+};
 
 typedef enum {
     TB_LINKER_PIECE_CODE      = 1,
@@ -56,8 +59,6 @@ struct TB_LinkerSectionPiece {
         PIECE_MODULE_SECTION,
         // Write the TB module's pdata section
         PIECE_PDATA,
-        // Write the TB module's reloc section
-        PIECE_RELOC,
     } kind;
 
     TB_LinkerSection* parent;
@@ -74,9 +75,15 @@ struct TB_LinkerSectionPiece {
     // mostly for .pdata crap
     TB_LinkerSectionPiece* assoc;
 
-    // ordered by address
+    // mostly compact table from per-file symbol index -> symbol (some
+    // indices are NULL because they map to aux symbol data)
+    DynArray(TB_LinkerSymbol*) symbol_map;
+    // object-file specific
+    void* section_header;
+
+    // points to where the object-file specific relocation data lies
     size_t reloc_count;
-    TB_LinkerReloc* relocs;
+    void* relocs;
 
     union {
         // kind=PIECE_BUFFER
@@ -225,6 +232,7 @@ typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
     void (*append_object)(TPool* pool, TB_LinkerObject* task);
     void (*append_library)(TPool* pool, TB_LinkerObject* task);
+    size_t (*apply_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail);
     bool (*export)(TB_Linker* l, const char* file_name);
 } TB_LinkerVtbl;
 
@@ -287,6 +295,7 @@ void tb_linker_associate(TB_Linker* l, TB_LinkerSectionPiece* a, TB_LinkerSectio
 size_t tb__get_symbol_pos(TB_Symbol* s);
 
 TB_LinkerSymbol* tb_linker_import_symbol(TB_Linker* l, TB_Slice name);
+void tb_linker_lazy_resolve(TB_Linker* l, TB_Slice name, TB_LinkerObject* obj);
 
 // symbols are technically doing a dumb but concurrent disjoint-set
 void tb_linker_symbol_union(TB_Linker* l, TB_LinkerSymbol* leader, TB_LinkerSymbol* other_guy);

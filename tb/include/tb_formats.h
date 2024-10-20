@@ -71,6 +71,9 @@ typedef struct {
     TB_Slice raw_data;
 
     size_t relocation_count;
+    size_t relocation_offset;
+
+    // legacy... HACK... i'll get rid of it later
     TB_ObjectReloc* relocations;
 
     // this is zeroed out by the loader and left for the user to do crap with

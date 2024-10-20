@@ -88,56 +88,59 @@ bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser) 
     return true;
 }
 
-size_t tb_archive_parse_entries(TB_ArchiveFileParser* restrict parser, size_t start, size_t count, TB_ArchiveEntry* out_entry) {
+bool tb_archive_member_is_short(TB_ArchiveFileParser* restrict parser, size_t i) {
     TB_Slice file = parser->file;
     TB_Slice strtbl = parser->strtbl;
-    size_t entry_count = 0;
 
-    FOR_N(i, start, count) {
-        COFF_ArchiveMemberHeader* restrict sym = (COFF_ArchiveMemberHeader*) &file.data[parser->members[i]];
-        size_t len = tb__parse_decimal_int(sizeof(sym->size), sym->size);
+    COFF_ArchiveMemberHeader* restrict sym = (COFF_ArchiveMemberHeader*) &file.data[parser->members[i]];
+    uint32_t short_form_header = *(uint32_t*)sym->contents;
 
-        TB_Slice sym_name = { (uint8_t*) sym->name, strchr(sym->name, ' ') - sym->name };
-        if (sym_name.data[0] == '/') {
-            // name is actually just an index into the long names table
-            size_t num = tb__parse_decimal_int(sym_name.length - 1, (char*)sym_name.data + 1);
-            sym_name = (TB_Slice){ &strtbl.data[num], strlen((const char*) &strtbl.data[num]) };
-        }
+    return (short_form_header != 0xFFFF0000);
+}
 
-        uint32_t short_form_header = *(uint32_t*)sym->contents;
-        if (short_form_header == 0xFFFF0000) {
-            COFF_ImportHeader* import = (COFF_ImportHeader*) sym->contents;
+TB_ArchiveEntry tb_archive_member_get(TB_ArchiveFileParser* restrict parser, size_t i) {
+    TB_Slice file = parser->file;
+    TB_Slice strtbl = parser->strtbl;
 
-            const char* imported_symbol = (const char*) &sym->contents[sizeof(COFF_ImportHeader)];
-            const char* dll_path = (const char*) &sym->contents[sizeof(COFF_ImportHeader) + strlen(imported_symbol) + 1];
+    COFF_ArchiveMemberHeader* restrict sym = (COFF_ArchiveMemberHeader*) &file.data[parser->members[i]];
+    size_t len = tb__parse_decimal_int(sizeof(sym->size), sym->size);
 
-            TB_Slice import_name = { 0 };
-            if (import->name_type == 3) {
-                // for odd reasons windows has some symbols with @ and underscores (C++ amirite)
-                // and we have to strip them out.
-                const char* leading = imported_symbol;
-                const char* at = strchr(imported_symbol, '@');
-                if (at == NULL) at = imported_symbol + strlen(imported_symbol);
-
-                for (const char* s = imported_symbol; s != at; s++) {
-                    if (*s == '_') leading = s+1;
-                }
-
-                import_name.length = at - leading;
-                import_name.data   = (const uint8_t*) leading;
-            } else {
-                import_name.length = strlen(imported_symbol);
-                import_name.data   = (const uint8_t*) imported_symbol;
-            }
-
-            // printf("%s : %s : %d\n", dll_path, imported_symbol, import->name_type);
-            out_entry[entry_count++] = (TB_ArchiveEntry){ { (const uint8_t*) dll_path, strlen(dll_path) }, .import_name = import_name, .ordinal = import->ordinal_hint };
-        } else {
-            out_entry[entry_count++] = (TB_ArchiveEntry){ sym_name, .content = { sym->contents, len } };
-        }
-
-        skip:;
+    TB_Slice sym_name = { (uint8_t*) sym->name, strchr(sym->name, ' ') - sym->name };
+    if (sym_name.data[0] == '/') {
+        // name is actually just an index into the long names table
+        size_t num = tb__parse_decimal_int(sym_name.length - 1, (char*)sym_name.data + 1);
+        sym_name = (TB_Slice){ &strtbl.data[num], strlen((const char*) &strtbl.data[num]) };
     }
 
-    return entry_count;
+    uint32_t short_form_header = *(uint32_t*)sym->contents;
+    if (short_form_header == 0xFFFF0000) {
+        COFF_ImportHeader* import = (COFF_ImportHeader*) sym->contents;
+
+        const char* imported_symbol = (const char*) &sym->contents[sizeof(COFF_ImportHeader)];
+        const char* dll_path = (const char*) &sym->contents[sizeof(COFF_ImportHeader) + strlen(imported_symbol) + 1];
+
+        TB_Slice import_name = { 0 };
+        if (import->name_type == 3) {
+            // for odd reasons windows has some symbols with @ and underscores (C++ amirite)
+            // and we have to strip them out.
+            const char* leading = imported_symbol;
+            const char* at = strchr(imported_symbol, '@');
+            if (at == NULL) at = imported_symbol + strlen(imported_symbol);
+
+            for (const char* s = imported_symbol; s != at; s++) {
+                if (*s == '_') leading = s+1;
+            }
+
+            import_name.length = at - leading;
+            import_name.data   = (const uint8_t*) leading;
+        } else {
+            import_name.length = strlen(imported_symbol);
+            import_name.data   = (const uint8_t*) imported_symbol;
+        }
+
+        // printf("%s : %s : %d\n", dll_path, imported_symbol, import->name_type);
+        return (TB_ArchiveEntry){ { (const uint8_t*) dll_path, strlen(dll_path) }, .import_name = import_name, .ordinal = import->ordinal_hint };
+    } else {
+        return (TB_ArchiveEntry){ sym_name, .content = { sym->contents, len } };
+    }
 }

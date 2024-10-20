@@ -100,6 +100,8 @@ typedef struct TB_COFF_Parser {
 bool tb_coff_parse_init(TB_COFF_Parser* restrict parser);
 bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSection* out_sec);
 
+TB_ObjectReloc tb_coff_parse_reloc(TB_COFF_Parser* restrict parser, TB_ObjectSection* section, size_t i);
+
 // how many symbols does this one symbol take up (basically 1 + aux symbols).
 // returns 0 if error.
 size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym);
@@ -229,40 +231,8 @@ bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectS
 
     // Parse relocations
     if (sec->num_reloc > 0) {
+        out_sec->relocation_offset = sec->pointer_to_reloc;
         out_sec->relocation_count = sec->num_reloc;
-        COFF_ImageReloc* src_relocs = (COFF_ImageReloc*) &file.data[sec->pointer_to_reloc];
-
-        TB_ObjectReloc* dst_relocs = tb_platform_heap_alloc(sec->num_reloc * sizeof(TB_ObjectReloc));
-        FOR_N(j, 0, sec->num_reloc) {
-            dst_relocs[j] = (TB_ObjectReloc){ 0 };
-            switch (src_relocs[j].Type) {
-                case IMAGE_REL_AMD64_ADDR32NB: dst_relocs[j].type = TB_OBJECT_RELOC_ADDR32NB; break;
-                case IMAGE_REL_AMD64_ADDR32:   dst_relocs[j].type = TB_OBJECT_RELOC_ADDR32; break;
-                case IMAGE_REL_AMD64_ADDR64:   dst_relocs[j].type = TB_OBJECT_RELOC_ADDR64; break;
-                case IMAGE_REL_AMD64_SECREL:   dst_relocs[j].type = TB_OBJECT_RELOC_SECREL; break;
-                case IMAGE_REL_AMD64_SECTION:  dst_relocs[j].type = TB_OBJECT_RELOC_SECTION; break;
-
-                case IMAGE_REL_AMD64_REL32:
-                case IMAGE_REL_AMD64_REL32_1:
-                case IMAGE_REL_AMD64_REL32_2:
-                case IMAGE_REL_AMD64_REL32_3:
-                case IMAGE_REL_AMD64_REL32_4:
-                case IMAGE_REL_AMD64_REL32_5:
-                dst_relocs[j].type = TB_OBJECT_RELOC_REL32;
-                break;
-
-                default: tb_todo();
-            }
-
-            if (src_relocs[j].Type >= IMAGE_REL_AMD64_REL32 && src_relocs[j].Type <= IMAGE_REL_AMD64_REL32_5) {
-                dst_relocs[j].addend = 4 + (src_relocs[j].Type - IMAGE_REL_AMD64_REL32);
-            }
-
-            dst_relocs[j].symbol_index = src_relocs[j].SymbolTableIndex;
-            dst_relocs[j].virtual_address = src_relocs[j].VirtualAddress;
-        }
-
-        out_sec->relocations = dst_relocs;
     }
 
     // Parse virtual region
@@ -276,6 +246,37 @@ bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectS
     }
 
     return true;
+}
+
+TB_ObjectReloc tb_coff_parse_reloc(TB_COFF_Parser* restrict parser, TB_ObjectSection* section, size_t i) {
+    COFF_ImageReloc* src = (COFF_ImageReloc*) &parser->file.data[section->relocation_offset];
+    TB_ObjectReloc r = { 0 };
+    switch (src[i].Type) {
+        case IMAGE_REL_AMD64_ADDR32NB: r.type = TB_OBJECT_RELOC_ADDR32NB; break;
+        case IMAGE_REL_AMD64_ADDR32:   r.type = TB_OBJECT_RELOC_ADDR32; break;
+        case IMAGE_REL_AMD64_ADDR64:   r.type = TB_OBJECT_RELOC_ADDR64; break;
+        case IMAGE_REL_AMD64_SECREL:   r.type = TB_OBJECT_RELOC_SECREL; break;
+        case IMAGE_REL_AMD64_SECTION:  r.type = TB_OBJECT_RELOC_SECTION; break;
+
+        case IMAGE_REL_AMD64_REL32:
+        case IMAGE_REL_AMD64_REL32_1:
+        case IMAGE_REL_AMD64_REL32_2:
+        case IMAGE_REL_AMD64_REL32_3:
+        case IMAGE_REL_AMD64_REL32_4:
+        case IMAGE_REL_AMD64_REL32_5:
+        r.type = TB_OBJECT_RELOC_REL32;
+        break;
+
+        default: tb_todo();
+    }
+
+    if (src[i].Type >= IMAGE_REL_AMD64_REL32 && src[i].Type <= IMAGE_REL_AMD64_REL32_5) {
+        r.addend = 4 + (src[i].Type - IMAGE_REL_AMD64_REL32);
+    }
+
+    r.symbol_index = src[i].SymbolTableIndex;
+    r.virtual_address = src[i].VirtualAddress;
+    return r;
 }
 
 TB_ObjectSymbolType classify_symbol_type(uint16_t st_class) {

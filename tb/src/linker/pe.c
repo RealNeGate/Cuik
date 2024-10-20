@@ -60,6 +60,68 @@ static bool strprefix(const char* str, const char* pre, size_t len) {
     return string_case_cmp(pre, str, len < prelen ? len : prelen) == 0;
 }
 
+static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* end_directive) {
+    while (curr != end_directive && *curr == ' ') curr++;
+
+    while (curr != end_directive) {
+        const uint8_t* end = curr;
+        while (end != end_directive && *end != ' ') end++;
+
+        // printf("directive: %.*s\n", (int) (end - curr), curr);
+
+        if (*curr == 0 || curr == end_directive) {
+            break;
+            // } else if (strprefix((const char*) curr, "/merge:", end - curr)) {
+            /* curr += sizeof("/merge:")-1;
+
+            const uint8_t* equals = curr;
+            while (*equals && *equals != '=') equals++;
+
+            if (*equals == '=') {
+                TB_LinkerCmd cmd = {
+                    .from = { curr, equals - curr },
+                    .to   = { equals + 1, (end - equals) - 1 },
+                };
+                dyn_array_put(info->merges, cmd);
+            } */
+        } else if (strprefix((const char*) curr, "/include:", end - curr)) {
+            curr += sizeof("/include:")-1;
+
+            // forcibly include symbol
+            tb_linker_import_symbol(l, (TB_Slice){ curr, end - curr });
+        } else if (strprefix((const char*) curr, "/defaultlib:", end - curr)) {
+            curr += sizeof("/defaultlib:")-1;
+
+            int len = end - curr;
+            if (curr[0] == '"') {
+                curr += 1;
+                len -= 2;
+            }
+
+            char path[FILENAME_MAX];
+            snprintf(path, FILENAME_MAX, "%.*s", len, curr);
+            tb_linker_append_library(l, path);
+        } else if (strprefix((const char*) curr, "/alternatename:", end - curr)) {
+            curr += sizeof("/alternatename:")-1;
+
+            const uint8_t* equals = curr;
+            while (*equals && *equals != '=') equals++;
+
+            // printf("alternate: %.*s\n", (int) (end - curr), curr);
+            if (*equals == '=') {
+                // we convert the symbol into a weak one
+                TB_LinkerSymbol* from = tb_linker_import_symbol(l, (TB_Slice){ curr, equals - curr });
+                TB_LinkerSymbol* to   = tb_linker_import_symbol(l, (TB_Slice){ equals + 1, (end - equals) - 1 });
+                tb_linker_symbol_weak(l, from, to);
+            }
+        } else {
+            // log_warn("unknown linker directive: %.*s", (int) (end - curr), curr);
+        }
+
+        curr = end+1;
+    }
+}
+
 // If any of the exported symbols in this object are referenced, we'll load the rest. This avoids
 // loading a shit load of unnecessary object files.
 void pe_append_lazy(TPool* pool, TB_LinkerObject* obj) {
@@ -71,13 +133,9 @@ void pe_append_lazy(TPool* pool, TB_LinkerObject* obj) {
         }
     }
 
+    assert(obj->parent != NULL);
     cuikperf_region_start2("lazy", obj->name.length - slash, (const char*) obj->name.data + slash);
-
-    if (!linker_thread_init) {
-        linker_thread_init = true;
-        tb_arena_create(&linker_perm_arena, "LinkerPerm");
-        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
-    }
+    // printf("OBJECT: %.*s\n", (int) obj->name.length, obj->name.data);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -92,13 +150,15 @@ void pe_append_lazy(TPool* pool, TB_LinkerObject* obj) {
     TB_COFF_Parser parser = { name, content };
     tb_coff_parse_init(&parser);
 
-    TB_ArenaSavepoint sp = tb_arena_save(&linker_tmp_arena);
-
     CUIK_TIMED_BLOCK("apply symbols") {
         size_t i = 0;
         while (i < parser.symbol_count) {
             TB_ObjectSymbol sym;
             i += tb_coff_parse_symbol(&parser, i, &sym);
+
+            /* if (sym.name.length == sizeof("_tls_index")-1 && memcmp(sym.name.data, "_tls_index", sym.name.length) == 0) {
+                __debugbreak();
+            } */
 
             // only define the exported symbols (if they're reachable the rest of the object is)
             if (sym.section_num > 0 && sym.type == TB_OBJECT_SYMBOL_EXTERN) {
@@ -118,9 +178,31 @@ void pe_append_lazy(TPool* pool, TB_LinkerObject* obj) {
                 if (new_s != s) {
                     tb_arena_free(&linker_perm_arena, s, sizeof(TB_LinkerSymbol));
                     s = new_s;
+
+                    // for a symbol to have already been inserted, it means we're already been resolved
+                    // so let's stop with the lazy shit.
+                    tb_linker_lazy_resolve(l, s->name, obj);
+                    break;
                 }
             }
         }
+    }
+
+    CUIK_TIMED_BLOCK("skim sections") {
+        FOR_N(i, 0, parser.section_count) {
+            TB_ObjectSection s;
+            tb_coff_parse_section(&parser, i, &s);
+
+            if (s.name.length == sizeof(".drectve")-1 && memcmp(s.name.data, ".drectve", s.name.length) == 0 && s.raw_data.length > 3) {
+                parse_directives(l, s.raw_data.data, s.raw_data.data + s.raw_data.length);
+                break;
+            }
+        }
+    }
+
+    if (l->jobs.pool != NULL) {
+        l->jobs.done += 1;
+        futex_signal(&l->jobs.done);
     }
     cuikperf_region_end();
 }
@@ -159,10 +241,7 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
     CUIK_TIMED_BLOCK("parse sections") {
         FOR_N(i, 0, parser.section_count) {
             TB_ObjectSection* restrict s = &sections[i];
-
-            cuikperf_region_start("s", NULL);
             tb_coff_parse_section(&parser, i, s);
-            cuikperf_region_end();
 
             // trim the dollar sign (if applies)
             TB_Slice coff_order = { 0 };
@@ -177,66 +256,11 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
             }
 
             size_t drectve_len = sizeof(".drectve")-1;
-
-            if (s->name.length == drectve_len && memcmp(s->name.data, ".drectve", drectve_len) == 0 && s->raw_data.length > 3) {
-                const uint8_t* curr = s->raw_data.data;
-                const uint8_t* end_directive = s->raw_data.data + s->raw_data.length;
-
-                while (curr != end_directive && *curr == ' ') curr++;
-
-                while (curr != end_directive) {
-                    const uint8_t* end = curr;
-                    while (end != end_directive && *end != ' ') end++;
-
-                    // printf("directive: %.*s\n", (int) (end - curr), curr);
-
-                    if (*curr == 0 || curr == end_directive) {
-                        break;
-                        // } else if (strprefix((const char*) curr, "/merge:", end - curr)) {
-                        /* curr += sizeof("/merge:")-1;
-
-                        const uint8_t* equals = curr;
-                        while (*equals && *equals != '=') equals++;
-
-                        if (*equals == '=') {
-                            TB_LinkerCmd cmd = {
-                                .from = { curr, equals - curr },
-                                .to   = { equals + 1, (end - equals) - 1 },
-                            };
-                            dyn_array_put(info->merges, cmd);
-                        } */
-                    } else if (strprefix((const char*) curr, "/defaultlib:", end - curr)) {
-                        curr += sizeof("/defaultlib:")-1;
-
-                        int len = end - curr;
-                        if (curr[0] == '"') {
-                            curr += 1;
-                            len -= 2;
-                        }
-
-                        char path[FILENAME_MAX];
-                        snprintf(path, FILENAME_MAX, "%.*s", len, curr);
-                        tb_linker_append_library(l, path);
-                    } else if (strprefix((const char*) curr, "/alternatename:", end - curr)) {
-                        curr += sizeof("/alternatename:")-1;
-
-                        const uint8_t* equals = curr;
-                        while (*equals && *equals != '=') equals++;
-
-                        // printf("alternate: %.*s\n", (int) (end - curr), curr);
-                        if (*equals == '=') {
-                            // we convert the symbol into a weak one
-                            TB_LinkerSymbol* from = tb_linker_import_symbol(l, (TB_Slice){ curr, equals - curr });
-                            TB_LinkerSymbol* to   = tb_linker_import_symbol(l, (TB_Slice){ equals + 1, (end - equals) - 1 });
-                            tb_linker_symbol_weak(l, from, to);
-                        }
-                    } else {
-                        // log_warn("unknown linker directive: %.*s", (int) (end - curr), curr);
-                    }
-
-                    curr = end+1;
+            if (s->name.length == drectve_len && memcmp(s->name.data, ".drectve", drectve_len) == 0) {
+                // if we were lazy and now "loaded" then we don't re-parse the directives
+                if (!obj->loaded) {
+                    parse_directives(l, s->raw_data.data, s->raw_data.data + s->raw_data.length);
                 }
-
                 continue;
             }
 
@@ -283,13 +307,14 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
     size_t sym_count = 0;
     TB_ObjectSymbol* syms = tb_arena_alloc(&linker_tmp_arena, parser.symbol_count * sizeof(TB_ObjectSymbol));
 
+    DynArray(TB_LinkerSymbol*) symbol_map = NULL;
     DynArray(TB_ObjectSymbol*) weak_syms = NULL;
     NL_Map(int, COFF_AuxSectionSymbol*) comdat_sections = NULL;
     CUIK_TIMED_BLOCK("apply symbols") {
         size_t i = 0;
         while (i < parser.symbol_count) {
             TB_ObjectSymbol* restrict sym = &syms[sym_count++];
-            i += tb_coff_parse_symbol(&parser, i, sym);
+            size_t c = tb_coff_parse_symbol(&parser, i, sym);
 
             TB_LinkerSymbol* s = NULL;
             if (sym->section_num > 0) {
@@ -363,8 +388,15 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
                 }
                 // cuikperf_region_end();
             }
-
             sym->user_data = s;
+
+            // write into symbol mapping (including whatever aux data "padding")
+            TB_ASSERT(i == dyn_array_length(symbol_map));
+            dyn_array_put(symbol_map, s);
+            FOR_N(i, 1, c) {
+                dyn_array_put(symbol_map, NULL);
+            }
+            i += c;
         }
     }
 
@@ -392,28 +424,30 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
 
         p->relocs = tb_arena_alloc(&linker_perm_arena, s->relocation_count * sizeof(TB_LinkerReloc));
 
+        bool sorted = true;
+        uint32_t prev_rva = 0;
+
         // some relocations point to sections within the same object file, we resolve
         // their symbols early.
         size_t reloc_count = 0;
         FOR_N(j, 0, s->relocation_count) {
-            TB_ObjectReloc* restrict reloc = &s->relocations[j];
+            TB_ObjectReloc r = tb_coff_parse_reloc(&parser, &sections[i], j);
 
             // resolve address used in relocation, symbols are sorted so we can binary search
-            TB_ObjectSymbol key = { .ordinal = reloc->symbol_index };
+            TB_ObjectSymbol key = { .ordinal = r.symbol_index };
             TB_ObjectSymbol* src_symbol = bsearch(&key, syms, sym_count, sizeof(TB_ObjectSymbol), symbol_cmp);
-            if (src_symbol->user_data == NULL) {
-                continue;
-            }
+            TB_ASSERT(src_symbol->user_data != NULL);
 
+            prev_rva = r.virtual_address;
             p->relocs[reloc_count++] = (TB_LinkerReloc){
-                .type       = reloc->type,
-                .addend     = reloc->addend,
+                .type       = r.type,
+                .addend     = r.addend,
                 .target     = src_symbol->user_data,
-                .src_offset = reloc->virtual_address,
+                .src_offset = r.virtual_address,
             };
         }
         p->reloc_count = reloc_count;
-        qsort(p->relocs, reloc_count, sizeof(TB_LinkerReloc), compare_rva);
+        // qsort(p->relocs, reloc_count, sizeof(TB_LinkerReloc), compare_rva);
     }
     nl_map_free(comdat_sections);
     tb_arena_restore(&linker_tmp_arena, sp);
@@ -426,17 +460,17 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
     cuikperf_region_end();
 }
 
-static void pe_append_library(TPool* pool, TB_LinkerObject* obj) {
+static void pe_append_library(TPool* pool, TB_LinkerObject* lib) {
     size_t slash = 0;
-    FOR_REV_N(i, 0, obj->name.length) {
-        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
+    FOR_REV_N(i, 0, lib->name.length) {
+        if (lib->name.data[i] == '/' || lib->name.data[i] == '\\') {
             slash = i + 1;
             break;
         }
     }
 
-    cuikperf_region_start2("library", obj->name.length - slash, (const char*) obj->name.data + slash);
-    log_debug("linking against %.*s", (int) obj->name.length, obj->name.data);
+    cuikperf_region_start2("library", lib->name.length - slash, (const char*) lib->name.data + slash);
+    log_debug("linking against %.*s", (int) lib->name.length, lib->name.data);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -444,8 +478,8 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* obj) {
         tb_arena_create(&linker_tmp_arena, "LinkerTmp");
     }
 
-    TB_Linker* l = obj->linker;
-    TB_Slice ar_file = obj->content;
+    TB_Linker* l = lib->linker;
+    TB_Slice ar_file = lib->content;
 
     TB_ArchiveFileParser ar_parser = { 0 };
     if (!tb_archive_parse(ar_file, &ar_parser)) {
@@ -453,31 +487,27 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* obj) {
         return;
     }
 
-    TB_ArenaSavepoint sp = tb_arena_save(&linker_tmp_arena);
-    TB_ArchiveEntry* entries = tb_arena_alloc(&linker_tmp_arena, ar_parser.member_count * sizeof(TB_ArchiveEntry));
-    size_t new_count;
-    CUIK_TIMED_BLOCK("parse entries") {
-        new_count = tb_archive_parse_entries(&ar_parser, 0, ar_parser.member_count, entries);
-    }
+    CUIK_TIMED_BLOCK("objects") {
+        // we can dispatch these object parsing jobs into separate threads
+        uint64_t time = lib->time;
+        int obj_file_count = 0;
+        FOR_N(i, 0, ar_parser.member_count) {
+            if (!tb_archive_member_is_short(&ar_parser, i)) { continue; }
+            TB_ArchiveEntry e = tb_archive_member_get(&ar_parser, i);
 
-    // we can dispatch these object parsing jobs into separate threads
-    uint64_t time = obj->time;
-    int obj_file_count = 0;
-    FOR_N(i, 0, new_count) {
-        TB_ArchiveEntry* restrict e = &entries[i];
-        if (e->import_name.length != 0) { continue; }
+            // We don't *really* care about this info beyond nicer errors (use an arena tho)
+            TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
+            *obj_file = (TB_LinkerObject){ l, e.name, e.content, time + obj_file_count*65536, lib };
+            obj_file_count += 1;
 
-
-        // We don't *really* care about this info beyond nicer errors (use an arena tho)
-        TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
-        *obj_file = (TB_LinkerObject){ l, e->name, e->content, time + obj_file_count*65536 };
-        obj_file_count += 1;
-
-        if (l->jobs.pool != NULL) {
-            tpool_add_task(l->jobs.pool, (tpool_task_proc*) pe_append_lazy, obj_file);
-            l->jobs.count += 1;
-        } else {
-            pe_append_lazy(NULL, obj_file);
+            if (l->jobs.pool != NULL) {
+                // printf("OBJECT: %.*s\n", (int) e.name.length, e.name.data);
+                TB_ASSERT(obj_file->parent != NULL);
+                tpool_add_task(l->jobs.pool, (tpool_task_proc*) pe_append_lazy, obj_file);
+                l->jobs.count += 1;
+            } else {
+                pe_append_lazy(NULL, obj_file);
+            }
         }
     }
 
@@ -485,86 +515,87 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* obj) {
     // kernel32.lib being completely kernel32.dll imports), because of this
     // we keep the lock open across archive entry iteration for like 1000
     // ops, it's manual lock elision.
-    int imp_ticker = 0;
-    ImportTable* imp_cache = NULL;
-    FOR_N(i, 0, new_count) {
-        TB_ArchiveEntry* restrict e = &entries[i];
-        if (e->import_name.length == 0) { continue; }
+    CUIK_TIMED_BLOCK("imports") {
+        int imp_ticker = 0;
+        ImportTable* imp_cache = NULL;
+        FOR_N(i, 0, ar_parser.member_count) {
+            if (tb_archive_member_is_short(&ar_parser, i)) { continue; }
+            TB_ArchiveEntry e = tb_archive_member_get(&ar_parser, i);
+
+            if (imp_cache) {
+                imp_ticker -= 1;
+                if (imp_ticker == 0) {
+                    mtx_unlock(&imp_cache->lock);
+                    imp_cache = NULL;
+                }
+            }
+
+            // import from DLL:
+            //   we don't lock up to insert a new import table but we
+            //   do to fill it up, this is probably fine since the filling
+            //   process is most likely done by one thread while multiple
+            //   threads might be poking multiple separate import tables.
+            ImportTable* imp = tb_arena_alloc(&linker_perm_arena, sizeof(ImportTable));
+            *imp = (ImportTable){ .libpath = e.name };
+
+            if (imp_cache == NULL || imp_cache->libpath.length != e.name.length || memcmp(imp_cache->libpath.data, e.name.data, e.name.length) != 0) {
+                if (imp_cache != NULL) {
+                    mtx_unlock(&imp_cache->lock);
+                }
+
+                mtx_init(&imp->lock, mtx_plain);
+
+                ImportTable* old = nbhs_intern(&l->imports, imp);
+                if (old != imp) {
+                    tb_arena_free(&linker_perm_arena, imp, sizeof(ImportTable));
+                    imp = old;
+                }
+
+                // insert thunk
+                mtx_lock(&imp->lock);
+                imp_cache = imp;
+                imp_ticker = 1000;
+
+                if (imp->thunks == NULL) {
+                    imp->thunks = dyn_array_create(TB_LinkerSymbol*, 4096);
+                }
+            } else {
+                imp = imp_cache;
+            }
+
+            // make __imp_ form which refers to raw address
+            size_t newlen = e.import_name.length + sizeof("__imp_") - 1;
+            uint8_t* newstr = tb_arena_alloc(&linker_perm_arena, newlen);
+            memcpy(newstr, "__imp_", sizeof("__imp_"));
+            memcpy(newstr + sizeof("__imp_") - 1, e.import_name.data, e.import_name.length);
+            newstr[newlen] = 0;
+
+            // printf("Import: %.*s (%d)\n", (int) e.import_name.length, e.import_name.data, e.ordinal);
+
+            CUIK_TIMED_BLOCK_ARGS("archive", (char*) newstr) {
+                TB_LinkerSymbol* import_sym = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+                *import_sym = (TB_LinkerSymbol){
+                    .name   = { newstr, newlen },
+                    .tag    = TB_LINKER_SYMBOL_IMPORT,
+                    .import = { .table = imp, .ordinal = e.ordinal }
+                };
+                import_sym = tb_linker_symbol_insert(l, import_sym);
+
+                // make the thunk-like symbol
+                TB_LinkerSymbol* sym = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+                *sym = (TB_LinkerSymbol){
+                    .name   = e.import_name,
+                    .tag    = TB_LINKER_SYMBOL_THUNK,
+                    .thunk  = import_sym
+                };
+                sym = tb_linker_symbol_insert(l, sym);
+                dyn_array_put(imp->thunks, import_sym);
+            }
+        }
 
         if (imp_cache) {
-            imp_ticker -= 1;
-            if (imp_ticker == 0) {
-                mtx_unlock(&imp_cache->lock);
-                imp_cache = NULL;
-            }
+            mtx_unlock(&imp_cache->lock);
         }
-
-        // import from DLL:
-        //   we don't lock up to insert a new import table but we
-        //   do to fill it up, this is probably fine since the filling
-        //   process is most likely done by one thread while multiple
-        //   threads might be poking multiple separate import tables.
-        ImportTable* imp = tb_arena_alloc(&linker_perm_arena, sizeof(ImportTable));
-        *imp = (ImportTable){ .libpath = e->name };
-
-        if (imp_cache == NULL || imp_cache->libpath.length != e->name.length || memcmp(imp_cache->libpath.data, e->name.data, e->name.length) != 0) {
-            if (imp_cache != NULL) {
-                mtx_unlock(&imp_cache->lock);
-            }
-
-            mtx_init(&imp->lock, mtx_plain);
-
-            ImportTable* old = nbhs_intern(&l->imports, imp);
-            if (old != imp) {
-                tb_arena_free(&linker_perm_arena, imp, sizeof(ImportTable));
-                imp = old;
-            }
-
-            // insert thunk
-            mtx_lock(&imp->lock);
-            imp_cache = imp;
-            imp_ticker = 1000;
-
-            if (imp->thunks == NULL) {
-                imp->thunks = dyn_array_create(TB_LinkerSymbol*, 4096);
-            }
-        } else {
-            imp = imp_cache;
-        }
-
-        // make __imp_ form which refers to raw address
-        size_t newlen = e->import_name.length + sizeof("__imp_") - 1;
-        uint8_t* newstr = tb_arena_alloc(&linker_perm_arena, newlen);
-        memcpy(newstr, "__imp_", sizeof("__imp_"));
-        memcpy(newstr + sizeof("__imp_") - 1, e->import_name.data, e->import_name.length);
-        newstr[newlen] = 0;
-
-        // log_debug("Import: %.*s (%d)", (int) e->import_name.length, e->import_name.data, e->ordinal);
-
-        CUIK_TIMED_BLOCK_ARGS("archive", (char*) newstr) {
-            TB_LinkerSymbol* import_sym = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
-            *import_sym = (TB_LinkerSymbol){
-                .name   = { newstr, newlen },
-                .tag    = TB_LINKER_SYMBOL_IMPORT,
-                .import = { .table = imp, .ordinal = e->ordinal }
-            };
-            import_sym = tb_linker_symbol_insert(l, import_sym);
-
-            // make the thunk-like symbol
-            TB_LinkerSymbol* sym = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
-            *sym = (TB_LinkerSymbol){
-                .name   = e->import_name,
-                .tag    = TB_LINKER_SYMBOL_THUNK,
-                .thunk  = import_sym
-            };
-            sym = tb_linker_symbol_insert(l, sym);
-            dyn_array_put(imp->thunks, import_sym);
-        }
-    }
-    tb_arena_restore(&linker_tmp_arena, sp);
-
-    if (imp_cache) {
-        mtx_unlock(&imp_cache->lock);
     }
 
     if (l->jobs.pool != NULL) {
@@ -572,6 +603,47 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* obj) {
         futex_signal(&l->jobs.done);
     }
     cuikperf_region_end();
+}
+
+static size_t apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail) {
+    size_t reloc_len = p->reloc_count;
+    while (reloc_i < reloc_len) {
+        TB_ObjectReloc rel = tb_coff_parse_reloc(&parser, p->section_header, j);
+        int rel_size = rel.type == TB_OBJECT_RELOC_ADDR64 ? 8 : 4;
+
+        // we only apply if it's not hanging off the right edge, if that's
+        // the case we've fully loaded the memory we're overlaying.
+        int dst_pos = rel.virtual_address - head;
+        if (dst_pos + rel_size > tail) { break; }
+
+        // by this point, we've fully resolved the relocation
+        TB_LinkerSymbol* sym = tb_linker_symbol_find(p->symbol_map[rel.symbol_index]);
+        TB_ASSERT(sym && sym->tag != TB_LINKER_SYMBOL_UNKNOWN && sym->tag != TB_LINKER_SYMBOL_LAZY);
+
+        // resolve source location
+        uint32_t target_rva = 0;
+        if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
+            target_rva = l->iat_pos + (sym->import.thunk_id * 8);
+        } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
+            TB_LinkerSymbol* import_sym = sym->thunk;
+            target_rva = trampoline_rva + (import_sym->import.thunk_id * 6);
+        } else {
+            target_rva = tb__get_symbol_rva(l, sym);
+        }
+
+        // skip because it's irrelevant
+        if (rel.type == TB_OBJECT_RELOC_ADDR64) {
+            // we write out the fake VA and the base relocs will fix it up
+            int64_t* dst = (int64_t*) &out[dst_pos];
+            *dst += 0x140000000 + target_rva;
+        } else {
+            uint32_t src_rva = section_rva + p->offset + rel.virtual_address;
+            int32_t* dst = (int32_t*) &out[dst_pos];
+            *dst += resolve_reloc(sym, rel.type, src_rva, target_rva, rel.addend);
+        }
+        reloc_i += 1;
+    }
+    return reloc_i;
 }
 
 // returns the two new section pieces for the IAT and ILT
@@ -814,6 +886,11 @@ static DynArray(PE_BaseReloc) find_base_relocs(TB_Linker* l, DynArray(TB_LinkerS
 static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
 
+    // mark entrypoint as something that's accessed, so the lazy symbols get resolved.
+    tb_linker_import_symbol(l, (TB_Slice){ (const uint8_t*) l->entrypoint, strlen(l->entrypoint) });
+    tb_linker_import_symbol(l, (TB_Slice){ (const uint8_t*) "_load_config_used", sizeof("_load_config_used")-1 });
+    tb_linker_import_symbol(l, (TB_Slice){ (const uint8_t*) "_tls_used", sizeof("_tls_used")-1 });
+
     if (l->jobs.pool != NULL) {
         // finish up parsing all the object file tasks
         uint64_t old;
@@ -821,9 +898,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             futex_wait(&l->jobs.done, old);
         }
     }
-
-    PE_ImageDataDirectory imp_dir, iat_dir;
-    COFF_ImportDirectory* import_dirs;
 
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
         dyn_array_for(i, info->alternates) {
@@ -886,6 +960,8 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         return false;
     }
 
+    PE_ImageDataDirectory imp_dir, iat_dir;
+    COFF_ImportDirectory* import_dirs;
     CUIK_TIMED_BLOCK("generate imports") {
         import_dirs = gen_imports(l, &imp_dir, &iat_dir);
     }
@@ -1005,7 +1081,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
                 memset(&out[rem], b, p->size - rem);
             }
 
-            tb_linker_apply_reloc(l, p, out, pdata->address, text->address + l->trampoline_pos, 0, 0, p->size);
+            apply_reloc(l, p, out, pdata->address, text->address + l->trampoline_pos, 0, 0, p->size);
         }
         qsort(pdata_buffer, pdata->size / sizeof(uint32_t[3]), sizeof(uint32_t[3]), compare_rva);
 
@@ -1118,12 +1194,12 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         opt_header.minor_subsystem_ver = 0;
     }
 
-    TB_LinkerSymbol* tls_used_sym = tb_linker_find_symbol2(l, "_tls_used");
+    TB_LinkerSymbol* tls_used_sym = tb_linker_symbol_find(tb_linker_find_symbol2(l, "_tls_used"));
     if (tls_used_sym && (tls_used_sym->flags & TB_LINKER_SYMBOL_USED)) {
         opt_header.data_directories[IMAGE_DIRECTORY_ENTRY_TLS] = (PE_ImageDataDirectory){ tb__get_symbol_rva(l, tls_used_sym), sizeof(PE_TLSDirectory) };
     }
 
-    TB_LinkerSymbol* load_config_used_sym = tb_linker_find_symbol2(l, "_load_config_used");
+    TB_LinkerSymbol* load_config_used_sym = tb_linker_symbol_find(tb_linker_find_symbol2(l, "_load_config_used"));
     if (load_config_used_sym && (load_config_used_sym->flags & TB_LINKER_SYMBOL_USED)) {
         opt_header.data_directories[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG] = (PE_ImageDataDirectory){ tb__get_symbol_rva(l, load_config_used_sym), 0x140 };
     }
@@ -1143,7 +1219,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         opt_header.base_of_code = text->address;
         opt_header.size_of_code = align_up(text->size, 4096);
 
-        TB_LinkerSymbol* sym = tb_linker_find_symbol2(l, l->entrypoint);
+        TB_LinkerSymbol* sym = tb_linker_symbol_find(tb_linker_find_symbol2(l, l->entrypoint));
         if (sym) {
             if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
                 opt_header.entrypoint = text->address + sym->normal.piece->offset + sym->normal.secrel;
@@ -1297,5 +1373,6 @@ TB_LinkerVtbl tb__linker_pe = {
     .init           = pe_init,
     .append_object  = pe_append_object,
     .append_library = pe_append_library,
+    .apply_reloc    = apply_reloc,
     .export         = pe_export
 };

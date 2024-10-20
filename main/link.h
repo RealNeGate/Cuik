@@ -20,10 +20,6 @@ int run_link(int argc, const char** argv) {
 
         const char* output_name = "a.exe";
 
-        tb_linker_add_libpath(l, "/home/yasser/AA/ucrt/x64");
-        tb_linker_add_libpath(l, "/home/yasser/AA/um/x64");
-        tb_linker_add_libpath(l, "/home/yasser/AA/vs_lib/x64");
-
         dyn_array_for(i, cl.libpaths) {
             tb_linker_add_libpath(l, cl.libpaths[i]);
         }
