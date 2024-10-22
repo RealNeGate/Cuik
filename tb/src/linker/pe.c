@@ -286,6 +286,8 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
             p->order = order + i;
             p->coff_order = coff_order;
             p->flags = (s->flags & IMAGE_SCN_MEM_EXECUTE) ? TB_LINKER_PIECE_CODE : 0;
+            p->reloc_count = s->relocation_count;
+            p->relocs = &parser.file.data[s->relocation_offset];
             if (s->flags & IMAGE_SCN_LNK_COMDAT) {
                 p->flags |= TB_LINKER_PIECE_COMDAT;
             }
@@ -315,6 +317,7 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
         while (i < parser.symbol_count) {
             TB_ObjectSymbol* restrict sym = &syms[sym_count++];
             size_t c = tb_coff_parse_symbol(&parser, i, sym);
+            TB_ASSERT(c > 0);
 
             TB_LinkerSymbol* s = NULL;
             if (sym->section_num > 0) {
@@ -338,7 +341,7 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
 
                         // sections without a piece are ok
                         if (sec->user_data == NULL) {
-                            continue;
+                            goto skip;
                         }
                     }
                 }
@@ -390,13 +393,22 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
             }
             sym->user_data = s;
 
+            skip:;
             // write into symbol mapping (including whatever aux data "padding")
             TB_ASSERT(i == dyn_array_length(symbol_map));
             dyn_array_put(symbol_map, s);
-            FOR_N(i, 1, c) {
-                dyn_array_put(symbol_map, NULL);
-            }
+            FOR_N(j, 1, c) { dyn_array_put(symbol_map, NULL); }
             i += c;
+        }
+    }
+
+    // broadcast to all sections how to find symbols (for relocation resolution later)
+    FOR_N(i, 0, parser.section_count) {
+        TB_ObjectSection* restrict s = &sections[i];
+        TB_LinkerSectionPiece* p = s->user_data;
+
+        if (p != NULL) {
+            p->symbol_map = symbol_map;
         }
     }
 
@@ -415,39 +427,6 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
             tb_linker_symbol_weak(l, src_symbol->user_data, alt_sym->user_data);
         }
         dyn_array_destroy(weak_syms);
-    }
-
-    CUIK_TIMED_BLOCK("parse relocations") FOR_N(i, 0, parser.section_count) {
-        TB_ObjectSection* restrict s = &sections[i];
-        TB_LinkerSectionPiece* restrict p = s->user_data;
-        if (p == NULL || s->relocation_count == 0) { continue; }
-
-        p->relocs = tb_arena_alloc(&linker_perm_arena, s->relocation_count * sizeof(TB_LinkerReloc));
-
-        bool sorted = true;
-        uint32_t prev_rva = 0;
-
-        // some relocations point to sections within the same object file, we resolve
-        // their symbols early.
-        size_t reloc_count = 0;
-        FOR_N(j, 0, s->relocation_count) {
-            TB_ObjectReloc r = tb_coff_parse_reloc(&parser, &sections[i], j);
-
-            // resolve address used in relocation, symbols are sorted so we can binary search
-            TB_ObjectSymbol key = { .ordinal = r.symbol_index };
-            TB_ObjectSymbol* src_symbol = bsearch(&key, syms, sym_count, sizeof(TB_ObjectSymbol), symbol_cmp);
-            TB_ASSERT(src_symbol->user_data != NULL);
-
-            prev_rva = r.virtual_address;
-            p->relocs[reloc_count++] = (TB_LinkerReloc){
-                .type       = r.type,
-                .addend     = r.addend,
-                .target     = src_symbol->user_data,
-                .src_offset = r.virtual_address,
-            };
-        }
-        p->reloc_count = reloc_count;
-        // qsort(p->relocs, reloc_count, sizeof(TB_LinkerReloc), compare_rva);
     }
     nl_map_free(comdat_sections);
     tb_arena_restore(&linker_tmp_arena, sp);
@@ -503,8 +482,8 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* lib) {
             if (l->jobs.pool != NULL) {
                 // printf("OBJECT: %.*s\n", (int) e.name.length, e.name.data);
                 TB_ASSERT(obj_file->parent != NULL);
-                tpool_add_task(l->jobs.pool, (tpool_task_proc*) pe_append_lazy, obj_file);
                 l->jobs.count += 1;
+                tpool_add_task(l->jobs.pool, (tpool_task_proc*) pe_append_lazy, obj_file);
             } else {
                 pe_append_lazy(NULL, obj_file);
             }
@@ -605,45 +584,12 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* lib) {
     cuikperf_region_end();
 }
 
-static size_t apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail) {
-    size_t reloc_len = p->reloc_count;
-    while (reloc_i < reloc_len) {
-        TB_ObjectReloc rel = tb_coff_parse_reloc(&parser, p->section_header, j);
-        int rel_size = rel.type == TB_OBJECT_RELOC_ADDR64 ? 8 : 4;
-
-        // we only apply if it's not hanging off the right edge, if that's
-        // the case we've fully loaded the memory we're overlaying.
-        int dst_pos = rel.virtual_address - head;
-        if (dst_pos + rel_size > tail) { break; }
-
-        // by this point, we've fully resolved the relocation
-        TB_LinkerSymbol* sym = tb_linker_symbol_find(p->symbol_map[rel.symbol_index]);
-        TB_ASSERT(sym && sym->tag != TB_LINKER_SYMBOL_UNKNOWN && sym->tag != TB_LINKER_SYMBOL_LAZY);
-
-        // resolve source location
-        uint32_t target_rva = 0;
-        if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
-            target_rva = l->iat_pos + (sym->import.thunk_id * 8);
-        } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
-            TB_LinkerSymbol* import_sym = sym->thunk;
-            target_rva = trampoline_rva + (import_sym->import.thunk_id * 6);
-        } else {
-            target_rva = tb__get_symbol_rva(l, sym);
-        }
-
-        // skip because it's irrelevant
-        if (rel.type == TB_OBJECT_RELOC_ADDR64) {
-            // we write out the fake VA and the base relocs will fix it up
-            int64_t* dst = (int64_t*) &out[dst_pos];
-            *dst += 0x140000000 + target_rva;
-        } else {
-            uint32_t src_rva = section_rva + p->offset + rel.virtual_address;
-            int32_t* dst = (int32_t*) &out[dst_pos];
-            *dst += resolve_reloc(sym, rel.type, src_rva, target_rva, rel.addend);
-        }
-        reloc_i += 1;
-    }
-    return reloc_i;
+static void parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc) {
+    TB_ObjectReloc rel = tb_coff_parse_reloc(p->relocs, reloc_i);
+    out_reloc->src_offset = rel.virtual_address;
+    out_reloc->type       = rel.type;
+    out_reloc->addend     = rel.addend;
+    out_reloc->target     = tb_linker_symbol_find(p->symbol_map[rel.symbol_index]);
 }
 
 // returns the two new section pieces for the IAT and ILT
@@ -852,10 +798,12 @@ static DynArray(PE_BaseReloc) find_base_relocs(TB_Linker* l, DynArray(TB_LinkerS
             if ((p->flags & TB_LINKER_PIECE_LIVE) == 0) { continue; }
 
             FOR_N(j, 0, p->reloc_count) {
-                TB_LinkerReloc* restrict r = &p->relocs[j];
-                if (r->type != TB_OBJECT_RELOC_ADDR64) continue;
+                TB_LinkerReloc rel;
+                l->vtbl.parse_reloc(l, p, j, &rel);
 
-                PE_BaseReloc br = { p->offset + r->src_offset, sections[i] };
+                if (rel.type != TB_OBJECT_RELOC_ADDR64) continue;
+
+                PE_BaseReloc br = { p->offset + rel.src_offset, sections[i] };
                 if (last_page != (br.rva & ~4095)) {
                     if ((reloc_section_size & 3) != 0) {
                         reloc_section_size += 2;
@@ -893,8 +841,8 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 
     if (l->jobs.pool != NULL) {
         // finish up parsing all the object file tasks
-        uint64_t old;
-        while (old = l->jobs.done, old < l->jobs.count) {
+        int32_t old;
+        while (old = l->jobs.done, old != l->jobs.count) {
             futex_wait(&l->jobs.done, old);
         }
     }
@@ -1081,7 +1029,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
                 memset(&out[rem], b, p->size - rem);
             }
 
-            apply_reloc(l, p, out, pdata->address, text->address + l->trampoline_pos, 0, 0, p->size);
+            tb_linker_apply_reloc(l, p, out, pdata->address, text->address + l->trampoline_pos, 0, 0, p->size);
         }
         qsort(pdata_buffer, pdata->size / sizeof(uint32_t[3]), sizeof(uint32_t[3]), compare_rva);
 
@@ -1251,13 +1199,15 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             continue; // exitting the TIMED_BLOCK... ik it's nasty
         }
         #else
-        int fd = open(file_name, O_CREAT | O_WRONLY);
+        int fd = open(file_name, O_CREAT | O_RDWR, 0666);
         if (fd <= 0) {
             printf("tblink: could not open file! %s", file_name);
             continue; // exitting the TIMED_BLOCK... ik it's nasty
         }
 
-        void* output = mmap(NULL, output_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+        ftruncate(fd, output_size);
+
+        void* output = mmap(NULL, output_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (output == MAP_FAILED) {
             printf("tblink: could not map file! %s", file_name);
             continue; // exitting the TIMED_BLOCK... ik it's nasty
@@ -1373,6 +1323,6 @@ TB_LinkerVtbl tb__linker_pe = {
     .init           = pe_init,
     .append_object  = pe_append_object,
     .append_library = pe_append_library,
-    .apply_reloc    = apply_reloc,
+    .parse_reloc    = parse_reloc,
     .export         = pe_export
 };

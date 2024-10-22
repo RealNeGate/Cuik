@@ -169,7 +169,13 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     char test_path[FILENAME_MAX];
     FileMap fm;
     dyn_array_for(j, l->libpaths) {
-        snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+        int len = snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+        FOR_N(k, strlen(l->libpaths[j]), len) {
+            if (test_path[k] >= 'A' && test_path[k] <= 'Z') {
+                test_path[k] -= 'A' - 'a';
+            }
+        }
+
         fm = open_file_map(test_path);
         if (fm.data != NULL) {
             break;
@@ -181,7 +187,13 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     if (test_path[0] == 0) {
         fprintf(stderr, "cuiklink: could not find library: %s\n", file_name);
         dyn_array_for(j, l->libpaths) {
-            snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+            int len = snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+            FOR_N(k, strlen(l->libpaths[j]), len) {
+                if (test_path[k] >= 'A' && test_path[k] <= 'Z') {
+                    test_path[k] -= 'A' - 'a';
+                }
+            }
+
             fprintf(stderr, "  searched at %s\n", test_path);
         }
         return;
@@ -616,7 +628,7 @@ void tb_linker_export_piece(TPool* pool, ExportTask* task) {
 
             // apply relocations
             CUIK_TIMED_BLOCK("relocs") {
-                reloc_i = l->vtbl.apply_reloc(l, p, out, section_rva, trampoline_rva, reloc_i, head, tail);
+                reloc_i = tb_linker_apply_reloc(l, p, out, section_rva, trampoline_rva, reloc_i, head, tail);
             }
             head = tail;
         }
@@ -802,6 +814,55 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
     return sections;
 }
 
+size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail) {
+    size_t reloc_len = p->reloc_count;
+    while (reloc_i < reloc_len) {
+        TB_LinkerReloc rel;
+        l->vtbl.parse_reloc(l, p, reloc_i, &rel);
+
+        int rel_size = rel.type == TB_OBJECT_RELOC_ADDR64 ? 8 : 4;
+
+        // we only apply if it's not hanging off the right edge, if that's
+        // the case we've fully loaded the memory we're overlaying.
+        int dst_pos = rel.src_offset - head;
+        if (dst_pos + rel_size > tail) { break; }
+
+        // by this point, we've fully resolved the relocation
+        TB_LinkerSymbol* sym = rel.target;
+        if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN || sym->tag == TB_LINKER_SYMBOL_LAZY) {
+            TB_LinkerSymbol* alt = tb_linker_symbol_find(atomic_load_explicit(&sym->weak_alt, memory_order_relaxed));
+            if (alt && alt->tag != TB_LINKER_SYMBOL_UNKNOWN && alt->tag != TB_LINKER_SYMBOL_LAZY) {
+                sym = alt;
+            }
+        }
+        TB_ASSERT(sym && sym->tag != TB_LINKER_SYMBOL_UNKNOWN && sym->tag != TB_LINKER_SYMBOL_LAZY);
+
+        // resolve source location
+        uint32_t target_rva = 0;
+        if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
+            target_rva = l->iat_pos + (sym->import.thunk_id * 8);
+        } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
+            TB_LinkerSymbol* import_sym = sym->thunk;
+            target_rva = trampoline_rva + (import_sym->import.thunk_id * 6);
+        } else {
+            target_rva = tb__get_symbol_rva(l, sym);
+        }
+
+        // skip because it's irrelevant
+        if (rel.type == TB_OBJECT_RELOC_ADDR64) {
+            // we write out the fake VA and the base relocs will fix it up
+            int64_t* dst = (int64_t*) &out[dst_pos];
+            *dst += 0x140000000 + target_rva;
+        } else {
+            uint32_t src_rva = section_rva + p->offset + rel.src_offset;
+            int32_t* dst = (int32_t*) &out[dst_pos];
+            *dst += resolve_reloc(sym, rel.type, src_rva, target_rva, rel.addend);
+        }
+        reloc_i += 1;
+    }
+    return reloc_i;
+}
+
 void tb_linker_push_named(TB_Linker* l, const char* name) {
     TB_LinkerSymbol* sym = tb_linker_symbol_find(tb_linker_find_symbol2(l, name));
     if (sym->tag != TB_LINKER_SYMBOL_UNKNOWN && sym->tag != TB_LINKER_SYMBOL_LAZY) {
@@ -892,10 +953,14 @@ void tb_linker_mark_live(TB_Linker* l) {
         //   by this point, the symbols aren't being fought for so we really should
         // use relaxed loads when possible (might matter for ARM but not x86)
         FOR_N(i, 0, p->reloc_count) {
-            TB_LinkerSymbol* sym = tb_linker_symbol_find(p->relocs[i].target);
+            TB_LinkerReloc rel;
+            l->vtbl.parse_reloc(l, p, i, &rel);
+
+            TB_LinkerSymbol* sym = rel.target;
             if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN || sym->tag == TB_LINKER_SYMBOL_LAZY) {
                 TB_LinkerSymbol* alt = tb_linker_symbol_find(atomic_load_explicit(&sym->weak_alt, memory_order_relaxed));
                 if (alt && alt->tag != TB_LINKER_SYMBOL_UNKNOWN && alt->tag != TB_LINKER_SYMBOL_LAZY) {
+                    // we could make this the leader to path compress
                     sym = alt;
                 } else {
                     nbhs_intern(&l->unresolved_symbols, &sym->name);
@@ -907,7 +972,6 @@ void tb_linker_mark_live(TB_Linker* l) {
                 tb_linker_push_piece(l, sym->normal.piece);
                 // printf("  Mark: %.*s (%p)\n", (int) sym->name.length, sym->name.data, sym->normal.piece);
             }
-            p->relocs[i].target = sym;
         }
     }
     cuikperf_region_end();

@@ -83,7 +83,7 @@ struct TB_LinkerSectionPiece {
 
     // points to where the object-file specific relocation data lies
     size_t reloc_count;
-    void* relocs;
+    const void* relocs;
 
     union {
         // kind=PIECE_BUFFER
@@ -232,7 +232,7 @@ typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
     void (*append_object)(TPool* pool, TB_LinkerObject* task);
     void (*append_library)(TPool* pool, TB_LinkerObject* task);
-    size_t (*apply_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail);
+    void (*parse_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
     bool (*export)(TB_Linker* l, const char* file_name);
 } TB_LinkerVtbl;
 
@@ -296,6 +296,8 @@ size_t tb__get_symbol_pos(TB_Symbol* s);
 
 TB_LinkerSymbol* tb_linker_import_symbol(TB_Linker* l, TB_Slice name);
 void tb_linker_lazy_resolve(TB_Linker* l, TB_Slice name, TB_LinkerObject* obj);
+
+size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail);
 
 // symbols are technically doing a dumb but concurrent disjoint-set
 void tb_linker_symbol_union(TB_Linker* l, TB_LinkerSymbol* leader, TB_LinkerSymbol* other_guy);

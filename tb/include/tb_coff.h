@@ -96,11 +96,13 @@ typedef struct TB_COFF_Parser {
     TB_Slice string_table;
 } TB_COFF_Parser;
 
+typedef struct COFF_ImageReloc COFF_ImageReloc;
+
 // fills the parser with results from the COFF header
 bool tb_coff_parse_init(TB_COFF_Parser* restrict parser);
 bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSection* out_sec);
 
-TB_ObjectReloc tb_coff_parse_reloc(TB_COFF_Parser* restrict parser, TB_ObjectSection* section, size_t i);
+TB_ObjectReloc tb_coff_parse_reloc(const COFF_ImageReloc* relocs, size_t i);
 
 // how many symbols does this one symbol take up (basically 1 + aux symbols).
 // returns 0 if error.
@@ -150,14 +152,14 @@ typedef struct COFF_Symbol {
     uint8_t  aux_symbols_count;
 } COFF_Symbol;
 
-typedef struct COFF_ImageReloc {
+struct COFF_ImageReloc {
     union {
         uint32_t VirtualAddress;
         uint32_t RelocCount;
     };
     uint32_t SymbolTableIndex;
     uint16_t Type;
-} COFF_ImageReloc;
+};
 #pragma pack(pop)
 
 // sanity checks
@@ -248,10 +250,9 @@ bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectS
     return true;
 }
 
-TB_ObjectReloc tb_coff_parse_reloc(TB_COFF_Parser* restrict parser, TB_ObjectSection* section, size_t i) {
-    COFF_ImageReloc* src = (COFF_ImageReloc*) &parser->file.data[section->relocation_offset];
+TB_ObjectReloc tb_coff_parse_reloc(const COFF_ImageReloc* relocs, size_t i) {
     TB_ObjectReloc r = { 0 };
-    switch (src[i].Type) {
+    switch (relocs[i].Type) {
         case IMAGE_REL_AMD64_ADDR32NB: r.type = TB_OBJECT_RELOC_ADDR32NB; break;
         case IMAGE_REL_AMD64_ADDR32:   r.type = TB_OBJECT_RELOC_ADDR32; break;
         case IMAGE_REL_AMD64_ADDR64:   r.type = TB_OBJECT_RELOC_ADDR64; break;
@@ -270,12 +271,12 @@ TB_ObjectReloc tb_coff_parse_reloc(TB_COFF_Parser* restrict parser, TB_ObjectSec
         default: tb_todo();
     }
 
-    if (src[i].Type >= IMAGE_REL_AMD64_REL32 && src[i].Type <= IMAGE_REL_AMD64_REL32_5) {
-        r.addend = 4 + (src[i].Type - IMAGE_REL_AMD64_REL32);
+    if (relocs[i].Type >= IMAGE_REL_AMD64_REL32 && relocs[i].Type <= IMAGE_REL_AMD64_REL32_5) {
+        r.addend = 4 + (relocs[i].Type - IMAGE_REL_AMD64_REL32);
     }
 
-    r.symbol_index = src[i].SymbolTableIndex;
-    r.virtual_address = src[i].VirtualAddress;
+    r.symbol_index    = relocs[i].SymbolTableIndex;
+    r.virtual_address = relocs[i].VirtualAddress;
     return r;
 }
 

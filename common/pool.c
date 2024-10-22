@@ -76,6 +76,7 @@ void _tpool_signal(TPool_Futex *addr) {
         __debugbreak();
     }
 }
+
 void _tpool_broadcast(TPool_Futex *addr) {
     int ret = syscall(SYS_futex, addr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, INT32_MAX, NULL, NULL, 0);
     if (ret == -1) {
@@ -247,7 +248,7 @@ void _tpool_broadcast(TPool_Futex *addr) {
 
             perror("Futex wake");
             __debugbreak();
-        } else if (ret == 1) {
+        } else if (ret > 0) {
             return;
         }
     }
@@ -301,9 +302,9 @@ typedef struct TPool_Thread {
 } TPool_Thread;
 
 TPool_RingBuffer *tpool_ring_make(ssize_t size) {
-    TPool_RingBuffer *ring = malloc(sizeof(TPool_RingBuffer));
+    TPool_RingBuffer *ring = cuik_malloc(sizeof(TPool_RingBuffer));
     ring->size = size;
-    ring->buffer = calloc(ring->size, sizeof(TPool_Task));
+    ring->buffer = cuik_calloc(ring->size, sizeof(TPool_Task));
     return ring;
 }
 
@@ -315,8 +316,8 @@ TPool_Queue tpool_queue_make(ssize_t size) {
 }
 
 void tpool_queue_delete(TPool_Queue *q) {
-    free(q->ring->buffer);
-    free(q->ring);
+    cuik_free(q->ring->buffer);
+    cuik_free(q->ring);
 }
 
 TPool_RingBuffer *tpool_ring_grow(TPool_RingBuffer *ring, ssize_t bottom, ssize_t top) {
@@ -533,7 +534,7 @@ void tpool_wait(TPool *pool) {
 void tpool_init(TPool *pool, int child_thread_count) {
     int thread_count = child_thread_count + 1;
     pool->thread_count = thread_count;
-    pool->threads = malloc(sizeof(TPool_Thread) * pool->thread_count);
+    pool->threads = cuik_malloc(sizeof(TPool_Thread) * pool->thread_count);
 
     pool->running = true;
 
@@ -558,5 +559,5 @@ void tpool_destroy(TPool *pool) {
         tpool_queue_delete(&pool->threads[i].queue);
     }
 
-    free(pool->threads);
+    cuik_free(pool->threads);
 }

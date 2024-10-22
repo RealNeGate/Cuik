@@ -287,14 +287,12 @@ void futex_wait(Futex* addr, int64_t val) {
     for (;;) {
         int ret = futex(addr, FUTEX_WAIT | FUTEX_PRIVATE_FLAG, val, NULL, NULL, 0);
 
-        if (ret == -1) {
-            if (errno != EAGAIN) {
-                __builtin_trap();
-            }
-        } else if (ret == 0) {
-            if (*addr != val) {
-                return;
-            }
+        if (!((ret == -1 && errno == EAGAIN) || ret == 0)) {
+            __builtin_trap();
+        }
+
+        if (*addr != val) {
+            return;
         }
     }
 }
