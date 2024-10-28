@@ -7,6 +7,36 @@
 
 #include <stdatomic.h>
 
+static uint32_t namehs_hash(const void* a) {
+    const TB_Slice* sym = a;
+    return tb__murmur3_32(sym->data, sym->length);
+}
+
+static bool namehs_cmp(const void* a, const void* b) {
+    const TB_Slice* aa = a;
+    const TB_Slice* bb = b;
+    return aa->length == bb->length && memcmp(aa->data, bb->data, aa->length) == 0;
+}
+
+static uint32_t strhs_hash(const void* a) {
+    uint32_t h = 0x811C9DC5;
+    const char* str = a;
+    while (*str) {
+        h = ((uint8_t) *str++ ^ h) * 0x01000193;
+    }
+    return h;
+}
+
+static bool strhs_cmp(const void* a, const void* b) {
+    return strcmp(a, b) == 0;
+}
+
+#define NBHS_FN(n) strhs_ ## n
+#include <nbhs.h>
+
+#define NBHS_FN(n) namehs_ ## n
+#include <nbhs.h>
+
 thread_local bool linker_thread_init;
 thread_local TB_Arena linker_tmp_arena;
 thread_local TB_Arena linker_perm_arena;
@@ -23,34 +53,6 @@ TB_API TB_ExecutableType tb_system_executable_format(TB_System s) {
 ////////////////////////////////
 // Symbols
 ////////////////////////////////
-static uint32_t name_hash(const void* a) {
-    const TB_Slice* sym = a;
-    uint32_t h = 0x811C9DC5;
-    FOR_N(i, 0, sym->length) {
-        h = ((uint8_t) sym->data[i] ^ h) * 0x01000193;
-    }
-    return h;
-}
-
-static bool name_cmp(const void* a, const void* b) {
-    const TB_Slice* aa = a;
-    const TB_Slice* bb = b;
-    return aa->length == bb->length && memcmp(aa->data, bb->data, aa->length) == 0;
-}
-
-static uint32_t str_hash(const void* a) {
-    uint32_t h = 0x811C9DC5;
-    const char* str = a;
-    while (*str) {
-        h = ((uint8_t) *str++ ^ h) * 0x01000193;
-    }
-    return h;
-}
-
-static bool str_cmp(const void* a, const void* b) {
-    return strcmp(a, b) == 0;
-}
-
 static void* muh_hs_alloc(size_t size) {
     void* ptr = tb_platform_heap_alloc(size);
     memset(ptr, 0, size);
@@ -87,11 +89,11 @@ TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
     l->target_arch = arch;
     l->jobs.pool = tp;
 
-    l->symbols  = nbhs_alloc(60000, muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
-    l->sections = nbhs_alloc(16,   muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
-    l->imports  = nbhs_alloc(256,  muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
-    l->libs     = nbhs_alloc(32,   muh_hs_alloc, muh_hs_free, str_cmp, str_hash);
-    l->unresolved_symbols = nbhs_alloc(16, muh_hs_alloc, muh_hs_free, name_cmp, name_hash);
+    l->symbols  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free);
+    l->sections = nbhs_alloc(16,  muh_hs_alloc, muh_hs_free);
+    l->imports  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free);
+    l->libs     = nbhs_alloc(32,  muh_hs_alloc, muh_hs_free);
+    l->unresolved_symbols = nbhs_alloc(16, muh_hs_alloc, muh_hs_free);
 
     switch (exe) {
         case TB_EXECUTABLE_PE: l->vtbl = tb__linker_pe; break;
@@ -160,7 +162,7 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     memcpy(str, file_name, len);
     str[len] = 0;
 
-    if (nbhs_intern(&l->libs, str) != str) {
+    if (strhs_intern(&l->libs, str) != str) {
         tb_arena_free(&linker_perm_arena, str, len + 1);
         return;
     }
@@ -169,13 +171,7 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     char test_path[FILENAME_MAX];
     FileMap fm;
     dyn_array_for(j, l->libpaths) {
-        int len = snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
-        FOR_N(k, strlen(l->libpaths[j]), len) {
-            if (test_path[k] >= 'A' && test_path[k] <= 'Z') {
-                test_path[k] -= 'A' - 'a';
-            }
-        }
-
+        snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
         fm = open_file_map(test_path);
         if (fm.data != NULL) {
             break;
@@ -187,24 +183,18 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     if (test_path[0] == 0) {
         fprintf(stderr, "cuiklink: could not find library: %s\n", file_name);
         dyn_array_for(j, l->libpaths) {
-            int len = snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
-            FOR_N(k, strlen(l->libpaths[j]), len) {
-                if (test_path[k] >= 'A' && test_path[k] <= 'Z') {
-                    test_path[k] -= 'A' - 'a';
-                }
-            }
-
+            snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
             fprintf(stderr, "  searched at %s\n", test_path);
         }
         return;
     }
 
-    CUIK_TIMED_BLOCK("load") {
+    /* CUIK_TIMED_BLOCK("load") {
         volatile const uint8_t* buf = fm.data;
         for (size_t i = 0; i < fm.size; i += 4096) {
             buf[i];
         }
-    }
+    } */
 
     size_t newlen = strlen(test_path);
     char* newstr = linker_newstr(newlen, test_path);
@@ -308,14 +298,14 @@ void tb_linker_associate(TB_Linker* l, TB_LinkerSectionPiece* a, TB_LinkerSectio
 
 TB_LinkerSection* tb_linker_find_section(TB_Linker* l, const char* name) {
     TB_Slice str = { (const uint8_t*) name, strlen(name) };
-    return nbhs_get(&l->sections, &str);
+    return namehs_get(&l->sections, &str);
 }
 
 TB_LinkerSection* tb_linker_find_or_create_section(TB_Linker* l, size_t name_len, const char* name, uint32_t flags) {
     TB_LinkerSection* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSection));
     *s = (TB_LinkerSection){ .name = { (const uint8_t*) name, name_len }, .flags = flags };
 
-    TB_LinkerSection* k = nbhs_intern(&l->sections, s);
+    TB_LinkerSection* k = namehs_intern(&l->sections, s);
     if (s != k) {
         tb_arena_free(&linker_perm_arena, s, sizeof(TB_LinkerSymbol));
         return k;
@@ -369,12 +359,12 @@ void tb_linker_merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_Link
 }
 
 TB_LinkerSymbol* tb_linker_find_symbol(TB_Linker* l, TB_Slice name) {
-    return nbhs_get(&l->symbols, &name);
+    return namehs_get(&l->symbols, &name);
 }
 
 TB_LinkerSymbol* tb_linker_find_symbol2(TB_Linker* l, const char* name) {
     TB_Slice str = { (const uint8_t*) name, strlen(name) };
-    return nbhs_get(&l->symbols, &str);
+    return namehs_get(&l->symbols, &str);
 }
 
 TB_LinkerSymbol* tb_linker_import_symbol(TB_Linker* l, TB_Slice name) {
@@ -445,10 +435,18 @@ TB_LinkerSymbol* tb_linker_symbol_find(TB_LinkerSymbol* sym) {
     return sym;
 }
 
-void tb_linker_lazy_resolve(TB_Linker* l, TB_Slice name, TB_LinkerObject* obj) {
+void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject* obj) {
     bool expected = false;
     if (atomic_compare_exchange_strong(&obj->loaded, &expected, true)) {
-        // printf("Lazy referenced at %.*s (from %.*s)\n", (int) name.length, name.data, (int) obj->name.length, obj->name.data);
+        size_t slash = 0;
+        FOR_REV_N(i, 0, obj->name.length) {
+            if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
+                slash = i + 1;
+                break;
+            }
+        }
+
+        // printf("Loaded %.*s for %.*s\n", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
 
         if (l->jobs.pool != NULL) {
             l->jobs.count += 1;
@@ -460,20 +458,20 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_Slice name, TB_LinkerObject* obj) {
 }
 
 TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
+    // printf("%.*s    %"PRIx32"\n", (int) sym->name.length, sym->name.data, tb__murmur3_32(sym->name.data, sym->name.length) & 65535);
+
     // insert into global symbol table
-    TB_LinkerSymbol* old2 = nbhs_intern(&l->symbols, sym);
+    TB_LinkerSymbol* old2 = namehs_intern(&l->symbols, sym);
     TB_LinkerSymbol* old = tb_linker_symbol_find(old2);
     if (sym != old) {
         if (old->tag == TB_LINKER_SYMBOL_LAZY && sym->tag == TB_LINKER_SYMBOL_LAZY) {
-            // resolve both, go the old fashioned way
-            tb_linker_lazy_resolve(l, old->name, old->lazy.obj);
-            tb_linker_lazy_resolve(l, sym->name, sym->lazy.obj);
+            // this doesn't force a resolution
             sym = old;
         } else if (old->tag == TB_LINKER_SYMBOL_LAZY || sym->tag == TB_LINKER_SYMBOL_LAZY) {
             if (old->tag == TB_LINKER_SYMBOL_UNKNOWN) {
-                tb_linker_lazy_resolve(l, sym->name, sym->lazy.obj);
+                tb_linker_lazy_resolve(l, sym, sym->lazy.obj);
             } else if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN) {
-                tb_linker_lazy_resolve(l, old->name, old->lazy.obj);
+                tb_linker_lazy_resolve(l, old, old->lazy.obj);
             }
 
             // if we're requesting this symbol and it's lazy, load it :p
@@ -673,7 +671,7 @@ static int compare_linker_sections(const void* a, const void* b) {
 }
 
 DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
-    nbhs_resize_barrier(&l->unresolved_symbols);
+    namehs_resize_barrier(&l->unresolved_symbols);
     if (nbhs_count(&l->unresolved_symbols) > 0) {
         nbhs_for(e, &l->unresolved_symbols) {
             TB_Slice* sym_name = *e;
@@ -719,7 +717,6 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
             #endif
         }
 
-        __debugbreak();
         return NULL;
     }
 
@@ -884,7 +881,7 @@ bool tb_linker_push_piece(TB_Linker* l, TB_LinkerSectionPiece* p) {
 static TB_LinkerSymbol* resolve_external(TB_Linker* l, TB_External* ext) {
     TB_LinkerSymbol* sym = tb_linker_symbol_find(tb_linker_find_symbol2(l, ext->super.name));
     if (sym == NULL || sym->tag == TB_LINKER_SYMBOL_UNKNOWN) {
-        nbhs_intern(&l->unresolved_symbols, &sym->name);
+        namehs_intern(&l->unresolved_symbols, &sym->name);
     } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
         sym->thunk->flags |= TB_LINKER_SYMBOL_USED;
     }
@@ -963,7 +960,7 @@ void tb_linker_mark_live(TB_Linker* l) {
                     // we could make this the leader to path compress
                     sym = alt;
                 } else {
-                    nbhs_intern(&l->unresolved_symbols, &sym->name);
+                    namehs_intern(&l->unresolved_symbols, &sym->name);
                 }
             }
 

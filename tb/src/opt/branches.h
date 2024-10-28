@@ -471,7 +471,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     // control just flows through
     l->elems[0] = latuni_get(f, n->inputs[0]);
 
-    Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
+    Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
     if (k != l) { tb_arena_free(arena, l, size); }
     return k;
 }

@@ -247,13 +247,14 @@ typedef struct TB_Linker {
 
     TB_LinkerVtbl vtbl;
 
+    // namehs
     NBHS symbols;
     NBHS sections;
     NBHS imports;
 
     // sometimes people ask to import
     // the same libs a bunch of times.
-    NBHS libs;
+    NBHS libs; // strhs
 
     NBHS unresolved_symbols;
 
@@ -295,7 +296,7 @@ void tb_linker_associate(TB_Linker* l, TB_LinkerSectionPiece* a, TB_LinkerSectio
 size_t tb__get_symbol_pos(TB_Symbol* s);
 
 TB_LinkerSymbol* tb_linker_import_symbol(TB_Linker* l, TB_Slice name);
-void tb_linker_lazy_resolve(TB_Linker* l, TB_Slice name, TB_LinkerObject* obj);
+void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject* obj);
 
 size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail);
 

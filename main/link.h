@@ -9,6 +9,7 @@ int run_link(int argc, const char** argv) {
     cl.toolchain.ctx = cl.toolchain.init();
     cuiklink_apply_toolchain_libs(&cl, false);
 
+    int status = EXIT_SUCCESS;
     CUIK_TIMED_BLOCK("driver") {
         #if CUIK_ALLOW_THREADS
         TPool pool;
@@ -59,7 +60,7 @@ int run_link(int argc, const char** argv) {
 
         if (!tb_linker_export(l, output_name)) {
             cuikperf_region_end();
-            return EXIT_FAILURE;
+            status = EXIT_FAILURE;
         }
 
         #if CUIK_ALLOW_THREADS
@@ -68,5 +69,5 @@ int run_link(int argc, const char** argv) {
     }
 
     cuikperf_stop();
-    return EXIT_SUCCESS;
+    return status;
 }

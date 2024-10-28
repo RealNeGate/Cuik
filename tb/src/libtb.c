@@ -37,8 +37,8 @@ void* tb_jit_stack_create(void);
 
 // Linker
 #include "linker/linker.c"
-#include "linker/pe.c"
-#include "linker/elf.c"
+#include "linker/pe_linker.c"
+#include "linker/elf_linker.c"
 
 // Platform layer
 #if defined(_WIN32)

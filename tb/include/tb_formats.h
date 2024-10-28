@@ -123,6 +123,7 @@ typedef struct {
 
     size_t symbol_count;
     uint16_t* symbols;
+    char* symbol_strtab;
 
     TB_Slice strtbl;
 } TB_ArchiveFileParser;

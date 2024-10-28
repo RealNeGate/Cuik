@@ -28,7 +28,7 @@ static Lattice I64_IN_THE_SKY    = { LATTICE_INT, ._int = { INT64_MIN, INT64_MAX
 
 static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt);
 
-static uint32_t lattice_hash(const void* a) {
+static uint32_t latticehs_hash(const void* a) {
     const Lattice* l = a;
     uint64_t h = l->tag + 1000;
     switch (l->tag) {
@@ -71,7 +71,7 @@ static uint32_t lattice_hash(const void* a) {
     return (h * 11400714819323198485llu) >> 32llu;
 }
 
-static bool lattice_cmp(const void* a, const void* b) {
+static bool latticehs_cmp(const void* a, const void* b) {
     const Lattice *aa = a, *bb = b;
     if (aa->tag != bb->tag) { return false; }
 
@@ -100,6 +100,9 @@ static bool lattice_cmp(const void* a, const void* b) {
     }
 }
 
+#define NBHS_FN(n) latticehs_ ## n
+#include <nbhs.h>
+
 static void* lattice_hs_alloc(size_t size) {
     void* ptr = tb_platform_heap_alloc(size);
     memset(ptr, 0, size);
@@ -120,7 +123,7 @@ static Lattice* lattice_intern(TB_Function* f, Lattice l) {
     Lattice* k = tb_arena_alloc(arena, sizeof(Lattice));
     memcpy(k, &l, sizeof(l));
 
-    Lattice* interned = nbhs_intern(&m->lattice_elements, k);
+    Lattice* interned = latticehs_intern(&m->lattice_elements, k);
     if (interned != k) {
         // fast unwind, we finna use the old val
         tb_arena_free(arena, k, sizeof(Lattice));
@@ -129,30 +132,30 @@ static Lattice* lattice_intern(TB_Function* f, Lattice l) {
 }
 
 void tb__lattice_init(TB_Module* m) {
-    m->lattice_elements = nbhs_alloc(256, lattice_hs_alloc, lattice_hs_free, lattice_cmp, lattice_hash);
+    m->lattice_elements = nbhs_alloc(256, lattice_hs_alloc, lattice_hs_free);
 
-    nbhs_raw_insert(&m->lattice_elements, &BOT_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &TOP_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &LIVE_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &DEAD_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &NULL_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &XNULL_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &FLT32_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &FLT64_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &NAN32_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &NAN64_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &XNAN32_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &XNAN64_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &MEM_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &ANYPTR_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &ALLPTR_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &FALSE_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &TRUE_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &BOOL_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &I8_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &I16_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &I32_IN_THE_SKY);
-    nbhs_raw_insert(&m->lattice_elements, &I64_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &BOT_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &TOP_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &LIVE_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &DEAD_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &NULL_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &XNULL_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &FLT32_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &FLT64_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &NAN32_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &NAN64_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &XNAN32_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &XNAN64_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &MEM_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &ANYPTR_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &ALLPTR_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &FALSE_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &TRUE_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &BOOL_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &I8_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &I16_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &I32_IN_THE_SKY);
+    latticehs_raw_insert(&m->lattice_elements, &I64_IN_THE_SKY);
 }
 
 static bool lattice_is_const(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
@@ -245,7 +248,7 @@ static Lattice* lattice_branch_goto(TB_Function* f, int succ_count, int taken) {
         l->elems[i] = i == taken ? &LIVE_IN_THE_SKY : &DEAD_IN_THE_SKY;
     }
 
-    Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
+    Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
     if (k != l) { tb_arena_free(arena, l, size); }
     return k;
 }
@@ -269,7 +272,7 @@ static Lattice* lattice_tuple_from_node(TB_Function* f, TB_Node* n) {
         l->elems[index] = lattice_from_dt(f, USERN(u)->dt);
     }
 
-    Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
+    Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
     if (k != l) { tb_arena_free(arena, l, size); }
     return k;
 }
@@ -390,7 +393,7 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
                 l->elems[i] = lattice_dual(f, type->elems[i]);
             }
 
-            Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
+            Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
             if (k != l) { tb_arena_free(arena, l, size); }
             return k;
         }
@@ -487,7 +490,7 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
                 l->elems[i] = lattice_meet(f, a->elems[i], b->elems[i]);
             }
 
-            Lattice* k = nbhs_intern(&f->super.module->lattice_elements, l);
+            Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
             if (k != l) { tb_arena_free(arena, l, size); }
             return k;
         }

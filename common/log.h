@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <time.h>
 
 #define TB_ENABLE_LOG 1
@@ -20,7 +21,7 @@ typedef struct {
     va_list ap;
     const char *fmt;
     const char *file;
-    struct tm *time;
+    uint64_t time;
     void *udata;
     int tid;
     int line;

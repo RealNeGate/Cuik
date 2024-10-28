@@ -107,6 +107,8 @@ TB_ObjectReloc tb_coff_parse_reloc(const COFF_ImageReloc* relocs, size_t i);
 // how many symbols does this one symbol take up (basically 1 + aux symbols).
 // returns 0 if error.
 size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym);
+// will consider all non-externals as "unknown"
+size_t tb_coff_skim_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym);
 
 #endif // TB_COFF_H
 
@@ -189,6 +191,51 @@ bool tb_coff_parse_init(TB_COFF_Parser* restrict parser) {
     return true;
 }
 
+static int find_char(TB_Slice name, char ch) {
+    // 8 byte chunks
+    uint64_t* name_u64 = (uint64_t*) name.data;
+
+    uint64_t char_mask = (~(uint64_t)0) / 255 * (uint64_t)(ch);
+    size_t j = 0;
+    for (; j < (name.length/8); j++) {
+        uint64_t x = name_u64[j] ^ char_mask;
+        x = ((x - 0x0101010101010101ull) & ~x & 0x8080808080808080ull);
+
+        if (x) {
+            return j*8 + ((__builtin_ffsll(x) / 8) - 1);
+        }
+    }
+
+    // final chunk
+    if (name.length % 8) {
+        uint64_t mask = UINT64_MAX >> (64 - ((name.length % 8)*8));
+        uint64_t x = (name_u64[j] & mask) ^ char_mask;
+        x = ((x - 0x0101010101010101ull) & ~x & 0x8080808080808080ull);
+
+        if (x) {
+            return j*8 + ((__builtin_ffsll(x) / 8) - 1);
+        }
+    }
+
+    return name.length;
+}
+
+static int ideally_fast_strlen(const char* name) {
+    // 8 byte chunks
+    uint64_t* name_u64 = (uint64_t*) name;
+    uint64_t char_mask = (~(uint64_t)0) / 255 * (uint64_t)(0);
+    for (size_t j = 0;; j++) {
+        uint64_t x = name_u64[j] ^ char_mask;
+        x = ((x - 0x0101010101010101ull) & ~x & 0x8080808080808080ull);
+
+        if (x) {
+            size_t len = j*8 + ((__builtin_ffsll(x) / 8) - 1);
+            assert(len == strlen(name));
+            return len;
+        }
+    }
+}
+
 static long long tb__parse_decimal_int(size_t n, const char* str) {
     const char* end = &str[n];
 
@@ -224,10 +271,10 @@ bool tb_coff_parse_section(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectS
         }
 
         const uint8_t* data = &parser->string_table.data[offset];
-        out_sec->name = (TB_Slice){ data, strlen((const char*) data) };
+        out_sec->name = (TB_Slice){ data, ideally_fast_strlen((const char*) data) };
     } else {
         // normal inplace string
-        size_t len = strlen(sec->name);
+        size_t len = ideally_fast_strlen(sec->name);
         out_sec->name = (TB_Slice){ (uint8_t*) sec->name, len };
     }
 
@@ -291,6 +338,53 @@ TB_ObjectSymbolType classify_symbol_type(uint16_t st_class) {
     }
 }
 
+size_t tb_coff_skim_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym) {
+    TB_Slice file = parser->file;
+    size_t symbol_offset = parser->symbol_table + (i * sizeof(COFF_Symbol));
+
+    if (file.length < symbol_offset + sizeof(COFF_Symbol)) {
+        return 0;
+    }
+
+    COFF_Symbol* sym = (COFF_Symbol*) &file.data[symbol_offset];
+    *out_sym = (TB_ObjectSymbol) {
+        .ordinal = i,
+        .type = sym->storage_class == 2 ? TB_OBJECT_SYMBOL_EXTERN : TB_OBJECT_SYMBOL_UNKNOWN,
+        .section_num = sym->section_number,
+        .value = sym->value
+    };
+
+    // Parse string table name stuff
+    if (sym->long_name[0] == 0) {
+        // string table access (read a cstring)
+        // TODO(NeGate): bounds check this
+        const uint8_t* data = &parser->string_table.data[sym->long_name[1]];
+        out_sym->name = (TB_Slice){ data, ideally_fast_strlen((const char*) data) };
+    } else {
+        out_sym->name.data = sym->short_name;
+
+        // normal inplace string
+        uint64_t name;
+        memcpy(&name, sym->short_name, 8);
+
+        static const uint64_t mask = (~(uint64_t)0) / 255 * (uint64_t)(0);
+        uint64_t x = name ^ mask;
+        x = ((x - 0x0101010101010101ull) & ~x & 0x8080808080808080ull);
+        if (x) {
+            out_sym->name.length = ((__builtin_ffsll(x) / 8) - 1);
+        } else {
+            out_sym->name.length = 8;
+        }
+    }
+
+    // TODO(NeGate): Process aux symbols
+    if (sym->aux_symbols_count) {
+        out_sym->extra = &sym[1];
+    }
+
+    return sym->aux_symbols_count + 1;
+}
+
 size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_ObjectSymbol* restrict out_sym) {
     TB_Slice file = parser->file;
     size_t symbol_offset = parser->symbol_table + (i * sizeof(COFF_Symbol));
@@ -312,15 +406,22 @@ size_t tb_coff_parse_symbol(TB_COFF_Parser* restrict parser, size_t i, TB_Object
         // string table access (read a cstring)
         // TODO(NeGate): bounds check this
         const uint8_t* data = &parser->string_table.data[sym->long_name[1]];
-        out_sym->name = (TB_Slice){ data, strlen((const char*) data) };
+        out_sym->name = (TB_Slice){ data, ideally_fast_strlen((const char*) data) };
     } else {
+        out_sym->name.data = sym->short_name;
+
         // normal inplace string
-        size_t len = 1;
-        const char* name = (const char*) sym->short_name;
-        while (len < 8 && name[len] != 0) {
-            len++;
+        uint64_t name;
+        memcpy(&name, sym->short_name, 8);
+
+        static const uint64_t mask = (~(uint64_t)0) / 255 * (uint64_t)(0);
+        uint64_t x = name ^ mask;
+        x = ((x - 0x0101010101010101ull) & ~x & 0x8080808080808080ull);
+        if (x) {
+            out_sym->name.length = ((__builtin_ffsll(x) / 8) - 1);
+        } else {
+            out_sym->name.length = 8;
         }
-        out_sym->name = (TB_Slice){ sym->short_name, len };
     }
 
     // TODO(NeGate): Process aux symbols

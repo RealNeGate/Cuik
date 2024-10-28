@@ -67,6 +67,8 @@ bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser) 
 
         memcpy(&out_parser->symbol_count, &second->contents[4 + out_parser->member_count*sizeof(uint32_t)], sizeof(uint32_t));
         out_parser->symbols = (uint16_t*) &second->contents[8 + out_parser->member_count*sizeof(uint32_t)];
+
+        out_parser->symbol_strtab = (char*) &out_parser->symbols[out_parser->symbol_count];
     }
 
     // Advance
@@ -95,7 +97,7 @@ bool tb_archive_member_is_short(TB_ArchiveFileParser* restrict parser, size_t i)
     COFF_ArchiveMemberHeader* restrict sym = (COFF_ArchiveMemberHeader*) &file.data[parser->members[i]];
     uint32_t short_form_header = *(uint32_t*)sym->contents;
 
-    return (short_form_header != 0xFFFF0000);
+    return (short_form_header == 0xFFFF0000);
 }
 
 TB_ArchiveEntry tb_archive_member_get(TB_ArchiveFileParser* restrict parser, size_t i) {
