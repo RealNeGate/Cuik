@@ -7,8 +7,9 @@ typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 // basically an object file
 typedef struct TB_LinkerObject TB_LinkerObject;
 struct TB_LinkerObject {
-    TB_Linker* linker;
     TB_Slice name;
+
+    TB_Linker* linker;
     TB_Slice content;
     uint64_t time;
 
@@ -251,6 +252,8 @@ typedef struct TB_Linker {
     NBHS symbols;
     NBHS sections;
     NBHS imports;
+    // tracking the linker objects
+    NBHS objects; // -> TB_LinkerObject*
 
     // sometimes people ask to import
     // the same libs a bunch of times.

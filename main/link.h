@@ -13,17 +13,13 @@ int run_link(int argc, const char** argv) {
     CUIK_TIMED_BLOCK("driver") {
         #if CUIK_ALLOW_THREADS
         TPool pool;
-        tpool_init(&pool, 1);
+        tpool_init(&pool, 6);
         TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64, &pool);
         #else
         TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64, NULL);
         #endif
 
         const char* output_name = "a.exe";
-
-        tb_linker_add_libpath(l, "/home/yasser/AA/ucrt/x64");
-        tb_linker_add_libpath(l, "/home/yasser/AA/um/x64");
-        tb_linker_add_libpath(l, "/home/yasser/AA/vs_lib/x64");
 
         dyn_array_for(i, cl.libpaths) {
             tb_linker_add_libpath(l, cl.libpaths[i]);

@@ -17,6 +17,15 @@
 
 enum { IMP_PREFIX_LEN = sizeof("__imp_") - 1 };
 
+typedef struct {
+    TB_Linker* linker;
+    TB_LinkerObject* lib;
+    TB_ArchiveFileParser* parser;
+    size_t symbol_i;
+    size_t string_i;
+    size_t count;
+} LazyImportTask;
+
 const static uint8_t dos_stub[] = {
     // header
     0x4d,0x5a,0x78,0x00,0x01,0x00,0x00,0x00,0x04,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
@@ -131,86 +140,6 @@ static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* e
     }
 }
 
-// If any of the exported symbols in this object are referenced, we'll load the rest. This avoids
-// loading a shit load of unnecessary object files.
-void pe_append_lazy(TPool* pool, TB_LinkerObject* obj) {
-    size_t slash = 0;
-    FOR_REV_N(i, 0, obj->name.length) {
-        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
-            slash = i + 1;
-            break;
-        }
-    }
-
-    TB_ASSERT(obj->parent != NULL);
-    cuikperf_region_start2("lazy", obj->name.length - slash, (const char*) obj->name.data + slash);
-    // printf("Lazy: %.*s\n", (int) (obj->name.length - slash), (const char*) obj->name.data + slash);
-
-    if (!linker_thread_init) {
-        linker_thread_init = true;
-        tb_arena_create(&linker_perm_arena, "LinkerPerm");
-        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
-    }
-
-    TB_Linker* l = obj->linker;
-    TB_Slice name = obj->name;
-    TB_Slice content = obj->content;
-
-    TB_COFF_Parser parser = { name, content };
-    tb_coff_parse_init(&parser);
-
-    CUIK_TIMED_BLOCK("apply symbols") {
-        size_t i = 0;
-        while (i < parser.symbol_count) {
-            TB_ObjectSymbol sym;
-            i += tb_coff_skim_symbol(&parser, i, &sym);
-
-            /* if (sym.name.length == sizeof("_tls_index")-1 && memcmp(sym.name.data, "_tls_index", sym.name.length) == 0) {
-                __debugbreak();
-            } */
-
-            // only define the exported symbols (if they're reachable the rest of the object is)
-            if (sym.section_num > 0 && sym.type == TB_OBJECT_SYMBOL_EXTERN) {
-                // ignored symbols (idk what they do but LLD ignores them)
-                if (sym.name.length == 8 && (memcmp(sym.name.data, "@feat.00", 8) == 0 || memcmp(sym.name.data, "@comp.id", 8) == 0)) {
-                    continue;
-                }
-
-                TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
-                *s = (TB_LinkerSymbol){
-                    .name   = sym.name,
-                    .tag    = TB_LINKER_SYMBOL_LAZY,
-                    .lazy   = { obj },
-                };
-
-                TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
-                if (new_s != s) {
-                    tb_arena_free(&linker_perm_arena, s, sizeof(TB_LinkerSymbol));
-                    s = new_s;
-                }
-            }
-        }
-    }
-
-    CUIK_TIMED_BLOCK("skim sections") {
-        FOR_N(i, 0, parser.section_count) {
-            TB_ObjectSection s;
-            tb_coff_parse_section(&parser, i, &s);
-
-            if (s.name.length == sizeof(".drectve")-1 && memcmp(s.name.data, ".drectve", s.name.length) == 0 && s.raw_data.length > 3) {
-                parse_directives(l, s.raw_data.data, s.raw_data.data + s.raw_data.length);
-                break;
-            }
-        }
-    }
-
-    /* if (l->jobs.pool != NULL) {
-        l->jobs.done += 1;
-        futex_signal(&l->jobs.done);
-    } */
-    cuikperf_region_end();
-}
-
 void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
     size_t slash = 0;
     FOR_REV_N(i, 0, obj->name.length) {
@@ -221,7 +150,7 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
     }
 
     cuikperf_region_start2("object", obj->name.length - slash, (const char*) obj->name.data + slash);
-    // printf("Object: %.*s\n", (int) (obj->name.length - slash), (const char*) obj->name.data + slash);
+    // printf("tb-link: Reading (%.*s):\n", (int) (obj->name.length - slash), (const char*) obj->name.data + slash);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -261,10 +190,8 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
 
             size_t drectve_len = sizeof(".drectve")-1;
             if (s->name.length == drectve_len && memcmp(s->name.data, ".drectve", drectve_len) == 0) {
-                // if we were lazy and now "loaded" then we don't re-parse the directives
-                if (!obj->loaded) {
-                    parse_directives(l, s->raw_data.data, s->raw_data.data + s->raw_data.length);
-                }
+                // printf("tb-link: Directives: %.*s\n", (int) s->raw_data.length, s->raw_data.data);
+                parse_directives(l, s->raw_data.data, s->raw_data.data + s->raw_data.length);
                 continue;
             }
 
@@ -436,6 +363,64 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
     cuikperf_region_end();
 }
 
+static void lazy_import_task(TPool* pool, LazyImportTask* task) {
+    cuikperf_region_start("lazy parse", NULL);
+
+    if (!linker_thread_init) {
+        linker_thread_init = true;
+        tb_arena_create(&linker_perm_arena, "LinkerPerm");
+        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
+    }
+
+    TB_ArchiveFileParser* parser = task->parser;
+    TB_LinkerObject* lib = task->lib;
+    TB_Linker* l = task->linker;
+    uint64_t t = lib->time;
+
+    char* strtab = parser->symbol_strtab;
+    size_t j = task->string_i;
+    FOR_N(i, task->symbol_i, task->symbol_i + task->count) {
+        uint16_t offset_index = parser->symbols[i] - 1;
+
+        const char* name = &strtab[j];
+        size_t len = ideally_fast_strlen(name);
+
+        TB_ArchiveEntry e = tb_archive_member_get(parser, offset_index);
+
+        // We don't *really* care about this info beyond nicer errors (use an arena tho)
+        TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
+        *obj_file = (TB_LinkerObject){ e.name, l, e.content, t + offset_index*65536, lib };
+
+        TB_LinkerObject* k = namehs_intern(&l->objects, obj_file);
+        if (k != obj_file) {
+            tb_arena_free(&linker_perm_arena, k, sizeof(TB_LinkerObject));
+            obj_file = k;
+        }
+
+        // printf("%s : %u : %#x (%.*s)\n", name, offset_index, parser->members[offset_index], (int) e.name.length, e.name.data);
+        TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+        *s = (TB_LinkerSymbol){
+            .name   = { (const uint8_t*) name, len },
+            .tag    = TB_LINKER_SYMBOL_LAZY,
+            .lazy   = { obj_file },
+        };
+
+        TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
+        if (new_s != s) {
+            tb_arena_free(&linker_perm_arena, s, sizeof(TB_LinkerSymbol));
+            s = new_s;
+        }
+        j += len + 1;
+    }
+
+    if (l->jobs.pool != NULL) {
+        l->jobs.done += 1;
+        futex_signal(&l->jobs.done);
+    }
+
+    cuikperf_region_end();
+}
+
 static void pe_append_library(TPool* pool, TB_LinkerObject* lib) {
     size_t slash = 0;
     FOR_REV_N(i, 0, lib->name.length) {
@@ -463,45 +448,77 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* lib) {
         return;
     }
 
-    CUIK_TIMED_BLOCK("symbols") {
-        printf("SYMBOLS (%zu count)\n", ar_parser.symbol_count);
-
+    // populate lazy symbols, distribute work to other threads... because we can :)
+    CUIK_TIMED_BLOCK("lazy") {
+        uint64_t t = lib->time;
         char* strtab = ar_parser.symbol_strtab;
-        size_t i = 0, j = 0;
-        while (i < ar_parser.symbol_count) {
-            uint16_t offset_index = ar_parser.symbols[i] - 1;
 
-            size_t len = ideally_fast_strlen(&strtab[j]);
-            printf("%s : %u : %#x\n", &strtab[j], offset_index, ar_parser.members[offset_index]);
+        if (l->jobs.pool != NULL) {
+            TB_ArchiveFileParser* p = tb_arena_alloc(&linker_perm_arena, sizeof(TB_ArchiveFileParser));
+            *p = ar_parser;
 
-            i += 1, j += len + 1;
-        }
-    }
+            size_t i = 0, j = 0, start_i = 0, start_j = 0;
+            while (i < ar_parser.symbol_count) {
+                uint16_t offset_index = ar_parser.symbols[i] - 1;
 
-    CUIK_TIMED_BLOCK("objects") {
-        // we can dispatch these object parsing jobs into separate threads
-        uint64_t time = lib->time;
-        int obj_file_count = 0;
-        FOR_N(i, 0, ar_parser.member_count) {
-            if (tb_archive_member_is_short(&ar_parser, i)) { continue; }
-            TB_ArchiveEntry e = tb_archive_member_get(&ar_parser, i);
+                const char* name = &strtab[j];
+                size_t len = ideally_fast_strlen(name);
 
-            // We don't *really* care about this info beyond nicer errors (use an arena tho)
-            TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
-            *obj_file = (TB_LinkerObject){ l, e.name, e.content, time + obj_file_count*65536, lib };
-            obj_file_count += 1;
+                // dispatch lazy syms
+                if (i - start_i >= 249) {
+                    l->jobs.count += 1;
+                    LazyImportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(LazyImportTask));
+                    *task = (LazyImportTask){ l, lib, p, start_i, start_j, (i - start_i) + 1 };
+                    tpool_add_task(l->jobs.pool, (tpool_task_proc*) lazy_import_task, task);
 
-            // l->jobs.count += 1;
-            pe_append_lazy(NULL, obj_file);
+                    start_i = i, start_j = j;
+                }
 
-            /* if (l->jobs.pool != NULL) {
-                // printf("OBJECT: %.*s\n", (int) e.name.length, e.name.data);
-                TB_ASSERT(obj_file->parent != NULL);
+                i += 1, j += len + 1;
+            }
+
+            // finish up the remaining work on this task
+            if (i != start_i) {
                 l->jobs.count += 1;
-                tpool_add_task(l->jobs.pool, (tpool_task_proc*) pe_append_lazy, obj_file);
-            } else {
-                pe_append_lazy(NULL, obj_file);
-            } */
+                LazyImportTask t = { l, lib, p, start_i, start_j, i - start_i };
+                lazy_import_task(NULL, &t);
+            }
+        } else {
+            char* strtab = ar_parser.symbol_strtab;
+            size_t i = 0, j = 0;
+            while (i < ar_parser.symbol_count) {
+                uint16_t offset_index = ar_parser.symbols[i] - 1;
+
+                const char* name = &strtab[j];
+                size_t len = ideally_fast_strlen(name);
+
+                TB_ArchiveEntry e = tb_archive_member_get(&ar_parser, offset_index);
+
+                // We don't *really* care about this info beyond nicer errors (use an arena tho)
+                TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
+                *obj_file = (TB_LinkerObject){ e.name, l, e.content, t + offset_index*65536, lib };
+
+                TB_LinkerObject* k = namehs_intern(&l->objects, obj_file);
+                if (k != obj_file) {
+                    tb_arena_free(&linker_perm_arena, k, sizeof(TB_LinkerObject));
+                    obj_file = k;
+                }
+
+                // printf("%s : %u : %#x (%.*s)\n", name, offset_index, ar_parser.members[offset_index], (int) e.name.length, e.name.data);
+                TB_LinkerSymbol* s = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+                *s = (TB_LinkerSymbol){
+                    .name   = { (const uint8_t*) name, len },
+                    .tag    = TB_LINKER_SYMBOL_LAZY,
+                    .lazy   = { obj_file },
+                };
+
+                TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
+                if (new_s != s) {
+                    tb_arena_free(&linker_perm_arena, s, sizeof(TB_LinkerSymbol));
+                    s = new_s;
+                }
+                i += 1, j += len + 1;
+            }
         }
     }
 
@@ -604,7 +621,7 @@ static void parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, 
     out_reloc->src_offset = rel.virtual_address;
     out_reloc->type       = rel.type;
     out_reloc->addend     = rel.addend;
-    out_reloc->target     = tb_linker_symbol_find(p->symbol_map[rel.symbol_index]);
+    out_reloc->target     = p->symbol_map[rel.symbol_index];
 }
 
 // returns the two new section pieces for the IAT and ILT
@@ -795,7 +812,13 @@ static void pe_init(TB_Linker* l) {
     symbol("__guard_eh_cont_count");
     symbol("__guard_eh_cont_table");
     #undef symbol
+
+    // mark entrypoint as something that's accessed, so the lazy symbols get resolved.
+    tb_linker_import_symbol(l, (TB_Slice){ (const uint8_t*) l->entrypoint, strlen(l->entrypoint) });
+    tb_linker_import_symbol(l, (TB_Slice){ (const uint8_t*) "_load_config_used", sizeof("_load_config_used")-1 });
+    tb_linker_import_symbol(l, (TB_Slice){ (const uint8_t*) "_tls_used", sizeof("_tls_used")-1 });
 }
+
 static DynArray(PE_BaseReloc) find_base_relocs(TB_Linker* l, DynArray(TB_LinkerSection*)* inout_sections) {
     DynArray(TB_LinkerSection*) sections = *inout_sections;
 
@@ -849,22 +872,12 @@ static DynArray(PE_BaseReloc) find_base_relocs(TB_Linker* l, DynArray(TB_LinkerS
 static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
 
-    // mark entrypoint as something that's accessed, so the lazy symbols get resolved.
-    tb_linker_import_symbol(l, (TB_Slice){ (const uint8_t*) l->entrypoint, strlen(l->entrypoint) });
-    tb_linker_import_symbol(l, (TB_Slice){ (const uint8_t*) "_load_config_used", sizeof("_load_config_used")-1 });
-    tb_linker_import_symbol(l, (TB_Slice){ (const uint8_t*) "_tls_used", sizeof("_tls_used")-1 });
-
     if (l->jobs.pool != NULL) {
         // finish up parsing all the object file tasks
         int32_t old;
         while (old = l->jobs.done, old != l->jobs.count) {
             futex_wait(&l->jobs.done, old);
         }
-    }
-
-    if (1) {
-        cuikperf_region_end();
-        return true;
     }
 
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {

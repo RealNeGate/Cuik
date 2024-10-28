@@ -93,6 +93,7 @@ TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
     l->sections = nbhs_alloc(16,  muh_hs_alloc, muh_hs_free);
     l->imports  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free);
     l->libs     = nbhs_alloc(32,  muh_hs_alloc, muh_hs_free);
+    l->objects  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free);
     l->unresolved_symbols = nbhs_alloc(16, muh_hs_alloc, muh_hs_free);
 
     switch (exe) {
@@ -129,8 +130,8 @@ void tb_linker_append_object(TB_Linker* l, const char* file_name) {
         FileMap fm = open_file_map(file_name);
         TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
         *obj_file = (TB_LinkerObject){
-            l,
             { (const uint8_t*) file_name, strlen(file_name) },
+            l,
             { fm.data, fm.size },
             atomic_fetch_add(&l->time, 0x100000000),
         };
@@ -201,8 +202,8 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
 
     TB_LinkerObject* lib_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
     *lib_file = (TB_LinkerObject){
-        l,
         { (const uint8_t*) newstr, newlen },
+        l,
         { fm.data, fm.size },
         atomic_fetch_add(&l->time, 0x100000000),
     };
@@ -409,12 +410,14 @@ void tb_linker_symbol_weak(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerSymbol* 
     }
 }
 
+// leader can't be in the symbol table btw
 void tb_linker_symbol_union(TB_Linker* l, TB_LinkerSymbol* leader, TB_LinkerSymbol* other_guy) {
+    // insert link above the "other_guy"
     TB_LinkerSymbol* old = NULL;
-    while (!atomic_compare_exchange_strong(&other_guy->parent, &old, leader)) {
-        // we failed to make leader the real leader... ok let's walk up the chain and try again
-        other_guy = old, old = NULL;
-    }
+    do {
+        old = atomic_load_explicit(&other_guy->parent, memory_order_relaxed);
+        atomic_store_explicit(&leader->parent, old, memory_order_release);
+    } while (!atomic_compare_exchange_strong(&other_guy->parent, &old, leader));
 
     // migrate the weak alternative up
     TB_LinkerSymbol* weak_alt = atomic_load_explicit(&other_guy->weak_alt, memory_order_acquire);
@@ -446,7 +449,7 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject*
             }
         }
 
-        // printf("Loaded %.*s for %.*s\n", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
+        // printf("tb-link: Loaded %.*s for %.*s\n", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
 
         if (l->jobs.pool != NULL) {
             l->jobs.count += 1;
@@ -825,7 +828,7 @@ size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* ou
         if (dst_pos + rel_size > tail) { break; }
 
         // by this point, we've fully resolved the relocation
-        TB_LinkerSymbol* sym = rel.target;
+        TB_LinkerSymbol* sym = tb_linker_symbol_find(rel.target);
         if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN || sym->tag == TB_LINKER_SYMBOL_LAZY) {
             TB_LinkerSymbol* alt = tb_linker_symbol_find(atomic_load_explicit(&sym->weak_alt, memory_order_relaxed));
             if (alt && alt->tag != TB_LINKER_SYMBOL_UNKNOWN && alt->tag != TB_LINKER_SYMBOL_LAZY) {
@@ -953,8 +956,12 @@ void tb_linker_mark_live(TB_Linker* l) {
             TB_LinkerReloc rel;
             l->vtbl.parse_reloc(l, p, i, &rel);
 
-            TB_LinkerSymbol* sym = rel.target;
+            TB_LinkerSymbol* sym = tb_linker_symbol_find(rel.target);
             if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN || sym->tag == TB_LINKER_SYMBOL_LAZY) {
+                if (sym->name.length == sizeof("__scrt_is_ucrt_dll_in_use")-1 && memcmp(sym->name.data, "__scrt_is_ucrt_dll_in_use", sym->name.length) == 0) {
+                    __debugbreak();
+                }
+
                 TB_LinkerSymbol* alt = tb_linker_symbol_find(atomic_load_explicit(&sym->weak_alt, memory_order_relaxed));
                 if (alt && alt->tag != TB_LINKER_SYMBOL_UNKNOWN && alt->tag != TB_LINKER_SYMBOL_LAZY) {
                     // we could make this the leader to path compress
