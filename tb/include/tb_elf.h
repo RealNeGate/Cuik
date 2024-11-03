@@ -88,7 +88,7 @@ typedef enum {
 #define TB_ELF64_STT_FUNC    2
 #define TB_ELF64_STT_SECTION 3
 
-// ST_INFO
+// ST_BIND
 #define TB_ELF64_STB_LOCAL  0
 #define TB_ELF64_STB_GLOBAL 1
 #define TB_ELF64_STB_WEAK   2

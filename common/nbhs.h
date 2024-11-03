@@ -188,8 +188,6 @@ static void* NBHS_FN(raw_intern)(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev,
             }
 
             i = (i + 1) & mask;
-            // uint32_t step = (h >> (32 - exp)) | 1;
-            // i = (i + step) & mask;
         }
 
         // if the table changed before our eyes, it means someone resized which sucks

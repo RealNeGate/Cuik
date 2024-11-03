@@ -1309,7 +1309,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
             if (n->inputs[0]->type == TB_ROOT) {
                 const struct ParamDesc* params = &param_descs[ctx->abi_index];
-                assert(i >= 2);
+                TB_ASSERT(i >= 2);
                 if (i == 2) {
                     return intern_regmask(ctx, REG_CLASS_STK, false, STACK_BASE_REG_NAMES);
                 } else {
@@ -1328,15 +1328,15 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                         return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << params->gprs[param_id]);
                     }
                 }
-            } else if (n->inputs[0]->type == x86_call || n->inputs[0]->type == x86_static_call) {
-                assert(i == 2 || i == 3);
+            } else if (n->inputs[0]->type == x86_call || n->inputs[0]->type == x86_static_call || n->inputs[0]->type == TB_SYSCALL) {
+                TB_ASSERT(i == 2 || i == 3);
                 if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) {
                     if (i >= 2) { return intern_regmask(ctx, REG_CLASS_XMM, false, 1u << (i - 2)); }
                 } else {
                     if (i >= 2) { return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i == 2 ? RAX : RDX)); }
                 }
             } else if (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div) {
-                assert(i < 2);
+                TB_ASSERT(i < 2);
                 return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i ? RDX : RAX));
             } else if (n->inputs[0]->type >= TB_ATOMIC_LOAD && n->inputs[0]->type <= TB_ATOMIC_PTROFF) {
                 return i == 1 && n->users ? ctx->normie_mask[REG_CLASS_GPR] : &TB_REG_EMPTY;
@@ -1624,6 +1624,39 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     ins[j++] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << i);
                 }
             }
+            return &TB_REG_EMPTY;
+        }
+
+        case TB_SYSCALL: {
+            if (ins) {
+                const struct ParamDesc* abi = &param_descs[2];
+                int gprs_used = 0, xmms_used = 0;
+
+                ins[1] = &TB_REG_EMPTY;
+                ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
+
+                int base_stack = ctx->param_count;
+                FOR_N(i, 3, n->input_count) {
+                    int param_num = i - 3;
+
+                    TB_ASSERT(TB_IS_INTEGER_TYPE(n->inputs[i]->dt) || n->inputs[i]->dt.type == TB_TAG_PTR);
+                    TB_ASSERT(gprs_used < abi->gpr_count);
+
+                    ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << abi->gprs[gprs_used]);
+                    gprs_used += 1;
+                }
+
+                size_t j = n->input_count;
+                X86Call* op_extra = TB_NODE_GET_EXTRA(n);
+                for (uint64_t bits = abi->caller_saved_gprs, k = 0; bits; bits >>= 1, k++) {
+                    if (bits & 1) { ins[j++] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << k); }
+                }
+
+                FOR_N(k, 0, abi->caller_saved_xmms) {
+                    ins[j++] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << k);
+                }
+            }
+
             return &TB_REG_EMPTY;
         }
 
@@ -2367,6 +2400,11 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             X86Call* op_extra = TB_NODE_GET_EXTRA(n);
             Val target = op_at(ctx, n->inputs[2]);
             __(CALL, TB_X86_QWORD, &target);
+            break;
+        }
+
+        case TB_SYSCALL: {
+            __(SYSCALL, TB_X86_QWORD);
             break;
         }
 

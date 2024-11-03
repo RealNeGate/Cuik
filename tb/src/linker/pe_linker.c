@@ -1,12 +1,5 @@
-////////////////////////////////
-// PE linker
-////////////////////////////////
-//
-// Too many lazy objects are being resolved rn, that's probably an issue...
-//
 // TODO:
 // * Process COMDAT rules correctly.
-//
 #define NL_STRING_MAP_IMPL
 #include "linker.h"
 #include "../objects/coff.h"
@@ -616,7 +609,7 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* lib) {
     cuikperf_region_end();
 }
 
-static void parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc) {
+static void pe_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc) {
     TB_ObjectReloc rel = tb_coff_parse_reloc(p->relocs, reloc_i);
     out_reloc->src_offset = rel.virtual_address;
     out_reloc->type       = rel.type;
@@ -837,7 +830,7 @@ static DynArray(PE_BaseReloc) find_base_relocs(TB_Linker* l, DynArray(TB_LinkerS
 
             FOR_N(j, 0, p->reloc_count) {
                 TB_LinkerReloc rel;
-                l->vtbl.parse_reloc(l, p, j, &rel);
+                pe_parse_reloc(l, p, j, &rel);
 
                 if (rel.type != TB_OBJECT_RELOC_ADDR64) continue;
 
@@ -881,23 +874,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     }
 
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
-        dyn_array_for(i, info->alternates) {
-            TB_Slice to = info->alternates[i].to;
-            TB_Slice from = info->alternates[i].from;
-
-            TB_LinkerInternStr to_str = tb_linker_intern_string(l, to.length, (const char*) to.data);
-            TB_LinkerInternStr from_str = tb_linker_intern_string(l, from.length, (const char*) from.data);
-
-            TB_LinkerSymbol* old = tb_linker_find_symbol(l, to_str);
-            if (old) {
-                TB_LinkerSymbol* sym = tb_linker_find_symbol(l, from_str);
-                TB_ASSERT(sym->tag == TB_LINKER_SYMBOL_UNKNOWN);
-
-                *sym = *old;
-                sym->name = from_str;
-            }
-        }
-
         dyn_array_for(i, info->merges) {
             NL_Slice to_name = { info->merges[i].to.length, info->merges[i].to.data };
             ptrdiff_t to = nl_map_get(l->sections, to_name);
@@ -988,19 +964,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             virt_addr += align_up(s->size, 4096);
 
             log_debug("Section %.*s: %#x - %#x", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
-        }
-    }
-
-    // printf("Symbol count: %zu\n", nbhs_count(&l->symbols));
-
-    if (0) {
-        printf("RVA        Name\n");
-        nbhs_for(e, &l->symbols) {
-            TB_LinkerSymbol* sym = tb_linker_symbol_find(*e);
-            if (sym->tag == TB_LINKER_SYMBOL_NORMAL && (sym->flags & TB_LINKER_SYMBOL_USED)) {
-                uint64_t rva = tb__get_symbol_rva(l, sym);
-                printf("%#08"PRIx64"   %.*s\n", rva, (int) sym->name.length, sym->name.data);
-            }
         }
     }
 
@@ -1216,37 +1179,15 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     // do the final exporting, we can thread this
     bool result = true;
     CUIK_TIMED_BLOCK("output") {
-        #ifdef _WIN32
-        HANDLE file = CreateFileA(file_name, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-
-        HANDLE mapping = CreateFileMappingA(file, NULL, PAGE_READWRITE, 0, output_size, NULL);
-        if (mapping == NULL) {
-            printf("tblink: could not map file! %s", file_name);
-            continue; // exitting the TIMED_BLOCK... ik it's nasty
-        }
-
-        uint8_t* restrict output = MapViewOfFileEx(mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, output_size, NULL);
-        if (output == NULL) {
-            printf("tblink: could not view mapped file! %s", file_name);
-            continue; // exitting the TIMED_BLOCK... ik it's nasty
-        }
-        #else
-        int fd = open(file_name, O_CREAT | O_RDWR, 0666);
-        if (fd <= 0) {
+        FileMap fm = open_file_map_write(file_name, output_size);
+        if (fm.data == NULL) {
             printf("tblink: could not open file! %s", file_name);
-            continue; // exitting the TIMED_BLOCK... ik it's nasty
+            return false;
         }
-
-        ftruncate(fd, output_size);
-
-        void* output = mmap(NULL, output_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-        if (output == MAP_FAILED) {
-            printf("tblink: could not map file! %s", file_name);
-            continue; // exitting the TIMED_BLOCK... ik it's nasty
-        }
-        #endif
 
         size_t write_pos = 0;
+        uint8_t* output = fm.data;
+
         uint32_t pe_magic = 0x00004550;
         WRITE(dos_stub,    sizeof(dos_stub));
         WRITE(&pe_magic,   sizeof(pe_magic));
@@ -1273,88 +1214,19 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         }
         write_pos = tb__pad_file(output, write_pos, 0x00, 0x200);
 
-        if (l->jobs.pool != NULL) {
-            l->jobs.done = 0;
-            l->jobs.count = 0;
-
-            // each of the pieces can be exported in parallel
-            cuikperf_region_start("submitting", NULL);
-            dyn_array_for(i, sections) {
-                TB_LinkerSectionPiece* p = atomic_load_explicit(&sections[i]->list, memory_order_relaxed);
-
-                // we wanna dispatch tasks as a nice batch so if the accumulated
-                // size goes past like 8k we'll dispatch it
-                TB_LinkerSectionPiece* accum_start = p;
-                size_t accum_size = 0;
-
-                int c = 0;
-                while (p != NULL) {
-                    if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind != PIECE_BSS) {
-                        accum_size += p->size;
-                    }
-
-                    if (accum_size >= 8192) {
-                        ExportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(ExportTask));
-                        *task = (ExportTask){ l, output, accum_start, p };
-                        tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, task);
-                        c += 1;
-
-                        accum_size = p->size;
-                        accum_start = p;
-                    }
-
-                    p = atomic_load_explicit(&p->next, memory_order_relaxed);
-                }
-
-                // push remaining bits
-                if (accum_start != NULL) {
-                    ExportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(ExportTask));
-                    *task = (ExportTask){ l, output, accum_start, NULL };
-                    tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, task);
-                    c += 1;
-                }
-
-                l->jobs.count += c;
-            }
-            cuikperf_region_end();
-
-            // finish up exporting
-            futex_wait_eq(&l->jobs.done, l->jobs.count);
-        } else {
-            dyn_array_for(i, sections) {
-                size_t section_file_offset = sections[i]->offset;
-                size_t section_rva = sections[i]->address;
-
-                TB_LinkerSectionPiece* p = atomic_load_explicit(&sections[i]->list, memory_order_relaxed);
-                while (p != NULL) {
-                    TB_LinkerSectionPiece* next = atomic_load_explicit(&p->next, memory_order_relaxed);
-                    if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind != PIECE_BSS) {
-                        ExportTask task = { l, output, p, next };
-                        tb_linker_export_piece(NULL, &task);
-                    }
-                    p = next;
-                }
-            }
-        }
-
-        #ifdef _WIN32
-        UnmapViewOfFile(output);
-        CloseHandle(mapping);
-        CloseHandle(file);
-        #else
-        munmap(output, output_size);
-        close(fd);
-        #endif
+        tb_linker_export_pieces(l, sections, output);
+        close_file_map(&fm);
     }
 
     cuikperf_region_end();
     return true;
 }
+#undef WRITE
 
 TB_LinkerVtbl tb__linker_pe = {
     .init           = pe_init,
     .append_object  = pe_append_object,
     .append_library = pe_append_library,
-    .parse_reloc    = parse_reloc,
+    .parse_reloc    = pe_parse_reloc,
     .export         = pe_export
 };

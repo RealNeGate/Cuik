@@ -186,6 +186,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         ////////////////////////////////
         // ESCAPE OPS
         ////////////////////////////////
+        // syscall
+        _0F(0x05)        = OP_0ARY,
         // ud2
         _0F(0x0B)        = OP_0ARY,
         // SSE: movu
@@ -784,6 +786,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x60F6: case 0x60F7: return "div";
         case 0x70F6: case 0x70F7: return "idiv";
 
+        case _0F(0x05): return "syscall";
         case 0x84: case 0x85: return "test";
 
         case _0F(0x10): case _0F(0x11): return "mov";

@@ -13,7 +13,7 @@ int run_objdump(int argc, const char** argv) {
         return EXIT_FAILURE;
     }
 
-    FileMap fm = open_file_map(argv[0]);
+    FileMap fm = open_file_map_read(argv[0]);
     if (fm.data == NULL) {
         fprintf(stderr, "\x1b[31merror\x1b[0m: '%s' not found!\n", argv[0]);
         return EXIT_FAILURE;

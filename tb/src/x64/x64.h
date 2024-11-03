@@ -217,7 +217,7 @@ static const char* COND_NAMES[] = {
 #define INST2SSE(op, a, b, dt)    inst2sse(&ctx->emit, op, a, b, dt)
 
 #define GET_MACRO(_0, _1, _2, NAME, ...) NAME
-#define __(mnemonic, dt, ...) GET_MACRO(_0, ##__VA_ARGS__, asm_inst2, asm_inst1, asm_inst0)(e, mnemonic, dt, __VA_ARGS__)
+#define __(mnemonic, dt, ...) GET_MACRO(_0, ##__VA_ARGS__, asm_inst2, asm_inst1, asm_inst0)(e, mnemonic, dt, ## __VA_ARGS__)
 
 typedef enum {
     UNWIND_OP_PUSH_NONVOL = 0, /* info == register number */

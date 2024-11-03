@@ -34,7 +34,7 @@ typedef enum {
 typedef struct TB_LinkerReloc {
     uint32_t src_offset;
     uint16_t type;
-    uint16_t addend;
+    int16_t addend;
     TB_LinkerSymbol* target;
 } TB_LinkerReloc;
 
@@ -334,6 +334,7 @@ void tb_linker_mark_live(TB_Linker* l);
 
 // General linker job
 void tb_linker_export_piece(TPool* pool, ExportTask* task);
+void tb_linker_export_pieces(TB_Linker* l, DynArray(TB_LinkerSection*) sections, uint8_t* output);
 
 // do layouting (requires GC step to complete)
 DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l);

@@ -785,7 +785,6 @@ TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_
     TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 1);
     set_input(f, n, xfer_mem(g, mproj, mem_var), 1);
 
-    add_input_late(f, get_callgraph(f), n);
     return tb__make_proj(f, dt, n, 2);
 }
 

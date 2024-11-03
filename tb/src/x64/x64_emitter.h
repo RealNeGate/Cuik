@@ -57,23 +57,6 @@ static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val*
     }
 }
 
-static void inst0(TB_CGEmitter* restrict e, InstType type, TB_X86_DataType dt) {
-    assert(type < COUNTOF(inst_table));
-    const InstDesc* restrict inst = &inst_table[type];
-
-    if (dt == TB_X86_QWORD) {
-        EMIT1(e, 0x48);
-    }
-    EXT_OP(INST_BYTE_EXT);
-
-    if (inst->op) {
-        EMIT1(e, inst->op);
-    } else {
-        EMIT1(e, inst->op_i);
-        EMIT1(e, inst->rx_i);
-    }
-}
-
 static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_X86_DataType dt) {
     assert(dt >= TB_X86_BYTE && dt <= TB_X86_QWORD);
     assert(type < COUNTOF(inst_table));
@@ -241,6 +224,23 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
     EMIT1(e, 0x0F);
     EMIT1(e, inst->op + (supports_mem_dst ? dir : 0));
     emit_memory_operand(e, rx, b);
+}
+
+static void asm_inst0(TB_CGEmitter* restrict e, InstType type, TB_X86_DataType dt) {
+    assert(type < COUNTOF(inst_table));
+    const InstDesc* restrict inst = &inst_table[type];
+
+    if (dt == TB_X86_QWORD) {
+        EMIT1(e, 0x48);
+    }
+    EXT_OP(INST_BYTE_EXT);
+
+    if (inst->op) {
+        EMIT1(e, inst->op);
+    } else {
+        EMIT1(e, inst->op_i);
+        EMIT1(e, inst->rx_i);
+    }
 }
 
 static void asm_inst1(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* r) {

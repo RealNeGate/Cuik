@@ -98,7 +98,7 @@ TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
 
     switch (exe) {
         case TB_EXECUTABLE_PE: l->vtbl = tb__linker_pe; break;
-        // case TB_EXECUTABLE_ELF: l->vtbl = tb__linker_elf; break;
+        case TB_EXECUTABLE_ELF: l->vtbl = tb__linker_elf; break;
         default: break;
     }
 
@@ -126,8 +126,14 @@ void tb_linker_add_libpath(TB_Linker* l, const char* path) {
 }
 
 void tb_linker_append_object(TB_Linker* l, const char* file_name) {
+    if (!linker_thread_init) {
+        linker_thread_init = true;
+        tb_arena_create(&linker_perm_arena, "LinkerPerm");
+        tb_arena_create(&linker_tmp_arena, "LinkerTmp");
+    }
+
     CUIK_TIMED_BLOCK("append_obj") {
-        FileMap fm = open_file_map(file_name);
+        FileMap fm = open_file_map_read(file_name);
         TB_LinkerObject* obj_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
         *obj_file = (TB_LinkerObject){
             { (const uint8_t*) file_name, strlen(file_name) },
@@ -173,7 +179,7 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     FileMap fm;
     dyn_array_for(j, l->libpaths) {
         snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
-        fm = open_file_map(test_path);
+        fm = open_file_map_read(test_path);
         if (fm.data != NULL) {
             break;
         }
@@ -557,26 +563,6 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
     }
 }
 
-// just run whatever reloc function from the spec
-static int32_t resolve_reloc(TB_LinkerSymbol* sym, TB_ObjectRelocType type, uint32_t source_pos, uint32_t target_rva, int addend) {
-    switch (type) {
-        case TB_OBJECT_RELOC_ADDR32NB:
-        return target_rva;
-
-        case TB_OBJECT_RELOC_SECTION:
-        return sym->normal.piece->parent->number;
-
-        case TB_OBJECT_RELOC_SECREL:
-        return sym->normal.piece->offset + sym->normal.secrel;
-
-        case TB_OBJECT_RELOC_REL32:
-        return target_rva - (source_pos + addend);
-
-        default:
-        tb_todo();
-    }
-}
-
 enum { EXPORT_BUFFER_SIZE = 64*1024 };
 void tb_linker_export_piece(TPool* pool, ExportTask* task) {
     TB_Linker* l = task->linker;
@@ -642,6 +628,72 @@ void tb_linker_export_piece(TPool* pool, ExportTask* task) {
         futex_signal(&l->jobs.done);
     }
     cuikperf_region_end();
+}
+
+void tb_linker_export_pieces(TB_Linker* l, DynArray(TB_LinkerSection*) sections, uint8_t* output) {
+    if (l->jobs.pool != NULL) {
+        l->jobs.done = 0;
+        l->jobs.count = 0;
+
+        // each of the pieces can be exported in parallel
+        cuikperf_region_start("submitting", NULL);
+        dyn_array_for(i, sections) {
+            TB_LinkerSectionPiece* p = atomic_load_explicit(&sections[i]->list, memory_order_relaxed);
+
+            // we wanna dispatch tasks as a nice batch so if the accumulated
+            // size goes past like 8k we'll dispatch it
+            TB_LinkerSectionPiece* accum_start = p;
+            size_t accum_size = 0;
+
+            int c = 0;
+            while (p != NULL) {
+                if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind != PIECE_BSS) {
+                    accum_size += p->size;
+                }
+
+                if (accum_size >= 8192) {
+                    ExportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(ExportTask));
+                    *task = (ExportTask){ l, output, accum_start, p };
+                    tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, task);
+                    c += 1;
+
+                    accum_size = p->size;
+                    accum_start = p;
+                }
+
+                p = atomic_load_explicit(&p->next, memory_order_relaxed);
+            }
+
+            // push remaining bits
+            if (accum_start != NULL) {
+                ExportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(ExportTask));
+                *task = (ExportTask){ l, output, accum_start, NULL };
+                tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, task);
+                c += 1;
+            }
+
+            l->jobs.count += c;
+        }
+        cuikperf_region_end();
+
+        // finish up exporting
+        futex_wait_eq(&l->jobs.done, l->jobs.count);
+    } else {
+        dyn_array_for(i, sections) {
+            size_t section_file_offset = sections[i]->offset;
+            size_t section_rva = sections[i]->address;
+
+            TB_LinkerSectionPiece* p = atomic_load_explicit(&sections[i]->list, memory_order_relaxed);
+            while (p != NULL) {
+                TB_LinkerSectionPiece* next = atomic_load_explicit(&p->next, memory_order_relaxed);
+                if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind != PIECE_BSS) {
+                    ExportTask task = { l, output, p, next };
+                    tb_linker_export_piece(NULL, &task);
+                }
+                p = next;
+            }
+        }
+    }
 }
 
 static TB_Slice as_filename(TB_Slice s) {
@@ -814,6 +866,26 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
     return sections;
 }
 
+// just run whatever reloc function from the spec
+static int32_t resolve_reloc(TB_LinkerSymbol* sym, TB_ObjectRelocType type, uint32_t source_pos, uint32_t target_rva, int addend) {
+    switch (type) {
+        case TB_OBJECT_RELOC_ADDR32NB:
+        return target_rva;
+
+        case TB_OBJECT_RELOC_SECTION:
+        return sym->normal.piece->parent->number;
+
+        case TB_OBJECT_RELOC_SECREL:
+        return sym->normal.piece->offset + sym->normal.secrel;
+
+        case TB_OBJECT_RELOC_REL32:
+        return (target_rva + addend) - source_pos;
+
+        default:
+        tb_todo();
+    }
+}
+
 size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail) {
     size_t reloc_len = p->reloc_count;
     while (reloc_i < reloc_len) {
@@ -958,10 +1030,6 @@ void tb_linker_mark_live(TB_Linker* l) {
 
             TB_LinkerSymbol* sym = tb_linker_symbol_find(rel.target);
             if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN || sym->tag == TB_LINKER_SYMBOL_LAZY) {
-                if (sym->name.length == sizeof("__scrt_is_ucrt_dll_in_use")-1 && memcmp(sym->name.data, "__scrt_is_ucrt_dll_in_use", sym->name.length) == 0) {
-                    __debugbreak();
-                }
-
                 TB_LinkerSymbol* alt = tb_linker_symbol_find(atomic_load_explicit(&sym->weak_alt, memory_order_relaxed));
                 if (alt && alt->tag != TB_LINKER_SYMBOL_UNKNOWN && alt->tag != TB_LINKER_SYMBOL_LAZY) {
                     // we could make this the leader to path compress
