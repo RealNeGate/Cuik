@@ -232,8 +232,8 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
     // append all symbols
     size_t sym_count = 0;
     TB_ObjectSymbol* syms = tb_arena_alloc(&linker_tmp_arena, parser.symbol_count * sizeof(TB_ObjectSymbol));
+    TB_LinkerSymbol** symbol_map = tb_arena_alloc(&linker_perm_arena, parser.symbol_count * sizeof(TB_LinkerSymbol*));
 
-    DynArray(TB_LinkerSymbol*) symbol_map = NULL;
     DynArray(TB_ObjectSymbol*) weak_syms = NULL;
     NL_Map(int, COFF_AuxSectionSymbol*) comdat_sections = NULL;
     CUIK_TIMED_BLOCK("apply symbols") {
@@ -312,9 +312,8 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
 
             skip:;
             // write into symbol mapping (including whatever aux data "padding")
-            TB_ASSERT(i == dyn_array_length(symbol_map));
-            dyn_array_put(symbol_map, s);
-            FOR_N(j, 1, c) { dyn_array_put(symbol_map, NULL); }
+            symbol_map[i] = s;
+            FOR_N(j, 1, c) { symbol_map[i+j] = NULL; }
             i += c;
         }
     }

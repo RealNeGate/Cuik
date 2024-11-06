@@ -12,7 +12,7 @@ typedef struct {
 } FileMap;
 
 static FileMap open_file_map_write(const char* filepath, size_t size) {
-    HANDLE file = CreateFileA(file_name, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE file = CreateFileA(filepath, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
         return (FileMap){ INVALID_HANDLE_VALUE };
     }
@@ -34,7 +34,7 @@ static FileMap open_file_map_write(const char* filepath, size_t size) {
         .file = file,
         .mapping = mapping,
         .size = size,
-        .data = memory
+        .data = output
     };
 }
 

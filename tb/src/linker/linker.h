@@ -77,8 +77,8 @@ struct TB_LinkerSectionPiece {
     TB_LinkerSectionPiece* assoc;
 
     // mostly compact table from per-file symbol index -> symbol (some
-    // indices are NULL because they map to aux symbol data)
-    DynArray(TB_LinkerSymbol*) symbol_map;
+    // indices are NULL because they map to COFF aux data)
+    TB_LinkerSymbol** symbol_map;
     // object-file specific
     void* section_header;
 
