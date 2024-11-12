@@ -55,7 +55,7 @@ static uint8_t get_wasm_type(TB_DataType dt) {
 static TB_ExportChunk* emitter_to_chunk(TB_Arena* dst_arena, TB_Emitter* e) {
     TB_ExportChunk* stuff = tb_export_make_chunk(dst_arena, e->count);
     memcpy(stuff->data, e->data, e->count);
-    tb_platform_heap_free(e->data);
+    cuik_free(e->data);
     return stuff;
 }
 

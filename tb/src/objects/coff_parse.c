@@ -11,7 +11,7 @@
 TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
     COFF_FileHeader* header = (COFF_FileHeader*) &file.data[0];
 
-    TB_ObjectFile* obj_file = tb_platform_heap_alloc(sizeof(TB_ObjectFile) + (header->section_count * sizeof(TB_ObjectSection)));
+    TB_ObjectFile* obj_file = cuik_malloc(sizeof(TB_ObjectFile) + (header->section_count * sizeof(TB_ObjectSection)));
 
     // not using calloc since i only really wanna clear the header
     memset(obj_file, 0, sizeof(TB_ObjectFile));
@@ -35,7 +35,7 @@ TB_ObjectFile* tb_object_parse_coff(const TB_Slice file) {
     FOR_N(i, 0, header->section_count) {
     }
 
-    obj_file->symbols = tb_platform_heap_alloc(header->symbol_count * sizeof(TB_ObjectSymbol));
+    obj_file->symbols = cuik_malloc(header->symbol_count * sizeof(TB_ObjectSymbol));
     obj_file->symbol_count = 0;
 
     size_t sym_id = 0;

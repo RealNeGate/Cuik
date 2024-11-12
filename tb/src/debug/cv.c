@@ -32,7 +32,7 @@ static void md5sum_file(uint8_t out_bytes[16], const char* filepath) {
     }
 
     size_t len  = file_stats.st_size;
-    unsigned char* data = tb_platform_heap_alloc(len + 1);
+    unsigned char* data = cuik_malloc(len + 1);
 
     fseek(file, 0, SEEK_SET);
     fread(data, 1, len, file);
@@ -40,7 +40,7 @@ static void md5sum_file(uint8_t out_bytes[16], const char* filepath) {
     tb__md5sum(out_bytes, data, len);
 
     fclose(file);
-    tb_platform_heap_free(data);
+    cuik_free(data);
 }
 
 static uint16_t get_codeview_type(TB_DataType dt) {

@@ -1,6 +1,6 @@
 void worklist_alloc(TB_Worklist* restrict ws, size_t initial_cap) {
     ws->visited_cap = (initial_cap + 63) / 64;
-    ws->visited = tb_platform_heap_alloc(ws->visited_cap * sizeof(uint64_t));
+    ws->visited = cuik_malloc(ws->visited_cap * sizeof(uint64_t));
     ws->items = dyn_array_create(uint64_t, ws->visited_cap * 64);
     FOR_N(i, 0, ws->visited_cap) {
         ws->visited[i] = 0;
@@ -8,7 +8,7 @@ void worklist_alloc(TB_Worklist* restrict ws, size_t initial_cap) {
 }
 
 void worklist_free(TB_Worklist* restrict ws) {
-    tb_platform_heap_free(ws->visited);
+    cuik_free(ws->visited);
     dyn_array_destroy(ws->items);
 }
 
@@ -48,7 +48,7 @@ bool worklist_test_n_set(TB_Worklist* restrict ws, TB_Node* n) {
     // resize?
     if (gvn_word >= ws->visited_cap) {
         size_t new_cap = gvn_word + 16;
-        ws->visited = tb_platform_heap_realloc(ws->visited, new_cap * sizeof(uint64_t));
+        ws->visited = cuik_realloc(ws->visited, new_cap * sizeof(uint64_t));
 
         // clear new space
         FOR_N(i, ws->visited_cap, new_cap) {

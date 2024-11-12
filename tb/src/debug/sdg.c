@@ -94,12 +94,12 @@ static size_t write_normie_sym(TB_Emitter* e, TB_ObjectSection* section, int tag
 #define MARK_NEXT(patch_pos) (((SDG_Symbol*) tb_out_get(&symtab, patch_pos))->next = symtab.count)
 #define MARK_KIDS(patch_pos, c) (((SDG_Symbol*) tb_out_get(&symtab, patch_pos))->kid_count = c)
 static TB_SectionGroup sdg_generate_debug_info(TB_Module* m, TB_Arena* arena) {
-    TB_ObjectSection* sections = tb_platform_heap_alloc(1 * sizeof(TB_ObjectSection));
+    TB_ObjectSection* sections = cuik_malloc(1 * sizeof(TB_ObjectSection));
     sections[0] = (TB_ObjectSection){ gimme_cstr_as_slice(arena, ".sdg$S") };
     sections[1] = (TB_ObjectSection){ gimme_cstr_as_slice(arena, ".sdg$T") };
 
     size_t reloc_cap = m->symbol_count[TB_SYMBOL_GLOBAL] + m->compiled_function_count;
-    sections[0].relocations = tb_platform_heap_alloc(reloc_cap * sizeof(TB_ObjectReloc));
+    sections[0].relocations = cuik_malloc(reloc_cap * sizeof(TB_ObjectReloc));
 
     TB_Emitter symtab = { 0 };
     SDG_Types types = { 0 };

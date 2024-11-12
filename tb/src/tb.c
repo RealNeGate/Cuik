@@ -65,7 +65,7 @@ TB_ThreadInfo* tb_thread_info(TB_Module* m) {
     }
 
     CUIK_TIMED_BLOCK("alloc thread info") {
-        info = tb_platform_heap_alloc(sizeof(TB_ThreadInfo));
+        info = cuik_malloc(sizeof(TB_ThreadInfo));
         *info = (TB_ThreadInfo){ .owner = m, .chain = &chain, .lock = &lock };
 
         // allocate memory for it
@@ -177,7 +177,7 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     }
     #endif
 
-    TB_Module* m = tb_platform_heap_alloc(sizeof(TB_Module));
+    TB_Module* m = cuik_malloc(sizeof(TB_Module));
     if (m == NULL) {
         fprintf(stderr, "tb_module_create: Out of memory!\n");
         return NULL;
@@ -288,13 +288,13 @@ void tb_module_destroy(TB_Module* m) {
         }
         mtx_unlock(info->lock);
 
-        tb_platform_heap_free(info);
+        cuik_free(info);
         info = next;
     }
 
     nbhs_free(&m->lattice_elements);
     dyn_array_destroy(m->files);
-    tb_platform_heap_free(m);
+    cuik_free(m);
 }
 
 TB_SourceFile* tb_get_source_file(TB_Module* m, ptrdiff_t len, const char* path) {
@@ -434,7 +434,7 @@ void* tb_global_add_region(TB_Module* m, TB_Global* g, size_t offset, size_t siz
     assert(size == (uint32_t)size);
     assert(g->obj_count + 1 <= g->obj_capacity);
 
-    void* ptr = tb_platform_heap_alloc(size);
+    void* ptr = cuik_malloc(size);
     g->objects[g->obj_count++] = (TB_InitObj) {
         .type = TB_INIT_OBJ_REGION, .offset = offset, .region = { .size = size, .ptr = ptr }
     };
@@ -592,7 +592,7 @@ void* tb_out_reserve(TB_Emitter* o, size_t count) {
             o->capacity *= 2;
         }
 
-        o->data = tb_platform_heap_realloc(o->data, o->capacity);
+        o->data = cuik_realloc(o->data, o->capacity);
         if (o->data == NULL) tb_todo();
     }
 

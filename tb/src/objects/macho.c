@@ -111,6 +111,6 @@ TB_ExportBuffer tb_macho_write_output(TB_Module* m, TB_Arena* dst_arena, const I
 
     // fwrite(string_table.data, string_table.count, 1, f);
 
-    tb_platform_heap_free(string_table.data);
+    cuik_free(string_table.data);
     return (TB_ExportBuffer){ .total = output_size, .head = chunk, .tail = chunk };
 }

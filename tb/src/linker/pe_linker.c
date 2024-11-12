@@ -109,9 +109,12 @@ static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* e
                 len -= 2;
             }
 
-            char path[FILENAME_MAX];
+            char* path = tb_arena_alloc(&linker_perm_arena, FILENAME_MAX);
             snprintf(path, FILENAME_MAX, "%.*s", len, curr);
-            tb_linker_append_library(l, path);
+
+            mtx_lock(&l->lock);
+            dyn_array_put(l->default_libs, path);
+            mtx_unlock(&l->lock);
         } else if (strprefix((const char*) curr, "/alternatename:", end - curr)) {
             curr += sizeof("/alternatename:")-1;
 
@@ -281,6 +284,7 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
                 TB_ASSERT(sym->type != TB_OBJECT_SYMBOL_WEAK_EXTERN);
                 if (sym->type == TB_OBJECT_SYMBOL_EXTERN) {
                     if (comdat_aux) {
+                        s->comdat = TB_LINKER_COMDAT_ANY;
                         nl_map_remove(comdat_sections, sym->section_num);
                     }
                 }
@@ -582,17 +586,24 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* lib) {
                 .tag    = TB_LINKER_SYMBOL_IMPORT,
                 .import = { .table = imp, .ordinal = e.ordinal }
             };
-            import_sym = tb_linker_symbol_insert(l, import_sym);
 
-            // make the thunk-like symbol
-            TB_LinkerSymbol* sym = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
-            *sym = (TB_LinkerSymbol){
-                .name   = e.import_name,
-                .tag    = TB_LINKER_SYMBOL_THUNK,
-                .thunk  = import_sym
-            };
-            sym = tb_linker_symbol_insert(l, sym);
-            dyn_array_put(imp->thunks, import_sym);
+            TB_LinkerSymbol* new_sym = tb_linker_symbol_insert(l, import_sym);
+            if (new_sym == import_sym) {
+                // first time we're importing this symbol, swag
+                import_sym = new_sym;
+
+                // make the thunk-like symbol
+                TB_LinkerSymbol* sym = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSymbol));
+                *sym = (TB_LinkerSymbol){
+                    .name   = e.import_name,
+                    .tag    = TB_LINKER_SYMBOL_THUNK,
+                    .thunk  = import_sym
+                };
+                tb_linker_symbol_insert(l, sym);
+                dyn_array_put(imp->thunks, import_sym);
+            } else {
+                tb_arena_free(&linker_perm_arena, import_sym, sizeof(TB_LinkerSymbol));
+            }
             cuikperf_region_end();
         }
 
@@ -647,6 +658,7 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
 
     // Generate import thunks
     uint32_t thunk_id_counter = 0;
+    size_t import_dir_count = 0;
     l->trampolines = (TB_Emitter){ 0 };
     nbhs_for(e, &l->imports) {
         ImportTable* imp = *e;
@@ -664,13 +676,13 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
             // we're gonna relocate this to map onto an import thunk later
             tb_out4b(&l->trampolines, 0);
         }
-        thunk_id_counter++;
+        import_dir_count++, thunk_id_counter++;
     }
 
     ////////////////////////////////
     // Generate import table
     ////////////////////////////////
-    size_t import_dir_size = (1 + nbhs_count(&l->imports)) * sizeof(COFF_ImportDirectory);
+    size_t import_dir_size = (1 + import_dir_count) * sizeof(COFF_ImportDirectory);
     size_t iat_size = import_entry_count * sizeof(uint64_t);
     size_t total_size = import_dir_size + 2*iat_size;
     nbhs_for(e, &l->imports) {
@@ -684,7 +696,7 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
         }
     }
 
-    uint8_t* output = tb_platform_heap_alloc(total_size);
+    uint8_t* output = cuik_malloc(total_size);
 
     COFF_ImportDirectory* import_dirs = (COFF_ImportDirectory*) &output[0];
     uint64_t* iat = (uint64_t*) &output[import_dir_size];
@@ -705,25 +717,23 @@ static COFF_ImportDirectory* gen_imports(TB_Linker* l, PE_ImageDataDirectory* im
     *imp_dir = (PE_ImageDataDirectory){ import_piece->offset, import_dir_size };
     *iat_dir = (PE_ImageDataDirectory){ import_piece->offset + import_dir_size, iat_size };
 
-    size_t p = 0;
-    size_t import_dir_count = 0;
+    size_t p = 0, q = 0;
     nbhs_for(e, &l->imports) {
         ImportTable* imp = *e;
         if (dyn_array_length(imp->thunks) == 0) { continue; }
 
-        COFF_ImportDirectory* header = &import_dirs[import_dir_count++];
-        TB_Slice lib = imp->libpath;
-
-        // after we resolve RVAs we need to backpatch stuff
-        imp->header = header;
-        imp->iat = &iat[p], imp->ilt = &ilt[p];
-
+        COFF_ImportDirectory* header = &import_dirs[q++];
         *header = (COFF_ImportDirectory){
             .import_lookup_table  = import_piece->offset + import_dir_size + iat_size + p*sizeof(uint64_t),
             .import_address_table = import_piece->offset + import_dir_size + p*sizeof(uint64_t),
             .name = import_piece->offset + strtbl_pos,
         };
 
+        // after we resolve RVAs we need to backpatch stuff
+        imp->header = header;
+        imp->iat = &iat[p], imp->ilt = &ilt[p];
+
+        TB_Slice lib = imp->libpath;
         memcpy(&output[strtbl_pos], lib.data, lib.length), strtbl_pos += lib.length;
         output[strtbl_pos++] = 0;
 
@@ -865,11 +875,19 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
 
     if (l->jobs.pool != NULL) {
-        // finish up parsing all the object file tasks
-        int32_t old;
-        while (old = l->jobs.done, old != l->jobs.count) {
-            futex_wait(&l->jobs.done, old);
-        }
+        bool repeat;
+        do {
+            tb_linker_barrier(l);
+
+            // once we've completed whatever jobs we can do another round of defaultlibs
+            mtx_lock(&l->lock);
+            repeat = dyn_array_length(l->default_libs);
+            dyn_array_for(i, l->default_libs) {
+                tb_linker_append_library(l, l->default_libs[i]);
+            }
+            dyn_array_clear(l->default_libs);
+            mtx_unlock(&l->lock);
+        } while (repeat);
     }
 
     /* for (TB_LinkerThreadInfo* restrict info = l->first_thread_info; info; info = info->next) {
@@ -945,30 +963,28 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 
     size_t section_content_size = 0;
     uint64_t virt_addr = align_up(size_of_headers, 4096); // this area is reserved for the PE header stuff
-    CUIK_TIMED_BLOCK("layout sections") {
-        dyn_array_for(i, sections) {
-            TB_LinkerSection* s = sections[i];
-            if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
+    dyn_array_for(i, sections) {
+        TB_LinkerSection* s = sections[i];
+        if (s->generic_flags & TB_LINKER_SECTION_DISCARD) continue;
 
-            if (s->flags & IMAGE_SCN_CNT_CODE) pe_code_size += s->size;
-            if (s->flags & IMAGE_SCN_CNT_INITIALIZED_DATA) pe_init_size += s->size;
-            if (s->flags & IMAGE_SCN_CNT_UNINITIALIZED_DATA) pe_uninit_size += s->size;
+        if (s->flags & IMAGE_SCN_CNT_CODE) pe_code_size += s->size;
+        if (s->flags & IMAGE_SCN_CNT_INITIALIZED_DATA) pe_init_size += s->size;
+        if (s->flags & IMAGE_SCN_CNT_UNINITIALIZED_DATA) pe_uninit_size += s->size;
 
-            s->offset = size_of_headers + section_content_size;
-            if ((s->flags & IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0) {
-                section_content_size += align_up(s->size, 512);
-            }
-
-            s->address = virt_addr;
-            virt_addr += align_up(s->size, 4096);
-
-            log_debug("Section %.*s: %#x - %#x", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
+        s->offset = size_of_headers + section_content_size;
+        if ((s->flags & IMAGE_SCN_CNT_UNINITIALIZED_DATA) == 0) {
+            section_content_size += align_up(s->size, 512);
         }
+
+        s->address = virt_addr;
+        virt_addr += align_up(s->size, 4096);
+
+        log_debug("Section %.*s: %#x - %#x", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
     }
 
     if (l->main_reloc != NULL) {
         CUIK_TIMED_BLOCK(".reloc") {
-            TB_Emitter relocs = { .capacity = l->main_reloc->size, .data = tb_platform_heap_alloc(l->main_reloc->size) };
+            TB_Emitter relocs = { .capacity = l->main_reloc->size, .data = cuik_malloc(l->main_reloc->size) };
 
             // generates .reloc for everyone
             uint32_t last_page = UINT32_MAX;
@@ -1004,7 +1020,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
     TB_LinkerSection* text = tb_linker_find_section(l, ".text");
     CUIK_TIMED_BLOCK("sort .pdata") {
         TB_LinkerSection* pdata = tb_linker_find_section(l, ".pdata");
-        uint8_t* pdata_buffer   = tb_platform_heap_alloc(pdata->size);
+        uint8_t* pdata_buffer   = cuik_malloc(pdata->size);
 
         TB_LinkerSectionPiece* p = atomic_load_explicit(&pdata->list, memory_order_relaxed);
         for (; p != NULL; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
@@ -1028,7 +1044,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         qsort(pdata_buffer, pdata->size / sizeof(uint32_t[3]), sizeof(uint32_t[3]), compare_rva);
 
         // this doesn't change the section contents size, just resolves it into one big piece
-        TB_LinkerSectionPiece* piece = tb_platform_heap_alloc(sizeof(TB_LinkerSectionPiece));
+        TB_LinkerSectionPiece* piece = cuik_malloc(sizeof(TB_LinkerSectionPiece));
         *piece = (TB_LinkerSectionPiece){
             .kind        = PIECE_BUFFER,
             .flags       = TB_LINKER_PIECE_LIVE,
@@ -1172,6 +1188,18 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
             }
         } else {
             printf("tblink: could not find entrypoint! %s\n", l->entrypoint);
+        }
+    }
+
+    if (0) {
+        printf("Symbol count: %zu\n", nbhs_count(&l->symbols));
+        printf("RVA        Name\n");
+        nbhs_for(e, &l->symbols) {
+            TB_LinkerSymbol* sym = tb_linker_symbol_find(*e);
+            if (sym->tag == TB_LINKER_SYMBOL_NORMAL && (sym->flags & TB_LINKER_SYMBOL_USED)) {
+                uint64_t rva = tb__get_symbol_rva(l, sym);
+                printf("%#08"PRIx64"   %.*s\n", rva, (int) sym->name.length, sym->name.data);
+            }
         }
     }
 

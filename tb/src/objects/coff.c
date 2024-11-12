@@ -98,7 +98,7 @@ static void generate_unwind_info(TB_Arena* dst_arena, COFF_UnwindInfo* restrict 
 
     u->xdata_chunk = tb_export_make_chunk(dst_arena, xdata.count);
     memcpy(u->xdata_chunk->data, xdata.data, xdata.count);
-    tb_platform_heap_free(xdata.data);
+    cuik_free(xdata.data);
 
     // generate COFF headers
     u->pdata_header = (COFF_SectionHeader){

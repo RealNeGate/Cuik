@@ -149,9 +149,16 @@ typedef enum TB_LinkerSymbolTag {
 
 typedef enum TB_LinkerSymbolFlags {
     TB_LINKER_SYMBOL_WEAK   = 1,
-    TB_LINKER_SYMBOL_COMDAT = 2,
-    TB_LINKER_SYMBOL_USED   = 4,
+    TB_LINKER_SYMBOL_USED   = 2,
 } TB_LinkerSymbolFlags;
+
+typedef enum {
+    TB_LINKER_COMDAT_NONE,
+
+    // pick whichever (for threading reasons we'll use
+    // the piece's order info for consistency).
+    TB_LINKER_COMDAT_ANY,
+} TB_LinkerComdatRule;
 
 typedef struct {
     TB_Slice libpath;
@@ -176,6 +183,7 @@ struct TB_LinkerSymbol {
 
     TB_LinkerSymbolTag   tag;
     TB_LinkerSymbolFlags flags;
+    TB_LinkerComdatRule  comdat;
 
     _Atomic(TB_LinkerSymbol*) weak_alt;
 
@@ -277,6 +285,9 @@ typedef struct TB_Linker {
     // this is where all the .reloc stuff from object files goes
     TB_LinkerSectionPiece* main_reloc;
     uint32_t iat_pos;
+    // used for a few boring resources like the defaultlib list
+    mtx_t lock;
+    DynArray(const char*) default_libs;
 
     _Alignas(64) struct {
         TPool* pool;

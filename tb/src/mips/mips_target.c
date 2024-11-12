@@ -616,12 +616,6 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
     ctx->prologue_length = ctx->emit.count;
 }
 
-static void emit_goto(Ctx* ctx, TB_CGEmitter* e, MachineBB* succ) {
-    if (ctx->fallthrough != succ->fwd) {
-        branch(e, beq, ZR, ZR, succ->fwd);
-    }
-}
-
 static void on_basic_block(Ctx* restrict ctx, TB_CGEmitter* e, int bb) {
     tb_resolve_rel32(e, &e->labels[bb], e->count, 0xFFFF, 2);
 }
@@ -740,7 +734,9 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
             FOR_USERS(u, n) {
                 if (USERN(u)->type == TB_BRANCH_PROJ) {
                     int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-                    MachineBB* mbb = node_to_bb(ctx, USERN(u));
+                    TB_Node* un = USERN(u);
+
+                    TB_BasicBlock* mbb = nl_map_get_checked(ctx->cfg.node_to_block, un);
                     succ[index] = mbb->fwd;
                 }
             }
@@ -770,9 +766,10 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
         }
 
         case TB_MACH_JUMP: {
-            MachineBB* succ = node_to_bb(ctx, cfg_next_control(n));
-            if (ctx->fallthrough != succ->fwd) {
-                branch(e, beq, ZR, ZR, succ->fwd);
+            TB_Node* succ_n = cfg_next_control(n);
+            TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
+            if (ctx->fallthrough != succ_bb->fwd) {
+                branch(e, beq, ZR, ZR, succ_bb->fwd);
             }
             break;
         }

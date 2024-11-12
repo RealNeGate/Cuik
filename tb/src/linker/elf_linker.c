@@ -159,18 +159,6 @@ static void elf_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc
 static bool elf_export(TB_Linker* l, const char* file_name) {
     cuikperf_region_start("linker", NULL);
 
-    if (0) {
-        printf("Symbol count: %zu\n", nbhs_count(&l->symbols));
-        printf("RVA        Name\n");
-        nbhs_for(e, &l->symbols) {
-            TB_LinkerSymbol* sym = tb_linker_symbol_find(*e);
-            if (sym->tag == TB_LINKER_SYMBOL_NORMAL && (sym->flags & TB_LINKER_SYMBOL_USED)) {
-                uint64_t rva = tb__get_symbol_rva(l, sym);
-                printf("%#08"PRIx64"   %.*s\n", rva, (int) sym->name.length, sym->name.data);
-            }
-        }
-    }
-
     if (l->jobs.pool != NULL) {
         // finish up parsing all the object file tasks
         int32_t old;

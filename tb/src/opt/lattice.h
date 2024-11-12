@@ -103,16 +103,6 @@ static bool latticehs_cmp(const void* a, const void* b) {
 #define NBHS_FN(n) latticehs_ ## n
 #include <nbhs.h>
 
-static void* lattice_hs_alloc(size_t size) {
-    void* ptr = tb_platform_heap_alloc(size);
-    memset(ptr, 0, size);
-    return ptr;
-}
-
-static void lattice_hs_free(void* ptr, size_t size) {
-    tb_platform_heap_free(ptr);
-}
-
 static Lattice* lattice_intern(TB_Function* f, Lattice l) {
     assert(l.tag != LATTICE_TUPLE);
 
@@ -132,7 +122,7 @@ static Lattice* lattice_intern(TB_Function* f, Lattice l) {
 }
 
 void tb__lattice_init(TB_Module* m) {
-    m->lattice_elements = nbhs_alloc(256, lattice_hs_alloc, lattice_hs_free);
+    m->lattice_elements = nbhs_alloc(256);
 
     latticehs_raw_insert(&m->lattice_elements, &BOT_IN_THE_SKY);
     latticehs_raw_insert(&m->lattice_elements, &TOP_IN_THE_SKY);
@@ -171,7 +161,7 @@ static bool lattice_int_le(Lattice* l, int64_t x) { return l->_int.min <= x && l
 
 static void latuni_grow(TB_Function* f, size_t top) {
     size_t new_cap = tb_next_pow2(top + 16);
-    f->types = tb_platform_heap_realloc(f->types, new_cap * sizeof(Lattice*));
+    f->types = cuik_realloc(f->types, new_cap * sizeof(Lattice*));
     // clear new space
     FOR_N(i, f->type_cap, new_cap) { f->types[i] = NULL; }
     f->type_cap = new_cap;

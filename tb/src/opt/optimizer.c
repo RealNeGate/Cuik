@@ -1237,7 +1237,7 @@ bool tb_opt_cprop(TB_Function* f) {
 }
 
 static void* zalloc(size_t s) {
-    void* ptr = tb_platform_heap_alloc(s);
+    void* ptr = cuik_malloc(s);
     memset(ptr, 0, s);
     return ptr;
 }
@@ -1358,11 +1358,11 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     #if TB_OPTDEBUG_STATS
     tb_opt_dump_stats(f);
 
-    tb_platform_heap_free(f->stats.identities);
-    tb_platform_heap_free(f->stats.rewrites);
-    tb_platform_heap_free(f->stats.constants);
-    tb_platform_heap_free(f->stats.opto_constants);
-    tb_platform_heap_free(f->stats.killed);
+    cuik_free(f->stats.identities);
+    cuik_free(f->stats.rewrites);
+    cuik_free(f->stats.constants);
+    cuik_free(f->stats.opto_constants);
+    cuik_free(f->stats.killed);
     #endif
 
     f->worklist = NULL;
@@ -1413,14 +1413,14 @@ void tb_opt_dump_stats(TB_Function* f) {
 #endif
 
 TB_API TB_Worklist* tb_worklist_alloc(void) {
-    TB_Worklist* ws = tb_platform_heap_alloc(sizeof(TB_Worklist));
+    TB_Worklist* ws = cuik_malloc(sizeof(TB_Worklist));
     worklist_alloc(ws, 500);
     return ws;
 }
 
 TB_API void tb_worklist_free(TB_Worklist* ws) {
     worklist_free(ws);
-    tb_platform_heap_free(ws);
+    cuik_free(ws);
 }
 
 static bool alloc_types(TB_Function* f) {
@@ -1429,7 +1429,7 @@ static bool alloc_types(TB_Function* f) {
     CUIK_TIMED_BLOCK("allocate type array") {
         size_t count = (f->node_count + 63ull) & ~63ull;
         f->type_cap = count;
-        f->types = tb_platform_heap_alloc(count * sizeof(Lattice*));
+        f->types = cuik_malloc(count * sizeof(Lattice*));
         // when latuni_get sees a NULL, it'll replace it with the correct bottom type
         FOR_N(i, 0, count) { f->types[i] = NULL; }
     }
@@ -1438,7 +1438,7 @@ static bool alloc_types(TB_Function* f) {
 
 TB_API void tb_opt_free_types(TB_Function* f) {
     if (f->types != NULL) {
-        tb_platform_heap_free(f->types);
+        cuik_free(f->types);
         f->types = NULL;
     }
 }

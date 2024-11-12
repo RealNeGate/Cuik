@@ -6,8 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Cuik currently uses mimalloc so we wrap those calls here
-#ifdef CUIK_USE_MIMALLOC
+#ifdef TB_USE_MIMALLOC
 #include <mimalloc.h>
 
 #define cuik_malloc(size)        mi_malloc(size)
@@ -40,6 +39,15 @@
 #else
 #define USE_INTRIN 1
 #endif
+
+#define FOR_N(it, start, end) \
+for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
+
+#define FOR_REV_N(it, start, end) \
+for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
+
+#define FOR_BIT(it, start, bits) \
+for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bits_ & 1)
 
 #define STR2(x) #x
 #define STR(x) STR2(x)

@@ -22,6 +22,7 @@
 //
 // https://github.com/colrdavidson/workpool/blob/main/pool.h
 #include "pool.h"
+#include <threads.h>
 
 #ifdef ENABLE_TRACING
 #include "spall_native_auto.h"
@@ -32,13 +33,12 @@
 #if defined(__linux__) || defined(__APPLE__)
 
 #include <stdatomic.h>
-#include <pthread.h>
 #include <unistd.h>
 #include <errno.h>
 
 typedef pthread_t TPool_ThreadHandle;
 
-#define tpool_thread_start(t) pthread_create(&(t)->thread, NULL, _tpool_worker, (void *) (t))
+#define tpool_thread_start(t) pthread_create(&(t)->thread, NULL, )
 #define tpool_thread_end(t)   pthread_join((t)->thread, NULL)
 
 #elif defined(_WIN32)
@@ -47,11 +47,6 @@ typedef pthread_t TPool_ThreadHandle;
 #include <process.h>
 
 typedef ptrdiff_t ssize_t;
-typedef HANDLE TPool_ThreadHandle;
-
-#define tpool_thread_start(t) ((t)->thread = (HANDLE) _beginthread(_tpool_worker, 0, t))
-#define tpool_thread_end(t) WaitForSingleObject((t)->thread, INFINITE)
-
 #endif
 
 #include <stdatomic.h>
@@ -294,7 +289,7 @@ typedef struct {
 } TPool_Queue;
 
 typedef struct TPool_Thread {
-    TPool_ThreadHandle thread;
+    thrd_t thread;
     int idx;
 
     TPool_Queue queue;
@@ -413,12 +408,7 @@ int _tpool_queue_steal(TPool_Thread *thread, TPool_Task *task) {
 void cuikperf_thread_start(void);
 void cuikperf_thread_stop(void);
 
-#ifndef _WIN32
-void *_tpool_worker(void *ptr)
-#else
-void _tpool_worker(void *ptr)
-#endif
-{
+int _tpool_worker(void *ptr) {
     TPool_Task task;
     TPool_Thread *current_thread = (TPool_Thread *)ptr;
     tpool_current_thread_idx = current_thread->idx;
@@ -494,9 +484,7 @@ void _tpool_worker(void *ptr)
     cuikperf_thread_stop();
     #endif
 
-    #ifndef _WIN32
-    return NULL;
-    #endif
+    return 0;
 }
 
 void tpool_add_task(TPool *pool, tpool_task_proc* fn, void* val) {
@@ -544,7 +532,7 @@ void tpool_init(TPool *pool, int child_thread_count) {
 
     for (int i = 1; i < pool->thread_count; i++) {
         _thread_init(pool, &pool->threads[i], i);
-        tpool_thread_start(&pool->threads[i]);
+        thrd_create(&pool->threads[i].thread, _tpool_worker, &pool->threads[i]);
     }
 }
 
@@ -553,7 +541,7 @@ void tpool_destroy(TPool *pool) {
     for (int i = 1; i < pool->thread_count; i++) {
         TPOOL_ATOMIC_FUTEX_INC(pool->tasks_available);
         _tpool_broadcast(&pool->tasks_available);
-        tpool_thread_end(&pool->threads[i]);
+        thrd_join(pool->threads[i].thread, NULL);
     }
     for (int i = 0; i < pool->thread_count; i++) {
         tpool_queue_delete(&pool->threads[i].queue);

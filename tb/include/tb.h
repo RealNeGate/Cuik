@@ -1036,6 +1036,9 @@ TB_API TB_ExecutableType tb_system_executable_format(TB_System s);
 TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch, TPool* tp);
 TB_API bool tb_linker_export(TB_Linker* l, const char* file_name);
 
+// wait for any pending jobs to finish
+TB_API void tb_linker_barrier(TB_Linker* l);
+
 // windows only
 TB_API void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem);
 

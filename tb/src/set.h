@@ -20,7 +20,7 @@ static Set set_create_in_arena(TB_Arena* arena, size_t cap) {
 }
 
 static Set set_create(size_t cap) {
-    void* ptr = tb_platform_heap_alloc(((cap + 63) / 64) * sizeof(uint64_t));
+    void* ptr = cuik_malloc(((cap + 63) / 64) * sizeof(uint64_t));
     memset(ptr, 0, ((cap + 63) / 64) * sizeof(uint64_t));
 
     return (Set){
@@ -30,7 +30,7 @@ static Set set_create(size_t cap) {
 }
 
 static void set_free(Set* s) {
-    tb_platform_heap_free(s->data);
+    cuik_free(s->data);
 }
 
 static void set_clear(Set* s) {
@@ -105,7 +105,7 @@ static bool set_first_time(Set* s, size_t index) {
         s->capacity = index * 2;
         size_t new_slots = (s->capacity + 63) / 64;
 
-        s->data = tb_platform_heap_realloc(s->data, new_slots * sizeof(uint64_t));
+        s->data = cuik_realloc(s->data, new_slots * sizeof(uint64_t));
         if (s->data == NULL) {
             fprintf(stderr, "TB error: Set out of memory!");
             abort();
@@ -130,7 +130,7 @@ static void set_put(Set* s, size_t index) {
         size_t old = s->capacity;
 
         s->capacity = quot * 2;
-        s->data = tb_platform_heap_realloc(s->data, s->capacity * sizeof(uint64_t));
+        s->data = cuik_realloc(s->data, s->capacity * sizeof(uint64_t));
         if (s->data == NULL) {
             fprintf(stderr, "TB error: Set out of memory!");
             abort();

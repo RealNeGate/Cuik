@@ -64,19 +64,12 @@
 #define NL_HASH_MAP_INLINE
 #include <hash_map.h>
 #include <new_hash_map.h>
+
+#define NBHS_REALLOC cuik_realloc
 #include <nbhs.h>
 
 #include <perf.h>
 #include <log.h>
-
-#define FOR_N(it, start, end) \
-for (ptrdiff_t it = (start), end__ = (end); it < end__; ++it)
-
-#define FOR_REV_N(it, start, end) \
-for (ptrdiff_t it = (end), start__ = (start); (it--) > start__;)
-
-#define FOR_BIT(it, start, bits) \
-for (uint64_t _bits_ = (bits), it = (start); _bits_; _bits_ >>= 1, ++it) if (_bits_ & 1)
 
 #define TB_MIN(x, y) ((x) < (y) ? (x) : (y))
 #define TB_MAX(x, y) ((x) > (y) ? (x) : (y))

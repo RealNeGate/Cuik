@@ -145,7 +145,7 @@ void* tb_arena_unaligned_alloc(TB_Arena* restrict arena, size_t size) {
             chunk_size *= 2;
         }
 
-        log_debug("arena: alloc %.2f KiB", chunk_size / 1024.0f);
+        // log_debug("arena: alloc %.2f KiB", chunk_size / 1024.0f);
 
         TB_ArenaChunk* c = top->prev;
         c = cuik_malloc(sizeof(TB_ArenaChunk) + chunk_size - TB_ARENA_ALLOC_HEAD_SLACK);

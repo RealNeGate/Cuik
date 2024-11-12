@@ -37,8 +37,7 @@ void tb_symbol_append(TB_Module* m, TB_Symbol* s) {
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size) {
     // TODO(NeGate): probably wanna have a custom heap for the symbol table
     assert(tag != TB_SYMBOL_NONE);
-    TB_Symbol* s = tb_platform_heap_alloc(size);
-    memset(s, 0, size);
+    TB_Symbol* s = cuik_calloc(1, size);
 
     s->tag = tag;
     s->name = tb__arena_strdup(m, len, name);

@@ -344,7 +344,7 @@ int tb_opt_locals(TB_Function* f) {
     cuikperf_region_start("locals", NULL);
     assert(dyn_array_length(f->worklist->items) == 0);
 
-    CUIK_TIMED_BLOCK("sroa") {
+    /*CUIK_TIMED_BLOCK("sroa") {
         TB_Worklist* ws = f->worklist;
         int pointer_size = f->super.module->codegen->pointer_size;
         TB_Node* root = f->root_node;
@@ -360,7 +360,7 @@ int tb_opt_locals(TB_Function* f) {
             TB_ASSERT(ws->items[i]->type == TB_LOCAL);
             sroa_rewrite(f, root, ws->items[i]);
         }
-    }
+    }*/
 
     // find all locals
     LocalSplitter ctx = { 0 };

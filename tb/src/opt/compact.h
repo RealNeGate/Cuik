@@ -35,7 +35,7 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
             if (f->types) {
                 f->type_cap = tb_next_pow2(f->node_count + 16);
 
-                Lattice** new_types = tb_platform_heap_alloc(f->type_cap * sizeof(Lattice*));
+                Lattice** new_types = cuik_malloc(f->type_cap * sizeof(Lattice*));
                 FOR_N(i, 0, f->type_cap) { new_types[i] = NULL; }
 
                 FOR_N(i, 0, dyn_array_length(ws->items)) {
@@ -45,7 +45,7 @@ void tb_compact_nodes(TB_Function* f, TB_Worklist* ws) {
                 }
 
                 TB_ASSERT(f->root_node->gvn == 0);
-                tb_platform_heap_free(f->types);
+                cuik_free(f->types);
                 f->types = new_types;
             }
 
@@ -133,7 +133,7 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
             if (f->types) {
                 f->type_cap = tb_next_pow2(f->node_count + 16);
 
-                Lattice** new_types = tb_platform_heap_alloc(f->type_cap * sizeof(Lattice*));
+                Lattice** new_types = cuik_malloc(f->type_cap * sizeof(Lattice*));
                 FOR_N(i, 0, f->type_cap) { new_types[i] = NULL; }
 
                 FOR_N(i, 0, dyn_array_length(ws->items)) {
@@ -143,7 +143,7 @@ void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws) {
                 }
 
                 TB_ASSERT(f->root_node->gvn == 0);
-                tb_platform_heap_free(f->types);
+                cuik_free(f->types);
                 f->types = new_types;
             } else {
                 FOR_N(i, 0, dyn_array_length(ws->items)) {

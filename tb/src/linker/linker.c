@@ -54,13 +54,13 @@ TB_API TB_ExecutableType tb_system_executable_format(TB_System s) {
 // Symbols
 ////////////////////////////////
 static void* muh_hs_alloc(size_t size) {
-    void* ptr = tb_platform_heap_alloc(size);
+    void* ptr = cuik_malloc(size);
     memset(ptr, 0, size);
     return ptr;
 }
 
 static void muh_hs_free(void* ptr, size_t size) {
-    tb_platform_heap_free(ptr);
+    cuik_free(ptr);
 }
 
 TB_Slice tb_linker_read_entire_file(FILE* file) {
@@ -73,7 +73,7 @@ TB_Slice tb_linker_read_entire_file(FILE* file) {
     }
 
     size_t length = file_stats.st_size;
-    void* data = tb_platform_heap_alloc(length);
+    void* data = cuik_malloc(length);
 
     fseek(file, 0, SEEK_SET);
     fread(data, 1, length, file);
@@ -84,17 +84,18 @@ TB_Slice tb_linker_read_entire_file(FILE* file) {
 }
 
 TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
-    TB_Linker* l = tb_platform_heap_alloc(sizeof(TB_Linker));
+    TB_Linker* l = cuik_malloc(sizeof(TB_Linker));
     memset(l, 0, sizeof(TB_Linker));
     l->target_arch = arch;
     l->jobs.pool = tp;
+    mtx_init(&l->lock, mtx_plain);
 
-    l->symbols  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free);
-    l->sections = nbhs_alloc(16,  muh_hs_alloc, muh_hs_free);
-    l->imports  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free);
-    l->libs     = nbhs_alloc(32,  muh_hs_alloc, muh_hs_free);
-    l->objects  = nbhs_alloc(256, muh_hs_alloc, muh_hs_free);
-    l->unresolved_symbols = nbhs_alloc(16, muh_hs_alloc, muh_hs_free);
+    l->symbols  = nbhs_alloc(256);
+    l->sections = nbhs_alloc(16);
+    l->imports  = nbhs_alloc(256);
+    l->libs     = nbhs_alloc(32);
+    l->objects  = nbhs_alloc(256);
+    l->unresolved_symbols = nbhs_alloc(16);
 
     switch (exe) {
         case TB_EXECUTABLE_PE: l->vtbl = tb__linker_pe; break;
@@ -106,6 +107,16 @@ TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
     return l;
 }
 
+void tb_linker_barrier(TB_Linker* l) {
+    // finish up parsing all the object file tasks
+    cuikperf_region_start("barrier", NULL);
+    int64_t old;
+    while (old = l->jobs.done, old != l->jobs.count) {
+        futex_wait(&l->jobs.done, old);
+    }
+    cuikperf_region_end();
+}
+
 void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem) {
     l->subsystem = subsystem;
 }
@@ -115,7 +126,7 @@ void tb_linker_set_entrypoint(TB_Linker* l, const char* name) {
 }
 
 static char* linker_newstr(size_t len, const char* path) {
-    char* newstr = tb_platform_heap_alloc(len + 1);
+    char* newstr = cuik_malloc(len + 1);
     memcpy(newstr, path, len);
     newstr[len] = 0;
     return newstr;
@@ -174,27 +185,30 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
         return;
     }
 
-    cuikperf_region_start("find lib", NULL);
+    cuikperf_region_start("find lib", file_name);
     char test_path[FILENAME_MAX];
-    FileMap fm;
-    dyn_array_for(j, l->libpaths) {
-        snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
-        fm = open_file_map_read(test_path);
-        if (fm.data != NULL) {
-            break;
-        }
-        test_path[0] = 0;
-    }
-    cuikperf_region_end();
-
-    if (test_path[0] == 0) {
-        fprintf(stderr, "cuiklink: could not find library: %s\n", file_name);
+    FileMap fm = open_file_map_read(file_name);
+    if (fm.data == NULL) {
         dyn_array_for(j, l->libpaths) {
             snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
-            fprintf(stderr, "  searched at %s\n", test_path);
+            fm = open_file_map_read(test_path);
+            if (fm.data != NULL) {
+                break;
+            }
+            test_path[0] = 0;
         }
-        return;
+
+        if (test_path[0] == 0) {
+            fprintf(stderr, "cuiklink: could not find library: %s\n", file_name);
+            dyn_array_for(j, l->libpaths) {
+                snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+                fprintf(stderr, "  searched at %s\n", test_path);
+            }
+            cuikperf_region_end();
+            return;
+        }
     }
+    cuikperf_region_end();
 
     /* CUIK_TIMED_BLOCK("load") {
         volatile const uint8_t* buf = fm.data;
@@ -238,7 +252,7 @@ bool tb_linker_export(TB_Linker* l, const char* file_name) {
 }
 
 void tb_linker_destroy(TB_Linker* l) {
-    tb_platform_heap_free(l);
+    cuik_free(l);
 }
 
 TB_LinkerSectionPiece* tb_linker_get_piece(TB_Linker* l, TB_LinkerSymbol* restrict sym) {
@@ -455,7 +469,7 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject*
             }
         }
 
-        // printf("tb-link: Loaded %.*s for %.*s\n", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
+        log_debug("Loaded %.*s for %.*s", (int) (obj->name.length - slash), obj->name.data + slash, (int) sym->name.length, sym->name.data);
 
         if (l->jobs.pool != NULL) {
             l->jobs.count += 1;
@@ -498,13 +512,15 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
             tb_linker_symbol_union(l, sym, old);
         } else if (sym->tag == TB_LINKER_SYMBOL_UNKNOWN) {
             sym = old;
-        } else if ((old->flags & TB_LINKER_SYMBOL_COMDAT)) {
+        } else if (old->comdat != TB_LINKER_COMDAT_NONE) {
             // COMDAT, we need to decide which of these lives but for now we don't care.
             sym = old;
         } else {
             // symbol collision if we're overriding something that's
             // not a forward ref.
-            // log_debug("Collision at %.*s", (int) sym->name.length, sym->name.data);
+            if (old->tag == TB_LINKER_SYMBOL_NORMAL && sym->tag == TB_LINKER_SYMBOL_NORMAL) {
+                fprintf(stderr, "\x1b[31merror\x1b[0m: symbol collision: %.*s\n", (int) sym->name.length, sym->name.data);
+            }
             sym = old;
         }
     }
@@ -523,7 +539,7 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
 
             dyn_array_for(i, funcs) {
                 const char* name = funcs[i]->parent->super.name;
-                TB_LinkerSymbol* s = tb_platform_heap_alloc(sizeof(TB_LinkerSymbol));
+                TB_LinkerSymbol* s = cuik_malloc(sizeof(TB_LinkerSymbol));
                 *s = (TB_LinkerSymbol){
                     .name = { (const uint8_t*) name, strlen(name) },
                     .tag  = TB_LINKER_SYMBOL_TB,
@@ -533,7 +549,7 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
                 if (funcs[i]->linkage != TB_LINKAGE_PRIVATE) {
                     TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
                     if (new_s != s) {
-                        tb_platform_heap_free(s);
+                        cuik_free(s);
                         s = new_s;
                     }
                 }
@@ -543,7 +559,7 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
 
             dyn_array_for(i, globals) {
                 const char* name  = globals[i]->super.name;
-                TB_LinkerSymbol* s = tb_platform_heap_alloc(sizeof(TB_LinkerSymbol));
+                TB_LinkerSymbol* s = cuik_malloc(sizeof(TB_LinkerSymbol));
                 *s = (TB_LinkerSymbol){
                     .name = { (const uint8_t*) name, strlen(name) },
                     .tag  = TB_LINKER_SYMBOL_TB,
@@ -553,7 +569,7 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
                 if (globals[i]->linkage != TB_LINKAGE_PRIVATE) {
                     TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
                     if (new_s != s) {
-                        tb_platform_heap_free(s);
+                        cuik_free(s);
                         s = new_s;
                     }
                 }
@@ -795,7 +811,7 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
             size_t j = 0;
             CUIK_TIMED_BLOCK("convert to array") {
                 assert(s->piece_count != 0);
-                array_form = tb_platform_heap_realloc(array_form, piece_count * sizeof(TB_LinkerSectionPiece*));
+                array_form = cuik_realloc(array_form, piece_count * sizeof(TB_LinkerSectionPiece*));
 
                 TB_LinkerSectionPiece* p = atomic_load_explicit(&s->list, memory_order_relaxed);
                 for (; p != NULL; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
@@ -860,7 +876,7 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
             dyn_array_put(sections, s);
             s->number = num++;
         }
-        tb_platform_heap_free(array_form);
+        cuik_free(array_form);
     }
 
     return sections;
