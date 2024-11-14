@@ -174,14 +174,14 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
             tb_coff_parse_section(&parser, i, s);
 
             // trim the dollar sign (if applies)
-            TB_Slice coff_order = { 0 };
+            /* TB_Slice coff_order = { 0 };
             int dollar = find_char(s->name, '$');
             if (dollar < s->name.length) {
                 coff_order.length = s->name.length - (dollar + 1);
                 coff_order.data = &s->name.data[dollar + 1];
 
                 s->name.length = dollar;
-            }
+            } */
             // printf("L: %zu %.*s (dollar: %d)\n", s->name.length, (int) s->name.length, s->name.data, dollar);
 
             size_t drectve_len = sizeof(".drectve")-1;
@@ -211,7 +211,6 @@ void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
             }
             s->user_data = p;
             p->order = order + i;
-            p->coff_order = coff_order;
             p->flags = (s->flags & IMAGE_SCN_MEM_EXECUTE) ? TB_LINKER_PIECE_CODE : 0;
             p->reloc_count = s->relocation_count;
             p->relocs = &parser.file.data[s->relocation_offset];
@@ -982,6 +981,20 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         log_debug("Section %.*s: %#x - %#x", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
     }
 
+    if (1) {
+        printf(" Start         Length     Name                   Class\n");
+        dyn_array_for(i, sections) {
+            TB_LinkerSection* s = sections[i];
+
+            uint32_t mask = IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE;
+            bool is_code = (s->flags & mask) == mask;
+
+            int len = printf(" %04x:%08zx %08zxH %.*s", 0, s->address, s->size, (int) s->name.length, s->name.data);
+            printf("%*s%s\n", 49 - len, "", is_code ? "CODE" : "DATA");
+        }
+    }
+    __debugbreak();
+
     if (l->main_reloc != NULL) {
         CUIK_TIMED_BLOCK(".reloc") {
             TB_Emitter relocs = { .capacity = l->main_reloc->size, .data = cuik_malloc(l->main_reloc->size) };
@@ -1222,8 +1235,6 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         WRITE(&opt_header, sizeof(opt_header));
         dyn_array_for(i, sections) {
             TB_LinkerSection* s = sections[i];
-            if (s->generic_flags & TB_LINKER_SECTION_DISCARD) { continue; }
-
             PE_SectionHeader sec_header = {
                 .virtual_size    = s->size,
                 .virtual_address = s->address,

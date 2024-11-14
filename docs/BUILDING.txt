@@ -1,0 +1,13 @@
+# Building
+
+First of all, lets' grab mimalloc:
+
+```
+git submodule update --init --recursive
+```
+
+You will need Clang/GCC, Ninja, and Lua (Luajit works)
+
+For the most part doing `lua build.lua -driver` will build the CLI app, if you wish to build
+the library by itself add `-cuik` and/or `-tb` depending on what is wanted. If you wish
+for a shared object (DLL/SO) add `-shared` which by default will compile with Cuik and TB.

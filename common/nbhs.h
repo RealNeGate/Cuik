@@ -360,6 +360,7 @@ NBHS_Table* NBHS_FN(move_items)(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, 
         // dettach now
         NBHS__BEGIN("detach");
         latest->prev = NULL;
+        NBHS_FN(exit_pinned)();
 
         int state_count = nbhs_ebr_count;
         uint64_t* states = NBHS_REALLOC(NULL, state_count * sizeof(uint64_t));
@@ -412,6 +413,7 @@ NBHS_Table* NBHS_FN(move_items)(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, 
         NBHS_VIRTUAL_FREE(prev, sizeof(NBHS_Table) + prev->cap*sizeof(void*));
         NBHS_REALLOC(states, 0);
 
+        NBHS_FN(enter_pinned)();
         prev = NULL;
         NBHS__END();
     }

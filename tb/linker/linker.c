@@ -724,17 +724,23 @@ static TB_Slice as_filename(TB_Slice s) {
 }
 
 static int compare_linker_sections(const void* a, const void* b) {
-    const TB_LinkerSectionPiece* sec_a = *(const TB_LinkerSectionPiece**) a;
-    const TB_LinkerSectionPiece* sec_b = *(const TB_LinkerSectionPiece**) b;
+    const TB_LinkerSection* sec_a = *(const TB_LinkerSection**) a;
+    const TB_LinkerSection* sec_b = *(const TB_LinkerSection**) b;
 
-    size_t len = TB_MIN(sec_a->coff_order.length, sec_b->coff_order.length);
+    size_t len = TB_MIN(sec_a->name.length, sec_b->name.length);
     FOR_N(i, 0, len) {
-        int c = sec_a->coff_order.data[i] - sec_b->coff_order.data[i];
+        int c = sec_a->name.data[i] - sec_b->name.data[i];
         if (c != 0) { return c; }
     }
 
-    if (sec_a->coff_order.length < sec_b->coff_order.length) { return -1; }
-    if (sec_a->coff_order.length > sec_b->coff_order.length) { return  1; }
+    if (sec_a->name.length < sec_b->name.length) { return -1; }
+    if (sec_a->name.length > sec_b->name.length) { return  1; }
+    return 0;
+}
+
+static int compare_linker_pieces(const void* a, const void* b) {
+    const TB_LinkerSectionPiece* sec_a = *(const TB_LinkerSectionPiece**) a;
+    const TB_LinkerSectionPiece* sec_b = *(const TB_LinkerSectionPiece**) b;
 
     if (sec_a->order < sec_b->order) return -1;
     if (sec_a->order > sec_b->order) return  1;
@@ -831,7 +837,7 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
 
             // sort
             CUIK_TIMED_BLOCK("sort section") {
-                qsort(array_form, piece_count, sizeof(TB_LinkerSectionPiece*), compare_linker_sections);
+                qsort(array_form, piece_count, sizeof(TB_LinkerSectionPiece*), compare_linker_pieces);
             }
 
             // convert back into linked list
@@ -879,6 +885,7 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
         cuik_free(array_form);
     }
 
+    qsort(sections, dyn_array_length(sections), sizeof(TB_LinkerSection*), compare_linker_sections);
     return sections;
 }
 

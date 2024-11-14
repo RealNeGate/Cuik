@@ -38,20 +38,20 @@ local modules = {
 	-- libraries:
 	--   CuikC frontend
 	cuik = { srcs={
-			"libCuik/lib/libcuik.c",
+			"libCuik/libcuik.c",
 			-- toolchain support
-			"libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c",
+			"libCuik/toolchains/msvc.c", "libCuik/toolchains/gnu.c", "libCuik/toolchains/darwin.c",
 			-- architectures
-			"libCuik/lib/targets/x64_desc.c",  "libCuik/lib/targets/aarch64_desc.c",
-			"libCuik/lib/targets/mips_desc.c", "libCuik/lib/targets/wasm_desc.c",
-		}, flags="-I libCuik/include", deps={"common"}
+			"libCuik/targets/x64_desc.c",  "libCuik/targets/aarch64_desc.c",
+			"libCuik/targets/mips_desc.c", "libCuik/targets/wasm_desc.c",
+		}, flags="", deps={"common"}
 	},
 	--   TildeBackend
 	tb = { srcs={
-			"tb/src/libtb.c",
+			"tb/libtb.c",
 			-- archictectures
-			"tb/src/x64/x64_target.c", "tb/src/aarch64/aarch64_target.c", "tb/src/mips/mips_target.c", "tb/src/wasm/wasm_target.c"
-		}, flags="-I tb/include -DCUIK_USE_TB -DTB_HAS_X64", deps={"common"}
+			"tb/x64/x64_target.c", "tb/aarch64/aarch64_target.c", "tb/mips/mips_target.c", "tb/wasm/wasm_target.c"
+		}, flags="-DCUIK_USE_TB -DTB_HAS_MIPS", deps={"common"}
 	},
 	-- executables:
 	--   Cuik command line
@@ -71,12 +71,12 @@ for i = 1, #arg do
 end
 
 local ldflags = ""
-local cflags = " -g -march=haswell -I common -Wall -Werror -Wno-unused -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
+local cflags = " -g -march=haswell -I include -I common -Wall -Werror -Wno-unused -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
 
 if options.asan then
 	cflags = cflags.." -fsanitize=address"
 else
-	cflags = cflags.." -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC"
+	cflags = cflags.." -DTB_USE_MIMALLOC"
 end
 
 if options.driver then
@@ -105,8 +105,7 @@ end
 local src = {}
 
 if is_windows then
-	src[#src + 1] = "c11threads/threads_msvc.c"
-	cflags = cflags.." -I c11threads -D_CRT_SECURE_NO_WARNINGS"
+	cflags = cflags.." -D_CRT_SECURE_NO_WARNINGS"
 
 	if options.shared then
 		cflags = cflags.." -DCUIK_DLL -DTB_DLL"
@@ -239,8 +238,8 @@ rule("run", {
 })
 
 -- lexer metaprogram
-command("bin/objs/lexgen"..exe_ext, "libCuik/meta/lexgen.c", cc.." $in -O1 -o $out")
-command("libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
+command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
+command("libCuik/preproc/keywords.h libCuik/preproc/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
 
 -- TB metaprogram
 -- command("tb/meta/foo.c", "tb/meta/dsl.lua", arg[-1].." $in")
@@ -262,7 +261,7 @@ else
 end
 local freestanding_headers = table.concat(x, " ")
 
-command("bin/objs/hexembed"..exe_ext, "libCuik/meta/hexembed.c", cc.." $in -O1 -o $out")
+command("bin/objs/hexembed"..exe_ext, "meta/hexembed.c", cc.." $in -O1 -o $out")
 command("bin/objs/freestanding.c", freestanding_headers, "bin/objs/hexembed"..exe_ext.." $in", "bin/objs/hexembed"..exe_ext)
 
 src[#src + 1] = "bin/objs/freestanding.c"
@@ -272,7 +271,7 @@ local objs = {}
 for i, f in ipairs(src) do
 	local out = "bin/objs/"..filename(f)..".o"
 	ninja:write("build "..out..": cc "..f)
-	ninja:write(" | libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h\n")
+	ninja:write(" | libCuik/preproc/keywords.h libCuik/preproc/dfa.h\n")
 	objs[#objs + 1] = out
 end
 
