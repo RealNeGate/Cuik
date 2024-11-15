@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef TB_USE_MIMALLOC
+#ifdef CONFIG_HAS_MIMALLOC
 #include <mimalloc.h>
 
 #define cuik_malloc(size)        mi_malloc(size)

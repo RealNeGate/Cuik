@@ -7,7 +7,7 @@
 // hacky but i dont care
 #include <file_map.h>
 
-#ifdef CUIK_USE_TB
+#ifdef CONFIG_HAS_TB
 #include "objdump.h"
 #include "link.h"
 #endif
@@ -105,7 +105,7 @@ int main(int argc, const char** argv) {
 
     int status = EXIT_SUCCESS;
     if (argc >= 2) {
-        #ifdef CUIK_USE_TB
+        #ifdef CONFIG_HAS_TB
         if (strcmp(argv[1], "-objdump") == 0) return run_objdump(argc - 2, argv + 2);
         if (strcmp(argv[1], "-link")    == 0) return run_link(argc - 2, argv + 2);
         #endif
@@ -120,7 +120,7 @@ int main(int argc, const char** argv) {
         .version   = CUIK_VERSION_C23,
         .toolchain = cuik_toolchain_host(),
 
-        #ifdef CUIK_USE_TB
+        #ifdef CONFIG_HAS_TB
         .flavor    = TB_FLAVOR_EXECUTABLE,
         #endif
     };

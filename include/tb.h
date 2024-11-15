@@ -587,6 +587,8 @@ typedef struct TB_Symbol {
     // which thread info it's tied to (we may need to remove it, this
     // is used for that)
     TB_ThreadInfo* info;
+
+    size_t name_length;
     char* name;
 
     // It's kinda a weird circular reference but yea
@@ -902,15 +904,6 @@ TB_API void tb_module_set_tls_index(TB_Module* m, ptrdiff_t len, const char* nam
 // not thread-safe
 TB_API TB_ModuleSectionHandle tb_module_create_section(TB_Module* m, ptrdiff_t len, const char* name, TB_ModuleSectionFlags flags, TB_ComdatType comdat);
 
-typedef struct {
-    TB_ThreadInfo* info;
-    size_t i;
-} TB_SymbolIter;
-
-// Lovely iterator for all the symbols... it's probably not "fast"
-TB_SymbolIter tb_symbol_iter(TB_Module* mod);
-TB_Symbol* tb_symbol_iter_next(TB_SymbolIter* iter);
-
 ////////////////////////////////
 // Compiled code introspection
 ////////////////////////////////
@@ -1060,7 +1053,6 @@ TB_API void tb_linker_append_library(TB_Linker* l, const char* file_name);
 ////////////////////////////////
 // Symbols
 ////////////////////////////////
-TB_API bool tb_extern_resolve(TB_External* e, TB_Symbol* sym);
 TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type);
 
 TB_API TB_SourceFile* tb_get_source_file(TB_Module* m, ptrdiff_t len, const char* path);

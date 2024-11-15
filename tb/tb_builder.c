@@ -5,6 +5,7 @@
 // optimizations while the generation happens to improve
 // the machine code output or later analysis stages.
 #include "tb_internal.h"
+#include "opt/passes.h"
 
 TB_API void tb_inst_set_trace(TB_Function* f, TB_Trace trace) { f->trace = trace; }
 TB_API TB_Trace tb_inst_get_trace(TB_Function* f) { return f->trace; }

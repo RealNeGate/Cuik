@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <pool.h>
 
 #ifdef CUIK_DLL
 #  ifdef CUIK_IMPORT_DLL
@@ -17,7 +18,7 @@
 #endif
 
 // hacky
-#if !defined(CUIK_USE_TB) && !defined(TB_CORE_H)
+#if !defined(CONFIG_HAS_TB) && !defined(TB_CORE_H)
 typedef enum TB_WindowsSubsystem {
     TB_WIN_SUBSYSTEM_UNKNOWN,
 

@@ -80,6 +80,9 @@ typedef enum {
     TB_ELF_X86_64_GOT32    = 3,
     TB_ELF_X86_64_PLT32    = 4,
     TB_ELF_X86_64_GOTPCREL = 9,
+
+    TB_ELF_X86_64_GOTPCRELX = 41,
+    TB_ELF_X86_64_REX_GOTPCRELX = 42,
 } TB_ELF_RelocType;
 
 // ST_TYPE

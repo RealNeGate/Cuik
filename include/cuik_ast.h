@@ -169,7 +169,7 @@ struct Cuik_Type {
 
     Atom also_known_as;
 
-    #ifdef CUIK_USE_TB
+    #ifdef CONFIG_HAS_TB
     _Atomic(TB_DebugType*) debug_type;
     #else
     void* user_data;
@@ -494,14 +494,14 @@ struct Stmt {
 
         // Used by the backend for backend-y things
         union {
-            #ifdef CUIK_USE_TB
+            #ifdef CONFIG_HAS_TB
             TB_Node* n;
             TB_Node* loop[2];
             TB_Function* f;
             TB_Symbol* s;
             TB_Global* g;
             TB_External* e;
-            #endif /* CUIK_USE_TB */
+            #endif /* CONFIG_HAS_TB */
 
             void* user_data;
         } backing;

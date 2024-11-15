@@ -3,8 +3,75 @@ void elf_init(TB_Linker* l) {
     l->entrypoint = "_start";
 }
 
-void elf_append_library(TPool* pool, TB_LinkerObject* obj) {
-    __debugbreak();
+FileMap elf_find_lib(TB_Linker* l, const char* file_name, char* path) {
+    FileMap fm;
+    dyn_array_for(j, l->libpaths) {
+        snprintf(path, FILENAME_MAX, "%s/lib%s.so", l->libpaths[j], file_name);
+        fm = open_file_map_read(path);
+        if (fm.data != NULL) {
+            break;
+        }
+        path[0] = 0;
+    }
+
+    if (path[0] == 0) {
+        dyn_array_for(j, l->libpaths) {
+            snprintf(path, FILENAME_MAX, "%s/lib%s.a", l->libpaths[j], file_name);
+            fm = open_file_map_read(path);
+            if (fm.data != NULL) {
+                break;
+            }
+            path[0] = 0;
+        }
+    }
+
+    if (path[0] == 0) {
+        printf("tblink: could not find library: %s\n", file_name);
+        dyn_array_for(j, l->libpaths) {
+            snprintf(path, FILENAME_MAX, "%s/lib%s.so", l->libpaths[j], file_name);
+            printf("  searched at %s\n", path);
+        }
+
+        dyn_array_for(j, l->libpaths) {
+            snprintf(path, FILENAME_MAX, "%s/lib%s.a", l->libpaths[j], file_name);
+            printf("  searched at %s\n", path);
+        }
+        return (FileMap){ 0 };
+    }
+    return fm;
+}
+
+static void elf_append_shared(TPool* pool, TB_LinkerObject* lib) {
+
+}
+
+void elf_append_library(TPool* pool, TB_LinkerObject* lib) {
+    size_t slash = 0;
+    FOR_REV_N(i, 0, lib->name.length) {
+        if (lib->name.data[i] == '/' || lib->name.data[i] == '\\') {
+            slash = i + 1;
+            break;
+        }
+    }
+
+    cuikperf_region_start2("library", lib->name.length - slash, (const char*) lib->name.data + slash);
+
+    TB_Linker* l = lib->linker;
+    TB_Slice ar_file = lib->content;
+    if (ar_file.length >= 4 && memcmp(ar_file.data, (uint8_t[4]){ 0x7F, 'E', 'L', 'F' }, 4) == 0) {
+        __debugbreak();
+    } else if (ar_file.length >= 8 && memcmp(ar_file.data, "!<arch>\n", 8) == 0) {
+        append_archive(pool, lib, slash);
+    } else {
+        elf_append_script(pool, lib, slash);
+    }
+
+    if (l->jobs.pool != NULL) {
+        l->jobs.done += 1;
+        futex_signal(&l->jobs.done);
+    }
+
+    cuikperf_region_end();
 }
 
 void elf_append_object(TPool* pool, TB_LinkerObject* obj) {
@@ -17,6 +84,7 @@ void elf_append_object(TPool* pool, TB_LinkerObject* obj) {
     }
 
     cuikperf_region_start2("object", obj->name.length - slash, (const char*) obj->name.data + slash);
+    log_info("Object: %.*s\n", obj->name.length - slash, (const char*) obj->name.data + slash);
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -125,8 +193,10 @@ void elf_append_object(TPool* pool, TB_LinkerObject* obj) {
                 // TODO(NeGate): support the lame relocations without addend
                 if (section_header->type == TB_SHT_RELA) {
                     TB_LinkerSectionPiece* p = sections[section_header->info];
-                    p->reloc_count = section_header->size / sizeof(TB_Elf64_Rela);
-                    p->relocs = &content.data[section_header->offset];
+                    if (p != NULL) {
+                        p->reloc_count = section_header->size / sizeof(TB_Elf64_Rela);
+                        p->relocs = &content.data[section_header->offset];
+                    }
                 }
             }
         }
@@ -146,10 +216,21 @@ static void elf_parse_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc
     out_reloc->addend     = rel->addend;
     out_reloc->target     = p->symbol_map[TB_ELF64_R_SYM(rel->info)];
 
+    printf("%llu\n", TB_ELF64_R_TYPE(rel->info));
+
     int type;
     switch (TB_ELF64_R_TYPE(rel->info)) {
-        case TB_ELF_X86_64_64:   type = TB_OBJECT_RELOC_ADDR64; break;
-        case TB_ELF_X86_64_PC32: type = TB_OBJECT_RELOC_REL32;  break;
+        case TB_ELF_X86_64_64:       type = TB_OBJECT_RELOC_ADDR64;  break;
+        case TB_ELF_X86_64_PC32:     type = TB_OBJECT_RELOC_REL32;   break;
+        case TB_ELF_X86_64_PLT32:    type = TB_OBJECT_RELOC_REL32;   break;
+        case TB_ELF_X86_64_GOTPCREL: type = TB_OBJECT_RELOC_GOTPCREL; break;
+
+        // TODO(NeGate): incorrect but we'll fix it later.
+        //   these are meant to be GOTPCRELs which can convert from the indirect load/store
+        //   to a direct load/store.
+        case TB_ELF_X86_64_GOTPCRELX:     type = TB_OBJECT_RELOC_GOTPCREL; break;
+        case TB_ELF_X86_64_REX_GOTPCRELX: type = TB_OBJECT_RELOC_GOTPCREL; break;
+
         default: TB_ASSERT_MSG(0, "missing relocation type");
     }
     out_reloc->type = type;
@@ -353,6 +434,7 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
 
 TB_LinkerVtbl tb__linker_elf = {
     .init           = elf_init,
+    .find_lib       = elf_find_lib,
     .append_object  = elf_append_object,
     .append_library = elf_append_library,
     .parse_reloc    = elf_parse_reloc,

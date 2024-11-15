@@ -7,7 +7,6 @@ void* tb_jit_stack_create(void);
 #include "tb_builder.c"
 #include "debug_builder.c"
 #include "exporter.c"
-#include "symbols.c"
 #include "disasm.c"
 
 // JIT
@@ -37,6 +36,8 @@ void* tb_jit_stack_create(void);
 
 // Linker
 #include "linker/linker.c"
+#include "linker/archives.c"
+#include "linker/ld_script.c"
 #include "linker/pe_linker.c"
 #include "linker/elf_linker.c"
 

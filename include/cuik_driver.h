@@ -22,7 +22,7 @@ struct Cuik_Toolchain {
 struct Cuik_DriverArgs {
     Cuik_Version version;
 
-    #ifdef CUIK_USE_TB
+    #ifdef CONFIG_HAS_TB
     TB_OutputFlavor flavor;
     #endif
 
@@ -99,7 +99,7 @@ CUIK_API bool cuik_driver_compile(TPool* tp, Cuik_DriverArgs* restrict args, boo
 CUIK_API Cuik_CPP* cuik_driver_preprocess_str(String source, const Cuik_DriverArgs* args, bool should_finalize);
 CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_DriverArgs* args, bool should_finalize);
 
-#ifdef CUIK_USE_TB
+#ifdef CONFIG_HAS_TB
 CUIK_API void cuik_apply_tb_toolchain_libs(TB_Linker* l);
 #endif
 
@@ -170,7 +170,7 @@ CUIK_API bool cuik_driver_does_codegen(const Cuik_DriverArgs* args);
 // Scheduling
 ////////////////////////////////
 // This is used to help users multithread their actions (optimizations, codegen, etc)
-#ifdef CUIK_USE_TB
+#ifdef CONFIG_HAS_TB
 typedef void (*CuikSched_PerFunction)(TB_Function* f, void* ctx);
 
 CUIK_API void cuiksched_per_function(TPool* tp, CompilationUnit* cu, TB_Module* m, void* ctx, CuikSched_PerFunction func);

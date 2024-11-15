@@ -17,6 +17,10 @@ typedef enum {
     // COFF only
     TB_OBJECT_RELOC_ADDR32NB, // Relative virtual address
 
+    // Global offset table (ELF)
+    TB_OBJECT_RELOC_GOTPCREL,
+    TB_OBJECT_RELOC_REX_GOTPCRELX,
+
     // x64 only
     TB_OBJECT_RELOC_REL32,    // relative 32bit displacement
 

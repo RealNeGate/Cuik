@@ -136,6 +136,34 @@ static void parse_directives(TB_Linker* l, const uint8_t* curr, const uint8_t* e
     }
 }
 
+FileMap pe_find_lib(TB_Linker* l, const char* file_name, char* path) {
+    FileMap fm = open_file_map_read(file_name);
+    if (fm.data !=  NULL) {
+        strncpy(path, file_name, FILENAME_MAX);
+        return fm;
+    }
+
+    dyn_array_for(j, l->libpaths) {
+        snprintf(path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+        fm = open_file_map_read(path);
+        if (fm.data != NULL) {
+            break;
+        }
+        path[0] = 0;
+    }
+
+    if (path[0] == 0) {
+        printf("tblink: could not find library: %s\n", file_name);
+        dyn_array_for(j, l->libpaths) {
+            snprintf(path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
+            printf("  searched at %s\n", path);
+        }
+        cuikperf_region_end();
+        return (FileMap){ 0 };
+    }
+    return fm;
+}
+
 void pe_append_object(TPool* pool, TB_LinkerObject* obj) {
     size_t slash = 0;
     FOR_REV_N(i, 0, obj->name.length) {
@@ -479,7 +507,6 @@ static void pe_append_library(TPool* pool, TB_LinkerObject* lib) {
                 lazy_import_task(NULL, &t);
             }
         } else {
-            char* strtab = ar_parser.symbol_strtab;
             size_t i = 0, j = 0;
             while (i < ar_parser.symbol_count) {
                 uint16_t offset_index = ar_parser.symbols[i] - 1;
@@ -1263,6 +1290,7 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
 
 TB_LinkerVtbl tb__linker_pe = {
     .init           = pe_init,
+    .find_lib       = pe_find_lib,
     .append_object  = pe_append_object,
     .append_library = pe_append_library,
     .parse_reloc    = pe_parse_reloc,

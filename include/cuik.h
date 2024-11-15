@@ -7,7 +7,7 @@
 int sprintf_s(char* buffer, size_t len, const char* format, ...);
 #endif
 
-#ifdef CUIK_USE_TB
+#ifdef CONFIG_HAS_TB
 #include <tb.h>
 #endif
 
@@ -83,7 +83,7 @@ CUIK_API void cuik_add_to_compilation_unit(CompilationUnit* restrict cu, Transla
 CUIK_API void cuik_destroy_compilation_unit(CompilationUnit* restrict cu);
 CUIK_API size_t cuik_num_of_translation_units_in_compilation_unit(CompilationUnit* restrict cu);
 
-#ifdef CUIK_USE_TB
+#ifdef CONFIG_HAS_TB
 CUIK_API void cuik_compilation_unit_set_tb_module(CompilationUnit* restrict cu, TB_Module* mod);
 CUIK_API TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu);
 #endif
@@ -95,8 +95,6 @@ CUIK_API TB_Module* cuik_compilation_unit_tb_module(CompilationUnit* restrict cu
 #include "cuik_driver.h"
 #include "cuik_fs.h"
 
-#ifdef CUIK_USE_TB
+#ifdef CONFIG_HAS_TB
 #include "cuik_irgen.h"
 #endif
-
-#include "cuik_private.h"

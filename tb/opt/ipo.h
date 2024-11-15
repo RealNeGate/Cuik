@@ -74,12 +74,13 @@ bool tb_module_ipo(TB_Module* m) {
     // we can incorporate IPSCCP)
     SCC scc = { 0 };
     scc.arena    = get_temporary_arena(m);
-    scc.fn_count = m->symbol_count[TB_SYMBOL_FUNCTION];
+    // scc.fn_count = m->symbol_count[TB_SYMBOL_FUNCTION];
 
     IPOSolver ipo = { 0 };
     ipo.ws_cap = scc.fn_count;
     ipo.ws = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
 
+    #if 0
     CUIK_TIMED_BLOCK("build SCC") {
         TB_ArenaSavepoint sp = tb_arena_save(scc.arena);
         scc.stk      = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
@@ -100,6 +101,7 @@ bool tb_module_ipo(TB_Module* m) {
         }
         tb_arena_restore(scc.arena, sp);
     }
+    #endif
 
     // we've got our bottom up ordering on the worklist... start trying to inline callsites
     bool progress = false;

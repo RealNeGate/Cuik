@@ -1,12 +1,25 @@
 #include "tb_internal.h"
 #include "host.h"
-#include "opt/passes.h"
+#include <hashes.h>
 
 #ifndef TB_NO_THREADS
 static once_flag tb_global_init = ONCE_FLAG_INIT;
 #else
 static bool tb_global_init;
 #endif
+
+static uint32_t symbolhs_hash(const void* a) {
+    const TB_Symbol *aa = a;
+    return tb__murmur3_32(aa->name, aa->name_length);
+}
+
+static bool symbolhs_cmp(const void* a, const void* b) {
+    const TB_Symbol *aa = a, *bb = b;
+    return aa->name_length == bb->name_length && memcmp(aa->name, bb->name, aa->name_length) == 0;
+}
+
+#define NBHS_FN(n) symbolhs_ ## n
+#include <nbhs.h>
 
 ICodeGen tb_codegen_families[TB_ARCH_MAX];
 
@@ -274,7 +287,6 @@ void tb_module_destroy(TB_Module* m) {
     while (info != NULL) {
         TB_ThreadInfo* next = info->next_in_module;
 
-        dyn_array_destroy(info->symbols);
         tb_arena_destroy(&info->tmp_arena);
         tb_arena_destroy(&info->perm_arena);
 
@@ -292,6 +304,7 @@ void tb_module_destroy(TB_Module* m) {
         info = next;
     }
 
+    nbhs_free(&m->symbols);
     nbhs_free(&m->lattice_elements);
     dyn_array_destroy(m->files);
     cuik_free(m);
@@ -450,20 +463,65 @@ void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, TB_Sy
     g->objects[g->obj_count++] = (TB_InitObj) { .type = TB_INIT_OBJ_RELOC, .offset = offset, .reloc = symbol };
 }
 
-TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
-    TB_Global* g = tb_arena_alloc(get_permanent_arena(m), sizeof(TB_Global));
-    *g = (TB_Global){
-        .super = {
-            .tag = TB_SYMBOL_GLOBAL,
-            .name = tb__arena_strdup(m, len, name),
-            .module = m,
-        },
-        .dbg_type = dbg_type,
-        .linkage = linkage
-    };
-    tb_symbol_append(m, (TB_Symbol*) g);
+TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size) {
+    assert(tag != TB_SYMBOL_NONE);
+    TB_ThreadInfo* info = tb_thread_info(m);
 
+    if (len < 0) {
+        len = strlen(name);
+    }
+
+    TB_Symbol* s = tb_arena_alloc(&info->perm_arena, size);
+    s->tag = tag;
+    s->name_length = len;
+    s->name = tb__arena_strdup(m, len, name);
+    s->module = m;
+    if (size > sizeof(TB_Symbol)) {
+        memset(&s[1], 0, size - sizeof(TB_Symbol));
+    }
+
+    TB_Symbol* old_s = symbolhs_intern(&m->symbols, s);
+    if (s != old_s) {
+        if (s->tag == TB_SYMBOL_EXTERNAL) {
+            tb_arena_free(&info->perm_arena, s, size);
+            s = old_s;
+        } else if (old_s->tag == TB_SYMBOL_EXTERNAL && s->tag != TB_SYMBOL_EXTERNAL) {
+            TB_Symbol* expected = NULL;
+            TB_External* old_e = (TB_External*) old_s;
+            if (!atomic_compare_exchange_strong(&old_e->resolved, &expected, s)) {
+                tb_panic("tb: symbol collision");
+            }
+        } else {
+            tb_panic("tb: symbol collision");
+        }
+    }
+
+    return s;
+}
+
+TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
+    TB_External* e = (TB_External*) tb_symbol_alloc(m, TB_SYMBOL_EXTERNAL, len, name, sizeof(TB_External));
+    e->type = type;
+    return e;
+}
+
+TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
+    TB_Global* g = (TB_Global*) tb_symbol_alloc(m, TB_SYMBOL_GLOBAL, len, name, sizeof(TB_Global));
+    g->dbg_type = dbg_type;
+    g->linkage = linkage;
     return g;
+}
+
+TB_Function* tb_symbol_as_function(TB_Symbol* s) {
+    return s && s->tag == TB_SYMBOL_FUNCTION ? (TB_Function*) s : NULL;
+}
+
+TB_External* tb_symbol_as_external(TB_Symbol* s) {
+    return s && s->tag == TB_SYMBOL_EXTERNAL ? (TB_External*) s : NULL;
+}
+
+TB_Global* tb_symbol_as_global(TB_Symbol* s) {
+    return s && s->tag == TB_SYMBOL_GLOBAL ? (TB_Global*) s : NULL;
 }
 
 void tb_global_set_storage(TB_Module* m, TB_ModuleSectionHandle section, TB_Global* global, size_t size, size_t align, size_t max_objects) {
@@ -537,22 +595,6 @@ void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr) {
 
 TB_ExternalType tb_extern_get_type(TB_External* e) {
     return e->type;
-}
-
-TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
-    assert(name != NULL);
-
-    TB_External* e = tb_arena_alloc(get_permanent_arena(m), sizeof(TB_External));
-    *e = (TB_External){
-        .super = {
-            .tag = TB_SYMBOL_EXTERNAL,
-            .name = tb__arena_strdup(m, len, name),
-            .module = m,
-        },
-        .type = type,
-    };
-    tb_symbol_append(m, (TB_Symbol*) e);
-    return e;
 }
 
 //

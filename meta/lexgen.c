@@ -353,7 +353,7 @@ static uint8_t eq_classes[256] = {
 };
 
 int main(int argc, char** argv) {
-    FILE* file = fopen("libCuik/lib/preproc/keywords.h", "wb");
+    FILE* file = fopen("cuik_pp/keywords.h", "wb");
     for (int i = 0; i < num_keywords; i++) {
         const char* base = keywords[i];
         while (*base == '_') base++;
@@ -375,7 +375,7 @@ int main(int argc, char** argv) {
     }
     eq_classes['L'] = EQ_L;
 
-    file = fopen("libCuik/lib/preproc/dfa.h", "wb");
+    file = fopen("cuik_pp/dfa.h", "wb");
     run_keyword_tablegen(file);
     fprintf(file, "\nstatic const char keywords[][16] = {\n");
     for (int i = 0; i < num_keywords; i++) {

@@ -1,4 +1,5 @@
 // Common is just a bunch of crap i want accessible to all projects in the Cuik repo
+#include "str.h"
 #include "arena.h"
 #include "futex.h"
 #include <stdatomic.h>
@@ -81,7 +82,26 @@ void cuik__vfree(void* ptr, size_t size) {
 }
 
 ////////////////////////////////
-// TB_Arenas
+// Strings
+////////////////////////////////
+String string_cstr(const char* str) {
+    return (String){ .length = strlen(str), .data = (const unsigned char*) str };
+}
+
+String string_from_range(const unsigned char* start, const unsigned char* end) {
+    return (String){ .length = end-start, .data = start };
+}
+
+bool string_equals(const String* a, const String* b) {
+    return a->length == b->length && memcmp(a->data, b->data, a->length) == 0;
+}
+
+bool string_equals_cstr(const String* a, const char* b) {
+    return a->length == strlen(b) && memcmp(a->data, b, a->length) == 0;
+}
+
+////////////////////////////////
+// Arenas
 ////////////////////////////////
 static size_t align_up_pow2(size_t a, size_t b) { return (a + b - 1) & -b; }
 

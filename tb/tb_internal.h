@@ -480,7 +480,6 @@ struct TB_ThreadInfo {
     TB_ThreadInfo* next;
 
     mtx_t* lock;
-    DynArray(TB_Symbol*) symbols;
 
     // used for moving the start of the
     // linked list forward.
@@ -519,6 +518,9 @@ struct TB_Module {
     TB_FeatureSet features;
     ExportList exports;
 
+    // TB_Symbol*
+    NBHS symbols;
+
     // This is a hack for windows since they've got this idea
     // of a _tls_index
     TB_Symbol* tls_index_extern;
@@ -529,7 +531,6 @@ struct TB_Module {
 
     _Atomic uint32_t uses_chkstk;
     _Atomic uint32_t compiled_function_count;
-    _Atomic uint32_t symbol_count[TB_SYMBOL_MAX];
 
     // needs to be locked with 'TB_Module.lock'
     NL_Strmap(TB_SourceFile*) files;
@@ -743,7 +744,6 @@ void tb_node_clear_extras(TB_Function* f, TB_Node* n);
 TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra);
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
-void tb_symbol_append(TB_Module* m, TB_Symbol* s);
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos);
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data);

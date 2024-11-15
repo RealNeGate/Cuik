@@ -186,39 +186,18 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     }
 
     cuikperf_region_start("find lib", file_name);
-    char test_path[FILENAME_MAX];
-    FileMap fm = open_file_map_read(file_name);
-    if (fm.data == NULL) {
-        dyn_array_for(j, l->libpaths) {
-            snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
-            fm = open_file_map_read(test_path);
-            if (fm.data != NULL) {
-                break;
-            }
-            test_path[0] = 0;
-        }
-
-        if (test_path[0] == 0) {
-            fprintf(stderr, "cuiklink: could not find library: %s\n", file_name);
-            dyn_array_for(j, l->libpaths) {
-                snprintf(test_path, FILENAME_MAX, "%s/%s", l->libpaths[j], file_name);
-                fprintf(stderr, "  searched at %s\n", test_path);
-            }
-            cuikperf_region_end();
-            return;
-        }
-    }
+    char resolved_path[FILENAME_MAX];
+    FileMap fm = l->vtbl.find_lib(l, file_name, resolved_path);
     cuikperf_region_end();
 
-    /* CUIK_TIMED_BLOCK("load") {
-        volatile const uint8_t* buf = fm.data;
-        for (size_t i = 0; i < fm.size; i += 4096) {
-            buf[i];
-        }
-    } */
+    if (fm.data == NULL) {
+        return;
+    }
 
-    size_t newlen = strlen(test_path);
-    char* newstr = linker_newstr(newlen, test_path);
+    log_info("Loading library: %s", resolved_path);
+
+    size_t newlen = strlen(resolved_path);
+    char* newstr = linker_newstr(newlen, resolved_path);
 
     TB_LinkerObject* lib_file = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerObject));
     *lib_file = (TB_LinkerObject){
@@ -480,6 +459,18 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject*
     }
 }
 
+static void print_obj_name(TB_LinkerObject* obj) {
+    size_t slash = 0;
+    FOR_REV_N(i, 0, obj->name.length) {
+        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
+            slash = i + 1;
+            break;
+        }
+    }
+
+    printf("%.*s", (int) (obj->name.length - slash), (const char*) obj->name.data + slash);
+}
+
 TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
     // printf("%.*s    %"PRIx32"\n", (int) sym->name.length, sym->name.data, tb__murmur3_32(sym->name.data, sym->name.length) & 65535);
 
@@ -519,7 +510,9 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
             // symbol collision if we're overriding something that's
             // not a forward ref.
             if (old->tag == TB_LINKER_SYMBOL_NORMAL && sym->tag == TB_LINKER_SYMBOL_NORMAL) {
-                fprintf(stderr, "\x1b[31merror\x1b[0m: symbol collision: %.*s\n", (int) sym->name.length, sym->name.data);
+                printf("\x1b[31merror\x1b[0m: symbol collision: %.*s\n", (int) sym->name.length, sym->name.data);
+                printf("  old: "); print_obj_name(old->normal.piece->obj); printf("\n");
+                printf("  new: "); print_obj_name(sym->normal.piece->obj); printf("\n");
             }
             sym = old;
         }
@@ -752,14 +745,14 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
     if (nbhs_count(&l->unresolved_symbols) > 0) {
         nbhs_for(e, &l->unresolved_symbols) {
             TB_Slice* sym_name = *e;
-            fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved external: %.*s\n", (int) sym_name->length, sym_name->data);
+            printf("\x1b[31merror\x1b[0m: unresolved external: %.*s\n", (int) sym_name->length, sym_name->data);
 
             #if 0
             size_t i = 0;
             for (; u && i < 5; u = u->next, i++) {
                 // walk input stack
                 TB_LinkerInputHandle curr = u->reloc;
-                fprintf(stderr, "  in ");
+                printf("  in ");
 
                 int depth = 0;
                 while (curr != 0) {
@@ -767,30 +760,30 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
 
                     depth++;
                     if (depth) {
-                        fprintf(stderr, "(");
+                        printf("(");
                     }
 
                     if (input->tag == TB_LINKER_INPUT_MODULE) {
-                        fprintf(stderr, "<tb-module %p>\n", input->module);
+                        printf("<tb-module %p>\n", input->module);
                     } else {
                         TB_Slice obj_name = as_filename(input->name);
-                        fprintf(stderr, "%.*s", (int) obj_name.length, obj_name.data);
+                        printf("%.*s", (int) obj_name.length, obj_name.data);
                     }
 
                     curr = input->parent;
                 }
 
-                while (depth--) fprintf(stderr, ")");
-                fprintf(stderr, "\n");
+                while (depth--) printf(")");
+                printf("\n");
             }
 
             if (u) {
                 // count the rest
                 while (u) u = u->next, i++;
 
-                fprintf(stderr, "  ...and %zu more...\n", i - 5);
+                printf("  ...and %zu more...\n", i - 5);
             }
-            fprintf(stderr, "\n");
+            printf("\n");
             #endif
         }
 

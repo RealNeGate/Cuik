@@ -1,6 +1,7 @@
 #pragma once
 #include "../tb_internal.h"
 #include <futex.h>
+#include <file_map.h>
 
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
 
@@ -69,8 +70,6 @@ struct TB_LinkerSectionPiece {
     size_t offset, size, align_log2;
     // for consistent layout (since we're doing so much parallel stuff)
     uint64_t order;
-    // this is for COFF $ management
-    TB_Slice coff_order;
     TB_LinkerPieceFlags flags;
 
     // mostly for .pdata crap
@@ -239,6 +238,7 @@ typedef struct {
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
+    FileMap (*find_lib)(TB_Linker* l, const char* file_name, char* out_path);
     void (*append_object)(TPool* pool, TB_LinkerObject* task);
     void (*append_library)(TPool* pool, TB_LinkerObject* task);
     void (*parse_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);

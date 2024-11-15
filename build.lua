@@ -11,9 +11,6 @@
 
 --]]
 
---  TODO
---  Don't build unnecessary modules, e.g. don't build Cuik when doing tb_unittests.
-
 -- silly little OS detection
 local is_windows = package.config:sub(1,1) == "\\"
 
@@ -21,10 +18,8 @@ local options = {
 	debug         = false,
 	cuik          = false,
 	tb            = false,
-	tests         = false,
 	driver        = false,
 	shared        = false,
-	test          = false,
 	lld           = false,
 	gcc           = false,
 	asan          = false,
@@ -36,31 +31,34 @@ local modules = {
 	common = { srcs={"common/common.c", "common/perf.c"} },
 
 	-- libraries:
-	--   CuikC frontend
-	cuik = { srcs={
-			"libCuik/libcuik.c",
+	--   C preprocessor
+	cuik_pp = { srcs={
+			"cuik_pp/lexer.c", "cuik_pp/cpp.c", "cuik_pp/diagnostic.c"
+		}, flags="-DCONFIG_HAS_CUIKPP", deps={"common"}
+	},
+	--   C frontend
+	cuik_c = { srcs={
+			"cuik_c/libcuik.c",
 			-- toolchain support
-			"libCuik/toolchains/msvc.c", "libCuik/toolchains/gnu.c", "libCuik/toolchains/darwin.c",
+			"cuik_c/toolchains/msvc.c", "cuik_c/toolchains/gnu.c", "cuik_c/toolchains/darwin.c",
 			-- architectures
-			"libCuik/targets/x64_desc.c",  "libCuik/targets/aarch64_desc.c",
-			"libCuik/targets/mips_desc.c", "libCuik/targets/wasm_desc.c",
-		}, flags="", deps={"common"}
+			"cuik_c/targets/x64_desc.c",  "cuik_c/targets/aarch64_desc.c",
+			"cuik_c/targets/mips_desc.c", "cuik_c/targets/wasm_desc.c",
+		}, flags="-DCONFIG_HAS_CUIKC", deps={"common", "cuik_pp"}
 	},
 	--   TildeBackend
 	tb = { srcs={
 			"tb/libtb.c",
 			-- archictectures
 			"tb/x64/x64_target.c", "tb/aarch64/aarch64_target.c", "tb/mips/mips_target.c", "tb/wasm/wasm_target.c"
-		}, flags="-DCUIK_USE_TB -DTB_HAS_MIPS", deps={"common"}
+		}, flags="-DCONFIG_HAS_CUIKPP -DTB_HAS_X64", deps={"common", "cuik_pp"}
 	},
 	-- executables:
 	--   Cuik command line
-	driver       = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik", "tb"} },
-	--   TB unittests
-	tests        = { is_exe=true, srcs={"tb/tests/cg_test.c"}, deps={"tb", "common"} },
+	driver = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik_pp", "cuik_c", "tb"} },
 
 	-- external dependencies
-	mimalloc = { srcs={"mimalloc/src/static.c"} }
+	mimalloc = { srcs={"mimalloc/src/static.c"}, flags="-DCONFIG_HAS_MIMALLOC" }
 }
 
 -- command lines
@@ -75,8 +73,6 @@ local cflags = " -g -march=haswell -I include -I common -Wall -Werror -Wno-unuse
 
 if options.asan then
 	cflags = cflags.." -fsanitize=address"
-else
-	cflags = cflags.." -DTB_USE_MIMALLOC"
 end
 
 if options.driver then
@@ -239,7 +235,7 @@ rule("run", {
 
 -- lexer metaprogram
 command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
-command("libCuik/preproc/keywords.h libCuik/preproc/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
+command("cuik_pp/keywords.h cuik_pp/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
 
 -- TB metaprogram
 -- command("tb/meta/foo.c", "tb/meta/dsl.lua", arg[-1].." $in")
@@ -247,13 +243,13 @@ command("libCuik/preproc/keywords.h libCuik/preproc/dfa.h", "bin/objs/lexgen"..e
 -- package freestanding headers into C file
 local x = {}
 if is_windows then
-	local cmd = io.popen("dir /B headers\\*.h")
+	local cmd = io.popen("dir /B freestanding\\*.h")
 	for c in cmd:lines() do
 		x[#x + 1] = "headers/"..c
 	end
 	cmd:close()
 else
-	local cmd = io.popen("find headers/*.h -maxdepth 1")
+	local cmd = io.popen("find freestanding/*.h -maxdepth 1")
 	for c in cmd:lines() do
 		x[#x + 1] = c
 	end
@@ -271,15 +267,17 @@ local objs = {}
 for i, f in ipairs(src) do
 	local out = "bin/objs/"..filename(f)..".o"
 	ninja:write("build "..out..": cc "..f)
-	ninja:write(" | libCuik/preproc/keywords.h libCuik/preproc/dfa.h\n")
+	if added["cuik_pp"] then
+		ninja:write(" | cuik_pp/keywords.h cuik_pp/dfa.h")
+	end
+	ninja:write("\n")
 	objs[#objs + 1] = out
 end
 
 local obj_names = table.concat(objs, " ")
 
-local exe_name = "cuik"
-if options.tb    then exe_name = "tb" end
-if options.tests then exe_name = "tests" end
+local exe_name = "tb"
+if options.driver then exe_name = "cuik" end
 
 -- placing executables into bin/
 exe_name = "bin/"..exe_name

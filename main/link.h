@@ -1,4 +1,5 @@
 #include <pool.h>
+#include <ctype.h>
 
 static const char* link_output_name;
 static DynArray(const char*) link_default_libs;
@@ -6,11 +7,54 @@ static DynArray(const char*) link_default_libs;
 static bool gnu_cli(TB_Linker* l, int argc, const char** argv) {
     link_output_name = "a.out";
 
+    bool as_needed = false;
+
+    char tmp[4096];
     for (int i = 0; i < argc; i++) {
         const char* arg = argv[i];
 
-        if (arg[0] == '-' || arg[0] == '/') {
+        if (arg[0] == '-') {
+            if (arg[1] == '-') {
+                if (strcmp(arg, "--as-needed") == 0) {
+                    as_needed = true;
+                } else if (strcmp(arg, "--no-as-needed") == 0) {
+                    as_needed = false;
+                } else {
+                    fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved option: %s\n", arg);
+                }
+                continue;
+            }
 
+            switch (arg[1]) {
+                case 'L': {
+                    const char* val = arg[2] ? &arg[2] : argv[++i];
+                    tb_linker_add_libpath(l, val);
+                    break;
+                }
+                case 'l': {
+                    const char* val = arg[2] ? &arg[2] : argv[++i];
+                    tb_linker_append_library(l, val);
+                    break;
+                }
+                case 'm': {
+                    const char* val = arg[2] ? &arg[2] : argv[++i];
+                    break;
+                }
+                case 'z': {
+                    const char* val = arg[2] ? &arg[2] : argv[++i];
+                    break;
+                }
+                case 'o': {
+                    link_output_name = arg[2] ? &arg[2] : argv[++i];
+                    break;
+                }
+
+                default:
+                fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved option: %s\n", arg);
+                break;
+            }
+        } else {
+            tb_linker_append_object(l, arg);
         }
     }
 
@@ -40,10 +84,11 @@ static bool msvc_cli(TB_Linker* l, int argc, const char** argv) {
             } else if (str_case_prefix(arg, "libpath:", 8)) {
                 tb_linker_add_libpath(l, arg + 8);
             } else if (str_case_prefix(arg, "entry:", 6)) {
+                tb_linker_set_entrypoint(l, arg + 6);
             } else if (str_case_prefix(arg, "defaultlib:", 11)) {
                 dyn_array_put(link_default_libs, arg + 11);
             } else {
-                fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved option: -%s\n", arg);
+                fprintf(stderr, "\x1b[31merror\x1b[0m: unresolved option: %s\n", arg);
                 // return false;
             }
         } else {
@@ -70,12 +115,20 @@ int run_link(int argc, const char** argv) {
 
     int status = EXIT_SUCCESS;
     CUIK_TIMED_BLOCK("driver") {
+        #ifdef _WIN32
+        TB_ExecutableType exe = TB_EXECUTABLE_PE;
+        #elif defined(__linux__)
+        TB_ExecutableType exe = TB_EXECUTABLE_ELF;
+        #else
+        #error "Wtf is this machine?"
+        #endif
+
         #if CUIK_ALLOW_THREADS
         TPool pool;
-        tpool_init(&pool, 6);
-        TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64, &pool);
+        tpool_init(&pool, 1);
+        TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, &pool);
         #else
-        TB_Linker* l = tb_linker_create(TB_EXECUTABLE_PE, TB_ARCH_X86_64, NULL);
+        TB_Linker* l = tb_linker_create(exe, TB_ARCH_X86_64, NULL);
         #endif
 
         dyn_array_for(i, cl.libpaths) {

@@ -36,7 +36,7 @@
 #define NBHS_VIRTUAL_ALLOC(size)     VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
 #define NBHS_VIRTUAL_FREE(ptr, size) VirtualFree(ptr, size, MEM_RELEASE)
 #else
-#include <mmap.h>
+#include <sys/mman.h>
 
 #define NBHS_VIRTUAL_ALLOC(size)     mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
 #define NBHS_VIRTUAL_FREE(ptr, size) munmap(ptr, size)

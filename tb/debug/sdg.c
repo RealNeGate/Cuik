@@ -98,7 +98,13 @@ static TB_SectionGroup sdg_generate_debug_info(TB_Module* m, TB_Arena* arena) {
     sections[0] = (TB_ObjectSection){ gimme_cstr_as_slice(arena, ".sdg$S") };
     sections[1] = (TB_ObjectSection){ gimme_cstr_as_slice(arena, ".sdg$T") };
 
-    size_t reloc_cap = m->symbol_count[TB_SYMBOL_GLOBAL] + m->compiled_function_count;
+    size_t reloc_cap = 0;
+    dyn_array_for(i, m->sections) {
+        DynArray(TB_FunctionOutput*) funcs = m->sections[i].funcs;
+        DynArray(TB_Global*) globals = m->sections[i].globals;
+        reloc_cap = dyn_array_length(globals) + dyn_array_length(funcs);
+    }
+
     sections[0].relocations = cuik_malloc(reloc_cap * sizeof(TB_ObjectReloc));
 
     TB_Emitter symtab = { 0 };

@@ -162,11 +162,16 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
     sections[0] = (TB_ObjectSection){ gimme_cstr_as_slice(arena, ".debug$S") };
     sections[1] = (TB_ObjectSection){ gimme_cstr_as_slice(arena, ".debug$T") };
 
-    size_t global_count = m->symbol_count[TB_SYMBOL_GLOBAL];
-
     // debug$S does quite a few relocations :P, namely saying that
     // certain things point to specific areas of .text section
-    size_t reloc_cap = (2 * global_count) + (4 * m->compiled_function_count);
+    size_t reloc_cap = 0;
+    dyn_array_for(i, m->sections) {
+        DynArray(TB_FunctionOutput*) funcs = m->sections[i].funcs;
+        DynArray(TB_Global*) globals = m->sections[i].globals;
+
+        reloc_cap = (2 * dyn_array_length(globals)) + (4 * dyn_array_length(funcs));
+    }
+
     sections[0].relocations = tb_arena_alloc(arena, reloc_cap * sizeof(TB_ObjectReloc));
 
     TB_ArenaSavepoint sp = tb_arena_save(arena);

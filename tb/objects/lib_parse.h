@@ -1,3 +1,4 @@
+#pragma once
 #include "coff.h"
 
 typedef struct {
