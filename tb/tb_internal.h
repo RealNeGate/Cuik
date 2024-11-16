@@ -129,7 +129,6 @@ typedef struct TB_InitObj {
 
 struct TB_Global {
     TB_Symbol super;
-    TB_Linkage linkage;
     TB_ModuleSectionHandle parent;
 
     // layout stuff
@@ -370,7 +369,6 @@ typedef struct {
 struct TB_Function {
     TB_Symbol super;
     TB_ModuleSectionHandle section;
-    TB_Linkage linkage;
 
     TB_DebugType* dbg_type;
     TB_FunctionPrototype* prototype;
@@ -444,7 +442,7 @@ struct TB_Function {
 
 struct TB_ModuleSection {
     char* name;
-    TB_LinkerSectionPiece* piece;
+    // TB_LinkerSectionPiece* piece;
 
     int section_num;
     TB_ModuleSectionFlags flags;
@@ -539,7 +537,7 @@ struct TB_Module {
     DynArray(TB_ModuleSection) sections;
 
     // windows specific lol
-    TB_LinkerSectionPiece* xdata;
+    // TB_LinkerSectionPiece* xdata;
 };
 
 typedef struct {

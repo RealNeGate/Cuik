@@ -452,15 +452,6 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
     }
 }
 
-static Cuik_Entrypoint check_for_entry(Cuik_Parser* parser) {
-    Symbol* sym = cuik_symtab_lookup(parser->symbols, atoms_putc("WinMain"));
-    if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
-        return CUIK_ENTRYPOINT_WINMAIN;
-    }
-
-    return CUIK_ENTRYPOINT_MAIN;
-}
-
 Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, TB_Arena* restrict arena, bool only_code_index) {
     assert(s != NULL);
 
@@ -539,7 +530,12 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         .va_list = parser.va_list,
     };
 
-    parser.tu->entrypoint_status = check_for_entry(&parser);
+    Symbol* sym = cuik_symtab_lookup(parser.symbols, atoms_putc("WinMain"));
+    if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {
+        parser.tu->entrypoint_status = CUIK_ENTRYPOINT_WINMAIN;
+    } else {
+        parser.tu->entrypoint_status = CUIK_ENTRYPOINT_MAIN;
+    }
 
     if (only_code_index) {
         return (Cuik_ParseResult){ .tu = parser.tu, .imports = parser.import_libs };

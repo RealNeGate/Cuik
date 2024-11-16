@@ -51,11 +51,16 @@ local modules = {
 			"tb/libtb.c",
 			-- archictectures
 			"tb/x64/x64_target.c", "tb/aarch64/aarch64_target.c", "tb/mips/mips_target.c", "tb/wasm/wasm_target.c"
-		}, flags="-DCONFIG_HAS_CUIKPP -DTB_HAS_X64", deps={"common", "cuik_pp"}
+		}, flags="-DCONFIG_HAS_TB -DTB_HAS_X64", deps={"common", "cuik_pp"}
+	},
+	--   Linker
+	linker = { srcs={
+			"linker/linker.c",
+		}, flags="-DCONFIG_HAS_LINKER", deps={"common", "cuik_pp"}
 	},
 	-- executables:
 	--   Cuik command line
-	driver = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik_pp", "cuik_c", "tb"} },
+	driver = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik_pp", "cuik_c", "tb", "linker"} },
 
 	-- external dependencies
 	mimalloc = { srcs={"mimalloc/src/static.c"}, flags="-DCONFIG_HAS_MIMALLOC" }

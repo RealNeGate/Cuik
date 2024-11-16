@@ -16,11 +16,8 @@
 #include "cuik_prelude.h"
 #include <tb.h>
 
-// allocates all the functions and globals necessary to do IRgen.
-CUIK_API void cuikcg_allocate_ir(TranslationUnit* restrict tu, TPool* pool, TB_Module* m, bool debug);
-
-// same as cuikcg_allocate_ir except it's used for single-TU setups
-CUIK_API void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m, bool debug);
+// allocates all the functions and globals necessary to do IR gen
+CUIK_API void cuikcg_allocate_ir(TranslationUnit* tu, TB_Module* m, bool debug);
 
 // returns NULL on failure
 CUIK_API TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s);

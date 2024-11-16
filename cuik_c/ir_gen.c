@@ -1,6 +1,6 @@
 #include "ir_gen.h"
 #include <futex.h>
-#include "../targets/targets.h"
+#include "targets/targets.h"
 
 // Maps param_num -> TB_Node*
 static thread_local TB_Node** parameter_map;
@@ -22,25 +22,6 @@ static int switch_cmp(const void* a, const void* b) {
 
 static uint64_t get_ir_ordinal(TranslationUnit* tu, Stmt* stmt) {
     return ((uint64_t) tu->local_ordinal << 32ull) | stmt->decl.local_ordinal;
-}
-
-static TB_Symbol* get_external(CompilationUnit* restrict cu, const char* name) {
-    // if this is the first time we've seen this name, add it to the table
-    cuik_lock_compilation_unit(cu);
-
-    TB_Symbol* result = NULL;
-    ptrdiff_t search = nl_map_get_cstr(cu->export_table, name);
-    if (search >= 0) {
-        // Figure out what the symbol is and link it together
-        result = cu->export_table[search].v;
-    } else {
-        // Always creates a real external... for now
-        result = (TB_Symbol*) tb_extern_create(cu->ir_mod, -1, name, TB_EXTERNAL_SO_LOCAL);
-        nl_map_put_cstr(cu->export_table, name, result);
-    }
-
-    cuik_unlock_compilation_unit(cu);
-    return result;
 }
 
 static void fallthrough_label(TB_Function* func, TB_Node* target) {
@@ -710,12 +691,7 @@ static IRVal irgen_subexpr(TranslationUnit* tu, TB_Function* func, Cuik_Expr* _,
                     // check if it's defined by another TU
                     // functions are external by default
                     const char* name = (const char*) stmt->decl.name;
-
-                    if (tu->parent != NULL) {
-                        stmt->backing.s = get_external(tu->parent, name);
-                    } else {
-                        stmt->backing.e = tb_extern_create(tu->ir_mod, -1, name, TB_EXTERNAL_SO_LOCAL);
-                    }
+                    stmt->backing.s = tb_extern_create(tu->ir_mod, atoms_len(stmt->decl.name), name, TB_EXTERNAL_SO_LOCAL);
                 }
 
                 assert(stmt->backing.s != NULL);
@@ -2096,147 +2072,44 @@ TB_Module* cuik_get_tb_module(TranslationUnit* restrict tu) {
     return tu->ir_mod;
 }
 
-typedef struct {
-    TB_Module* mod;
-    TranslationUnit* tu;
+void cuikcg_allocate_ir(TranslationUnit* tu, TB_Module* m, bool debug) {
+    tu->ir_mod = tu->parent->ir_mod = m;
+    tu->has_tb_debug_info = debug;
 
-    Stmt** stmts;
-    size_t count;
-
-    Futex* remaining;
-} IRAllocTask;
-
-static void ir_alloc_task(TPool* tp, void* task) {
-    CUIK_TIMED_BLOCK("ir_alloc_task") {
-        IRAllocTask t = *(IRAllocTask*) task;
-        CompilationUnit* cu = t.tu->parent;
-
-        for (size_t i = 0; i < t.count; i++) {
-            Stmt* s = t.stmts[i];
+    CUIK_TIMED_BLOCK("IR alloc") {
+        size_t count = dyn_array_length(tu->top_level_stmts);
+        for (size_t i = 0; i < count; i++) {
+            Stmt* s = tu->top_level_stmts[i];
             if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) == 0) continue;
             if (!s->decl.attrs.is_used) continue;
 
             Atom name = s->decl.name;
             size_t len = atoms_len(name);
 
-            if (s->decl.attrs.is_inline) {
-                mtx_lock(&cu->lock);
-                NL_Slice key = { len, (const uint8_t*) name };
-                ptrdiff_t search = nl_map_get(cu->export_table, key);
-                if (search >= 0 && cu->export_table[search].v->tag == TB_SYMBOL_FUNCTION) {
-                    assert((s->flags & STMT_FLAGS_HAS_IR_BACKING) && "inline funcs should have IR backing... right?");
-                    s->flags &= ~STMT_FLAGS_HAS_IR_BACKING;
-                    mtx_unlock(&cu->lock);
-                    continue;
-                } else {
-                    mtx_unlock(&cu->lock);
-                }
-            }
-
             TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
             TB_SymbolTag tag   = s->op == STMT_FUNC_DECL ? TB_SYMBOL_FUNCTION : TB_SYMBOL_GLOBAL;
 
             if (s->op == STMT_FUNC_DECL) {
-                TB_Function* func = tb_function_create(t.tu->ir_mod, len, name, linkage);
+                TB_Function* func = tb_function_create(tu->ir_mod, len, name, linkage);
                 s->backing.f = func;
             } else {
                 Cuik_Type* type = cuik_canonical_type(s->decl.type);
 
                 // if we have a TB module, fill it up with declarations
                 if (s->decl.attrs.is_tls) {
-                    tb_module_set_tls_index(t.tu->ir_mod, sizeof("_tls_index")-1, "_tls_index");
+                    tb_module_set_tls_index(tu->ir_mod, sizeof("_tls_index")-1, "_tls_index");
                 }
 
                 TB_Linkage linkage = s->decl.attrs.is_static ? TB_LINKAGE_PRIVATE : TB_LINKAGE_PUBLIC;
                 TB_DebugType* dbg_type = NULL;
-                if (t.tu->has_tb_debug_info) {
-                    dbg_type = cuik__as_tb_debug_type(t.tu->ir_mod, cuik_canonical_type(s->decl.type));
+                if (tu->has_tb_debug_info) {
+                    dbg_type = cuik__as_tb_debug_type(tu->ir_mod, cuik_canonical_type(s->decl.type));
                 }
 
                 // allocate new
-                s->backing.g = tb_global_create(cu->ir_mod, len, name, dbg_type, linkage);
+                s->backing.g = tb_global_create(tu->ir_mod, len, name, dbg_type, linkage);
             }
-            s->backing.s->ordinal = get_ir_ordinal(t.tu, s);
-
-            // an exported symbol that's already defined
-            if (s->decl.attrs.is_inline || (s->flags & STMT_FLAGS_IS_EXPORTED)) {
-                mtx_lock(&cu->lock);
-                NL_Slice key = { len, (const uint8_t*) name };
-                ptrdiff_t search = nl_map_get(cu->export_table, key);
-                if (search >= 0) {
-                    if (cu->export_table[search].v->tag == TB_SYMBOL_EXTERNAL) {
-                        // defined already as an external, let's just resolve it late
-                        TB_External* e = (TB_External*) cu->export_table[search].v;
-                        tb_extern_resolve(e, s->backing.s);
-                    } else if (s->decl.attrs.is_inline) {
-                        assert((s->flags & STMT_FLAGS_HAS_IR_BACKING) && "inline funcs should have IR backing... right?");
-                        s->flags &= ~STMT_FLAGS_HAS_IR_BACKING;
-                    }
-                } else {
-                    // we've defined it before uses, yay
-                    nl_map_put(cu->export_table, key, s->backing.s);
-                }
-                mtx_unlock(&cu->lock);
-            }
-        }
-
-        if (t.remaining != NULL) {
-            atomic_fetch_sub_explicit(t.remaining, 1, memory_order_acq_rel);
-            futex_signal(t.remaining);
+            s->backing.s->ordinal = get_ir_ordinal(tu, s);
         }
     }
-}
-
-void cuikcg_allocate_ir(TranslationUnit* restrict tu, TPool* tp, TB_Module* m, bool debug) {
-    // we actually fill the remaining count while we dispatch tasks, it's ok for it to hit 0
-    // occasionally (very rare realistically).
-    enum { BATCH_SIZE = 65536 };
-
-    size_t count = dyn_array_length(tu->top_level_stmts);
-    Futex remaining = (count + (BATCH_SIZE - 1)) / BATCH_SIZE;
-
-    Stmt** top_level = tu->top_level_stmts;
-    tu->ir_mod = tu->parent->ir_mod = m;
-    tu->has_tb_debug_info = debug;
-
-    IRAllocTask* tasks = cuik_malloc(sizeof(IRAllocTask) * remaining);
-    int j = 0;
-    for (size_t i = 0; i < count; i += BATCH_SIZE) {
-        size_t end = i + BATCH_SIZE;
-        if (end >= count) end = count;
-
-        tasks[j] = (IRAllocTask){
-            .mod = m,
-            .tu = tu,
-            .stmts = &top_level[i],
-            .count = end - i,
-            .remaining = &remaining,
-        };
-
-        if (tp) {
-            tpool_add_task(tp, ir_alloc_task, &tasks[j]);
-        } else {
-            ir_alloc_task(NULL, &tasks[j]);
-        }
-        j += 1;
-    }
-
-    if (tp) {
-        futex_wait_eq(&remaining, 0);
-    }
-    cuik_free(tasks);
-}
-
-void cuikcg_allocate_ir2(TranslationUnit* tu, TB_Module* m, bool debug) {
-    size_t count = dyn_array_length(tu->top_level_stmts);
-    tu->ir_mod = tu->parent->ir_mod = m;
-    tu->has_tb_debug_info = debug;
-
-    IRAllocTask t = {
-        .mod = m,
-        .tu = tu,
-        .stmts = tu->top_level_stmts,
-        .count = count,
-    };
-    ir_alloc_task(NULL, &t);
 }

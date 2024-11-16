@@ -5,6 +5,35 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifndef TB_API
+#  ifdef __cplusplus
+#    define TB_EXTERN extern "C"
+#  else
+#    define TB_EXTERN
+#  endif
+#  ifdef TB_DLL
+#    ifdef TB_IMPORT_DLL
+#      define TB_API TB_EXTERN __declspec(dllimport)
+#    else
+#      define TB_API TB_EXTERN __declspec(dllexport)
+#    endif
+#  else
+#    define TB_API TB_EXTERN
+#  endif
+#endif
+
+// just represents some region of bytes, usually in file parsing crap
+typedef struct {
+    const uint8_t* data;
+    size_t length;
+} TB_Slice;
+
+typedef enum {
+    TB_EXECUTABLE_UNKNOWN,
+    TB_EXECUTABLE_PE,
+    TB_EXECUTABLE_ELF,
+} TB_ExecutableType;
+
 typedef enum {
     TB_OBJECT_RELOC_NONE, // how?
 
@@ -93,7 +122,7 @@ typedef enum {
 
 typedef struct {
     TB_ObjectFileType type;
-    TB_Arch           arch;
+    int               arch;
 
     TB_Slice          name;
     TB_Slice          ar_name;
@@ -133,8 +162,10 @@ typedef struct {
 } TB_ArchiveFileParser;
 
 // We do this to parse the header
-bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser);
+TB_API bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser);
 // After that we can enumerate any symbol entries to resolve imports
-size_t tb_archive_parse_entries(TB_ArchiveFileParser* restrict parser, size_t i, size_t count, TB_ArchiveEntry* out_entry);
+TB_API size_t tb_archive_parse_entries(TB_ArchiveFileParser* restrict parser, size_t i, size_t count, TB_ArchiveEntry* out_entry);
+
+TB_API TB_ExecutableType tb_system_executable_format(TB_System s);
 
 #endif // TB_OBJECT_H

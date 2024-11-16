@@ -26,6 +26,10 @@
 
 #include "cuik_prelude.h"
 
+#ifdef CONFIG_HAS_TB
+#include <tb.h>
+#endif
+
 typedef char* Atom;
 typedef struct Cuik_Expr Cuik_Expr;
 typedef struct Subexpr Subexpr;

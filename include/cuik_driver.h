@@ -99,10 +99,6 @@ CUIK_API bool cuik_driver_compile(TPool* tp, Cuik_DriverArgs* restrict args, boo
 CUIK_API Cuik_CPP* cuik_driver_preprocess_str(String source, const Cuik_DriverArgs* args, bool should_finalize);
 CUIK_API Cuik_CPP* cuik_driver_preprocess_cstr(const char* source, const Cuik_DriverArgs* args, bool should_finalize);
 
-#ifdef CONFIG_HAS_TB
-CUIK_API void cuik_apply_tb_toolchain_libs(TB_Linker* l);
-#endif
-
 CUIK_API Cuik_Toolchain cuik_toolchain_msvc(void);
 CUIK_API Cuik_Toolchain cuik_toolchain_darwin(void);
 CUIK_API Cuik_Toolchain cuik_toolchain_gnu(void);

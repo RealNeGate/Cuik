@@ -1,10 +1,10 @@
 #pragma once
-#ifdef CONFIG_HAS_TB
 
+#ifdef CONFIG_HAS_TB
 #include <arena.h>
 #include <common.h>
 #include <threads.h>
-#include "../front/parser.h"
+#include "parser.h"
 
 #include <tb.h>
 

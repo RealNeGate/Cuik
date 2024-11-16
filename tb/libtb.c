@@ -34,13 +34,6 @@ void* tb_jit_stack_create(void);
 #include "objects/macho.c"
 #include "objects/wasm_obj.c"
 
-// Linker
-#include "linker/linker.c"
-#include "linker/archives.c"
-#include "linker/ld_script.c"
-#include "linker/pe_linker.c"
-#include "linker/elf_linker.c"
-
 // Platform layer
 #if defined(_WIN32)
 #pragma comment(lib, "onecore.lib")

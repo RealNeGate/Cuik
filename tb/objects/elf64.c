@@ -2,16 +2,6 @@
 #include <tb_elf.h>
 #include <log.h>
 
-static bool is_nonlocal(const TB_Symbol* s) {
-    if (s->tag == TB_SYMBOL_GLOBAL) {
-        return ((TB_Global*) s)->linkage == TB_LINKAGE_PUBLIC;
-    } else if (s->tag == TB_SYMBOL_FUNCTION) {
-        return ((TB_Function*) s)->linkage == TB_LINKAGE_PUBLIC;
-    } else {
-        return true;
-    }
-}
-
 static int put_symbol(TB_Emitter* stab, uint32_t name, uint8_t sym_info, uint16_t section_index, uint64_t value, uint64_t size) {
     // Emit symbol
     TB_Elf64_Sym sym = {
@@ -42,7 +32,7 @@ static void put_section_symbols(DynArray(TB_ModuleSection) sections, TB_Emitter*
         int acceptable = t == TB_ELF64_STB_GLOBAL ? TB_LINKAGE_PUBLIC : TB_LINKAGE_PRIVATE;
         dyn_array_for(i, globals) {
             TB_Global* g = globals[i];
-            if (g->linkage != acceptable) {
+            if (g->super.linkage != acceptable) {
                 continue;
             }
 
@@ -219,7 +209,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
 
                 size_t actual_pos = source_offset + p->pos;
                 size_t symbol_id = p->target->symbol_id;
-                if (is_nonlocal(p->target)) {
+                if (p->target->linkage == TB_LINKAGE_PUBLIC) {
                     symbol_id += local_sym_count;
                 }
                 assert(symbol_id != 0);

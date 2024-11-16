@@ -10,11 +10,23 @@ static bool tb_global_init;
 
 static uint32_t symbolhs_hash(const void* a) {
     const TB_Symbol *aa = a;
+
+    if (aa->linkage == TB_LINKAGE_PRIVATE) {
+        return ((uintptr_t) aa * 11400714819323198485llu) >> 32llu;
+    }
+
     return tb__murmur3_32(aa->name, aa->name_length);
 }
 
 static bool symbolhs_cmp(const void* a, const void* b) {
     const TB_Symbol *aa = a, *bb = b;
+
+    // private symbols don't compare based on names, you could have 100 private
+    // symbols all named the same.
+    if (aa->linkage == TB_LINKAGE_PRIVATE || bb->linkage == TB_LINKAGE_PRIVATE) {
+        return aa == bb;
+    }
+
     return aa->name_length == bb->name_length && memcmp(aa->name, bb->name, aa->name_length) == 0;
 }
 
@@ -205,6 +217,7 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     m->codegen = tb_codegen_info(m);
 
     mtx_init(&m->lock, mtx_plain);
+    m->symbols = nbhs_alloc(256);
 
     // AOT uses sections to know where to organize things in an executable file,
     // JIT does placement on the fly.
@@ -243,7 +256,7 @@ TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_ar
     f->worklist = ws;
 
     TB_FunctionOutput* func_out = tb_arena_alloc(code_arena, sizeof(TB_FunctionOutput));
-    *func_out = (TB_FunctionOutput){ .parent = f, .section = f->section, .linkage = f->linkage };
+    *func_out = (TB_FunctionOutput){ .parent = f, .section = f->section, .linkage = f->super.linkage };
     m->codegen->compile_function(f, func_out, features, code_arena, emit_asm);
     atomic_fetch_add(&m->compiled_function_count, 1);
 
@@ -362,7 +375,7 @@ TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_
 
 TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage) {
     TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, len, name, sizeof(TB_Function));
-    f->linkage = linkage;
+    f->super.linkage = linkage;
     return f;
 }
 
@@ -465,14 +478,16 @@ void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, TB_Sy
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size) {
     assert(tag != TB_SYMBOL_NONE);
-    TB_ThreadInfo* info = tb_thread_info(m);
+    cuikperf_region_start("symbol_alloc", NULL);
 
+    TB_ThreadInfo* info = tb_thread_info(m);
     if (len < 0) {
         len = strlen(name);
     }
 
     TB_Symbol* s = tb_arena_alloc(&info->perm_arena, size);
     s->tag = tag;
+    s->linkage = TB_LINKAGE_PUBLIC;
     s->name_length = len;
     s->name = tb__arena_strdup(m, len, name);
     s->module = m;
@@ -496,19 +511,20 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const 
         }
     }
 
+    cuikperf_region_end();
     return s;
 }
 
-TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
+TB_Symbol* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
     TB_External* e = (TB_External*) tb_symbol_alloc(m, TB_SYMBOL_EXTERNAL, len, name, sizeof(TB_External));
     e->type = type;
-    return e;
+    return &e->super;
 }
 
 TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
     TB_Global* g = (TB_Global*) tb_symbol_alloc(m, TB_SYMBOL_GLOBAL, len, name, sizeof(TB_Global));
+    g->super.linkage = linkage;
     g->dbg_type = dbg_type;
-    g->linkage = linkage;
     return g;
 }
 
@@ -595,16 +611,6 @@ void tb_symbol_bind_ptr(TB_Symbol* s, void* ptr) {
 
 TB_ExternalType tb_extern_get_type(TB_External* e) {
     return e->type;
-}
-
-//
-// TLS - Thread local storage
-//
-// Certain backend elements require memory but we would prefer to avoid
-// making any heap allocations when possible to there's a preallocated
-// block per thread that can run TB.
-//
-void tb_free_thread_resources(void) {
 }
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos) {

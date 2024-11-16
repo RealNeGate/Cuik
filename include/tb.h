@@ -101,7 +101,6 @@ typedef enum TB_System {
 
 typedef enum TB_WindowsSubsystem {
     TB_WIN_SUBSYSTEM_UNKNOWN,
-
     TB_WIN_SUBSYSTEM_WINDOWS,
     TB_WIN_SUBSYSTEM_CONSOLE,
     TB_WIN_SUBSYSTEM_EFI_APP,
@@ -513,12 +512,6 @@ typedef enum TB_NodeTypeEnum {
 typedef uint16_t TB_NodeType;
 static_assert(sizeof(TB_NODE_TYPE_MAX) < 0x100, "this is the bound where machine nodes start");
 
-// just represents some region of bytes, usually in file parsing crap
-typedef struct {
-    const uint8_t* data;
-    size_t length;
-} TB_Slice;
-
 // represents byte counts
 typedef uint32_t TB_CharUnits;
 
@@ -583,6 +576,7 @@ typedef enum {
 // and thus are safely allowed to cast into a symbol for operations.
 typedef struct TB_Symbol {
     TB_SymbolTag tag;
+    TB_Linkage linkage;
 
     // which thread info it's tied to (we may need to remove it, this
     // is used for that)
@@ -786,12 +780,6 @@ typedef struct {
     int64_t key;
     TB_Node* value;
 } TB_SwitchEntry;
-
-typedef enum {
-    TB_EXECUTABLE_UNKNOWN,
-    TB_EXECUTABLE_PE,
-    TB_EXECUTABLE_ELF,
-} TB_ExecutableType;
 
 typedef struct TB_Safepoint {
     TB_Node* node; // type == TB_SAFEPOINT
@@ -1016,53 +1004,11 @@ TB_API TB_ExportBuffer tb_module_object_export(TB_Module* m, TB_Arena* dst_arena
 TB_API bool tb_export_buffer_to_file(TB_ExportBuffer buffer, const char* path);
 
 ////////////////////////////////
-// Linker exporter
-////////////////////////////////
-// This is used to export shared objects or executables
-typedef struct TB_Linker TB_Linker;
-typedef struct TB_LinkerSection TB_LinkerSection;
-typedef struct TB_LinkerSectionPiece TB_LinkerSectionPiece;
-
-TB_API TB_ExecutableType tb_system_executable_format(TB_System s);
-
-// tp can be NULL, it just means we're single-threaded
-TB_API TB_Linker* tb_linker_create(TB_ExecutableType type, TB_Arch arch, TPool* tp);
-TB_API bool tb_linker_export(TB_Linker* l, const char* file_name);
-
-// wait for any pending jobs to finish
-TB_API void tb_linker_barrier(TB_Linker* l);
-
-// windows only
-TB_API void tb_linker_set_subsystem(TB_Linker* l, TB_WindowsSubsystem subsystem);
-
-TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name);
-
-TB_API void tb_linker_add_libpath(TB_Linker* l, const char* path);
-
-// Links compiled module into output
-TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m);
-
-// Adds object file to output
-TB_API void tb_linker_append_object(TB_Linker* l, const char* file_name);
-
-// Adds static library to output
-//   this can include imports (wrappers for DLL symbols) along with
-//   normal sections.
-TB_API void tb_linker_append_library(TB_Linker* l, const char* file_name);
-
-////////////////////////////////
 // Symbols
 ////////////////////////////////
-TB_API TB_External* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type);
+TB_API TB_Symbol* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type);
 
 TB_API TB_SourceFile* tb_get_source_file(TB_Module* m, ptrdiff_t len, const char* path);
-
-// Called once you're done with TB operations on a thread (or i guess when it's
-// about to be killed :p), not calling it can only result in leaks on that thread
-// and calling it too early will result in TB potentially reallocating it but there's
-// should be no crashes from this, just potential slowdown or higher than expected memory
-// usage.
-TB_API void tb_free_thread_resources(void);
 
 ////////////////////////////////
 // Function Prototypes

@@ -5,7 +5,7 @@
 #include <cuik.h>
 
 #ifdef CONFIG_HAS_TB
-#include "ir_gen.h"
+#include "../ir_gen.h"
 #endif
 
 enum {

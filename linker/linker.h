@@ -1,9 +1,19 @@
 #pragma once
-#include "../tb_internal.h"
+#include <common.h>
 #include <futex.h>
-#include <file_map.h>
+#include <tb_linker.h>
+
+#if 0
+#include "../tb_internal.h"
+#endif
 
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
+
+// just represents some region of bytes, usually in file parsing crap
+typedef struct {
+    const uint8_t* data;
+    size_t length;
+} TB_Slice;
 
 // basically an object file
 typedef struct TB_LinkerObject TB_LinkerObject;
@@ -16,8 +26,10 @@ struct TB_LinkerObject {
 
     TB_LinkerObject* parent;
 
+    #ifdef CONFIG_HAS_LINKER
     // if not-NULL, the sections for the are in a TB_Module.
     TB_Module* module;
+    #endif
 
     // matters if we're doing lazy loading
     _Atomic bool loaded;

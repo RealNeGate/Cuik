@@ -1,6 +1,12 @@
 #include "linker.h"
 #include <file_map.h>
 
+#include "archives.c"
+#include "ld_script.c"
+
+#include "pe_linker.c"
+#include "elf_linker.c"
+
 #if __STDC_VERSION__ < 201112L || defined(__STDC_NO_ATOMICS__)
 #error "Missing C11 support for stdatomic.h"
 #endif
@@ -559,7 +565,7 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
                     .tb   = { piece, &globals[i]->super }
                 };
 
-                if (globals[i]->linkage != TB_LINKAGE_PRIVATE) {
+                if (globals[i]->super.linkage != TB_LINKAGE_PRIVATE) {
                     TB_LinkerSymbol* new_s = tb_linker_symbol_insert(l, s);
                     if (new_s != s) {
                         cuik_free(s);

@@ -258,7 +258,9 @@ static Cuik_GlslQuals* parse_glsl_qualifiers(Cuik_Parser* restrict parser, Token
 #include "top_level_parser.h"
 
 void type_layout2(Cuik_Parser* restrict parser, TokenStream* restrict tokens, Cuik_Type* type) {
-    if (CUIK_TYPE_IS_COMPLETE(type)) return;
+    if (CUIK_TYPE_IS_COMPLETE(type)) {
+        return;
+    }
     if (CUIK_TYPE_IS_PROGRESS(type)) {
         diag_err(tokens, type->loc, "Type has a circular dependency");
         return;
@@ -466,7 +468,6 @@ static Symbol* find_symbol(Cuik_Parser* parser, TokenStream* restrict s) {
 ////////////////////////////////
 static _Noreturn void generic_error(TranslationUnit* tu, TokenStream* restrict s, const char* msg) {
     SourceLoc loc = tokens_get_location(s);
-
     report(REPORT_ERROR, s, loc, msg);
     abort();
 }

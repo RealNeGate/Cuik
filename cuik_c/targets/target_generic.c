@@ -1,9 +1,6 @@
 #include "targets.h"
 #include "../sema.h"
 
-// two simple temporary buffers to represent type_as_string results
-static thread_local char temp_string0[1024], temp_string1[1024];
-
 Cuik_System cuik_get_target_system(const Cuik_Target* t) { return t->system; }
 Cuik_Environment cuik_get_target_env(const Cuik_Target* t) { return t->env; }
 

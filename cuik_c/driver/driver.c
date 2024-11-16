@@ -321,7 +321,7 @@ static void cc_invoke(TPool* tp, BuildStepInfo* restrict info) {
     #ifdef CONFIG_HAS_TB
     TB_Module* mod = cu->ir_mod;
     CUIK_TIMED_BLOCK("Allocate IR") {
-        cuikcg_allocate_ir2(tu, mod, args->debug_info);
+        cuikcg_allocate_ir(tu, mod, args->debug_info);
     }
 
     CUIK_TIMED_BLOCK("IR Gen") {

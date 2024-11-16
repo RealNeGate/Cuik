@@ -1,5 +1,6 @@
 #include <pool.h>
 #include <ctype.h>
+#include <tb_linker.h>
 
 static const char* link_output_name;
 static DynArray(const char*) link_default_libs;

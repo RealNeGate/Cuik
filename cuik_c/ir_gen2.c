@@ -395,11 +395,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                     // check if it's defined by another TU
                     // functions are external by default
                     const char* name = (const char*) stmt->decl.name;
-                    if (tu->parent != NULL) {
-                        stmt->backing.s = get_external(tu->parent, name);
-                    } else {
-                        stmt->backing.e = tb_extern_create(tu->ir_mod, -1, name, TB_EXTERNAL_SO_LOCAL);
-                    }
+                    stmt->backing.s = tb_extern_create(tu->ir_mod, atoms_len(stmt->decl.name), name, TB_EXTERNAL_SO_LOCAL);
                 }
 
                 assert(stmt->backing.s != NULL);

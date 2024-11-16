@@ -586,7 +586,7 @@ TB_ExportBuffer tb_coff_write_output(TB_Module* m, TB_Arena* dst_arena, const ID
 
                 dyn_array_for(j, globals) {
                     TB_Global* g = globals[j];
-                    bool is_extern = g->linkage == TB_LINKAGE_PUBLIC;
+                    bool is_extern = g->super.linkage == TB_LINKAGE_PUBLIC;
 
                     assert(section_num == g->parent + 1);
                     COFF_Symbol sym = {
