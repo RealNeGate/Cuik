@@ -33,6 +33,21 @@ static uint32_t read32be(uint8_t* ptr) {
     return (ptr[0] << 24u) | (ptr[1] << 16u) | (ptr[2] << 8u) | (ptr[3]);
 }
 
+static long long tb__parse_decimal_int(size_t n, const char* str) {
+    const char* end = &str[n];
+
+    int result = 0;
+    while (str != end) {
+        if (*str < '0' || *str > '9') break;
+
+        result *= 10;
+        result += *str - '0';
+        str++;
+    }
+
+    return result;
+}
+
 bool tb_archive_parse(TB_Slice file, TB_ArchiveFileParser* restrict out_parser) {
     *out_parser = (TB_ArchiveFileParser){ file };
 

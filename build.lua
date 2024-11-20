@@ -28,7 +28,7 @@ local options = {
 
 -- Cuik/TB are broken down into several pieces
 local modules = {
-	common = { srcs={"common/common.c", "common/perf.c"} },
+	common = { srcs={"common/common.c", "common/perf.c", "common/emitter.c"} },
 
 	-- libraries:
 	--   C preprocessor
@@ -250,7 +250,7 @@ local x = {}
 if is_windows then
 	local cmd = io.popen("dir /B freestanding\\*.h")
 	for c in cmd:lines() do
-		x[#x + 1] = "headers/"..c
+		x[#x + 1] = "freestanding/"..c
 	end
 	cmd:close()
 else

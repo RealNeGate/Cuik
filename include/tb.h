@@ -23,17 +23,7 @@
 #ifndef TB_CORE_H
 #define TB_CORE_H
 
-#include <assert.h>
-#include <inttypes.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stddef.h>
-#include <stdlib.h>
-#include <string.h>
-
-// from Common
-#include <pool.h>
+#include <prelude.h>
 
 #define TB_VERSION_MAJOR 0
 #define TB_VERSION_MINOR 4
@@ -73,53 +63,6 @@ typedef enum TB_DebugFormat {
 
     TB_DEBUGFMT_SDG,
 } TB_DebugFormat;
-
-typedef enum TB_Arch {
-    TB_ARCH_UNKNOWN,
-
-    TB_ARCH_X86_64,
-    TB_ARCH_AARCH64,
-
-    // they're almost identical so might as well do both.
-    TB_ARCH_MIPS32,
-    TB_ARCH_MIPS64,
-
-    TB_ARCH_WASM32,
-
-    TB_ARCH_MAX,
-} TB_Arch;
-
-typedef enum TB_System {
-    TB_SYSTEM_WINDOWS,
-    TB_SYSTEM_LINUX,
-    TB_SYSTEM_MACOS,
-    TB_SYSTEM_ANDROID, // Not supported yet
-    TB_SYSTEM_WASM,
-
-    TB_SYSTEM_MAX,
-} TB_System;
-
-typedef enum TB_WindowsSubsystem {
-    TB_WIN_SUBSYSTEM_UNKNOWN,
-    TB_WIN_SUBSYSTEM_WINDOWS,
-    TB_WIN_SUBSYSTEM_CONSOLE,
-    TB_WIN_SUBSYSTEM_EFI_APP,
-} TB_WindowsSubsystem;
-
-typedef enum TB_ABI {
-    // Used on 64bit Windows platforms
-    TB_ABI_WIN64,
-
-    // Used on Mac, BSD and Linux platforms
-    TB_ABI_SYSTEMV,
-} TB_ABI;
-
-typedef enum TB_OutputFlavor {
-    TB_FLAVOR_OBJECT,     // .o  .obj
-    TB_FLAVOR_SHARED,     // .so .dll
-    TB_FLAVOR_STATIC,     // .a  .lib
-    TB_FLAVOR_EXECUTABLE, //     .exe
-} TB_OutputFlavor;
 
 typedef enum TB_CallingConv {
     TB_CDECL,

@@ -14,6 +14,8 @@ typedef struct {
 
 typedef struct Cuik_File Cuik_File;
 
+CUIK_API bool cuikfs_exists(const char* path);
+
 // if case_insensitive is set on a case sensitive and there's multiple files conflicting
 // the behavior is unspecified (it will pick *a* file)
 //
@@ -45,6 +47,15 @@ CUIK_API bool cuikfs_canonicalize(Cuik_Path* out, const char* path, bool case_in
 struct Cuik_File {
     int id;
 };
+
+bool cuikfs_exists(const char* path) {
+    #ifdef _WIN32
+    return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+    #else
+    struct stat buffer;
+    return (stat(path, &buffer) == 0);
+    #endif
+}
 
 bool cuikfs_canonicalize(Cuik_Path* restrict output, const char* path, bool case_insensitive) {
     #ifdef _WIN32

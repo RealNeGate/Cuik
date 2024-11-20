@@ -1,11 +1,10 @@
 // TODO:
 // * Process COMDAT rules correctly.
-#define NL_STRING_MAP_IMPL
 #include "linker.h"
-#include "../objects/coff.h"
-#include "../objects/lib_parse.h"
+#include "../tb/objects/coff.h"
 
 #include <ctype.h>
+#include <tb_coff.h>
 #include <file_map.h>
 
 enum { IMP_PREFIX_LEN = sizeof("__imp_") - 1 };

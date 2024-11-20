@@ -29,6 +29,7 @@ void* tb_jit_stack_create(void);
 #include "debug/sdg.c"
 
 // Objects
+#include "objects/coff_parse.c"
 #include "objects/coff.c"
 #include "objects/elf64.c"
 #include "objects/macho.c"

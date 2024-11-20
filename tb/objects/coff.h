@@ -56,11 +56,6 @@ typedef struct COFF_AuxSectionSymbol {
     int16_t  high_bits;    // high bits of the section number
 } COFF_AuxSectionSymbol;
 static_assert(sizeof(COFF_AuxSectionSymbol) == 18, "COFF Aux Section Symbol size != 18 bytes");
-
-typedef union COFF_SymbolUnion {
-    COFF_Symbol s;
-    COFF_AuxSectionSymbol a;
-} COFF_SymbolUnion;
 #pragma pack(pop)
 
 #pragma pack(push, 1)

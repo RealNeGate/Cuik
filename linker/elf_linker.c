@@ -1,3 +1,5 @@
+#include "linker.h"
+#include <tb_elf.h>
 
 void elf_init(TB_Linker* l) {
     l->entrypoint = "_start";

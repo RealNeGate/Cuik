@@ -34,13 +34,7 @@ bool cuikpp_locate_file(void* user_data, const Cuik_Path* restrict input, Cuik_P
         }
     } else {
         cuikfs_canonicalize(output, input->data, case_insensitive);
-
-        #ifdef _WIN32
-        return GetFileAttributesA(output->data) != INVALID_FILE_ATTRIBUTES;
-        #else
-        struct stat buffer;
-        return (stat(output->data, &buffer) == 0);
-        #endif
+        return cuikfs_exists(output->data);
     }
 }
 

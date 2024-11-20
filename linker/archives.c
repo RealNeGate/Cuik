@@ -1,5 +1,5 @@
 #include "linker.h"
-#include "../objects/lib_parse.h"
+#include "../tb/objects/lib_parse.h"
 
 void append_archive(TPool* pool, TB_LinkerObject* lib, int slash) {
     log_debug("linking against %.*s (as archive)", (int) (lib->name.length - slash), lib->name.data + slash);

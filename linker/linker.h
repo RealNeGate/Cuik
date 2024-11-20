@@ -1,19 +1,24 @@
 #pragma once
 #include <common.h>
 #include <futex.h>
+#include <pool.h>
+#include <threads.h>
+#include <file_map.h>
+#include <dyn_array.h>
 #include <tb_linker.h>
 
-#if 0
-#include "../tb_internal.h"
+#ifdef CONFIG_HAS_TB
+#include <tb.h>
+#endif
+
+#define NBHS_REALLOC cuik_realloc
+#include <nbhs.h>
+
+#if 0 // CONFIG_HAS_TB
+#include "../tb/tb_internal.h"
 #endif
 
 typedef struct TB_LinkerSymbol TB_LinkerSymbol;
-
-// just represents some region of bytes, usually in file parsing crap
-typedef struct {
-    const uint8_t* data;
-    size_t length;
-} TB_Slice;
 
 // basically an object file
 typedef struct TB_LinkerObject TB_LinkerObject;
@@ -26,7 +31,7 @@ struct TB_LinkerObject {
 
     TB_LinkerObject* parent;
 
-    #ifdef CONFIG_HAS_LINKER
+    #ifdef CONFIG_HAS_TB
     // if not-NULL, the sections for the are in a TB_Module.
     TB_Module* module;
     #endif
@@ -325,12 +330,14 @@ TB_LinkerSymbol* tb_linker_import_symbol(TB_Linker* l, TB_Slice name);
 void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject* obj);
 
 size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* out, uint32_t section_rva, uint32_t trampoline_rva, size_t reloc_i, size_t head, size_t tail);
+void tb_linker_symbol_weak(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerSymbol* alt);
 
 // symbols are technically doing a dumb but concurrent disjoint-set
 void tb_linker_symbol_union(TB_Linker* l, TB_LinkerSymbol* leader, TB_LinkerSymbol* other_guy);
 TB_LinkerSymbol* tb_linker_symbol_find(TB_LinkerSymbol* sym);
 TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym);
 
+TB_LinkerSymbol* tb_linker_new_symbol(TB_Linker* l, size_t len, const char* name);
 TB_LinkerSymbol* tb_linker_find_symbol(TB_Linker* l, TB_Slice name);
 TB_LinkerSymbol* tb_linker_find_symbol2(TB_Linker* l, const char* name);
 

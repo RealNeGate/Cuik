@@ -85,12 +85,11 @@
 #include <threads.h>
 #include <stdatomic.h>
 
-typedef struct TB_Emitter {
-    size_t capacity, count;
-    uint8_t* data;
-} TB_Emitter;
-
 #define TB_DATA_TYPE_EQUALS(a, b) ((a).raw == (b).raw)
+
+#ifdef CONFIG_HAS_LINKER
+typedef struct TB_LinkerSectionPiece TB_LinkerSectionPiece;
+#endif
 
 // i love my linked lists don't i?
 typedef struct TB_SymbolPatch TB_SymbolPatch;
@@ -442,7 +441,10 @@ struct TB_Function {
 
 struct TB_ModuleSection {
     char* name;
-    // TB_LinkerSectionPiece* piece;
+
+    #ifdef CONFIG_HAS_LINKER
+    TB_LinkerSectionPiece* piece;
+    #endif
 
     int section_num;
     TB_ModuleSectionFlags flags;
@@ -535,9 +537,6 @@ struct TB_Module {
 
     // unused by the JIT
     DynArray(TB_ModuleSection) sections;
-
-    // windows specific lol
-    // TB_LinkerSectionPiece* xdata;
 };
 
 typedef struct {
@@ -653,40 +652,6 @@ do {                                      \
 #endif
 
 TB_ThreadInfo* tb_thread_info(TB_Module* m);
-
-void* tb_out_reserve(TB_Emitter* o, size_t count);
-void tb_out_commit(TB_Emitter* o, size_t count);
-
-// reserves & commits
-void* tb_out_grab(TB_Emitter* o, size_t count);
-size_t tb_out_grab_i(TB_Emitter* o, size_t count);
-size_t tb_out_get_pos(TB_Emitter* o, void* p);
-
-// Adds null terminator onto the end and returns the starting position of the string
-size_t tb_outstr_nul_UNSAFE(TB_Emitter* o, const char* str);
-
-void tb_out1b_UNSAFE(TB_Emitter* o, uint8_t i);
-void tb_out4b_UNSAFE(TB_Emitter* o, uint32_t i);
-void tb_outstr_UNSAFE(TB_Emitter* o, const char* str);
-void tb_outs_UNSAFE(TB_Emitter* o, size_t len, const void* str);
-size_t tb_outs(TB_Emitter* o, size_t len, const void* str);
-void* tb_out_get(TB_Emitter* o, size_t pos);
-
-// fills region with zeros
-void tb_out_zero(TB_Emitter* o, size_t len);
-
-void tb_out1b(TB_Emitter* o, uint8_t i);
-void tb_out2b(TB_Emitter* o, uint16_t i);
-void tb_out4b(TB_Emitter* o, uint32_t i);
-void tb_out8b(TB_Emitter* o, uint64_t i);
-void tb_patch1b(TB_Emitter* o, uint32_t pos, uint8_t i);
-void tb_patch2b(TB_Emitter* o, uint32_t pos, uint16_t i);
-void tb_patch4b(TB_Emitter* o, uint32_t pos, uint32_t i);
-void tb_patch8b(TB_Emitter* o, uint32_t pos, uint64_t i);
-
-uint8_t  tb_get1b(TB_Emitter* o, uint32_t pos);
-uint16_t tb_get2b(TB_Emitter* o, uint32_t pos);
-uint32_t tb_get4b(TB_Emitter* o, uint32_t pos);
 
 inline static uint64_t align_up(uint64_t a, uint64_t b) {
     return a + (b - (a % b)) % b;

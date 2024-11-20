@@ -2,37 +2,7 @@
 #ifndef TB_OBJECT_H
 #define TB_OBJECT_H
 
-#include <stdint.h>
-#include <stddef.h>
-
-#ifndef TB_API
-#  ifdef __cplusplus
-#    define TB_EXTERN extern "C"
-#  else
-#    define TB_EXTERN
-#  endif
-#  ifdef TB_DLL
-#    ifdef TB_IMPORT_DLL
-#      define TB_API TB_EXTERN __declspec(dllimport)
-#    else
-#      define TB_API TB_EXTERN __declspec(dllexport)
-#    endif
-#  else
-#    define TB_API TB_EXTERN
-#  endif
-#endif
-
-// just represents some region of bytes, usually in file parsing crap
-typedef struct {
-    const uint8_t* data;
-    size_t length;
-} TB_Slice;
-
-typedef enum {
-    TB_EXECUTABLE_UNKNOWN,
-    TB_EXECUTABLE_PE,
-    TB_EXECUTABLE_ELF,
-} TB_ExecutableType;
+#include <prelude.h>
 
 typedef enum {
     TB_OBJECT_RELOC_NONE, // how?

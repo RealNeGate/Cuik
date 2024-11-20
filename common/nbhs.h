@@ -96,12 +96,6 @@ typedef struct {
     _Atomic(NBHS_Table*) latest;
 } NBHS;
 
-typedef struct NBHS_FreeQueueNode NBHS_FreeQueueNode;
-struct NBHS_FreeQueueNode {
-    _Atomic(NBHS_FreeQueueNode*) next;
-    NBHS_Table* table;
-};
-
 static size_t nbhs_compute_cap(size_t y) {
     // minimum capacity
     if (y < 512) {

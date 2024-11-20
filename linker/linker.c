@@ -1,11 +1,7 @@
 #include "linker.h"
+#include <hashes.h>
 #include <file_map.h>
-
-#include "archives.c"
-#include "ld_script.c"
-
-#include "pe_linker.c"
-#include "elf_linker.c"
+#include "../tb/objects/parse_prelude.h"
 
 #if __STDC_VERSION__ < 201112L || defined(__STDC_NO_ATOMICS__)
 #error "Missing C11 support for stdatomic.h"
@@ -47,7 +43,11 @@ thread_local bool linker_thread_init;
 thread_local TB_Arena linker_tmp_arena;
 thread_local TB_Arena linker_perm_arena;
 
-extern TB_LinkerVtbl tb__linker_pe, tb__linker_elf;
+#include "archives.c"
+#include "ld_script.c"
+#include "pe_linker.c"
+#include "elf_linker.c"
+
 TB_API TB_ExecutableType tb_system_executable_format(TB_System s) {
     switch (s) {
         case TB_SYSTEM_WINDOWS: return TB_EXECUTABLE_PE;
@@ -67,26 +67,6 @@ static void* muh_hs_alloc(size_t size) {
 
 static void muh_hs_free(void* ptr, size_t size) {
     cuik_free(ptr);
-}
-
-TB_Slice tb_linker_read_entire_file(FILE* file) {
-    cuikperf_region_start("file", NULL);
-    int descriptor = fileno(file);
-
-    struct stat file_stats;
-    if (fstat(descriptor, &file_stats) == -1) {
-        return (TB_Slice){ 0 };
-    }
-
-    size_t length = file_stats.st_size;
-    void* data = cuik_malloc(length);
-
-    fseek(file, 0, SEEK_SET);
-    fread(data, 1, length, file);
-    fclose(file);
-    cuikperf_region_end();
-
-    return (TB_Slice){ data, length };
 }
 
 TB_Linker* tb_linker_create(TB_ExecutableType exe, TB_Arch arch, TPool* tp) {
@@ -221,6 +201,7 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
     }
 }
 
+/*#ifdef CONFIG_HAS_TB
 void tb_linker_append_module_section(TB_Linker* l, TB_LinkerObject* mod, TB_ModuleSection* section, uint32_t flags) {
     assert(mod->module != NULL && "not a TB_Module's section?");
     if (section->total_size > 0) {
@@ -231,6 +212,7 @@ void tb_linker_append_module_section(TB_Linker* l, TB_LinkerObject* mod, TB_Modu
         section->piece->ir_section = section;
     }
 }
+#endif*/
 
 bool tb_linker_export(TB_Linker* l, const char* file_name) {
     return l->vtbl.export(l, file_name);
@@ -527,6 +509,7 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
     return sym;
 }
 
+#ifdef CONFIG_HAS_TB
 void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
     DynArray(TB_ModuleSection) sections = m->sections;
 
@@ -577,6 +560,7 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
         }
     }
 }
+#endif
 
 enum { EXPORT_BUFFER_SIZE = 64*1024 };
 void tb_linker_export_piece(TPool* pool, ExportTask* task) {
@@ -1022,12 +1006,14 @@ void tb_linker_mark_live(TB_Linker* l) {
         if (p->obj->module && !p->obj->module->visited) {
             p->obj->module->visited = true;
 
+            #ifdef CONFIG_HAS_TB
             TB_Module* m = p->obj->module;
             dyn_array_for(i, m->sections) {
                 if (m->sections[i].piece) {
                     tb_linker_push_piece(l, m->sections[i].piece);
                 }
             }
+            #endif
 
             // associate TB externals with linker symbols
             FOR_N(i, 0, m->exports.count) {

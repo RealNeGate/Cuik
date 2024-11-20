@@ -48,8 +48,11 @@ TB_API void tb_linker_set_entrypoint(TB_Linker* l, const char* name);
 
 TB_API void tb_linker_add_libpath(TB_Linker* l, const char* path);
 
+#ifdef CONFIG_HAS_TB
 // Links compiled module into output
+typedef struct TB_Module TB_Module;
 TB_API void tb_linker_append_module(TB_Linker* l, TB_Module* m);
+#endif
 
 // Adds object file to output
 TB_API void tb_linker_append_object(TB_Linker* l, const char* file_name);
