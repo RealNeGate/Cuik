@@ -63,6 +63,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_CLZ:
         case TB_CTZ:
         case TB_ADC:
+        case TB_BSWAP:
         case TB_VA_START:
         case TB_PTR_OFFSET:
         case TB_POISON:

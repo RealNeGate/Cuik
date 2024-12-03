@@ -1435,6 +1435,8 @@ TB_API void tb_builder_label_kill(TB_GraphBuilder* g, TB_Node* label);
 //   writes to the paths array the symbol tables for the branch.
 //   [0] is the true case and [1] is the false case.
 TB_API void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]);
+//   switch tables
+TB_API void tb_builder_switch(TB_GraphBuilder* g, TB_Node* cond, int n, uint64_t* keys, TB_Node** paths);
 //   unconditional jump to target
 TB_API void tb_builder_br(TB_GraphBuilder* g, TB_Node* target);
 //   forward and backward branch target

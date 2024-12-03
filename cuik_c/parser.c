@@ -224,7 +224,11 @@ static bool expect_char(TokenStream* restrict s, char ch) {
         diag_err(s, tokens_get_range(s), "expected '%c', got end-of-file", ch);
         return false;
     } else if (tokens_get(s)->type != ch) {
-        diag_err(s, tokens_get_range(s), "expected '%c', got '%!S'", ch, tokens_get(s)->content);
+        char str[2] = { ch, 0 };
+        DiagFixit fixit = { tokens_get_last_range(s), 0, str };
+        fixit.loc.start.raw += 1;
+        fixit.loc.end.raw += 1;
+        diag_err(s, fixit.loc, "#expected '%c', got '%!S'", fixit, ch, tokens_get(s)->content);
         return false;
     } else {
         tokens_next(s);

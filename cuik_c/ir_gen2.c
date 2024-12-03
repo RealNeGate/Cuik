@@ -334,6 +334,11 @@ static void cg_logical_op(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
 
 static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, Cuik_QualType qt, int arg_count, ValDesc* args) {
     switch (e->op) {
+        case EXPR_CHAR:
+        case EXPR_WCHAR: {
+            TB_DataType dt = ctype_to_tbtype(cuik_canonical_type(qt));
+            return (ValDesc){ RVALUE, .n = tb_builder_uint(g, dt, e->char_lit) };
+        }
         case EXPR_INT: {
             Cuik_Type* t = cuik_canonical_type(qt);
             TB_DataType dt = ctype_to_tbtype(t);
@@ -1350,6 +1355,10 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             tb_builder_label_set(g, exit);
             break;
         }
+
+        case STMT_BREAK:
+        tb_builder_br(g, s->continue_.target->backing.loop[1]);
+        break;
 
         case STMT_CONTINUE:
         tb_builder_br(g, s->continue_.target->backing.loop[0]);

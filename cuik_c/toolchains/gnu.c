@@ -56,7 +56,7 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
     enum { CMD_LINE_MAX = 4096 };
 
     char cmd_line[CMD_LINE_MAX];
-    int cmd_line_len = snprintf(cmd_line, CMD_LINE_MAX, "clang %s -o %s ", args->debug_info ? "-g" : "", output);
+    int cmd_line_len = snprintf(cmd_line, CMD_LINE_MAX, "clang %s -lm -o %s ", args->debug_info ? "-g" : "", output);
 
     dyn_array_for(i, linker->inputs) {
         cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "%s ", linker->inputs[i]);

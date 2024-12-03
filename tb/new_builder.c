@@ -125,12 +125,15 @@ TB_GraphBuilder* tb_builder_enter_from_dbg(TB_Function* f, TB_ModuleSectionHandl
 }
 
 void tb_builder_exit(TB_GraphBuilder* g) {
-    if (g->start_syms != g->curr) {
-        tb_builder_label_kill(g, g->start_syms);
+    if (g->curr) {
+        TB_Node* n = g->curr;
+        g->curr = NULL;
+
+        tb_builder_label_kill(g, n);
     }
 
-    if (g->curr) {
-        tb_builder_label_kill(g, g->curr);
+    if (g->start_syms != g->curr) {
+        tb_builder_label_kill(g, g->start_syms);
     }
 
     // needs to be empty for the optimizer not to act up
@@ -624,6 +627,42 @@ void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]) {
     br->succ_count = 2;
 }
 
+void tb_builder_switch(TB_GraphBuilder* g, TB_Node* cond, int path_count, uint64_t* keys, TB_Node** paths) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch));
+    set_input(f, n, xfer_ctrl(g, n), 0);
+    set_input(f, n, cond, 1);
+
+    int prob = (100 / path_count);
+    if (prob < 1) { prob = 1; }
+
+    paths[0] = branch_cproj(f, n, prob, 0, 0);
+    FOR_N(i, 1, path_count) {
+        paths[i] = branch_cproj(f, n, prob, keys[i - 1], i);
+    }
+
+    TB_Node* curr = g->curr;
+    g->curr = NULL;
+
+    FOR_N(i, 0, path_count) {
+        TB_Node* cproj = paths[i];
+
+        TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, curr->input_count, sizeof(TB_NodeSymbolTable));
+        set_input(f, syms, cproj, 0);
+        set_input(f, syms, cproj, 1);
+        TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = true);
+
+        FOR_N(j, 2, curr->input_count) {
+            set_input(f, syms, curr->inputs[j], j);
+        }
+        paths[i] = syms;
+    }
+
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    br->total_hits = 100;
+    br->succ_count = path_count;
+}
+
 TB_Node* tb_builder_phi(TB_GraphBuilder* g, int val_count, TB_Node** vals) {
     TB_ASSERT(cfg_is_region(g->curr->inputs[1]));
     TB_ASSERT(g->curr->inputs[1]->input_count == val_count);
@@ -646,7 +685,7 @@ void tb_builder_br(TB_GraphBuilder* g, TB_Node* target) {
     }
 
     TB_ASSERT(target->type == TB_SYMBOL_TABLE);
-    TB_ASSERT(syms->input_count == target->input_count);
+    TB_ASSERT(syms->input_count >= target->input_count);
 
     TB_Node* top_ctrl = target->inputs[1];
     FOR_N(i, 2, target->input_count) {

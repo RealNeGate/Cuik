@@ -187,8 +187,17 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
         }
 
+        // dead node elim
+        CUIK_TIMED_BLOCK("dead node elim") {
+            for (TB_Node* n; n = worklist_pop(ws), n;) {
+                if (n->user_count == 0 && !is_proj(n) && n != ctx.frame_ptr) {
+                    TB_OPTDEBUG(ISEL)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
+                    tb_kill_node(f, n);
+                }
+            }
+        }
+
         // greedy instruction selector does bottom-up rewrites from the pinned nodes
-        worklist_clear(ws);
         aarray_for(i, pins) {
             TB_Node* pin_n = pins[i];
 
@@ -380,7 +389,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 int tmps = node_tmp_count(&ctx, n);
                 RegMask* def_mask = node_constraint(&ctx, n, ctx.ins);
 
-                printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
+                printf("  "), tb_print_dumb_node(NULL, n), printf(" (%u uses)\n", n->user_count);
                 if (vreg_id > 0) {
                     printf("    OUT    = "), tb__print_regmask(def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
                 }

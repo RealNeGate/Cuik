@@ -94,14 +94,14 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
 
     printf(")");
 
-    #if 0
-    printf("   { ");
+    #if 1
+    printf("   [[ ");
     FOR_USERS(u, n) {
         TB_Node* un = USERN(u);
         int ui      = USERI(u);
         printf("%%%u:%d ", un->gvn, ui);
     }
-    printf("}");
+    printf("]]");
     #endif
 }
 
