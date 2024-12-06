@@ -1346,6 +1346,12 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
         }
 
+        case TB_BSWAP:
+        if (ins) {
+            ins[1] = ctx->normie_mask[REG_CLASS_GPR];
+        }
+        return ctx->normie_mask[REG_CLASS_GPR];
+
         case x86_vzero:
         return ctx->normie_mask[REG_CLASS_XMM];
 
@@ -1861,6 +1867,29 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             } else {
                 __(MOV, dt, Vgpr(dst), Vimm(x));
             }
+            break;
+        }
+
+        case TB_BSWAP: {
+            Val dst = op_at(ctx, n);
+            Val src = op_at(ctx, n->inputs[1]);
+
+            TB_X86_DataType dt = legalize(n->dt);
+            if (!is_value_match(&dst, &src)) {
+                __(MOV, dt, &dst, &src);
+            }
+
+            if (dt == TB_X86_WORD) {
+                EMIT1(e, 0x66);
+            }
+
+            if (dt == TB_X86_QWORD || dst.reg >= 8) {
+                uint8_t rex = 0x40 | (dt == TB_X86_QWORD ? 8 : 0) | (dst.reg >= 8 ? 1 : 0);
+                EMIT1(e, rex);
+            }
+
+            EMIT1(e, 0x0F);
+            EMIT1(e, 0xC8 + (dst.reg & 0x7));
             break;
         }
 

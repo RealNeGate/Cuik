@@ -56,8 +56,6 @@ void target_generic_fill_builtin_table(BuiltinTable* builtins) {
     X(__noop, ". v");
     X(__assume, "b v");
     X(__debugbreak, " v");
-    X(__va_start, "c**T v");
-    X(__va_arg, "c*T v");
     X(_umul128, "LLL* L");
     X(_mul128, "LLL* L");
     X(_InterlockedExchange, "l*l l");

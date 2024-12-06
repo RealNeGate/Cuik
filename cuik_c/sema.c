@@ -683,9 +683,30 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
         int level;
         Cuik_Type* base = cuik_canonical_type(cuik_get_direct_type(arg_type, &level));
 
+        // pointer decay
+        if (base->kind == KIND_ARRAY) {
+            base = cuik_canonical_type(base->array.of);
+            level++;
+        }
+
+        if (level != expected_level) {
+            if (level == 0 && expected_level == 1) {
+                Cuik_Type* ptr_type = expected;
+                for (size_t j = 0; j < expected_level; j++) {
+                    ptr_type = cuik__new_pointer(&tu->types, cuik_uncanonical_type(ptr_type));
+                }
+
+                DiagFixit fixit = { arg->loc, 0, "&" };
+                diag_err(&tu->tokens, fixit.loc, "#We wanted a pointer (%!T) and you didn't give me that (%!T), have you considered doing '&'?", fixit, ptr_type, arg_type);
+            } else {
+                diag_err(&tu->tokens, arg->loc, "pointer indirection mismatch (got %d, expected %d)", level, expected_level);
+            }
+            return NULL;
+        }
+
         if (level == 0) {
             if (!type_compatible(tu, base, expected, arg)) {
-                diag_err(&tu->tokens, arg->loc, "argument type doesn't match parameter type (got %!T, expected %!T)", base, expected);
+                diag_err(&tu->tokens, arg->loc, "argument and parameter don't match (got %!T, expected %!T)", base, expected);
                 return NULL;
             }
 
@@ -701,11 +722,6 @@ static Cuik_Type* sema_builtin(TranslationUnit* tu, Cuik_Expr* restrict _, const
             }
 
             SET_CAST(i, cuik_uncanonical_type(expected));
-        }
-
-        if (level != expected_level) {
-            diag_err(&tu->tokens, arg->loc, "pointer indirection mismatch (got %d, expected %d)", level, expected_level);
-            return NULL;
         }
     }
 

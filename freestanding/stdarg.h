@@ -46,7 +46,7 @@ static void *__va_arg_fp(__va_elem *ap, int sz, int align) {
 }
 
 #define va_arg(ap, ty) *((ty*) __va_arg(ap, ty))
-#define va_start(ap, a) __va_start(&ap, a)
+#define va_start(ap, a) __va_start(ap, a)
 #define va_end(ap)
 #define va_copy(dest, src) ((dest)[0] = (src)[0])
 
