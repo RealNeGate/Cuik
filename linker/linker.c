@@ -141,9 +141,9 @@ void tb_linker_append_object(TB_Linker* l, const char* file_name) {
 
         if (l->jobs.pool != NULL) {
             l->jobs.count += 1;
-            tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_object, obj_file);
+            tpool_add_task(l->jobs.pool, l->vtbl.append_object, obj_file);
         } else {
-            l->vtbl.append_object(NULL, obj_file);
+            l->vtbl.append_object(NULL, &(void*){ obj_file });
         }
     }
 }
@@ -197,7 +197,7 @@ void tb_linker_append_library(TB_Linker* l, const char* file_name) {
         l->jobs.count += 1;
         tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_library, lib_file);
     } else {
-        l->vtbl.append_library(NULL, lib_file);
+        l->vtbl.append_library(NULL, &(void*){ lib_file });
     }
 }
 
@@ -240,7 +240,7 @@ size_t tb__get_symbol_pos(TB_Symbol* s) {
     }
 }
 
-uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym) {
+uint64_t tb__get_symbol_rva(TB_LinkerSymbol* sym) {
     if (sym->tag == TB_LINKER_SYMBOL_ABSOLUTE) {
         return 0;
     } else if (sym->tag == TB_LINKER_SYMBOL_IMAGEBASE) {
@@ -251,7 +251,7 @@ uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym) {
     assert(sym->tag == TB_LINKER_SYMBOL_NORMAL || sym->tag == TB_LINKER_SYMBOL_TB);
     TB_LinkerSectionPiece* piece = sym->normal.piece;
 
-    uint32_t rva = piece->parent->address + piece->offset;
+    uint32_t rva = piece->parent->segment->address + piece->parent->offset + piece->offset;
     if (sym->tag == TB_LINKER_SYMBOL_NORMAL) {
         return rva + sym->normal.secrel;
     }
@@ -282,6 +282,20 @@ size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align) {
 void tb_linker_associate(TB_Linker* l, TB_LinkerSectionPiece* a, TB_LinkerSectionPiece* b) {
     assert(a->assoc == NULL);
     a->assoc = b;
+}
+
+TB_LinkerSegment* tb_linker_find_segment(TB_Linker* linker, const char* name) {
+    DynArray(TB_LinkerSegment*) segments = linker->segments;
+
+    size_t length = strlen(name);
+    size_t i = 0, segment_count = dyn_array_length(segments);
+    for (; i < segment_count; i++) {
+        if (segments[i]->name.length == length && memcmp(segments[i]->name.data, name, length) == 0) {
+            return segments[i];
+        }
+    }
+
+    return NULL;
 }
 
 TB_LinkerSection* tb_linker_find_section(TB_Linker* l, const char* name) {
@@ -440,9 +454,9 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject*
 
         if (l->jobs.pool != NULL) {
             l->jobs.count += 1;
-            tpool_add_task(l->jobs.pool, (tpool_task_proc*) l->vtbl.append_object, obj);
+            tpool_add_task(l->jobs.pool, l->vtbl.append_object, obj);
         } else {
-            l->vtbl.append_object(NULL, obj);
+            l->vtbl.append_object(NULL, &(void*){ obj });
         }
     }
 }
@@ -563,9 +577,13 @@ void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m) {
 #endif
 
 enum { EXPORT_BUFFER_SIZE = 64*1024 };
-void tb_linker_export_piece(TPool* pool, ExportTask* task) {
-    TB_Linker* l = task->linker;
+void tb_linker_export_piece(TPool* pool, void** args) {
     cuikperf_region_start("export", NULL);
+
+    TB_Linker* l = args[0];
+    uint8_t* file = l->output;
+
+    TB_LinkerSectionPiece* p = args[1];
 
     if (!linker_thread_init) {
         linker_thread_init = true;
@@ -573,63 +591,59 @@ void tb_linker_export_piece(TPool* pool, ExportTask* task) {
         tb_arena_create(&linker_tmp_arena, "LinkerTmp");
     }
 
-    TB_LinkerSectionPiece* end = task->end;
-    for (TB_LinkerSectionPiece* p = task->start; p != end; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
-        if ((p->flags & TB_LINKER_PIECE_LIVE) == 0 || p->kind == PIECE_BSS) {
-            continue;
-        }
+    assert((p->flags & TB_LINKER_PIECE_LIVE) || p->kind == PIECE_BSS);
 
-        cuikperf_region_start("piece", NULL);
+    TB_LinkerSection* text  = tb_linker_find_section(l, ".text");
+    uint32_t trampoline_rva = text->segment->address + l->trampoline_pos;
 
-        TB_LinkerSection* text  = tb_linker_find_section(l, ".text");
-        uint32_t trampoline_rva = text->address + l->trampoline_pos;
+    TB_ASSERT(p->kind == PIECE_BUFFER);
+    size_t section_rva = tb_linker_section_rva(p->parent);
+    size_t section_file_offset = tb_linker_section_file_pos(p->parent);
 
-        TB_ASSERT(p->kind == PIECE_BUFFER);
-        size_t section_file_offset = p->parent->offset;
-        size_t section_rva = p->parent->address;
+    size_t head = 0, reloc_i = 0;
+    while (head < p->size) {
+        uint8_t* out = &file[section_file_offset + p->offset + head];
 
-        size_t head = 0, reloc_i = 0;
-        while (head < p->size) {
-            uint8_t* out = &task->file[section_file_offset + p->offset + head];
+        // copy from input stream
+        size_t tail;
+        CUIK_TIMED_BLOCK("read") {
+            tail = head + EXPORT_BUFFER_SIZE;
+            if (tail > p->size) { tail = p->size; }
 
-            // copy from input stream
-            size_t tail;
-            CUIK_TIMED_BLOCK("read") {
-                tail = head + EXPORT_BUFFER_SIZE;
-                if (tail > p->size) { tail = p->size; }
-
-                size_t rem = 0;
-                if (p->buffer) {
-                    size_t buffer_tail = tail > p->buffer_size ? p->buffer_size : tail;
-                    memcpy(out, &p->buffer[head], buffer_tail - head);
-                    rem = buffer_tail - head;
-                }
-
-                // zero the remaining space (or CC if it's code)
-                if (rem < (tail - head)) {
-                    int b = (p->flags & TB_LINKER_PIECE_CODE) ? 0xCC : 0;
-                    memset(&out[rem], b, (tail - head) - rem);
-                }
+            size_t rem = 0;
+            if (p->buffer) {
+                size_t buffer_tail = tail > p->buffer_size ? p->buffer_size : tail;
+                memcpy(out, &p->buffer[head], buffer_tail - head);
+                rem = buffer_tail - head;
             }
 
-            // apply relocations
-            CUIK_TIMED_BLOCK("relocs") {
-                reloc_i = tb_linker_apply_reloc(l, p, out, section_rva, trampoline_rva, reloc_i, head, tail);
+            // zero the remaining space (or CC if it's code)
+            if (rem < (tail - head)) {
+                int b = (p->flags & TB_LINKER_PIECE_CODE) ? 0xCC : 0;
+                memset(&out[rem], b, (tail - head) - rem);
             }
-            head = tail;
         }
 
-        cuikperf_region_end();
+        // apply relocations
+        CUIK_TIMED_BLOCK("relocs") {
+            reloc_i = tb_linker_apply_reloc(l, p, out, section_rva, trampoline_rva, reloc_i, head, tail);
+        }
+        head = tail;
     }
 
     if (l->jobs.pool != NULL) {
         l->jobs.done += 1;
-        futex_signal(&l->jobs.done);
+        if (l->jobs.count == l->jobs.done) { // might be done?
+            futex_signal(&l->jobs.done);
+        }
     }
     cuikperf_region_end();
 }
 
-void tb_linker_export_pieces(TB_Linker* l, DynArray(TB_LinkerSection*) sections, uint8_t* output) {
+void tb_linker_export_pieces(TB_Linker* l) {
+    DynArray(TB_LinkerSection*) sections = l->sections_arr;
+
+    uint8_t* output = l->output;
     if (l->jobs.pool != NULL) {
         l->jobs.done = 0;
         l->jobs.count = 0;
@@ -637,38 +651,14 @@ void tb_linker_export_pieces(TB_Linker* l, DynArray(TB_LinkerSection*) sections,
         // each of the pieces can be exported in parallel
         cuikperf_region_start("submitting", NULL);
         dyn_array_for(i, sections) {
-            TB_LinkerSectionPiece* p = atomic_load_explicit(&sections[i]->list, memory_order_relaxed);
-
-            // we wanna dispatch tasks as a nice batch so if the accumulated
-            // size goes past like 8k we'll dispatch it
-            TB_LinkerSectionPiece* accum_start = p;
-            size_t accum_size = 0;
-
             int c = 0;
-            while (p != NULL) {
+            dyn_array_for(j, sections[i]->pieces) {
+                TB_LinkerSectionPiece* p = sections[i]->pieces[j];
                 if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind != PIECE_BSS) {
-                    accum_size += p->size;
+                    void* args[2] = { l, p };
+                    tpool_add_task2(l->jobs.pool, tb_linker_export_piece, 2, args);
+                    c++;
                 }
-
-                if (accum_size >= 8192) {
-                    ExportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(ExportTask));
-                    *task = (ExportTask){ l, output, accum_start, p };
-                    tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, task);
-                    c += 1;
-
-                    accum_size = p->size;
-                    accum_start = p;
-                }
-
-                p = atomic_load_explicit(&p->next, memory_order_relaxed);
-            }
-
-            // push remaining bits
-            if (accum_start != NULL) {
-                ExportTask* task = tb_arena_alloc(&linker_perm_arena, sizeof(ExportTask));
-                *task = (ExportTask){ l, output, accum_start, NULL };
-                tpool_add_task(l->jobs.pool, (tpool_task_proc*) tb_linker_export_piece, task);
-                c += 1;
             }
 
             l->jobs.count += c;
@@ -679,17 +669,12 @@ void tb_linker_export_pieces(TB_Linker* l, DynArray(TB_LinkerSection*) sections,
         futex_wait_eq(&l->jobs.done, l->jobs.count);
     } else {
         dyn_array_for(i, sections) {
-            size_t section_file_offset = sections[i]->offset;
-            size_t section_rva = sections[i]->address;
-
-            TB_LinkerSectionPiece* p = atomic_load_explicit(&sections[i]->list, memory_order_relaxed);
-            while (p != NULL) {
-                TB_LinkerSectionPiece* next = atomic_load_explicit(&p->next, memory_order_relaxed);
+            FOR_N(j, 0, sections[i]->piece_count) {
+                TB_LinkerSectionPiece* p = sections[i]->pieces[j];
                 if ((p->flags & TB_LINKER_PIECE_LIVE) && p->kind != PIECE_BSS) {
-                    ExportTask task = { l, output, p, next };
-                    tb_linker_export_piece(NULL, &task);
+                    void* args[2] = { l, p };
+                    tb_linker_export_piece(NULL, args);
                 }
-                p = next;
             }
         }
     }
@@ -730,7 +715,7 @@ static int compare_linker_pieces(const void* a, const void* b) {
     return 0;
 }
 
-DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
+bool tb_linker_layout(TB_Linker* l) {
     namehs_resize_barrier(&l->unresolved_symbols);
     if (nbhs_count(&l->unresolved_symbols) > 0) {
         nbhs_for(e, &l->unresolved_symbols) {
@@ -777,12 +762,11 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
             #endif
         }
 
-        return NULL;
+        return false;
     }
 
     DynArray(TB_LinkerSection*) sections = NULL;
     CUIK_TIMED_BLOCK("sort sections") {
-        TB_LinkerSectionPiece** array_form = NULL;
         size_t num = 0;
 
         nbhs_for(e, &l->sections) {
@@ -792,35 +776,33 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
             }
 
             size_t piece_count = s->piece_count;
+            TB_ASSERT(piece_count != 0);
 
             ////////////////////////////////
             // Sort sections
             ////////////////////////////////
             // convert into array
-            size_t j = 0;
+            DynArray(TB_LinkerSectionPiece*) array_form = dyn_array_create(TB_LinkerSectionPiece*, piece_count);
             CUIK_TIMED_BLOCK("convert to array") {
-                assert(s->piece_count != 0);
-                array_form = cuik_realloc(array_form, piece_count * sizeof(TB_LinkerSectionPiece*));
-
                 TB_LinkerSectionPiece* p = atomic_load_explicit(&s->list, memory_order_relaxed);
                 for (; p != NULL; p = atomic_load_explicit(&p->next, memory_order_relaxed)) {
                     if (p->size != 0 && (p->flags & TB_LINKER_PIECE_LIVE)) {
-                        array_form[j++] = p;
+                        dyn_array_put(array_form, p);
                     }
                 }
 
-                // fprintf(stderr, "%.*s: %zu -> %zu\n", (int) s->name.length, s->name.data, piece_count, j);
-                piece_count = j;
+                // printf("%.*s: %zu -> %zu\n", (int) s->name.length, s->name.data, piece_count, j);
             }
 
-            if (piece_count == 0) {
+            if (dyn_array_length(array_form) == 0) {
+                dyn_array_destroy(array_form);
                 s->generic_flags |= TB_LINKER_SECTION_DISCARD;
                 continue;
             }
 
             // sort
             CUIK_TIMED_BLOCK("sort section") {
-                qsort(array_form, piece_count, sizeof(TB_LinkerSectionPiece*), compare_linker_pieces);
+                qsort(array_form, dyn_array_length(array_form), sizeof(TB_LinkerSectionPiece*), compare_linker_pieces);
             }
 
             // convert back into linked list
@@ -829,47 +811,103 @@ DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l) {
 
                 size_t offset = 0;
                 TB_LinkerSectionPiece* prev = NULL;
-                FOR_N(j, 0, piece_count) {
+                dyn_array_for(j, array_form) {
                     size_t mask = (1u << array_form[j]->align_log2) - 1;
                     size_t next = (offset + mask) & ~mask;
-                    if (prev != NULL) {
-                        prev->size += next - offset;
+                    if (j > 0) {
+                        array_form[j - 1]->size += next - offset;
                     }
                     offset = next;
 
-                    /* if (array_form[j]->coff_order.length > 0) {
-                        TB_Slice n = array_form[j]->coff_order;
-                        printf("  PIECE %06zx (align=%06x): %.*s", offset, (1u << array_form[j]->align_log2), (int) n.length, n.data);
-                    } else {
-                        printf("  PIECE %06zx (align=%06x)", offset, (1u << array_form[j]->align_log2));
-                    }
-                    printf("\n"); */
+                    // printf("  PIECE %06zx (align=%06x)\n", offset, (1u << array_form[j]->align_log2));
 
                     array_form[j]->offset = offset;
                     offset += array_form[j]->size;
-
-                    if (prev) {
-                        atomic_store_explicit(&prev->next, array_form[j], memory_order_relaxed);
-                    }
                     prev = array_form[j];
                 }
-                atomic_store_explicit(&prev->next, NULL, memory_order_relaxed);
 
                 s->size = offset;
-                s->list = array_form[0];
-                s->piece_count = piece_count;
+                s->list = NULL;
+                s->piece_count = 0xCAFEBABE;
+                s->pieces = array_form;
 
-                log_debug("Section %.*s: %zu pieces with %zu bytes", (int) s->name.length, s->name.data, piece_count, offset);
+                // log_debug("Section %.*s: %zu pieces with %zu bytes", (int) s->name.length, s->name.data, piece_count, offset);
             }
 
             dyn_array_put(sections, s);
-            s->number = num++;
         }
-        cuik_free(array_form);
+    }
+    qsort(sections, dyn_array_length(sections), sizeof(TB_LinkerSection*), compare_linker_sections);
+    l->sections_arr = sections;
+
+    // get or add linker segment
+    DynArray(TB_LinkerSegment*) segments = NULL;
+    dyn_array_for(i, sections) {
+        TB_Slice name = sections[i]->name;
+
+        // sections with the same name before the dollar sign will be combined.
+        int dollar = find_char(name, '$');
+        if (dollar < name.length) {
+            name.length = dollar;
+        }
+
+        size_t j = 0, segment_count = dyn_array_length(segments);
+        for (; j < segment_count; j++) {
+            if (segments[j]->name.length == name.length && memcmp(segments[j]->name.data, name.data, name.length) == 0) {
+                break;
+            }
+        }
+
+        TB_LinkerSegment* segment;
+        if (j == segment_count) {
+            segment = tb_arena_alloc(&linker_perm_arena, sizeof(TB_LinkerSegment));
+            *segment = (TB_LinkerSegment){
+                .name   = name,
+                .number = segment_count,
+                .flags = sections[i]->flags,
+            };
+            dyn_array_put(segments, segment);
+        } else {
+            segment = segments[j];
+        }
+
+        sections[i]->segment = segment;
+        dyn_array_put(segment->sections, sections[i]);
     }
 
-    qsort(sections, dyn_array_length(sections), sizeof(TB_LinkerSection*), compare_linker_sections);
-    return sections;
+    // sort sections inside the segment
+    dyn_array_for(i, segments) {
+        qsort(segments[i]->sections, dyn_array_length(segments[i]->sections), sizeof(TB_LinkerSection*), compare_linker_sections);
+
+        // layout offsets next to each other in the segment
+        size_t offset = 0;
+        dyn_array_for(j, segments[i]->sections) {
+            TB_LinkerSection* sec = segments[i]->sections[j];
+
+            /*TB_ASSERT(dyn_array_length(sec->pieces) > 0);
+            size_t first_align_log2 = sec->pieces[0]->align_log2;
+
+            size_t mask = (1u << first_align_log2) - 1;
+            size_t next = (offset + mask) & ~mask;
+            if (j > 0 && offset != next) {
+                // add padding to the end of the section
+                TB_LinkerSection* prev = segments[i]->sections[j - 1];
+                TB_ASSERT(prev->offset + prev->size == offset);
+
+                size_t pad = next - offset;
+
+                prev->pieces[dyn_array_length(prev->pieces) - 1]->size += pad;
+                prev->size += pad;
+            }*/
+
+            sec->offset = offset;
+            offset += sec->size;
+        }
+        segments[i]->size = offset;
+    }
+    l->segments = segments;
+
+    return true;
 }
 
 // just run whatever reloc function from the spec
@@ -879,10 +917,18 @@ static int32_t resolve_reloc(TB_LinkerSymbol* sym, TB_ObjectRelocType type, uint
         return target_rva;
 
         case TB_OBJECT_RELOC_SECTION:
-        return sym->normal.piece->parent->number;
+        if (sym->tag == TB_LINKER_SYMBOL_IMAGEBASE || sym->tag == TB_LINKER_SYMBOL_ABSOLUTE) {
+            return 0;
+        } else {
+            return sym->normal.piece->parent->segment->number;
+        }
 
         case TB_OBJECT_RELOC_SECREL:
-        return sym->normal.piece->offset + sym->normal.secrel;
+        if (sym->tag == TB_LINKER_SYMBOL_IMAGEBASE || sym->tag == TB_LINKER_SYMBOL_ABSOLUTE) {
+            return 0;
+        } else {
+            return sym->normal.piece->parent->offset + sym->normal.piece->offset + sym->normal.secrel;
+        }
 
         case TB_OBJECT_RELOC_REL32:
         return (target_rva + addend) - source_pos;
@@ -917,16 +963,17 @@ size_t tb_linker_apply_reloc(TB_Linker* l, TB_LinkerSectionPiece* p, uint8_t* ou
 
         // resolve source location
         uint32_t target_rva = 0;
-        if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
+        if (sym->tag == TB_LINKER_SYMBOL_IMAGEBASE) {
+            target_rva = 0;
+        } else if (sym->tag == TB_LINKER_SYMBOL_IMPORT) {
             target_rva = l->iat_pos + (sym->import.thunk_id * 8);
         } else if (sym->tag == TB_LINKER_SYMBOL_THUNK) {
             TB_LinkerSymbol* import_sym = sym->thunk;
             target_rva = trampoline_rva + (import_sym->import.thunk_id * 6);
         } else {
-            target_rva = tb__get_symbol_rva(l, sym);
+            target_rva = tb__get_symbol_rva(sym);
         }
 
-        // skip because it's irrelevant
         if (rel.type == TB_OBJECT_RELOC_ADDR64) {
             // we write out the fake VA and the base relocs will fix it up
             int64_t* dst = (int64_t*) &out[dst_pos];

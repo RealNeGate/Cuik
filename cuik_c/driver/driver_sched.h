@@ -11,8 +11,8 @@ typedef struct {
     CuikSched_PerFunction func;
 } PerFunction;
 
-static void per_func_task(TPool* tp, void* arg) {
-    PerFunction task = *((PerFunction*) arg);
+static void per_func_task(TPool* tp, void** arg) {
+    PerFunction task = *((PerFunction*) arg[0]);
     for (size_t i = 0; i < task.count; i++) {
         task.func(task.arr[i], task.arg);
     }

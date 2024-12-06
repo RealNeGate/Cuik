@@ -329,7 +329,8 @@ void _thread_init(TPool *pool, TPool_Thread *thread, int idx) {
     thread->idx = idx;
 }
 
-void _tpool_queue_push(TPool_Thread *thread, tpool_task_proc* fn, char* val) {
+void _tpool_queue_push(TPool_Thread *thread, tpool_task_proc* fn, int val_count, void** val) {
+    assert(val_count <= 3);
     ssize_t bot                = atomic_load_explicit(&thread->queue.bottom, memory_order_relaxed);
     ssize_t top                = atomic_load_explicit(&thread->queue.top,    memory_order_acquire);
     TPool_RingBuffer *cur_ring = atomic_load_explicit(&thread->queue.ring,   memory_order_relaxed);
@@ -342,7 +343,7 @@ void _tpool_queue_push(TPool_Thread *thread, tpool_task_proc* fn, char* val) {
     }
 
     cur_ring->buffer[bot % cur_ring->size].do_work = fn;
-    cur_ring->buffer[bot % cur_ring->size].args = val;
+    memcpy(&cur_ring->buffer[bot % cur_ring->size].args, val, val_count * sizeof(void*));
 
     atomic_thread_fence(memory_order_release);
     atomic_store_explicit(&thread->queue.bottom, bot + 1, memory_order_relaxed);
@@ -489,7 +490,12 @@ int _tpool_worker(void *ptr) {
 
 void tpool_add_task(TPool *pool, tpool_task_proc* fn, void* val) {
     TPool_Thread *current_thread = &pool->threads[tpool_current_thread_idx];
-    _tpool_queue_push(current_thread, fn, val);
+    _tpool_queue_push(current_thread, fn, 1, &val);
+}
+
+void tpool_add_task2(TPool *pool, tpool_task_proc* fn, int arg_count, void** args) {
+    TPool_Thread *current_thread = &pool->threads[tpool_current_thread_idx];
+    _tpool_queue_push(current_thread, fn, arg_count, args);
 }
 
 void tpool_wait(TPool *pool) {

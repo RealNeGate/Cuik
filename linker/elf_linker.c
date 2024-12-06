@@ -1,3 +1,4 @@
+#if 0
 #include "linker.h"
 #include <tb_elf.h>
 
@@ -442,4 +443,7 @@ TB_LinkerVtbl tb__linker_elf = {
     .parse_reloc    = elf_parse_reloc,
     .export         = elf_export
 };
+#endif
+
+TB_LinkerVtbl tb__linker_elf;
 

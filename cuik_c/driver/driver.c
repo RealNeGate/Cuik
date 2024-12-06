@@ -404,7 +404,7 @@ static void ld_invoke(TPool* tp, BuildStepInfo* info) {
 
     Cuik_Path output_path;
     if (args->output_name == NULL) {
-        cuik_path_set(&output_path, sys == TB_SYSTEM_WINDOWS ? "a.exe" : "a.out");
+        cuik_path_set(&output_path, sys == (Cuik_System) TB_SYSTEM_WINDOWS ? "a.exe" : "a.out");
     } else if (!has_file_ext(args->output_name) && cuik_get_target_system(args->target) == CUIK_SYSTEM_WINDOWS) {
         cuik_path_append2(&output_path, strlen(args->output_name), args->output_name, 4, ".exe");
     } else {
@@ -818,8 +818,8 @@ typedef struct {
     #endif
 } IRGenTask;
 
-static void irgen_job(TPool* pool, void* arg) {
-    IRGenTask task = *((IRGenTask*) arg);
+static void irgen_job(TPool* pool, void** arg) {
+    IRGenTask task = *((IRGenTask*) arg[0]);
     TB_Module* mod = task.mod;
 
     CompilationUnit* cu = task.tu->parent;
@@ -915,7 +915,7 @@ static void irgen(TPool* tp, Cuik_DriverArgs* restrict args, CompilationUnit* re
                 .stmts = cuik_get_top_level_stmts(tu),
                 .count = c
             };
-            irgen_job(NULL, &task);
+            irgen_job(NULL, &(void*){ &task });
         }
     }
 }

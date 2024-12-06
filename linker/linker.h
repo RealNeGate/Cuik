@@ -56,11 +56,6 @@ typedef struct TB_LinkerReloc {
     TB_LinkerSymbol* target;
 } TB_LinkerReloc;
 
-typedef struct {
-    uint32_t rva;
-    TB_LinkerSection* section;
-} PE_BaseReloc;
-
 // it's a linked list so i can do dumb insertion while parsing the pieces, once
 // we're doing layouting a sorted array will be constructed.
 struct TB_LinkerSectionPiece {
@@ -118,26 +113,44 @@ typedef enum {
     TB_LINKER_SECTION_DISCARD = 1,
 } TB_LinkerSectionFlags;
 
-struct TB_LinkerSection {
+typedef struct {
     TB_Slice name;
 
-    TB_LinkerSectionFlags generic_flags;
-    uint32_t flags;
     uint32_t number;
-
     uint32_t name_pos;
+    uint32_t flags;
 
     // virtual layout (vsize is just size with virtual alignment)
     uint64_t address;
-    size_t vsize;
 
-    // file layout (size is just the sum of all final raw datas aligned)
+    size_t offset;
+    size_t size;
+
+    DynArray(TB_LinkerSection*) sections;
+} TB_LinkerSegment;
+
+struct TB_LinkerSection {
+    TB_Slice name;
+    TB_LinkerSegment* segment;
+
+    TB_LinkerSectionFlags generic_flags;
+    uint32_t flags;
+
+    // in-segment layout (size is just the sum of all final raw datas aligned)
     size_t offset;
     size_t size;
 
     _Atomic size_t piece_count;
     _Atomic(TB_LinkerSectionPiece*) list;
+
+    // once we finish layouting, it's kinda nice to just
+    // operate on the array stuff (mostly just fed to the
+    // exporter shit)
+    DynArray(TB_LinkerSectionPiece*) pieces;
 };
+
+static uint64_t tb_linker_section_rva(TB_LinkerSection* s) { return s->segment->address + s->offset; }
+static uint64_t tb_linker_section_file_pos(TB_LinkerSection* s) { return s->segment->offset + s->offset; }
 
 typedef enum TB_LinkerSymbolTag {
     TB_LINKER_SYMBOL_ABSOLUTE = 0,
@@ -242,22 +255,12 @@ typedef struct {
     TB_Slice from, to;
 } TB_LinkerCmd;
 
-////////////////////////////////
-// Tasks
-////////////////////////////////
-typedef struct {
-    TB_Linker* linker;
-    uint8_t* file;
-    TB_LinkerSectionPiece* start;
-    TB_LinkerSectionPiece* end;
-} ExportTask;
-
 // Format-specific vtable:
 typedef struct TB_LinkerVtbl {
     void (*init)(TB_Linker* l);
     FileMap (*find_lib)(TB_Linker* l, const char* file_name, char* out_path);
-    void (*append_object)(TPool* pool, TB_LinkerObject* task);
-    void (*append_library)(TPool* pool, TB_LinkerObject* task);
+    void (*append_object)(TPool* pool, void** args);
+    void (*append_library)(TPool* pool, void** args);
     void (*parse_reloc)(TB_Linker* l, TB_LinkerSectionPiece* p, size_t reloc_i, TB_LinkerReloc* out_reloc);
     bool (*export)(TB_Linker* l, const char* file_name);
 } TB_LinkerVtbl;
@@ -274,25 +277,31 @@ typedef struct TB_Linker {
     TB_LinkerVtbl vtbl;
 
     // namehs
-    NBHS symbols;
-    NBHS sections;
-    NBHS imports;
+    NBHS symbols;  // TB_LinkerSymbol*
+    NBHS sections; // TB_LinkerSection*
+    NBHS imports;  // ImportTable*
     // tracking the linker objects
-    NBHS objects; // -> TB_LinkerObject*
+    NBHS objects; // TB_LinkerObject*
 
     // sometimes people ask to import
     // the same libs a bunch of times.
-    NBHS libs; // strhs
+    NBHS libs;    // strhs
 
     NBHS unresolved_symbols;
 
-    DynArray(const char*) libpaths;
+    // Post layout info:
+    DynArray(TB_LinkerSection*) sections_arr;
+    DynArray(TB_LinkerSegment*) segments;
 
     // we track which symbols have not been resolved yet
     DynArray(TB_LinkerSectionPiece*) worklist;
 
     size_t trampoline_pos;  // relative to the .text section
     TB_Emitter trampolines; // these are for calling imported functions
+
+    // Exporter info:
+    size_t output_cap;
+    uint8_t* output;
 
     // Windows specific:
     //   on windows, we use DLLs to interact with the OS so
@@ -305,6 +314,8 @@ typedef struct TB_Linker {
     // used for a few boring resources like the defaultlib list
     mtx_t lock;
     DynArray(const char*) default_libs;
+    DynArray(const char*) libpaths;
+    DynArray(TB_LinkerCmd) merges;
 
     _Alignas(64) struct {
         TPool* pool;
@@ -341,6 +352,8 @@ TB_LinkerSymbol* tb_linker_new_symbol(TB_Linker* l, size_t len, const char* name
 TB_LinkerSymbol* tb_linker_find_symbol(TB_Linker* l, TB_Slice name);
 TB_LinkerSymbol* tb_linker_find_symbol2(TB_Linker* l, const char* name);
 
+TB_LinkerSegment* tb_linker_find_segment(TB_Linker* linker, const char* name);
+
 // Sections
 TB_LinkerSection* tb_linker_find_section(TB_Linker* linker, const char* name);
 TB_LinkerSection* tb_linker_find_or_create_section(TB_Linker* linker, size_t len, const char* name, uint32_t flags);
@@ -351,8 +364,7 @@ void tb_linker_merge_sections(TB_Linker* linker, TB_LinkerSection* from, TB_Link
 void tb_linker_append_module_section(TB_Linker* l, TB_LinkerObject* mod, TB_ModuleSection* section, uint32_t flags);
 void tb_linker_append_module_symbols(TB_Linker* l, TB_Module* m);
 
-uint64_t tb__compute_rva(TB_Linker* l, TB_Module* m, const TB_Symbol* s);
-uint64_t tb__get_symbol_rva(TB_Linker* l, TB_LinkerSymbol* sym);
+uint64_t tb__get_symbol_rva(TB_LinkerSymbol* sym);
 
 size_t tb__pad_file(uint8_t* output, size_t write_pos, char pad, size_t align);
 void tb_linker_apply_module_relocs(TB_Linker* l, TB_Module* m, TB_LinkerSection* text, uint8_t* output);
@@ -363,8 +375,8 @@ void tb_linker_push_named(TB_Linker* l, const char* name);
 void tb_linker_mark_live(TB_Linker* l);
 
 // General linker job
-void tb_linker_export_piece(TPool* pool, ExportTask* task);
-void tb_linker_export_pieces(TB_Linker* l, DynArray(TB_LinkerSection*) sections, uint8_t* output);
+void tb_linker_export_pieces(TB_Linker* l);
 
 // do layouting (requires GC step to complete)
-DynArray(TB_LinkerSection*) tb__finalize_sections(TB_Linker* l);
+bool tb_linker_layout(TB_Linker* l);
+
