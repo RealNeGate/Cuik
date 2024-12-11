@@ -379,4 +379,6 @@ void tb_linker_export_pieces(TB_Linker* l);
 
 // do layouting (requires GC step to complete)
 bool tb_linker_layout(TB_Linker* l);
+void tb_linker_print_map(TB_Linker* l);
+
 

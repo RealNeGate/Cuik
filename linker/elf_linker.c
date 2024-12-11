@@ -1,4 +1,3 @@
-#if 0
 #include "linker.h"
 #include <tb_elf.h>
 
@@ -48,7 +47,9 @@ static void elf_append_shared(TPool* pool, TB_LinkerObject* lib) {
 
 }
 
-void elf_append_library(TPool* pool, TB_LinkerObject* lib) {
+void elf_append_library(TPool* pool, void** args) {
+    TB_LinkerObject* lib = args[0];
+
     size_t slash = 0;
     FOR_REV_N(i, 0, lib->name.length) {
         if (lib->name.data[i] == '/' || lib->name.data[i] == '\\') {
@@ -77,7 +78,9 @@ void elf_append_library(TPool* pool, TB_LinkerObject* lib) {
     cuikperf_region_end();
 }
 
-void elf_append_object(TPool* pool, TB_LinkerObject* obj) {
+void elf_append_object(TPool* pool, void** args) {
+    TB_LinkerObject* obj = args[0];
+
     size_t slash = 0;
     FOR_REV_N(i, 0, obj->name.length) {
         if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
@@ -264,8 +267,7 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
     }
 
     // Layout
-    DynArray(TB_LinkerSection*) sections = tb__finalize_sections(l);
-    if (sections == NULL) {
+    if (!tb_linker_layout(l)) {
         cuikperf_region_end();
         return false;
     }
@@ -277,9 +279,8 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
     size_t strtab_name = tb_outstr_nul_UNSAFE(&strtbl, ".strtab");
 
     size_t final_section_count = 0;
-    dyn_array_for(i, sections) {
-        TB_LinkerSection* s = sections[i];
-        if (s->generic_flags & TB_LINKER_SECTION_DISCARD) { continue; }
+    dyn_array_for(i, l->segments) {
+        TB_LinkerSegment* s = l->segments[i];
 
         // reserve space for names
         s->name_pos = tb_outs(&strtbl, s->name.length, s->name.data);
@@ -300,9 +301,8 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
     size_t output_size = size_of_headers + strtbl.count;
     uint64_t virt_addr = align_up(size_of_headers, 4096);
     CUIK_TIMED_BLOCK("layout sections") {
-        dyn_array_for(i, sections) {
-            TB_LinkerSection* s = sections[i];
-            if (s->generic_flags & TB_LINKER_SECTION_DISCARD) { continue; }
+        dyn_array_for(i, l->segments) {
+            TB_LinkerSegment* s = l->segments[i];
 
             s->offset = output_size;
             output_size += s->size;
@@ -313,9 +313,11 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
             s->address = virt_addr + in_page_offset;
             virt_addr += align_up(in_page_offset + s->size, 4096);
 
-            log_debug("Section %.*s: %#x - %#x", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
+            log_debug("Segment %.*s: %#x - %#x", (int) s->name.length, s->name.data, s->offset, s->offset + s->size - 1);
         }
     }
+
+    tb_linker_print_map(l);
 
     uint64_t entrypoint = 0;
     TB_LinkerSymbol* entry_sym = tb_linker_symbol_find(tb_linker_find_symbol2(l, l->entrypoint));
@@ -324,7 +326,7 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
         cuikperf_region_end();
         return false;
     }
-    entrypoint = tb__get_symbol_rva(l, entry_sym);
+    entrypoint = tb__get_symbol_rva(entry_sym);
 
     // Writing work
     FileMap fm = open_file_map_write(file_name, output_size);
@@ -385,8 +387,8 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
             .align  = 1,
         };
         WRITE(&phdr, sizeof(phdr));
-        dyn_array_for(i, sections) {
-            TB_LinkerSection* s = sections[i];
+        dyn_array_for(i, l->segments) {
+            TB_LinkerSegment* s = l->segments[i];
             TB_Elf64_Phdr sec = {
                 .type   = TB_PT_LOAD,
                 .flags  = s->flags,
@@ -411,8 +413,8 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
         // write section headers
         memset(&output[write_pos], 0, sizeof(TB_Elf64_Shdr)), write_pos += sizeof(TB_Elf64_Shdr);
         WRITE(&strtab, sizeof(strtab));
-        dyn_array_for(i, sections) {
-            TB_LinkerSection* s = sections[i];
+        dyn_array_for(i, l->segments) {
+            TB_LinkerSegment* s = l->segments[i];
             TB_Elf64_Shdr sec = {
                 .name = s->name_pos,
                 .type = TB_SHT_PROGBITS,
@@ -426,7 +428,10 @@ static bool elf_export(TB_Linker* l, const char* file_name) {
         }
 
         WRITE(strtbl.data, strtbl.count);
-        tb_linker_export_pieces(l, sections, output);
+
+        l->output = output;
+        l->output_cap = output_size;
+        tb_linker_export_pieces(l);
     }
 
     close_file_map(&fm);
@@ -443,7 +448,4 @@ TB_LinkerVtbl tb__linker_elf = {
     .parse_reloc    = elf_parse_reloc,
     .export         = elf_export
 };
-#endif
-
-TB_LinkerVtbl tb__linker_elf;
 

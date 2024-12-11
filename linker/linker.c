@@ -122,6 +122,37 @@ void tb_linker_add_libpath(TB_Linker* l, const char* path) {
     dyn_array_put(l->libpaths, linker_newstr(strlen(path), path));
 }
 
+void tb_linker_print_map(TB_Linker* l) {
+    printf(" Start         Length     Name                   Class\n");
+    dyn_array_for(i, l->sections_arr) {
+        TB_LinkerSection* s = l->sections_arr[i];
+
+        uint32_t mask = IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_EXECUTE;
+        bool is_code = (s->flags & mask) == mask;
+
+        int len = printf(" %04x:%08zx %08zxH %.*s", s->segment->number, s->offset, s->size, (int) s->name.length, s->name.data);
+        printf("%*s%s\n", 49 - len, "", is_code ? "CODE" : "DATA");
+    }
+
+    DynArray(TB_LinkerSymbol*) symbols = NULL;
+    nbhs_for(e, &l->symbols) {
+        TB_LinkerSymbol* sym = tb_linker_symbol_find(*e);
+        if (sym->tag == TB_LINKER_SYMBOL_NORMAL && (sym->flags & TB_LINKER_SYMBOL_USED)) {
+            dyn_array_put(symbols, sym);
+        }
+    }
+    qsort(symbols, dyn_array_length(symbols), sizeof(TB_LinkerSymbol*), compare_symbols);
+
+    printf("\n  Address         Publics by Value              Rva+Base               Lib:Object\n\n");
+    dyn_array_for(i, symbols) {
+        TB_LinkerSymbol* sym = symbols[i];
+        uint32_t secidx = sym->normal.piece->parent->segment->number;
+        uint32_t secrel = sym->normal.piece->parent->offset + sym->normal.secrel;
+
+        printf(" %04"PRIx32":%08"PRIx32"       %.*s\n", secidx, secrel, (int) sym->name.length, sym->name.data);
+    }
+}
+
 void tb_linker_append_object(TB_Linker* l, const char* file_name) {
     if (!linker_thread_init) {
         linker_thread_init = true;

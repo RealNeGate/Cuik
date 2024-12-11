@@ -53,24 +53,6 @@ static bool inverted_cmp(TB_Node* n, TB_Node* n2) {
     }
 }
 
-static Lattice* value_zext(TB_Function* f, TB_Node* n) {
-    Lattice* a = latuni_get(f, n->inputs[1]);
-    if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }
-
-    int dst_bits = tb_data_type_bit_size(NULL, n->dt.type);
-    int src_bits = tb_data_type_bit_size(NULL, n->inputs[1]->dt.type);
-
-    uint64_t mask = ~tb__mask(src_bits);
-    TB_ASSERT(src_bits != 64);
-
-    Lattice* full_zxt_range = lattice_gimme_int(f, 0, lattice_uint_max(src_bits), src_bits);
-    if (a->_int.min >= 0 || (a->_int.known_zeros >> (src_bits - 1)) & 1) { // known non-negative
-        return lattice_join(f, full_zxt_range, a);
-    } else {
-        return full_zxt_range;
-    }
-}
-
 static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) {
