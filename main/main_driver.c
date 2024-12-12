@@ -187,7 +187,7 @@ int main(int argc, const char** argv) {
     }
 
     // spin up worker threads
-    TPool pool;
+    TPool pool = { 0 };
 
     #if CUIK_ALLOW_THREADS
     if (args.threads > 0) {

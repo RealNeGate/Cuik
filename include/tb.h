@@ -832,6 +832,8 @@ TB_API void tb_module_destroy(TB_Module* m);
 // dont and the tls_index is used, it'll crash
 TB_API void tb_module_set_tls_index(TB_Module* m, ptrdiff_t len, const char* name);
 
+TB_API void tb_module_enable_chkstk(TB_Module* m);
+
 // not thread-safe
 TB_API TB_ModuleSectionHandle tb_module_create_section(TB_Module* m, ptrdiff_t len, const char* name, TB_ModuleSectionFlags flags, TB_ComdatType comdat);
 

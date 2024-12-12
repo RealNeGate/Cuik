@@ -22,6 +22,7 @@ X(OUTPUT,      "o",        true,  "set the output filepath")
 X(OBJECT,      "c",        false, "output object file")
 X(ASSEMBLY,    "S",        false, "output assembly to stdout")
 X(DEBUG,       "g",        false, "compile with debug information")
+X(NOCHKSTK,    "nochkstk", false, "disable buffer checks (think of MSVC's /GS-)")
 // linker
 X(NOLIBC,      "nostdlib", false, "don't include and link against the default CRT")
 X(LIB,         "l",        true,  "add library name to the linking")

@@ -608,7 +608,7 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
         [TB_WIN_SUBSYSTEM_UNKNOWN] = "",
         [TB_WIN_SUBSYSTEM_WINDOWS] = "/subsystem:windows ",
         [TB_WIN_SUBSYSTEM_CONSOLE] = "/subsystem:console ",
-        [TB_WIN_SUBSYSTEM_EFI_APP] = "/subsystem:efi_application",
+        [TB_WIN_SUBSYSTEM_EFI_APP] = "/subsystem:efi_application ",
     };
 
     char cmd_line[CMD_LINE_MAX];
@@ -618,6 +618,10 @@ static bool invoke_link(void* ctx, const Cuik_DriverArgs* args, Cuik_Linker* lin
         t->vc_tools_install, subsystem_option[args->subsystem],
         args->debug_info ? "full" : "none", output, output
     );
+
+    if (args->subsystem == TB_WIN_SUBSYSTEM_EFI_APP) {
+        cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "/entry:EfiMain ");
+    }
 
     dyn_array_for(i, linker->libpaths) {
         cmd_line_len += snprintf(&cmd_line[cmd_line_len], CMD_LINE_MAX - cmd_line_len, "/libpath:\"%s\" ", linker->libpaths[i]);

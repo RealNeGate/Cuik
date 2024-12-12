@@ -2588,7 +2588,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     }
 
     // inserts a chkstk call if we use too much stack
-    if (stack_usage >= param_descs[ctx->abi_index].chkstk_limit) {
+    if (ctx->f->super.module->chkstk_extern && stack_usage >= param_descs[ctx->abi_index].chkstk_limit) {
         assert(ctx->f->super.module->chkstk_extern);
         ctx->f->super.module->uses_chkstk++;
 

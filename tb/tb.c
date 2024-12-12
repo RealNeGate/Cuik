@@ -219,20 +219,25 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
     mtx_init(&m->lock, mtx_plain);
     m->symbols = nbhs_alloc(256);
 
-    // AOT uses sections to know where to organize things in an executable file,
-    // JIT does placement on the fly.
     if (!is_jit) {
         bool win = sys == TB_SYSTEM_WINDOWS;
         tb_module_create_section(m, -1, ".text",                    TB_MODULE_SECTION_EXEC,                          TB_COMDAT_NONE);
         tb_module_create_section(m, -1, ".data",                    TB_MODULE_SECTION_WRITE,                         TB_COMDAT_NONE);
         tb_module_create_section(m, -1, win ? ".rdata" : ".rodata", 0,                                               TB_COMDAT_NONE);
         tb_module_create_section(m, -1, win ? ".tls$"  : ".tls",    TB_MODULE_SECTION_WRITE | TB_MODULE_SECTION_TLS, TB_COMDAT_NONE);
+    }
 
-        if (win) {
+    tb__lattice_init(m);
+    return m;
+}
+
+void tb_module_enable_chkstk(TB_Module* m) {
+    // AOT uses sections to know where to organize things in an executable file,
+    // JIT does placement on the fly.
+    if (m->target_system == TB_SYSTEM_WINDOWS) {
+        if (!m->is_jit) {
             m->chkstk_extern = (TB_Symbol*) tb_extern_create(m, -1, "__chkstk", TB_EXTERNAL_SO_LOCAL);
-        }
-    } else {
-        if (sys == TB_SYSTEM_WINDOWS) {
+        } else {
             #ifdef _WIN32
             extern void __chkstk(void);
 
@@ -242,9 +247,6 @@ TB_Module* tb_module_create(TB_Arch arch, TB_System sys, bool is_jit) {
             #endif
         }
     }
-
-    tb__lattice_init(m);
-    return m;
 }
 
 TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm) {

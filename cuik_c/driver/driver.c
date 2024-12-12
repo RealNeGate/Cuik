@@ -575,6 +575,10 @@ Cuik_BuildStep* cuik_driver_ld(Cuik_DriverArgs* args, int dep_count, Cuik_BuildS
     );
     #endif
 
+    if (!args->nochkstk) {
+        tb_module_enable_chkstk(s->ld.cu->ir_mod);
+    }
+
     for (size_t i = 0; i < dep_count; i++) {
         deps[i]->anti_dep = s;
     }

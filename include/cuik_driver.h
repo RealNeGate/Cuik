@@ -62,6 +62,7 @@ struct Cuik_DriverArgs {
     bool preprocess      : 1;
     bool think           : 1;
     bool based           : 1;
+    bool nochkstk        : 1;
     bool preserve_ast    : 1;
 };
 
