@@ -160,6 +160,8 @@ typedef struct CPPStackSlot {
 
 // just the value (doesn't track the name of the parameter)
 typedef struct {
+    // for the first token
+    TknType type;
     String content;
     SourceRange loc;
 } MacroArg;

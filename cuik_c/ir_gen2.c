@@ -423,8 +423,15 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             int64_t stride = cuik_canonical_type(qt)->size;
             return (ValDesc){ LVALUE, .mem_var = args[0].mem_var, .n = tb_builder_ptr_array(g, base, index, stride ? stride : 1) };
         }
-        case EXPR_DOT_R: {
-            assert(args[0].kind == LVALUE);
+        case EXPR_DOT_R:
+        case EXPR_ARROW_R: {
+            TB_Node* src = NULL;
+            if (e->op == EXPR_DOT_R) {
+                assert(args[0].kind == LVALUE);
+                src = args[0].n;
+            } else {
+                src = as_rval(tu, g, &args[0]);
+            }
 
             Member* member = e->dot_arrow.member;
             assert(member != NULL);
@@ -436,10 +443,10 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                         .offset = member->bit_offset,
                         .width = member->bit_width,
                     },
-                    .n = tb_builder_ptr_member(g, args[0].n, e->dot_arrow.offset)
+                    .n = tb_builder_ptr_member(g, src, e->dot_arrow.offset)
                 };
             } else {
-                return (ValDesc){ LVALUE, .n = tb_builder_ptr_member(g, args[0].n, e->dot_arrow.offset) };
+                return (ValDesc){ LVALUE, .n = tb_builder_ptr_member(g, src, e->dot_arrow.offset) };
             }
         }
         case EXPR_LOGICAL_AND:

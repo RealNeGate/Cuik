@@ -90,6 +90,7 @@ static bool parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenArra
         size_t len = 0;
         unsigned char* str = gimme_the_shtuffs(c, 0);
         SourceRange loc = { .start = peek(in).location };
+        TknType first_type = peek(in).type;
         while (!at_token_list_end(in)) {
             t = consume(in);
 
@@ -131,7 +132,7 @@ static bool parse_args(Cuik_CPP* restrict c, MacroArgs* restrict args, TokenArra
         }
 
         tls_push(sizeof(MacroArg));
-        values[value_count++] = (MacroArg){ .content = { len, str }, .loc = loc };
+        values[value_count++] = (MacroArg){ .type = first_type, .content = { len, str }, .loc = loc };
 
         if (t.type == ')' && paren_depth == 0) {
             break;
@@ -166,6 +167,7 @@ static TokenNode* parse_args2(Cuik_CPP* restrict c, MacroArgs* restrict args, To
         size_t len = 0;
         unsigned char* str = gimme_the_shtuffs(c, 0);
         SourceRange loc = { .start = t.location };
+        TknType first_type = t.type;
         while (curr != NULL) {
             t = curr->t;
 
@@ -207,7 +209,7 @@ static TokenNode* parse_args2(Cuik_CPP* restrict c, MacroArgs* restrict args, To
         }
 
         tls_push(sizeof(MacroArg));
-        values[value_count++] = (MacroArg){ .content = { len, str }, .loc = loc };
+        values[value_count++] = (MacroArg){ .type = first_type, .content = { len, str }, .loc = loc };
 
         if (t.type == ')' && paren_depth == 0) {
             break;
@@ -412,11 +414,18 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
             String a = prev->t.content;
 
             TokenNode* savepoint = curr;
-            String b = NEXT_TOKEN().content;
-            ptrdiff_t b_i = find_arg(args, b);
-            if (b_i >= 0) b = args->values[b_i].content;
+            Token b_token = NEXT_TOKEN();
 
-            if (b.data[0] == '_' && string_equals_cstr(&b, "__VA_ARGS__")) {
+            ptrdiff_t b_i = find_arg(args, b_token.content);
+            if (b_i >= 0) {
+                b_token = (Token){
+                    .type = TOKEN_IDENTIFIER,
+                    .location = args->values[b_i].loc.start,
+                    .content = args->values[b_i].content
+                };
+            }
+
+            if (b_token.content.data[0] == '_' && string_equals_cstr(&b_token.content, "__VA_ARGS__")) {
                 // if we just followed a comma and concat a __VA_ARGS__ which expands
                 // to nothing, then we delete the comma
                 size_t key_count = args->key_count, value_count = args->value_count;
@@ -429,9 +438,12 @@ static bool subst(Cuik_CPP* restrict c, TokenNode* head, const uint8_t* subst_st
 
                 prev->next = curr;
                 continue;
+            } else if (expand_builtin_idents(c, &b_token)) {
+                // we need to expand idents before cat
             }
 
             // Literally join the data
+            String b = b_token.content;
             unsigned char* out = gimme_the_shtuffs(c, a.length + b.length + 16);
             memcpy(out, a.data, a.length);
             memcpy(out + a.length, b.data, b.length);

@@ -336,6 +336,11 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
 
     if (comp_args->verbose) {
         comp_args->toolchain.print_verbose(comp_args->toolchain.ctx, comp_args);
+
+        printf("User Includes:\n");
+        dyn_array_for(i, comp_args->includes) {
+            printf("  %s\n", comp_args->includes[i]->data);
+        }
     }
 
     return true;
