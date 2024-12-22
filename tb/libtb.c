@@ -17,8 +17,9 @@ void* tb_jit_stack_create(void);
 #include "new_builder.c"
 
 // Regalloc
+#include "codegen.c"
 #include "rogers_ra.c"
-#include "chaitin.c"
+#include "briggs_ra.c"
 
 // Parsers
 #define TB_COFF_IMPL

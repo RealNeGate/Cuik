@@ -122,6 +122,18 @@ void tb_linker_add_libpath(TB_Linker* l, const char* path) {
     dyn_array_put(l->libpaths, linker_newstr(strlen(path), path));
 }
 
+static void print_name(TB_Slice name) {
+    size_t slash = 0;
+    FOR_REV_N(i, 0, name.length) {
+        if (name.data[i] == '/' || name.data[i] == '\\') {
+            slash = i + 1;
+            break;
+        }
+    }
+
+    printf("%.*s", (int) (name.length - slash), (const char*) name.data + slash);
+}
+
 void tb_linker_print_map(TB_Linker* l) {
     printf(" Start         Length     Name                   Class\n");
     dyn_array_for(i, l->sections_arr) {
@@ -149,7 +161,11 @@ void tb_linker_print_map(TB_Linker* l) {
         uint32_t secidx = sym->normal.piece->parent->segment->number;
         uint32_t secrel = sym->normal.piece->parent->offset + sym->normal.secrel;
 
-        printf(" %04"PRIx32":%08"PRIx32"       %.*s\n", secidx, secrel, (int) sym->name.length, sym->name.data);
+        int len = printf(" %04"PRIx32":%08"PRIx32"       %.*s", secidx, secrel, (int) sym->name.length, sym->name.data);
+        // add padding
+        printf("%*s", len < 80 ? 80 - len : 1, "");
+        print_name(sym->normal.piece->obj->name);
+        printf("\n");
     }
 }
 
@@ -492,18 +508,6 @@ void tb_linker_lazy_resolve(TB_Linker* l, TB_LinkerSymbol* sym, TB_LinkerObject*
     }
 }
 
-static void print_obj_name(TB_LinkerObject* obj) {
-    size_t slash = 0;
-    FOR_REV_N(i, 0, obj->name.length) {
-        if (obj->name.data[i] == '/' || obj->name.data[i] == '\\') {
-            slash = i + 1;
-            break;
-        }
-    }
-
-    printf("%.*s", (int) (obj->name.length - slash), (const char*) obj->name.data + slash);
-}
-
 TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
     // printf("%.*s    %"PRIx32"\n", (int) sym->name.length, sym->name.data, tb__murmur3_32(sym->name.data, sym->name.length) & 65535);
 
@@ -544,8 +548,8 @@ TB_LinkerSymbol* tb_linker_symbol_insert(TB_Linker* l, TB_LinkerSymbol* sym) {
             // not a forward ref.
             if (old->tag == TB_LINKER_SYMBOL_NORMAL && sym->tag == TB_LINKER_SYMBOL_NORMAL) {
                 printf("\x1b[31merror\x1b[0m: symbol collision: %.*s\n", (int) sym->name.length, sym->name.data);
-                printf("  old: "); print_obj_name(old->normal.piece->obj); printf("\n");
-                printf("  new: "); print_obj_name(sym->normal.piece->obj); printf("\n");
+                printf("  old: "); print_name(old->normal.piece->obj->name); printf("\n");
+                printf("  new: "); print_name(sym->normal.piece->obj->name); printf("\n");
             }
             sym = old;
         }

@@ -517,6 +517,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
         return &TB_REG_EMPTY;
 
+        case mips_sll:
+        if (ins) {
+            ins[1] = &TB_REG_EMPTY;
+            ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+        }
+        return ctx->normie_mask[REG_CLASS_GPR];
+
         case mips_addu:
         case mips_daddu:
         if (ins) {
@@ -545,9 +552,9 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     TB_Node* in = n->inputs[3 + i];
                     TB_DataType dt = in->dt;
                     if (TB_IS_FLOAT_TYPE(dt)) {
-                        ins[i] = intern_regmask(ctx, REG_CLASS_FPR, false, 1u << i);
+                        ins[3+i] = intern_regmask(ctx, REG_CLASS_FPR, false, 1u << i);
                     } else {
-                        ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (V0 + i));
+                        ins[3+i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (V0 + i));
                     }
                 }
             }
@@ -689,6 +696,15 @@ static void node_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* n) {
 
             int32_t imm = TB_NODE_GET_EXTRA_T(n, MIPSImm)->imm;
             __(r, dsll, dst, ZR, src, imm);
+            break;
+        }
+
+        case mips_sll: {
+            GPR dst = op_gpr_at(ctx, n);
+            GPR src = op_gpr_at(ctx, n->inputs[1]);
+
+            int32_t imm = TB_NODE_GET_EXTRA_T(n, MIPSImm)->imm;
+            __(r, sll, dst, ZR, src, imm);
             break;
         }
 

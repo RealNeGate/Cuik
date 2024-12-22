@@ -1,30 +1,306 @@
-// TODO(NeGate): implement Chaitin-Briggs, if you wanna contribute this would be cool to work
-// with someone else on.
+// Mostly based on reading Briggs' thesis "Register Allocation via Graph Coloring"
 #include "codegen.h"
 #include <float.h>
 
-// used by codegen.h & it's friends but some of those get compiled multiple
-// TUs and i want a consistent address.
-RegMask TB_REG_EMPTY = { 1, 0, 1, { 0 } };
+enum {
+    BRIGGS_WORDS_PER_CHUNK = (128 / sizeof(uint32_t)) - 1,
+    BRIGGS_BITS_PER_CHUNK = BRIGGS_WORDS_PER_CHUNK * 32,
+};
+
+// 128b chunk of bits
+typedef struct Briggs_Chunk Briggs_Chunk;
+struct Briggs_Chunk {
+    // once the local degree drops below
+    uint32_t degree;
+    uint32_t bits[BRIGGS_WORDS_PER_CHUNK];
+};
+
+typedef struct {
+    int degree;
+    Briggs_Chunk* chunks[];
+} Briggs_Set;
 
 typedef struct {
     Ctx* ctx;
     TB_Arena* arena;
 
     int num_classes;
+    int* num_regs;
     int* fixed;
-    uint64_t* callee_saved;
-    RegMask* normie_mask;
 
     int max_spills;
     DynArray(int) spills;
 
     // Interference graph
-    size_t ifg_stride;
     size_t ifg_len;
-    uint64_t* ifg;
-    int* degree;
-} Chaitin;
+    size_t ifg_chunks_per_set;
+    Briggs_Set** ifg;
+} Briggs;
+
+static void ifg_build(Ctx* restrict ctx, Briggs* ra);
+static void ifg_square(Ctx* restrict ctx, Briggs* ra);
+
+void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
+    TB_Function* f = ctx->f;
+    Briggs ra = { .ctx = ctx, .arena = arena };
+    ra.spills = dyn_array_create(int, 32);
+
+    // creating fixed vregs which coalesce all fixed reg uses
+    // so i can more easily tell when things are asking for them.
+    int max_regs_in_class = 0;
+    CUIK_TIMED_BLOCK("pre-pass on fixed intervals") {
+        ra.fixed  = tb_arena_alloc(arena, ctx->num_classes * sizeof(int));
+
+        FOR_N(i, 0, ctx->num_classes) {
+            size_t count = ctx->num_regs[i];
+            if (max_regs_in_class < count) {
+                max_regs_in_class = count;
+            }
+
+            int base = aarray_length(ctx->vregs);
+            FOR_N(j, 0, count) {
+                RegMask* mask = intern_regmask(ctx, i, false, i == 0 ? j : 1ull << j);
+                aarray_push(ctx->vregs, (VReg){
+                        .class = i,
+                        .assigned = j,
+                        .mask = mask,
+                        .spill_cost = INFINITY,
+                    });
+            }
+            ra.fixed[i] = base;
+        }
+        ra.num_regs  = ctx->num_regs;
+        assert(max_regs_in_class <= 64 && "TODO: we assume some 64bit masks in places lol");
+    }
+
+    tb_print_dumb(f);
+
+    TB_ArenaSavepoint sp;
+    for (;;) {
+        // build IFG
+        CUIK_TIMED_BLOCK("IFG build") {
+            log_debug("%s: briggs: building IFG", f->super.name);
+            ifg_build(ctx, &ra);
+        }
+
+        // square
+        CUIK_TIMED_BLOCK("IFG square") {
+            ifg_square(ctx, &ra);
+        }
+
+        // optimistic simplify
+
+        // select (can fail to color due)
+        __debugbreak();
+    }
+}
+
+////////////////////////////////
+// IFG construction
+////////////////////////////////
+static void ifg_raw_edge(Briggs* ra, int i, int j) {
+    Briggs_Chunk* chk = ra->ifg[i]->chunks[j / BRIGGS_BITS_PER_CHUNK];
+    if (chk == NULL) {
+        // first time we're writing to this chunk
+        // TODO(NeGate): put these into a free list, we wanna recycle chunks as much as possible.
+        chk = tb_arena_alloc(ra->arena, sizeof(Briggs_Chunk));
+        memset(chk, 0, sizeof(Briggs_Chunk));
+
+        ra->ifg[i]->chunks[j / BRIGGS_BITS_PER_CHUNK] = chk;
+    }
+
+    uint32_t k = j % BRIGGS_BITS_PER_CHUNK;
+    chk->bits[k / 32] |= 1u << (k % 32);
+}
+
+static void ifg_edge(Briggs* ra, int i, int j) {
+    if (i > j) {
+        SWAP(int, i, j);
+    }
+    ifg_raw_edge(ra, i, j);
+}
+
+static bool bits32_member(uint32_t* arr, size_t x) {
+    return arr[x / 32] & (1u << (x % 32));
+}
+
+static void interfere_live(Ctx* restrict ctx, Briggs* ra, uint32_t* live, int vreg_id) {
+    RegMask* vreg_mask = ctx->vregs[vreg_id].mask;
+    FOR_N(k, 1, ra->ifg_len) {
+        TB_Node* kn = ctx->vregs[k].n;
+        TB_ASSERT(kn == NULL || kn->gvn < ctx->f->node_count);
+
+        if (kn && bits32_member(live, kn->gvn) && reg_mask_may_intersect(vreg_mask, ctx->vregs[k].mask)) {
+            // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%td\n", vreg_id, k));
+            ifg_edge(ra, vreg_id, k);
+        }
+    }
+}
+
+static void interfere_mask(Ctx* restrict ctx, Briggs* ra, int vreg_id) {
+    RegMask* def_mask = ctx->vregs[vreg_id].mask;
+
+    // definition should interfere with each physical reg's node it doesn't intersect with
+    // such that it can't be seen alive in those registers.
+    if (def_mask->class > 0 && reg_mask_is_not_empty(def_mask)) {
+        size_t reg_count    = ctx->num_regs[def_mask->class];
+        uint64_t word_count = (reg_count + 63) / 64;
+        FOR_N(i, 0, word_count) {
+            size_t j = i*64, k = j + 64;
+            uint64_t mask = ~def_mask->mask[i];
+            for (; j < k && j < reg_count; j++) {
+                if (mask & 1) {
+                    int in_vreg_id = ra->fixed[def_mask->class] + j;
+                    // TB_OPTDEBUG(REGALLOC)(printf("  V%d -- V%d\n", vreg_id, in_vreg_id));
+                    ifg_edge(ra, in_vreg_id, vreg_id);
+                }
+                mask >>= 1;
+            }
+        }
+    }
+}
+
+static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
+    TB_Function* f = ctx->f;
+
+    ra->ifg_len = aarray_length(ctx->vregs);
+    ra->ifg = tb_arena_alloc(ra->arena, ra->ifg_len * sizeof(Briggs_Set*));
+
+    log_debug("%s: briggs: allocating IFG skeleton (%zu nodes)", f->super.name, ra->ifg_len);
+
+    ra->ifg_chunks_per_set = (ra->ifg_len + BRIGGS_BITS_PER_CHUNK - 1) / BRIGGS_BITS_PER_CHUNK;
+    size_t set_size = sizeof(Briggs_Set) + ra->ifg_chunks_per_set*sizeof(Briggs_Chunk);
+    FOR_N(i, 0, ra->ifg_len) {
+        ra->ifg[i] = tb_arena_alloc(ra->arena, set_size);
+        memset(ra->ifg[i], 0, set_size);
+    }
+
+    // fixed vregs interfere with their fellow fixed vregs
+    FOR_N(i, 0, ctx->num_classes) {
+        int base = ra->fixed[i];
+        FOR_N(j, 0, ctx->num_regs[i]) FOR_N(k, j + 1, ctx->num_regs[i]) {
+            ifg_edge(ra, base + k, base + j);
+        }
+    }
+
+    size_t live_count = ((f->node_count + 31) / 32);
+    uint32_t* live = tb_arena_alloc(ra->arena, live_count * sizeof(uint32_t));
+    memset(live, 0, live_count * sizeof(uint32_t));
+
+    FOR_REV_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+
+        memcpy(live, bb->live_out.data, live_count * sizeof(uint32_t));
+
+        size_t item_count = aarray_length(bb->items);
+        FOR_REV_N(j, 0, item_count) {
+            TB_Node* n = bb->items[j];
+            int vreg_id = ctx->vreg_map[n->gvn];
+
+            if (vreg_id > 0) {
+                VReg* vreg = &ctx->vregs[vreg_id];
+                RegMask* def_mask = vreg->mask;
+
+                TB_ASSERT(n->gvn < f->node_count);
+                live[n->gvn / 32] &= ~(1u << n->gvn);
+
+                interfere_live(ctx, ra, live, vreg_id);
+                interfere_mask(ctx, ra, vreg_id);
+
+                // 2 address ops will interfere with their own inputs (except for
+                // shared dst/src)
+                int shared_edge = ctx->node_2addr(n);
+                if (shared_edge >= 0) {
+                    assert(shared_edge < n->input_count);
+                    FOR_N(k, 1, n->input_count) if (k != shared_edge) {
+                        TB_Node* in = n->inputs[k];
+                        VReg* in_vreg = node_vreg(ctx, in);
+                        if (in_vreg && reg_mask_may_intersect(def_mask, in_vreg->mask)) {
+                            int in_vreg_id = in_vreg - ctx->vregs;
+
+                            // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%d\n", vreg_id, in_vreg_id));
+                            ifg_edge(ra, in_vreg_id, vreg_id);
+                        }
+                    }
+                }
+
+                RegMask** ins = ctx->ins;
+                ctx->constraint(ctx, n, ins);
+
+                FOR_N(j, 1, n->input_count) {
+                    TB_Node* in = n->inputs[j];
+                    if (ins[j] != &TB_REG_EMPTY) {
+                        VReg* in_vreg = node_vreg(ctx, in);
+                        TB_ASSERT(in_vreg);
+
+                        // intersect use masks with the vreg's mask, if it becomes empty we've
+                        // got a hard-split (not necessarily spilling to the stack)
+                        RegMask* new_mask = tb__reg_mask_meet(ctx, in_vreg->mask, ins[j]);
+                        if (in_vreg->mask != &TB_REG_EMPTY && new_mask == &TB_REG_EMPTY) {
+                            TB_OPTDEBUG(REGALLOC)(printf("HARD-SPLIT on V%td\n", in_vreg - ctx->vregs));
+                            dyn_array_put(ra->spills, in_vreg - ctx->vregs);
+                        }
+                        in_vreg->mask = new_mask;
+
+                        // uses are live now
+                        TB_ASSERT(in->gvn < f->node_count);
+                        live[in->gvn / 32] |= (1u << in->gvn);
+                    }
+                }
+            } else {
+                // uses are live now
+                FOR_N(j, 0, n->input_count) {
+                    TB_Node* in = n->inputs[j];
+                    if (in) {
+                        TB_ASSERT(in->gvn < f->node_count);
+                        live[in->gvn / 32] |= (1u << in->gvn);
+                    }
+                }
+            }
+
+            int tmp_count = ctx->tmp_count(ctx, n);
+            if (tmp_count > 0) {
+                Tmps* tmps = nl_table_get(&ctx->tmps_map, n);
+                TB_ASSERT(tmps && tmps->count == tmp_count);
+
+                // temporaries basically just live across this instruction alone (thus intereferes
+                // with the inputs)
+                FOR_N(k, 0, tmps->count) {
+                    interfere_live(ctx, ra, live, tmps->elems[k]);
+                    interfere_mask(ctx, ra, tmps->elems[k]);
+                }
+            }
+        }
+    }
+}
+
+static void ifg_square(Ctx* restrict ctx, Briggs* ra) {
+    FOR_N(i, 0, ra->ifg_len) {
+        FOR_N(j, 0, ra->ifg_chunks_per_set) {
+            Briggs_Chunk* chk = ra->ifg[i]->chunks[j];
+            if (chk == NULL) { continue; }
+
+            FOR_N(k, 0, BRIGGS_WORDS_PER_CHUNK) {
+                uint64_t bits = chk->bits[k];
+                while (bits) {
+                    int l = j*BRIGGS_BITS_PER_CHUNK + k*32 + (__builtin_ffsll(bits) - 1);
+                    if (l > i) {
+                        // l < i cases were already handled during the initial construction
+                        TB_OPTDEBUG(REGALLOC)(printf("V%-4d -- V%-4zu\n", l, i));
+                        ifg_raw_edge(ra, l, i);
+                    }
+                    bits &= ~(1u << l);
+                }
+            }
+        }
+    }
+}
+
+#if 0
+// TODO(NeGate): implement Chaitin-Briggs, if you wanna contribute this would be cool to work
+// with someone else on.
+#include "codegen.h"
+#include <float.h>
 
 static bool test_n_set(uint32_t* arr, int i) {
     bool old = arr[i / 32] & (1u << (i % 32));
@@ -128,131 +404,6 @@ static int ifg_remove_edges(Chaitin* ra, int* ws, int ws_cnt, uint32_t* visited,
     }
     ra->degree[i] = 0;
     return ws_cnt;
-}
-
-static bool ifg_empty(Chaitin* ra) {
-    FOR_N(i, 0, ra->ifg_len) {
-        if (ra->degree[i]) return false;
-    }
-
-    return true;
-}
-
-VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
-    int i = aarray_length(ctx->vregs);
-    aarray_insert(ctx->vreg_map, n->gvn, i);
-    aarray_push(ctx->vregs, (VReg){ .n = n, .assigned = -1, .spill_cost = NAN });
-    return &ctx->vregs[i];
-}
-
-void tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
-    if (f->node_count >= f->scheduled_n) {
-        TB_BasicBlock** new_sched = tb_arena_alloc(&f->arena, 2 * f->scheduled_n * sizeof(TB_BasicBlock*));
-        memcpy(new_sched, f->scheduled, f->scheduled_n * sizeof(TB_BasicBlock*));
-        FOR_N(i, f->scheduled_n, 2 * f->scheduled_n) {
-            new_sched[i] = NULL;
-        }
-        f->scheduled = new_sched;
-        f->scheduled_n *= 2;
-    }
-
-    assert(bb);
-    f->scheduled[n->gvn] = bb;
-}
-
-void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
-    TB_BasicBlock* bb = f->scheduled[before_n->gvn];
-    tb__insert(ctx, f, bb, n);
-
-    size_t i = 0, cnt = aarray_length(bb->items);
-    while (i < cnt && bb->items[i] != before_n) { i++; }
-
-    aarray_push(bb->items, 0);
-    memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
-    bb->items[i] = n;
-}
-
-void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
-    TB_BasicBlock* bb = f->scheduled[n->gvn];
-
-    size_t i = 0, cnt = aarray_length(bb->items);
-    while (i < cnt && bb->items[i] != n) { i++; }
-
-    TB_ASSERT(bb->items[i] == n);
-    memmove(&bb->items[i], &bb->items[i + 1], (cnt - (i + 1)) * sizeof(TB_Node*));
-    aarray_pop(bb->items);
-    f->scheduled[n->gvn] = NULL;
-}
-
-void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
-    TB_BasicBlock* bb = f->scheduled[after_n->gvn];
-    tb__insert(ctx, f, bb, n);
-
-    size_t i = 0, cnt = aarray_length(bb->items);
-    while (i < cnt && bb->items[i] != after_n) { i++; }
-
-    TB_ASSERT(i != cnt);
-    i += 1;
-
-    aarray_push(bb->items, NULL);
-    memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
-    bb->items[i] = n;
-}
-
-RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b) {
-    // a /\ a = a
-    if (a == b) { return a; }
-    // a /\ TOP = a
-    if (a == NULL) { return b; }
-    if (b == NULL) { return a; }
-    // if they both may spill, we can intersect on the stack
-    bool may_spill = a->may_spill && b->may_spill;
-    // a /\ b = BOT if their masks disagree
-    if (!may_spill && a->class != b->class) { return &TB_REG_EMPTY; }
-    // if it's stack and both don't ask for a slot... we're good
-    // a /\ b = intersect masks
-    assert(a->count == b->count);
-    assert(a->count == 1);
-    uint64_t i = a->mask[0] & b->mask[0];
-    return intern_regmask(ctx, i == 0 ? 1 : a->class, may_spill, i);
-}
-
-static bool reg_mask_may_stack(RegMask* a) {
-    return a->class == REG_CLASS_STK || a->may_spill;
-}
-
-static void interfere_live(Ctx* restrict ctx, Chaitin* ra, Set* live, int vreg_id) {
-    RegMask* vreg_mask = ctx->vregs[vreg_id].mask;
-    FOR_N(k, 1, ra->ifg_len) {
-        TB_Node* kn = ctx->vregs[k].n;
-        if (kn && set_get(live, kn->gvn) && reg_mask_may_intersect(vreg_mask, ctx->vregs[k].mask)) {
-            // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%td\n", vreg_id, k));
-            ifg_edge(ra, vreg_id, k);
-        }
-    }
-}
-
-static void interfere_mask(Ctx* restrict ctx, Chaitin* ra, int vreg_id) {
-    RegMask* def_mask = ctx->vregs[vreg_id].mask;
-
-    // definition should interfere with each physical reg's node it doesn't intersect with
-    // such that it can't be seen alive in those registers.
-    if (def_mask->class > 0 && reg_mask_is_not_empty(def_mask)) {
-        size_t reg_count    = ctx->num_regs[def_mask->class];
-        uint64_t word_count = (reg_count + 63) / 64;
-        FOR_N(i, 0, word_count) {
-            size_t j = i*64, k = j + 64;
-            uint64_t mask = ~def_mask->mask[i];
-            for (; j < k && j < reg_count; j++) {
-                if (mask & 1) {
-                    int in_vreg_id = ra->fixed[def_mask->class] + j;
-                    // TB_OPTDEBUG(REGALLOC)(printf("  V%d -- V%d\n", vreg_id, in_vreg_id));
-                    ifg_edge(ra, in_vreg_id, vreg_id);
-                }
-                mask >>= 1;
-            }
-        }
-    }
 }
 
 static void build_ifg(Ctx* restrict ctx, TB_Arena* arena, Chaitin* ra) {
@@ -786,3 +937,4 @@ void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena) {
         redo_dataflow(ctx, arena);
     }
 }
+#endif

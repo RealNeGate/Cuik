@@ -94,7 +94,7 @@ struct VReg {
 
     bool marked_spilled;
 
-    // only matters for chaitin
+    // only matters for briggs
     struct {
         // debug purposes only
         int coalesced;
@@ -202,7 +202,7 @@ struct Ctx {
 extern RegMask TB_REG_EMPTY;
 
 void tb__rogers(Ctx* restrict ctx, TB_Arena* arena);
-void tb__chaitin(Ctx* restrict ctx, TB_Arena* arena);
+void tb__briggs(Ctx* restrict ctx, TB_Arena* arena);
 
 // RA helpers
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b);
