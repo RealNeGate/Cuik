@@ -630,7 +630,7 @@ static void ifg_remove(Briggs* ra, int i, int j) {
     FOR_N(l, 1, d+1) {
         if (ra->adj[i][l] == j) {
             TB_ASSERT(d < aarray_length(ra->adj[i]));
-            printf("V%d: Remove V%d (%zu %d)\n", i, j, l, d);
+            // printf("V%d: Remove V%d (%zu %d)\n", i, j, l, d);
             SWAP(uint32_t, ra->adj[i][d], ra->adj[i][l]);
             ra->adj[i][0] = d - 1;
             return;
