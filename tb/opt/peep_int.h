@@ -282,7 +282,7 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
 
                     // overflow check
                     if ((new_min >> bmin) == min && (new_max >> bmin) == max) {
-                        return lattice_gimme_int2(f, new_min, new_max, zeros, ones, bits);
+                        return lattice_gimme_uint2(f, new_min, new_max, zeros, ones, bits);
                     }
                 }
 

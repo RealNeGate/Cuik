@@ -92,13 +92,13 @@ struct VReg {
     float spill_bias;
     int hint_vreg;
 
-    bool marked_spilled;
+    bool marked_spilled : 1;
 
     // only matters for briggs
     struct {
         // debug purposes only
         int coalesced;
-    };
+    } briggs;
 };
 
 typedef struct Ctx Ctx;

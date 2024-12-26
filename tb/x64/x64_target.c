@@ -302,7 +302,6 @@ static int node_2addr(TB_Node* n) {
         }
 
         // ANY_GPR = OP(COND, shared: ANY_GPR, ANY_GPR)
-        case x86_lea:
         case x86_cmovcc:
         return 2;
 
@@ -635,6 +634,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         } else {
             // xor edx, edx
             in_rdx = tb_alloc_node(f, TB_ICONST, n->dt, 1, sizeof(TB_NodeInt));
+            set_input(f, in_rdx, f->root_node, 0);
             TB_NODE_SET_EXTRA(in_rdx, TB_NodeInt, .value = 0);
             in_rdx = tb__gvn(f, in_rdx, sizeof(TB_NodeInt));
         }
@@ -2560,7 +2560,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         #if 0
         printf("FUNC %s:\n", ctx->f->super.name);
         FOR_N(i, 0, proto->param_count) {
-            printf("  [FP + %2lld]           PARAM\n", ctx->stack_header + i*8);
+            printf("  [FP + %2td]           PARAM\n", ctx->stack_header + i*8);
         }
         printf("  [FP + %2d]           RPC\n", ctx->stack_header - 8);
         if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
@@ -2568,10 +2568,10 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         }
         printf("==============\n");
         FOR_N(i, 0, ctx->num_spills) {
-            printf("  [FP - %2lld] [SP + %2lld] SPILL\n", 8 + i*8, stack_usage - (8 + i*8));
+            printf("  [FP - %2td] [SP + %2td] SPILL\n", 8 + i*8, stack_usage - (8 + i*8));
         }
         FOR_REV_N(i, 0, ctx->call_usage) {
-            printf("            [SP + %2lld] CALLEE PARAM\n", i*8);
+            printf("            [SP + %2td] CALLEE PARAM\n", i*8);
         }
         #endif
     }
@@ -2805,9 +2805,9 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         #else
         if (inst.dt >= TB_X86_F32x1 && inst.dt <= TB_X86_F64x2) {
             static const char* strs[] = { "ss", "sd", "ps", "pd" };
-            E("%s%s ", mnemonic, strs[inst.dt - TB_X86_F32x1]);
+            E("%s%-5s ", mnemonic, strs[inst.dt - TB_X86_F32x1]);
         } else {
-            E("%s ", mnemonic);
+            E("%-8s ", mnemonic);
         }
         #endif
 

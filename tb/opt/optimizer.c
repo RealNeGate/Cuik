@@ -377,7 +377,9 @@ static TB_Node* ideal_location(TB_Function* f, TB_Node* n) {
 static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     // wait for region to check first
     TB_Node* r = n->inputs[0];
-    if (latuni_get(f, r) == &TOP_IN_THE_SKY) return &TOP_IN_THE_SKY;
+    if (latuni_get(f, r) == &TOP_IN_THE_SKY) {
+        return &TOP_IN_THE_SKY;
+    }
 
     Lattice* old = latuni_get(f, n);
     if (r->type == TB_AFFINE_LOOP) {
@@ -1319,6 +1321,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         // sometimes might invalidate the loop tree so we should
         // track when it makes CFG changes.
         TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== SCCP ===\n"));
         major_progress |= tb_opt_cprop(f);
 
         TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));

@@ -2,13 +2,13 @@
 void tb_print_dumb_edge(Lattice** types, TB_Node* n) {
     if (n) {
         TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-        printf("%%%u ", n->gvn);
+        printf("%%%u", n->gvn);
         TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
 
         // i put the assert at the bottom so the last thing printed is the erroneous node ID
         TB_ASSERT(n->type != TB_NULL);
     } else {
-        printf("___ ");
+        printf("___");
     }
 }
 
@@ -84,22 +84,23 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     printf("( ");
     FOR_N(i, 0, n->input_count) {
         tb_print_dumb_edge(types, n->inputs[i]);
+        printf(" ");
     }
 
     bool first = true;
     FOR_N(i, n->input_count, n->input_cap) if (n->inputs[i]) {
         if (first) { printf("| "), first = false; }
         tb_print_dumb_edge(types, n->inputs[i]);
+        printf(" ");
     }
 
     printf(")");
 
-    #if 1
+    #if 0
     printf("   [[ ");
     FOR_USERS(u, n) {
-        TB_Node* un = USERN(u);
-        int ui      = USERI(u);
-        printf("%%%u:%d ", un->gvn, ui);
+        tb_print_dumb_edge(types, USERN(u));
+        printf(":%d ", USERI(u));
     }
     printf("]]");
     #endif

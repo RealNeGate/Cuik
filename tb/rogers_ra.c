@@ -92,7 +92,7 @@ void tb__print_regmask(RegMask* mask) {
 static void dump_sched(Ctx* restrict ctx) {
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-        printf("BB %zu:\n", i);
+        printf("BB %zu (freq=%f):\n", i, bb->freq);
         aarray_for(i, bb->items) {
             printf("  ");
             tb_print_dumb_node(NULL, bb->items[i]);
@@ -441,7 +441,7 @@ static bool reg_mask_may_intersect(RegMask* a, RegMask* b) {
     return false;
 }
 
-static bool vreg_is_fixed(Ctx* restrict ctx, Rogers* restrict ra, int id) {
+static bool rogers_is_fixed(Ctx* ctx, Rogers* ra, int id) {
     int class = ctx->vregs[id].mask->class;
     return id >= ra->fixed[class] && id < ra->fixed[class] + ctx->num_regs[class];
 }
@@ -698,7 +698,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         } else if (res == ALLOC_FAIL) {
             // undo assignments
             FOR_N(i, 1, aarray_length(ctx->vregs)) {
-                if (!vreg_is_fixed(ctx, &ra, i) && ctx->vregs[i].mask->class != REG_CLASS_STK) {
+                if (!rogers_is_fixed(ctx, &ra, i) && ctx->vregs[i].mask->class != REG_CLASS_STK) {
                     ctx->vregs[i].class    = 0;
                     ctx->vregs[i].assigned = -1;
                     ctx->vregs[i].marked_spilled = false;
@@ -714,7 +714,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             TB_Node* n  = ctx->vregs[vreg_id].n;
             RegMask* vreg_mask = ctx->vregs[vreg_id].mask;
 
-            TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m# v%u: spilled (%%%u)\x1b[0m\n", vreg_id, n->gvn));
+            TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m# V%u: spilled (%%%u)\x1b[0m\n", vreg_id, n->gvn));
 
             // rematerialization candidates will delete the original def and for now, they'll
             // reload per use site (although we might wanna coalesce some later on).
@@ -947,7 +947,11 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
     FOREACH_SET(i, ra->active) {
         VReg* other = &ctx->vregs[i];
         if (other->class == mask->class) {
-            TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) interferes as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
+            // if they can interfere, log it
+            if (other->mask->mask[0] & mask->mask[0]) {
+                TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) interferes as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
+            }
+
             in_use |= (1ull << other->assigned);
             dyn_array_put(ra->potential_spills, i);
         }
@@ -959,7 +963,11 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
         VReg* other = &ctx->vregs[i];
         if (other->class == mask->class && (in_use & (1ull << other->assigned)) == 0) {
             if (interfere(ctx, ra, vreg->n, other->n)) {
-                TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) future interferes as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
+                // if they can interfere, log it
+                if (other->mask->mask[0] & mask->mask[0]) {
+                    TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) future interferes as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
+                }
+
                 in_use |= (1ull << other->assigned);
                 dyn_array_put(ra->potential_spills, i);
             }
@@ -978,7 +986,10 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
             TB_Node* in = n->inputs[k];
             VReg* in_vreg = node_vreg(ctx, in);
             if (in_vreg && in_vreg->class == mask->class) {
-                TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) interferes as ", in_vreg - ctx->vregs, in->gvn), print_reg_name(in_vreg->class, in_vreg->assigned), printf("; "));
+                if (in_vreg->mask->mask[0] & mask->mask[0]) {
+                    TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) interferes as ", in_vreg - ctx->vregs, in->gvn), print_reg_name(in_vreg->class, in_vreg->assigned), printf("; "));
+                }
+
                 in_use |= (1ull << in_vreg->assigned);
                 dyn_array_put(ra->potential_spills, in_vreg - ctx->vregs);
             }
@@ -989,7 +1000,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
         }
     }
     TB_OPTDEBUG(REGALLOC)(printf("\n"));
-    TB_OPTDEBUG(REGALLOC)(printf("#   available: %#"PRIx64"\n", ~in_use));
+    // TB_OPTDEBUG(REGALLOC)(printf("#   available: %#"PRIx64"\n", ~in_use));
 
     if (in_use == UINT64_MAX) {
         return false;
@@ -1092,7 +1103,7 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_
         #endif
 
         // undo it's allocation and pretend it's unallocated
-        TB_ASSERT(!vreg_is_fixed(ctx, ra, best_spill));
+        TB_ASSERT(!rogers_is_fixed(ctx, ra, best_spill));
         int old_assigned = ctx->vregs[best_spill].assigned;
         ctx->vregs[best_spill].class    = 0;
         ctx->vregs[best_spill].assigned = -1;

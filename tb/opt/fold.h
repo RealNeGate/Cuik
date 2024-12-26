@@ -61,13 +61,15 @@ static Lattice* value_trunc(TB_Function* f, TB_Node* n) {
 
     if (TB_IS_INTEGER_TYPE(n->dt)) {
         int bits = tb_data_type_bit_size(NULL, n->dt.type);
-        int64_t mask = tb__mask(bits);
-        int64_t min = tb_sign_ext(NULL, n->dt, a->_int.min & mask);
-        int64_t max = tb_sign_ext(NULL, n->dt, a->_int.max & mask);
-        if (min > max) { return NULL; }
+        uint64_t mask = tb__mask(bits);
+        int64_t  min = tb_sign_ext(NULL, n->dt, a->_int.min & mask);
+        int64_t  max = tb_sign_ext(NULL, n->dt, a->_int.max & mask);
+        if (min > max) {
+            return NULL;
+        }
 
-        uint64_t zeros = (a->_int.known_zeros & mask) | ~mask;
-        uint64_t ones  =  a->_int.known_ones  & mask;
+        uint64_t zeros = a->_int.known_zeros & mask;
+        uint64_t ones  = a->_int.known_ones  & mask;
         return lattice_gimme_int2(f, min, max, zeros, ones, bits);
     } else {
         return NULL;

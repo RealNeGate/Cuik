@@ -421,6 +421,11 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
                 .widen       = TB_MAX(a->_int.widen, b->_int.widen),
             };
 
+            if (i.min == i.max) {
+                i.known_zeros = ~i.min;
+                i.known_ones  =  i.min;
+            }
+
             return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = i });
         }
 
