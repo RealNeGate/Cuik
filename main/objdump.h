@@ -13,13 +13,13 @@ int run_objdump(int argc, const char** argv) {
         return EXIT_FAILURE;
     }
 
-    FileMap fm = open_file_map(argv[0]);
+    FileMap fm = open_file_map_read(argv[0]);
     if (fm.data == NULL) {
         fprintf(stderr, "\x1b[31merror\x1b[0m: '%s' not found!\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    TB_COFF_Parser parser = { { strlen(argv[0]), (const uint8_t*) argv[0] }, { fm.size, fm.data } };
+    TB_COFF_Parser parser = { { (const uint8_t*) argv[0], strlen(argv[0]) }, { fm.data, fm.size } };
     if (!tb_coff_parse_init(&parser)) {
         // TODO(NeGate): make better errors
         fprintf(stderr, "\x1b[31merror\x1b[0m: '%s' was not a valid COFF object!\n", argv[0]);
@@ -53,10 +53,12 @@ int run_objdump(int argc, const char** argv) {
 
         printf("%3zu %-8s      %08zx %016zx %s", i, name, size, s->virtual_address, flags);
         if (s->flags & TB_COFF_SECTION_ALIGN) {
-            printf(" (align %d)", 1u << (s->flags >> 20));
+            printf(" (align %d)", 1u << ((s->flags >> 20) & 0xF));
         }
         printf("\n");
     }
+
+    #if 1
     printf("\n  note:\n");
     printf("    r - read   w - write   x - execute\n");
     printf("    c - code   u - uninit  i - init\n");
@@ -91,35 +93,54 @@ int run_objdump(int argc, const char** argv) {
     }
 
     printf("\n");
+    #endif
 
     // print disassembly
     for (size_t i = 0; i < parser.section_count; i++) {
         TB_ObjectSection* s = &sections[i];
+        if ((s->flags & TB_COFF_SECTION_CODE) == 0) {
+            continue;
+        }
+
+        printf("DUMP: %.*s\n", (int) s->name.length, s->name.data);
 
         size_t size = s->raw_data.length;
         if (size == 0) {
-            printf("~~empty~~\n\n");
+            printf("  ~~empty~~\n\n");
             continue;
         }
 
         const uint8_t* data = s->raw_data.data;
         if (s->flags & TB_COFF_SECTION_CODE) {
             // dump assembly
-            size_t pos = 0, count = 0;
+            uint64_t pos = 0;
             while (pos < s->raw_data.length) {
-                printf("  %08zx: ", pos);
-                ptrdiff_t delta = tb_print_disassembly_inst(TB_ARCH_X86_64, s->raw_data.length - pos, data + pos);
-                if (delta < 0) {
-                    printf("ERROR\n");
-                    pos += 1;
+                printf(" %8"PRIx64": ", pos);
+
+                /*TB_X86_Inst inst;
+                if (tb_x86_disasm(&inst, s->raw_data.length - pos, data + pos)) {
+                    // print first 10 bytes
+                    size_t i = 0;
+                    for (; i < inst.length && i < 10; i++) {
+                        printf("%02x ", data[pos + i]);
+                    }
+
+                    for (; i < 10; i++) {
+                        printf("   ");
+                    }
+
+                    // print op
+                    tb_x86_print_inst(stdout, &inst);
+                    pos += inst.length;
                 } else {
-                    pos += delta;
-                }
-                count += 1;
+                    printf("%02x                            ERROR\n", data[pos]);
+                    pos += 1;
+                }*/
             }
+            printf("\n");
         } else {
             // dump raw data
-            printf("DUMP: %.*s\n  ", (int) s->name.length, s->name.data);
+            printf("  ");
 
             size_t j = 0;
             for (; j < size; j++) {

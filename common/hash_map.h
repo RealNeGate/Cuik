@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <assert.h>
 
-#if defined(TB_USE_MIMALLOC) || defined(CUIK_USE_MIMALLOC)
+#ifdef CONFIG_HAS_MIMALLOC
 #include <mimalloc.h>
 
 #define NL_MALLOC(s)     mi_malloc(s)

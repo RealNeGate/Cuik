@@ -1,0 +1,288 @@
+xxh_64:
+sub      rsp, 168
+BB0: // Freq: 1.000000
+mov      dword [rsp + 8], edx        // spill
+mov      qword [rsp + 24], r8        // spill
+mov      qword [rsp + 88], r14       // spill
+mov      qword [rsp + 80], r13       // spill
+mov      qword [rsp + 72], rsi       // spill
+mov      qword [rsp + 64], rdi       // spill
+mov      qword [rsp + 48], rbp       // spill
+mov      qword [rsp + 48], rbx       // spill
+mov      qword [rsp + 40], r12       // spill
+mov      qword [rsp + 32], r15       // spill
+mov      rax, -4417276706812531889
+mov      rbx, qword [rsp + 24]       // reload
+mov      r9, rbx
+add      r9, rax
+mov      r11, 6983438078262162902
+mov      rax, rbx
+add      rax, r11
+xorps    xmm0, xmm0
+lea      r10, qword [rsp + 128]
+movps    xmmword [r10], xmm0
+lea      r10, qword [rsp + 128]
+movps    xmmword [r10 + 16], xmm0
+mov      qword [rsp + 128], rax
+mov      qword [rsp + 136], r9
+mov      qword [rsp + 144], rbx
+mov      rax, 7046029288634856825
+mov      r8, rbx
+add      r8, rax
+mov      qword [rsp + 152], r8
+mov      eax, dword [rsp + 8]        // reload
+add      eax, 31
+xor      r8d, r8d
+mov      r9d, eax
+cmp      eax, r8d
+cmovl    r9d, eax
+sar      r9d, 5
+cmp      r9d, 0
+jbe      BB12
+BB1: // Freq: 1.000000
+xor      r8d, r8d
+mov      r11d, r8d
+BB2: // Freq: 8.000000
+xorps    xmm0, xmm0
+lea      rax, qword [rsp + 96]
+movps    xmmword [rax], xmm0
+lea      rax, qword [rsp + 96]
+movps    xmmword [rax + 16], xmm0
+mov      r8d, r11d
+mov      rax, qword [rcx + r8*8]
+mov      qword [rsp + 96], rax
+mov      eax, r11d
+add      eax, 3
+mov      r8d, r11d
+add      r8d, 2
+mov      r10d, r11d
+add      r10d, 1
+mov      r14, qword [rcx + r10*8]
+mov      qword [rsp + 104], r14
+mov      r10, qword [rcx + r8*8]
+mov      qword [rsp + 112], r10
+mov      r8, qword [rcx + rax*8]
+mov      qword [rsp + 120], r8
+xor      eax, eax
+BB3: // Freq: 64.000000
+mov      r8d, eax
+mov      r10, qword [rsp + r8*8 + 96]
+mov      r8d, eax
+mov      r14, qword [rsp + r8*8 + 128]
+mov      r8, -4417276706812531889
+imul     r8, r10
+add      r14, r10
+mov      r8d, eax
+mov      qword [rsp + r8*8 + 96], r14
+add      eax, 1
+xor      r8d, r8d
+mov      r10d, r8d
+cmp      eax, 4
+jnb      BB6
+BB4: // Freq: 64.000000
+jmp      BB3
+BB6: // Freq: 64.000000
+mov      eax, r10d
+mov      ebx, eax
+mov      r14, qword [rsp + rbx*8 + 96]
+rol      r14, 31
+mov      rax, -7046029288634856825
+imul     rax, r14
+mov      qword [rsp + rax*8 + 128], r14
+mov      eax, r10d
+add      eax, 1
+mov      r10d, eax
+cmp      eax, 4
+jb       BB6
+BB8: // Freq: 8.000000
+add      r11d, 4
+cmp      r11d, r9d
+jnb      BB12
+BB9: // Freq: 8.000000
+jmp      BB2
+BB12: // Freq: 1.000000
+mov      rax, qword [rsp + 144]
+mov      r8, 2870177450012600261
+mov      r10, rax
+add      r10, r8
+mov      r11, -8796714831421723037
+mov      edx, dword [rsp + 8]        // reload
+cmp      edx, 32
+jbe      BB18
+BB13: // Freq: 1.000000
+mov      r10, qword [rsp + 128]
+mov      r14, qword [rsp + 136]
+mov      r8, qword [rsp + 152]
+rol      r8, 18
+rol      r14, 7
+rol      r10, 1
+add      r10, r14
+rol      rax, 12
+add      r10, rax
+add      r10, r8
+mov      rax, r10
+xor      r8d, r8d
+BB14: // Freq: 8.000000
+mov      r10, rax
+cmp      r8d, 4
+jnb      BB18
+BB15: // Freq: 8.000000
+movsxd   r10d, r8d
+mov      r14, qword [rsp + r10*8 + 128]
+mov      r10, -4417276706812531889
+imul     r10, r14
+rol      r14, 31
+mov      r10, -7046029288634856825
+imul     r10, r14
+xor      rax, r14
+mov      r10, -7046029288634856825
+imul     r10, rax
+add      rax, r11
+add      r8d, 1
+jmp      BB14
+BB18: // Freq: 1.000000
+mov      eax, dword [rsp + 8]        // reload
+movsxd   eax, eax
+shl      r9d, 5
+movsxd   r9d, r9d
+lea      rcx, qword [rcx + r9*1]
+add      r10, rax
+and      eax, 31
+mov      r8d, eax
+add      r8d, 7
+xor      r9d, r9d
+mov      r9d, r8d
+cmp      eax, r9d
+cmovl    r9d, eax
+sar      r9d, 3
+mov      rax, r10
+mov      r8, rcx
+cmp      r9d, 0
+jbe      BB24
+BB19: // Freq: 1.000000
+xor      eax, eax
+mov      r8, r10
+BB20: // Freq: 8.000000
+mov      r10, qword [rcx]
+lea      rcx, qword [rcx + 8]
+mov      r14, -4417276706812531889
+imul     r14, r10
+rol      r10, 31
+mov      r14, -7046029288634856825
+imul     r14, r10
+xor      r8, r10
+rol      r8, 27
+mov      r10, -7046029288634856825
+imul     r10, r8
+mov      r10, r8
+add      r10, r11
+mov      rax, r10
+mov      r8, rcx
+mov      r14d, eax
+add      r14d, 1
+cmp      r14d, r9d
+jnb      BB24
+BB21: // Freq: 8.000000
+mov      eax, r14d
+mov      r8, r10
+jmp      BB20
+BB24: // Freq: 1.000000
+mov      ecx, dword [rsp + 8]        // reload
+mov      r9d, ecx
+and      r9d, 7
+mov      r10d, r9d
+add      r10d, 3
+xor      r11d, r11d
+mov      r11d, r10d
+cmp      r9d, r11d
+cmovl    r11d, r9d
+mov      r9, r8
+sar      r11d, 2
+mov      r10, rax
+cmp      r11d, 0
+jbe      BB30
+BB25: // Freq: 1.000000
+xor      r9d, r9d
+BB26: // Freq: 8.000000
+mov      r10d, dword [r8]
+mov      r14, -7046029288634856825
+imul     r14, r10
+xor      rax, r10
+rol      rax, 23
+mov      r10, -4417276706812531889
+imul     r10, rax
+mov      rcx, 1609587929392839161
+add      rax, rcx
+mov      r10, rax
+lea      rcx, qword [r8 + 4]
+mov      r9, rcx
+mov      r14d, r9d
+add      r14d, 1
+cmp      r14d, r11d
+jnb      BB30
+BB27: // Freq: 8.000000
+mov      r9d, r14d
+lea      r8, qword [r8 + 4]
+jmp      BB26
+BB30: // Freq: 1.000000
+mov      r11, r9
+mov      rax, r10
+mov      r8, rax
+mov      eax, dword [rsp + 8]        // reload
+mov      edx, eax
+and      edx, 3
+mov      dword [rsp + 16], edx       // spill
+xor      eax, eax
+mov      edx, eax
+mov      eax, dword [rsp + 16]       // reload
+cmp      eax, 0
+jbe      BB35
+BB32: // Freq: 8.000000
+mov      eax, edx
+mov      rcx, r8
+mov      rbx, r11
+movzx    rbp, qword [rbx]
+lea      rbx, qword [rbx + 1]
+mov      rsi, 2870177450012600261
+imul     rsi, rbp
+xor      rcx, rbp
+rol      rcx, 11
+mov      rbp, -7046029288634856825
+imul     rbp, rcx
+mov      r8, rcx
+mov      r11, rbx
+add      eax, 1
+mov      edx, eax
+mov      ebx, dword [rsp + 16]       // reload
+cmp      eax, ebx
+jb       BB32
+BB34: // Freq: 1.000000
+mov      rax, rcx
+jmp      BB36
+BB35: // Freq: 1.000000
+mov      rax, r10
+BB36: // Freq: 1.000000
+mov      rdx, rax
+shr      rdx, 33
+xor      rax, rdx
+mov      rdx, -4417276706812531889
+imul     rdx, rax
+mov      rdx, rax
+shr      rdx, 29
+xor      rax, rdx
+mov      rdx, 1609587929392839161
+imul     rdx, rax
+mov      rdx, rax
+shr      rdx, 32
+xor      rax, rdx
+mov      r14, qword [rsp + 88]       // reload
+mov      r13, qword [rsp + 80]       // reload
+mov      rsi, qword [rsp + 72]       // reload
+mov      rdi, qword [rsp + 64]       // reload
+mov      rbp, qword [rsp + 48]       // reload
+mov      rbx, qword [rsp + 48]       // reload
+mov      r12, qword [rsp + 40]       // reload
+mov      r15, qword [rsp + 32]       // reload
+add      rsp, 168
+ret
+nop      word [rax + rax*1], ax

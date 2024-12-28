@@ -1,12 +1,10 @@
 #pragma once
 #include <common.h>
-#include <log.h>
 #include <perf.h>
 
-#define INITIAL_CAP 64
+#define DYN_ARRAY_INITIAL_CAP 64
 
 typedef struct DynArrayHeader {
-    // honestly storing the type size is kinda weird
     size_t size, capacity;
     char data[];
 } DynArrayHeader;
@@ -29,7 +27,7 @@ static void dyn_array_internal_destroy(void* ptr) {
 
 static void* dyn_array_internal_reserve2(void* ptr, size_t type_size, size_t min_size) {
     if (ptr == NULL) {
-        return dyn_array_internal_create(type_size, INITIAL_CAP);
+        return dyn_array_internal_create(type_size, DYN_ARRAY_INITIAL_CAP);
     }
 
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;
@@ -49,7 +47,7 @@ static void* dyn_array_internal_reserve2(void* ptr, size_t type_size, size_t min
 
 static void* dyn_array_internal_reserve(void* ptr, size_t type_size, size_t extra) {
     if (ptr == NULL) {
-        return dyn_array_internal_create(type_size, INITIAL_CAP);
+        return dyn_array_internal_create(type_size, DYN_ARRAY_INITIAL_CAP);
     }
 
     DynArrayHeader* header = ((DynArrayHeader*)ptr) - 1;

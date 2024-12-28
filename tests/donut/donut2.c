@@ -4,8 +4,14 @@
 
 const char string[] = ".,-~:;=!*#$@";
 
+short foo(short* a, int i) {
+    return a[i];
+}
+
 int k;
 int main() {
+    short ggg = 0;
+
     float A = 0.0f, B = 0, i, j, z[1760];
     char b[1760];
 

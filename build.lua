@@ -1,32 +1,25 @@
---[[
-
-  _____       _ _     _                 _
- | ___ \     (_) |   | |               | |
- | |_/ /_   _ _| | __| |  ___ _   _ ___| |_ ___ _ __ ___
- | ___ \ | | | | |/ _` | / __| | | / __| __/ _ \ '_ ` _ \
- | |_/ / |_| | | | (_| | \__ \ |_| \__ \ ||  __/ | | | | |
- \____/ \__,_|_|_|\__,_| |___/\__, |___/\__\___|_| |_| |_|
-                               __/ |
-                              |___/
-
---]]
-
---  TODO
---  Don't build unnecessary modules, e.g. don't build Cuik when doing tb_unittests.
+--
+--
+--   _____       _ _     _                 _
+--  | ___ \     (_) |   | |               | |
+--  | |_/ /_   _ _| | __| |  ___ _   _ ___| |_ ___ _ __ ___
+--  | ___ \ | | | | |/ _` | / __| | | / __| __/ _ \ '_ ` _ \
+--  | |_/ / |_| | | | (_| | \__ \ |_| \__ \ ||  __/ | | | | |
+--  \____/ \__,_|_|_|\__,_| |___/\__, |___/\__\___|_| |_| |_|
+--                                __/ |
+--                               |___/
+--
+--
 
 -- silly little OS detection
 local is_windows = package.config:sub(1,1) == "\\"
 
 local options = {
-	log           = false,
 	debug         = false,
 	cuik          = false,
 	tb            = false,
-	tests         = false,
 	driver        = false,
 	shared        = false,
-	test          = false,
-	forth         = false,
 	lld           = false,
 	gcc           = false,
 	asan          = false,
@@ -35,24 +28,42 @@ local options = {
 
 -- Cuik/TB are broken down into several pieces
 local modules = {
-	common = { srcs={"common/common.c", "common/perf.c"} },
+	common = { srcs={"common/common.c", "common/perf.c", "common/emitter.c"} },
 
 	-- libraries:
-	--   CuikC frontend
-	cuik   = { srcs={"libCuik/lib/libcuik.c", "libCuik/lib/toolchains/msvc.c", "libCuik/lib/toolchains/gnu.c", "libCuik/lib/toolchains/darwin.c"}, flags="-I libCuik/include", deps={"common"} },
+	--   C preprocessor
+	cuik_pp = { srcs={
+			"cuik_pp/lexer.c", "cuik_pp/cpp.c", "cuik_pp/diagnostic.c"
+		}, flags="-DCONFIG_HAS_CUIKPP", deps={"common"}
+	},
+	--   C frontend
+	cuik_c = { srcs={
+			"cuik_c/libcuik.c",
+			-- toolchain support
+			"cuik_c/toolchains/msvc.c", "cuik_c/toolchains/gnu.c", "cuik_c/toolchains/darwin.c",
+			-- architectures
+			"cuik_c/targets/x64_desc.c",  "cuik_c/targets/aarch64_desc.c",
+			"cuik_c/targets/mips_desc.c", "cuik_c/targets/wasm_desc.c",
+		}, flags="-DCONFIG_HAS_CUIKC", deps={"common", "cuik_pp"}
+	},
 	--   TildeBackend
-	tb     = { srcs={"tb/src/libtb.c", "tb/src/x64/x64.c"}, flags="-I tb/include -DCUIK_USE_TB", deps={"common"} },
-
+	tb = { srcs={
+			"tb/libtb.c",
+			-- archictectures
+			"tb/x64/x64_target.c", "tb/aarch64/aarch64_target.c", "tb/mips/mips_target.c", "tb/wasm/wasm_target.c"
+		}, flags="-DCONFIG_HAS_TB -DTB_HAS_X64", deps={"common", "cuik_pp"}
+	},
+	--   Linker
+	linker = { srcs={
+			"linker/linker.c",
+		}, flags="-DCONFIG_HAS_LINKER", deps={"common", "cuik_pp"}
+	},
 	-- executables:
 	--   Cuik command line
-	driver       = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik", "tb"} },
-	--   forth
-	forth        = { is_exe=true, srcs={"forth/forth.c"}, deps={"common", "tb"}, flags="-I libCuik/include" },
-	--   TB unittests
-	tests        = { is_exe=true, srcs={"tb/tests/cg_test.c"}, deps={"tb", "common"} },
+	driver = { is_exe=true, srcs={"main/main_driver.c"}, deps={"common", "cuik_pp", "cuik_c", "tb", "linker"} },
 
 	-- external dependencies
-	mimalloc = { srcs={"mimalloc/src/static.c"} }
+	mimalloc = { srcs={"mimalloc/src/static.c"}, flags="-DCONFIG_HAS_MIMALLOC" }
 }
 
 -- command lines
@@ -63,12 +74,10 @@ for i = 1, #arg do
 end
 
 local ldflags = ""
-local cflags = " -g -march=haswell -I common -Wall -Werror -Wno-unused -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
+local cflags = " -g -march=haswell -I include -I common -Wall -Werror -Wno-unused -Wno-deprecated -DMI_SKIP_COLLECT_ON_EXIT -DCUIK_ALLOW_THREADS -I mimalloc/include"
 
 if options.asan then
 	cflags = cflags.." -fsanitize=address"
-else
-	cflags = cflags.." -DTB_USE_MIMALLOC -DCUIK_USE_MIMALLOC"
 end
 
 if options.driver then
@@ -84,10 +93,10 @@ local ar = options.gcc and "ar"  or "llvm-ar"
 
 if not options.debug then
 	cflags = cflags.." -O2 -DNDEBUG"
-end
-
-if not options.log then
-	cflags = cflags.." -DLOG_SUPPRESS"
+	if not options.gcc then
+		-- options.lld = true
+		-- cflags = cflags.." -flto"
+	end
 end
 
 if options.spall_auto then
@@ -97,8 +106,7 @@ end
 local src = {}
 
 if is_windows then
-	src[#src + 1] = "c11threads/threads_msvc.c"
-	cflags = cflags.." -I c11threads -D_CRT_SECURE_NO_WARNINGS"
+	cflags = cflags.." -D_CRT_SECURE_NO_WARNINGS"
 
 	if options.shared then
 		cflags = cflags.." -DCUIK_DLL -DTB_DLL"
@@ -115,7 +123,7 @@ if is_windows then
 			ld = "link"
 		end
 
-		ldflags = ldflags.." /nologo /debug onecore.lib msvcrt.lib libcmt.lib"
+		ldflags = ldflags.." /nologo /incremental:no /debug onecore.lib msvcrt.lib libcmt.lib"
 		ldflags = ldflags.." /defaultlib:libcmt /out:"
 	end
 
@@ -231,19 +239,22 @@ rule("run", {
 })
 
 -- lexer metaprogram
-command("bin/objs/lexgen"..exe_ext, "libCuik/meta/lexgen.c", cc.." $in -O1 -o $out")
-command("libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
+command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
+command("cuik_pp/keywords.h cuik_pp/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
+
+-- TB metaprogram
+-- command("tb/meta/foo.c", "tb/meta/dsl.lua", arg[-1].." $in")
 
 -- package freestanding headers into C file
 local x = {}
 if is_windows then
-	local cmd = io.popen("dir /B headers\\*.h")
+	local cmd = io.popen("dir /B freestanding\\*.h")
 	for c in cmd:lines() do
-		x[#x + 1] = "headers/"..c
+		x[#x + 1] = "freestanding/"..c
 	end
 	cmd:close()
 else
-	local cmd = io.popen("find headers/*.h -maxdepth 1")
+	local cmd = io.popen("find freestanding/*.h -maxdepth 1")
 	for c in cmd:lines() do
 		x[#x + 1] = c
 	end
@@ -251,7 +262,7 @@ else
 end
 local freestanding_headers = table.concat(x, " ")
 
-command("bin/objs/hexembed"..exe_ext, "libCuik/meta/hexembed.c", cc.." $in -O1 -o $out")
+command("bin/objs/hexembed"..exe_ext, "meta/hexembed.c", cc.." $in -O1 -o $out")
 command("bin/objs/freestanding.c", freestanding_headers, "bin/objs/hexembed"..exe_ext.." $in", "bin/objs/hexembed"..exe_ext)
 
 src[#src + 1] = "bin/objs/freestanding.c"
@@ -261,20 +272,17 @@ local objs = {}
 for i, f in ipairs(src) do
 	local out = "bin/objs/"..filename(f)..".o"
 	ninja:write("build "..out..": cc "..f)
-	if out == "bin/objs/libcuik.o" then
-		ninja:write(" | libCuik/lib/preproc/keywords.h libCuik/lib/preproc/dfa.h\n")
-	else
-		ninja:write("\n")
+	if added["cuik_pp"] then
+		ninja:write(" | cuik_pp/keywords.h cuik_pp/dfa.h")
 	end
+	ninja:write("\n")
 	objs[#objs + 1] = out
 end
 
 local obj_names = table.concat(objs, " ")
 
-local exe_name = "cuik"
-if options.tb    then exe_name = "tb" end
-if options.tests then exe_name = "tests" end
-if options.forth then exe_name = "forth" end
+local exe_name = "tb"
+if options.driver then exe_name = "cuik" end
 
 -- placing executables into bin/
 exe_name = "bin/"..exe_name

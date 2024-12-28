@@ -24,6 +24,7 @@
 
 #include "log.h"
 #include <threads.h>
+#include <inttypes.h>
 
 #ifdef _WIN32
 #ifdef _POSIX_C_SOURCE
@@ -63,18 +64,24 @@ static const char *level_colors[] = {
 };
 #endif
 
+static uint64_t log_time_start;
+
+static uint64_t get_nanos(void) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ((uint64_t)ts.tv_sec * UINT64_C(1000000000)) + ts.tv_nsec;
+}
+
 static void stdout_callback(log_Event *ev) {
-    char buf[16];
-    buf[strftime(buf, sizeof(buf), "%H:%M:%S", ev->time)] = '\0';
     #ifdef LOG_USE_COLOR
     fprintf(
-        ev->udata, "Thread-%d %s %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
-        ev->tid, buf, level_colors[ev->level], level_strings[ev->level],
+        ev->udata, "Thread-%d %.4f s %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
+        ev->tid, ev->time / 1000000.0, level_colors[ev->level], level_strings[ev->level],
         ev->file, ev->line);
     #else
     fprintf(
-        ev->udata, "Thread-%d %s %-5s %s:%d: ",
-        ev->tid, buf, level_strings[ev->level], ev->file, ev->line);
+        ev->udata, "Thread-%d %.4f s %-5s %s:%d: ",
+        ev->tid, ev->time / 1000000.0, level_strings[ev->level], ev->file, ev->line);
     #endif
     vfprintf(ev->udata, ev->fmt, ev->ap);
     fprintf(ev->udata, "\n");
@@ -82,11 +89,9 @@ static void stdout_callback(log_Event *ev) {
 }
 
 static void file_callback(log_Event *ev) {
-    char buf[64];
-    buf[strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", ev->time)] = '\0';
     fprintf(
-        ev->udata, "Thread-%d %s %-5s %s:%d: ",
-        ev->tid, buf, level_strings[ev->level], ev->file, ev->line);
+        ev->udata, "Thread-%d %.4f s %-5s %s:%d: ",
+        ev->tid, ev->time / 1000000.0, level_strings[ev->level], ev->file, ev->line);
     vfprintf(ev->udata, ev->fmt, ev->ap);
     fprintf(ev->udata, "\n");
     fflush(ev->udata);
@@ -120,13 +125,13 @@ int log_add_fp(FILE *fp, int level) {
 
 static void init_event(log_Event *ev, void *udata) {
     if (!ev->time) {
-        time_t t = time(NULL);
-        ev->time = localtime(&t);
+        ev->time = (get_nanos() / 1000) - log_time_start;
     }
     ev->udata = udata;
 }
 
 static void log_init(void) {
+    log_time_start = get_nanos() / 1000;
     mtx_init(&L.lock, mtx_plain);
 }
 

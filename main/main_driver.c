@@ -7,19 +7,19 @@
 // hacky but i dont care
 #include <file_map.h>
 
-#ifdef CUIK_USE_TB
+#ifdef CONFIG_HAS_TB
 #include "objdump.h"
 #include "link.h"
 #endif
 
 #include "bindgen.h"
-#include "spall_perf.h"
 
 #if CUIK_ALLOW_THREADS
 #include <threads.h>
 #endif
 
 #ifdef CUIK_USE_SPALL_AUTO
+#include <spall_native_auto.h>
 static void spall_die(void) {
     spall_auto_thread_quit();
     spall_auto_quit();
@@ -97,7 +97,7 @@ static void test_diag(void) {
 int main(int argc, const char** argv) {
     #ifdef CUIK_USE_SPALL_AUTO
     spall_auto_init("perf.spall");
-    spall_auto_thread_init(1, SPALL_DEFAULT_BUFFER_SIZE, SPALL_DEFAULT_SYMBOL_CACHE_SIZE);
+    spall_auto_thread_init(1, SPALL_DEFAULT_BUFFER_SIZE);
     atexit(spall_die);
     #endif
 
@@ -105,7 +105,7 @@ int main(int argc, const char** argv) {
 
     int status = EXIT_SUCCESS;
     if (argc >= 2) {
-        #ifdef CUIK_USE_TB
+        #ifdef CONFIG_HAS_TB
         if (strcmp(argv[1], "-objdump") == 0) return run_objdump(argc - 2, argv + 2);
         if (strcmp(argv[1], "-link")    == 0) return run_link(argc - 2, argv + 2);
         #endif
@@ -120,13 +120,14 @@ int main(int argc, const char** argv) {
         .version   = CUIK_VERSION_C23,
         .toolchain = cuik_toolchain_host(),
 
-        #ifdef CUIK_USE_TB
+        #ifdef CONFIG_HAS_TB
         .flavor    = TB_FLAVOR_EXECUTABLE,
         #endif
     };
 
     if (!cuik_parse_driver_args(&args, argc - 1, argv + 1)) {
-        return EXIT_SUCCESS;
+        status = EXIT_FAILURE;
+        goto done2;
     }
 
     // default to host target
@@ -181,18 +182,20 @@ int main(int argc, const char** argv) {
         char* perf_output_path = cuik_malloc(FILENAME_MAX);
         snprintf(perf_output_path, FILENAME_MAX, "%s.spall", args.output_name ? args.output_name : args.sources[0]->data);
 
-        cuikperf_start(perf_output_path, &spall_profiler, false);
+        cuikperf_start(perf_output_path);
         cuik_free(perf_output_path);
     }
 
     // spin up worker threads
-    Cuik_IThreadpool* tp = NULL;
-    #if CUIK_ALLOW_THREADS
-    if (args.threads > 1) {
-        if (args.verbose) printf("Starting with %d threads...\n", args.threads);
+    TPool pool = { 0 };
 
-        tp = cuik_threadpool_create(args.threads);
+    #if CUIK_ALLOW_THREADS
+    if (args.threads > 0) {
+        if (args.verbose) printf("Starting with %d threads...\n", args.threads);
+        tpool_init(&pool, args.threads);
     }
+    #else
+    args.threads = 0;
     #endif
 
     // compile source files
@@ -204,7 +207,7 @@ int main(int argc, const char** argv) {
 
     // link (if no codegen is performed this doesn't *really* do much)
     Cuik_BuildStep* linked = cuik_driver_ld(&args, obj_count, objs);
-    if (!cuik_step_run(linked, tp)) {
+    if (!cuik_step_run(linked, args.threads > 0 ? &pool : NULL)) {
         status = 1;
     }
 
@@ -212,11 +215,12 @@ int main(int argc, const char** argv) {
     cuik_free(objs);
 
     #if CUIK_ALLOW_THREADS
-    cuik_threadpool_destroy(tp);
+    tpool_destroy(&pool);
     #endif
 
-    if (args.time) cuikperf_stop();
-    cuik_free_thread_resources();
+    if (args.time) {
+        cuikperf_stop();
+    }
 
     done:
     // Free arguments
@@ -225,5 +229,6 @@ int main(int argc, const char** argv) {
     cuik_free_driver_args(&args);
 
     // stb_leakcheck_dumpmem();
+    done2:
     return status;
 }
