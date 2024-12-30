@@ -179,11 +179,12 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
             }
         }
 
-        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: remat (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
+        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: remat  (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
     }
     tb_arena_restore(&f->tmp_arena, sp);
 
     // delete the original def
+    ctx->vregs[ctx->vreg_map[n->gvn]].uses -= 1;
     ctx->vreg_map[n->gvn] = 0;
     tb__remove_node(ctx, f, n);
     tb_kill_node(f, n);
@@ -506,6 +507,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                         .assigned = j,
                         .mask = mask,
                         .spill_cost = INFINITY,
+                        .uses = 1
                     });
             }
             ra.fixed[i] = base;
@@ -599,7 +601,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                             tmps->elems[k - in_count] = ra.fixed[in_mask->class] + fixed;
                         } else {
                             tmps->elems[k - in_count] = aarray_length(ctx->vregs);
-                            aarray_push(ctx->vregs, (VReg){ .n = n, .mask = in_mask, .assigned = -1, .spill_cost = INFINITY });
+                            aarray_push(ctx->vregs, (VReg){ .n = n, .mask = in_mask, .assigned = -1, .spill_cost = INFINITY, .uses = 1 });
                         }
                     }
                 }
@@ -918,10 +920,10 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
         set_put(&ra->active, vreg_id);
         return true;
     } else if (reg_mask_is_spill(vreg->mask)) {
-        int empty_slot = ++ctx->num_spills;
+        int empty_slot = ctx->num_spills++;
         TB_OPTDEBUG(REGALLOC)(printf("#   assigned to SPILL%u\n", empty_slot));
         vreg->class    = REG_CLASS_STK;
-        vreg->assigned = STACK_BASE_REG_NAMES + empty_slot;
+        vreg->assigned = STACK_BASE_REG_NAMES + empty_slot + 1;
         set_put(&ra->active, vreg_id);
         return true;
     } else if (vreg->mask->class == REG_CLASS_STK) {

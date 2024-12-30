@@ -407,15 +407,15 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
                 if (vreg_id > 0 && n->type != TB_MACH_MOVE) {
                     RegMask* def_mask = node_constraint(&ctx, n, NULL);
-                    ctx.vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN };
+                    ctx.vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN, .uses = 1 };
                 }
             }
         }
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        // tb__rogers(&ctx, &f->tmp_arena);
-        tb__briggs(&ctx, &f->tmp_arena);
+        tb__rogers(&ctx, &f->tmp_arena);
+        // tb__briggs(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);

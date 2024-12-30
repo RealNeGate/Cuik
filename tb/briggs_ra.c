@@ -48,6 +48,8 @@ typedef struct {
 } IFG_Worklist;
 
 static void ifg_build(Ctx* restrict ctx, Briggs* ra);
+static void ifg_raw_edge(Briggs* ra, int i, int j);
+static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro);
 static IFG_Worklist ifg_simplify(Ctx* restrict ctx, Briggs* ra);
 
 static bool bits32_test_n_set(uint32_t* arr, size_t x) {
@@ -127,9 +129,12 @@ static bool briggs_is_fixed(Ctx* ctx, Briggs* ra, int id) {
 static void briggs_print_vreg(Ctx* restrict ctx, Briggs* restrict ra, VReg* vreg) {
     float cost = get_spill_cost(ctx, vreg);
     printf("# V%-4"PRIdPTR" deg=%d cost=%.2f ", vreg - ctx->vregs, ifg_degree(ra, vreg - ctx->vregs), cost);
+    if (vreg->hint_vreg > 0) {
+        printf(" hint=V%d", vreg->hint_vreg);
+    }
     tb__print_regmask(vreg->mask);
-    if (vreg->briggs.coalesced > 0) {
-        printf(" (%d DEFS)", vreg->briggs.coalesced + 1);
+    if (vreg->uses > 1) {
+        printf(" (%d USES)", vreg->uses);
     }
     printf("\n");
     if (vreg->n) {
@@ -164,6 +169,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                         .assigned = j,
                         .mask = mask,
                         .spill_cost = INFINITY,
+                        .uses = 1,
                     });
             }
             ra.fixed[i] = base;
@@ -216,7 +222,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                         tmps->elems[k - in_count] = ra.fixed[in_mask->class] + fixed;
                     } else {
                         tmps->elems[k - in_count] = aarray_length(ctx->vregs);
-                        aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = INFINITY });
+                        aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = INFINITY, .uses = 1 });
                     }
                 }
             }
@@ -246,12 +252,39 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         cuikperf_region_start("round", NULL);
 
         // that's a lot of rounds... you sure we're making forward progress?
-        TB_ASSERT(++rounds < 3);
+        rounds += 1;
+        TB_ASSERT(rounds < 10);
 
         // build IFG
         CUIK_TIMED_BLOCK("IFG build") {
             log_debug("%s: briggs: building IFG", f->super.name);
             ifg_build(ctx, &ra);
+        }
+
+        CUIK_TIMED_BLOCK("IFG square") {
+            FOR_N(i, 0, ra.ifg_len) {
+                FOR_N(j, 0, ra.ifg_chunks_per_set) {
+                    Briggs_Chunk* chk = ra.ifg[i]->chunks[j];
+                    if (chk == NULL) { continue; }
+
+                    FOR_N(k, 0, BRIGGS_WORDS_PER_CHUNK) {
+                        uint32_t bits = chk->bits[k];
+                        while (bits) {
+                            int l = tb_ffs(bits) - 1;
+                            int m = j*BRIGGS_BITS_PER_CHUNK + k*32 + l;
+                            if (i < m) {
+                                ifg_raw_edge(&ra, m, i);
+                            }
+                            bits &= ~(1u << l);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (ifg_coalesce(ctx, &ra, rounds == 1)) {
+            tb_arena_restore(arena, sp);
+            continue;
         }
 
         CUIK_TIMED_BLOCK("Convert to adjacency") {
@@ -273,11 +306,13 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                             int l = tb_ffs(bits) - 1;
                             int m = j*BRIGGS_BITS_PER_CHUNK + k*32 + l;
 
+                            /* if (i < m) {
+                                printf("V%zu -- V%d\n", i, m);
+                            } */
+
                             // insert into adjancency list
                             aarray_push(ra.adj[i], m);
                             ra.adj[i][0] += 1;
-                            aarray_push(ra.adj[m], i);
-                            ra.adj[m][0] += 1;
 
                             bits &= ~(1u << l);
                         }
@@ -304,13 +339,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         printf("###############################\n");
         #endif
 
-        CUIK_TIMED_BLOCK("IFG undo") {
-            FOR_N(i, 0, ra.ifg_len) {
-                // ra.adj[i][0] = aarray_length(ra.adj[i]) - 1;
-            }
-        }
-
-        int highest_stack_slot = 0;
+        int num_spills = ctx->num_spills;
         Set live_stack = set_create_in_arena(arena, ra.max_spills);
 
         int vreg_id;
@@ -321,20 +350,22 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             // need to undo the removals on a node
             int degree = ra.adj[vreg_id][0] = dyn_array_pop(ra.undo_stk);
 
+            // precolored? skip it
+            if (vreg->assigned >= 0) {
+                continue;
+            }
+
             #if TB_OPTDEBUG_REGALLOC
             briggs_print_vreg(ctx, &ra, vreg);
             #endif
 
             // coloring stack slots
             if (reg_mask_is_spill(vreg->mask)) {
-                int empty_slot = 1 + set_pop_any(&live_stack);
-                if (empty_slot > highest_stack_slot) {
-                    highest_stack_slot = empty_slot;
-                }
+                int empty_slot = num_spills++;
 
-                TB_OPTDEBUG(REGALLOC)(printf("#   assign to SPILL%u\n", ctx->num_spills + empty_slot));
+                TB_OPTDEBUG(REGALLOC)(printf("#   assigned SPILL%u\n", empty_slot));
                 vreg->class    = REG_CLASS_STK;
-                vreg->assigned = STACK_BASE_REG_NAMES + ctx->num_spills + empty_slot;
+                vreg->assigned = STACK_BASE_REG_NAMES + empty_slot + 1;
                 continue;
             }
 
@@ -346,7 +377,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 VReg* other = &ctx->vregs[other_id];
                 if (other->mask->class == def_class && other->assigned >= 0) {
                     mask &= ~(1ull << other->assigned);
-                    TB_OPTDEBUG(REGALLOC)(printf("  => %#04"PRIx64" (we can't be R%d because V%d)\n", mask, other->assigned, other_id));
+                    // TB_OPTDEBUG(REGALLOC)(printf("  => %#04"PRIx64" (we can't be R%d because V%d)\n", mask, other->assigned, other_id));
                     if (mask == 0) { goto leave; }
                 }
             }
@@ -383,7 +414,9 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         if (dyn_array_length(ra.spills) == 0) {
             log_debug("%s: briggs: good coloring (arena = %.1f KiB)", f->super.name, (tb_arena_current_size(arena) - baseline) / 1024.0f);
             dyn_array_destroy(ra.spills);
-            ctx->num_spills += highest_stack_slot;
+            tb_arena_restore(arena, sp);
+
+            ctx->num_spills = num_spills;
             cuikperf_region_end();
             break;
         }
@@ -401,7 +434,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             TB_Node* n  = ctx->vregs[vreg_id].n;
             RegMask* vreg_mask = ctx->vregs[vreg_id].mask;
 
-            TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m# V%d: SPILL (%%%u)\x1b[0m\n", vreg_id, n->gvn));
+            TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m# V%d: spill (%%%u)\x1b[0m\n", vreg_id, n->gvn));
 
             // rematerialization candidates will delete the original def and for now, they'll
             // reload per use site (although we might wanna coalesce some later on).
@@ -437,6 +470,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
         // recompute liveness
         redo_dataflow(ctx, arena);
+        dump_sched(ctx);
 
         // time to retry
         dyn_array_clear(ra.spills);
@@ -463,22 +497,58 @@ static void ifg_raw_edge(Briggs* ra, int i, int j) {
     chk->bits[k / 32] |= 1u << (k % 32);
 }
 
+static void ifg_union(Briggs* ra, int dst, int src) {
+    FOR_N(i, 0, ra->ifg_chunks_per_set) {
+        Briggs_Chunk* chk = ra->ifg[dst]->chunks[i];
+        if (ra->ifg[src]->chunks[i] != NULL) {
+            uint32_t* src_bits = ra->ifg[src]->chunks[i]->bits;
+            if (chk == NULL) {
+                // first time we're writing to this chunk
+                // TODO(NeGate): put these into a free list, we wanna recycle chunks as much as possible.
+                chk = tb_arena_alloc(ra->arena, sizeof(Briggs_Chunk));
+                memcpy(chk, src_bits, sizeof(Briggs_Chunk));
+
+                ra->ifg[dst]->chunks[i] = chk;
+            } else {
+                FOR_N(j, 0, BRIGGS_WORDS_PER_CHUNK) {
+                    chk->bits[j] |= src_bits[j];
+                }
+            }
+        }
+    }
+}
+
 static void ifg_edge(Briggs* ra, int i, int j) {
     if (i > j) {
         SWAP(int, i, j);
     }
+
+    TB_ASSERT(i < ra->ifg_len);
+    TB_ASSERT(j < ra->ifg_len);
     ifg_raw_edge(ra, i, j);
+}
+
+static bool ifg_member(Briggs* ra, int i, int j) {
+    if (i > j) {
+        SWAP(int, i, j);
+    }
+
+    Briggs_Chunk* chk = ra->ifg[i]->chunks[j / BRIGGS_BITS_PER_CHUNK];
+    if (chk == NULL) {
+        return false;
+    }
+
+    uint32_t k = j % BRIGGS_BITS_PER_CHUNK;
+    return chk->bits[k / 32] & (1u << (k % 32));
 }
 
 static void interfere_live(Ctx* restrict ctx, Briggs* ra, uint32_t* live, int vreg_id) {
     RegMask* vreg_mask = ctx->vregs[vreg_id].mask;
-    FOR_N(k, 1, ra->ifg_len) {
-        TB_Node* kn = ctx->vregs[k].n;
-        TB_ASSERT(kn == NULL || kn->gvn < ctx->f->node_count);
-
-        if (vreg_id != k && kn && bits32_member(live, kn->gvn) && reg_mask_may_intersect(vreg_mask, ctx->vregs[k].mask)) {
+    FOR_N(k, 1, ctx->f->node_count) {
+        int other_id = ctx->vreg_map[k];
+        if (other_id > 0 && vreg_id != other_id && bits32_member(live, k) && reg_mask_may_intersect(vreg_mask, ctx->vregs[other_id].mask)) {
             // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%td\n", vreg_id, k));
-            ifg_edge(ra, vreg_id, k);
+            ifg_edge(ra, vreg_id, other_id);
         }
     }
 }
@@ -521,7 +591,6 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
         ra->ifg[i] = tb_arena_alloc(ra->arena, set_size);
         memset(ra->ifg[i], 0, set_size);
     }
-    log_debug("%s: briggs: AAA %zu (arena = %.1f KiB)", f->super.name, ra->ifg_chunks_per_set, (tb_arena_current_size(ra->arena) - ra->baseline) / 1024.0f);
 
     // fixed vregs interfere with their fellow fixed vregs
     FOR_N(i, 0, ctx->num_classes) {
@@ -613,6 +682,182 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
 ////////////////////////////////
 // Aggressive coalescing
 ////////////////////////////////
+static int uf_find(int* uf, int a) {
+    // leader
+    int l = a;
+    while (uf[l] != l) {
+        l = uf[l];
+    }
+
+    // path compaction
+    while (uf[a] != a) {
+        int p = uf[a];
+        uf[a] = l, a = p;
+    }
+
+    return l;
+}
+
+static void uf_union(int* uf, int x, int y) {
+    x = uf_find(uf, x);
+    y = uf_find(uf, y);
+
+    // parent should be the smaller number
+    if (x > y) {
+        SWAP(int, x, y);
+    }
+
+    if (x != y) {
+        uf[y] = x;
+    }
+}
+
+static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
+    // TODO(NeGate): implement conservative coalescing
+    if (!aggro) {
+        return false;
+    }
+
+    int* uf = tb_arena_alloc(ra->arena, ra->ifg_len * sizeof(int));
+    FOR_N(i, 0, ra->ifg_len) {
+        uf[i] = i;
+    }
+
+    FOR_REV_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        size_t item_count = aarray_length(bb->items);
+        FOR_N(j, 0, item_count) {
+            TB_Node* n = bb->items[j];
+            int dst_id = ctx->vreg_map[n->gvn];
+            if (dst_id < 0) { continue; }
+
+            int shared_edge = ctx->node_2addr(n);
+            if (shared_edge <= 0) { continue; }
+
+            TB_ASSERT(shared_edge < n->input_count);
+            int src_id = ctx->vreg_map[n->inputs[shared_edge]->gvn];
+
+            if (!ifg_member(ra, dst_id, src_id)) {
+                int x = uf_find(uf, dst_id);
+                int y = uf_find(uf, src_id);
+                // parent should be the smaller number
+                if (x > y) {
+                    SWAP(int, x, y);
+                }
+                // union if they're not already in the same
+                // set... and they can intersect
+                if (x != y && ctx->vregs[x].assigned < 0 && ctx->vregs[y].assigned < 0) {
+                    RegMask* meet = tb__reg_mask_meet(ctx, ctx->vregs[x].mask, ctx->vregs[y].mask);
+                    if (meet != &TB_REG_EMPTY) {
+                        uf[y] = x;
+
+                        #if 0
+                        printf("COALESCED %%%u and %%%u\n  V%d ", n->gvn, n->inputs[shared_edge]->gvn, x);
+                        tb__print_regmask(ctx->vregs[x].mask);
+                        printf(" /\\ V%d ", y);
+                        tb__print_regmask(ctx->vregs[y].mask);
+                        printf("\n");
+                        #endif
+
+                        // edit the IFG so that the rest of the intersection
+                        // queries can see "x" with all of y's edges.
+                        ifg_union(ra, x, y);
+
+                        ctx->vregs[x].uses += ctx->vregs[y].uses;
+                        ctx->vregs[x].mask = meet;
+
+                        // if it's a machine copy and it's coalesced, just get rid of it
+                        if (n->type == TB_MACH_COPY) {
+                            ctx->vregs[x].uses -= 1;
+                            ctx->vreg_map[n->gvn] = 0;
+
+                            subsume_node(ctx->f, n, n->inputs[1]);
+                            tb__remove_node(ctx, ctx->f, n);
+                            tb_kill_node(ctx->f, n);
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            #if 0
+            int x = uf_find(uf, dst_id);
+            int y = uf_find(uf, src_id);
+
+            printf("FAILED TO COALESCED %%%u and %%%u\n  V%d ", n->gvn, n->inputs[shared_edge]->gvn, x);
+            tb__print_regmask(ctx->vregs[x].mask);
+            printf(" /\\ V%d ", y);
+            tb__print_regmask(ctx->vregs[y].mask);
+            printf("\n");
+            #endif
+        }
+    }
+    dump_sched(ctx);
+
+    // compact path
+    bool changes = false;
+    FOR_N(i, 1, ra->ifg_len) {
+        if (uf_find(uf, i) != i) {
+            changes = true;
+        }
+    }
+
+    if (!changes) {
+        return false;
+    }
+
+    #if 0
+    // compact vregs
+    int new_vreg_count = 1;
+    FOR_N(i, 1, ra->ifg_len) {
+        int p = uf[i];
+        // printf("V%zu - V%d (V%d)\n", i, p, uf[p]);
+
+        if (p == i) {
+            TB_ASSERT(new_vreg_count <= p);
+            if (new_vreg_count != p) {
+                // printf("MOVE V%d <- V%d\n", new_vreg_count, p);
+                ctx->vregs[new_vreg_count] = ctx->vregs[p];
+            }
+            uf[i] = new_vreg_count++;
+        }
+    }
+    #endif
+
+    // UF holds the relocations of the old vreg -> new vreg.
+    // time to rewrite the vreg_map
+    FOR_N(i, 1, aarray_length(ctx->vreg_map)) {
+        // printf("RELOCATE V%d -> V%d\n", ctx->vreg_map[i], uf[ctx->vreg_map[i]]);
+        ctx->vreg_map[i] = uf[ctx->vreg_map[i]];
+    }
+
+    // relocate the fixed regs, they couldn't be compacted so they should
+    // still be next to each other.
+    FOR_N(i, 0, ctx->num_classes) {
+        int base = ra->fixed[i];
+        ra->fixed[i] = uf[base];
+
+        #if TB_OPTDEBUG_REGALLOC
+        size_t count = ctx->num_regs[i];
+        FOR_N(j, 0, count) {
+            TB_ASSERT(uf[base] + j == uf[base + j]);
+        }
+        #endif
+    }
+
+    // relocate temporaries
+    nl_table_for(it, &ctx->tmps_map) {
+        Tmps* tmps = it->v;
+        FOR_N(i, 0, tmps->count) {
+            tmps->elems[i] = uf[tmps->elems[i]];
+        }
+    }
+
+    // aarray_set_length(ctx->vregs, new_vreg_count);
+    // TB_OPTDEBUG(REGALLOC)(printf("\nNodes after aggro coalescing: %d (started with %zu)\n", new_vreg_count, ra->ifg_len));
+
+    return true;
+}
 
 ////////////////////////////////
 // Simplify phase
@@ -648,10 +893,7 @@ static void ifg_remove_edges(Ctx* ctx, Briggs* ra, int i, IFG_Worklist* lo, IFG_
         ifg_remove(ra, k, i);
 
         if (bits32_member(hi->visited, k) && ifg_is_lo_degree(ctx, ra, k)) {
-            #if TB_OPTDEBUG_REGALLOC
-            briggs_print_vreg(ctx, ra, &ctx->vregs[k]);
-            printf("#   used to be uncolorable, we fixed that!\n");
-            #endif
+            TB_OPTDEBUG(REGALLOC)(printf("#   V%d used to be uncolorable, we fixed that!\n", k));
 
             ifg_ws_remove(hi, k);
             ifg_ws_push(lo, k);
@@ -676,8 +918,7 @@ static IFG_Worklist ifg_simplify(Ctx* restrict ctx, Briggs* restrict ra) {
 
     // bucket all the IFG nodes into low or high degree
     FOR_N(i, 1, ra->ifg_len) {
-        // dead nodes shouldn't be considered
-        if (ctx->vregs[i].n && ctx->vregs[i].n->type == TB_NULL) {
+        if (ctx->vregs[i].uses == 0) {
             continue;
         }
 
@@ -697,6 +938,10 @@ static IFG_Worklist ifg_simplify(Ctx* restrict ctx, Briggs* restrict ra) {
             briggs_print_vreg(ctx, ra, &ctx->vregs[vreg_id]);
             printf("#   colorable!\n");
             #endif
+
+            if (reg_mask_is_spill(ctx->vregs[vreg_id].mask)) {
+                ra->max_spills += 1;
+            }
 
             int d = ra->adj[vreg_id][0];
             ifg_remove_edges(ctx, ra, vreg_id, &lo, &hi);

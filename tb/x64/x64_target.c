@@ -254,13 +254,28 @@ static bool fits_into_int32(uint64_t x) {
     return hi == 0 || hi == 0xFFFFFFFF;
 }
 
+static bool try_for_imm32_2(TB_DataType dt, uint64_t src, int32_t* out_x) {
+    if (dt.type == TB_TAG_I64 || dt.type == TB_TAG_PTR) {
+        bool sign = (src >> 31ull) & 1;
+        uint64_t top = src >> 32ull;
+
+        // if the sign matches the rest of the top bits, we can sign extend just fine
+        if (top != (sign ? 0xFFFFFFFF : 0)) {
+            return false;
+        }
+    }
+
+    *out_x = src;
+    return true;
+}
+
 static bool try_for_imm32(TB_DataType dt, TB_Node* n, int32_t* out_x) {
     if (n->type != TB_ICONST) {
         return false;
     }
 
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    if (dt.type == TB_TAG_I64) {
+    if (dt.type == TB_TAG_I64 || dt.type == TB_TAG_PTR) {
         bool sign = (i->value >> 31ull) & 1;
         uint64_t top = i->value >> 32ull;
 
@@ -395,7 +410,7 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         if (local->stack_pos >= 0) {
             // each stack slot is 8bytes
             ctx->num_spills = align_up(ctx->num_spills + (local->size+7)/8, (local->align+7)/8);
-            local->stack_pos = -(8 + ctx->num_spills*8);
+            local->stack_pos = -ctx->num_spills*8;
         }
 
         if (local->type) {
@@ -695,6 +710,8 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         set_input(f, op, n->inputs[1], 1); // mem
         X86Call* op_extra = TB_NODE_GET_EXTRA(op);
 
+        op_extra->proto = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto;
+
         // check for static call
         if (n->inputs[2]->type == TB_SYMBOL) {
             op->type = x86_static_call;
@@ -702,11 +719,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         } else {
             set_input(f, op, n->inputs[2], 2);
         }
-
-        int num_params = n->input_count - 3;
-        // win64 abi will alloc 4 param slots if you even use one
-        if (ctx->abi_index == 0 && num_params > 0 && num_params < 4) { num_params = 4; }
-        if (num_params > ctx->call_usage) { ctx->call_usage = num_params; }
 
         const struct ParamDesc* abi = &param_descs[ctx->abi_index];
         op_extra->clobber_gpr = abi->caller_saved_gprs;
@@ -737,6 +749,22 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 
             set_input(f, op, n->inputs[i], i);
         }
+
+        int num_params = n->input_count - 3;
+        if (ctx->abi_index == 0) {
+            // win64 abi will alloc 4 param slots if you even use one
+            if (num_params > 0 && num_params < 4) {
+                num_params = 4;
+            }
+        } else {
+            // on SystemV there's no shadow space so we only consider call usage
+            // whenever it begins to use registers
+            if (num_params < 6) {
+                num_params = 0;
+            }
+        }
+
+        if (num_params > ctx->call_usage) { ctx->call_usage = num_params; }
 
         return op;
     } else if (n->type == TB_MEMSET) {
@@ -884,6 +912,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         if (if_br) {
             // If-logic lowering, just generate a FLAGS and make
             // the branch compare on that instead.
+            int32_t x;
             TB_Node* mach_cond = NULL;
             if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
                 TB_DataType cmp_dt = TB_NODE_GET_EXTRA_T(cond, TB_NodeCompare)->cmp_dt;
@@ -931,7 +960,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                     mach_cond = tb_alloc_node(f, x86_cmpjcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
                     op_extra = TB_NODE_GET_EXTRA(mach_cond);
 
-                    int32_t x;
                     if ((TB_IS_INTEGER_TYPE(cmp_dt) || cmp_dt.type == TB_TAG_PTR) && try_for_imm32(cmp_dt, b, &x)) {
                         if (x == 0 && (cond->type == TB_CMP_EQ || cond->type == TB_CMP_NE)) {
                             mach_cond->type = x86_testjcc;
@@ -954,10 +982,19 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
                 set_input(f, mach_cond, cond, 2);
                 set_input(f, mach_cond, cond, 4);
                 if_br->key = E;
-            } else {
+            } else if (try_for_imm32_2(cond->dt, if_br->key, &x)) {
                 mach_cond = tb_alloc_node(f, x86_cmpimmjcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
                 TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt, .imm = if_br->key);
                 set_input(f, mach_cond, cond, 2);
+                if_br->key = E;
+            } else {
+                TB_Node* imm = tb_alloc_node(f, TB_ICONST, cond->dt, 1, sizeof(TB_NodeInt));
+                TB_NODE_SET_EXTRA(imm, TB_NodeInt, .value = if_br->key);
+
+                mach_cond = tb_alloc_node(f, x86_cmpjcc, TB_TYPE_TUPLE, 5, sizeof(X86MemOp));
+                TB_NODE_SET_EXTRA(mach_cond, X86MemOp, .dt = cond->dt);
+                set_input(f, mach_cond, cond, 2);
+                set_input(f, mach_cond, imm,  4);
                 if_br->key = E;
             }
 
@@ -969,6 +1006,14 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         }
     }
 
+    int32_t x;
+    if (n->type == TB_MUL && try_for_imm32(n->dt, n->inputs[2], &x)) {
+        TB_Node* op = tb_alloc_node(f, x86_imulimm, n->dt, 2, sizeof(X86MemOp));
+        set_input(f, op, n->inputs[1], 1);
+        TB_NODE_SET_EXTRA(op, X86MemOp, .imm = x);
+        return op;
+    }
+
     // any of these ops might be the starting point to complex addressing modes
     if ((n->type >= TB_AND && n->type <= TB_SUB)   ||
         (n->type >= TB_FADD && n->type <= TB_FMAX) ||
@@ -977,14 +1022,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         n->type == TB_PTR_OFFSET) {
         const static int ops[]  = { x86_and, x86_or, x86_xor, x86_add, x86_sub };
         const static int fops[] = { x86_vadd, x86_vsub, x86_vmul, x86_vdiv, x86_vmin, x86_vmax };
-
-        int32_t x;
-        if (n->type == TB_MUL && try_for_imm32(n->dt, n->inputs[2], &x)) {
-            TB_Node* op = tb_alloc_node(f, x86_imulimm, n->dt, 2, sizeof(X86MemOp));
-            set_input(f, op, n->inputs[1], 1);
-            TB_NODE_SET_EXTRA(op, X86MemOp, .imm = x);
-            return op;
-        }
 
         // folded binop with immediate
         if (n->type >= TB_AND && n->type <= TB_SUB) {
@@ -1733,14 +1770,14 @@ static int stk_offset(Ctx* ctx, int reg) {
         // return address
         return ctx->stack_usage + (ctx->stack_header - 8);
     } else if (reg > STACK_BASE_REG_NAMES) {
-        int pos = -(8 + ((reg + 1) - STACK_BASE_REG_NAMES) * 8);
-        return ctx->stack_usage + pos;
+        int spill_num = reg - (STACK_BASE_REG_NAMES);
+        return (ctx->stack_usage - ctx->stack_header) - (spill_num*8);
     } else if (reg >= ctx->param_count) {
         // param passing slots
         return (reg - ctx->param_count)*8;
     } else {
-        // argument slots
-        return ctx->stack_header + reg*8;
+        // argument slots (reaching outside of our stack frame)
+        return ctx->stack_usage + ctx->stack_header + reg*8;
     }
 }
 
@@ -1748,7 +1785,8 @@ static Val op_at(Ctx* ctx, TB_Node* n) {
     assert(ctx->vreg_map[n->gvn] > 0);
     VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
     if (vreg->class == REG_CLASS_STK) {
-        return val_stack(stk_offset(ctx, vreg->assigned));
+        int disp = stk_offset(ctx, vreg->assigned);
+        return val_stack(disp);
     } else {
         assert(vreg->assigned >= 0);
         return (Val) { .type = vreg->class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR, .reg = vreg->assigned };
@@ -1777,7 +1815,7 @@ static Val parse_cisc_operand(Ctx* restrict ctx, TB_Node* n, Val* rhs, X86MemOp*
             rm.symbol = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeMachSymbol)->sym;
         } else if (n->inputs[2]->type == TB_MACH_FRAME_PTR) {
             rm.reg = RSP;
-            rm.imm += ctx->stack_usage;
+            rm.imm += ctx->stack_usage - ctx->stack_header;
         } else {
             rm.reg = op_gpr_at(ctx, n->inputs[2]);
         }
@@ -2109,6 +2147,12 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 dt = legalize_int(n->dt);
             }
 
+            #if 1
+            if (op->mode != MODE_ST) {
+                COMMENT("=V%d", ctx->vreg_map[n->gvn]);
+            }
+            #endif
+
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
             int op_type = ops[n->type - x86_add];
             if (op->mode == MODE_ST) {
@@ -2425,23 +2469,17 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_call: {
-            X86Call* op_extra = TB_NODE_GET_EXTRA(n);
-            Val target = op_at(ctx, n->inputs[2]);
-            __(CALL, TB_X86_QWORD, &target);
-            break;
-        }
-
         case TB_SYSCALL: {
             __(SYSCALL, TB_X86_QWORD);
             break;
         }
 
+        case x86_call:
         case x86_static_call: {
             X86Call* op_extra = TB_NODE_GET_EXTRA(n);
 
             // on SysV, AL stores the number of float params
-            if (ctx->abi_index == 1) {
+            if (ctx->abi_index == 1 && op_extra->proto->has_varargs) {
                 int float_params = 0;
                 FOR_N(i, 3, n->input_count) {
                     if (TB_IS_FLOAT_TYPE(n->inputs[i]->dt)) {
@@ -2456,10 +2494,15 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 }
             }
 
-            // CALL rel32
-            EMIT1(e, 0xE8);
-            EMIT4(e, 0);
-            tb_emit_symbol_patch(e->output, op_extra->sym, e->count - 4);
+            if (n->type == x86_static_call) {
+                // CALL rel32
+                EMIT1(e, 0xE8);
+                EMIT4(e, 0);
+                tb_emit_symbol_patch(e->output, op_extra->sym, e->count - 4);
+            } else {
+                Val target = op_at(ctx, n->inputs[2]);
+                __(CALL, TB_X86_QWORD, &target);
+            }
             break;
         }
 
@@ -2556,26 +2599,31 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         // Align stack usage to 16bytes + header to accommodate for the RIP being pushed
         // by CALL (and frameptr if applies)
         stack_usage = align_up(stack_usage + ctx->stack_header, 16) + (16 - ctx->stack_header);
+    }
+    ctx->stack_usage = stack_usage;
 
-        #if 0
+    #if 0
+    if (stack_usage > 0) {
+        printf("SPACE = %zu, FP = %zu\n", stack_usage, stack_usage - ctx->stack_header);
+
         printf("FUNC %s:\n", ctx->f->super.name);
-        FOR_N(i, 0, proto->param_count) {
-            printf("  [FP + %2td]           PARAM\n", ctx->stack_header + i*8);
+        FOR_REV_N(i, 0, proto->param_count) {
+            printf("  [FP + %2td] [SP + %2td] PARAM\n", ctx->stack_header + i*8, ctx->stack_usage + ctx->stack_header + i*8);
         }
-        printf("  [FP + %2d]           RPC\n", ctx->stack_header - 8);
+        printf("  [FP + %2d] [SP + %2d] RPC\n", ctx->stack_header - 8, ctx->stack_usage + ctx->stack_header - 8);
         if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
-            printf("  [FP + %2d]             saved RBP\n", 0);
+            printf("  [FP + %2d] [SP + %2d] saved RBP\n", 0, ctx->stack_usage);
         }
         printf("==============\n");
         FOR_N(i, 0, ctx->num_spills) {
-            printf("  [FP - %2td] [SP + %2td] SPILL\n", 8 + i*8, stack_usage - (8 + i*8));
+            int pos = stk_offset(ctx, STACK_BASE_REG_NAMES + 1 + i);
+            printf("  [FP - %2td] [SP + %2d] SPILL%zu\n", 8 + i*8, pos, i);
         }
         FOR_REV_N(i, 0, ctx->call_usage) {
             printf("            [SP + %2td] CALLEE PARAM\n", i*8);
         }
-        #endif
     }
-    ctx->stack_usage = stack_usage;
+    #endif
 
     // save frame pointer (if applies)
     if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {

@@ -170,7 +170,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             int unit_i = tb_ffs64(avail) - 1;
 
             TB_Node* n = sched.ready[idx].n;
-            in_use_mask |= 1ull << unit_i;
+            // in_use_mask |= 1ull << unit_i;
             stall = false;
 
             remove_ready(&sched, idx);

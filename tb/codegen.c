@@ -7,7 +7,7 @@ RegMask TB_REG_EMPTY = { 1, 0, 1, { 0 } };
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
     int i = aarray_length(ctx->vregs);
     aarray_insert(ctx->vreg_map, n->gvn, i);
-    aarray_push(ctx->vregs, (VReg){ .n = n, .assigned = -1, .spill_cost = NAN });
+    aarray_push(ctx->vregs, (VReg){ .n = n, .assigned = -1, .spill_cost = NAN, .uses = 1 });
     return &ctx->vregs[i];
 }
 
@@ -22,7 +22,7 @@ void tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
         f->scheduled_n *= 2;
     }
 
-    assert(bb);
+    TB_ASSERT(bb);
     f->scheduled[n->gvn] = bb;
 }
 
