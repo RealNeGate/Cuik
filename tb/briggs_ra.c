@@ -814,13 +814,10 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
         return false;
     }
 
-    #if 1
     // compact vregs
     int new_vreg_count = 1;
     FOR_N(i, 1, ra->ifg_len) {
         int p = uf[i];
-        // printf("V%zu - V%d (V%d)\n", i, p, uf[p]);
-
         if (p == i) {
             TB_ASSERT(new_vreg_count <= p);
             if (new_vreg_count != p) {
@@ -828,9 +825,11 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
                 ctx->vregs[new_vreg_count] = ctx->vregs[p];
             }
             uf[i] = new_vreg_count++;
+        } else {
+            // printf("REF  V%d <- V%d\n", uf[p], p);
+            uf[i] = uf[p];
         }
     }
-    #endif
 
     // UF holds the relocations of the old vreg -> new vreg.
     // time to rewrite the vreg_map

@@ -1980,7 +1980,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                     __(op, dt, &dst, &src);
                 }
             } else {
-                EMIT1(e, 0x90);
+                TB_OPTDEBUG(REGALLOC2)(EMIT1(e, 0x90));
             }
             break;
         }
