@@ -440,8 +440,10 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
             Cuik_IntSuffix suffix;
             uint64_t i = parse_int(t->content.length, (const char*) t->content.data, &suffix);
 
-            if (i > INT32_MAX) {
-                suffix = INT_SUFFIX_ULL;
+            if (i > UINT32_MAX) {
+                suffix = INT_SUFFIX_LL;
+            } else if (i > INT32_MAX) {
+                suffix = INT_SUFFIX_U;
             }
 
             e = push_expr(parser);

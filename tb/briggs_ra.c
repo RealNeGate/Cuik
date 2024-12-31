@@ -38,8 +38,13 @@ typedef struct {
 
     // Adjancency list IFG
     ArenaArray(uint32_t)* adj;
-    DynArray(int) undo_stk;
 } Briggs;
+
+typedef struct {
+    uint32_t vreg_id;
+    // degree before removal
+    uint32_t degree;
+} SimplifiedElem;
 
 typedef struct {
     int count;
@@ -50,7 +55,7 @@ typedef struct {
 static void ifg_build(Ctx* restrict ctx, Briggs* ra);
 static void ifg_raw_edge(Briggs* ra, int i, int j);
 static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro);
-static IFG_Worklist ifg_simplify(Ctx* restrict ctx, Briggs* ra);
+static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra);
 
 static bool bits32_test_n_set(uint32_t* arr, size_t x) {
     uint32_t y = arr[x / 32];
@@ -105,9 +110,12 @@ static void ifg_ws_remove(IFG_Worklist* ws, int vreg_id) {
     TB_ASSERT(0); // not found
 }
 
-static void ifg_ws_push(IFG_Worklist* ws, int vreg_id) {
+static bool ifg_ws_push(IFG_Worklist* ws, int vreg_id) {
     if (!bits32_test_n_set(ws->visited, vreg_id)) {
         ws->stack[ws->count++] = vreg_id;
+        return true;
+    } else {
+        return false;
     }
 }
 
@@ -212,18 +220,20 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 tmps->count = tmp_count;
                 nl_table_put(&ctx->tmps_map, n, tmps);
 
+                float c = bb->freq;
                 FOR_N(k, in_count, in_count + tmp_count) {
                     RegMask* in_mask = ins[k];
                     assert(in_mask != &TB_REG_EMPTY);
 
-                    int fixed = fixed_reg_mask(in_mask);
+                    /* int fixed = fixed_reg_mask(in_mask);
                     if (fixed >= 0) {
                         // insert new range to the existing vreg
-                        tmps->elems[k - in_count] = ra.fixed[in_mask->class] + fixed;
+                        int vreg_id = tmps->elems[k - in_count] = ra.fixed[in_mask->class] + fixed;
+                        ctx->vregs[vreg_id].uses += 1;
                     } else {
-                        tmps->elems[k - in_count] = aarray_length(ctx->vregs);
-                        aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = INFINITY, .uses = 1 });
-                    }
+                    } */
+                    tmps->elems[k - in_count] = aarray_length(ctx->vregs);
+                    aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = c, .uses = 1 });
                 }
             }
         }
@@ -330,7 +340,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         #endif
 
         // simplify (find potential spills)
-        IFG_Worklist ws = ifg_simplify(ctx, &ra);
+        ArenaArray(SimplifiedElem) stk = ifg_simplify(ctx, &ra);
 
         // select (can fail to color due)
         #if TB_OPTDEBUG_REGALLOC
@@ -342,13 +352,13 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         int num_spills = ctx->num_spills;
         Set live_stack = set_create_in_arena(arena, ra.max_spills);
 
-        int vreg_id;
-        while (vreg_id = ifg_ws_pop(&ws), vreg_id > 0) {
-            VReg* vreg = &ctx->vregs[vreg_id];
-
+        dyn_array_clear(ra.spills);
+        FOR_REV_N(i, 0, aarray_length(stk)) {
+            SimplifiedElem s = stk[i];
+            VReg* vreg = &ctx->vregs[s.vreg_id];
             // un-yank, this will let us know how far we
             // need to undo the removals on a node
-            int degree = ra.adj[vreg_id][0] = dyn_array_pop(ra.undo_stk);
+            int degree = ra.adj[s.vreg_id][0] = s.degree;
 
             // precolored? skip it
             if (vreg->assigned >= 0) {
@@ -372,7 +382,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             uint64_t mask = vreg->mask->mask[0];
             int def_class = vreg->mask->class;
             FOR_N(j, 1, degree + 1) {
-                uint32_t other_id = ra.adj[vreg_id][j];
+                uint32_t other_id = ra.adj[s.vreg_id][j];
 
                 VReg* other = &ctx->vregs[other_id];
                 if (other->mask->class == def_class && other->assigned >= 0) {
@@ -389,7 +399,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 // failed to color.. sadge
                 vreg->class    = 0;
                 vreg->assigned = -1;
-                dyn_array_put(ra.spills, vreg_id);
+                dyn_array_put(ra.spills, s.vreg_id);
             } else {
                 int hint_reg = -1;
                 if (vreg->hint_vreg >= 0 && ctx->vregs[vreg->hint_vreg].class == def_class) {
@@ -470,7 +480,6 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
         // recompute liveness
         redo_dataflow(ctx, arena);
-        dump_sched(ctx);
 
         // time to retry
         dyn_array_clear(ra.spills);
@@ -792,7 +801,6 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
             #endif
         }
     }
-    dump_sched(ctx);
 
     // compact path
     bool changes = false;
@@ -806,7 +814,7 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
         return false;
     }
 
-    #if 0
+    #if 1
     // compact vregs
     int new_vreg_count = 1;
     FOR_N(i, 1, ra->ifg_len) {
@@ -853,8 +861,8 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
         }
     }
 
-    // aarray_set_length(ctx->vregs, new_vreg_count);
-    // TB_OPTDEBUG(REGALLOC)(printf("\nNodes after aggro coalescing: %d (started with %zu)\n", new_vreg_count, ra->ifg_len));
+    aarray_set_length(ctx->vregs, new_vreg_count);
+    log_debug("%s: briggs: aggro coalescing %zu -> %d", ctx->f->super.name, ra->ifg_len, new_vreg_count);
 
     return true;
 }
@@ -905,16 +913,14 @@ static void ifg_remove_edges(Ctx* ctx, Briggs* ra, int i, IFG_Worklist* lo, IFG_
 }
 
 // returns the stack size (0 on failure).
-static IFG_Worklist ifg_simplify(Ctx* restrict ctx, Briggs* restrict ra) {
-    dyn_array_clear(ra->spills);
-    IFG_Worklist stk = ifg_ws_alloc(ctx, ra);
+static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
+    ArenaArray(SimplifiedElem) stk = aarray_create(ra->arena, SimplifiedElem, ra->ifg_len);
 
     TB_ArenaSavepoint sp = tb_arena_save(ra->arena);
     IFG_Worklist lo = ifg_ws_alloc(ctx, ra);
     IFG_Worklist hi = ifg_ws_alloc(ctx, ra);
 
     ra->max_spills = 0;
-    dyn_array_clear(ra->undo_stk);
 
     // bucket all the IFG nodes into low or high degree
     FOR_N(i, 1, ra->ifg_len) {
@@ -945,9 +951,9 @@ static IFG_Worklist ifg_simplify(Ctx* restrict ctx, Briggs* restrict ra) {
 
             int d = ra->adj[vreg_id][0];
             ifg_remove_edges(ctx, ra, vreg_id, &lo, &hi);
-            ifg_ws_push(&stk, vreg_id);
 
-            dyn_array_put(ra->undo_stk, d);
+            SimplifiedElem s = { vreg_id, d };
+            aarray_push(stk, s);
         }
 
         if (hi.count == 0) {
@@ -988,10 +994,10 @@ static IFG_Worklist ifg_simplify(Ctx* restrict ctx, Briggs* restrict ra) {
         // speculatively simplify
         int d = ra->adj[best_spill][0];
         ifg_remove_edges(ctx, ra, best_spill, &lo, &hi);
-
         ifg_ws_remove(&hi, best_spill);
-        ifg_ws_push(&stk, best_spill);
-        dyn_array_put(ra->undo_stk, d);
+
+        SimplifiedElem s = { best_spill, d };
+        aarray_push(stk, s);
 
         // TODO(NeGate): assuming 1 stack slot per vreg (will become incorrect later on)
         ra->max_spills += 1;

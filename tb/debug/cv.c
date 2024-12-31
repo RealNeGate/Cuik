@@ -169,7 +169,7 @@ static TB_SectionGroup codeview_generate_debug_info(TB_Module* m, TB_Arena* aren
         DynArray(TB_FunctionOutput*) funcs = m->sections[i].funcs;
         DynArray(TB_Global*) globals = m->sections[i].globals;
 
-        reloc_cap = (2 * dyn_array_length(globals)) + (4 * dyn_array_length(funcs));
+        reloc_cap += (2 * dyn_array_length(globals)) + (4 * dyn_array_length(funcs));
     }
 
     sections[0].relocations = tb_arena_alloc(arena, reloc_cap * sizeof(TB_ObjectReloc));

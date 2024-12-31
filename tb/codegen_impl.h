@@ -414,8 +414,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        tb__rogers(&ctx, &f->tmp_arena);
-        // tb__briggs(&ctx, &f->tmp_arena);
+        // tb__rogers(&ctx, &f->tmp_arena);
+        tb__briggs(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);
@@ -660,7 +660,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             TB_CGEmitter* e = &ctx.emit;
             {
                 #if ASM_STYLE_PRINT_POS
-                tb_asm_print(e, "%-4x  BB%d: ", start, id);
+                int len = tb_asm_print(e, "%-4x  BB%d: ", start, id);
 
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[32m"));
                 tb_asm_print(e, "// Freq: %.4f, (", cfg.blocks[id].freq);
@@ -690,7 +690,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[0m"));
                 tb_asm_print(e, "\n");
                 #else
-                tb_asm_print(e, ".bb%d: ", id);
+                int len = tb_asm_print(e, ".bb%d: ", id);
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[32m"));
                 tb_asm_print(e, "// Freq: %.4f", cfg.blocks[id].freq);
                 TB_OPTDEBUG(ANSI)(tb_asm_print(e, "\x1b[0m"));

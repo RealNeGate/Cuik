@@ -107,10 +107,10 @@ static void tb_emit_comment(TB_CGEmitter* restrict e, TB_Arena* arena, const cha
     }
 }
 
-static void tb_asm_print(TB_CGEmitter* restrict e, const char* fmt, ...) {
+static int tb_asm_print(TB_CGEmitter* restrict e, const char* fmt, ...) {
     // make sure we have enough bytes for the operation
     TB_Assembly* new_head = e->tail_asm;
-    if (new_head == NULL || new_head->length + 100 >= TB_ASSEMBLY_CHUNK_CAP) {
+    if (new_head == NULL || new_head->length + 120 >= TB_ASSEMBLY_CHUNK_CAP) {
         new_head = tb_platform_valloc(TB_ASSEMBLY_CHUNK_CAP);
         // new_head->next = NULL;
         // new_head->length = 0;
@@ -125,11 +125,13 @@ static void tb_asm_print(TB_CGEmitter* restrict e, const char* fmt, ...) {
 
     va_list ap;
     va_start(ap, fmt);
-    int len = vsnprintf(&new_head->data[new_head->length], 100, fmt, ap);
+    int len = vsnprintf(&new_head->data[new_head->length], 120, fmt, ap);
     va_end(ap);
 
+    TB_ASSERT(len >= 0 && len < 120);
     new_head->length += len;
     e->total_asm += len;
+    return len;
 }
 
 static void tb_emit_rel32(TB_CGEmitter* restrict e, uint32_t* head, uint32_t pos, uint32_t mask, uint32_t shift) {

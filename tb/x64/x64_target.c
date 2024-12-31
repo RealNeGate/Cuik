@@ -1842,6 +1842,32 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
     TB_Node* n = bundle->arr[0];
     VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
 
+    #if TB_OPTDEBUG_REGALLOC2
+    if (e->has_comments) {
+        enum { BUF_SIZE = 1024 };
+        char buf[BUF_SIZE];
+        int j = 0;
+
+        int dst = ctx->vreg_map[n->gvn];
+        if (dst > 0) {
+            j += snprintf(buf+j, BUF_SIZE-j, "V%-3d", dst);
+        } else {
+            j += snprintf(buf+j, BUF_SIZE-j, "____");
+        }
+        j += snprintf(buf+j, BUF_SIZE-j, " = %-14s (", tb_node_get_name(n->type));
+        FOR_N(i, 0, n->input_count) {
+            int src = n->inputs[i] ? ctx->vreg_map[n->inputs[i]->gvn] : 0;
+            if (src > 0) {
+                j += snprintf(buf+j, BUF_SIZE-j, " V%-3d", src);
+            } else {
+                j += snprintf(buf+j, BUF_SIZE-j, " ____");
+            }
+        }
+        j += snprintf(buf+j, BUF_SIZE-j, " )");
+        COMMENT("%.*s", j > 100 ? 100 : j, buf);
+    }
+    #endif
+
     switch (n->type) {
         // some ops don't do shit lmao
         case TB_PHI:
@@ -1938,11 +1964,11 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
             if (!is_value_match(&dst, &src)) {
-                if (dst.type == VAL_MEM && src.type != VAL_MEM) {
+                /* if (dst.type == VAL_MEM && src.type != VAL_MEM) {
                     COMMENT("spill");
                 } else if (dst.type != VAL_MEM && src.type == VAL_MEM) {
                     COMMENT("reload");
-                }
+                } */
 
                 if (dst.type == VAL_GPR && src.type == VAL_XMM) {
                     __(MOV_I2F, dt, &dst, &src);
@@ -1953,6 +1979,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                     int op = dt < TB_X86_F32x1 ? MOV : FP_MOV;
                     __(op, dt, &dst, &src);
                 }
+            } else {
+                EMIT1(e, 0x90);
             }
             break;
         }
@@ -2146,12 +2174,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             } else {
                 dt = legalize_int(n->dt);
             }
-
-            #if 1
-            if (op->mode != MODE_ST) {
-                COMMENT("=V%d", ctx->vreg_map[n->gvn]);
-            }
-            #endif
 
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
             int op_type = ops[n->type - x86_add];
@@ -2808,6 +2830,8 @@ static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* re
 
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end) {
     while (pos < end) {
+        uint64_t line_start = e->total_asm;
+
         #if ASM_STYLE_PRINT_POS
         E("%-4x  ", pos);
         #else
@@ -2820,6 +2844,7 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
             TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
             d->loc++;
 
+            line_start = e->total_asm;
             #if ASM_STYLE_PRINT_POS
             E("%-4x  ", pos);
             #else
@@ -2834,7 +2859,6 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
             continue;
         }
 
-        uint64_t line_start = e->total_asm;
         const char* mnemonic = tb_x86_mnemonic(&inst);
         if (inst.flags & TB_X86_INSTR_REP) {
             E("rep ");
@@ -2889,12 +2913,12 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
         int offset = e->total_asm - line_start;
         if (d->comment && d->comment->pos == pos) {
             TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
-            E("      %*s", 40 - offset, "// ");
+            E("%*s// ", 50 - offset, "");
             bool out_of_line = false;
             do {
                 if (out_of_line) {
                     // tack on a newline
-                    E("      %*s// ", offset, "");
+                    E("%*s// ", 50, "");
                 }
 
                 E("%.*s\n", d->comment->line_len, d->comment->line);
