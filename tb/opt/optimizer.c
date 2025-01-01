@@ -1005,6 +1005,7 @@ static void inc_nums(int* arr, int i) { if (i < TB_NODE_TYPE_MAX) { arr[i]++; } 
 // because certain optimizations apply when things are the same
 // we mark ALL users including the ones who didn't get changed
 // when subsuming.
+static Lattice* yoink = NULL;
 static TB_Node* peephole(TB_Function* f, TB_Node* n) {
     DO_IF(TB_OPTDEBUG_PEEP)(printf("PEEP t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 

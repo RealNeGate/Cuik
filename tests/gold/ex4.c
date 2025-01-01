@@ -5,45 +5,16 @@
 #include <stdio.h>
 #include <assert.h>
 
-#if 0
-void compute(size_t n, double a, double* x, double* y) {
-    /* #if 0
-    size_t i = 0;
-    for (; i+1 < n; i += 2) {
-        y[i+0] = a*x[i+0] + y[i+0];
-        y[i+1] = a*x[i+1] + y[i+1];
-    }
-
-    if (i < n) {
-        y[i] = a*x[i] + y[i];
-    }
-    #else
-    size_t i = 0;
-    for (; i < n; i++) {
-        y[i] = a*x[i] + y[i];
-    }
-    #endif */
-
-    for (;;) { // size_t j = 0; j < 10; j++) {
-        for (size_t i = 0; i < n;) {
-            if (x[i] > 0.0f) {
-                y[i] = a*x[i] + y[i];
-                i += 1;
-            } else {
-                y[i] = a*x[i] - y[i];
-                i += 1;
-            }
-        }
-
-        if (n > 10) {
-            for (;;) { *x = 1.0; }
-        }
-    }
+#if 1
+static const char str[] = "Paused my existence sesh to be here";
+int main() {
+    uint64_t h = xxh_64(str, sizeof(str)-1, 0);
+    printf("hash = %"PRIu64"\n", h);
+    return 0;
 }
-#else
-uint64_t xxh_64 (const void *key, int len, uint64_t h) {
-    assert(key);
+#endif
 
+uint64_t xxh_64 (const void *key, int len, uint64_t h) {
     // primes used in mul-rot updates
     uint64_t p1 = 0x9e3779b185ebca87, p2 = 0xc2b2ae3d27d4eb4f,
     p3 = 0x165667b19e3779f9, p4 =0x85ebca77c2b2ae63, p5 = 0x27d4eb2f165667c5;
@@ -96,14 +67,3 @@ uint64_t xxh_64 (const void *key, int len, uint64_t h) {
     s64 =  (s64 ^ (s64 >> 29))*p3;
     return (s64 ^ (s64 >> 32));
 }
-#endif
-
-#if 1
-static const char str[] = "Paused my existence sesh to be here";
-int main() {
-    uint64_t h = xxh_64(str, sizeof(str)-1, 0);
-    printf("hash = %"PRIu64, h);
-    return 0;
-}
-#endif
-

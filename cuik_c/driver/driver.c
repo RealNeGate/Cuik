@@ -369,8 +369,6 @@ static void ld_invoke(TPool* tp, BuildStepInfo* info) {
 
     CUIK_TIMED_BLOCK("Backend") {
         if (args->optimize) {
-            cuiksched_per_function(tp, s->ld.cu, mod, args, local_opt_func);
-
             int t = 0;
             do {
                 CUIK_TIMED_BLOCK("Local opts") {
@@ -386,7 +384,9 @@ static void ld_invoke(TPool* tp, BuildStepInfo* info) {
             // printf("%s", pre);
         }
 
-        cuiksched_per_function(tp, s->ld.cu, mod, args, apply_func);
+        CUIK_TIMED_BLOCK("Codegen") {
+            cuiksched_per_function(tp, s->ld.cu, mod, args, apply_func);
+        }
     }
 
     // Once the frontend is complete we don't need this... unless we wanna keep it

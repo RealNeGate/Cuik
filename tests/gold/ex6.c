@@ -2,7 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 
-#if 1
+#if 0
 int main() {
     printf("Hash: %#x\n", murmur3_32("Hello!!!", 8));
     return 0;

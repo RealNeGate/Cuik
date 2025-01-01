@@ -292,6 +292,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         }
 
         if (ifg_coalesce(ctx, &ra, rounds == 1)) {
+            cuikperf_region_end();
             tb_arena_restore(arena, sp);
             continue;
         }
@@ -339,7 +340,9 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         #endif
 
         // simplify (find potential spills)
+        cuikperf_region_start("simplify", NULL);
         ArenaArray(SimplifiedElem) stk = ifg_simplify(ctx, &ra);
+        cuikperf_region_end();
 
         // select (can fail to color due)
         #if TB_OPTDEBUG_REGALLOC
@@ -351,6 +354,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         int num_spills = ctx->num_spills;
         Set live_stack = set_create_in_arena(arena, ra.max_spills);
 
+        cuikperf_region_start("select", NULL);
         dyn_array_clear(ra.spills);
         FOR_REV_N(i, 0, aarray_length(stk)) {
             SimplifiedElem s = stk[i];
@@ -418,6 +422,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 }
             }
         }
+        cuikperf_region_end();
 
         // if we found nothing to spill, we've successfully colored vregs
         if (dyn_array_length(ra.spills) == 0) {
@@ -438,6 +443,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
         // if anything in the spill candidates failed to color, we need to spill. note that
         // it wouldn't have been able to fail coloring without making it to this list.
+        cuikperf_region_start("spill", NULL);
         FOR_N(i, 0, dyn_array_length(ra.spills)) {
             int vreg_id = ra.spills[i];
             TB_Node* n  = ctx->vregs[vreg_id].n;
@@ -465,6 +471,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 spill_entire_lifetime(ctx, spill_vreg, spill_rm, false);
             }
         }
+        cuikperf_region_end();
 
         // undo assignments
         FOR_N(i, 1, aarray_length(ctx->vregs)) {

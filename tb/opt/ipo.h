@@ -1,3 +1,4 @@
+
 typedef struct {
     bool on_stack;
     int index, low_link;
