@@ -71,7 +71,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_LOAD]           = { ideal_load,        identity_load,      NULL             },
     [TB_STORE]          = { ideal_store,       NULL,               value_mem        },
     [TB_MEMSET]         = { NULL,              NULL,               value_mem        },
-    [TB_MEMCPY]         = { NULL,              NULL,               value_mem        },
+    [TB_MEMCPY]         = { ideal_memcpy,      NULL,               value_mem        },
     [TB_SPLITMEM]       = { ideal_split_mem,   NULL,               value_mem        },
     [TB_MERGEMEM]       = { ideal_merge_mem,   NULL,               value_mem        },
     // ptr values

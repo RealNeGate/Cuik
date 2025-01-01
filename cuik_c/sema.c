@@ -1643,8 +1643,8 @@ void sema_stmt(TranslationUnit* tu, Stmt* restrict s) {
             break;
         }
         case STMT_SWITCH: {
-            Cuik_QualType type = cuik__sema_expr(tu, s->switch_.condition);
-            set_root_cast(s->switch_.condition, type);
+            Cuik_QualType type = cuik__sema_expr(tu, s->switch_.cond);
+            set_root_cast(s->switch_.cond, type);
 
             if (CUIK_QUAL_TYPE_IS_NULL(type)) {
                 break;

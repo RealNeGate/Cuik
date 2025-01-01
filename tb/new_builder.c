@@ -512,6 +512,16 @@ TB_Node* tb_builder_label_make(TB_GraphBuilder* g) {
     return syms;
 }
 
+TB_Node* tb_builder_label_make2(TB_GraphBuilder* g, TB_Node* label) {
+    TB_Function* f = g->f;
+
+    TB_Node* r = tb_alloc_node_dyn(f, TB_REGION, TB_TYPE_CONTROL, 0, 2, sizeof(TB_NodeRegion));
+    TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, label->input_count, sizeof(TB_NodeSymbolTable));
+    set_input(f, syms, r, 0);
+    set_input(f, syms, r, 1);
+    return syms;
+}
+
 void tb_builder_label_kill(TB_GraphBuilder* g, TB_Node* label) {
     if (label->type != TB_NULL) {
         TB_ASSERT(label->type == TB_SYMBOL_TABLE);
@@ -627,40 +637,56 @@ void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]) {
     br->succ_count = 2;
 }
 
-void tb_builder_switch(TB_GraphBuilder* g, TB_Node* cond, int path_count, uint64_t* keys, TB_Node** paths) {
+TB_Node* tb_builder_switch(TB_GraphBuilder* g, TB_Node* cond) {
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, TB_BRANCH, TB_TYPE_TUPLE, 2, sizeof(TB_NodeBranch));
     set_input(f, n, xfer_ctrl(g, n), 0);
     set_input(f, n, cond, 1);
 
-    int prob = (100 / path_count);
-    if (prob < 1) { prob = 1; }
-
-    paths[0] = branch_cproj(f, n, prob, 0, 0);
-    FOR_N(i, 1, path_count) {
-        paths[i] = branch_cproj(f, n, prob, keys[i - 1], i);
-    }
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    br->total_hits = 100;
+    br->succ_count = 1;
 
     TB_Node* curr = g->curr;
     g->curr = NULL;
+    return curr;
+}
 
-    FOR_N(i, 0, path_count) {
-        TB_Node* cproj = paths[i];
+TB_Node* tb_builder_def_case(TB_GraphBuilder* g, TB_Node* br_syms, int prob) {
+    TB_Function* f = g->f;
+    TB_ASSERT(br_syms->type == TB_SYMBOL_TABLE);
+    TB_ASSERT(br_syms->inputs[0]->type == TB_BRANCH);
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(br_syms->inputs[0]);
 
-        TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, curr->input_count, sizeof(TB_NodeSymbolTable));
-        set_input(f, syms, cproj, 0);
-        set_input(f, syms, cproj, 1);
-        TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = true);
+    TB_Node* cproj = branch_cproj(f, br_syms->inputs[0], prob, 0, 0);
+    TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, br_syms->input_count, sizeof(TB_NodeSymbolTable));
+    set_input(f, syms, cproj, 0);
+    set_input(f, syms, cproj, 1);
+    TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = true);
 
-        FOR_N(j, 2, curr->input_count) {
-            set_input(f, syms, curr->inputs[j], j);
-        }
-        paths[i] = syms;
+    FOR_N(j, 2, br_syms->input_count) {
+        set_input(f, syms, br_syms->inputs[j], j);
     }
+    return syms;
+}
 
-    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-    br->total_hits = 100;
-    br->succ_count = path_count;
+TB_Node* tb_builder_key_case(TB_GraphBuilder* g, TB_Node* br_syms, uint64_t key, int prob) {
+    TB_Function* f = g->f;
+
+    TB_ASSERT(br_syms->type == TB_SYMBOL_TABLE);
+    TB_ASSERT(br_syms->inputs[0]->type == TB_BRANCH);
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(br_syms->inputs[0]);
+
+    TB_Node* cproj = branch_cproj(f, br_syms->inputs[0], prob, key, br->succ_count++);
+    TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, br_syms->input_count, sizeof(TB_NodeSymbolTable));
+    set_input(f, syms, cproj, 0);
+    set_input(f, syms, cproj, 1);
+    TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = true);
+
+    FOR_N(j, 2, br_syms->input_count) {
+        set_input(f, syms, br_syms->inputs[j], j);
+    }
+    return syms;
 }
 
 TB_Node* tb_builder_phi(TB_GraphBuilder* g, int val_count, TB_Node** vals) {

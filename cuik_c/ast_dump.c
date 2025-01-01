@@ -510,7 +510,7 @@ static void dump_stmt(FILE* stream, Stmt* restrict s, int depth, bool last_node)
         }
         case STMT_SWITCH: {
             fprintf(stream, "Switch\n");
-            dump_expr(stream, s->switch_.condition, depth + 1, true);
+            dump_expr(stream, s->switch_.cond, depth + 1, true);
             dump_stmt(stream, s->switch_.body, depth + 1, true);
             break;
         }

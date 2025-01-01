@@ -262,8 +262,8 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
     if (b->_int.max <= bits) {
         uint64_t zeros = 0, ones = 0;
 
-        int64_t min  = a->_int.min & mask;
-        int64_t max  = a->_int.max & mask;
+        int64_t min  = a->_int.min;
+        int64_t max  = a->_int.max;
         int64_t bmin = b->_int.min & mask;
         int64_t bmax = b->_int.max & mask;
 
@@ -271,17 +271,18 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
             case TB_SHL: {
                 // we at least shifted this many bits therefore we
                 // at least have this many zeros at the bottom
-                zeros |= (1ull << b->_int.min) - 1ull;
+                zeros |= (1ull << bmin) - 1ull;
 
                 if (bmin == bmax) {
                     uint64_t new_min = (min << bmin) & mask;
                     uint64_t new_max = (max << bmin) & mask;
 
                     // we know exactly where the bits went
-                    ones <<= b->_int.min;
+                    ones <<= bmin;
 
                     // overflow check
-                    if ((new_min >> bmin) == min && (new_max >> bmin) == max) {
+                    if ((new_min >> bmin) == min &&
+                        (new_max >> bmin) == max) {
                         return lattice_gimme_uint2(f, new_min, new_max, zeros, ones, bits);
                     }
                 }

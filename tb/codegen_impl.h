@@ -443,7 +443,20 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                     }
                 }
             } else if (item_count > 1 || !cfg_is_cproj(bb->items[0])) {
-                empty = false;
+                // if there's just empty copies we can consider it empty
+                FOR_N(j, 1, item_count) {
+                    TB_Node* n = bb->items[j];
+                    if (n->type == TB_MACH_MOVE ||
+                        n->type == TB_MACH_COPY) {
+                        // if both dst & src match, it's not gonna emit anything
+                        if (ctx.vreg_map[n->gvn] == ctx.vreg_map[n->inputs[1]->gvn]) {
+                            continue;
+                        }
+                    }
+
+                    empty = false;
+                    break;
+                }
             }
 
             if (empty) {

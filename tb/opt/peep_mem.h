@@ -29,6 +29,45 @@ static bool no_alias_with(TB_Module* m, KnownPointer us, int us_bytes, TB_Node* 
     return false;
 }
 
+static TB_Node* ideal_memcpy(TB_Function* f, TB_Node* n) {
+    TB_Node* ctrl = n->inputs[0];
+    TB_Node* mem = n->inputs[1];
+    TB_Node* dst = n->inputs[2];
+    TB_Node* src = n->inputs[3];
+
+    // convert small memcpys into scalar stores (+ bitcasts), this
+    // allows mem2reg to fold away the memory
+    int align = TB_NODE_GET_EXTRA_T(n, TB_NodeMemAccess)->align;
+    if (is_iconst(f, n->inputs[4])) {
+        int64_t size = latuni_get(f, n->inputs[4])->_int.min;
+
+        TB_DataType dt;
+        switch (size) {
+            case 1: dt = TB_TYPE_I8;  break;
+            case 2: dt = TB_TYPE_I16; break;
+            case 4: dt = TB_TYPE_I32; break;
+            case 8: dt = TB_TYPE_I64; break;
+            default: return NULL;
+        }
+
+        TB_Node* ld = tb_alloc_node(f, TB_LOAD, dt, 3, sizeof(TB_NodeMemAccess));
+        set_input(f, ld, ctrl, 0);
+        set_input(f, ld, mem,  1);
+        set_input(f, ld, src,  2);
+        TB_NODE_SET_EXTRA(ld, TB_NodeMemAccess, .align = align);
+
+        TB_Node* st = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
+        set_input(f, st, ctrl, 0);
+        set_input(f, st, mem,  1);
+        set_input(f, st, dst,  2);
+        set_input(f, st, ld,   3);
+        TB_NODE_SET_EXTRA(st, TB_NodeMemAccess, .align = align);
+        return st;
+    }
+
+    return NULL;
+}
+
 static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
     TB_Node* ctrl = n->inputs[0];
     TB_Node* mem = n->inputs[1];

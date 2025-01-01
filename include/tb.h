@@ -1421,6 +1421,7 @@ TB_API void tb_builder_set_var(TB_GraphBuilder* g, int id, TB_Node* v);
 // control flow primitives:
 //   makes a region we can jump to (generally for forward jumps)
 TB_API TB_Node* tb_builder_label_make(TB_GraphBuilder* g);
+TB_API TB_Node* tb_builder_label_make2(TB_GraphBuilder* g, TB_Node* label);
 //   once a label is complete you can no longer insert jumps to it, the phis
 //   are placed and you can then insert code into the label's body.
 TB_API void tb_builder_label_complete(TB_GraphBuilder* g, TB_Node* label);
@@ -1437,8 +1438,13 @@ TB_API void tb_builder_label_kill(TB_GraphBuilder* g, TB_Node* label);
 //   writes to the paths array the symbol tables for the branch.
 //   [0] is the true case and [1] is the false case.
 TB_API void tb_builder_if(TB_GraphBuilder* g, TB_Node* cond, TB_Node* paths[2]);
-//   switch tables
-TB_API void tb_builder_switch(TB_GraphBuilder* g, TB_Node* cond, int n, uint64_t* keys, TB_Node** paths);
+//   begins empty switch statement, we can add cases as we go.
+//   returns the symbol table we use to instatiate the cases.
+TB_API TB_Node* tb_builder_switch(TB_GraphBuilder* g, TB_Node* cond);
+//   returns the symbol table for the newly created case.
+TB_API TB_Node* tb_builder_def_case(TB_GraphBuilder* g, TB_Node* br_syms, int prob);
+//   returns the symbol table for the newly created case.
+TB_API TB_Node* tb_builder_key_case(TB_GraphBuilder* g, TB_Node* br_syms, uint64_t key, int prob);
 //   unconditional jump to target
 TB_API void tb_builder_br(TB_GraphBuilder* g, TB_Node* target);
 //   forward and backward branch target

@@ -308,7 +308,7 @@ static Stmt* parse_stmt2(Cuik_Parser* parser, TokenStream* restrict s) {
             expect_char(s, ')');
 
             n->op = STMT_SWITCH;
-            n->switch_ = (struct StmtSwitch){ .condition = cond };
+            n->switch_ = (struct StmtSwitch){ .cond = cond };
 
             // begin a new chain but keep the old one
             Stmt* old_switch = current_switch_or_case;

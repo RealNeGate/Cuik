@@ -2,6 +2,13 @@
 #include <string.h>
 #include <stdio.h>
 
+#if 1
+int main() {
+    printf("Hash: %#x\n", murmur3_32("Hello!!!", 8));
+    return 0;
+}
+#endif
+
 #if 0
 uint32_t murmur3_32(const void* key, size_t len);
 #else
@@ -20,7 +27,6 @@ uint32_t murmur3_32(const void* key, size_t len) {
     }
 
     // load/mix up to 3 remaining tail bytes into a tail block
-    #if 0
     uint32_t t = 0;
     const uint8_t *tail = ((const uint8_t*) key) + 4*(len/4);
     switch(len & 3) {
@@ -31,7 +37,6 @@ uint32_t murmur3_32(const void* key, size_t len) {
             h ^= ((0xcc9e2d51*t << 15) | (0xcc9e2d51*t >> 17))*0x1b873593;
         }
     }
-    #endif
 
     // finalization mix, including key length
     h = ((h^len) ^ ((h^len) >> 16))*0x85ebca6b;
@@ -39,10 +44,3 @@ uint32_t murmur3_32(const void* key, size_t len) {
     return (h ^ (h >> 16));
 }
 #endif
-
-int main() {
-    printf("Hash: %#x\n", murmur3_32("Hello!!!", 8));
-    return 0;
-}
-
-

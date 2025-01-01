@@ -220,10 +220,9 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 tmps->count = tmp_count;
                 nl_table_put(&ctx->tmps_map, n, tmps);
 
-                float c = bb->freq;
                 FOR_N(k, in_count, in_count + tmp_count) {
                     RegMask* in_mask = ins[k];
-                    assert(in_mask != &TB_REG_EMPTY);
+                    TB_ASSERT(in_mask != &TB_REG_EMPTY);
 
                     /* int fixed = fixed_reg_mask(in_mask);
                     if (fixed >= 0) {
@@ -233,7 +232,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                     } else {
                     } */
                     tmps->elems[k - in_count] = aarray_length(ctx->vregs);
-                    aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = c, .uses = 1 });
+                    aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = INFINITY, .uses = 1 });
                 }
             }
         }
@@ -507,21 +506,34 @@ static void ifg_raw_edge(Briggs* ra, int i, int j) {
 }
 
 static void ifg_union(Briggs* ra, int dst, int src) {
-    FOR_N(i, 0, ra->ifg_chunks_per_set) {
-        Briggs_Chunk* chk = ra->ifg[dst]->chunks[i];
-        if (ra->ifg[src]->chunks[i] != NULL) {
-            uint32_t* src_bits = ra->ifg[src]->chunks[i]->bits;
-            if (chk == NULL) {
-                // first time we're writing to this chunk
-                // TODO(NeGate): put these into a free list, we wanna recycle chunks as much as possible.
-                chk = tb_arena_alloc(ra->arena, sizeof(Briggs_Chunk));
-                memcpy(chk, src_bits, sizeof(Briggs_Chunk));
+    FOR_N(j, 0, ra->ifg_chunks_per_set) {
+        Briggs_Chunk* chk = ra->ifg[dst]->chunks[j];
+        if (ra->ifg[src]->chunks[j] == NULL) {
+            continue;
+        }
 
-                ra->ifg[dst]->chunks[i] = chk;
-            } else {
-                FOR_N(j, 0, BRIGGS_WORDS_PER_CHUNK) {
-                    chk->bits[j] |= src_bits[j];
+        uint32_t* src_bits = ra->ifg[src]->chunks[j]->bits;
+        if (chk == NULL) {
+            // first time we're writing to this chunk
+            // TODO(NeGate): put these into a free list, we wanna recycle chunks as much as possible.
+            chk = tb_arena_alloc(ra->arena, sizeof(Briggs_Chunk));
+            memset(chk, 0, sizeof(Briggs_Chunk));
+
+            ra->ifg[dst]->chunks[j] = chk;
+        }
+
+        // newly set
+        FOR_N(k, 0, BRIGGS_WORDS_PER_CHUNK) {
+            uint32_t bits = ~chk->bits[k] & src_bits[k];
+            chk->bits[k] |= src_bits[k];
+
+            while (bits) {
+                int l = tb_ffs(bits) - 1;
+                int m = j*BRIGGS_BITS_PER_CHUNK + k*32 + l;
+                if (dst < m) {
+                    ifg_raw_edge(ra, m, dst);
                 }
+                bits &= ~(1u << l);
             }
         }
     }
@@ -653,9 +665,10 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
                         VReg* in_vreg = node_vreg(ctx, in);
                         if (in_vreg && reg_mask_may_intersect(def_mask, in_vreg->mask)) {
                             int in_vreg_id = in_vreg - ctx->vregs;
-
-                            // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%d\n", vreg_id, in_vreg_id));
-                            ifg_edge(ra, in_vreg_id, vreg_id);
+                            if (in_vreg_id != vreg_id) {
+                                // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%d\n", vreg_id, in_vreg_id));
+                                ifg_edge(ra, in_vreg_id, vreg_id);
+                            }
                         }
                     }
                 }
@@ -689,7 +702,7 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
 }
 
 ////////////////////////////////
-// Aggressive coalescing
+// Coalescing
 ////////////////////////////////
 static int uf_find(int* uf, int a) {
     // leader
@@ -732,11 +745,13 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
         uf[i] = i;
     }
 
-    FOR_REV_N(i, 0, ctx->bb_count) {
+    FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         size_t item_count = aarray_length(bb->items);
-        FOR_N(j, 0, item_count) {
-            TB_Node* n = bb->items[j];
+
+        size_t j = 0;
+        while (j < item_count) {
+            TB_Node* n = bb->items[j++];
             int dst_id = ctx->vreg_map[n->gvn];
             if (dst_id < 0) { continue; }
 
@@ -746,9 +761,9 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
             TB_ASSERT(shared_edge < n->input_count);
             int src_id = ctx->vreg_map[n->inputs[shared_edge]->gvn];
 
-            if (!ifg_member(ra, dst_id, src_id)) {
-                int x = uf_find(uf, dst_id);
-                int y = uf_find(uf, src_id);
+            int x = uf_find(uf, dst_id);
+            int y = uf_find(uf, src_id);
+            if (!ifg_member(ra, x, y)) {
                 // parent should be the smaller number
                 if (x > y) {
                     SWAP(int, x, y);
@@ -780,9 +795,11 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
                             ctx->vregs[x].uses -= 1;
                             ctx->vreg_map[n->gvn] = 0;
 
-                            subsume_node(ctx->f, n, n->inputs[1]);
                             tb__remove_node(ctx, ctx->f, n);
-                            tb_kill_node(ctx->f, n);
+                            subsume_node(ctx->f, n, n->inputs[1]);
+
+                            item_count = aarray_length(bb->items);
+                            j -= 1;
                         }
                         continue;
                     }
@@ -790,9 +807,6 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
             }
 
             #if 0
-            int x = uf_find(uf, dst_id);
-            int y = uf_find(uf, src_id);
-
             printf("FAILED TO COALESCED %%%u and %%%u\n  V%d ", n->gvn, n->inputs[shared_edge]->gvn, x);
             tb__print_regmask(ctx->vregs[x].mask);
             printf(" /\\ V%d ", y);

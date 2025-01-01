@@ -550,7 +550,7 @@ struct Stmt {
             // linked lists
             Stmt* next;
 
-            Cuik_Expr* condition;
+            Cuik_Expr* cond;
             Stmt* body;
         } switch_;
         struct StmtDecl {

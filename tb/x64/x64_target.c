@@ -1848,6 +1848,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         char buf[BUF_SIZE];
         int j = 0;
 
+        j += snprintf(buf+j, BUF_SIZE-j, "%%%-3u: ", n->gvn);
+
         int dst = ctx->vreg_map[n->gvn];
         if (dst > 0) {
             j += snprintf(buf+j, BUF_SIZE-j, "V%-3d", dst);
@@ -1964,11 +1966,13 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
             if (!is_value_match(&dst, &src)) {
-                /* if (dst.type == VAL_MEM && src.type != VAL_MEM) {
+                #if !TB_OPTDEBUG_REGALLOC2
+                if (dst.type == VAL_MEM && src.type != VAL_MEM) {
                     COMMENT("spill");
                 } else if (dst.type != VAL_MEM && src.type == VAL_MEM) {
                     COMMENT("reload");
-                } */
+                }
+                #endif
 
                 if (dst.type == VAL_GPR && src.type == VAL_XMM) {
                     __(MOV_I2F, dt, &dst, &src);
