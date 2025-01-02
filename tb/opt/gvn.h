@@ -58,6 +58,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_FDIV:
         case TB_FMAX:
         case TB_FMIN:
+        case TB_FNEG:
         case TB_NEG:
         case TB_PHI:
         case TB_CLZ:
