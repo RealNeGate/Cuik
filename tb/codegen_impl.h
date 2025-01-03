@@ -385,7 +385,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 // so don't be assuming it everywhere.
                 TB_ASSERT(vreg_id >= 0 && vreg_id < aarray_length(ctx.vregs));
 
-                #if TB_OPTDEBUG_CODEGEN
+                #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
                 int tmps = node_tmp_count(&ctx, n);
                 RegMask* def_mask = node_constraint(&ctx, n, ctx.ins);
 
@@ -408,14 +408,24 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 if (vreg_id > 0 && n->type != TB_MACH_MOVE) {
                     RegMask* def_mask = node_constraint(&ctx, n, NULL);
                     ctx.vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN, .uses = 1 };
+
+                    if (def_mask->class == REG_CLASS_STK) {
+                        ctx.vregs[vreg_id].spill_cost = INFINITY;
+
+                        int fixed = fixed_reg_mask(def_mask);
+                        if (fixed >= 0) {
+                            ctx.vregs[vreg_id].class = REG_CLASS_STK;
+                            ctx.vregs[vreg_id].assigned = fixed;
+                        }
+                    }
                 }
             }
         }
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        // tb__rogers(&ctx, &f->tmp_arena);
-        tb__briggs(&ctx, &f->tmp_arena);
+        tb__rogers(&ctx, &f->tmp_arena);
+        // tb__briggs(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);

@@ -1,4 +1,9 @@
-// Mostly based on reading Briggs' thesis "Register Allocation via Graph Coloring"
+// Mostly implementing Briggs' thesis "Register Allocation via Graph Coloring" +
+//
+// Also:
+//   https://cr.openjdk.org/~thartmann/offsite_2018/register_allocator.pdf
+//
+// Oh and special thanks to Cliff for advice
 #include "codegen.h"
 #include <float.h>
 
@@ -30,6 +35,11 @@ typedef struct {
 
     int max_spills;
     DynArray(int) spills;
+
+    // Block pressures per reg class, we don't track stack
+    // pressure because... we uhh don't care? this is for
+    // splitting heuristics.
+    int* block_pressures[MAX_REG_CLASSES];
 
     // Bit matrix IFG
     size_t ifg_len;
@@ -69,6 +79,29 @@ static void bits32_remove(uint32_t* arr, size_t x) {
 
 static bool bits32_member(uint32_t* arr, size_t x) {
     return arr[x / 32] & (1u << (x % 32));
+}
+
+static int bits32_next(uint32_t* arr, size_t cnt, int x) {
+    // unpack coords
+    size_t i = x / 32, j = x % 32;
+
+    uint32_t word;
+    for (;;) {
+        // we're done
+        if (i >= cnt) { return -1; }
+        // if there's no more bits in the word, we move along
+        word = arr[i] >> (j + 1);
+        if (word != 0) {
+            j += tb_ffs(word);
+            return i*32 + j;
+        }
+        i += 1, j = 0;
+    }
+}
+
+static int bits32_first(uint32_t* arr, size_t cnt) {
+    TB_ASSERT(cnt > 0);
+    return arr[0] & 1 ? 0 : bits32_next(arr, cnt, 0);
 }
 
 static int ifg_degree(Briggs* ra, int i) {
@@ -150,6 +183,54 @@ static void briggs_print_vreg(Ctx* restrict ctx, Briggs* restrict ra, VReg* vreg
         tb_print_dumb_node(NULL, vreg->n);
         printf("\n");
     }
+}
+
+static void briggs_dump_sched(Ctx* restrict ctx, Briggs* restrict ra) {
+    FOR_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        printf("BB %zu (freq=%f, pressures: {%d, %d}):\n", i, bb->freq, ra->block_pressures[1][i], ra->block_pressures[2][i]);
+        aarray_for(i, bb->items) {
+            printf("  ");
+            tb_print_dumb_node(NULL, bb->items[i]);
+            printf("\n");
+        }
+    }
+    __debugbreak();
+}
+
+// First step is just gonna be to move the spill site further from the def site, no crazy
+// SSA modifications need to be done if we just schedule it somewhere between the def and
+// LCA of the uses (same as GCM).
+//
+// We'll try to move it to the
+static void spill_fancy(Ctx* ctx, Briggs* ra, int vreg_id) {
+    VReg* to_spill = &ctx->vregs[vreg_id];
+    TB_ASSERT(to_spill->uses == 1);
+
+    TB_Function* f = ctx->f;
+    TB_Node* n = to_spill->n;
+    RegMask* vreg_mask = to_spill->mask;
+
+    // TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill  (%%%u)\x1b[0m\n", to_spill - ctx->vregs, n->gvn));
+    // it needs to reload somewhere between these two points
+    // TB_BasicBlock* early = f->scheduled[n->gvn];
+    // TB_BasicBlock* late  = tb_late_sched(f, &ctx->cfg, NULL, n);
+
+    #if 1
+    to_spill->mask = ctx->constraint(ctx, n, NULL);
+    to_spill->spill_cost = NAN;
+
+    RegMask* spill_rm = intern_regmask(ctx, 0, true, 0);
+    TB_Node* spill_n  = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+    subsume_node2(f, n, spill_n);
+    set_input(f, spill_n, n, 1);
+    TB_NODE_SET_EXTRA(spill_n, TB_NodeMachCopy, .def = spill_rm, .use = vreg_mask);
+
+    tb__insert_after(ctx, f, spill_n, n);
+    VReg* spill_vreg = tb__set_node_vreg(ctx, spill_n);
+    spill_vreg->spill_cost = INFINITY;
+    spill_entire_lifetime(ctx, spill_vreg, spill_rm, false);
+    #endif
 }
 
 void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
@@ -351,8 +432,11 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         printf("###############################\n");
         #endif
 
-        int num_spills = ctx->num_spills;
-        Set live_stack = set_create_in_arena(arena, ra.max_spills);
+        int mask_cap = max_regs_in_class > ctx->num_spills ? max_regs_in_class : ctx->num_spills;
+        uint64_t* mask = tb_arena_alloc(arena, ((mask_cap+63)/64) * sizeof(uint64_t));
+
+        int num_spills = 0;
+        int stack_base = ctx->num_regs[REG_CLASS_STK];
 
         cuikperf_region_start("select", NULL);
         dyn_array_clear(ra.spills);
@@ -363,63 +447,87 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             // need to undo the removals on a node
             int degree = ra.adj[s.vreg_id][0] = s.degree;
 
-            // precolored? skip it
-            if (vreg->assigned >= 0) {
-                continue;
-            }
+            // nothing precolored should've landed into this stack
+            TB_ASSERT(vreg->assigned < 0);
 
             #if TB_OPTDEBUG_REGALLOC
             briggs_print_vreg(ctx, &ra, vreg);
             #endif
 
-            // coloring stack slots
-            if (reg_mask_is_spill(vreg->mask)) {
-                int empty_slot = num_spills++;
+            int def_class = vreg->mask->class;
+            int num_regs = def_class == REG_CLASS_STK ? (stack_base + ra.max_spills) : ctx->num_regs[vreg->mask->class];
+            size_t mask_word_count = (num_regs + 63) / 64;
 
-                TB_OPTDEBUG(REGALLOC)(printf("#   assigned SPILL%u\n", empty_slot));
-                vreg->class    = REG_CLASS_STK;
-                vreg->assigned = STACK_BASE_REG_NAMES + empty_slot + 1;
-                continue;
+            FOR_N(j, 0, mask_word_count) {
+                mask[j] = 0;
             }
 
-            uint64_t mask = vreg->mask->mask[0];
-            int def_class = vreg->mask->class;
+            #if 0
+            if (def_class == REG_CLASS_STK) {
+                // don't allow us to allocate the local vars' preserved spills here
+                FOR_N(j, 0, stack_base / 64) {
+                    mask[j] = UINT64_MAX;
+                }
+
+                if (stack_base % 64) {
+                    mask[stack_base / 64] = UINT64_MAX >> (64ull - (stack_base % 64));
+                }
+
+                FOR_N(j, (stack_base + 63) / 64, mask_word_count) {
+                    mask[j] = 0;
+                }
+            }
+            #endif
+
+            #if TB_OPTDEBUG_REGALLOC
+            printf("#\n");
+            #endif
+
             FOR_N(j, 1, degree + 1) {
                 uint32_t other_id = ra.adj[s.vreg_id][j];
-
                 VReg* other = &ctx->vregs[other_id];
                 if (other->mask->class == def_class && other->assigned >= 0) {
-                    mask &= ~(1ull << other->assigned);
-                    // TB_OPTDEBUG(REGALLOC)(printf("  => %#04"PRIx64" (we can't be R%d because V%d)\n", mask, other->assigned, other_id));
-                    if (mask == 0) { goto leave; }
+                    int other_assigned = other->assigned;
+                    mask[other_assigned / 64u] |= (1ull << (other_assigned % 64u));
+
+                    #if 1 && TB_OPTDEBUG_REGALLOC
+                    if (def_class != REG_CLASS_STK) {
+                        continue;
+                    }
+                    printf("#   MASK: 0x");
+
+                    FOR_REV_N(i, 0, mask_word_count - 1) {
+                        printf("%016"PRIx64, mask[i]);
+                    }
+
+                    if (num_regs % 64 != 0) {
+                        char buf[16];
+                        static const char hexnums[16] = "0123456789abcdef";
+
+                        uint64_t bits = mask[mask_word_count - 1];
+                        size_t l = ((num_regs % 64) + 3) / 4;
+                        FOR_REV_N(k, 0, l) {
+                            buf[l - (k + 1)] = hexnums[(bits >> (k*4)) & 0xF];
+                        }
+
+                        printf("%.*s", (int) l, buf);
+                    }
+
+                    printf(" (we can't be ");
+                    print_reg_name(def_class, other_assigned);
+                    printf(" because V%d)\n", other_id);
+                    #endif
                 }
             }
 
-            leave:
-            if (mask == 0) {
-                TB_OPTDEBUG(REGALLOC)(printf("#   assigned UNCOLORED\n"));
-
-                // failed to color.. sadge
-                vreg->class    = 0;
-                vreg->assigned = -1;
-                dyn_array_put(ra.spills, s.vreg_id);
+            if (reg_assign(ctx, vreg, mask, num_regs)) {
+                // we need to know how much actual stack space we use
+                if (def_class == REG_CLASS_STK && num_spills < vreg->assigned + 1) {
+                    num_spills = vreg->assigned + 1;
+                }
             } else {
-                int hint_reg = -1;
-                if (vreg->hint_vreg >= 0 && ctx->vregs[vreg->hint_vreg].class == def_class) {
-                    hint_reg = ctx->vregs[vreg->hint_vreg].assigned;
-                }
-
-                if (hint_reg >= 0 && (mask & (1ull << hint_reg)) == 0) {
-                    TB_OPTDEBUG(REGALLOC)(printf("#   assigned to "), print_reg_name(def_class, hint_reg), printf("(hinted from V%d)\n", vreg->hint_vreg));
-
-                    // biased coloring
-                    vreg->class    = def_class;
-                    vreg->assigned = 1ull << hint_reg;
-                } else {
-                    vreg->class    = def_class;
-                    vreg->assigned = tb_ffs64(mask) - 1;
-                    TB_OPTDEBUG(REGALLOC)(printf("#   assigned to "), print_reg_name(def_class, vreg->assigned), printf("\n"));
-                }
+                TB_ASSERT_MSG(def_class != REG_CLASS_STK, "you fucked something up... bad");
+                dyn_array_put(ra.spills, s.vreg_id);
             }
         }
         cuikperf_region_end();
@@ -430,7 +538,9 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             dyn_array_destroy(ra.spills);
             tb_arena_restore(arena, sp);
 
-            ctx->num_spills = num_spills;
+            if (num_spills > ctx->num_spills) {
+                ctx->num_spills = num_spills;
+            }
             cuikperf_region_end();
             break;
         }
@@ -447,7 +557,6 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         FOR_N(i, 0, dyn_array_length(ra.spills)) {
             int vreg_id = ra.spills[i];
             TB_Node* n  = ctx->vregs[vreg_id].n;
-            RegMask* vreg_mask = ctx->vregs[vreg_id].mask;
 
             TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m# V%d: spill (%%%u)\x1b[0m\n", vreg_id, n->gvn));
 
@@ -456,30 +565,18 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             if (can_remat(ctx, n)) {
                 rematerialize(ctx, NULL, n);
             } else {
-                ctx->vregs[vreg_id].mask = ctx->constraint(ctx, n, NULL);
-                ctx->vregs[vreg_id].spill_cost = NAN;
-
-                RegMask* spill_rm = intern_regmask(ctx, 1, true, 0);
-                TB_Node* spill_n  = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
-                subsume_node2(f, n, spill_n);
-                set_input(f, spill_n, n, 1);
-                TB_NODE_SET_EXTRA(spill_n, TB_NodeMachCopy, .def = spill_rm, .use = vreg_mask);
-
-                tb__insert_after(ctx, f, spill_n, n);
-                VReg* spill_vreg = tb__set_node_vreg(ctx, spill_n);
-                spill_vreg->spill_cost = INFINITY;
-                spill_entire_lifetime(ctx, spill_vreg, spill_rm, false);
+                spill_fancy(ctx, &ra, vreg_id);
             }
         }
         cuikperf_region_end();
 
         // undo assignments
-        FOR_N(i, 1, aarray_length(ctx->vregs)) {
-            if (!briggs_is_fixed(ctx, &ra, i) && ctx->vregs[i].mask->class != REG_CLASS_STK) {
-                ctx->vregs[i].class    = 0;
-                ctx->vregs[i].assigned = -1;
-                ctx->vregs[i].marked_spilled = false;
-            }
+        FOR_N(i, 0, aarray_length(stk)) {
+            SimplifiedElem s = stk[i];
+            VReg* vreg = &ctx->vregs[s.vreg_id];
+
+            vreg->class    = 0;
+            vreg->assigned = -1;
         }
         log_debug("%s: briggs: failed to color (arena = %.1f KiB)", f->super.name, (tb_arena_current_size(arena) - baseline) / 1024.0f);
         tb_arena_restore(arena, sp);
@@ -574,9 +671,11 @@ static void interfere_live(Ctx* restrict ctx, Briggs* ra, uint32_t* live, int vr
     RegMask* vreg_mask = ctx->vregs[vreg_id].mask;
     FOR_N(k, 1, ctx->f->node_count) {
         int other_id = ctx->vreg_map[k];
-        if (other_id > 0 && vreg_id != other_id && bits32_member(live, k) && reg_mask_may_intersect(vreg_mask, ctx->vregs[other_id].mask)) {
-            // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%td\n", vreg_id, k));
-            ifg_edge(ra, vreg_id, other_id);
+        if (other_id > 0 && vreg_id != other_id && bits32_member(live, k)) {
+            if (reg_mask_may_intersect(vreg_mask, ctx->vregs[other_id].mask)) {
+                // TB_OPTDEBUG(REGALLOC)(printf("V%d -- V%td\n", vreg_id, k));
+                ifg_edge(ra, vreg_id, other_id);
+            }
         }
     }
 }
@@ -584,7 +683,7 @@ static void interfere_live(Ctx* restrict ctx, Briggs* ra, uint32_t* live, int vr
 static void interfere_mask(Ctx* restrict ctx, Briggs* ra, int vreg_id, RegMask* def_mask) {
     // definition should interfere with each physical reg's node it doesn't intersect with
     // such that it can't be seen alive in those registers.
-    if (def_mask->class > 0 && reg_mask_is_not_empty(def_mask)) {
+    if (reg_mask_is_not_empty(def_mask)) {
         size_t reg_count    = ctx->num_regs[def_mask->class];
         uint64_t word_count = (reg_count + 63) / 64;
         FOR_N(i, 0, word_count) {
@@ -602,6 +701,12 @@ static void interfere_mask(Ctx* restrict ctx, Briggs* ra, int vreg_id, RegMask* 
                 bits &= ~(1ull << j);
             }
         }
+    } else if (def_mask->class == REG_CLASS_STK) {
+        // if it's both empty and a stack slot, interfere with ALL the fixed stack slots
+        int base = ra->fixed[REG_CLASS_STK];
+        FOR_N(i, 0, ctx->num_regs[REG_CLASS_STK]) {
+            ifg_edge(ra, base+i, vreg_id);
+        }
     }
 }
 
@@ -610,6 +715,12 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
 
     ra->ifg_len = aarray_length(ctx->vregs);
     ra->ifg = tb_arena_alloc(ra->arena, ra->ifg_len * sizeof(Briggs_Set*));
+
+    /* ra->block_pressures[0] = NULL;
+    FOR_N(i, 1, ctx->num_classes) {
+        ra->block_pressures[i] = tb_arena_alloc(ra->arena, ctx->bb_count * sizeof(int));
+        memset(ra->block_pressures[i], 0, ctx->bb_count * sizeof(int));
+    }*/
 
     log_debug("%s: briggs: allocating IFG skeleton (%zu nodes)", f->super.name, ra->ifg_len);
 
@@ -638,6 +749,22 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
             live[j*2 + 0] = bb->live_out.data[j] & 0xFFFFFFFF;
             live[j*2 + 1] = bb->live_out.data[j] >> 32ull;
         }
+
+        // current
+        /*int pressures[MAX_REG_CLASSES];
+        int max_pressures[MAX_REG_CLASSES];
+
+        int j = bits32_first(live, live_count);
+        while (j >= 0) {
+            int vreg_id = ctx->vreg_map[j];
+            if (vreg_id > 0) {
+                int def_class = ctx->vregs[vreg_id].mask->class;
+                if (def_class != REG_CLASS_STK) {
+                    ra->block_pressures[def_class][i] += 1;
+                }
+            }
+            j = bits32_next(live, live_count, j);
+        }*/
 
         size_t item_count = aarray_length(bb->items);
         FOR_REV_N(j, 0, item_count) {
@@ -766,6 +893,7 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
             if (shared_edge <= 0) { continue; }
 
             TB_ASSERT(shared_edge < n->input_count);
+            if (n->inputs[shared_edge] == NULL) { continue; }
             int src_id = ctx->vreg_map[n->inputs[shared_edge]->gvn];
 
             int x = uf_find(uf, dst_id);
@@ -965,15 +1093,17 @@ static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
             printf("#   colorable!\n");
             #endif
 
-            if (reg_mask_is_spill(ctx->vregs[vreg_id].mask)) {
+            if (ctx->vregs[vreg_id].mask->class == REG_CLASS_STK) {
                 ra->max_spills += 1;
             }
 
             int d = ra->adj[vreg_id][0];
             ifg_remove_edges(ctx, ra, vreg_id, &lo, &hi);
 
-            SimplifiedElem s = { vreg_id, d };
-            aarray_push(stk, s);
+            if (ctx->vregs[vreg_id].assigned < 0) {
+                SimplifiedElem s = { vreg_id, d };
+                aarray_push(stk, s);
+            }
         }
 
         if (hi.count == 0) {
@@ -1016,6 +1146,8 @@ static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
         ifg_remove_edges(ctx, ra, best_spill, &lo, &hi);
         ifg_ws_remove(&hi, best_spill);
 
+        // how was it spilled and precolored?!
+        TB_ASSERT(ctx->vregs[best_spill].assigned < 0);
         SimplifiedElem s = { best_spill, d };
         aarray_push(stk, s);
 

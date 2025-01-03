@@ -156,6 +156,30 @@ static TB_BasicBlock* add_anti_deps(TB_Function* f, TB_CFG* cfg, TB_Node* ld, TB
     return lca;
 }
 
+TB_BasicBlock* tb_late_sched(TB_Function* f, TB_CFG* cfg, TB_BasicBlock* lca, TB_Node* n) {
+    if (n->dt.type == TB_TAG_TUPLE) {
+        FOR_USERS(use, n) {
+            // to avoid projections stopping the sinking of nodes, we walk past
+            // them whenever decision making here
+            if (is_proj(USERN(use))) {
+                FOR_USERS(use2, USERN(use)) {
+                    TB_BasicBlock* use_block = find_use_block(f, cfg, n, USERN(use), use2);
+                    if (use_block) { lca = find_lca(lca, use_block); }
+                }
+            } else {
+                TB_BasicBlock* use_block = find_use_block(f, cfg, n, n, use);
+                if (use_block) { lca = find_lca(lca, use_block); }
+            }
+        }
+    } else {
+        FOR_USERS(use, n) {
+            TB_BasicBlock* use_block = find_use_block(f, cfg, n, n, use);
+            if (use_block) { lca = find_lca(lca, use_block); }
+        }
+    }
+    return lca;
+}
+
 void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_only, bool dataflow, TB_GetLatency get_lat) {
     TB_ASSERT_MSG(f->scheduled == NULL, "make sure when you're done with the schedule, you throw away the old one");
 
@@ -387,26 +411,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         }
                     }
 
-                    if (n->dt.type == TB_TAG_TUPLE) {
-                        FOR_USERS(use, n) {
-                            // to avoid projections stopping the sinking of nodes, we walk past
-                            // them whenever decision making here
-                            if (is_proj(USERN(use))) {
-                                FOR_USERS(use2, USERN(use)) {
-                                    TB_BasicBlock* use_block = find_use_block(f, &cfg, n, USERN(use), use2);
-                                    if (use_block) { lca = find_lca(lca, use_block); }
-                                }
-                            } else {
-                                TB_BasicBlock* use_block = find_use_block(f, &cfg, n, n, use);
-                                if (use_block) { lca = find_lca(lca, use_block); }
-                            }
-                        }
-                    } else {
-                        FOR_USERS(use, n) {
-                            TB_BasicBlock* use_block = find_use_block(f, &cfg, n, n, use);
-                            if (use_block) { lca = find_lca(lca, use_block); }
-                        }
-                    }
+                    lca = tb_late_sched(f, &cfg, lca, n);
 
                     if (lca != NULL) {
                         TB_ASSERT_MSG(curr, "we made it to late sched without an early sched?");

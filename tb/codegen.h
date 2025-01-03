@@ -38,20 +38,13 @@
 #include <arena_array.h>
 
 enum {
-    // every platform has a stack regclass, the mask is actually an offset
-    // on the stack (useful for parameter passing).
+    // every platform has a stack regclass.
     REG_CLASS_STK = 0,
 
     // all we can fit into 3bits, but also... 8 classes is a lot.
     //
     // * x86 has 3 currently: Stack, GPR, Vector.
     MAX_REG_CLASSES = 8,
-};
-
-enum {
-    // any assigned stack vregs past this point refer to spill slots
-    // not the stack base (where params usually go).
-    STACK_BASE_REG_NAMES = 0x4000,
 };
 
 // represents a set of registers, usually for register constraints.
@@ -280,7 +273,6 @@ static bool reg_mask_eq(RegMask* a, RegMask* b) {
 static bool reg_mask_is_not_empty(RegMask* mask) {
     if (mask == NULL) return false;
 
-    assert(mask->count == 1);
     FOR_N(i, 0, mask->count) {
         if (mask->mask[0] != 0) return true;
     }
@@ -289,29 +281,21 @@ static bool reg_mask_is_not_empty(RegMask* mask) {
 }
 
 static bool reg_mask_is_stack(RegMask* mask) {
-    return mask->class == REG_CLASS_STK || (!reg_mask_is_not_empty(mask) && mask->may_spill);
-}
-
-static bool reg_mask_is_spill(RegMask* mask) {
-    return mask->class != REG_CLASS_STK && (!reg_mask_is_not_empty(mask) && mask->may_spill);
+    return mask->class == REG_CLASS_STK;
 }
 
 static int fixed_reg_mask(RegMask* mask) {
-    if (mask->class == REG_CLASS_STK) {
-        assert(mask->count == 1);
-        return mask->mask[0];
-    } else {
-        int set = -1;
-        FOR_N(i, 0, mask->count) {
-            int found = 63 - tb_clz64(mask->mask[i]);
-            if (mask->mask[0] == (1ull << found)) {
-                if (set >= 0) return -1;
-                set = i*64 + found;
-            }
+    int set = -1;
+    FOR_N(i, 0, mask->count) {
+        if (mask->mask[i] == 0) { continue; }
+        int found = tb_ffs64(mask->mask[i]) - 1;
+        if (mask->mask[i] == (1ull << found)) {
+            if (set >= 0) return -1;
+            set = i*64 + found;
         }
-
-        return set;
     }
+
+    return set;
 }
 
 static RegMask* new_regmask(TB_Function* f, int reg_class, bool may_spill, uint64_t mask) {
@@ -347,6 +331,24 @@ static bool rm_compare(void* a, void* b) {
 
 static RegMask* intern_regmask(Ctx* ctx, int reg_class, bool may_spill, uint64_t mask) {
     RegMask* new_rm = new_regmask(ctx->f, reg_class, may_spill, mask);
+    RegMask* old_rm = nl_hashset_put2(&ctx->mask_intern, new_rm, rm_hash, rm_compare);
+    if (old_rm != NULL) {
+        tb_arena_free(&ctx->f->arena, new_rm, sizeof(RegMask));
+        return old_rm;
+    }
+    return new_rm;
+}
+
+static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg) {
+    RegMask* new_rm = tb_arena_alloc(&ctx->f->arena, sizeof(RegMask) + sizeof(uint64_t));
+    new_rm->may_spill = may_spill;
+    new_rm->class = reg_class;
+    new_rm->count = reg ? (reg + 63) / 64 : 1;
+    FOR_N(i, 0, new_rm->count) {
+        new_rm->mask[i] = 0;
+    }
+    new_rm->mask[reg / 64ull] |= (1ull << (reg % 64ull));
+
     RegMask* old_rm = nl_hashset_put2(&ctx->mask_intern, new_rm, rm_hash, rm_compare);
     if (old_rm != NULL) {
         tb_arena_free(&ctx->f->arena, new_rm, sizeof(RegMask));

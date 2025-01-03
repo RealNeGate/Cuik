@@ -430,6 +430,7 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
 void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg);
 
 // Global scheduler
+TB_BasicBlock* tb_late_sched(TB_Function* f, TB_CFG* cfg, TB_BasicBlock* lca, TB_Node* n);
 void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws);
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws);
 void tb_compact_nodes(TB_Function* f, TB_Worklist* ws);

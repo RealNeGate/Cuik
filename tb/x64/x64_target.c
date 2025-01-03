@@ -423,6 +423,8 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
             dyn_array_put(ctx->debug_stack_slots, s);
         }
     }
+
+    ctx->num_regs[REG_CLASS_STK] = ctx->param_count + ctx->num_spills + 1;
 }
 
 static RegMask* normie_mask(Ctx* restrict ctx, TB_DataType dt) {
@@ -724,7 +726,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         op_extra->clobber_gpr = abi->caller_saved_gprs;
         op_extra->clobber_xmm = abi->caller_saved_xmms;
 
-        int gprs_used = 0, xmms_used = 0;
+        int gprs_used = 0, xmms_used = 0, stk_used = 0;
         FOR_N(i, 3, n->input_count) {
             int param_num = i - 3;
 
@@ -735,19 +737,24 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             if (TB_IS_FLOAT_TYPE(n->inputs[i]->dt)) {
                 if (xmms_used < abi->xmm_count) {
                     xmms_used += 1;
-                } else if (param_num + 1 > ctx->num_regs[REG_CLASS_STK]) {
-                    ctx->num_regs[REG_CLASS_STK] = param_num + 1;
+                } else if (param_num+1 > stk_used) {
+                    stk_used = param_num+1;
                 }
             } else {
                 TB_ASSERT(TB_IS_INTEGER_TYPE(n->inputs[i]->dt) || n->inputs[i]->dt.type == TB_TAG_PTR);
                 if (gprs_used < abi->gpr_count) {
                     gprs_used += 1;
-                } else if (param_num + 1 > ctx->num_regs[REG_CLASS_STK]) {
-                    ctx->num_regs[REG_CLASS_STK] = param_num + 1;
+                } else if (param_num+1 > stk_used) {
+                    stk_used = param_num+1;
                 }
             }
 
             set_input(f, op, n->inputs[i], i);
+        }
+
+        int a = ctx->param_count + ctx->num_spills + stk_used + 1;
+        if (a > ctx->num_regs[REG_CLASS_STK]) {
+            ctx->num_regs[REG_CLASS_STK] = a;
         }
 
         int num_params = n->input_count - 3;
@@ -1348,18 +1355,18 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 const struct ParamDesc* params = &param_descs[ctx->abi_index];
                 TB_ASSERT(i >= 2);
                 if (i == 2) {
-                    return intern_regmask(ctx, REG_CLASS_STK, false, STACK_BASE_REG_NAMES);
+                    return intern_regmask2(ctx, REG_CLASS_STK, false, 0);
                 } else {
                     int param_id = i - 3;
                     if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) {
                         if (param_id >= params->xmm_count) {
-                            return intern_regmask(ctx, REG_CLASS_STK, false, param_id);
+                            return intern_regmask2(ctx, REG_CLASS_STK, false, 1 + param_id);
                         }
 
                         return intern_regmask(ctx, REG_CLASS_XMM, false, 1u << param_id);
                     } else {
                         if (param_id >= params->gpr_count) {
-                            return intern_regmask(ctx, REG_CLASS_STK, false, param_id);
+                            return intern_regmask2(ctx, REG_CLASS_STK, false, 1 + param_id);
                         }
 
                         return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << params->gprs[param_id]);
@@ -1635,10 +1642,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 static int ret_gprs[2] = { RAX, RDX };
 
                 ins[1] = &TB_REG_EMPTY; // mem
-                ins[2] = intern_regmask(ctx, REG_CLASS_STK, false, STACK_BASE_REG_NAMES); // rpc
+                ins[2] = intern_regmask2(ctx, REG_CLASS_STK, false, 0); // rpc
 
                 TB_FunctionPrototype* proto = ctx->f->prototype;
-                assert(proto->return_count <= 2 && "At most 2 return values :(");
+                TB_ASSERT(proto->return_count <= 2 && "At most 2 return values :(");
 
                 FOR_N(i, 3, 3 + proto->return_count) {
                     TB_Node* in = n->inputs[i];
@@ -1715,7 +1722,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[1] = &TB_REG_EMPTY;
                 ins[2] = n->type == x86_static_call ? &TB_REG_EMPTY : ctx->normie_mask[REG_CLASS_GPR];
 
-                int base_stack = ctx->param_count;
+                int base_stack = 1 + ctx->param_count;
                 FOR_N(i, 3, n->input_count) {
                     int param_num = i - 3;
 
@@ -1728,7 +1735,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                             ins[i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << xmms_used);
                             xmms_used += 1;
                         } else {
-                            ins[i] = intern_regmask(ctx, REG_CLASS_STK, false, base_stack + param_num);
+                            ins[i] = intern_regmask2(ctx, REG_CLASS_STK, false, base_stack + param_num);
                         }
                     } else {
                         TB_ASSERT(TB_IS_INTEGER_TYPE(n->inputs[i]->dt) || n->inputs[i]->dt.type == TB_TAG_PTR);
@@ -1736,7 +1743,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                             ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << abi->gprs[gprs_used]);
                             gprs_used += 1;
                         } else {
-                            ins[i] = intern_regmask(ctx, REG_CLASS_STK, false, base_stack + param_num);
+                            ins[i] = intern_regmask2(ctx, REG_CLASS_STK, false, base_stack + param_num);
                         }
                     }
                 }
@@ -1766,18 +1773,18 @@ static int op_gpr_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_
 static int op_xmm_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_XMM); }
 
 static int stk_offset(Ctx* ctx, int reg) {
-    if (reg == STACK_BASE_REG_NAMES) {
+    if (reg == 0) {
         // return address
         return ctx->stack_usage + (ctx->stack_header - 8);
-    } else if (reg > STACK_BASE_REG_NAMES) {
-        int spill_num = reg - (STACK_BASE_REG_NAMES);
-        return (ctx->stack_usage - ctx->stack_header) - (spill_num*8);
-    } else if (reg >= ctx->param_count) {
-        // param passing slots
-        return (reg - ctx->param_count)*8;
-    } else {
+    } else if (reg < ctx->param_count + 1) {
         // argument slots (reaching outside of our stack frame)
-        return ctx->stack_usage + ctx->stack_header + reg*8;
+        return ctx->stack_usage + ctx->stack_header + (reg - 1)*8;
+    } else if (reg < ctx->param_count + ctx->call_usage + 1) {
+        // param passing slots
+        return (reg - (ctx->param_count + 1))*8;
+    } else {
+        int spill_num = reg - (ctx->param_count + ctx->call_usage);
+        return (ctx->stack_usage - ctx->stack_header) - (spill_num*8);
     }
 }
 
@@ -1785,8 +1792,8 @@ static Val op_at(Ctx* ctx, TB_Node* n) {
     assert(ctx->vreg_map[n->gvn] > 0);
     VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
     if (vreg->class == REG_CLASS_STK) {
-        int disp = stk_offset(ctx, vreg->assigned);
-        return val_stack(disp);
+        TB_ASSERT(vreg->assigned >= 0);
+        return val_stack(stk_offset(ctx, vreg->assigned));
     } else {
         assert(vreg->assigned >= 0);
         return (Val) { .type = vreg->class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR, .reg = vreg->assigned };
