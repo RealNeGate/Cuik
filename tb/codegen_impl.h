@@ -58,6 +58,8 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n);
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
 static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
 
+static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e);
+
 typedef struct {
     TB_Node* n;
     uint32_t ip;
@@ -504,8 +506,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             bb->fwd = fwd;
         }
 
-        final_order_count = bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
-        // final_order_count = bb_placement_trace(&f->tmp_arena, &cfg, final_order);
+        // final_order_count = bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
+        final_order_count = bb_placement_trace(&f->tmp_arena, &cfg, final_order);
 
         ctx.emit.final_order_count = final_order_count;
 
@@ -514,7 +516,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         FOR_N(i, 0, final_order_count) {
             int id = final_order[i];
             TB_ASSERT(id == cfg.blocks[id].fwd);
-            printf("  BB%d (freq=%f)\n", id, cfg.blocks[id].freq);
+            printf("  BB%-3d (freq=%f)\n", id, cfg.blocks[id].freq);
         }
         #endif
     }
@@ -648,6 +650,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     // TODO(NeGate): move the assembly output to code arena
     if (emit_asm) CUIK_TIMED_BLOCK("dissassembly") {
+        dump_stack_layout(&ctx, &ctx.emit);
+
         dyn_array_for(i, ctx.debug_stack_slots) {
             TB_StackSlot* s = &ctx.debug_stack_slots[i];
             EMITA(&ctx.emit, "// %s = [rsp + %d]\n", s->name, s->storage.offset);

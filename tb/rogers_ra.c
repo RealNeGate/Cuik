@@ -79,11 +79,15 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
             continue;
         } else if (use_n->type == TB_MACH_COPY) {
             // if it's already a machine copy, inserting an extra one is useless
-            TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%d: folded reload (%%%u)\x1b[0m\n", ctx->vreg_map[use_n->gvn], use_n->gvn));
-
             TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
-            cpy->use = spill_mask;
-            continue;
+            if (cpy->def->class != REG_CLASS_STK || spill_mask->class != REG_CLASS_STK) {
+                TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%d: folded reload (%%%u)\x1b[0m\n", ctx->vreg_map[use_n->gvn], use_n->gvn));
+                cpy->use = spill_mask;
+                continue;
+            } else {
+                // stack-stack move requires a loosened mask for some register family
+                cpy->use = ctx->normie_mask[cpy->use->class];
+            }
         }
 
         // earliest point within the BB
@@ -128,9 +132,15 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
         int use_i      = USERI(&n->users[i]);
         TB_BasicBlock* bb = f->scheduled[use_n->gvn];
 
-        if (use_n->type == TB_MACH_COPY || use_i >= use_n->input_count) {
+        if (use_i >= use_n->input_count) {
             i += 1;
             continue;
+        } else if (use_n->type == TB_MACH_COPY) {
+            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
+            if (cpy->def == NULL || cpy->use == spill_mask) {
+                i += 1;
+                continue;
+            }
         }
 
         TB_Node* reload = reload_n[bb - ctx->cfg.blocks];
@@ -147,7 +157,7 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, VReg* to_spill, Re
         if (reload_t[i] > 0) {
             TB_Node* reload   = reload_n[i];
             VReg* reload_vreg = &ctx->vregs[ctx->vreg_map[reload->gvn]];
-            assert(reload->user_count > 0);
+            TB_ASSERT(reload->user_count > 0);
 
             // this process might introduce hard-splits
             bool split = false;
@@ -409,7 +419,8 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     }
 
     int rounds = 0;
-    ra.num_spills = ctx->num_spills;
+    int starting_spills = ctx->num_regs[REG_CLASS_STK];
+    ra.num_spills = starting_spills;
 
     cuikperf_region_start("allocate", NULL);
     for (;;) {
@@ -437,8 +448,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                         ctx->vregs[i].class = 0;
                         ctx->vregs[i].assigned = -1;
                     }
-
-                    ctx->vregs[i].marked_spilled = false;
                 }
             }
         }
@@ -450,6 +459,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
             RegMask* vreg_mask = ctx->vregs[vreg_id].mask;
 
             TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m# V%u: spilled (%%%u)\x1b[0m\n", vreg_id, n->gvn));
+            ctx->vregs[vreg_id].marked_spilled = false;
 
             // rematerialization candidates will delete the original def and for now, they'll
             // reload per use site (although we might wanna coalesce some later on).
@@ -491,9 +501,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         redo_dataflow(ctx, arena);
     }
 
-    if (ra.num_spills > ctx->num_spills) {
-        ctx->num_spills = ra.num_spills;
-    }
+    ctx->num_spills = ra.num_spills - (1 + ctx->param_count + ctx->call_usage);
     cuikperf_region_end();
 }
 
@@ -733,16 +741,19 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
     }
     TB_OPTDEBUG(REGALLOC)(printf("\n"));
 
-    #if 0
     int hint_reg = hint_vreg > 0
         && ctx->vregs[hint_vreg].class == mask->class
         ?  ctx->vregs[hint_vreg].assigned
         :  -1;
 
-    if (hint_reg >= 0) {
-        TB_OPTDEBUG(REGALLOC)(printf("#   hint as V%d (", hint_vreg), print_reg_name(vreg->class, hint_reg), printf(")\n"));
+    if (hint_reg >= 0 && (ra->mask[hint_reg / 64ull] & (1ull << (hint_reg % 64ull))) == 0) {
+        TB_OPTDEBUG(REGALLOC)(printf("#   assigned to "), print_reg_name(def_class, hint_reg), printf(" (HINTED)\n"));
+
+        vreg->class    = def_class;
+        vreg->assigned = hint_reg;
+        set_put(&ra->active, vreg_id);
+        return true;
     }
-    #endif
 
     if (reg_assign(ctx, vreg, ra->mask, num_regs)) {
         set_put(&ra->active, vreg_id);
@@ -755,11 +766,17 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
             vreg->assigned = ra->num_spills++;
             set_put(&ra->active, vreg_id);
 
+            // resize the mask array if necessary
+            size_t new_cap = ra->max_regs_in_class > ra->num_spills ? ra->max_regs_in_class : ra->num_spills;
+            if (((ra->mask_cap+63)/64) < (new_cap+63)/64) {
+                ra->mask_cap = new_cap + 64;
+                ra->mask = tb_arena_alloc(ra->arena, ((ra->mask_cap+63)/64) * sizeof(uint64_t));
+            }
+
             TB_OPTDEBUG(REGALLOC)(printf("#   assigned to STACK%d (new stack slot)\n", vreg->assigned));
             return true;
         }
 
-        TB_OPTDEBUG(REGALLOC)(printf("#   assigned UNCOLORED\n"));
         return false;
     }
 }
@@ -843,6 +860,11 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_
     ctx->vregs[best_spill].class    = 0;
     ctx->vregs[best_spill].assigned = -1;
     ctx->vregs[best_spill].marked_spilled = true;
+
+    // take out the equation for the rest of the allocation loop
+    set_remove(&ra->active, best_spill);
+    set_remove(&ra->future_active, best_spill);
+
     return old_assigned;
 }
 
@@ -1052,9 +1074,6 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                 if (!allocate_reg(ctx, ra, vreg_id, ra->in_use[class])) {
                     RegMask* mask = ctx->vregs[vreg_id].mask;
                     int r = commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
-                    if (r < 0) {
-                        return ALLOC_FAIL;
-                    }
 
                     ctx->vregs[vreg_id].class = class;
                     ctx->vregs[vreg_id].assigned = r;
@@ -1072,9 +1091,6 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                         if (!allocate_reg(ctx, ra, vreg_id, ra->in_use[class])) {
                             RegMask* mask = ctx->vregs[vreg_id].mask;
                             int r = commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
-                            if (r < 0) {
-                                return ALLOC_FAIL;
-                            }
 
                             ctx->vregs[vreg_id].class = class;
                             ctx->vregs[vreg_id].assigned = r;

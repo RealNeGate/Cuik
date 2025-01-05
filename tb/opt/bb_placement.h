@@ -33,6 +33,10 @@ typedef struct Trace {
     int id;
     int first_bb;
     int last_bb;
+
+    // I'm gonna assume the first
+    // block's frequency is a good metric
+    float freq;
 } Trace;
 
 typedef struct {
@@ -92,9 +96,25 @@ static TB_BasicBlock* best_successor_of(TB_CFG* cfg, TB_Node* n) {
     }
 }
 
+static int trace_cmp(const void* a, const void* b) {
+    const Trace* aa = *(const Trace**) a;
+    const Trace* bb = *(const Trace**) b;
+
+    // can't reorder the entry block
+    if (aa->first_bb != 0 && bb->first_bb != 0) {
+        // it's not unsurprising to get the exact same
+        // frequency, synthetic frequencies do it all the
+        // time and it which case we'll order by the RPO.
+        if (aa->freq != bb->freq) {
+            return aa->freq > bb->freq ? -1 : 1;
+        }
+    }
+
+    return aa->first_bb - bb->first_bb;
+}
+
 int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
     size_t bb_count = aarray_length(cfg->blocks);
-    bool* visited = tb_arena_alloc(arena, bb_count);
 
     TraceScheduler traces = { .cfg = cfg };
     traces.block_to_trace = tb_arena_alloc(arena, bb_count * sizeof(Trace*));
@@ -114,12 +134,24 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
         }
         traces.next_block[i] = -1;
     }
-    TB_ASSERT(trace_count < bb_count);
+    TB_ASSERT(trace_count <= bb_count);
+
+    // place starting point and any missed BBs will be placed on a worklist to attempt
+    // trace growing when we can't grow the main trace anymore.
+    int ws_cnt = 0;
+    Trace** ws = tb_arena_alloc(arena, bb_count * sizeof(Trace*));
+    bool* visited = tb_arena_alloc(arena, bb_count);
+    FOR_N(i, 0, bb_count) { visited[i] = false; }
+
+    // place entry
+    ws[ws_cnt++] = traces.block_to_trace[0];
+
+    int order_cnt = 0;
+    Trace** order = tb_arena_alloc(arena, bb_count * sizeof(Trace*));
 
     // grow traces by placing likely traces next to them
-    FOR_N(i, 0, bb_count) { visited[i] = false; }
-    FOR_N(i, 0, bb_count) {
-        Trace* trace = traces.block_to_trace[i];
+    while (ws_cnt > 0) {
+        Trace* trace = ws[--ws_cnt];
         if (trace == NULL) { continue; }
         // if we've already tried to grow this trace, don't :p
         if (visited[trace->id]) { continue; }
@@ -127,9 +159,13 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
 
         TB_OPTDEBUG(PLACEMENT)(printf("Grow Trace %d?\n", trace->id));
 
+        trace->freq = cfg->blocks[trace->first_bb].freq;
+        order[order_cnt++] = trace;
+
         // extend the end of the trace until we hit an unlikely case or a backedge
         int curr = trace->last_bb;
-        for (;;) {
+        TB_BasicBlock* succ;
+        do {
             TB_BasicBlock* bb = &cfg->blocks[trace->last_bb];
 
             #if TB_OPTDEBUG_PLACEMENT
@@ -142,31 +178,45 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order) {
             #endif
 
             // find best successor
-            TB_BasicBlock* succ = best_successor_of(cfg, bb->end);
-            if (succ == NULL) { break; }
-            // it's not worth growing the trace if the next block is really low-freq
-            if (succ->freq < 1e-3) { break; }
-            // can't do backedges in traces
-            int succ_bb = succ->fwd;
-            if (succ_bb <= curr) { break; }
-            // it's only an option if the block is the start of it's trace
-            if (traces.block_to_trace[succ_bb]->first_bb != succ_bb) { break; }
+            succ = best_successor_of(cfg, bb->end);
+            if (succ != NULL &&
+                // it's not worth growing the trace if the next block is really low-freq
+                succ->freq >= 1e-3 &&
+                // can't do backedges in traces
+                succ->fwd > curr &&
+                // it's only an option if the block is the start of it's trace
+                traces.block_to_trace[succ->fwd]->first_bb == succ->fwd
+            ) {
+                trace_append(&traces, curr, succ->fwd);
+                curr = succ->fwd;
+            } else {
+                succ = NULL;
+            }
 
-            trace_append(&traces, curr, succ_bb);
-            curr = succ_bb;
-        }
+            // place the missed blocks in the worklist
+            FOR_SUCC(it, bb->end) {
+                TB_BasicBlock* bb = nl_map_get_checked(cfg->node_to_block, it.succ);
+                if (bb == succ) { continue; }
+                Trace* t = traces.block_to_trace[bb->fwd];
+                // it's only an option if the block is the start of it's trace
+                if (t->first_bb != bb->fwd) { continue; }
+                // if it's already visited, we're too late to build it up here
+                if (visited[t->id]) { continue; }
+
+                TB_OPTDEBUG(PLACEMENT)(printf("    Postpone Trace%d\n", t->id));
+
+                TB_ASSERT(ws_cnt < bb_count);
+                ws[ws_cnt++] = t;
+            }
+        } while (succ != NULL);
     }
+
+    qsort(order, order_cnt, sizeof(Trace*), trace_cmp);
 
     // final placement
     int j = 0;
-    FOR_N(i, 0, bb_count) { visited[i] = false; }
-    FOR_N(i, 0, bb_count) {
-        Trace* trace = traces.block_to_trace[i];
-        if (trace == NULL) { continue; }
-        // if we've already tried to grow this trace, don't :p
-        if (visited[trace->id]) { continue; }
-        visited[trace->id] = true;
-
+    FOR_N(i, 0, order_cnt) {
+        Trace* trace = order[i];
         int curr = trace->first_bb;
         do {
             TB_ASSERT(cfg->blocks[curr].fwd == curr);

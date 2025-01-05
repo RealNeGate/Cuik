@@ -319,7 +319,7 @@ static uint32_t rm_hash(void* a) {
 
 static bool rm_compare(void* a, void* b) {
     RegMask *x = a, *y = b;
-    if (x->count != y->count || x->class != y->class || x->count != y->count) {
+    if (x->may_spill != y->may_spill || x->count != y->count || x->class != y->class || x->count != y->count) {
         return false;
     }
 

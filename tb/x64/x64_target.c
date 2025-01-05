@@ -410,7 +410,7 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         if (local->stack_pos >= 0) {
             // each stack slot is 8bytes
             ctx->num_spills = align_up(ctx->num_spills + (local->size+7)/8, (local->align+7)/8);
-            local->stack_pos = -ctx->num_spills*8;
+            local->stack_pos = -(ctx->num_spills + 1)*8;
         }
 
         if (local->type) {
@@ -682,7 +682,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     } else if (n->type == TB_SELECT) {
         TB_Node* op = tb_alloc_node(f, x86_cmovcc, n->dt, 5, sizeof(X86Cmov));
 
-        Cond cc = E;
+        Cond cc = NE;
         TB_Node* cond = n->inputs[1];
         if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
             switch (cond->type) {
@@ -752,11 +752,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             set_input(f, op, n->inputs[i], i);
         }
 
-        int a = ctx->param_count + ctx->num_spills + stk_used + 1;
-        if (a > ctx->num_regs[REG_CLASS_STK]) {
-            ctx->num_regs[REG_CLASS_STK] = a;
-        }
-
         int num_params = n->input_count - 3;
         if (ctx->abi_index == 0) {
             // win64 abi will alloc 4 param slots if you even use one
@@ -771,7 +766,14 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
         }
 
-        if (num_params > ctx->call_usage) { ctx->call_usage = num_params; }
+        if (num_params > ctx->call_usage) {
+            ctx->call_usage = num_params;
+        }
+
+        int a = ctx->param_count + ctx->num_spills + ctx->call_usage + 1;
+        if (a > ctx->num_regs[REG_CLASS_STK]) {
+            ctx->num_regs[REG_CLASS_STK] = a;
+        }
 
         return op;
     } else if (n->type == TB_MEMSET) {
@@ -1778,13 +1780,13 @@ static int stk_offset(Ctx* ctx, int reg) {
         return ctx->stack_usage + (ctx->stack_header - 8);
     } else if (reg < ctx->param_count + 1) {
         // argument slots (reaching outside of our stack frame)
-        return ctx->stack_usage + ctx->stack_header + (reg - 1)*8;
+        return ctx->stack_usage + (reg - 1)*8;
     } else if (reg < ctx->param_count + ctx->call_usage + 1) {
         // param passing slots
         return (reg - (ctx->param_count + 1))*8;
     } else {
         int spill_num = reg - (ctx->param_count + ctx->call_usage);
-        return (ctx->stack_usage - ctx->stack_header) - (spill_num*8);
+        return (ctx->stack_usage - ctx->stack_header) - spill_num*8;
     }
 }
 
@@ -2009,7 +2011,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             TB_FunctionPrototype* proto = ctx->f->prototype;
 
             int stack_usage = ctx->stack_usage;
-            if (stack_usage) {
+            if (stack_usage > 8) {
                 // add rsp, N
                 if (stack_usage == (int8_t)stack_usage) {
                     EMIT1(e, rex(true, 0x00, RSP, 0));
@@ -2025,7 +2027,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             }
 
             // pop rbp (if we even used the frameptr)
-            if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
+            if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 8) {
                 EMIT1(e, 0x58 + RBP);
             }
             EMIT1(e, 0xC3);
@@ -2372,11 +2374,12 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             }
 
             Val cmp1 = op_at(ctx, n->inputs[1]);
+            TB_X86_DataType dt2 = legalize_int(n->inputs[1]->dt);
             if (n->inputs[2]) {
                 Val cmp2 = op_at(ctx, n->inputs[2]);
-                __(CMP, dt, &cmp1, &cmp2);
+                __(CMP, dt2, &cmp1, &cmp2);
             } else {
-                __(CMP, dt, &cmp1, Vimm(0));
+                __(CMP, dt2, &cmp1, Vimm(0));
             }
 
             Val lhs = op_at(ctx, n->inputs[3]);
@@ -2625,7 +2628,7 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     TB_FunctionPrototype* proto = ctx->f->prototype;
 
-    size_t stack_usage = 0;
+    size_t stack_usage = ctx->stack_header;
     if (ctx->num_spills != 0 || ctx->call_usage != 0) {
         stack_usage = (ctx->num_spills+ctx->call_usage) * 8;
 
@@ -2634,29 +2637,6 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         stack_usage = align_up(stack_usage + ctx->stack_header, 16) + (16 - ctx->stack_header);
     }
     ctx->stack_usage = stack_usage;
-
-    #if 0
-    if (stack_usage > 0) {
-        printf("SPACE = %zu, FP = %zu\n", stack_usage, stack_usage - ctx->stack_header);
-
-        printf("FUNC %s:\n", ctx->f->super.name);
-        FOR_REV_N(i, 0, proto->param_count) {
-            printf("  [FP + %2td] [SP + %2td] PARAM\n", ctx->stack_header + i*8, ctx->stack_usage + ctx->stack_header + i*8);
-        }
-        printf("  [FP + %2d] [SP + %2d] RPC\n", ctx->stack_header - 8, ctx->stack_usage + ctx->stack_header - 8);
-        if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
-            printf("  [FP + %2d] [SP + %2d] saved RBP\n", 0, ctx->stack_usage);
-        }
-        printf("==============\n");
-        FOR_N(i, 0, ctx->num_spills) {
-            int pos = stk_offset(ctx, STACK_BASE_REG_NAMES + 1 + i);
-            printf("  [FP - %2td] [SP + %2d] SPILL%zu\n", 8 + i*8, pos, i);
-        }
-        FOR_REV_N(i, 0, ctx->call_usage) {
-            printf("            [SP + %2td] CALLEE PARAM\n", i*8);
-        }
-    }
-    #endif
 
     // save frame pointer (if applies)
     if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
@@ -2680,7 +2660,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         __(MOV,  TB_X86_DWORD, &rax, Vimm(stack_usage));
         __(CALL, TB_X86_QWORD, &sym);
         __(SUB,  TB_X86_QWORD, &rsp, &rax);
-    } else if (stack_usage) {
+    } else if (stack_usage > 8) {
         if (stack_usage == (int8_t)stack_usage) {
             // sub rsp, stack_usage
             EMIT1(e, rex(true, 0x00, RSP, 0));
@@ -2705,7 +2685,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
         size_t extra_param_count = proto->param_count > gpr_count ? 0 : gpr_count - proto->param_count;
 
         FOR_N(i, proto->param_count, gpr_count) {
-            int dst_pos = ctx->stack_header + (i * 8);
+            int dst_pos = i * 8;
             __(MOV, TB_X86_QWORD, Vbase(RSP, stack_usage + dst_pos), Vgpr(params[i]));
         }
     }
@@ -2757,7 +2737,7 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
     tb_outs(e, sizeof(UnwindInfo), &unwind);
 
     size_t code_count = 0;
-    if (stack_usage > 0) {
+    if (stack_usage > 8) {
         UnwindCode codes[] = {
             // sub rsp, stack_usage
             { .code_offset = 4, .unwind_op = UNWIND_OP_ALLOC_SMALL, .op_info = (stack_usage / 8) - 1 },
@@ -2771,6 +2751,33 @@ static void emit_win64eh_unwind_info(TB_Emitter* e, TB_FunctionOutput* out_f, ui
 
 #define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
 static void our_print_rip32(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos, int disp_pos, int32_t imm);
+
+static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e) {
+    TB_FunctionPrototype* proto = ctx->f->prototype;
+    size_t stack_usage = ctx->stack_usage;
+
+    TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
+    E("// STACK OF '%s' (SPACE = %zu):\n", ctx->f->super.name, stack_usage);
+    FOR_REV_N(i, 0, proto->param_count) {
+        E("//  [SP + %3td] CALLER PARAM\n", stack_usage + i*8);
+    }
+
+    if (stack_usage > 8) {
+        E("// ==============\n");
+        E("//  [SP + %3zu] RPC\n", stack_usage - 8);
+        if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
+            E("//  [SP + %3zu] saved RBP\n", stack_usage - 16);
+        }
+        FOR_N(i, 0, ctx->num_spills) {
+            int pos = stk_offset(ctx, 1 + ctx->param_count + ctx->call_usage + i);
+            E("//  [SP + %3d] SPILL%zu\n", pos, i);
+        }
+        FOR_REV_N(i, 0, ctx->call_usage) {
+            E("//  [SP + %3td] CALLEE ARG\n", i*8);
+        }
+    }
+    TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
+}
 
 // #define E(fmt, ...) printf(fmt, ## __VA_ARGS__)
 static void our_print_memory_operand(TB_CGEmitter* e, Disasm* restrict d, TB_X86_Inst* restrict inst, size_t pos) {
