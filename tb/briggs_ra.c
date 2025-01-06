@@ -23,6 +23,12 @@ typedef struct {
 } Briggs_Set;
 
 typedef struct {
+    int curr, max;
+    // index in the block where the pressure went from lo->hi
+    int lo2hi;
+} Briggs_Pressure;
+
+typedef struct {
     Ctx* ctx;
     TB_Arena* arena;
 
@@ -39,7 +45,7 @@ typedef struct {
     // Block pressures per reg class, we don't track stack
     // pressure because... we uhh don't care? this is for
     // splitting heuristics.
-    int* block_pressures[MAX_REG_CLASSES];
+    Briggs_Pressure* block_pressures[MAX_REG_CLASSES];
 
     // Bit matrix IFG
     size_t ifg_len;
@@ -188,7 +194,7 @@ static void briggs_print_vreg(Ctx* restrict ctx, Briggs* restrict ra, VReg* vreg
 static void briggs_dump_sched(Ctx* restrict ctx, Briggs* restrict ra) {
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-        printf("BB %zu (freq=%f, pressures: {%d, %d}):\n", i, bb->freq, ra->block_pressures[1][i], ra->block_pressures[2][i]);
+        printf("BB %zu (freq=%f, pressures: {%d, %d}):\n", i, bb->freq, ra->block_pressures[1][i].max, ra->block_pressures[2][i].max);
         aarray_for(i, bb->items) {
             printf("  ");
             tb_print_dumb_node(NULL, bb->items[i]);
@@ -197,6 +203,16 @@ static void briggs_dump_sched(Ctx* restrict ctx, Briggs* restrict ra) {
     }
     __debugbreak();
 }
+
+enum {
+    SPLIT_DEAD,
+    // original definition
+    SPLIT_DEF,
+    // the reloaded form
+    SPLIT_DEF2,
+    // when the reloaded and og def meet
+    SPLIT_PHI,
+};
 
 // First step is just gonna be to move the spill site further from the def site, no crazy
 // SSA modifications need to be done if we just schedule it somewhere between the def and
@@ -208,15 +224,157 @@ static void spill_fancy(Ctx* ctx, Briggs* ra, int vreg_id) {
     TB_ASSERT(to_spill->uses == 1);
 
     TB_Function* f = ctx->f;
-    TB_Node* n = to_spill->n;
+    TB_Node* spilled_n = to_spill->n;
     RegMask* vreg_mask = to_spill->mask;
+    int def_class = vreg_mask->class;
 
-    // TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill  (%%%u)\x1b[0m\n", to_spill - ctx->vregs, n->gvn));
+    // is_def[i] = false means that we're in register, true means we're the stack form.
+    uint8_t* is_def = tb_arena_alloc(ra->arena, ctx->bb_count);
+    memset(is_def, 0, ctx->bb_count);
+
+    TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill  (%%%u)\x1b[0m\n", to_spill - ctx->vregs, spilled_n->gvn));
+
+    FOR_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+
+        const char* rg = ra->block_pressures[1][i].max >= 16 ? "HRP" : "LRP";
+        printf("BB %zu (freq=%f, pressures: {%d, %d}, %s): ", i, bb->freq, ra->block_pressures[1][i].max, ra->block_pressures[2][i].max, rg);
+        FOR_SUCC(it, bb->end) {
+            TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, it.succ);
+            printf("  BB%-3zu", succ_bb - ctx->cfg.blocks);
+        }
+        printf("\n");
+
+        #if 0
+        aarray_for(i, bb->items) {
+            printf("  ");
+            tb_print_dumb_node(NULL, bb->items[i]);
+            printf("\n");
+        }
+        #endif
+    }
+
+    FOR_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        bool is_hrp = ra->block_pressures[def_class][i].max >= ctx->num_regs[def_class];
+
+        bool split = false; // preds don't match
+
+        TB_Node* bb_node = bb->start;
+        if (!(bb_node->type == TB_PROJ && bb_node->inputs[0]->type == TB_ROOT)) {
+            FOR_N(i, 0, bb_node->input_count) {
+                TB_Node* pred = cfg_get_pred(&ctx->cfg, bb_node, i);
+                if (pred->input_count == 0 || pred->type == TB_DEAD) { continue; }
+
+                TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+                bool pred_def = is_defs[pred_bb - ctx->cfg.blocks];
+
+                if (pred_def
+            }
+        }
+
+        /* if (ra->block_pressures[def_class][i].max >= ctx->num_regs[def_class]) {
+
+        } */
+
+        // walk all the instructions, figure out if we "need"
+        aarray_for(j, bb->items) {
+            TB_Node* n = bb->items[j];
+            // if we're in an HRP, then we spill immediately. if not we'll spill once we rim some HRP
+            if (n == spilled_n && is_hrp) {
+                is_def[i] = 1;
+            }
+            // we've entered an HRP and weren't in one already
+            if (!is_def[i] && ra->block_pressures[def_class][i].lo2hi == j) {
+                is_def[i] = 1; // we're now on the stack
+            }
+        }
+
+        __debugbreak();
+    }
+
+    #if 0
+    // mark initial def site as "pre-split"
+    TB_BasicBlock* early = f->scheduled[n->gvn];
+    defs[early - ctx->cfg.blocks] = SPLIT_DEF;
+    // mark all use sites as "post-split"
+    FOR_USERS(u, n) {
+        TB_BasicBlock* bb = f->scheduled[USERN(u)->gvn];
+        defs[bb - ctx->cfg.blocks] = SPLIT_DEF2;
+    }
+
+    // find the earlest block that's LRP
+    /*TB_BasicBlock* split = early;
+    TB_BasicBlock* curr = tb_late_sched(f, &ctx->cfg, NULL, n);
+    while (curr != early) {
+        int i = curr - ctx->cfg.blocks;
+        if (ra->block_pressures[def_class][i].max <= ctx->num_regs[def_class]) {
+            split = curr;
+        }
+        curr = curr->dom;
+    }
+    defs[split - ctx->cfg.blocks] = 3;*/
+
+    // every block which is HRP will use the split value
+    FOR_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        if (ra->block_pressures[def_class][i].max >= ctx->num_regs[def_class]) {
+            if (defs[bb - ctx->cfg.blocks] == 0) {
+                defs[bb - ctx->cfg.blocks] = SPLIT_DEF2;
+            }
+        }
+    }
+
+    // TODO(NeGate): worklists are goated
+    bool changes;
+    do {
+        changes = false;
+
+        FOR_N(i, 0, ctx->bb_count) {
+            int old = defs[i];
+
+            // if all inputs agree we just use that
+            int preds = 0;
+            TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+            TB_Node* bb_node = bb->start;
+            if (!(bb_node->type == TB_PROJ && bb_node->inputs[0]->type == TB_ROOT)) {
+                FOR_N(i, 0, bb_node->input_count) {
+                    TB_Node* pred = cfg_get_pred(&ctx->cfg, bb_node, i);
+                    if (pred->input_count > 0 && pred->type != TB_DEAD) {
+                        TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+                        int pred_def = defs[pred_bb - ctx->cfg.blocks];
+
+                        if (preds == 0) {
+                            preds = pred_def;
+                        } else if (preds != pred_def) {
+                            preds = -1;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            int new = preds;
+            if (preds == SPLIT_PHI) {
+                new = SPLIT_DEF2;
+            } else if (preds == -1) {
+                new = SPLIT_PHI;
+            }
+
+            if (new > 0 && old != new) {
+                defs[i] = new;
+                changes = true;
+            }
+        }
+
+        __debugbreak();
+    } while (changes);
+
     // it needs to reload somewhere between these two points
     // TB_BasicBlock* early = f->scheduled[n->gvn];
-    // TB_BasicBlock* late  = tb_late_sched(f, &ctx->cfg, NULL, n);
+    #endif
 
-    #if 1
+    #if 0
     to_spill->mask = ctx->constraint(ctx, n, NULL);
     to_spill->spill_cost = NAN;
 
@@ -432,12 +590,11 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         printf("###############################\n");
         #endif
 
-        int mask_cap = max_regs_in_class > ctx->num_spills ? max_regs_in_class : ctx->num_spills;
+        int stack_cap = ctx->num_regs[REG_CLASS_STK] + ra.max_spills;
+        int mask_cap = stack_cap < max_regs_in_class ? max_regs_in_class : stack_cap;
         uint64_t* mask = tb_arena_alloc(arena, ((mask_cap+63)/64) * sizeof(uint64_t));
 
-        int num_spills = 0;
-        int stack_base = ctx->num_regs[REG_CLASS_STK];
-
+        int max_stack_usage = ctx->num_regs[REG_CLASS_STK];
         cuikperf_region_start("select", NULL);
         dyn_array_clear(ra.spills);
         FOR_REV_N(i, 0, aarray_length(stk)) {
@@ -455,29 +612,12 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             #endif
 
             int def_class = vreg->mask->class;
-            int num_regs = def_class == REG_CLASS_STK ? (stack_base + ra.max_spills) : ctx->num_regs[vreg->mask->class];
+            int num_regs = def_class == REG_CLASS_STK ? stack_cap : ctx->num_regs[vreg->mask->class];
             size_t mask_word_count = (num_regs + 63) / 64;
 
             FOR_N(j, 0, mask_word_count) {
                 mask[j] = 0;
             }
-
-            #if 0
-            if (def_class == REG_CLASS_STK) {
-                // don't allow us to allocate the local vars' preserved spills here
-                FOR_N(j, 0, stack_base / 64) {
-                    mask[j] = UINT64_MAX;
-                }
-
-                if (stack_base % 64) {
-                    mask[stack_base / 64] = UINT64_MAX >> (64ull - (stack_base % 64));
-                }
-
-                FOR_N(j, (stack_base + 63) / 64, mask_word_count) {
-                    mask[j] = 0;
-                }
-            }
-            #endif
 
             #if TB_OPTDEBUG_REGALLOC
             printf("#\n");
@@ -522,8 +662,8 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
             if (reg_assign(ctx, vreg, mask, num_regs)) {
                 // we need to know how much actual stack space we use
-                if (def_class == REG_CLASS_STK && num_spills < vreg->assigned + 1) {
-                    num_spills = vreg->assigned + 1;
+                if (def_class == REG_CLASS_STK && max_stack_usage < vreg->assigned + 1) {
+                    max_stack_usage = vreg->assigned + 1;
                 }
             } else {
                 TB_ASSERT_MSG(def_class != REG_CLASS_STK, "you fucked something up... bad");
@@ -538,9 +678,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             dyn_array_destroy(ra.spills);
             tb_arena_restore(arena, sp);
 
-            if (num_spills > ctx->num_spills) {
-                ctx->num_spills = num_spills;
-            }
+            ctx->num_spills = max_stack_usage - (1 + ctx->param_count + ctx->call_usage);
             cuikperf_region_end();
             break;
         }
@@ -710,17 +848,34 @@ static void interfere_mask(Ctx* restrict ctx, Briggs* ra, int vreg_id, RegMask* 
     }
 }
 
+static void p_up(Briggs_Pressure* p, int pos) {
+    if (++p->curr > p->max) {
+        p->max = p->curr;
+        if (p->lo2hi < 0 && p->max > 16) {
+            p->lo2hi = pos;
+        }
+    }
+}
+
+static void p_down(Briggs_Pressure* p) {
+    p->curr--;
+}
+
 static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
     TB_Function* f = ctx->f;
 
     ra->ifg_len = aarray_length(ctx->vregs);
     ra->ifg = tb_arena_alloc(ra->arena, ra->ifg_len * sizeof(Briggs_Set*));
 
-    /* ra->block_pressures[0] = NULL;
+    ra->block_pressures[0] = NULL;
     FOR_N(i, 1, ctx->num_classes) {
-        ra->block_pressures[i] = tb_arena_alloc(ra->arena, ctx->bb_count * sizeof(int));
-        memset(ra->block_pressures[i], 0, ctx->bb_count * sizeof(int));
-    }*/
+        ra->block_pressures[i] = tb_arena_alloc(ra->arena, ctx->bb_count * sizeof(Briggs_Pressure));
+        memset(ra->block_pressures[i], 0, ctx->bb_count * sizeof(Briggs_Pressure));
+
+        FOR_N(j, 0, ctx->bb_count) {
+            ra->block_pressures[i][j].lo2hi = -1;
+        }
+    }
 
     log_debug("%s: briggs: allocating IFG skeleton (%zu nodes)", f->super.name, ra->ifg_len);
 
@@ -751,20 +906,17 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
         }
 
         // current
-        /*int pressures[MAX_REG_CLASSES];
-        int max_pressures[MAX_REG_CLASSES];
-
         int j = bits32_first(live, live_count);
         while (j >= 0) {
             int vreg_id = ctx->vreg_map[j];
             if (vreg_id > 0) {
                 int def_class = ctx->vregs[vreg_id].mask->class;
                 if (def_class != REG_CLASS_STK) {
-                    ra->block_pressures[def_class][i] += 1;
+                    p_up(&ra->block_pressures[def_class][i], 0);
                 }
             }
             j = bits32_next(live, live_count, j);
-        }*/
+        }
 
         size_t item_count = aarray_length(bb->items);
         FOR_REV_N(j, 0, item_count) {
@@ -785,6 +937,9 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
 
                 TB_ASSERT(n->gvn < f->node_count);
                 bits32_remove(live, n->gvn);
+                if (def_mask->class != REG_CLASS_STK) {
+                    p_down(&ra->block_pressures[def_mask->class][i]);
+                }
 
                 interfere_live(ctx, ra, live, vreg_id);
                 interfere_mask(ctx, ra, vreg_id, vreg->mask);
@@ -793,7 +948,7 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
                 // shared dst/src)
                 int shared_edge = ctx->node_2addr(n);
                 if (shared_edge >= 0) {
-                    assert(shared_edge < n->input_count);
+                    TB_ASSERT(shared_edge < n->input_count);
                     FOR_N(k, 1, n->input_count) if (k != shared_edge) {
                         TB_Node* in = n->inputs[k];
                         VReg* in_vreg = node_vreg(ctx, in);
@@ -823,11 +978,17 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
 
             // uses are live now
             if (n->type != TB_PHI) {
-                FOR_N(j, 0, n->input_count) {
-                    TB_Node* in = n->inputs[j];
+                FOR_N(k, 0, n->input_count) {
+                    TB_Node* in = n->inputs[k];
                     if (in) {
                         TB_ASSERT(in->gvn < f->node_count);
-                        bits32_test_n_set(live, in->gvn);
+
+                        int in_class = ctx->vreg_map[in->gvn] > 0 ? ctx->vregs[ctx->vreg_map[in->gvn]].mask->class : REG_CLASS_STK;
+                        if (!bits32_test_n_set(live, in->gvn) &&
+                            in_class != REG_CLASS_STK
+                        ) {
+                            p_up(&ra->block_pressures[in_class][i], k);
+                        }
                     }
                 }
             }

@@ -667,6 +667,7 @@ void cuikpp_dump_tokens(TokenStream* s) {
     Token* tokens = cuikpp_get_tokens(s);
     size_t count = cuikpp_get_token_count(s);
 
+    int last_spot = 0;
     for (size_t i = 0; i < count; i++) {
         Token* t = &tokens[i];
 
@@ -689,19 +690,21 @@ void cuikpp_dump_tokens(TokenStream* s) {
             *out++ = '\0';
 
             printf("\n#line %d \"%s\"\t", r.line, str);
-            last_file = r.file->filename;
+            last_spot = 0, last_file = r.file->filename;
         }
 
         if (last_line != r.line) {
             printf("\n/* line %3d */\t", r.line);
-            last_line = r.line;
+            last_spot = 0, last_line = r.line;
         }
 
         if (t->type == TOKEN_STRING_WIDE_SINGLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
             printf("L");
         }
 
-        printf("%.*s ", (int) t->content.length, t->content.data);
+        printf("%*s", r.column - last_spot, "");
+        printf("%.*s", (int) t->content.length, t->content.data);
+        last_spot = r.column + t->content.length;
     }
     printf("\n");
 }

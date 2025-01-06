@@ -328,7 +328,9 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
         // if it's already a machine copy, inserting an extra one is useless
         if (use_n->type == TB_MACH_COPY) {
             TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
-            if (!reg_mask_is_stack(in_mask) || !reg_mask_is_stack(spill_mask)) {
+
+            // folded-reloads can't happen for stack-stack moves
+            if (!reg_mask_is_stack(cpy->def) || !reg_mask_is_stack(spill_mask)) {
                 TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%d: folded reload (%%%u)\x1b[0m\n", ctx->vreg_map[use_n->gvn], use_n->gvn));
                 cpy->use = spill_mask;
                 continue;
@@ -366,7 +368,14 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
             TB_Node* reload_n = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
             set_input(f, use_n, reload_n, use_i);
             set_input(f, reload_n, n, 1);
-            TB_NODE_SET_EXTRA(reload_n, TB_NodeMachCopy, .def = in_mask, .use = spill_mask);
+
+            // if the spill & in mask don't fit into the same class
+            // it doesn't make sense to keep it so tight.
+            if (spill_mask->class > 0 && in_mask->class != spill_mask->class) {
+                TB_NODE_SET_EXTRA(reload_n, TB_NodeMachCopy, .def = in_mask, .use = ctx->normie_mask[spill_mask->class]);
+            } else {
+                TB_NODE_SET_EXTRA(reload_n, TB_NodeMachCopy, .def = in_mask, .use = spill_mask);
+            }
 
             // schedule the split right before use
             tb__insert_before(ctx, ctx->f, reload_n, use_n);
