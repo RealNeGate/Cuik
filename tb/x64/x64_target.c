@@ -61,7 +61,7 @@ static bool can_gvn(TB_Node* n) {
     return true;
 }
 
-uint32_t node_flags(TB_Node* n) {
+static uint32_t node_flags(TB_Node* n) {
     X86NodeType type = n->type;
     switch (type) {
         case x86_idiv: case x86_div:

@@ -245,10 +245,10 @@ static float get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
 }
 
 static int op_reg_at(Ctx* ctx, TB_Node* n, int class) {
-    assert(ctx->vreg_map[n->gvn] > 0);
+    TB_ASSERT(ctx->vreg_map[n->gvn] > 0);
     VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
-    assert(vreg->assigned >= 0);
-    assert(vreg->class == class);
+    TB_ASSERT(vreg->assigned >= 0);
+    TB_ASSERT(vreg->class == class);
     return vreg->assigned;
 }
 
@@ -356,3 +356,4 @@ static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg
     }
     return new_rm;
 }
+

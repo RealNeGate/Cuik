@@ -369,7 +369,7 @@ static void spill_fancy(Ctx* ctx, Briggs* ra, int vreg_id) {
         W_exit[i] = W_entry[i];
         S_entry[i] = pred_S && W_entry[i];
 
-        printf("  \x1b[32mW_entry=%d, S_entry=%d, pred_S=%d, freq=%d\x1b[0m\n", W_entry[i], S_entry[i], pred_S, freq);
+        printf("  \x1b[32mW_entry=%d, S_entry=%d, pred_S=%d\x1b[0m\n", W_entry[i], S_entry[i], pred_S);
 
         // placement of spills and reloads between blocks can
         // only happen once we've fully resolved the block.
@@ -389,7 +389,6 @@ static void spill_fancy(Ctx* ctx, Briggs* ra, int vreg_id) {
                     // TB_NODE_SET_EXTRA(v, TB_NodeMachCopy, .def = reload_rm, .use = spill_rm);
 
                     #if TB_OPTDEBUG_REGALLOC
-                    FOR_N(j, 0, depth) { printf(" "); }
                     // printf("  reloaded before entry! %%%u\n", v->gvn);
                     printf("  reloaded in BB%d!\n", pred_id);
                     #endif
@@ -403,7 +402,6 @@ static void spill_fancy(Ctx* ctx, Briggs* ra, int vreg_id) {
                 //   the end of P.
                 if (S_entry[i] && !S_exit[pred_id] && W_exit[pred_id]) {
                     #if TB_OPTDEBUG_REGALLOC
-                    FOR_N(j, 0, depth) { printf(" "); }
                     printf("  spilled in BB%d!\n", pred_id);
                     #endif
                 }
