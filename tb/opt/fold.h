@@ -96,25 +96,11 @@ static Lattice* value_negate(TB_Function* f, TB_Node* n) {
     if (a->tag != LATTICE_INT) { return NULL; }
 
     int bits = tb_data_type_bit_size(NULL, n->dt.type);
-    uint64_t mask = tb__mask(bits);
-    uint64_t min = ~a->_int.min & mask;
-    uint64_t max = ~a->_int.max & mask;
-    if (min > max) { return NULL; }
-
-    // -x => ~x + 1
-    //   because of this addition we can technically
-    //   overflow... umm? glhf?
-    uint64_t min_inc = (min+1) & mask;
-    uint64_t max_inc = (max+1) & mask;
-
-    if (min_inc < min || max_inc < min) {
-        return NULL;
-    } else {
-        min = min_inc;
-        max = max_inc;
+    if (a->_int.min == a->_int.max) {
+        return lattice_gimme_int(f, -a->_int.min, -a->_int.min, bits);
     }
 
-    return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, ~mask, 0, .widen = a->_int.widen } });
+    return NULL;
 }
 
 static void swap_edges(TB_Function* f, TB_Node* n, int i, int j) {

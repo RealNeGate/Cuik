@@ -1,5 +1,3 @@
-**btw project's not dead im in the trenches aka new-cg branch putting in the hours 😤**
-
 <img src="logo/cuik.svg" width="256px"/>
 
 **warning: unfinished and buggy...**
