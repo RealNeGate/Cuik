@@ -44,7 +44,7 @@ jobs:
       - uses: seanmiddleditch/gha-setup-ninja@master
 
       - name: Download LLVM & Lua
-        run: sudo apt-get install llvm-11 clang-11 lld lua5.3
+        run: sudo apt-get install llvm clang lld lua5.3
 
       - name: Download Submodules
         run: git submodule update --init --recursive
@@ -79,7 +79,7 @@ jobs:
 
       - name: Download LLVM & Lua
         if: runner.os == 'Linux'
-        run: sudo apt-get install llvm-11 clang-11 lld lua5.3
+        run: sudo apt-get install llvm clang lld lua5.3
 
       - name: Download Submodules
         run: git submodule update --init --recursive
