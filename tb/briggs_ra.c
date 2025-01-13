@@ -19,7 +19,7 @@ struct Briggs_Chunk {
 };
 
 typedef struct {
-    Briggs_Chunk* chunks[];
+    Briggs_Chunk* chunks[0];
 } Briggs_Set;
 
 typedef struct {
