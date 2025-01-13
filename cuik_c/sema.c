@@ -1766,6 +1766,18 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                     diag_note(&tu->tokens, type->loc, "type declared here");
                 }
             }
+
+            if ((s->flags & STMT_FLAGS_HAS_IR_BACKING) && s->decl.initial) {
+                Subexpr* root = get_root_subexpr(s->decl.initial);
+                if (root->op != EXPR_INITIALIZER && root->op != EXPR_STR && root->op != EXPR_WSTR) {
+                    Cuik_ConstVal val;
+                    if (const_eval(NULL, &tu->tokens, s->decl.initial, &val)) {
+                        s->decl.initial->count = 1;
+                        root->op = EXPR_CONST;
+                        root->const_val = val;
+                    }
+                }
+            }
             break;
         }
         default:

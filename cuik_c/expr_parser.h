@@ -1096,7 +1096,7 @@ static intmax_t parse_const_expr(Cuik_Parser* parser, TokenStream* restrict s) {
     Cuik_Expr* e = complete_expr(parser);
 
     Cuik_ConstVal value;
-    if (!const_eval(parser, e, &value)) {
+    if (!const_eval(parser, &parser->tokens, e, &value)) {
         // the const_eval_int will handle errors
         return 0;
     }

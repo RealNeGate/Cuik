@@ -2,12 +2,12 @@
 #define GET_CONST_INT(e) (e.i)
 #define SET_CONST_INT(lhs, rhs) (lhs.tag = CUIK_CONST_INT, lhs.i = (rhs))
 
-static bool const_eval(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstVal* out_val);
+static bool const_eval(Cuik_Parser* restrict parser, TokenStream* tokens, Cuik_Expr* e, Cuik_ConstVal* out_val);
 
 enum { CONST_ERROR = -2 };
 
 // -1 for error
-static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType* types, Subexpr* exprs, ptrdiff_t i, Cuik_ConstVal* res) {
+static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* tokens, Cuik_QualType* types, Subexpr* exprs, ptrdiff_t i, Cuik_ConstVal* res) {
     assert(i >= 0);
     Subexpr* s = &exprs[i];
 
@@ -31,10 +31,10 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType*
         case EXPR_SIZEOF_T: {
             Cuik_Type* src = cuik_canonical_type(s->x_of_type.type);
             if (src->size == 0) {
-                type_layout2(parser, &parser->tokens, src);
+                type_layout2(parser, tokens, src);
 
                 if (src->size == 0) {
-                    diag_err(&parser->tokens, s->loc, "Could not resolve type");
+                    diag_err(tokens, s->loc, "Could not resolve type");
                     return -1;
                 }
             }
@@ -45,7 +45,7 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType*
 
         case EXPR_ENUM: {
             if (s->enum_val.num->lexer_pos != 0) {
-                type_layout2(parser, &parser->tokens, cuik_canonical_type(s->enum_val.type));
+                type_layout2(parser, tokens, cuik_canonical_type(s->enum_val.type));
             }
 
             *res = (Cuik_ConstVal){ CUIK_CONST_INT, .i = s->enum_val.num->value };
@@ -54,7 +54,7 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType*
         case EXPR_CAST: {
             Cuik_ConstVal src;
 
-            i = const_eval_subexpr(parser, types, exprs, i - 1, &src);
+            i = const_eval_subexpr(parser, tokens, types, exprs, i - 1, &src);
             if (i == CONST_ERROR) return i;
 
             assert(src.tag == CUIK_CONST_INT);
@@ -65,71 +65,108 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType*
             i -= 1;
 
             // find base (just skip arrow or dot)
-            Subexpr* base = &exprs[i];
-            if (base->op == EXPR_DOT || base->op == EXPR_ARROW) {
-                base -= 1;
-            }
+            /* if (exprs[i].op == EXPR_DOT || exprs[i].op == EXPR_ARROW) {
+                i -= 1;
+            } */
 
             Cuik_Type* t = NULL;
-            if (base->op == EXPR_CAST) {
-                t = cuik_canonical_type(base->cast.type);
-                base -= 1;
-                if (base->op == EXPR_INT) {
-                    // (T*) 0
-                    *res = (Cuik_ConstVal){ CUIK_CONST_INT, .i = base->int_lit.lit };
-                } else if (base->op == EXPR_SYMBOL) {
-                    *res = (Cuik_ConstVal){ CUIK_CONST_ADDR, .s = { base - exprs, 0 } };
+            if (exprs[i].op == EXPR_CAST) {
+                t = cuik_canonical_type(exprs[i].cast.type);
+                i -= 1;
+            }
+
+            printf("AAA %zu %s\n", i, cuik_get_expr_name(&exprs[i]));
+
+            ptrdiff_t offset = 0;
+            while (exprs[i].op == EXPR_ARROW || exprs[i].op == EXPR_DOT_R || exprs[i].op == EXPR_SUBSCRIPT) {
+                Subexpr* s = &exprs[i];
+
+                if (exprs[i].op == EXPR_DOT_R) {
+                    offset += exprs[i].dot_arrow.offset;
+                    i -= 1;
+                } else if (exprs[i].op == EXPR_ARROW) {
+                    // &(a->b)         A -> &
+                    if (t == NULL) {
+                        diag_err(tokens, s->loc, "Unknown type, cannot get member: %s", s->dot_arrow.name);
+                        return CONST_ERROR;
+                    }
+
+                    if (cuik_type_can_deref(t)) {
+                        t = cuik_canonical_type(t->ptr_to);
+                    } else {
+                        diag_err(tokens, s->loc, "Expected pointer (or array) for arrow");
+                        return CONST_ERROR;
+                    }
+
+                    // force this expression's type to resolve
+                    if (t->size == 0) {
+                        type_layout2(parser, tokens, t);
+                    }
+
+                    uint32_t member_offset = 0;
+                    Member* member = sema_traverse_members(t, s->dot_arrow.name, &member_offset);
+                    if (member == NULL) {
+                        diag_err(tokens, s->loc, "Unknown member: %s", s->dot_arrow.name);
+                        return CONST_ERROR;
+                    }
+
+                    offset += member_offset;
+                    i -= 1;
+                } else if (exprs[i].op == EXPR_SUBSCRIPT) {
+                    t = cuik_canonical_type(types[i]);
+
+                    if (t == NULL) {
+                        diag_err(tokens, s->loc, "Unknown type, cannot get member: %s", s->dot_arrow.name);
+                        return CONST_ERROR;
+                    }
+
+                    // force this expression's type to resolve
+                    if (t->size == 0) {
+                        type_layout2(parser, tokens, t);
+                    }
+
+                    Cuik_ConstVal idx;
+                    i = const_eval_subexpr(parser, tokens, types, exprs, i - 1, &idx);
+                    if (i == CONST_ERROR) return i;
+
+                    if (idx.tag != CUIK_CONST_INT) {
+                        diag_err(tokens, s->loc, "Array index wasn't an integer");
+                        return CONST_ERROR;
+                    }
+
+                    printf("IDX[%zu]\n", idx.i);
+                    offset += idx.i * t->size;
                 } else {
-                    diag_err(&parser->tokens, s->loc, "Cannot evaluate address as constant");
+                    diag_err(tokens, s->loc, "TODO");
                     return CONST_ERROR;
                 }
             }
 
-            ptrdiff_t offset = 0;
-            Subexpr* s = &exprs[i];
-            if (s->op == EXPR_ARROW) {
-                // &(a->b)         A -> &
-                if (t == NULL) {
-                    diag_err(&parser->tokens, s->loc, "Unknown type, cannot get member: %s", s->dot_arrow.name);
-                    return CONST_ERROR;
-                }
-
-                if (cuik_type_can_deref(t)) {
-                    t = cuik_canonical_type(t->ptr_to);
-                } else {
-                    diag_err(&parser->tokens, s->loc, "Expected pointer (or array) for arrow");
-                    return CONST_ERROR;
-                }
-
-                // force this expression's type to resolve
-                if (t->size == 0) {
-                    type_layout2(parser, &parser->tokens, t);
-                }
-
-                uint32_t member_offset = 0;
-                Member* member = sema_traverse_members(t, s->dot_arrow.name, &member_offset);
-                if (member == NULL) {
-                    diag_err(&parser->tokens, s->loc, "Unknown member: %s", s->dot_arrow.name);
-                    return CONST_ERROR;
-                }
-
-                offset += member_offset;
-                i -= 1;
+            if (exprs[i].op == EXPR_INT) {
+                // (T*) 0
+                *res = (Cuik_ConstVal){ CUIK_CONST_INT, .i = exprs[i].int_lit.lit };
+            } else if (exprs[i].op == EXPR_SYMBOL) {
+                *res = (Cuik_ConstVal){ CUIK_CONST_ADDR, .s = { i, 0 } };
+            } else {
+                diag_err(tokens, s->loc, "Cannot evaluate address as constant");
+                return CONST_ERROR;
             }
 
             if (res->tag == CUIK_CONST_ADDR) {
                 res->s.offset += offset;
-            } else {
-                assert(res->tag == CUIK_CONST_INT);
+            } else if (res->tag == CUIK_CONST_INT) {
                 res->i += offset;
+            } else {
+                diag_err(tokens, s->loc, "Cannot evaluate address as constant");
+                return CONST_ERROR;
             }
 
-            return (base - exprs) - 1;
+            return i - 1;
         }
         case EXPR_SYMBOL: {
             Stmt* sym = s->sym.stmt;
             if (!cuik_type_implicit_ptr(cuik_canonical_type(sym->decl.type))) {
-                diag_err(&parser->tokens, s->loc, "Cannot evaluate address as constant");
+                diag_err(tokens, s->loc, "Cannot evaluate address as constant");
                 return CONST_ERROR;
             }
 
@@ -143,7 +180,7 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType*
     if (s->op == EXPR_NOT || s->op == EXPR_NEGATE) {
         Cuik_ConstVal src;
 
-        i = const_eval_subexpr(parser, types, exprs, i - 1, &src);
+        i = const_eval_subexpr(parser, tokens, types, exprs, i - 1, &src);
         if (i == CONST_ERROR) return i;
 
         Cuik_Type* ty = types ? cuik_canonical_type(types[i]) : NULL;
@@ -170,9 +207,9 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType*
     if (s->op >= EXPR_PLUS && s->op <= EXPR_CMPLT) {
         Cuik_ConstVal rhs, lhs;
 
-        i = const_eval_subexpr(parser, types, exprs, i - 1, &rhs);
+        i = const_eval_subexpr(parser, tokens, types, exprs, i - 1, &rhs);
         if (i == CONST_ERROR) return i;
-        i = const_eval_subexpr(parser, types, exprs, i, &lhs);
+        i = const_eval_subexpr(parser, tokens, types, exprs, i, &lhs);
         if (i == CONST_ERROR) return i;
 
         Cuik_Type* ty = types ? cuik_canonical_type(types[i]) : NULL;
@@ -229,17 +266,17 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType*
 
     if (s->op == EXPR_TERNARY) {
         Cuik_ConstVal src;
-        i = const_eval_subexpr(parser, types, exprs, i - 1, &src);
+        i = const_eval_subexpr(parser, tokens, types, exprs, i - 1, &src);
         if (i == CONST_ERROR) return i;
 
         if (src.tag != CUIK_CONST_INT) {
-            diag_err(&parser->tokens, s->loc, "Ternary condition must be int");
+            diag_err(tokens, s->loc, "Ternary condition must be int");
             return CONST_ERROR;
         }
 
         Cuik_ConstVal v;
-        if (!const_eval(parser, src.i ? s->ternary.left : s->ternary.right, &v)) {
-            diag_err(&parser->tokens, s->loc, "Cannot fold ternary");
+        if (!const_eval(parser, tokens, src.i ? s->ternary.left : s->ternary.right, &v)) {
+            diag_err(tokens, s->loc, "Cannot fold ternary");
             return CONST_ERROR;
         }
 
@@ -247,7 +284,7 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, Cuik_QualType*
         return i;
     }
 
-    diag_err(parser ? &parser->tokens : NULL, s->loc, "could not parse subexpression '%s' as constant.", cuik_get_expr_name(s));
+    diag_err(tokens, s->loc, "could not parse subexpression '%s' as constant.", cuik_get_expr_name(s));
     return CONST_ERROR;
 }
 
@@ -308,8 +345,8 @@ static bool const_eval_addr_single(Cuik_Parser* restrict parser, Cuik_Expr* e, S
 }
 
 // does constant eval on integer values, if it ever fails it'll exit with false
-static bool const_eval(Cuik_Parser* restrict parser, Cuik_Expr* e, Cuik_ConstVal* out_val) {
-    return const_eval_subexpr(parser, e->types, e->exprs, e->count - 1, out_val) != CONST_ERROR;
+static bool const_eval(Cuik_Parser* restrict parser, TokenStream* tokens, Cuik_Expr* e, Cuik_ConstVal* out_val) {
+    return const_eval_subexpr(parser, tokens, e->types, e->exprs, e->count - 1, out_val) != CONST_ERROR;
 
     #if 0
     size_t top = 0;

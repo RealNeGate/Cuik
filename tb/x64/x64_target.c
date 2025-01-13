@@ -24,16 +24,22 @@ enum {
     MODE_ST, // mem <- reg
 };
 
+enum {
+    HAS_IMMEDATE = 1,
+};
+
 // node with X86MemOp (mov, add, and...) will have this layout of inputs:
 //   [1] mem
 //   [2] base (or first src)
 //   [3] idx
-//   [4] val
+//   [4] val (only if flags' HAS_IMMEDATE is unset)
 typedef struct {
     uint8_t mode  : 2;
     uint8_t scale : 2;
     uint8_t cond  : 4;
+    uint8_t flags;
     TB_DataType dt;
+
     int32_t disp;
     int32_t imm;
 } X86MemOp;
@@ -56,6 +62,8 @@ typedef enum X86NodeType {
     #define X(name) x86_ ## name,
     #include "x64_nodes.inc"
 } X86NodeType;
+
+// #include "x64_gen.inc"
 
 static bool can_gvn(TB_Node* n) {
     return true;
@@ -2650,7 +2658,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
 
     // inserts a chkstk call if we use too much stack
     if (ctx->f->super.module->chkstk_extern && stack_usage >= param_descs[ctx->abi_index].chkstk_limit) {
-        assert(ctx->f->super.module->chkstk_extern);
+        TB_ASSERT(ctx->f->super.module->chkstk_extern);
         ctx->f->super.module->uses_chkstk++;
 
         Val sym = val_global(ctx->f->super.module->chkstk_extern, 0);
