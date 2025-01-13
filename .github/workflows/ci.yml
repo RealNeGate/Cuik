@@ -10,7 +10,8 @@ jobs:
 
       - uses: TheMrMilchmann/setup-msvc-dev@v3
         with:
-          toolset: "17.8"
+          arch: "x64"
+          toolset: "17.XX"
 
       - uses: leafo/gh-actions-lua@v10
         with:
