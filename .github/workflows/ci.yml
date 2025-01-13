@@ -3,16 +3,13 @@ on: [pull_request, workflow_dispatch, push]
 
 jobs:
   build_win:
-    runs-on: windows-2019
+    runs-on: windows-2022
+    if: github.ref == 'refs/heads/master'
     steps:
       - uses: actions/checkout@v3
       - uses: seanmiddleditch/gha-setup-ninja@master
 
-      - uses: TheMrMilchmann/setup-msvc-dev@v3
-        with:
-          arch: "x64"
-          toolset: "17.XX"
-
+      - uses: ilammy/msvc-dev-cmd@v1
       - uses: leafo/gh-actions-lua@v10
         with:
           luaVersion: "5.3.0"
