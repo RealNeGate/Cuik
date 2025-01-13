@@ -18,6 +18,14 @@ enum {
 // Brings in all the glue to our codegen functions
 #include "../codegen_impl.h"
 
+typedef enum A64NodeType {
+    A64_ADDIMM = TB_MACH_A64,
+} A64NodeType;
+
+typedef struct {
+    uint64_t imm;
+} A64Imm12;
+
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->num_regs[REG_CLASS_GPR] = 32;
     ctx->num_regs[REG_CLASS_FPR] = 32;
@@ -32,7 +40,10 @@ static void print_extra(TB_Node* n) {
 }
 
 static const char* node_name(int type) {
-    return "???";
+    switch (type) {
+        case A64_ADDIMM: return "add imm";
+        default: return "???";
+    }
 }
 
 static bool can_gvn(TB_Node* n) {
@@ -40,11 +51,11 @@ static bool can_gvn(TB_Node* n) {
 }
 
 static size_t extra_bytes(TB_Node* n) {
-    if (n->type == TB_ICONST) {
-        TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
-    }
+    switch (n->type) {
+        case A64_ADDIMM: return sizeof(A64Imm12);
 
-    return 0;
+        default: tb_todo();
+    }
 }
 
 static uint32_t node_flags(TB_Node* n) {
@@ -55,7 +66,39 @@ static uint32_t node_flags(TB_Node* n) {
 // Instruction selection
 ////////////////////////////////
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
-    return NULL;
+    switch (n->type) {
+        case TB_ROOT: {
+            TB_Node* ret = n->inputs[1];
+            if (ret->type == TB_RETURN) {
+                return NULL;
+            }
+            return NULL;
+        }
+
+        case TB_PHI: {
+            tb_todo();
+        }
+
+        case TB_ADD: {
+            TB_Node* rhs = n->inputs[2];
+            if (rhs->type == TB_ICONST) {
+                tb_print_dumb_node(NULL, n);
+                uint64_t val = TB_NODE_GET_EXTRA_T(rhs, TB_NodeInt)->value;
+                bool lo12 = val == (val & 07777);
+                bool hi12 = val == (val & 077770000);
+                if (lo12 || hi12) {
+                    TB_Node* new = tb_alloc_node(f, A64_ADDIMM, n->dt, 2, sizeof(A64Imm12));
+                    set_input(f, new, n->inputs[1], 1);
+                    TB_NODE_SET_EXTRA(new, A64Imm12, .imm = val);
+                    return new;
+                }
+            }
+            return NULL;
+        }
+
+        default:
+        return NULL;
+    }
 }
 
 ////////////////////////////////
@@ -66,7 +109,7 @@ static bool node_remat(TB_Node* n) {
 }
 
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
-    printf("CONSTRAINT %%%u\n", n->gvn);
+    printf("CONSTRAINT %%%u, %s\n", n->gvn, tb_node_get_name(n->type));
     switch (n->type) {
         case TB_PROJ: {
             if (n->dt.type == TB_TAG_MEMORY || n->dt.type == TB_TAG_CONTROL) {
@@ -86,10 +129,27 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
         }
 
-        case TB_ADD: {
+        case TB_ICONST: {
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
+
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_MUL:
+        case TB_SMOD: {
             if (ins) {
                 ins[1] = ctx->normie_mask[REG_CLASS_GPR];
                 ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+            }
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
+        
+        case A64_ADDIMM: {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_GPR];
             }
             return ctx->normie_mask[REG_CLASS_GPR];
         }
@@ -153,6 +213,34 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
     TB_Node* n = bundle->arr[0];
     // VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
 
+    #if TB_OPTDEBUG_REGALLOC2
+    if (e->has_comments) {
+        enum { BUF_SIZE = 1024 };
+        char buf[BUF_SIZE];
+        int j = 0;
+
+        j += snprintf(buf+j, BUF_SIZE-j, "%%%-3u: ", n->gvn);
+
+        int dst = ctx->vreg_map[n->gvn];
+        if (dst > 0) {
+            j += snprintf(buf+j, BUF_SIZE-j, "V%-3d", dst);
+        } else {
+            j += snprintf(buf+j, BUF_SIZE-j, "____");
+        }
+        j += snprintf(buf+j, BUF_SIZE-j, " = %-14s (", tb_node_get_name(n->type));
+        FOR_N(i, 0, n->input_count) {
+            int src = n->inputs[i] ? ctx->vreg_map[n->inputs[i]->gvn] : 0;
+            if (src > 0) {
+                j += snprintf(buf+j, BUF_SIZE-j, " V%-3d", src);
+            } else {
+                j += snprintf(buf+j, BUF_SIZE-j, " ____");
+            }
+        }
+        j += snprintf(buf+j, BUF_SIZE-j, " )");
+        COMMENT("%.*s", j > 100 ? 100 : j, buf);
+    }
+    #endif
+
     printf("EMIT %%%u\n", n->gvn);
     switch (n->type) {
         case TB_CALLGRAPH:
@@ -163,6 +251,22 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_PHI:
         break;
 
+        case TB_ICONST: {
+            int dst = op_reg_at(ctx, n, REG_CLASS_GPR);
+            uint64_t val = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
+            
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            int shift = 0; bool first = true;
+            while (val) {
+                if (val & 0xFFFF) {
+                    emit_movimm(e, dst, val & 0xFFFF, shift / 16, is_64bit, first);
+                    first = false;
+                }
+                val >>= 16, shift += 16;
+            }
+            break;
+        }
+
         case TB_ADD: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
@@ -170,6 +274,26 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
             bool is_64bit = n->dt.type == TB_TAG_I64; // legalize_int(n->dt);
             emit_dp_r(e, ADD, dst, lhs, rhs, 0, 0, is_64bit);
+            break;
+        }
+        case TB_OR:
+        case TB_XOR:
+        case TB_SUB:
+        case TB_MUL:
+        case TB_SMOD:
+
+        case A64_ADDIMM: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            uint64_t imm = TB_NODE_GET_EXTRA_T(n, A64Imm12)->imm;
+            int shift = 0;
+            if (imm == (imm & 077770000)) {
+                shift = 12;
+                imm >>= shift;
+            }
+
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dp_imm(e, ADD, dst, lhs, imm, shift, is_64bit);
             break;
         }
 

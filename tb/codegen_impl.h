@@ -389,6 +389,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
                 #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
                 int tmps = node_tmp_count(&ctx, n);
+                FOR_N(i, 0, n->input_count + tmps) {
+                    ctx.ins[i] = NULL;
+                }
                 RegMask* def_mask = node_constraint(&ctx, n, ctx.ins);
 
                 printf("  "), tb_print_dumb_node(NULL, n), printf(" (%u uses)\n", n->user_count);

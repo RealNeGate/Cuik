@@ -51,7 +51,7 @@ local modules = {
 			"tb/libtb.c",
 			-- archictectures
 			"tb/x64/x64_target.c", "tb/aarch64/aarch64_target.c", "tb/mips/mips_target.c", "tb/wasm/wasm_target.c"
-		}, flags="-DCONFIG_HAS_TB -DTB_HAS_X64", deps={"common"}
+		}, flags="-DCONFIG_HAS_TB -DTB_HAS_AARCH64", deps={"common", "cuik_pp"}
 	},
 	--   Linker
 	linker = { srcs={
