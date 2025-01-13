@@ -51,7 +51,7 @@ local modules = {
 			"tb/libtb.c",
 			-- archictectures
 			"tb/x64/x64_target.c", "tb/aarch64/aarch64_target.c", "tb/mips/mips_target.c", "tb/wasm/wasm_target.c"
-		}, flags="-DCONFIG_HAS_TB -DTB_HAS_X64", deps={"common", "cuik_pp"}
+		}, flags="-DCONFIG_HAS_TB -DTB_HAS_X64", deps={"common"}
 	},
 	--   Linker
 	linker = { srcs={
@@ -187,6 +187,10 @@ end
 
 walk("mimalloc")
 
+if options.cuik then
+    walk("cuik_c")
+end
+
 -- whatever the options says to compile, do that
 for k,v in pairs(options) do
 	if v and modules[k] then walk(k) end
@@ -237,6 +241,12 @@ rule("run", {
 	command = "$cmd",
 	description = "$cmd"
 })
+
+-- TB's x64 metaprogram
+if false and added["tb"] then
+    command("bin/objs/x64_gen"..exe_ext, "meta/x64_gen.c", cc.." $in -O1 -o $out")
+    command("tb/x64/x64_gen.inc", "", "bin/objs/x64_gen"..exe_ext.." $in", "bin/objs/x64_gen"..exe_ext)
+end
 
 -- lexer metaprogram
 command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
