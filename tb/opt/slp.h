@@ -235,7 +235,7 @@ void generate_pack(TB_Function* f, PairSet* pairs, TB_Node* n) {
             printf("\n");
             #endif
 
-            visited = tb_arena_alloc(&f->tmp_arena, pairs->count * sizeof(bool));
+            tb_arena_free(&f->tmp_arena, visited, pairs->count * sizeof(bool));
         }
 
         start = end;
