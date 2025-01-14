@@ -893,6 +893,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
         FOREACH_SET(j, ra->live_out) if (!set_get(live_in, j)) {
             int vreg_id = ctx->vreg_map[j];
             if (vreg_id == 0) { continue; }
+            if (!set_get(&ra->active, vreg_id)) { continue; }
 
             bool pause = false;
             FOR_N(k, i, ctx->bb_count) {

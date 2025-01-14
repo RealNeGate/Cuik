@@ -36,7 +36,7 @@
 #define TB_OPTDEBUG_INLINE    0
 #define TB_OPTDEBUG_REGALLOC  0
 #define TB_OPTDEBUG_REGALLOC2 0
-#define TB_OPTDEBUG_SLP       0
+#define TB_OPTDEBUG_SLP       1
 #define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_COMPACT   0
 #define TB_OPTDEBUG_SCHEDULE  0

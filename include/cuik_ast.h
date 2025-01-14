@@ -46,7 +46,7 @@ typedef struct {
 
         // symbols refer to their creator + an offset
         struct {
-            uint32_t base;
+            Stmt* base;
             int32_t offset;
         } s;
     };

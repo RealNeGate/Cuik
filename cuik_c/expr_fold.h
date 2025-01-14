@@ -6,7 +6,6 @@ static bool const_eval(Cuik_Parser* restrict parser, TokenStream* tokens, Cuik_E
 
 enum { CONST_ERROR = -2 };
 
-// -1 for error
 static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* tokens, Cuik_QualType* types, Subexpr* exprs, ptrdiff_t i, Cuik_ConstVal* res) {
     assert(i >= 0);
     Subexpr* s = &exprs[i];
@@ -35,7 +34,7 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* t
 
                 if (src->size == 0) {
                     diag_err(tokens, s->loc, "Could not resolve type");
-                    return -1;
+                    return CONST_ERROR;
                 }
             }
 
@@ -74,8 +73,6 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* t
                 t = cuik_canonical_type(exprs[i].cast.type);
                 i -= 1;
             }
-
-            printf("AAA %zu %s\n", i, cuik_get_expr_name(&exprs[i]));
 
             ptrdiff_t offset = 0;
             while (exprs[i].op == EXPR_ARROW || exprs[i].op == EXPR_DOT_R || exprs[i].op == EXPR_SUBSCRIPT) {
@@ -134,7 +131,6 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* t
                         return CONST_ERROR;
                     }
 
-                    printf("IDX[%zu]\n", idx.i);
                     offset += idx.i * t->size;
                 } else {
                     diag_err(tokens, s->loc, "TODO");
@@ -146,7 +142,7 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* t
                 // (T*) 0
                 *res = (Cuik_ConstVal){ CUIK_CONST_INT, .i = exprs[i].int_lit.lit };
             } else if (exprs[i].op == EXPR_SYMBOL) {
-                *res = (Cuik_ConstVal){ CUIK_CONST_ADDR, .s = { i, 0 } };
+                *res = (Cuik_ConstVal){ CUIK_CONST_ADDR, .s = { exprs[i].sym.stmt, 0 } };
             } else {
                 diag_err(tokens, s->loc, "Cannot evaluate address as constant");
                 return CONST_ERROR;
@@ -170,7 +166,7 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* t
                 return CONST_ERROR;
             }
 
-            *res = (Cuik_ConstVal){ CUIK_CONST_ADDR, .s = { i, 0 } };
+            *res = (Cuik_ConstVal){ CUIK_CONST_ADDR, .s = { exprs[i].sym.stmt, 0 } };
             return i - 1;
         }
         default: break;
@@ -179,11 +175,11 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* t
     // try unary operators
     if (s->op == EXPR_NOT || s->op == EXPR_NEGATE) {
         Cuik_ConstVal src;
+        Cuik_Type* ty = types ? cuik_canonical_type(types[i - 1]) : NULL;
 
         i = const_eval_subexpr(parser, tokens, types, exprs, i - 1, &src);
         if (i == CONST_ERROR) return i;
 
-        Cuik_Type* ty = types ? cuik_canonical_type(types[i]) : NULL;
         if (ty && cuik_type_is_float(ty)) {
             assert(s->op == EXPR_NEGATE && "expected negate");
 
@@ -314,8 +310,7 @@ static bool const_eval_addr_single(Cuik_Parser* restrict parser, Cuik_Expr* e, S
                 return false;
             }
 
-            Subexpr* s = &e->exprs[args[0].s.base];
-            Stmt* sym = s->sym.stmt;
+            Stmt* sym = args[0].s.base;
             if (cuik_canonical_type(sym->decl.type)->size == 0) {
                 type_layout2(parser, &parser->tokens, cuik_canonical_type(sym->decl.type));
 

@@ -1342,7 +1342,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         }
 
         // TODO(NeGate): doesn't do anything yet
-        // progress |= tb_opt_vectorize(f);
+        progress |= tb_opt_vectorize(f);
 
         progress |= major_progress;
     } while (major_progress);

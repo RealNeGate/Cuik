@@ -1422,7 +1422,7 @@ TB_API void tb_builder_set_var(TB_GraphBuilder* g, int id, TB_Node* v);
 // control flow primitives:
 //   makes a region we can jump to (generally for forward jumps)
 TB_API TB_Node* tb_builder_label_make(TB_GraphBuilder* g);
-TB_API TB_Node* tb_builder_label_make2(TB_GraphBuilder* g, TB_Node* label);
+TB_API TB_Node* tb_builder_label_make2(TB_GraphBuilder* g, TB_Node* label, bool has_backward_jumps);
 //   once a label is complete you can no longer insert jumps to it, the phis
 //   are placed and you can then insert code into the label's body.
 TB_API void tb_builder_label_complete(TB_GraphBuilder* g, TB_Node* label);

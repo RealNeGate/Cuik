@@ -10,6 +10,8 @@ static TB_Node* cg_rval(TranslationUnit* tu, TB_GraphBuilder* g, Cuik_Expr* rest
 
 static void emit_loc(TranslationUnit* tu, TB_GraphBuilder* g, SourceLoc loc) {
     if (!tu->has_tb_debug_info) {
+        ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
+        printf("%s:%d\n", rloc.file->filename, rloc.line);
         return;
     }
 
@@ -409,6 +411,10 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 assert(stmt->backing.s != NULL);
                 return (ValDesc){ LVALUE, .n = tb_builder_symbol(g, stmt->backing.s) };
             } else {
+                if (stmt->backing.n == NULL) {
+                    stmt->backing.n = tb_builder_label_make2(g, tb_builder_label_get(g), true);
+                }
+
                 return (ValDesc){ LVALUE, .mem_var = stmt->decl.local_ordinal, .n = stmt->backing.n };
             }
         }
@@ -816,6 +822,11 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             return (ValDesc){ RVALUE, .n = tb_builder_phi(g, 2, vals) };
         }
         case EXPR_NOT: {
+            if (cuik_canonical_type(qt)->kind == KIND_BOOL) {
+                TB_Node* src = as_rval(tu, g, &args[0]);
+                return (ValDesc){ RVALUE, .n = tb_builder_cmp(g, TB_CMP_NE, src, tb_builder_uint(g, src->dt, 0)) };
+            }
+
             return (ValDesc){ RVALUE, .n = tb_builder_not(g, as_rval(tu, g, &args[0])) };
         }
         case EXPR_NEGATE: {
@@ -1190,6 +1201,35 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             break;
         }
 
+        case STMT_LABEL: {
+            if (s->backing.n == NULL) {
+                TB_Node* dst = tb_builder_label_make2(g, tb_builder_label_get(g), true);
+                s->backing.n = dst;
+
+                emit_loc(tu, g, s->loc.start);
+            }
+
+            // fallthru
+            if (tb_builder_label_get(g) != NULL) {
+                tb_builder_br(g, s->backing.n);
+            }
+
+            // we wanna keep the OG symbol table around for jumping to the label
+            tb_builder_label_set(g, tb_builder_label_clone(g, s->backing.n));
+            break;
+        }
+
+        case STMT_GOTO: {
+            ValDesc v = cg_expr(tu, g, s->goto_.target);
+            if (v.kind == LVALUE) {
+                tb_builder_br(g, v.n);
+            } else {
+                // TODO(NeGate): Handle computed goto case
+                assert(0 && "todo: computed goto");
+            }
+            break;
+        }
+
         case STMT_COMPOUND: {
             Stmt** kids  = s->compound.kids;
             size_t count = s->compound.kids_count;
@@ -1366,7 +1406,6 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                 tb_builder_label_kill(g, paths[0]);
             }
             tb_builder_label_kill(g, loop);
-            tb_builder_label_complete(g, header);
             tb_builder_label_kill(g, header);
 
             tb_builder_label_set(g, exit);
@@ -1417,8 +1456,9 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             TB_Node* exit   = tb_builder_label_make(g);
             TB_Node* header = tb_builder_loop(g);
             TB_Node* loop   = tb_builder_label_clone(g, header);
+            TB_Node* next   = tb_builder_label_make(g);
 
-            s->backing.loop[0] = loop;
+            s->backing.loop[0] = next;
             s->backing.loop[1] = exit;
 
             {
@@ -1433,12 +1473,21 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                 // loop body
                 tb_builder_label_set(g, paths[0]);
                 cg_stmt(tu, g, s->for_.body);
-                if (s->for_.next) {
-                    cg_expr(tu, g, s->for_.next);
+                // fallthru to next label
+                if (tb_builder_label_get(g) != NULL) {
+                    tb_builder_br(g, next);
+                }
+                tb_builder_label_complete(g, next);
+                tb_builder_label_set(g, next);
+                if (tb_builder_label_get(g) != NULL) {
+                    if (s->for_.next) {
+                        cg_expr(tu, g, s->for_.next);
+                    }
                 }
                 tb_builder_br(g, header);
                 tb_builder_label_kill(g, paths[0]);
             }
+            tb_builder_label_kill(g, next);
             tb_builder_label_kill(g, loop);
             tb_builder_label_complete(g, header);
             tb_builder_label_kill(g, header);

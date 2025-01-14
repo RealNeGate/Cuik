@@ -342,7 +342,7 @@ TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t offset
     }
 
     TB_Function* f = g->f;
-    TB_Node* con = tb_opt_peep_node(f, tb_inst_sint(f, TB_TYPE_I64, offset));
+    TB_Node* con = g->peep(f, tb_inst_sint(f, TB_TYPE_I64, offset));
     TB_Node* n = tb_alloc_node(f, TB_PTR_OFFSET, TB_TYPE_PTR, 3, 0);
     set_input(f, n, base, 1);
     set_input(f, n, con,  2);
@@ -512,13 +512,24 @@ TB_Node* tb_builder_label_make(TB_GraphBuilder* g) {
     return syms;
 }
 
-TB_Node* tb_builder_label_make2(TB_GraphBuilder* g, TB_Node* label) {
+TB_Node* tb_builder_label_make2(TB_GraphBuilder* g, TB_Node* label, bool has_backward_jumps) {
     TB_Function* f = g->f;
 
     TB_Node* r = tb_alloc_node_dyn(f, TB_REGION, TB_TYPE_CONTROL, 0, 2, sizeof(TB_NodeRegion));
     TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, label->input_count, sizeof(TB_NodeSymbolTable));
     set_input(f, syms, r, 0);
     set_input(f, syms, r, 1);
+
+    if (has_backward_jumps) {
+        // pre-emptively enter phis
+        FOR_N(i, 2, label->input_count) {
+            TB_Node* n = tb_alloc_node_dyn(f, TB_PHI, label->inputs[i]->dt, 1, 3, 0);
+            set_input(f, n, r, 0);
+            set_input(f, syms, n, i);
+        }
+        TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = true);
+    }
+
     return syms;
 }
 
@@ -602,8 +613,9 @@ TB_Node* tb_builder_label_clone(TB_GraphBuilder* g, TB_Node* label) {
     FOR_N(j, 0, label->input_count) if (label->inputs[j]) {
         set_input(f, syms, label->inputs[j], j);
     }
-    TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = false);
 
+    bool complete = TB_NODE_GET_EXTRA_T(label, TB_NodeSymbolTable)->complete;
+    TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = complete);
     return syms;
 }
 
@@ -743,6 +755,7 @@ void tb_builder_br(TB_GraphBuilder* g, TB_Node* target) {
 TB_Node* tb_builder_loop(TB_GraphBuilder* g) {
     TB_Function* f = g->f;
     TB_Node* curr = g->curr;
+    TB_ASSERT(curr);
 
     TB_Node* r = tb_alloc_node_dyn(f, TB_REGION, TB_TYPE_CONTROL, 1, 2, sizeof(TB_NodeRegion));
     set_input(f, r, curr->inputs[0], 0);

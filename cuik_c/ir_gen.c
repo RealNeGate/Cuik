@@ -489,7 +489,7 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
     Cuik_ConstVal value = s->const_val;
     uint64_t int_form = 0;
     if (value.tag == CUIK_CONST_ADDR) {
-        Stmt* stmt = e->exprs[value.s.base].sym.stmt;
+        Stmt* stmt = value.s.base;
         assert((stmt->op == STMT_GLOBAL_DECL || stmt->op == STMT_FUNC_DECL) && "could not resolve as constant initializer");
 
         tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
