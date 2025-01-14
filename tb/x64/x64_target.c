@@ -472,8 +472,7 @@ static bool same_mem_edge(TB_Node* ld_mem, TB_Node* st_mem) {
 
 // store(binop(load(a), b))
 static bool can_folded_store(TB_Node* mem, TB_Node* addr, TB_Node* n) {
-    if ((n->type >= TB_AND  && n->type <= TB_SUB) ||
-        (n->type >= TB_FADD && n->type <= TB_FMAX)) {
+    if (n->type >= TB_AND  && n->type <= TB_SUB) {
         return
             n->inputs[1]->type == TB_LOAD &&
             same_mem_edge(n->inputs[1]->inputs[1], mem) &&
@@ -2605,12 +2604,14 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
             switch (n->type) {
                 case x86_vdiv:    clk = 11; break;
                 case x86_imulimm: clk = 3;  break;
+                case x86_mov:     clk = 0;  break;
+                case x86_vmov:    clk = 0;  break;
                 default:          clk = 1;  break;
             }
 
             if (op->mode == MODE_LD) clk += 3;
             // every store op except for x86_mov will do both a ld(3 clks) + st(4 clks)
-            if (op->mode == MODE_ST) clk += (n->type != x86_mov ? 7 : 4);
+            if (op->mode == MODE_ST) clk += ((n->type != x86_mov && n->type != x86_vmov) ? 7 : 4);
             return clk;
         }
 

@@ -38,7 +38,7 @@ static void ready_up(ListSched* sched, TB_Node* n, TB_Node* end) {
     int prio           = sched->get_lat(sched->f, n, end);
     uint64_t unit_mask = sched->get_unit_mask(sched->f, n);
 
-    TB_OPTDEBUG(SCHEDULE)(printf("        READY    "), tb_print_dumb_node(NULL, n), printf("\n"));
+    TB_OPTDEBUG(SCHEDULE)(printf("        READY    "), tb_print_dumb_node(NULL, n), printf(" (lat=%d)\n", prio));
     set_put(&sched->ready_set, n->gvn);
 
     // projections are readied but not in the ready list
@@ -161,6 +161,31 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     while (aarray_length(active) > 0 || aarray_length(sched.ready) > 0) {
         bool stall = true;
 
+        // retire active nodes
+        for (size_t i = 0; i < aarray_length(active);) {
+            TB_Node* n = active[i].n;
+            if (active[i].end > cycle) { i++; continue; }
+
+            in_use_mask &= ~(1ull << active[i].unit_i);
+            aarray_remove(active, i);
+            TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: RETIRE   ", cycle), tb_print_dumb_node(NULL, n), printf("\n"));
+
+            // instruction's retired, time to ready up users
+            FOR_USERS(u, n) {
+                TB_Node* un = USERN(u);
+                if (is_proj(un)) {
+                    // projections are where all the real users ended up
+                    FOR_USERS(proj_u, un) {
+                        if (can_ready_user(f, ws, bb, &sched.ready_set, USERN(proj_u))) {
+                            ready_up(&sched, USERN(proj_u), end);
+                        }
+                    }
+                } else if (can_ready_user(f, ws, bb, &sched.ready_set, un)) {
+                    ready_up(&sched, un, end);
+                }
+            }
+        }
+
         // dispatch one instruction per machine per cycle
         while (in_use_mask != blocked_mask && aarray_length(sched.ready) > 0) {
             int idx = best_ready_node(&sched, in_use_mask);
@@ -170,7 +195,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             int unit_i = tb_ffs64(avail) - 1;
 
             TB_Node* n = sched.ready[idx].n;
-            // in_use_mask |= 1ull << unit_i;
+            in_use_mask |= 1ull << unit_i;
             stall = false;
 
             remove_ready(&sched, idx);
@@ -195,35 +220,13 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                 TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: DISPATCH ", cycle), tb_print_dumb_node(NULL, n), printf(" (on machine %d, until t=%d)\n", unit_i, end_cycle));
             }
         }
+        in_use_mask = 0;
 
         if (stall) {
             TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: STALL\n", cycle));
         }
+
         cycle += 1;
-
-        for (size_t i = 0; i < aarray_length(active);) {
-            TB_Node* n = active[i].n;
-            if (active[i].end > cycle) { i++; continue; }
-
-            in_use_mask &= ~(1ull << active[i].unit_i);
-            aarray_remove(active, i);
-            TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: RETIRE   ", cycle), tb_print_dumb_node(NULL, n), printf("\n"));
-
-            // instruction's retired, time to ready up users
-            FOR_USERS(u, n) {
-                TB_Node* un = USERN(u);
-                if (is_proj(un)) {
-                    // projections are where all the real users ended up
-                    FOR_USERS(proj_u, un) {
-                        if (can_ready_user(f, ws, bb, &sched.ready_set, USERN(proj_u))) {
-                            ready_up(&sched, USERN(proj_u), end);
-                        }
-                    }
-                } else if (can_ready_user(f, ws, bb, &sched.ready_set, un)) {
-                    ready_up(&sched, un, end);
-                }
-            }
-        }
     }
 
     // place end node
