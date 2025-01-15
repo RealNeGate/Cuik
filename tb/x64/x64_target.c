@@ -1082,8 +1082,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
 
             int32_t x;
-            if (op->type >= x86_add && op->type <= x86_test &&
-                try_for_imm32(rhs->dt, rhs, &x)) {
+            if (op->type >= x86_add && op->type <= x86_test && try_for_imm32(rhs->dt, rhs, &x)) {
                 op_extra->imm = x;
                 op->type += (x86_andimm - x86_and);
             } else {

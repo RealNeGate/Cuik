@@ -230,7 +230,12 @@ TB_Node* tb_builder_string(TB_GraphBuilder* g, ptrdiff_t len, const char* str) {
 TB_Node* tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type, TB_Node* src) {
     TB_ASSERT(type >= TB_TRUNCATE && type <= TB_BITCAST);
 
-    if (type == TB_SIGN_EXT && src->type == TB_ICONST) {
+    if (type == TB_ZERO_EXT && src->type == TB_ICONST) {
+        int bits = tb_data_type_bit_size(g->f->super.module, src->dt.type);
+
+        uint64_t y = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
+        return tb_builder_uint(g, dt, y & (~UINT64_C(0) >> (64 - bits)));
+    } else if (type == TB_SIGN_EXT && src->type == TB_ICONST) {
         uint64_t y = TB_NODE_GET_EXTRA_T(src, TB_NodeInt)->value;
         y = tb_sign_ext(g->f->super.module, src->dt, y);
         return tb_builder_uint(g, dt, y);

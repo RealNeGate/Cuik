@@ -74,6 +74,7 @@ static int ref_cmp(const void* a, const void* b) {
     const MemRef* aa = a;
     const MemRef* bb = b;
 
+    if (aa->mem->type != bb->mem->type) { return aa->base->type - bb->base->type; }
     if (aa->base->gvn != bb->base->gvn) { return aa->base->gvn - bb->base->gvn; }
     if (aa->size != bb->size) { return aa->size - bb->size; }
     if (aa->offset != bb->offset) { return aa->offset - bb->offset; }
@@ -99,7 +100,7 @@ static void slp_add_pair(TB_Function* f, PairSet* pairs, TB_Node* lhs, TB_Node* 
     pairs->r_map[rhs->gvn] = p;
 }
 
-void generate_pack(TB_Function* f, PairSet* pairs, TB_Node* n) {
+void generate_pack(TB_Function* f, PairSet* pairs) {
     ArenaArray(MemRef) refs = aarray_create(&f->tmp_arena, MemRef, 8);
 
     pairs->l_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
@@ -109,27 +110,58 @@ void generate_pack(TB_Function* f, PairSet* pairs, TB_Node* n) {
         pairs->r_map[i] = NULL;
     }
 
-    // find chains of stores
-    TB_Node* mem = n;
-    while (mem->type == TB_STORE) {
-        MemRef r = { mem, mem->inputs[2] };
-        if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_ICONST) {
-            r.offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
-            r.base   = r.base->inputs[1];
+    TB_Node* root_mem = USERN(proj_with_index(f->root_node, 1));
+    TB_ASSERT(root_mem->dt.type == TB_TAG_MEMORY);
+    worklist_push(f->worklist, root_mem);
+
+    for (size_t i = 0; i < dyn_array_length(f->worklist->items); i++) {
+        TB_Node* mem = f->worklist->items[i];
+
+        if (mem->type == TB_LOAD || mem->type == TB_STORE) {
+            MemRef r = { mem, mem->inputs[2] };
+            if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_ICONST) {
+                r.offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
+                r.base   = r.base->inputs[1];
+            }
+
+            if (mem->type == TB_LOAD) {
+                r.size = tb_data_type_byte_size(f->super.module, mem->dt.type);
+            } else {
+                r.size = tb_data_type_byte_size(f->super.module, mem->inputs[3]->dt.type);
+            }
+            aarray_push(refs, r);
         }
 
-        r.size = tb_data_type_byte_size(f->super.module, mem->inputs[3]->dt.type);
-        aarray_push(refs, r);
+        if (mem->dt.type == TB_TAG_MEMORY) {
+            FOR_USERS(u, mem) {
+                if (cfg_is_mproj(USERN(u))) {
+                    mem = USERN(u);
+                    break;
+                }
+            }
+        }
 
-        printf("AAA! ");
-        tb_print_dumb_node(NULL, mem);
-        printf(" (%%%u + %d, size=%d)\n", r.base->gvn, r.offset, r.size);
-
-        mem = mem->inputs[1];
+        // walk all the memory users of the memory node
+        if (mem->dt.type == TB_TAG_MEMORY) {
+            FOR_USERS(u, mem) {
+                if ((USERN(u)->type == TB_PHI && USERN(u)->dt.type == TB_TAG_MEMORY) ||
+                    (USERI(u) == 1 && cfg_flags(USERN(u)) & NODE_MEMORY_IN)) {
+                    worklist_push(f->worklist, USERN(u));
+                }
+            }
+        }
     }
 
     // sort for faster queries later on
     qsort(refs, aarray_length(refs), sizeof(MemRef), ref_cmp);
+
+    aarray_for(i, refs) {
+        MemRef r = refs[i];
+
+        printf("AAA! ");
+        tb_print_dumb_node(NULL, r.mem);
+        printf(" (%%%u + %d, size=%d)\n", r.base->gvn, r.offset, r.size);
+    }
 
     // scan for groups with the same base & element size
     int start = 0;
@@ -248,18 +280,13 @@ bool tb_opt_vectorize(TB_Function* f) {
     #if 0
     tb_print_dumb(f);
 
-    // TODO(NeGate): search for reductions & stores throughout
-    // the entire graph, for now we're only searching the exit
-    // paths
+    TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
+
     PairSet pairs = { 0 };
-    FOR_N(i, 1, f->root_node->input_count) {
-        TB_Node* exit = f->root_node->inputs[i];
-        if (exit->type == TB_RETURN) {
-            generate_pack(f, &pairs, exit->inputs[1]);
-        }
-    }
+    generate_pack(f, &pairs);
 
     __debugbreak();
+
     tb_arena_clear(&f->tmp_arena);
     #endif
 

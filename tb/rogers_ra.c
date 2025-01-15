@@ -256,7 +256,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         }
         ra.num_regs  = ctx->num_regs;
         ra.max_regs_in_class = max_regs_in_class;
-        TB_ASSERT(max_regs_in_class <= 64 && "TODO: we assume some 64bit masks in places lol");
     }
 
     ra.spills = dyn_array_create(int, 32);
@@ -668,7 +667,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
     // what the regmask holds only applies up until num_regs[class], this is mostly
     // just relevant for the stack coloring i suppose
     FOR_N(j, 0, mask->count) { ra->mask[j] = ~mask->mask[0]; }
-    FOR_N(j, mask->count, mask_word_count) { ra->mask[j] = 0; }
+    FOR_N(j, mask->count, mask_word_count) { ra->mask[j] = UINT64_MAX; }
     if (num_regs % 64) {
         ra->mask[num_regs / 64] &= UINT64_MAX >> (64ull - (num_regs % 64));
     }
@@ -798,7 +797,7 @@ static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* att
 
     int best_spill = -1;
     float best_score = INFINITY;
-    FOR_N(i, 0, dyn_array_length(ra->potential_spills)) {
+    FOR_REV_N(i, 0, dyn_array_length(ra->potential_spills)) {
         int vreg_id = ra->potential_spills[i];
         VReg* vreg  = &ctx->vregs[vreg_id];
 
@@ -893,7 +892,6 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
         FOREACH_SET(j, ra->live_out) if (!set_get(live_in, j)) {
             int vreg_id = ctx->vreg_map[j];
             if (vreg_id == 0) { continue; }
-            if (!set_get(&ra->active, vreg_id)) { continue; }
 
             bool pause = false;
             FOR_N(k, i, ctx->bb_count) {
@@ -922,6 +920,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                 if (!allocate_reg(ctx, ra, vreg_id, 0)) {
                     RegMask* mask = ctx->vregs[vreg_id].mask;
                     commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
+                    return ALLOC_FAIL;
                 }
             }
         }
@@ -1055,6 +1054,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                     if (in_use == UINT64_MAX) {
                         int r = commit_spill(ctx, ra, NULL, tmp_mask->class, tmp_mask->mask[0]);
                         in_use &= ~(1ull << r);
+                        return ALLOC_FAIL;
                     }
 
                     TB_OPTDEBUG(REGALLOC)(printf("#     available: %#"PRIx64"\n", ~in_use));
@@ -1078,6 +1078,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
 
                     ctx->vregs[vreg_id].class = class;
                     ctx->vregs[vreg_id].assigned = r;
+                    return ALLOC_FAIL;
                 }
 
                 TB_Node* def = ctx->vregs[vreg_id].n;
@@ -1095,6 +1096,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
 
                             ctx->vregs[vreg_id].class = class;
                             ctx->vregs[vreg_id].assigned = r;
+                            return ALLOC_FAIL;
                         }
 
                         set_put(&ra->live_out, un->gvn);
