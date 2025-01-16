@@ -157,7 +157,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     emit_memory_operand(e, rx, a);
 
     // BTW memory displacements go before immediates
-    ptrdiff_t disp_patch = e->count - 4;
+    ptrdiff_t disp_patch = e->count;
     if (b->type == VAL_IMM) {
         if (dt == TB_X86_BYTE || short_imm) {
             if (short_imm) {
@@ -168,16 +168,15 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
         } else if (dt == TB_X86_WORD) {
             uint32_t imm = b->imm;
             assert((imm & 0xFFFF0000) == 0xFFFF0000 || (imm & 0xFFFF0000) == 0);
-
             EMIT2(e, imm);
         } else {
             EMIT4(e, (int32_t)b->imm);
         }
     }
 
-    /* if (a->type == VAL_GLOBAL && disp_patch + 4 != e->count) {
-        RELOC4(e, disp_patch, (disp_patch + 4) - e->count);
-    } */
+    if (a->type == VAL_GLOBAL && disp_patch != e->count) {
+        RELOC4(e, disp_patch - 4, disp_patch - e->count, 0xFFFFFFFF);
+    }
 }
 
 static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_X86_DataType dt) {

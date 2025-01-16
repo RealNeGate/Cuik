@@ -83,7 +83,7 @@ static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b)
     printf("  ========= BUNDLE (%d) =========\n", b->count);
     FOR_N(i, 0, b->count) {
         TB_Node* n = b->arr[i];
-        int def_id = ctx->vreg_map[n->gvn];
+        int def_id = n->gvn < aarray_length(ctx->vreg_map) ? ctx->vreg_map[n->gvn] : 0;
         VReg* vreg = def_id > 0 ? &ctx->vregs[def_id] : NULL;
 
         printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
@@ -94,7 +94,7 @@ static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b)
 
         FOR_N(j, 1, n->input_count) {
             TB_Node* in = n->inputs[j];
-            int in_id = in ? ctx->vreg_map[in->gvn] : 0;
+            int in_id = in && in->gvn < aarray_length(ctx->vreg_map) ? ctx->vreg_map[in->gvn] : 0;
             if (in_id > 0) {
                 VReg* other = &ctx->vregs[in_id];
                 printf("    IN[%zu]  = %s:R%d\n", j, reg_class_name(other->class), other->assigned);
@@ -650,11 +650,13 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     // TODO(NeGate): move the assembly output to code arena
     if (emit_asm) CUIK_TIMED_BLOCK("dissassembly") {
-        dump_stack_layout(&ctx, &ctx.emit);
-
+        // dump_stack_layout(&ctx, &ctx.emit);
         dyn_array_for(i, ctx.debug_stack_slots) {
             TB_StackSlot* s = &ctx.debug_stack_slots[i];
-            EMITA(&ctx.emit, "// %s = [rsp + %d]\n", s->name, s->storage.offset);
+
+            TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[32m"));
+            EMITA(&ctx.emit, "// %s = [rsp + %d]\n", s->name, (ctx.stack_usage - ctx.stack_header) + s->storage.offset);
+            TB_OPTDEBUG(ANSI)(EMITA(&ctx.emit, "\x1b[0m"));
         }
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 
@@ -749,6 +751,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     func_out->code_size = ctx.emit.count;
     func_out->locations = ctx.locations;
     func_out->stack_slots = ctx.debug_stack_slots;
+    func_out->stack_header = ctx.stack_header;
     func_out->stack_usage = ctx.stack_usage;
     func_out->prologue_length = ctx.prologue_length;
     func_out->epilogue_length = ctx.epilogue_length;

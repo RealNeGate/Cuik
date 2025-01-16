@@ -10,8 +10,6 @@ static TB_Node* cg_rval(TranslationUnit* tu, TB_GraphBuilder* g, Cuik_Expr* rest
 
 static void emit_loc(TranslationUnit* tu, TB_GraphBuilder* g, SourceLoc loc) {
     if (!tu->has_tb_debug_info) {
-        ResolvedSourceLoc rloc = cuikpp_find_location(&tu->tokens, loc);
-        printf("%s:%d\n", rloc.file->filename, rloc.line);
         return;
     }
 
@@ -576,7 +574,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                     default: TODO();
                 }
             } else {
-                bool is_signed = type->is_unsigned;
+                bool is_signed = !type->is_unsigned;
                 if (type->kind == KIND_PTR) { is_signed = false; }
 
                 switch (e->op) {
@@ -1708,7 +1706,7 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
         if (initial == NULL) {
             tb_global_set_storage(tu->ir_mod, section, (TB_Global*) s->backing.s, type->size, type->align, 0);
             return s->backing.s;
-        } else if (initial->op == EXPR_ADDR) {
+        } else if (initial->op == EXPR_CONST && initial->const_val.tag == CUIK_CONST_ADDR) {
             max_tb_objects = 2;
         } else if (initial->op == EXPR_INITIALIZER) {
             max_tb_objects = count_max_tb_init_objects(initial->init.root);

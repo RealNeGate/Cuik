@@ -388,7 +388,9 @@ int count_max_tb_init_objects(InitNode* root_node) {
     int sum = root_node->kids_count;
     for (InitNode* k = root_node->kid; k != NULL; k = k->next) {
         sum += count_max_tb_init_objects(k);
-        if (k->expr && get_root_subexpr(k->expr)->op == EXPR_ADDR) sum += 1;
+        if (k->expr && get_root_subexpr(k->expr)->op == EXPR_CONST && get_root_subexpr(k->expr)->const_val.tag == CUIK_CONST_ADDR) {
+            sum += 1;
+        }
     }
 
     return sum;
@@ -513,7 +515,6 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
 
     if (int_form != 0) {
         uint8_t* region = tb_global_add_region(tu->ir_mod, g, offset, type_size);
-
         if (TARGET_NEEDS_BYTESWAP(tu->target)) {
             // reverse copy
             uint8_t* src = (uint8_t*) &int_form;

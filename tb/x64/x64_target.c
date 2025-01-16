@@ -309,7 +309,8 @@ static int node_2addr(TB_Node* n) {
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            return op->mode == MODE_ST ? -1 : 4;
+            if (op->mode == MODE_ST) return -1;
+            return 4;
         }
 
         case x86_mov:
@@ -1865,7 +1866,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
         j += snprintf(buf+j, BUF_SIZE-j, "%%%-3u: ", n->gvn);
 
-        int dst = ctx->vreg_map[n->gvn];
+        int dst = n->gvn < aarray_length(ctx->vreg_map) ? ctx->vreg_map[n->gvn] : 0;
         if (dst > 0) {
             j += snprintf(buf+j, BUF_SIZE-j, "V%-3d", dst);
         } else {
@@ -1873,7 +1874,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         }
         j += snprintf(buf+j, BUF_SIZE-j, " = %-14s (", tb_node_get_name(n->type));
         FOR_N(i, 0, n->input_count) {
-            int src = n->inputs[i] ? ctx->vreg_map[n->inputs[i]->gvn] : 0;
+            int src = n->inputs[i] && n->inputs[i]->gvn < aarray_length(ctx->vreg_map) ? ctx->vreg_map[n->inputs[i]->gvn] : 0;
             if (src > 0) {
                 j += snprintf(buf+j, BUF_SIZE-j, " V%-3d", src);
             } else {
@@ -2094,7 +2095,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             if (!is_value_match(&dst, &src)) {
                 __(MOV, dt, &dst, &src);
             }
-            __(NEG, dt, &dst, &dst);
+            __(NEG, dt, &dst);
             break;
         }
 
@@ -2432,8 +2433,10 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             };
 
             TB_X86_DataType dt = legalize_int(n->inputs[2]->dt);
-            if (n->type == x86_movsx8 || n->type == x86_movsx16) {
+            if (n->type == x86_movzx8 || n->type == x86_movzx16) {
                 dt = TB_X86_DWORD;
+            } else if (n->type == x86_movsx32) {
+                dt = TB_X86_QWORD;
             }
 
             Val dst = op_at(ctx, n);

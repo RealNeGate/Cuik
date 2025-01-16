@@ -381,7 +381,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
             // if the def_mask got tightened, we needed the copy
             RegMask* def_mask = ctx->vregs[ctx->vreg_map[n->gvn]].mask;
-            if (!interfere(ctx, &ra, n, n->inputs[1])) {
+            if (def_mask == cpy->def && !interfere(ctx, &ra, n, n->inputs[1])) {
                 // delete copy
                 tb__remove_node(ctx, f, n);
                 subsume_node(f, n, n->inputs[1]);
@@ -730,7 +730,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
                     dyn_array_put(ra->potential_spills, in_vreg - ctx->vregs);
                 }
 
-                in_use |= (1ull << in_vreg->assigned);
+                ra->mask[in_vreg->assigned / 64ull] |= (1ull << (in_vreg->assigned % 64ull));
             }
         }
 
@@ -1076,8 +1076,8 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                     RegMask* mask = ctx->vregs[vreg_id].mask;
                     int r = commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
 
-                    ctx->vregs[vreg_id].class = class;
-                    ctx->vregs[vreg_id].assigned = r;
+                    // ctx->vregs[vreg_id].class = class;
+                    // ctx->vregs[vreg_id].assigned = r;
                     return ALLOC_FAIL;
                 }
 
@@ -1094,8 +1094,8 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                             RegMask* mask = ctx->vregs[vreg_id].mask;
                             int r = commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
 
-                            ctx->vregs[vreg_id].class = class;
-                            ctx->vregs[vreg_id].assigned = r;
+                            // ctx->vregs[vreg_id].class = class;
+                            // ctx->vregs[vreg_id].assigned = r;
                             return ALLOC_FAIL;
                         }
 

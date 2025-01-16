@@ -460,7 +460,7 @@ TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f) {
 void* tb_global_add_region(TB_Module* m, TB_Global* g, size_t offset, size_t size) {
     TB_ASSERT(offset == (uint32_t)offset);
     TB_ASSERT(size == (uint32_t)size);
-    TB_ASSERT(g->obj_count <= g->obj_capacity);
+    TB_ASSERT(g->obj_count < g->obj_capacity);
 
     void* ptr = cuik_malloc(size);
     g->objects[g->obj_count++] = (TB_InitObj) {
