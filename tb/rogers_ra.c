@@ -785,13 +785,38 @@ static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* att
 
     bool can_spill_self = false;
     if (attempted_vreg) {
-        if (can_remat(ctx, attempted_vreg->n)) {
-            // this limits the interference thus improving colorability
+        // this limits the interference thus improving colorability
+        if (attempted_vreg->spill_bias < 1e9 && can_remat(ctx, attempted_vreg->n)) {
             can_spill_self = true;
-        } else if (fixed_reg_mask(attempted_vreg->mask) >= 0) {
-            // we can only spill ourselves if that meant loosening the vreg's mask
-            RegMask* def = ctx->constraint(ctx, attempted_vreg->n, NULL);
-            can_spill_self = (attempted_vreg->mask != def);
+        }
+
+        // we can only spill ourselves if that meant loosening the vreg's mask
+        if (fixed_reg_mask(attempted_vreg->mask) >= 0) {
+            RegMask* expected_mask = ctx->constraint(ctx, attempted_vreg->n, NULL);
+            printf("  self spill? %%%u\n", attempted_vreg->n->gvn);
+
+            FOR_USERS(u, attempted_vreg->n) {
+                RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
+                RegMask* new_mask = tb__reg_mask_meet(ctx, expected_mask, in_mask);
+
+                printf("    use %%%u[%d]: ", USERN(u)->gvn, USERI(u));
+                tb__print_regmask(new_mask);
+                printf("\n");
+
+                // shouldn't see any hard splits here?
+                if (new_mask == &TB_REG_EMPTY) {
+                    break;
+                }
+                expected_mask = new_mask;
+            }
+
+            if (attempted_vreg->mask != expected_mask) {
+                TB_OPTDEBUG(REGALLOC)(printf("#     can self spill since mask is loosened from "), tb__print_regmask(attempted_vreg->mask), printf(" to "), tb__print_regmask(expected_mask), printf("\n"));
+            }
+
+            if (attempted_vreg->mask != expected_mask) {
+                can_spill_self = true;
+            }
         }
     }
 
