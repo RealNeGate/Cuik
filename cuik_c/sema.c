@@ -3,6 +3,7 @@
 #include "targets/targets.h"
 
 thread_local Stmt* cuik__sema_function_stmt;
+static thread_local bool inside_static_decl;
 
 void sema_stmt(TranslationUnit* tu, Stmt* restrict s);
 
@@ -321,7 +322,7 @@ static InitSearchResult get_next_member_in_type(Cuik_Type* type, int target, int
     return (InitSearchResult){ 0 };
 }
 
-static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int base_offset, int bounds /* max slots to fill */, InitNode* node, int* cursor, int* max_cursor) {
+static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int base_offset, int bounds /* max slots to fill */, InitNode* node, int* cursor, int* max_cursor, bool is_const_init) {
     ////////////////////////////////
     // manage any selectors
     ////////////////////////////////
@@ -420,21 +421,19 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
         //                ^^^^^
         //                this would be the array
         if (type->kind == KIND_ARRAY) {
-            if (e != NULL) {
-                if (e->op == EXPR_STR || e->op == EXPR_WSTR) {
-                    if (expr_type->kind == KIND_ARRAY && type->kind == KIND_ARRAY &&
-                        type_equal(cuik_canonical_type(expr_type->array.of), cuik_canonical_type(type->array.of))) {
-                        // check if it fits properly
-                        if (expr_type->array.count == type->array.count + 1) {
-                            // we chop off the null terminator
-                            e->str.end -= (e->op == EXPR_STR ? 1 : 2);
-                            expr_type->array.count = type->array.count;
-                        } else if (expr_type->array.count > type->array.count) {
-                            diag_err(&tu->tokens, e->loc, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array.count, type->array.count);
-                        }
-                    } else {
-                        diag_err(&tu->tokens, e->loc, "Could not use %sinitializer-string on array of %!T", (e->op == EXPR_WSTR) ? "wide " : "", cuik_canonical_type(type->array.of));
+            if (e != NULL && (e->op == EXPR_STR || e->op == EXPR_WSTR)) {
+                if (expr_type->kind == KIND_ARRAY && type->kind == KIND_ARRAY &&
+                    type_equal(cuik_canonical_type(expr_type->array.of), cuik_canonical_type(type->array.of))) {
+                    // check if it fits properly
+                    if (expr_type->array.count == type->array.count + 1) {
+                        // we chop off the null terminator
+                        e->str.end -= (e->op == EXPR_STR ? 1 : 2);
+                        expr_type->array.count = type->array.count;
+                    } else if (expr_type->array.count > type->array.count) {
+                        diag_err(&tu->tokens, e->loc, "initializer-string too big for the initializer (%d elements out of %d)", expr_type->array.count, type->array.count);
                     }
+                } else {
+                    diag_err(&tu->tokens, e->loc, "Could not use %sinitializer-string on array of %!T", (e->op == EXPR_WSTR) ? "wide " : "", cuik_canonical_type(type->array.of));
                 }
             }
         } else {
@@ -449,17 +448,31 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
                 (e->op == EXPR_WSTR && cuik_canonical_type(node->type)->kind == KIND_SHORT)) {
                 // { "hello" } can be used when the initializer is an array because reasons
                 cast_type = node->type = expr_qtype;
-            } else if (!(e->op == EXPR_INT && e->int_lit.lit == 0)) {
-                // zero is allowed for everything, so don't do the normal checks in that case
-                //
-                // it throws it's own errors and we don't really need
-                // any complex recovery for it since it'll exit at the
-                // end of type checking so it's not like the error will
-                // spread well
-                implicit_conversion(tu, cuik_uncanonical_type(expr_type), node->type, e);
-                cast_type = node->type;
             } else {
-                cast_type = node->type;
+                if (!(e->op == EXPR_INT && e->int_lit.lit == 0)) {
+                    // zero is allowed for everything, so don't do the normal checks in that case
+                    //
+                    // it throws it's own errors and we don't really need
+                    // any complex recovery for it since it'll exit at the
+                    // end of type checking so it's not like the error will
+                    // spread well
+                    implicit_conversion(tu, cuik_uncanonical_type(expr_type), node->type, e);
+                    cast_type = node->type;
+                } else {
+                    cast_type = node->type;
+                }
+
+                if (is_const_init) {
+                    Cuik_ConstVal val;
+                    if (const_eval(NULL, &tu->tokens, expr, &val)) {
+                        expr->exprs[0] = *e;
+                        expr->exprs[0].op = EXPR_CONST;
+                        expr->exprs[0].const_val = val;
+                        expr->count = 1;
+
+                        e = &expr->exprs[0];
+                    }
+                }
             }
 
             expr->cast_types[expr->count - 1] = cast_type;
@@ -476,7 +489,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             for (size_t i = 0; i < node_count; i++) {
                 assert(n != NULL);
 
-                walk_initializer_layer(tu, type, pos, member_count, n, &kid_cursor, &kid_max_cursor);
+                walk_initializer_layer(tu, type, pos, member_count, n, &kid_cursor, &kid_max_cursor, is_const_init);
                 n = n->next;
             }
         } else if (type->kind == KIND_ARRAY) {
@@ -484,7 +497,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             for (int i = 0; i < node_count; i++) {
                 assert(n != NULL);
 
-                walk_initializer_layer(tu, type, pos, array_count, n, &kid_cursor, &kid_max_cursor);
+                walk_initializer_layer(tu, type, pos, array_count, n, &kid_cursor, &kid_max_cursor, is_const_init);
                 n = n->next;
             }
         } else {
@@ -494,7 +507,7 @@ static int walk_initializer_layer(TranslationUnit* tu, Cuik_Type* parent, int ba
             }
 
             // scalars
-            walk_initializer_layer(tu, type, pos, 1, node, &kid_cursor, &kid_max_cursor);
+            walk_initializer_layer(tu, type, pos, 1, node, &kid_cursor, &kid_max_cursor, is_const_init);
         }
     }
 
@@ -526,12 +539,12 @@ static size_t sema_infer_initializer_array_count(TranslationUnit* tu, InitNode* 
     return max;
 }
 
-static void walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type, InitNode* root, int base_offset) {
+static void walk_initializer_for_sema(TranslationUnit* tu, Cuik_Type* type, InitNode* root, int base_offset, bool is_const_init) {
     InitNode* n = root->kid;
     int cursor = 0, max_cursor = 0, bounds = compute_initializer_bounds(type);
 
     while (n != NULL) {
-        walk_initializer_layer(tu, type, 0, bounds, n, &cursor, &max_cursor);
+        walk_initializer_layer(tu, type, 0, bounds, n, &cursor, &max_cursor, is_const_init);
         n = n->next;
     }
 
@@ -849,6 +862,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                 if (type->kind == KIND_ARRAY) {
                     if (type->size == 0 && (sym->op == STMT_GLOBAL_DECL || sym->op == STMT_DECL)) {
                         sym->flags |= STMT_FLAGS_IS_RESOLVING;
+                        printf("AAA %s\n", sym->decl.name);
 
                         // try to resolve the type since it's incomplete
                         sema_stmt(tu, sym);
@@ -951,7 +965,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                 }
             }
 
-            walk_initializer_for_sema(tu, t, e->init.root, 0);
+            walk_initializer_for_sema(tu, t, e->init.root, 0, inside_static_decl);
             return e->init.type;
         }
 
@@ -1734,7 +1748,9 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                         e->init.type = s->decl.type;
                     }
 
+                    inside_static_decl = s->op == STMT_GLOBAL_DECL || (s->op == STMT_DECL && s->decl.attrs.is_static);
                     Cuik_Type* expr_type = cuik_canonical_type(cuik__sema_expr(tu, s->decl.initial));
+                    inside_static_decl = false;
 
                     if (e->op == EXPR_INITIALIZER || e->op == EXPR_STR || e->op == EXPR_WSTR) {
                         if (type->kind == KIND_ARRAY && expr_type->kind == KIND_ARRAY) {
@@ -1764,6 +1780,20 @@ static void sema_top_level(TranslationUnit* tu, Stmt* restrict s) {
                 if (type->size == 0 || !CUIK_TYPE_IS_COMPLETE(type)) {
                     diag_err(&tu->tokens, s->loc, "incomplete type used in declaration");
                     diag_note(&tu->tokens, type->loc, "type declared here");
+                }
+            }
+
+            if (s->decl.initial) {
+                Subexpr* root = get_root_subexpr(s->decl.initial);
+                if (root->op != EXPR_INITIALIZER && root->op != EXPR_STR && root->op != EXPR_WSTR) {
+                    Cuik_ConstVal val;
+                    if (const_eval(NULL, &tu->tokens, s->decl.initial, &val)) {
+                        Cuik_Expr* e = s->decl.initial;
+                        e->exprs[0] = *root;
+                        e->exprs[0].op = EXPR_CONST;
+                        e->exprs[0].const_val = val;
+                        e->count = 1;
+                    }
                 }
             }
             break;

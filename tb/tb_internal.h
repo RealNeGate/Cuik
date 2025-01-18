@@ -256,6 +256,7 @@ typedef struct TB_FunctionOutput {
 
     uint64_t ordinal;
     uint64_t stack_usage;
+    uint64_t stack_header;
 
     uint8_t* code;
     uint32_t code_size;

@@ -24,16 +24,22 @@ enum {
     MODE_ST, // mem <- reg
 };
 
+enum {
+    HAS_IMMEDATE = 1,
+};
+
 // node with X86MemOp (mov, add, and...) will have this layout of inputs:
 //   [1] mem
 //   [2] base (or first src)
 //   [3] idx
-//   [4] val
+//   [4] val (only if flags' HAS_IMMEDATE is unset)
 typedef struct {
     uint8_t mode  : 2;
     uint8_t scale : 2;
     uint8_t cond  : 4;
+    uint8_t flags;
     TB_DataType dt;
+
     int32_t disp;
     int32_t imm;
 } X86MemOp;
@@ -56,6 +62,8 @@ typedef enum X86NodeType {
     #define X(name) x86_ ## name,
     #include "x64_nodes.inc"
 } X86NodeType;
+
+// #include "x64_gen.inc"
 
 static bool can_gvn(TB_Node* n) {
     return true;
@@ -301,7 +309,8 @@ static int node_2addr(TB_Node* n) {
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            return op->mode == MODE_ST ? -1 : 4;
+            if (op->mode == MODE_ST) return -1;
+            return 4;
         }
 
         case x86_mov:
@@ -315,6 +324,9 @@ static int node_2addr(TB_Node* n) {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             return op->mode == MODE_REG ? 2 : 0;
         }
+
+        case x86_neg:
+        return 1;
 
         // ANY_GPR = OP(COND, shared: ANY_GPR, ANY_GPR)
         case x86_cmovcc:
@@ -464,8 +476,7 @@ static bool same_mem_edge(TB_Node* ld_mem, TB_Node* st_mem) {
 
 // store(binop(load(a), b))
 static bool can_folded_store(TB_Node* mem, TB_Node* addr, TB_Node* n) {
-    if ((n->type >= TB_AND  && n->type <= TB_SUB) ||
-        (n->type >= TB_FADD && n->type <= TB_FMAX)) {
+    if (n->type >= TB_AND  && n->type <= TB_SUB) {
         return
             n->inputs[1]->type == TB_LOAD &&
             same_mem_edge(n->inputs[1]->inputs[1], mem) &&
@@ -1047,6 +1058,15 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
         }
 
+        // negate
+        if (n->type == TB_SUB && n->inputs[1]->type == TB_ICONST && TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeInt)->value == 0) {
+            n->type = x86_neg;
+            set_input(f, n, n->inputs[2], 1);
+            set_input(f, n, NULL, 2);
+            n->input_count = 2;
+            return n;
+        }
+
         TB_Node* op = tb_alloc_node(f, x86_lea, n->dt, 5, sizeof(X86MemOp));
         X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
         op_extra->mode = MODE_LD;
@@ -1075,8 +1095,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
 
             int32_t x;
-            if (op->type >= x86_add && op->type <= x86_test &&
-                try_for_imm32(rhs->dt, rhs, &x)) {
+            if (op->type >= x86_add && op->type <= x86_test && try_for_imm32(rhs->dt, rhs, &x)) {
                 op_extra->imm = x;
                 op->type += (x86_andimm - x86_and);
             } else {
@@ -1478,11 +1497,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return ctx->normie_mask[REG_CLASS_XMM];
         }
 
-        case TB_NEG: {
-            if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
-            return ctx->normie_mask[REG_CLASS_GPR];
-        }
-
         case TB_INT2FLOAT:
         case TB_UINT2FLOAT: {
             if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_XMM]; }
@@ -1564,6 +1578,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
             return &TB_REG_EMPTY;
         }
+
+        case x86_neg:
+        if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
+        return ctx->normie_mask[REG_CLASS_GPR];
 
         case x86_imulimm:
         if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
@@ -1859,7 +1877,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
         j += snprintf(buf+j, BUF_SIZE-j, "%%%-3u: ", n->gvn);
 
-        int dst = ctx->vreg_map[n->gvn];
+        int dst = n->gvn < aarray_length(ctx->vreg_map) ? ctx->vreg_map[n->gvn] : 0;
         if (dst > 0) {
             j += snprintf(buf+j, BUF_SIZE-j, "V%-3d", dst);
         } else {
@@ -1867,7 +1885,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         }
         j += snprintf(buf+j, BUF_SIZE-j, " = %-14s (", tb_node_get_name(n->type));
         FOR_N(i, 0, n->input_count) {
-            int src = n->inputs[i] ? ctx->vreg_map[n->inputs[i]->gvn] : 0;
+            int src = n->inputs[i] && n->inputs[i]->gvn < aarray_length(ctx->vreg_map) ? ctx->vreg_map[n->inputs[i]->gvn] : 0;
             if (src > 0) {
                 j += snprintf(buf+j, BUF_SIZE-j, " V%-3d", src);
             } else {
@@ -2081,14 +2099,14 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case TB_NEG: {
+        case x86_neg: {
             TB_X86_DataType dt = legalize_int(n->dt);
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
             if (!is_value_match(&dst, &src)) {
                 __(MOV, dt, &dst, &src);
             }
-            __(NEG, dt, &dst, &dst);
+            __(NEG, dt, &dst);
             break;
         }
 
@@ -2426,8 +2444,10 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             };
 
             TB_X86_DataType dt = legalize_int(n->inputs[2]->dt);
-            if (n->type == x86_movsx8 || n->type == x86_movsx16) {
+            if (n->type == x86_movzx8 || n->type == x86_movzx16) {
                 dt = TB_X86_DWORD;
+            } else if (n->type == x86_movsx32) {
+                dt = TB_X86_QWORD;
             }
 
             Val dst = op_at(ctx, n);
@@ -2597,12 +2617,14 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
             switch (n->type) {
                 case x86_vdiv:    clk = 11; break;
                 case x86_imulimm: clk = 3;  break;
+                case x86_mov:     clk = 0;  break;
+                case x86_vmov:    clk = 0;  break;
                 default:          clk = 1;  break;
             }
 
             if (op->mode == MODE_LD) clk += 3;
             // every store op except for x86_mov will do both a ld(3 clks) + st(4 clks)
-            if (op->mode == MODE_ST) clk += (n->type != x86_mov ? 7 : 4);
+            if (op->mode == MODE_ST) clk += ((n->type != x86_mov && n->type != x86_vmov) ? 7 : 4);
             return clk;
         }
 
@@ -2650,7 +2672,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
 
     // inserts a chkstk call if we use too much stack
     if (ctx->f->super.module->chkstk_extern && stack_usage >= param_descs[ctx->abi_index].chkstk_limit) {
-        assert(ctx->f->super.module->chkstk_extern);
+        TB_ASSERT(ctx->f->super.module->chkstk_extern);
         ctx->f->super.module->uses_chkstk++;
 
         Val sym = val_global(ctx->f->super.module->chkstk_extern, 0);

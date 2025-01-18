@@ -598,7 +598,7 @@ TB_Node* tb_inst_neg(TB_Function* f, TB_Node* src) {
     } else if (TB_IS_FLOAT_TYPE(src->dt)) {
         return tb_unary(f, TB_FNEG, src->dt, src);
     } else {
-        return tb_unary(f, TB_NEG, src->dt, src);
+        return tb_bin_arith(f, TB_SUB, 0, tb_inst_sint(f, src->dt, 0), src);
     }
 }
 

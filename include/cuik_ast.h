@@ -46,7 +46,7 @@ typedef struct {
 
         // symbols refer to their creator + an offset
         struct {
-            uint32_t base;
+            Stmt* base;
             int32_t offset;
         } s;
     };
@@ -413,6 +413,7 @@ typedef enum ExprOp {
     EXPR_VA_ARG,
 
     EXPR_INITIALIZER,
+    EXPR_CONST, // used for the resolved form of an const initializer
 
     EXPR_CAST,
     EXPR_PARAM, // special case of EXPR_VAR
@@ -633,6 +634,8 @@ struct Subexpr {
             Stmt* stmt;
             ptrdiff_t next_symbol;
         } sym;
+
+        Cuik_ConstVal const_val;
 
         // EXPR_PARAM
         int param_num;

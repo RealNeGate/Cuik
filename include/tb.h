@@ -370,7 +370,6 @@ typedef enum TB_NodeTypeEnum {
     TB_POPCNT,
 
     // Unary operations
-    TB_NEG,
     TB_FNEG,
 
     // Integer arithmatic
@@ -449,8 +448,9 @@ typedef enum TB_NodeTypeEnum {
 
     // each family of machine nodes gets 256 nodes
     // first machine op, we have some generic ops here:
-    TB_MACH_X86  = TB_ARCH_X86_64 * 0x100,
-    TB_MACH_MIPS = TB_ARCH_MIPS32 * 0x100,
+    TB_MACH_X86  = TB_ARCH_X86_64  * 0x100,
+    TB_MACH_A64  = TB_ARCH_AARCH64 * 0x100,
+    TB_MACH_MIPS = TB_ARCH_MIPS32  * 0x100,
 } TB_NodeTypeEnum;
 typedef uint16_t TB_NodeType;
 static_assert(sizeof(TB_NODE_TYPE_MAX) < 0x100, "this is the bound where machine nodes start");
@@ -1421,7 +1421,7 @@ TB_API void tb_builder_set_var(TB_GraphBuilder* g, int id, TB_Node* v);
 // control flow primitives:
 //   makes a region we can jump to (generally for forward jumps)
 TB_API TB_Node* tb_builder_label_make(TB_GraphBuilder* g);
-TB_API TB_Node* tb_builder_label_make2(TB_GraphBuilder* g, TB_Node* label);
+TB_API TB_Node* tb_builder_label_make2(TB_GraphBuilder* g, TB_Node* label, bool has_backward_jumps);
 //   once a label is complete you can no longer insert jumps to it, the phis
 //   are placed and you can then insert code into the label's body.
 TB_API void tb_builder_label_complete(TB_GraphBuilder* g, TB_Node* label);

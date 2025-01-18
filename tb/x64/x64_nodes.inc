@@ -8,7 +8,7 @@ X(xorimm) X(cmpimm) X(movimm) X(testimm)
 X(shlimm) X(shrimm) X(sarimm) X(rolimm) X(rorimm)
 // misc
 //   sxt_a2d is CDQ and CQO since they sign extend the (e|r)Ax reg to (e|r)Dx
-X(lea) X(cmovcc) X(imulimm) X(div) X(idiv) X(sxt_a2d)
+X(lea) X(cmovcc) X(imulimm) X(div) X(idiv) X(sxt_a2d) X(neg)
 // casts
 X(movsx8)
 X(movzx8)

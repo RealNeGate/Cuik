@@ -1,3 +1,4 @@
+#ifdef TB_HAS_AARCH64
 #include "../emitter.h"
 #include "../tb_internal.h"
 #include "aarch64_emitter.h"
@@ -435,6 +436,7 @@ ICodeGen tb__aarch64_codegen = {
     .emit_call_patches  = emit_call_patches,
     .compile_function   = compile_function,
 };
+#endif
 
 #if 0
 #ifdef TB_HAS_AARCH64

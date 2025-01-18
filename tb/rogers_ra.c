@@ -256,7 +256,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         }
         ra.num_regs  = ctx->num_regs;
         ra.max_regs_in_class = max_regs_in_class;
-        TB_ASSERT(max_regs_in_class <= 64 && "TODO: we assume some 64bit masks in places lol");
     }
 
     ra.spills = dyn_array_create(int, 32);
@@ -382,7 +381,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
             // if the def_mask got tightened, we needed the copy
             RegMask* def_mask = ctx->vregs[ctx->vreg_map[n->gvn]].mask;
-            if (!interfere(ctx, &ra, n, n->inputs[1])) {
+            if (def_mask == cpy->def && !interfere(ctx, &ra, n, n->inputs[1])) {
                 // delete copy
                 tb__remove_node(ctx, f, n);
                 subsume_node(f, n, n->inputs[1]);
@@ -667,9 +666,9 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
 
     // what the regmask holds only applies up until num_regs[class], this is mostly
     // just relevant for the stack coloring i suppose
-    FOR_N(j, 0, mask->count) { ra->mask[j] = ~mask->mask[0]; }
-    FOR_N(j, mask->count, mask_word_count) { ra->mask[j] = 0; }
-    if (num_regs % 64) {
+    FOR_N(j, 0, mask->count) { ra->mask[j] = ~mask->mask[j]; }
+    FOR_N(j, mask->count, (ctx->num_regs[mask->class] + 63) / 64) { ra->mask[j] = UINT64_MAX; }
+    if (ctx->num_regs[mask->class] % 64) {
         ra->mask[num_regs / 64] &= UINT64_MAX >> (64ull - (num_regs % 64));
     }
 
@@ -731,7 +730,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
                     dyn_array_put(ra->potential_spills, in_vreg - ctx->vregs);
                 }
 
-                in_use |= (1ull << in_vreg->assigned);
+                ra->mask[in_vreg->assigned / 64ull] |= (1ull << (in_vreg->assigned % 64ull));
             }
         }
 
@@ -786,19 +785,44 @@ static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* att
 
     bool can_spill_self = false;
     if (attempted_vreg) {
-        if (can_remat(ctx, attempted_vreg->n)) {
-            // this limits the interference thus improving colorability
+        // this limits the interference thus improving colorability
+        if (attempted_vreg->spill_bias < 1e9 && can_remat(ctx, attempted_vreg->n)) {
             can_spill_self = true;
-        } else if (fixed_reg_mask(attempted_vreg->mask) >= 0) {
-            // we can only spill ourselves if that meant loosening the vreg's mask
-            RegMask* def = ctx->constraint(ctx, attempted_vreg->n, NULL);
-            can_spill_self = (attempted_vreg->mask != def);
+        }
+
+        // we can only spill ourselves if that meant loosening the vreg's mask
+        if (fixed_reg_mask(attempted_vreg->mask) >= 0) {
+            RegMask* expected_mask = ctx->constraint(ctx, attempted_vreg->n, NULL);
+            printf("  self spill? %%%u\n", attempted_vreg->n->gvn);
+
+            FOR_USERS(u, attempted_vreg->n) {
+                RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
+                RegMask* new_mask = tb__reg_mask_meet(ctx, expected_mask, in_mask);
+
+                printf("    use %%%u[%d]: ", USERN(u)->gvn, USERI(u));
+                tb__print_regmask(new_mask);
+                printf("\n");
+
+                // shouldn't see any hard splits here?
+                if (new_mask == &TB_REG_EMPTY) {
+                    break;
+                }
+                expected_mask = new_mask;
+            }
+
+            if (attempted_vreg->mask != expected_mask) {
+                TB_OPTDEBUG(REGALLOC)(printf("#     can self spill since mask is loosened from "), tb__print_regmask(attempted_vreg->mask), printf(" to "), tb__print_regmask(expected_mask), printf("\n"));
+            }
+
+            if (attempted_vreg->mask != expected_mask) {
+                can_spill_self = true;
+            }
         }
     }
 
     int best_spill = -1;
     float best_score = INFINITY;
-    FOR_N(i, 0, dyn_array_length(ra->potential_spills)) {
+    FOR_REV_N(i, 0, dyn_array_length(ra->potential_spills)) {
         int vreg_id = ra->potential_spills[i];
         VReg* vreg  = &ctx->vregs[vreg_id];
 
@@ -921,6 +945,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                 if (!allocate_reg(ctx, ra, vreg_id, 0)) {
                     RegMask* mask = ctx->vregs[vreg_id].mask;
                     commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
+                    return ALLOC_FAIL;
                 }
             }
         }
@@ -1054,6 +1079,7 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                     if (in_use == UINT64_MAX) {
                         int r = commit_spill(ctx, ra, NULL, tmp_mask->class, tmp_mask->mask[0]);
                         in_use &= ~(1ull << r);
+                        return ALLOC_FAIL;
                     }
 
                     TB_OPTDEBUG(REGALLOC)(printf("#     available: %#"PRIx64"\n", ~in_use));
@@ -1075,8 +1101,9 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                     RegMask* mask = ctx->vregs[vreg_id].mask;
                     int r = commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
 
-                    ctx->vregs[vreg_id].class = class;
-                    ctx->vregs[vreg_id].assigned = r;
+                    // ctx->vregs[vreg_id].class = class;
+                    // ctx->vregs[vreg_id].assigned = r;
+                    return ALLOC_FAIL;
                 }
 
                 TB_Node* def = ctx->vregs[vreg_id].n;
@@ -1092,8 +1119,9 @@ static int allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena
                             RegMask* mask = ctx->vregs[vreg_id].mask;
                             int r = commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
 
-                            ctx->vregs[vreg_id].class = class;
-                            ctx->vregs[vreg_id].assigned = r;
+                            // ctx->vregs[vreg_id].class = class;
+                            // ctx->vregs[vreg_id].assigned = r;
+                            return ALLOC_FAIL;
                         }
 
                         set_put(&ra->live_out, un->gvn);

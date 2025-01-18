@@ -388,7 +388,9 @@ int count_max_tb_init_objects(InitNode* root_node) {
     int sum = root_node->kids_count;
     for (InitNode* k = root_node->kid; k != NULL; k = k->next) {
         sum += count_max_tb_init_objects(k);
-        if (k->expr && get_root_subexpr(k->expr)->op == EXPR_ADDR) sum += 1;
+        if (k->expr && get_root_subexpr(k->expr)->op == EXPR_CONST && get_root_subexpr(k->expr)->const_val.tag == CUIK_CONST_ADDR) {
+            sum += 1;
+        }
     }
 
     return sum;
@@ -484,52 +486,47 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
     }
 
     // try to emit constant integer + constant addresses
-    Cuik_ConstVal value;
-    if (const_eval(NULL, e, &value)) {
-        uint64_t int_form = 0;
-        if (value.tag == CUIK_CONST_ADDR) {
-            Stmt* stmt = e->exprs[value.s.base].sym.stmt;
-            assert((stmt->op == STMT_GLOBAL_DECL || stmt->op == STMT_FUNC_DECL) && "could not resolve as constant initializer");
+    assert(s->op == EXPR_CONST);
 
-            tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
-            int_form = value.s.offset;
-        } else if (value.tag == CUIK_CONST_INT) {
-            int_form = value.i;
-        } else if (value.tag == CUIK_CONST_FLOAT) {
-            Cuik_TypeKind kind = cuik_canonical_type(e->cast_types[e->count - 1])->kind;
-            if (kind == KIND_DOUBLE) {
-                typedef union { double f; uint64_t u; } F64U64;
-                int_form = (F64U64){ value.f }.u;
-            } else if (kind == KIND_FLOAT) {
-                typedef union { float f; uint32_t u; } F32U32;
-                int_form = (F32U32){ value.f }.u;
-            } else {
-                assert(0 && "TODO");
-            }
+    Cuik_ConstVal value = s->const_val;
+    uint64_t int_form = 0;
+    if (value.tag == CUIK_CONST_ADDR) {
+        Stmt* stmt = value.s.base;
+        assert((stmt->op == STMT_GLOBAL_DECL || stmt->op == STMT_FUNC_DECL) && "could not resolve as constant initializer");
+
+        tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
+        int_form = value.s.offset;
+    } else if (value.tag == CUIK_CONST_INT) {
+        int_form = value.i;
+    } else if (value.tag == CUIK_CONST_FLOAT) {
+        Cuik_TypeKind kind = cuik_canonical_type(e->cast_types[e->count - 1])->kind;
+        if (kind == KIND_DOUBLE) {
+            typedef union { double f; uint64_t u; } F64U64;
+            int_form = (F64U64){ value.f }.u;
+        } else if (kind == KIND_FLOAT) {
+            typedef union { float f; uint32_t u; } F32U32;
+            int_form = (F32U32){ value.f }.u;
         } else {
             assert(0 && "TODO");
         }
-
-        if (int_form != 0) {
-            uint8_t* region = tb_global_add_region(tu->ir_mod, g, offset, type_size);
-
-            if (TARGET_NEEDS_BYTESWAP(tu->target)) {
-                // reverse copy
-                uint8_t* src = (uint8_t*) &int_form;
-                size_t top = type_size - 1;
-
-                for (size_t i = 0; i < type_size; i++) {
-                    region[i] = src[top - i];
-                }
-            } else {
-                memcpy(region, &int_form, type->size);
-            }
-        }
-        return;
+    } else {
+        assert(0 && "TODO");
     }
 
-    fprintf(stderr, "internal compiler error: cannot compile global initializer as constant (%s).\n", tu->filepath);
-    abort();
+    if (int_form != 0) {
+        uint8_t* region = tb_global_add_region(tu->ir_mod, g, offset, type_size);
+        if (TARGET_NEEDS_BYTESWAP(tu->target)) {
+            // reverse copy
+            uint8_t* src = (uint8_t*) &int_form;
+            size_t top = type_size - 1;
+
+            for (size_t i = 0; i < type_size; i++) {
+                region[i] = src[top - i];
+            }
+        } else {
+            memcpy(region, &int_form, type->size);
+        }
+    }
 }
 
 static void eval_global_initializer(TranslationUnit* tu, TB_Global* g, InitNode* n, int offset) {

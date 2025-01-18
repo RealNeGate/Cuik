@@ -408,6 +408,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
 
         case 0x00F6: case 0x00F7: return "test";
         case 0x20F6: case 0x20F7: return "not";
+        case 0x30F6: case 0x30F7: return "neg";
         case 0x60F6: case 0x60F7: return "div";
         case 0x70F6: case 0x70F7: return "idiv";
 

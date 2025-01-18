@@ -101,10 +101,10 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         max = ssub(amax, bmin, mask);
         if (amin != amax || bmin != bmax) {
             // Ahh sweet, Hacker's delight horrors beyond my comprehension
-            uint64_t u = ~(amin ^ bmax) | ~(amin ^ min);
-            uint64_t v = ~(amax ^ bmin) | ~(amax ^ max);
+            uint64_t u = (amin ^ bmax) | (amin ^ min);
+            uint64_t v = (amax ^ bmin) | (amax ^ max);
 
-            if (((u & v) & imin) == 0) {
+            if ((u & v) & imin) {
                 overflow = true;
                 min = imin, max = imax;
             }

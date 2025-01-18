@@ -109,7 +109,7 @@ static void loop_scc_walk(LoopSCC* restrict scc, TB_CFG* restrict cfg, TB_BasicB
 
             if (cfg->root_loop == NULL) {
                 cfg->root_loop = new_loop;
-            } else {
+            } else if (new_loop != cfg->root_loop) {
                 // if we dominate the previously placed loop, we're its parent, if not
                 // then we're siblings.
                 if (slow_dommy(cfg, cfg->root_loop->header, succ_bb->start)) {
