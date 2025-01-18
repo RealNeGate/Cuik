@@ -133,18 +133,53 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return ctx->normie_mask[REG_CLASS_GPR];
         }
 
+        case TB_SELECT: {
+            tb_todo();
+        }
+
+        case TB_BSWAP:
+        case TB_CLZ:
+        case TB_CTZ:
+        case TB_POPCNT: {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_GPR];
+            }
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
+
         case TB_AND:
         case TB_OR:
         case TB_XOR:
         case TB_ADD:
         case TB_SUB:
         case TB_MUL:
+        case TB_SHL:
+        case TB_SHR:
+        case TB_SAR:
+        case TB_ROL:
+        case TB_ROR:
+        case TB_UDIV:
+        case TB_SDIV:
+        case TB_UMOD:
         case TB_SMOD: {
             if (ins) {
                 ins[1] = ctx->normie_mask[REG_CLASS_GPR];
                 ins[2] = ctx->normie_mask[REG_CLASS_GPR];
             }
             return ctx->normie_mask[REG_CLASS_GPR];
+        }
+
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV:
+        case TB_FMIN:
+        case TB_FMAX: {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_FPR];
+                ins[2] = ctx->normie_mask[REG_CLASS_FPR];
+            }
+            return ctx->normie_mask[REG_CLASS_FPR];
         }
         
         case A64_ADDIMM: {
@@ -267,6 +302,48 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
+        case TB_SELECT: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[3], REG_CLASS_GPR);
+            bool is64bit = n->dt.type == TB_TAG_I64;
+            Cond cc = 0;
+            TB_Node* cond = n->inputs[1];
+            if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
+                switch (cond->type) {
+                    case TB_CMP_EQ:  cc = EQ;  break;
+                    case TB_CMP_NE:  cc = NE; break;
+                    case TB_CMP_SLT: cc = LT;  break;
+                    case TB_CMP_SLE: cc = LE; break;
+                    case TB_CMP_ULT: cc = CC;  break;
+                    case TB_CMP_ULE: cc = CS; break;
+                    case TB_CMP_FLT: tb_todo();  break;
+                    case TB_CMP_FLE: tb_todo(); break;
+                    default: tb_unreachable();
+                }
+            } else {
+                // emit cmp instruction
+                tb_todo();
+            }
+            emit_cs(e, CSEL, dst, lhs, rhs, cc, is64bit);
+            break;
+        }
+
+        case TB_AND: case TB_OR: case TB_XOR: {
+            static LogicOp table[] = {
+                [TB_AND] = AND,
+                [TB_OR]  = ORR,
+                [TB_XOR] = EOR,
+            };
+
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+
+            bool is_64bit = n->dt.type == TB_TAG_I64; // legalize_int(n->dt);
+            emit_dpr_logical(e, table[n->type], dst, lhs, rhs, 0, 0, is_64bit);
+            break;
+        }
         case TB_ADD: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
@@ -276,8 +353,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             emit_dp_r(e, ADD, dst, lhs, rhs, 0, 0, is_64bit);
             break;
         }
-        case TB_OR:
-        case TB_XOR:
         case TB_SUB:
         case TB_MUL:
         case TB_SMOD:
