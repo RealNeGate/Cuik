@@ -666,9 +666,9 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id, ui
 
     // what the regmask holds only applies up until num_regs[class], this is mostly
     // just relevant for the stack coloring i suppose
-    FOR_N(j, 0, mask->count) { ra->mask[j] = ~mask->mask[0]; }
-    FOR_N(j, mask->count, mask_word_count) { ra->mask[j] = UINT64_MAX; }
-    if (num_regs % 64) {
+    FOR_N(j, 0, mask->count) { ra->mask[j] = ~mask->mask[j]; }
+    FOR_N(j, mask->count, (ctx->num_regs[mask->class] + 63) / 64) { ra->mask[j] = UINT64_MAX; }
+    if (ctx->num_regs[mask->class] % 64) {
         ra->mask[num_regs / 64] &= UINT64_MAX >> (64ull - (num_regs % 64));
     }
 

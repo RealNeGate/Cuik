@@ -370,7 +370,6 @@ typedef enum TB_NodeTypeEnum {
     TB_POPCNT,
 
     // Unary operations
-    TB_NEG,
     TB_FNEG,
 
     // Integer arithmatic

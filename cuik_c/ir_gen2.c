@@ -915,7 +915,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                     TB_Node* dst = as_rval(tu, g, &args[1]);
                     TB_Node* src = as_rval(tu, g, &args[2]);
                     int order = get_memory_order_val(as_rval(tu, g, &args[3]));
-                    src = tb_builder_unary(g, TB_NEG, src);
+                    src = tb_builder_neg(g, src);
                     return (ValDesc){ RVALUE, .n = tb_builder_atomic_rmw(g, 0, TB_ATOMIC_ADD, dst, src, order) };
                 } else {
                     // TB_Node* val = tu->target->compile_builtin(tu, g, name, arg_count, args);

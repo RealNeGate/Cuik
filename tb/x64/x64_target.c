@@ -325,6 +325,9 @@ static int node_2addr(TB_Node* n) {
             return op->mode == MODE_REG ? 2 : 0;
         }
 
+        case x86_neg:
+        return 1;
+
         // ANY_GPR = OP(COND, shared: ANY_GPR, ANY_GPR)
         case x86_cmovcc:
         return 2;
@@ -1055,6 +1058,15 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             }
         }
 
+        // negate
+        if (n->type == TB_SUB && n->inputs[1]->type == TB_ICONST && TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeInt)->value == 0) {
+            n->type = x86_neg;
+            set_input(f, n, n->inputs[2], 1);
+            set_input(f, n, NULL, 2);
+            n->input_count = 2;
+            return n;
+        }
+
         TB_Node* op = tb_alloc_node(f, x86_lea, n->dt, 5, sizeof(X86MemOp));
         X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
         op_extra->mode = MODE_LD;
@@ -1485,11 +1497,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return ctx->normie_mask[REG_CLASS_XMM];
         }
 
-        case TB_NEG: {
-            if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
-            return ctx->normie_mask[REG_CLASS_GPR];
-        }
-
         case TB_INT2FLOAT:
         case TB_UINT2FLOAT: {
             if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_XMM]; }
@@ -1571,6 +1578,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
             return &TB_REG_EMPTY;
         }
+
+        case x86_neg:
+        if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
+        return ctx->normie_mask[REG_CLASS_GPR];
 
         case x86_imulimm:
         if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
@@ -2088,7 +2099,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case TB_NEG: {
+        case x86_neg: {
             TB_X86_DataType dt = legalize_int(n->dt);
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);

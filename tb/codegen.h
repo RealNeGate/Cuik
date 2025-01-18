@@ -155,7 +155,6 @@ struct Ctx {
 
     // Basic blocks
     int bb_count;
-    TB_Node** rpo_nodes;
 
     // used when calling node_constraint since it needs an array, we
     // figure out the max input count of all nodes before allocating it.
@@ -282,6 +281,14 @@ static bool reg_mask_is_not_empty(RegMask* mask) {
 
 static bool reg_mask_is_stack(RegMask* mask) {
     return mask->class == REG_CLASS_STK;
+}
+
+static int popcnt_reg_mask(RegMask* mask) {
+    int sum = 0;
+    FOR_N(i, 0, mask->count) {
+        sum += tb_popcount64(mask->mask[i]);
+    }
+    return sum;
 }
 
 static int fixed_reg_mask(RegMask* mask) {

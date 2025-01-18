@@ -91,7 +91,6 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
 
         case TB_CLZ: return "clz";
         case TB_CTZ: return "ctz";
-        case TB_NEG: return "neg";
         case TB_AND: return "and";
         case TB_OR: return "or";
         case TB_XOR: return "xor";

@@ -37,7 +37,6 @@ typedef struct {
 
     int num_classes;
     int* num_regs;
-    int* fixed;
 
     int max_spills;
     DynArray(int) spills;
@@ -168,11 +167,6 @@ static int ifg_ws_pop(IFG_Worklist* ws) {
     return vreg_id;
 }
 
-static bool briggs_is_fixed(Ctx* ctx, Briggs* ra, int id) {
-    int class = ctx->vregs[id].mask->class;
-    return id >= ra->fixed[class] && id < ra->fixed[class] + ctx->num_regs[class];
-}
-
 static void briggs_print_vreg(Ctx* restrict ctx, Briggs* restrict ra, VReg* vreg) {
     float cost = get_spill_cost(ctx, vreg);
     printf("# V%-4"PRIdPTR" deg=%d cost=%.2f ", vreg - ctx->vregs, ifg_degree(ra, vreg - ctx->vregs), cost);
@@ -299,6 +293,7 @@ static void spill_fancy(Ctx* ctx, Briggs* ra, int vreg_id) {
     TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill  (%%%u)\x1b[0m\n", to_spill - ctx->vregs, spilled_n->gvn));
 
     briggs_dump_sched(ctx, ra);
+    __debugbreak();
 
     ArenaArray(int)* df = tb_arena_alloc(ra->arena, ctx->bb_count * sizeof(ArenaArray(int)));
     {
@@ -545,30 +540,13 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
     Briggs ra = { .ctx = ctx, .arena = arena };
     ra.spills = dyn_array_create(int, 32);
 
-    // creating fixed vregs which coalesce all fixed reg uses
-    // so i can more easily tell when things are asking for them.
     int max_regs_in_class = 0;
     CUIK_TIMED_BLOCK("pre-pass on fixed intervals") {
-        ra.fixed = tb_arena_alloc(arena, ctx->num_classes * sizeof(int));
-
         FOR_N(i, 0, ctx->num_classes) {
             size_t count = ctx->num_regs[i];
             if (max_regs_in_class < count) {
                 max_regs_in_class = count;
             }
-
-            int base = aarray_length(ctx->vregs);
-            FOR_N(j, 0, count) {
-                RegMask* mask = intern_regmask(ctx, i, false, i == 0 ? j : 1ull << j);
-                aarray_push(ctx->vregs, (VReg){
-                        .class = i,
-                        .assigned = j,
-                        .mask = mask,
-                        .spill_cost = INFINITY,
-                        .uses = 1,
-                    });
-            }
-            ra.fixed[i] = base;
         }
         ra.num_regs = ctx->num_regs;
         assert(max_regs_in_class <= 64 && "TODO: we assume some 64bit masks in places lol");
@@ -608,17 +586,17 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 tmps->count = tmp_count;
                 nl_table_put(&ctx->tmps_map, n, tmps);
 
+                TB_OPTDEBUG(REGALLOC)(printf("TMPS %%%u:\n", n->gvn));
                 FOR_N(k, in_count, in_count + tmp_count) {
                     RegMask* in_mask = ins[k];
                     TB_ASSERT(in_mask != &TB_REG_EMPTY);
 
-                    /* int fixed = fixed_reg_mask(in_mask);
-                    if (fixed >= 0) {
-                        // insert new range to the existing vreg
-                        int vreg_id = tmps->elems[k - in_count] = ra.fixed[in_mask->class] + fixed;
-                        ctx->vregs[vreg_id].uses += 1;
-                    } else {
-                    } */
+                    #if TB_OPTDEBUG_REGALLOC
+                    printf("  V%u: ", aarray_length(ctx->vregs));
+                    tb__print_regmask(in_mask);
+                    printf("\n");
+                    #endif
+
                     tmps->elems[k - in_count] = aarray_length(ctx->vregs);
                     aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = INFINITY, .uses = 1 });
                 }
@@ -650,7 +628,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
         // that's a lot of rounds... you sure we're making forward progress?
         rounds += 1;
-        TB_ASSERT(rounds < 10);
+        TB_ASSERT(rounds < 5);
 
         // build IFG
         CUIK_TIMED_BLOCK("IFG build") {
@@ -743,7 +721,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         int mask_cap = stack_cap < max_regs_in_class ? max_regs_in_class : stack_cap;
         uint64_t* mask = tb_arena_alloc(arena, ((mask_cap+63)/64) * sizeof(uint64_t));
 
-        int max_stack_usage = ctx->num_regs[REG_CLASS_STK];
+        int num_spills = ctx->num_spills;
         cuikperf_region_start("select", NULL);
         dyn_array_clear(ra.spills);
         FOR_REV_N(i, 0, aarray_length(stk)) {
@@ -760,12 +738,17 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             briggs_print_vreg(ctx, &ra, vreg);
             #endif
 
-            int def_class = vreg->mask->class;
-            int num_regs = def_class == REG_CLASS_STK ? stack_cap : ctx->num_regs[vreg->mask->class];
+            RegMask* rm = vreg->mask;
+            int def_class = rm->class;
+            int num_regs = def_class == REG_CLASS_STK ? stack_cap : ctx->num_regs[rm->class];
             size_t mask_word_count = (num_regs + 63) / 64;
+            TB_ASSERT(mask_word_count <= mask_cap);
 
-            FOR_N(j, 0, mask_word_count) {
-                mask[j] = 0;
+            // make sure it thinks the unusable regs are "in use" by someone else
+            FOR_N(j, 0, rm->count) { mask[j] = ~rm->mask[j]; }
+            FOR_N(j, rm->count, (ctx->num_regs[rm->class] + 63) / 64) { mask[j] = UINT64_MAX; }
+            if (ctx->num_regs[rm->class] % 64) {
+                mask[num_regs / 64] &= UINT64_MAX >> (64ull - (ctx->num_regs[rm->class] % 64));
             }
 
             #if TB_OPTDEBUG_REGALLOC
@@ -780,7 +763,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                     mask[other_assigned / 64u] |= (1ull << (other_assigned % 64u));
 
                     #if 1 && TB_OPTDEBUG_REGALLOC
-                    if (def_class != REG_CLASS_STK) {
+                    if (def_class != 1) {
                         continue;
                     }
                     printf("#   MASK: 0x");
@@ -809,14 +792,17 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 }
             }
 
-            if (reg_assign(ctx, vreg, mask, num_regs)) {
-                // we need to know how much actual stack space we use
-                if (def_class == REG_CLASS_STK && max_stack_usage < vreg->assigned + 1) {
-                    max_stack_usage = vreg->assigned + 1;
+            if (!reg_assign(ctx, vreg, mask, num_regs)) {
+                // if a stack slot failed to color then it means we
+                // need more stack slots (there's an indefinite amount :p)
+                if (def_class == REG_CLASS_STK) {
+                    vreg->class = REG_CLASS_STK;
+                    vreg->assigned = num_spills++;
+
+                    TB_OPTDEBUG(REGALLOC)(printf("#   assigned to STACK%d (new stack slot)\n", vreg->assigned));
+                } else {
+                    dyn_array_put(ra.spills, s.vreg_id);
                 }
-            } else {
-                TB_ASSERT_MSG(def_class != REG_CLASS_STK, "you fucked something up... bad");
-                dyn_array_put(ra.spills, s.vreg_id);
             }
         }
         cuikperf_region_end();
@@ -827,7 +813,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             dyn_array_destroy(ra.spills);
             tb_arena_restore(arena, sp);
 
-            ctx->num_spills = max_stack_usage - (1 + ctx->param_count + ctx->call_usage);
+            ctx->num_spills = num_spills - (1 + ctx->param_count + ctx->call_usage);
             cuikperf_region_end();
             break;
         }
@@ -852,7 +838,21 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             if (can_remat(ctx, n)) {
                 rematerialize(ctx, NULL, n);
             } else {
-                spill_fancy(ctx, &ra, vreg_id);
+                ctx->vregs[vreg_id].mask = ctx->constraint(ctx, n, NULL);
+                ctx->vregs[vreg_id].spill_cost = NAN;
+
+                RegMask* spill_rm = intern_regmask(ctx, REG_CLASS_STK, true, 0);
+                TB_Node* spill_n  = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+                subsume_node2(f, n, spill_n);
+                set_input(f, spill_n, n, 1);
+                TB_NODE_SET_EXTRA(spill_n, TB_NodeMachCopy, .def = spill_rm, .use = ctx->vregs[vreg_id].mask);
+
+                tb__insert_after(ctx, f, spill_n, n);
+                VReg* spill_vreg = tb__set_node_vreg(ctx, spill_n);
+                spill_vreg->spill_cost = INFINITY;
+                spill_entire_lifetime(ctx, spill_vreg, spill_rm, false);
+
+                // spill_fancy(ctx, &ra, vreg_id);
             }
         }
         cuikperf_region_end();
@@ -870,6 +870,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
         // recompute liveness
         redo_dataflow(ctx, arena);
+        dump_sched(ctx);
 
         // time to retry
         dyn_array_clear(ra.spills);
@@ -967,36 +968,6 @@ static void interfere_live(Ctx* restrict ctx, Briggs* ra, uint32_t* live, int vr
     }
 }
 
-static void interfere_mask(Ctx* restrict ctx, Briggs* ra, int vreg_id, RegMask* def_mask) {
-    // definition should interfere with each physical reg's node it doesn't intersect with
-    // such that it can't be seen alive in those registers.
-    if (reg_mask_is_not_empty(def_mask)) {
-        size_t reg_count    = ctx->num_regs[def_mask->class];
-        uint64_t word_count = (reg_count + 63) / 64;
-        FOR_N(i, 0, word_count) {
-            uint64_t bits = ~def_mask->mask[i];
-            while (bits) {
-                int j = tb_ffs64(bits) - 1;
-                if (i*64 + j >= reg_count) {
-                    return;
-                }
-
-                int in_vreg_id = ra->fixed[def_mask->class] + i*64 + j;
-
-                TB_ASSERT(in_vreg_id < aarray_length(ctx->vregs));
-                ifg_edge(ra, in_vreg_id, vreg_id);
-                bits &= ~(1ull << j);
-            }
-        }
-    } else if (def_mask->class == REG_CLASS_STK) {
-        // if it's both empty and a stack slot, interfere with ALL the fixed stack slots
-        int base = ra->fixed[REG_CLASS_STK];
-        FOR_N(i, 0, ctx->num_regs[REG_CLASS_STK]) {
-            ifg_edge(ra, base+i, vreg_id);
-        }
-    }
-}
-
 static void p_up(Briggs_Pressure* p, int pos) {
     if (++p->curr > p->max) {
         p->max = p->curr;
@@ -1035,21 +1006,13 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
         memset(ra->ifg[i], 0, set_size);
     }
 
-    // fixed vregs interfere with their fellow fixed vregs
-    FOR_N(i, 0, ctx->num_classes) {
-        int base = ra->fixed[i];
-        FOR_N(j, 0, ctx->num_regs[i]) FOR_N(k, j + 1, ctx->num_regs[i]) {
-            ifg_edge(ra, base + k, base + j);
-        }
-    }
-
-    size_t live_count = ((f->node_count + 63) / 32);
+    size_t live_count = ((f->node_count + 63) / 64) * 2;
     uint32_t* live = tb_arena_alloc(ra->arena, live_count * sizeof(uint32_t));
 
     FOR_REV_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
 
-        FOR_N(j, 0, (live_count + 1) / 2) {
+        FOR_N(j, 0, (bb->live_out.capacity + 63) / 64) {
             live[j*2 + 0] = bb->live_out.data[j] & 0xFFFFFFFF;
             live[j*2 + 1] = bb->live_out.data[j] >> 32ull;
         }
@@ -1091,7 +1054,6 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
                 }
 
                 interfere_live(ctx, ra, live, vreg_id);
-                interfere_mask(ctx, ra, vreg_id, vreg->mask);
 
                 // 2 address ops will interfere with their own inputs (except for
                 // shared dst/src)
@@ -1121,7 +1083,6 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
                 FOR_N(k, 0, tmps->count) {
                     RegMask* tmp_mask = ctx->vregs[tmps->elems[k]].mask;
                     interfere_live(ctx, ra, live, tmps->elems[k]);
-                    interfere_mask(ctx, ra, tmps->elems[k], tmp_mask);
                 }
             }
 
@@ -1297,20 +1258,6 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
         ctx->vreg_map[i] = uf[ctx->vreg_map[i]];
     }
 
-    // relocate the fixed regs, they couldn't be compacted so they should
-    // still be next to each other.
-    FOR_N(i, 0, ctx->num_classes) {
-        int base = ra->fixed[i];
-        ra->fixed[i] = uf[base];
-
-        #if TB_OPTDEBUG_REGALLOC
-        size_t count = ctx->num_regs[i];
-        FOR_N(j, 0, count) {
-            TB_ASSERT(uf[base] + j == uf[base + j]);
-        }
-        #endif
-    }
-
     // relocate temporaries
     nl_table_for(it, &ctx->tmps_map) {
         Tmps* tmps = it->v;
@@ -1331,7 +1278,7 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
 static bool ifg_is_lo_degree(Ctx* ctx, Briggs* ra, int vreg_id) {
     RegMask* mask = ctx->vregs[vreg_id].mask;
     // note the stack has infinite colors so it never spills
-    return reg_mask_is_stack(mask) || ifg_degree(ra, vreg_id) < ctx->num_regs[mask->class];
+    return mask->class == REG_CLASS_STK || ifg_degree(ra, vreg_id) < popcnt_reg_mask(mask);
 }
 
 static void ifg_remove(Briggs* ra, int i, int j) {

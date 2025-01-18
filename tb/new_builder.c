@@ -296,7 +296,7 @@ TB_Node* tb_builder_neg(TB_GraphBuilder* g, TB_Node* src) {
     if (TB_IS_FLOAT_TYPE(src->dt)) {
         return tb_builder_unary(g, TB_FNEG, src);
     } else {
-        return tb_builder_unary(g, TB_NEG, src);
+        return tb_builder_binop_int(g, TB_SUB, tb_builder_sint(g, src->dt, 0), src, 0);
     }
 }
 
