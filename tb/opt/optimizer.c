@@ -52,16 +52,20 @@ static void node_resize_inputs(TB_Function* f, TB_Node* n, size_t cnt) {
 
 // this has to move things which is not nice...
 void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
-    #ifndef NDEBUG
-    // if it's possible to add late inputs, we can't have extra deps.
-    FOR_N(i, n->input_count, n->input_cap) {
-        TB_ASSERT(n->inputs[i] == NULL);
+    // if there's an extra dep, we gotta shuffle it away. since
+    // the extra deps are unique i'll just move it to the nearest
+    //
+    TB_Node* old = n->input_count < n->input_cap ? n->inputs[n->input_count] : NULL;
+    if (old != NULL) {
+        remove_user(f, n, n->input_count);
+        n->inputs[n->input_count] = in;
+
+        tb_node_add_extra(f, n, old);
+    } else {
+        node_resize_inputs(f, n, n->input_count);
+        n->inputs[n->input_count] = in;
     }
-    #endif
 
-    node_resize_inputs(f, n, n->input_count);
-
-    n->inputs[n->input_count] = in;
     if (in) {
         add_user(f, n, in, n->input_count);
     }
@@ -496,10 +500,11 @@ static bool can_gvn(TB_Node* n) {
     switch (n->type) {
         case TB_LOCAL:
         case TB_MACH_MOVE:
+        case TB_MACH_TEMP:
         return false;
 
-        // control producing nodes can't really GVN, it doesn't make sense if
-        // they're constructed from a CFG.
+        // control producing nodes can't win from GVN (they all gonna be unique so the rules
+        // are met, they'd just bloat the table tho).
         case TB_ROOT:
         case TB_CALL:
         case TB_READ:

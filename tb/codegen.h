@@ -79,10 +79,10 @@ struct VReg {
 
     // spill cost (sum of block_freq * uses_in_block)
     //   NaN if not computed yet
-    float spill_cost;
+    double spill_cost;
     // certain events make us more likely to bias spilling, mostly
     // if we've already spilled.
-    float spill_bias;
+    double spill_bias;
     int hint_vreg;
 
     // BRIGGS: when coalesced this number will go up
@@ -114,11 +114,6 @@ typedef struct {
     uint32_t* pos;
     uint32_t target;
 } JumpTablePatch;
-
-typedef struct {
-    int count;
-    int elems[]; // vregs
-} Tmps;
 
 // like a VLIW bundle, except it can be used to model delay slots.
 // there's also the degenerate case where the bundle is always 1
@@ -163,7 +158,6 @@ struct Ctx {
     // Values
     ArenaArray(VReg) vregs;   // [vid]
     ArenaArray(int) vreg_map; // [gvn] -> vid
-    NL_Table tmps_map;        // TB_Node* -> Tmps*
 
     // Regalloc
     int num_spills;
@@ -216,6 +210,7 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
         case TB_F32CONST:
         case TB_F64CONST:
         case TB_MACH_COPY:
+        case TB_MACH_TEMP:
         return true;
 
         // user-defined rematerializing
@@ -224,14 +219,14 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
-static float get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
+static double get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
     if (!isnan(vreg->spill_cost)) {
         return vreg->spill_cost;
     } else if (can_remat(ctx, vreg->n)) {
-        return (vreg->spill_cost = -1.0f + vreg->spill_bias);
+        return (vreg->spill_cost = -1.0 + vreg->spill_bias);
     }
 
-    float c = 0.0f;
+    double c = 0.0f;
 
     // sum of (block_freq * uses_in_block)
     FOR_USERS(u, vreg->n) {
@@ -289,6 +284,10 @@ static int popcnt_reg_mask(RegMask* mask) {
         sum += tb_popcount64(mask->mask[i]);
     }
     return sum;
+}
+
+static bool within_reg_mask(RegMask* mask, int i) {
+    return i/64 < mask->count ? mask->mask[i/64] & (1ull << (i%64)) : false;
 }
 
 static int fixed_reg_mask(RegMask* mask) {

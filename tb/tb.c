@@ -61,6 +61,15 @@ static void init_codegen_families(void) {
     extern ICodeGen tb__wasm32_codegen;
     tb_codegen_families[TB_ARCH_WASM32] = tb__wasm32_codegen;
     #endif
+
+    // allows me to initialize all the fun tables
+    FOR_N(i, 0, TB_ARCH_MAX) {
+        if (tb_codegen_families[i].global_init) {
+            CUIK_TIMED_BLOCK("arch global init") {
+                tb_codegen_families[i].global_init();
+            }
+        }
+    }
 }
 
 static ICodeGen* tb_codegen_info(TB_Module* m) { return &tb_codegen_families[m->target_arch]; }

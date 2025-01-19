@@ -443,6 +443,8 @@ typedef enum TB_NodeTypeEnum {
     // referring to a global.
     TB_MACH_SYMBOL,
 
+    TB_MACH_TEMP,
+
     // limit on generic nodes
     TB_NODE_TYPE_MAX,
 
@@ -595,6 +597,10 @@ typedef struct { // TB_MACH_COPY
     RegMask* use;
     RegMask* def;
 } TB_NodeMachCopy;
+
+typedef struct { // TB_MACH_TEMP
+    RegMask* def;
+} TB_NodeMachTemp;
 
 typedef struct { // TB_PROJ
     int index;

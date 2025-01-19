@@ -38,6 +38,7 @@ uint64_t cuik__page_mask = 0;
 void cuik_init_terminal(void) {
     #if _WIN32
     // Raw input mode
+    // setvbuf(stdout, (char *)NULL, _IOLBF, BUFSIZ);
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), ENABLE_PROCESSED_INPUT);
 
     // Enable ANSI/VT sequences on windows

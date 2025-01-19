@@ -16,10 +16,13 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n);
 // RA constraints:
 //   TODO
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
-//   these are input edges to a node which do not have a register bound, they
-//   can be used to define clobbers or scratch depending on if they're later
-//   defined as fixed RegMasks or not.
+//   where is the definition allowed to be stored into (&TB_REG_EMPTY if it's not
+//   something that's stored)
+static void node_constraint_out(Ctx* restrict ctx, TB_Node* n, RegMask** outs, int out_count);
+//   these are used to define clobbers and scratch, they're just adding little
+//   vregs for use of a register during the lifetime of a node.
 static int node_tmp_count(Ctx* restrict ctx, TB_Node* n);
+static void node_constraint_tmps(Ctx* restrict ctx, TB_Node* n, RegMask** tmps);
 //   when we represent 2addr ops in the SSA, we define which edge is potentially
 //   shared such that lifetimes don't freak out about the fact that there's a
 //   hypothetical move before the op (which means that it'll interfere with its
@@ -112,6 +115,25 @@ static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b)
     #endif
     bundle_emit(ctx, e, b);
     b->count = 0;
+}
+
+static int try_create_vreg(Ctx* restrict ctx, TB_Node* n, RegMask* def_mask) {
+    int vreg_id = ctx->vreg_map[n->gvn];
+    if (vreg_id > 0 && n->type != TB_MACH_MOVE) {
+        TB_ASSERT(def_mask != &TB_REG_EMPTY);
+        ctx->vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN, .uses = 1 };
+
+        if (def_mask->class == REG_CLASS_STK) {
+            ctx->vregs[vreg_id].spill_cost = INFINITY;
+
+            int fixed = fixed_reg_mask(def_mask);
+            if (fixed >= 0) {
+                ctx->vregs[vreg_id].class = REG_CLASS_STK;
+                ctx->vregs[vreg_id].assigned = fixed;
+            }
+        }
+    }
+    return vreg_id;
 }
 
 static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
@@ -305,6 +327,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         FOR_N(i, 0, f->node_count) { ctx.vreg_map[i] = 0; }
 
+        tb_print_dumb(f);
+
         int max_ins = 0;
         size_t vreg_count = 1; // 0 is reserved as the NULL vreg
         TB_ASSERT(dyn_array_length(ws->items) == 0);
@@ -320,52 +344,103 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             // a bit of slack for spills
             size_t item_count = dyn_array_length(ws->items);
             ArenaArray(TB_Node*) items = aarray_create(&f->arena, TB_Node*, item_count + 16);
-            aarray_set_length(items, item_count);
 
             // copy out sched
-            FOR_N(i, 0, item_count) {
-                TB_Node* n = ws->items[i];
-                items[i] = n;
+            for (size_t j = 0; j < item_count; j++) {
+                TB_Node* n = ws->items[j];
+                if (is_proj(n)) {
+                    aarray_push(items, n);
+                    continue;
+                }
 
-                // if there's a def, let's make a vreg
-                RegMask* def_mask = node_constraint(&ctx, n, NULL);
+                // temps are added as extras so they don't
+                // increase the "input_count"
+                if (n->input_count > max_ins) {
+                    max_ins = n->input_count;
+                }
 
-                int ins = n->input_count + node_tmp_count(&ctx, n);
-                if (ins > max_ins) { max_ins = ins; }
+                int tmp_count = node_tmp_count(&ctx, n);
+                if (tmp_count > 0) {
+                    RegMask** tmp_masks = tb_arena_alloc(&f->tmp_arena, tmp_count * sizeof(RegMask*));
+                    node_constraint_tmps(&ctx, n, tmp_masks);
+
+                    FOR_N(k, 0, tmp_count) {
+                        TB_Node* tmp = tb_alloc_node(f, TB_MACH_TEMP, TB_TYPE_VOID, 1, sizeof(TB_NodeMachTemp));
+                        set_input(f, tmp, f->root_node, 0);
+                        add_input_late(f, n, tmp);
+
+                        TB_ASSERT(tmp_masks[k] != NULL);
+                        TB_NODE_SET_EXTRA(tmp, TB_NodeMachTemp, .def = tmp_masks[k]);
+                        aarray_push(items, tmp);
+
+                        aarray_reserve(ctx.vreg_map, f->node_count);
+                        ctx.vreg_map[tmp->gvn] = vreg_count++;
+                    }
+
+                    // we don't need to process either this item or it's temps after this point
+                    tb_arena_free(&f->tmp_arena, tmp_masks, tmp_count * sizeof(RegMask*));
+                }
+                aarray_push(items, n);
 
                 // these ops are guarenteed to fit since new nodes aren't being added and the
                 // size was fine when we started.
                 TB_ASSERT(n->gvn < aarray_length(ctx.vreg_map));
 
                 int vreg_id = 0;
-                if (def_mask != &TB_REG_EMPTY) {
-                    if (n->type == TB_MACH_MOVE) {
-                        TB_ASSERT(single_use(n));
-                        TB_ASSERT(USERN(n->users)->type == TB_PHI);
 
-                        // these are phi moves, they should share the vreg of phi
-                        TB_Node* phi = USERN(n->users);
-                        if (ctx.vreg_map[phi->gvn] == 0) {
-                            ctx.vreg_map[phi->gvn] = vreg_id = vreg_count++;
-                        } else {
-                            vreg_id = ctx.vreg_map[phi->gvn];
+                if (n->dt.type == TB_TAG_TUPLE) {
+                    // all tuples have no direct output mask, so we
+                    // don't check for one.
+                    int max_proj_index = -1;
+                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                        TB_Node* un = USERN(u);
+                        int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+                        if (max_proj_index < index) {
+                            max_proj_index = index;
                         }
-                    } else if (n->type == TB_PHI && ctx.vreg_map[n->gvn] > 0) {
-                        vreg_id = ctx.vreg_map[n->gvn];
-                    } else {
-                        vreg_id = vreg_count++;
+                    }
+
+                    TB_ASSERT(max_proj_index >= 0);
+                    RegMask** out_masks = tb_arena_alloc(&f->tmp_arena, (max_proj_index + 1) * sizeof(RegMask*));
+                    node_constraint_out(&ctx, n, out_masks, max_proj_index + 1);
+
+                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                        TB_Node* un = USERN(u);
+                        int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+                        if (out_masks[index] != &TB_REG_EMPTY) {
+                            ctx.vreg_map[un->gvn] = vreg_count++;
+                        }
+                    }
+
+                    tb_arena_free(&f->tmp_arena, out_masks, (max_proj_index + 1) * sizeof(RegMask*));
+                } else {
+                    RegMask* def_mask;
+                    node_constraint_out(&ctx, n, &def_mask, 1);
+                    if (def_mask != &TB_REG_EMPTY) {
+                        if (n->type == TB_MACH_MOVE) {
+                            TB_ASSERT(single_use(n));
+                            TB_ASSERT(USERN(n->users)->type == TB_PHI);
+
+                            // these are phi moves, they should share the vreg of phi
+                            TB_Node* phi = USERN(n->users);
+                            if (ctx.vreg_map[phi->gvn] == 0) {
+                                ctx.vreg_map[n->gvn] = ctx.vreg_map[phi->gvn] = vreg_count++;
+                            } else {
+                                ctx.vreg_map[n->gvn] = ctx.vreg_map[phi->gvn];
+                            }
+                        } else if (n->type == TB_PHI && ctx.vreg_map[n->gvn] > 0) {
+                            ctx.vreg_map[n->gvn] = ctx.vreg_map[n->gvn];
+                        } else {
+                            ctx.vreg_map[n->gvn] = vreg_count++;
+                        }
                     }
                 }
-                ctx.vreg_map[n->gvn] = vreg_id;
             }
             dyn_array_clear(ws->items);
             bb->items = items;
         }
         ctx.bb_count = bb_count;
         ctx.ins = tb_arena_alloc(&f->tmp_arena, max_ins * sizeof(RegMask*));
-
-        // ops with temporaries are *relatively* uncommon (mostly calls)
-        ctx.tmps_map = nl_table_alloc((vreg_count / 16) + 4);
 
         log_phase_end(f, og_size, "local-sched & ra constraints");
 
@@ -375,57 +450,84 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("gather RA constraints") {
+        #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
+        printf("=== DUMP %s ===\n", f->super.name);
+        #endif
+
         FOR_N(i, 0, bb_count) {
             TB_BasicBlock* bb = &cfg.blocks[i];
-            TB_OPTDEBUG(CODEGEN)(printf("BB %zu (freq=%.2f)\n", i, bb->freq));
+
+            #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
+            printf("BB %zu (freq=%.4f)\n", i, bb->freq);
+            #endif
 
             aarray_for(j, bb->items) {
                 TB_Node* n = bb->items[j];
-                int vreg_id = ctx.vreg_map[n->gvn];
 
-                // all vreg writes here are in-bounds but later work will grow vregs
-                // so don't be assuming it everywhere.
-                TB_ASSERT(vreg_id >= 0 && vreg_id < aarray_length(ctx.vregs));
+                if (n->dt.type == TB_TAG_TUPLE) {
+                    #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
+                    printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
+                    #endif
 
-                #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
-                int tmps = node_tmp_count(&ctx, n);
-                RegMask* def_mask = node_constraint(&ctx, n, ctx.ins);
-
-                printf("  "), tb_print_dumb_node(NULL, n), printf(" (%u uses)\n", n->user_count);
-                if (vreg_id > 0) {
-                    printf("    OUT    = "), tb__print_regmask(def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
-                }
-
-                FOR_N(j, 1, n->input_count) {
-                    if (n->inputs[j] && ctx.ins[j] != &TB_REG_EMPTY) {
-                        printf("    IN[%zu]  = ", j), tb__print_regmask(ctx.ins[j]), printf(" %%%d\n", n->inputs[j]->gvn);
-                    }
-                }
-
-                FOR_N(j, n->input_count, n->input_count + tmps) {
-                    printf("    TMP[%zu] = ", j), tb__print_regmask(ctx.ins[j]), printf("\n");
-                }
-                #endif
-
-                if (vreg_id > 0 && n->type != TB_MACH_MOVE) {
-                    RegMask* def_mask = node_constraint(&ctx, n, NULL);
-                    ctx.vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN, .uses = 1 };
-
-                    if (def_mask->class == REG_CLASS_STK) {
-                        ctx.vregs[vreg_id].spill_cost = INFINITY;
-
-                        int fixed = fixed_reg_mask(def_mask);
-                        if (fixed >= 0) {
-                            ctx.vregs[vreg_id].class = REG_CLASS_STK;
-                            ctx.vregs[vreg_id].assigned = fixed;
+                    // all tuples have no direct output mask, so we
+                    // don't check for one.
+                    int max_proj_index = -1;
+                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                        TB_Node* un = USERN(u);
+                        int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+                        if (max_proj_index < index) {
+                            max_proj_index = index;
                         }
                     }
+
+                    TB_ASSERT(max_proj_index >= 0);
+                    RegMask** out_masks = tb_arena_alloc(&f->tmp_arena, (max_proj_index + 1) * sizeof(RegMask*));
+                    node_constraint_out(&ctx, n, out_masks, max_proj_index + 1);
+
+                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                        TB_Node* un = USERN(u);
+                        int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+                        int vreg_id = try_create_vreg(&ctx, un, out_masks[index]);
+                        #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
+                        if (vreg_id > 0) {
+                            printf("    OUT[%-2d]  = ", index), tb__print_regmask(out_masks[index]), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
+                        }
+                        #endif
+                    }
+
+                    tb_arena_free(&f->tmp_arena, out_masks, (max_proj_index + 1) * sizeof(RegMask*));
+                } else if (!is_proj(n)) {
+                    #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
+                    printf("  "), tb_print_dumb_node(NULL, n), printf("\n");
+                    #endif
+
+                    RegMask* def_mask;
+                    node_constraint_out(&ctx, n, &def_mask, 1);
+                    int vreg_id = try_create_vreg(&ctx, n, def_mask);
+                    #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
+                    if (vreg_id > 0) {
+                        printf("    OUT    = "), tb__print_regmask(def_mask), printf(" \x1b[32m# VREG=%d\x1b[0m\n", vreg_id);
+                    }
+                    #endif
                 }
+
+                /* node_constraint(&ctx, n, ctx.ins);
+                FOR_N(j, 1, n->input_count) {
+                    if (n->inputs[j]) {
+                        if (n->inputs[j]->type == TB_MACH_TEMP) {
+                            printf("    TMP[%zu] = ", j), tb__print_regmask(TB_NODE_GET_EXTRA_T(n->inputs[j], TB_NodeMachTemp)->def), printf(" %%%d\n", n->inputs[j]->gvn);
+                        } else if (ctx.ins[j] != &TB_REG_EMPTY) {
+                            printf("    IN[%zu]  = ", j), tb__print_regmask(ctx.ins[j]), printf(" %%%d\n", n->inputs[j]->gvn);
+                        }
+                    }
+                } */
             }
         }
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
+        __debugbreak();
+
         tb__rogers(&ctx, &f->tmp_arena);
         // tb__briggs(&ctx, &f->tmp_arena);
 
@@ -640,8 +742,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 *ctx.jump_table_patches[i].pos = target & ~0x80000000;
             }
         }
-
-        nl_table_free(ctx.tmps_map);
     }
 
     if (ctx.locations) {

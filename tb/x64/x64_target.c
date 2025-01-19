@@ -51,8 +51,7 @@ typedef struct {
 typedef struct {
     TB_FunctionPrototype* proto;
     TB_Symbol* sym;
-    uint32_t clobber_gpr;
-    uint32_t clobber_xmm;
+    int param_count;
 } X86Call;
 
 // machine node types
@@ -62,8 +61,6 @@ typedef enum X86NodeType {
     #define X(name) x86_ ## name,
     #include "x64_nodes.inc"
 } X86NodeType;
-
-// #include "x64_gen.inc"
 
 static bool can_gvn(TB_Node* n) {
     return true;
@@ -224,6 +221,30 @@ static const struct ParamDesc {
     // syscall
     { INT_MAX, 6, 4, 5, SYSCALL_ABI_CALLER_SAVED, { RDI, RSI, RDX, R10, R8, R9 } },
 };
+
+typedef struct {
+    // original node match
+    int node_type;
+    // flags
+    bool mi : 1;
+    bool rm : 1;
+    bool mr : 1;
+    // constraints
+    const char* outs;
+    const char* ins;
+    const char* tmps;
+} NodeMeta;
+
+static const char* node_formats[][2] = {
+    // rdtsc outputs in two registers
+    [TB_CYCLE_COUNTER]  = { "A :| A D", "" },
+};
+enum { NODE_FORMATS_COUNT = sizeof(node_formats) / sizeof(node_formats[0]) };
+
+#include "x64_gen.inc"
+
+static void global_init(void) {
+}
 
 static TB_X86_DataType legalize_int(TB_DataType dt) {
     switch (dt.type) {
@@ -518,10 +539,50 @@ static TB_Node* mach_symbol(Ctx* restrict ctx, TB_Function* f, TB_Symbol* s) {
     return k;
 }
 
+typedef struct {
+    TB_Node* n;
+    int index;
+} NodeCursor;
+
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     if (n->type == TB_PROJ) {
         return n;
-    } else if (n->type == TB_ROOT) {
+    }
+
+    NodeCursor stk[16];
+    TB_Node* captures[16];
+
+    int head = 1, state = 0;
+    stk[0] = (NodeCursor){ 0 };
+
+    TB_Node* curr = NULL;
+    int index = 0;
+    do {
+        // fetch current edge
+        TB_Node* in = curr ? (index < curr->input_count ? curr->inputs[index] : NULL) : n;
+        TB_NodeTypeEnum in_type = in ? in->type : TB_NULL;
+        uint32_t next = x86_grammar[in_type+1][state];
+        // if there's no specific match, try general
+        if (next == 0) { next = x86_grammar[0][state]; }
+        // if there's no match, we have no pattern over there
+        if (next == 0) { return NULL; }
+        // Advance
+        index += 1;
+        switch (next >> 30u) {
+            // Push
+            case 1: stk[head].index = index, stk[head++] = (NodeCursor){ in, 0 }, curr = in, index = 0; break;
+            // Pop
+            case 2: head--, index = stk[head].index, curr = stk[head].n; break;
+            // Capture
+            case 3: captures[(next >> 16u) & 0x3FFF] = in; break;
+        }
+        state = next & 0xFFFF;
+    } while (head > 1);
+
+    // we've found a match, jump to the relevant C match
+    return x86_dfa_accept(ctx, f, n, captures, state);
+
+    if (n->type == TB_ROOT) {
         TB_Node* ret = n->inputs[1];
         if (ret->type == TB_RETURN) {
             // add some callee-saved mach projections
@@ -723,6 +784,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         set_input(f, op, n->inputs[1], 1); // mem
         X86Call* op_extra = TB_NODE_GET_EXTRA(op);
 
+        op_extra->param_count = n->input_count - 3;
         op_extra->proto = TB_NODE_GET_EXTRA_T(n, TB_NodeCall)->proto;
 
         // check for static call
@@ -734,9 +796,6 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         }
 
         const struct ParamDesc* abi = &param_descs[ctx->abi_index];
-        op_extra->clobber_gpr = abi->caller_saved_gprs;
-        op_extra->clobber_xmm = abi->caller_saved_xmms;
-
         int gprs_used = 0, xmms_used = 0, stk_used = 0;
         FOR_N(i, 3, n->input_count) {
             int param_num = i - 3;
@@ -1263,23 +1322,90 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
 }
 
 static int node_tmp_count(Ctx* restrict ctx, TB_Node* n) {
-    switch (n->type) {
-        case x86_call: case x86_static_call: {
-            X86Call* op_extra = TB_NODE_GET_EXTRA(n);
-            return tb_popcount(op_extra->clobber_gpr) + op_extra->clobber_xmm;
+    if (n->type == x86_call || n->type == x86_static_call) {
+        X86Call* op_extra = TB_NODE_GET_EXTRA(n);
+        const struct ParamDesc* abi = &param_descs[ctx->abi_index];
+        return tb_popcount(abi->caller_saved_gprs) + abi->caller_saved_xmms;
+    }
+
+    if (n->type < NODE_FORMATS_COUNT && node_formats[n->type][0]) {
+        const char* fmt = node_formats[n->type][0];
+        // skip output & input masks
+        while (*fmt && *fmt != '|') { fmt++; }
+
+        if (*fmt++ == '|') {
+            // count words
+            int count = 0;
+            while (*fmt) {
+                count += (fmt[0] != ' ' && (fmt[1] == 0 || fmt[1] == ' '));
+                fmt++;
+            }
+            return count;
+        }
+    }
+
+    return 0;
+}
+
+static const char* parse_reg_mask(Ctx* restrict ctx, const char* fmt, RegMask** out_mask) {
+    // skip whitespace
+    while (*fmt == ' ') { fmt++; }
+    // EOS?
+    if (*fmt == ':' || *fmt == '|' || *fmt == 0) { return fmt; }
+    // register class names?
+    int first = *fmt++;
+    if (first == 's') { *out_mask = ctx->normie_mask[0]; }
+    if (first == 'r') { *out_mask = ctx->normie_mask[1]; }
+    if (first == 'f') { *out_mask = ctx->normie_mask[2]; }
+    // special x86 names
+    if (first == 'A') { *out_mask = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX); }
+    if (first == 'C') { *out_mask = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX); }
+    if (first == 'D') { *out_mask = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX); }
+    if (first == 'D' && *fmt == 'i') { *out_mask = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI); fmt++; }
+    if (first == 'S' && *fmt == 'i') { *out_mask = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSI); fmt++; }
+    return fmt;
+}
+
+static void node_constraint_tmps(Ctx* restrict ctx, TB_Node* n, RegMask** tmps) {
+    if (n->type == x86_call || n->type == x86_static_call) {
+        size_t j = 0;
+        X86Call* op_extra = TB_NODE_GET_EXTRA(n);
+        const struct ParamDesc* abi = &param_descs[ctx->abi_index];
+        for (uint64_t bits = abi->caller_saved_gprs, k = 0; bits; bits >>= 1, k++) {
+            if (bits & 1) { tmps[j++] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << k); }
         }
 
-        case TB_MEMSET:
-        return 2;
+        FOR_N(k, 0, abi->caller_saved_xmms) {
+            tmps[j++] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << k);
+        }
+    } else if (n->type < NODE_FORMATS_COUNT && node_formats[n->type][0]) {
+        const char* fmt = node_formats[n->type][0];
+        // skip output & input masks
+        while (*fmt && *fmt != '|') { fmt++; }
 
-        case TB_MEMCPY:
-        return 3;
+        if (*fmt++ == '|') {
+            int j = 0;
+            while (*fmt) {
+                fmt = parse_reg_mask(ctx, fmt, &tmps[j++]);
+            }
 
-        case x86_idiv: case x86_div:
-        case TB_CYCLE_COUNTER: // clobber RDX & RAX
-        return 2;
+            TB_ASSERT(j == node_tmp_count(ctx, n));
+        }
+    }
+}
 
-        default: return 0;
+static void node_constraint_out(Ctx* restrict ctx, TB_Node* n, RegMask** outs, int out_count) {
+    if (n->type < NODE_FORMATS_COUNT && node_formats[n->type][0]) {
+        const char* fmt = node_formats[n->type][0];
+
+        int j = 0;
+        while (*fmt && *fmt != ':') {
+            fmt = parse_reg_mask(ctx, fmt, &outs[j++]);
+        }
+    } else {
+        FOR_N(j, 0, out_count) {
+            outs[j] = node_constraint(ctx, n, NULL);
+        }
     }
 }
 
@@ -1308,12 +1434,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return ctx->normie_mask[REG_CLASS_GPR];
         }
 
-        case TB_CYCLE_COUNTER: {
-            ins[1] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
-            ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX);
-            return ins[1];
-        }
-
         case TB_LOCAL:
         case TB_BRANCH_PROJ:
         case TB_MACH_SYMBOL:
@@ -1329,6 +1449,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[1] = move->use;
             }
             return move->def;
+        }
+
+        case TB_MACH_TEMP: {
+            return TB_NODE_GET_EXTRA_T(n, TB_NodeMachTemp)->def;
         }
 
         case TB_MACH_PROJ: {
@@ -1633,8 +1757,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI);
                 ins[3] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
                 ins[4] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
-                ins[5] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI);
-                ins[6] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
             }
             return &TB_REG_EMPTY;
         }
@@ -1646,9 +1768,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI);
                 ins[3] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSI);
                 ins[4] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
-                ins[5] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDI);
-                ins[6] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSI);
-                ins[7] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
             }
             return &TB_REG_EMPTY;
         }
@@ -1735,6 +1854,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         {
             if (ins) {
                 const struct ParamDesc* abi = &param_descs[ctx->abi_index];
+                X86Call* op_extra = TB_NODE_GET_EXTRA(n);
 
                 int abi_index = ctx->abi_index;
                 int gprs_used = 0, xmms_used = 0;
@@ -1743,39 +1863,27 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[2] = n->type == x86_static_call ? &TB_REG_EMPTY : ctx->normie_mask[REG_CLASS_GPR];
 
                 int base_stack = 1 + ctx->param_count;
-                FOR_N(i, 3, n->input_count) {
-                    int param_num = i - 3;
-
+                FOR_N(i, 0, op_extra->param_count) {
                     // on win64 we always have the XMMs and GPRs used match the param_num
                     // so if XMM2 is used, it's always the 3rd parameter.
-                    if (abi_index == 0) { xmms_used = gprs_used = param_num; }
+                    if (abi_index == 0) { xmms_used = gprs_used = i; }
 
-                    if (TB_IS_FLOAT_TYPE(n->inputs[i]->dt)) {
+                    if (TB_IS_FLOAT_TYPE(n->inputs[3+i]->dt)) {
                         if (xmms_used < abi->xmm_count) {
-                            ins[i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << xmms_used);
+                            ins[3+i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << xmms_used);
                             xmms_used += 1;
                         } else {
-                            ins[i] = intern_regmask2(ctx, REG_CLASS_STK, false, base_stack + param_num);
+                            ins[3+i] = intern_regmask2(ctx, REG_CLASS_STK, false, base_stack + i);
                         }
                     } else {
-                        TB_ASSERT(TB_IS_INTEGER_TYPE(n->inputs[i]->dt) || n->inputs[i]->dt.type == TB_TAG_PTR);
+                        TB_ASSERT(TB_IS_INTEGER_TYPE(n->inputs[3+i]->dt) || n->inputs[3+i]->dt.type == TB_TAG_PTR);
                         if (gprs_used < abi->gpr_count) {
-                            ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << abi->gprs[gprs_used]);
+                            ins[3+i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << abi->gprs[gprs_used]);
                             gprs_used += 1;
                         } else {
-                            ins[i] = intern_regmask2(ctx, REG_CLASS_STK, false, base_stack + param_num);
+                            ins[3+i] = intern_regmask2(ctx, REG_CLASS_STK, false, base_stack + i);
                         }
                     }
-                }
-
-                size_t j = n->input_count;
-                X86Call* op_extra = TB_NODE_GET_EXTRA(n);
-                for (uint64_t bits = op_extra->clobber_gpr, k = 0; bits; bits >>= 1, k++) {
-                    if (bits & 1) { ins[j++] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << k); }
-                }
-
-                FOR_N(k, 0, op_extra->clobber_xmm) {
-                    ins[j++] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << k);
                 }
             }
 
@@ -3007,6 +3115,7 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
 ICodeGen tb__x64_codegen = {
     .minimum_addressable_size = 8,
     .pointer_size = 64,
+    .global_init = global_init,
     .can_gvn = can_gvn,
     .node_name = node_name,
     .print_extra = print_extra,

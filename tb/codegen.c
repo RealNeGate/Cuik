@@ -158,6 +158,10 @@ static void redo_dataflow(Ctx* restrict ctx, TB_Arena* arena) {
 }
 
 static RegMask* constraint_in(Ctx* ctx, TB_Node* n, int i) {
+    if (n->inputs[i]->type == TB_MACH_TEMP) {
+        return TB_NODE_GET_EXTRA_T(n->inputs[i], TB_NodeMachTemp)->def;
+    }
+
     ctx->constraint(ctx, n, ctx->ins);
     return ctx->ins[i];
 }
@@ -209,78 +213,6 @@ static int reg_assign(Ctx* ctx, VReg* vreg, uint64_t* mask, size_t num_regs) {
         vreg->assigned = reg;
         return true;
     }
-}
-
-static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
-    // TB_ASSERT(n->input_count == 1 && "for now remat only happens for simple stuff like constants");
-
-    size_t extra = extra_bytes(n);
-    TB_Function* f = ctx->f;
-    TB_Node* root = f->root_node;
-    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
-
-    // don't want weird pointer invalidation crap
-    size_t user_count = n->user_count;
-    TB_User* users = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_User));
-    memcpy(users, n->users, n->user_count * sizeof(TB_User));
-
-    // aggressive reload
-    for (size_t i = 0; i < user_count; i++) {
-        TB_Node* use_n = USERN(&users[i]);
-        int use_i      = USERI(&users[i]);
-
-        // it's never in[0] lmao
-        assert(use_i != 0);
-        RegMask* in_mask = constraint_in(ctx, use_n, use_i);
-
-        // remat per use site
-        TB_Node* remat = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
-        memcpy(remat->extra, n->extra, extra);
-        FOR_N(j, 0, n->input_count) if (n->inputs[j]) {
-            remat->inputs[j] = n->inputs[j];
-            add_user(f, remat, n->inputs[j], j);
-        }
-
-        set_input(f, use_n, remat, use_i);
-
-        // schedule the split right before use
-        tb__insert_before(ctx, ctx->f, remat, use_n);
-        VReg* reload_vreg = tb__set_node_vreg(ctx, remat);
-
-        // reloads are unlikely to spill... but not impossible
-        reload_vreg->spill_bias = 1e9;
-
-        RegMask* remat_mask = ctx->constraint(ctx, remat, NULL);
-        reload_vreg->mask = tb__reg_mask_meet(ctx, in_mask, remat_mask);
-        assert(reload_vreg->mask != &TB_REG_EMPTY && "TODO hard split from rematerializing");
-
-        // if it's remat'ing a copy, we should edit the def mask to match the use
-        if (remat->type == TB_MACH_COPY) {
-            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(remat);
-
-            // slightly harder to rematerialize than a normal remat because we tightened it
-            reload_vreg->spill_bias = 1e10;
-            cpy->def = reload_vreg->mask;
-        }
-
-        // if we're going into a fixed-dst copy, we should hint towards that vreg
-        if (fixed_vregs && use_n->type == TB_MACH_COPY) {
-            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
-            int fixed = fixed_reg_mask(cpy->def);
-            if (fixed >= 0) {
-                reload_vreg->hint_vreg = fixed_vregs[cpy->def->class] + fixed;
-            }
-        }
-
-        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: remat  (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
-    }
-    tb_arena_restore(&f->tmp_arena, sp);
-
-    // delete the original def
-    ctx->vregs[ctx->vreg_map[n->gvn]].uses -= 1;
-    ctx->vreg_map[n->gvn] = 0;
-    tb__remove_node(ctx, f, n);
-    tb_kill_node(f, n);
 }
 
 static void dump_sched(Ctx* restrict ctx) {

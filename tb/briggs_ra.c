@@ -578,29 +578,6 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                     in_vreg->mask = new_mask;
                 }
             }
-
-            int tmp_count = ctx->tmp_count(ctx, n);
-            if (tmp_count > 0) {
-                // used for clobbers/scratch but more importantly they're not bound to a node.
-                Tmps* tmps  = tb_arena_alloc(arena, sizeof(Tmps) + tmp_count*sizeof(int));
-                tmps->count = tmp_count;
-                nl_table_put(&ctx->tmps_map, n, tmps);
-
-                TB_OPTDEBUG(REGALLOC)(printf("TMPS %%%u:\n", n->gvn));
-                FOR_N(k, in_count, in_count + tmp_count) {
-                    RegMask* in_mask = ins[k];
-                    TB_ASSERT(in_mask != &TB_REG_EMPTY);
-
-                    #if TB_OPTDEBUG_REGALLOC
-                    printf("  V%u: ", aarray_length(ctx->vregs));
-                    tb__print_regmask(in_mask);
-                    printf("\n");
-                    #endif
-
-                    tmps->elems[k - in_count] = aarray_length(ctx->vregs);
-                    aarray_push(ctx->vregs, (VReg){ .mask = in_mask, .assigned = -1, .spill_cost = INFINITY, .uses = 1 });
-                }
-            }
         }
     }
 
@@ -835,7 +812,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
             // rematerialization candidates will delete the original def and for now, they'll
             // reload per use site (although we might wanna coalesce some later on).
-            if (can_remat(ctx, n)) {
+            /* if (can_remat(ctx, n)) {
                 rematerialize(ctx, NULL, n);
             } else {
                 ctx->vregs[vreg_id].mask = ctx->constraint(ctx, n, NULL);
@@ -851,9 +828,10 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 VReg* spill_vreg = tb__set_node_vreg(ctx, spill_n);
                 spill_vreg->spill_cost = INFINITY;
                 spill_entire_lifetime(ctx, spill_vreg, spill_rm, false);
+            }*/
 
-                // spill_fancy(ctx, &ra, vreg_id);
-            }
+            // handles remat as well
+            spill_fancy(ctx, &ra, vreg_id);
         }
         cuikperf_region_end();
 
@@ -1074,18 +1052,6 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
                 }
             }
 
-            int tmp_count = ctx->tmp_count(ctx, n);
-            if (tmp_count > 0) {
-                Tmps* tmps = nl_table_get(&ctx->tmps_map, n);
-                TB_ASSERT(tmps && tmps->count == tmp_count);
-
-                // temporaries basically just live across this instruction alone
-                FOR_N(k, 0, tmps->count) {
-                    RegMask* tmp_mask = ctx->vregs[tmps->elems[k]].mask;
-                    interfere_live(ctx, ra, live, tmps->elems[k]);
-                }
-            }
-
             // uses are live now
             if (n->type != TB_PHI) {
                 FOR_N(k, 0, n->input_count) {
@@ -1256,14 +1222,6 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
     FOR_N(i, 1, aarray_length(ctx->vreg_map)) {
         // printf("RELOCATE V%d -> V%d\n", ctx->vreg_map[i], uf[ctx->vreg_map[i]]);
         ctx->vreg_map[i] = uf[ctx->vreg_map[i]];
-    }
-
-    // relocate temporaries
-    nl_table_for(it, &ctx->tmps_map) {
-        Tmps* tmps = it->v;
-        FOR_N(i, 0, tmps->count) {
-            tmps->elems[i] = uf[tmps->elems[i]];
-        }
     }
 
     aarray_set_length(ctx->vregs, new_vreg_count);

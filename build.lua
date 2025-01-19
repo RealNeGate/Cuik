@@ -243,17 +243,13 @@ rule("run", {
 })
 
 -- TB's x64 metaprogram
-if false and added["tb"] then
-    command("bin/objs/x64_gen"..exe_ext, "meta/x64_gen.c", cc.." $in -O1 -o $out")
-    command("tb/x64/x64_gen.inc", "", "bin/objs/x64_gen"..exe_ext.." $in", "bin/objs/x64_gen"..exe_ext)
+if added["tb"] then
+    command("tb/x64/x64_gen.inc", "meta/dsl.lua", arg[-1].." $in")
 end
 
 -- lexer metaprogram
 command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
 command("cuik_pp/keywords.h cuik_pp/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
-
--- TB metaprogram
--- command("tb/meta/foo.c", "tb/meta/dsl.lua", arg[-1].." $in")
 
 -- package freestanding headers into C file
 local x = {}

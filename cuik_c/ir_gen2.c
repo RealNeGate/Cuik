@@ -885,6 +885,8 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                     TB_FunctionPrototype* proto = tb_function_get_prototype((TB_Function*) target);
                     TB_Node** out = tb_builder_call(g, proto, 0, tb_builder_symbol(g, target), 3, params);
                     return (ValDesc){ RVALUE, .n = out[0] };
+                } else if (strcmp(name, "__rdtsc") == 0) {
+                    return (ValDesc){ RVALUE, .n = tb_builder_cycle_counter(g) };
                 } else if (strcmp(name, "__builtin_syscall") == 0) {
                     TB_Node* num = as_rval(tu, g, &args[1]);
                     TB_Node** ir_args = tb_arena_alloc(muh_tmp_arena, (arg_count - 2) * sizeof(TB_Node*));

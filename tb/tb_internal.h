@@ -29,13 +29,14 @@
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
 #define TB_OPTDEBUG_MEM2REG   0
-#define TB_OPTDEBUG_ISEL      0
+#define TB_OPTDEBUG_ISEL      1
 #define TB_OPTDEBUG_CODEGEN   0
 #define TB_OPTDEBUG_DATAFLOW  0
 #define TB_OPTDEBUG_PLACEMENT 0
 #define TB_OPTDEBUG_INLINE    0
-#define TB_OPTDEBUG_REGALLOC  0
+#define TB_OPTDEBUG_REGALLOC  1
 #define TB_OPTDEBUG_REGALLOC2 0
+#define TB_OPTDEBUG_REGALLOC3 0
 #define TB_OPTDEBUG_SLP       0
 #define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_COMPACT   0
@@ -571,6 +572,8 @@ enum {
 struct ICodeGen {
     // what does CHAR_BIT mean on said platform
     int minimum_addressable_size, pointer_size;
+
+    void (*global_init)(void);
 
     // Mach nodes info
     bool (*can_gvn)(TB_Node* n);
