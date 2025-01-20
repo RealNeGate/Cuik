@@ -241,7 +241,32 @@ static const char* node_formats[][2] = {
 };
 enum { NODE_FORMATS_COUNT = sizeof(node_formats) / sizeof(node_formats[0]) };
 
-#include "x64_gen.inc"
+static bool fits_into_int32(TB_DataType dt, TB_Node* n) {
+    if (n->type != TB_ICONST) {
+        return false;
+    }
+
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    if (dt.type == TB_TAG_I64 || dt.type == TB_TAG_PTR) {
+        bool sign = (i->value >> 31ull) & 1;
+        uint64_t top = i->value >> 32ull;
+
+        // if the sign matches the rest of the top bits, we can sign extend just fine
+        if (top != (sign ? 0xFFFFFFFF : 0)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static int32_t as_int32(TB_Node* n) {
+    TB_ASSERT(n->type == TB_ICONST);
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    return i->value;
+}
+
+#include "x64_gen.h"
 
 static void global_init(void) {
 }
@@ -276,11 +301,6 @@ static TB_X86_DataType legalize(TB_DataType dt) {
     } else {
         return legalize_int(dt);
     }
-}
-
-static bool fits_into_int32(uint64_t x) {
-    uint32_t hi = x >> 32ull;
-    return hi == 0 || hi == 0xFFFFFFFF;
 }
 
 static bool try_for_imm32_2(TB_DataType dt, uint64_t src, int32_t* out_x) {
@@ -570,11 +590,17 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         index += 1;
         switch (next >> 30u) {
             // Push
-            case 1: stk[head].index = index, stk[head++] = (NodeCursor){ in, 0 }, curr = in, index = 0; break;
+            case 1:
+            stk[head].index = index, stk[head++] = (NodeCursor){ in, 0 }, curr = in, index = 0;
+            break;
             // Pop
-            case 2: head--, index = stk[head].index, curr = stk[head].n; break;
+            case 2:
+            head--, index = stk[head].index, curr = stk[head].n;
+            break;
             // Capture
-            case 3: captures[(next >> 16u) & 0x3FFF] = in; break;
+            case 3:
+            captures[(next >> 16u) & 0x3FFF] = in;
+            break;
         }
         state = next & 0xFFFF;
     } while (head > 1);

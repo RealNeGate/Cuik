@@ -244,7 +244,7 @@ rule("run", {
 
 -- TB's x64 metaprogram
 if added["tb"] then
-    command("tb/x64/x64_gen.inc", "meta/dsl.lua", arg[-1].." $in")
+    command("tb/x64/x64_gen.h", "meta/dsl.lua", arg[-1].." $in")
 end
 
 -- lexer metaprogram
