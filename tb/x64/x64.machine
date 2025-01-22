@@ -1,0 +1,6 @@
+
+(TB_LOAD dt=$dt $ctrl $mem (TB_PTR_OFFSET ___ $base ($imm: TB_ICONST ...)))
+  where "fits_into_int32($dt, $imm)"
+  => (x86_mov dt=$dt mode=MODE_LD $ctrl $mem $base disp="as_int32($imm)")
+
+

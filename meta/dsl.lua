@@ -76,9 +76,7 @@ local function lexer(str)
     end
 end
 
-local source = [[
-        (TB_LOAD dt=$dt $ctrl $mem (TB_PTR_OFFSET ___ $base ($imm: TB_ICONST ...))) where "fits_into_int32($dt, $imm)" => (x86_mov dt=$dt mode=MODE_LD $ctrl $mem $base disp="as_int32($imm)")
-    ]]
+local source = read_all("tb/x64/x64.machine")
 
 local dfa = {}
 local depth = 0
@@ -93,6 +91,19 @@ local lex = lexer(source)
 local function parse_node()
     local n = {}
     local t = lex()
+
+    if t:byte(1) == string.byte("$") then
+        n["name"] = t
+
+        t = lex()
+        if t ~= ":" then
+            print("fuck but in colon")
+            os.exit(1)
+        end
+
+        t = lex()
+    end
+
     while t ~= ")" do
         if t == "(" then
             n[#n + 1] = parse_node()
@@ -131,7 +142,15 @@ local function dfa_compile(n, head, depth)
         dfa[ty] = {}
     end
 
-    dfa[ty][head] = "R_PUSH("..state_count..")"
+    if n["name"] then
+        local t = n["name"]
+
+        captures[t] = "captures["..capture_count.."]"
+        dfa[ty][head] = "R_CAPTURE("..state_count..", "..capture_count..")"
+        capture_count = capture_count + 1
+    else
+        dfa[ty][head] = "R_PUSH("..state_count..")"
+    end
     head = state_count
     state_count = state_count + 1
 
@@ -241,7 +260,8 @@ function find_non_node_captures(strs, n, expr)
 
     for k,v in pairs(n) do
         -- captured field
-        if type(k) == "string" and v:byte(1) == string.byte("$") then
+        if type(k) == "string" and v:byte(1) == string.byte("$") and k ~= "name" then
+            print("A", k, v)
             captures[v] = v
             strs[#strs + 1] = string.format("    TB_DataType %s = %s->%s;", v, expr, k)
         end
@@ -267,7 +287,6 @@ while true do
         where = lex()
 
         t = lex()
-        print(t)
     end
 
     if t ~= "=>" then

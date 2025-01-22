@@ -12,7 +12,7 @@ static int cool_ansi_color(uint32_t x) {
 
 const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
     switch (n_type) {
-        case TB_NULL: return "FREED";
+        case TB_NULL: return "NULL";
         case TB_UNREACHABLE: return "unreachable";
 
         case TB_BRANCH_PROJ: return "br_proj";

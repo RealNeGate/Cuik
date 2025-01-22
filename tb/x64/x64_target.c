@@ -205,23 +205,6 @@ typedef struct {
     bool if_chain;
 } AuxBranch;
 
-static const struct ParamDesc {
-    int chkstk_limit;
-    int gpr_count;
-    int xmm_count;
-    uint16_t caller_saved_xmms; // XMM0 - XMMwhatever
-    uint16_t caller_saved_gprs; // bitfield
-
-    GPR gprs[6];
-} param_descs[] = {
-    // win64
-    { 4096,    4, 4, 6, WIN64_ABI_CALLER_SAVED,   { RCX, RDX, R8,  R9,  0,  0 } },
-    // system v
-    { INT_MAX, 6, 4, 5, SYSV_ABI_CALLER_SAVED,    { RDI, RSI, RDX, RCX, R8, R9 } },
-    // syscall
-    { INT_MAX, 6, 4, 5, SYSCALL_ABI_CALLER_SAVED, { RDI, RSI, RDX, R10, R8, R9 } },
-};
-
 typedef struct {
     // original node match
     int node_type;
@@ -265,6 +248,51 @@ static int32_t as_int32(TB_Node* n) {
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
     return i->value;
 }
+
+static CallingConv CC_WIN64 = {
+    .sp_class  = REG_CLASS_GPR, .sp_reg  = RSP, // stack pointer
+    .fp_class  = REG_CLASS_GPR, .fp_reg  = RBP, // frame pointer
+    .rpc_class = REG_CLASS_STK, .rpc_reg = 0,   // return PC
+
+    .volatile_regs[REG_CLASS_GPR] = (1u << RAX)  | (1u << RCX)  | (1u << RDX)  | (1u << R8)   | (1u << R9)   | (1u << R10) | (1u << R11),
+    .volatile_regs[REG_CLASS_XMM] = (1u << XMM0) | (1u << XMM1) | (1u << XMM2) | (1u << XMM3) | (1u << XMM4) | (1u << XMM5),
+
+    .param_count = { [REG_CLASS_GPR] = 4, [REG_CLASS_XMM] = 4 },
+    .params[REG_CLASS_GPR] = (uint8_t[]){ RCX, RDX, R8, R9 },
+    .params[REG_CLASS_XMM] = (uint8_t[]){ XMM0, XMM1, XMM2, XMM3 },
+
+    .ret_count = { [REG_CLASS_GPR] = 2, [REG_CLASS_XMM] = 2 },
+    .rets[REG_CLASS_GPR] = { RAX,  RDX  },
+    .rets[REG_CLASS_XMM] = { XMM0, XMM1 },
+};
+
+static CallingConv CC_SYSV = {
+    .sp_class  = REG_CLASS_GPR, .sp_reg  = RSP, // stack pointer
+    .fp_class  = REG_CLASS_GPR, .fp_reg  = RBP, // frame pointer
+    .rpc_class = REG_CLASS_STK, .rpc_reg = 0,   // return PC
+
+    .volatile_regs[REG_CLASS_GPR] = (1u << RAX)  | (1u << RDI)  | (1u << RSI)  | (1u << RCX)  | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11),
+    .volatile_regs[REG_CLASS_XMM] = (1u << XMM0) | (1u << XMM1) | (1u << XMM2) | (1u << XMM3) | (1u << XMM4),
+
+    .param_count = { [REG_CLASS_GPR] = 6, [REG_CLASS_XMM] = 4 },
+    .params[REG_CLASS_GPR] = (uint8_t[]){ RDI, RSI, RDX, RCX, R8, R9 },
+    .params[REG_CLASS_XMM] = (uint8_t[]){ XMM0, XMM1, XMM2, XMM3 },
+
+    .ret_count = { [REG_CLASS_GPR] = 2, [REG_CLASS_XMM] = 2 },
+    .rets[REG_CLASS_GPR] = { RAX,  RDX  },
+    .rets[REG_CLASS_XMM] = { XMM0, XMM1 },
+};
+
+static CallingConv CC_SYSCALL = {
+    .volatile_regs[REG_CLASS_GPR] = (1u << RAX)  | (1u << RDI)  | (1u << RSI)  | (1u << RCX)  | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11),
+    .volatile_regs[REG_CLASS_XMM] = (1u << XMM0) | (1u << XMM1) | (1u << XMM2) | (1u << XMM3) | (1u << XMM4),
+
+    .param_count = { [REG_CLASS_GPR] = 6 },
+    .params[REG_CLASS_GPR] = (uint8_t[]){ RDI, RSI, RDX, R10, R8, R9 },
+
+    .ret_count = { [REG_CLASS_GPR] = 2 },
+    .rets[REG_CLASS_GPR] = { RAX, RDX },
+};
 
 #include "x64_gen.h"
 
@@ -407,7 +435,7 @@ static bool node_remat(TB_Node* n) {
 }
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
-    ctx->abi_index = abi == TB_ABI_SYSTEMV ? 1 : 0;
+    ctx->calling_conv = abi == TB_ABI_SYSTEMV ? &CC_SYSV : &CC_WIN64;
 
     // currently only using 16 GPRs and 16 XMMs, AVX gives us
     // 32 YMMs (which double as XMMs) and later on APX will do
@@ -446,7 +474,7 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         TB_NodeLocal* local = TB_NODE_GET_EXTRA(addr);
         local->stack_pos = ctx->stack_header + i*8;
 
-        if (i >= 4 && ctx->abi_index == 0) {
+        if (i >= 4 && ctx->calling_conv == &CC_WIN64) {
             // get rid of the store since it's already at that location
             TB_Node* prev = store_op->inputs[1];
             set_input(ctx->f, store_op, NULL, 1);
@@ -567,6 +595,73 @@ typedef struct {
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     if (n->type == TB_PROJ) {
         return n;
+    } else if (n->type == TB_ROOT) {
+        TB_Node* ret = n->inputs[1];
+        if (ret->type == TB_RETURN) {
+            // insert callee saves
+            int proj_count = 3 + f->prototype->param_count;
+
+            CallingConv* cc = ctx->calling_conv;
+            FOR_N(i, 1, ctx->num_classes) {
+                uint64_t callee_saves = ~cc->volatile_regs[REG_CLASS_GPR];
+
+                // stack and frame pointer (if applies) will get special treatment in the
+                // prologue and epilogue for setup, that's not happening here.
+                if (cc->sp_class == i) {
+                    callee_saves &= ~(1ull << cc->sp_reg);
+                }
+
+                if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && cc->fp_class == i) {
+                    callee_saves &= ~(1ull << cc->fp_reg);
+                }
+
+                if (cc->rpc_class == i) {
+                    callee_saves &= ~(1ull << cc->rpc_reg);
+                }
+
+                FOR_N(j, 0, ctx->num_regs[i]) {
+                    if ((callee_saves >> j) & 1) {
+                        RegMask* rm = intern_regmask(ctx, i, false, 1ull << j);
+                        TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+                        TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = proj_count++, .def = rm);
+
+                        set_input(f, proj, n, 0);
+                        add_input_late(f, ret, proj);
+                    }
+                }
+            }
+        }
+
+        return n;
+    } else if (n->type == TB_PHI) {
+        if (TB_IS_SCALAR_TYPE(n->dt)) {
+            RegMask* rm = ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
+
+            // just in case we have some recursive phis, RA should be able to fold it away later.
+            // we have to be a bit hacky since we can't subsume the node with something that's
+            // referencing it (we'll get a cycle we didn't want).
+            TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+            TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = rm, .use = rm);
+
+            subsume_node2(f, n, cpy);
+            set_input(f, cpy, n, 1);
+
+            // we just want some copies on the data edges which RA will coalesce, this way we
+            // never leave SSA.
+            FOR_N(i, 1, n->input_count) {
+                TB_Node* in = n->inputs[i];
+                assert(in->type != TB_MACH_MOVE);
+
+                TB_Node* move = tb_alloc_node(f, TB_MACH_MOVE, in->dt, 2, 0);
+                set_input(f, move, in, 1);
+                set_input(f, n, move, i);
+            }
+
+            // we did the subsumes for it
+            return n;
+        } else {
+            return n;
+        }
     }
 
     NodeCursor stk[16];
@@ -575,12 +670,15 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     int head = 1, state = 0;
     stk[0] = (NodeCursor){ 0 };
 
+    TB_OPTDEBUG(ISEL2)(printf("\nMatching %%%u...\n", n->gvn));
+
     TB_Node* curr = NULL;
     int index = 0;
     do {
         // fetch current edge
         TB_Node* in = curr ? (index < curr->input_count ? curr->inputs[index] : NULL) : n;
         TB_NodeTypeEnum in_type = in ? in->type : TB_NULL;
+        TB_OPTDEBUG(ISEL2)(printf("  step(%s, %d):\n", tb_node_get_name(in_type), state));
         uint32_t next = x86_grammar[in_type+1][state];
         // if there's no specific match, try general
         if (next == 0) { next = x86_grammar[0][state]; }
@@ -588,18 +686,38 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         if (next == 0) { return NULL; }
         // Advance
         index += 1;
-        switch (next >> 30u) {
+        if ((next >> 29u) >= 3) {
+            #if TB_OPTDEBUG_ISEL2
+            printf("    capture[%d]: ", (next >> 16u) & 0x1FFF);
+            if (in != NULL) {
+                tb_print_dumb_node(NULL, in);
+            } else {
+                printf("___");
+            }
+            printf("\n");
+            #endif
+        }
+        switch (next >> 29u) {
             // Push
             case 1:
+            TB_OPTDEBUG(ISEL2)(printf("    push\n"));
             stk[head].index = index, stk[head++] = (NodeCursor){ in, 0 }, curr = in, index = 0;
             break;
             // Pop
             case 2:
+            TB_OPTDEBUG(ISEL2)(printf("    pop\n"));
             head--, index = stk[head].index, curr = stk[head].n;
             break;
             // Capture
             case 3:
+            TB_OPTDEBUG(ISEL2)(printf("    capture\n"));
+            captures[(next >> 16u) & 0x1FFF] = in;
+            break;
+            // Push & Capture
+            case 4:
+            TB_OPTDEBUG(ISEL2)(printf("    push & cap\n"));
             captures[(next >> 16u) & 0x3FFF] = in;
+            stk[head].index = index, stk[head++] = (NodeCursor){ in, 0 }, curr = in, index = 0;
             break;
         }
         state = next & 0xFFFF;
@@ -608,41 +726,8 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     // we've found a match, jump to the relevant C match
     return x86_dfa_accept(ctx, f, n, captures, state);
 
-    if (n->type == TB_ROOT) {
-        TB_Node* ret = n->inputs[1];
-        if (ret->type == TB_RETURN) {
-            // add some callee-saved mach projections
-            int j = 3 + f->prototype->param_count;
-
-            uint32_t callee_saved_gpr = ~param_descs[ctx->abi_index].caller_saved_gprs;
-            callee_saved_gpr &= ~(1u << RSP);
-            if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
-                callee_saved_gpr &= ~(1 << RBP);
-            }
-
-            FOR_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
-                if ((callee_saved_gpr >> i) & 1) {
-                    RegMask* rm = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << i);
-                    TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
-                    TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = j++, .def = rm);
-
-                    set_input(f, proj, n, 0);
-                    add_input_late(f, ret, proj);
-                }
-            }
-
-            FOR_N(i, param_descs[ctx->abi_index].caller_saved_xmms, ctx->num_regs[REG_CLASS_XMM]) {
-                RegMask* rm = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << i);
-                TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_F64, 1, sizeof(TB_NodeMachProj));
-                TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = j++, .def = rm);
-
-                set_input(f, proj, n, 0);
-                add_input_late(f, ret, proj);
-            }
-        }
-
-        return n;
-    } else if (n->type == TB_PHI) {
+    #if 0
+    if (n->type == TB_PHI) {
         if (TB_IS_SCALAR_TYPE(n->dt)) {
             RegMask* rm = ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
 
@@ -1345,14 +1430,15 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     }
 
     return NULL;
+    #endif
 }
 
 static int node_tmp_count(Ctx* restrict ctx, TB_Node* n) {
-    if (n->type == x86_call || n->type == x86_static_call) {
+    /* if (n->type == x86_call || n->type == x86_static_call) {
         X86Call* op_extra = TB_NODE_GET_EXTRA(n);
         const struct ParamDesc* abi = &param_descs[ctx->abi_index];
         return tb_popcount(abi->caller_saved_gprs) + abi->caller_saved_xmms;
-    }
+    } */
 
     if (n->type < NODE_FORMATS_COUNT && node_formats[n->type][0]) {
         const char* fmt = node_formats[n->type][0];
@@ -1393,6 +1479,7 @@ static const char* parse_reg_mask(Ctx* restrict ctx, const char* fmt, RegMask** 
 }
 
 static void node_constraint_tmps(Ctx* restrict ctx, TB_Node* n, RegMask** tmps) {
+    #if 0
     if (n->type == x86_call || n->type == x86_static_call) {
         size_t j = 0;
         X86Call* op_extra = TB_NODE_GET_EXTRA(n);
@@ -1418,6 +1505,7 @@ static void node_constraint_tmps(Ctx* restrict ctx, TB_Node* n, RegMask** tmps) 
             TB_ASSERT(j == node_tmp_count(ctx, n));
         }
     }
+    #endif
 }
 
 static void node_constraint_out(Ctx* restrict ctx, TB_Node* n, RegMask** outs, int out_count) {
@@ -1523,42 +1611,27 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
             int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
             if (n->inputs[0]->type == TB_ROOT) {
-                const struct ParamDesc* params = &param_descs[ctx->abi_index];
-                TB_ASSERT(i >= 2);
+                CallingConv* cc = ctx->calling_conv;
+
+                // Return address
                 if (i == 2) {
-                    return intern_regmask2(ctx, REG_CLASS_STK, false, 0);
-                } else {
-                    int param_id = i - 3;
-                    if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) {
-                        if (param_id >= params->xmm_count) {
-                            return intern_regmask2(ctx, REG_CLASS_STK, false, 1 + param_id);
-                        }
-
-                        return intern_regmask(ctx, REG_CLASS_XMM, false, 1u << param_id);
-                    } else {
-                        if (param_id >= params->gpr_count) {
-                            return intern_regmask2(ctx, REG_CLASS_STK, false, 1 + param_id);
-                        }
-
-                        return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << params->gprs[param_id]);
-                    }
+                    return intern_regmask2(ctx, cc->rpc_class, false, cc->rpc_reg);
                 }
-            } else if (n->inputs[0]->type == x86_call || n->inputs[0]->type == x86_static_call || n->inputs[0]->type == TB_SYSCALL) {
-                TB_ASSERT(i == 2 || i == 3);
-                if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) {
-                    if (i >= 2) { return intern_regmask(ctx, REG_CLASS_XMM, false, 1u << (i - 2)); }
-                } else {
-                    if (i >= 2) { return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i == 2 ? RAX : RDX)); }
+
+                TB_ASSERT(i >= 3);
+                int param_id = i - 3;
+                int reg_class = n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64 ? REG_CLASS_XMM : REG_CLASS_GPR;
+
+                // After some point the params are just on the stack
+                if (param_id >= cc->param_count[reg_class]) {
+                    return intern_regmask2(ctx, REG_CLASS_STK, false, 1 + param_id);
                 }
-            } else if (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div) {
-                TB_ASSERT(i < 2);
-                return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i ? RDX : RAX));
-            } else if (n->inputs[0]->type >= TB_ATOMIC_LOAD && n->inputs[0]->type <= TB_ATOMIC_PTROFF) {
-                return i == 1 && n->users ? ctx->normie_mask[REG_CLASS_GPR] : &TB_REG_EMPTY;
-            } else {
-                tb_todo();
-                return &TB_REG_EMPTY;
+
+                return intern_regmask(ctx, reg_class, false, 1u << param_id);
             }
+
+            tb_todo();
+            return &TB_REG_EMPTY;
         }
 
         case TB_BSWAP:
@@ -1805,111 +1878,89 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         {
             if (ins) {
                 static int ret_gprs[2] = { RAX, RDX };
+                CallingConv* cc = ctx->calling_conv;
 
-                ins[1] = &TB_REG_EMPTY; // mem
-                ins[2] = intern_regmask2(ctx, REG_CLASS_STK, false, 0); // rpc
+                ins[1] = &TB_REG_EMPTY; // memory
+                ins[2] = intern_regmask2(ctx, cc->rpc_class, false, cc->rpc_reg);
 
                 TB_FunctionPrototype* proto = ctx->f->prototype;
-                TB_ASSERT(proto->return_count <= 2 && "At most 2 return values :(");
-
                 FOR_N(i, 3, 3 + proto->return_count) {
                     TB_Node* in = n->inputs[i];
                     TB_DataType dt = in->dt;
-                    if (TB_IS_FLOAT_TYPE(dt)) {
-                        ins[i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << (i-3));
-                    } else {
-                        ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << ret_gprs[i-3]);
+                    int reg_class = TB_IS_FLOAT_TYPE(dt) ? REG_CLASS_XMM : REG_CLASS_GPR;
+
+                    TB_ASSERT(i >= cc->ret_count[reg_class]);
+                    ins[i] = intern_regmask2(ctx, reg_class, false, cc->rets[reg_class][i-3]);
+                }
+
+                size_t k = 3 + proto->return_count;
+                FOR_N(i, 1, ctx->num_classes) {
+                    uint64_t callee_saves = ~cc->volatile_regs[REG_CLASS_GPR];
+
+                    // stack and frame pointer (if applies) will get special treatment in the
+                    // prologue and epilogue for setup, that's not happening here.
+                    if (cc->sp_class == i) {
+                        callee_saves &= ~(1ull << cc->sp_reg);
                     }
-                }
 
-                uint32_t callee_saved_gpr = ~param_descs[ctx->abi_index].caller_saved_gprs;
-                callee_saved_gpr &= ~(1u << RSP);
-                if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
-                    callee_saved_gpr &= ~(1 << RBP);
-                }
-
-                size_t j = 3 + proto->return_count;
-                FOR_N(i, 0, ctx->num_regs[REG_CLASS_GPR]) {
-                    if ((callee_saved_gpr >> i) & 1) {
-                        ins[j++] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << i);
+                    if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && cc->fp_class == i) {
+                        callee_saves &= ~(1ull << cc->fp_reg);
                     }
-                }
 
-                FOR_N(i, param_descs[ctx->abi_index].caller_saved_xmms, ctx->num_regs[REG_CLASS_XMM]) {
-                    ins[j++] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << i);
+                    if (cc->rpc_class == i) {
+                        callee_saves &= ~(1ull << cc->rpc_reg);
+                    }
+
+                    FOR_N(j, 0, ctx->num_regs[i]) {
+                        if ((callee_saves >> j) & 1) {
+                            ins[k++] = intern_regmask(ctx, i, false, 1ull << j);
+                        }
+                    }
                 }
             }
             return &TB_REG_EMPTY;
         }
 
-        case TB_SYSCALL: {
-            if (ins) {
-                const struct ParamDesc* abi = &param_descs[2];
-                int gprs_used = 0, xmms_used = 0;
-
-                ins[1] = &TB_REG_EMPTY;
-                ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
-
-                int base_stack = ctx->param_count;
-                FOR_N(i, 3, n->input_count) {
-                    int param_num = i - 3;
-
-                    TB_ASSERT(TB_IS_INTEGER_TYPE(n->inputs[i]->dt) || n->inputs[i]->dt.type == TB_TAG_PTR);
-                    TB_ASSERT(gprs_used < abi->gpr_count);
-
-                    ins[i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << abi->gprs[gprs_used]);
-                    gprs_used += 1;
-                }
-
-                size_t j = n->input_count;
-                X86Call* op_extra = TB_NODE_GET_EXTRA(n);
-                for (uint64_t bits = abi->caller_saved_gprs, k = 0; bits; bits >>= 1, k++) {
-                    if (bits & 1) { ins[j++] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << k); }
-                }
-
-                FOR_N(k, 0, abi->caller_saved_xmms) {
-                    ins[j++] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << k);
-                }
-            }
-
-            return &TB_REG_EMPTY;
-        }
-
+        case TB_SYSCALL:
         case x86_static_call:
         case x86_call:
         {
             if (ins) {
-                const struct ParamDesc* abi = &param_descs[ctx->abi_index];
+                CallingConv* cc = ctx->calling_conv;
+                if (n->type == TB_SYSCALL) {
+                    cc = &CC_SYSCALL;
+                }
+
                 X86Call* op_extra = TB_NODE_GET_EXTRA(n);
-
-                int abi_index = ctx->abi_index;
-                int gprs_used = 0, xmms_used = 0;
-
                 ins[1] = &TB_REG_EMPTY;
                 ins[2] = n->type == x86_static_call ? &TB_REG_EMPTY : ctx->normie_mask[REG_CLASS_GPR];
 
-                int base_stack = 1 + ctx->param_count;
+                int used[8];
+                FOR_N(i, 0, ctx->num_classes) {
+                    used[i] = 0;
+                }
+                used[REG_CLASS_STK] = 1 + ctx->param_count;
+
                 FOR_N(i, 0, op_extra->param_count) {
                     // on win64 we always have the XMMs and GPRs used match the param_num
                     // so if XMM2 is used, it's always the 3rd parameter.
-                    if (abi_index == 0) { xmms_used = gprs_used = i; }
-
-                    if (TB_IS_FLOAT_TYPE(n->inputs[3+i]->dt)) {
-                        if (xmms_used < abi->xmm_count) {
-                            ins[3+i] = intern_regmask(ctx, REG_CLASS_XMM, false, 1u << xmms_used);
-                            xmms_used += 1;
-                        } else {
-                            ins[3+i] = intern_regmask2(ctx, REG_CLASS_STK, false, base_stack + i);
-                        }
-                    } else {
-                        TB_ASSERT(TB_IS_INTEGER_TYPE(n->inputs[3+i]->dt) || n->inputs[3+i]->dt.type == TB_TAG_PTR);
-                        if (gprs_used < abi->gpr_count) {
-                            ins[3+i] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << abi->gprs[gprs_used]);
-                            gprs_used += 1;
-                        } else {
-                            ins[3+i] = intern_regmask2(ctx, REG_CLASS_STK, false, base_stack + i);
-                        }
+                    if (cc == &CC_WIN64) {
+                        used[REG_CLASS_GPR] = used[REG_CLASS_XMM] = i;
+                        used[REG_CLASS_STK] = 1 + ctx->param_count + i;
                     }
+
+                    TB_Node* in = n->inputs[3+i];
+                    int reg_class = TB_IS_FLOAT_TYPE(in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR;
+                    int reg_num = used[reg_class];
+
+                    if (reg_num >= cc->param_count[reg_class]) {
+                        ins[3+i] = intern_regmask2(ctx, REG_CLASS_STK, false, used[REG_CLASS_STK]);
+                        used[REG_CLASS_STK] += 1;
+                    }
+
+                    TB_ASSERT(TB_IS_INT_OR_PTR(in->dt));
+                    ins[3+i] = intern_regmask(ctx, REG_CLASS_GPR, false, cc->params[reg_class][reg_num]);
+                    used[reg_class] += 1;
                 }
             }
 
@@ -2669,7 +2720,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             X86Call* op_extra = TB_NODE_GET_EXTRA(n);
 
             // on SysV, AL stores the number of float params
-            if (ctx->abi_index == 1 && op_extra->proto->has_varargs) {
+            if (ctx->calling_conv == &CC_SYSV && op_extra->proto->has_varargs) {
                 int float_params = 0;
                 FOR_N(i, 3, n->input_count) {
                     if (TB_IS_FLOAT_TYPE(n->inputs[i]->dt)) {
@@ -2805,7 +2856,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     }
 
     // inserts a chkstk call if we use too much stack
-    if (ctx->f->super.module->chkstk_extern && stack_usage >= param_descs[ctx->abi_index].chkstk_limit) {
+    if (ctx->calling_conv == &CC_WIN64 && ctx->f->super.module->chkstk_extern && stack_usage >= 4096) {
         TB_ASSERT(ctx->f->super.module->chkstk_extern);
         ctx->f->super.module->uses_chkstk++;
 
@@ -2833,8 +2884,9 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     }
 
     // handle unknown parameters (if we have varargs)
+    CallingConv* cc = ctx->calling_conv;
     if (proto->has_varargs) {
-        const GPR* params = param_descs[ctx->abi_index].gprs;
+        const GPR* params = param_descs[].gprs;
 
         // spill the rest of the parameters (assumes they're all in the GPRs)
         size_t gpr_count = param_descs[ctx->abi_index].gpr_count;

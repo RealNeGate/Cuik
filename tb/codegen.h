@@ -123,6 +123,29 @@ typedef struct {
     TB_Node** arr;
 } Bundle;
 
+typedef struct {
+    // where is the stack pointer
+    uint8_t sp_class, sp_reg;
+
+    // where is the frame pointer defined (when enabled)
+    uint8_t fp_class, fp_reg;
+
+    // where is the return address
+    uint8_t rpc_class, rpc_reg;
+
+    // clobbered during function calls (caller saves), all
+    // other regs are saved before use during a function body.
+    uint64_t volatile_regs[8];
+
+    // param passing
+    uint8_t param_count[8];
+    uint8_t* params[8];
+
+    // return vals
+    uint8_t ret_count[8];
+    uint8_t rets[8][2];
+} CallingConv;
+
 struct Ctx {
     TB_CGEmitter emit;
 
@@ -140,7 +163,7 @@ struct Ctx {
     NodeRemat remat;
 
     // target-dependent index
-    int abi_index;
+    CallingConv* calling_conv;
     int fallthrough;
 
     int param_count;
