@@ -255,9 +255,6 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
         Token* t = tokens_get(s);
         if (t->type == TOKEN_STRING_DOUBLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
             total_len += t->content.length - 2;
-        } else if (string_equals_cstr(&t->content, "__func__")) {
-            if (cuik__sema_function_stmt) total_len += strlen(cuik__sema_function_stmt->decl.name);
-            else total_len += 3; // "???"
         } else {
             break;
         }
@@ -266,7 +263,7 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
     }
 
     size_t curr = 0;
-    char* buffer = tb_arena_alloc(parser->arena, total_len + 3);
+    char* buffer = tb_arena_alloc(parser->arena, total_len + 2);
 
     buffer[curr++] = '\"';
 
@@ -277,15 +274,6 @@ static void parse_string_literal(Cuik_Parser* parser, TokenStream* restrict s, S
         if (t->type == TOKEN_STRING_DOUBLE_QUOTE || t->type == TOKEN_STRING_WIDE_DOUBLE_QUOTE) {
             memcpy(&buffer[curr], t->content.data + 1, t->content.length - 2);
             curr += t->content.length - 2;
-        } else if (string_equals_cstr(&t->content, "__func__")) {
-            if (cuik__sema_function_stmt) {
-                size_t len = strlen(cuik__sema_function_stmt->decl.name);
-                memcpy(&buffer[curr], cuik__sema_function_stmt->decl.name, len);
-                curr += len;
-            } else {
-                memcpy(&buffer[curr], "???", 3);
-                curr += 3;
-            }
         } else {
             break;
         }
@@ -349,14 +337,20 @@ static void parse_primary_expr(Cuik_Parser* parser, TokenStream* restrict s) {
                 };
                 break;
             } else if (!parser->is_in_global_scope && string_equals_cstr(&t->content, "__func__")) {
-                tokens_next(s);
                 Atom name = cuik__sema_function_stmt->decl.name;
+                size_t name_len = strlen(name);
+
+                char* buffer = tb_arena_alloc(parser->arena, name_len + 2);
+
+                buffer[0] = '\"';
+                buffer[name_len + 1] = '\"';
+                memcpy(&buffer[1], name, name_len);
 
                 e = push_expr(parser);
                 *e = (Subexpr){
                     .op = EXPR_STR,
-                    .str.start = (const unsigned char*) name,
-                    .str.end = (const unsigned char*) &name[strlen(name)],
+                    .str.start = (const unsigned char*)buffer,
+                    .str.end = (const unsigned char*)(buffer + name_len + 2),
                 };
                 break;
             }
