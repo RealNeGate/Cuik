@@ -154,8 +154,8 @@ int main(int argc, const char** argv) {
             " <|        |\\   \n"
             "  |        |/    \n"
             "  ^        ^     \n"
-            "|/ \\      / \\|  \n"
-            "|---|    |---|   \n\n"
+            "|/ \\     / \\|  \n"
+            "|---|     |---|  \n\n"
             "https://xkcd.com/303/\n\n"
         );
 
