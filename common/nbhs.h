@@ -405,7 +405,7 @@ NBHS_Table* NBHS_FN(move_items)(NBHS* hs, NBHS_Table* latest, NBHS_Table* prev, 
 
         // no more refs, we can immediately free
         NBHS_VIRTUAL_FREE(prev, sizeof(NBHS_Table) + prev->cap*sizeof(void*));
-        NBHS_REALLOC(states, 0);
+        states = NBHS_REALLOC(states, 0);
 
         NBHS_FN(enter_pinned)();
         prev = NULL;

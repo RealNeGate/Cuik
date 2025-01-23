@@ -92,8 +92,8 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
                 TB_DebugType* field = NULL;
                 if (member->name == NULL) {
                     // if we have unnamed members we just do _N where N is just ticked by the counter
-                    char buf[8];
-                    snprintf(buf, 8, "_%zu", i);
+                    char buf[20];
+                    snprintf(buf, sizeof(buf), "_%zu", i);
 
                     field = tb_debug_create_field(mod, base, -1, buf, member->offset);
                 } else {
@@ -122,8 +122,8 @@ TB_DebugType* cuik__as_tb_debug_type(TB_Module* mod, Cuik_Type* t) {
 
                 if (param_list[i].name == NULL) {
                     // if we have unnamed members we just do _N where N is just ticked by the counter
-                    char buf[8];
-                    snprintf(buf, 8, "arg%zu", i);
+                    char buf[25];
+                    snprintf(buf, sizeof(buf), "arg%zu", i);
 
                     params[i] = tb_debug_create_field(mod, type, -1, buf, 0);
                 } else {

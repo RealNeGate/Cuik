@@ -234,7 +234,7 @@ static void cc_invoke(TPool* tp, BuildStepInfo* restrict info) {
         if (args->output_name == NULL) {
             cuik_path_set_ext(&obj_path, args->sources[0], 2, ".o");
         } else {
-            cuik_path_append2(&obj_path, strlen(args->output_name), args->output_name, 4, ".o");
+            cuik_path_append2(&obj_path, strlen(args->output_name), args->output_name, 2, ".o");
         }
 
         // write depfile

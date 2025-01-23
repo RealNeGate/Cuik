@@ -179,14 +179,14 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
                 if (USERN(u)->type == TB_PHI) { if (USERN(u) != n) return NULL; }
             }
 
-            // guarentee paths are effectless (there's only one data phi and no control nodes)
-            //
-            //        If
-            //       /  \
-            // CProjT    CProjF          Region[0][0] == Region[1][0]
-            //       \  /
-            //      Region
-            //
+            /* guarentee paths are effectless (there's only one data phi and no control nodes)
+             *
+             *        If
+             *       /  \
+             * CProjT    CProjF          Region[0][0] == Region[1][0]
+             *       \  /
+             *      Region
+             */
             TB_Node* left = region->inputs[0];
             TB_Node* right = region->inputs[1];
             if (left->type == TB_BRANCH_PROJ && right->type == TB_BRANCH_PROJ &&
@@ -245,17 +245,18 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
                 return NULL;
             }
 
-            // try to make a multi-way lookup:
-            //
-            //      Branch
-            //       / | \
-            //    ... ... ...         each of these is a CProj
-            //       \ | /
-            //       Region
-            //            \
-            //             \ ... ...  each of these is a trivial value (int consts only for now)
-            //              \ | /
-            //               Phi
+            /* try to make a multi-way lookup:
+             *
+             *      Branch
+             *       / | \
+             *    ... ... ...         each of these is a CProj
+             *       \ | /
+             *       Region
+             *            \
+             *             \ ... ...  each of these is a trivial value (int consts only for now)
+             *              \ | /
+             *               Phi
+             */
             TB_Node* parent = region->inputs[0]->inputs[0];
             TB_NodeBranch* br = TB_NODE_GET_EXTRA(parent);
             if (parent->type != TB_BRANCH || br->succ_count != n->input_count - 1) {
