@@ -698,7 +698,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         int mask_cap = stack_cap < max_regs_in_class ? max_regs_in_class : stack_cap;
         uint64_t* mask = tb_arena_alloc(arena, ((mask_cap+63)/64) * sizeof(uint64_t));
 
-        int num_spills = ctx->num_spills;
+        int num_spills = ctx->num_regs[REG_CLASS_STK];
         cuikperf_region_start("select", NULL);
         dyn_array_clear(ra.spills);
         FOR_REV_N(i, 0, aarray_length(stk)) {

@@ -26,10 +26,15 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     printf(" = %s ", tb_node_get_name(n->type));
     if (is_proj(n)) {
         int idx = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-        printf("%d ", idx);
+        printf("%d", idx);
         if (n->type == TB_BRANCH_PROJ && idx > 0) {
-            printf(", key=%"PRId64" ", TB_NODE_GET_EXTRA_T(n, TB_NodeBranchProj)->key);
+            printf(", key=%"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeBranchProj)->key);
+        } else if (n->type == TB_MACH_PROJ) {
+            TB_NodeMachProj* p = TB_NODE_GET_EXTRA(n);
+            printf(", mask=");
+            tb__print_regmask(p->def);
         }
+        printf(" ");
     } else if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
         printf("def=");
@@ -75,7 +80,7 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
         printf("%f ", f->value);
-    } else if (n->type > 0x100) {
+    } else if (n->type >= 0x100) {
         int family = n->type / 0x100;
         assert(family >= 1 && family < TB_ARCH_MAX);
         tb_codegen_families[family].print_extra(n);

@@ -137,6 +137,11 @@ typedef struct {
     // other regs are saved before use during a function body.
     uint64_t volatile_regs[8];
 
+    // when it's true we'll allocate the next
+    // available param in the class rather than matching 1-to-1 to
+    // the param slot.
+    bool flexible_param_alloc;
+
     // param passing
     uint8_t param_count[8];
     uint8_t* params[8];

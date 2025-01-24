@@ -1,10 +1,7 @@
-/* #include <stdio.h>
+#include <stdint.h>
 
-int main() {
-    printf("Hello, World!\n");
-    return 0;
-}*/
-
-long long foo(long long* x) {
-    return x[1];
+long long foo(long long* x, long long y, long long z) {
+    return x[0] + x[y] + x[2] + x[1+y];
 }
+
+

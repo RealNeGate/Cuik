@@ -528,48 +528,28 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         }
     }
 
-    return NULL;
-
-    #if 0
     // idk how to handle this yet
-    if (is_signed) return NULL;
+    if (is_signed) {
+        return NULL;
+    }
 
-    uint64_t sh = (64 - tb_clz64(y)) - 1; // sh = ceil(log2(y)) + w - 64
-
-    #ifndef NDEBUG
-    uint64_t sh2 = 0;
-    while(y > (1ull << sh2)){ sh2++; }    // sh' = ceil(log2(y))
-    sh2 += 63 - 64;                       // sh  = ceil(log2(y)) + w - 64
-
-    assert(sh == sh2);
-    #endif
-
-    // 128bit division here can't overflow
+    TB_ASSERT(y != 0 && y != 1);
+    // ceil(log2(y))
+    uint64_t sh = (64 - tb_clz64(y)) - 1;
+    // a = ceil(2^sh / y) = floor((2^sh + y-1) / y)
     uint64_t a = tb_div128(1ull << sh, y - 1, y);
 
     // now we can take a and sh and do:
     //   x / y  => mulhi(x, a) >> sh
-    int bits = dt.data;
-    if (bits > 32) {
-        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, 0);
-        set_input(f, mul_node, x, 1);
-        set_input(f, mul_node, make_int_node(f, dt, a), 2);
-
-        TB_Node* lo = make_proj_node(f, dt, mul_node, 0);
-        TB_Node* hi = make_proj_node(f, dt, mul_node, 1);
-
-        mark_node(f, mul_node);
-        mark_node(f, lo);
-        mark_node(f, hi);
-
-        TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, sh_node, hi, 1);
-        set_input(f, sh_node, make_int_node(f, dt, sh), 2);
-        TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
-
-        return sh_node;
-    } else {
-        TB_DataType big_dt = TB_TYPE_INTN(bits * 2);
+    int bits = tb_data_type_bit_size(NULL, n->dt.type);
+    if (dt.type != TB_TAG_I64) {
+        TB_DataType big_dt;
+        switch (dt.type) {
+            case TB_TAG_I8:  big_dt = TB_TYPE_I16; break;
+            case TB_TAG_I16: big_dt = TB_TYPE_I32; break;
+            case TB_TAG_I32: big_dt = TB_TYPE_I64; break;
+            default: tb_todo();
+        }
         sh += bits; // chopping the low half
 
         a &= (1ull << bits) - 1;
@@ -595,8 +575,25 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         mark_node(f, sh_node);
         mark_node(f, ext_node);
         return trunc_node;
+    } else {
+        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, 0);
+        set_input(f, mul_node, x, 1);
+        set_input(f, mul_node, make_int_node(f, dt, a), 2);
+
+        TB_Node* lo = make_proj_node(f, dt, mul_node, 0);
+        TB_Node* hi = make_proj_node(f, dt, mul_node, 1);
+
+        mark_node(f, mul_node);
+        mark_node(f, lo);
+        mark_node(f, hi);
+
+        TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, sh_node, hi, 1);
+        set_input(f, sh_node, make_int_node(f, dt, sh), 2);
+        TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
+
+        return sh_node;
     }
-    #endif
 }
 
 ////////////////////////////////
