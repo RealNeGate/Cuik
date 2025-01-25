@@ -77,8 +77,8 @@ static uint32_t node_flags(TB_Node* n) {
 
         case x86_movzx8: case x86_movzx16:
         case x86_movsx8: case x86_movsx16: case x86_movsx32:
-        case x86_add: case x86_or: case x86_and: case x86_sub:
-        case x86_xor: case x86_cmp: case x86_mov: case x86_test: case x86_lea:
+        case x86_add: case x86_or: case x86_and: case x86_sub: case x86_xor:
+        case x86_cmp: case x86_mov: case x86_test: case x86_imul: case x86_lea:
         case x86_shl: case x86_shr: case x86_sar: case x86_rol: case x86_ror:
         case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
         case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor: case x86_ucomi:
@@ -365,7 +365,7 @@ static int node_2addr(TB_Node* n) {
 
         // ANY_GPR = OP(ANY_GPR, ...)
         case TB_SHL: case TB_SHR: case TB_ROL: case TB_ROR: case TB_SAR:
-        case TB_MUL: case x86_imulimm:
+        case TB_MUL: case x86_imul:
         return 1;
 
         case x86_div: case x86_idiv:

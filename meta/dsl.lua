@@ -5,8 +5,8 @@ function string:starts_with(start)
     return self:sub(1, #start) == start
 end
 
-function read_all(file)
-    local f = assert(io.open(file, "rb"))
+function run_command(cmd)
+    local f = assert(io.popen(cmd))
     local content = f:read("*all")
     f:close()
     return content
@@ -32,7 +32,7 @@ local function lexer(str)
         if ch_class[str:byte(i)] == "ws" then
             i = i + 1
             goto loop
-        elseif str:byte(i) == 59 then -- semicolons are comments
+        elseif str:byte(i) == 35 then -- hash are comments
             while str:byte(i) ~= 10 do
                 i = i + 1
             end
@@ -83,7 +83,8 @@ local function lexer(str)
     end
 end
 
-local source = read_all("tb/x64/x64.machine")
+local source = run_command("clang -E -xc tb/x64/x64.machine")
+print(source)
 
 local can_memory = {}
 
@@ -194,7 +195,6 @@ local function dfa_compile(n, head, depth)
             head = dfa_insert("TB_NULL+1", head)
         elseif t:byte(1) == string.byte("$") then -- capture
             head = dfa_insert(0, head)
-            print(t, head)
         end
     end
 
@@ -238,8 +238,8 @@ function write_node(strs, ids, n)
 
     local potentially_dynamic_count = false
 
-    strs[#strs + 1] = string.format("    size_t k%d_i = 0;", ids[n]);
-    strs[#strs + 1] = string.format("    TB_Node* k%d = tb_alloc_node(f, %s, %s, %d, sizeof(%s));", ids[n], node_type, dt_name, in_cnt, extra_type);
+    strs[#strs + 1] = string.format("    size_t k%d_i = 0;", ids[n])
+    strs[#strs + 1] = string.format("    TB_Node* k%d = tb_alloc_node(f, %s, %s, %d, sizeof(%s));", ids[n], node_type, dt_name, in_cnt, extra_type)
 
     -- input edges
     for i=2,#n do
@@ -312,66 +312,70 @@ while true do
     local t = lex()
     if t == nil then
         break
-    elseif t ~= "(" then
-        print("fuck but in parsing")
-        os.exit(1)
     end
 
     mem_capture = nil
+    if t == "pat" then
+        t = lex()
+        if t ~= "(" then
+            print("fuck but in parsing")
+            os.exit(1)
+        end
 
-    local pattern = parse_node()
-    local head = dfa_compile(pattern, 0, 0)
-    -- print(inspect(pattern))
-
-    t = lex()
-    local where = nil
-    if t == "where" then
-        where = lex()
+        local pattern = parse_node()
+        local head = dfa_compile(pattern, 0, 0)
+        -- print(inspect(pattern))
 
         t = lex()
+        local where = nil
+        if t == "where" then
+            where = lex()
+
+            t = lex()
+        end
+
+        if t ~= "=>" then
+            print("fuck but in parsing 2")
+            os.exit(1)
+        end
+
+        local replacement = nil
+        t = lex()
+        if t == "(" then
+            replacement = parse_node()
+        end
+
+        -- print(inspect(pattern))
+
+        local strs = accept[head]
+        if not strs then
+            strs = {}
+            accept[head] = strs
+        end
+
+        if replacement[1] == "x86_MEMORY" then
+            can_memory[pattern[1]] = true
+        end
+
+        local ids = {}
+        node_cnt = 0
+
+        strs[#strs + 1] = "do {"
+        find_captures(strs, pattern, "n")
+        if where then
+            strs[#strs + 1] = "    if (!("..where..")) {"
+            strs[#strs + 1] = "        break;"
+            strs[#strs + 1] = "    }"
+        end
+        strs[#strs + 1] = ""
+        write_node(strs, ids, replacement)
+        strs[#strs + 1] = string.format("    return k%d;", ids[replacement])
+        strs[#strs + 1] = "} while (0);"
+
+        -- reset muh shit
+        captures = {}
+        capture_count = 0
     end
-
-    if t ~= "=>" then
-        print("fuck but in parsing 2")
-        os.exit(1)
-    end
-
-    local replacement = nil
-    t = lex()
-    if t == "(" then
-        replacement = parse_node()
-    end
-
-    print(inspect(pattern))
-
-    local strs = accept[head]
-    if not strs then
-        strs = {}
-        accept[head] = strs
-    end
-
-    if replacement[1] == "x86_MEMORY" then
-        can_memory[pattern[1]] = true
-    end
-
-    local ids = {}
-    node_cnt = 0
-
-    strs[#strs + 1] = "do {"
-    find_captures(strs, pattern, "n")
-    if where then
-        strs[#strs + 1] = "    if (!("..where..")) {"
-        strs[#strs + 1] = "        break;"
-        strs[#strs + 1] = "    }"
-    end
-    strs[#strs + 1] = ""
-    write_node(strs, ids, replacement)
-    strs[#strs + 1] = string.format("    return k%d;", ids[replacement])
-    strs[#strs + 1] = "} while (0);"
-
-    -- reset muh shit
-    captures = {}
-    capture_count = 0
 end
 
 local out = buffer.new(size)
@@ -418,7 +422,7 @@ out:put("        default: return NULL;\n")
 out:put("    }\n")
 out:put("}\n")
 
-print(out:tostring())
+-- print(out:tostring())
 
 local f = io.open("tb/x64/x64_gen.h", "w")
 f:write(out:tostring())
