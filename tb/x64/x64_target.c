@@ -138,37 +138,11 @@ static bool is_x86_mem_op(TB_Node* n) {
 
 static void print_extra(TB_Node* n) {
     static const char* modes[] = { "reg", "ld", "st" };
-    switch (n->type) {
-        case x86_MEMORY:
-        {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf("scale=%d, disp=%d", 1u<<op->scale, op->disp);
-            break;
-        }
 
-        case x86_movzx8: case x86_movzx16:
-        case x86_movsx8: case x86_movsx16: case x86_movsx32:
-        case x86_add: case x86_or: case x86_and: case x86_sub:
-        case x86_xor: case x86_cmp: case x86_mov: case x86_test: case x86_lea:
-        case x86_vmov: case x86_vadd: case x86_vmul: case x86_vsub:
-        case x86_vmin: case x86_vmax: case x86_vdiv: case x86_vxor:
-        {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf("scale=%d, disp=%d, mode=%s", 1u<<op->scale, op->disp, modes[op->mode]);
-            if (op->flags & OP_IMMEDIATE) {
-                printf(", imm=%d", op->imm);
-            }
-            break;
-        }
-
-        case x86_cmpjcc:
-        case x86_testjcc:
-        case x86_ucomijcc:
-        {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf("scale=%d, disp=%d, mode=%s", 1u<<op->scale, op->disp, modes[op->mode]);
-            break;
-        }
+    X86MemOp* op = TB_NODE_GET_EXTRA(n);
+    printf("scale=%d, disp=%d, mode=%s", 1u<<op->scale, op->disp, modes[op->mode]);
+    if (op->flags & OP_IMMEDIATE) {
+        printf(", imm=%d", op->imm);
     }
 }
 
@@ -257,6 +231,12 @@ static const char* node_formats[][2] = {
     [TB_CYCLE_COUNTER]  = { "A :| A D", "" },
 };
 enum { NODE_FORMATS_COUNT = sizeof(node_formats) / sizeof(node_formats[0]) };
+
+static bool fits_into_uint8(TB_DataType dt, TB_Node* n) {
+    TB_ASSERT(n->type == TB_ICONST);
+    TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
+    return i->value <= 255;
+}
 
 static bool fits_into_int32(TB_DataType dt, TB_Node* n) {
     if (n->type != TB_ICONST) {
