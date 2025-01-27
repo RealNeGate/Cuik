@@ -60,6 +60,9 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
 
 static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e);
 
+// just a pretty asm-like printer
+static void print_pretty(Ctx* restrict ctx, TB_Node* n);
+
 typedef struct {
     TB_Node* n;
     uint32_t ip;
@@ -75,12 +78,24 @@ static void dump_sched(Ctx* restrict ctx) {
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         printf("BB %zu:\n", i);
-        aarray_for(i, bb->items) {
+        aarray_for(j, bb->items) {
             printf("  ");
-            tb_print_dumb_node(NULL, bb->items[i]);
+            tb_print_dumb_node(NULL, bb->items[j]);
             printf("\n");
         }
     }
+}
+
+static void dump_pretty_sched(Ctx* restrict ctx) {
+    printf("=== DUMP %s ===\n", ctx->f->super.name);
+    FOR_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        printf(".BB%zu:\n", i);
+        aarray_for(j, bb->items) {
+            print_pretty(ctx, bb->items[j]);
+        }
+    }
+    printf("\n");
 }
 
 static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b) {
@@ -643,6 +658,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             }
         }
     }
+
+    TB_OPTDEBUG(CODEGEN)(dump_pretty_sched(&ctx));
 
     CUIK_TIMED_BLOCK("regalloc") {
         // tb__rogers(&ctx, &f->tmp_arena);

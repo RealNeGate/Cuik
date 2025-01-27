@@ -172,6 +172,81 @@ static void print_extra(TB_Node* n) {
     }
 }
 
+static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
+    int vreg_id = ctx->vreg_map[n->gvn];
+    if (vreg_id > 0 && ctx->vregs[vreg_id].assigned >= 0) {
+        VReg* v = &ctx->vregs[vreg_id];
+        print_reg_name(v->class, v->assigned);
+    } else {
+        printf("%%%u", n->gvn);
+    }
+}
+
+static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
+    if (n->type >= TB_MACH_X86) {
+        const char* name = tb_node_get_name(n->type);
+        if (n->type >= TB_MACH_X86) {
+            name += 4; // skip x86_
+        }
+
+        if (TB_IS_INT_OR_PTR(n->dt)) {
+            int bytes;
+            switch (n->dt.type) {
+                case TB_TAG_I8:  bytes = 1; break;
+                case TB_TAG_I16: bytes = 2; break;
+                case TB_TAG_I32: bytes = 4; break;
+                case TB_TAG_I64: bytes = 8; break;
+                default: tb_todo();
+            }
+            printf("  %s%d %%%u", name, bytes, n->gvn);
+        } else {
+            printf("  %s %%%u", name, n->gvn);
+        }
+
+        X86MemOp* op = TB_NODE_GET_EXTRA(n);
+        int rx_i = op->flags & OP_INDEXED ? 4 : 3;
+
+        if (op->mode == MODE_REG) {
+            FOR_N(i, 2, n->input_count) {
+                printf(", %%%u", n->inputs[i]->gvn);
+            }
+        } else {
+            // if we're in load-form we print the RX first
+            if (op->mode == MODE_LD && rx_i < n->input_count && n->inputs[rx_i]) {
+                printf(", %%%u", n->inputs[rx_i]->gvn);
+            }
+
+            // print memory operand
+            if (op->mode == MODE_LD || op->mode == MODE_ST) {
+                printf(", [");
+                print_pretty_edge(ctx, n->inputs[2]);
+                if (op->flags & OP_INDEXED) {
+                    printf(" + ");
+                    print_pretty_edge(ctx, n->inputs[3]);
+                    if (op->scale) {
+                        printf("*%d", 1 << op->scale);
+                    }
+                }
+                if (op->disp) {
+                    printf(" + %"PRId32, op->disp);
+                }
+                printf("]");
+            }
+
+            if (op->mode == MODE_ST && rx_i < n->input_count && n->inputs[rx_i]) {
+                printf(", %%%u ", n->inputs[rx_i]->gvn);
+            }
+        }
+
+        if (op->flags & OP_IMMEDIATE) {
+            printf(", %"PRId32, op->imm);
+        }
+        printf("\n");
+    } else if (n->type == TB_RETURN) {
+        printf("  ret\n");
+    }
+}
+
 typedef struct {
     int64_t min, max;
     bool if_chain;
