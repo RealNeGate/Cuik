@@ -41,17 +41,12 @@ pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) => (x86_mov dt=$dt $ctrl 
 
 #define NORMIE_OP(op_name, x86_op_name) \
 pat (op_name dt=$dt ___ $lhs $rhs) => (x86_op_name dt=$dt ___ ___ $lhs $rhs) \
-pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs) => (x86_op_name dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD) \
 pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ... flags=$flags)) ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_op_name dt=$dt $ctrl $mem $lhs $rhs flags="$flags | OP_IMMEDIATE" imm="as_int32($rhs)" mode=MODE_LD) \
+pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs) => (x86_op_name dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD)
 
 NORMIE_OP(TB_ADD, x86_add)
 NORMIE_OP(TB_OR,  x86_or)
 NORMIE_OP(TB_AND, x86_and)
 NORMIE_OP(TB_SUB, x86_sub)
 NORMIE_OP(TB_XOR, x86_xor)
-
-// [base + index + disp]
-pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ $index ($imm: TB_ICONST ...)))
-  where "fits_into_int32(TB_TYPE_I64, $imm)"
-  => (x86_MEMORY $base $index disp="as_int32($imm)")
-
+NORMIE_OP(TB_MUL, x86_imul)

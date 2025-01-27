@@ -167,13 +167,18 @@ local function dfa_compile(n, head, depth)
         dfa[ty] = {}
     end
 
+    if n.name and n[1] == "x86_MEMORY" then
+        if mem_capture then
+            print("Can't capture 2 memory operands in one pattern?!?")
+            os.exit(1)
+        end
+
+        mem_capture = n
+    end
+
     if dfa[ty][head] ~= nil then
         head = dfa_get(ty, head)
     else
-        if n.name and mem_capture == nil and n[1] == "x86_MEMORY" then
-            mem_capture = n
-        end
-
         dfa[ty][head] = "R_PUSH("..state_count..")"
         head = state_count
         state_count = state_count + 1
