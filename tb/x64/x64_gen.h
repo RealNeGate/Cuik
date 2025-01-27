@@ -56,20 +56,6 @@ static uint32_t x86_grammar[117][512] = {
     [109][0] = 110,
     [113][0] = 113,
 
-    [0][TB_OR+1] = R_PUSH(55),
-
-    [0][TB_PTR_OFFSET+1] = R_PUSH(1),
-
-    [0][TB_ADD+1] = R_PUSH(40),
-    [3][TB_ADD+1] = R_PUSH(7),
-
-    [0][TB_LOAD+1] = R_PUSH(34),
-    [56][TB_LOAD+1] = R_PUSH(59),
-    [86][TB_LOAD+1] = R_PUSH(89),
-    [101][TB_LOAD+1] = R_PUSH(104),
-    [41][TB_LOAD+1] = R_PUSH(44),
-    [71][TB_LOAD+1] = R_PUSH(74),
-
     [67][TB_ICONST+1] = R_PUSH(68),
     [29][TB_ICONST+1] = R_PUSH(30),
     [24][TB_ICONST+1] = R_PUSH(25),
@@ -82,8 +68,34 @@ static uint32_t x86_grammar[117][512] = {
     [15][TB_ICONST+1] = R_PUSH(16),
     [3][TB_ICONST+1] = R_PUSH(5),
 
+    [0][x86_MEMORY+1] = R_PUSH(33),
+    [91][x86_MEMORY+1] = R_PUSH(92),
+    [76][x86_MEMORY+1] = R_PUSH(77),
+    [46][x86_MEMORY+1] = R_PUSH(47),
+    [106][x86_MEMORY+1] = R_PUSH(107),
+    [61][x86_MEMORY+1] = R_PUSH(62),
+    [36][x86_MEMORY+1] = R_PUSH(38),
+
+    [0][TB_SUB+1] = R_PUSH(85),
+
+    [0][TB_AND+1] = R_PUSH(70),
+
     [3][TB_SHL+1] = R_PUSH(22),
     [8][TB_SHL+1] = R_PUSH(13),
+
+    [0][TB_PTR_OFFSET+1] = R_PUSH(1),
+
+    [0][TB_XOR+1] = R_PUSH(100),
+
+    [0][TB_ADD+1] = R_PUSH(40),
+    [3][TB_ADD+1] = R_PUSH(7),
+
+    [0][TB_LOAD+1] = R_PUSH(34),
+    [56][TB_LOAD+1] = R_PUSH(59),
+    [86][TB_LOAD+1] = R_PUSH(89),
+    [101][TB_LOAD+1] = R_PUSH(104),
+    [41][TB_LOAD+1] = R_PUSH(44),
+    [71][TB_LOAD+1] = R_PUSH(74),
 
     [1][TB_NULL+1] = 2,
     [4][TB_NULL+1] = R_POP(4),
@@ -154,19 +166,7 @@ static uint32_t x86_grammar[117][512] = {
     [115][TB_NULL+1] = R_POP(116),
     [116][TB_NULL+1] = R_POP(116),
 
-    [0][TB_SUB+1] = R_PUSH(85),
-
-    [0][TB_XOR+1] = R_PUSH(100),
-
-    [0][x86_MEMORY+1] = R_PUSH(33),
-    [91][x86_MEMORY+1] = R_PUSH(92),
-    [76][x86_MEMORY+1] = R_PUSH(77),
-    [46][x86_MEMORY+1] = R_PUSH(47),
-    [106][x86_MEMORY+1] = R_PUSH(107),
-    [61][x86_MEMORY+1] = R_PUSH(62),
-    [36][x86_MEMORY+1] = R_PUSH(38),
-
-    [0][TB_AND+1] = R_PUSH(70),
+    [0][TB_OR+1] = R_PUSH(55),
 
 };
 
@@ -244,8 +244,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $base, k0_i++);
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->flags = OP_INDEXED;
                 k0_extra->scale = as_int32($scale);
+                k0_extra->flags = OP_INDEXED;
             
                 return k0;
             } while (0);
@@ -305,9 +305,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $base, k0_i++);
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->flags = OP_INDEXED;
                 k0_extra->disp = as_int32($disp);
                 k0_extra->scale = as_int32($scale);
+                k0_extra->flags = OP_INDEXED;
             
                 return k0;
             } while (0);
@@ -356,7 +356,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 TB_Node* $mem = 1 < n->inputs[1]->input_count ? n->inputs[1]->inputs[1] : NULL;
                 TB_Node* $rhs = n->inputs[2];
                 TB_DataType $dt = n->dt;
-                if (!(fits_into_int32(TB_TYPE_I64, $rhs))) {
+                if (!(fits_into_int32($dt, $rhs))) {
                     break;
                 }
             
@@ -367,9 +367,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $lhs, k0_i++);
                 set_input(f, k0, $rhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = $flags | OP_IMMEDIATE;
                 k0_extra->mode = MODE_LD;
-                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -389,9 +389,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $base, k0_i++);
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->flags = OP_INDEXED;
                 k0_extra->disp = as_int32($disp);
                 k0_extra->scale = as_int32($scale);
+                k0_extra->flags = OP_INDEXED;
             
                 return k0;
             } while (0);
@@ -467,8 +467,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $base, k0_i++);
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->flags = OP_INDEXED;
                 k0_extra->scale = 1;
+                k0_extra->flags = OP_INDEXED;
             
                 return k0;
             } while (0);
@@ -481,7 +481,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 TB_Node* $mem = 1 < n->inputs[1]->input_count ? n->inputs[1]->inputs[1] : NULL;
                 TB_Node* $rhs = n->inputs[2];
                 TB_DataType $dt = n->dt;
-                if (!(fits_into_int32(TB_TYPE_I64, $rhs))) {
+                if (!(fits_into_int32($dt, $rhs))) {
                     break;
                 }
             
@@ -492,9 +492,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $lhs, k0_i++);
                 set_input(f, k0, $rhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = $flags | OP_IMMEDIATE;
                 k0_extra->mode = MODE_LD;
-                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -524,7 +524,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 TB_Node* $mem = 1 < n->inputs[1]->input_count ? n->inputs[1]->inputs[1] : NULL;
                 TB_Node* $rhs = n->inputs[2];
                 TB_DataType $dt = n->dt;
-                if (!(fits_into_int32(TB_TYPE_I64, $rhs))) {
+                if (!(fits_into_int32($dt, $rhs))) {
                     break;
                 }
             
@@ -535,9 +535,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $lhs, k0_i++);
                 set_input(f, k0, $rhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = $flags | OP_IMMEDIATE;
                 k0_extra->mode = MODE_LD;
-                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -550,7 +550,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 TB_Node* $mem = 1 < n->inputs[1]->input_count ? n->inputs[1]->inputs[1] : NULL;
                 TB_Node* $rhs = n->inputs[2];
                 TB_DataType $dt = n->dt;
-                if (!(fits_into_int32(TB_TYPE_I64, $rhs))) {
+                if (!(fits_into_int32($dt, $rhs))) {
                     break;
                 }
             
@@ -561,9 +561,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $lhs, k0_i++);
                 set_input(f, k0, $rhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = $flags | OP_IMMEDIATE;
                 k0_extra->mode = MODE_LD;
-                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -598,7 +598,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 TB_Node* $mem = 1 < n->inputs[1]->input_count ? n->inputs[1]->inputs[1] : NULL;
                 TB_Node* $rhs = n->inputs[2];
                 TB_DataType $dt = n->dt;
-                if (!(fits_into_int32(TB_TYPE_I64, $rhs))) {
+                if (!(fits_into_int32($dt, $rhs))) {
                     break;
                 }
             
@@ -609,9 +609,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $lhs, k0_i++);
                 set_input(f, k0, $rhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = $flags | OP_IMMEDIATE;
                 k0_extra->mode = MODE_LD;
-                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);

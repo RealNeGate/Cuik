@@ -1556,12 +1556,11 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         case x86_lea:
-        // ANY_GPR = OP(ANY_GPR)
         case x86_movzx8: case x86_movzx16:
         case x86_movsx8: case x86_movsx16: case x86_movsx32:
-        // ANY_GPR = OP(ANY_GPR, ANY_GPR)
         case x86_add: case x86_or:  case x86_and: case x86_sub:
         case x86_xor: case x86_cmp: case x86_mov: case x86_test:
+        case x86_imul:
         {
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
             if (ins) {
@@ -1632,17 +1631,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_neg:
         if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
         return ctx->normie_mask[REG_CLASS_GPR];
-
-        case x86_imulimm:
-        if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_GPR]; }
-        return ctx->normie_mask[REG_CLASS_GPR];
-
-        case TB_MUL:
-        {
-            RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
-            if (ins) { ins[1] = ins[2] = rm; }
-            return rm;
-        }
 
         case x86_shl: case x86_shr: case x86_rol: case x86_ror: case x86_sar:
         {
@@ -2225,32 +2213,24 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_imulimm: {
+        case x86_imul: {
             TB_X86_DataType dt = legalize_int(n->dt);
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
 
             Val dst = op_at(ctx, n);
-            Val lhs = op_at(ctx, n->inputs[1]);
-
-            // hacky but the ternary multiply is just a 2op modrm like normal, except with an
-            // extra immediate afterwards.
-            __(IMUL3, dt, &dst, &lhs);
-            if (dt == TB_X86_WORD) { EMIT2(e, op->imm); }
-            else { EMIT4(e, op->imm); }
-            break;
-        }
-
-        case TB_MUL: {
-            TB_X86_DataType dt = legalize_int(n->dt);
-
-            Val dst  = op_at(ctx, n);
-            Val lhs  = op_at(ctx, n->inputs[1]);
-            Val rhs  = op_at(ctx, n->inputs[2]);
-
-            if (!is_value_match(&dst, &lhs)) {
-                __(MOV, dt, &dst, &lhs);
+            Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
+            if (rx.type == VAL_IMM) {
+                // hacky but the ternary multiply is just a 2op modrm like normal, except with an
+                // extra immediate afterwards.
+                __(IMUL3, dt, &dst, &rm);
+                if (dt == TB_X86_WORD) { EMIT2(e, rx.imm); }
+                else { EMIT4(e, rx.imm); }
+            } else {
+                if (!is_value_match(&dst, &rx)) {
+                    __(MOV, dt, &dst, &rx);
+                }
+                __(IMUL, dt, &dst, &rm);
             }
-            __(IMUL, dt, &dst, &rhs);
             break;
         }
 
@@ -2591,11 +2571,11 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
 
             int clk;
             switch (n->type) {
-                case x86_vdiv:    clk = 11; break;
-                case x86_imulimm: clk = 3;  break;
-                case x86_mov:     clk = 0;  break;
-                case x86_vmov:    clk = 0;  break;
-                default:          clk = 1;  break;
+                case x86_vdiv: clk = 11; break;
+                case x86_imul: clk = 3;  break;
+                case x86_mov:  clk = 0;  break;
+                case x86_vmov: clk = 0;  break;
+                default:       clk = 1;  break;
             }
 
             if (op->mode == MODE_LD) clk += 3;
