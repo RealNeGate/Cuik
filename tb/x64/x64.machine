@@ -1,4 +1,3 @@
-
 // *******************************
 // memory operands
 // *******************************
@@ -41,6 +40,7 @@ pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) => (x86_mov dt=$dt $ctrl 
 
 #define NORMIE_OP(op_name, x86_op_name) \
 pat (op_name dt=$dt ___ $lhs $rhs) => (x86_op_name dt=$dt ___ ___ $lhs $rhs) \
+pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_op_name dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
 pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ... flags=$flags)) ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_op_name dt=$dt $ctrl $mem $lhs flags="$flags | OP_IMMEDIATE" imm="as_int32($rhs)" mode=MODE_LD) \
 pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs) => (x86_op_name dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD)
 

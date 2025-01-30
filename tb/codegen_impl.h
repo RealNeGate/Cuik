@@ -120,14 +120,6 @@ static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b)
                 printf("    IN[%zu]  = %s:R%d\n", j, reg_class_name(other->class), other->assigned);
             }
         }
-
-        Tmps* tmps = nl_table_get(&ctx->tmps_map, n);
-        if (tmps) {
-            FOR_N(j, 0, tmps->count) {
-                VReg* other = &ctx->vregs[tmps->elems[j]];
-                printf("    TMP[%zu] = %s:R%d\n", j, reg_class_name(other->class), other->assigned);
-            }
-        }
     }
     #endif
     bundle_emit(ctx, e, b);
@@ -306,13 +298,11 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
             TB_OPTDEBUG(ISEL2)(printf("failed!\n"));
             return NULL;
         }
-        // Advance
+        // advance
         index += 1;
-        switch (next >> 30u) {
-            case 0:
+        if ((next >> 16u) == 0) {
             TB_OPTDEBUG(ISEL2)(printf("next\n"));
-            break;
-            case 1:
+        } else if ((next >> 16u) == 1) {
             stk[head - 1].index = index, stk[head++] = (NodeCursor){ in, 0 }, curr = in, index = 0;
 
             #if TB_OPTDEBUG_ISEL2
@@ -320,9 +310,8 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
             tb_print_dumb_node(NULL, curr);
             printf("\n");
             #endif
-            break;
-            case 2:
-            head -= 1;
+        } else {
+            head -= (next >> 16u) - 1;
             index = stk[head - 1].index, curr = stk[head - 1].n;
 
             #if TB_OPTDEBUG_ISEL2
@@ -332,7 +321,6 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
             }
             printf("\n");
             #endif
-            break;
         }
         state = next & 0xFFFF;
     } while (head > 1);
@@ -530,7 +518,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         FOR_N(i, 0, f->node_count) { ctx.vreg_map[i] = 0; }
 
-        tb_print_dumb(f);
+        TB_OPTDEBUG(CODEGEN)(printf("=== DUMP %s ===\n", ctx.f->super.name));
 
         int max_ins = 0;
         size_t vreg_count = 1; // 0 is reserved as the NULL vreg
@@ -548,9 +536,12 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             size_t item_count = dyn_array_length(ws->items);
             ArenaArray(TB_Node*) items = aarray_create(&f->arena, TB_Node*, item_count + 16);
 
+            TB_OPTDEBUG(CODEGEN)(printf(".BB%zu:\n", i));
+
             // copy out sched
             for (size_t j = 0; j < item_count; j++) {
                 TB_Node* n = ws->items[j];
+                TB_OPTDEBUG(CODEGEN)(print_pretty(&ctx, n));
 
                 // temps are added as extras so they don't
                 // increase the "input_count"
@@ -620,6 +611,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("gather RA constraints") {
+        #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_ISEL
+        TB_OPTDEBUG(ISEL)(dump_pretty_sched(&ctx));
+        #endif
+
         #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_REGALLOC
         printf("=== DUMP %s ===\n", f->super.name);
         #endif
@@ -658,8 +653,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             }
         }
     }
-
-    TB_OPTDEBUG(CODEGEN)(dump_pretty_sched(&ctx));
 
     CUIK_TIMED_BLOCK("regalloc") {
         // tb__rogers(&ctx, &f->tmp_arena);

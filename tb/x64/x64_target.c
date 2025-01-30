@@ -148,9 +148,15 @@ static void print_extra(TB_Node* n) {
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
     int vreg_id = ctx->vreg_map[n->gvn];
-    if (vreg_id > 0 && ctx->vregs[vreg_id].assigned >= 0) {
+    if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
         VReg* v = &ctx->vregs[vreg_id];
-        print_reg_name(v->class, v->assigned);
+        if (v->class == REG_CLASS_GPR) {
+            printf("%s", GPR_NAMES[v->assigned]);
+        } else if (v->class == REG_CLASS_XMM) {
+            printf("XMM%d", v->assigned);
+        } else if (v->class == REG_CLASS_STK) {
+            printf("STACK%d", v->assigned);
+        }
     } else {
         printf("%%%u", n->gvn);
     }

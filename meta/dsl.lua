@@ -92,6 +92,10 @@ local dfa = {}
 local depth = 0
 local state_count = 1
 
+local any = {}
+local push = {}
+local pop = {}
+
 local accept = {}
 local lex = lexer(source)
 
@@ -129,42 +133,31 @@ local function parse_node()
     return n
 end
 
-local function dfa_get(ty, state)
-    local s = dfa[ty][state]
-    if type(s) == "string" then
-        if s:starts_with("R_POP(") then
-            s = s:sub(7, #s - 1)
-        elseif s:starts_with("R_PUSH(") then
-            s = s:sub(8, #s - 1)
-        end
-
-        local as_num = tonumber(s)
-        if as_num then
-            return as_num
-        end
-    end
-
-    return s
-end
-
 local function dfa_insert(ty, old)
-    if dfa[ty] == nil then
-        dfa[ty] = {}
+    if dfa[old] == nil then
+        dfa[old] = {}
     end
 
-    if dfa[ty][old] == nil then
-        dfa[ty][old] = state_count
+    if dfa[old][ty] == nil then
+        dfa[old][ty] = state_count
         state_count = state_count + 1
         return state_count - 1
     else
-        return dfa_get(ty, old)
+        return dfa[old][ty]
     end
+end
+
+local function insert_2d(t, i, j, v)
+    if not t[i] then
+        t[i] = {}
+    end
+    t[i][j] = v
 end
 
 local function dfa_compile(n, head, depth)
     local ty = n[1].."+1"
-    if dfa[ty] == nil then
-        dfa[ty] = {}
+    if dfa[head] == nil then
+        dfa[head] = {}
     end
 
     if n.name and n[1] == "x86_MEMORY" then
@@ -176,10 +169,11 @@ local function dfa_compile(n, head, depth)
         mem_capture = n
     end
 
-    if dfa[ty][head] ~= nil then
-        head = dfa_get(ty, head)
+    if dfa[head][ty] ~= nil then
+        head = dfa[head][ty]
     else
-        dfa[ty][head] = "R_PUSH("..state_count..")"
+        insert_2d(push, head, ty, true)
+        dfa[head][ty] = state_count
         head = state_count
         state_count = state_count + 1
     end
@@ -191,24 +185,38 @@ local function dfa_compile(n, head, depth)
         elseif t == "..." then
             -- keep chewing up any nodes in this guy
             local ty = 0
-            if dfa[ty] == nil then
-                dfa[ty] = {}
+            if dfa[head] == nil then
+                dfa[head] = {}
             end
 
-            dfa[ty][head] = head
+            dfa[head][ty] = head
         elseif t == "___" then
             head = dfa_insert("TB_NULL+1", head)
         elseif t:byte(1) == string.byte("$") then -- capture
+            local before = head
             head = dfa_insert(0, head)
+
+            -- any paths in this camp which fail should
+            -- return to "head"
+            any[#any + 1] = { before, head }
         end
     end
 
+    if dfa[head] == nil then
+        dfa[head] = {}
+    end
+
+    if dfa[head]["TB_NULL+1"] then
+        return dfa[head]["TB_NULL+1"]
+    end
+
     -- pop once we've exhausted all the inputs
+    insert_2d(pop, head, "TB_NULL+1", 1)
     if depth == 0 then
-        dfa["TB_NULL+1"][head] = "R_POP("..head..")"
+        dfa[head]["TB_NULL+1"] = head
         return head
     else
-        dfa["TB_NULL+1"][head] = "R_POP("..state_count..")"
+        dfa[head]["TB_NULL+1"] = state_count
         state_count = state_count + 1
         return state_count - 1
     end
@@ -383,53 +391,141 @@ while true do
     end
 end
 
-local out = buffer.new(size)
-out:put("#define R_PUSH(next)        ((1u<<30u) | (next))\n")
-out:put("#define R_POP(next)         ((2u<<30u) | (next))\n")
-out:put("static bool x86_can_memory[512] = {\n")
-for k,v in pairs(can_memory) do
-    out:put("    [")
-    out:put(k)
-    out:put("] = true,\n")
+-- propagate any "fail" cases
+local visited = {}
+local function dfa_crawl(state, fail, depth)
+    if visited[state] then
+        return
+    end
+    visited[state] = true
+
+    -- print("[", state, "]", dfa[state][0], fail, depth)
+
+    -- if there's no "ANY" state, then we add one
+    if not dfa[state][0] then
+        -- we need to undo all the pushes we did to get here
+        insert_2d(pop, state, 0, depth)
+        dfa[state][0] = fail
+    end
+
+    for k,v in pairs(dfa[state]) do
+        if state ~= v then
+            if push[state] and push[state][k] then
+                dfa_crawl(v, fail, depth + 1)
+            elseif pop[state] and pop[state][k] then
+                -- once depth drops back to 0 we've rejoined
+                if depth > 1 then
+                    dfa_crawl(v, fail, depth - 1)
+                end
+            else
+                dfa_crawl(v, fail, depth)
+            end
+        end
+    end
 end
-out:put("};\n")
-out:put("static uint32_t x86_grammar[")
-out:put(state_count)
-out:put("][512] = {\n")
-for id,v in pairs(dfa) do
-    for k,v2 in pairs(v) do
+
+for i=1,#any do
+    local state = any[i][1]
+    local times = 0
+    for k,v in pairs(dfa[state]) do
+        if k ~= 0 then
+            times = times + 1
+        end
+    end
+
+    if times > 0 then
+        local fail = any[i][2]
+        visited[fail] = true
+
+        for k,v in pairs(dfa[state]) do
+            if k ~= 0 then
+                local depth = 0
+                if push[state][k] then
+                    depth = depth + 1
+                end
+
+                dfa_crawl(v, fail, depth)
+            end
+        end
+    end
+end
+
+if false then
+    local graphviz = buffer.new(1000)
+    graphviz:put("digraph G {")
+    for state=0,#dfa do
+        for id,next in pairs(dfa[state]) do
+            if id == 0 then
+                graphviz:put(string.format("v%d -> v%d [label=\"ANY\"]\n", state, next))
+            else
+                graphviz:put(string.format("v%d -> v%d [label=\"%s\"]\n", state, next, id:sub(1, #id-2)))
+            end
+        end
+        graphviz:put("\n")
+    end
+    graphviz:put("}\n")
+
+    local f2 = io.open("foo.dot", "w")
+    f2:write(graphviz:tostring())
+    f2:close()
+else
+    local count = 0
+    local out = buffer.new(size)
+    out:put("#define R_PUSH(next)        ((1u  << 16u) | (next))\n")
+    out:put("#define R_POP(n, next)      (((n) << 16u) | (next))\n")
+    out:put("static bool x86_can_memory[512] = {\n")
+    for k,v in pairs(can_memory) do
         out:put("    [")
         out:put(k)
-        out:put("][")
-        out:put(id)
-        out:put("] = ")
-        out:put(v2)
-        out:put(",\n")
+        out:put("] = true,\n")
     end
-    out:put("\n")
-end
-out:put("};\n\n")
-out:put("static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) {\n")
-out:put("    switch (state) {\n")
-for k,v in pairs(accept) do
-    out:put("        case ")
-    out:put(k)
-    out:put(": {\n")
-    for i,line in pairs(v) do
-        out:put("            ")
-        out:put(line)
+    out:put("};\n")
+    out:put("static uint32_t x86_grammar[")
+    out:put(state_count)
+    out:put("][512] = {\n")
+    for state=0,#dfa do
+        for id,next in pairs(dfa[state]) do
+            out:put("    [")
+            out:put(state)
+            out:put("][")
+            out:put(id)
+            out:put("] = ")
+            if push[state] and push[state][id] then
+                out:put(string.format("R_PUSH(%d)", dfa[state][id]))
+            elseif pop[state] and pop[state][id] then
+                out:put(string.format("R_POP(%d, %d)", 1+pop[state][id], dfa[state][id]))
+            else
+                out:put(next)
+            end
+            count = count + 1
+            out:put(",\n")
+        end
         out:put("\n")
     end
-    out:put("        } return NULL;\n")
+    out:put("};\n\n")
+    out:put("static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) {\n")
+    out:put("    switch (state) {\n")
+    for k,v in pairs(accept) do
+        out:put("        case ")
+        out:put(k)
+        out:put(": {\n")
+        for i,line in pairs(v) do
+            out:put("            ")
+            out:put(line)
+            out:put("\n")
+        end
+        out:put("        } return NULL;\n")
+    end
+    out:put("        // no match?\n")
+    out:put("        default: return NULL;\n")
+    out:put("    }\n")
+    out:put("}\n")
+
+    -- print(out:tostring())
+    print("Transitions:", count)
+
+    local f = io.open("tb/x64/x64_gen.h", "w")
+    f:write(out:tostring())
+    f:close()
 end
-out:put("        // no match?\n")
-out:put("        default: return NULL;\n")
-out:put("    }\n")
-out:put("}\n")
-
--- print(out:tostring())
-
-local f = io.open("tb/x64/x64_gen.h", "w")
-f:write(out:tostring())
-f:close()
 
