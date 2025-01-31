@@ -408,7 +408,7 @@ while true do
             replacement = parse_node()
         end
 
-        print(inspect(pattern))
+        -- print(inspect(pattern))
 
         local strs = accept[head]
         if not strs then

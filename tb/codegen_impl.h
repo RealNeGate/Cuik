@@ -332,7 +332,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 
 static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
     cuikperf_region_start("compile", f->super.name);
-    #if TB_OPTDEBUG_CODEGEN || TB_OPTDEBUG_ISEL
+    #if 1 // TB_OPTDEBUG_ISEL
     tb_print_dumb(f);
     #endif
 

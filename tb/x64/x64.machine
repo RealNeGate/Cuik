@@ -67,14 +67,14 @@ pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) => (x86_mov dt=$dt $ctrl 
 
 #define NORMIE_OP(op_name, mnemonic) \
 node (mnemonic) \
-pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
+pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs) \
 pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
 pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ... flags=$flags)) ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs flags="$flags | OP_IMMEDIATE" imm="as_int32($rhs)" mode=MODE_LD) \
-pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs) => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD)
+pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem $lhs ($rhs: x86_MEMORY ...))) => (x86_ ## mnemonic dt=$dt $ctrl $mem $rhs $lhs mode=MODE_LD)
 
 #define NORMIE_OP8(op_name, mnemonic) \
 node (mnemonic) \
-pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
+pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs) \
 pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_uint8($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
 
 NORMIE_OP(TB_ADD, add)
@@ -90,3 +90,4 @@ NORMIE_OP8(TB_SHR, shr)
 NORMIE_OP8(TB_SAR, sar)
 NORMIE_OP8(TB_ROL, rol)
 NORMIE_OP8(TB_ROR, ror)
+

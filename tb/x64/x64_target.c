@@ -242,38 +242,35 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
 
         int rx_i = op->flags & OP_INDEXED ? 4 : 3;
 
-        if (op->mode == MODE_REG) {
-            FOR_N(i, 2, n->input_count) {
-                printf(", ");
-                print_pretty_edge(ctx, n->inputs[i]);
-            }
-        } else {
-            // if we're in load-form we print the RX first
-            if (op->mode == MODE_LD && rx_i < n->input_count && n->inputs[rx_i]) {
-                printf(", ");
-                print_pretty_edge(ctx, n->inputs[rx_i]);
-            }
+        // if we're in load-form we print the RX first
+        if (op->mode != MODE_ST && rx_i < n->input_count && n->inputs[rx_i]) {
+            printf(", ");
+            print_pretty_edge(ctx, n->inputs[rx_i]);
+        }
 
-            // print memory operand
-            if (op->mode == MODE_LD || op->mode == MODE_ST) {
-                printf(", [");
-                print_pretty_edge(ctx, n->inputs[2]);
-                if (op->flags & OP_INDEXED) {
-                    printf(" + ");
-                    print_pretty_edge(ctx, n->inputs[3]);
-                    if (op->scale) {
-                        printf("*%d", 1 << op->scale);
-                    }
+        // print memory operand
+        if (op->mode == MODE_LD || op->mode == MODE_ST) {
+            printf(", [");
+            print_pretty_edge(ctx, n->inputs[2]);
+            if (op->flags & OP_INDEXED) {
+                printf(" + ");
+                print_pretty_edge(ctx, n->inputs[3]);
+                if (op->scale) {
+                    printf("*%d", 1 << op->scale);
                 }
-                if (op->disp) {
-                    printf(" + %"PRId32, op->disp);
-                }
-                printf("]");
             }
+            if (op->disp) {
+                printf(" + %"PRId32, op->disp);
+            }
+            printf("]");
+        } else if (op->mode == MODE_REG) {
+            printf(", ");
+            print_pretty_edge(ctx, n->inputs[2]);
+        }
 
-            if (op->mode == MODE_ST && rx_i < n->input_count && n->inputs[rx_i]) {
-                printf(", %%%u ", n->inputs[rx_i]->gvn);
-            }
+        if (op->mode == MODE_ST && rx_i < n->input_count && n->inputs[rx_i]) {
+            printf(", ");
+            print_pretty_edge(ctx, n->inputs[rx_i]);
         }
 
         if (op->flags & OP_IMMEDIATE) {
