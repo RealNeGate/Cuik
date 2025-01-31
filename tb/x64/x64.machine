@@ -1,64 +1,92 @@
 // *******************************
 // memory operands
 // *******************************
+node (MEMORY)
+
 // [base + index]
 pat (TB_PTR_OFFSET ___ $base $index)
-  => (x86_lea dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale=1)
+=> (x86_lea dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale=1)
 
 // [base + disp]
 pat (TB_PTR_OFFSET ___ $base ($imm: TB_ICONST ...))
-  where "fits_into_int32(TB_TYPE_I64, $imm)"
-  => (x86_MEMORY $base disp="as_int32($imm)")
+where "fits_into_int32(TB_TYPE_I64, $imm)"
+=> (x86_MEMORY $base disp="as_int32($imm)")
 
 // [base + index + disp]
 pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ $index ($imm: TB_ICONST ...)))
-  where "fits_into_int32(TB_TYPE_I64, $imm)"
-  => (x86_MEMORY $base $index disp="as_int32($imm)")
+where "fits_into_int32(TB_TYPE_I64, $imm)"
+=> (x86_MEMORY $base $index disp="as_int32($imm)")
 
 // [base + index*scale + disp]
 pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ (TB_SHL ___ $index ($scale: TB_ICONST ...)) ($disp: TB_ICONST ...)))
-  where "fits_into_scale($scale) && fits_into_int32(TB_TYPE_I64, $disp)"
-  => (x86_MEMORY dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale="as_int32($scale)" disp="as_int32($disp)")
+where "fits_into_scale($scale) && fits_into_int32(TB_TYPE_I64, $disp)"
+=> (x86_MEMORY dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale="as_int32($scale)" disp="as_int32($disp)")
 
 // [base + index*scale]
 pat (TB_PTR_OFFSET ___ $base (TB_SHL ___ $index ($scale: TB_ICONST ...)))
-  where "fits_into_scale($scale)"
-  => (x86_MEMORY dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale="as_int32($scale)")
+where "fits_into_scale($scale)"
+=> (x86_MEMORY dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale="as_int32($scale)")
 
 // [base + index*scale + disp]
 pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ (TB_SHL ___ $index ($scale: TB_ICONST ...)) ($disp: TB_ICONST ...)))
-  where "fits_into_scale($scale) && fits_into_int32(TB_TYPE_I64, $disp)"
-  => (x86_MEMORY flags=OP_INDEXED $base $index scale="as_int32($scale)" disp="as_int32($disp)")
+where "fits_into_scale($scale) && fits_into_int32(TB_TYPE_I64, $disp)"
+=> (x86_MEMORY flags=OP_INDEXED $base $index scale="as_int32($scale)" disp="as_int32($disp)")
+
+// *******************************
+// FLAGS
+// *******************************
+node (COND)
+node (cmp)
+node (test)
+
+// compares
+#define CMP_OP(op_name, cc) \
+pat (op_name cmp_dt=$dt ___ $lhs $rhs) => (x86_COND (x86_cmp dt=TB_TYPE_I64 ___ ___ $lhs $rhs extra_dt=$dt)) cond=cc) \
+pat (op_name cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_COND (x86_cmp dt=TB_TYPE_I64 ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)" extra_dt=$dt) cond=cc)
+
+CMP_OP(TB_CMP_SLE, LE)
+CMP_OP(TB_CMP_SLT, L)
+CMP_OP(TB_CMP_ULE, BE)
+CMP_OP(TB_CMP_ULT, B)
+CMP_OP(TB_CMP_EQ,  E)
+CMP_OP(TB_CMP_NE,  NE)
+
+node (jcc)
+pat (TB_BRANCH dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond)
 
 // *******************************
 // integer ops
 // *******************************
+node (mov)
+node (lea)
+
 pat ($lhs: x86_MEMORY ...) => (x86_lea dt=TB_TYPE_PTR ___ ___ $lhs mode=MODE_LD)
 
 pat (TB_LOAD dt=$dt $ctrl $mem $addr) => (x86_mov dt=$dt $ctrl $mem $addr mode=MODE_LD)
 pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) => (x86_mov dt=$dt $ctrl $mem $lhs mode=MODE_LD)
 
-#define NORMIE_OP(op_name, x86_op_name) \
-pat (op_name dt=$dt ___ $lhs $rhs) => (x86_op_name dt=$dt ___ ___ $lhs $rhs) \
-pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_op_name dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
-pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ... flags=$flags)) ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_op_name dt=$dt $ctrl $mem $lhs flags="$flags | OP_IMMEDIATE" imm="as_int32($rhs)" mode=MODE_LD) \
-pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs) => (x86_op_name dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD)
+#define NORMIE_OP(op_name, mnemonic) \
+node (mnemonic) \
+pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
+pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
+pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ... flags=$flags)) ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs flags="$flags | OP_IMMEDIATE" imm="as_int32($rhs)" mode=MODE_LD) \
+pat (op_name dt=$dt ___ (TB_LOAD $ctrl $mem ($lhs: x86_MEMORY ...)) $rhs) => (x86_ ## mnemonic dt=$dt $ctrl $mem $lhs $rhs mode=MODE_LD)
 
-#define NORMIE_OP8(op_name, x86_op_name) \
-pat (op_name dt=$dt ___ $lhs $rhs) => (x86_op_name dt=$dt ___ ___ $lhs $rhs) \
-pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_uint8($dt, $rhs)" => (x86_op_name dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
+#define NORMIE_OP8(op_name, mnemonic) \
+node (mnemonic) \
+pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $lhs $rhs) \
+pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_uint8($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
 
-NORMIE_OP(TB_ADD, x86_add)
-NORMIE_OP(TB_OR,  x86_or)
-NORMIE_OP(TB_AND, x86_and)
-NORMIE_OP(TB_SUB, x86_sub)
-NORMIE_OP(TB_XOR, x86_xor)
-NORMIE_OP(TB_MUL, x86_imul)
+NORMIE_OP(TB_ADD, add)
+NORMIE_OP(TB_OR,  or)
+NORMIE_OP(TB_AND, and)
+NORMIE_OP(TB_SUB, sub)
+NORMIE_OP(TB_XOR, xor)
+NORMIE_OP(TB_MUL, imul)
 
 // shifts
-NORMIE_OP8(TB_SHL, x86_shl)
-NORMIE_OP8(TB_SHR, x86_shr)
-NORMIE_OP8(TB_SAR, x86_sar)
-NORMIE_OP8(TB_ROL, x86_rol)
-NORMIE_OP8(TB_ROR, x86_ror)
-
+NORMIE_OP8(TB_SHL, shl)
+NORMIE_OP8(TB_SHR, shr)
+NORMIE_OP8(TB_SAR, sar)
+NORMIE_OP8(TB_ROL, rol)
+NORMIE_OP8(TB_ROR, ror)

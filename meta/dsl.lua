@@ -86,11 +86,14 @@ end
 local source = run_command("clang -E -xc tb/x64/x64.machine")
 print(source)
 
-local can_memory = {}
+local is_operand = {}
 
 local dfa = {}
 local depth = 0
 local state_count = 1
+
+local node_type_count = 0
+local node_types = {}
 
 local any = {}
 local push = {}
@@ -160,13 +163,22 @@ local function dfa_compile(n, head, depth)
         dfa[head] = {}
     end
 
-    if n.name and n[1] == "x86_MEMORY" then
-        if mem_capture then
-            print("Can't capture 2 memory operands in one pattern?!?")
-            os.exit(1)
-        end
+    if n.name then
+        if n[1] == "x86_MEMORY" then
+            if mem_capture then
+                print("Can't capture 2 memory operands in one pattern?!?")
+                os.exit(1)
+            end
 
-        mem_capture = n
+            mem_capture = n
+        elseif n.name and n[1] == "x86_COND" then
+            if cond_capture then
+                print("Can't capture 2 conditional operands in one pattern?!?")
+                os.exit(1)
+            end
+
+            cond_capture = n
+        end
     end
 
     if dfa[head][ty] ~= nil then
@@ -294,6 +306,10 @@ node_basic_fields = {
   ["dt"] = true,
 }
 
+node_extra_desc = {
+    ["TB_NodeCompare"] = { cmp_dt="TB_DataType" },
+}
+
 function find_captures(strs, n, expr)
     for i=2,#n do
         local v = n[i]
@@ -306,13 +322,32 @@ function find_captures(strs, n, expr)
         strs[#strs + 1] = string.format("    TB_Node* %s = %s;", n.name, expr)
     end
 
+    local extra_type = "X86MemOp"
+    if  n[1] == "TB_CMP_ULE" or
+        n[1] == "TB_CMP_ULT" or
+        n[1] == "TB_CMP_SLE" or
+        n[1] == "TB_CMP_SLT" or
+        n[1] == "TB_CMP_FLE" or
+        n[1] == "TB_CMP_FLT" or
+        n[1] == "TB_CMP_EQ"  or
+        n[1] == "TB_CMP_NE"  then
+        extra_type = "TB_NodeCompare"
+    end
+
     for k,v in pairs(n) do
         if type(v) == "string" and v:byte(1) == string.byte("$") then
             if type(k) == "string" and k ~= "name" then
                 if node_basic_fields[k] then
                     strs[#strs + 1] = string.format("    TB_DataType %s = %s->%s;", v, expr, k)
                 else
-                    strs[#strs + 1] = string.format("    int %s = TB_NODE_GET_EXTRA_T(%s, X86MemOp)->%s;", v, expr, k)
+                    local t = node_extra_desc[extra_type]
+                    if t then
+                        t = t[k]
+                    else
+                        t = "int"
+                    end
+
+                    strs[#strs + 1] = string.format("    %s %s = TB_NODE_GET_EXTRA_T(%s, %s)->%s;", t, v, expr, extra_type, k)
                 end
             elseif type(k) == "number" then
                 strs[#strs + 1] = string.format("    TB_Node* %s = %d < %s->input_count ? %s->inputs[%d] : NULL;", v, k-2, expr, expr, k-2)
@@ -328,7 +363,22 @@ while true do
     end
 
     mem_capture = nil
-    if t == "pat" then
+    cond_capture = nil
+    if t == "node" then
+        t = lex()
+        if t ~= "(" then
+            print("fuck but in parsing")
+            os.exit(1)
+        end
+
+        local desc = parse_node()
+
+        -- define node types
+        if not node_types["x86_"..desc[1]] then
+            node_types["x86_"..desc[1]] = { id=node_type_count, name="x86_"..desc[1] }
+            node_type_count = node_type_count + 1
+        end
+    elseif t == "pat" then
         t = lex()
         if t ~= "(" then
             print("fuck but in parsing")
@@ -358,7 +408,7 @@ while true do
             replacement = parse_node()
         end
 
-        -- print(inspect(pattern))
+        print(inspect(pattern))
 
         local strs = accept[head]
         if not strs then
@@ -366,8 +416,8 @@ while true do
             accept[head] = strs
         end
 
-        if replacement[1] == "x86_MEMORY" then
-            can_memory[pattern[1]] = true
+        if replacement[1] == "x86_MEMORY" or replacement[1] == "x86_COND" then
+            is_operand[pattern[1]] = true
         end
 
         local ids = {}
@@ -471,10 +521,34 @@ if false then
 else
     local count = 0
     local out = buffer.new(size)
+
+    -- node_types[desc[1]] = { id=node_type_count, name=desc[2] }
+    -- node_type_count = node_type_count + 1
+
+    out:put("typedef enum X86NodeType {\n")
+    for k,v in pairs(node_types) do
+    x86_MEMORY = TB_MACH_X86,
+        out:put(string.format("    %s = TB_MACH_X86 + %d,\n", k, v.id))
+    end
+    out:put("} X86NodeType;\n")
+
+    out:put("static const char* node_name(int n_type) {\n")
+    out:put("    switch (n_type) {\n")
+    for k,v in pairs(node_types) do
+        out:put("        case ")
+        out:put(k)
+        out:put(": return \"")
+        out:put(v.name)
+        out:put("\";\n")
+    end
+    out:put("        default: return NULL;\n")
+    out:put("    }\n")
+    out:put("}\n\n")
+
     out:put("#define R_PUSH(next)        ((1u  << 16u) | (next))\n")
     out:put("#define R_POP(n, next)      (((n) << 16u) | (next))\n")
-    out:put("static bool x86_can_memory[512] = {\n")
-    for k,v in pairs(can_memory) do
+    out:put("static bool x86_is_operand[512] = {\n")
+    for k,v in pairs(is_operand) do
         out:put("    [")
         out:put(k)
         out:put("] = true,\n")
@@ -519,6 +593,11 @@ else
     out:put("        // no match?\n")
     out:put("        default: return NULL;\n")
     out:put("    }\n")
+    out:put("}\n\n")
+    out:put("static void global_init(void) {\n")
+    out:put("     // transitions: ")
+    out:put(count)
+    out:put("\n")
     out:put("}\n")
 
     -- print(out:tostring())

@@ -173,6 +173,8 @@ static void print_reg_name(int rg, int num) {
         // printf("%s", GPR_NAMES[num]);
     } else if (rg == 2) {
         printf("XMM%d", num);
+    } else if (rg == 3) {
+        printf("FLAGS");
     } else if (rg == REG_CLASS_STK) {
         printf("STACK%d", num);
     } else {

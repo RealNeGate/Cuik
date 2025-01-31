@@ -279,6 +279,7 @@ static const char* reg_class_name(int class) {
         case 0: return "STK";
         case 1: return "GPR";
         case 2: return "XMM";
+        case 3: return "FLAGS";
         default: return NULL;
     }
 }

@@ -14,3 +14,15 @@ uint32_t murmur(uint32_t* key, uint32_t h) {
     return h;
 }
 
+/* uint8_t cmp(uint32_t* key, uint32_t h) {
+    if (key[1] >= 16) {
+        return 0;
+    }
+    return 1;
+}
+
+int foo(int arg) {
+    int x = arg/3;
+    return x*4+arg;
+}*/
+

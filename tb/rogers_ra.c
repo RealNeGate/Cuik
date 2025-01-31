@@ -737,7 +737,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
         if (other->class == mask->class) {
             TB_ASSERT(other->assigned >= 0);
             if (within_reg_mask(mask, other->assigned)) {
-                TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) interferes as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
+                TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) active as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
                 dyn_array_put(ra->potential_spills, i);
             }
 
@@ -752,7 +752,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
         if (other->class == mask->class && interfere(ctx, ra, vreg->n, other->n)) {
             TB_ASSERT(other->assigned >= 0);
             if (within_reg_mask(mask, other->assigned)) {
-                TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) future interferes as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
+                TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) inactive as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
                 dyn_array_put(ra->potential_spills, i);
             }
 
@@ -790,7 +790,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
             if (in_vreg && in_vreg->class == mask->class) {
                 TB_ASSERT(in_vreg->assigned >= 0);
                 if (within_reg_mask(mask, in_vreg->assigned)) {
-                    TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) interferes as ", in_vreg - ctx->vregs, in->gvn), print_reg_name(in_vreg->class, in_vreg->assigned), printf("; "));
+                    TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) active as ", in_vreg - ctx->vregs, in->gvn), print_reg_name(in_vreg->class, in_vreg->assigned), printf("; "));
                     dyn_array_put(ra->potential_spills, in_vreg - ctx->vregs);
                 }
 
@@ -1064,6 +1064,10 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_
     return old_assigned;
 }
 
+#if TB_OPTDEBUG_REGALLOC
+static _Thread_local DynArray(int) dbg_pause_list;
+#endif
+
 static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena) {
     ra->active        = set_create_in_arena(arena, aarray_length(ctx->vregs));
     ra->future_active = set_create_in_arena(arena, aarray_length(ctx->vregs));
@@ -1075,6 +1079,12 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
     ra->mask_cap = ra->max_regs_in_class > ra->num_spills ? ra->max_regs_in_class : ra->num_spills;
     ra->mask = tb_arena_alloc(arena, ((ra->mask_cap+63)/64) * sizeof(uint64_t));
+
+    #if TB_OPTDEBUG_REGALLOC
+    if (dbg_pause_list == NULL) {
+        dbg_pause_list = dyn_array_create(int, 32);
+    }
+    #endif
 
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
@@ -1130,11 +1140,12 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             ra->where_bb = i, ra->where_order = j;
 
             #if TB_OPTDEBUG_REGALLOC
-            printf("\n");
             printf("# ===========================\n");
             printf("# ");
             tb_print_dumb_node(NULL, n);
             printf("\n");
+
+            dyn_array_clear(dbg_pause_list);
             #endif
 
             // expire intervals for node
@@ -1163,7 +1174,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                             // once we've past the move, we can't *really* refer to the phi so it's paused
                             if (move && last_use <= def_t) {
                                 // liveness hole within cur
-                                TB_OPTDEBUG(REGALLOC)(printf("#   pause  V%-4d (for block)\n", vreg_id));
+                                TB_OPTDEBUG(REGALLOC)(dyn_array_put(dbg_pause_list, vreg_id));
                                 set_remove(&ra->live_out, in->gvn);
                                 set_remove(&ra->active, vreg_id);
                                 set_put(&ra->future_active, vreg_id);
@@ -1189,15 +1200,31 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                         }
                     }
 
+                    TB_OPTDEBUG(REGALLOC)(dyn_array_put(dbg_pause_list, vreg_id));
                     if (pause) {
-                        TB_OPTDEBUG(REGALLOC)(printf("#   pause  V%-4d\n", vreg_id));
                         set_put(&ra->future_active, vreg_id);
-                    } else {
-                        TB_OPTDEBUG(REGALLOC)(printf("#   expire V%-4d\n", vreg_id));
                     }
                     set_remove(&ra->active, vreg_id);
                 }
             }
+
+            #if TB_OPTDEBUG_REGALLOC
+            if (dyn_array_length(dbg_pause_list)) {
+                printf("# paused:");
+                dyn_array_for(i, dbg_pause_list) {
+                    if (set_get(&ra->future_active, dbg_pause_list[i])) {
+                        printf(" V%d", dbg_pause_list[i]);
+                    }
+                }
+                printf("\n# expire: ");
+                dyn_array_for(i, dbg_pause_list) {
+                    if (!set_get(&ra->future_active, dbg_pause_list[i])) {
+                        printf(" V%d", dbg_pause_list[i]);
+                    }
+                }
+                printf("\n");
+            }
+            #endif
 
             // allocate free register
             int vreg_id = ctx->vreg_map[n->gvn];
