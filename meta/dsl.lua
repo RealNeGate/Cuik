@@ -544,39 +544,6 @@ else
     out:put("        default: return NULL;\n")
     out:put("    }\n")
     out:put("}\n\n")
-
-    out:put("#define R_PUSH(next)        ((1u  << 16u) | (next))\n")
-    out:put("#define R_POP(n, next)      (((n) << 16u) | (next))\n")
-    out:put("static bool x86_is_operand[512] = {\n")
-    for k,v in pairs(is_operand) do
-        out:put("    [")
-        out:put(k)
-        out:put("] = true,\n")
-    end
-    out:put("};\n")
-    out:put("static void x86_global_init(void) {")
-    out:put(state_count)
-    out:put("][512] = {\n")
-    for state=0,#dfa do
-        for id,next in pairs(dfa[state]) do
-            out:put("    [")
-            out:put(state)
-            out:put("][")
-            out:put(id)
-            out:put("] = ")
-            if push[state] and push[state][id] then
-                out:put(string.format("R_PUSH(%d)", dfa[state][id]))
-            elseif pop[state] and pop[state][id] then
-                out:put(string.format("R_POP(%d, %d)", 1+pop[state][id], dfa[state][id]))
-            else
-                out:put(next)
-            end
-            count = count + 1
-            out:put(",\n")
-        end
-        out:put("\n")
-    end
-    out:put("};\n\n")
     out:put("static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) {\n")
     out:put("    switch (state) {\n")
     for k,v in pairs(accept) do
@@ -594,10 +561,44 @@ else
     out:put("        default: return NULL;\n")
     out:put("    }\n")
     out:put("}\n\n")
+    out:put("static bool x86_is_operand[512] = {\n")
+    for k,v in pairs(is_operand) do
+        out:put("    [")
+        out:put(k)
+        out:put("] = true,\n")
+    end
+    out:put("};\n")
+    out:put("#define R_PUSH(next)        ((1u  << 16u) | (next))\n")
+    out:put("#define R_POP(n, next)      (((n) << 16u) | (next))\n")
     out:put("static void global_init(void) {\n")
-    out:put("     // transitions: ")
+    out:put("    static const uint32_t edges[] = {\n")
+    for state=0,#dfa do
+        for id,next in pairs(dfa[state]) do
+            out:put("        (")
+            out:put(state)
+            out:put(")<<16 | (")
+            out:put(id)
+            out:put("), ")
+            if push[state] and push[state][id] then
+                out:put(string.format("R_PUSH(%d)", dfa[state][id]))
+            elseif pop[state] and pop[state][id] then
+                out:put(string.format("R_POP(%d, %d)", 1+pop[state][id], dfa[state][id]))
+            else
+                out:put(next)
+            end
+            out:put(",\n")
+            count = count + 1
+        end
+    end
+    out:put("    };\n")
+    out:put("    // transitions: ")
     out:put(count)
     out:put("\n")
+    out:put("    size_t count = sizeof(edges) / (2*sizeof(uint32_t));\n")
+    out:put("    node_grammar_alloc(count);\n")
+    out:put("    FOR_N(i, 0, count) {\n")
+    out:put("        node_grammar_put(edges[i*2], edges[i*2 + 1]);\n")
+    out:put("    }\n")
     out:put("}\n")
 
     -- print(out:tostring())

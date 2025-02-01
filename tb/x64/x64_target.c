@@ -596,37 +596,6 @@ static TB_Node* mach_symbol(Ctx* restrict ctx, TB_Function* f, TB_Symbol* s) {
 }
 
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
-    if (n->type == TB_PHI) {
-        if (TB_IS_SCALAR_TYPE(n->dt)) {
-            RegMask* rm = ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
-
-            // just in case we have some recursive phis, RA should be able to fold it away later.
-            // we have to be a bit hacky since we can't subsume the node with something that's
-            // referencing it (we'll get a cycle we didn't want).
-            TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
-            TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = rm, .use = rm);
-
-            subsume_node2(f, n, cpy);
-            set_input(f, cpy, n, 1);
-
-            // we just want some copies on the data edges which RA will coalesce, this way we
-            // never leave SSA.
-            FOR_N(i, 1, n->input_count) {
-                TB_Node* in = n->inputs[i];
-                assert(in->type != TB_MACH_MOVE);
-
-                TB_Node* move = tb_alloc_node(f, TB_MACH_MOVE, in->dt, 2, 0);
-                set_input(f, move, in, 1);
-                set_input(f, n, move, i);
-            }
-
-            // we did the subsumes for it
-            return n;
-        } else {
-            return n;
-        }
-    }
-
     return NULL;
 
     #if 0
