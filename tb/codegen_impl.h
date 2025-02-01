@@ -246,6 +246,10 @@ static bool x86_is_operand[512];
 static uint32_t x86_grammar[][512];
 static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state);
 
+static void node_grammar_edge(uint32_t k, uint32_t v) {
+
+}
+
 static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws) {
     NodeCursor stk[16];
     int head = 1, state = 0;

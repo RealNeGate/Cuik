@@ -554,7 +554,7 @@ else
         out:put("] = true,\n")
     end
     out:put("};\n")
-    out:put("static uint32_t x86_grammar[")
+    out:put("static void x86_global_init(void) {")
     out:put(state_count)
     out:put("][512] = {\n")
     for state=0,#dfa do
