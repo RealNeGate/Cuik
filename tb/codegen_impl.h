@@ -262,7 +262,7 @@ static void node_grammar_alloc(size_t cap) {
     cap = (cap == 1 ? 1 : 1ull << exp);
 
     x86_grammar_exp = exp;
-    x86_grammar = malloc(2 * cap * sizeof(uint32_t));
+    x86_grammar = calloc(2 * cap, sizeof(uint32_t));
 }
 
 static void node_grammar_put(uint32_t k, uint32_t v) {
@@ -301,37 +301,40 @@ static uint32_t node_grammar_get(uint32_t k) {
     return 0;
 }
 
-static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws) {
-    if (n->type == TB_PHI) {
-        if (!TB_IS_SCALAR_TYPE(n->dt)) {
-            return NULL;
-        }
-
-        RegMask* rm = node_constraint(ctx, n, NULL);
-
-        // just in case we have some recursive phis, RA should be able to fold it away later.
-        // we have to be a bit hacky since we can't subsume the node with something that's
-        // referencing it (we'll get a cycle we didn't want).
-        TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
-        TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = rm, .use = rm);
-
-        subsume_node2(f, n, cpy);
-        set_input(f, cpy, n, 1);
-
-        // we just want some copies on the data edges which RA will coalesce, this way we
-        // never leave SSA.
-        FOR_N(i, 1, n->input_count) {
-            TB_Node* in = n->inputs[i];
-            assert(in->type != TB_MACH_MOVE);
-
-            TB_Node* move = tb_alloc_node(f, TB_MACH_MOVE, in->dt, 2, 0);
-            set_input(f, move, in, 1);
-            set_input(f, n, move, i);
-        }
-
-        // we did the subsumes for it
-        return n;
+static TB_Node* node_isel_phi(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws) {
+    TB_ASSERT(n->type == TB_PHI);
+    if (!TB_IS_SCALAR_TYPE(n->dt)) {
+        return NULL;
     }
+
+    RegMask* rm = node_constraint(ctx, n, NULL);
+
+    // just in case we have some recursive phis, RA should be able to fold it away later.
+    // we have to be a bit hacky since we can't subsume the node with something that's
+    // referencing it (we'll get a cycle we didn't want).
+    TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+    TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = rm, .use = rm);
+
+    subsume_node2(f, n, cpy);
+    set_input(f, cpy, n, 1);
+
+    // we just want some copies on the data edges which RA will coalesce, this way we
+    // never leave SSA.
+    FOR_N(i, 1, n->input_count) {
+        TB_Node* in = n->inputs[i];
+        assert(in->type != TB_MACH_MOVE);
+
+        TB_Node* move = tb_alloc_node(f, TB_MACH_MOVE, in->dt, 2, 0);
+        set_input(f, move, in, 1);
+        set_input(f, n, move, i);
+    }
+
+    // we did the subsumes for it
+    return n;
+}
+
+static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws) {
+    TB_ASSERT(n->type != TB_PHI);
 
     NodeCursor stk[16];
     int head = 1, state = 0;
@@ -418,7 +421,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 
 static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
     cuikperf_region_start("compile", f->super.name);
-    #if 1 // TB_OPTDEBUG_ISEL
+    #if TB_OPTDEBUG_ISEL
     tb_print_dumb(f);
     #endif
 
@@ -527,23 +530,31 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
                 // replace with machine op
                 TB_OPTDEBUG(ISEL)(printf("\n\n"));
-                bool progress;
-                do {
-                    TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws);
-                    progress = k != NULL;
+                if (n->type == TB_PHI) {
+                    TB_Node* k = node_isel_phi(&ctx, f, n, &walker_ws);
+                    TB_ASSERT(n == k);
 
-                    if (k && k != n) {
-                        // we can GVN machine nodes :)
-                        k = tb_opt_gvn_node(f, k);
+                    // don't walk the replacement
+                    worklist_test_n_set(&walker_ws, k);
+                } else {
+                    bool progress;
+                    do {
+                        TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws);
+                        progress = k != NULL;
 
-                        TB_OPTDEBUG(ISEL)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
-                        subsume_node(f, n, k);
+                        if (k && k != n) {
+                            // we can GVN machine nodes :)
+                            k = tb_opt_gvn_node(f, k);
 
-                        // don't walk the replacement
-                        worklist_test_n_set(&walker_ws, k);
-                        n = k;
-                    }
-                } while (progress);
+                            TB_OPTDEBUG(ISEL)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
+                            subsume_node(f, n, k);
+
+                            // don't walk the replacement
+                            worklist_test_n_set(&walker_ws, k);
+                            n = k;
+                        }
+                    } while (progress);
+                }
                 TB_OPTDEBUG(ISEL)(printf("\n"));
 
                 FOR_N(i, 0, n->input_count) if (n->inputs[i]) {

@@ -107,7 +107,9 @@ static int best_ready_node(ListSched* sched, uint64_t in_use_mask) {
         return len;
     }
 
-    return -1;
+    // if we couldn't find a good answer, we still need to make progress
+    // so we pick the lowest latency fella
+    return aarray_length(sched->ready) - 1;
 }
 
 void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count) {
@@ -190,20 +192,18 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                 printf("___  ");
             }
         }
-        printf("  ");
-        FOR_N(i, 0, aarray_length(sched.ready)) {
-
-        }
-        printf("\n");
         #endif
 
         // retire active nodes
+        int retired = 0;
         for (size_t i = 0; i < aarray_length(active);) {
             TB_Node* n = active[i].n;
             if (active[i].end > cycle) { i++; continue; }
 
             in_use_mask &= ~(1ull << active[i].unit_i);
             aarray_remove(active, i);
+            retired += 1;
+
             // TB_OPTDEBUG(SCHEDULE)(printf("  T=%2d: RETIRE   ", cycle), tb_print_dumb_node(NULL, n), printf("\n"));
 
             // instruction's retired, time to ready up users
@@ -222,14 +222,25 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
             }
         }
 
+
+        #if TB_OPTDEBUG_SCHEDULE
+        printf("  retired %d ops [ ", retired);
+        FOR_N(i, 0, aarray_length(sched.ready)) {
+            printf("%%%u ", sched.ready[i].n->gvn);
+        }
+        printf("]\n");
+        #endif
+
         // dispatch one instruction per machine per cycle
-        while (in_use_mask != blocked_mask && aarray_length(sched.ready) > 0) {
+        int ready_len = aarray_length(sched.ready);
+        while (in_use_mask != blocked_mask && ready_len--) {
             int idx = best_ready_node(&sched, in_use_mask);
             if (idx < 0) { break; }
 
             uint64_t avail = sched.ready[idx].unit_mask & ~in_use_mask;
-            int unit_i = tb_ffs64(avail) - 1;
+            if (avail == 0) { continue; }
 
+            int unit_i = tb_ffs64(avail) - 1;
             TB_Node* n = sched.ready[idx].n;
             in_use_mask |= 1ull << unit_i;
             stall = false;
@@ -247,8 +258,8 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                 if (n->dt.type == TB_TAG_TUPLE) {
                     TB_ASSERT(!cfg_is_fork(n));
                     FOR_USERS(u, n) if (is_proj(USERN(u))) {
-                        assert(USERI(u) == 0);
-                        assert(!worklist_test(ws, USERN(u)));
+                        TB_ASSERT(USERI(u) == 0);
+                        TB_ASSERT(!worklist_test(ws, USERN(u)));
                         worklist_push(ws, USERN(u));
                     }
                 }

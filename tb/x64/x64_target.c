@@ -49,7 +49,6 @@ typedef struct {
 
 typedef struct {
     TB_FunctionPrototype* proto;
-    TB_Symbol* sym;
     int param_count;
 } X86Call;
 
@@ -164,6 +163,13 @@ static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
         } else if (v->class == REG_CLASS_FLAGS) {
             printf("FLAGS");
         }
+    } else if (n->type == TB_MACH_SYMBOL) {
+        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
+        if (sym->name[0]) {
+            printf("%s ", sym->name);
+        } else {
+            printf("sym%p ", sym);
+        }
     } else {
         printf("%%%u", n->gvn);
     }
@@ -232,6 +238,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
                 case TB_TAG_I16: bytes = 2; break;
                 case TB_TAG_I32: bytes = 4; break;
                 case TB_TAG_I64: bytes = 8; break;
+                case TB_TAG_PTR: bytes = 8; break;
                 default: tb_todo();
             }
             printf("  %s%d ", name, bytes);
@@ -436,7 +443,7 @@ static int node_2addr(TB_Node* n) {
 }
 
 static bool node_remat(TB_Node* n) {
-    return n->type == x86_lea;
+    return n->type == x86_lea || n->type == x86_cmp || n->type == x86_test;
 }
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
@@ -2380,6 +2387,17 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) { return false; }
 
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
+    if (n->type >= TB_MACH_X86) {
+        X86MemOp* op = TB_NODE_GET_EXTRA(n);
+        if (op->mode == MODE_LD) {
+            // if we're doing a load, we can only fit into ports 2 & 3
+            return 0b00001100;
+        } else if (op->mode == MODE_ST) {
+            // stores go into port 4
+            return 0b00010000;
+        }
+    }
+
     return 0b11101111;
 }
 

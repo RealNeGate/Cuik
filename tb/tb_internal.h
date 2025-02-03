@@ -41,7 +41,7 @@
 #define TB_OPTDEBUG_SLP       0
 #define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_COMPACT   0
-#define TB_OPTDEBUG_SCHEDULE  1
+#define TB_OPTDEBUG_SCHEDULE  0
 // for toggling ANSI colors
 #define TB_OPTDEBUG_ANSI      1
 

@@ -218,9 +218,9 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena);
 // RA helpers
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b);
 void tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n);
-void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n);
-void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
+size_t tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
+size_t tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n);
 
 static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {

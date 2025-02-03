@@ -133,7 +133,7 @@ void tb_arena_clear(TB_Arena* arena) {
         cuik_free(c);
         c = prev;
     }
-    arena->top->avail = arena->top->data;
+    c->avail = c->data;
     arena->top = c;
 }
 

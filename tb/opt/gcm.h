@@ -152,7 +152,6 @@ static TB_BasicBlock* add_anti_deps(TB_Function* f, TB_CFG* cfg, TB_Node* ld, TB
             }
         }
     }
-
     return lca;
 }
 

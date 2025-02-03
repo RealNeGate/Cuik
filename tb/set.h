@@ -10,13 +10,29 @@ typedef struct Set {
 } Set;
 
 static Set set_create_in_arena(TB_Arena* arena, size_t cap) {
-    void* ptr = tb_arena_alloc(arena, ((cap + 63) / 64) * sizeof(uint64_t));
-    memset(ptr, 0, ((cap + 63) / 64) * sizeof(uint64_t));
+    size_t words = ((cap + 63) / 64);
+    void* ptr = tb_arena_alloc(arena, words * sizeof(uint64_t));
+    memset(ptr, 0, words * sizeof(uint64_t));
 
     return (Set){
-        .capacity = cap,
+        .capacity = words * 64,
         .data = ptr,
     };
+}
+
+static void set_resize_in_arena(TB_Arena* arena, Set* set, size_t cap) {
+    size_t words = ((cap + 63) / 64);
+
+    if (words*64 > set->capacity) {
+        words = tb_next_pow2(words);
+        cap = words*64;
+
+        uint64_t* bits = tb_arena_realloc(arena, set->data, (set->capacity / 64) * sizeof(uint64_t), words * sizeof(uint64_t));
+        memset(&bits[set->capacity / 64], 0, ((cap - set->capacity) / 64) * sizeof(uint64_t));
+
+        set->capacity = cap;
+        set->data = bits;
+    }
 }
 
 static Set set_create(size_t cap) {

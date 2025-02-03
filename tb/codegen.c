@@ -26,16 +26,20 @@ void tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     f->scheduled[n->gvn] = bb;
 }
 
-void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
-    TB_BasicBlock* bb = f->scheduled[before_n->gvn];
-    tb__insert(ctx, f, bb, n);
+size_t tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
+    size_t i = 0;
+    CUIK_TIMED_BLOCK("insert") {
+        TB_BasicBlock* bb = f->scheduled[before_n->gvn];
+        tb__insert(ctx, f, bb, n);
 
-    size_t i = 0, cnt = aarray_length(bb->items);
-    while (i < cnt && bb->items[i] != before_n) { i++; }
+        size_t cnt = aarray_length(bb->items);
+        while (i < cnt && bb->items[i] != before_n) { i++; }
 
-    aarray_push(bb->items, 0);
-    memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
-    bb->items[i] = n;
+        aarray_push(bb->items, 0);
+        memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
+        bb->items[i] = n;
+    }
+    return i;
 }
 
 void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
@@ -50,19 +54,23 @@ void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     f->scheduled[n->gvn] = NULL;
 }
 
-void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
-    TB_BasicBlock* bb = f->scheduled[after_n->gvn];
-    tb__insert(ctx, f, bb, n);
+size_t tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
+    size_t i = 0;
+    CUIK_TIMED_BLOCK("insert") {
+        TB_BasicBlock* bb = f->scheduled[after_n->gvn];
+        tb__insert(ctx, f, bb, n);
 
-    size_t i = 0, cnt = aarray_length(bb->items);
-    while (i < cnt && bb->items[i] != after_n) { i++; }
+        size_t cnt = aarray_length(bb->items);
+        while (i < cnt && bb->items[i] != after_n) { i++; }
 
-    TB_ASSERT(i != cnt);
-    i += 1;
+        TB_ASSERT(i != cnt);
+        i += 1;
 
-    aarray_push(bb->items, NULL);
-    memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
-    bb->items[i] = n;
+        aarray_push(bb->items, NULL);
+        memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
+        bb->items[i] = n;
+    }
+    return i;
 }
 
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b) {

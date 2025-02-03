@@ -255,6 +255,9 @@ function write_node(strs, ids, n)
     -- declaration of a node
     local node_type = n[1]
     local extra_type = "X86MemOp"
+    if node_type == "TB_MACH_SYMBOL" then
+        extra_type = "TB_NodeMachSymbol"
+    end
 
     local dt_name = n.dt
     if dt_name == nil then
@@ -308,6 +311,7 @@ node_basic_fields = {
 
 node_extra_desc = {
     ["TB_NodeCompare"] = { cmp_dt="TB_DataType" },
+    ["TB_NodeSymbol"]  = { sym="TB_Symbol*" },
 }
 
 function find_captures(strs, n, expr)
@@ -332,6 +336,8 @@ function find_captures(strs, n, expr)
         n[1] == "TB_CMP_EQ"  or
         n[1] == "TB_CMP_NE"  then
         extra_type = "TB_NodeCompare"
+    elseif n[1] == "TB_SYMBOL" then
+        extra_type = "TB_NodeSymbol"
     end
 
     for k,v in pairs(n) do
@@ -449,10 +455,10 @@ local function dfa_crawl(state, fail, depth)
     end
     visited[state] = true
 
-    -- print("[", state, "]", dfa[state][0], fail, depth)
+    print("[", state, "]", dfa[state][0], fail, depth)
 
     -- if there's no "ANY" state, then we add one
-    if not dfa[state][0] then
+    if (dfa[state][0] == state and depth > 1) or not dfa[state][0] then
         -- we need to undo all the pushes we did to get here
         insert_2d(pop, state, 0, depth)
         dfa[state][0] = fail
@@ -490,7 +496,7 @@ for i=1,#any do
         for k,v in pairs(dfa[state]) do
             if k ~= 0 then
                 local depth = 0
-                if push[state][k] then
+                if push[state] and push[state][k] then
                     depth = depth + 1
                 end
 
@@ -502,7 +508,10 @@ end
 
 if false then
     local graphviz = buffer.new(1000)
-    graphviz:put("digraph G {")
+    graphviz:put("digraph G {\n")
+    for k,v in pairs(accept) do
+        graphviz:put(string.format("v%d [label=\"%s\"]\n", v, k))
+    end
     for state=0,#dfa do
         for id,next in pairs(dfa[state]) do
             if id == 0 then
