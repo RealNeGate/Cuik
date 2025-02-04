@@ -8,6 +8,11 @@
 FOR_N(_i, 0, ((set).capacity + 63) / 64) FOR_BIT(it, _i*64, (set).data[_i])
 
 typedef struct {
+    int gvn;      // key
+    int last_use; // val
+} InactiveCacheEntry;
+
+typedef struct {
     Ctx* ctx;
     TB_Arena* arena;
 
@@ -25,6 +30,9 @@ typedef struct {
     Set live_out;
 
     int* dirty_bb;
+
+    // last use in a BB
+    InactiveCacheEntry* inactive_cache;
 
     // where is the linear scan at
     int where_bb;
@@ -493,6 +501,15 @@ static TB_Node* phi_move_in_block(TB_BasicBlock** scheduled, TB_BasicBlock* bloc
 }
 
 static int last_use_in_bb(TB_BasicBlock** scheduled, Rogers* restrict ra, TB_BasicBlock* bb, TB_Node* n) {
+    // printf("Last use in BB0 for %%%u: ", n->gvn);
+
+    int hash_index = (n->gvn * 11400714819323198485ull) >> 57ull;
+    if (ra->inactive_cache[hash_index].gvn == n->gvn) {
+        // printf(" Hit!\n");
+        return ra->inactive_cache[hash_index].last_use;
+    }
+
+    // printf(" Miss.\n");
     int l = 0;
     FOR_USERS(u, n) {
         TB_Node* un = USERN(u);
@@ -502,6 +519,9 @@ static int last_use_in_bb(TB_BasicBlock** scheduled, Rogers* restrict ra, TB_Bas
             l = ra->order[un->gvn];
         }
     }
+
+    ra->inactive_cache[hash_index].gvn = n->gvn;
+    ra->inactive_cache[hash_index].last_use = l;
     return l;
 }
 
@@ -559,28 +579,16 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
         }
 
         block = ctx->f->scheduled[last->gvn];
-        FOR_USERS(u, first) {
-            TB_Node* un = USERN(u);
-            if (USERI(u) < un->input_count &&
-                block == ctx->f->scheduled[un->gvn] &&
-                ra->order[un->gvn] > ra->order[last->gvn]) {
-                return true;
-            }
-        }
+        int last_use = last_use_in_bb(ctx->f->scheduled, ra, block, first);
+        return last_use > ra->order[last->gvn];
     } else {
         if (lhs_live_out) {
             SWAP(TB_Node*, lhs, rhs);
         }
 
         block = ctx->f->scheduled[rhs->gvn];
-        FOR_USERS(u, lhs) {
-            TB_Node* un = USERN(u);
-            if (USERI(u) < un->input_count &&
-                block == ctx->f->scheduled[un->gvn] &&
-                ra->order[un->gvn] > ra->order[rhs->gvn]) {
-                return true;
-            }
-        }
+        int last_use = last_use_in_bb(ctx->f->scheduled, ra, block, lhs);
+        return last_use > ra->order[rhs->gvn];
     }
 
     return false;
@@ -651,11 +659,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
     }
 
     // interfere live things
-    // there's some cases where we'd rather spill ourselves over anything else we interfere
-    // with, for instance with constants. another case is that we've got an overly tight constraint
-    // and a spill would loosen that
     dyn_array_clear(ra->potential_spills);
-    dyn_array_put(ra->potential_spills, vreg_id);
 
     cuikperf_region_start("active", NULL);
     TB_OPTDEBUG(REGALLOC)(printf("#   "));
@@ -665,7 +669,6 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
             TB_ASSERT(other->assigned >= 0);
             if (within_reg_mask(mask, other->assigned)) {
                 TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) active as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
-                dyn_array_put(ra->potential_spills, i);
             }
 
             ra->mask[other->assigned / 64ull] |= (1ull << (other->assigned % 64ull));
@@ -771,14 +774,48 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
     }
 }
 
-static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_vreg, int useful_class, uint64_t useful_spill) {
+static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_vreg, RegMask* useful_mask) {
     cuikperf_region_start("choose spill", NULL);
+
+    // these are added late because... there's a lot of them sometimes and we'd rather not add them
+    // every allocation loop, if i could do the same with inactives without incurring an extra interference
+    // check i would.
+    FOREACH_SET(i, ra->active) {
+        VReg* other = &ctx->vregs[i];
+        if (other->class == useful_mask->class && within_reg_mask(useful_mask, other->assigned)) {
+            dyn_array_put(ra->potential_spills, i);
+        }
+    }
+
+    int best_spill = -1;
+    float best_score = INFINITY;
+    FOR_REV_N(i, 0, dyn_array_length(ra->potential_spills)) {
+        int vreg_id = ra->potential_spills[i];
+        VReg* vreg  = &ctx->vregs[vreg_id];
+
+        float score = get_spill_cost(ctx, vreg);
+        if (score < best_score) {
+            if (best_spill >= 0) {
+                TB_OPTDEBUG(REGALLOC)(printf("#     V%d is a better spill! V%d (%f is better than %f)\n", vreg_id, best_spill, score, best_score));
+            } else {
+                TB_OPTDEBUG(REGALLOC)(printf("#     V%d is... one of the spills of all time! %f\n", vreg_id, score));
+            }
+            best_score = score;
+            best_spill = vreg_id;
+        }
+    }
 
     bool can_spill_self = false;
     if (attempted_vreg) {
+        float self_score = get_spill_cost(ctx, attempted_vreg);
+
         // this limits the interference thus improving colorability
         if (attempted_vreg->spill_bias < 1e7 && can_remat(ctx, attempted_vreg->n)) {
-            can_spill_self = true;
+            if (self_score < best_score) {
+                TB_OPTDEBUG(REGALLOC)(printf("#     Self spilling! (%f is better than %f)\n", self_score, best_score));
+                cuikperf_region_end();
+                return attempted_vreg - ctx->vregs;
+            }
         }
 
         // we can only spill ourselves if that meant loosening the vreg's mask
@@ -800,40 +837,14 @@ static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* att
                 TB_OPTDEBUG(REGALLOC)(printf("#     can self spill since mask is loosened from "), tb__print_regmask(attempted_vreg->mask), printf(" to "), tb__print_regmask(expected_mask), printf("\n"));
             }
 
-            if (attempted_vreg->mask != expected_mask) {
-                can_spill_self = true;
+            if (attempted_vreg->mask != expected_mask && self_score < best_score) {
+                TB_OPTDEBUG(REGALLOC)(printf("#     Self spilling! (%f is better than %f)\n", self_score, best_score));
+                cuikperf_region_end();
+                return attempted_vreg - ctx->vregs;
             }
         }
     }
 
-    int best_spill = -1;
-    float best_score = INFINITY;
-    FOR_REV_N(i, 0, dyn_array_length(ra->potential_spills)) {
-        int vreg_id = ra->potential_spills[i];
-        VReg* vreg  = &ctx->vregs[vreg_id];
-
-        if (attempted_vreg == vreg) {
-            if (!can_spill_self) {
-                continue;
-            }
-        } else {
-            // skip live values which we couldn't use to accomodate our RA failure
-            if (vreg->class != useful_class || (useful_spill & (1ull << vreg->assigned)) == 0) {
-                continue;
-            }
-        }
-
-        float score = get_spill_cost(ctx, vreg);
-        if (score < best_score) {
-            if (best_spill >= 0) {
-                TB_OPTDEBUG(REGALLOC)(printf("#     V%d is a better spill! V%d (%f is better than %f)\n", vreg_id, best_spill, score, best_score));
-            } else {
-                TB_OPTDEBUG(REGALLOC)(printf("#     V%d is... one of the spills of all time! %f\n", vreg_id, score));
-            }
-            best_score = score;
-            best_spill = vreg_id;
-        }
-    }
     cuikperf_region_end();
     TB_ASSERT(best_spill >= 0);
     return best_spill;
@@ -846,7 +857,7 @@ static void ensure_ordinals_cap(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena
         if (ra->order == NULL) {
             ra->order = tb_arena_alloc(arena, new_cap * sizeof(int));
         } else {
-            ra->order = tb_arena_realloc(arena, ra->order, ra->order_cap, new_cap * sizeof(int));
+            ra->order = tb_arena_realloc(arena, ra->order, ra->order_cap * sizeof(int), new_cap * sizeof(int));
         }
         ra->order_cap = new_cap;
     }
@@ -871,8 +882,8 @@ static void mark_dirty_bb(Rogers* restrict ra, int bb, int i) {
     }
 }
 
-static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_vreg, int useful_class, uint64_t useful_spill) {
-    int best_spill = choose_decent_spill(ctx, ra, attempted_vreg, useful_class, useful_spill);
+static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_vreg, RegMask* useful_mask) {
+    int best_spill = choose_decent_spill(ctx, ra, attempted_vreg, useful_mask);
 
     #if 0
     printf("  V%zu: Spill V%d %%%u (assigned=", attempted_vreg ? attempted_vreg - ctx->vregs : 0, best_spill, ctx->vregs[best_spill].n->gvn);
@@ -1023,6 +1034,13 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_
         allocate_reg(ctx, ra, spill_vreg_id);
     }
 
+    // we only have to clear our spilled n
+    int hash_index = (n->gvn * 11400714819323198485ull) >> 57ull;
+    if (ra->inactive_cache[hash_index].gvn == n->gvn) {
+        ra->inactive_cache[hash_index].gvn = 0;
+        ra->inactive_cache[hash_index].last_use = 0;
+    }
+
     if (attempted_vreg == &ctx->vregs[best_spill]) {
         // it's a self spill, if so then we either are dead now (REMAT) or have to
         // retry allocation with a weaker constraint.
@@ -1040,6 +1058,7 @@ static _Thread_local DynArray(int) dbg_pause_list;
 #endif
 
 static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena) {
+    ra->inactive_cache = tb_arena_alloc(arena, 128 * sizeof(InactiveCacheEntry));
     ra->active        = set_create_in_arena(arena, aarray_length(ctx->vregs));
     ra->future_active = set_create_in_arena(arena, aarray_length(ctx->vregs));
     ra->live_out      = set_create_in_arena(arena, ctx->f->node_count);
@@ -1096,12 +1115,16 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
         ra->where_bb = i, ra->where_order = 0;
 
+        CUIK_TIMED_BLOCK("clear") {
+            memset(ra->inactive_cache, 0, 128 * sizeof(InactiveCacheEntry));
+        }
+
         // start intervals
         FOREACH_SET(j, *live_in) if (!set_get(&ra->live_out, j)) {
             int vreg_id = ctx->vreg_map[j];
             if (vreg_id > 0 && !allocate_reg(ctx, ra, vreg_id)) {
                 RegMask* mask = ctx->vregs[vreg_id].mask;
-                commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
+                commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask);
             }
         }
 
@@ -1207,7 +1230,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 int class = ctx->vregs[vreg_id].mask->class;
                 if (!allocate_reg(ctx, ra, vreg_id)) {
                     RegMask* mask = ctx->vregs[vreg_id].mask;
-                    commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
+                    commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask);
 
                     // update position in BB
                     if (ra->order[n->gvn] != 0) {
@@ -1227,7 +1250,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                         int class = ctx->vregs[vreg_id].mask->class;
                         if (!allocate_reg(ctx, ra, vreg_id)) {
                             RegMask* mask = ctx->vregs[vreg_id].mask;
-                            commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask->class, mask->mask[0]);
+                            commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask);
 
                             // update position in BB
                             if (ra->order[n->gvn] != 0) {

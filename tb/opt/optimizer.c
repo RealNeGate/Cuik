@@ -35,6 +35,10 @@ TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 static void node_resize_inputs(TB_Function* f, TB_Node* n, size_t cnt) {
     if (cnt >= n->input_cap) {
         size_t new_cap = tb_next_pow2(cnt + 1);
+        if (new_cap >= UINT16_MAX) {
+            tb_panic("Too many inputs for one node");
+        }
+
         TB_Node** new_inputs = tb_arena_alloc(&f->arena, new_cap * sizeof(TB_Node*));
         if (n->inputs != NULL) {
             memcpy(new_inputs, n->inputs, cnt * sizeof(TB_Node*));
@@ -53,8 +57,7 @@ static void node_resize_inputs(TB_Function* f, TB_Node* n, size_t cnt) {
 // this has to move things which is not nice...
 void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
     // if there's an extra dep, we gotta shuffle it away. since
-    // the extra deps are unique i'll just move it to the nearest
-    //
+    // the extra deps are unique i'll just move it wherever
     TB_Node* old = n->input_count < n->input_cap ? n->inputs[n->input_count] : NULL;
     if (old != NULL) {
         remove_user(f, n, n->input_count);
@@ -658,7 +661,7 @@ static void remove_user(TB_Function* f, TB_Node* n, int slot) {
 
 void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
     // try to recycle the user
-    assert(slot < n->input_count);
+    TB_ASSERT(slot < n->input_count);
     remove_user(f, n, slot);
     n->inputs[slot] = in;
     if (in != NULL) { add_user(f, n, in, slot); }
@@ -668,7 +671,9 @@ void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
 void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
     if (in->user_count >= in->user_cap) {
         size_t new_cap = ((size_t) in->user_cap) * 2;
-        assert(new_cap < UINT16_MAX);
+        if (new_cap >= UINT16_MAX) {
+            tb_panic("Too many users to one node");
+        }
 
         // resize
         TB_User* users = tb_arena_alloc(&f->arena, new_cap * sizeof(TB_User));

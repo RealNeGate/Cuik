@@ -204,6 +204,16 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         print_pretty_edge(ctx, n);
         printf(", ");
         print_pretty_edge(ctx, n->inputs[1]);
+    } else if (n->type == TB_MACH_COPY) {
+        TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
+        printf("  mov ");
+        print_pretty_edge(ctx, n);
+        printf(" ");
+        tb__print_regmask(cpy->def);
+        printf(", ");
+        print_pretty_edge(ctx, n->inputs[1]);
+        printf(" ");
+        tb__print_regmask(cpy->use);
     } else if (n->type == TB_ICONST) {
         int bytes;
         switch (n->dt.type) {
@@ -1509,13 +1519,17 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         {
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
             if (ins) {
-                FOR_N(i, 1, n->input_count - 1) {
-                    ins[i] = rm;
-                }
-
                 X86MemOp* op = TB_NODE_GET_EXTRA(n);
                 if ((op->flags & OP_IMMEDIATE) == 0) {
+                    FOR_N(i, 2, n->input_count - 1) {
+                        ins[i] = rm;
+                    }
+
                     ins[n->input_count - 1] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
+                } else {
+                    FOR_N(i, 2, n->input_count) {
+                        ins[i] = rm;
+                    }
                 }
             }
             return rm;
@@ -2387,8 +2401,13 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) { return false; }
 
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
+    if (n->type == x86_imul) {
+        return 0b00000010;
+    }
+
     if (n->type >= TB_MACH_X86) {
         X86MemOp* op = TB_NODE_GET_EXTRA(n);
+
         if (op->mode == MODE_LD) {
             // if we're doing a load, we can only fit into ports 2 & 3
             return 0b00001100;
@@ -2402,6 +2421,10 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
 }
 
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
+    if (n->type == x86_imul) {
+        return 3;
+    }
+
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
     /* if (end && end->type >= x86_cmpjcc && end->type <= x86_ucomijcc && end->inputs[2] == n) {
         return 0;

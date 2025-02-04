@@ -167,6 +167,8 @@ struct Ctx {
     TB_2Addr node_2addr;
     NodeRemat remat;
 
+    void (*print_pretty)(Ctx* restrict ctx, TB_Node* n);
+
     // target-dependent index
     CallingConv* calling_conv;
     int fallthrough;
@@ -315,7 +317,7 @@ static int popcnt_reg_mask(RegMask* mask) {
     return sum;
 }
 
-static bool within_reg_mask(RegMask* mask, int i) {
+static bool within_reg_mask(RegMask* mask, uint64_t i) {
     return i/64 < mask->count ? mask->mask[i/64] & (1ull << (i%64)) : false;
 }
 

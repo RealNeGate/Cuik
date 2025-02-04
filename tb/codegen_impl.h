@@ -442,6 +442,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         .constraint  = node_constraint,
         .node_2addr  = node_2addr,
         .remat       = node_remat,
+        .print_pretty= print_pretty,
         .num_classes = REG_CLASS_COUNT,
         .emit = {
             .output = func_out,
