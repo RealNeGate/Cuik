@@ -1510,6 +1510,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_cmp:
         {
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
             if (ins) {
                 ins[1] = &TB_REG_EMPTY;
                 FOR_N(i, 2, n->input_count) {
@@ -1518,10 +1519,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
                 if (n->inputs[2] && (n->inputs[2]->type == TB_MACH_FRAME_PTR || n->inputs[2]->type == TB_MACH_SYMBOL)) {
                     ins[2] = &TB_REG_EMPTY;
+                } else if (op->mode == MODE_REG && (op->flags & OP_INDEXED) == 0) {
+                    // the memory operand can be a spill slot
+                    // if we're not one already
+                    ins[2] = ctx->mayspill_mask[REG_CLASS_GPR];
                 }
             }
 
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
             if (op->mode == MODE_ST) {
                 return &TB_REG_EMPTY;
             } else if (n->type == x86_cmp || n->type == x86_test) {
