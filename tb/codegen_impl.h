@@ -63,6 +63,8 @@ static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e);
 // just a pretty asm-like printer
 static void print_pretty(Ctx* restrict ctx, TB_Node* n);
 
+TB_OPTDEBUG(STATS)(int stats_miss, stats_hit);
+
 typedef struct {
     TB_Node* n;
     uint32_t ip;
@@ -758,8 +760,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        tb__rogers(&ctx, &f->tmp_arena);
-        // tb__briggs(&ctx, &f->tmp_arena);
+        // tb__rogers(&ctx, &f->tmp_arena);
+        tb__briggs(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);
@@ -1091,6 +1093,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     log_debug("%s: total allocs on tmp_arena=%.1f KiB", f->super.name, f->tmp_arena.alloc_bytes / 1024.0f);
     log_debug("%s: code_arena=%.1f KiB", f->super.name, tb_arena_current_size(code_arena) / 1024.0f);
     #endif
+
+    TB_OPTDEBUG(STATS)(printf("%f miss rate (%d misses, %d hits)\n", stats_miss / (float) (stats_miss + stats_hit), stats_miss, stats_hit));
 
     tb_arena_clear(&f->tmp_arena);
 

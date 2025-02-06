@@ -212,6 +212,9 @@ struct Ctx {
     DynArray(TB_Location) locations;
 };
 
+// Rogers RA stats collection crap
+TB_OPTDEBUG(STATS)(extern int stats_miss, stats_hit);
+
 extern RegMask TB_REG_EMPTY;
 
 void tb__rogers(Ctx* restrict ctx, TB_Arena* arena);
@@ -307,6 +310,19 @@ static bool reg_mask_is_not_empty(RegMask* mask) {
 
 static bool reg_mask_is_stack(RegMask* mask) {
     return mask->class == REG_CLASS_STK;
+}
+
+static bool reg_mask_is_spill(RegMask* mask) {
+    if (mask->class != REG_CLASS_STK || !mask->may_spill) {
+        return false;
+    }
+
+    // if any bits are set it's not a spill slot
+    FOR_N(i, 0, mask->count) {
+        if (mask->mask[0] != 0) { return false; }
+    }
+
+    return true;
 }
 
 static int popcnt_reg_mask(RegMask* mask) {

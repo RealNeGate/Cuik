@@ -2,11 +2,11 @@
 #include <stddef.h>
 #include <string.h>
 
-#if 0
 long long foo(long long* x, long long y, long long z) {
     return x[0] + x[y] + x[2] + x[1+y];
 }
 
+#if 0
 uint32_t murmur3_32(const void* key, size_t len) {
     const uint32_t* key32 = key;
     uint32_t h = 0;
@@ -36,7 +36,6 @@ uint32_t murmur3_32(const void* key, size_t len) {
     h = (h ^ (h >> 13))*0xc2b2ae35;
     return (h ^ (h >> 16));
 }
-#endif
 
 // void matmul(int* dst, int* a, int* b) {}
 
@@ -46,6 +45,7 @@ uint8_t cmp(uint32_t* key, uint32_t h) {
     }
     return 1;
 }
+#endif
 
 /*int foo(int arg) {
     int x = arg/3;

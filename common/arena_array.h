@@ -52,8 +52,8 @@ static void* aarray__reserve2(void* ptr, size_t type_size, size_t min_size) {
     // zero out the space up to the min_size
     if (min_size > header->length) {
         memset(&header->data[header->length * type_size], 0, (min_size - header->length) * type_size);
+        header->length = min_size + 1;
     }
-    header->length = min_size + 1;
 
     return ptr;
 }

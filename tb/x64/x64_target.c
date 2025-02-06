@@ -206,14 +206,30 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         print_pretty_edge(ctx, n->inputs[1]);
     } else if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
-        printf("  mov ");
+
+        printf("  ");
         print_pretty_edge(ctx, n);
-        printf(" ");
-        tb__print_regmask(cpy->def);
-        printf(", ");
-        print_pretty_edge(ctx, n->inputs[1]);
-        printf(" ");
-        tb__print_regmask(cpy->use);
+        if (reg_mask_is_spill(cpy->def) && cpy->use->class != REG_CLASS_STK) {
+            printf(" = spill(");
+            print_pretty_edge(ctx, n->inputs[1]);
+            printf(": ");
+            tb__print_regmask(cpy->use);
+            printf(")");
+        } else if (cpy->def->class != REG_CLASS_STK && reg_mask_is_spill(cpy->use)) {
+            printf(": ");
+            tb__print_regmask(cpy->def);
+            printf(" = reload(");
+            print_pretty_edge(ctx, n->inputs[1]);
+            printf(")");
+        } else {
+            printf(": ");
+            tb__print_regmask(cpy->def);
+            printf(" = copy (");
+            print_pretty_edge(ctx, n->inputs[1]);
+            printf(": ");
+            tb__print_regmask(cpy->use);
+            printf(")");
+        }
     } else if (n->type == TB_ICONST) {
         int bytes;
         switch (n->dt.type) {

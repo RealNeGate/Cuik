@@ -198,6 +198,29 @@ static void briggs_dump_sched(Ctx* restrict ctx, Briggs* restrict ra) {
     }
 }
 
+static void briggs_insert_op(Ctx* ctx, Briggs* ra, int bb_id, TB_Node* n, int pos) {
+    TB_BasicBlock* bb = &ctx->cfg.blocks[bb_id];
+
+    // skip phis and projections so that they stay nice and snug
+    size_t cnt = aarray_length(bb->items);
+    while (pos < cnt && is_proj(bb->items[pos])) {
+        pos += 1;
+    }
+
+    aarray_push(bb->items, 0);
+    memmove(&bb->items[pos + 1], &bb->items[pos], (cnt - pos) * sizeof(TB_Node*));
+    bb->items[pos] = n;
+
+    FOR_N(i, 1, ctx->num_classes) {
+        Briggs_Pressure* p = &ra->block_pressures[i][bb - ctx->cfg.blocks];
+        if (pos >= p->lo2hi) {
+            p->lo2hi += 1;
+        }
+    }
+
+    tb__insert(ctx, ctx->f, bb, n);
+}
+
 // inserts spills and reloads that happen across blocks
 static TB_Node* spill_fancy_xbb(Ctx* ctx, Briggs* ra, int i, TB_Node* phi, TB_Node** pred_defs, bool* is_spilled, int def_class) {
     TB_Function* f = ctx->f;
@@ -268,7 +291,7 @@ static TB_Node* spill_fancy_xbb(Ctx* ctx, Briggs* ra, int i, TB_Node* phi, TB_No
     if (phi == NULL) {
         phi = tb_alloc_node(f, TB_PHI, TB_TYPE_VOID, 1 + pred_count, 0);
         set_input(f, phi, bb_node, 0);
-        tb__insert_after(ctx, f, phi, bb_node);
+        briggs_insert_op(ctx, ra, i, phi, 1);
     }
 
     FOR_N(j, 0, pred_count) {
@@ -281,14 +304,20 @@ static TB_Node* spill_fancy_xbb(Ctx* ctx, Briggs* ra, int i, TB_Node* phi, TB_No
     return phi;
 }
 
-static bool briggs_is_hrp(Ctx* ctx, Briggs* ra, RegMask* def_mask, int bb, int pos) {
-    if (ra->block_pressures[def_mask->class][bb].lo2hi >= 0 &&
-        pos >= ra->block_pressures[def_mask->class][bb].lo2hi) {
-        return true;
-    }
+static bool briggs_split_at_site(Ctx* ctx, Briggs* ra, RegMask* def_mask, int bb, int pos) {
+    // is block LRP?
+    if (ra->block_pressures[def_mask->class][bb].lo2hi < 0) { return false; }
+    // if it's an HRP, we transition into HRP at some point that's *sometimes*
+    // not at the beginning, consider us HRP then.
+    return pos >= ra->block_pressures[def_mask->class][bb].lo2hi;
 
-    int max = ra->block_pressures[def_mask->class][bb].max;
-    return max >= popcnt_reg_mask(def_mask);
+    // int max = ra->block_pressures[def_mask->class][bb].max;
+    // return max >= popcnt_reg_mask(def_mask);
+}
+
+static int spill_map_get(NL_Table* spill_map, int k) {
+    intptr_t p = (intptr_t) nl_table_get(spill_map, (void*) (uintptr_t) k);
+    return p - 1;
 }
 
 static void spill_fancy(Ctx* ctx, Briggs* ra) {
@@ -296,30 +325,34 @@ static void spill_fancy(Ctx* ctx, Briggs* ra) {
 
     // TODO(NeGate): use a hash map, far more compact
     int num_spills = dyn_array_length(ra->spills);
-    int* spill_map = tb_arena_alloc(ra->arena, aarray_length(ctx->vregs) * sizeof(int));
-    aarray_for(i, ctx->vregs) {
-        spill_map[i] = -1;
-    }
+    NL_Table spill_map = nl_table_alloc(num_spills);
 
+    int* reload_class = tb_arena_alloc(ra->arena, num_spills * sizeof(int));
     FOR_N(i, 0, num_spills) {
-        spill_map[ra->spills[i]] = i;
+        nl_table_put(&spill_map, (void*) (uintptr_t) ra->spills[i], (void*) (i + 1));
 
         // reset the spilled vregs since we're gonna split off the uses now
         VReg* to_spill = &ctx->vregs[ra->spills[i]];
-        to_spill->mask = &TB_REG_EMPTY;
+
+        // all reloads will use the normie mask for the class
+        reload_class[i] = to_spill->mask->class;
+
+        to_spill->mask = NULL;
         to_spill->spill_cost = NAN;
-        to_spill->uses = 1;
+        to_spill->uses = 0;
     }
 
-    RegMask* spill_rm  = intern_regmask(ctx, 0, true, 0);
-
-    // int def_class = to_spill->mask->class;
-    // RegMask* reload_rm = ctx->normie_mask[def_class];
+    RegMask* spill_rm = intern_regmask(ctx, 0, true, 0);
 
     // [def_i*num_spills + spill_i]
     bool* is_spilled = tb_arena_alloc(ra->arena, num_spills * ctx->bb_count * sizeof(bool));
     TB_Node** defs = tb_arena_alloc(ra->arena, num_spills * ctx->bb_count * sizeof(TB_Node*));
     TB_Node** phis = tb_arena_alloc(ra->arena, num_spills * ctx->bb_count * sizeof(TB_Node*));
+    int* spill_vregs = tb_arena_alloc(ra->arena, num_spills * sizeof(int));
+
+    FOR_N(i, 0, num_spills * ctx->bb_count) {
+        spill_vregs[i] = 0;
+    }
 
     // everything starts as dead and unspilled
     FOR_N(i, 0, num_spills * ctx->bb_count) {
@@ -410,7 +443,7 @@ static void spill_fancy(Ctx* ctx, Briggs* ra) {
             FOR_N(j, 0, num_spills) {
                 phis[i*num_spills + j] = tb_alloc_node(f, TB_PHI, TB_TYPE_VOID, 1 + pred_count, 0);
                 set_input(f, phis[i*num_spills + j], bb_node, 0);
-                tb__insert_after(ctx, f, phis[i*num_spills + j], bb_node);
+                briggs_insert_op(ctx, ra, i, phis[i*num_spills + j], 1);
             }
 
             // push both head & tail, we'll fill the phis later
@@ -418,7 +451,7 @@ static void spill_fancy(Ctx* ctx, Briggs* ra) {
             aarray_push(loop_stack, loop_tail);
         } else if (pred_count > 0) {
             FOR_N(j, 0, num_spills) {
-                int reg_class = ctx->vregs[ra->spills[j]].mask->class;
+                int reg_class = ctx->normie_mask[reload_class[j]]->class;
                 TB_ASSERT(reg_class != REG_CLASS_STK);
 
                 // if none of our predecessors want it in a reg, we don't either... yet?
@@ -438,7 +471,7 @@ static void spill_fancy(Ctx* ctx, Briggs* ra) {
 
         if (loop_tail < 0) {
             FOR_N(j, 0, num_spills) {
-                int reg_class = ctx->vregs[ra->spills[j]].mask->class;
+                int reg_class = ctx->normie_mask[reload_class[j]]->class;
                 TB_ASSERT(reg_class != REG_CLASS_STK);
 
                 defs[i*num_spills + j] = spill_fancy_xbb(ctx, ra, i, phis[i], pred_defs, is_spilled, reg_class);
@@ -471,7 +504,7 @@ static void spill_fancy(Ctx* ctx, Briggs* ra) {
             }
 
             FOR_N(j, 0, num_spills) {
-                int reg_class = ctx->vregs[ra->spills[j]].mask->class;
+                int reg_class = ctx->normie_mask[reload_class[j]]->class;
                 TB_ASSERT(reg_class != REG_CLASS_STK);
 
                 // insert fully resolved phis now
@@ -490,13 +523,45 @@ static void spill_fancy(Ctx* ctx, Briggs* ra) {
             TB_Node* n = bb->items[j];
             int dst_vreg = n->gvn < aarray_length(ctx->vreg_map) ? ctx->vreg_map[n->gvn] : 0;
 
+            // if we hit an HRP, we must spill before that point if we haven't already.
+            FOR_N(k, 0, num_spills) {
+                RegMask* def_mask = ctx->normie_mask[reload_class[k]];
+                TB_ASSERT(def_mask->class != REG_CLASS_STK);
+
+                if (defs[i*num_spills + k] != NULL && !is_spilled[i*num_spills + k] && briggs_split_at_site(ctx, ra, def_mask, i, j)) {
+                    TB_Node* def = defs[i*num_spills + k];
+
+                    TB_Node* v = tb_alloc_node(f, TB_MACH_COPY, def->dt, 2, sizeof(TB_NodeMachCopy));
+                    set_input(f, v, def, 1);
+                    TB_NODE_SET_EXTRA(v, TB_NodeMachCopy, .def = spill_rm, .use = def_mask);
+
+                    briggs_insert_op(ctx, ra, i, v, j - 1);
+                    defs[i*num_spills + k] = v;
+                    is_spilled[i*num_spills + k] = true;
+
+                    // there's one shared spilled vreg for all the stack copies
+                    int spill_vreg_id = spill_vregs[k];
+                    if (spill_vreg_id == 0) {
+                        VReg* spill_vreg = tb__set_node_vreg(ctx, v);
+                        spill_vreg->spill_cost = INFINITY;
+                        spill_vreg->mask = spill_rm;
+
+                        spill_vregs[k] = spill_vreg - ctx->vregs;
+                    } else {
+                        aarray_insert(ctx->vreg_map, n->gvn, spill_vreg_id);
+                    }
+
+                    TB_OPTDEBUG(REGALLOC2)(printf("  Spill%zu: onto stack now! (we've crossed an HRP region)\n", k));
+                }
+            }
+
             // forced reloads before use
             TB_Node* reload = NULL;
             FOR_N(k, 1, n->input_count) {
                 if (n->inputs[k] == NULL) { continue; }
 
                 int src_vreg = ctx->vreg_map[n->inputs[k]->gvn];
-                int spill_i = spill_map[src_vreg];
+                int spill_i = spill_map_get(&spill_map, src_vreg);
                 if (spill_i >= 0 && defs[spill_i] != NULL && is_spilled[i*num_spills + spill_i]) {
                     if (reload == NULL) {
                         ctx->constraint(ctx, n, ctx->ins);
@@ -512,49 +577,56 @@ static void spill_fancy(Ctx* ctx, Briggs* ra) {
                         set_input(f, reload, defs[i*num_spills + spill_i], 1);
                         TB_NODE_SET_EXTRA(reload, TB_NodeMachCopy, .def = reload_rm, .use = spill_rm);
 
-                        tb__insert_before(ctx, f, reload, n);
-                        j += 1;
+                        // reloads have their own vregs, but never overlap (useful for phis)
+                        VReg* reload_vreg = tb__set_node_vreg(ctx, reload);
+                        reload_vreg->mask = reload_rm;
+
+                        int reload_vreg_id = reload_vreg - ctx->vregs;
+                        nl_table_put(&spill_map, (void*) (uintptr_t) reload_vreg_id, (void*) (uintptr_t) (spill_i + 1));
+
+                        briggs_insert_op(ctx, ra, i, reload, j - 1);
                         defs[i*num_spills + spill_i] = reload;
 
                         is_spilled[i*num_spills + spill_i] = false;
                         TB_OPTDEBUG(REGALLOC2)(printf("  Spill%d: we need to reload now! %%%u\n", spill_i, reload->gvn));
+                    } else {
+                        // intersect against other uses
+                        VReg* reload_vreg = ctx->vregs[ctx->vreg_map[reload->gvn]];
+                        reload_vreg->mask =  tb__reg_mask_meet(ctx, reload_vreg->mask, );
                     }
                     set_input(f, n, reload, k);
                 }
             }
 
-            // if we hit an HRP, we must spill before that point if we haven't already.
-            FOR_N(k, 0, num_spills) {
-                RegMask* def_mask = ctx->vregs[ra->spills[k]].mask;
-                TB_ASSERT(def_mask->class != REG_CLASS_STK);
+            // since we've coalesced, this might be hit multiple times
+            int spill_i = spill_map_get(&spill_map, dst_vreg);
+            if (spill_i >= 0) {
+                TB_OPTDEBUG(REGALLOC2)(printf("  Spill%d: in register! (we're now %%%u)\n", spill_i, n->gvn));
 
-                if (defs[i*num_spills + k] != NULL && !is_spilled[i*num_spills + k] && briggs_is_hrp(ctx, ra, def_mask, i, j)) {
-                    TB_Node* def = defs[i*num_spills + k];
+                // inherit the vreg from the guy right above you... unless
+                // he's a spill
+                TB_Node* old = defs[i*num_spills + spill_i];
+                if (!is_spilled[i*num_spills + spill_i] && old != NULL) {
+                    int old_vreg = ctx->vreg_map[old->gvn];
 
-                    TB_Node* v = tb_alloc_node(f, TB_MACH_COPY, def->dt, 2, sizeof(TB_NodeMachCopy));
-                    set_input(f, v, def, 1);
-                    TB_NODE_SET_EXTRA(v, TB_NodeMachCopy, .def = spill_rm, .use = def_mask);
+                    // intersect both lifetimes, they should never produce an empty set because
+                    // we've gotten rid of hard conflicts by this point.
+                    ctx->vregs[old_vreg].mask = tb__reg_mask_meet(ctx, ctx->vregs[old_vreg].mask, ctx->constraint(ctx, n, NULL));
 
-                    tb__insert_before(ctx, f, v, n);
-                    j += 1;
-                    defs[i*num_spills + k] = v;
-
-                    TB_OPTDEBUG(REGALLOC2)(printf("  Spill%zu: onto stack now! (we've crossed an HRP region)\n", k));
-                    is_spilled[i*num_spills + k] = true;
+                    aarray_insert(ctx->vreg_map, n->gvn, old_vreg);
+                } else {
+                    // assign new vreg
+                    VReg* new_vreg = tb__set_node_vreg(ctx, n);
+                    new_vreg->mask = ctx->constraint(ctx, n, NULL);
                 }
-            }
-
-            int spill_i = spill_map[dst_vreg];
-            if (spill_i >= 0 && defs[i*num_spills + spill_i] == NULL) {
-                TB_OPTDEBUG(REGALLOC2)(printf("  Spill%d: in register! (just defined)\n", spill_i));
-
-                ctx->vregs[dst_vreg].mask = ctx->constraint(ctx, n, NULL);
+                nl_table_put(&spill_map, (void*) (uintptr_t) ctx->vreg_map[n->gvn], (void*) (uintptr_t) (spill_i + 1));
 
                 defs[i*num_spills + spill_i] = n;
                 is_spilled[i*num_spills + spill_i] = false;
             }
         }
     }
+    nl_table_free(spill_map);
 }
 
 void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
@@ -1200,7 +1272,7 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
     // compact path
     bool changes = false;
     FOR_N(i, 1, ra->ifg_len) {
-        if (uf_find(uf, i) != i) {
+        if (uf_find(uf, i) != i || ctx->vregs[i].mask == NULL) {
             changes = true;
         }
     }
@@ -1213,7 +1285,7 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
     int new_vreg_count = 1;
     FOR_N(i, 1, ra->ifg_len) {
         int p = uf[i];
-        if (p == i) {
+        if (p == i && ctx->vregs[p].mask != NULL) {
             TB_ASSERT(new_vreg_count <= p);
             if (new_vreg_count != p) {
                 // printf("MOVE V%d <- V%d\n", new_vreg_count, p);
@@ -1234,8 +1306,7 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
     }
 
     aarray_set_length(ctx->vregs, new_vreg_count);
-    log_debug("%s: briggs: aggro coalescing %zu -> %d", ctx->f->super.name, ra->ifg_len, new_vreg_count);
-
+    log_debug("%s: briggs: coalescing %zu -> %d", ctx->f->super.name, ra->ifg_len, new_vreg_count);
     return true;
 }
 
