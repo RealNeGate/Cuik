@@ -52,7 +52,7 @@ static void* aarray__reserve2(void* ptr, size_t type_size, size_t min_size) {
     // zero out the space up to the min_size
     if (min_size > header->length) {
         memset(&header->data[header->length * type_size], 0, (min_size - header->length) * type_size);
-        header->length = min_size + 1;
+        header->length = min_size;
     }
 
     return ptr;
@@ -63,7 +63,7 @@ static void* aarray__reserve2(void* ptr, size_t type_size, size_t min_size) {
 #define aarray_length(arr)           ((((AArray*) (arr)) - 1)->length)
 #define aarray_set_length(arr, len)  ((((AArray*) (arr)) - 1)->length = (len))
 #define aarray_clear(arr)            ((((AArray*) (arr)) - 1)->length = 0)
-#define aarray_insert(arr, i, ...)   ((arr) = aarray__reserve2(arr, sizeof(*(arr)), (i)), (arr)[i] = __VA_ARGS__)
+#define aarray_insert(arr, i, ...)   ((arr) = aarray__reserve2(arr, sizeof(*(arr)), (i)+1), (arr)[i] = __VA_ARGS__)
 #define aarray_push(arr, ...)        ((arr) = aarray__reserve(arr, sizeof(*(arr)), aarray_length(arr)), (arr)[aarray_length(arr)++] = __VA_ARGS__)
 #define aarray_pop(arr)              ((arr)[(((AArray*)(arr)) - 1)->length -= 1])
 #define aarray_top(arr)              ((arr)[(((AArray*)(arr)) - 1)->length - 1])

@@ -811,6 +811,8 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
     }
 
     if (reg_assign(ctx, vreg, ra->mask, num_regs)) {
+        TB_OPTDEBUG(REGALLOC)(printf("#   assigned to "), print_reg_name(vreg->class, vreg->assigned), printf("\n"));
+
         mark_active(ctx, ra, vreg_id);
         return true;
     } else {
@@ -832,6 +834,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
             return true;
         }
 
+        TB_OPTDEBUG(REGALLOC)(printf("#   assigned UNCOLORED\n"));
         return false;
     }
 }
@@ -950,11 +953,11 @@ static void mark_dirty_bb(Rogers* restrict ra, int bb, int i) {
     }
 }
 
-static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_vreg, RegMask* useful_mask) {
-    int best_spill = choose_decent_spill(ctx, ra, attempted_vreg, useful_mask);
+static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vreg, RegMask* useful_mask) {
+    int best_spill = choose_decent_spill(ctx, ra, attempted_vreg ? &ctx->vregs[attempted_vreg] : NULL, useful_mask);
 
     #if 0
-    printf("  V%zu: Spill V%d %%%u (assigned=", attempted_vreg ? attempted_vreg - ctx->vregs : 0, best_spill, ctx->vregs[best_spill].n->gvn);
+    printf("  V%zu: Spill V%d %%%u (assigned=", attempted_vreg, best_spill, ctx->vregs[best_spill].n->gvn);
     print_reg_name(ctx->vregs[best_spill].class, ctx->vregs[best_spill].assigned);
     printf(")\n");
     #endif
@@ -1109,15 +1112,15 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_
         ra->inactive_cache[hash_index].last_use = 0;
     }
 
-    if (attempted_vreg == &ctx->vregs[best_spill]) {
+    if (attempted_vreg == best_spill) {
         // it's a self spill, if so then we either are dead now (REMAT) or have to
         // retry allocation with a weaker constraint.
         __debugbreak();
     } else {
         // we just steal their assignment now
-        attempted_vreg->class    = old_class;
-        attempted_vreg->assigned = old_assigned;
-        mark_active(ctx, ra, best_spill);
+        ctx->vregs[attempted_vreg].class    = old_class;
+        ctx->vregs[attempted_vreg].assigned = old_assigned;
+        mark_active(ctx, ra, attempted_vreg);
     }
     return old_assigned;
 }
@@ -1193,7 +1196,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             int vreg_id = ctx->vreg_map[j];
             if (vreg_id > 0 && !allocate_reg(ctx, ra, vreg_id)) {
                 RegMask* mask = ctx->vregs[vreg_id].mask;
-                commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask);
+                commit_spill(ctx, ra, vreg_id, mask);
             }
         }
 
@@ -1301,7 +1304,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 int class = ctx->vregs[vreg_id].mask->class;
                 if (!allocate_reg(ctx, ra, vreg_id)) {
                     RegMask* mask = ctx->vregs[vreg_id].mask;
-                    commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask);
+                    commit_spill(ctx, ra, vreg_id, mask);
 
                     // update position in BB
                     if (ra->order[n->gvn] != 0) {
@@ -1321,7 +1324,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                         int class = ctx->vregs[vreg_id].mask->class;
                         if (!allocate_reg(ctx, ra, vreg_id)) {
                             RegMask* mask = ctx->vregs[vreg_id].mask;
-                            commit_spill(ctx, ra, &ctx->vregs[vreg_id], mask);
+                            commit_spill(ctx, ra, vreg_id, mask);
 
                             // update position in BB
                             if (ra->order[n->gvn] != 0) {

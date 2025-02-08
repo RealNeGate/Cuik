@@ -455,10 +455,11 @@ local function dfa_crawl(state, fail, depth)
     end
     visited[state] = true
 
-    print("[", state, "]", dfa[state][0], fail, depth)
-
     -- if there's no "ANY" state, then we add one
-    if (dfa[state][0] == state and depth > 1) or not dfa[state][0] then
+    -- if (dfa[state][0] == state and depth > 1) or not dfa[state][0] then
+    if not dfa[state][0] then
+        print("[", state, "]", dfa[state][0], fail, depth)
+
         -- we need to undo all the pushes we did to get here
         insert_2d(pop, state, 0, depth)
         dfa[state][0] = fail

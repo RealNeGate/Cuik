@@ -127,6 +127,13 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
     int id = bb - cfg->blocks;
     if (id == 0) {
         FOR_USERS(u, f->root_node) {
+            if (USERN(u)->type == TB_MACH_FRAME_PTR) {
+                TB_ASSERT(USERI(u) == 0);
+                worklist_push(ws, USERN(u));
+            }
+        }
+
+        FOR_USERS(u, f->root_node) {
             if (is_proj(USERN(u))) {
                 TB_ASSERT(USERI(u) == 0);
                 // TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, USERN(u)), printf("\n"));

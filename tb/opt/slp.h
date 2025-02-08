@@ -51,10 +51,31 @@ static bool isomorphic(TB_Node* a, TB_Node* b) {
 }
 
 static bool independent(TB_Node* a, TB_Node* b) {
+    // TODO(NeGate): check for real independence
     return a != b;
 }
 
-static bool can_pack(PairSet* pairs, TB_Node* a, TB_Node* b) {
+static bool is_adjacent_ref(MemRef a, MemRef b) {
+    // one of them is touching starting the other's ass
+    return a.base == b.base && a.size == b.size && (a.offset + a.size == b.offset || b.offset + b.size == a.offset);
+}
+
+static MemRef compute_mem_ref(TB_Function* f, TB_Node* mem) {
+    MemRef r = { mem, mem->inputs[2] };
+    if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_ICONST) {
+        r.offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
+        r.base   = r.base->inputs[1];
+    }
+
+    if (mem->type == TB_LOAD) {
+        r.size = tb_data_type_byte_size(f->super.module, mem->dt.type);
+    } else {
+        r.size = tb_data_type_byte_size(f->super.module, mem->inputs[3]->dt.type);
+    }
+    return r;
+}
+
+static bool can_pack(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) {
     if (pairs->l_map[a->gvn] || pairs->r_map[b->gvn]) {
         return false;
     }
@@ -63,7 +84,15 @@ static bool can_pack(PairSet* pairs, TB_Node* a, TB_Node* b) {
         is_valid_vector_component(slp_node_data_type(b)) &&
         isomorphic(a, b) &&
         independent(a, b)) {
-        // TODO(NeGate): check for independence
+        // if it's a memory op then it should share a base, we can't do sparse loads
+        if (a->type == TB_LOAD || a->type == TB_STORE) {
+            MemRef aa = compute_mem_ref(f, a);
+            MemRef bb = compute_mem_ref(f, b);
+            if (!is_adjacent_ref(aa, bb)) {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -74,7 +103,7 @@ static int ref_cmp(const void* a, const void* b) {
     const MemRef* aa = a;
     const MemRef* bb = b;
 
-    if (aa->mem->type != bb->mem->type) { return aa->base->type - bb->base->type; }
+    if (aa->mem->type != bb->mem->type) { return bb->mem->type - aa->mem->type; }
     if (aa->base->gvn != bb->base->gvn) { return aa->base->gvn - bb->base->gvn; }
     if (aa->size != bb->size) { return aa->size - bb->size; }
     if (aa->offset != bb->offset) { return aa->offset - bb->offset; }
@@ -118,18 +147,7 @@ void generate_pack(TB_Function* f, PairSet* pairs) {
         TB_Node* mem = f->worklist->items[i];
 
         if (mem->type == TB_LOAD || mem->type == TB_STORE) {
-            MemRef r = { mem, mem->inputs[2] };
-            if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_ICONST) {
-                r.offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
-                r.base   = r.base->inputs[1];
-            }
-
-            if (mem->type == TB_LOAD) {
-                r.size = tb_data_type_byte_size(f->super.module, mem->dt.type);
-            } else {
-                r.size = tb_data_type_byte_size(f->super.module, mem->inputs[3]->dt.type);
-            }
-            aarray_push(refs, r);
+            aarray_push(refs, compute_mem_ref(f, mem));
         }
 
         if (mem->dt.type == TB_TAG_MEMORY) {
@@ -163,6 +181,8 @@ void generate_pack(TB_Function* f, PairSet* pairs) {
         printf(" (%%%u + %d, size=%d)\n", r.base->gvn, r.offset, r.size);
     }
 
+    DynArray(TB_Node*) combined = dyn_array_create(TB_Node*, 8);
+
     // scan for groups with the same base & element size
     int start = 0;
     while (start < aarray_length(refs)) {
@@ -175,7 +195,7 @@ void generate_pack(TB_Function* f, PairSet* pairs) {
         if (start + 1 != end) { // no group :(
             TB_Node* base = refs[start].base;
             int32_t size  = refs[start].size;
-            TB_DataType elem_dt = refs[start].mem->inputs[3]->dt;
+            TB_DataType elem_dt = refs[start].mem->type == TB_STORE ? refs[start].mem->inputs[3]->dt : refs[start].mem->dt;
 
             // find adjacent stores
             FOR_N(i, start, end) {
@@ -185,7 +205,7 @@ void generate_pack(TB_Function* f, PairSet* pairs) {
 
                     // there's a weird overlapping memory op
                     if (a->offset + size < b->offset) { break; }
-                    if (a->offset + size == b->offset && can_pack(pairs, a->mem, b->mem)) {
+                    if (a->offset + size == b->offset && can_pack(f, pairs, a->mem, b->mem)) {
                         slp_add_pair(f, pairs, a->mem, b->mem);
                     }
                 }
@@ -223,9 +243,11 @@ void generate_pack(TB_Function* f, PairSet* pairs) {
                     FOR_N(j, lhs->type == TB_STORE ? 3 : 1, lhs->input_count) {
                         TB_Node* a = lhs->inputs[j];
                         TB_Node* b = rhs->inputs[j];
-                        if (can_pack(pairs, a, b)) {
+                        if (can_pack(f, pairs, a, b)) {
                             slp_add_pair(f, pairs, a, b);
                             progress = true;
+                        } else {
+                            printf("failed to pack... %%%u -- %%%u\n", a->gvn, b->gvn);
                         }
                     }
                 }
@@ -243,28 +265,36 @@ void generate_pack(TB_Function* f, PairSet* pairs) {
                 if (visited[p->id]) { continue; }
                 visited[p->id] = true;
 
-                printf("  ");
-                tb_print_dumb_node(NULL, p->lhs);
-                printf("\n");
+                dyn_array_clear(combined);
+                dyn_array_put(combined, p->lhs);
+                dyn_array_put(combined, p->rhs);
 
-                printf("  ");
-                tb_print_dumb_node(NULL, p->rhs);
-                printf("\n");
-
-                // if one pack ends where the other starts, we join them
                 Pair* curr = p;
                 while (pairs->l_map[curr->rhs->gvn]) {
                     curr = pairs->l_map[curr->rhs->gvn];
                     visited[curr->id] = true;
-
-                    printf("  ");
-                    tb_print_dumb_node(NULL, curr->rhs);
-                    printf("\n");
+                    dyn_array_put(combined, curr->rhs);
                 }
 
-                printf("\n\n");
+                dyn_array_for(i, combined) {
+                    TB_Node* n = combined[i];
+
+                    printf("  ");
+                    tb_print_dumb_node(NULL, n);
+
+                    if (n->type == TB_LOAD || n->type == TB_STORE) {
+                        MemRef r = { n, n->inputs[2] };
+                        if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_ICONST) {
+                            r.offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
+                            r.base   = r.base->inputs[1];
+                        }
+
+                        printf(" (%%%u + %d, size=%d)", r.base->gvn, r.offset, r.size);
+                    }
+                    printf("\n");
+                }
+                printf("\n");
             }
-            printf("\n");
             #endif
 
             tb_arena_free(&f->tmp_arena, visited, pairs->count * sizeof(bool));

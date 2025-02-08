@@ -106,7 +106,6 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_ROL: return "rol";
         case TB_ROR: return "ror";
         case TB_SAR: return "sar";
-        case TB_ADC: return "adc";
 
         case TB_FADD: return "fadd";
         case TB_FSUB: return "fsub";
@@ -117,8 +116,6 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_FNEG: return "fneg";
 
         case TB_MULPAIR:  return "mulpair";
-        case TB_SDIVMOD:  return "sdivmod";
-        case TB_UDIVMOD:  return "udivmod";
         case TB_LOAD:     return "load";
         case TB_STORE:    return "store";
         case TB_READ:     return "read";

@@ -207,17 +207,11 @@ static int reg_assign(Ctx* ctx, VReg* vreg, uint64_t* mask, size_t num_regs) {
     }
 
     if (reg < 0) {
-        if (def_class != REG_CLASS_STK) {
-            TB_OPTDEBUG(REGALLOC)(printf("#   assigned UNCOLORED\n"));
-        }
-
         // failed to color.. sadge
         vreg->class    = 0;
         vreg->assigned = -1;
         return false;
     } else {
-        TB_OPTDEBUG(REGALLOC)(printf("#   assigned to "), print_reg_name(def_class, reg), printf("\n"));
-
         vreg->class    = def_class;
         vreg->assigned = reg;
         return true;
