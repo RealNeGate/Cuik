@@ -121,6 +121,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_READ:     return "read";
         case TB_WRITE:    return "write";
         case TB_VSHUFFLE: return "vshuffle";
+        case TB_VBROADCAST: return "vbroadcast";
 
         case TB_CALL:     return "call";
         case TB_SYSCALL:  return "syscall";
@@ -161,10 +162,15 @@ static int print_type(TB_DataType dt) {
         case TB_TAG_PTR:     return dt.elem_or_addrspace == 0 ? printf("ptr") : printf("ptr%d", dt.elem_or_addrspace);
         case TB_TAG_F32:     return printf("f32");
         case TB_TAG_F64:     return printf("f64");
-        case TB_TAG_V64:     return printf("v64["),  print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
-        case TB_TAG_V128:    return printf("v128["), print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
-        case TB_TAG_V256:    return printf("v256["), print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
-        case TB_TAG_V512:    return printf("v512["), print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
+        case TB_TAG_V64:
+        case TB_TAG_V128:
+        case TB_TAG_V256:
+        case TB_TAG_V512: {
+            int s = printf("v%d[", 1u << ((dt.type - TB_TAG_V64) + 6));
+            s += print_type((TB_DataType){ .type = dt.elem_or_addrspace });
+            s += printf("]");
+            return s;
+        }
         case TB_TAG_TUPLE:   return printf("tuple");
         case TB_TAG_CONTROL: return printf("ctrl");
         case TB_TAG_MEMORY:  return printf("mem");

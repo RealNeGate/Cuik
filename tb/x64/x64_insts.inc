@@ -134,4 +134,5 @@ X(FP_RSQRT,  "rsqrt",       BINOP_SSE,  0x52)
 X(FP_AND,    "and",         BINOP_SSE,  0x54)
 X(FP_OR,     "or",          BINOP_SSE,  0x56)
 X(FP_XOR,    "xor",         BINOP_SSE,  0x57)
+X(FP_SHUF,   "shuf",        BINOP_SSE,  0xC6)
 #undef X

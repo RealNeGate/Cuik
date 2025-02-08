@@ -115,14 +115,18 @@ NORMIE_OP8(TB_ROR, ror)
 // float ops
 // *******************************
 node (vmov)
+node (vzero)
 
-pat (TB_LOAD dt=$dt $ctrl $mem $addr) where "TB_IS_FLOAT_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $addr mode=MODE_LD)
-pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) where "TB_IS_FLOAT_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $lhs mode=MODE_LD)
-pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt)" => (x86_vmov dt=TB_TYPE_MEMORY $ctrl $mem $addr $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
-pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt)" => (x86_vmov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
+pat (TB_LOAD dt=$dt $ctrl $mem $addr) where "TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $addr mode=MODE_LD)
+pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) where "TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $lhs mode=MODE_LD)
+pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt) || TB_IS_VECTOR_TYPE(n->inputs[3]->dt)" => (x86_vmov dt=TB_TYPE_MEMORY $ctrl $mem $addr $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
+pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt) || TB_IS_VECTOR_TYPE(n->inputs[3]->dt)" => (x86_vmov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
 
 // float constants goop
+pat (TB_F32CONST $root) where "is_float32_zero(n)" => (x86_vzero dt=TB_TYPE_F32 $root)
 pat (TB_F32CONST $root) => (x86_vmov dt=TB_TYPE_F32 ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float32_sym(ctx, n)") mode=MODE_LD)
+
+pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) where "is_float32_zero($x)" => (x86_vzero dt=$dt $root)
 
 #define FLOATIE_OP(op_name, mnemonic) \
 node (mnemonic) \

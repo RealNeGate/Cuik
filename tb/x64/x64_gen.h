@@ -1,61 +1,63 @@
 typedef enum X86NodeType {
-    x86_vmul = TB_MACH_X86 + 20,
-    x86_imul = TB_MACH_X86 + 12,
-    x86_and = TB_MACH_X86 + 9,
-    x86_vdiv = TB_MACH_X86 + 21,
-    x86_movsx32 = TB_MACH_X86 + 26,
+    x86_movsx32 = TB_MACH_X86 + 27,
+    x86_COND = TB_MACH_X86 + 1,
+    x86_add = TB_MACH_X86 + 7,
+    x86_vzero = TB_MACH_X86 + 19,
     x86_shl = TB_MACH_X86 + 13,
     x86_mov = TB_MACH_X86 + 5,
-    x86_movsx8 = TB_MACH_X86 + 22,
+    x86_lea = TB_MACH_X86 + 6,
+    x86_vadd = TB_MACH_X86 + 20,
+    x86_or = TB_MACH_X86 + 8,
     x86_shr = TB_MACH_X86 + 14,
-    x86_movzx8 = TB_MACH_X86 + 23,
-    x86_vmov = TB_MACH_X86 + 18,
-    x86_movsx16 = TB_MACH_X86 + 24,
-    x86_vadd = TB_MACH_X86 + 19,
-    x86_movzx16 = TB_MACH_X86 + 25,
+    x86_vmul = TB_MACH_X86 + 21,
+    x86_sub = TB_MACH_X86 + 10,
+    x86_movzx16 = TB_MACH_X86 + 26,
+    x86_movsx16 = TB_MACH_X86 + 25,
     x86_sar = TB_MACH_X86 + 15,
-    x86_MEMORY = TB_MACH_X86 + 0,
+    x86_jcc = TB_MACH_X86 + 4,
+    x86_and = TB_MACH_X86 + 9,
+    x86_vmov = TB_MACH_X86 + 18,
+    x86_vdiv = TB_MACH_X86 + 22,
+    x86_xor = TB_MACH_X86 + 11,
+    x86_movsx8 = TB_MACH_X86 + 23,
+    x86_cmp = TB_MACH_X86 + 2,
+    x86_movzx8 = TB_MACH_X86 + 24,
+    x86_test = TB_MACH_X86 + 3,
     x86_ror = TB_MACH_X86 + 17,
     x86_rol = TB_MACH_X86 + 16,
-    x86_COND = TB_MACH_X86 + 1,
-    x86_jcc = TB_MACH_X86 + 4,
-    x86_add = TB_MACH_X86 + 7,
-    x86_sub = TB_MACH_X86 + 10,
-    x86_xor = TB_MACH_X86 + 11,
-    x86_lea = TB_MACH_X86 + 6,
-    x86_cmp = TB_MACH_X86 + 2,
-    x86_or = TB_MACH_X86 + 8,
-    x86_test = TB_MACH_X86 + 3,
+    x86_imul = TB_MACH_X86 + 12,
+    x86_MEMORY = TB_MACH_X86 + 0,
 } X86NodeType;
 static const char* node_name(int n_type) {
     switch (n_type) {
-        case x86_vmul: return "x86_vmul";
-        case x86_imul: return "x86_imul";
-        case x86_and: return "x86_and";
-        case x86_vdiv: return "x86_vdiv";
         case x86_movsx32: return "x86_movsx32";
+        case x86_COND: return "x86_COND";
+        case x86_add: return "x86_add";
+        case x86_vzero: return "x86_vzero";
         case x86_shl: return "x86_shl";
         case x86_mov: return "x86_mov";
-        case x86_movsx8: return "x86_movsx8";
-        case x86_shr: return "x86_shr";
-        case x86_movzx8: return "x86_movzx8";
-        case x86_vmov: return "x86_vmov";
-        case x86_movsx16: return "x86_movsx16";
+        case x86_lea: return "x86_lea";
         case x86_vadd: return "x86_vadd";
+        case x86_or: return "x86_or";
+        case x86_shr: return "x86_shr";
+        case x86_vmul: return "x86_vmul";
+        case x86_sub: return "x86_sub";
         case x86_movzx16: return "x86_movzx16";
+        case x86_movsx16: return "x86_movsx16";
         case x86_sar: return "x86_sar";
-        case x86_MEMORY: return "x86_MEMORY";
+        case x86_jcc: return "x86_jcc";
+        case x86_and: return "x86_and";
+        case x86_vmov: return "x86_vmov";
+        case x86_vdiv: return "x86_vdiv";
+        case x86_xor: return "x86_xor";
+        case x86_movsx8: return "x86_movsx8";
+        case x86_cmp: return "x86_cmp";
+        case x86_movzx8: return "x86_movzx8";
+        case x86_test: return "x86_test";
         case x86_ror: return "x86_ror";
         case x86_rol: return "x86_rol";
-        case x86_COND: return "x86_COND";
-        case x86_jcc: return "x86_jcc";
-        case x86_add: return "x86_add";
-        case x86_sub: return "x86_sub";
-        case x86_xor: return "x86_xor";
-        case x86_lea: return "x86_lea";
-        case x86_cmp: return "x86_cmp";
-        case x86_or: return "x86_or";
-        case x86_test: return "x86_test";
+        case x86_imul: return "x86_imul";
+        case x86_MEMORY: return "x86_MEMORY";
         default: return NULL;
     }
 }
@@ -72,8 +74,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $base, k0_i++);
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->flags = OP_INDEXED;
                 k0_extra->scale = 1;
+                k0_extra->flags = OP_INDEXED;
             
                 return k0;
             } while (0);
@@ -129,9 +131,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $base, k0_i++);
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->disp = as_int32($disp);
                 k0_extra->flags = OP_INDEXED;
                 k0_extra->scale = as_int32($scale);
-                k0_extra->disp = as_int32($disp);
             
                 return k0;
             } while (0);
@@ -149,9 +151,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $base, k0_i++);
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->scale = as_int32($scale);
-                k0_extra->flags = OP_INDEXED;
                 k0_extra->disp = as_int32($disp);
+                k0_extra->flags = OP_INDEXED;
+                k0_extra->scale = as_int32($scale);
             
                 return k0;
             } while (0);
@@ -170,8 +172,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $base, k0_i++);
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->scale = as_int32($scale);
                 k0_extra->flags = OP_INDEXED;
+                k0_extra->scale = as_int32($scale);
             
                 return k0;
             } while (0);
@@ -651,7 +653,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 TB_Node* $mem = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $addr = 2 < n->input_count ? n->inputs[2] : NULL;
                 TB_DataType $dt = n->dt;
-                if (!(TB_IS_FLOAT_TYPE($dt))) {
+                if (!(TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt))) {
                     break;
                 }
             
@@ -693,7 +695,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
                 TB_Node* $mem = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_DataType $dt = n->dt;
-                if (!(TB_IS_FLOAT_TYPE($dt))) {
+                if (!(TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt))) {
                     break;
                 }
             
@@ -737,7 +739,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 TB_Node* $mem = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $addr = 2 < n->input_count ? n->inputs[2] : NULL;
                 TB_Node* $val = 3 < n->input_count ? n->inputs[3] : NULL;
-                if (!(TB_IS_FLOAT_TYPE(n->inputs[3]->dt))) {
+                if (!(TB_IS_FLOAT_TYPE(n->inputs[3]->dt) || TB_IS_VECTOR_TYPE(n->inputs[3]->dt))) {
                     break;
                 }
             
@@ -783,7 +785,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
                 TB_Node* $mem = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $val = 3 < n->input_count ? n->inputs[3] : NULL;
-                if (!(TB_IS_FLOAT_TYPE(n->inputs[3]->dt))) {
+                if (!(TB_IS_FLOAT_TYPE(n->inputs[3]->dt) || TB_IS_VECTOR_TYPE(n->inputs[3]->dt))) {
                     break;
                 }
             
@@ -969,23 +971,6 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 203: {
-            do {
-                TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
-                TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
-                TB_DataType $dt = n->dt;
-            
-                size_t k0_i = 0;
-                TB_Node* k0 = tb_alloc_node(f, x86_vadd, $dt, 4, sizeof(X86MemOp));
-                k0_i++;
-                k0_i++;
-                set_input(f, k0, $rhs, k0_i++);
-                set_input(f, k0, $lhs, k0_i++);
-                X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-            
-                return k0;
-            } while (0);
-        } return NULL;
         case 155: {
             do {
                 TB_Node* $rhs = n->inputs[2];
@@ -1017,6 +1002,24 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $rhs, k0_i++);
                 set_input(f, k0, $lhs, k0_i++);
+                X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+            
+                return k0;
+            } while (0);
+        } return NULL;
+        case 219: {
+            do {
+                TB_Node* $src = 1 < n->input_count ? n->inputs[1] : NULL;
+                TB_DataType $dt = n->dt;
+                if (!($dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32)) {
+                    break;
+                }
+            
+                size_t k0_i = 0;
+                TB_Node* k0 = tb_alloc_node(f, x86_mov, TB_TYPE_I64, 3, sizeof(X86MemOp));
+                k0_i++;
+                k0_i++;
+                set_input(f, k0, $src, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
             
                 return k0;
@@ -1100,6 +1103,19 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
         case 199: {
             do {
                 TB_Node* $root = 0 < n->input_count ? n->inputs[0] : NULL;
+                if (!(is_float32_zero(n))) {
+                    break;
+                }
+            
+                size_t k0_i = 0;
+                TB_Node* k0 = tb_alloc_node(f, x86_vzero, TB_TYPE_F32, 1, sizeof(X86MemOp));
+                set_input(f, k0, $root, k0_i++);
+                X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+            
+                return k0;
+            } while (0);
+            do {
+                TB_Node* $root = 0 < n->input_count ? n->inputs[0] : NULL;
             
                 size_t k0_i = 0;
                 TB_Node* k0 = tb_alloc_node(f, TB_MACH_SYMBOL, TB_TYPE_VOID, 1, sizeof(TB_NodeMachSymbol));
@@ -1116,6 +1132,23 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k1_extra->mode = MODE_LD;
             
                 return k1;
+            } while (0);
+        } return NULL;
+        case 212: {
+            do {
+                TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
+                TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
+                TB_DataType $dt = n->dt;
+            
+                size_t k0_i = 0;
+                TB_Node* k0 = tb_alloc_node(f, x86_vmul, $dt, 4, sizeof(X86MemOp));
+                k0_i++;
+                k0_i++;
+                set_input(f, k0, $rhs, k0_i++);
+                set_input(f, k0, $lhs, k0_i++);
+                X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+            
+                return k0;
             } while (0);
         } return NULL;
         case 183: {
@@ -1193,19 +1226,18 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 214: {
+        case 216: {
             do {
-                TB_Node* $src = 1 < n->input_count ? n->inputs[1] : NULL;
+                TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
+                TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
                 TB_DataType $dt = n->dt;
-                if (!($dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32)) {
-                    break;
-                }
             
                 size_t k0_i = 0;
-                TB_Node* k0 = tb_alloc_node(f, x86_mov, TB_TYPE_I64, 3, sizeof(X86MemOp));
+                TB_Node* k0 = tb_alloc_node(f, x86_vdiv, $dt, 4, sizeof(X86MemOp));
                 k0_i++;
                 k0_i++;
-                set_input(f, k0, $src, k0_i++);
+                set_input(f, k0, $rhs, k0_i++);
+                set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
             
                 return k0;
@@ -1267,14 +1299,14 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 211: {
+        case 208: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
                 TB_DataType $dt = n->dt;
             
                 size_t k0_i = 0;
-                TB_Node* k0 = tb_alloc_node(f, x86_vdiv, $dt, 4, sizeof(X86MemOp));
+                TB_Node* k0 = tb_alloc_node(f, x86_vadd, $dt, 4, sizeof(X86MemOp));
                 k0_i++;
                 k0_i++;
                 set_input(f, k0, $rhs, k0_i++);
@@ -1284,37 +1316,18 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 185: {
+        case 204: {
             do {
-                TB_Node* $rhs = n->inputs[2];
-                TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
+                TB_Node* $x = n->inputs[1];
+                TB_Node* $root = 0 < n->inputs[1]->input_count ? n->inputs[1]->inputs[0] : NULL;
                 TB_DataType $dt = n->dt;
-                if (!(fits_into_uint8($dt, $rhs))) {
+                if (!(is_float32_zero($x))) {
                     break;
                 }
             
                 size_t k0_i = 0;
-                TB_Node* k0 = tb_alloc_node(f, x86_sar, $dt, 3, sizeof(X86MemOp));
-                k0_i++;
-                k0_i++;
-                set_input(f, k0, $lhs, k0_i++);
-                X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->flags = OP_IMMEDIATE;
-                k0_extra->imm = as_int32($rhs);
-            
-                return k0;
-            } while (0);
-            do {
-                TB_Node* $rhs = n->inputs[2];
-                TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
-                TB_DataType $dt = n->dt;
-            
-                size_t k0_i = 0;
-                TB_Node* k0 = tb_alloc_node(f, x86_sar, $dt, 4, sizeof(X86MemOp));
-                k0_i++;
-                k0_i++;
-                set_input(f, k0, $rhs, k0_i++);
-                set_input(f, k0, $lhs, k0_i++);
+                TB_Node* k0 = tb_alloc_node(f, x86_vzero, $dt, 1, sizeof(X86MemOp));
+                set_input(f, k0, $root, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
             
                 return k0;
@@ -1390,14 +1403,33 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 207: {
+        case 185: {
             do {
+                TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
-                TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
+                TB_DataType $dt = n->dt;
+                if (!(fits_into_uint8($dt, $rhs))) {
+                    break;
+                }
+            
+                size_t k0_i = 0;
+                TB_Node* k0 = tb_alloc_node(f, x86_sar, $dt, 3, sizeof(X86MemOp));
+                k0_i++;
+                k0_i++;
+                set_input(f, k0, $lhs, k0_i++);
+                X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
+            
+                return k0;
+            } while (0);
+            do {
+                TB_Node* $rhs = n->inputs[2];
+                TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_DataType $dt = n->dt;
             
                 size_t k0_i = 0;
-                TB_Node* k0 = tb_alloc_node(f, x86_vmul, $dt, 4, sizeof(X86MemOp));
+                TB_Node* k0 = tb_alloc_node(f, x86_sar, $dt, 4, sizeof(X86MemOp));
                 k0_i++;
                 k0_i++;
                 set_input(f, k0, $rhs, k0_i++);
@@ -1613,48 +1645,49 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
 }
 
 static bool x86_is_operand[512] = {
-    [TB_PTR_OFFSET] = true,
+    [TB_CMP_ULE] = true,
+    [TB_CMP_ULT] = true,
+    [TB_CMP_EQ] = true,
     [TB_CMP_NE] = true,
     [TB_SYMBOL] = true,
-    [TB_CMP_ULT] = true,
+    [TB_PTR_OFFSET] = true,
     [TB_CMP_SLE] = true,
     [TB_CMP_SLT] = true,
-    [TB_CMP_EQ] = true,
-    [TB_CMP_ULE] = true,
 };
 #define R_PUSH(next)        ((1u  << 16u) | (next))
 #define R_POP(n, next)      (((n) << 16u) | (next))
 static void global_init(void) {
     static const uint32_t edges[] = {
-        (0)<<16 | (TB_OR+1), R_PUSH(108),
-        (0)<<16 | (TB_CMP_SLE+1), R_PUSH(35),
-        (0)<<16 | (TB_FMUL+1), R_PUSH(204),
-        (0)<<16 | (TB_CMP_ULE+1), R_PUSH(47),
-        (0)<<16 | (TB_AND+1), R_PUSH(120),
-        (0)<<16 | (TB_SYMBOL+1), R_PUSH(28),
-        (0)<<16 | (TB_AFFINE_LATCH+1), R_PUSH(76),
-        (0)<<16 | (TB_SHL+1), R_PUSH(168),
-        (0)<<16 | (TB_FDIV+1), R_PUSH(208),
-        (0)<<16 | (TB_SUB+1), R_PUSH(132),
-        (0)<<16 | (TB_CMP_EQ+1), R_PUSH(59),
-        (0)<<16 | (x86_MEMORY+1), R_PUSH(81),
-        (0)<<16 | (TB_SHR+1), R_PUSH(174),
-        (0)<<16 | (TB_FADD+1), R_PUSH(200),
-        (0)<<16 | (TB_CMP_NE+1), R_PUSH(65),
-        (0)<<16 | (TB_F32CONST+1), R_PUSH(198),
-        (0)<<16 | (TB_STORE+1), R_PUSH(88),
-        (0)<<16 | (TB_ROL+1), R_PUSH(186),
-        (0)<<16 | (TB_SAR+1), R_PUSH(180),
-        (0)<<16 | (TB_ADD+1), R_PUSH(96),
-        (0)<<16 | (TB_ZERO_EXT+1), R_PUSH(212),
         (0)<<16 | (TB_MUL+1), R_PUSH(156),
-        (0)<<16 | (TB_XOR+1), R_PUSH(144),
-        (0)<<16 | (TB_LOAD+1), R_PUSH(82),
+        (0)<<16 | (TB_VBROADCAST+1), R_PUSH(200),
+        (0)<<16 | (TB_CMP_EQ+1), R_PUSH(59),
+        (0)<<16 | (TB_AFFINE_LATCH+1), R_PUSH(76),
+        (0)<<16 | (TB_ZERO_EXT+1), R_PUSH(217),
+        (0)<<16 | (TB_FDIV+1), R_PUSH(213),
+        (0)<<16 | (TB_CMP_NE+1), R_PUSH(65),
+        (0)<<16 | (x86_MEMORY+1), R_PUSH(81),
+        (0)<<16 | (TB_FMUL+1), R_PUSH(209),
+        (0)<<16 | (TB_ADD+1), R_PUSH(96),
+        (0)<<16 | (TB_FADD+1), R_PUSH(205),
+        (0)<<16 | (TB_OR+1), R_PUSH(108),
+        (0)<<16 | (TB_SHR+1), R_PUSH(174),
+        (0)<<16 | (TB_F32CONST+1), R_PUSH(198),
         (0)<<16 | (TB_PTR_OFFSET+1), R_PUSH(1),
-        (0)<<16 | (TB_CMP_ULT+1), R_PUSH(53),
-        (0)<<16 | (TB_BRANCH+1), R_PUSH(71),
+        (0)<<16 | (TB_SUB+1), R_PUSH(132),
+        (0)<<16 | (TB_SHL+1), R_PUSH(168),
+        (0)<<16 | (TB_STORE+1), R_PUSH(88),
+        (0)<<16 | (TB_SAR+1), R_PUSH(180),
+        (0)<<16 | (TB_LOAD+1), R_PUSH(82),
+        (0)<<16 | (TB_AND+1), R_PUSH(120),
         (0)<<16 | (TB_CMP_SLT+1), R_PUSH(41),
+        (0)<<16 | (TB_BRANCH+1), R_PUSH(71),
+        (0)<<16 | (TB_XOR+1), R_PUSH(144),
+        (0)<<16 | (TB_ROL+1), R_PUSH(186),
+        (0)<<16 | (TB_CMP_ULT+1), R_PUSH(53),
+        (0)<<16 | (TB_CMP_ULE+1), R_PUSH(47),
+        (0)<<16 | (TB_SYMBOL+1), R_PUSH(28),
         (0)<<16 | (TB_ROR+1), R_PUSH(192),
+        (0)<<16 | (TB_CMP_SLE+1), R_PUSH(35),
         (1)<<16 | (TB_NULL+1), 2,
         (2)<<16 | (0), 3,
         (2)<<16 | (TB_SYMBOL+1), R_PUSH(30),
@@ -1670,8 +1703,8 @@ static void global_init(void) {
         (7)<<16 | (0), R_POP(2, 4),
         (8)<<16 | (0), 9,
         (8)<<16 | (TB_SHL+1), R_PUSH(13),
-        (9)<<16 | (TB_ICONST+1), R_PUSH(10),
         (9)<<16 | (0), R_POP(2, 4),
+        (9)<<16 | (TB_ICONST+1), R_PUSH(10),
         (10)<<16 | (0), 10,
         (10)<<16 | (TB_NULL+1), R_POP(2, 11),
         (11)<<16 | (TB_NULL+1), R_POP(2, 12),
@@ -1680,14 +1713,14 @@ static void global_init(void) {
         (13)<<16 | (TB_NULL+1), 14,
         (13)<<16 | (0), R_POP(3, 4),
         (14)<<16 | (0), 15,
-        (15)<<16 | (TB_ICONST+1), R_PUSH(16),
         (15)<<16 | (0), R_POP(3, 4),
+        (15)<<16 | (TB_ICONST+1), R_PUSH(16),
         (16)<<16 | (0), 16,
         (16)<<16 | (TB_NULL+1), R_POP(2, 17),
         (17)<<16 | (TB_NULL+1), R_POP(2, 18),
         (17)<<16 | (0), R_POP(3, 4),
-        (18)<<16 | (TB_ICONST+1), R_PUSH(19),
         (18)<<16 | (0), R_POP(2, 4),
+        (18)<<16 | (TB_ICONST+1), R_PUSH(19),
         (19)<<16 | (0), 19,
         (19)<<16 | (TB_NULL+1), R_POP(2, 20),
         (20)<<16 | (TB_NULL+1), R_POP(2, 21),
@@ -1696,8 +1729,8 @@ static void global_init(void) {
         (22)<<16 | (TB_NULL+1), 23,
         (22)<<16 | (0), R_POP(2, 4),
         (23)<<16 | (0), 24,
-        (24)<<16 | (TB_ICONST+1), R_PUSH(25),
         (24)<<16 | (0), R_POP(2, 4),
+        (24)<<16 | (TB_ICONST+1), R_PUSH(25),
         (25)<<16 | (0), 25,
         (25)<<16 | (TB_NULL+1), R_POP(2, 26),
         (26)<<16 | (TB_NULL+1), R_POP(2, 27),
@@ -1793,13 +1826,13 @@ static void global_init(void) {
         (96)<<16 | (TB_NULL+1), 97,
         (97)<<16 | (0), 98,
         (98)<<16 | (0), 99,
-        (98)<<16 | (TB_LOAD+1), R_PUSH(100),
         (98)<<16 | (TB_ICONST+1), R_PUSH(106),
+        (98)<<16 | (TB_LOAD+1), R_PUSH(100),
         (99)<<16 | (TB_NULL+1), R_POP(2, 99),
         (100)<<16 | (0), 101,
         (101)<<16 | (0), 102,
-        (102)<<16 | (x86_MEMORY+1), R_PUSH(103),
         (102)<<16 | (0), R_POP(2, 99),
+        (102)<<16 | (x86_MEMORY+1), R_PUSH(103),
         (103)<<16 | (0), 103,
         (103)<<16 | (TB_NULL+1), R_POP(2, 104),
         (104)<<16 | (TB_NULL+1), R_POP(2, 105),
@@ -1811,13 +1844,13 @@ static void global_init(void) {
         (108)<<16 | (TB_NULL+1), 109,
         (109)<<16 | (0), 110,
         (110)<<16 | (0), 111,
-        (110)<<16 | (TB_LOAD+1), R_PUSH(112),
         (110)<<16 | (TB_ICONST+1), R_PUSH(118),
+        (110)<<16 | (TB_LOAD+1), R_PUSH(112),
         (111)<<16 | (TB_NULL+1), R_POP(2, 111),
         (112)<<16 | (0), 113,
         (113)<<16 | (0), 114,
-        (114)<<16 | (x86_MEMORY+1), R_PUSH(115),
         (114)<<16 | (0), R_POP(2, 111),
+        (114)<<16 | (x86_MEMORY+1), R_PUSH(115),
         (115)<<16 | (0), 115,
         (115)<<16 | (TB_NULL+1), R_POP(2, 116),
         (116)<<16 | (TB_NULL+1), R_POP(2, 117),
@@ -1829,13 +1862,13 @@ static void global_init(void) {
         (120)<<16 | (TB_NULL+1), 121,
         (121)<<16 | (0), 122,
         (122)<<16 | (0), 123,
-        (122)<<16 | (TB_LOAD+1), R_PUSH(124),
         (122)<<16 | (TB_ICONST+1), R_PUSH(130),
+        (122)<<16 | (TB_LOAD+1), R_PUSH(124),
         (123)<<16 | (TB_NULL+1), R_POP(2, 123),
         (124)<<16 | (0), 125,
         (125)<<16 | (0), 126,
-        (126)<<16 | (x86_MEMORY+1), R_PUSH(127),
         (126)<<16 | (0), R_POP(2, 123),
+        (126)<<16 | (x86_MEMORY+1), R_PUSH(127),
         (127)<<16 | (0), 127,
         (127)<<16 | (TB_NULL+1), R_POP(2, 128),
         (128)<<16 | (TB_NULL+1), R_POP(2, 129),
@@ -1847,13 +1880,13 @@ static void global_init(void) {
         (132)<<16 | (TB_NULL+1), 133,
         (133)<<16 | (0), 134,
         (134)<<16 | (0), 135,
-        (134)<<16 | (TB_LOAD+1), R_PUSH(136),
         (134)<<16 | (TB_ICONST+1), R_PUSH(142),
+        (134)<<16 | (TB_LOAD+1), R_PUSH(136),
         (135)<<16 | (TB_NULL+1), R_POP(2, 135),
         (136)<<16 | (0), 137,
         (137)<<16 | (0), 138,
-        (138)<<16 | (x86_MEMORY+1), R_PUSH(139),
         (138)<<16 | (0), R_POP(2, 135),
+        (138)<<16 | (x86_MEMORY+1), R_PUSH(139),
         (139)<<16 | (0), 139,
         (139)<<16 | (TB_NULL+1), R_POP(2, 140),
         (140)<<16 | (TB_NULL+1), R_POP(2, 141),
@@ -1865,13 +1898,13 @@ static void global_init(void) {
         (144)<<16 | (TB_NULL+1), 145,
         (145)<<16 | (0), 146,
         (146)<<16 | (0), 147,
-        (146)<<16 | (TB_LOAD+1), R_PUSH(148),
         (146)<<16 | (TB_ICONST+1), R_PUSH(154),
+        (146)<<16 | (TB_LOAD+1), R_PUSH(148),
         (147)<<16 | (TB_NULL+1), R_POP(2, 147),
         (148)<<16 | (0), 149,
         (149)<<16 | (0), 150,
-        (150)<<16 | (x86_MEMORY+1), R_PUSH(151),
         (150)<<16 | (0), R_POP(2, 147),
+        (150)<<16 | (x86_MEMORY+1), R_PUSH(151),
         (151)<<16 | (0), 151,
         (151)<<16 | (TB_NULL+1), R_POP(2, 152),
         (152)<<16 | (TB_NULL+1), R_POP(2, 153),
@@ -1883,13 +1916,13 @@ static void global_init(void) {
         (156)<<16 | (TB_NULL+1), 157,
         (157)<<16 | (0), 158,
         (158)<<16 | (0), 159,
-        (158)<<16 | (TB_LOAD+1), R_PUSH(160),
         (158)<<16 | (TB_ICONST+1), R_PUSH(166),
+        (158)<<16 | (TB_LOAD+1), R_PUSH(160),
         (159)<<16 | (TB_NULL+1), R_POP(2, 159),
         (160)<<16 | (0), 161,
         (161)<<16 | (0), 162,
-        (162)<<16 | (x86_MEMORY+1), R_PUSH(163),
         (162)<<16 | (0), R_POP(2, 159),
+        (162)<<16 | (x86_MEMORY+1), R_PUSH(163),
         (163)<<16 | (0), 163,
         (163)<<16 | (TB_NULL+1), R_POP(2, 164),
         (164)<<16 | (TB_NULL+1), R_POP(2, 165),
@@ -1941,22 +1974,27 @@ static void global_init(void) {
         (198)<<16 | (0), 199,
         (199)<<16 | (TB_NULL+1), R_POP(2, 199),
         (200)<<16 | (TB_NULL+1), 201,
-        (201)<<16 | (0), 202,
+        (201)<<16 | (TB_F32CONST+1), R_PUSH(202),
         (202)<<16 | (0), 203,
-        (203)<<16 | (TB_NULL+1), R_POP(2, 203),
-        (204)<<16 | (TB_NULL+1), 205,
-        (205)<<16 | (0), 206,
+        (203)<<16 | (TB_NULL+1), R_POP(2, 204),
+        (204)<<16 | (TB_NULL+1), R_POP(2, 204),
+        (205)<<16 | (TB_NULL+1), 206,
         (206)<<16 | (0), 207,
-        (207)<<16 | (TB_NULL+1), R_POP(2, 207),
-        (208)<<16 | (TB_NULL+1), 209,
-        (209)<<16 | (0), 210,
+        (207)<<16 | (0), 208,
+        (208)<<16 | (TB_NULL+1), R_POP(2, 208),
+        (209)<<16 | (TB_NULL+1), 210,
         (210)<<16 | (0), 211,
-        (211)<<16 | (TB_NULL+1), R_POP(2, 211),
-        (212)<<16 | (TB_NULL+1), 213,
-        (213)<<16 | (0), 214,
-        (214)<<16 | (TB_NULL+1), R_POP(2, 214),
+        (211)<<16 | (0), 212,
+        (212)<<16 | (TB_NULL+1), R_POP(2, 212),
+        (213)<<16 | (TB_NULL+1), 214,
+        (214)<<16 | (0), 215,
+        (215)<<16 | (0), 216,
+        (216)<<16 | (TB_NULL+1), R_POP(2, 216),
+        (217)<<16 | (TB_NULL+1), 218,
+        (218)<<16 | (0), 219,
+        (219)<<16 | (TB_NULL+1), R_POP(2, 219),
     };
-    // transitions: 329
+    // transitions: 335
     size_t count = sizeof(edges) / (2*sizeof(uint32_t));
     node_grammar_alloc(count);
     FOR_N(i, 0, count) {

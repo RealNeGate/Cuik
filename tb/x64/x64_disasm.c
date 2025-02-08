@@ -197,6 +197,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         _0F(0x1F)        = OP_MODRM,
         // SSE: ucomi
         _0F(0x2E)        = OP_MODRM | OP_SSE,
+        // shufps
+        _0F(0xC6)        = OP_MODRM | OP_SSE | OP_IMM8,
         // imul reg, r/m
         _0F(0xAF)        = OP_MODRM,
         // bswap r+
@@ -387,6 +389,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case _0Fx(0x18, 3): return "prefetch2";
 
         case _0F(0xC8) ... _0F(0xCF): return "bswap";
+        case _0F(0xC6): return "shuf";
 
         case 0x00 ... 0x05: NORMIE_BINOP(0): return "add";
         case 0x08 ... 0x0D: NORMIE_BINOP(1): return "or";

@@ -88,6 +88,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_UMOD]           = { ideal_int_mod,     identity_int_binop, NULL             },
     [TB_SMOD]           = { ideal_int_mod,     identity_int_binop, NULL             },
     // floats
+    [TB_FNEG]           = { NULL,              NULL,               value_fpneg      },
     [TB_FADD]           = { ideal_farith,      identity_flt_binop, NULL             },
     // comparisons
     [TB_CMP_EQ]         = { ideal_cmp,         identity_int_binop, value_cmp        },

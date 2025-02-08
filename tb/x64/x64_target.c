@@ -89,6 +89,11 @@ static int32_t as_int32(TB_Node* n) {
     return i->value;
 }
 
+static bool is_float32_zero(TB_Node* n) {
+    uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
+    return imm == 0;
+}
+
 static TB_Symbol* gimme_float32_sym(Ctx* ctx, TB_Node* n) {
     uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
     TB_Global* g = tb__small_data_intern(ctx->module, sizeof(float), &imm);
@@ -257,6 +262,9 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             print_pretty_edge(ctx, n->inputs[i]);
         }
         printf(")");
+    } else if (n->type == x86_vzero) {
+        printf("  vzero ");
+        print_pretty_edge(ctx, n);
     } else if (n->type >= TB_MACH_X86) {
         const char* name = tb_node_get_name(n->type);
         name += 4;
@@ -1504,6 +1512,14 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case TB_ICONST:
         return ctx->normie_mask[REG_CLASS_GPR];
 
+        case x86_vzero:
+        return ctx->normie_mask[REG_CLASS_XMM];
+
+        case TB_VSHUFFLE:
+        case TB_VBROADCAST:
+        if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_XMM]; }
+        return ctx->normie_mask[REG_CLASS_XMM];
+
         case TB_PROJ: {
             if (n->dt.type == TB_TAG_MEMORY || n->dt.type == TB_TAG_CONTROL) {
                 return &TB_REG_EMPTY;
@@ -1993,12 +2009,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         }
 
         #if 0
-        case x86_vzero: {
-            Val dst = op_at(ctx, n);
-            __(FP_XOR, TB_X86_F32x4, &dst, &dst); // xorps
-            break;
-        }
-
         case TB_FLOAT_EXT: {
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
@@ -2166,6 +2176,42 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
+        case TB_VBROADCAST: {
+            Val dst = op_at(ctx, n);
+            Val src = op_at(ctx, n->inputs[1]);
+            TB_X86_DataType dt = legalize_float(n->dt);
+            TB_ASSERT(dst.type == VAL_XMM);
+            TB_ASSERT(src.type == VAL_XMM || src.type == VAL_MEM || src.type == VAL_GLOBAL);
+
+            __(FP_SHUF, dt, &dst, &src);
+            EMIT1(e, 0);
+            break;
+        }
+
+        case TB_VSHUFFLE: {
+            Val dst = op_at(ctx, n);
+            Val src = op_at(ctx, n->inputs[1]);
+            TB_X86_DataType dt = legalize_float(n->dt);
+            TB_ASSERT(dst.type == VAL_XMM);
+            TB_ASSERT(src.type == VAL_XMM || src.type == VAL_MEM || src.type == VAL_GLOBAL);
+
+            uint8_t imm = 0;
+            TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
+            FOR_N(i, 0, shuf->width) {
+                imm |= (shuf->indices[i] & 3) << (i*2);
+            }
+
+            __(FP_SHUF, dt, &dst, &src);
+            EMIT1(e, imm);
+            break;
+        }
+
+        case x86_vzero: {
+            Val dst = op_at(ctx, n);
+            __(FP_XOR, TB_X86_F32x4, &dst, &dst); // xorps
+            break;
+        }
+
         case x86_add: case x86_or:  case x86_and:
         case x86_sub: case x86_xor: case x86_mov:
         case x86_shl: case x86_shr: case x86_rol:
@@ -2277,68 +2323,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             }
             break;
         }
-
-        #if 0
-        case x86_AAAHHHH: {
-            TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
-
-            TB_Arena* arena = &ctx->f->arena;
-            TB_ArenaSavepoint sp = tb_arena_save(arena);
-            TB_Node** succ = tb_arena_alloc(arena, br->succ_count * sizeof(TB_Node*));
-
-            // fill successors
-            bool has_default = false;
-            FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_BRANCH_PROJ) {
-                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-                    succ[index] = USERN(u);
-                }
-            }
-
-            Val key = op_at(ctx, n->inputs[1]);
-            FOR_N(i, 1, br->succ_count) {
-                uint64_t imm = TB_NODE_GET_EXTRA_T(succ[i], TB_NodeBranchProj)->key;
-                TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ[i]);
-
-                __(CMP, TB_X86_QWORD, &key, Vimm(imm));
-                __(JE, TB_X86_QWORD, Vlbl(succ_bb->fwd));
-            }
-
-            TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ[0]);
-            __(JMP, TB_X86_QWORD, Vlbl(succ_bb->fwd));
-            break;
-        }
-
-        case x86_ucomi:
-        case x86_ucomijcc:
-        case x86_cmp:
-        case x86_test:
-        case x86_cmpjcc:
-        case x86_testjcc: {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            TB_X86_DataType dt = legalize(op->dt);
-
-            int cc = op->cond;
-            int op_type = -1;
-            switch (n->type) {
-                case x86_cmp:        op_type = CMP;    break;
-                case x86_cmpjcc:     op_type = CMP;    break;
-                case x86_test:       op_type = TEST;   break;
-                case x86_testjcc:    op_type = TEST;   break;
-                case x86_ucomi:      op_type = FP_UCOMI; break;
-                case x86_ucomijcc:   op_type = FP_UCOMI; break;
-            }
-
-            Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
-            __(op_type, dt, &rm, &rx);
-            if (n->type >= x86_cmpjcc && n->type <= x86_ucomijcc) {
-            } else {
-                Val dst = op_at(ctx, n);
-                __(SETO + cc, TB_X86_BYTE, &dst);
-            }
-            break;
-        }
-        #endif
 
         case TB_MACH_JUMP: {
             TB_Node* succ_n = cfg_next_control(n);
@@ -2830,6 +2814,8 @@ static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos,
 
             if (inst.opcode == 0xE8 || inst.opcode == 0xE9 || inst.opcode == 0xEB || (inst.opcode >= 0x180 && inst.opcode <= 0x18F)) {
                 our_print_rip32(e, d, &inst, pos, inst.length - 4, inst.imm);
+            } else if (inst.opcode == 0x1C6) {
+                E("%"PRId64, inst.imm & 255);
             } else {
                 E("%"PRId64, inst.imm);
             }

@@ -20,11 +20,24 @@ static TB_Node* ideal_farith(TB_Function* f, TB_Node* n) {
 
 static TB_Node* identity_flt_binop(TB_Function* f, TB_Node* n) {
     Lattice* b = latuni_get(f, n->inputs[2]);
-    if (b->tag == LATTICE_FLTCON32 && b->_f32 == 0.0f) {
+    Lattice* add_id = lattice_f32_const(f, -0.0f);
+    if (n->type == TB_FADD && lattice_meet(f, b, add_id) == add_id) {
         return n->inputs[1];
     }
 
     return n;
+}
+
+static Lattice* value_fpneg(TB_Function* f, TB_Node* n) {
+    Lattice* a = latuni_get(f, n->inputs[1]);
+    if (a->tag == LATTICE_FLTCON32) {
+        union { float f; uint32_t i; } x;
+        x.f = a->_f32;
+        x.i ^= 0x80000000;
+        return lattice_f32_const(f, x.f);
+    }
+
+    return NULL;
 }
 
 static Lattice* value_fpext(TB_Function* f, TB_Node* n) {

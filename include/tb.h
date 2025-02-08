@@ -170,6 +170,7 @@ static_assert(sizeof(TB_DataType) == 1, "im expecting this to be a byte");
 #define TB_IS_BOOL_TYPE(x)     ((x).type == TB_TAG_BOOL)
 #define TB_IS_INTEGER_TYPE(x)  ((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_I64)
 #define TB_IS_FLOAT_TYPE(x)    ((x).type == TB_TAG_F32 || (x).type == TB_TAG_F64)
+#define TB_IS_VECTOR_TYPE(x)   ((x).type >= TB_TAG_V64 && (x).type <= TB_TAG_V512)
 #define TB_IS_POINTER_TYPE(x)  ((x).type == TB_TAG_PTR)
 #define TB_IS_SCALAR_TYPE(x)   ((x).type <= TB_TAG_F64)
 #define TB_IS_INT_OR_PTR(x)    ((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_PTR)
@@ -416,6 +417,7 @@ typedef enum TB_NodeTypeEnum {
     TB_MULPAIR,
 
     // Vector ops
+    TB_VBROADCAST,
     TB_VSHUFFLE,
 
     // variadic

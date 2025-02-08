@@ -59,10 +59,30 @@ static bool isomorphic(TB_Node* a, TB_Node* b) {
 
 static bool independent(TB_Node* a, TB_Node* b) {
     // TODO(NeGate): check for real independence
+    FOR_N(i, a->type == TB_STORE ? 3 : 1, a->input_count) {
+        if (a->inputs[i] == b) {
+            return false;
+        }
+    }
+
+    FOR_N(i, b->type == TB_STORE ? 3 : 1, b->input_count) {
+        if (b->inputs[i] == a) {
+            return false;
+        }
+    }
+
     return a != b;
 }
 
 static bool is_adjacent_ref(MemRef a, MemRef b) {
+    if (a.mem->type == TB_LOAD) {
+        // load adjacency means they share mem deps
+        if (a.mem->inputs[1] != b.mem->inputs[1]) { return false; }
+    } else {
+        // store adjacency means one will go into the other
+        if (a.mem->inputs[1] != b.mem && a.mem != b.mem->inputs[1]) { return false; }
+    }
+
     // one of them is touching starting the other's ass
     return a.base == b.base && a.size == b.size && (a.offset + a.size == b.offset || b.offset + b.size == a.offset);
 }
@@ -90,7 +110,9 @@ static bool can_pack(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) {
     if (is_valid_vector_component(slp_node_data_type(a)) &&
         is_valid_vector_component(slp_node_data_type(b)) &&
         isomorphic(a, b) &&
-        independent(a, b)) {
+        independent(a, b) &&
+        a->inputs[0] == b->inputs[0])
+    {
         // if it's a memory op then it should share a base, we can't do sparse loads
         if (a->type == TB_LOAD || a->type == TB_STORE) {
             MemRef aa = compute_mem_ref(f, a);
@@ -272,26 +294,43 @@ bool generate_pack(TB_Function* f, PairSet* pairs) {
     return true;
 }
 
+static int find_vector_index(VectorOp* op, TB_Node* src) {
+    FOR_N(i, 0, op->width) {
+        if (op->ops[i] == src) { return i; }
+    }
+
+    tb_panic("bad find_vector_index");
+}
+
 // op->op[...]->inputs[index] =>
 static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, VectorOp* op, int index) {
-    int* indices = tb_arena_alloc(&f->tmp_arena, op->width * sizeof(int));
+
+    TB_Node* leader = op->ops[0]->inputs[index];
+    VectorOp* leader_op = nl_table_get(ops, leader);
+    if (leader_op == NULL) {
+        // might be a broadcasted value?
+        FOR_N(i, 1, op->width) {
+            TB_Node* src = op->ops[i]->inputs[index];
+            if (src != leader) {
+                TB_ASSERT_MSG(0, "shoulda rejected");
+            }
+        }
+
+        TB_Node* n = tb_alloc_node(f, TB_VBROADCAST, v_dt, 2, 0);
+        set_input(f, n, leader, 1);
+        return n;
+    }
 
     // as long as all the ops come from the same leader, it's all good
-    VectorOp* leader = NULL;
-    FOR_N(i, 0, op->width) {
+    int* indices = tb_arena_alloc(&f->tmp_arena, op->width * sizeof(int));
+    indices[0] = find_vector_index(leader_op, leader);
+    FOR_N(i, 1, op->width) {
         TB_Node* src = op->ops[i]->inputs[index];
         VectorOp* src_op = nl_table_get(ops, src);
-        TB_ASSERT(src_op);
-
-        if (leader == NULL) { leader = src_op; }
-        else if (leader != src_op) { TB_ASSERT_MSG(0, "shoulda rejected"); }
-
-        // figure out which index we're getting
-        indices[i] = -1;
-        FOR_N(j, 0, src_op->width) {
-            if (src_op->ops[j] == src) { indices[i] = j; break; }
+        if (src_op != leader_op) {
+            TB_ASSERT_MSG(0, "shoulda rejected");
         }
-        TB_ASSERT(indices[i] >= 0);
+        indices[i] = find_vector_index(src_op, src);
     }
 
     // sometimes we don't need shuffles
@@ -301,11 +340,11 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, Ve
     }
 
     if (ordered) {
-        return leader->vec_op;
+        return leader_op->vec_op;
     }
 
     TB_Node* n = tb_alloc_node(f, TB_VSHUFFLE, v_dt, 2, sizeof(TB_NodeVShuffle) + op->width*sizeof(int));
-    set_input(f, n, leader->vec_op, 1);
+    set_input(f, n, leader_op->vec_op, 1);
 
     TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
     shuf->width = op->width;
