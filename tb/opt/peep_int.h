@@ -10,7 +10,7 @@ static int64_t smul(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a *
 // division handled separately
 static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
-    assert(type == TB_ADD || type == TB_SUB || type == TB_MUL);
+    TB_ASSERT(type == TB_ADD || type == TB_SUB || type == TB_MUL);
 
     TB_Node* a = n->inputs[1];
     TB_Node* b = n->inputs[2];

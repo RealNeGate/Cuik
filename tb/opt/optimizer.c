@@ -1352,9 +1352,12 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         }
 
         // TODO(NeGate): doesn't do anything yet
-        progress |= tb_opt_vectorize(f);
-
-        progress |= major_progress;
+        TB_OPTDEBUG(PASSES)(printf("    * Vectorize\n"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== VECTOR OPTS ===\n"));
+        if (tb_opt_vectorize(f)) {
+            major_progress = true;
+            TB_OPTDEBUG(PASSES)(printf("      * Yay!\n"));
+        }
     } while (major_progress);
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     // if we're doing IPO then it's helpful to keep these
@@ -1364,7 +1367,10 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     // avoids bloating up my arenas with freed nodes
     float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
     if (dead_factor > 0.2f) {
+        size_t old = tb_arena_current_size(&f->arena);
         tb_compact_nodes(f, ws);
+        size_t new = tb_arena_current_size(&f->arena);
+        TB_OPTDEBUG(PASSES)(printf("Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
     }
     tb_arena_destroy(&f->tmp_arena);
 

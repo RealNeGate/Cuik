@@ -42,6 +42,13 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         printf(", use=");
         tb__print_regmask(cpy->use);
         printf(" ");
+    } else if (n->type == TB_VSHUFFLE) {
+        TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
+        FOR_N(i, 0, shuf->width) {
+            if (i) { printf(", "); }
+            printf("%d", shuf->indices[i]);
+        }
+        printf(" ");
     } else if (n->type == TB_MACH_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
         if (sym->name[0]) {

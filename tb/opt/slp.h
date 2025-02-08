@@ -29,6 +29,13 @@ typedef struct {
     int32_t size;
 } MemRef;
 
+typedef struct {
+    TB_Node* vec_op;
+
+    int width;
+    TB_Node* ops[];
+} VectorOp;
+
 // int, float
 static bool is_valid_vector_component(TB_DataType dt) {
     return TB_IS_INTEGER_TYPE(dt) || TB_IS_FLOAT_TYPE(dt);
@@ -129,7 +136,7 @@ static void slp_add_pair(TB_Function* f, PairSet* pairs, TB_Node* lhs, TB_Node* 
     pairs->r_map[rhs->gvn] = p;
 }
 
-void generate_pack(TB_Function* f, PairSet* pairs) {
+bool generate_pack(TB_Function* f, PairSet* pairs) {
     ArenaArray(MemRef) refs = aarray_create(&f->tmp_arena, MemRef, 8);
 
     pairs->l_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
@@ -169,6 +176,7 @@ void generate_pack(TB_Function* f, PairSet* pairs) {
             }
         }
     }
+    worklist_clear(f->worklist);
 
     // sort for faster queries later on
     qsort(refs, aarray_length(refs), sizeof(MemRef), ref_cmp);
@@ -176,12 +184,12 @@ void generate_pack(TB_Function* f, PairSet* pairs) {
     aarray_for(i, refs) {
         MemRef r = refs[i];
 
+        #if TB_OPTDEBUG_SLP
         printf("AAA! ");
         tb_print_dumb_node(NULL, r.mem);
         printf(" (%%%u + %d, size=%d)\n", r.base->gvn, r.offset, r.size);
+        #endif
     }
-
-    DynArray(TB_Node*) combined = dyn_array_create(TB_Node*, 8);
 
     // scan for groups with the same base & element size
     int start = 0;
@@ -247,78 +255,207 @@ void generate_pack(TB_Function* f, PairSet* pairs) {
                             slp_add_pair(f, pairs, a, b);
                             progress = true;
                         } else {
-                            printf("failed to pack... %%%u -- %%%u\n", a->gvn, b->gvn);
+                            // printf("failed to pack... %%%u -- %%%u\n", a->gvn, b->gvn);
                         }
                     }
                 }
             } while (progress);
-
-            bool* visited = tb_arena_alloc(&f->tmp_arena, pairs->count * sizeof(bool));
-            FOR_N(i, 0, pairs->count) {
-                visited[i] = false;
-            }
-
-            // combine packs
-            #if TB_OPTDEBUG_SLP
-            printf("=== COMBINED ===\n");
-            for (Pair* p = pairs->first; p; p = p->next) {
-                if (visited[p->id]) { continue; }
-                visited[p->id] = true;
-
-                dyn_array_clear(combined);
-                dyn_array_put(combined, p->lhs);
-                dyn_array_put(combined, p->rhs);
-
-                Pair* curr = p;
-                while (pairs->l_map[curr->rhs->gvn]) {
-                    curr = pairs->l_map[curr->rhs->gvn];
-                    visited[curr->id] = true;
-                    dyn_array_put(combined, curr->rhs);
-                }
-
-                dyn_array_for(i, combined) {
-                    TB_Node* n = combined[i];
-
-                    printf("  ");
-                    tb_print_dumb_node(NULL, n);
-
-                    if (n->type == TB_LOAD || n->type == TB_STORE) {
-                        MemRef r = { n, n->inputs[2] };
-                        if (r.base->type == TB_PTR_OFFSET && r.base->inputs[2]->type == TB_ICONST) {
-                            r.offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
-                            r.base   = r.base->inputs[1];
-                        }
-
-                        printf(" (%%%u + %d, size=%d)", r.base->gvn, r.offset, r.size);
-                    }
-                    printf("\n");
-                }
-                printf("\n");
-            }
-            #endif
-
-            tb_arena_free(&f->tmp_arena, visited, pairs->count * sizeof(bool));
         }
 
         start = end;
     }
 
-    __debugbreak();
+    if (pairs->count == 0) {
+        return false;
+    }
+
+    return true;
+}
+
+// op->op[...]->inputs[index] =>
+static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, VectorOp* op, int index) {
+    int* indices = tb_arena_alloc(&f->tmp_arena, op->width * sizeof(int));
+
+    // as long as all the ops come from the same leader, it's all good
+    VectorOp* leader = NULL;
+    FOR_N(i, 0, op->width) {
+        TB_Node* src = op->ops[i]->inputs[index];
+        VectorOp* src_op = nl_table_get(ops, src);
+        TB_ASSERT(src_op);
+
+        if (leader == NULL) { leader = src_op; }
+        else if (leader != src_op) { TB_ASSERT_MSG(0, "shoulda rejected"); }
+
+        // figure out which index we're getting
+        indices[i] = -1;
+        FOR_N(j, 0, src_op->width) {
+            if (src_op->ops[j] == src) { indices[i] = j; break; }
+        }
+        TB_ASSERT(indices[i] >= 0);
+    }
+
+    // sometimes we don't need shuffles
+    bool ordered = true;
+    FOR_N(i, 0, op->width) {
+        if (i != indices[i]) { ordered = false; break; }
+    }
+
+    if (ordered) {
+        return leader->vec_op;
+    }
+
+    TB_Node* n = tb_alloc_node(f, TB_VSHUFFLE, v_dt, 2, sizeof(TB_NodeVShuffle) + op->width*sizeof(int));
+    set_input(f, n, leader->vec_op, 1);
+
+    TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
+    shuf->width = op->width;
+    FOR_N(i, 0, op->width) {
+        shuf->indices[i] = indices[i];
+    }
+
+    #if TB_OPTDEBUG_SLP
+    printf("SHUFFLE: ");
+    tb_print_dumb_node(NULL, n);
+    printf("\n");
+    #endif
+
+    return n;
+}
+
+void compile_packs(TB_Function* f, PairSet* pairs) {
+    DynArray(TB_Node*) combined = dyn_array_create(TB_Node*, 8);
+    bool* visited  = tb_arena_alloc(&f->tmp_arena, pairs->count * sizeof(bool));
+    FOR_N(i, 0, pairs->count) {
+        visited[i] = false;
+    }
+
+    // Node -> VectorOp
+    NL_Table ops = nl_table_alloc(64);
+    DynArray(VectorOp*) schedule = dyn_array_create(VectorOp*, 32);
+
+    // combine packs
+    TB_OPTDEBUG(SLP)(printf("=== COMBINED ===\n"));
+    for (Pair* p = pairs->first; p; p = p->next) {
+        if (visited[p->id]) { continue; }
+        visited[p->id] = true;
+
+        dyn_array_clear(combined);
+        dyn_array_put(combined, p->lhs);
+        dyn_array_put(combined, p->rhs);
+
+        Pair* curr = p;
+        while (pairs->l_map[curr->rhs->gvn]) {
+            curr = pairs->l_map[curr->rhs->gvn];
+            visited[curr->id] = true;
+            dyn_array_put(combined, curr->rhs);
+        }
+
+        VectorOp* op = tb_arena_alloc(&f->tmp_arena, sizeof(VectorOp) + dyn_array_length(combined)*sizeof(TB_Node*));
+        op->vec_op = NULL;
+        op->width = dyn_array_length(combined);
+        dyn_array_put(schedule, op);
+
+        dyn_array_for(i, combined) {
+            TB_Node* n = combined[i];
+            op->ops[i] = n;
+            nl_table_put(&ops, n, op);
+
+            TB_OPTDEBUG(SLP)(printf("  "), tb_print_dumb_node(NULL, n));
+
+            if (n->type == TB_LOAD || n->type == TB_STORE) {
+                MemRef r = compute_mem_ref(f, n);
+                TB_OPTDEBUG(SLP)(printf(" (%%%u + %d, size=%d)", r.base->gvn, r.offset, r.size));
+            }
+            TB_OPTDEBUG(SLP)(printf("\n"));
+        }
+        TB_OPTDEBUG(SLP)(printf("\n"));
+    }
+
+    TB_OPTDEBUG(SLP)(printf("=== COMPILED ===\n"));
+    FOR_REV_N(i, 0, dyn_array_length(schedule)) {
+        VectorOp* op = schedule[i];
+        TB_DataType v_dt = TB_TYPE_VOID;
+
+        TB_Node* first = op->ops[0];
+        TB_DataType elem_dt = slp_node_data_type(first);
+        TB_ASSERT(TB_IS_INTEGER_TYPE(elem_dt) || TB_IS_FLOAT_TYPE(elem_dt));
+
+        int elem_bits = tb_data_type_bit_size(f->super.module, elem_dt.type);
+        int vector_bits = elem_bits * op->width;
+        switch (vector_bits) {
+            case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
+            default: tb_todo();
+        }
+
+        // convert these ops into a packed op
+        if (first->type == TB_LOAD) {
+            TB_Node* n = tb_alloc_node(f, TB_LOAD, v_dt, 3, sizeof(TB_NodeMemAccess));
+            set_input(f, n, first->inputs[0], 0);
+            set_input(f, n, first->inputs[1], 1);
+            set_input(f, n, first->inputs[2], 2);
+            op->vec_op = n;
+        } else if (first->type == TB_STORE) {
+            TB_Node* src = gimme_vector(f, &ops, v_dt, op, 3);
+
+            TB_Node* n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
+            set_input(f, n, first->inputs[0], 0);
+            set_input(f, n, first->inputs[1], 1);
+            set_input(f, n, first->inputs[2], 2);
+            set_input(f, n, src, 3);
+            op->vec_op = n;
+
+            TB_Node* last = op->ops[op->width - 1];
+            subsume_node2(f, last, n);
+        } else if (first->type == TB_FADD || first->type == TB_FMUL) {
+            TB_Node* lhs = gimme_vector(f, &ops, v_dt, op, 1);
+            TB_Node* rhs = gimme_vector(f, &ops, v_dt, op, 2);
+
+            TB_Node* n = tb_alloc_node(f, first->type, v_dt, 3, 0);
+            set_input(f, n, lhs, 1);
+            set_input(f, n, rhs, 2);
+            op->vec_op = n;
+        } else {
+            __debugbreak();
+        }
+
+        #if TB_OPTDEBUG_SLP
+        FOR_N(j, 0, op->width) {
+            tb_print_dumb_node(NULL, op->ops[j]);
+            printf("\n");
+        }
+
+        printf("=> ");
+        tb_print_dumb_node(NULL, op->vec_op);
+        printf("\n\n");
+        #endif
+    }
+
+    // vaporization time, replace any effectful nodes tho
+    FOR_REV_N(i, 0, dyn_array_length(schedule)) {
+        VectorOp* op = schedule[i];
+
+        // most ops can just have all their nodes killed
+        FOR_N(j, 0, op->width) {
+            tb_kill_node(f, op->ops[j]);
+        }
+    }
+
+    tb_arena_free(&f->tmp_arena, visited, pairs->count * sizeof(bool));
 }
 
 bool tb_opt_vectorize(TB_Function* f) {
-    #if 0
-    tb_print_dumb(f);
-
+    #if 1
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
 
     PairSet pairs = { 0 };
-    generate_pack(f, &pairs);
-
-    __debugbreak();
+    bool can_vectorize = generate_pack(f, &pairs);
+    if (can_vectorize) {
+        compile_packs(f, &pairs);
+    }
 
     tb_arena_clear(&f->tmp_arena);
-    #endif
-
+    return can_vectorize;
+    #else
     return false;
+    #endif
 }

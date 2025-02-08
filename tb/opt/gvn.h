@@ -13,6 +13,11 @@ static size_t extra_bytes(TB_Node* n) {
             return sizeof(TB_NodeLookup) + (l->entry_count * sizeof(TB_LookupEntry));
         }
 
+        case TB_VSHUFFLE: {
+            TB_NodeVShuffle* v = TB_NODE_GET_EXTRA(n);
+            return sizeof(TB_NodeVShuffle) + (v->width * sizeof(int));
+        }
+
         case TB_BRANCH:
         case TB_AFFINE_LATCH:
         return sizeof(TB_NodeBranch);

@@ -1,4 +1,32 @@
 
+static TB_Node* ideal_farith(TB_Function* f, TB_Node* n) {
+    TB_NodeTypeEnum type = n->type;
+    TB_ASSERT(type == TB_FADD || type == TB_FMUL);
+
+    TB_Node* a = n->inputs[1];
+    TB_Node* b = n->inputs[2];
+
+    // commutativity opts (we want a canonical form).
+    int ap = node_pos(a);
+    int bp = node_pos(b);
+    if (ap < bp || (ap == bp && a->gvn < b->gvn)) {
+        set_input(f, n, b, 1);
+        set_input(f, n, a, 2);
+        return n;
+    }
+
+    return NULL;
+}
+
+static TB_Node* identity_flt_binop(TB_Function* f, TB_Node* n) {
+    Lattice* b = latuni_get(f, n->inputs[2]);
+    if (b->tag == LATTICE_FLTCON32 && b->_f32 == 0.0f) {
+        return n->inputs[1];
+    }
+
+    return n;
+}
+
 static Lattice* value_fpext(TB_Function* f, TB_Node* n) {
     Lattice* a = latuni_get(f, n->inputs[1]);
     if (a == &TOP_IN_THE_SKY) { return &TOP_IN_THE_SKY; }

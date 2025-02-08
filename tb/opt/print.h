@@ -120,6 +120,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_STORE:    return "store";
         case TB_READ:     return "read";
         case TB_WRITE:    return "write";
+        case TB_VSHUFFLE: return "vshuffle";
 
         case TB_CALL:     return "call";
         case TB_SYSCALL:  return "syscall";
@@ -596,6 +597,17 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     case TB_MACH_COPY:
                     case TB_MACH_MOVE:
                     break;
+
+                    case TB_VSHUFFLE: {
+                        TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
+                        printf(", [");
+                        FOR_N(i, 0, shuf->width) {
+                            if (i) { printf(", "); }
+                            printf("%d", shuf->indices[i]);
+                        }
+                        printf("]");
+                        break;
+                    }
 
                     default: {
                         int family = n->type / 0x100;

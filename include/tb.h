@@ -416,6 +416,7 @@ typedef enum TB_NodeTypeEnum {
     TB_MULPAIR,
 
     // Vector ops
+    TB_VSHUFFLE,
 
     // variadic
     TB_VA_START,
@@ -693,6 +694,11 @@ typedef struct {
     TB_NodeSafepoint super;
     TB_FunctionPrototype* proto;
 } TB_NodeTailcall;
+
+typedef struct {
+    int width;
+    int indices[0];
+} TB_NodeVShuffle;
 
 typedef struct {
     const char* tag;
