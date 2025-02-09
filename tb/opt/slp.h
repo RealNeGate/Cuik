@@ -160,6 +160,7 @@ static void slp_add_pair(TB_Function* f, PairSet* pairs, TB_Node* lhs, TB_Node* 
 
 bool generate_pack(TB_Function* f, PairSet* pairs) {
     ArenaArray(MemRef) refs = aarray_create(&f->tmp_arena, MemRef, 8);
+    int pack_limit = 4;
 
     pairs->l_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
     pairs->r_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
@@ -236,7 +237,17 @@ bool generate_pack(TB_Function* f, PairSet* pairs) {
                     // there's a weird overlapping memory op
                     if (a->offset + size < b->offset) { break; }
                     if (a->offset + size == b->offset && can_pack(f, pairs, a->mem, b->mem)) {
-                        slp_add_pair(f, pairs, a->mem, b->mem);
+                        // we can only keep growing the pack until the pack limit
+                        int pack_size = 1;
+                        Pair* curr = pairs->r_map[a->mem->gvn];
+                        while (curr != NULL) {
+                            pack_size += 1;
+                            curr = pairs->r_map[curr->lhs->gvn];
+                        }
+
+                        if (pack_size < pack_limit) {
+                            slp_add_pair(f, pairs, a->mem, b->mem);
+                        }
                     }
                 }
             }
@@ -246,38 +257,40 @@ bool generate_pack(TB_Function* f, PairSet* pairs) {
             do {
                 progress = false;
 
-                #if TB_OPTDEBUG_SLP
-                printf("=== PAIRS ===\n");
-                for (Pair* p = pairs->first; p; p = p->next) {
-                    printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
-                    tb_print_dumb_node(NULL, p->lhs);
-                    printf("\n  ");
-                    tb_print_dumb_node(NULL, p->rhs);
-                    printf("\n\n");
-                }
-                printf("\n\n\n");
-                #endif
-
-                // check if all input edges do the same op
-                for (Pair* p = pairs->first; p; p = p->next) {
-                    TB_Node* lhs = p->lhs;
-                    TB_Node* rhs = p->rhs;
-                    TB_ASSERT(lhs->type == rhs->type);
-
-                    // loads always terminate the SIMD chains, they only have an address input and those are scalar
-                    if (lhs->type == TB_LOAD) {
-                        continue;
+                CUIK_TIMED_BLOCK("SLP extend") {
+                    #if TB_OPTDEBUG_SLP
+                    printf("=== PAIRS ===\n");
+                    for (Pair* p = pairs->first; p; p = p->next) {
+                        printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
+                        tb_print_dumb_node(NULL, p->lhs);
+                        printf("\n  ");
+                        tb_print_dumb_node(NULL, p->rhs);
+                        printf("\n\n");
                     }
+                    printf("\n\n\n");
+                    #endif
 
-                    // can we pack the normal input ops (doesn't count the memory or address for a store)
-                    FOR_N(j, lhs->type == TB_STORE ? 3 : 1, lhs->input_count) {
-                        TB_Node* a = lhs->inputs[j];
-                        TB_Node* b = rhs->inputs[j];
-                        if (can_pack(f, pairs, a, b)) {
-                            slp_add_pair(f, pairs, a, b);
-                            progress = true;
-                        } else {
-                            // printf("failed to pack... %%%u -- %%%u\n", a->gvn, b->gvn);
+                    // check if all input edges do the same op
+                    for (Pair* p = pairs->first; p; p = p->next) {
+                        TB_Node* lhs = p->lhs;
+                        TB_Node* rhs = p->rhs;
+                        TB_ASSERT(lhs->type == rhs->type);
+
+                        // loads always terminate the SIMD chains, they only have an address input and those are scalar
+                        if (lhs->type == TB_LOAD) {
+                            continue;
+                        }
+
+                        // can we pack the normal input ops (doesn't count the memory or address for a store)
+                        FOR_N(j, lhs->type == TB_STORE ? 3 : 1, lhs->input_count) {
+                            TB_Node* a = lhs->inputs[j];
+                            TB_Node* b = rhs->inputs[j];
+                            if (can_pack(f, pairs, a, b)) {
+                                slp_add_pair(f, pairs, a, b);
+                                progress = true;
+                            } else {
+                                // printf("failed to pack... %%%u -- %%%u\n", a->gvn, b->gvn);
+                            }
                         }
                     }
                 }
@@ -302,9 +315,7 @@ static int find_vector_index(VectorOp* op, TB_Node* src) {
     tb_panic("bad find_vector_index");
 }
 
-// op->op[...]->inputs[index] =>
 static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, VectorOp* op, int index) {
-
     TB_Node* leader = op->ops[0]->inputs[index];
     VectorOp* leader_op = nl_table_get(ops, leader);
     if (leader_op == NULL) {
@@ -423,17 +434,22 @@ void compile_packs(TB_Function* f, PairSet* pairs) {
         int vector_bits = elem_bits * op->width;
         switch (vector_bits) {
             case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
+            case 512: v_dt = (TB_DataType){ { TB_TAG_V512, .elem_or_addrspace = elem_dt.type } }; break;
             default: tb_todo();
         }
 
         // convert these ops into a packed op
         if (first->type == TB_LOAD) {
+            int align = TB_NODE_GET_EXTRA_T(first, TB_NodeMemAccess)->align;
             TB_Node* n = tb_alloc_node(f, TB_LOAD, v_dt, 3, sizeof(TB_NodeMemAccess));
             set_input(f, n, first->inputs[0], 0);
             set_input(f, n, first->inputs[1], 1);
             set_input(f, n, first->inputs[2], 2);
+            TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
+
             op->vec_op = n;
         } else if (first->type == TB_STORE) {
+            int align = TB_NODE_GET_EXTRA_T(first, TB_NodeMemAccess)->align;
             TB_Node* src = gimme_vector(f, &ops, v_dt, op, 3);
 
             TB_Node* n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
@@ -441,6 +457,8 @@ void compile_packs(TB_Function* f, PairSet* pairs) {
             set_input(f, n, first->inputs[1], 1);
             set_input(f, n, first->inputs[2], 2);
             set_input(f, n, src, 3);
+            TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
+
             op->vec_op = n;
 
             TB_Node* last = op->ops[op->width - 1];
@@ -483,18 +501,16 @@ void compile_packs(TB_Function* f, PairSet* pairs) {
 }
 
 bool tb_opt_vectorize(TB_Function* f) {
-    #if 1
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
+    bool can_vectorize;
+    CUIK_TIMED_BLOCK("SLP") {
+        PairSet pairs = { 0 };
+        can_vectorize = generate_pack(f, &pairs);
+        if (can_vectorize) {
+            compile_packs(f, &pairs);
+        }
 
-    PairSet pairs = { 0 };
-    bool can_vectorize = generate_pack(f, &pairs);
-    if (can_vectorize) {
-        compile_packs(f, &pairs);
+        tb_arena_clear(&f->tmp_arena);
     }
-
-    tb_arena_clear(&f->tmp_arena);
     return can_vectorize;
-    #else
-    return false;
-    #endif
 }
