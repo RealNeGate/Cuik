@@ -30,7 +30,8 @@ typedef struct {
 } MemRef;
 
 typedef struct {
-    TB_Node* vec_op;
+    TB_DataType v_dt;
+    TB_Node* v_op;
 
     int width;
     TB_Node* ops[];
@@ -315,7 +316,36 @@ static int find_vector_index(VectorOp* op, TB_Node* src) {
     tb_panic("bad find_vector_index");
 }
 
-static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, VectorOp* op, int index) {
+static bool viable_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, VectorOp* op, int index) {
+    TB_Node* leader = op->ops[0]->inputs[index];
+    VectorOp* leader_op = nl_table_get(ops, leader);
+    if (leader_op == NULL) {
+        // might be a broadcasted value?
+        FOR_N(i, 1, op->width) {
+            TB_Node* src = op->ops[i]->inputs[index];
+            if (src != leader) { return false; }
+        }
+
+        TB_Node* n = tb_alloc_node(f, TB_VBROADCAST, v_dt, 2, 0);
+        set_input(f, n, leader, 1);
+        return n;
+    }
+
+    bool weird = false;
+    FOR_N(i, 1, op->width) {
+        TB_Node* src = op->ops[i]->inputs[index];
+        VectorOp* src_op = nl_table_get(ops, src);
+        // we can mix vectors until the same pool but we
+        // can't have a scalar mixed with vectors.
+        if (src_op == NULL) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int index) {
     TB_Node* leader = op->ops[0]->inputs[index];
     VectorOp* leader_op = nl_table_get(ops, leader);
     if (leader_op == NULL) {
@@ -327,7 +357,7 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, Ve
             }
         }
 
-        TB_Node* n = tb_alloc_node(f, TB_VBROADCAST, v_dt, 2, 0);
+        TB_Node* n = tb_alloc_node(f, TB_VBROADCAST, op->v_dt, 2, 0);
         set_input(f, n, leader, 1);
         return n;
     }
@@ -335,13 +365,27 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, Ve
     // as long as all the ops come from the same leader, it's all good
     int* indices = tb_arena_alloc(&f->tmp_arena, op->width * sizeof(int));
     indices[0] = find_vector_index(leader_op, leader);
+
+    bool weird = false;
     FOR_N(i, 1, op->width) {
         TB_Node* src = op->ops[i]->inputs[index];
         VectorOp* src_op = nl_table_get(ops, src);
         if (src_op != leader_op) {
-            TB_ASSERT_MSG(0, "shoulda rejected");
+            // TB_ASSERT_MSG(0, "shoulda rejected");
+            weird = true;
         }
         indices[i] = find_vector_index(src_op, src);
+    }
+
+    if (weird) {
+        printf("weird? ");
+        FOR_N(i, 0, op->width) {
+            if (i) { printf(", "); }
+            VectorOp* src_op = nl_table_get(ops, op->ops[i]->inputs[index]);
+            printf("%p:%d", src_op, indices[i]);
+        }
+        printf("\n");
+        __debugbreak();
     }
 
     // sometimes we don't need shuffles
@@ -351,17 +395,18 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, Ve
     }
 
     if (ordered) {
-        return leader_op->vec_op;
+        return leader_op->v_op;
     }
 
-    TB_Node* n = tb_alloc_node(f, TB_VSHUFFLE, v_dt, 2, sizeof(TB_NodeVShuffle) + op->width*sizeof(int));
-    set_input(f, n, leader_op->vec_op, 1);
+    TB_Node* n = tb_alloc_node(f, TB_VSHUFFLE, op->v_dt, 2, sizeof(TB_NodeVShuffle) + op->width*sizeof(int));
+    set_input(f, n, leader_op->v_op, 1);
 
     TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
     shuf->width = op->width;
     FOR_N(i, 0, op->width) {
         shuf->indices[i] = indices[i];
     }
+    tb_arena_free(&f->tmp_arena, indices, op->width * sizeof(int));
 
     #if TB_OPTDEBUG_SLP
     printf("SHUFFLE: ");
@@ -372,7 +417,7 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, Ve
     return n;
 }
 
-void compile_packs(TB_Function* f, PairSet* pairs) {
+bool compile_packs(TB_Function* f, PairSet* pairs) {
     DynArray(TB_Node*) combined = dyn_array_create(TB_Node*, 8);
     bool* visited  = tb_arena_alloc(&f->tmp_arena, pairs->count * sizeof(bool));
     FOR_N(i, 0, pairs->count) {
@@ -401,7 +446,7 @@ void compile_packs(TB_Function* f, PairSet* pairs) {
         }
 
         VectorOp* op = tb_arena_alloc(&f->tmp_arena, sizeof(VectorOp) + dyn_array_length(combined)*sizeof(TB_Node*));
-        op->vec_op = NULL;
+        op->v_op  = NULL;
         op->width = dyn_array_length(combined);
         dyn_array_put(schedule, op);
 
@@ -411,34 +456,79 @@ void compile_packs(TB_Function* f, PairSet* pairs) {
             nl_table_put(&ops, n, op);
 
             TB_OPTDEBUG(SLP)(printf("  "), tb_print_dumb_node(NULL, n));
-
             if (n->type == TB_LOAD || n->type == TB_STORE) {
                 MemRef r = compute_mem_ref(f, n);
                 TB_OPTDEBUG(SLP)(printf(" (%%%u + %d, size=%d)", r.base->gvn, r.offset, r.size));
             }
             TB_OPTDEBUG(SLP)(printf("\n"));
+
         }
         TB_OPTDEBUG(SLP)(printf("\n"));
+    }
+
+    FOR_REV_N(i, 0, dyn_array_length(schedule)) {
+        VectorOp* op = schedule[i];
+        TB_Node* first = op->ops[0];
+
+        // classify the vector width and see if it's good
+        bool bad = false;
+        TB_DataType elem_dt = slp_node_data_type(first);
+        if (!TB_IS_INTEGER_TYPE(elem_dt) && !TB_IS_FLOAT_TYPE(elem_dt)) {
+            TB_OPTDEBUG(SLP)(printf("    SLP failed: can't vectorize this type. "), print_type(elem_dt), printf("\n"));
+            bad = true;
+        }
+
+        int elem_bits = tb_data_type_bit_size(f->super.module, elem_dt.type);
+        int vector_bits = elem_bits * op->width;
+        TB_DataType v_dt = TB_TYPE_VOID;
+        switch (vector_bits) {
+            case 64:  v_dt = (TB_DataType){ { TB_TAG_V64,  .elem_or_addrspace = elem_dt.type } }; break;
+            case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
+            case 256: v_dt = (TB_DataType){ { TB_TAG_V256, .elem_or_addrspace = elem_dt.type } }; break;
+            case 512: v_dt = (TB_DataType){ { TB_TAG_V512, .elem_or_addrspace = elem_dt.type } }; break;
+            default: {
+                TB_OPTDEBUG(SLP)(printf("    SLP failed: vector width was weird? "), print_type(elem_dt), " * ", op->width, " would require %d-bit vectors\n");
+                bad = true;
+                break;
+            }
+        }
+        op->v_dt = v_dt;
+
+        // check if the vector ops can legally be connected up
+        if (first->type == TB_STORE) {
+            if (!viable_vector(f, &ops, v_dt, op, 3)) {
+                bad = true;
+            }
+        } else if (first->type != TB_LOAD) {
+            if (!viable_vector(f, &ops, v_dt, op, 1)) {
+                bad = true;
+            }
+
+            if (!viable_vector(f, &ops, v_dt, op, 2)) {
+                bad = true;
+            }
+        }
+
+        // prune out
+        if (bad) {
+            // nl_table_put(&ops, n, op);
+
+            __debugbreak();
+        }
+    }
+
+    // nothing left which is valid, bail out
+    if (dyn_array_length(schedule) == 0) {
+        return false;
     }
 
     TB_OPTDEBUG(SLP)(printf("=== COMPILED ===\n"));
     FOR_REV_N(i, 0, dyn_array_length(schedule)) {
         VectorOp* op = schedule[i];
-        TB_DataType v_dt = TB_TYPE_VOID;
-
         TB_Node* first = op->ops[0];
-        TB_DataType elem_dt = slp_node_data_type(first);
-        TB_ASSERT(TB_IS_INTEGER_TYPE(elem_dt) || TB_IS_FLOAT_TYPE(elem_dt));
-
-        int elem_bits = tb_data_type_bit_size(f->super.module, elem_dt.type);
-        int vector_bits = elem_bits * op->width;
-        switch (vector_bits) {
-            case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
-            case 512: v_dt = (TB_DataType){ { TB_TAG_V512, .elem_or_addrspace = elem_dt.type } }; break;
-            default: tb_todo();
-        }
 
         // convert these ops into a packed op
+        TB_DataType v_dt = op->v_dt;
         if (first->type == TB_LOAD) {
             int align = TB_NODE_GET_EXTRA_T(first, TB_NodeMemAccess)->align;
             TB_Node* n = tb_alloc_node(f, TB_LOAD, v_dt, 3, sizeof(TB_NodeMemAccess));
@@ -447,10 +537,10 @@ void compile_packs(TB_Function* f, PairSet* pairs) {
             set_input(f, n, first->inputs[2], 2);
             TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
 
-            op->vec_op = n;
+            op->v_op = n;
         } else if (first->type == TB_STORE) {
             int align = TB_NODE_GET_EXTRA_T(first, TB_NodeMemAccess)->align;
-            TB_Node* src = gimme_vector(f, &ops, v_dt, op, 3);
+            TB_Node* src = gimme_vector(f, &ops, op, 3);
 
             TB_Node* n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
             set_input(f, n, first->inputs[0], 0);
@@ -459,18 +549,18 @@ void compile_packs(TB_Function* f, PairSet* pairs) {
             set_input(f, n, src, 3);
             TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
 
-            op->vec_op = n;
+            op->v_op = n;
 
             TB_Node* last = op->ops[op->width - 1];
             subsume_node2(f, last, n);
         } else if (first->type == TB_FADD || first->type == TB_FMUL) {
-            TB_Node* lhs = gimme_vector(f, &ops, v_dt, op, 1);
-            TB_Node* rhs = gimme_vector(f, &ops, v_dt, op, 2);
+            TB_Node* lhs = gimme_vector(f, &ops, op, 1);
+            TB_Node* rhs = gimme_vector(f, &ops, op, 2);
 
             TB_Node* n = tb_alloc_node(f, first->type, v_dt, 3, 0);
             set_input(f, n, lhs, 1);
             set_input(f, n, rhs, 2);
-            op->vec_op = n;
+            op->v_op = n;
         } else {
             __debugbreak();
         }
@@ -482,7 +572,7 @@ void compile_packs(TB_Function* f, PairSet* pairs) {
         }
 
         printf("=> ");
-        tb_print_dumb_node(NULL, op->vec_op);
+        tb_print_dumb_node(NULL, op->v_op);
         printf("\n\n");
         #endif
     }
@@ -498,19 +588,21 @@ void compile_packs(TB_Function* f, PairSet* pairs) {
     }
 
     tb_arena_free(&f->tmp_arena, visited, pairs->count * sizeof(bool));
+    return true;
 }
 
 bool tb_opt_vectorize(TB_Function* f) {
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
-    bool can_vectorize;
+    bool progress;
     CUIK_TIMED_BLOCK("SLP") {
         PairSet pairs = { 0 };
-        can_vectorize = generate_pack(f, &pairs);
-        if (can_vectorize) {
-            compile_packs(f, &pairs);
+        progress = generate_pack(f, &pairs);
+        if (progress && compile_packs(f, &pairs)) {
+            // failed vibe check, no transformation performed
+            progress = false;
         }
 
         tb_arena_clear(&f->tmp_arena);
     }
-    return can_vectorize;
+    return progress;
 }
