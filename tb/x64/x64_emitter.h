@@ -180,7 +180,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
 }
 
 static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_X86_DataType dt) {
-    assert(type < COUNTOF(inst_table));
+    TB_ASSERT(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
     // most SSE instructions (that aren't mov__) are mem src only
@@ -229,7 +229,7 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
 }
 
 static void asm_inst0(TB_CGEmitter* restrict e, InstType type, TB_X86_DataType dt) {
-    assert(type < COUNTOF(inst_table));
+    TB_ASSERT(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
     if (dt == TB_X86_QWORD) {

@@ -215,7 +215,7 @@ static void construct_prologue_epilogue(Ctx* restrict ctx, TB_Function* f) {
 
         CallingConv* cc = ctx->calling_conv;
         FOR_N(i, 1, ctx->num_classes) {
-            uint64_t callee_saves = ~cc->volatile_regs[i];
+            uint64_t callee_saves = cc->nonvolatile_regs[i];
 
             // stack and frame pointer (if applies) will get special treatment in the
             // prologue and epilogue for setup, that's not happening here.
@@ -223,7 +223,7 @@ static void construct_prologue_epilogue(Ctx* restrict ctx, TB_Function* f) {
                 callee_saves &= ~(1ull << cc->sp_reg);
             }
 
-            if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && cc->fp_class == i) {
+            if ((f->features.gen & TB_FEATURE_FRAME_PTR) && cc->fp_class == i) {
                 callee_saves &= ~(1ull << cc->fp_reg);
             }
 
@@ -236,7 +236,8 @@ static void construct_prologue_epilogue(Ctx* restrict ctx, TB_Function* f) {
             // HACK(NeGate): we really should be describing the "reg class" => "ideal data type"
             // conversion somewhere, rather than hard coding in "XMM is floats"
             if (i == 2) {
-                dt = TB_TYPE_F64;
+                dt.type = TB_TAG_V128;
+                dt.elem_or_addrspace = TB_TAG_F32;
             }
 
             FOR_N(j, 0, ctx->num_regs[i]) {
@@ -432,7 +433,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
     log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena) - og_size) / 1024.0f, label);
 }
 
-static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code_arena, bool emit_asm) {
+static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
     cuikperf_region_start("compile", f->super.name);
     #if TB_OPTDEBUG_ISEL
     tb_print_dumb(f);
@@ -463,12 +464,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             .has_comments = true,
         }
     };
-
-    if (features == NULL) {
-        ctx.features = (TB_FeatureSet){ 0 };
-    } else {
-        ctx.features = *features;
-    }
 
     init_ctx(&ctx, f->super.module->target_abi);
     TB_Worklist* restrict ws = f->worklist;

@@ -133,9 +133,8 @@ typedef struct {
     // where is the return address
     uint8_t rpc_class, rpc_reg;
 
-    // clobbered during function calls (caller saves), all
-    // other regs are saved before use during a function body.
-    uint64_t volatile_regs[8];
+    // need to be saved before use in function
+    uint64_t nonvolatile_regs[8];
 
     // when it's true we'll allocate the next
     // available param in the class rather than matching 1-to-1 to
@@ -156,7 +155,6 @@ struct Ctx {
 
     TB_Module* module;
     TB_Function* f;
-    TB_FeatureSet features;
     TB_Node* frame_ptr;
     TB_CFG cfg;
     TB_Worklist* walker_ws;

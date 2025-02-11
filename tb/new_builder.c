@@ -114,6 +114,10 @@ TB_Node* tb_builder_param_addr(TB_GraphBuilder* g, int i) {
     return g->params[i];
 }
 
+void tb_function_set_features(TB_Function* f, const TB_FeatureSet* features) {
+    f->features = *features;
+}
+
 TB_GraphBuilder* tb_builder_enter(TB_Function* f, TB_ModuleSectionHandle section, TB_FunctionPrototype* proto, TB_Worklist* ws) {
     return builder_enter_raw(f, section, NULL, proto, ws);
 }

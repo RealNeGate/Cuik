@@ -187,9 +187,8 @@ static void apply_func(TB_Function* f, void* arg) {
             // printf("%s", str);
         } else {
             CUIK_TIMED_BLOCK("codegen") {
-                TB_FeatureSet features = { 0 };
                 TB_Arena* code_arena = get_code_arena();
-                TB_FunctionOutput* out = tb_codegen(f, ir_worklist, code_arena, &features, print_asm);
+                TB_FunctionOutput* out = tb_codegen(f, ir_worklist, code_arena, print_asm);
                 if (print_asm) {
                     tb_output_print_asm(out, stdout);
                     printf("\n\n");

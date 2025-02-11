@@ -1093,6 +1093,7 @@ TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int l
 
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage);
+TB_API void tb_function_set_features(TB_Function* f, const TB_FeatureSet* features);
 
 TB_API TB_Arena* tb_function_get_arena(TB_Function* f, int i);
 
@@ -1338,7 +1339,7 @@ TB_API void tb_print_svg(TB_Function* f);
 //   at least)
 //
 //   if code_arena is NULL, the IR arena will be used.
-TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
+TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm);
 
 // interprocedural optimizer iter
 TB_API bool tb_module_ipo(TB_Module* m);

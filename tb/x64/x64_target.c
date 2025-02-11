@@ -163,7 +163,7 @@ static void print_extra(TB_Node* n) {
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
     int vreg_id = ctx->vreg_map[n->gvn];
-    if (0 && vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
+    if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
         VReg* v = &ctx->vregs[vreg_id];
         if (v->class == REG_CLASS_GPR) {
             printf("%s", GPR_NAMES[v->assigned]);
@@ -265,6 +265,23 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
     } else if (n->type == x86_vzero) {
         printf("  vzero ");
         print_pretty_edge(ctx, n);
+    } else if (n->type == TB_VSHUFFLE) {
+        printf("  vshuffle ");
+        print_pretty_edge(ctx, n);
+        printf(", ");
+        print_pretty_edge(ctx, n->inputs[1]);
+        if (n->input_count >= 3) {
+            printf(", ");
+            print_pretty_edge(ctx, n->inputs[2]);
+        }
+
+        TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
+        printf(", [");
+        FOR_N(i, 0, shuf->width) {
+            if (i) { printf(", "); }
+            printf("%d", shuf->indices[i]);
+        }
+        printf("]");
     } else if (n->type >= TB_MACH_X86) {
         const char* name = tb_node_get_name(n->type);
         name += 4;
@@ -345,8 +362,8 @@ static CallingConv CC_WIN64 = {
     .fp_class  = REG_CLASS_GPR, .fp_reg  = RBP, // frame pointer
     .rpc_class = REG_CLASS_STK, .rpc_reg = 0,   // return PC
 
-    .volatile_regs[REG_CLASS_GPR] = (1u << RAX)  | (1u << RCX)  | (1u << RDX)  | (1u << R8)   | (1u << R9)   | (1u << R10) | (1u << R11),
-    .volatile_regs[REG_CLASS_XMM] = (1u << XMM0) | (1u << XMM1) | (1u << XMM2) | (1u << XMM3) | (1u << XMM4) | (1u << XMM5),
+    .nonvolatile_regs[REG_CLASS_GPR] = ~((1u << RAX)  | (1u << RCX)  | (1u << RDX)  | (1u << R8)   | (1u << R9)   | (1u << R10) | (1u << R11)),
+    .nonvolatile_regs[REG_CLASS_XMM] = ~((1u << XMM0) | (1u << XMM1) | (1u << XMM2) | (1u << XMM3) | (1u << XMM4) | (1u << XMM5)),
 
     .param_count = { [REG_CLASS_GPR] = 4, [REG_CLASS_XMM] = 4 },
     .params[REG_CLASS_GPR] = (uint8_t[]){ RCX,  RDX,  R8,   R9 },
@@ -363,8 +380,8 @@ static CallingConv CC_SYSV = {
     .rpc_class = REG_CLASS_STK, .rpc_reg = 0,   // return PC
     .flexible_param_alloc = true,
 
-    .volatile_regs[REG_CLASS_GPR] = (1u << RAX)  | (1u << RDI)  | (1u << RSI)  | (1u << RCX)  | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11),
-    .volatile_regs[REG_CLASS_XMM] = (1u << XMM0) | (1u << XMM1) | (1u << XMM2) | (1u << XMM3) | (1u << XMM4),
+    .nonvolatile_regs[REG_CLASS_GPR] = ~((1u << RAX)  | (1u << RDI)  | (1u << RSI)  | (1u << RCX)  | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11)),
+    .nonvolatile_regs[REG_CLASS_XMM] = ~((1u << XMM0) | (1u << XMM1) | (1u << XMM2) | (1u << XMM3) | (1u << XMM4)),
 
     .param_count = { [REG_CLASS_GPR] = 6, [REG_CLASS_XMM] = 4 },
     .params[REG_CLASS_GPR] = (uint8_t[]){ RDI,  RSI,  RDX,  RCX, R8, R9 },
@@ -376,8 +393,8 @@ static CallingConv CC_SYSV = {
 };
 
 static CallingConv CC_SYSCALL = {
-    .volatile_regs[REG_CLASS_GPR] = (1u << RAX)  | (1u << RDI)  | (1u << RSI)  | (1u << RCX)  | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11),
-    .volatile_regs[REG_CLASS_XMM] = (1u << XMM0) | (1u << XMM1) | (1u << XMM2) | (1u << XMM3) | (1u << XMM4),
+    .nonvolatile_regs[REG_CLASS_GPR] = ~((1u << RAX)  | (1u << RDI)  | (1u << RSI)  | (1u << RCX)  | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11)),
+    .nonvolatile_regs[REG_CLASS_XMM] = ~((1u << XMM0) | (1u << XMM1) | (1u << XMM2) | (1u << XMM3) | (1u << XMM4)),
 
     .param_count = { [REG_CLASS_GPR] = 6 },
     .params[REG_CLASS_GPR] = (uint8_t[]){ RDI, RSI, RDX, R10, R8, R9 },
@@ -413,6 +430,8 @@ static TB_X86_DataType legalize(TB_DataType dt) {
         return TB_X86_F32x1;
     } else if (dt.type == TB_TAG_F64) {
         return TB_X86_F64x1;
+    } else if (dt.type == TB_TAG_V128) {
+        return TB_X86_F32x4;
     } else {
         return legalize_int(dt);
     }
@@ -499,7 +518,7 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
     ctx->num_regs[REG_CLASS_FLAGS] = 1;
 
     uint16_t all_gprs = 0xFFFF & ~(1 << RSP);
-    if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
+    if (ctx->f->features.gen & TB_FEATURE_FRAME_PTR) {
         all_gprs &= ~(1 << RBP);
         ctx->stack_header = 16;
     } else {
@@ -1667,15 +1686,15 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[k++] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSP);
 
                 FOR_N(i, 1, ctx->num_classes) {
-                    uint64_t callee_saves = ~cc->volatile_regs[i];
+                    uint64_t callee_saves = cc->nonvolatile_regs[i];
 
-                    // stack and frame pointer (if applies) will get special treatment in the
-                    // prologue and epilogue for setup, that's not happening here.
+                    // stack and frame pointer (if applies) will get special treatment
+                    // in the prologue and epilogue for setup, that's not happening here.
                     if (cc->sp_class == i) {
                         callee_saves &= ~(1ull << cc->sp_reg);
                     }
 
-                    if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && cc->fp_class == i) {
+                    if ((ctx->f->features.gen & TB_FEATURE_FRAME_PTR) && cc->fp_class == i) {
                         callee_saves &= ~(1ull << cc->fp_reg);
                     }
 
@@ -2000,7 +2019,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             }
 
             // pop rbp (if we even used the frameptr)
-            if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 8) {
+            if ((ctx->f->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 8) {
                 EMIT1(e, 0x58 + RBP);
             }
             EMIT1(e, 0xC3);
@@ -2481,11 +2500,15 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
     }
 }
 
-static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) { return false; }
+static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) {
+    return false;
+}
 
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
     if (n->type == x86_imul) {
         return 0b00000010;
+    } else if (n->type == TB_VSHUFFLE) {
+        return 0b00100000;
     }
 
     if (n->type >= TB_MACH_X86) {
@@ -2531,7 +2554,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
     ctx->stack_usage = stack_usage;
 
     // save frame pointer (if applies)
-    if ((ctx->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
+    if ((ctx->f->features.gen & TB_FEATURE_FRAME_PTR) && stack_usage > 0) {
         EMIT1(e, 0x50 + RBP);
 
         // mov rbp, rsp
@@ -2656,7 +2679,7 @@ static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e) {
     if (stack_usage > 8) {
         E("// ==============\n");
         E("//  [SP + %3zu] RPC\n", stack_usage - 8);
-        if (ctx->features.gen & TB_FEATURE_FRAME_PTR) {
+        if (ctx->f->features.gen & TB_FEATURE_FRAME_PTR) {
             E("//  [SP + %3zu] saved RBP\n", stack_usage - 16);
         }
         FOR_N(i, 0, ctx->num_spills) {
@@ -2875,6 +2898,27 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
     return out_f->patch_count - r;
 }
 
+int max_pack_width_for_op(TB_Function* f, TB_DataType dt, TB_Node* n) {
+    static int limits[][7] = {
+        // SSE
+        { 16, 8,  4,  2, 0, 4,  2 },
+        // AVX
+        { 32, 16, 8,  4, 0, 8,  4 },
+        // AVX512
+        { 64, 32, 16, 8, 0, 16, 8 },
+    };
+
+    int i = 0;
+    if (f->features.x64 & TB_FEATURE_X64_AVX) {
+        i = 2;
+    } else if (f->features.x64 & TB_FEATURE_X64_SSE2) {
+        i = 1;
+    }
+
+    TB_ASSERT(dt.type >= 7);
+    return limits[i][dt.type - 2];
+}
+
 ICodeGen tb__x64_codegen = {
     .minimum_addressable_size = 8,
     .pointer_size = 64,
@@ -2884,6 +2928,7 @@ ICodeGen tb__x64_codegen = {
     .print_extra = print_extra,
     .flags = node_flags,
     .extra_bytes = extra_bytes,
+    .max_pack_width_for_op = max_pack_width_for_op,
     .emit_win64eh_unwind_info = emit_win64eh_unwind_info,
     .emit_call_patches  = emit_call_patches,
     .compile_function   = compile_function,

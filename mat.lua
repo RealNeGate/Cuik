@@ -10,7 +10,7 @@ for i=0,N-1 do
     for j=0,N-1 do
         print(string.format("    float sum%d_%d = -0.0f;", i, j))
         for k=0,N-1 do
-            print(string.format("    sum%d_%d += a%d * b%d;", i, j, i*N + k, j*N + k))
+            print(string.format("    sum%d_%d += a%d * b%d;", i, j, i*N + k, k*N + j))
         end
         print(string.format("    dst[%d] = sum%d_%d;", i*N + j, i, j))
     end

@@ -198,7 +198,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // SSE: ucomi
         _0F(0x2E)        = OP_MODRM | OP_SSE,
         // shufps
-        _0F(0xC6)        = OP_MODRM | OP_SSE | OP_IMM8,
+        _0F(0xC6)        = OP_MODRM | OP_SSE | OP_DIR | OP_IMM8,
         // imul reg, r/m
         _0F(0xAF)        = OP_MODRM,
         // bswap r+

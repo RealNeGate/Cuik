@@ -258,7 +258,7 @@ void tb_module_enable_chkstk(TB_Module* m) {
     }
 }
 
-TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm) {
+TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm) {
     if (code_arena == NULL) {
         code_arena = &f->arena;
     }
@@ -268,7 +268,7 @@ TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_ar
 
     TB_FunctionOutput* func_out = tb_arena_alloc(code_arena, sizeof(TB_FunctionOutput));
     *func_out = (TB_FunctionOutput){ .parent = f, .section = f->section, .linkage = f->super.linkage };
-    m->codegen->compile_function(f, func_out, features, code_arena, emit_asm);
+    m->codegen->compile_function(f, func_out, code_arena, emit_asm);
     atomic_fetch_add(&m->compiled_function_count, 1);
 
     f->output = func_out;

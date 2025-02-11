@@ -29,8 +29,8 @@
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
 #define TB_OPTDEBUG_MEM2REG   0
-#define TB_OPTDEBUG_ISEL      1
-#define TB_OPTDEBUG_ISEL2     1
+#define TB_OPTDEBUG_ISEL      0
+#define TB_OPTDEBUG_ISEL2     0
 #define TB_OPTDEBUG_EMIT      0
 #define TB_OPTDEBUG_DATAFLOW  0
 #define TB_OPTDEBUG_PLACEMENT 0
@@ -39,10 +39,10 @@
 #define TB_OPTDEBUG_REGALLOC2 0
 #define TB_OPTDEBUG_REGALLOC3 0
 #define TB_OPTDEBUG_REGALLOC4 0
-#define TB_OPTDEBUG_SLP       1
+#define TB_OPTDEBUG_SLP       0
 #define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_COMPACT   0
-#define TB_OPTDEBUG_SCHEDULE  0
+#define TB_OPTDEBUG_SCHEDULE  1
 // for toggling ANSI colors
 #define TB_OPTDEBUG_ANSI      1
 
@@ -376,6 +376,7 @@ struct TB_Function {
 
     TB_DebugType* dbg_type;
     TB_FunctionPrototype* prototype;
+    TB_FeatureSet features;
 
     // raw parameters
     size_t param_count;
@@ -520,7 +521,6 @@ struct TB_Module {
     TB_ABI target_abi;
     TB_Arch target_arch;
     TB_System target_system;
-    TB_FeatureSet features;
     ExportList exports;
 
     // TB_Symbol*
@@ -584,11 +584,13 @@ struct ICodeGen {
     const char* (*node_name)(int n_type);
     void (*print_extra)(TB_Node* n);
 
+    int (*max_pack_width_for_op)(TB_Function* f, TB_DataType dt, TB_Node* n);
+
     // return the number of non-local patches
     size_t (*emit_call_patches)(TB_Module* restrict m, TB_FunctionOutput* out_f);
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
-    void (*compile_function)(TB_Function* f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code, bool emit_asm);
+    void (*compile_function)(TB_Function* f, TB_FunctionOutput* restrict func_out, TB_Arena* code, bool emit_asm);
 };
 
 // All debug formats i know of boil down to adding some extra sections to the object file

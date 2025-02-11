@@ -161,7 +161,6 @@ static void slp_add_pair(TB_Function* f, PairSet* pairs, TB_Node* lhs, TB_Node* 
 
 bool generate_pack(TB_Function* f, PairSet* pairs) {
     ArenaArray(MemRef) refs = aarray_create(&f->tmp_arena, MemRef, 8);
-    int pack_limit = 4;
 
     pairs->l_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
     pairs->r_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
@@ -238,17 +237,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs) {
                     // there's a weird overlapping memory op
                     if (a->offset + size < b->offset) { break; }
                     if (a->offset + size == b->offset && can_pack(f, pairs, a->mem, b->mem)) {
-                        // we can only keep growing the pack until the pack limit
-                        int pack_size = 1;
-                        Pair* curr = pairs->r_map[a->mem->gvn];
-                        while (curr != NULL) {
-                            pack_size += 1;
-                            curr = pairs->r_map[curr->lhs->gvn];
-                        }
-
-                        if (pack_size < pack_limit) {
-                            slp_add_pair(f, pairs, a->mem, b->mem);
-                        }
+                        slp_add_pair(f, pairs, a->mem, b->mem);
                     }
                 }
             }
@@ -359,7 +348,7 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
 
         TB_Node* n = tb_alloc_node(f, TB_VBROADCAST, op->v_dt, 2, 0);
         set_input(f, n, leader, 1);
-        return n;
+        return tb_opt_gvn_node(f, n);
     }
 
     // as long as all the ops come from the same leader, it's all good
@@ -385,7 +374,34 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
             printf("%p:%d", src_op, indices[i]);
         }
         printf("\n");
-        __debugbreak();
+
+        // chain of shuffles
+        TB_Node* last = leader_op->v_op;
+        FOR_N(i, 1, op->width) {
+            TB_Node* src = op->ops[i]->inputs[index];
+            VectorOp* src_op = nl_table_get(ops, src);
+            if (src_op != leader_op) {
+                last = tb_opt_gvn_node(f, last);
+
+                TB_Node* n = tb_alloc_node(f, TB_VSHUFFLE, op->v_dt, 3, sizeof(TB_NodeVShuffle) + op->width*sizeof(int));
+                set_input(f, n, last,         1);
+                set_input(f, n, src_op->v_op, 2);
+
+                TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
+                shuf->width = op->width;
+                FOR_N(j, 0, op->width) {
+                    shuf->indices[j] = j;
+                }
+                last = n;
+            }
+
+            // overwrite the old entries
+            TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(last);
+            shuf->indices[i] = op->width + indices[i];
+        }
+
+        tb_arena_free(&f->tmp_arena, indices, op->width * sizeof(int));
+        return tb_opt_gvn_node(f, last);
     }
 
     // sometimes we don't need shuffles
@@ -395,6 +411,7 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
     }
 
     if (ordered) {
+        tb_arena_free(&f->tmp_arena, indices, op->width * sizeof(int));
         return leader_op->v_op;
     }
 
@@ -414,7 +431,7 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
     printf("\n");
     #endif
 
-    return n;
+    return tb_opt_gvn_node(f, n);
 }
 
 bool compile_packs(TB_Function* f, PairSet* pairs) {
@@ -430,6 +447,8 @@ bool compile_packs(TB_Function* f, PairSet* pairs) {
 
     // combine packs
     TB_OPTDEBUG(SLP)(printf("=== COMBINED ===\n"));
+
+    ICodeGen* codegen = f->super.module->codegen;
     for (Pair* p = pairs->first; p; p = p->next) {
         if (visited[p->id]) { continue; }
         visited[p->id] = true;
@@ -445,14 +464,26 @@ bool compile_packs(TB_Function* f, PairSet* pairs) {
             dyn_array_put(combined, curr->rhs);
         }
 
-        VectorOp* op = tb_arena_alloc(&f->tmp_arena, sizeof(VectorOp) + dyn_array_length(combined)*sizeof(TB_Node*));
-        op->v_op  = NULL;
-        op->width = dyn_array_length(combined);
+        TB_DataType elem_dt = slp_node_data_type(p->lhs);
+        int pack_limit = codegen->max_pack_width_for_op(f, elem_dt, p->lhs);
+        VectorOp* op = tb_arena_alloc(&f->tmp_arena, sizeof(VectorOp) + pack_limit*sizeof(TB_Node*));
+        op->v_op = NULL;
+        op->width = 0;
         dyn_array_put(schedule, op);
 
+        TB_OPTDEBUG(SLP)(printf("  PACK_LIMIT=%d\n", pack_limit));
         dyn_array_for(i, combined) {
+            if (op->width >= pack_limit) {
+                op = tb_arena_alloc(&f->tmp_arena, sizeof(VectorOp) + pack_limit*sizeof(TB_Node*));
+                op->v_op = NULL;
+                op->width = 0;
+                dyn_array_put(schedule, op);
+
+                TB_OPTDEBUG(SLP)(printf("  SPLIT\n"));
+            }
+
             TB_Node* n = combined[i];
-            op->ops[i] = n;
+            op->ops[op->width++] = n;
             nl_table_put(&ops, n, op);
 
             TB_OPTDEBUG(SLP)(printf("  "), tb_print_dumb_node(NULL, n));
@@ -461,7 +492,6 @@ bool compile_packs(TB_Function* f, PairSet* pairs) {
                 TB_OPTDEBUG(SLP)(printf(" (%%%u + %d, size=%d)", r.base->gvn, r.offset, r.size));
             }
             TB_OPTDEBUG(SLP)(printf("\n"));
-
         }
         TB_OPTDEBUG(SLP)(printf("\n"));
     }
@@ -486,11 +516,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs) {
             case 128: v_dt = (TB_DataType){ { TB_TAG_V128, .elem_or_addrspace = elem_dt.type } }; break;
             case 256: v_dt = (TB_DataType){ { TB_TAG_V256, .elem_or_addrspace = elem_dt.type } }; break;
             case 512: v_dt = (TB_DataType){ { TB_TAG_V512, .elem_or_addrspace = elem_dt.type } }; break;
-            default: {
-                TB_OPTDEBUG(SLP)(printf("    SLP failed: vector width was weird? "), print_type(elem_dt), " * ", op->width, " would require %d-bit vectors\n");
-                bad = true;
-                break;
-            }
+            default: tb_todo();
         }
         op->v_dt = v_dt;
 
@@ -537,7 +563,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs) {
             set_input(f, n, first->inputs[2], 2);
             TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
 
-            op->v_op = n;
+            op->v_op = tb_opt_gvn_node(f, n);
         } else if (first->type == TB_STORE) {
             int align = TB_NODE_GET_EXTRA_T(first, TB_NodeMemAccess)->align;
             TB_Node* src = gimme_vector(f, &ops, op, 3);
@@ -560,7 +586,7 @@ bool compile_packs(TB_Function* f, PairSet* pairs) {
             TB_Node* n = tb_alloc_node(f, first->type, v_dt, 3, 0);
             set_input(f, n, lhs, 1);
             set_input(f, n, rhs, 2);
-            op->v_op = n;
+            op->v_op = tb_opt_gvn_node(f, n);
         } else {
             __debugbreak();
         }
@@ -597,7 +623,7 @@ bool tb_opt_vectorize(TB_Function* f) {
     CUIK_TIMED_BLOCK("SLP") {
         PairSet pairs = { 0 };
         progress = generate_pack(f, &pairs);
-        if (progress && compile_packs(f, &pairs)) {
+        if (progress && !compile_packs(f, &pairs)) {
             // failed vibe check, no transformation performed
             progress = false;
         }
