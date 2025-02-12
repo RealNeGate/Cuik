@@ -320,13 +320,11 @@ static bool viable_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, Vecto
         return n;
     }
 
-    bool weird = false;
+    // all have to share the same vector source... for now
     FOR_N(i, 1, op->width) {
         TB_Node* src = op->ops[i]->inputs[index];
         VectorOp* src_op = nl_table_get(ops, src);
-        // we can mix vectors until the same pool but we
-        // can't have a scalar mixed with vectors.
-        if (src_op == NULL) {
+        if (src_op != leader_op) {
             return false;
         }
     }
@@ -355,53 +353,13 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
     int* indices = tb_arena_alloc(&f->tmp_arena, op->width * sizeof(int));
     indices[0] = find_vector_index(leader_op, leader);
 
-    bool weird = false;
     FOR_N(i, 1, op->width) {
         TB_Node* src = op->ops[i]->inputs[index];
         VectorOp* src_op = nl_table_get(ops, src);
         if (src_op != leader_op) {
-            // TB_ASSERT_MSG(0, "shoulda rejected");
-            weird = true;
+            TB_ASSERT_MSG(0, "shoulda rejected");
         }
         indices[i] = find_vector_index(src_op, src);
-    }
-
-    if (weird) {
-        printf("weird? ");
-        FOR_N(i, 0, op->width) {
-            if (i) { printf(", "); }
-            VectorOp* src_op = nl_table_get(ops, op->ops[i]->inputs[index]);
-            printf("%p:%d", src_op, indices[i]);
-        }
-        printf("\n");
-
-        // chain of shuffles
-        TB_Node* last = leader_op->v_op;
-        FOR_N(i, 1, op->width) {
-            TB_Node* src = op->ops[i]->inputs[index];
-            VectorOp* src_op = nl_table_get(ops, src);
-            if (src_op != leader_op) {
-                last = tb_opt_gvn_node(f, last);
-
-                TB_Node* n = tb_alloc_node(f, TB_VSHUFFLE, op->v_dt, 3, sizeof(TB_NodeVShuffle) + op->width*sizeof(int));
-                set_input(f, n, last,         1);
-                set_input(f, n, src_op->v_op, 2);
-
-                TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
-                shuf->width = op->width;
-                FOR_N(j, 0, op->width) {
-                    shuf->indices[j] = j;
-                }
-                last = n;
-            }
-
-            // overwrite the old entries
-            TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(last);
-            shuf->indices[i] = op->width + indices[i];
-        }
-
-        tb_arena_free(&f->tmp_arena, indices, op->width * sizeof(int));
-        return tb_opt_gvn_node(f, last);
     }
 
     // sometimes we don't need shuffles

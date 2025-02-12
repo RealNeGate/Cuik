@@ -2202,6 +2202,9 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             TB_ASSERT(dst.type == VAL_XMM);
             TB_ASSERT(src.type == VAL_XMM || src.type == VAL_MEM || src.type == VAL_GLOBAL);
 
+            if (!is_value_match(&dst, &src)) {
+                __(FP_MOV,  dt, &dst, &src);
+            }
             __(FP_SHUF, dt, &dst, &src);
             EMIT1(e, 0);
             break;
@@ -2220,6 +2223,9 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 imm |= (shuf->indices[i] & 3) << (i*2);
             }
 
+            if (!is_value_match(&dst, &src)) {
+                __(FP_MOV,  dt, &dst, &src);
+            }
             __(FP_SHUF, dt, &dst, &src);
             EMIT1(e, imm);
             break;
@@ -2532,12 +2538,29 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
     }
 
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
+    int lat = 1;
+    if (n->type == x86_vadd || n->type == x86_vmul) {
+        lat = 4;
+    }
+
+    if (op->mode == MODE_LD) {
+        lat += 3;
+    } else if (op->mode == MODE_ST) {
+        // bare stores are actually really cheap since they
+        // don't produce a value to be waited on, they merely
+        // queue up to be handled later.
+        if (n->type == x86_vmov || n->type == x86_mov) {
+            lat += 1;
+        } else {
+            lat += 4;
+        }
+    }
 
     /* if (end && end->type >= x86_cmpjcc && end->type <= x86_ucomijcc && end->inputs[2] == n) {
         return 0;
     } */
 
-    return 1;
+    return lat;
 }
 
 static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {

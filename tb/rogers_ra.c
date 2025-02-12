@@ -810,7 +810,14 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
         return true;
     }
 
-    if (reg_assign(ctx, vreg, ra->mask, num_regs)) {
+    int reg_width = 1;
+    if (def_class == REG_CLASS_STK) {
+        if (vreg->n->dt.type == TB_TAG_V128)      { reg_width = 2; }
+        else if (vreg->n->dt.type == TB_TAG_V256) { reg_width = 4; }
+        else if (vreg->n->dt.type == TB_TAG_V512) { reg_width = 8; }
+    }
+
+    if (reg_assign(ctx, vreg, ra->mask, reg_width, num_regs)) {
         TB_OPTDEBUG(REGALLOC)(printf("#   assigned to "), print_reg_name(vreg->class, vreg->assigned), printf("\n"));
 
         mark_active(ctx, ra, vreg_id);
@@ -820,8 +827,9 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
         // need more stack slots (there's an indefinite amount :p)
         if (def_class == REG_CLASS_STK) {
             vreg->class = REG_CLASS_STK;
-            vreg->assigned = ra->num_spills++;
+            vreg->assigned = ra->num_spills;
             mark_active(ctx, ra, vreg_id);
+            ra->num_spills += reg_width;
 
             // resize the mask array if necessary
             size_t new_cap = ra->max_regs_in_class > ra->num_spills ? ra->max_regs_in_class : ra->num_spills;
@@ -991,6 +999,11 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
 
         mark_dirty_bb(ra, f->scheduled[n->gvn] - ctx->cfg.blocks, tb__insert_after(ctx, ctx->f, spill_copy, n));
         TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill-store (%%%u)\x1b[0m\n", spill_vreg - ctx->vregs, spill_copy->gvn));
+
+        // spill is always placed before the "where_order" since... exercise to the reader :p
+        if (ra->where_bb == f->scheduled[n->gvn] - ctx->cfg.blocks) {
+            ra->where_order += 1;
+        }
     }
 
     double base_bias = ctx->vregs[ctx->vreg_map[n->gvn]].spill_bias;
@@ -1029,7 +1042,12 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
         }
 
         set_input(f, use_n, reload, use_i);
-        mark_dirty_bb(ra, f->scheduled[use_n->gvn] - ctx->cfg.blocks, tb__insert_before(ctx, ctx->f, reload, use_n));
+
+        int p = tb__insert_before(ctx, ctx->f, reload, use_n);
+        if (ra->where_bb == f->scheduled[n->gvn] - ctx->cfg.blocks && p >= ra->where_order) {
+            ra->where_order += 1;
+        }
+        mark_dirty_bb(ra, f->scheduled[use_n->gvn] - ctx->cfg.blocks, p);
 
         // if it's remat'ing a copy, we should edit the def mask to match the use
         if (reload->type == TB_MACH_COPY) {
@@ -1045,7 +1063,7 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
 
         // any reloads or clones before the spill point can keep their assignment
         int use_bb = f->scheduled[use_n->gvn] - ctx->cfg.blocks;
-        bool before_spill = use_bb < ra->where_bb || (use_bb == ra->where_bb && ra->order[use_n->gvn] < ra->where_order);
+        bool before_spill = use_bb < ra->where_bb || (use_bb == ra->where_bb && ra->order[use_n->gvn] <= ra->where_order);
         if (before_spill) {
             reload_vreg->class    = old_class;
             reload_vreg->assigned = old_assigned;
@@ -1071,7 +1089,7 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
                 TB_BasicBlock* bb = &ctx->cfg.blocks[i];
                 int* restrict order = ra->order;
 
-                FOR_N(j, start, aarray_length(bb->items)) {
+                FOR_N(j, 0, aarray_length(bb->items)) {
                     TB_Node* n = bb->items[j];
                     order[n->gvn] = 1+j;
                 }
@@ -1106,10 +1124,8 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
     }
 
     // we only have to clear our spilled n
-    int hash_index = inactive_hash_index(n->gvn);
-    if (ra->inactive_cache[hash_index].gvn == n->gvn) {
-        ra->inactive_cache[hash_index].gvn = 0;
-        ra->inactive_cache[hash_index].last_use = 0;
+    CUIK_TIMED_BLOCK("clear") {
+        memset(ra->inactive_cache, 0, 1024 * sizeof(InactiveCacheEntry));
     }
 
     if (attempted_vreg == best_spill) {
@@ -1207,7 +1223,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 continue;
             }
 
-            ra->where_bb = i, ra->where_order = j;
+            ra->where_order = j;
 
             #if TB_OPTDEBUG_REGALLOC
             printf("# ===========================\n");
@@ -1309,7 +1325,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                     // update position in BB
                     if (ra->order[n->gvn] != 0) {
                         ra->where_order = ra->order[n->gvn];
-                        i = ra->where_order - 1;
+                        j = ra->where_order - 1;
                     }
                 }
 
@@ -1329,7 +1345,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                             // update position in BB
                             if (ra->order[n->gvn] != 0) {
                                 ra->where_order = ra->order[n->gvn];
-                                i = ra->where_order - 1;
+                                j = ra->where_order - 1;
                             }
                         }
 

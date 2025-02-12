@@ -190,20 +190,43 @@ static void print_reg_name(int rg, int num) {
     }
 }
 
-static int reg_assign(Ctx* ctx, VReg* vreg, uint64_t* mask, size_t num_regs) {
+static int reg_assign(Ctx* ctx, VReg* vreg, uint64_t* mask, int reg_width, size_t num_regs) {
+    TB_ASSERT(reg_width >= 1);
     int def_class = vreg->mask->class;
     size_t mask_word_count = (num_regs + 63) / 64;
 
-    // find unset bit
+    // reg_width is gonna enforce alignment btw, this means if it's 2 we
+    // can't assign to odd slots (only even and then *also* take up the even
+    // slots).
     int reg = -1;
-    FOR_N(j, 0, mask_word_count) {
-        if (mask[j] == UINT64_MAX) { continue; }
+    if (reg_width > 1) {
+        TB_ASSERT(tb_is_power_of_two(reg_width));
 
-        int index = mask[j] != 0 ? tb_ffs64(~mask[j]) - 1 : 0;
-        if (j*64 + index < num_regs) {
-            reg = j*64 + index;
+        uint64_t allot_mask = UINT64_MAX >> (64ull - reg_width);
+        FOR_N(j, 0, mask_word_count) {
+            uint64_t m = mask[j];
+            FOR_N(k, 0, 64 / reg_width) {
+                if (((m >> (k*reg_width)) & allot_mask) == 0) {
+                    reg = j*64 + k*reg_width;
+                    if (reg >= num_regs) {
+                        reg = -1;
+                    }
+                    goto success;
+                }
+            }
         }
-        break;
+
+        success:;
+    } else {
+        // find unset bit
+        FOR_N(j, 0, mask_word_count) {
+            uint64_t m = mask[j];
+            int index = m != 0 ? tb_ffs64(~m) - 1 : 0;
+            if (j*64 + index < num_regs) {
+                reg = j*64 + index;
+            }
+            break;
+        }
     }
 
     if (reg < 0) {

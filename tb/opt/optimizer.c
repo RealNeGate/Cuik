@@ -1207,6 +1207,9 @@ bool tb_opt_cprop(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
 
     alloc_types(f);
+    if (UNLIKELY(f->node_count+1 >= f->type_cap)) {
+        latuni_grow(f, f->node_count+1);
+    }
     //   reset all types into TOP
     FOR_N(i, 0, f->node_count) { f->types[i] = &TOP_IN_THE_SKY; }
     //   anything unallocated should stay as NULL tho

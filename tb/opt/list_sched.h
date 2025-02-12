@@ -61,10 +61,6 @@ static void ready_up(ListSched* sched, TB_Node* n, TB_Node* end) {
     }
 }
 
-static void remove_ready(ListSched* sched, size_t i) {
-    aarray_remove(sched->ready, i);
-}
-
 static bool can_ready_user(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, Set* ready_set, TB_Node* n) {
     return !set_get(ready_set, n->gvn) && f->scheduled[n->gvn] == bb && !worklist_test(ws, n) && count_waiting_deps(f, ws, bb, n) == 0;
 }
@@ -81,7 +77,7 @@ static bool is_real_datatype(TB_DataType dt) {
 static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, ListSched* sched, int unit_i) {
     uint64_t unit_mask = 1ull << unit_i;
 
-    printf("Best on Port%d?\n", unit_i);
+    TB_OPTDEBUG(SCHEDULE)(printf("Best on Port%d?\n", unit_i));
 
     int best_i = -1;
     int best_score = 0;
@@ -105,7 +101,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
 
         // things which produce more values are cringe
         if (is_real_datatype(n->dt)) {
-            score -= 100;
+            score -= 10;
         }
 
         // if we have a single use and it's waiting on us? then we
@@ -118,9 +114,11 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
             }
         }
 
+        #if TB_OPTDEBUG_SCHEDULE
         printf("  ");
         tb_print_dumb_node(NULL, n);
         printf("  score=%d\n", score);
+        #endif
 
         if (score > best_score) {
             best_i = i;
@@ -272,7 +270,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                 in_use_mask |= 1ull << i;
                 stall = false;
 
-                remove_ready(&sched, idx);
+                aarray_remove(sched.ready, idx);
                 TB_ASSERT(!is_proj(n));
 
                 int end_cycle = cycle + get_lat(f, n, end);

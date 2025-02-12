@@ -901,7 +901,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 }
             }
 
-            if (!reg_assign(ctx, vreg, mask, num_regs)) {
+            if (!reg_assign(ctx, vreg, mask, 1, num_regs)) {
                 // if a stack slot failed to color then it means we
                 // need more stack slots (there's an indefinite amount :p)
                 if (def_class == REG_CLASS_STK) {
