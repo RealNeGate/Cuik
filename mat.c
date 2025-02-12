@@ -128,3 +128,4 @@ void matmul(float* dst, float* a, float* b) {
     sum3_3 += a15 * b15;
     dst[15] = sum3_3;
 }
+

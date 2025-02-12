@@ -2938,6 +2938,36 @@ int max_pack_width_for_op(TB_Function* f, TB_DataType dt, TB_Node* n) {
         i = 1;
     }
 
+    // consider any ops which have no vector forms as 0
+    switch (n->type) {
+        case TB_LOAD:
+        case TB_STORE:
+        break;
+
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        break;
+
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV:
+        case TB_FMIN:
+        case TB_FMAX:
+        break;
+
+        // some int multiplies are not possible
+        // in vectors, but we'll write simple fallbacks
+        // later on.
+        // case TB_MUL:
+        // break;
+
+        default: return 0;
+    }
+
     TB_ASSERT(dt.type >= 7);
     return limits[i][dt.type - 2];
 }

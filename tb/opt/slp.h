@@ -20,6 +20,10 @@ typedef struct {
 
     Pair** l_map;
     Pair** r_map;
+
+    // DFS constructed depths, useful to keep the
+    // independence checks manageable.
+    int* depths;
 } PairSet;
 
 typedef struct {
@@ -58,21 +62,36 @@ static bool isomorphic(TB_Node* a, TB_Node* b) {
     return false;
 }
 
-static bool independent(TB_Node* a, TB_Node* b) {
-    // TODO(NeGate): check for real independence
-    FOR_N(i, a->type == TB_STORE ? 3 : 1, a->input_count) {
-        if (a->inputs[i] == b) {
-            return false;
+static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) {
+    // siblings or equal?
+    if (pairs->depths[a->gvn] == pairs->depths[b->gvn]) {
+        return a != b;
+    }
+
+    TB_Node* shallow = a;
+    TB_Node* deep = b;
+    if (pairs->depths[a->gvn] > pairs->depths[b->gvn]) {
+        SWAP(TB_Node*, shallow, deep);
+    }
+
+    worklist_push(f->worklist, deep);
+    int mark = pairs->depths[shallow->gvn];
+
+    TB_Node* n;
+    while ((n = worklist_pop(f->worklist))) {
+        FOR_N(i, 0, n->input_count) {
+            if (n->inputs[i] == shallow) {
+                return false;
+            }
+
+            // push inputs which are still below the mark
+            if (n->inputs[i] && pairs->depths[n->inputs[i]->gvn] < mark) {
+                worklist_push(f->worklist, n->inputs[i]);
+            }
         }
     }
 
-    FOR_N(i, b->type == TB_STORE ? 3 : 1, b->input_count) {
-        if (b->inputs[i] == a) {
-            return false;
-        }
-    }
-
-    return a != b;
+    return true;
 }
 
 static bool is_adjacent_ref(MemRef a, MemRef b) {
@@ -111,7 +130,7 @@ static bool can_pack(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) {
     if (is_valid_vector_component(slp_node_data_type(a)) &&
         is_valid_vector_component(slp_node_data_type(b)) &&
         isomorphic(a, b) &&
-        independent(a, b) &&
+        independent(f, pairs, a, b) &&
         a->inputs[0] == b->inputs[0])
     {
         // if it's a memory op then it should share a base, we can't do sparse loads
@@ -159,20 +178,59 @@ static void slp_add_pair(TB_Function* f, PairSet* pairs, TB_Node* lhs, TB_Node* 
     pairs->r_map[rhs->gvn] = p;
 }
 
+static void dumb_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
+    if (worklist_test_n_set(ws, n)) { return; }
+    if (cfg_is_control(n)) {
+        FOR_USERS(u, n) {
+            if (cfg_is_control(USERN(u))) {
+                dumb_walk(f, ws, USERN(u));
+            }
+        }
+    }
+}
+
 bool generate_pack(TB_Function* f, PairSet* pairs) {
     ArenaArray(MemRef) refs = aarray_create(&f->tmp_arena, MemRef, 8);
 
-    pairs->l_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
-    pairs->r_map = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
+    pairs->l_map  = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
+    pairs->r_map  = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
+    pairs->depths = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
     FOR_N(i, 0, f->node_count) {
         pairs->l_map[i] = NULL;
         pairs->r_map[i] = NULL;
+        pairs->depths[i] = -1;
     }
 
+    // compute depths
+    {
+        worklist_push(f->worklist, f->root_node);
+        tb_print_dumb_node(NULL, f->root_node);
+        printf(" depth=0\n");
+
+        TB_Node* n;
+        while ((n = worklist_pop(f->worklist))) {
+            int depth = pairs->depths[n->gvn];
+
+            // push any unwalked nodes, assign their depth now
+            FOR_USERS(u, n) {
+                TB_Node* un = USERN(u);
+                if (pairs->depths[un->gvn] < 0) {
+                    pairs->depths[un->gvn] = depth + 1;
+                    worklist_push(f->worklist, un);
+
+                    tb_print_dumb_node(NULL, un);
+                    printf(" depth=%d\n", depth + 1);
+                }
+            }
+        }
+
+        __debugbreak();
+    }
+
+    // walk all memory effects
     TB_Node* root_mem = USERN(proj_with_index(f->root_node, 1));
     TB_ASSERT(root_mem->dt.type == TB_TAG_MEMORY);
     worklist_push(f->worklist, root_mem);
-
     for (size_t i = 0; i < dyn_array_length(f->worklist->items); i++) {
         TB_Node* mem = f->worklist->items[i];
 
@@ -424,6 +482,11 @@ bool compile_packs(TB_Function* f, PairSet* pairs) {
 
         TB_DataType elem_dt = slp_node_data_type(p->lhs);
         int pack_limit = codegen->max_pack_width_for_op(f, elem_dt, p->lhs);
+        if (pack_limit <= 1) {
+            // operation cannot vectorize, filter out this pack
+            continue;
+        }
+
         VectorOp* op = tb_arena_alloc(&f->tmp_arena, sizeof(VectorOp) + pack_limit*sizeof(TB_Node*));
         op->v_op = NULL;
         op->width = 0;

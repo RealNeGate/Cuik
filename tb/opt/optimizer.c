@@ -1354,7 +1354,15 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             }
         }
 
-        // TODO(NeGate): doesn't do anything yet
+        // avoids bloating up my arenas with freed nodes
+        float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
+        if (dead_factor > 0.2f) {
+            size_t old = tb_arena_current_size(&f->arena);
+            tb_compact_nodes(f, ws);
+            size_t new = tb_arena_current_size(&f->arena);
+            TB_OPTDEBUG(PASSES)(printf("Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
+        }
+
         TB_OPTDEBUG(PASSES)(printf("    * Vectorize\n"));
         DO_IF(TB_OPTDEBUG_PEEP)(printf("=== VECTOR OPTS ===\n"));
         if (tb_opt_vectorize(f)) {
@@ -1366,14 +1374,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {
         tb_opt_free_types(f);
-    }
-    // avoids bloating up my arenas with freed nodes
-    float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
-    if (dead_factor > 0.2f) {
-        size_t old = tb_arena_current_size(&f->arena);
-        tb_compact_nodes(f, ws);
-        size_t new = tb_arena_current_size(&f->arena);
-        TB_OPTDEBUG(PASSES)(printf("Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
     }
     tb_arena_destroy(&f->tmp_arena);
 
