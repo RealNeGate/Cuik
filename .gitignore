@@ -74,9 +74,6 @@ preprocessed.c
 
 project.4coder
 *.cache
-libCuik/freestanding.c
-libCuik/lib/preproc/dfa.h
-libCuik/lib/preproc/keywords.h
 tests/golden/tmp.txt
 tests/golden/tmp2.txt
 build.ninja
@@ -85,3 +82,4 @@ build.ninja
 tests/collection/foo.txt
 tests/gold/cuik.txt
 tests/gold/clang.txt
+meta/Instructions.json
