@@ -27,13 +27,6 @@ typedef struct {
 } PairSet;
 
 typedef struct {
-    TB_Node* mem;
-    TB_Node* base;
-    int32_t offset;
-    int32_t size;
-} MemRef;
-
-typedef struct {
     TB_DataType v_dt;
     TB_Node* v_op;
 
@@ -63,6 +56,7 @@ static bool isomorphic(TB_Node* a, TB_Node* b) {
 }
 
 static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) {
+    #if 0
     // siblings or equal?
     if (pairs->depths[a->gvn] == pairs->depths[b->gvn]) {
         return a != b;
@@ -92,6 +86,9 @@ static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) 
     }
 
     return true;
+    #endif
+
+    return a != b;
 }
 
 static bool is_adjacent_ref(MemRef a, MemRef b) {
@@ -178,18 +175,18 @@ static void slp_add_pair(TB_Function* f, PairSet* pairs, TB_Node* lhs, TB_Node* 
     pairs->r_map[rhs->gvn] = p;
 }
 
-static void dumb_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
+static void slp_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
     if (worklist_test_n_set(ws, n)) { return; }
     if (cfg_is_control(n)) {
         FOR_USERS(u, n) {
             if (cfg_is_control(USERN(u))) {
-                dumb_walk(f, ws, USERN(u));
+                slp_walk(f, ws, USERN(u));
             }
         }
     }
 }
 
-bool generate_pack(TB_Function* f, PairSet* pairs) {
+bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* loop) {
     ArenaArray(MemRef) refs = aarray_create(&f->tmp_arena, MemRef, 8);
 
     pairs->l_map  = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(Pair*));
@@ -202,7 +199,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs) {
     }
 
     // compute depths
-    {
+    if (false) {
         worklist_push(f->worklist, f->root_node);
         tb_print_dumb_node(NULL, f->root_node);
         printf(" depth=0\n");
@@ -228,9 +225,22 @@ bool generate_pack(TB_Function* f, PairSet* pairs) {
     }
 
     // walk all memory effects
-    TB_Node* root_mem = USERN(proj_with_index(f->root_node, 1));
-    TB_ASSERT(root_mem->dt.type == TB_TAG_MEMORY);
-    worklist_push(f->worklist, root_mem);
+    if (loop == NULL) {
+        TB_Node* root_mem = USERN(proj_with_index(f->root_node, 1));
+        TB_ASSERT(root_mem->dt.type == TB_TAG_MEMORY);
+        worklist_push(f->worklist, root_mem);
+    } else {
+        TB_Node* header = loop->header;
+        FOR_USERS(u, header) {
+            if (USERN(u)->type == TB_PHI ||
+                (USERI(u) == 0 && cfg_flags(USERN(u)) & NODE_MEMORY_IN)
+            ) {
+                TB_ASSERT(USERI(u) == 0);
+                worklist_push(f->worklist, USERN(u));
+            }
+        }
+    }
+
     for (size_t i = 0; i < dyn_array_length(f->worklist->items); i++) {
         TB_Node* mem = f->worklist->items[i];
 
@@ -238,7 +248,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs) {
             aarray_push(refs, compute_mem_ref(f, mem));
         }
 
-        if (mem->dt.type == TB_TAG_MEMORY) {
+        if (mem->dt.type == TB_TAG_TUPLE) {
             FOR_USERS(u, mem) {
                 if (cfg_is_mproj(USERN(u))) {
                     mem = USERN(u);
@@ -250,9 +260,13 @@ bool generate_pack(TB_Function* f, PairSet* pairs) {
         // walk all the memory users of the memory node
         if (mem->dt.type == TB_TAG_MEMORY) {
             FOR_USERS(u, mem) {
-                if ((USERN(u)->type == TB_PHI && USERN(u)->dt.type == TB_TAG_MEMORY) ||
-                    (USERI(u) == 1 && cfg_flags(USERN(u)) & NODE_MEMORY_IN)) {
-                    worklist_push(f->worklist, USERN(u));
+                TB_Node* un = USERN(u);
+                if ((un->type == TB_PHI && un->dt.type == TB_TAG_MEMORY) ||
+                    (USERI(u) == 1 && cfg_flags(un) & NODE_MEMORY_IN)) {
+                    // it's also gotta be inside the loop
+                    if (nl_table_get(&ctx->loop_map, ctx->ctrl[un->gvn]) == loop) {
+                        worklist_push(f->worklist, un);
+                    }
                 }
             }
         }
@@ -271,6 +285,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs) {
         printf(" (%%%u + %d, size=%d)\n", r.base->gvn, r.offset, r.size);
         #endif
     }
+    TB_OPTDEBUG(SLP)(printf("\n"));
 
     // scan for groups with the same base & element size
     int start = 0;
@@ -638,18 +653,12 @@ bool compile_packs(TB_Function* f, PairSet* pairs) {
     return true;
 }
 
-bool tb_opt_vectorize(TB_Function* f) {
-    TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
-    bool progress;
-    CUIK_TIMED_BLOCK("SLP") {
-        PairSet pairs = { 0 };
-        progress = generate_pack(f, &pairs);
-        if (progress && !compile_packs(f, &pairs)) {
-            // failed vibe check, no transformation performed
-            progress = false;
-        }
-
-        tb_arena_clear(&f->tmp_arena);
+bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_LoopTree* loop) {
+    PairSet pairs = { 0 };
+    if (generate_pack(f, &pairs, ctx, loop) && compile_packs(f, &pairs)) {
+        return true;
     }
-    return progress;
+
+    return false;
 }
+

@@ -8,11 +8,6 @@
 #define ASM_STYLE_PRINT_POS 0
 #define ASM_STYLE_PRINT_NOP 0
 
-// Instruction selection:
-//   returns an equivalent but machine-friendly node (one you're willing to
-//   use during RA & emit).
-static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n);
-
 // RA constraints:
 //   TODO
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
@@ -56,8 +51,9 @@ static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end);
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n);
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
-static void disassemble(TB_CGEmitter* e, Disasm* restrict d, int bb, size_t pos, size_t end);
 
+// Dissassembly:
+static bool sym_handler(TB_Disasm* disasm, int inst_length, uint64_t field, int field_pos, int field_len);
 static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e);
 
 // just a pretty asm-like printer
@@ -428,6 +424,65 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
     // we've found a match, jump to the relevant C match
     return x86_dfa_accept(ctx, f, n, state);
 }
+
+#define E(fmt, ...) tb_asm_print(e, fmt, ## __VA_ARGS__)
+static void disassemble(TB_Arch arch, TB_CGEmitter* e, Disasm* restrict d, int bb, size_t start, size_t end) {
+    char str[500];
+    TB_Disasm disasm = {
+        .ctx = d,
+        // input
+        .in = e->data, .in_curr = start, .in_len = end,
+        // output
+        .out = str, .out_len = sizeof(str),
+        // symbols
+        .symbol_handler = sym_handler,
+    };
+
+    while (disasm.in_curr < disasm.in_len) {
+        disasm.out_curr = 0;
+
+        size_t pos = disasm.in_curr;
+        while (d->loc != d->end && d->loc->pos == pos) {
+            TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
+            E("// %s : line %d\n", d->loc->file->path, d->loc->line);
+            TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
+            d->loc++;
+        }
+
+        if (tb_disasm_print(arch, &disasm, true) < 0) {
+            E("ERROR %#02x\n", disasm.in[disasm.in_curr++]);
+            continue;
+        }
+
+        uint64_t line_start = e->total_asm;
+        #if ASM_STYLE_PRINT_POS
+        E("%-4x  %.*s", pos, (int) disasm.out_curr, disasm.out);
+        #else
+        E("  %.*s", (int) disasm.out_curr, disasm.out);
+        #endif
+
+        int offset = e->total_asm - line_start;
+        if (d->comment && d->comment->pos == pos) {
+            TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
+            E("%*s// ", 50 - offset, "");
+            bool out_of_line = false;
+            do {
+                if (out_of_line) {
+                    // tack on a newline
+                    E("%*s// ", 50, "");
+                }
+
+                E("%.*s\n", d->comment->line_len, d->comment->line);
+                d->comment = d->comment->next;
+                out_of_line = true;
+            } while (d->comment && d->comment->pos == pos);
+            TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
+        } else {
+            E("\n");
+        }
+    }
+}
+#undef E
 
 static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
     log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena) - og_size) / 1024.0f, label);
@@ -1021,6 +1076,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
         EMITA(&ctx.emit, "%s:\n", f->super.name);
 
         Disasm d = {
+            &ctx.emit,
             func_out->first_patch,
             ctx.locations,
             &ctx.locations[dyn_array_length(ctx.locations)],
@@ -1028,8 +1084,9 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             func_out->safepoints
         };
 
+        TB_Arch arch = f->super.module->target_arch;
         if (ctx.prologue_length) {
-            disassemble(&ctx.emit, &d, -1, 0, ctx.prologue_length);
+            disassemble(arch, &ctx.emit, &d, -1, 0, ctx.prologue_length);
         }
 
         FOR_N(i, 0, final_order_count) {
@@ -1086,7 +1143,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 tb_asm_print(e, "\n");
                 #endif
             }
-            disassemble(e, &d, id, start, end);
+            disassemble(arch, e, &d, id, start, end);
         }
     }
 

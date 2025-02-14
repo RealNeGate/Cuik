@@ -25,9 +25,11 @@
 #define TB_OPTDEBUG_PASSES    1
 #define TB_OPTDEBUG_PEEP      0
 #define TB_OPTDEBUG_SCCP      0
-#define TB_OPTDEBUG_LOOP      0
+#define TB_OPTDEBUG_LOOP      1
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
+#define TB_OPTDEBUG_SLP       1
+#define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_MEM2REG   0
 #define TB_OPTDEBUG_ISEL      0
 #define TB_OPTDEBUG_ISEL2     0
@@ -39,8 +41,6 @@
 #define TB_OPTDEBUG_REGALLOC2 0
 #define TB_OPTDEBUG_REGALLOC3 0
 #define TB_OPTDEBUG_REGALLOC4 0
-#define TB_OPTDEBUG_SLP       1
-#define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_COMPACT   0
 #define TB_OPTDEBUG_SCHEDULE  0
 // for toggling ANSI colors
@@ -296,6 +296,14 @@ struct TB_Worklist {
 typedef struct TB_LoopTree TB_LoopTree;
 typedef struct TB_BasicBlock TB_BasicBlock;
 
+// SLP related goop
+typedef struct {
+    TB_Node* mem;
+    TB_Node* base;
+    int32_t offset;
+    int32_t size;
+} MemRef;
+
 struct TB_LoopTree {
     TB_LoopTree* parent;
     TB_LoopTree* next; // next sibling
@@ -308,6 +316,8 @@ struct TB_LoopTree {
     bool is_natural;
     int id;
     int depth;
+
+    ArenaArray(MemRef) refs;
 };
 
 // we have analysis stuff for computing BBs from our graphs, these aren't

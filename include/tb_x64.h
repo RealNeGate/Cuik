@@ -98,7 +98,6 @@ typedef struct {
     int64_t imm;
 } TB_X86_Inst;
 
-TB_API void tb_x86_print_inst(FILE* fp, TB_X86_Inst* inst);
 TB_API bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* data);
 TB_API const char* tb_x86_reg_name(int8_t reg, TB_X86_DataType dt);
 TB_API const char* tb_x86_type_name(TB_X86_DataType dt);

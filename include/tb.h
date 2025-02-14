@@ -881,7 +881,28 @@ TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip);
 ////////////////////////////////
 // Disassembler
 ////////////////////////////////
-TB_API ptrdiff_t tb_print_disassembly_inst(TB_Arch arch, size_t length, const void* ptr);
+typedef struct TB_Disasm {
+    void* ctx;
+
+    // Input stream
+    size_t in_len;
+    size_t in_curr;
+    const uint8_t* in;
+
+    // Output stream
+    size_t out_len;
+    size_t out_curr;
+    char* out;
+
+    // symbol_handler will be called any time there's a constant
+    // or offset which the disassembler can pretty print.
+    //
+    // field_pos is measured in bits because RISC processors like to have ranges in funky places
+    bool (*symbol_handler)(struct TB_Disasm* disasm, int inst_length, uint64_t field, int field_pos, int field_len);
+} TB_Disasm;
+
+TB_API bool tb_disasm_outf(TB_Disasm* disasm, const char* fmt, ...);
+TB_API ptrdiff_t tb_disasm_print(TB_Arch arch, TB_Disasm* disasm, bool has_relocs);
 
 ////////////////////////////////
 // JIT compilation

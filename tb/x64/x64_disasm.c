@@ -566,70 +566,83 @@ static const char* x86_fmts[] = {
     // "%#"PRIx64,
 };
 
-static void print_memory_operand(FILE* fp, TB_X86_Inst* restrict inst) {
+static void print_memory_operand(TB_Disasm* disasm, TB_X86_Inst* restrict inst) {
     uint8_t base = inst->regs & 0xFF;
     uint8_t index = (inst->regs >> 8) & 0xFF;
 
     if (inst->flags & TB_X86_INSTR_INDIRECT) {
         if ((inst->regs & 0xFFFF) == 0xFFFF) {
-            fprintf(fp, "[rip");
+            tb_disasm_outf(disasm, "%s [", tb_x86_type_name(inst->dt));
+            if (disasm->symbol_handler(disasm, inst->length, inst->disp, inst->disp_pos*8, 32)) {
+                tb_disasm_outf(disasm, "]");
+                return;
+            }
+
+            tb_disasm_outf(disasm, "[rip");
         } else {
-            fprintf(fp, "%s [", tb_x86_type_name(inst->dt));
+            tb_disasm_outf(disasm, "%s [", tb_x86_type_name(inst->dt));
             if (base != 0xFF) {
-                fprintf(fp, "%s", tb_x86_reg_name(base, TB_X86_QWORD));
+                tb_disasm_outf(disasm, "%s", tb_x86_reg_name(base, TB_X86_QWORD));
             }
 
             if (index != 0xFF) {
-                fprintf(fp, " + %s*%d", tb_x86_reg_name(index, TB_X86_QWORD), 1 << inst->scale);
+                tb_disasm_outf(disasm, " + %s*%d", tb_x86_reg_name(index, TB_X86_QWORD), 1 << inst->scale);
             }
         }
 
         if (inst->disp > 0) {
-            fprintf(fp, x86_fmts[0], inst->disp);
+            tb_disasm_outf(disasm, x86_fmts[0], inst->disp);
         } else if (inst->disp < 0) {
-            fprintf(fp, x86_fmts[1], -inst->disp);
+            tb_disasm_outf(disasm, x86_fmts[1], -inst->disp);
         }
-        fprintf(fp, "]");
+        tb_disasm_outf(disasm, "]");
     } else if (base != 0xFF) {
-        fprintf(fp, "%s", tb_x86_reg_name(base, inst->dt));
+        tb_disasm_outf(disasm, "%s", tb_x86_reg_name(base, inst->dt));
     }
 }
 
-void tb_x86_print_inst(FILE* fp, TB_X86_Inst* inst) {
-    if (fp == NULL) { fp = stdout; }
+size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs) {
+    size_t old = disasm->out_curr;
+    if (inst->flags & TB_X86_INSTR_REP) {
+        tb_disasm_outf(disasm, "rep ");
+    }
+
+    if (inst->flags & TB_X86_INSTR_LOCK) {
+        tb_disasm_outf(disasm, "lock ");
+    }
 
     const char* mnemonic = tb_x86_mnemonic(inst);
     if (inst->dt >= TB_X86_F32x1 && inst->dt <= TB_X86_F64x2) {
         static const char* strs[] = { "ss", "sd", "ps", "pd" };
-        fprintf(fp, "%s", mnemonic);
-        fprintf(fp, "%-6s", strs[inst->dt - TB_X86_F32x1]);
+        tb_disasm_outf(disasm, "%s", mnemonic);
+        tb_disasm_outf(disasm, "%-6s", strs[inst->dt - TB_X86_F32x1]);
     } else {
-        fprintf(fp, "%-8s", mnemonic);
+        tb_disasm_outf(disasm, "%-8s", mnemonic);
     }
 
     uint8_t rx = (inst->regs >> 16) & 0xFF;
     if (inst->flags & TB_X86_INSTR_DIRECTION) {
         if (rx != 255) {
-            fprintf(fp, "%s", tb_x86_reg_name(rx, inst->dt));
-            fprintf(fp, ", ");
+            tb_disasm_outf(disasm, "%s", tb_x86_reg_name(rx, inst->dt));
+            tb_disasm_outf(disasm, ", ");
         }
-        print_memory_operand(fp, inst);
+        print_memory_operand(disasm, inst);
     } else {
-        print_memory_operand(fp, inst);
+        print_memory_operand(disasm, inst);
         if (rx != 255) {
-            fprintf(fp, ", ");
-            fprintf(fp, "%s", tb_x86_reg_name(rx, inst->dt));
+            tb_disasm_outf(disasm, ", ");
+            tb_disasm_outf(disasm, "%s", tb_x86_reg_name(rx, inst->dt));
         }
     }
 
     if (inst->flags & TB_X86_INSTR_IMMEDIATE) {
         if (inst->regs != 0xFFFFFF) {
-            fprintf(fp, ", ");
+            tb_disasm_outf(disasm, ", ");
         }
 
-        fprintf(fp, x86_fmts[2], inst->imm);
+        tb_disasm_outf(disasm, x86_fmts[2], inst->imm);
     }
 
-    fprintf(fp, "\n");
+    return disasm->out_curr - old;
 }
 

@@ -213,15 +213,15 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 
 #include "mem_opt.h"
 #include "sroa.h"
-#include "loop.h"
-#include "branches.h"
 #include "print.h"
-#include "verify.h"
 #include "print_dumb.h"
+#include "loop.h"
+#include "slp.h"
+#include "branches.h"
+#include "verify.h"
 #include "print_svg.h"
 #include "compact.h"
 #include "gcm.h"
-#include "slp.h"
 #include "libcalls.h"
 #include "mem2reg.h"
 #include "rpo_sched.h"
@@ -1342,32 +1342,20 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
         }
 
-        // currently only rotating loops
-        TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
-        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
-        if (tb_opt_loops(f)) {
-            major_progress = true;
-
-            TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
-            if (k = tb_opt_peeps(f), k > 0) {
-                TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
-            }
-        }
-
         // avoids bloating up my arenas with freed nodes
         float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
         if (dead_factor > 0.2f) {
             size_t old = tb_arena_current_size(&f->arena);
             tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
-            TB_OPTDEBUG(PASSES)(printf("Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
+            TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
         }
 
-        TB_OPTDEBUG(PASSES)(printf("    * Vectorize\n"));
-        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== VECTOR OPTS ===\n"));
-        if (tb_opt_vectorize(f)) {
+        // currently only rotating loops
+        TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
+        if (tb_opt_loops(f)) {
             major_progress = true;
-            TB_OPTDEBUG(PASSES)(printf("      * Yay!\n"));
         }
     } while (major_progress);
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));

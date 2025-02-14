@@ -60,6 +60,7 @@ struct RegMask {
 };
 
 typedef struct {
+    TB_CGEmitter* emit;
     TB_SymbolPatch* patch;
     TB_Location* loc;
     TB_Location* end;
