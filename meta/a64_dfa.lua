@@ -18,6 +18,7 @@
 ]]
 
 local jason = require('jason')
+local inspect = require('inspect')
 
 --------------------------------
 -- helper schtuff
@@ -253,6 +254,34 @@ local instructions = {} -- list
 walk_A64(data.instructions, instructions)
 timer('walk')
 
+--[[
+i think i want to patch a bunch of N instructions to be 1 with more fields
+this will be fewer instructions, thus smaller dfa
+questions
+- how much more expensive will parsing be?
+case studies
+- copy and set memory
+	120 instructions that look the same (8/128 are unallocated)
+	all listed separately like why
+	op2 is actually a boolean matrix ABXY
+		|              | read  | write |
+		| non-temporal |   A   |   B   |
+		| unprivileged |   X   |   Y   |
+	(that these aren't documented as separate fields is dumb)
+	op1 is just 00=prologue, 01=main, 10=epilogue
+		and 11=set (this is special)
+	op0 (actually called o0 why) is just "forward only or not" 
+	set is the same pattern but using different bits because...
+		op0 is "with tags or not"
+		op2 is AABB
+			AA does what op1 did for copy (11 is unallocated)
+			BB does what op2 BY did for copy
+		with op0 and BB being 3 bits, when
+			AA is 11, that explains the 8 missing instructions
+	i think all of these values would be miniscule tables of text and
+		even letters in some case, so we can just "create" the mnemonic lmao
+]]
+
 if print_listings then
 	print(jason.encode(instructions))
 	timer('listing')
@@ -448,19 +477,53 @@ end
 --------------------------------
 
 if data_analysis then
+	-- how many patterns and duplicates?
+	local patset = {}
+	local patdup = {}
+	for _, i in ipairs(instructions) do
+		if patset[i.pattern] then
+			table.insert(patdup, i.name)
+		end
+		patset[i.pattern] = true
+	end
+	local unique_patterns = set_to_list(patset)
+	print(string.format('number of instructions = %d', #instructions))
+	print(string.format('number of patterns     = %d', #patterns))
+	print(string.format('unique patterns        = %d', #unique_patterns))
+	-- print(string.format('duplicate patterns %s', dump(patdup)))
+	
+	-- how many unique field groups?
+	local fields = {}
+	for _, i in ipairs(instructions) do
+		local mask = i.pattern:gsub('1', '0')
+		if not fields[mask] then
+			fields[mask] = {0}
+		end
+		fields[mask][1] = fields[mask][1] + 1
+		table.insert(fields[mask], i.name)
+	end
+	print(string.format('unique field patterns  = %d', #set_to_list(fields)))
+	-- print(inspect.inspect(fields))
+	-- error()
+
+	-- how many nodes?
 	local total_nodes = 0
 	for _, _ in pairs(dfa.Q) do
 		total_nodes = total_nodes + 1
+	end
+	local final_nodes = 0
+	for _, _ in pairs(dfa.F) do
+		final_nodes = final_nodes + 1
 	end
 	-- 25,389,524 cache no
 	--      7,939 cacne ye
 	
 	-- how many nodes
-	print(string.format('transition nodes = %d', delta_id))
-	print(string.format('final nodes      = %d', math.abs(final_id)))
 	print(string.format('total nodes      = %d', total_nodes))
+	print(string.format('final nodes      = %d', final_nodes))
+	print(string.format('transition nodes = %d', total_nodes - final_nodes))
 	-- final_id is negative, so we subtract
-	assert(total_nodes == delta_id - final_id, 'total nodes should be the sum of both ids')
+	-- assert(total_nodes == delta_id - final_id, 'total nodes should be the sum of both ids')
 
 	-- how many transitions happen in pairs/quads/octs/all
 	-- that is, how many inputs ignore the low bits
@@ -612,6 +675,20 @@ if data_analysis then
 	print(string.format('total tree size = %d', node_sizes[1]))
 	print(string.format('depth histogram %s', dump(depth_hist)))
 
+	-- where are the final states
+	local final_depths = copy(node_depths)
+	local final_hists = {}
+	for l, ns in ipairs(final_depths) do
+		for n, _ in pairs(ns) do
+			if not dfa.F[n] then
+				final_depths[l][n] = nil
+			end
+		end
+		local list = set_to_list(final_depths[l])
+		final_hists[l] = #list
+	end
+	print(string.format('final node depths = %s', dump(final_hists)))
+
 	local function idgraph(filename, dfa)
 		_, node_depths, _ = walk(dfa)
 		local file = assert(io.open(filename, 'w'))
@@ -622,7 +699,7 @@ if data_analysis then
 		end
 		file:close()
 	end
-	idgraph('normal.csv', dfa)
+	-- idgraph('normal.csv', dfa)
 
 	local function new_delta(dfa, idmap)
 		local newdelta = {}
@@ -695,7 +772,7 @@ if data_analysis then
 	for i, v in ipairs(order) do idmap[v] = i end
 	dfa.delta = new_delta(dfa, idmap)
 	local biggest_delta_supersmart, _, _ = delta_walk(dfa)
-	idgraph('smarest.csv', dfa)
+	-- idgraph('smarest.csv', dfa)
 	-- dfa.delta = new_delta(dfa, order)
 	--[[
 	-- try using node sizes to sort nodes for bread-first search
@@ -761,8 +838,8 @@ if data_analysis then
 	for i, v in ipairs(newids) do idmap[v] = i end
 	dfa.delta = new_delta(dfa, idmap)
 	local biggest_delta_dumb_bread, _, _ = delta_walk(dfa)
-	idgraph('bread.csv', dfa)
-	dfa.delta = new_delta(dfa, newids)
+	-- idgraph('bread.csv', dfa)
+	-- dfa.delta = new_delta(dfa, newids)
 	--[[
 	-- what's the biggest transition id delta?
 	print(string.format('biggest delta (dumb deeped) = %d', biggest_delta_deepd))
