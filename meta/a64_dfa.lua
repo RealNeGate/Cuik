@@ -119,6 +119,34 @@ encodings:
 		- idk if fields are allowed to overlap (none when checked 2025/02/04)
 ]]
 
+--[[
+i think i want to patch a bunch of N instructions to be 1 with more fields
+this will be fewer instructions, thus smaller dfa
+questions
+- how much more expensive will parsing be?
+case studies
+- copy and set memory
+	120 instructions that look the same (8/128 are unallocated)
+	all listed separately like why
+	op2 is actually a boolean matrix ABXY
+		|              | read  | write |
+		| non-temporal |   A   |   B   |
+		| unprivileged |   X   |   Y   |
+	(that these aren't documented as separate fields is dumb)
+	op1 is just 00=prologue, 01=main, 10=epilogue
+		and 11=set (this is special)
+	op0 (actually called o0 why) is just "forward only or not" 
+	set is the same pattern but using different bits because...
+		op0 is "with tags or not"
+		op2 is AABB
+			AA does what op1 did for copy (11 is unallocated)
+			BB does what op2 BY did for copy
+		with op0 and BB being 3 bits, when
+			AA is 11, that explains the 8 missing instructions
+	i think all of these values would be miniscule tables of text and
+		even letters in some case, so we can just "create" the mnemonic lmao
+]]
+
 -- patches, because arm wants to be silly :)
 local patches = {
 	sve_int_reduce_1         = {{ name = 'size', bit = 22, len = 2 }},
@@ -248,34 +276,6 @@ timer('decode')
 local instructions = {} -- list
 walk_A64(data.instructions, instructions)
 timer('walk')
-
---[[
-i think i want to patch a bunch of N instructions to be 1 with more fields
-this will be fewer instructions, thus smaller dfa
-questions
-- how much more expensive will parsing be?
-case studies
-- copy and set memory
-	120 instructions that look the same (8/128 are unallocated)
-	all listed separately like why
-	op2 is actually a boolean matrix ABXY
-		|              | read  | write |
-		| non-temporal |   A   |   B   |
-		| unprivileged |   X   |   Y   |
-	(that these aren't documented as separate fields is dumb)
-	op1 is just 00=prologue, 01=main, 10=epilogue
-		and 11=set (this is special)
-	op0 (actually called o0 why) is just "forward only or not" 
-	set is the same pattern but using different bits because...
-		op0 is "with tags or not"
-		op2 is AABB
-			AA does what op1 did for copy (11 is unallocated)
-			BB does what op2 BY did for copy
-		with op0 and BB being 3 bits, when
-			AA is 11, that explains the 8 missing instructions
-	i think all of these values would be miniscule tables of text and
-		even letters in some case, so we can just "create" the mnemonic lmao
-]]
 
 if print_listings then
 	print(jason.encode(instructions))
