@@ -1,20 +1,6 @@
 --[[ TODO
-	! add multiple names for final states, as there are duplicate patterns
-	? might need to patch specific instructions before moving on to dfa
-		- arm doesn't like defining their shit accurately :)
-		AUTIA_64P_dp_1src,   AUTIZA_64Z_dp_1src
-		AUTIB_64P_dp_1src,   AUTIZB_64Z_dp_1src
-		AUTDA_64P_dp_1src,   AUTDZA_64Z_dp_1src
-		AUTDB_64P_dp_1src,   AUTDZB_64Z_dp_1src
-		PACIA_64P_dp_1src,   PACIZA_64Z_dp_1src
-		PACIB_64P_dp_1src,   PACIZB_64Z_dp_1src
-		PACDA_64P_dp_1src,   PACDZA_64Z_dp_1src
-		PACDB_64P_dp_1src,   PACDZB_64Z_dp_1src
-		REV16_64_dp_1src,    RBIT_64_dp_1src
-		BRAAZ_64_branch_reg, RETAA_64E_branch_reg, RETAB_64E_branch_reg
-		BLR_64_branch_reg,   RETAA_64E_branch_reg, RETAASPPCR_64M_branch_reg, RETAB_64E_branch_reg, RETABSPPCR_64M_branch_reg
-		REV_32_dp_1src,      RBIT_32_dp_1src
-	? trim edges where a node can only reach one final state
+	some final states are shared, this is wrong
+		fix the duplicates pls
 ]]
 
 local jason = require('jason')
