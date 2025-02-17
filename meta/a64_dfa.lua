@@ -119,7 +119,17 @@ encodings:
 		- idk if fields are allowed to overlap (none when checked 2025/02/04)
 ]]
 
-local function parse_encoding(encodings)
+-- patches, because arm wants to be silly :)
+local patches = {
+	sve_int_reduce_1         = {{ name = 'size', bit = 22, len = 2 }},
+	sve_int_reduce_1q        = {{ name = 'size', bit = 22, len = 2 }},
+	sve_int_bin_pred_shift_1 = {{ name = 'size', bit = 22, len = 2 }},
+	sve_int_bin_pred_shift_2 = {{ name = 'size', bit = 22, len = 2 }},
+	sve_int_bin_cons_shift_a = {{ name = 'size', bit = 22, len = 2 }},
+	sve_int_ucmp_vi          = {{ name = 'size', bit = 22, len = 2 }},
+}
+
+local function parse_encoding(encodings, name)
 	--[[ encoding
 		i want to turn a list of ranges of bits/fields such as
 		[{ value='0101', range={ bit=4, len=4 }}
@@ -149,47 +159,45 @@ local function parse_encoding(encodings)
 		end
 	end
 
-	-- fields (walk up the tree)
-	for level = #encodings, 1, -1 do
-		local set = encodings[level]
-		for _, val in ipairs(set.values) do
-			if val._type == 'Instruction.Encodeset.Field' then
-				local bit = val.range.start
-				local len = val.range.width
-				local str = val.value.value
-				local name = val.name
-				local added = false
-				-- again reverse the string
-				str = string.reverse(str)
-				for i = 1, len do
-					-- we don't want to override bits
-					if pattern[bit + i] == '-' then
-						added = true
-						local c = str:sub(i + 1, i + 1)
-						if c == 'x' then
-							pattern[bit + i] = '_'
-						else
-							-- field value might be constrained (bit not 'x')
-							-- it might be this simple but who knows
-							pattern[bit + i] = c
-						end
-					end
+	-- i think i can just use the latest list for fields
+	local set = encodings[#encodings]
+	for _, val in ipairs(set.values) do
+		if val._type == 'Instruction.Encodeset.Field' then
+			local bit = val.range.start
+			local len = val.range.width
+			local str = val.value.value
+			local name = val.name
+			-- again reverse the string
+			str = string.reverse(str)
+			for i = 1, len do
+				local c = str:sub(i + 1, i + 1)
+				-- field value might be constrained (bit not 'x')
+				-- it might be this simple but who knows
+				if c == 'x' then
+					pattern[bit + i] = '_'
+				else
+					pattern[bit + i] = c
 				end
-				-- we want to add these always
-				if not added and name == 'sf' then
-					for i = 1, len do
-						pattern[bit + i] = '_'
-					end
-					added = true
-				end
-				if added then
-					field = {
-						name = name,
-						bit = bit,
-						len = len,
-					}
-					table.insert(fields, field)
-				end
+			end
+			field = {
+				name = name,
+				bit = bit,
+				len = len,
+			}
+			table.insert(fields, field)
+		end
+	end
+
+	-- patch in fields that arm felt they didn't need to specify even though
+	-- it's the same for all the instructions in the group just like the register
+	-- fields because they love people working with their big data
+	if patches[name] then
+		for _, field in ipairs(patches[name]) do
+			table.insert(fields, field)
+			local bit = field.bit
+			local len = field.len
+			for i = 1, len do
+				pattern[bit + i] = '_'
 			end
 		end
 	end
@@ -208,37 +216,24 @@ local function walk_A64(list, instructions, parent, encodings)
 	if not instructions then instructions = {} end
 
 	for index, item in pairs(list) do
-		if item._type == 'Instruction.InstructionSet' then
+		table.insert(encodings, item.encoding)
+		local pattern, fields = parse_encoding(encodings, item.name)
+		--[[ continue traversing until all bits have been
+			accounted for by all the encodings ]]
+		if pattern:find('-') then
 			table.insert(parent, item.name)
-			table.insert(encodings, item.encoding)
 			walk_A64(item.children, instructions, parent, encodings)
-			table.remove(encodings)
 			table.remove(parent)
-
-		elseif item._type == 'Instruction.InstructionGroup' then
-			table.insert(parent, item.name)
-			table.insert(encodings, item.encoding)
-			walk_A64(item.children, instructions, parent, encodings)
-			table.remove(encodings)
-			table.remove(parent)
-
-		elseif item._type == 'Instruction.Instruction' then
-			table.insert(encodings, item.encoding)
-			local name = item.name
-			local path = table.concat(parent, '/')
-			local mnemonic = item.assembly.symbols[1].value
-			local pattern, fields = parse_encoding(encodings)
-			-- aliases and sub-instructions are possible, they'll be in item.children
-			local instruction = {
-				name = name,
-				path = path,
-				mnemonic = mnemonic,
+		else
+			table.insert(instructions, {
+				name = item.name,
+				path = table.concat(parent, '/'),
 				pattern = pattern,
 				fields = fields,
-			}
-			table.insert(instructions, instruction)
-			table.remove(encodings)
+			})
+			instructions[item.name] = #instructions
 		end
+		table.remove(encodings)
 	end
 end
 
@@ -320,10 +315,22 @@ end
 local dfa = {
 	Q = {}, -- set
 	Sigma = { -- list
+		-- '0', '1',
+		-- '00', '01', '10', '11',
+		-- '000', '001', '010', '011',
+		-- '100', '101', '110', '111',
 		'0000', '0001', '0010', '0011',
 		'0100', '0101', '0110', '0111',
 		'1000', '1001', '1010', '1011',
 		'1100', '1101', '1110', '1111',
+		-- '00000', '00001', '00010', '00011',
+		-- '00100', '00101', '00110', '00111',
+		-- '01000', '01001', '01010', '01011',
+		-- '01100', '01101', '01110', '01111',
+		-- '10000', '10001', '10010', '10011',
+		-- '10100', '10101', '10110', '10111',
+		-- '11000', '11001', '11010', '11011',
+		-- '11100', '11101', '11110', '11111',
 	},
 	delta = {}, -- set [state][input]=state
 	q0 = 1,
@@ -482,15 +489,20 @@ if data_analysis then
 	local patdup = {}
 	for _, i in ipairs(instructions) do
 		if patset[i.pattern] then
-			table.insert(patdup, i.name)
+			patdup[i.path..'/'..i.name] = i.pattern
+			-- print(inspect(i))
+			patdup[patset[i.pattern]] = i.pattern
 		end
-		patset[i.pattern] = true
+		patset[i.pattern] = i.path..'/'..i.name
 	end
 	local unique_patterns = set_to_list(patset)
 	print(string.format('number of instructions = %d', #instructions))
 	print(string.format('number of patterns     = %d', #patterns))
 	print(string.format('unique patterns        = %d', #unique_patterns))
-	-- print(string.format('duplicate patterns %s', dump(patdup)))
+	-- print(string.format('duplicate patterns %s', inspect(patdup)))
+	for k, v in pairs(patdup) do
+		print(v, k)
+	end
 	
 	-- how many unique field groups?
 	local fields = {}
@@ -603,6 +615,7 @@ if data_analysis then
 	for _, s in pairs(dfa.F) do
 		if #s > 1 then
 			for _, n in pairs(s) do
+				print(inspect(instructions[instructions[n]]))
 				duped_names[n] = true
 			end
 		end
@@ -738,14 +751,32 @@ if data_analysis then
 		return true
 	end
 	local function pick_best(ready)
-		local index, delta, reach = 1, 0, #order + 1
+		local reach = #order + 1
+		local index = 1
+		local delta = 0
+		local children = 0
 		for i, n in ipairs(ready) do
 			if parents[n] then
 				for p, _ in pairs(parents[n]) do
 					local d = reach - n2ord[p]
 					if d > delta then
-						delta = d
 						index = i
+						delta = d
+						children = 0
+					end
+					if d == delta then
+						local cset = {}
+						if dfa.delta[n] then
+							for _, c in pairs(dfa.delta[n]) do
+								cset[c] = true
+							end
+						end
+						local clist = set_to_list(cset)
+						local cnum = #clist
+						if cnum > children then
+							index = i
+							children = cnum
+						end
 					end
 				end
 			end
