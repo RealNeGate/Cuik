@@ -194,7 +194,7 @@ local function dfa_compile(n, head, depth)
         local t = n[i]
         if type(t) == "table" then
             head = dfa_compile(t, head, depth + 1)
-        elseif t == "..." then
+        elseif t == "..." or t == "$REST" then
             -- keep chewing up any nodes in this guy
             local ty = 0
             if dfa[head] == nil then
@@ -238,14 +238,19 @@ local node_cnt = 0
 function write_node(strs, ids, n)
     -- create kids first
     local in_cnt = 0
+    local uses_rest = false
     for i=2,#n do
         local v = n[i]
         if type(v) == "table" then
             write_node(strs, ids, v)
+            in_cnt = in_cnt + 1
+        elseif v == "$REST" then
+            uses_rest = true
         elseif mem_capture and v == mem_capture.name then
+            in_cnt = in_cnt + 2
+        else
             in_cnt = in_cnt + 1
         end
-        in_cnt = in_cnt + 1
     end
 
     -- assign unique IDs
@@ -267,7 +272,11 @@ function write_node(strs, ids, n)
     local potentially_dynamic_count = false
 
     strs[#strs + 1] = string.format("    size_t k%d_i = 0;", ids[n])
-    strs[#strs + 1] = string.format("    TB_Node* k%d = tb_alloc_node(f, %s, %s, %d, sizeof(%s));", ids[n], node_type, dt_name, in_cnt, extra_type)
+    if uses_rest then
+        strs[#strs + 1] = string.format("    TB_Node* k%d = tb_alloc_node(f, %s, %s, %d + $REST_LEN, sizeof(%s));", ids[n], node_type, dt_name, in_cnt, extra_type)
+    else
+        strs[#strs + 1] = string.format("    TB_Node* k%d = tb_alloc_node(f, %s, %s, %d, sizeof(%s));", ids[n], node_type, dt_name, in_cnt, extra_type)
+    end
 
     -- input edges
     for i=2,#n do
@@ -282,6 +291,8 @@ function write_node(strs, ids, n)
             potentially_dynamic_count = true
             -- copy inputs
             strs[#strs + 1] = string.format("    FOR_N(i, 0, %s->input_count) { set_input(f, k%d, %s->inputs[i], k%d_i++); }", v, ids[n], v, ids[n])
+        elseif v == "$REST" then
+            strs[#strs + 1] = string.format("    FOR_N(i, 0, $REST_LEN) { set_input(f, k%d, $REST[i], k%d_i++); }", ids[n], ids[n])
         elseif type(v) == "string" and v:byte(1) == string.byte("$") then
             strs[#strs + 1] = string.format("    set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
         end
@@ -341,7 +352,10 @@ function find_captures(strs, n, expr)
     end
 
     for k,v in pairs(n) do
-        if type(v) == "string" and v:byte(1) == string.byte("$") then
+        if v == "$REST" then
+            strs[#strs + 1] = string.format("    size_t %s_LEN = %s->input_count - %d;", v, expr, k-2)
+            strs[#strs + 1] = string.format("    TB_Node** %s  = &%s->inputs[%d];", v, expr, k-2)
+        elseif type(v) == "string" and v:byte(1) == string.byte("$") then
             if type(k) == "string" and k ~= "name" then
                 if node_basic_fields[k] then
                     strs[#strs + 1] = string.format("    TB_DataType %s = %s->%s;", v, expr, k)

@@ -161,7 +161,7 @@ static void dumb_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
 
 static bool cfg_is_fork_proj(TB_Node* n) { return cfg_is_cproj(n) && cfg_is_fork(n->inputs[0]); }
 void tb_print_dumb(TB_Function* f) {
-    printf("=== DUMP %s ===\n", f->super.name);
+    printf("====== DUMP %-20s ======\n", f->super.name);
 
     TB_Worklist ws = { 0 };
     worklist_alloc(&ws, f->node_count);
@@ -182,5 +182,7 @@ void tb_print_dumb(TB_Function* f) {
         printf("\n");
     }
     worklist_free(&ws);
+
+    printf("=======================================\n");
 }
 

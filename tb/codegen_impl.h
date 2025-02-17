@@ -8,13 +8,11 @@
 #define ASM_STYLE_PRINT_POS 0
 #define ASM_STYLE_PRINT_NOP 0
 
+static void node_add_tmps(Ctx* restrict ctx, TB_Node* n);
+
 // RA constraints:
 //   TODO
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
-//   these are used to define clobbers and scratch, they're just adding little
-//   vregs for use of a register during the lifetime of a node.
-static int node_tmp_count(Ctx* restrict ctx, TB_Node* n);
-static void node_constraint_tmps(Ctx* restrict ctx, TB_Node* n, RegMask** tmps);
 //   when we represent 2addr ops in the SSA, we define which edge is potentially
 //   shared such that lifetimes don't freak out about the fact that there's a
 //   hypothetical move before the op (which means that it'll interfere with its
@@ -53,7 +51,7 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n);
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi);
 
 // Dissassembly:
-static bool sym_handler(TB_Disasm* disasm, int inst_length, uint64_t field, int field_pos, int field_len);
+static bool sym_handler(TB_Disasm* disasm, int inst_length, uint64_t field, int field_pos, int field_len, bool is_offset);
 static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e);
 
 // just a pretty asm-like printer
@@ -117,6 +115,15 @@ static void flush_bundle(Ctx* restrict ctx, TB_CGEmitter* restrict e, Bundle* b)
 
     bundle_emit(ctx, e, b);
     b->count = 0;
+}
+
+static TB_Node* node_add_tmp(Ctx* restrict ctx, TB_Node* n, RegMask* mask) {
+    TB_Function* f = ctx->f;
+    TB_Node* tmp = tb_alloc_node(f, TB_MACH_TEMP, TB_TYPE_VOID, 1, sizeof(TB_NodeMachTemp));
+    set_input(f, tmp, f->root_node, 0);
+    add_input_late(f, n, tmp);
+    TB_NODE_SET_EXTRA(tmp, TB_NodeMachTemp, .def = mask);
+    return tmp;
 }
 
 static int try_create_vreg(Ctx* restrict ctx, TB_Node* n, RegMask* def_mask) {
@@ -210,34 +217,24 @@ static void construct_prologue_epilogue(Ctx* restrict ctx, TB_Function* f) {
         int proj_count = 3 + f->prototype->param_count;
 
         CallingConv* cc = ctx->calling_conv;
+        bool use_frame_ptr = ctx->f->features.gen & TB_FEATURE_FRAME_PTR;
         FOR_N(i, 1, ctx->num_classes) {
-            uint64_t callee_saves = cc->nonvolatile_regs[i];
-
-            // stack and frame pointer (if applies) will get special treatment in the
-            // prologue and epilogue for setup, that's not happening here.
-            if (cc->sp_class == i) {
-                callee_saves &= ~(1ull << cc->sp_reg);
-            }
-
-            if ((f->features.gen & TB_FEATURE_FRAME_PTR) && cc->fp_class == i) {
-                callee_saves &= ~(1ull << cc->fp_reg);
-            }
-
-            if (cc->rpc_class == i) {
-                callee_saves &= ~(1ull << cc->rpc_reg);
-            }
-
-            TB_DataType dt = TB_TYPE_I64;
+            const char* saves = cc->reg_saves[i];
+            if (saves == NULL) { continue; }
 
             // HACK(NeGate): we really should be describing the "reg class" => "ideal data type"
             // conversion somewhere, rather than hard coding in "XMM is floats"
+            TB_DataType dt = TB_TYPE_I64;
             if (i == 2) {
                 dt.type = TB_TAG_V128;
                 dt.elem_or_addrspace = TB_TAG_F32;
             }
 
             FOR_N(j, 0, ctx->num_regs[i]) {
-                if ((callee_saves >> j) & 1) {
+                if (saves[j] == 'c' &&
+                    // if we're using the frame ptr, it should be treated as "no save"
+                    (!use_frame_ptr || cc->fp_class != i || cc->fp_reg != j)
+                ) {
                     RegMask* rm = intern_regmask(ctx, i, false, 1ull << j);
                     TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, dt, 1, sizeof(TB_NodeMachProj));
                     TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = proj_count++, .def = rm);
@@ -371,7 +368,7 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
                     subsume_node(f, in, new_in);
 
                     // don't walk the replacement
-                    worklist_test_n_set(walker_ws, new_in);
+                    worklist_push(walker_ws, new_in);
 
                     in = new_in;
                     in_type = in ? in->type : TB_NULL;
@@ -490,6 +487,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 
 static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
     cuikperf_region_start("compile", f->super.name);
+
     #if TB_OPTDEBUG_ISEL
     tb_print_dumb(f);
     #endif
@@ -507,7 +505,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     Ctx ctx = {
         .module = f->super.module,
         .f = f,
-        .tmp_count   = node_tmp_count,
         .constraint  = node_constraint,
         .node_2addr  = node_2addr,
         .remat       = node_remat,
@@ -621,6 +618,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 }
                 TB_OPTDEBUG(ISEL)(printf("\n"));
 
+                node_add_tmps(&ctx, n);
+
                 FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
                     worklist_push(&walker_ws, n->inputs[i]);
                 }
@@ -713,28 +712,6 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 if (n->input_count > max_ins) {
                     max_ins = n->input_count;
                 }
-
-                int tmp_count = node_tmp_count(&ctx, n);
-                if (tmp_count > 0) {
-                    RegMask** tmp_masks = tb_arena_alloc(&f->tmp_arena, tmp_count * sizeof(RegMask*));
-                    node_constraint_tmps(&ctx, n, tmp_masks);
-
-                    FOR_N(k, 0, tmp_count) {
-                        TB_Node* tmp = tb_alloc_node(f, TB_MACH_TEMP, TB_TYPE_VOID, 1, sizeof(TB_NodeMachTemp));
-                        set_input(f, tmp, f->root_node, 0);
-                        add_input_late(f, n, tmp);
-
-                        TB_ASSERT(tmp_masks[k] != NULL);
-                        TB_NODE_SET_EXTRA(tmp, TB_NodeMachTemp, .def = tmp_masks[k]);
-                        aarray_push(items, tmp);
-
-                        aarray_reserve(ctx.vreg_map, f->node_count);
-                        ctx.vreg_map[tmp->gvn] = vreg_count++;
-                    }
-
-                    // we don't need to process either this item or it's temps after this point
-                    tb_arena_free(&f->tmp_arena, tmp_masks, tmp_count * sizeof(RegMask*));
-                }
                 aarray_push(items, n);
 
                 // these ops are guarenteed to fit since new nodes aren't being added and the
@@ -805,7 +782,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 FOR_N(k, 1, n->input_count) {
                     if (n->inputs[k]) {
                         if (n->inputs[k]->type == TB_MACH_TEMP) {
-                            printf("    TMP[%zu] = ", k), tb__print_regmask(TB_NODE_GET_EXTRA_T(n->inputs[k], TB_NodeMachTemp)->def), printf(" %%%d\n", n->inputs[k]->gvn);
+                            printf("    TMP[%zu] = ", k), tb__print_regmask(ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
                         } else if (ctx.ins[k] != &TB_REG_EMPTY) {
                             printf("    IN[%zu]  = ", k), tb__print_regmask(ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
                         }

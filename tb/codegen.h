@@ -134,8 +134,10 @@ typedef struct {
     // where is the return address
     uint8_t rpc_class, rpc_reg;
 
-    // need to be saved before use in function
-    uint64_t nonvolatile_regs[8];
+    // 'C'  caller save (volatile)
+    // 'c'  callee save (non volatile)
+    // '\0' no save
+    const char* reg_saves[8];
 
     // when it's true we'll allocate the next
     // available param in the class rather than matching 1-to-1 to
@@ -161,7 +163,6 @@ struct Ctx {
     TB_Worklist* walker_ws;
 
     // user callbacks
-    TmpCount tmp_count;
     NodeConstraint constraint;
     TB_2Addr node_2addr;
     NodeRemat remat;

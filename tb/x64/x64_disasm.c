@@ -91,6 +91,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         OP_RAX    = 2048,
         // vector op
         OP_SSE    = 4096,
+        OP_SCALAR = 8192,
     };
 
     #define NORMIE_BINOP(op) [op+0] = OP_MODRM | OP_8BIT, [op+1] = OP_MODRM, [op+2] = OP_MODRM | OP_DIR | OP_8BIT, [op+3] = OP_MODRM | OP_DIR, [op+4] = OP_RAX | OP_IMM8, [op+5] = OP_RAX | OP_IMM
@@ -196,7 +197,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // nop r/m
         _0F(0x1F)        = OP_MODRM,
         // SSE: ucomi
-        _0F(0x2E)        = OP_MODRM | OP_SSE,
+        _0F(0x2E)        = OP_MODRM | OP_SSE | OP_DIR | OP_SCALAR,
         // shufps
         _0F(0xC6)        = OP_MODRM | OP_SSE | OP_DIR | OP_IMM8,
         // imul reg, r/m
@@ -233,11 +234,19 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     // in the "default" "type" "system", REX.W is 64bit, certain ops
     // will mark they're 8bit and most will just be 32bit (with 16bit on ADDR16)
     if (props & OP_SSE) {
-        if (0) {}
-        else if (flags & TB_X86_INSTR_REPNE) { inst->dt = TB_X86_F64x1; } // sd     REPNE  OPCODE
-        else if (flags & TB_X86_INSTR_REP)   { inst->dt = TB_X86_F32x1; } // ss     REP    OPCODE
-        else if (inst->dt == TB_X86_WORD)    { inst->dt = TB_X86_F64x2; } // pd     DATA16 OPCODE
-        else                                 { inst->dt = TB_X86_F32x4; } // ps     __     OPCODE
+        if (props & OP_SCALAR) {
+            if (0) {}
+            else if (flags & TB_X86_INSTR_REPNE) { inst->dt = TB_X86_F64x1; } // sd     REPNE  OPCODE
+            else if (flags & TB_X86_INSTR_REP)   { inst->dt = TB_X86_F32x1; } // ss     REP    OPCODE
+            else if (inst->dt == TB_X86_WORD)    { inst->dt = TB_X86_F64x1; } // pd     DATA16 OPCODE
+            else                                 { inst->dt = TB_X86_F32x1; } // ps     __     OPCODE
+        } else {
+            if (0) {}
+            else if (flags & TB_X86_INSTR_REPNE) { inst->dt = TB_X86_F64x1; } // sd     REPNE  OPCODE
+            else if (flags & TB_X86_INSTR_REP)   { inst->dt = TB_X86_F32x1; } // ss     REP    OPCODE
+            else if (inst->dt == TB_X86_WORD)    { inst->dt = TB_X86_F64x2; } // pd     DATA16 OPCODE
+            else                                 { inst->dt = TB_X86_F32x4; } // ps     __     OPCODE
+        }
 
         flags &= ~(TB_X86_INSTR_REP | TB_X86_INSTR_REPNE);
     } else if (props & OP_64BIT) {
@@ -348,7 +357,16 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         flags |= TB_X86_INSTR_DIRECTION;
     }
 
-    inst->dt2 = inst->dt;
+    if (props & OP_2DT) {
+        if (op == 0x1B6 || op == 0x1B7 || op == 0x1BE || op == 0x1BF) {
+            inst->dt2 = (op == 0x1B6 || op == 0x1BE) ? TB_X86_BYTE : TB_X86_WORD;
+        } else {
+            inst->dt2 = TB_X86_DWORD;
+        }
+    } else {
+        inst->dt2 = inst->dt;
+    }
+
     inst->opcode = op;
     inst->scale  = scale;
     inst->regs   = regs;
@@ -566,21 +584,21 @@ static const char* x86_fmts[] = {
     // "%#"PRIx64,
 };
 
-static void print_memory_operand(TB_Disasm* disasm, TB_X86_Inst* restrict inst) {
+static void print_memory_operand(TB_Disasm* disasm, TB_X86_Inst* restrict inst, TB_X86_DataType dt) {
     uint8_t base = inst->regs & 0xFF;
     uint8_t index = (inst->regs >> 8) & 0xFF;
 
     if (inst->flags & TB_X86_INSTR_INDIRECT) {
         if ((inst->regs & 0xFFFF) == 0xFFFF) {
-            tb_disasm_outf(disasm, "%s [", tb_x86_type_name(inst->dt));
-            if (disasm->symbol_handler(disasm, inst->length, inst->disp, inst->disp_pos*8, 32)) {
+            tb_disasm_outf(disasm, "%s [", tb_x86_type_name(dt));
+            if (disasm->symbol_handler(disasm, inst->length, inst->disp, inst->disp_pos*8, 32, true)) {
                 tb_disasm_outf(disasm, "]");
                 return;
             }
 
             tb_disasm_outf(disasm, "[rip");
         } else {
-            tb_disasm_outf(disasm, "%s [", tb_x86_type_name(inst->dt));
+            tb_disasm_outf(disasm, "%s [", tb_x86_type_name(dt));
             if (base != 0xFF) {
                 tb_disasm_outf(disasm, "%s", tb_x86_reg_name(base, TB_X86_QWORD));
             }
@@ -597,7 +615,7 @@ static void print_memory_operand(TB_Disasm* disasm, TB_X86_Inst* restrict inst) 
         }
         tb_disasm_outf(disasm, "]");
     } else if (base != 0xFF) {
-        tb_disasm_outf(disasm, "%s", tb_x86_reg_name(base, inst->dt));
+        tb_disasm_outf(disasm, "%s", tb_x86_reg_name(base, dt));
     }
 }
 
@@ -615,7 +633,7 @@ size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs) 
     if (inst->dt >= TB_X86_F32x1 && inst->dt <= TB_X86_F64x2) {
         static const char* strs[] = { "ss", "sd", "ps", "pd" };
         tb_disasm_outf(disasm, "%s", mnemonic);
-        tb_disasm_outf(disasm, "%-6s", strs[inst->dt - TB_X86_F32x1]);
+        tb_disasm_outf(disasm, "%*s", -(8 - strlen(mnemonic)), strs[inst->dt - TB_X86_F32x1]);
     } else {
         tb_disasm_outf(disasm, "%-8s", mnemonic);
     }
@@ -626,12 +644,12 @@ size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs) 
             tb_disasm_outf(disasm, "%s", tb_x86_reg_name(rx, inst->dt));
             tb_disasm_outf(disasm, ", ");
         }
-        print_memory_operand(disasm, inst);
+        print_memory_operand(disasm, inst, inst->dt2);
     } else {
-        print_memory_operand(disasm, inst);
+        print_memory_operand(disasm, inst, inst->dt);
         if (rx != 255) {
             tb_disasm_outf(disasm, ", ");
-            tb_disasm_outf(disasm, "%s", tb_x86_reg_name(rx, inst->dt));
+            tb_disasm_outf(disasm, "%s", tb_x86_reg_name(rx, inst->dt2));
         }
     }
 
@@ -640,7 +658,10 @@ size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs) 
             tb_disasm_outf(disasm, ", ");
         }
 
-        tb_disasm_outf(disasm, x86_fmts[2], inst->imm);
+        bool is_offset = inst->opcode == 0xE8 || inst->opcode == 0xE9;
+        if (!disasm->symbol_handler(disasm, inst->length, inst->imm, inst->length*8 - 32, 32, is_offset)) {
+            tb_disasm_outf(disasm, x86_fmts[2], inst->imm);
+        }
     }
 
     return disasm->out_curr - old;

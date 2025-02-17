@@ -12,15 +12,11 @@ typedef struct {
 } ReadyNode;
 
 static int count_waiting_deps(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
-    if (n->type == TB_CALLGRAPH) {
-        return 0;
-    }
-
     // we also care about extra edges here so we're iterating on input_cap
     int waiting = 0;
     FOR_N(i, 0, n->input_cap) {
         TB_Node* in = n->inputs[i];
-        if (in && f->scheduled[in->gvn] == bb && !worklist_test(ws, in)) {
+        if (in && f->scheduled[in->gvn] == bb && in->type != TB_MACH_TEMP && !worklist_test(ws, in)) {
             waiting++;
         }
     }
@@ -40,7 +36,7 @@ typedef struct {
 
 // should probably move this out, it's useful elsewhere
 static void ready_up(ListSched* sched, TB_Node* n, TB_Node* end) {
-    if (set_get(&sched->ready_set, n->gvn)) {
+    if (set_get(&sched->ready_set, n->gvn) || n->type == TB_MACH_TEMP) {
         return;
     }
 
@@ -89,7 +85,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
         // actually fits on the available machine
         if (((unit_mask >> unit_i) & 1) == 0) { continue; }
 
-        // high latency
+        // high latency ops should be scheduled first
         int score = lat*100;
 
         // things which have lots of inputs are ideally processed first
@@ -277,7 +273,15 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                 aarray_push(active, (InFlight){ n, end_cycle, i });
 
                 if (n != end) {
-                    worklist_push(ws, n);
+                    // idk, it's ugly and a bookkeeping op
+                    if (n->type != TB_CALLGRAPH) {
+                        // push any temporaries for the node right before
+                        FOR_N(i, 0, n->input_count) if (n->inputs[i] && n->inputs[i]->type == TB_MACH_TEMP) {
+                            worklist_push(ws, n->inputs[i]);
+                        }
+
+                        worklist_push(ws, n);
+                    }
 
                     // make sure to place all projections directly after their tuple node
                     if (n->dt.type == TB_TAG_TUPLE) {

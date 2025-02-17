@@ -898,7 +898,7 @@ typedef struct TB_Disasm {
     // or offset which the disassembler can pretty print.
     //
     // field_pos is measured in bits because RISC processors like to have ranges in funky places
-    bool (*symbol_handler)(struct TB_Disasm* disasm, int inst_length, uint64_t field, int field_pos, int field_len);
+    bool (*symbol_handler)(struct TB_Disasm* disasm, int inst_length, uint64_t field, int field_pos, int field_len, bool is_offset);
 } TB_Disasm;
 
 TB_API bool tb_disasm_outf(TB_Disasm* disasm, const char* fmt, ...);

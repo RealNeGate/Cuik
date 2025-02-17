@@ -1,3 +1,13 @@
+
+int foo(float a, float b) {
+    return a > b;
+}
+
+int bar(float a) {
+    return foo(a, 2.0f);
+}
+
+#if 0
 void matmul(float* dst, float* a, float* b) {
     float a0 = a[0];
     float b0 = b[0];
@@ -128,4 +138,4 @@ void matmul(float* dst, float* a, float* b) {
     sum3_3 += a15 * b15;
     dst[15] = sum3_3;
 }
-
+#endif

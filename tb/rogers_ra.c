@@ -1000,7 +1000,7 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
         mark_dirty_bb(ra, f->scheduled[n->gvn] - ctx->cfg.blocks, tb__insert_after(ctx, ctx->f, spill_copy, n));
         TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill-store (%%%u)\x1b[0m\n", spill_vreg - ctx->vregs, spill_copy->gvn));
 
-        // spill is always placed before the "where_order" since... exercise to the reader :p
+        // spill is always placed before the "where_order" since... exercise for the reader :p
         if (ra->where_bb == f->scheduled[n->gvn] - ctx->cfg.blocks) {
             ra->where_order += 1;
         }
@@ -1131,7 +1131,9 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
     if (attempted_vreg == best_spill) {
         // it's a self spill, if so then we either are dead now (REMAT) or have to
         // retry allocation with a weaker constraint.
-        __debugbreak();
+        if (!remat) {
+            tb_todo();
+        }
     } else {
         // we just steal their assignment now
         ctx->vregs[attempted_vreg].class    = old_class;
