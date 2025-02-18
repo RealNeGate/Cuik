@@ -48,7 +48,7 @@ static void ready_up(ListSched* sched, TB_Node* n, TB_Node* end) {
         set_put(&sched->ready_set, n->gvn);
 
         // projections are readied but not in the ready list
-        if (n->dt.type == TB_TAG_TUPLE) FOR_USERS(u, n) {
+        FOR_USERS(u, n) {
             if (is_proj(USERN(u))) { set_put(&sched->ready_set, USERN(u)->gvn); }
         }
 
@@ -106,7 +106,13 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
         if (n->user_count == 1) {
             TB_Node* use = USERN(&n->users[0]);
             if (count_waiting_deps(f, ws, bb, use) == 1) {
-                score += 100;
+                // if we're the missing op for the branch, then let's hold our horses
+                if (use == bb->end) {
+                    score = 1;
+                } else {
+                    // printf("  %%%u ABOUT TO BE READY, BUMP %%%u!\n", use->gvn, n->gvn);
+                    score += 100;
+                }
             }
         }
 
@@ -284,13 +290,11 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
                     }
 
                     // make sure to place all projections directly after their tuple node
-                    if (n->dt.type == TB_TAG_TUPLE) {
-                        TB_ASSERT(!cfg_is_fork(n));
-                        FOR_USERS(u, n) if (is_proj(USERN(u))) {
-                            TB_ASSERT(USERI(u) == 0);
-                            TB_ASSERT(!worklist_test(ws, USERN(u)));
-                            worklist_push(ws, USERN(u));
-                        }
+                    TB_ASSERT(!cfg_is_fork(n));
+                    FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                        TB_ASSERT(USERI(u) == 0);
+                        TB_ASSERT(!worklist_test(ws, USERN(u)));
+                        worklist_push(ws, USERN(u));
                     }
 
                     TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH "), tb_print_dumb_node(NULL, n), printf("\n"));

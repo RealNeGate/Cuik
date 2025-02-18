@@ -156,26 +156,25 @@ static TB_BasicBlock* add_anti_deps(TB_Function* f, TB_CFG* cfg, TB_Node* ld, TB
 }
 
 TB_BasicBlock* tb_late_sched(TB_Function* f, TB_CFG* cfg, TB_BasicBlock* lca, TB_Node* n) {
-    if (n->dt.type == TB_TAG_TUPLE) {
-        FOR_USERS(use, n) {
-            // to avoid projections stopping the sinking of nodes, we walk past
-            // them whenever decision making here
-            if (is_proj(USERN(use))) {
-                FOR_USERS(use2, USERN(use)) {
-                    TB_BasicBlock* use_block = find_use_block(f, cfg, n, USERN(use), use2);
-                    if (use_block) { lca = find_lca(lca, use_block); }
-                }
-            } else {
-                TB_BasicBlock* use_block = find_use_block(f, cfg, n, n, use);
+    FOR_USERS(use, n) {
+        TB_BasicBlock* use_block = find_use_block(f, cfg, n, n, use);
+        if (use_block) { lca = find_lca(lca, use_block); }
+    }
+
+    FOR_USERS(use, n) {
+        // to avoid projections stopping the sinking of nodes, we walk past
+        // them whenever decision making here
+        if (is_proj(USERN(use))) {
+            FOR_USERS(use2, USERN(use)) {
+                TB_BasicBlock* use_block = find_use_block(f, cfg, n, USERN(use), use2);
                 if (use_block) { lca = find_lca(lca, use_block); }
             }
-        }
-    } else {
-        FOR_USERS(use, n) {
+        } else {
             TB_BasicBlock* use_block = find_use_block(f, cfg, n, n, use);
             if (use_block) { lca = find_lca(lca, use_block); }
         }
     }
+
     return lca;
 }
 
@@ -333,11 +332,9 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         f->scheduled[n->gvn] = best;
 
                         // unpinned nodes getting moved means their users need to move too
-                        if (n->dt.type == TB_TAG_TUPLE) {
-                            FOR_USERS(u, n) if (is_proj(USERN(u))) {
-                                TB_ASSERT(USERN(u)->type != TB_NULL);
-                                f->scheduled[USERN(u)->gvn] = best;
-                            }
+                        FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                            TB_ASSERT(USERN(u)->type != TB_NULL);
+                            f->scheduled[USERN(u)->gvn] = best;
                         }
 
                         dyn_array_put(ws->items, n);
@@ -378,12 +375,10 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     }
 
                     // final schedule for a node is decided by this point so we place it into the correct bucket
-                    if (n->dt.type == TB_TAG_TUPLE) {
-                        FOR_USERS(u, n) {
-                            TB_Node* un = USERN(u);
-                            if (is_proj(un) && USERI(u) == 0) {
-                                aarray_push(curr->items, un);
-                            }
+                    FOR_USERS(u, n) {
+                        TB_Node* un = USERN(u);
+                        if (is_proj(un) && USERI(u) == 0) {
+                            aarray_push(curr->items, un);
                         }
                     }
                     aarray_push(curr->items, n);
@@ -429,12 +424,10 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                                 f->scheduled[n->gvn] = better;
 
                                 // unpinned nodes getting moved means their users need to move too
-                                if (n->dt.type == TB_TAG_TUPLE) {
-                                    FOR_USERS(u, n) {
-                                        TB_Node* un = USERN(u);
-                                        if (is_proj(un) && USERI(u) == 0) {
-                                            f->scheduled[un->gvn] = better;
-                                        }
+                                FOR_USERS(u, n) {
+                                    TB_Node* un = USERN(u);
+                                    if (is_proj(un) && USERI(u) == 0) {
+                                        f->scheduled[un->gvn] = better;
                                     }
                                 }
                                 curr = better;
@@ -443,12 +436,10 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     }
 
                     // final schedule for a node is decided by this point so we place it into the correct bucket
-                    if (n->dt.type == TB_TAG_TUPLE) {
-                        FOR_USERS(u, n) {
-                            TB_Node* un = USERN(u);
-                            if (is_proj(un) && USERI(u) == 0) {
-                                aarray_push(curr->items, un);
-                            }
+                    FOR_USERS(u, n) {
+                        TB_Node* un = USERN(u);
+                        if (is_proj(un) && USERI(u) == 0) {
+                            aarray_push(curr->items, un);
                         }
                     }
                     aarray_push(curr->items, n);

@@ -658,7 +658,12 @@ size_t tb_x86_print_inst(TB_Disasm* disasm, TB_X86_Inst* inst, bool has_relocs) 
             tb_disasm_outf(disasm, ", ");
         }
 
-        bool is_offset = inst->opcode == 0xE8 || inst->opcode == 0xE9;
+        bool is_offset = inst->opcode == 0xE8
+            || inst->opcode == 0xE9
+            || inst->opcode == 0xEB
+            || (inst->opcode >= 0x70 && inst->opcode <= 0x7F)
+            || (inst->opcode >= 0x180 && inst->opcode <= 0x18F);
+
         if (!disasm->symbol_handler(disasm, inst->length, inst->imm, inst->length*8 - 32, 32, is_offset)) {
             tb_disasm_outf(disasm, x86_fmts[2], inst->imm);
         }

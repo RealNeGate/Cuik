@@ -666,6 +666,7 @@ static void mark_active(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
     VReg* vreg = &ctx->vregs[vreg_id];
     if (vreg->class != REG_CLASS_STK) {
         set_put(&ra->active_per_class[vreg->class], vreg->assigned);
+        // printf("MARK V%u %"PRIx64"\n\n", vreg_id, ra->active_per_class[vreg->class].data[0]);
     }
     set_put(&ra->active, vreg_id);
 }
@@ -674,6 +675,7 @@ static void unmark_active(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
     VReg* vreg = &ctx->vregs[vreg_id];
     if (vreg->class != REG_CLASS_STK) {
         set_remove(&ra->active_per_class[vreg->class], vreg->assigned);
+        // printf("UNMARK V%u %"PRIx64"\n\n", vreg_id, ra->active_per_class[vreg->class].data[0]);
     }
     set_remove(&ra->active, vreg_id);
 }
@@ -879,6 +881,8 @@ static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* att
             }
             best_score = score;
             best_spill = vreg_id;
+        } else {
+            TB_OPTDEBUG(REGALLOC)(printf("#     V%d is a bad pick! %f\n", vreg_id, score));
         }
     }
 
@@ -891,7 +895,7 @@ static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* att
         // this limits the interference thus improving colorability
         if (attempted_vreg->spill_bias < 1e7 && can_remat(ctx, attempted_vreg->n)) {
             if (self_score < best_score) {
-                TB_OPTDEBUG(REGALLOC)(printf("#     Self spilling! (%f is better than %f)\n", self_score, best_score));
+                TB_OPTDEBUG(REGALLOC)(printf("#     self spilling! (%f is better than %f)\n", self_score, best_score));
                 cuikperf_region_end();
                 return attempted_vreg - ctx->vregs;
             }
@@ -917,7 +921,7 @@ static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* att
             }
 
             if (attempted_vreg->mask != expected_mask && self_score < best_score) {
-                TB_OPTDEBUG(REGALLOC)(printf("#     Self spilling! (%f is better than %f)\n", self_score, best_score));
+                TB_OPTDEBUG(REGALLOC)(printf("#     self spilling! (%f is better than %f)\n", self_score, best_score));
                 cuikperf_region_end();
                 return attempted_vreg - ctx->vregs;
             }
@@ -1040,11 +1044,10 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
             reload_vreg = tb__set_node_vreg(ctx, reload);
             reload_vreg->mask = in_mask;
         }
-
         set_input(f, use_n, reload, use_i);
 
         int p = tb__insert_before(ctx, ctx->f, reload, use_n);
-        if (ra->where_bb == f->scheduled[n->gvn] - ctx->cfg.blocks && p >= ra->where_order) {
+        if (ra->where_bb == f->scheduled[use_n->gvn] - ctx->cfg.blocks && p <= ra->where_order) {
             ra->where_order += 1;
         }
         mark_dirty_bb(ra, f->scheduled[use_n->gvn] - ctx->cfg.blocks, p);
@@ -1322,35 +1325,52 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 int class = ctx->vregs[vreg_id].mask->class;
                 if (!allocate_reg(ctx, ra, vreg_id)) {
                     RegMask* mask = ctx->vregs[vreg_id].mask;
+                    printf("WE %%%u\n", bb->items[ra->where_order+1]->gvn);
                     commit_spill(ctx, ra, vreg_id, mask);
 
                     // update position in BB
                     if (ra->order[n->gvn] != 0) {
                         ra->where_order = ra->order[n->gvn];
-                        j = ra->where_order - 1;
                     }
+
+                    printf("RETRY AT %%%u\n", bb->items[ra->where_order]->gvn);
+                    j = ra->where_order - 1;
                 }
 
                 TB_Node* def = ctx->vregs[vreg_id].n;
                 set_put(&ra->live_out, def->gvn);
-            } else if (n->dt.type == TB_TAG_TUPLE) {
-                // allocate projections
-                FOR_USERS(u, n) if (is_proj(USERN(u))) {
-                    TB_Node* un = USERN(u);
-                    vreg_id = ctx->vreg_map[un->gvn];
-                    if (vreg_id > 0) {
-                        int class = ctx->vregs[vreg_id].mask->class;
-                        if (!allocate_reg(ctx, ra, vreg_id)) {
-                            RegMask* mask = ctx->vregs[vreg_id].mask;
-                            commit_spill(ctx, ra, vreg_id, mask);
+            }
 
-                            // update position in BB
-                            if (ra->order[n->gvn] != 0) {
-                                ra->where_order = ra->order[n->gvn];
-                                j = ra->where_order - 1;
-                            }
+            // allocate projections
+            FOR_USERS(u, n) if (is_proj(USERN(u))) {
+                TB_Node* un = USERN(u);
+                vreg_id = ctx->vreg_map[un->gvn];
+                if (vreg_id > 0) {
+                    #if TB_OPTDEBUG_REGALLOC
+                    printf("# ");
+                    tb_print_dumb_node(NULL, un);
+                    printf("\n");
+                    #endif
+
+                    int class = ctx->vregs[vreg_id].mask->class;
+                    if (!allocate_reg(ctx, ra, vreg_id)) {
+                        RegMask* mask = ctx->vregs[vreg_id].mask;
+                        commit_spill(ctx, ra, vreg_id, mask);
+
+                        // update position in BB
+                        if (ra->order[n->gvn] != 0) {
+                            ra->where_order = ra->order[n->gvn];
+                            j = ra->where_order - 1;
+                        } else {
+                            ra->where_order -= 1;
                         }
+                    }
 
+                    // some projections have literally no
+                    // uses, they just die immediately.
+                    if (un->user_count == 0) {
+                        unmark_active(ctx, ra, vreg_id);
+                    } else {
                         set_put(&ra->live_out, un->gvn);
                     }
                 }

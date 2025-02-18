@@ -54,7 +54,7 @@ node (ucomi)
 
 // compares
 #define CMP_OP(op_name, cc) \
-pat (op_name cmp_dt=$dt ___ $lhs $rhs) => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt)) cond=cc) \
+pat (op_name cmp_dt=$dt ___ $lhs $rhs) => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=cc) \
 pat (op_name cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)" extra_dt=$dt) cond=cc)
 
 CMP_OP(TB_CMP_SLE, LE)

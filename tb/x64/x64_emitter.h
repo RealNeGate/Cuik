@@ -246,7 +246,7 @@ static void asm_inst0(TB_CGEmitter* restrict e, InstType type, TB_X86_DataType d
 }
 
 static void asm_inst1(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* r) {
-    assert(type < COUNTOF(inst_table));
+    TB_ASSERT(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
     bool is_rex = (dt == TB_X86_BYTE || dt == TB_X86_QWORD);

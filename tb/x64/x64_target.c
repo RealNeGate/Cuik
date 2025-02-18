@@ -160,6 +160,7 @@ static void print_extra(TB_Node* n) {
     if (op->flags & OP_IMMEDIATE) {
         printf(", imm=%d", op->imm);
     }
+    printf(", cond=%s", COND_NAMES[op->cond]);
 }
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
@@ -189,9 +190,10 @@ static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
 
 static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
     if (n->type == TB_MACH_PROJ) {
-        printf("  arg ");
+        printf("  ");
         print_pretty_edge(ctx, n);
-        printf(" = ");
+        printf(" = proj ");
+        print_pretty_edge(ctx, n->inputs[0]);
         tb__print_regmask(TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def);
     } else if (n->type == TB_MACH_JUMP || n->type == x86_jcc) {
         int succ[2] = { -1, -1 };
@@ -212,10 +214,11 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             printf("  jmp .bb%d", succ[0]);
         }
     } else if (n->type == TB_MACH_MOVE) {
-        printf("  mov ");
+        printf("  ");
         print_pretty_edge(ctx, n);
-        printf(", ");
+        printf(" = move (");
         print_pretty_edge(ctx, n->inputs[1]);
+        printf(")");
     } else if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
 
@@ -643,8 +646,8 @@ static TB_Node* mach_symbol(Ctx* restrict ctx, TB_Function* f, TB_Symbol* s) {
 }
 
 static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
+    TB_Function* f = ctx->f;
     if (n->type == x86_call) {
-        TB_Function* f = ctx->f;
         CallingConv* cc = ctx->calling_conv;
 
         // we need to know which regs we've used, since those won't be tmps
@@ -676,6 +679,13 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
             }
         }
         tb_arena_free(&f->tmp_arena, ins, n->input_count * sizeof(RegMask*));
+    } else if (n->type >= x86_add && n->type <= x86_ror) {
+        // integer ops all produce the FLAGS
+        TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+        set_input(f, proj, n, 0);
+        TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = 0, .def = ctx->normie_mask[REG_CLASS_FLAGS]);
+
+        // node_add_tmp(ctx, n, ctx->normie_mask[REG_CLASS_FLAGS]);
     }
 }
 

@@ -8,11 +8,11 @@ int bar(float a) {
 } */
 
 int foo(int n) {
-    int i = 0, sum = 0;
+    int i = 0;
     for (; i < n; i++) {
-        sum++;
+        // sum++;
     }
-    return sum;
+    return i;
 }
 
 #if 0

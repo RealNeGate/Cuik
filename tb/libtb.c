@@ -36,10 +36,6 @@ void* tb_jit_stack_create(void);
 #include "objects/macho.c"
 #include "objects/wasm_obj.c"
 
-// Platform layer
-#if defined(_WIN32)
-#pragma comment(lib, "onecore.lib")
-
 int uf_find(int* uf, int a) {
     // leader
     int l = a;
@@ -69,6 +65,10 @@ void uf_union(int* uf, int x, int y) {
         uf[y] = x;
     }
 }
+
+// Platform layer
+#if defined(_WIN32)
+#pragma comment(lib, "onecore.lib")
 
 void* tb_platform_valloc(size_t size) {
     return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
