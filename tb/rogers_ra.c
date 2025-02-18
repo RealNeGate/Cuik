@@ -793,15 +793,15 @@ static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* att
         // we can only spill ourselves if that meant loosening the vreg's mask
         if (fixed_reg_mask(attempted_vreg->mask) >= 0) {
             RegMask* expected_mask = ctx->constraint(ctx, attempted_vreg->n, NULL);
-            printf("  self spill? %%%u\n", attempted_vreg->n->gvn);
+            // printf("  self spill? %%%u\n", attempted_vreg->n->gvn);
 
             FOR_USERS(u, attempted_vreg->n) {
                 RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
                 RegMask* new_mask = tb__reg_mask_meet(ctx, expected_mask, in_mask);
 
-                printf("    use %%%u[%d]: ", USERN(u)->gvn, USERI(u));
-                tb__print_regmask(new_mask);
-                printf("\n");
+                // printf("    use %%%u[%d]: ", USERN(u)->gvn, USERI(u));
+                // tb__print_regmask(new_mask);
+                // printf("\n");
 
                 // shouldn't see any hard splits here?
                 if (new_mask == &TB_REG_EMPTY) {
