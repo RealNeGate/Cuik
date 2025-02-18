@@ -89,6 +89,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
 
         assert((b->type == VAL_GPR || b->type == VAL_IMM) && "secondary operand is invalid!");
     } else {
+        // movd/movq add the ADDR16 prefix for reasons?
         EMIT1(e, 0x66);
     }
 
@@ -129,7 +130,6 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 
     if (inst->cat == INST_BINOP_EXT3) {
-        // movd/movq add the ADDR16 prefix for reasons?
         EMIT1(e, 0x0F);
         EMIT1(e, inst->op);
     } else {
@@ -141,7 +141,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
         }
 
         // Immediates have a custom opcode
-        assert((b->type != VAL_IMM || inst->op_i != 0 || inst->rx_i != 0) && "no immediate variant of instruction");
+        TB_ASSERT((b->type != VAL_IMM || inst->op_i != 0 || inst->rx_i != 0) && "no immediate variant of instruction");
         uint8_t opcode = b->type == VAL_IMM ? inst->op_i : inst->op;
 
         // bottom bit usually means size, 0 for 8bit, 1 for everything else.

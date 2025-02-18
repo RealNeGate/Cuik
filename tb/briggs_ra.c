@@ -1237,36 +1237,6 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
 ////////////////////////////////
 // Coalescing
 ////////////////////////////////
-static int uf_find(int* uf, int a) {
-    // leader
-    int l = a;
-    while (uf[l] != l) {
-        l = uf[l];
-    }
-
-    // path compaction
-    while (uf[a] != a) {
-        int p = uf[a];
-        uf[a] = l, a = p;
-    }
-
-    return l;
-}
-
-static void uf_union(int* uf, int x, int y) {
-    x = uf_find(uf, x);
-    y = uf_find(uf, y);
-
-    // parent should be the smaller number
-    if (x > y) {
-        SWAP(int, x, y);
-    }
-
-    if (x != y) {
-        uf[y] = x;
-    }
-}
-
 static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
     // TODO(NeGate): implement conservative coalescing
     if (!aggro) {

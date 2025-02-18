@@ -436,10 +436,8 @@ int cuik_get_tu_ordinal(TranslationUnit* restrict tu) {
 }
 
 void cuik_destroy_translation_unit(TranslationUnit* restrict tu) {
-    if (!tu->is_free) {
-        tu->is_free = true;
-        dyn_array_destroy(tu->top_level_stmts);
-    }
+    dyn_array_destroy(tu->top_level_stmts);
+    tb_arena_destroy(&tu->arena);
 
     if (tu->parent == NULL) {
         cuik_free(tu);

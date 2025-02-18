@@ -23,8 +23,8 @@
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS     0
 #define TB_OPTDEBUG_PASSES    0
-#define TB_OPTDEBUG_PEEP      0
-#define TB_OPTDEBUG_SCCP      0
+#define TB_OPTDEBUG_PEEP      1
+#define TB_OPTDEBUG_SCCP      1
 #define TB_OPTDEBUG_LOOP      0
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
@@ -711,6 +711,9 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection) sections,
 
 TB_ExportChunk* tb_export_make_chunk(TB_Arena* arena, size_t size);
 void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
+
+int uf_find(int* uf, int a);
+void uf_union(int* uf, int x, int y);
 
 ////////////////////////////////
 // ANALYSIS

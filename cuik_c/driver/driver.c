@@ -52,7 +52,6 @@ struct Cuik_BuildStep {
             Cuik_DriverArgs* args;
             const char* source;
 
-            TB_Arena arena;
             Cuik_CPP* cpp;
             TranslationUnit* tu;
         } cc;
@@ -263,9 +262,7 @@ static void cc_invoke(TPool* tp, BuildStepInfo* restrict info) {
 
     Cuik_ParseResult result;
     CUIK_TIMED_BLOCK_ARGS("parse", s->cc.source) {
-        tb_arena_create(&s->cc.arena, "Parse");
-
-        result = cuikparse_run(args->version, tokens, args->target, &s->cc.arena, false);
+        result = cuikparse_run(args->version, tokens, args->target, false);
         s->cc.tu = result.tu;
 
         if (result.error_count > 0) {
@@ -337,10 +334,6 @@ static void cc_invoke(TPool* tp, BuildStepInfo* restrict info) {
     if (!args->preserve_ast) {
         CUIK_TIMED_BLOCK("Destroy TU") {
             cuik_destroy_translation_unit(tu);
-        }
-
-        CUIK_TIMED_BLOCK("Free arena") {
-            tb_arena_destroy(&s->cc.arena);
         }
     }
 
@@ -688,7 +681,11 @@ void cuikpp_dump_tokens(TokenStream* s) {
             }
             *out++ = '\0';
 
-            printf("\n#line %d \"%s\"\t", r.line, str);
+            if (str[0] == 0) {
+                printf("\n#line %d\n", r.line);
+            } else {
+                printf("\n#line %d \"%s\"\n", r.line, str);
+            }
             last_spot = 0, last_file = r.file->filename;
         }
 
@@ -721,26 +718,28 @@ void cuik_free_driver_args(Cuik_DriverArgs* args) {
 }
 
 static bool run_cpp(Cuik_CPP* cpp, const Cuik_DriverArgs* args, bool should_finalize) {
-    CUIK_TIMED_BLOCK("set CPP options") {
-        cuik_set_standard_defines(cpp, args);
+    if (args != NULL) {
+        CUIK_TIMED_BLOCK("set CPP options") {
+            cuik_set_standard_defines(cpp, args);
 
-        dyn_array_for(i, args->includes) {
-            cuikpp_add_include_directory(cpp, false, args->includes[i]->data);
-        }
+            dyn_array_for(i, args->includes) {
+                cuikpp_add_include_directory(cpp, false, args->includes[i]->data);
+            }
 
-        dyn_array_for(i, args->defines) {
-            const char* equal = strchr(args->defines[i], '=');
+            dyn_array_for(i, args->defines) {
+                const char* equal = strchr(args->defines[i], '=');
 
-            if (equal == NULL) {
-                cuikpp_define_empty_cstr(cpp, args->defines[i]);
-            } else {
-                cuikpp_define(
-                    cpp,
-                    // before equals
-                    equal - args->defines[i], args->defines[i],
-                    // after equals
-                    strlen(equal + 1), equal + 1
-                );
+                if (equal == NULL) {
+                    cuikpp_define_empty_cstr(cpp, args->defines[i]);
+                } else {
+                    cuikpp_define(
+                        cpp,
+                        // before equals
+                        equal - args->defines[i], args->defines[i],
+                        // after equals
+                        strlen(equal + 1), equal + 1
+                    );
+                }
             }
         }
     }

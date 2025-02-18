@@ -183,7 +183,7 @@ static void mark_users(TB_Function* f, TB_Node* n) {
         // (trunc (mul a b)) => ...
         // (phi ...) => ... (usually converting into branchless ops)
         if ((type >= TB_CMP_EQ && type <= TB_CMP_FLE) ||
-            type == TB_SHL || type == TB_SHR || type == TB_MUL ||
+            type == TB_SHL || type == TB_SHR || type == TB_ADD || type == TB_MUL ||
             type == TB_STORE || type == TB_PHI) {
             mark_users_raw(f, USERN(u));
         }
@@ -1203,9 +1203,74 @@ static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
     }
 }
 
+static void dump_partitions(TB_Function* f, ArenaArray(TB_Node*) partitions, int* uf) {
+    // slow and dumb printer but whatever
+    aarray_for(i, partitions) {
+        TB_Node* leader = partitions[i];
+
+        printf("Partition:\n");
+        printf("  %%%u ", leader->gvn);
+        FOR_N(j, 0, f->node_count) {
+            if (j != leader->gvn && uf[j] == leader->gvn) {
+                printf("%%%zu ", j);
+            }
+        }
+        printf("\n");
+    }
+}
+
 bool tb_opt_cprop(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
 
+    #if 0
+    bool progress = false;
+
+    tb_print_dumb(f);
+
+    // disjoint-set for the congruence classes
+    int* uf = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
+    FOR_N(i, 0, f->node_count) { uf[i] = -1; }
+
+    ArenaArray(TB_Node*) partitions = aarray_create(&f->tmp_arena, TB_Node*, 32);
+
+    // put everyone on the worklist
+    TB_Worklist* ws = f->worklist;
+    worklist_push(ws, f->root_node);
+
+    // place everyone into a partition based on opcode
+    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+        TB_Node* n = ws->items[i];
+        FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+
+        // find partition
+        TB_Node* leader = NULL;
+        aarray_for(j, partitions) {
+            if (partitions[j]->type == n->type) {
+                leader = partitions[j];
+                break;
+            }
+        }
+
+        if (leader == NULL) {
+            aarray_push(partitions, n);
+            uf[n->gvn] = n->gvn;
+        } else {
+            uf[n->gvn] = leader->gvn;
+        }
+    }
+    // remove all visited bits except the ones in the worklist
+    worklist_clear_visited(ws);
+    aarray_for(i, partitions) {
+        worklist_test_n_set(ws, partitions[i]);
+    }
+    dyn_array_set_length(ws->items, aarray_length(partitions));
+    dump_partitions(f, partitions, uf);
+    __debugbreak();
+
+    TB_Node* n;
+    while (n = worklist_pop(f->worklist), n) {
+    }
+    #else
     alloc_types(f);
     if (UNLIKELY(f->node_count+1 >= f->type_cap)) {
         latuni_grow(f, f->node_count+1);
@@ -1247,6 +1312,7 @@ bool tb_opt_cprop(TB_Function* f) {
         DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
         FOR_USERS(u, n) { mark_node(f, USERN(u)); }
     }
+    #endif
 
     return progress;
 }
@@ -1334,7 +1400,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         // sometimes might invalidate the loop tree so we should
         // track when it makes CFG changes.
         TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
-        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== SCCP ===\n"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== OPTIMISTIC ===\n"));
         major_progress |= tb_opt_cprop(f);
 
         TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));

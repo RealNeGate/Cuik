@@ -1,10 +1,18 @@
 
-int foo(float a, float b) {
+/* int foo(float a, float b) {
     return a > b;
 }
 
 int bar(float a) {
     return foo(a, 2.0f);
+} */
+
+int foo(int n) {
+    int i = 0, sum = 0;
+    for (; i < n; i++) {
+        sum++;
+    }
+    return sum;
 }
 
 #if 0

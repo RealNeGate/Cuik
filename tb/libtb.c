@@ -40,6 +40,36 @@ void* tb_jit_stack_create(void);
 #if defined(_WIN32)
 #pragma comment(lib, "onecore.lib")
 
+int uf_find(int* uf, int a) {
+    // leader
+    int l = a;
+    while (uf[l] != l) {
+        l = uf[l];
+    }
+
+    // path compaction
+    while (uf[a] != a) {
+        int p = uf[a];
+        uf[a] = l, a = p;
+    }
+
+    return l;
+}
+
+void uf_union(int* uf, int x, int y) {
+    x = uf_find(uf, x);
+    y = uf_find(uf, y);
+
+    // parent should be the smaller number
+    if (x > y) {
+        SWAP(int, x, y);
+    }
+
+    if (x != y) {
+        uf[y] = x;
+    }
+}
+
 void* tb_platform_valloc(size_t size) {
     return VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 }

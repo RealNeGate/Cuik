@@ -112,14 +112,20 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         break;
 
         case TB_MUL:
-        if (bmin != bmax) {
-            return NULL;
-        }
-
-        overflow |= __builtin_mul_overflow(amin, bmin, &min);
-        overflow |= __builtin_mul_overflow(amax, bmin, &max);
+        uint64_t prods[4];
+        overflow |= __builtin_mul_overflow(amin, bmin, &prods[0]);
+        overflow |= __builtin_mul_overflow(amax, bmin, &prods[1]);
+        overflow |= __builtin_mul_overflow(amin, bmax, &prods[2]);
+        overflow |= __builtin_mul_overflow(amax, bmax, &prods[3]);
         if (overflow) {
             min = imin, max = imax;
+            break;
+        }
+
+        min = prods[0], max = prods[0];
+        for (int i = 1; i < 4; i++) {
+            min = TB_MIN(min, prods[i]);
+            max = TB_MAX(max, prods[i]);
         }
         break;
 

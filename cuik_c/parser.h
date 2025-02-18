@@ -84,9 +84,8 @@ struct TranslationUnit {
     // chain of TUs for the compilation unit
     struct TranslationUnit* next;
 
-    TB_Arena* arena;
+    TB_Arena arena;
     void* user_data;
-    bool is_free;
 
     int local_ordinal;
 
