@@ -689,7 +689,7 @@ static void* init(void) {
 
     const OSChar* vc_tools_install = env_get("VCToolsInstallDir");
     if (vc_tools_install != NULL) {
-        str_copy(result->vc_tools_install, vc_tools_install, FILENAME_MAX);
+        str_copy(result->vc_tools_install, vc_tools_install, FILENAME_MAX - 1);
         str_printf(result->vs_include_path, FILENAME_MAX, "%s"SLASH"include"SLASH, vc_tools_install);
         str_printf(result->vs_library_path, FILENAME_MAX, "%s"SLASH"lib"SLASH"x64"SLASH, vc_tools_install);
         str_printf(result->vs_exe_path, FILENAME_MAX, "%sVC"SLASH"bin"SLASH"amd64"SLASH, vc_tools_install);

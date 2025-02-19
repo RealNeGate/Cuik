@@ -9,7 +9,7 @@ enum {
 };
 
 #if TB_PACKED_USERS
-#define USERN(u) ((TB_Node*) ((u)->_n)) // node
+#define USERN(u) ((TB_Node*) (uint64_t) ((u)->_n)) // node
 #define USERI(u) ((int) ((u)->_slot))   // index
 #else
 #define USERN(u) ((u)->_n)    // node
@@ -39,42 +39,44 @@ struct Lattice {
         LATTICE_INT,
         LATTICE_TUPLE,
 
-        // float (each float type has it's own separate set of these btw):
-        //
-        //        top
-        //       /   \
-        //      /     \
-        //     /       \
-        //    /         \
-        //   /|\       /|\
-        //  / | \     / | \
-        // N  N  N 0.0 1.5 ... # fltcon
-        //  \ | /     \ | /
-        //   \|/       \|/
-        //   nan      ~nan
-        //     \       /
-        //      \     /
-        //       \   /
-        //        \ /
-        //        flt
-        //
-        // N means NaN it's just too long to write in the diagram
+        /* float (each float type has it's own separate set of these btw):
+         *
+         *        top
+         *       /   \
+         *      /     \
+         *     /       \
+         *    /         \
+         *   /|\       /|\
+         *  / | \     / | \
+         * N  N  N 0.0 1.5 ... # fltcon
+         *  \ | /     \ | /
+         *   \|/       \|/
+         *   nan      ~nan
+         *     \       /
+         *      \     /
+         *       \   /
+         *        \ /
+         *        flt
+         *
+         * N means NaN it's just too long to write in the diagram
+         */
         LATTICE_FLT32,    LATTICE_FLT64,    // bottom types for floats
         LATTICE_NAN32,    LATTICE_NAN64,
         LATTICE_XNAN32,   LATTICE_XNAN64,
         LATTICE_FLTCON32, LATTICE_FLTCON64, // _f32 and _f64
 
-        // pointers:
-        //    anyptr
-        //     /   \
-        //    /     \
-        //   /     /|\
-        //   |    / | \
-        // null  a  b  ... # ptrcon
-        //   |    \ | /
-        //   \    ~null
-        //    \   /
-        //    allptr
+        /* pointers:
+         *    anyptr
+         *     /   \
+         *    /     \
+         *   /     /|\
+         *   |    / | \
+         * null  a  b  ... # ptrcon
+         *   |    \ | /
+         *   \    ~null
+         *    \   /
+         *    allptr
+         */
         LATTICE_ALLPTR,
         LATTICE_ANYPTR,
         LATTICE_NULL,

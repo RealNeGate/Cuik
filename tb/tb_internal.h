@@ -601,7 +601,13 @@ typedef struct {
 #define TB_FITS_INTO(T,x) ((x) == (T)(x))
 
 #ifndef _MSC_VER
+#ifdef __has_builtin
+#if __has_builtin(__builtin_debugtrap)
 #define __debugbreak() __builtin_debugtrap()
+#elif __has_builtin(__builtin_trap)
+#define __debugbreak() __builtin_trap()
+#endif
+#endif
 #endif
 
 // tb_todo means it's something we fill in later
