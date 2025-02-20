@@ -83,6 +83,14 @@ local function set_to_list(set)
 	return list
 end
 
+local function list_to_set(list)
+	set = {}
+	for _, v in pairs(list) do
+		set[v] = true
+	end
+	return set
+end
+
 
 
 --------------------------------
@@ -142,6 +150,8 @@ case studies
 
 -- patches, because arm wants to be silly :)
 local patches = {
+	-- all of these leave size out until the instruction level
+	-- but i can pull them up so the group pattern is filled
 	sve_int_reduce_1         = {{ name = 'size', bit = 22, len = 2 }},
 	sve_int_reduce_1q        = {{ name = 'size', bit = 22, len = 2 }},
 	sve_int_bin_pred_shift_1 = {{ name = 'size', bit = 22, len = 2 }},
@@ -174,6 +184,7 @@ local function parse_encoding(encodings, name)
 				str = string.reverse(str)
 				for i = 1, len do
 					-- we don't care about overriding previous bits
+					-- also the string contains quotes, +1
 					pattern[bit + i] = str:sub(i + 1, i + 1)
 				end
 			end
@@ -188,9 +199,9 @@ local function parse_encoding(encodings, name)
 			local len = val.range.width
 			local str = val.value.value
 			local name = val.name
-			-- again reverse the string
 			str = string.reverse(str)
 			for i = 1, len do
+				-- string contains quotes, +1
 				local c = str:sub(i + 1, i + 1)
 				-- field value might be constrained (bit not 'x')
 				-- it might be this simple but who knows
@@ -397,7 +408,7 @@ while #worklist > 0 do
 
 			-- have these alive patterns at this index been found already?
 			local cached = false
-			for _, old_q in pairs(cache) do
+			for _, old_q in ipairs(cache) do
 				if q_prime.index == old_q.index and sets_equal(q_prime.active, old_q.active) then
 					q_prime.id = old_q.id
 					cached = true
@@ -470,6 +481,83 @@ if options.graphviz then
 	timer('graphviz')
 end
 
+--[[ final state patching
+	some final states point to multiple instructions
+	which appear to be differentiated by one having a
+	specific bit pattern, so i can remove the others as
+	"not" having that pattern.
+]]
+-- these should "hijack" their final state
+local final_state_patches = {
+	dp_1src_imm          = true,
+	sve_mem_spill        = true,
+	sve_mem_cstnt_ss     = true,
+	sve_mem_cstnt_si     = true,
+	sve_mem_64b_prfm_sv  = true,
+	sve_mem_64b_prfm_sv2 = true,
+	sve_mem_cldnt_ss     = true,
+	sve_mem_cldnt_si     = true,
+	-- sve_mem_prfm_si      = true,
+	-- sve_mem_32b_pfill    = true,
+	-- sve_mem_32b_fill     = true,
+	asimdimm             = true,
+	sve_int_dup_mask_imm = true,
+}
+for s, ns in pairs(dfa.F) do
+	if #ns > 1 then
+		for _, n in ipairs(ns) do
+			if final_state_patches[n] then
+				dfa.F[s] = {n}
+				break
+			end
+		end
+	end
+end
+
+local function find(dfa, id, name, edges)
+	local found = false
+	local labels = {}
+	for i, b in pairs(dfa.delta[id]) do
+		local f = false
+		if dfa.F[b] then
+			b = table.concat(dfa.F[b], ',')
+			f = b:find(name)
+		else
+			f = find(dfa, b, name, edges)
+		end
+		if f then
+			found = true
+			if not labels[b] then
+				labels[b] = {i}
+			else
+				table.insert(labels[b], i)
+			end
+		end
+	end
+	for b, l in pairs(labels) do
+		table.insert(edges, '\t'..id..' -> '..b..' [label="'..table.concat(l,',')..'"]')
+	end
+	return found
+end
+local dup_names = {
+	'sve_mem_32b_gld_vs',
+	'sve_mem_prfm_si',
+	'sve_mem_32b_pfill',
+	'sve_mem_32b_fill',
+}
+-- local edges = {}
+-- for _, name in ipairs(dup_names) do
+-- 	find(dfa, 1, name, edges)
+-- end
+-- local edges = list_to_set(edges)
+-- print('digraph G {')
+-- -- print('\trankdir=LR')
+-- for e, _ in pairs(edges) do
+-- 	print(e)
+-- end
+-- print('}')
+
+
 
 
 --------------------------------
@@ -513,22 +601,82 @@ if options.analysis then
 
 	-- how many nodes?
 	local total_nodes = 0
+	local final_nodes = 0
+	local transition_nodes = 0
 	for _, _ in pairs(dfa.Q) do
 		total_nodes = total_nodes + 1
 	end
-	local final_nodes = 0
 	for _, _ in pairs(dfa.F) do
 		final_nodes = final_nodes + 1
 	end
-	-- 25,389,524 cache no
-	--      7,939 cacne ye
-	
-	-- how many nodes
+	for _, _ in pairs(dfa.delta) do
+		transition_nodes = transition_nodes + 1
+	end
 	print(string.format('total nodes      = %d', total_nodes))
 	print(string.format('final nodes      = %d', final_nodes))
-	print(string.format('transition nodes = %d', total_nodes - final_nodes))
-	-- final_id is negative, so we subtract
-	-- assert(total_nodes == delta_id - final_id, 'total nodes should be the sum of both ids')
+	print(string.format('transition nodes = %d', transition_nodes))
+	-- 25,389,524 cache no
+	--      7,939 cacne ye
+
+	-- how many final states have more than one name?
+	local multinames = 0
+	for _, ns in pairs(dfa.F) do
+		if #ns > 1 then
+			multinames = multinames + 1
+			for _, n in pairs(ns) do
+				local i = instructions[instructions[n]]
+				print(i.pattern, i.path..'/'..i.name)
+			end
+			print('')
+		end
+	end
+	-- how many names have more than one final state?
+	local states_per_name = {}
+	for s, ns in pairs(dfa.F) do
+		for _, n in pairs(ns) do
+			if not states_per_name[n] then
+				states_per_name[n] = {s}
+			else
+				table.insert(states_per_name[n], s)
+			end
+		end
+	end
+	local multistates = 0
+	for n, s in pairs(states_per_name) do
+		if #s > 1 then
+			print(n, dump(s))
+			multistates = multistates + 1
+		end
+	end
+	print(string.format('final states matching multiple names = %d', multinames))
+	print(string.format('names matching multiple final states = %d', multistates))
+
+	-- how many edges?
+	-- what's the biggest transition id delta?
+	-- how many nodes have how many total transitions?
+	local function delta_walk(dfa)
+		local edges = 0
+		local max_delta = 0
+		local histogram = {}
+		for a, ib in pairs(dfa.delta) do
+			local edge_count = 0
+			for i, b in pairs(ib) do
+				edge_count = edge_count + 1
+				if b - a > max_delta then
+					max_delta = b - a
+				end
+			end
+			edges = edges + edge_count
+			if not histogram[edge_count] then
+				histogram[edge_count] = 0
+			end
+			histogram[edge_count] = histogram[edge_count] + 1
+		end
+		return max_delta, edges, histogram
+	end
+	local biggest_delta, total_edges, edge_histogram = delta_walk(dfa)
+	print(string.format('total edges = %d', total_edges))
+	print(string.format('transition histogram %s', dump(edge_histogram)))
 
 	-- how many transitions happen in pairs/quads/octs/all
 	-- that is, how many inputs ignore the low bits
@@ -602,49 +750,6 @@ if options.analysis then
 	print(string.format('total nodes octsed = %d', octs_count))
 	print(string.format('total nodes allsed = %d', alls_count))
 	print(string.format('                   = %d', pair_count + quad_count + octs_count + alls_count))
-
-	-- how many names share a final state with other names
-	local duped_names = {}
-	for _, s in pairs(dfa.F) do
-		if #s > 1 then
-			for _, n in pairs(s) do
-				print(inspect(instructions[instructions[n]]))
-				duped_names[n] = true
-			end
-		end
-	end
-	local duped_names_count = 0
-	for _, _ in pairs(duped_names) do
-		duped_names_count = duped_names_count + 1
-	end
-	print(string.format('names sharing final states with others = %d', duped_names_count))
-
-	-- how many edges?
-	-- what's the biggest transition id delta?
-	-- how many nodes have how many total transitions?
-	local function delta_walk(dfa)
-		local edges = 0
-		local max_delta = 0
-		local histogram = {}
-		for a, ib in pairs(dfa.delta) do
-			local edge_count = 0
-			for i, b in pairs(ib) do
-				edge_count = edge_count + 1
-				if b - a > max_delta then
-					max_delta = b - a
-				end
-			end
-			edges = edges + edge_count
-			if not histogram[edge_count] then
-				histogram[edge_count] = 0
-			end
-			histogram[edge_count] = histogram[edge_count] + 1
-		end
-		return max_delta, edges, histogram
-	end
-	local biggest_delta, total_edges, edge_histogram = delta_walk(dfa)
-	print(string.format('total edges                 = %d', total_edges))
-	print(string.format('transition histogram %s', dump(edge_histogram)))
 
 	-- how are the node ids assigned?
 	-- i think i can use node sizes to assign nodes better
