@@ -287,8 +287,12 @@ end
 
 local obj_names = table.concat(objs, " ")
 
-local exe_name = "tb"
-if options.driver then exe_name = "cuik" end
+local exe_name = "cuik"
+if not options.cuik then exe_name = "tb" end
+
+if not is_windows then
+    exe_name = "lib"..exe_name
+end
 
 -- placing executables into bin/
 exe_name = "bin/"..exe_name

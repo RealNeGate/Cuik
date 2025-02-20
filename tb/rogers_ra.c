@@ -1325,7 +1325,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 int class = ctx->vregs[vreg_id].mask->class;
                 if (!allocate_reg(ctx, ra, vreg_id)) {
                     RegMask* mask = ctx->vregs[vreg_id].mask;
-                    printf("WE %%%u\n", bb->items[ra->where_order+1]->gvn);
+                    // printf("WE %%%u\n", bb->items[ra->where_order+1]->gvn);
                     commit_spill(ctx, ra, vreg_id, mask);
 
                     // update position in BB
@@ -1333,7 +1333,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                         ra->where_order = ra->order[n->gvn];
                     }
 
-                    printf("RETRY AT %%%u\n", bb->items[ra->where_order]->gvn);
+                    // printf("RETRY AT %%%u\n", bb->items[ra->where_order]->gvn);
                     j = ra->where_order - 1;
                 }
 

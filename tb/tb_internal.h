@@ -31,8 +31,8 @@
 #define TB_OPTDEBUG_SLP       0
 #define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_MEM2REG   0
-#define TB_OPTDEBUG_ISEL      0
-#define TB_OPTDEBUG_ISEL2     0
+#define TB_OPTDEBUG_ISEL      1
+#define TB_OPTDEBUG_ISEL2     1
 #define TB_OPTDEBUG_EMIT      0
 #define TB_OPTDEBUG_DATAFLOW  0
 #define TB_OPTDEBUG_PLACEMENT 0

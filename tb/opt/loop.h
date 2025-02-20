@@ -99,7 +99,8 @@ static void loop_scc_walk(LoopSCC* restrict scc, TB_CFG* restrict cfg, TB_BasicB
     scc->stk[scc->stk_cnt++] = bb - cfg->blocks;
     n->on_stack = ON_STK;
 
-    // walk successors (in order to avoid weird nondeterminism)
+    // walk successors
+    // TODO(NeGate): in order to avoid weird nondeterminism
     FOR_SUCC(it, bb->end) {
         TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, it.succ);
         LoopSCCNode* succ_n    = &scc->nodes[succ_bb - cfg->blocks];

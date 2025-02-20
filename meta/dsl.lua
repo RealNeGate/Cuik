@@ -295,6 +295,8 @@ function write_node(strs, ids, n)
             strs[#strs + 1] = string.format("    FOR_N(i, 0, $REST_LEN) { set_input(f, k%d, $REST[i], k%d_i++); }", ids[n], ids[n])
         elseif type(v) == "string" and v:byte(1) == string.byte("$") then
             strs[#strs + 1] = string.format("    set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
+        else
+            strs[#strs + 1] = string.format("    set_input(f, k%d, %s, k%d_i++);", ids[n], v, ids[n])
         end
     end
 
@@ -323,6 +325,7 @@ node_basic_fields = {
 node_extra_desc = {
     ["TB_NodeCompare"] = { cmp_dt="TB_DataType" },
     ["TB_NodeSymbol"]  = { sym="TB_Symbol*" },
+    ["TB_NodeLocal"]   = { stack_pos="int" },
 }
 
 function find_captures(strs, n, expr)
@@ -349,6 +352,8 @@ function find_captures(strs, n, expr)
         extra_type = "TB_NodeCompare"
     elseif n[1] == "TB_SYMBOL" then
         extra_type = "TB_NodeSymbol"
+    elseif n[1] == "TB_LOCAL" then
+        extra_type = "TB_NodeLocal"
     end
 
     for k,v in pairs(n) do
@@ -521,6 +526,18 @@ for i=1,#any do
     end
 end
 
+function sort(set, cmp_fn)
+    local a = {}
+    for k, v in pairs(set) do
+        table.insert(a, k)
+    end
+
+    table.sort(a, function(a, b)
+        return cmp_fn(set, a, b)
+    end)
+    return a
+end
+
 if false then
     local graphviz = buffer.new(1000)
     graphviz:put("digraph G {\n")
@@ -550,19 +567,24 @@ else
     -- node_type_count = node_type_count + 1
 
     out:put("typedef enum X86NodeType {\n")
-    for k,v in pairs(node_types) do
-    x86_MEMORY = TB_MACH_X86,
-        out:put(string.format("    %s = TB_MACH_X86 + %d,\n", k, v.id))
+
+    local function cmp_node_types(table, a, b)
+        return table[a].id < table[b].id
+    end
+
+    local sorted_types = sort(node_types, cmp_node_types)
+    for i,k in ipairs(sorted_types) do
+        out:put(string.format("    %s = TB_MACH_X86 + %d,\n", k, node_types[k].id))
     end
     out:put("} X86NodeType;\n")
 
     out:put("static const char* node_name(int n_type) {\n")
     out:put("    switch (n_type) {\n")
-    for k,v in pairs(node_types) do
+    for i,k in ipairs(sorted_types) do
         out:put("        case ")
         out:put(k)
         out:put(": return \"")
-        out:put(v.name)
+        out:put(node_types[k].name)
         out:put("\";\n")
     end
     out:put("        default: return NULL;\n")

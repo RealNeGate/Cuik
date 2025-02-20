@@ -1,8 +1,10 @@
-ffi = require("ffi")
-bit = require("bit")
+buffer  = require "string.buffer"
+inspect = require "meta/inspect"
+ffi = require "ffi"
+bit = require "bit"
 
 local t = {}
-local cuik_dll = ffi.load(ffi.os == "Windows" and "tb.dll" or "tb.so")
+local cuik_dll = ffi.load(ffi.os == "Windows" and "cuik.dll" or "bin/libcuik.so")
 
 ffi.cdef[[
 typedef struct TokenStream TokenStream;
@@ -165,15 +167,43 @@ CompilationUnit* cuik_create_compilation_unit(void);
 void cuik_add_to_compilation_unit(CompilationUnit* cu, TranslationUnit* tu);
 
 void cuik_init(bool use_crash_handler);
-]]
 
-local src = [[
-int foo(int x, int y) { return x + y; }
+typedef struct Stmt Stmt;
+typedef struct TB_Symbol TB_Symbol;
+Stmt** cuik_get_top_level_stmts(TranslationUnit* tu);
+size_t cuik_num_of_top_level_stmts(TranslationUnit* tu);
+TB_Symbol* cuikcg_top_level(TranslationUnit* tu, TB_Module* m, Stmt* s);
+const char* cuik_stmt_decl_name(Stmt* stmt);
+
+typedef struct TB_Worklist TB_Worklist;
+TB_Worklist* tb_worklist_alloc(void);
+void tb_worklist_free(TB_Worklist* ws);
+
+typedef struct TB_ArenaChunk TB_ArenaChunk;
+typedef struct {
+    TB_ArenaChunk* top;
+
+    const char* tag;
+    uint32_t allocs;
+    uint32_t alloc_bytes;
+} TB_Arena;
+
+typedef struct TB_Function TB_Function;
+typedef struct TB_FunctionOutput TB_FunctionOutput;
+bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types);
+TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm);
+TB_Function* tb_symbol_as_function(TB_Symbol* s);
+void tb_output_print_asm(TB_FunctionOutput* out, void* fp);
+
+typedef struct TB_JIT TB_JIT;
+TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity);
+void* tb_jit_place_function(TB_JIT* jit, TB_Function* f);
+void tb_jit_end(TB_JIT* jit);
 ]]
 
 cuik_dll.cuik_init(false)
 
-function compile(src)
+function compile(src, optimize, decl_mappings)
     local str = ffi.new("String", { length=#src, data=ffi.string(src) })
 
     local args = ffi.new("Cuik_DriverArgs")
@@ -199,9 +229,82 @@ function compile(src)
     cuik_dll.cuikcg_allocate_ir(parse.tu, mod, args.debug_info)
 
     print(mod)
+
+    local stmt_count = tonumber(ffi.cast("uint32_t", cuik_dll.cuik_num_of_top_level_stmts(parse.tu)))
+    local stmts = cuik_dll.cuik_get_top_level_stmts(parse.tu)
+
+    local symbols = {}
+    local ir_worklist = cuik_dll.tb_worklist_alloc()
+    for i=0,stmt_count-1 do
+        local sym = cuik_dll.cuikcg_top_level(parse.tu, mod, stmts[i])
+
+        if cuik_dll.tb_symbol_as_function(sym) ~= nil then
+            local f = ffi.cast("TB_Function*", sym)
+            if optimize then
+                cuik_dll.tb_opt(f, ir_worklist, false)
+            end
+
+            local out = cuik_dll.tb_codegen(f, ir_worklist, nil, true)
+            cuik_dll.tb_output_print_asm(out, nil)
+
+            symbols[i] = sym
+        end
+    end
+    cuik_dll.tb_worklist_free(ir_worklist)
+
+    -- export JITted functions
+    local result = {}
+    local jit = cuik_dll.tb_jit_begin(mod, 0)
+    for i=0,stmt_count-1 do
+        local n = cuik_dll.cuik_stmt_decl_name(stmts[i])
+
+        if symbols[i] then
+            local name = ffi.string(n)
+            local decl_type = decl_mappings[name]
+            if decl_type then
+                ffi.cdef(decl_type)
+
+                local addr = cuik_dll.tb_jit_place_function(jit, ffi.cast("TB_Function*", symbols[i]))
+                result[name] = ffi.cast("FN_"..name.."*", addr)
+            end
+        end
+    end
+
+    return result
 end
 
-compile(src)
+function matmul_fully_unroll(N)
+    local src = buffer.new(1000)
+    src:put("void matmul(float* dst, float* a, float* b) {\n")
+    for i=0,(N*N) - 1 do
+        src:put(string.format("    float a%d = a[%d];\n", i, i))
+        src:put(string.format("    float b%d = b[%d];\n", i, i))
+    end
+    for i=0,N-1 do
+        for j=0,N-1 do
+            src:put(string.format("    float sum%d_%d = -0.0f;\n", i, j))
+            for k=0,N-1 do
+                src:put(string.format("    sum%d_%d += a%d * b%d;\n", i, j, i*N + k, k*N + j))
+            end
+            src:put(string.format("    dst[%d] = sum%d_%d;\n", i*N + j, i, j))
+        end
+    end
+    src:put("}\n")
+    return src:tostring()
+end
 
-print("Hello, World!", cuik_dll)
+local src = matmul_fully_unroll(2);
+print(src)
+
+--[[
+local funcs = compile(src, true, {
+    matmul="typedef int FN_matmul(float* dst, float* a, float* b);",
+})
+
+print(inspect(funcs))
+
+print("Hello, World!", cuik_dll, funcs.foo(16))
+]]--
+
+
 

@@ -32,9 +32,7 @@ pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ (TB_SHL ___ $index ($scale: TB_ICONST .
 where "fits_into_scale($scale) && fits_into_int32(TB_TYPE_I64, $disp)"
 => (x86_MEMORY flags=OP_INDEXED $base $index scale="as_int32($scale)" disp="as_int32($disp)")
 
-// using an lea as a memory operand is kinda useful... swag :p
-// pat (x86_lea ___ ___ $base disp=$disp) => (x86_MEMORY $base disp=$disp)
-// pat (x86_lea ___ ___ $base $index scale=$scale disp=$disp flags=$flags) where "$flags==OP_INDEXED" => (x86_MEMORY $base $index flags=OP_INDEXED scale=$scale disp=$disp)
+pat (TB_LOCAL $root stack_pos=$disp) => (x86_MEMORY "ctx->frame_ptr" disp=$disp)
 
 // [symbol]
 pat (TB_SYMBOL $root sym=$sym) => (x86_MEMORY (TB_MACH_SYMBOL $root sym=$sym))
@@ -43,6 +41,10 @@ pat (TB_SYMBOL $root sym=$sym) => (x86_MEMORY (TB_MACH_SYMBOL $root sym=$sym))
 pat (TB_PTR_OFFSET ___ (TB_SYMBOL $root sym=$sym) ($disp: TB_ICONST ...))
 where "fits_into_int32(TB_TYPE_I64, $disp)"
 => (x86_MEMORY (TB_MACH_SYMBOL $root sym=$sym) disp="as_int32($disp)")
+
+// using an lea as a memory operand is kinda useful... swag :p
+pat (x86_lea ___ ___ $base disp=$disp) => (x86_MEMORY $base disp=$disp)
+pat (x86_lea ___ ___ $base $index scale=$scale disp=$disp flags=$flags) where "$flags==OP_INDEXED" => (x86_MEMORY $base $index flags=OP_INDEXED scale=$scale disp=$disp)
 
 // *******************************
 // FLAGS

@@ -30,7 +30,7 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
         // commutativity opts (we want a canonical form).
         int ap = node_pos(a);
         int bp = node_pos(b);
-        if (ap < bp || (ap == bp && a->gvn < b->gvn)) {
+        if (ap < bp || (ap == bp && a->gvn > b->gvn)) {
             set_input(f, n, b, 1);
             set_input(f, n, a, 2);
             return n;

@@ -339,14 +339,18 @@ static TB_Node* node_isel_phi(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
     return n;
 }
 
-static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws) {
+static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws, int depth) {
     TB_ASSERT(n->type != TB_PHI);
+
+    if (depth == 0 && x86_is_operand[n->type]) {
+        return NULL;
+    }
 
     NodeCursor stk[16];
     int head = 1, state = 0;
     stk[0] = (NodeCursor){ 0 };
 
-    TB_OPTDEBUG(ISEL2)(printf("Matching %%%u...\n", n->gvn));
+    TB_OPTDEBUG(ISEL2)(printf("Matching %%%u (%d uses)...\n", n->gvn, n->user_count));
 
     TB_Node* curr = NULL;
     int index = 0;
@@ -357,11 +361,12 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
         if (in) {
             TB_OPTDEBUG(ISEL2)(printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
 
-            if (x86_is_operand[in->type] && !worklist_test_n_set(walker_ws, in)) {
+            if (x86_is_operand[in->type] && in != n) {
+                worklist_test_n_set(walker_ws, in);
                 tb__gvn_remove(f, in);
 
                 TB_OPTDEBUG(ISEL2)(printf("\n>>>\n"));
-                TB_Node* new_in = node_isel_raw(ctx, f, in, walker_ws);
+                TB_Node* new_in = node_isel_raw(ctx, f, in, walker_ws, depth + 1);
                 if (new_in && new_in != n) {
                     // we can GVN machine nodes :)
                     new_in = tb_opt_gvn_node(f, new_in);
@@ -593,14 +598,13 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 TB_OPTDEBUG(ISEL)(printf("\n\n"));
                 if (n->type == TB_PHI) {
                     TB_Node* k = node_isel_phi(&ctx, f, n, &walker_ws);
-                    TB_ASSERT(n == k);
+                    TB_ASSERT(k == NULL || k == n);
 
-                    // don't walk the replacement
-                    worklist_test_n_set(&walker_ws, k);
+                    worklist_test_n_set(&walker_ws, n);
                 } else {
                     bool progress;
                     do {
-                        TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws);
+                        TB_Node* k = node_isel_raw(&ctx, f, n, &walker_ws, 0);
                         progress = k != NULL;
 
                         if (k && k != n) {
