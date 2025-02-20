@@ -10,15 +10,22 @@ local inspect = require('inspect')
 -- helper schtuff
 --------------------------------
 
-local print_listings = false
-local print_graphviz = false
-local timer_printing = true
-local data_analysis = true
+local options = {
+	timings  = false,
+	listing  = false,
+	graphviz = false,
+	analysis = false,
+}
+for _, a in ipairs(arg) do
+	if options[a] ~= nil then
+		options[a] = true
+	end
+end
 
 local total_time = os.clock()
 local timestamp = os.clock()
 local function timer(string)
-	if timer_printing then
+	if options.timings then
 		local stamp = string.format('%08.4f', os.clock() - timestamp)
 		print(string .. ' ' .. stamp .. 's')
 	end
@@ -263,7 +270,7 @@ local instructions = {} -- list
 walk_A64(data.instructions, instructions)
 timer('walk')
 
-if print_listings then
+if options.listing then
 	print(jason.encode(instructions))
 	timer('listing')
 end
@@ -435,7 +442,7 @@ while #worklist > 0 do
 end
 timer('dfa')
 
-if print_graphviz then
+if options.graphviz then
 	local function graphviz(dfa)
 		local strings = {}
 		table.insert(strings, 'digraph G {')
@@ -469,7 +476,7 @@ end
 -- data analysis
 --------------------------------
 
-if data_analysis then
+if options.analysis then
 	-- how many patterns and duplicates?
 	local patset = {}
 	local patdup = {}
