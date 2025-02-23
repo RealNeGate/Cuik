@@ -28,12 +28,12 @@
 #define TB_OPTDEBUG_LOOP      0
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
-#define TB_OPTDEBUG_SLP       0
+#define TB_OPTDEBUG_SLP       1
 #define TB_OPTDEBUG_GVN       0
 #define TB_OPTDEBUG_MEM2REG   0
 #define TB_OPTDEBUG_ISEL      1
 #define TB_OPTDEBUG_ISEL2     1
-#define TB_OPTDEBUG_EMIT      0
+#define TB_OPTDEBUG_EMIT      1
 #define TB_OPTDEBUG_DATAFLOW  0
 #define TB_OPTDEBUG_PLACEMENT 0
 #define TB_OPTDEBUG_INLINE    0
@@ -296,14 +296,6 @@ struct TB_Worklist {
 typedef struct TB_LoopTree TB_LoopTree;
 typedef struct TB_BasicBlock TB_BasicBlock;
 
-// SLP related goop
-typedef struct {
-    TB_Node* mem;
-    TB_Node* base;
-    int32_t offset;
-    int32_t size;
-} MemRef;
-
 struct TB_LoopTree {
     TB_LoopTree* parent;
     TB_LoopTree* next; // next sibling
@@ -316,8 +308,6 @@ struct TB_LoopTree {
     bool is_natural;
     int id;
     int depth;
-
-    ArenaArray(MemRef) refs;
 };
 
 // we have analysis stuff for computing BBs from our graphs, these aren't
@@ -594,6 +584,7 @@ struct ICodeGen {
     const char* (*node_name)(int n_type);
     void (*print_extra)(TB_Node* n);
 
+    int (*is_pack_op_supported)(TB_Function* f, TB_DataType dt, TB_Node* n, int width);
     int (*max_pack_width_for_op)(TB_Function* f, TB_DataType dt, TB_Node* n);
 
     // return the number of non-local patches
@@ -714,6 +705,9 @@ void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 
 int uf_find(int* uf, int a);
 void uf_union(int* uf, int x, int y);
+
+int tb_data_type_bit_size(TB_Module* m, uint8_t type);
+int tb_data_type_byte_size(TB_Module* m, uint8_t type);
 
 ////////////////////////////////
 // ANALYSIS

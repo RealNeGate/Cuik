@@ -1588,7 +1588,7 @@ static void cool_matmul_gen(TranslationUnit* tu, TB_GraphBuilder* g) {
 }
 
 TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s) {
-    assert(s->flags & STMT_FLAGS_HAS_IR_BACKING);
+    // assert(s->flags & STMT_FLAGS_HAS_IR_BACKING);
     if (s->op == STMT_FUNC_DECL) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
         assert(type->kind == KIND_FUNC);

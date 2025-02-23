@@ -156,6 +156,7 @@ typedef enum TB_Arch {
 
 Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* s, Cuik_Target* target, bool only_code_index);
 int cuiksema_run(TranslationUnit* tu);
+void cuikdg_dump_to_file(TokenStream* tokens, void* out);
 
 typedef struct TB_Module TB_Module;
 TB_Module* tb_module_create_for_host(bool is_jit);
@@ -212,13 +213,17 @@ function compile(src, optimize, decl_mappings)
 
     local cpp = cuik_dll.cuik_driver_preprocess_str(str, args, true)
     local tokens = cuik_dll.cuikpp_get_token_stream(cpp)
-    -- cuik_dll.cuikpp_dump_tokens(tokens)
+    cuik_dll.cuikpp_dump_tokens(tokens)
 
     local parse = cuik_dll.cuikparse_run(args.version, tokens, args.target, false)
-    print(parse.tu)
+    if parse.tu == nil then
+        cuik_dll.cuikdg_dump_to_file(tokens, nil)
+        return
+    end
 
-    if cuik_dll.cuiksema_run(parse.tu) > 0 then
-        print("ERROR!")
+    local r = cuik_dll.cuiksema_run(parse.tu)
+    cuik_dll.cuikdg_dump_to_file(tokens, nil)
+    if r > 0 then
         return
     end
 
@@ -228,8 +233,6 @@ function compile(src, optimize, decl_mappings)
     local mod = cuik_dll.tb_module_create_for_host(true)
     cuik_dll.cuikcg_allocate_ir(parse.tu, mod, args.debug_info)
 
-    print(mod)
-
     local stmt_count = tonumber(ffi.cast("uint32_t", cuik_dll.cuik_num_of_top_level_stmts(parse.tu)))
     local stmts = cuik_dll.cuik_get_top_level_stmts(parse.tu)
 
@@ -237,15 +240,14 @@ function compile(src, optimize, decl_mappings)
     local ir_worklist = cuik_dll.tb_worklist_alloc()
     for i=0,stmt_count-1 do
         local sym = cuik_dll.cuikcg_top_level(parse.tu, mod, stmts[i])
-
         if cuik_dll.tb_symbol_as_function(sym) ~= nil then
             local f = ffi.cast("TB_Function*", sym)
             if optimize then
                 cuik_dll.tb_opt(f, ir_worklist, false)
             end
 
-            local out = cuik_dll.tb_codegen(f, ir_worklist, nil, true)
-            cuik_dll.tb_output_print_asm(out, nil)
+            local out = cuik_dll.tb_codegen(f, ir_worklist, nil, false)
+            -- cuik_dll.tb_output_print_asm(out, nil)
 
             symbols[i] = sym
         end
@@ -275,36 +277,127 @@ end
 
 function matmul_fully_unroll(N)
     local src = buffer.new(1000)
+    src:put("#include <stddef.h>\n")
     src:put("void matmul(float* dst, float* a, float* b) {\n")
-    for i=0,(N*N) - 1 do
-        src:put(string.format("    float a%d = a[%d];\n", i, i))
-        src:put(string.format("    float b%d = b[%d];\n", i, i))
-    end
-    for i=0,N-1 do
-        for j=0,N-1 do
-            src:put(string.format("    float sum%d_%d = -0.0f;\n", i, j))
-            for k=0,N-1 do
-                src:put(string.format("    sum%d_%d += a%d * b%d;\n", i, j, i*N + k, k*N + j))
+
+    if false then
+        for i=0,(N*N) - 1 do
+            src:put(string.format("    float a%d = a[%d];\n", i, i))
+            src:put(string.format("    float b%d = b[%d];\n", i, i))
+        end
+        for i=0,N-1 do
+            for j=0,N-1 do
+                src:put(string.format("    float sum%d_%d = -0.0f;\n", i, j))
+                for k=0,N-1 do
+                    src:put(string.format("    sum%d_%d += a%d * b%d;\n", i, j, i*N + k, k*N + j))
+                end
+                src:put(string.format("    dst[%d] = sum%d_%d;\n", i*N + j, i, j))
             end
-            src:put(string.format("    dst[%d] = sum%d_%d;\n", i*N + j, i, j))
+        end
+        src:put("}\n")
+    end
+
+    local block_size = 4
+
+    -- zeroing loop (slightly unrolled)
+    local elem_count = N * N
+    local zero_unroll = 4
+    src:put(string.format("    for (size_t i = 0; i < %d; i++) {\n", elem_count / zero_unroll))
+    for i=0,zero_unroll-1 do
+        src:put(string.format("        dst[i*%d + %d] = -0.0f;\n", zero_unroll, i))
+    end
+    src:put("    }\n")
+
+    -- blocked matrix multiply
+    src:put("\n")
+    src:put(string.format("    for (size_t kk = 0; kk < %d; kk += %d) {\n", N, block_size))
+    src:put(string.format("        for (size_t jj = 0; jj < %d; jj += %d) {\n", N, block_size))
+    src:put(string.format("            for (size_t i = 0; i < %d; i++) {\n", N))
+    -- load all items into regs before any stores to avoid aliasing issues
+    for k=0,block_size-1 do
+        src:put(string.format("                float a%d = a[i*%d + (kk+%d)];\n", k, N, k))
+    end
+    for j=0,block_size-1 do
+        for k=0,block_size-1 do
+            src:put(string.format("                float b%d = b[(kk+%d)*%d + (jj+%d)];\n", j*block_size + k, k, N, j))
         end
     end
+    -- load destination block
+    for j=0,block_size-1 do
+        src:put(string.format("                float sum%d = dst[i*%d + (jj+%d)];\n", j, N, j))
+    end
+    -- fully unroll the block multiply
+    for j=0,block_size-1 do
+        for k=0,block_size-1 do
+            src:put(string.format("                sum%d += a%d * b%d;\n", j, k, j*block_size + k))
+        end
+        src:put(string.format("                dst[i*%d + (jj+%d)] = sum%d;\n", N, j, j))
+    end
+    src:put("            }\n")
+    src:put("        }\n")
+    src:put("    }\n")
     src:put("}\n")
+
     return src:tostring()
 end
 
-local src = matmul_fully_unroll(2);
+local src = matmul_fully_unroll(4);
 print(src)
+os.exit(0)
 
---[[
 local funcs = compile(src, true, {
     matmul="typedef int FN_matmul(float* dst, float* a, float* b);",
 })
 
 print(inspect(funcs))
 
-print("Hello, World!", cuik_dll, funcs.foo(16))
-]]--
+function sample(N, dst, a, b)
+    for i=0,N-1 do
+        for j=0,N-1 do
+            local sum = 0
+            for k=0,N-1 do
+                sum = sum + a[i*N + k]*b[k*N + j]
+            end
+            dst[i*N + j] = sum
+        end
+    end
+end
 
+math.randomseed(os.time())
+function rand_mat(N)
+    local m = ffi.new("float[16]")
+    for i=0,(N*N)-1 do
+        m[i] = math.random()
+    end
+    return m
+end
 
+function print_mat(N, mat)
+    local str = buffer.new(1000)
+    for i=0,N-1 do
+        for j=0,N-1 do
+            str:put(string.format("%f ", mat[i*N + j]))
+        end
+        str:put("\n")
+    end
+    print(str:tostring())
+end
 
+local aa = rand_mat(4)
+local bb = rand_mat(4)
+local dst = ffi.new("float[16]")
+
+local tries = 10000000
+local x = os.clock()
+for i=1,tries do
+    sample(4, dst, aa, bb)
+    -- print_mat(4, dst)
+end
+print(string.format("luajit impl: %.2f seconds\n", os.clock() - x))
+
+x = os.clock()
+for i=1,tries do
+    funcs.matmul(dst, aa, bb)
+    -- print_mat(4, dst)
+end
+print(string.format("C impl: %.2f seconds\n", os.clock() - x))

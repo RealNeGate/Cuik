@@ -2066,6 +2066,37 @@ static size_t emit_call_patches(TB_Module* restrict m, TB_FunctionOutput* out_f)
     return out_f->patch_count - r;
 }
 
+int is_pack_op_supported(TB_Function* f, TB_DataType dt, TB_Node* n, int width) {
+    // consider any ops which have no vector forms as 0
+    int elem_bits = tb_data_type_bit_size(f->super.module, dt.type);
+    switch (n->type) {
+        case TB_LOAD:
+        case TB_STORE:
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV:
+        case TB_FMIN:
+        case TB_FMAX: {
+            int bits = elem_bits * width;
+            return bits == 128 || bits == 256 || bits == 512;
+        }
+
+        // some int multiplies are not possible
+        // in vectors, but we'll write simple fallbacks
+        // later on.
+        // case TB_MUL:
+        // break;
+
+        default: return 0;
+    }
+}
+
 int max_pack_width_for_op(TB_Function* f, TB_DataType dt, TB_Node* n) {
     static int limits[][7] = {
         // SSE
@@ -2083,36 +2114,6 @@ int max_pack_width_for_op(TB_Function* f, TB_DataType dt, TB_Node* n) {
         i = 1;
     }
 
-    // consider any ops which have no vector forms as 0
-    switch (n->type) {
-        case TB_LOAD:
-        case TB_STORE:
-        break;
-
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
-        break;
-
-        case TB_FADD:
-        case TB_FSUB:
-        case TB_FMUL:
-        case TB_FDIV:
-        case TB_FMIN:
-        case TB_FMAX:
-        break;
-
-        // some int multiplies are not possible
-        // in vectors, but we'll write simple fallbacks
-        // later on.
-        // case TB_MUL:
-        // break;
-
-        default: return 0;
-    }
-
     TB_ASSERT(dt.type >= 7);
     return limits[i][dt.type - 2];
 }
@@ -2126,6 +2127,7 @@ ICodeGen tb__x64_codegen = {
     .print_extra = print_extra,
     .flags = node_flags,
     .extra_bytes = extra_bytes,
+    .is_pack_op_supported = is_pack_op_supported,
     .max_pack_width_for_op = max_pack_width_for_op,
     .emit_win64eh_unwind_info = emit_win64eh_unwind_info,
     .emit_call_patches  = emit_call_patches,

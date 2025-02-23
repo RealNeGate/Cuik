@@ -1212,6 +1212,11 @@ bool tb_opt_loops(TB_Function* f) {
 
         aarray_for(i, cfg.loops) {
             TB_LoopTree* loop = cfg.loops[i];
+            if (loop->header->type != TB_AFFINE_LOOP) { continue; }
+
+            TB_Node* latch = affine_loop_latch(loop->header);
+            if (latch == NULL) { continue; }
+
             if (loop->is_natural && slp_transform(f, &ctx, loop)) {
                 TB_OPTDEBUG(PASSES)(printf("      * Vectorized Loop%zu!\n", i));
                 progress = true;
@@ -1222,25 +1227,9 @@ bool tb_opt_loops(TB_Function* f) {
             TB_OPTDEBUG(PASSES)(printf("      * Vectorized Body!\n"));
             progress = true;
         }
-    }
-
-    // find all memory refs and bucket them per loop
-    /* {
-        TB_Worklist* ws = f->worklist;
-        worklist_push(ws, f->root_node);
 
         __debugbreak();
-
-        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-            TB_Node* n = ws->items[i];
-
-            TB_LoopTree* loop = nl_table_get(&ctx.loop_map, ctx.ctrl[n->gvn]);
-            if (loop != NULL) {
-                // we're inside a loop, assign us to the correct body
-                __debugbreak();
-            }
-        }
-    } */
+    }
 
     worklist_free(&tmp_ws);
     nl_table_free(ctx.loop_map);

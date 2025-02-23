@@ -310,14 +310,14 @@ static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uin
         umin = 0, umax = lattice_uint_max(bits);
     }
 
-    zeros |= ~umin;
-    ones  |=  umin;
-
     if (umin != umax) {
         // wherever the highest differing bit is we just clear everything below that
         int msb_diff = 64 - __builtin_clzll(umin ^ umax);
-        zeros &= ~(UINT64_MAX >> (64 - msb_diff));
-        ones  &= ~(UINT64_MAX >> (64 - msb_diff));
+        zeros |= ~min & ~(UINT64_MAX >> (64 - msb_diff));
+        ones  |=  min & ~(UINT64_MAX >> (64 - msb_diff));
+    } else {
+        zeros |= ~min;
+        ones  |=  min;
     }
 
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });

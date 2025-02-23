@@ -165,7 +165,7 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         uint64_t zeros = ~possible_sum_zeros & known;
         uint64_t ones  =  possible_sum_ones  & known;
 
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        return lattice_gimme_int2(f, min, max, zeros, ones, 64);
     }
 }
 
@@ -216,6 +216,10 @@ static TB_Node* ideal_shift(TB_Function* f, TB_Node* n) {
             mark_node(f, shift);
         }
 
+        if (inner_shift == type) {
+            return shift;
+        }
+
         TB_Node* mask_node = make_int_node(f, n->dt, mask);
         TB_Node* and_node = tb_alloc_node(f, TB_AND, n->dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, and_node, shift,     1);
@@ -245,6 +249,8 @@ static TB_Node* ideal_shift(TB_Function* f, TB_Node* n) {
         n->type = TB_ADD;
         set_input(f, n, lhs, 1);
         set_input(f, n, rhs, 2);
+
+        Lattice* aaa = value_of(f, n);
         return n;
     }
 

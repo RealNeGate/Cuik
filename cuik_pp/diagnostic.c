@@ -102,7 +102,7 @@ static void print_chunk(TB_ArenaChunk* c, FILE* out) {
 }
 
 void cuikdg_dump_to_file(TokenStream* tokens, FILE* out) {
-    print_chunk(tokens->diag->buffer.top, out);
+    print_chunk(tokens->diag->buffer.top, out ? out : stdout);
 }
 
 // we use the call stack so we can print in reverse order
