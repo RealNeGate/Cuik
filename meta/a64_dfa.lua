@@ -151,7 +151,7 @@ case studies
 -- patches, because arm wants to be silly :)
 local patches = {
 	-- all of these leave size out until the instruction level
-	-- but i can pull them up so the group pattern is filled
+	-- but i can add them so the group pattern is filled
 	sve_int_reduce_1         = {{ name = 'size', bit = 22, len = 2 }},
 	sve_int_reduce_1q        = {{ name = 'size', bit = 22, len = 2 }},
 	sve_int_bin_pred_shift_1 = {{ name = 'size', bit = 22, len = 2 }},
@@ -344,7 +344,6 @@ dfa.Q[dfa.q0] = true
 
 -- initial state
 local delta_id = 1 -- ids for transition states, they go up
-local final_id = 0 -- ids for final states, they go backwards
 local q0 = {} -- set
 for i = 1, #patterns do q0[i] = true end
 local worklist = {
@@ -418,13 +417,8 @@ while #worklist > 0 do
 			
 			-- if new, assign a new id
 			if not cached then
-				-- if final then
-					-- final_id = final_id - 1
-					-- q_prime.id = final_id
-				-- else
-					delta_id = delta_id + 1
-					q_prime.id = delta_id
-				-- end
+				delta_id = delta_id + 1
+				q_prime.id = delta_id
 				local new_q = copy(q_prime)
 				table.insert(cache, new_q)
 			end
@@ -453,42 +447,64 @@ while #worklist > 0 do
 end
 timer('dfa')
 
-if options.graphviz then
-	local function graphviz(dfa)
-		local strings = {}
-		table.insert(strings, 'digraph G {')
-		table.insert(strings, '\trankdir=LR')
-		for a, ib in pairs(dfa.delta) do
-			local labels = {}
-			for i, b in pairs(ib) do
-				if dfa.F[b] then
-					b = dfa.F[b][1]
-				end
-				if not labels[b] then
-					labels[b] = i
-				else
-					labels[b] = labels[b] .. ',' .. i
-				end
-			end 
-			for b, l in pairs(labels) do
-				table.insert(strings, '\t' .. a .. ' -> ' .. b .. ' [label="' .. l .. '"]')
-			end
-		end
-		table.insert(strings, '}')
-		return table.concat(strings, '\n')
-	end
-	print(graphviz(dfa))
-	timer('graphviz')
-end
 
---[[ final state patching
+
+--------------------------------
+-- cleanup
+--------------------------------
+
+-- minimisation?
+--[[
+revus
+	sounds like wot i done did
+	no work necessary i suppose
+hopcroft
+	P := {F, Q \ F}
+	W := {F, Q \ F}
+	while (W is not empty) do
+		choose and remove a set A from W
+		for each c in Σ do
+			let X be the set of states for which a transition on c leads to a state in A
+			for each set Y in P for which X ∩ Y is nonempty and Y \ X is nonempty do
+				replace Y in P by the two sets X ∩ Y and Y \ X
+				if Y is in W
+					replace Y in W by the same two sets
+				else
+					if |X ∩ Y| <= |Y \ X|
+						add X ∩ Y to W
+					else
+						add Y \ X to W
+moore's
+	Moore's algorithm for DFA minimization is due to Edward F. Moore (1956).
+	Like Hopcroft's algorithm, it maintains a partition that starts off
+	separating the accepting from the rejecting states, and repeatedly
+	refines the partition until no more refinements can be made. At each
+	step, it replaces the current partition with the coarsest common
+	refinement of s + 1 partitions, one of which is the current one and the
+	rest of which are the preimages of the current partition under the
+	transition functions for each of the input symbols. The algorithm
+	terminates when this replacement does not change the current partition.
+	Its worst-case time complexity is O(n2s): each step of the algorithm may
+	be performed in time O(ns) using a variant of radix sort to reorder the
+	states so that states in the same set of the new partition are
+	consecutive in the ordering, and there are at most n steps since each
+	one but the last increases the number of sets in the partition. The
+	instances of the DFA minimization problem that cause the worst-case
+	behavior are the same as for Hopcroft's algorithm. The number of steps
+	that the algorithm performs can be much smaller than n, so on average
+	(for constant s) its performance is O(n log n) or even O(n log log n)
+	depending on the random distribution on automata chosen to model the
+	algorithm's average-case behavior.[6][9]
+]]
+
+--[[ final state fixing
 	some final states point to multiple instructions
 	which appear to be differentiated by one having a
 	specific bit pattern, so i can remove the others as
 	"not" having that pattern.
 ]]
 -- these should "hijack" their final state
-local final_state_patches = {
+local proper_final_states = { -- set
 	dp_1src_imm          = true,
 	sve_mem_spill        = true,
 	sve_mem_cstnt_ss     = true,
@@ -497,66 +513,123 @@ local final_state_patches = {
 	sve_mem_64b_prfm_sv2 = true,
 	sve_mem_cldnt_ss     = true,
 	sve_mem_cldnt_si     = true,
-	-- sve_mem_prfm_si      = true,
-	-- sve_mem_32b_pfill    = true,
-	-- sve_mem_32b_fill     = true,
+	sve_mem_prfm_si      = true,
+	sve_mem_32b_pfill    = true,
+	sve_mem_32b_fill     = true,
 	asimdimm             = true,
 	sve_int_dup_mask_imm = true,
 }
+-- each final state needs only one instruction
 for s, ns in pairs(dfa.F) do
 	if #ns > 1 then
 		for _, n in ipairs(ns) do
-			if final_state_patches[n] then
+			if proper_final_states[n] then
 				dfa.F[s] = {n}
 				break
 			end
 		end
 	end
 end
-
-local function find(dfa, id, name, edges)
-	local found = false
-	local labels = {}
-	for i, b in pairs(dfa.delta[id]) do
-		local f = false
-		if dfa.F[b] then
-			b = table.concat(dfa.F[b], ',')
-			f = b:find(name)
-		else
-			f = find(dfa, b, name, edges)
-		end
-		if f then
-			found = true
-			if not labels[b] then
-				labels[b] = {i}
-			else
-				table.insert(labels[b], i)
+-- each instruction needs only one final state
+local function fix(dfa, s, id)
+	for a, ib in pairs(dfa.delta) do
+		for i, b in pairs(ib) do
+			if b == s then
+				dfa.delta[a][i] = id
 			end
 		end
 	end
-	for b, l in pairs(labels) do
-		table.insert(edges, '\t'..id..' -> '..b..' [label="'..table.concat(l,',')..'"]')
-	end
-	return found
+	dfa.Q[s] = nil
+	dfa.F[s] = nil
 end
-local dup_names = {
-	'sve_mem_32b_gld_vs',
-	'sve_mem_prfm_si',
-	'sve_mem_32b_pfill',
-	'sve_mem_32b_fill',
-}
--- local edges = {}
--- for _, name in ipairs(dup_names) do
--- 	find(dfa, 1, name, edges)
--- end
--- local edges = list_to_set(edges)
--- print('digraph G {')
--- -- print('\trankdir=LR')
--- for e, _ in pairs(edges) do
--- 	print(e)
--- end
--- print('}')
+local final_states = {}
+for s, ns in pairs(dfa.F) do
+	local name = ns[1]
+	final_states[s] = name
+	if final_states[name] == nil then
+		final_states[name] = s
+	else
+		fix(dfa, s, final_states[name])
+	end
+end
 
+-- reassign node ids to keep them linear and
+-- to hopefully bundle the deltas closer together
+-- this could help with compression
+local function map_ids(old, idmap)
+	local new = {Q = {}, F = {}, delta = {}}
+	for old_a, _ in pairs(old.Q) do
+		-- state
+		local new_a = idmap[old_a]
+		new.Q[new_a] = true
+		-- deltas
+		local old_delta = old.delta[old_a]
+		if old_delta then
+			new.delta[new_a] = {}
+			for i, b in pairs(old_delta) do
+				new.delta[new_a][i] = idmap[b]
+			end
+		else -- final states
+			new.F[new_a] = old.F[old_a]
+		end
+	end
+	old.Q = new.Q
+	old.F = new.F
+	old.delta = new.delta
+end
+-- dumb breadth-first assignment
+local newids = {}
+local visited = {}
+local towalk = {1}
+while #towalk > 0 do
+	local id = table.remove(towalk, 1)
+	table.insert(newids, id)
+	if dfa.delta[id] then
+		for _, S in ipairs(dfa.Sigma) do
+			local child = dfa.delta[id][S]
+			if child and not visited[child] then
+				table.insert(towalk, child)
+				visited[child] = true
+			end
+		end
+	end
+end
+local idmap = {}
+for i, v in ipairs(newids) do idmap[v] = i end
+map_ids(dfa, idmap)
+
+timer('cleanup')
+
+
+
+--------------------------------
+-- graph visualisation
+--------------------------------
+
+if options.graphviz then
+	local strings = {}
+	table.insert(strings, 'digraph G {')
+	table.insert(strings, '\trankdir=LR')
+	for a, ib in pairs(dfa.delta) do
+		local labels = {}
+		for i, b in pairs(ib) do
+			if dfa.F[b] then
+				b = dfa.F[b][1]
+			end
+			if not labels[b] then
+				labels[b] = i
+			else
+				labels[b] = labels[b] .. ',' .. i
+			end
+		end 
+		for b, l in pairs(labels) do
+			table.insert(strings, '\t' .. a .. ' -> ' .. b .. ' [label="' .. l .. '"]')
+		end
+	end
+	table.insert(strings, '}')
+	print(table.concat(strings, '\n'))
+	timer('graphviz')
+end
 
 
 
@@ -571,7 +644,6 @@ if options.analysis then
 	for _, i in ipairs(instructions) do
 		if patset[i.pattern] then
 			patdup[i.path..'/'..i.name] = i.pattern
-			-- print(inspect(i))
 			patdup[patset[i.pattern]] = i.pattern
 		end
 		patset[i.pattern] = i.path..'/'..i.name
@@ -580,24 +652,9 @@ if options.analysis then
 	print(string.format('number of instructions = %d', #instructions))
 	print(string.format('number of patterns     = %d', #patterns))
 	print(string.format('unique patterns        = %d', #unique_patterns))
-	-- print(string.format('duplicate patterns %s', inspect(patdup)))
 	for k, v in pairs(patdup) do
 		print(v, k)
 	end
-	
-	-- how many unique field groups?
-	local fields = {}
-	for _, i in ipairs(instructions) do
-		local mask = i.pattern:gsub('1', '0')
-		if not fields[mask] then
-			fields[mask] = {0}
-		end
-		fields[mask][1] = fields[mask][1] + 1
-		table.insert(fields[mask], i.name)
-	end
-	print(string.format('unique field patterns  = %d', #set_to_list(fields)))
-	-- print(inspect.inspect(fields))
-	-- error()
 
 	-- how many nodes?
 	local total_nodes = 0
@@ -616,7 +673,7 @@ if options.analysis then
 	print(string.format('final nodes      = %d', final_nodes))
 	print(string.format('transition nodes = %d', transition_nodes))
 	-- 25,389,524 cache no
-	--      7,939 cacne ye
+	--      7,939 cache ye
 
 	-- how many final states have more than one name?
 	local multinames = 0
@@ -625,11 +682,12 @@ if options.analysis then
 			multinames = multinames + 1
 			for _, n in pairs(ns) do
 				local i = instructions[instructions[n]]
-				print(i.pattern, i.path..'/'..i.name)
+				print('\t'..i.pattern, i.path..'/'..i.name)
 			end
 			print('')
 		end
 	end
+	print(string.format('final states matching multiple names = %d', multinames))
 	-- how many names have more than one final state?
 	local states_per_name = {}
 	for s, ns in pairs(dfa.F) do
@@ -644,11 +702,10 @@ if options.analysis then
 	local multistates = 0
 	for n, s in pairs(states_per_name) do
 		if #s > 1 then
-			print(n, dump(s))
+			print('\t'..n, dump(s))
 			multistates = multistates + 1
 		end
 	end
-	print(string.format('final states matching multiple names = %d', multinames))
 	print(string.format('names matching multiple final states = %d', multistates))
 
 	-- how many edges?
@@ -810,18 +867,7 @@ if options.analysis then
 		end
 		file:close()
 	end
-	-- idgraph('normal.csv', dfa)
-
-	local function new_delta(dfa, idmap)
-		local newdelta = {}
-		for a, ib in pairs(dfa.delta) do
-			newdelta[idmap[a]] = {}
-			for i, b in pairs(ib) do
-				newdelta[idmap[a]][i] = idmap[b]
-			end
-		end
-		return newdelta
-	end
+	-- idgraph('bumbread.csv', dfa)
 
 	-- calculate predecessors
 	local parents = {}
@@ -836,6 +882,8 @@ if options.analysis then
 	-- 	table.sort(parents[c])
 	-- end
 
+	-- yasser suggested a fancier algorithm for minimising the deltas
+	-- performing worse atm for some reason
 	local ready = {1}
 	local up_there = {}
 	local order = {}
@@ -899,155 +947,21 @@ if options.analysis then
 	end
 	local idmap = {}
 	for i, v in ipairs(order) do idmap[v] = i end
-	dfa.delta = new_delta(dfa, idmap)
+	map_ids(dfa, idmap)
 	local biggest_delta_supersmart, _, _ = delta_walk(dfa)
 	-- idgraph('smarest.csv', dfa)
-	-- dfa.delta = new_delta(dfa, order)
-	--[[
-	-- try using node sizes to sort nodes for bread-first search
-	local newids = {}
-	for level, nodes in ipairs(node_depths) do
-		local list = set_to_list(nodes)
-		table.sort(list, function(a,b)
-			return node_sizes[a] < node_sizes[b]
-		end)
-		for _, n in ipairs(list) do
-			table.insert(newids, n)
-		end
-	end
-	local idmap = {}
-	for i, v in ipairs(newids) do idmap[v] = i end
-	dfa.delta = new_delta(dfa, idmap)
-	local biggest_delta_smart_bread, _, _ = delta_walk(dfa)
-	idgraph('smartbread.csv', dfa)
-	dfa.delta = new_delta(dfa, newids)
 
-	-- depth-first ids, reverse post-order
-	local newids = {}
-	local visited = {}
-	local function traverse(id)
-		if dfa.delta[id] then
-			for _, S in ipairs(dfa.Sigma) do
-				local child = dfa.delta[id][S]
-				if child and not visited[child] then
-					traverse(child)
-				end
-			end
-		end
-		visited[id] = true
-		table.insert(newids, id)
-	end
-	traverse(1)
-	reverse(newids)
-	local idmap = {}
-	for i, v in ipairs(newids) do idmap[v] = i end
-	dfa.delta = new_delta(dfa, idmap)
-	local biggest_delta_deepd, _, _ = delta_walk(dfa)
-	idgraph('deepd.csv', dfa)
-	dfa.delta = new_delta(dfa, newids)
-	]]
-	-- dumb breadth-first assignment
-	local newids = {}
-	local visited = {}
-	local towalk = {1}
-	while #towalk > 0 do
-		local id = table.remove(towalk, 1)
-		table.insert(newids, id)
-		if dfa.delta[id] then
-			for _, S in ipairs(dfa.Sigma) do
-				local child = dfa.delta[id][S]
-				if child and not visited[child] then
-					table.insert(towalk, child)
-					visited[child] = true
-				end
-			end
-		end
-	end
-	local idmap = {}
-	for i, v in ipairs(newids) do idmap[v] = i end
-	dfa.delta = new_delta(dfa, idmap)
-	local biggest_delta_dumb_bread, _, _ = delta_walk(dfa)
-	-- idgraph('bread.csv', dfa)
-	-- dfa.delta = new_delta(dfa, newids)
-	--[[
-	-- what's the biggest transition id delta?
-	print(string.format('biggest delta (dumb deeped) = %d', biggest_delta_deepd))
-	print(string.format('biggest delta (smart bread) = %d', biggest_delta_smart_bread))
-	]]
-	print(string.format('biggest delta (normal)      = %d', biggest_delta))
-	print(string.format('biggest delta (dumb bread)  = %d', biggest_delta_dumb_bread))
+	print(string.format('biggest delta (dumb bread)  = %d', biggest_delta))
 	print(string.format('biggest delta (super smart) = %d', biggest_delta_supersmart))
 
 	timer('data analysis')
 end
-
---------------------------------
--- cleanup
---------------------------------
-
--- might be able to delta compress if
--- i turn depth-first node numbers to
--- bread-first node numbers
-
--- minimisation?
---[[
-revus
-	sounds like wot i done did
-hopcroft
-	P := {F, Q \ F}
-	W := {F, Q \ F}
-	while (W is not empty) do
-		choose and remove a set A from W
-		for each c in Σ do
-			let X be the set of states for which a transition on c leads to a state in A
-			for each set Y in P for which X ∩ Y is nonempty and Y \ X is nonempty do
-				replace Y in P by the two sets X ∩ Y and Y \ X
-				if Y is in W
-					replace Y in W by the same two sets
-				else
-					if |X ∩ Y| <= |Y \ X|
-						add X ∩ Y to W
-					else
-						add Y \ X to W
-moore's
-	Moore's algorithm for DFA minimization is due to Edward F. Moore (1956).
-	Like Hopcroft's algorithm, it maintains a partition that starts off
-	separating the accepting from the rejecting states, and repeatedly
-	refines the partition until no more refinements can be made. At each
-	step, it replaces the current partition with the coarsest common
-	refinement of s + 1 partitions, one of which is the current one and the
-	rest of which are the preimages of the current partition under the
-	transition functions for each of the input symbols. The algorithm
-	terminates when this replacement does not change the current partition.
-	Its worst-case time complexity is O(n2s): each step of the algorithm may
-	be performed in time O(ns) using a variant of radix sort to reorder the
-	states so that states in the same set of the new partition are
-	consecutive in the ordering, and there are at most n steps since each
-	one but the last increases the number of sets in the partition. The
-	instances of the DFA minimization problem that cause the worst-case
-	behavior are the same as for Hopcroft's algorithm. The number of steps
-	that the algorithm performs can be much smaller than n, so on average
-	(for constant s) its performance is O(n log n) or even O(n log log n)
-	depending on the random distribution on automata chosen to model the
-	algorithm's average-case behavior.[6][9]
-]]
 
 
 
 --------------------------------
 -- C generation
 --------------------------------
-
-local names_final_states = {}
-for q, ns in pairs(dfa.F) do
-	for _, n in pairs(ns) do
-		if not names_final_states[n] then
-			names_final_states[n] = {}
-		end
-		table.insert(names_final_states[n], q)
-	end
-end
--- print(jason.encode(names_final_states))
 
 -- make a table of names->final states
 
