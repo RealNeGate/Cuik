@@ -1,8 +1,3 @@
---[[ TODO
-	some final states are shared, this is wrong
-		fix the duplicates pls
-]]
-
 local jason = require('jason')
 local inspect = require('inspect')
 
@@ -519,6 +514,8 @@ local proper_final_states = { -- set
 	asimdimm             = true,
 	sve_int_dup_mask_imm = true,
 }
+-- i can also make a map between states<->names for ease
+local final_states = {} -- set[state]=name & set[name]=state
 -- each final state needs only one instruction
 for s, ns in pairs(dfa.F) do
 	if #ns > 1 then
@@ -527,6 +524,14 @@ for s, ns in pairs(dfa.F) do
 				dfa.F[s] = {n}
 				break
 			end
+		end
+		if #dfa.F[s] > 1 then
+			-- we missed one
+			for _, n in pairs(ns) do
+				local i = instructions[instructions[n]]
+				print('\t'..i.pattern, i.path..'/'..i.name)
+			end
+			print('\t^^^ missed a busy final state')
 		end
 	end
 end
@@ -542,7 +547,6 @@ local function fix(dfa, s, id)
 	dfa.Q[s] = nil
 	dfa.F[s] = nil
 end
-local final_states = {}
 for s, ns in pairs(dfa.F) do
 	local name = ns[1]
 	final_states[s] = name
@@ -675,41 +679,8 @@ if options.analysis then
 	-- 25,389,524 cache no
 	--      7,939 cache ye
 
-	-- how many final states have more than one name?
-	local multinames = 0
-	for _, ns in pairs(dfa.F) do
-		if #ns > 1 then
-			multinames = multinames + 1
-			for _, n in pairs(ns) do
-				local i = instructions[instructions[n]]
-				print('\t'..i.pattern, i.path..'/'..i.name)
-			end
-			print('')
-		end
-	end
-	print(string.format('final states matching multiple names = %d', multinames))
-	-- how many names have more than one final state?
-	local states_per_name = {}
-	for s, ns in pairs(dfa.F) do
-		for _, n in pairs(ns) do
-			if not states_per_name[n] then
-				states_per_name[n] = {s}
-			else
-				table.insert(states_per_name[n], s)
-			end
-		end
-	end
-	local multistates = 0
-	for n, s in pairs(states_per_name) do
-		if #s > 1 then
-			print('\t'..n, dump(s))
-			multistates = multistates + 1
-		end
-	end
-	print(string.format('names matching multiple final states = %d', multistates))
-
 	-- how many edges?
-	-- what's the biggest transition id delta?
+	-- what's the biggest difference in dfa.delta[A][i]=B between A and B?
 	-- how many nodes have how many total transitions?
 	local function delta_walk(dfa)
 		local edges = 0
@@ -737,79 +708,83 @@ if options.analysis then
 
 	-- how many transitions happen in pairs/quads/octs/all
 	-- that is, how many inputs ignore the low bits
-	local alls_count = 0
-	local octs_count = 0
-	local quad_count = 0
-	local pair_count = 0
-	local octs = {
-		{'0000', '0001', '0010', '0011', '0100', '0101', '0110', '0111'},
-		{'1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'},
-	}
-	local quads = {
-		{'0000', '0001', '0010', '0011'},
-		{'0100', '0101', '0110', '0111'},
-		{'1000', '1001', '1010', '1011'},
-		{'1100', '1101', '1110', '1111'},
-	}
-	local pairings = {
-		{'0000', '0001'}, {'0010', '0011'},
-		{'0100', '0101'}, {'0110', '0111'},
-		{'1010', '1001'}, {'1010', '1011'},
-		{'1110', '1101'}, {'1110', '1111'},
-	}
-	for a, ib in pairs(dfa.delta) do
-		local allsed = true
-		local octsed = true
-		local quaded = true
-		local paired = true
-		for _, S in ipairs(dfa.Sigma) do
-			if ib[dfa.Sigma[1]] ~= ib[S] then
-				allsed = false
-				break
-			end
-		end
-		for _, o in ipairs(octs) do
-			for _, i in ipairs(o) do
-				if ib[o[1]] ~= ib[i] then
-					octsed = false
+	-- this is specific to stepping 4 bits
+	if #dfa.Sigma[1] == 4 then
+		local alls_count = 0
+		local octs_count = 0
+		local quad_count = 0
+		local pair_count = 0
+		local octs = {
+			{'0000', '0001', '0010', '0011', '0100', '0101', '0110', '0111'},
+			{'1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'},
+		}
+		local quads = {
+			{'0000', '0001', '0010', '0011'},
+			{'0100', '0101', '0110', '0111'},
+			{'1000', '1001', '1010', '1011'},
+			{'1100', '1101', '1110', '1111'},
+		}
+		local pairings = {
+			{'0000', '0001'}, {'0010', '0011'},
+			{'0100', '0101'}, {'0110', '0111'},
+			{'1010', '1001'}, {'1010', '1011'},
+			{'1110', '1101'}, {'1110', '1111'},
+		}
+		for a, ib in pairs(dfa.delta) do
+			local allsed = true
+			local octsed = true
+			local quaded = true
+			local paired = true
+			for _, S in ipairs(dfa.Sigma) do
+				if ib[dfa.Sigma[1]] ~= ib[S] then
+					allsed = false
 					break
 				end
 			end
-			if not octsed then break end
-		end
-		for _, q in ipairs(quads) do
-			for _, i in ipairs(q) do
-				if ib[q[1]] ~= ib[i] then
-					quaded = false
+			for _, o in ipairs(octs) do
+				for _, i in ipairs(o) do
+					if ib[o[1]] ~= ib[i] then
+						octsed = false
+						break
+					end
+				end
+				if not octsed then break end
+			end
+			for _, q in ipairs(quads) do
+				for _, i in ipairs(q) do
+					if ib[q[1]] ~= ib[i] then
+						quaded = false
+						break
+					end
+				end
+				if not quaded then break end
+			end
+			for _, p in ipairs(pairings) do
+				if ib[p[1]] ~= ib[p[2]] then
+					paired = false
 					break
 				end
 			end
-			if not quaded then break end
-		end
-		for _, p in ipairs(pairings) do
-			if ib[p[1]] ~= ib[p[2]] then
-				paired = false
-				break
+			if allsed then
+				alls_count = alls_count + 1
+			elseif octsed then
+				octs_count = octs_count + 1
+			elseif quaded then
+				quad_count = quad_count + 1
+			elseif paired then
+				pair_count = pair_count + 1
 			end
 		end
-		if allsed then
-			alls_count = alls_count + 1
-		elseif octsed then
-			octs_count = octs_count + 1
-		elseif quaded then
-			quad_count = quad_count + 1
-		elseif paired then
-			pair_count = pair_count + 1
-		end
+		print(string.format('total nodes paired = %d', pair_count))
+		print(string.format('total nodes quaded = %d', quad_count))
+		print(string.format('total nodes octsed = %d', octs_count))
+		print(string.format('total nodes allsed = %d', alls_count))
+		print(string.format('                   = %d', pair_count + quad_count + octs_count + alls_count))
 	end
-	print(string.format('total nodes paired = %d', pair_count))
-	print(string.format('total nodes quaded = %d', quad_count))
-	print(string.format('total nodes octsed = %d', octs_count))
-	print(string.format('total nodes allsed = %d', alls_count))
-	print(string.format('                   = %d', pair_count + quad_count + octs_count + alls_count))
 
-	-- how are the node ids assigned?
-	-- i think i can use node sizes to assign nodes better
+	-- what is each node's tree size?
+	-- what nodes are at which depth?
+	-- how many nodes are at each depth?
 	local function walk(dfa) -- sizes, depth, depth histogram
 		local sizes = {}
 		local hist = {}
@@ -843,7 +818,7 @@ if options.analysis then
 	print(string.format('total tree size = %d', node_sizes[1]))
 	print(string.format('depth histogram %s', dump(depth_hist)))
 
-	-- where are the final states
+	-- what depths are the final states?
 	local final_depths = copy(node_depths)
 	local final_hists = {}
 	for l, ns in ipairs(final_depths) do
@@ -857,6 +832,7 @@ if options.analysis then
 	end
 	print(string.format('final node depths = %s', dump(final_hists)))
 
+	-- i just wanna make a point graph of node vs depth
 	local function idgraph(filename, dfa)
 		_, node_depths, _ = walk(dfa)
 		local file = assert(io.open(filename, 'w'))
@@ -877,10 +853,6 @@ if options.analysis then
 			parents[b][a] = true
 		end
 	end
-	-- for c, ps in pairs(parents) do
-	-- 	parents[c] = set_to_list(ps)
-	-- 	table.sort(parents[c])
-	-- end
 
 	-- yasser suggested a fancier algorithm for minimising the deltas
 	-- performing worse atm for some reason
@@ -963,17 +935,31 @@ end
 -- C generation
 --------------------------------
 
--- make a table of names->final states
+-- make the delta table
+-- make a table of final-states -> names
+-- make a walk function
 
 local cdfa = {}
+-- delta table
 table.insert(cdfa, '#include <stdint.h>')
-table.insert(cdfa, string.format('int16_t dfa[16][%d] = {', delta_id + 1))
+table.insert(cdfa, string.format('int16_t dfa_delta[16][%d] = {', delta_id + 1))
 for a, ib in pairs(dfa.delta) do
 	for i, b in pairs(ib) do
 		table.insert(cdfa, string.format('\t[0b%s][%d] = %d,', i, a, b))
 	end
 end
 table.insert(cdfa, '};')
+-- name table
+table.insert(cdfa, string.format('char* names[%d] = {', delta_id + 1))
+for i, n in pairs(final_states) do
+	if type(i) == 'number' then
+		table.insert(cdfa, string.format('\t[%d] = "%s",', i, n))
+	end
+end
+table.insert(cdfa, '};')
+-- walk function
+
+-- write it
 local file = assert(io.open('a64dfa.c', 'w'))
 file:write(table.concat(cdfa, '\n'))
 file:close()
