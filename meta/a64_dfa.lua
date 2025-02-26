@@ -919,8 +919,9 @@ if options.analysis then
 	end
 	local idmap = {}
 	for i, v in ipairs(order) do idmap[v] = i end
-	map_ids(dfa, idmap)
-	local biggest_delta_supersmart, _, _ = delta_walk(dfa)
+	local test_dfa = copy(dfa)
+	map_ids(test_dfa, idmap)
+	local biggest_delta_supersmart, _, _ = delta_walk(test_dfa)
 	-- idgraph('smarest.csv', dfa)
 
 	print(string.format('biggest delta (dumb bread)  = %d', biggest_delta))
@@ -932,7 +933,7 @@ end
 
 
 --------------------------------
--- C generation
+-- generation C (zoomer)
 --------------------------------
 
 -- make the delta table
@@ -940,24 +941,50 @@ end
 -- make a walk function
 
 local cdfa = {}
+
 -- delta table
 table.insert(cdfa, '#include <stdint.h>')
-table.insert(cdfa, string.format('int16_t dfa_delta[16][%d] = {', delta_id + 1))
+table.insert(cdfa, string.format('int16_t delta[16][%d] = {', delta_id + 1))
 for a, ib in pairs(dfa.delta) do
 	for i, b in pairs(ib) do
 		table.insert(cdfa, string.format('\t[0b%s][%d] = %d,', i, a, b))
 	end
 end
 table.insert(cdfa, '};')
+
 -- name table
 table.insert(cdfa, string.format('char* names[%d] = {', delta_id + 1))
-for i, n in pairs(final_states) do
-	if type(i) == 'number' then
-		table.insert(cdfa, string.format('\t[%d] = "%s",', i, n))
-	end
+for i, n in pairs(dfa.F) do
+	table.insert(cdfa, string.format('\t[%d] = "%s",', i, n[1]))
 end
 table.insert(cdfa, '};')
+
 -- walk function
+--[[
+// mask lowest N bits
+#define BIT_MASK(N) ((1 << N) - 1)
+// masks N lowest bits of V and shifts to offset O
+#define SET_BITS(V, N, O) ((V & BIT_MASK(N)) << O)
+// shifts V from offset O and masks N lowest bits
+#define GET_BITS(V, N, O) ((V >> O) & BIT_MASK(N))
+// gets Nth 4 bits from 7777 6666 5555 4444 3333 2222 1111 0000
+#define GET_INPUT(N, V) (GET_BITS(V, 4, N * 4))
+
+int16_t walk(uint32_t inst) {
+	int16_t state = 1;
+	int input = 7;
+	while (state != 0 && names[state] == 0) {
+		state = delta[GET_INPUT(input--, inst)][state];
+	}
+	return state;
+}
+
+i currently check if there's a name
+but i could easily renumber all the final states to have a set bit
+this can be tested for, and also keep the names array dense
+#define COND1(S) (names[S] == 0)
+#define COND2(S) ((S & 0x800) == 0)
+]]
 
 -- write it
 local file = assert(io.open('a64dfa.c', 'w'))
