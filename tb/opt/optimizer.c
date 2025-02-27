@@ -227,6 +227,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "rpo_sched.h"
 #include "list_sched.h"
 #include "bb_placement.h"
+#include "interp.h"
 #include "dbg.h"
 
 static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
@@ -1397,17 +1398,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             }
         }
 
-        // const prop leaves work for the peephole optimizer and
-        // sometimes might invalidate the loop tree so we should
-        // track when it makes CFG changes.
-        TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
-        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== OPTIMISTIC ===\n"));
-        major_progress |= tb_opt_cprop(f);
-
-        TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
-        if (k = tb_opt_peeps(f), k > 0) {
-            TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
-        }
+        tb_print_dumb(f);
 
         // avoids bloating up my arenas with freed nodes
         float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
@@ -1423,6 +1414,19 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
         if (tb_opt_loops(f)) {
             major_progress = true;
+        }
+        // don't worry, we'll scan all the nodes regardless
+        worklist_clear(f->worklist);
+
+        // loop optimizer will bully the fuck out of the SCCP types, so we might
+        // as well reconstruct them using the optimistic crap
+        TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== OPTIMISTIC ===\n"));
+        major_progress |= tb_opt_cprop(f);
+
+        TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
+        if (k = tb_opt_peeps(f), k > 0) {
+            TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
         }
     } while (major_progress);
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));

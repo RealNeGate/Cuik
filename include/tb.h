@@ -1354,6 +1354,8 @@ TB_API void tb_print(TB_Function* f);
 TB_API void tb_print_dumb(TB_Function* f);
 TB_API void tb_print_svg(TB_Function* f);
 
+uint64_t tb_interpret(TB_Function* f, TB_Worklist* ws, uint64_t* params);
+
 // codegen:
 //   output goes at the top of the code_arena, feel free to place multiple functions
 //   into the same code arena (although arenas aren't thread-safe you'll want one per thread

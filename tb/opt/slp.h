@@ -10,8 +10,9 @@ typedef struct {
     int32_t offset;
     int32_t size;
 
-    TB_Node* index;
-    int32_t stride;
+    int index_count;
+    TB_Node* index[2];
+    int32_t stride[2];
 } MemRef;
 
 typedef struct Pair {
@@ -80,11 +81,12 @@ static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) 
     worklist_push(f->worklist, deep);
     int mark = pairs->depth[shallow->gvn];
 
-    TB_Node* n;
-    while ((n = worklist_pop(f->worklist))) {
-        /*printf("Checked... ");
-        tb_print_dumb_node(NULL, n);
-        printf("\n");*/
+    for (size_t i = 0; i < dyn_array_length(f->worklist->items); i++) {
+        TB_Node* n = f->worklist->items[i];
+
+        // printf("Checked... ");
+        // tb_print_dumb_node(NULL, n);
+        // printf(" depth=%d\n", pairs->depth[n->gvn]);
 
         FOR_N(i, 0, n->input_count) {
             if (n->inputs[i] == shallow) {
@@ -92,8 +94,11 @@ static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) 
             }
 
             // push inputs which are still below the mark
-            if (n->inputs[i] && pairs->depth[n->inputs[i]->gvn] >= 0 && pairs->depth[n->inputs[i]->gvn] <= mark) {
-                worklist_push(f->worklist, n->inputs[i]);
+            if (n->inputs[i]) {
+                int d = pairs->depth[n->inputs[i]->gvn];
+                if (d >= 0 && d >= mark) {
+                    worklist_push(f->worklist, n->inputs[i]);
+                }
             }
         }
     }
@@ -117,23 +122,43 @@ static bool is_adjacent_ref(MemRef a, MemRef b) {
 static MemRef compute_mem_ref(TB_Function* f, TB_Node* mem, TB_Node* top) {
     MemRef r = { mem, mem->inputs[2] };
     if (r.base->type == TB_PTR_OFFSET) {
-        r.index = r.base->inputs[2];
+        TB_Node* curr = r.base->inputs[2];
         r.base = r.base->inputs[1];
 
-        if (r.index->type == TB_ICONST) {
-            r.index = NULL;
-            r.offset = TB_NODE_GET_EXTRA_T(r.base->inputs[2], TB_NodeInt)->value;
+        if (curr->type == TB_ICONST) {
+            r.offset = TB_NODE_GET_EXTRA_T(curr, TB_NodeInt)->value;
         } else {
-            if (r.index->type == TB_ADD && r.index->inputs[2]->type == TB_ICONST) {
-                int64_t disp = TB_NODE_GET_EXTRA_T(r.index->inputs[2], TB_NodeInt)->value;
-                r.offset = disp;
-                r.index = r.index->inputs[1];
+            TB_Node* index = NULL;
+            uint64_t stride = 1;
+            for (;;) {
+                if (curr->type == TB_ADD && curr->inputs[2]->type == TB_ICONST) {
+                    int64_t disp = TB_NODE_GET_EXTRA_T(curr->inputs[2], TB_NodeInt)->value;
+
+                    curr = curr->inputs[1];
+                    r.offset += disp * stride;
+                }
+
+                if (curr->type == TB_SHL && curr->inputs[2]->type == TB_ICONST) {
+                    stride <<= TB_NODE_GET_EXTRA_T(curr->inputs[2], TB_NodeInt)->value;
+                    curr = curr->inputs[1];
+                }
+
+                r.stride[r.index_count] = stride;
+                r.index[r.index_count++] = curr;
+
+                // combining indices (we limit the analysis to 2D because... works :p)
+                if (r.index_count >= 2 || curr->type != TB_ADD) {
+                    break;
+                }
+
+                r.index[r.index_count - 1] = curr->inputs[1];
+                curr = curr->inputs[2];
             }
 
-            if (r.index->type == TB_SHL && r.index->inputs[2]->type == TB_ICONST) {
-                uint64_t scale = TB_NODE_GET_EXTRA_T(r.index->inputs[2], TB_NodeInt)->value;
-                r.index = r.index->inputs[1];
-                r.stride = 1ull << scale;
+            // if there's two indices and one has a bigger stride, it should be placed first
+            if (r.index_count == 2 && (r.stride[0] < r.stride[1] || (r.stride[0] == r.stride[1] && r.index[0]->gvn > r.index[1]->gvn))) {
+                SWAP(int32_t,  r.stride[0], r.stride[1]);
+                SWAP(TB_Node*, r.index[0], r.index[1]);
             }
         }
     }
@@ -184,15 +209,30 @@ static int ref_cmp(const void* a, const void* b) {
     if (aa->mem->type != bb->mem->type) { return bb->mem->type - aa->mem->type; }
     if (aa->base->gvn != bb->base->gvn) { return aa->base->gvn - bb->base->gvn; }
 
-    int a_idx = aa->index ? aa->index->gvn : 0;
-    int b_idx = bb->index ? bb->index->gvn : 0;
-    if (aa->stride != bb->stride) { return aa->stride - bb->stride; }
-    if (a_idx != b_idx) { return a_idx - b_idx; }
+    if (aa->index_count != bb->index_count) { return aa->index_count - bb->index_count; }
+    FOR_REV_N(i, 0, aa->index_count) {
+        if (aa->stride[i] != bb->stride[i]) { return aa->stride[i] - bb->stride[i]; }
+        if (aa->index[i]->gvn != bb->index[i]->gvn) { return aa->index[i]->gvn - bb->index[i]->gvn; }
+    }
 
     if (aa->size != bb->size) { return aa->size - bb->size; }
     if (aa->offset != bb->offset) { return aa->offset - bb->offset; }
 
     return 0;
+}
+
+static bool ref_same_indices(MemRef* a, MemRef* b) {
+    if (a->index_count != b->index_count) {
+        return false;
+    }
+
+    FOR_N(i, 0, a->index_count) {
+        if (a->stride[i] != b->stride[i] || a->index[i] != b->index[i]) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static void slp_add_pair(TB_Function* f, PairSet* pairs, TB_Node* lhs, TB_Node* rhs) {
@@ -245,13 +285,21 @@ bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* lo
         worklist_push(ws, top);
         pairs->depth[top->gvn] = 0;
 
-        while (dyn_array_length(ws->items)) {
+        if (loop != NULL) {
+            FOR_USERS(u, top) {
+                if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
+                    worklist_push(ws, USERN(u));
+                }
+            }
+        }
+
+        while (dyn_array_length(ws->items)) retry: {
             TB_Node* n = ws->items[dyn_array_length(ws->items) - 1];
 
             // process users before placing ourselves
             FOR_USERS(u, n) {
                 TB_Node* un = USERN(u);
-                if (un->type != TB_PHI && !worklist_test_n_set(ws, un)) {
+                if (!worklist_test_n_set(ws, un)) {
                     TB_Node* un_ctrl = ctx->ctrl[un->gvn];
                     TB_LoopTree* un_loop = un_ctrl ? nl_table_get(&ctx->loop_map, un_ctrl) : NULL;
                     if (loop == un_loop) {
@@ -261,18 +309,18 @@ bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* lo
                 }
             }
 
+            #if TB_OPTDEBUG_SLP
             tb_print_dumb_node(NULL, n);
             printf(" depth=%zu\n", dyn_array_length(ws->items));
-            dyn_array_pop(ws->items);
+            #endif
 
+            dyn_array_pop(ws->items);
             pairs->depth[n->gvn] = dyn_array_length(ws->items);
 
             // find relevant memory ops
             if (n->type == TB_LOAD || n->type == TB_STORE) {
                 aarray_push(refs, compute_mem_ref(f, n, top));
             }
-
-            retry:;
         }
         worklist_clear(ws);
     }
@@ -287,8 +335,8 @@ bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* lo
         printf("AAA! ");
         tb_print_dumb_node(NULL, r.mem);
         printf(" (%%%u", r.base->gvn);
-        if (r.index != NULL) {
-            printf(" + %%%u*%d", r.index->gvn, r.stride);
+        FOR_N(j, 0, r.index_count) {
+            printf(" + %%%u*%d", r.index[j]->gvn, r.stride[j]);
         }
         printf(" + %d, size=%d)\n", r.offset, r.size);
         #endif
@@ -300,8 +348,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* lo
     while (start < aarray_length(refs)) {
         int end = start + 1;
         while (refs[end].base   == refs[start].base
-            && refs[end].index  == refs[start].index
-            && refs[end].stride == refs[start].stride
+            && ref_same_indices(&refs[end], &refs[start])
             && refs[end].size   == refs[start].size) {
             end++;
         }
@@ -332,7 +379,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* lo
 
                 CUIK_TIMED_BLOCK("SLP extend") {
                     #if TB_OPTDEBUG_SLP
-                    printf("=== PAIRS ===\n");
+                    /*printf("=== PAIRS ===\n");
                     for (Pair* p = pairs->first; p; p = p->next) {
                         printf("\x1b[96m%%%-4u --   %%%-4u    %s\x1b[0m\n  ", p->lhs->gvn, p->rhs->gvn, tb_node_get_name(p->lhs->type));
                         tb_print_dumb_node(NULL, p->lhs);
@@ -340,7 +387,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* lo
                         tb_print_dumb_node(NULL, p->rhs);
                         printf("\n\n");
                     }
-                    printf("\n\n\n");
+                    printf("\n\n\n");*/
                     #endif
 
                     // check if all input edges do the same op
@@ -451,6 +498,7 @@ static TB_Node* gimme_vector(TB_Function* f, NL_Table* ops, VectorOp* op, int in
         if (i != indices[i]) { ordered = false; break; }
     }
 
+    TB_ASSERT(leader_op->v_op);
     if (ordered) {
         tb_arena_free(&f->tmp_arena, indices, op->width * sizeof(int));
         return leader_op->v_op;
@@ -533,12 +581,11 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
             op->ops[op->width++] = n;
             nl_table_put(&ops, n, op);
 
-            TB_OPTDEBUG(SLP)(printf("  "), tb_print_dumb_node(NULL, n));
-            if (n->type == TB_LOAD || n->type == TB_STORE) {
-                MemRef r = compute_mem_ref(f, n, top);
-                TB_OPTDEBUG(SLP)(printf(" (%%%u + %d, size=%d)", r.base->gvn, r.offset, r.size));
-            }
-            TB_OPTDEBUG(SLP)(printf("\n"));
+            #if TB_OPTDEBUG_SLP
+            printf("  ");
+            tb_print_dumb_node(NULL, n);
+            printf("\n");
+            #endif
         }
         TB_OPTDEBUG(SLP)(printf("\n"));
     }
@@ -610,8 +657,8 @@ bool compile_packs(TB_Function* f, PairSet* pairs, TB_LoopTree* loop) {
 
             size_t len = dyn_array_length(schedule);
             if (len - 1 != i) {
-                schedule[i] = schedule[len - 1];
                 i++;
+                memmove(&schedule[i - 1], &schedule[i], (len - i) * sizeof(VectorOp*));
             }
             dyn_array_pop(schedule);
         }

@@ -5,7 +5,7 @@ node (MEMORY)
 
 // [base + index]
 pat (TB_PTR_OFFSET ___ $base $index)
-=> (x86_MEMORY flags=OP_INDEXED $base $index scale=1)
+=> (x86_MEMORY flags=OP_INDEXED $base $index scale=0)
 
 // [base + disp]
 pat (TB_PTR_OFFSET ___ $base ($imm: TB_ICONST ...))
@@ -15,7 +15,7 @@ where "fits_into_int32(TB_TYPE_I64, $imm)"
 // [base + index + disp]
 pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ $index ($imm: TB_ICONST ...)))
 where "fits_into_int32(TB_TYPE_I64, $imm)"
-=> (x86_MEMORY $base $index disp="as_int32($imm)")
+=> (x86_MEMORY $base $index flags=OP_INDEXED disp="as_int32($imm)")
 
 // [base + index*scale + disp]
 pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ (TB_SHL ___ $index ($scale: TB_ICONST ...)) ($disp: TB_ICONST ...)))

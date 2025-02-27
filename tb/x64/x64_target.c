@@ -165,7 +165,7 @@ static void print_extra(TB_Node* n) {
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
     int vreg_id = ctx->vreg_map[n->gvn];
-    if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
+    if (0 && vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
         VReg* v = &ctx->vregs[vreg_id];
         if (v->class == REG_CLASS_GPR) {
             printf("%s", GPR_NAMES[v->assigned]);
@@ -203,7 +203,13 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
                 TB_Node* succ_n = USERN(u);
 
                 TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
-                succ[index] = succ_bb - ctx->cfg.blocks;
+                int b = succ_bb - ctx->cfg.blocks;
+                if (ctx->cfg.blocks[b].fwd >= 0) {
+                    while (b != ctx->cfg.blocks[b].fwd) {
+                        b = ctx->cfg.blocks[b].fwd;
+                    }
+                }
+                succ[index] = b;
             }
         }
 
@@ -216,9 +222,8 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
     } else if (n->type == TB_MACH_MOVE) {
         printf("  ");
         print_pretty_edge(ctx, n);
-        printf(" = move (");
+        printf(" = mov ");
         print_pretty_edge(ctx, n->inputs[1]);
-        printf(")");
     } else if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
 
@@ -239,11 +244,10 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         } else {
             printf(": ");
             tb__print_regmask(cpy->def);
-            printf(" = copy (");
+            printf(" = cpy ");
             print_pretty_edge(ctx, n->inputs[1]);
             printf(": ");
             tb__print_regmask(cpy->use);
-            printf(")");
         }
     } else if (n->type == TB_ICONST) {
         int bytes;
@@ -252,11 +256,12 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             case TB_TAG_I16: bytes = 2; break;
             case TB_TAG_I32: bytes = 4; break;
             case TB_TAG_I64: bytes = 8; break;
+            case TB_TAG_PTR: bytes = 8; break;
             default: tb_todo();
         }
         printf("  mov%d ", bytes);
         print_pretty_edge(ctx, n);
-        printf(", %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value);
+        printf(" = %"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value);
     } else if (n->type == TB_PHI) {
         printf("  ");
         print_pretty_edge(ctx, n);
@@ -272,7 +277,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
     } else if (n->type == TB_VSHUFFLE) {
         printf("  vshuffle ");
         print_pretty_edge(ctx, n);
-        printf(", ");
+        printf(" = ");
         print_pretty_edge(ctx, n->inputs[1]);
         if (n->input_count >= 3) {
             printf(", ");
@@ -313,19 +318,23 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         } else {
             printf("  %s ", name);
         }
-        print_pretty_edge(ctx, n);
+
+        if (n->dt.type != TB_TAG_MEMORY) {
+            print_pretty_edge(ctx, n);
+            printf(" = ");
+        }
 
         int rx_i = op->flags & OP_INDEXED ? 4 : 3;
 
         // if we're in load-form we print the RX first
         if (op->mode != MODE_ST && rx_i < n->input_count && n->inputs[rx_i]) {
-            printf(", ");
             print_pretty_edge(ctx, n->inputs[rx_i]);
+            printf(", ");
         }
 
         // print memory operand
         if (op->mode == MODE_LD || op->mode == MODE_ST) {
-            printf(", [");
+            printf("[");
             print_pretty_edge(ctx, n->inputs[2]);
             if (op->flags & OP_INDEXED) {
                 printf(" + ");
@@ -339,7 +348,6 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             }
             printf("]");
         } else if (op->mode == MODE_REG) {
-            printf(", ");
             print_pretty_edge(ctx, n->inputs[2]);
         }
 
@@ -366,7 +374,7 @@ static CallingConv CC_WIN64 = {
         // volatiles (caller saves)
         [RAX] = 'C', [RCX] = 'C', [RDX] = 'C', [R8] = 'C', [R9] = 'C', [R10] = 'C', [R11] = 'C',
         // non-volatile (callee saves)
-        [RBX] = 'c', [RDI] = 'c', [RSI] = 'c', [R12 ... R15] = 'c',
+        [RBX] = 'c', [RBP] = 'c', [RDI] = 'c', [RSI] = 'c', [R12 ... R15] = 'c',
     },
 
     .reg_saves[REG_CLASS_XMM] = (char[16]){
@@ -393,7 +401,7 @@ static CallingConv CC_SYSV = {
         // volatiles (caller saves)
         [RAX] = 'C', [RCX] = 'C', [RDX] = 'C', [RDI] = 'C', [RSI] = 'C', [R8] = 'C', [R9] = 'C', [R10] = 'C', [R11] = 'C',
         // non-volatile (callee saves)
-        [RBX] = 'c', [R12 ... R15] = 'c',
+        [RBX] = 'c', [RBP] = 'c', [R12 ... R15] = 'c',
     },
 
     .reg_saves[REG_CLASS_XMM] = (char[16]){
@@ -415,7 +423,7 @@ static CallingConv CC_SYSCALL = {
         // volatiles (caller saves)
         [RAX] = 'C', [RCX] = 'C', [RDX] = 'C', [RDI] = 'C', [RSI] = 'C', [R8] = 'C', [R9] = 'C', [R10] = 'C', [R11] = 'C',
         // non-volatile (callee saves)
-        [RBX] = 'c', [R12 ... R15] = 'c',
+        [RBX] = 'c', [RBP] = 'c', [R12 ... R15] = 'c',
     },
 
     .reg_saves[REG_CLASS_XMM] = (char[16]){
@@ -765,8 +773,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
 
             if (n->dt.type == TB_TAG_MEMORY) return &TB_REG_EMPTY;
-            if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) return ctx->mayspill_mask[REG_CLASS_XMM];
-            return ctx->mayspill_mask[REG_CLASS_GPR];
+            if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) return ctx->normie_mask[REG_CLASS_XMM];
+            return ctx->normie_mask[REG_CLASS_GPR];
         }
 
         case TB_ICONST:
@@ -844,6 +852,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         {
             RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
             if (ins) {
+                ins[1] = &TB_REG_EMPTY;
+
                 X86MemOp* op = TB_NODE_GET_EXTRA(n);
                 if ((op->flags & OP_IMMEDIATE) == 0) {
                     FOR_N(i, 2, n->input_count - 1) {
@@ -863,11 +873,11 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_vmov: case x86_vadd: case x86_vmul: case x86_vdiv:
         case x86_ucomi:
         {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
             RegMask* xmm = ctx->normie_mask[REG_CLASS_XMM];
             if (ins) {
                 ins[1] = &TB_REG_EMPTY;
 
-                X86MemOp* op = TB_NODE_GET_EXTRA(n);
                 if (op->mode == MODE_LD || op->mode == MODE_ST) {
                     if (n->inputs[2]->type == TB_MACH_FRAME_PTR) {
                         ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSP);
@@ -889,7 +899,9 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 }
             }
 
-            if (n->type == x86_ucomi) {
+            if (op->mode == MODE_ST) {
+                return &TB_REG_EMPTY;
+            } else if (n->type == x86_ucomi) {
                 return ctx->normie_mask[REG_CLASS_FLAGS];
             } else {
                 return ctx->normie_mask[REG_CLASS_XMM];
@@ -1037,7 +1049,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 static int op_gpr_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_GPR); }
 static int op_xmm_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_XMM); }
 
-static int stk_offset(Ctx* ctx, int reg) {
+static int stk_offset(Ctx* ctx, int reg, int width) {
     if (reg == 0) {
         // return address
         return ctx->stack_usage + (ctx->stack_header - 8);
@@ -1049,18 +1061,27 @@ static int stk_offset(Ctx* ctx, int reg) {
         return (reg - (ctx->param_count + 1))*8;
     } else {
         int spill_num = reg - (ctx->param_count + ctx->call_usage);
+        if (width > 1) {
+            spill_num += width - 1;
+        }
+
         return (ctx->stack_usage - ctx->stack_header) - spill_num*8;
     }
 }
 
 static Val op_at(Ctx* ctx, TB_Node* n) {
-    assert(ctx->vreg_map[n->gvn] > 0);
+    TB_ASSERT(ctx->vreg_map[n->gvn] > 0);
     VReg* vreg = &ctx->vregs[ctx->vreg_map[n->gvn]];
     if (vreg->class == REG_CLASS_STK) {
+        int width = 1;
+        if (n->dt.type == TB_TAG_V128) {
+            width = 2;
+        }
+
         TB_ASSERT(vreg->assigned >= 0);
-        return val_stack(stk_offset(ctx, vreg->assigned));
+        return val_stack(stk_offset(ctx, vreg->assigned, width));
     } else {
-        assert(vreg->assigned >= 0);
+        TB_ASSERT(vreg->assigned >= 0);
         return (Val) { .type = vreg->class == REG_CLASS_XMM ? VAL_XMM : VAL_GPR, .reg = vreg->assigned };
     }
 }
@@ -1793,25 +1814,26 @@ static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) {
 }
 
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
-    if (n->type == x86_imul) {
-        return 0b00000010;
-    } else if (n->type == TB_VSHUFFLE) {
-        return 0b00100000;
-    }
-
-    if (n->type >= TB_MACH_X86) {
-        X86MemOp* op = TB_NODE_GET_EXTRA(n);
-
-        if (op->mode == MODE_LD) {
-            // if we're doing a load, we can only fit into ports 2 & 3
-            return 0b00001100;
-        } else if (op->mode == MODE_ST) {
-            // stores go into port 4
-            return 0b00010000;
+    /* if (n->type == x86_imul) {
+            return 0b00000010;
+        } else if (n->type == TB_VSHUFFLE) {
+            return 0b00100000;
         }
-    }
 
-    return 0b11101111;
+        if (n->type >= TB_MACH_X86) {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+
+            if (op->mode == MODE_LD) {
+                // if we're doing a load, we can only fit into ports 2 & 3
+                return 0b00001100;
+            } else if (op->mode == MODE_ST) {
+                // stores go into port 4
+                return 0b00010000;
+            }
+        }
+
+        return 0b11101111; */
+    return 1;
 }
 
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
@@ -1983,13 +2005,17 @@ static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e) {
         if (ctx->f->features.gen & TB_FEATURE_FRAME_PTR) {
             E("//  [SP + %3zu] saved RBP\n", stack_usage - 16);
         }
-        FOR_N(i, 0, ctx->num_spills) {
+        FOR_N(i, 0, ctx->param_count + ctx->call_usage + ctx->num_spills) {
+            int pos = stk_offset(ctx, 1 + i, 1);
+            E("//  [SP + %3d] STACK%zu\n", pos, 1 + i);
+        }
+        /* FOR_N(i, 0, ctx->num_spills) {
             int pos = stk_offset(ctx, 1 + ctx->param_count + ctx->call_usage + i);
             E("//  [SP + %3d] SPILL%zu\n", pos, i);
         }
         FOR_REV_N(i, 0, ctx->call_usage) {
             E("//  [SP + %3td] CALLEE ARG\n", i*8);
-        }
+        } */
     }
     TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
 }

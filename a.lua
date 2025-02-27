@@ -5,6 +5,7 @@ bit = require "bit"
 
 local t = {}
 local cuik_dll = ffi.load(ffi.os == "Windows" and "cuik.dll" or "bin/libcuik.so")
+local a_dll = ffi.load("a.dll")
 
 ffi.cdef[[
 typedef struct TokenStream TokenStream;
@@ -200,6 +201,8 @@ typedef struct TB_JIT TB_JIT;
 TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity);
 void* tb_jit_place_function(TB_JIT* jit, TB_Function* f);
 void tb_jit_end(TB_JIT* jit);
+
+void matmul(float* dst, float* a, float* b);
 ]]
 
 cuik_dll.cuik_init(false)
@@ -213,7 +216,7 @@ function compile(src, optimize, decl_mappings)
 
     local cpp = cuik_dll.cuik_driver_preprocess_str(str, args, true)
     local tokens = cuik_dll.cuikpp_get_token_stream(cpp)
-    cuik_dll.cuikpp_dump_tokens(tokens)
+    -- cuik_dll.cuikpp_dump_tokens(tokens)
 
     local parse = cuik_dll.cuikparse_run(args.version, tokens, args.target, false)
     if parse.tu == nil then
@@ -246,8 +249,8 @@ function compile(src, optimize, decl_mappings)
                 cuik_dll.tb_opt(f, ir_worklist, false)
             end
 
-            local out = cuik_dll.tb_codegen(f, ir_worklist, nil, false)
-            -- cuik_dll.tb_output_print_asm(out, nil)
+            local out = cuik_dll.tb_codegen(f, ir_worklist, nil, true)
+            cuik_dll.tb_output_print_asm(out, nil)
 
             symbols[i] = sym
         end
@@ -275,7 +278,7 @@ function compile(src, optimize, decl_mappings)
     return result
 end
 
-function matmul_fully_unroll(N)
+function matmul_blocked(N)
     local src = buffer.new(1000)
     src:put("#include <stddef.h>\n")
     src:put("void matmul(float* dst, float* a, float* b) {\n")
@@ -298,16 +301,14 @@ function matmul_fully_unroll(N)
     end
 
     local block_size = 4
-
     -- zeroing loop (slightly unrolled)
     local elem_count = N * N
-    local zero_unroll = 4
+    local zero_unroll = 16
     src:put(string.format("    for (size_t i = 0; i < %d; i++) {\n", elem_count / zero_unroll))
     for i=0,zero_unroll-1 do
         src:put(string.format("        dst[i*%d + %d] = -0.0f;\n", zero_unroll, i))
     end
     src:put("    }\n")
-
     -- blocked matrix multiply
     src:put("\n")
     src:put(string.format("    for (size_t kk = 0; kk < %d; kk += %d) {\n", N, block_size))
@@ -341,9 +342,8 @@ function matmul_fully_unroll(N)
     return src:tostring()
 end
 
-local src = matmul_fully_unroll(4);
+local src = matmul_blocked(16)
 print(src)
-os.exit(0)
 
 local funcs = compile(src, true, {
     matmul="typedef int FN_matmul(float* dst, float* a, float* b);",
@@ -365,7 +365,7 @@ end
 
 math.randomseed(os.time())
 function rand_mat(N)
-    local m = ffi.new("float[16]")
+    local m = ffi.new("float[?]", N*N)
     for i=0,(N*N)-1 do
         m[i] = math.random()
     end
@@ -383,21 +383,31 @@ function print_mat(N, mat)
     print(str:tostring())
 end
 
-local aa = rand_mat(4)
-local bb = rand_mat(4)
-local dst = ffi.new("float[16]")
+local N = 16
+local aa = rand_mat(N)
+local bb = rand_mat(N)
+local dst = ffi.new("float[?]", N*N)
 
-local tries = 10000000
+if true then
+    funcs.matmul(dst, aa, bb)
+    print_mat(N, dst)
+
+    sample(N, dst, aa, bb)
+    print_mat(N, dst)
+end
+
+local tries = 100000
 local x = os.clock()
 for i=1,tries do
-    sample(4, dst, aa, bb)
-    -- print_mat(4, dst)
+    funcs.matmul(dst, aa, bb)
 end
-print(string.format("luajit impl: %.2f seconds\n", os.clock() - x))
+local y = ((os.clock() - x) * 1000000.0) / tries
+print(string.format("cool Cuik impl: %.2f us/op\n", y))
 
 x = os.clock()
 for i=1,tries do
-    funcs.matmul(dst, aa, bb)
-    -- print_mat(4, dst)
+    sample(N, dst, aa, bb)
 end
-print(string.format("C impl: %.2f seconds\n", os.clock() - x))
+local y = ((os.clock() - x) * 1000000.0) / tries
+print(string.format("naive LJ impl: %.2f us/op\n", y))
+

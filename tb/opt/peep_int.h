@@ -52,6 +52,18 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
             set_input(f, n, con,          2);
             return n;
         }
+
+        // a + (b + c) => (a + b) + c where c is constant and b is not
+        if (b->type == type && is_iconst(f, b->inputs[2])) {
+            TB_Node* ab = tb_alloc_node(f, type, n->dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, ab, a, 1);
+            set_input(f, ab, b->inputs[1], 2);
+            latuni_set(f, ab, value_of(f, ab));
+
+            set_input(f, n, ab,           1);
+            set_input(f, n, b->inputs[2], 2);
+            return n;
+        }
     }
 
     uint64_t rhs;
@@ -68,6 +80,19 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
+static bool will_mul_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattice* b) {
+    int bits = tb_data_type_bit_size(NULL, dt.type);
+    TB_ASSERT(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
+
+    bool overflow = false;
+    uint64_t prods[4];
+    overflow |= __builtin_mul_overflow(a->_int.min, b->_int.min, &prods[0]);
+    overflow |= __builtin_mul_overflow(a->_int.max, b->_int.min, &prods[1]);
+    overflow |= __builtin_mul_overflow(a->_int.min, b->_int.max, &prods[2]);
+    overflow |= __builtin_mul_overflow(a->_int.max, b->_int.max, &prods[3]);
+    return overflow;
+}
+
 static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, TB_Node* n, Lattice* a, Lattice* b) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
@@ -76,7 +101,7 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
     int64_t amin = a->_int.min, amax = a->_int.max;
     int64_t bmin = b->_int.min, bmax = b->_int.max;
 
-    assert(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
+    TB_ASSERT(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
     bool overflow = false;
     int64_t min, max;
     switch (type) {

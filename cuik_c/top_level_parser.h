@@ -534,7 +534,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     };
 
     // make sure they're both updating the same arena that's owned by the TU now
-    parser.types.arena = parser.arena = &parser.tu->arena;
+    parser.tu->types.arena = parser.types.arena = parser.arena = &parser.tu->arena;
 
     Symbol* sym = cuik_symtab_lookup(parser.symbols, atoms_putc("WinMain"));
     if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {

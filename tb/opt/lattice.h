@@ -278,6 +278,7 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
 }
 
 static bool lattice_signed(LatticeInt* l) { return l->min > l->max; }
+static bool lattice_is_iconst(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
 
 static LatticeInt lattice_into_unsigned(LatticeInt i, int bits) {
     if (i.min > i.max) {

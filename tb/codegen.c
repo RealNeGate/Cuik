@@ -42,7 +42,7 @@ size_t tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n
     return i;
 }
 
-void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
+size_t tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     TB_BasicBlock* bb = f->scheduled[n->gvn];
 
     size_t i = 0, cnt = aarray_length(bb->items);
@@ -52,6 +52,7 @@ void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     memmove(&bb->items[i], &bb->items[i + 1], (cnt - (i + 1)) * sizeof(TB_Node*));
     aarray_pop(bb->items);
     f->scheduled[n->gvn] = NULL;
+    return i;
 }
 
 size_t tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {

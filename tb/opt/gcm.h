@@ -35,7 +35,7 @@ static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_la
                 if (move->type == TB_MACH_MOVE) {
                     TB_Node* other_dst = USERN(get_single_use(move));
                     TB_ASSERT(other_dst->type == TB_PHI);
-                    if (dst->inputs[0] != other_dst->inputs[0]) {
+                    if (dst->inputs[0] == other_dst->inputs[0]) {
                         return late;
                     }
                 }

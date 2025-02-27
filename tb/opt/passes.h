@@ -120,6 +120,7 @@ bool cfg_is_endpoint(TB_Node* n);
 
 bool tb_node_is_safepoint(TB_Node* n);
 bool tb_node_has_mem_out(TB_Node* n);
+bool tb_node_mem_read_only(TB_Node* n);
 TB_Node* tb_node_mem_in(TB_Node* n);
 
 ////////////////////////////////
@@ -220,10 +221,6 @@ static bool is_mem_end_op(TB_Node* n) {
 
 static bool is_mem_in_op(TB_Node* n) {
     return is_mem_out_op(n) || n->type == TB_SAFEPOINT || n->type == TB_LOAD;
-}
-
-static bool is_mem_only_in_op(TB_Node* n) {
-    return n->type == TB_SAFEPOINT || n->type == TB_LOAD;
 }
 
 static bool single_use(TB_Node* n) {

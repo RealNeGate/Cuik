@@ -162,6 +162,11 @@ bool cfg_is_endpoint(TB_Node* n)      { return cfg_flags(n) & NODE_END; }
 bool tb_node_is_safepoint(TB_Node* n) { return cfg_flags(n) & NODE_SAFEPOINT; }
 bool tb_node_has_mem_out(TB_Node* n)  { return cfg_flags(n) & NODE_MEMORY_OUT; }
 
+bool tb_node_mem_read_only(TB_Node* n) {
+    uint32_t f = cfg_flags(n);
+    return (f & NODE_MEMORY_IN) != 0 && (f & NODE_MEMORY_OUT) == 0;
+}
+
 // has potential memory dep on inputs[1]
 TB_Node* tb_node_mem_in(TB_Node* n) {
     if (cfg_flags(n) & NODE_MEMORY_IN) {

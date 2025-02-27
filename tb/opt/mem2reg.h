@@ -116,10 +116,10 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
             int reason = -1;
 
             if (0) {}
-            else if (is_mem_end_op(use_n))       { reason = MEM_END;  }
-            else if (use_n->type == TB_MERGEMEM) { reason = MEM_END;  }
-            else if (use_n->type == TB_PHI)      { reason = MEM_JOIN; }
-            else if (is_mem_only_in_op(use_n))   { reason = MEM_USE;  }
+            else if (is_mem_end_op(use_n))         { reason = MEM_END;  }
+            else if (use_n->type == TB_MERGEMEM)   { reason = MEM_END;  }
+            else if (use_n->type == TB_PHI)        { reason = MEM_JOIN; }
+            else if (tb_node_mem_read_only(use_n)) { reason = MEM_USE;  }
             else if (cfg_is_mproj(use_n) || (use_i == 1 && is_mem_out_op(use_n))) {
                 reason = MEM_FORK;
             }

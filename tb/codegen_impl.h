@@ -497,6 +497,23 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     tb_print_dumb(f);
     #endif
 
+    if (0) {
+        static float dst[256];
+        uint64_t args[] = { (uintptr_t) &dst, 0, 0 };
+        uint64_t ret = tb_interpret(f, f->worklist, args);
+
+        // printf("AAA = %"PRId64"\n", ret);
+        printf("Dst = \n");
+        FOR_N(j, 0, 16) {
+            FOR_N(i, 0, 16) {
+                printf("%.3f ", dst[j*16 + i]);
+            }
+            printf("\n");
+        }
+
+        __debugbreak();
+    }
+
     // the temp arena might've been freed, let's restore it
     if (f->tmp_arena.top == NULL) {
         tb_arena_create(&f->tmp_arena, "Tmp");
@@ -529,6 +546,13 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     ctx.mask_intern = nl_hashset_alloc(200);
     nl_hashset_put2(&ctx.mask_intern, &TB_REG_EMPTY, rm_hash, rm_compare);
+
+    FOR_N(i, 1, REG_CLASS_COUNT) {
+        nl_hashset_put2(&ctx.mask_intern, ctx.normie_mask[i], rm_hash, rm_compare);
+        if (ctx.mayspill_mask[i]) {
+            nl_hashset_put2(&ctx.mask_intern, ctx.mayspill_mask[i], rm_hash, rm_compare);
+        }
+    }
 
     CUIK_TIMED_BLOCK("isel") {
         log_debug("%s: tmp_arena=%.1f KiB (pre-isel)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f);
@@ -679,7 +703,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
             ctx.vreg_map[i] = 0;
         }
 
-        TB_OPTDEBUG(ISEL)(printf("=== DUMP %s ===\n", ctx.f->super.name));
+        TB_OPTDEBUG(ISEL)(printf("=== SCHED %s ===\n", ctx.f->super.name));
 
         int max_ins = 0;
         size_t vreg_count = 1; // 0 is reserved as the NULL vreg
@@ -1046,7 +1070,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
     // TODO(NeGate): move the assembly output to code arena
     if (emit_asm) CUIK_TIMED_BLOCK("dissassembly") {
-        // dump_stack_layout(&ctx, &ctx.emit);
+        dump_stack_layout(&ctx, &ctx.emit);
         dyn_array_for(i, ctx.debug_stack_slots) {
             TB_StackSlot* s = &ctx.debug_stack_slots[i];
 

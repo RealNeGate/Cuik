@@ -245,17 +245,17 @@ static int node_pos(TB_Node* n) {
         case TB_F64CONST:
         return 1;
 
-        case TB_SHR:
-        return 2;
-
-        case TB_SHL:
-        return 3;
-
         default:
         return 4;
 
         case TB_PHI:
         return 5;
+
+        case TB_SHR:
+        return 6;
+
+        case TB_SHL:
+        return 7;
     }
 }
 

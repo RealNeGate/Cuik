@@ -157,7 +157,7 @@ local function insert_2d(t, i, j, v)
     t[i][j] = v
 end
 
-local function dfa_compile(n, head, depth)
+local function dfa_compile(n, head, depth, stack)
     local ty = n[1].."+1"
     if dfa[head] == nil then
         dfa[head] = {}
@@ -189,11 +189,13 @@ local function dfa_compile(n, head, depth)
         head = state_count
         state_count = state_count + 1
     end
+    stack[#stack + 1] = head
 
     for i=2,#n do
         local t = n[i]
         if type(t) == "table" then
-            head = dfa_compile(t, head, depth + 1)
+            head = dfa_compile(t, head, depth + 1, stack)
+            stack[#stack + 1] = head
         elseif t == "..." or t == "$REST" then
             -- keep chewing up any nodes in this guy
             local ty = 0
@@ -204,9 +206,11 @@ local function dfa_compile(n, head, depth)
             dfa[head][ty] = head
         elseif t == "___" then
             head = dfa_insert("TB_NULL+1", head)
+            stack[#stack + 1] = head
         elseif t:byte(1) == string.byte("$") then -- capture
             local before = head
             head = dfa_insert(0, head)
+            stack[#stack + 1] = head
 
             -- any paths in this camp which fail should
             -- return to "head"
@@ -381,6 +385,7 @@ function find_captures(strs, n, expr)
     end
 end
 
+local fallback = {}
 while true do
     local t = lex()
     if t == nil then
@@ -411,12 +416,14 @@ while true do
         end
 
         local pattern = parse_node()
-        local head = dfa_compile(pattern, 0, 0)
-        -- print(inspect(pattern))
+
+        local stack = {}
+        local head = dfa_compile(pattern, 0, 0, stack)
 
         t = lex()
         local where = nil
         if t == "where" then
+           fallback[head] = stack
             where = lex()
 
             t = lex()
@@ -465,6 +472,23 @@ while true do
         capture_count = 0
     end
 end
+
+local special_return_cases = {}
+for k,v in pairs(fallback) do
+    -- print("V", v, v[#v], inspect(v))
+
+    local final_state = v[#v]
+    local i = #v
+    while i > 1 do
+        i = i - 1
+        local any_case = dfa[v[i]][0]
+        if accept[any_case] then
+            special_return_cases[final_state] = any_case
+            -- print("Final", any_case)
+        end
+    end
+end
+-- print(inspect(fallback))
 
 -- propagate any "fail" cases
 local visited = {}
@@ -601,7 +625,13 @@ else
             out:put(line)
             out:put("\n")
         end
-        out:put("        } return NULL;\n")
+        if special_return_cases[k] then
+            out:put("        } return x86_dfa_accept(ctx, f, n, ")
+            out:put(special_return_cases[k])
+            out:put(");\n")
+        else
+            out:put("        } return NULL;\n")
+        end
     end
     out:put("        // no match?\n")
     out:put("        default: return NULL;\n")
