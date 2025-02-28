@@ -314,29 +314,32 @@ end
 ]]
 local dfa = {
 	Q = {}, -- set
-	Sigma = { -- list
-		-- '0', '1',
-		-- '00', '01', '10', '11',
-		-- '000', '001', '010', '011',
-		-- '100', '101', '110', '111',
-		'0000', '0001', '0010', '0011',
-		'0100', '0101', '0110', '0111',
-		'1000', '1001', '1010', '1011',
-		'1100', '1101', '1110', '1111',
-		-- '00000', '00001', '00010', '00011',
-		-- '00100', '00101', '00110', '00111',
-		-- '01000', '01001', '01010', '01011',
-		-- '01100', '01101', '01110', '01111',
-		-- '10000', '10001', '10010', '10011',
-		-- '10100', '10101', '10110', '10111',
-		-- '11000', '11001', '11010', '11011',
-		-- '11100', '11101', '11110', '11111',
-	},
+	Sigma = {}, -- list
 	delta = {}, -- set [state][input]=state
 	q0 = 1,
 	F = {}, -- set [state]=[names]
 }
 dfa.Q[dfa.q0] = true
+
+-- generate the alphabet
+local function genSigma(n)
+	local Sigma = {}
+	local function walk(n, l)
+		if n == 0 then
+			table.insert(Sigma, table.concat(l, ''))
+		else
+			table.insert(l, '0')
+			walk(n - 1, l)
+			l[#l] = '1'
+			walk(n - 1, l)
+			table.remove(l)
+		end
+	end
+	walk(n, {})
+	return Sigma
+end
+local alphabet_rank = 4
+dfa.Sigma = genSigma(alphabet_rank)
 
 -- initial state
 local delta_id = 1 -- ids for transition states, they go up
