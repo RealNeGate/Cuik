@@ -6,10 +6,11 @@ local inspect = require('inspect')
 --------------------------------
 
 local options = {
-	timings  = false,
-	listing  = false,
+	timings = false,
+	listing = false,
 	graphviz = false,
 	analysis = false,
+	transpose = false,
 }
 for _, a in ipairs(arg) do
 	if options[a] ~= nil then
@@ -345,6 +346,7 @@ local worklist = {
 	{active = q0, len = #patterns, index = 1, id = 1}
 }
 
+-- TODO idk if (2 patterns: 1 final, 1 unfinished) matters here
 local function is_final(q)
 	for i, _ in pairs(q.active) do
 		local pat = patterns[i]
@@ -936,21 +938,25 @@ end
 -- generation C (zoomer)
 --------------------------------
 
--- make the delta table
--- make a table of final-states -> names
--- make a walk function
+--[[ test checklist
+	transposed matrix
+		delta[state][input] vs delta[input][state]
+	early out vs always 8 iterations
+		final states need transitions to themselves
+]]
 
 local cdfa = {}
 
--- delta table
-table.insert(cdfa, '#include <stdint.h>')
-table.insert(cdfa, string.format('int16_t delta[16][%d] = {', delta_id + 1))
-for a, ib in pairs(dfa.delta) do
-	for i, b in pairs(ib) do
-		table.insert(cdfa, string.format('\t[0b%s][%d] = %d,', i, a, b))
-	end
-end
-table.insert(cdfa, '};')
+-- prefix
+table.insert(cdfa, [[
+/*************\
+|* GENERATED *|
+\*************/
+#include <stdint.h>
+#define BIT_MASK(N) ((1 << N) - 1)
+#define GET_BITS(N, V, O) ((V >> O) & BIT_MASK(N))
+#define GET_INPUT(N, V) (GET_BITS(V, 4, N * 4))
+]])
 
 -- name table
 table.insert(cdfa, string.format('char* names[%d] = {', delta_id + 1))
@@ -959,35 +965,45 @@ for i, n in pairs(dfa.F) do
 end
 table.insert(cdfa, '};')
 
+-- delta table
+local delta_def = 'int16_t delta[%d][16] = {'
+local delta_part = function (a, i, b) return string.format('\t[%d][0b%s] = %d,', a, i, b) end
+if options.transpose then
+	delta_def = 'int16_t delta[16][%d] = {'
+	delta_part = function (a, i, b) return string.format('\t[0b%s][%d] = %d,', i, a, b) end
+end
+table.insert(cdfa, string.format(delta_def, delta_id + 1))
+for a, _ in pairs(dfa.Q) do
+	if dfa.delta[a] then
+		for i, b in pairs(dfa.delta[a]) do
+			table.insert(cdfa, delta_part(a, i, b))
+		end
+	else
+		for _, i in ipairs(dfa.Sigma) do
+			table.insert(cdfa, delta_part(a, i, a))
+		end
+	end
+end
+table.insert(cdfa, '};')
+
 -- walk function
---[[
-// mask lowest N bits
-#define BIT_MASK(N) ((1 << N) - 1)
-// masks N lowest bits of V and shifts to offset O
-#define SET_BITS(V, N, O) ((V & BIT_MASK(N)) << O)
-// shifts V from offset O and masks N lowest bits
-#define GET_BITS(V, N, O) ((V >> O) & BIT_MASK(N))
-// gets Nth 4 bits from 7777 6666 5555 4444 3333 2222 1111 0000
-#define GET_INPUT(N, V) (GET_BITS(V, 4, N * 4))
-
-int16_t walk(uint32_t inst) {
+table.insert(cdfa, [[
+uint16_t walk(uint32_t inst) {
 	int16_t state = 1;
-	int input = 7;
-	while (state != 0 && names[state] == 0) {
-		state = delta[GET_INPUT(input--, inst)][state];
-	}
+]])
+for i = 28, 0, -4 do
+	if options.transpose then
+		table.insert(cdfa, string.format('\tstate = delta[(inst >> %d) & 0b1111][state];', i))
+	else
+		table.insert(cdfa, string.format('\tstate = delta[state][(inst >> %d) & 0b1111];', i))
+	end
+end
+table.insert(cdfa, [[
 	return state;
-}
-
-i currently check if there's a name
-but i could easily renumber all the final states to have a set bit
-this can be tested for, and also keep the names array dense
-#define COND1(S) (names[S] == 0)
-#define COND2(S) ((S & 0x800) == 0)
-]]
+}]])
 
 -- write it
-local file = assert(io.open('a64dfa.c', 'w'))
+local file = assert(io.open('a64dfa.h', 'w'))
 file:write(table.concat(cdfa, '\n'))
 file:close()
 timer('c-nile')
