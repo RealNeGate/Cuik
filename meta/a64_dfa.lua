@@ -159,9 +159,10 @@ local patches = {
 local function parse_encoding(encodings, name)
 	--[[ encoding
 		i want to turn a list of ranges of bits/fields such as
-		[{ value='0101', range={ bit=4, len=4 }}
-		,{ value='xxxx', range={ bit=0, len=4 }}]
-		into a pattern such as '0101____'
+			[{ value='0101', range={ bit=4, len=4 }}
+			,{ value='xxxx', range={ bit=0, len=4 }}]
+		into a pattern such as
+			'0101____'
 	]]
 	local fields = {} -- list
 	local pattern = {} -- list
@@ -253,6 +254,7 @@ local function walk_A64(list, instructions, parent, encodings)
 			walk_A64(item.children, instructions, parent, encodings)
 			table.remove(parent)
 		else
+			--!! also parse constraints & children for decoding
 			table.insert(instructions, {
 				name = item.name,
 				path = table.concat(parent, '/'),
@@ -349,7 +351,7 @@ local worklist = {
 	{active = q0, len = #patterns, index = 1, id = 1}
 }
 
--- TODO idk if (2 patterns: 1 final, 1 unfinished) matters here
+--!! idk if (2 patterns: 1 final, 1 unfinished) matters here
 local function is_final(q)
 	for i, _ in pairs(q.active) do
 		local pat = patterns[i]
@@ -519,8 +521,7 @@ local proper_final_states = { -- set
 	asimdimm             = true,
 	sve_int_dup_mask_imm = true,
 }
--- i can also make a map between states<->names for ease
-local final_states = {} -- set[state]=name & set[name]=state
+
 -- each final state needs only one instruction
 for s, ns in pairs(dfa.F) do
 	if #ns > 1 then
@@ -540,6 +541,7 @@ for s, ns in pairs(dfa.F) do
 		end
 	end
 end
+
 -- each instruction needs only one final state
 local function fix(dfa, s, id)
 	for a, ib in pairs(dfa.delta) do
@@ -551,15 +553,6 @@ local function fix(dfa, s, id)
 	end
 	dfa.Q[s] = nil
 	dfa.F[s] = nil
-end
-for s, ns in pairs(dfa.F) do
-	local name = ns[1]
-	final_states[s] = name
-	if final_states[name] == nil then
-		final_states[name] = s
-	else
-		fix(dfa, s, final_states[name])
-	end
 end
 
 -- reassign node ids to keep them linear and
@@ -587,6 +580,7 @@ local function map_ids(old, idmap)
 	old.delta = new.delta
 end
 -- dumb breadth-first assignment
+--!! maybe assign delta then final
 local newids = {}
 local visited = {}
 local towalk = {1}
@@ -606,6 +600,18 @@ end
 local idmap = {}
 for i, v in ipairs(newids) do idmap[v] = i end
 map_ids(dfa, idmap)
+
+-- i can also make a map between states<->names for ease
+local final_states = {} -- set[state]=name & set[name]=state
+for s, ns in pairs(dfa.F) do
+	local name = ns[1]
+	final_states[s] = name
+	if final_states[name] == nil then
+		final_states[name] = s
+	else
+		fix(dfa, s, final_states[name])
+	end
+end
 
 timer('cleanup')
 
@@ -711,6 +717,7 @@ if options.analysis then
 	print(string.format('total edges = %d', total_edges))
 	print(string.format('transition histogram %s', dump(edge_histogram)))
 
+	--!! i can rework this to handle any alphabet size
 	-- how many transitions happen in pairs/quads/octs/all
 	-- that is, how many inputs ignore the low bits
 	-- this is specific to stepping 4 bits
@@ -951,15 +958,18 @@ end
 local cdfa = {}
 
 -- prefix
-table.insert(cdfa, [[
+table.insert(cdfa, string.format([[
 /*************\
 |* GENERATED *|
 \*************/
 #include <stdint.h>
+// provides mask of N bits
 #define BIT_MASK(N) ((1 << N) - 1)
+// get N bits from value V at offset O
 #define GET_BITS(N, V, O) ((V >> O) & BIT_MASK(N))
-#define GET_INPUT(N, V) (GET_BITS(V, 4, N * 4))
-]])
+#define ALPHABET_RANK %d]], alphabet_rank))
+
+--!! decode functions
 
 -- name table
 table.insert(cdfa, string.format('char* names[%d] = {', delta_id + 1))
@@ -992,8 +1002,8 @@ table.insert(cdfa, '};')
 -- walk function
 table.insert(cdfa, [[
 uint16_t walk(uint32_t inst) {
-	int16_t state = 1;
-]])
+	int16_t state = 1;]])
+--!! handle alphabet size
 for i = 28, 0, -4 do
 	if options.transpose then
 		table.insert(cdfa, string.format('\tstate = delta[(inst >> %d) & 0b1111][state];', i))
