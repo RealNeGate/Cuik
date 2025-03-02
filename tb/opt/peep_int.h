@@ -4,6 +4,27 @@ static int64_t sadd(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a +
 static int64_t ssub(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a - (uint64_t)b) & mask; }
 static int64_t smul(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a * (uint64_t)b) & mask; }
 
+static int node_pos(TB_Node* n) {
+    switch (n->type) {
+        case TB_ICONST:
+        case TB_F32CONST:
+        case TB_F64CONST:
+        return 1;
+
+        default:
+        return 4;
+
+        case TB_PHI:
+        return 5;
+
+        case TB_SHR:
+        return 6;
+
+        case TB_SHL:
+        return 7;
+    }
+}
+
 ////////////////////////////////
 // Arithmetic
 ////////////////////////////////

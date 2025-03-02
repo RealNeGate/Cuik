@@ -89,7 +89,7 @@ struct VReg {
     // BRIGGS: when coalesced this number will go up
     int uses;
 
-    bool marked_spilled : 1;
+    bool was_spilled;
 };
 
 typedef struct Ctx Ctx;
@@ -408,5 +408,9 @@ static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg
         return old_rm;
     }
     return new_rm;
+}
+
+static bool bits64_member(uint64_t* arr, size_t x) {
+    return arr[x / 64] & (1ull << (x % 64));
 }
 

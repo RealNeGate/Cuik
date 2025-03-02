@@ -78,6 +78,9 @@ node (jcc)
 pat (TB_BRANCH dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond)
 pat (TB_AFFINE_LATCH dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond)
 
+pat (TB_BRANCH dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=E)
+pat (TB_AFFINE_LATCH dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=E)
+
 // if we don't get rid of the "condition" by merging it with something
 // else then it's being directly used.
 node (setcc)
@@ -130,6 +133,9 @@ NORMIE_OP8(TB_SHR, shr)
 NORMIE_OP8(TB_SAR, sar)
 NORMIE_OP8(TB_ROL, rol)
 NORMIE_OP8(TB_ROR, ror)
+
+// special case for ADD
+pat (TB_ADD dt=$dt ___ $lhs $rhs) where "$dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64" => (x86_lea dt=$dt ___ ___ $lhs $rhs mode=MODE_LD flags=OP_INDEXED)
 
 // *******************************
 // float ops

@@ -29,7 +29,6 @@ typedef struct {
     TB_GetLatency get_lat;
     TB_GetUnitMask get_unit_mask;
 
-    TB_Node* cmp;
     Set ready_set;
     ArenaArray(ReadyNode) ready;
 } ListSched;
@@ -184,12 +183,6 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(Ph
         if (!worklist_test(ws, n) && f->scheduled[n->gvn] == bb && count_waiting_deps(f, ws, bb, n) == 0) {
             ready_up(&sched, n, end);
         }
-    }
-
-    // TODO(NeGate): we shouldn't do this on VLIWs, ideally we schedule predication earlier there
-    if ((end->type == TB_BRANCH || end->type == TB_AFFINE_LATCH) && f->scheduled[end->inputs[1]->gvn] == bb &&
-        end->inputs[1]->user_count == 1 && !is_proj(end->inputs[1])) {
-        sched.cmp = end->inputs[1];
     }
 
     uint64_t in_use_mask = 0;

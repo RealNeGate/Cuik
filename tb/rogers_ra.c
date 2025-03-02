@@ -103,7 +103,8 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
 
         RegMask* remat_mask = ctx->constraint(ctx, remat, NULL);
         reload_vreg->mask = tb__reg_mask_meet(ctx, in_mask, remat_mask);
-        assert(reload_vreg->mask != &TB_REG_EMPTY && "TODO hard split from rematerializing");
+        reload_vreg->was_spilled = true;
+        TB_ASSERT(reload_vreg->mask != &TB_REG_EMPTY && "TODO hard split from rematerializing");
 
         // if it's remat'ing a copy, we should edit the def mask to match the use
         if (remat->type == TB_MACH_COPY) {
@@ -859,20 +860,17 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
     }
 }
 
-static bool bits64_member(uint64_t* arr, size_t x) {
-    return arr[x / 64] & (1ull << (x % 64));
-}
-
 static int choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, VReg* attempted_vreg) {
     cuikperf_region_start("choose spill", NULL);
 
     // these are added late because... there's a lot of them sometimes and we'd rather not add them
     // every allocation loop, if i could do the same with inactives without incurring an extra interference
     // check i would.
+    RegMask* useful_mask = attempted_vreg->mask;
     int useful_class = attempted_vreg->mask->class;
     FOREACH_SET(i, ra->active) {
         VReg* other = &ctx->vregs[i];
-        if (other->class == useful_class && bits64_member(ra->mask, other->assigned)) {
+        if (other->class == useful_class && bits64_member(ra->mask, other->assigned) && within_reg_mask(useful_mask, other->assigned)) {
             dyn_array_put(ra->potential_spills, i);
         }
     }

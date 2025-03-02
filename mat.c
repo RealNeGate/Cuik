@@ -8,13 +8,29 @@ int bar(float a) {
 } */
 
 #include <stddef.h>
+#include <stdint.h>
+
+/*uint32_t count(uint64_t bits) {
+    uint32_t used = 0;
+    for (uint32_t i = 0; i < 64; i++) {
+        if (bits & (1ull << i)) {
+            used += 1;
+        }
+    }
+
+    return used;
+}*/
 
 #if 0
-float* foo(float* b, size_t kk, size_t jj) {
+/* float* foo(float* b, size_t kk, size_t jj) {
     return &b[(kk+2)*16 + (jj+1)];
-}
+} */
 #else
-__declspec(dllexport) void matmul(float* dst, float* a, float* b) {
+void matmul(float* dst, float* a, float* b) {
+    if (dst == NULL) {
+        return;
+    }
+
     for (size_t i = 0; i < 64; i++) {
         dst[i*4 + 0] = -0.0f;
         dst[i*4 + 1] = -0.0f;

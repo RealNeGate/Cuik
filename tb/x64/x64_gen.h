@@ -82,8 +82,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $base, k0_i++);
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->flags = OP_INDEXED;
                 k0_extra->scale = 0;
+                k0_extra->flags = OP_INDEXED;
             
                 return k0;
             } while (0);
@@ -141,8 +141,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $index, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
                 k0_extra->scale = as_int32($scale);
-                k0_extra->disp = as_int32($disp);
                 k0_extra->flags = OP_INDEXED;
+                k0_extra->disp = as_int32($disp);
             
                 return k0;
             } while (0);
@@ -262,9 +262,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             do {
                 TB_Node* $base = 2 < n->input_count ? n->inputs[2] : NULL;
                 TB_Node* $index = 3 < n->input_count ? n->inputs[3] : NULL;
-                int $scale = TB_NODE_GET_EXTRA_T(n, X86MemOp)->scale;
-                int $flags = TB_NODE_GET_EXTRA_T(n, X86MemOp)->flags;
                 int $disp = TB_NODE_GET_EXTRA_T(n, X86MemOp)->disp;
+                int $flags = TB_NODE_GET_EXTRA_T(n, X86MemOp)->flags;
+                int $scale = TB_NODE_GET_EXTRA_T(n, X86MemOp)->scale;
                 if (!($flags==OP_INDEXED)) {
                     break;
                 }
@@ -320,9 +320,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->extra_dt = $dt;
                 k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->extra_dt = $dt;
             
                 size_t k1_i = 0;
                 TB_Node* k1 = tb_alloc_node(f, x86_COND, TB_TYPE_I8, 1, sizeof(X86MemOp));
@@ -372,9 +372,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->extra_dt = $dt;
                 k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->extra_dt = $dt;
             
                 size_t k1_i = 0;
                 TB_Node* k1 = tb_alloc_node(f, x86_COND, TB_TYPE_I8, 1, sizeof(X86MemOp));
@@ -424,9 +424,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->extra_dt = $dt;
                 k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->extra_dt = $dt;
             
                 size_t k1_i = 0;
                 TB_Node* k1 = tb_alloc_node(f, x86_COND, TB_TYPE_I8, 1, sizeof(X86MemOp));
@@ -476,9 +476,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->extra_dt = $dt;
                 k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->extra_dt = $dt;
             
                 size_t k1_i = 0;
                 TB_Node* k1 = tb_alloc_node(f, x86_COND, TB_TYPE_I8, 1, sizeof(X86MemOp));
@@ -553,9 +553,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->extra_dt = $dt;
                 k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->extra_dt = $dt;
             
                 size_t k1_i = 0;
                 TB_Node* k1 = tb_alloc_node(f, x86_COND, TB_TYPE_I8, 1, sizeof(X86MemOp));
@@ -655,9 +655,9 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->extra_dt = $dt;
                 k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->extra_dt = $dt;
             
                 size_t k1_i = 0;
                 TB_Node* k1 = tb_alloc_node(f, x86_COND, TB_TYPE_I8, 1, sizeof(X86MemOp));
@@ -775,7 +775,57 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
+        case 96: {
+            do {
+                TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
+                TB_DataType $dt = n->dt;
+                TB_Node* $x = 1 < n->input_count ? n->inputs[1] : NULL;
+            
+                size_t k0_i = 0;
+                TB_Node* k0 = tb_alloc_node(f, x86_test, TB_TYPE_I64, 4, sizeof(X86MemOp));
+                k0_i++;
+                k0_i++;
+                set_input(f, k0, $x, k0_i++);
+                set_input(f, k0, $x, k0_i++);
+                X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->extra_dt = n->inputs[1]->dt;
+            
+                size_t k1_i = 0;
+                TB_Node* k1 = tb_alloc_node(f, x86_jcc, TB_TYPE_TUPLE, 2, sizeof(X86MemOp));
+                set_input(f, k1, $ctrl, k1_i++);
+                set_input(f, k1, k0, k1_i++);
+                X86MemOp* k1_extra = TB_NODE_GET_EXTRA(k1);
+                k1_extra->cond = E;
+            
+                return k1;
+            } while (0);
+        } return NULL;
         case 97: {
+            do {
+                TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
+                TB_DataType $dt = n->dt;
+                TB_Node* $x = 1 < n->input_count ? n->inputs[1] : NULL;
+            
+                size_t k0_i = 0;
+                TB_Node* k0 = tb_alloc_node(f, x86_test, TB_TYPE_I64, 4, sizeof(X86MemOp));
+                k0_i++;
+                k0_i++;
+                set_input(f, k0, $x, k0_i++);
+                set_input(f, k0, $x, k0_i++);
+                X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->extra_dt = n->inputs[1]->dt;
+            
+                size_t k1_i = 0;
+                TB_Node* k1 = tb_alloc_node(f, x86_jcc, TB_TYPE_TUPLE, 2, sizeof(X86MemOp));
+                set_input(f, k1, $ctrl, k1_i++);
+                set_input(f, k1, k0, k1_i++);
+                X86MemOp* k1_extra = TB_NODE_GET_EXTRA(k1);
+                k1_extra->cond = E;
+            
+                return k1;
+            } while (0);
+        } return NULL;
+        case 99: {
             do {
                 TB_Node* $cmp = 0 < n->input_count ? n->inputs[0] : NULL;
                 int $cond = TB_NODE_GET_EXTRA_T(n, X86MemOp)->cond;
@@ -791,7 +841,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 104: {
+        case 106: {
             do {
                 TB_Node* $sym = n->inputs[2]->inputs[0];
                 TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
@@ -810,7 +860,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 105: {
+        case 107: {
             do {
                 TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
                 TB_Node* $mem = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -830,7 +880,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 106: {
+        case 108: {
             do {
                 TB_Node* $lhs = n;
             
@@ -847,7 +897,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 110: {
+        case 112: {
             do {
                 TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
                 TB_Node* $mem = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -886,8 +936,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 110);
-        case 112: {
+        } return x86_dfa_accept(ctx, f, n, 112);
+        case 114: {
             do {
                 TB_Node* $lhs = n->inputs[2];
                 TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
@@ -930,8 +980,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 110);
-        case 117: {
+        } return x86_dfa_accept(ctx, f, n, 112);
+        case 119: {
             do {
                 TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
                 TB_Node* $mem = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -948,8 +998,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $addr, k0_i++);
                 set_input(f, k0, $val, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->extra_dt = n->inputs[3]->dt;
                 k0_extra->mode = MODE_ST;
+                k0_extra->extra_dt = n->inputs[3]->dt;
             
                 return k0;
             } while (0);
@@ -969,13 +1019,13 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $addr, k0_i++);
                 set_input(f, k0, $val, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->extra_dt = n->inputs[3]->dt;
                 k0_extra->mode = MODE_ST;
+                k0_extra->extra_dt = n->inputs[3]->dt;
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 117);
-        case 120: {
+        } return x86_dfa_accept(ctx, f, n, 119);
+        case 122: {
             do {
                 TB_Node* $lhs = n->inputs[2];
                 TB_Node* $ctrl = 0 < n->input_count ? n->inputs[0] : NULL;
@@ -993,8 +1043,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $val, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
                 memcpy(k0_extra, $lhs->extra, sizeof(X86MemOp));
-                k0_extra->extra_dt = n->inputs[3]->dt;
                 k0_extra->mode = MODE_ST;
+                k0_extra->extra_dt = n->inputs[3]->dt;
                 k0->input_count = k0_i;
             
                 return k0;
@@ -1016,14 +1066,14 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 set_input(f, k0, $val, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
                 memcpy(k0_extra, $lhs->extra, sizeof(X86MemOp));
-                k0_extra->extra_dt = n->inputs[3]->dt;
                 k0_extra->mode = MODE_ST;
+                k0_extra->extra_dt = n->inputs[3]->dt;
                 k0->input_count = k0_i;
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 120);
-        case 124: {
+        } return x86_dfa_accept(ctx, f, n, 122);
+        case 126: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1039,8 +1089,28 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return NULL;
-        case 130: {
+            do {
+                TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
+                TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
+                TB_DataType $dt = n->dt;
+                if (!($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64)) {
+                    break;
+                }
+            
+                size_t k0_i = 0;
+                TB_Node* k0 = tb_alloc_node(f, x86_lea, $dt, 4, sizeof(X86MemOp));
+                k0_i++;
+                k0_i++;
+                set_input(f, k0, $lhs, k0_i++);
+                set_input(f, k0, $rhs, k0_i++);
+                X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
+                k0_extra->mode = MODE_LD;
+                k0_extra->flags = OP_INDEXED;
+            
+                return k0;
+            } while (0);
+        } return x86_dfa_accept(ctx, f, n, 126);
+        case 132: {
             do {
                 TB_Node* $rhs = n->inputs[2]->inputs[2];
                 TB_Node* $ctrl = 0 < n->inputs[2]->input_count ? n->inputs[2]->inputs[0] : NULL;
@@ -1062,7 +1132,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 132: {
+        case 134: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1077,8 +1147,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1097,8 +1167,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 124);
-        case 136: {
+        } return x86_dfa_accept(ctx, f, n, 126);
+        case 138: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1115,7 +1185,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 142: {
+        case 144: {
             do {
                 TB_Node* $rhs = n->inputs[2]->inputs[2];
                 TB_Node* $ctrl = 0 < n->inputs[2]->input_count ? n->inputs[2]->inputs[0] : NULL;
@@ -1137,7 +1207,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 144: {
+        case 146: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1152,8 +1222,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1172,8 +1242,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 136);
-        case 148: {
+        } return x86_dfa_accept(ctx, f, n, 138);
+        case 150: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1190,7 +1260,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 154: {
+        case 156: {
             do {
                 TB_Node* $rhs = n->inputs[2]->inputs[2];
                 TB_Node* $ctrl = 0 < n->inputs[2]->input_count ? n->inputs[2]->inputs[0] : NULL;
@@ -1212,7 +1282,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 156: {
+        case 158: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1227,8 +1297,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1247,8 +1317,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 148);
-        case 160: {
+        } return x86_dfa_accept(ctx, f, n, 150);
+        case 162: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1265,7 +1335,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 166: {
+        case 168: {
             do {
                 TB_Node* $rhs = n->inputs[2]->inputs[2];
                 TB_Node* $ctrl = 0 < n->inputs[2]->input_count ? n->inputs[2]->inputs[0] : NULL;
@@ -1287,7 +1357,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 168: {
+        case 170: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1302,8 +1372,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1322,8 +1392,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 160);
-        case 172: {
+        } return x86_dfa_accept(ctx, f, n, 162);
+        case 174: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1340,7 +1410,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 178: {
+        case 180: {
             do {
                 TB_Node* $rhs = n->inputs[2]->inputs[2];
                 TB_Node* $ctrl = 0 < n->inputs[2]->input_count ? n->inputs[2]->inputs[0] : NULL;
@@ -1362,7 +1432,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 180: {
+        case 182: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1377,8 +1447,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1397,8 +1467,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 172);
-        case 184: {
+        } return x86_dfa_accept(ctx, f, n, 174);
+        case 186: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1415,7 +1485,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 190: {
+        case 192: {
             do {
                 TB_Node* $rhs = n->inputs[2]->inputs[2];
                 TB_Node* $ctrl = 0 < n->inputs[2]->input_count ? n->inputs[2]->inputs[0] : NULL;
@@ -1437,7 +1507,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 192: {
+        case 194: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1452,8 +1522,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1472,8 +1542,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 184);
-        case 196: {
+        } return x86_dfa_accept(ctx, f, n, 186);
+        case 198: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1490,7 +1560,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 198: {
+        case 200: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1505,8 +1575,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1525,8 +1595,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 196);
-        case 202: {
+        } return x86_dfa_accept(ctx, f, n, 198);
+        case 204: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1543,7 +1613,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 204: {
+        case 206: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1558,8 +1628,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1578,8 +1648,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 202);
-        case 208: {
+        } return x86_dfa_accept(ctx, f, n, 204);
+        case 210: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1596,7 +1666,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 210: {
+        case 212: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1611,8 +1681,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1631,8 +1701,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 208);
-        case 214: {
+        } return x86_dfa_accept(ctx, f, n, 210);
+        case 216: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1649,7 +1719,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 216: {
+        case 218: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1664,8 +1734,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1684,8 +1754,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 214);
-        case 220: {
+        } return x86_dfa_accept(ctx, f, n, 216);
+        case 222: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1702,7 +1772,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 222: {
+        case 224: {
             do {
                 TB_Node* $rhs = n->inputs[2];
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
@@ -1717,8 +1787,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 k0_i++;
                 set_input(f, k0, $lhs, k0_i++);
                 X86MemOp* k0_extra = TB_NODE_GET_EXTRA(k0);
-                k0_extra->imm = as_int32($rhs);
                 k0_extra->flags = OP_IMMEDIATE;
+                k0_extra->imm = as_int32($rhs);
             
                 return k0;
             } while (0);
@@ -1737,8 +1807,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 220);
-        case 224: {
+        } return x86_dfa_accept(ctx, f, n, 222);
+        case 226: {
             do {
                 TB_Node* $root = 0 < n->input_count ? n->inputs[0] : NULL;
                 if (!(is_float32_zero(n))) {
@@ -1771,8 +1841,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k1;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 224);
-        case 229: {
+        } return x86_dfa_accept(ctx, f, n, 226);
+        case 231: {
             do {
                 TB_Node* $x = n->inputs[1];
                 TB_Node* $root = 0 < n->inputs[1]->input_count ? n->inputs[1]->inputs[0] : NULL;
@@ -1789,7 +1859,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 233: {
+        case 235: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1806,7 +1876,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 237: {
+        case 239: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1823,7 +1893,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 241: {
+        case 243: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1840,7 +1910,7 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 245: {
+        case 247: {
             do {
                 TB_Node* $lhs = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_Node* $rhs = 2 < n->input_count ? n->inputs[2] : NULL;
@@ -1857,10 +1927,10 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
         } return NULL;
-        case 248: {
+        case 250: {
             do {
-                TB_Node* $src = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_DataType $dt = n->dt;
+                TB_Node* $src = 1 < n->input_count ? n->inputs[1] : NULL;
                 if (!($dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32)) {
                     break;
                 }
@@ -1875,8 +1945,8 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
                 return k0;
             } while (0);
             do {
-                TB_Node* $src = 1 < n->input_count ? n->inputs[1] : NULL;
                 TB_DataType $dt = n->dt;
+                TB_Node* $src = 1 < n->input_count ? n->inputs[1] : NULL;
                 if (!(($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && n->inputs[1]->dt.type == TB_TAG_I8)) {
                     break;
                 }
@@ -1890,122 +1960,122 @@ static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state) 
             
                 return k0;
             } while (0);
-        } return x86_dfa_accept(ctx, f, n, 248);
+        } return x86_dfa_accept(ctx, f, n, 250);
         // no match?
         default: return NULL;
     }
 }
 
 static bool x86_is_operand[512] = {
-    [TB_CMP_FLT] = true,
+    [TB_CMP_EQ] = true,
+    [TB_CMP_NE] = true,
+    [TB_SYMBOL] = true,
+    [x86_lea] = true,
+    [TB_PTR_OFFSET] = true,
+    [TB_LOCAL] = true,
     [TB_CMP_ULE] = true,
     [TB_CMP_ULT] = true,
     [TB_CMP_SLE] = true,
     [TB_CMP_SLT] = true,
     [TB_CMP_FLE] = true,
-    [x86_lea] = true,
-    [TB_CMP_EQ] = true,
-    [TB_CMP_NE] = true,
-    [TB_SYMBOL] = true,
-    [TB_LOCAL] = true,
-    [TB_PTR_OFFSET] = true,
+    [TB_CMP_FLT] = true,
 };
 #define R_PUSH(next)        ((1u  << 16u) | (next))
 #define R_POP(n, next)      (((n) << 16u) | (next))
 static void global_init(void) {
     static const uint32_t edges[] = {
-        (0)<<16 | (TB_ROL+1), R_PUSH(211),
-        (0)<<16 | (TB_CALL+1), R_PUSH(98),
-        (0)<<16 | (x86_MEMORY+1), R_PUSH(106),
-        (0)<<16 | (TB_ZERO_EXT+1), R_PUSH(246),
-        (0)<<16 | (TB_SHL+1), R_PUSH(193),
+        (0)<<16 | (TB_SHL+1), R_PUSH(195),
         (0)<<16 | (x86_lea+1), R_PUSH(37),
-        (0)<<16 | (TB_OR+1), R_PUSH(133),
+        (0)<<16 | (TB_LOAD+1), R_PUSH(109),
+        (0)<<16 | (TB_BRANCH+1), R_PUSH(86),
+        (0)<<16 | (x86_COND+1), R_PUSH(98),
+        (0)<<16 | (TB_SHR+1), R_PUSH(201),
+        (0)<<16 | (TB_FMUL+1), R_PUSH(240),
+        (0)<<16 | (TB_SAR+1), R_PUSH(207),
+        (0)<<16 | (TB_STORE+1), R_PUSH(115),
+        (0)<<16 | (TB_FDIV+1), R_PUSH(244),
+        (0)<<16 | (TB_AFFINE_LATCH+1), R_PUSH(91),
+        (0)<<16 | (TB_ROL+1), R_PUSH(213),
+        (0)<<16 | (TB_CMP_SLT+1), R_PUSH(48),
+        (0)<<16 | (TB_ROR+1), R_PUSH(219),
         (0)<<16 | (TB_CMP_ULE+1), R_PUSH(54),
         (0)<<16 | (TB_CMP_ULT+1), R_PUSH(60),
-        (0)<<16 | (TB_PTR_OFFSET+1), R_PUSH(1),
-        (0)<<16 | (TB_AND+1), R_PUSH(145),
+        (0)<<16 | (TB_OR+1), R_PUSH(135),
         (0)<<16 | (TB_CMP_EQ+1), R_PUSH(66),
-        (0)<<16 | (TB_CMP_NE+1), R_PUSH(72),
-        (0)<<16 | (TB_F32CONST+1), R_PUSH(223),
-        (0)<<16 | (TB_SUB+1), R_PUSH(157),
-        (0)<<16 | (TB_CMP_FLT+1), R_PUSH(78),
-        (0)<<16 | (TB_XOR+1), R_PUSH(169),
-        (0)<<16 | (TB_CMP_FLE+1), R_PUSH(82),
-        (0)<<16 | (TB_VBROADCAST+1), R_PUSH(225),
-        (0)<<16 | (TB_MUL+1), R_PUSH(181),
-        (0)<<16 | (TB_STORE+1), R_PUSH(113),
         (0)<<16 | (TB_LOCAL+1), R_PUSH(28),
-        (0)<<16 | (TB_ADD+1), R_PUSH(121),
-        (0)<<16 | (TB_BRANCH+1), R_PUSH(86),
-        (0)<<16 | (x86_COND+1), R_PUSH(96),
-        (0)<<16 | (TB_FSUB+1), R_PUSH(234),
+        (0)<<16 | (TB_CMP_NE+1), R_PUSH(72),
+        (0)<<16 | (TB_CALL+1), R_PUSH(100),
+        (0)<<16 | (x86_MEMORY+1), R_PUSH(108),
         (0)<<16 | (TB_SYMBOL+1), R_PUSH(30),
-        (0)<<16 | (TB_FMUL+1), R_PUSH(238),
-        (0)<<16 | (TB_SHR+1), R_PUSH(199),
-        (0)<<16 | (TB_FDIV+1), R_PUSH(242),
-        (0)<<16 | (TB_FADD+1), R_PUSH(230),
-        (0)<<16 | (TB_AFFINE_LATCH+1), R_PUSH(91),
+        (0)<<16 | (TB_F32CONST+1), R_PUSH(225),
+        (0)<<16 | (TB_ZERO_EXT+1), R_PUSH(248),
+        (0)<<16 | (TB_XOR+1), R_PUSH(171),
+        (0)<<16 | (TB_CMP_FLE+1), R_PUSH(82),
+        (0)<<16 | (TB_FSUB+1), R_PUSH(236),
+        (0)<<16 | (TB_FADD+1), R_PUSH(232),
+        (0)<<16 | (TB_PTR_OFFSET+1), R_PUSH(1),
+        (0)<<16 | (TB_VBROADCAST+1), R_PUSH(227),
+        (0)<<16 | (TB_CMP_FLT+1), R_PUSH(78),
+        (0)<<16 | (TB_MUL+1), R_PUSH(183),
         (0)<<16 | (TB_CMP_SLE+1), R_PUSH(42),
-        (0)<<16 | (TB_SAR+1), R_PUSH(205),
-        (0)<<16 | (TB_CMP_SLT+1), R_PUSH(48),
-        (0)<<16 | (TB_ROR+1), R_PUSH(217),
-        (0)<<16 | (TB_LOAD+1), R_PUSH(107),
+        (0)<<16 | (TB_ADD+1), R_PUSH(123),
+        (0)<<16 | (TB_SUB+1), R_PUSH(159),
+        (0)<<16 | (TB_AND+1), R_PUSH(147),
         (1)<<16 | (TB_NULL+1), 2,
         (2)<<16 | (0), 3,
         (2)<<16 | (TB_SYMBOL+1), R_PUSH(32),
         (3)<<16 | (0), 4,
         (3)<<16 | (TB_ADD+1), R_PUSH(7),
-        (3)<<16 | (TB_ICONST+1), R_PUSH(5),
         (3)<<16 | (TB_SHL+1), R_PUSH(22),
+        (3)<<16 | (TB_ICONST+1), R_PUSH(5),
         (4)<<16 | (TB_NULL+1), R_POP(2, 4),
         (5)<<16 | (0), 5,
         (5)<<16 | (TB_NULL+1), R_POP(2, 6),
         (6)<<16 | (TB_NULL+1), R_POP(2, 6),
-        (7)<<16 | (0), R_POP(2, 4),
         (7)<<16 | (TB_NULL+1), 8,
+        (7)<<16 | (0), R_POP(2, 4),
         (8)<<16 | (0), 9,
         (8)<<16 | (TB_SHL+1), R_PUSH(13),
-        (9)<<16 | (TB_ICONST+1), R_PUSH(10),
         (9)<<16 | (0), R_POP(2, 4),
+        (9)<<16 | (TB_ICONST+1), R_PUSH(10),
         (10)<<16 | (0), 10,
         (10)<<16 | (TB_NULL+1), R_POP(2, 11),
-        (11)<<16 | (0), R_POP(2, 4),
         (11)<<16 | (TB_NULL+1), R_POP(2, 12),
+        (11)<<16 | (0), R_POP(2, 4),
         (12)<<16 | (TB_NULL+1), R_POP(2, 12),
-        (13)<<16 | (0), R_POP(3, 4),
         (13)<<16 | (TB_NULL+1), 14,
+        (13)<<16 | (0), R_POP(3, 4),
         (14)<<16 | (0), 15,
-        (15)<<16 | (TB_ICONST+1), R_PUSH(16),
         (15)<<16 | (0), R_POP(3, 4),
+        (15)<<16 | (TB_ICONST+1), R_PUSH(16),
         (16)<<16 | (0), 16,
         (16)<<16 | (TB_NULL+1), R_POP(2, 17),
-        (17)<<16 | (0), R_POP(3, 4),
         (17)<<16 | (TB_NULL+1), R_POP(2, 18),
-        (18)<<16 | (TB_ICONST+1), R_PUSH(19),
+        (17)<<16 | (0), R_POP(3, 4),
         (18)<<16 | (0), R_POP(2, 4),
+        (18)<<16 | (TB_ICONST+1), R_PUSH(19),
         (19)<<16 | (0), 19,
         (19)<<16 | (TB_NULL+1), R_POP(2, 20),
-        (20)<<16 | (0), R_POP(2, 4),
         (20)<<16 | (TB_NULL+1), R_POP(2, 21),
+        (20)<<16 | (0), R_POP(2, 4),
         (21)<<16 | (TB_NULL+1), R_POP(2, 21),
-        (22)<<16 | (0), R_POP(2, 4),
         (22)<<16 | (TB_NULL+1), 23,
+        (22)<<16 | (0), R_POP(2, 4),
         (23)<<16 | (0), 24,
-        (24)<<16 | (TB_ICONST+1), R_PUSH(25),
         (24)<<16 | (0), R_POP(2, 4),
+        (24)<<16 | (TB_ICONST+1), R_PUSH(25),
         (25)<<16 | (0), 25,
         (25)<<16 | (TB_NULL+1), R_POP(2, 26),
-        (26)<<16 | (0), R_POP(2, 4),
         (26)<<16 | (TB_NULL+1), R_POP(2, 27),
+        (26)<<16 | (0), R_POP(2, 4),
         (27)<<16 | (TB_NULL+1), R_POP(2, 27),
         (28)<<16 | (0), 29,
         (29)<<16 | (TB_NULL+1), R_POP(2, 29),
         (30)<<16 | (0), 31,
         (31)<<16 | (TB_NULL+1), R_POP(2, 31),
         (32)<<16 | (0), 33,
-        (33)<<16 | (0), R_POP(2, 3),
         (33)<<16 | (TB_NULL+1), R_POP(2, 34),
+        (33)<<16 | (0), R_POP(2, 3),
         (34)<<16 | (TB_ICONST+1), R_PUSH(35),
         (35)<<16 | (0), 35,
         (35)<<16 | (TB_NULL+1), R_POP(2, 36),
@@ -2013,8 +2083,8 @@ static void global_init(void) {
         (37)<<16 | (TB_NULL+1), 38,
         (38)<<16 | (TB_NULL+1), 39,
         (39)<<16 | (0), 40,
-        (40)<<16 | (0), 41,
         (40)<<16 | (TB_NULL+1), R_POP(2, 40),
+        (40)<<16 | (0), 41,
         (41)<<16 | (TB_NULL+1), R_POP(2, 41),
         (42)<<16 | (TB_NULL+1), 43,
         (43)<<16 | (0), 44,
@@ -2074,226 +2144,232 @@ static void global_init(void) {
         (85)<<16 | (TB_NULL+1), R_POP(2, 85),
         (86)<<16 | (0), 87,
         (87)<<16 | (x86_COND+1), R_PUSH(88),
+        (87)<<16 | (0), 96,
         (88)<<16 | (0), 89,
         (89)<<16 | (TB_NULL+1), R_POP(2, 90),
+        (89)<<16 | (0), R_POP(2, 96),
         (90)<<16 | (TB_NULL+1), R_POP(2, 90),
         (91)<<16 | (0), 92,
         (92)<<16 | (x86_COND+1), R_PUSH(93),
+        (92)<<16 | (0), 97,
         (93)<<16 | (0), 94,
         (94)<<16 | (TB_NULL+1), R_POP(2, 95),
+        (94)<<16 | (0), R_POP(2, 97),
         (95)<<16 | (TB_NULL+1), R_POP(2, 95),
-        (96)<<16 | (0), 97,
+        (96)<<16 | (TB_NULL+1), R_POP(2, 96),
         (97)<<16 | (TB_NULL+1), R_POP(2, 97),
         (98)<<16 | (0), 99,
-        (99)<<16 | (0), 100,
-        (100)<<16 | (x86_MEMORY+1), R_PUSH(101),
-        (100)<<16 | (0), 105,
-        (101)<<16 | (0), R_POP(2, 105),
-        (101)<<16 | (TB_MACH_SYMBOL+1), R_PUSH(102),
-        (102)<<16 | (0), 102,
-        (102)<<16 | (TB_NULL+1), R_POP(2, 103),
-        (103)<<16 | (0), R_POP(2, 105),
-        (103)<<16 | (TB_NULL+1), R_POP(2, 104),
+        (99)<<16 | (TB_NULL+1), R_POP(2, 99),
+        (100)<<16 | (0), 101,
+        (101)<<16 | (0), 102,
+        (102)<<16 | (0), 107,
+        (102)<<16 | (x86_MEMORY+1), R_PUSH(103),
+        (103)<<16 | (TB_MACH_SYMBOL+1), R_PUSH(104),
+        (103)<<16 | (0), R_POP(2, 107),
         (104)<<16 | (0), 104,
-        (104)<<16 | (TB_NULL+1), R_POP(2, 104),
-        (105)<<16 | (0), 105,
-        (105)<<16 | (TB_NULL+1), R_POP(2, 105),
+        (104)<<16 | (TB_NULL+1), R_POP(2, 105),
+        (105)<<16 | (TB_NULL+1), R_POP(2, 106),
+        (105)<<16 | (0), R_POP(2, 107),
         (106)<<16 | (0), 106,
         (106)<<16 | (TB_NULL+1), R_POP(2, 106),
-        (107)<<16 | (0), 108,
-        (108)<<16 | (0), 109,
+        (107)<<16 | (0), 107,
+        (107)<<16 | (TB_NULL+1), R_POP(2, 107),
+        (108)<<16 | (0), 108,
+        (108)<<16 | (TB_NULL+1), R_POP(2, 108),
         (109)<<16 | (0), 110,
-        (109)<<16 | (x86_MEMORY+1), R_PUSH(111),
-        (110)<<16 | (TB_NULL+1), R_POP(2, 110),
-        (111)<<16 | (0), 111,
-        (111)<<16 | (TB_NULL+1), R_POP(2, 112),
+        (110)<<16 | (0), 111,
+        (111)<<16 | (0), 112,
+        (111)<<16 | (x86_MEMORY+1), R_PUSH(113),
         (112)<<16 | (TB_NULL+1), R_POP(2, 112),
-        (113)<<16 | (0), 114,
-        (114)<<16 | (0), 115,
+        (113)<<16 | (0), 113,
+        (113)<<16 | (TB_NULL+1), R_POP(2, 114),
+        (114)<<16 | (TB_NULL+1), R_POP(2, 114),
         (115)<<16 | (0), 116,
-        (115)<<16 | (x86_MEMORY+1), R_PUSH(118),
         (116)<<16 | (0), 117,
-        (117)<<16 | (TB_NULL+1), R_POP(2, 117),
-        (118)<<16 | (0), 118,
-        (118)<<16 | (TB_NULL+1), R_POP(2, 119),
-        (119)<<16 | (0), 120,
-        (120)<<16 | (TB_NULL+1), R_POP(2, 120),
-        (121)<<16 | (TB_NULL+1), 122,
-        (122)<<16 | (0), 123,
-        (123)<<16 | (0), 124,
-        (123)<<16 | (TB_ICONST+1), R_PUSH(131),
-        (123)<<16 | (TB_LOAD+1), R_PUSH(125),
-        (124)<<16 | (TB_NULL+1), R_POP(2, 124),
+        (117)<<16 | (0), 118,
+        (117)<<16 | (x86_MEMORY+1), R_PUSH(120),
+        (118)<<16 | (0), 119,
+        (119)<<16 | (TB_NULL+1), R_POP(2, 119),
+        (120)<<16 | (0), 120,
+        (120)<<16 | (TB_NULL+1), R_POP(2, 121),
+        (121)<<16 | (0), 122,
+        (122)<<16 | (TB_NULL+1), R_POP(2, 122),
+        (123)<<16 | (TB_NULL+1), 124,
+        (124)<<16 | (0), 125,
         (125)<<16 | (0), 126,
-        (126)<<16 | (0), 127,
-        (127)<<16 | (x86_MEMORY+1), R_PUSH(128),
-        (127)<<16 | (0), R_POP(2, 124),
-        (128)<<16 | (0), 128,
-        (128)<<16 | (TB_NULL+1), R_POP(2, 129),
-        (129)<<16 | (0), R_POP(2, 124),
-        (129)<<16 | (TB_NULL+1), R_POP(2, 130),
-        (130)<<16 | (TB_NULL+1), R_POP(2, 130),
-        (131)<<16 | (0), 131,
+        (125)<<16 | (TB_LOAD+1), R_PUSH(127),
+        (125)<<16 | (TB_ICONST+1), R_PUSH(133),
+        (126)<<16 | (TB_NULL+1), R_POP(2, 126),
+        (127)<<16 | (0), 128,
+        (128)<<16 | (0), 129,
+        (129)<<16 | (0), R_POP(2, 126),
+        (129)<<16 | (x86_MEMORY+1), R_PUSH(130),
+        (130)<<16 | (0), 130,
+        (130)<<16 | (TB_NULL+1), R_POP(2, 131),
         (131)<<16 | (TB_NULL+1), R_POP(2, 132),
+        (131)<<16 | (0), R_POP(2, 126),
         (132)<<16 | (TB_NULL+1), R_POP(2, 132),
-        (133)<<16 | (TB_NULL+1), 134,
-        (134)<<16 | (0), 135,
-        (135)<<16 | (0), 136,
-        (135)<<16 | (TB_ICONST+1), R_PUSH(143),
-        (135)<<16 | (TB_LOAD+1), R_PUSH(137),
-        (136)<<16 | (TB_NULL+1), R_POP(2, 136),
+        (133)<<16 | (0), 133,
+        (133)<<16 | (TB_NULL+1), R_POP(2, 134),
+        (134)<<16 | (TB_NULL+1), R_POP(2, 134),
+        (135)<<16 | (TB_NULL+1), 136,
+        (136)<<16 | (0), 137,
         (137)<<16 | (0), 138,
-        (138)<<16 | (0), 139,
-        (139)<<16 | (x86_MEMORY+1), R_PUSH(140),
-        (139)<<16 | (0), R_POP(2, 136),
-        (140)<<16 | (0), 140,
-        (140)<<16 | (TB_NULL+1), R_POP(2, 141),
-        (141)<<16 | (0), R_POP(2, 136),
-        (141)<<16 | (TB_NULL+1), R_POP(2, 142),
-        (142)<<16 | (TB_NULL+1), R_POP(2, 142),
-        (143)<<16 | (0), 143,
+        (137)<<16 | (TB_LOAD+1), R_PUSH(139),
+        (137)<<16 | (TB_ICONST+1), R_PUSH(145),
+        (138)<<16 | (TB_NULL+1), R_POP(2, 138),
+        (139)<<16 | (0), 140,
+        (140)<<16 | (0), 141,
+        (141)<<16 | (0), R_POP(2, 138),
+        (141)<<16 | (x86_MEMORY+1), R_PUSH(142),
+        (142)<<16 | (0), 142,
+        (142)<<16 | (TB_NULL+1), R_POP(2, 143),
         (143)<<16 | (TB_NULL+1), R_POP(2, 144),
+        (143)<<16 | (0), R_POP(2, 138),
         (144)<<16 | (TB_NULL+1), R_POP(2, 144),
-        (145)<<16 | (TB_NULL+1), 146,
-        (146)<<16 | (0), 147,
-        (147)<<16 | (0), 148,
-        (147)<<16 | (TB_ICONST+1), R_PUSH(155),
-        (147)<<16 | (TB_LOAD+1), R_PUSH(149),
-        (148)<<16 | (TB_NULL+1), R_POP(2, 148),
+        (145)<<16 | (0), 145,
+        (145)<<16 | (TB_NULL+1), R_POP(2, 146),
+        (146)<<16 | (TB_NULL+1), R_POP(2, 146),
+        (147)<<16 | (TB_NULL+1), 148,
+        (148)<<16 | (0), 149,
         (149)<<16 | (0), 150,
-        (150)<<16 | (0), 151,
-        (151)<<16 | (x86_MEMORY+1), R_PUSH(152),
-        (151)<<16 | (0), R_POP(2, 148),
-        (152)<<16 | (0), 152,
-        (152)<<16 | (TB_NULL+1), R_POP(2, 153),
-        (153)<<16 | (0), R_POP(2, 148),
-        (153)<<16 | (TB_NULL+1), R_POP(2, 154),
-        (154)<<16 | (TB_NULL+1), R_POP(2, 154),
-        (155)<<16 | (0), 155,
+        (149)<<16 | (TB_LOAD+1), R_PUSH(151),
+        (149)<<16 | (TB_ICONST+1), R_PUSH(157),
+        (150)<<16 | (TB_NULL+1), R_POP(2, 150),
+        (151)<<16 | (0), 152,
+        (152)<<16 | (0), 153,
+        (153)<<16 | (0), R_POP(2, 150),
+        (153)<<16 | (x86_MEMORY+1), R_PUSH(154),
+        (154)<<16 | (0), 154,
+        (154)<<16 | (TB_NULL+1), R_POP(2, 155),
         (155)<<16 | (TB_NULL+1), R_POP(2, 156),
+        (155)<<16 | (0), R_POP(2, 150),
         (156)<<16 | (TB_NULL+1), R_POP(2, 156),
-        (157)<<16 | (TB_NULL+1), 158,
-        (158)<<16 | (0), 159,
-        (159)<<16 | (0), 160,
-        (159)<<16 | (TB_ICONST+1), R_PUSH(167),
-        (159)<<16 | (TB_LOAD+1), R_PUSH(161),
-        (160)<<16 | (TB_NULL+1), R_POP(2, 160),
+        (157)<<16 | (0), 157,
+        (157)<<16 | (TB_NULL+1), R_POP(2, 158),
+        (158)<<16 | (TB_NULL+1), R_POP(2, 158),
+        (159)<<16 | (TB_NULL+1), 160,
+        (160)<<16 | (0), 161,
         (161)<<16 | (0), 162,
-        (162)<<16 | (0), 163,
-        (163)<<16 | (x86_MEMORY+1), R_PUSH(164),
-        (163)<<16 | (0), R_POP(2, 160),
-        (164)<<16 | (0), 164,
-        (164)<<16 | (TB_NULL+1), R_POP(2, 165),
-        (165)<<16 | (0), R_POP(2, 160),
-        (165)<<16 | (TB_NULL+1), R_POP(2, 166),
-        (166)<<16 | (TB_NULL+1), R_POP(2, 166),
-        (167)<<16 | (0), 167,
+        (161)<<16 | (TB_LOAD+1), R_PUSH(163),
+        (161)<<16 | (TB_ICONST+1), R_PUSH(169),
+        (162)<<16 | (TB_NULL+1), R_POP(2, 162),
+        (163)<<16 | (0), 164,
+        (164)<<16 | (0), 165,
+        (165)<<16 | (0), R_POP(2, 162),
+        (165)<<16 | (x86_MEMORY+1), R_PUSH(166),
+        (166)<<16 | (0), 166,
+        (166)<<16 | (TB_NULL+1), R_POP(2, 167),
         (167)<<16 | (TB_NULL+1), R_POP(2, 168),
+        (167)<<16 | (0), R_POP(2, 162),
         (168)<<16 | (TB_NULL+1), R_POP(2, 168),
-        (169)<<16 | (TB_NULL+1), 170,
-        (170)<<16 | (0), 171,
-        (171)<<16 | (0), 172,
-        (171)<<16 | (TB_ICONST+1), R_PUSH(179),
-        (171)<<16 | (TB_LOAD+1), R_PUSH(173),
-        (172)<<16 | (TB_NULL+1), R_POP(2, 172),
+        (169)<<16 | (0), 169,
+        (169)<<16 | (TB_NULL+1), R_POP(2, 170),
+        (170)<<16 | (TB_NULL+1), R_POP(2, 170),
+        (171)<<16 | (TB_NULL+1), 172,
+        (172)<<16 | (0), 173,
         (173)<<16 | (0), 174,
-        (174)<<16 | (0), 175,
-        (175)<<16 | (x86_MEMORY+1), R_PUSH(176),
-        (175)<<16 | (0), R_POP(2, 172),
-        (176)<<16 | (0), 176,
-        (176)<<16 | (TB_NULL+1), R_POP(2, 177),
-        (177)<<16 | (0), R_POP(2, 172),
-        (177)<<16 | (TB_NULL+1), R_POP(2, 178),
-        (178)<<16 | (TB_NULL+1), R_POP(2, 178),
-        (179)<<16 | (0), 179,
+        (173)<<16 | (TB_LOAD+1), R_PUSH(175),
+        (173)<<16 | (TB_ICONST+1), R_PUSH(181),
+        (174)<<16 | (TB_NULL+1), R_POP(2, 174),
+        (175)<<16 | (0), 176,
+        (176)<<16 | (0), 177,
+        (177)<<16 | (0), R_POP(2, 174),
+        (177)<<16 | (x86_MEMORY+1), R_PUSH(178),
+        (178)<<16 | (0), 178,
+        (178)<<16 | (TB_NULL+1), R_POP(2, 179),
         (179)<<16 | (TB_NULL+1), R_POP(2, 180),
+        (179)<<16 | (0), R_POP(2, 174),
         (180)<<16 | (TB_NULL+1), R_POP(2, 180),
-        (181)<<16 | (TB_NULL+1), 182,
-        (182)<<16 | (0), 183,
-        (183)<<16 | (0), 184,
-        (183)<<16 | (TB_ICONST+1), R_PUSH(191),
-        (183)<<16 | (TB_LOAD+1), R_PUSH(185),
-        (184)<<16 | (TB_NULL+1), R_POP(2, 184),
+        (181)<<16 | (0), 181,
+        (181)<<16 | (TB_NULL+1), R_POP(2, 182),
+        (182)<<16 | (TB_NULL+1), R_POP(2, 182),
+        (183)<<16 | (TB_NULL+1), 184,
+        (184)<<16 | (0), 185,
         (185)<<16 | (0), 186,
-        (186)<<16 | (0), 187,
-        (187)<<16 | (x86_MEMORY+1), R_PUSH(188),
-        (187)<<16 | (0), R_POP(2, 184),
-        (188)<<16 | (0), 188,
-        (188)<<16 | (TB_NULL+1), R_POP(2, 189),
-        (189)<<16 | (0), R_POP(2, 184),
-        (189)<<16 | (TB_NULL+1), R_POP(2, 190),
-        (190)<<16 | (TB_NULL+1), R_POP(2, 190),
-        (191)<<16 | (0), 191,
+        (185)<<16 | (TB_LOAD+1), R_PUSH(187),
+        (185)<<16 | (TB_ICONST+1), R_PUSH(193),
+        (186)<<16 | (TB_NULL+1), R_POP(2, 186),
+        (187)<<16 | (0), 188,
+        (188)<<16 | (0), 189,
+        (189)<<16 | (0), R_POP(2, 186),
+        (189)<<16 | (x86_MEMORY+1), R_PUSH(190),
+        (190)<<16 | (0), 190,
+        (190)<<16 | (TB_NULL+1), R_POP(2, 191),
         (191)<<16 | (TB_NULL+1), R_POP(2, 192),
+        (191)<<16 | (0), R_POP(2, 186),
         (192)<<16 | (TB_NULL+1), R_POP(2, 192),
-        (193)<<16 | (TB_NULL+1), 194,
-        (194)<<16 | (0), 195,
-        (195)<<16 | (0), 196,
-        (195)<<16 | (TB_ICONST+1), R_PUSH(197),
-        (196)<<16 | (TB_NULL+1), R_POP(2, 196),
-        (197)<<16 | (0), 197,
-        (197)<<16 | (TB_NULL+1), R_POP(2, 198),
+        (193)<<16 | (0), 193,
+        (193)<<16 | (TB_NULL+1), R_POP(2, 194),
+        (194)<<16 | (TB_NULL+1), R_POP(2, 194),
+        (195)<<16 | (TB_NULL+1), 196,
+        (196)<<16 | (0), 197,
+        (197)<<16 | (0), 198,
+        (197)<<16 | (TB_ICONST+1), R_PUSH(199),
         (198)<<16 | (TB_NULL+1), R_POP(2, 198),
-        (199)<<16 | (TB_NULL+1), 200,
-        (200)<<16 | (0), 201,
-        (201)<<16 | (0), 202,
-        (201)<<16 | (TB_ICONST+1), R_PUSH(203),
-        (202)<<16 | (TB_NULL+1), R_POP(2, 202),
-        (203)<<16 | (0), 203,
-        (203)<<16 | (TB_NULL+1), R_POP(2, 204),
+        (199)<<16 | (0), 199,
+        (199)<<16 | (TB_NULL+1), R_POP(2, 200),
+        (200)<<16 | (TB_NULL+1), R_POP(2, 200),
+        (201)<<16 | (TB_NULL+1), 202,
+        (202)<<16 | (0), 203,
+        (203)<<16 | (0), 204,
+        (203)<<16 | (TB_ICONST+1), R_PUSH(205),
         (204)<<16 | (TB_NULL+1), R_POP(2, 204),
-        (205)<<16 | (TB_NULL+1), 206,
-        (206)<<16 | (0), 207,
-        (207)<<16 | (0), 208,
-        (207)<<16 | (TB_ICONST+1), R_PUSH(209),
-        (208)<<16 | (TB_NULL+1), R_POP(2, 208),
-        (209)<<16 | (0), 209,
-        (209)<<16 | (TB_NULL+1), R_POP(2, 210),
+        (205)<<16 | (0), 205,
+        (205)<<16 | (TB_NULL+1), R_POP(2, 206),
+        (206)<<16 | (TB_NULL+1), R_POP(2, 206),
+        (207)<<16 | (TB_NULL+1), 208,
+        (208)<<16 | (0), 209,
+        (209)<<16 | (0), 210,
+        (209)<<16 | (TB_ICONST+1), R_PUSH(211),
         (210)<<16 | (TB_NULL+1), R_POP(2, 210),
-        (211)<<16 | (TB_NULL+1), 212,
-        (212)<<16 | (0), 213,
-        (213)<<16 | (0), 214,
-        (213)<<16 | (TB_ICONST+1), R_PUSH(215),
-        (214)<<16 | (TB_NULL+1), R_POP(2, 214),
-        (215)<<16 | (0), 215,
-        (215)<<16 | (TB_NULL+1), R_POP(2, 216),
+        (211)<<16 | (0), 211,
+        (211)<<16 | (TB_NULL+1), R_POP(2, 212),
+        (212)<<16 | (TB_NULL+1), R_POP(2, 212),
+        (213)<<16 | (TB_NULL+1), 214,
+        (214)<<16 | (0), 215,
+        (215)<<16 | (0), 216,
+        (215)<<16 | (TB_ICONST+1), R_PUSH(217),
         (216)<<16 | (TB_NULL+1), R_POP(2, 216),
-        (217)<<16 | (TB_NULL+1), 218,
-        (218)<<16 | (0), 219,
-        (219)<<16 | (0), 220,
-        (219)<<16 | (TB_ICONST+1), R_PUSH(221),
-        (220)<<16 | (TB_NULL+1), R_POP(2, 220),
-        (221)<<16 | (0), 221,
-        (221)<<16 | (TB_NULL+1), R_POP(2, 222),
+        (217)<<16 | (0), 217,
+        (217)<<16 | (TB_NULL+1), R_POP(2, 218),
+        (218)<<16 | (TB_NULL+1), R_POP(2, 218),
+        (219)<<16 | (TB_NULL+1), 220,
+        (220)<<16 | (0), 221,
+        (221)<<16 | (0), 222,
+        (221)<<16 | (TB_ICONST+1), R_PUSH(223),
         (222)<<16 | (TB_NULL+1), R_POP(2, 222),
-        (223)<<16 | (0), 224,
+        (223)<<16 | (0), 223,
+        (223)<<16 | (TB_NULL+1), R_POP(2, 224),
         (224)<<16 | (TB_NULL+1), R_POP(2, 224),
-        (225)<<16 | (TB_NULL+1), 226,
-        (226)<<16 | (TB_F32CONST+1), R_PUSH(227),
-        (227)<<16 | (0), 228,
-        (228)<<16 | (TB_NULL+1), R_POP(2, 229),
-        (229)<<16 | (TB_NULL+1), R_POP(2, 229),
-        (230)<<16 | (TB_NULL+1), 231,
-        (231)<<16 | (0), 232,
-        (232)<<16 | (0), 233,
-        (233)<<16 | (TB_NULL+1), R_POP(2, 233),
-        (234)<<16 | (TB_NULL+1), 235,
-        (235)<<16 | (0), 236,
-        (236)<<16 | (0), 237,
-        (237)<<16 | (TB_NULL+1), R_POP(2, 237),
-        (238)<<16 | (TB_NULL+1), 239,
-        (239)<<16 | (0), 240,
-        (240)<<16 | (0), 241,
-        (241)<<16 | (TB_NULL+1), R_POP(2, 241),
-        (242)<<16 | (TB_NULL+1), 243,
-        (243)<<16 | (0), 244,
-        (244)<<16 | (0), 245,
-        (245)<<16 | (TB_NULL+1), R_POP(2, 245),
-        (246)<<16 | (TB_NULL+1), 247,
-        (247)<<16 | (0), 248,
-        (248)<<16 | (TB_NULL+1), R_POP(2, 248),
+        (225)<<16 | (0), 226,
+        (226)<<16 | (TB_NULL+1), R_POP(2, 226),
+        (227)<<16 | (TB_NULL+1), 228,
+        (228)<<16 | (TB_F32CONST+1), R_PUSH(229),
+        (229)<<16 | (0), 230,
+        (230)<<16 | (TB_NULL+1), R_POP(2, 231),
+        (231)<<16 | (TB_NULL+1), R_POP(2, 231),
+        (232)<<16 | (TB_NULL+1), 233,
+        (233)<<16 | (0), 234,
+        (234)<<16 | (0), 235,
+        (235)<<16 | (TB_NULL+1), R_POP(2, 235),
+        (236)<<16 | (TB_NULL+1), 237,
+        (237)<<16 | (0), 238,
+        (238)<<16 | (0), 239,
+        (239)<<16 | (TB_NULL+1), R_POP(2, 239),
+        (240)<<16 | (TB_NULL+1), 241,
+        (241)<<16 | (0), 242,
+        (242)<<16 | (0), 243,
+        (243)<<16 | (TB_NULL+1), R_POP(2, 243),
+        (244)<<16 | (TB_NULL+1), 245,
+        (245)<<16 | (0), 246,
+        (246)<<16 | (0), 247,
+        (247)<<16 | (TB_NULL+1), R_POP(2, 247),
+        (248)<<16 | (TB_NULL+1), 249,
+        (249)<<16 | (0), 250,
+        (250)<<16 | (TB_NULL+1), R_POP(2, 250),
     };
-    // transitions: 378
+    // transitions: 384
     size_t count = sizeof(edges) / (2*sizeof(uint32_t));
     node_grammar_alloc(count);
     FOR_N(i, 0, count) {

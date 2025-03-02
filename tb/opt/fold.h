@@ -238,27 +238,6 @@ static TB_Node* ideal_truncate(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
-static int node_pos(TB_Node* n) {
-    switch (n->type) {
-        case TB_ICONST:
-        case TB_F32CONST:
-        case TB_F64CONST:
-        return 1;
-
-        default:
-        return 4;
-
-        case TB_PHI:
-        return 5;
-
-        case TB_SHR:
-        return 6;
-
-        case TB_SHL:
-        return 7;
-    }
-}
-
 static bool is_shift_op(TB_Node* n) {
     return n->type == TB_SHL || n->type == TB_SHR || n->type == TB_SAR;
 }

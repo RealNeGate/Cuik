@@ -232,13 +232,9 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         if (reg_mask_is_spill(cpy->def) && cpy->use->class != REG_CLASS_STK) {
             printf(" = spill(");
             print_pretty_edge(ctx, n->inputs[1]);
-            printf(": ");
-            tb__print_regmask(cpy->use);
-            printf(")");
+            printf(": %s)", reg_class_name(cpy->use->class));
         } else if (cpy->def->class != REG_CLASS_STK && reg_mask_is_spill(cpy->use)) {
-            printf(": ");
-            tb__print_regmask(cpy->def);
-            printf(" = reload(");
+            printf(": %s = reload(", reg_class_name(cpy->def->class));
             print_pretty_edge(ctx, n->inputs[1]);
             printf(")");
         } else {
@@ -525,8 +521,11 @@ static int node_2addr(TB_Node* n) {
         return 0;
 
         case x86_shl: case x86_shr: case x86_sar:
-        case x86_rol: case x86_ror:
-        return 2;
+        case x86_rol: case x86_ror: {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            TB_ASSERT(op->mode == MODE_REG);
+            return n->input_count - 1;
+        }
 
         case TB_MACH_COPY:
         case TB_MACH_MOVE:
@@ -856,11 +855,12 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
                 X86MemOp* op = TB_NODE_GET_EXTRA(n);
                 if ((op->flags & OP_IMMEDIATE) == 0) {
-                    FOR_N(i, 2, n->input_count - 1) {
+                    TB_ASSERT(op->mode == MODE_REG);
+                    ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
+
+                    FOR_N(i, 3, n->input_count) {
                         ins[i] = rm;
                     }
-
-                    ins[n->input_count - 1] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RCX);
                 } else {
                     FOR_N(i, 2, n->input_count) {
                         ins[i] = rm;
