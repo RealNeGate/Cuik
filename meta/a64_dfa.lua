@@ -618,6 +618,101 @@ timer('cleanup')
 
 
 --------------------------------
+-- generation C (zoomer)
+--------------------------------
+
+--[[ test checklist
+	transposed matrix
+		delta[state][input] vs delta[input][state]
+	early out vs always 8 iterations
+		final states need transitions to themselves
+]]
+
+local cdfa = {}
+
+-- prefix
+table.insert(cdfa, string.format([[
+/*************\
+|* GENERATED *|
+\*************/
+#include <stdint.h>
+// provides mask of N bits
+#define BIT_MASK(N) ((1 << N) - 1)
+// get N bits from value V at offset O
+#define GET_BITS(N, V, O) ((V >> O) & BIT_MASK(N))
+#define ALPHABET_RANK %d]], alphabet_rank))
+
+--!! decode functions
+
+-- name table
+table.insert(cdfa, string.format('char* names[%d] = {', delta_id + 1))
+for i, n in pairs(dfa.F) do
+	table.insert(cdfa, string.format('\t[%d] = "%s",', i, n[1]))
+end
+table.insert(cdfa, '};')
+
+-- delta table
+local delta_def = string.format('int16_t delta[%d][%d] = {', delta_id + 1, 2^alphabet_rank)
+local delta_part = function (a, i, b) return string.format('\t[%d][0b%s] = %d,', a, i, b) end
+if options.transpose then
+	delta_def = string.format('int16_t delta[%d][%d] = {', 2^alphabet_rank, delta_id + 1)
+	delta_part = function (a, i, b) return string.format('\t[0b%s][%d] = %d,', i, a, b) end
+end
+table.insert(cdfa, string.format(delta_def, delta_id + 1))
+for a, _ in pairs(dfa.Q) do
+	if dfa.delta[a] then
+		for i, b in pairs(dfa.delta[a]) do
+			table.insert(cdfa, delta_part(a, i, b))
+		end
+	else
+		for _, i in ipairs(dfa.Sigma) do
+			table.insert(cdfa, delta_part(a, i, a))
+		end
+	end
+end
+table.insert(cdfa, '};')
+
+-- walk function
+table.insert(cdfa, [[
+uint16_t walk(uint32_t inst) {
+	int16_t state = 1;]])
+--!! handle alphabet size
+local input_steps = {}
+for i = 32 - alphabet_rank, 1 - alphabet_rank, -alphabet_rank do
+	table.insert(input_steps, i)
+end
+local delta_str = '\tstate = delta[state][(%s) & BIT_MASK(ALPHABET_RANK)];'
+if options.transpose then
+	delta_str = '\tstate = delta[(%s) & BIT_MASK(ALPHABET_RANK)][state];'
+end
+for _, i in ipairs(input_steps) do
+	local shift = string.format('inst >> %d', i)
+	if i < 0 then
+		shift = string.format('inst << %d', -i)
+	end
+	table.insert(cdfa, string.format(delta_str, shift))
+end
+
+-- for i = 28, 0, -4 do
+-- 	if options.transpose then
+-- 		table.insert(cdfa, string.format('\tstate = delta[(inst >> %d) & 0b1111][state];', i))
+-- 	else
+-- 		table.insert(cdfa, string.format('\tstate = delta[state][(inst >> %d) & 0b1111];', i))
+-- 	end
+-- end
+table.insert(cdfa, [[
+	return state;
+}]])
+
+-- write it
+local file = assert(io.open('a64dfa.h', 'w'))
+file:write(table.concat(cdfa, '\n'))
+file:close()
+timer('c-nile')
+
+
+
+--------------------------------
 -- graph visualisation
 --------------------------------
 
@@ -844,6 +939,14 @@ if options.analysis then
 	end
 	print(string.format('final node depths = %s', dump(final_hists)))
 
+	-- what is the average depth of the final nodes
+	local avg_depth = 0
+	for i, v in pairs(final_hists) do
+		avg_depth = avg_depth + (i - 1) * v
+	end
+	avg_depth = avg_depth / final_nodes
+	print(string.format('average steps to final node = %f', avg_depth))
+
 	-- i just wanna make a point graph of node vs depth
 	local function idgraph(filename, dfa)
 		_, node_depths, _ = walk(dfa)
@@ -939,89 +1042,11 @@ if options.analysis then
 	print(string.format('biggest delta (dumb bread)  = %d', biggest_delta))
 	print(string.format('biggest delta (super smart) = %d', biggest_delta_supersmart))
 
+	local table_size = 2 * (delta_id + 1) * (2 ^ alphabet_rank)
+	print(string.format('delta table size = %d bytes (%dk)', table_size, table_size / 1024))
+
 	timer('data analysis')
 end
-
-
-
---------------------------------
--- generation C (zoomer)
---------------------------------
-
---[[ test checklist
-	transposed matrix
-		delta[state][input] vs delta[input][state]
-	early out vs always 8 iterations
-		final states need transitions to themselves
-]]
-
-local cdfa = {}
-
--- prefix
-table.insert(cdfa, string.format([[
-/*************\
-|* GENERATED *|
-\*************/
-#include <stdint.h>
-// provides mask of N bits
-#define BIT_MASK(N) ((1 << N) - 1)
-// get N bits from value V at offset O
-#define GET_BITS(N, V, O) ((V >> O) & BIT_MASK(N))
-#define ALPHABET_RANK %d]], alphabet_rank))
-
---!! decode functions
-
--- name table
-table.insert(cdfa, string.format('char* names[%d] = {', delta_id + 1))
-for i, n in pairs(dfa.F) do
-	table.insert(cdfa, string.format('\t[%d] = "%s",', i, n[1]))
-end
-table.insert(cdfa, '};')
-
--- delta table
-local delta_def = 'int16_t delta[%d][16] = {'
-local delta_part = function (a, i, b) return string.format('\t[%d][0b%s] = %d,', a, i, b) end
-if options.transpose then
-	delta_def = 'int16_t delta[16][%d] = {'
-	delta_part = function (a, i, b) return string.format('\t[0b%s][%d] = %d,', i, a, b) end
-end
-table.insert(cdfa, string.format(delta_def, delta_id + 1))
-for a, _ in pairs(dfa.Q) do
-	if dfa.delta[a] then
-		for i, b in pairs(dfa.delta[a]) do
-			table.insert(cdfa, delta_part(a, i, b))
-		end
-	else
-		for _, i in ipairs(dfa.Sigma) do
-			table.insert(cdfa, delta_part(a, i, a))
-		end
-	end
-end
-table.insert(cdfa, '};')
-
--- walk function
-table.insert(cdfa, [[
-uint16_t walk(uint32_t inst) {
-	int16_t state = 1;]])
---!! handle alphabet size
-for i = 28, 0, -4 do
-	if options.transpose then
-		table.insert(cdfa, string.format('\tstate = delta[(inst >> %d) & 0b1111][state];', i))
-	else
-		table.insert(cdfa, string.format('\tstate = delta[state][(inst >> %d) & 0b1111];', i))
-	end
-end
-table.insert(cdfa, [[
-	return state;
-}]])
-
--- write it
-local file = assert(io.open('a64dfa.h', 'w'))
-file:write(table.concat(cdfa, '\n'))
-file:close()
-timer('c-nile')
-
-
 
 
 
@@ -1031,7 +1056,7 @@ getting here takes
 	luajit around 15 seconds (no jit)
 	luajit around 8  seconds (ye jit)
 ]]
-if timer_printing then
+if options.timings then
 	local ttime_string = string.format('%08.4f', os.clock() - total_time)
 	print('total time: ' .. ttime_string)
 end
