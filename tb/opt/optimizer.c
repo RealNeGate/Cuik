@@ -503,7 +503,6 @@ static Lattice* value_select(TB_Function* f, TB_Node* n) {
 static bool can_gvn(TB_Node* n) {
     switch (n->type) {
         case TB_LOCAL:
-        case TB_MACH_MOVE:
         case TB_MACH_TEMP:
         return false;
 

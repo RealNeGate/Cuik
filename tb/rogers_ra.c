@@ -34,6 +34,9 @@ typedef struct {
 
     int* dirty_bb;
 
+    // coalesce disjoint set
+    int* uf;
+
     // last use in a BB
     InactiveCacheEntry* inactive_cache;
 
@@ -349,6 +352,10 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
     // used for hard-list list at the very start
     ra.potential_spills = dyn_array_create(int, 32);
+    ra.uf = tb_arena_alloc(arena, f->node_count * sizeof(int));
+    FOR_N(i, 0, f->node_count) {
+        ra.uf[i] = i;
+    }
 
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {
@@ -420,8 +427,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                     RegMask* def_mask = vreg->mask;
 
                     vreg->spill_cost = NAN;
-
-                    if (n->type == TB_MACH_COPY && n->inputs[1]->type == TB_PHI) {
+                    if (n->type == TB_MACH_COPY) {
                         worklist_push(ws, n);
                     }
                 }
@@ -429,11 +435,11 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         }
     }
 
+    // aggressively coalesce copies which don't change masks (come
+    // up all the time during phis)
     bool changes = false;
-
-    // we aggressively place phi copies, let's filter some of them out
     if (dyn_array_length(ws->items) > old) {
-        cuikperf_region_start("phi coalesce", NULL);
+        cuikperf_region_start("aggro coalesce", NULL);
         TB_ArenaSavepoint sp = tb_arena_save(arena);
         compute_ordinals(ctx, &ra, arena);
 
@@ -443,7 +449,7 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
         while (dyn_array_length(ws->items) > old) {
             TB_Node* n = worklist_pop(ws);
-            assert(n->type == TB_MACH_COPY);
+            TB_ASSERT(n->type == TB_MACH_COPY);
             TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
 
             // if the def_mask got tightened, we needed the copy
@@ -482,12 +488,39 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         changes = true;
     }
 
+    // phi hard coalescing
+    FOR_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        size_t j = 0; // we do insert things while iterating
+        for (; j < aarray_length(bb->items); j++) {
+            TB_Node* n = bb->items[j];
+            int vreg_id = ctx->vreg_map[n->gvn];
+            if (vreg_id > 0 && n->type == TB_PHI) {
+                // join all these into one lifetime, make n the leader
+                int x = uf_find(ra.uf, n->gvn);
+                FOR_N(i, 1, n->input_count) {
+                    int y = uf_find(ra.uf, n->inputs[i]->gvn);
+                    if (x != y) {
+                        ra.uf[y] = x;
+                    }
+                }
+            }
+        }
+    }
+
+    // get rid of the vreg mapping
+    FOR_N(i, 1, aarray_length(ctx->vreg_map)) {
+        int leader = uf_find(ra.uf, i);
+        if (leader != i) {
+            ctx->vreg_map[i] = ctx->vreg_map[leader];
+        }
+    }
+
     if (changes) {
         // recompute liveness
         redo_dataflow(ctx, arena);
     }
 
-    int rounds = 0;
     int starting_spills = ctx->num_regs[REG_CLASS_STK];
     ra.num_spills = starting_spills;
 
@@ -581,7 +614,7 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
     // phis might have a liveness hole in the middle
     bool lhs_live_out = set_get(&block->live_out, lhs->gvn);
     bool rhs_live_out = set_get(&block->live_out, rhs->gvn);
-    if (lhs->type == TB_PHI || rhs->type == TB_PHI) {
+    /* if (lhs->type == TB_PHI || rhs->type == TB_PHI) {
         TB_Node *phi = rhs, *other = lhs;
         if (lhs->type == TB_PHI && rhs->type != TB_PHI) {
             phi = lhs, other = rhs;
@@ -619,7 +652,7 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
                 return false;
             }
         }
-    }
+    }*/
 
     if (lhs_live_out && rhs_live_out) {
         return true;
@@ -645,7 +678,7 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
     return false;
 }
 
-static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs) {
+static bool interfere_single_node(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs) {
     TB_BasicBlock* lhs_block = ctx->f->scheduled[lhs->gvn];
     TB_BasicBlock* rhs_block = ctx->f->scheduled[rhs->gvn];
 
@@ -655,6 +688,29 @@ static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_N
 
     return interfere_in_block(ctx, ra, lhs, rhs, lhs_block)
         || interfere_in_block(ctx, ra, rhs, lhs, rhs_block);
+}
+
+static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs) {
+    // phis are effectively "multi-defs"
+    if (lhs->type == TB_PHI || rhs->type == TB_PHI) {
+        int lhs_count = lhs->type == TB_PHI ? lhs->input_count - 1 : 1;
+        TB_Node** lhs_arr = lhs->type == TB_PHI ? &lhs->inputs[1] : &lhs;
+
+        int rhs_count = rhs->type == TB_PHI ? rhs->input_count - 1 : 1;
+        TB_Node** rhs_arr = rhs->type == TB_PHI ? &rhs->inputs[1] : &rhs;
+
+        FOR_N(i, 0, lhs_count) {
+            FOR_N(j, 0, rhs_count) {
+                if (interfere_single_node(ctx, ra, lhs_arr[i], rhs_arr[j])) {
+                    return true;
+                }
+            }
+        }
+
+        return interfere_single_node(ctx, ra, lhs, rhs);
+    } else {
+        return interfere_single_node(ctx, ra, lhs, rhs);
+    }
 }
 
 static void mark_active(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
@@ -1203,6 +1259,7 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 
     memset(ra->inactive_cache, 0, 1024 * sizeof(InactiveCacheEntry));
 
+    size_t uf_len = ctx->f->node_count;
     FOR_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         Set* live_in      = &bb->live_in;
@@ -1239,10 +1296,22 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
         ra->where_bb = i, ra->where_order = 0;
 
         // start intervals
+        printf("# ========= Live-In =========\n");
         FOREACH_SET(j, *live_in) if (!set_get(&ra->live_out, j)) {
-            int vreg_id = ctx->vreg_map[j];
-            if (vreg_id > 0 && !allocate_reg(ctx, ra, vreg_id)) {
-                commit_spill(ctx, ra, vreg_id);
+            int leader = j < uf_len ? uf_find(ra->uf, j) : j;
+            int vreg_id = ctx->vreg_map[leader];
+            if (j == leader && vreg_id > 0) {
+                #if TB_OPTDEBUG_REGALLOC
+                if (ctx->vregs[vreg_id].n) {
+                    printf("# ");
+                    tb_print_dumb_node(NULL, ctx->vregs[vreg_id].n);
+                    printf("%zu %d\n", j, leader);
+                }
+                #endif
+
+                if (!allocate_reg(ctx, ra, vreg_id)) {
+                    commit_spill(ctx, ra, vreg_id);
+                }
             }
         }
 
@@ -1347,8 +1416,9 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             #endif
 
             // allocate free register
+            int leader = n->gvn < uf_len ? uf_find(ra->uf, n->gvn) : n->gvn;
             int vreg_id = ctx->vreg_map[n->gvn];
-            if (vreg_id > 0) {
+            if (n->gvn == leader && vreg_id > 0) {
                 int class = ctx->vregs[vreg_id].mask->class;
                 if (!allocate_reg(ctx, ra, vreg_id)) {
                     commit_spill(ctx, ra, vreg_id);
@@ -1363,8 +1433,10 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             // allocate projections
             FOR_USERS(u, n) if (is_proj(USERN(u))) {
                 TB_Node* un = USERN(u);
+
+                int leader = un->gvn < uf_len ? uf_find(ra->uf, un->gvn) : un->gvn;
                 vreg_id = ctx->vreg_map[un->gvn];
-                if (vreg_id > 0) {
+                if (leader == un->gvn && vreg_id > 0) {
                     #if TB_OPTDEBUG_REGALLOC
                     printf("# ");
                     tb_print_dumb_node(NULL, un);

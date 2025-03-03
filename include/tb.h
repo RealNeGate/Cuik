@@ -430,8 +430,6 @@ typedef enum TB_NodeTypeEnum {
     TB_X86INTRIN_RSQRT,
 
     // general machine nodes:
-    // does the phi move
-    TB_MACH_MOVE,
     TB_MACH_COPY,
     // (Control) -> Control
     TB_MACH_JUMP,

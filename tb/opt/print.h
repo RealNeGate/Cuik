@@ -132,7 +132,6 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
 
         case TB_MACH_TEMP: return "mach_temp";
         case TB_MACH_JUMP: return "mach_jump";
-        case TB_MACH_MOVE: return "mach_move";
         case TB_MACH_COPY: return "mach_copy";
         case TB_MACH_PROJ: return "mach_proj";
         case TB_MACH_SYMBOL: return "mach_symbol";
@@ -605,7 +604,6 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     }
 
                     case TB_MACH_COPY:
-                    case TB_MACH_MOVE:
                     break;
 
                     case TB_VSHUFFLE: {

@@ -72,6 +72,9 @@ tests/test5.c
 tests/test5_2.c
 preprocessed.c
 
+# metaprogram artifacts
+tb/x64/x64_gen.h
+
 project.4coder
 *.cache
 libCuik/freestanding.c

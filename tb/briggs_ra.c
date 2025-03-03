@@ -1343,14 +1343,6 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
             TB_Node* n = bb->items[j];
             int vreg_id = ctx->vreg_map[n->gvn];
 
-            if (n->type == TB_MACH_MOVE) {
-                TB_ASSERT(n->user_count == 1);
-                TB_Node* phi = USERN(n->users);
-
-                // write to phi, "logically" defined here
-                bits32_remove(live, phi->gvn);
-            }
-
             if (vreg_id > 0) {
                 VReg* vreg = &ctx->vregs[vreg_id];
                 RegMask* def_mask = vreg->mask;

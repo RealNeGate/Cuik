@@ -105,13 +105,8 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
         if (n->user_count == 1) {
             TB_Node* use = USERN(&n->users[0]);
             if (count_waiting_deps(f, ws, bb, use) == 1) {
-                // if we're the missing op for the branch, then let's hold our horses
-                if (use == bb->end) {
-                    score = 1;
-                } else {
-                    // printf("  %%%u ABOUT TO BE READY, BUMP %%%u!\n", use->gvn, n->gvn);
-                    score += 100;
-                }
+                // printf("  %%%u ABOUT TO BE READY, BUMP %%%u!\n", use->gvn, n->gvn);
+                score += 100;
             }
         }
 

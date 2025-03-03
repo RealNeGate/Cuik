@@ -174,7 +174,7 @@ static void print_extra(TB_Node* n) {
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
     int vreg_id = ctx->vreg_map[n->gvn];
-    if (0 && vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
+    if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
         VReg* v = &ctx->vregs[vreg_id];
         if (v->class == REG_CLASS_GPR) {
             printf("%s", GPR_NAMES[v->assigned]);
@@ -228,25 +228,23 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         } else {
             printf("  jmp .bb%d", succ[0]);
         }
-    } else if (n->type == TB_MACH_MOVE) {
-        printf("  ");
-        print_pretty_edge(ctx, n);
-        printf(" = mov ");
-        print_pretty_edge(ctx, n->inputs[1]);
     } else if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
 
-        printf("  ");
-        print_pretty_edge(ctx, n);
         if (reg_mask_is_spill(cpy->def) && cpy->use->class != REG_CLASS_STK) {
-            printf(" = spill(");
+            printf("  spill ");
+            print_pretty_edge(ctx, n);
+            printf(" = ");
             print_pretty_edge(ctx, n->inputs[1]);
-            printf(": %s)", reg_class_name(cpy->use->class));
+            printf(": %s", reg_class_name(cpy->use->class));
         } else if (cpy->def->class != REG_CLASS_STK && reg_mask_is_spill(cpy->use)) {
-            printf(": %s = reload(", reg_class_name(cpy->def->class));
+            printf("  reload ");
+            print_pretty_edge(ctx, n);
+            printf(": %s = ", reg_class_name(cpy->def->class));
             print_pretty_edge(ctx, n->inputs[1]);
-            printf(")");
         } else {
+            printf("  copy ");
+            print_pretty_edge(ctx, n);
             printf(": ");
             tb__print_regmask(cpy->def);
             printf(" = cpy ");
@@ -537,7 +535,6 @@ static int node_2addr(TB_Node* n) {
         }
 
         case TB_MACH_COPY:
-        case TB_MACH_MOVE:
         case TB_FLOAT_EXT:
         return 1;
 
@@ -755,12 +752,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
         case TB_MACH_PROJ: {
             return TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def;
-        }
-
-        case TB_MACH_MOVE: {
-            RegMask* rm = ctx->mayspill_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
-            if (ins) { ins[1] = rm; }
-            return rm;
         }
 
         case TB_SAFEPOINT: {
@@ -1260,7 +1251,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case TB_MACH_MOVE:
         case TB_MACH_COPY: {
             TB_X86_DataType dt = legalize(n->dt);
 

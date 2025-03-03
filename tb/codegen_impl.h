@@ -128,7 +128,7 @@ static TB_Node* node_add_tmp(Ctx* restrict ctx, TB_Node* n, RegMask* mask) {
 
 static int try_create_vreg(Ctx* restrict ctx, TB_Node* n, RegMask* def_mask) {
     int vreg_id = ctx->vreg_map[n->gvn];
-    if (vreg_id > 0 && n->type != TB_MACH_MOVE) {
+    if (vreg_id > 0) {
         TB_ASSERT(def_mask != &TB_REG_EMPTY);
         ctx->vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN, .uses = 1 };
 
@@ -315,24 +315,15 @@ static TB_Node* node_isel_phi(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
 
     RegMask* rm = node_constraint(ctx, n, NULL);
 
-    // just in case we have some recursive phis, RA should be able to fold it away later.
-    // we have to be a bit hacky since we can't subsume the node with something that's
-    // referencing it (we'll get a cycle we didn't want).
-    TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
-    TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = rm, .use = rm);
-
-    subsume_node2(f, n, cpy);
-    set_input(f, cpy, n, 1);
-
     // we just want some copies on the data edges which RA will coalesce, this way we
     // never leave SSA.
     FOR_N(i, 1, n->input_count) {
         TB_Node* in = n->inputs[i];
-        assert(in->type != TB_MACH_MOVE);
 
-        TB_Node* move = tb_alloc_node(f, TB_MACH_MOVE, in->dt, 2, 0);
+        TB_Node* move = tb_alloc_node(f, TB_MACH_COPY, in->dt, 2, sizeof(TB_NodeMachCopy));
         set_input(f, move, in, 1);
         set_input(f, n, move, i);
+        TB_NODE_SET_EXTRA(move, TB_NodeMachCopy, .def = rm, .use = rm);
     }
 
     // we did the subsumes for it
@@ -341,7 +332,6 @@ static TB_Node* node_isel_phi(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
 
 static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws, int depth) {
     TB_ASSERT(n->type != TB_PHI);
-
     if (depth == 0 && x86_is_operand[n->type]) {
         return NULL;
     }
@@ -749,22 +739,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 int vreg_id = 0;
                 RegMask* def_mask = node_constraint(&ctx, n, NULL);
                 if (def_mask != &TB_REG_EMPTY) {
-                    if (n->type == TB_MACH_MOVE) {
-                        TB_ASSERT(single_use(n));
-                        TB_ASSERT(USERN(n->users)->type == TB_PHI);
-
-                        // these are phi moves, they should share the vreg of phi
-                        TB_Node* phi = USERN(n->users);
-                        if (ctx.vreg_map[phi->gvn] == 0) {
-                            ctx.vreg_map[n->gvn] = ctx.vreg_map[phi->gvn] = vreg_count++;
-                        } else {
-                            ctx.vreg_map[n->gvn] = ctx.vreg_map[phi->gvn];
-                        }
-                    } else if (n->type == TB_PHI && ctx.vreg_map[n->gvn] > 0) {
-                        ctx.vreg_map[n->gvn] = ctx.vreg_map[n->gvn];
-                    } else {
-                        ctx.vreg_map[n->gvn] = vreg_count++;
-                    }
+                    ctx.vreg_map[n->gvn] = vreg_count++;
                 }
             }
             dyn_array_clear(ws->items);
@@ -858,8 +833,7 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
                 // if there's just empty copies we can consider it empty
                 FOR_N(j, 1, item_count) {
                     TB_Node* n = bb->items[j];
-                    if (n->type == TB_MACH_MOVE ||
-                        n->type == TB_MACH_COPY) {
+                    if (n->type == TB_MACH_COPY) {
                         // if both dst & src match, it's not gonna emit anything
                         if (ctx.vreg_map[n->gvn] == ctx.vreg_map[n->inputs[1]->gvn]) {
                             continue;
