@@ -797,8 +797,6 @@ if options.analysis then
 	print(string.format('total nodes      = %d', total_nodes))
 	print(string.format('final nodes      = %d', final_nodes))
 	print(string.format('transition nodes = %d', transition_nodes))
-	-- 25,389,524 cache no
-	--      7,939 cache ye
 
 	-- how many edges?
 	-- what's the biggest difference in dfa.delta[A][i]=B between A and B?
@@ -1058,7 +1056,8 @@ if options.analysis then
 	print(string.format('biggest delta (super smart) = %d', biggest_delta_supersmart))
 
 	local table_size = 2 * (delta_id + 1) * (2 ^ alphabet_rank)
-	print(string.format('delta table size = %d bytes (%dk)', table_size, table_size / 1024))
+	local k_table_size = math.floor(table_size / 1024)
+	print(string.format('delta table size = %d bytes (%dk)', table_size, k_table_size))
 
 	timer('data analysis')
 end
@@ -1067,9 +1066,9 @@ end
 
 --[[ timings
 getting here takes
-	lua    around 30 seconds
-	luajit around 15 seconds (no jit)
-	luajit around 8  seconds (ye jit)
+	lua    around 4.9 seconds
+	luajit around 2.5 seconds (no jit)
+	luajit around 1.2 seconds (ye jit)
 ]]
 if options.timings then
 	local ttime_string = string.format('%08.4f', os.clock() - total_time)
