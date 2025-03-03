@@ -629,9 +629,12 @@ timer('cleanup')
 ]]
 
 local cdfa = {}
+local function cgen(str)
+	table.insert(cdfa, str)
+end
 
 -- prefix
-table.insert(cdfa, string.format([[
+cgen(string.format([[
 /*************\
 |* GENERATED *|
 \*************/
@@ -642,14 +645,31 @@ table.insert(cdfa, string.format([[
 #define GET_BITS(N, V, O) ((V >> O) & BIT_MASK(N))
 #define ALPHABET_RANK %d]], alphabet_rank))
 
---!! decode functions
+-- decode functions
+for _, i in ipairs(instructions) do
+	cgen(string.format('void %s(uint32_t inst) {', i.name))
+	cgen(string.format('\tchar* name = "%s";', i.name))
+	for _, f in ipairs(i.fields) do
+		cgen(string.format('\tuint32_t %s = GET_BITS(%d, inst, %d);', f.name, f.len, f.bit))
+	end
+	cgen('\tprintf(\n\t\t"name = %s"')
+	for _, f in ipairs(i.fields) do
+		cgen(string.format('\t\t"\\t%s = %%d"', f.name))
+	end
+	cgen('\t\t"\\n"\n\t\t, name')
+	for _, f in ipairs(i.fields) do
+		cgen(string.format('\t\t, %s', f.name))
+	end
+	cgen('\t);\n}')
+end
 
 -- name table
-table.insert(cdfa, string.format('char* names[%d] = {', delta_id + 1))
+cgen(string.format('void (*names[%d])(uint32_t) = {', delta_id + 1))
+-- cgen(string.format('char* names[%d] = {', delta_id + 1))
 for i, n in pairs(dfa.F) do
-	table.insert(cdfa, string.format('\t[%d] = "%s",', i, n[1]))
+	cgen(string.format('\t[%d] = %s,', i, n[1]))
 end
-table.insert(cdfa, '};')
+cgen('};')
 
 -- delta table
 local delta_def = string.format('int16_t delta[%d][%d] = {', delta_id + 1, 2^alphabet_rank)
@@ -658,49 +678,44 @@ if options.transpose then
 	delta_def = string.format('int16_t delta[%d][%d] = {', 2^alphabet_rank, delta_id + 1)
 	delta_part = function (a, i, b) return string.format('\t[0b%s][%d] = %d,', i, a, b) end
 end
-table.insert(cdfa, string.format(delta_def, delta_id + 1))
+cgen(string.format(delta_def, delta_id + 1))
 for a, _ in pairs(dfa.Q) do
 	if dfa.delta[a] then
 		for i, b in pairs(dfa.delta[a]) do
-			table.insert(cdfa, delta_part(a, i, b))
+			cgen(delta_part(a, i, b))
 		end
 	else
 		for _, i in ipairs(dfa.Sigma) do
-			table.insert(cdfa, delta_part(a, i, a))
+			cgen(delta_part(a, i, a))
 		end
 	end
 end
-table.insert(cdfa, '};')
+cgen('};')
 
 -- walk function
-table.insert(cdfa, [[
+cgen([[
 uint16_t walk(uint32_t inst) {
 	int16_t state = 1;]])
---!! handle alphabet size
+-- calculate the shift amounts for manual unrolling
 local input_steps = {}
 for i = 32 - alphabet_rank, 1 - alphabet_rank, -alphabet_rank do
 	table.insert(input_steps, i)
 end
+-- transposing requires a different order
 local delta_str = '\tstate = delta[state][(%s) & BIT_MASK(ALPHABET_RANK)];'
 if options.transpose then
 	delta_str = '\tstate = delta[(%s) & BIT_MASK(ALPHABET_RANK)][state];'
 end
 for _, i in ipairs(input_steps) do
+	-- negative requires a different shift
 	local shift = string.format('inst >> %d', i)
 	if i < 0 then
 		shift = string.format('inst << %d', -i)
 	end
-	table.insert(cdfa, string.format(delta_str, shift))
+	cgen(string.format(delta_str, shift))
 end
 
--- for i = 28, 0, -4 do
--- 	if options.transpose then
--- 		table.insert(cdfa, string.format('\tstate = delta[(inst >> %d) & 0b1111][state];', i))
--- 	else
--- 		table.insert(cdfa, string.format('\tstate = delta[state][(inst >> %d) & 0b1111];', i))
--- 	end
--- end
-table.insert(cdfa, [[
+cgen([[
 	return state;
 }]])
 
