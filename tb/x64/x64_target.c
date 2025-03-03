@@ -95,9 +95,18 @@ static bool is_float32_zero(TB_Node* n) {
 }
 
 static TB_Symbol* gimme_float32_sym(Ctx* ctx, TB_Node* n) {
-    uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
-    TB_Global* g = tb__small_data_intern(ctx->module, sizeof(float), &imm);
-    return &g->super;
+    if (n->type == TB_VBROADCAST) {
+        uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeFloat32)->value }.i;
+        TB_ASSERT(n->dt.type == TB_TAG_V128);
+
+        uint32_t x[] = { imm, imm, imm, imm };
+        TB_Global* g = tb__small_data_intern(ctx->module, sizeof(x), &x);
+        return &g->super;
+    } else {
+        uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
+        TB_Global* g = tb__small_data_intern(ctx->module, sizeof(float), &imm);
+        return &g->super;
+    }
 }
 
 #include "x64_gen.h"

@@ -290,7 +290,7 @@ local obj_names = table.concat(objs, " ")
 local exe_name = "cuik"
 if not added["cuik_c"] then exe_name = "tb" end
 
-if not is_windows then
+if not is_windows and not is_exe then
     exe_name = "lib"..exe_name
 end
 

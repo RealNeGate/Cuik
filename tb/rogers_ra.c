@@ -1061,9 +1061,11 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
         }
         set_input(f, use_n, reload, use_i);
 
+        bool before_spill = false;
         int p = tb__insert_before(ctx, ctx->f, reload, use_n);
         if (ra->where_bb == f->scheduled[use_n->gvn] - ctx->cfg.blocks && p <= ra->where_order) {
             ra->where_order -= 1;
+            before_spill = true;
         }
         mark_dirty_bb(ra, f->scheduled[use_n->gvn] - ctx->cfg.blocks, p);
 
@@ -1081,8 +1083,7 @@ static int commit_spill(Ctx* restrict ctx, Rogers* restrict ra, int attempted_vr
 
         // any reloads or clones before the spill point can keep their assignment
         int use_bb = f->scheduled[use_n->gvn] - ctx->cfg.blocks;
-        bool before_spill = use_bb < ra->where_bb || (use_bb == ra->where_bb && ra->order[use_n->gvn] < ra->where_order);
-        if (before_spill) {
+        if (use_bb < ra->where_bb || before_spill) {
             reload_vreg->class    = old_class;
             reload_vreg->assigned = old_assigned;
         }

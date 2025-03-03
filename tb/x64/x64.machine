@@ -153,6 +153,7 @@ pat (TB_F32CONST $root) where "is_float32_zero(n)" => (x86_vzero dt=TB_TYPE_F32 
 pat (TB_F32CONST $root) => (x86_vmov dt=TB_TYPE_F32 ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float32_sym(ctx, n)") mode=MODE_LD)
 
 pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) where "is_float32_zero($x)" => (x86_vzero dt=$dt $root)
+pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) => (x86_vmov dt=$dt ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float32_sym(ctx, n)") mode=MODE_LD)
 
 #define FLOATIE_OP(op_name, mnemonic) \
 node (mnemonic) \
