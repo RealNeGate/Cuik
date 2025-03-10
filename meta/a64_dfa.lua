@@ -1,6 +1,17 @@
 local jason = require('jason')
 local inspect = require('inspect')
 
+--[[ file structure
+	0. helper functions
+	1. load & parse jason
+		- extract bit patterns
+	2. generate dfa
+	3. cleanup dfa
+	4. generate c
+	5. data analysis (optional)
+		- ask a bunch of questions
+]]
+
 --------------------------------
 -- helper schtuff
 --------------------------------
@@ -260,6 +271,7 @@ local function walk_A64(list, instructions, parent, encodings)
 				path = table.concat(parent, '/'),
 				pattern = pattern,
 				fields = fields,
+				original = item,
 			})
 			instructions[item.name] = #instructions
 		end
@@ -663,7 +675,7 @@ for _, i in ipairs(instructions) do
 	cgen('\t);\n}')
 end
 
--- name table
+-- decode table
 cgen(string.format('void (*names[%d])(uint32_t) = {', delta_id + 1))
 -- cgen(string.format('char* names[%d] = {', delta_id + 1))
 for i, n in pairs(dfa.F) do
@@ -763,6 +775,11 @@ end
 --------------------------------
 
 if options.analysis then
+	--------------------------------
+	-- arm analysis first
+	--------------------------------
+	print('\nARM analysis:')
+
 	-- how many patterns and duplicates?
 	local patset = {}
 	local patdup = {}
@@ -777,9 +794,56 @@ if options.analysis then
 	print(string.format('number of instructions = %d', #instructions))
 	print(string.format('number of patterns     = %d', #patterns))
 	print(string.format('unique patterns        = %d', #unique_patterns))
-	for k, v in pairs(patdup) do
-		print(v, k)
+	-- for k, v in pairs(patdup) do
+	-- 	print(v, k)
+	-- end
+
+	-- are any patterns shared by their children?
+	local inst_group_pats = 0
+	for _, group in ipairs(instructions) do
+		local parent_pattern = group.pattern
+		for _, inst in ipairs(group.original.children) do
+			local pattern = {}
+			for c in parent_pattern:gmatch('.') do
+				table.insert(pattern, c)
+			end
+			local bits_count = 0
+			for _, bits in ipairs(inst.encoding.values) do
+				if bits._type == 'Instruction.Encodeset.Bits' then
+					bits_count = bits_count + 1
+					local bit = bits.range.start
+					local len = bits.range.width
+					local str = bits.value.value
+					for i = 1, len do
+						local c = str:gsub(#str - i, #str - i)
+						pattern[#pattern - (bit + (i - 1))] = c
+					end
+				end
+			end
+			if table.concat(pattern, '') == parent_pattern then
+				inst_group_pats = inst_group_pats + 1
+				-- print(parent_pattern, bits_count, group.name, inst.name)
+			end
+		end
 	end
+	print(string.format('inst patterns same as group = %d', inst_group_pats))
+
+	-- are any groups not actually groups?
+	local individual_instructions = 0
+	for _, group in ipairs(instructions) do
+		if group.original._type ~= 'Instruction.InstructionGroup' then
+			individual_instructions = individual_instructions + 1
+			-- print('\t', group.name, group.original._type)
+		end
+	end
+	print(string.format('patterns for individual instructions = %d', individual_instructions))
+
+
+
+	--------------------------------
+	-- dfa analysis second
+	--------------------------------
+	print('\nDFA analysis:')
 
 	-- how many nodes?
 	local total_nodes = 0
@@ -797,6 +861,11 @@ if options.analysis then
 	print(string.format('total nodes      = %d', total_nodes))
 	print(string.format('final nodes      = %d', final_nodes))
 	print(string.format('transition nodes = %d', transition_nodes))
+
+	-- what is the table size?
+	local table_size = 2 * (delta_id + 1) * (2 ^ alphabet_rank)
+	local k_table_size = math.floor(table_size / 1024)
+	print(string.format('delta table size = %d bytes (%dk)', table_size, k_table_size))
 
 	-- how many edges?
 	-- what's the biggest difference in dfa.delta[A][i]=B between A and B?
@@ -822,85 +891,8 @@ if options.analysis then
 		return max_delta, edges, histogram
 	end
 	local biggest_delta, total_edges, edge_histogram = delta_walk(dfa)
-	print(string.format('total edges = %d', total_edges))
+	print(string.format('total edges      = %d', total_edges))
 	print(string.format('transition histogram %s', dump(edge_histogram)))
-
-	--!! i can rework this to handle any alphabet size
-	-- how many transitions happen in pairs/quads/octs/all
-	-- that is, how many inputs ignore the low bits
-	-- this is specific to stepping 4 bits
-	if #dfa.Sigma[1] == 4 then
-		local alls_count = 0
-		local octs_count = 0
-		local quad_count = 0
-		local pair_count = 0
-		local octs = {
-			{'0000', '0001', '0010', '0011', '0100', '0101', '0110', '0111'},
-			{'1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'},
-		}
-		local quads = {
-			{'0000', '0001', '0010', '0011'},
-			{'0100', '0101', '0110', '0111'},
-			{'1000', '1001', '1010', '1011'},
-			{'1100', '1101', '1110', '1111'},
-		}
-		local pairings = {
-			{'0000', '0001'}, {'0010', '0011'},
-			{'0100', '0101'}, {'0110', '0111'},
-			{'1010', '1001'}, {'1010', '1011'},
-			{'1110', '1101'}, {'1110', '1111'},
-		}
-		for a, ib in pairs(dfa.delta) do
-			local allsed = true
-			local octsed = true
-			local quaded = true
-			local paired = true
-			for _, S in ipairs(dfa.Sigma) do
-				if ib[dfa.Sigma[1]] ~= ib[S] then
-					allsed = false
-					break
-				end
-			end
-			for _, o in ipairs(octs) do
-				for _, i in ipairs(o) do
-					if ib[o[1]] ~= ib[i] then
-						octsed = false
-						break
-					end
-				end
-				if not octsed then break end
-			end
-			for _, q in ipairs(quads) do
-				for _, i in ipairs(q) do
-					if ib[q[1]] ~= ib[i] then
-						quaded = false
-						break
-					end
-				end
-				if not quaded then break end
-			end
-			for _, p in ipairs(pairings) do
-				if ib[p[1]] ~= ib[p[2]] then
-					paired = false
-					break
-				end
-			end
-			if allsed then
-				alls_count = alls_count + 1
-			elseif octsed then
-				octs_count = octs_count + 1
-			elseif quaded then
-				quad_count = quad_count + 1
-			elseif paired then
-				pair_count = pair_count + 1
-			end
-		end
-		print(string.format('total nodes paired = %d', pair_count))
-		print(string.format('total nodes quaded = %d', quad_count))
-		print(string.format('total nodes octsed = %d', octs_count))
-		print(string.format('total nodes allsed = %d', alls_count))
-		print(string.format('                   = %d', pair_count + quad_count + octs_count + alls_count))
-	end
 
 	-- what is each node's tree size?
 	-- what nodes are at which depth?
@@ -935,7 +927,7 @@ if options.analysis then
 		return sizes, depths, hist
 	end
 	local node_sizes, node_depths, depth_hist = walk(dfa)
-	print(string.format('total tree size = %d', node_sizes[1]))
+	print(string.format('total tree size  = %d', node_sizes[1]))
 	print(string.format('depth histogram %s', dump(depth_hist)))
 
 	-- what depths are the final states?
@@ -950,7 +942,7 @@ if options.analysis then
 		local list = set_to_list(final_depths[l])
 		final_hists[l] = #list
 	end
-	print(string.format('final node depths = %s', dump(final_hists)))
+	print(string.format('final node depth = %s', dump(final_hists)))
 
 	-- what is the average depth of the final nodes
 	local avg_depth = 0
@@ -1055,9 +1047,82 @@ if options.analysis then
 	print(string.format('biggest delta (dumb bread)  = %d', biggest_delta))
 	print(string.format('biggest delta (super smart) = %d', biggest_delta_supersmart))
 
-	local table_size = 2 * (delta_id + 1) * (2 ^ alphabet_rank)
-	local k_table_size = math.floor(table_size / 1024)
-	print(string.format('delta table size = %d bytes (%dk)', table_size, k_table_size))
+	--!! i can rework this to handle any alphabet size
+	-- how many transitions happen in pairs/quads/octs/all
+	-- that is, how many inputs ignore the low bits
+	-- this is specific to stepping 4 bits
+	if #dfa.Sigma[1] == 4 then
+		local alls_count = 0
+		local octs_count = 0
+		local quad_count = 0
+		local pair_count = 0
+		local octs = {
+			{'0000', '0001', '0010', '0011', '0100', '0101', '0110', '0111'},
+			{'1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'},
+		}
+		local quads = {
+			{'0000', '0001', '0010', '0011'},
+			{'0100', '0101', '0110', '0111'},
+			{'1000', '1001', '1010', '1011'},
+			{'1100', '1101', '1110', '1111'},
+		}
+		local pairings = {
+			{'0000', '0001'}, {'0010', '0011'},
+			{'0100', '0101'}, {'0110', '0111'},
+			{'1010', '1001'}, {'1010', '1011'},
+			{'1110', '1101'}, {'1110', '1111'},
+		}
+		for a, ib in pairs(dfa.delta) do
+			local allsed = true
+			local octsed = true
+			local quaded = true
+			local paired = true
+			for _, S in ipairs(dfa.Sigma) do
+				if ib[dfa.Sigma[1]] ~= ib[S] then
+					allsed = false
+					break
+				end
+			end
+			for _, o in ipairs(octs) do
+				for _, i in ipairs(o) do
+					if ib[o[1]] ~= ib[i] then
+						octsed = false
+						break
+					end
+				end
+				if not octsed then break end
+			end
+			for _, q in ipairs(quads) do
+				for _, i in ipairs(q) do
+					if ib[q[1]] ~= ib[i] then
+						quaded = false
+						break
+					end
+				end
+				if not quaded then break end
+			end
+			for _, p in ipairs(pairings) do
+				if ib[p[1]] ~= ib[p[2]] then
+					paired = false
+					break
+				end
+			end
+			if allsed then
+				alls_count = alls_count + 1
+			elseif octsed then
+				octs_count = octs_count + 1
+			elseif quaded then
+				quad_count = quad_count + 1
+			elseif paired then
+				pair_count = pair_count + 1
+			end
+		end
+		print(string.format('total nodes paired = %d', pair_count))
+		print(string.format('total nodes quaded = %d', quad_count))
+		print(string.format('total nodes octsed = %d', octs_count))
+		print(string.format('total nodes allsed = %d', alls_count))
+		print(string.format('                   = %d', pair_count + quad_count + octs_count + alls_count))
+	end
 
 	timer('data analysis')
 end
