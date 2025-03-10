@@ -744,21 +744,49 @@ cgen(string.format([[
 #define ALPHABET_RANK %d]], alphabet_rank))
 
 -- decode functions
-for _, i in ipairs(instructions) do
-	cgen(string.format('void %s(uint32_t inst) {', i.name))
-	cgen(string.format('\tchar* name = "%s";', i.name))
-	for _, f in ipairs(i.fields) do
+for _, group in ipairs(instructions) do
+	cgen(string.format('void %s(uint32_t inst) {', group.name))
+	-- group name
+	cgen(string.format('\tchar* name = "%s";', group.name))
+	-- group fields
+	for _, f in ipairs(group.fields) do
 		cgen(string.format('\tuint32_t %s = GET_BITS(%d, inst, %d);', f.name, f.len, f.bit))
 	end
+	-- separate instructions
+	print(group.name)
+	for _, inst in ipairs(group.original.children) do
+		local str = {}
+		table.insert(str, string.format('\t%s', inst.name))
+		for _, e in ipairs(inst.encoding.values) do
+			if e._type == 'Instruction.Encodeset.Bits' then
+				-- find which field
+				local field = nil
+				for _, f in ipairs(group.fields) do
+					if f.bit == e.range.start then
+						field = f
+						break
+					end
+				end
+				if field then
+					table.insert(str, string.format('%s==%s', field.name, e.value.value))
+				else
+					table.insert(str, string.format('[%d:%d]==%s', e.range.start, e.range.width, e.value.value))
+				end
+			end
+		end
+		--print(table.concat(str, ', '))
+	end
+	-- print test
 	cgen('\tprintf(\n\t\t"name = %s"')
-	for _, f in ipairs(i.fields) do
+	for _, f in ipairs(group.fields) do
 		cgen(string.format('\t\t"\\t%s = %%d"', f.name))
 	end
 	cgen('\t\t"\\n"\n\t\t, name')
-	for _, f in ipairs(i.fields) do
+	for _, f in ipairs(group.fields) do
 		cgen(string.format('\t\t, %s', f.name))
 	end
-	cgen('\t);\n}')
+	cgen('\t);')
+	cgen('\n}')
 end
 
 -- decode table
