@@ -256,6 +256,92 @@ static void briggs_insert_op(Ctx* ctx, Briggs* ra, int bb_id, TB_Node* n, int po
     tb__insert(ctx, ctx->f, bb, n);
 }
 
+static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
+    size_t extra = extra_bytes(n);
+    TB_Function* f = ctx->f;
+    TB_Node* root = f->root_node;
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+
+    // don't want weird pointer invalidation crap
+    size_t user_count = n->user_count;
+    TB_User* users = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_User));
+    memcpy(users, n->users, n->user_count * sizeof(TB_User));
+
+    // aggressive reload
+    double base_bias = ctx->vregs[ctx->vreg_map[n->gvn]].spill_bias;
+    for (size_t i = 0; i < user_count; i++) {
+        TB_Node* use_n = USERN(&users[i]);
+        int use_i      = USERI(&users[i]);
+
+        // it's never in[0] lmao
+        assert(use_i != 0);
+        RegMask* in_mask = constraint_in(ctx, use_n, use_i);
+
+        // remat per use site
+        TB_Node* remat = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
+        memcpy(remat->extra, n->extra, extra);
+        FOR_N(j, 0, n->input_count) if (n->inputs[j]) {
+            remat->inputs[j] = n->inputs[j];
+            add_user(f, remat, n->inputs[j], j);
+        }
+
+        set_input(f, use_n, remat, use_i);
+
+        VReg* reload_vreg;
+        if (use_n->type == TB_PHI) {
+            TB_Node* pred = cfg_get_pred(&ctx->cfg, use_n->inputs[0], use_i - 1);
+            TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+            TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
+
+            // place at the end of the pred BB to the phi, basically the latest point
+            rogers_insert_op(ctx, pred_bb - ctx->cfg.blocks, remat, aarray_length(pred_bb->items) - 1);
+
+            // phis hard coalesce
+            int vreg_id = ctx->vreg_map[use_n->gvn];
+            reload_vreg = &ctx->vregs[vreg_id];
+            aarray_insert(ctx->vreg_map, remat->gvn, vreg_id);
+        } else {
+            // schedule the split right before use
+            tb__insert_before(ctx, ctx->f, remat, use_n);
+            reload_vreg = tb__set_node_vreg(ctx, remat);
+        }
+
+        RegMask* remat_mask = ctx->constraint(ctx, remat, NULL);
+        reload_vreg->mask = tb__reg_mask_meet(ctx, in_mask, remat_mask);
+        TB_ASSERT(reload_vreg->mask != &TB_REG_EMPTY && "TODO hard split from rematerializing");
+
+        // if it's remat'ing a copy, we should edit the def mask to match the use
+        if (remat->type == TB_MACH_COPY) {
+            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(remat);
+
+            // slightly harder to rematerialize than a normal remat because we tightened it
+            reload_vreg->spill_bias = base_bias + 1e8;
+            cpy->def = reload_vreg->mask;
+        } else {
+            // reloads are unlikely to spill... but not impossible
+            reload_vreg->spill_bias = base_bias + 1e7;
+        }
+
+        // if we're going into a fixed-dst copy, we should hint towards that vreg
+        if (fixed_vregs && use_n->type == TB_MACH_COPY) {
+            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
+            int fixed = fixed_reg_mask(cpy->def);
+            if (fixed >= 0) {
+                reload_vreg->hint_vreg = fixed_vregs[cpy->def->class] + fixed;
+            }
+        }
+
+        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: remat  (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
+    }
+    tb_arena_restore(&f->tmp_arena, sp);
+
+    // delete the original def
+    ctx->vregs[ctx->vreg_map[n->gvn]].uses -= 1;
+    ctx->vreg_map[n->gvn] = 0;
+    tb__remove_node(ctx, f, n);
+    tb_kill_node(f, n);
+}
+
 #define BITS64_TEST(x, i) (((x) >> (i)) & 1)
 static TB_Node* split_fancy_pred_edge(Ctx* ctx, Briggs* ra, int def_class, int bb_id, TB_BasicBlock* pred_bb, int spill_i, int num_spills) {
     // TB_Function* f = ctx->f;
