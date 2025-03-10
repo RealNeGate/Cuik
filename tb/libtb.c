@@ -36,7 +36,11 @@ void* tb_jit_stack_create(void);
 #include "objects/macho.c"
 #include "objects/wasm_obj.c"
 
-int uf_find(int* uf, int a) {
+int uf_find(int* uf, int uf_len, int a) {
+    if (a >= uf_len) {
+        return a;
+    }
+
     // leader
     int l = a;
     while (uf[l] != l) {
@@ -53,8 +57,8 @@ int uf_find(int* uf, int a) {
 }
 
 void uf_union(int* uf, int x, int y) {
-    x = uf_find(uf, x);
-    y = uf_find(uf, y);
+    x = uf_find(uf, INT_MAX, x);
+    y = uf_find(uf, INT_MAX, y);
 
     // parent should be the smaller number
     if (x > y) {

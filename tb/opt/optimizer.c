@@ -1066,7 +1066,6 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
             if (lattice_is_const(old_type) || !lattice_is_const(new_type)) {
                 TB_OPTDEBUG(PEEP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
                 TB_OPTDEBUG(PEEP)(printf("  "), print_lattice(old_type), printf("  =//=>  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
-                tb_print_dumb(f);
                 TB_ASSERT_MSG(0, "forward progress assert!");
             }
         }
@@ -1396,8 +1395,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
             }
         }
-
-        tb_print_dumb(f);
 
         // avoids bloating up my arenas with freed nodes
         float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);

@@ -157,7 +157,7 @@ TB_BasicBlock* tb_late_sched(TB_Function* f, TB_CFG* cfg, TB_BasicBlock* lca, TB
     return lca;
 }
 
-void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_only, bool dataflow, TB_GetLatency get_lat) {
+void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_only, TB_GetLatency get_lat) {
     TB_ASSERT_MSG(f->scheduled == NULL, "make sure when you're done with the schedule, you throw away the old one");
 
     CUIK_TIMED_BLOCK("schedule") {
@@ -167,15 +167,6 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
         f->scheduled_n = node_count + 32;
         f->scheduled = tb_arena_alloc(&f->tmp_arena, f->scheduled_n * sizeof(TB_BasicBlock*));
         FOR_N(i, 0, f->scheduled_n) { f->scheduled[i] = NULL; }
-
-        if (dataflow) {
-            // live ins & outs will outlive this function so we wanna alloc before the savepoint
-            aarray_for(i, cfg.blocks) {
-                TB_BasicBlock* bb = &cfg.blocks[i];
-                bb->live_in = set_create_in_arena(&f->tmp_arena, node_count);
-                bb->live_out = set_create_in_arena(&f->tmp_arena, node_count);
-            }
-        }
 
         TB_BasicBlock* bb0 = &cfg.blocks[0];
         ArenaArray(TB_Node*) pins = aarray_create(&f->tmp_arena, TB_Node*, (f->node_count / 32) + 16);
@@ -427,10 +418,6 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
         }
 
         worklist_clear(ws);
-
-        if (dataflow) {
-            tb_dataflow(f, &f->tmp_arena, cfg);
-        }
     }
 }
 
@@ -439,7 +426,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
 ////////////////////////////////
 // we don't require local scheduling (only global) to run this since SSA implies the necessary info
 void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
-    size_t bb_count   = aarray_length(cfg.blocks);
+    size_t bb_count = aarray_length(cfg.blocks);
     size_t node_count = f->node_count;
 
     TB_ArenaSavepoint sp = tb_arena_save(arena);
@@ -461,40 +448,20 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                 TB_BasicBlock* bb = &cfg.blocks[i];
                 aarray_for(j, bb->items) {
                     TB_Node* n = bb->items[j];
+                    TB_ASSERT(n->gvn < node_count);
 
-                    // PHI
-                    if (n->type == TB_PHI) {
-                        // every block which has the phi edges will def the phi, this emulates
-                        // the phi move.
-                        FOR_N(i, 1, n->input_count) {
-                            TB_Node* in = n->inputs[i];
-                            if (in) {
-                                TB_BasicBlock* in_bb = f->scheduled[in->gvn];
-                                TB_ASSERT(n->gvn < node_count);
-                                set_put(&in_bb->kill, n->gvn);
-                            }
-                        }
-                    } else {
-                        // other than phis every node dominates all uses which means it's KILL
-                        // within it's scheduled block and since it's single assignment this is
-                        // the only KILL for that a through all sets.
-                        TB_ASSERT(n->gvn < node_count);
+                    if (n->dt.type != TB_TAG_CONTROL && n->dt.type != TB_TAG_MEMORY) {
+                        set_remove(&bb->gen, n->gvn);
                         set_put(&bb->kill, n->gvn);
                     }
-                }
-            }
 
-            aarray_for(i, cfg.blocks) {
-                TB_BasicBlock* bb = &cfg.blocks[i];
-                aarray_for(j, bb->items) {
-                    TB_Node* n = bb->items[j];
-                    if (n->type == TB_PHI) continue;
-
-                    FOR_N(k, 1, n->input_count) {
-                        TB_Node* in = n->inputs[k];
-                        if (in && (in->type == TB_PHI || !set_get(&bb->kill, in->gvn))) {
-                            TB_ASSERT(in->gvn < node_count);
-                            set_put(&bb->gen, in->gvn);
+                    if (n->type != TB_PHI) {
+                        FOR_N(k, 1, n->input_count) {
+                            TB_Node* in = n->inputs[k];
+                            if (in && !set_get(&bb->kill, in->gvn)) {
+                                TB_ASSERT(in->gvn < node_count);
+                                set_put(&bb->gen, in->gvn);
+                            }
                         }
                     }
                 }
@@ -559,6 +526,23 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                         if (pred->input_count > 0 && pred->type != TB_DEAD) {
                             worklist_push(ws, pred);
                         }
+                    }
+                }
+            }
+        }
+
+        // "multi-def" nodes, they should be "live out" in the respective pred blocks
+        aarray_for(i, cfg.blocks) {
+            TB_BasicBlock* bb = &cfg.blocks[i];
+            aarray_for(j, bb->items) {
+                TB_Node* n = bb->items[j];
+                if (n->type == TB_PHI && n->dt.type != TB_TAG_MEMORY) {
+                    FOR_N(k, 1, n->input_count) {
+                        TB_Node* pred = cfg_get_pred(&cfg, n->inputs[0], k - 1);
+                        TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+
+                        TB_ASSERT(n->inputs[k]->gvn < node_count);
+                        set_put(&pred_bb->live_out, n->inputs[k]->gvn);
                     }
                 }
             }

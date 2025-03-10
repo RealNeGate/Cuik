@@ -140,10 +140,6 @@ static bool reg_mask_may_intersect(RegMask* a, RegMask* b) {
         return false;
     }
 
-    if (a->may_spill && b->may_spill) {
-        return true;
-    }
-
     TB_ASSERT(a->count == b->count);
     FOR_N(i, 0, a->count) {
         if ((a->mask[i] & b->mask[i]) != 0) {
@@ -156,13 +152,11 @@ static bool reg_mask_may_intersect(RegMask* a, RegMask* b) {
 
 static void redo_dataflow(Ctx* restrict ctx, TB_Arena* arena) {
     TB_Function* f = ctx->f;
-
     aarray_for(i, ctx->cfg.blocks) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         bb->live_in  = set_create_in_arena(arena, f->node_count);
         bb->live_out = set_create_in_arena(arena, f->node_count);
     }
-
     tb_dataflow(f, arena, ctx->cfg);
 }
 
@@ -260,7 +254,6 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
     TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill  (%%%u)\x1b[0m\n", to_spill - ctx->vregs, n->gvn));
 
     to_spill->mask = spill_mask;
-
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     // don't want weird pointer invalidation crap

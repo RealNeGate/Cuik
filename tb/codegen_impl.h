@@ -308,7 +308,7 @@ static uint32_t node_grammar_get(uint32_t k) {
 }
 
 static TB_Node* node_isel_phi(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws) {
-    TB_ASSERT(n->type == TB_PHI);
+    /*TB_ASSERT(n->type == TB_PHI);
     if (!TB_IS_SCALAR_TYPE(n->dt)) {
         return NULL;
     }
@@ -327,7 +327,8 @@ static TB_Node* node_isel_phi(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
     }
 
     // we did the subsumes for it
-    return n;
+    return n;*/
+    return NULL;
 }
 
 static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws, int depth) {
@@ -676,8 +677,15 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
         ctx.cfg = cfg = tb_compute_cfg(f, ws, &f->tmp_arena, true);
         tb_compute_synthetic_loop_freq(f, &cfg);
-        tb_global_schedule(f, ws, cfg, false, true, node_latency);
+        tb_global_schedule(f, ws, cfg, false, node_latency);
 
+        // live ins & outs will outlive this function so we wanna alloc before the savepoint
+        aarray_for(i, cfg.blocks) {
+            TB_BasicBlock* bb = &cfg.blocks[i];
+            bb->live_in  = set_create_in_arena(&f->tmp_arena, f->node_count);
+            bb->live_out = set_create_in_arena(&f->tmp_arena, f->node_count);
+        }
+        tb_dataflow(f, &f->tmp_arena, cfg);
         log_phase_end(f, og_size, "GCM");
     }
 
@@ -801,8 +809,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        tb__rogers(&ctx, &f->tmp_arena);
-        // tb__briggs(&ctx, &f->tmp_arena);
+        // tb__rogers(&ctx, &f->tmp_arena);
+        tb__briggs(&ctx, &f->tmp_arena);
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);

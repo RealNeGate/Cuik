@@ -5,7 +5,6 @@ bit = require "bit"
 
 local t = {}
 local cuik_dll = ffi.load(ffi.os == "Windows" and "cuik.dll" or "bin/libcuik.so")
-local a_dll = ffi.load("a.dll")
 
 ffi.cdef[[
 typedef struct TokenStream TokenStream;
@@ -201,8 +200,6 @@ typedef struct TB_JIT TB_JIT;
 TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity);
 void* tb_jit_place_function(TB_JIT* jit, TB_Function* f);
 void tb_jit_end(TB_JIT* jit);
-
-void matmul(float* dst, float* a, float* b);
 ]]
 
 cuik_dll.cuik_init(false)

@@ -203,6 +203,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         print_pretty_edge(ctx, n);
         printf(" = proj ");
         print_pretty_edge(ctx, n->inputs[0]);
+        printf(" ");
         tb__print_regmask(TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def);
     } else if (n->type == TB_MACH_JUMP || n->type == x86_jcc) {
         int succ[2] = { -1, -1 };
@@ -767,13 +768,18 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         case TB_PHI: {
-            if (ins) {
-                FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
+            if (n->dt.type == TB_TAG_MEMORY) {
+                if (ins) {
+                    FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
+                }
+                return &TB_REG_EMPTY;
             }
 
-            if (n->dt.type == TB_TAG_MEMORY) return &TB_REG_EMPTY;
-            if (n->dt.type == TB_TAG_F32 || n->dt.type == TB_TAG_F64) return ctx->normie_mask[REG_CLASS_XMM];
-            return ctx->normie_mask[REG_CLASS_GPR];
+            RegMask* rm = TB_IS_VECTOR_TYPE(n->dt) || TB_IS_FLOAT_TYPE(n->dt) ? ctx->normie_mask[REG_CLASS_XMM] : ctx->normie_mask[REG_CLASS_GPR];
+            if (ins) {
+                FOR_N(i, 1, n->input_count) { ins[i] = rm; }
+            }
+            return rm;
         }
 
         case TB_ICONST:

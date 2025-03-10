@@ -682,7 +682,7 @@ bool tb_opt_loops(TB_Function* f) {
     // we use this early scheduling to discover if nodes are loop invariant or not
     CUIK_TIMED_BLOCK("early sched") {
         TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
-        tb_global_schedule(f, f->worklist, cfg, false, false, NULL);
+        tb_global_schedule(f, f->worklist, cfg, false, NULL);
         tb_clear_anti_deps(f, f->worklist);
 
         FOR_N(i, 0, f->node_count) { ctx.ctrl[i] = f->scheduled[i] ? f->scheduled[i]->start : NULL; }

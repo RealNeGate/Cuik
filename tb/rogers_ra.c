@@ -36,6 +36,10 @@ typedef struct {
 
     // coalesce disjoint set
     int* uf;
+    int uf_len;
+
+    // leader -> list of members
+    NL_Table coalesce_set;
 
     // last use in a BB
     InactiveCacheEntry* inactive_cache;
@@ -69,6 +73,20 @@ static bool rogers_is_fixed(Ctx* ctx, Rogers* ra, int id) {
     return id >= ra->fixed[class] && id < ra->fixed[class] + ctx->num_regs[class];
 }
 
+static void rogers_insert_op(Ctx* ctx, int bb_id, TB_Node* n, int pos) {
+    TB_BasicBlock* bb = &ctx->cfg.blocks[bb_id];
+
+    // skip phis and projections so that they stay nice and snug
+    size_t cnt = aarray_length(bb->items);
+    aarray_push(bb->items, 0);
+    if (cnt > pos) {
+        memmove(&bb->items[pos + 1], &bb->items[pos], (cnt - pos) * sizeof(TB_Node*));
+    }
+    bb->items[pos] = n;
+
+    tb__insert(ctx, ctx->f, bb, n);
+}
+
 static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
     size_t extra = extra_bytes(n);
     TB_Function* f = ctx->f;
@@ -100,13 +118,27 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
 
         set_input(f, use_n, remat, use_i);
 
-        // schedule the split right before use
-        tb__insert_before(ctx, ctx->f, remat, use_n);
-        VReg* reload_vreg = tb__set_node_vreg(ctx, remat);
+        VReg* reload_vreg;
+        if (use_n->type == TB_PHI) {
+            TB_Node* pred = cfg_get_pred(&ctx->cfg, use_n->inputs[0], use_i - 1);
+            TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+            TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
+
+            // place at the end of the pred BB to the phi, basically the latest point
+            rogers_insert_op(ctx, pred_bb - ctx->cfg.blocks, remat, aarray_length(pred_bb->items) - 1);
+
+            // phis hard coalesce
+            int vreg_id = ctx->vreg_map[use_n->gvn];
+            reload_vreg = &ctx->vregs[vreg_id];
+            aarray_insert(ctx->vreg_map, remat->gvn, vreg_id);
+        } else {
+            // schedule the split right before use
+            tb__insert_before(ctx, ctx->f, remat, use_n);
+            reload_vreg = tb__set_node_vreg(ctx, remat);
+        }
 
         RegMask* remat_mask = ctx->constraint(ctx, remat, NULL);
         reload_vreg->mask = tb__reg_mask_meet(ctx, in_mask, remat_mask);
-        reload_vreg->was_spilled = true;
         TB_ASSERT(reload_vreg->mask != &TB_REG_EMPTY && "TODO hard split from rematerializing");
 
         // if it's remat'ing a copy, we should edit the def mask to match the use
@@ -311,11 +343,9 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
     size_t node_count = f->node_count;
 
     TB_Worklist* ws = f->worklist;
+    worklist_clear(ws);
 
-    // i keep the nodes for the BB entries at the bottom of the worklist at this time so
-    // ideally don't kill that info. visited bits are gg tho
-    size_t old = dyn_array_length(ws->items);
-    worklist_clear_visited(ws);
+    ra.uf_len = f->node_count;
 
     // creating fixed vregs which coalesce all fixed reg uses
     // so i can more easily tell when things are asking for them.
@@ -352,10 +382,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
     // used for hard-list list at the very start
     ra.potential_spills = dyn_array_create(int, 32);
-    ra.uf = tb_arena_alloc(arena, f->node_count * sizeof(int));
-    FOR_N(i, 0, f->node_count) {
-        ra.uf[i] = i;
-    }
 
     // create timeline & insert moves
     CUIK_TIMED_BLOCK("insert legalizing moves") {
@@ -427,7 +453,8 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                     RegMask* def_mask = vreg->mask;
 
                     vreg->spill_cost = NAN;
-                    if (n->type == TB_MACH_COPY) {
+                    if (n->type == TB_PHI) {
+                        ra.uf_len += n->input_count - 1;
                         worklist_push(ws, n);
                     }
                 }
@@ -435,11 +462,19 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         }
     }
 
-    // aggressively coalesce copies which don't change masks (come
-    // up all the time during phis)
+    ra.coalesce_set = nl_table_alloc(100);
+
     bool changes = false;
-    if (dyn_array_length(ws->items) > old) {
+    if (dyn_array_length(ws->items) > 0) {
         cuikperf_region_start("aggro coalesce", NULL);
+
+        ra.uf = tb_arena_alloc(arena, ra.uf_len * sizeof(int));
+        int* uf_size = tb_arena_alloc(arena, ra.uf_len * sizeof(int));
+        FOR_N(i, 0, ra.uf_len) {
+            ra.uf[i] = i;
+            uf_size[i] = 1;
+        }
+
         TB_ArenaSavepoint sp = tb_arena_save(arena);
         compute_ordinals(ctx, &ra, arena);
 
@@ -447,20 +482,81 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         // do this if you remove nodes such that they get DCE'd
         f->worklist = NULL;
 
-        while (dyn_array_length(ws->items) > old) {
-            TB_Node* n = worklist_pop(ws);
-            TB_ASSERT(n->type == TB_MACH_COPY);
-            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
+        FOR_N(i, 0, dyn_array_length(ws->items)) {
+            TB_Node* n = ws->items[i];
+            int vreg_id = ctx->vreg_map[n->gvn];
+            TB_ASSERT(n->type == TB_PHI);
 
-            // if the def_mask got tightened, we needed the copy
-            RegMask* def_mask = ctx->vregs[ctx->vreg_map[n->gvn]].mask;
-            if (def_mask == cpy->def && !interfere(ctx, &ra, n, n->inputs[1])) {
-                // delete copy
-                tb__remove_node(ctx, f, n);
-                subsume_node(f, n, n->inputs[1]);
-                changes = true;
-            } else {
-                TB_OPTDEBUG(REGALLOC)(printf("PHI %%%u can't coalesce with %%%u\n", n->inputs[1]->gvn, n->gvn));
+            // join all these into one lifetime, make n the leader
+            RegMask* rm = ctx->constraint(ctx, n, NULL);
+            int x = uf_find(ra.uf, ra.uf_len, n->gvn);
+            FOR_N(k, 1, n->input_count) {
+                // interfere against everything in the set
+                TB_Node* in = n->inputs[k];
+                if (ra.uf[in->gvn] != in->gvn || uf_size[in->gvn] != 1 || interfere(ctx, &ra, n, in)) {
+                    TB_OPTDEBUG(REGALLOC)(printf("PHI %%%u (-> %%%u) has self-conflict\n", n->gvn, in->gvn));
+
+                    TB_Node* move;
+                    if (can_remat(ctx, in)) {
+                        size_t extra = extra_bytes(in);
+                        move = tb_alloc_node(f, in->type, in->dt, in->input_count, extra);
+                        memcpy(move->extra, in->extra, extra);
+                        FOR_N(j, 0, in->input_count) if (in->inputs[j]) {
+                            move->inputs[j] = in->inputs[j];
+                            add_user(f, move, in->inputs[j], j);
+                        }
+                    } else {
+                        move = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+                        set_input(f, move, in, 1);
+                        TB_NODE_SET_EXTRA(move, TB_NodeMachCopy, .def = rm, .use = rm);
+                    }
+                    set_input(f, n, move, k);
+
+                    VReg* move_vreg = tb__set_node_vreg(ctx, move);
+                    move_vreg->mask = rm;
+
+                    TB_Node* pred = cfg_get_pred(&ctx->cfg, n->inputs[0], k - 1);
+                    TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+                    TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
+
+                    // place at the end of the pred BB to the phi, basically the latest point
+                    TB_Node* last = pred_bb->items[aarray_length(pred_bb->items) - 1];
+                    rogers_insert_op(ctx, pred_bb - ctx->cfg.blocks, move, aarray_length(pred_bb->items) - (last == in ? 0 : 1));
+                    changes = true;
+                }
+
+                TB_ASSERT(n->inputs[k]->gvn < ra.uf_len);
+
+                // hard coalesce with direct input
+                int y = uf_find(ra.uf, ra.uf_len, n->inputs[k]->gvn);
+                ra.uf[y] = x;
+                uf_size[x] += uf_size[y];
+            }
+        }
+
+        // compute lists of coalesced nodes
+        FOR_N(i, 0, ctx->bb_count) {
+            TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+            aarray_for(j, bb->items) {
+                TB_Node* n = bb->items[j];
+                int vreg_id = ctx->vreg_map[n->gvn];
+                if (vreg_id == 0) { continue; }
+
+                // remap the vregs
+                int leader = uf_find(ra.uf, ra.uf_len, n->gvn);
+                if (leader != n->gvn) {
+                    ctx->vreg_map[n->gvn] = ctx->vreg_map[leader];
+                }
+
+                if (uf_size[leader] > 1) {
+                    // add anything to the set which isn't the leader
+                    ArenaArray(TB_Node*) set = nl_table_get(&ra.coalesce_set, (void*) (uintptr_t) (leader + 1));
+                    if (set == NULL) {
+                        set = aarray_create(arena, TB_Node*, 4);
+                        nl_table_put(&ra.coalesce_set, (void*) (uintptr_t) (leader + 1), set);
+                    }
+                    aarray_push(set, n);
+                }
             }
         }
 
@@ -486,34 +582,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         dyn_array_clear(ra.potential_spills);
         cuikperf_region_end();
         changes = true;
-    }
-
-    // phi hard coalescing
-    FOR_N(i, 0, ctx->bb_count) {
-        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-        size_t j = 0; // we do insert things while iterating
-        for (; j < aarray_length(bb->items); j++) {
-            TB_Node* n = bb->items[j];
-            int vreg_id = ctx->vreg_map[n->gvn];
-            if (vreg_id > 0 && n->type == TB_PHI) {
-                // join all these into one lifetime, make n the leader
-                int x = uf_find(ra.uf, n->gvn);
-                FOR_N(i, 1, n->input_count) {
-                    int y = uf_find(ra.uf, n->inputs[i]->gvn);
-                    if (x != y) {
-                        ra.uf[y] = x;
-                    }
-                }
-            }
-        }
-    }
-
-    // get rid of the vreg mapping
-    FOR_N(i, 1, aarray_length(ctx->vreg_map)) {
-        int leader = uf_find(ra.uf, i);
-        if (leader != i) {
-            ctx->vreg_map[i] = ctx->vreg_map[leader];
-        }
     }
 
     if (changes) {
@@ -678,7 +746,7 @@ static bool interfere_in_block(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* 
     return false;
 }
 
-static bool interfere_single_node(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs) {
+static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs) {
     TB_BasicBlock* lhs_block = ctx->f->scheduled[lhs->gvn];
     TB_BasicBlock* rhs_block = ctx->f->scheduled[rhs->gvn];
 
@@ -688,29 +756,6 @@ static bool interfere_single_node(Ctx* restrict ctx, Rogers* restrict ra, TB_Nod
 
     return interfere_in_block(ctx, ra, lhs, rhs, lhs_block)
         || interfere_in_block(ctx, ra, rhs, lhs, rhs_block);
-}
-
-static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs) {
-    // phis are effectively "multi-defs"
-    if (lhs->type == TB_PHI || rhs->type == TB_PHI) {
-        int lhs_count = lhs->type == TB_PHI ? lhs->input_count - 1 : 1;
-        TB_Node** lhs_arr = lhs->type == TB_PHI ? &lhs->inputs[1] : &lhs;
-
-        int rhs_count = rhs->type == TB_PHI ? rhs->input_count - 1 : 1;
-        TB_Node** rhs_arr = rhs->type == TB_PHI ? &rhs->inputs[1] : &rhs;
-
-        FOR_N(i, 0, lhs_count) {
-            FOR_N(j, 0, rhs_count) {
-                if (interfere_single_node(ctx, ra, lhs_arr[i], rhs_arr[j])) {
-                    return true;
-                }
-            }
-        }
-
-        return interfere_single_node(ctx, ra, lhs, rhs);
-    } else {
-        return interfere_single_node(ctx, ra, lhs, rhs);
-    }
 }
 
 static void mark_active(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
@@ -724,11 +769,22 @@ static void mark_active(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
 
 static void unmark_active(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
     VReg* vreg = &ctx->vregs[vreg_id];
+    set_remove(&ra->active, vreg_id);
+
     if (vreg->class != REG_CLASS_STK) {
         set_remove(&ra->active_per_class[vreg->class], vreg->assigned);
+
+        // check if the bit should actually stay set
+        FOREACH_SET(i, ra->active) {
+            VReg* other = &ctx->vregs[i];
+            if (other->class == vreg->class && other->assigned == vreg->assigned) {
+                set_put(&ra->active_per_class[vreg->class], other->assigned);
+                break;
+            }
+        }
+
         // printf("UNMARK V%u %"PRIx64"\n\n", vreg_id, ra->active_per_class[vreg->class].data[0]);
     }
-    set_remove(&ra->active, vreg_id);
 }
 
 static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
@@ -792,17 +848,24 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
     cuikperf_region_end();
 
     cuikperf_region_start("inactive", NULL);
+    int leader = uf_find(ra->uf, ra->uf_len, vreg->n->gvn);
+    ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
+    size_t cnt = set ? aarray_length(set) : 1;
+    TB_Node** arr = set ? &set[0] : &vreg->n;
+
     FOREACH_SET(i, ra->future_active) {
         VReg* other = &ctx->vregs[i];
-        if (other->class == mask->class && interfere(ctx, ra, vreg->n, other->n)) {
-            TB_ASSERT(other->assigned >= 0);
-            if (within_reg_mask(mask, other->assigned)) {
-                TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) inactive as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
-                dyn_array_put(ra->potential_spills, i);
-            }
+        FOR_N(j, 0, cnt) {
+            if (other->class == mask->class && interfere(ctx, ra, arr[j], other->n)) {
+                TB_ASSERT(other->assigned >= 0);
+                if (within_reg_mask(mask, other->assigned)) {
+                    TB_OPTDEBUG(REGALLOC)(printf("V%zu (%%%u) inactive as ", i, other->n->gvn), print_reg_name(other->class, other->assigned), printf("; "));
+                    dyn_array_put(ra->potential_spills, i);
+                }
 
-            TB_ASSERT(other->assigned >= 0);
-            ra->mask[other->assigned / 64ull] |= (1ull << (other->assigned % 64ull));
+                TB_ASSERT(other->assigned >= 0);
+                ra->mask[other->assigned / 64ull] |= (1ull << (other->assigned % 64ull));
+            }
         }
     }
     cuikperf_region_end();
@@ -869,6 +932,28 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
         && ctx->vregs[hint_vreg].class == mask->class
         ?  ctx->vregs[hint_vreg].assigned
         :  -1;
+
+    /* static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs) {
+        // phis are effectively "multi-defs"
+        ArenaArray(TB_Node*) ll = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (lhs->gvn + 1));
+        ArenaArray(TB_Node*) rr = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (rhs->gvn + 1));
+
+        if (ll || rr) {
+            TB_Node** lhs_arr = ll ? &ll[0] : &lhs;
+            TB_Node** rhs_arr = rr ? &rr[0] : &rhs;
+            FOR_N(i, 0, ll ? aarray_length(ll) : 1) {
+                FOR_N(j, 0, rr ? aarray_length(rr) : 1) {
+                    if (interfere_single_node(ctx, ra, lhs_arr[i], rhs_arr[j])) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        } else {
+            return interfere_single_node(ctx, ra, lhs, rhs);
+        }
+    } */
 
     if (hint_reg >= 0 && (ra->mask[hint_reg / 64ull] & (1ull << (hint_reg % 64ull))) == 0) {
         TB_OPTDEBUG(REGALLOC)(printf("#   assigned to "), print_reg_name(def_class, hint_reg), printf(" (HINTED)\n"));
@@ -1298,14 +1383,13 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
         // start intervals
         printf("# ========= Live-In =========\n");
         FOREACH_SET(j, *live_in) if (!set_get(&ra->live_out, j)) {
-            int leader = j < uf_len ? uf_find(ra->uf, j) : j;
-            int vreg_id = ctx->vreg_map[leader];
-            if (j == leader && vreg_id > 0) {
+            int vreg_id = ctx->vreg_map[j];
+            if (vreg_id > 0) {
                 #if TB_OPTDEBUG_REGALLOC
                 if (ctx->vregs[vreg_id].n) {
                     printf("# ");
                     tb_print_dumb_node(NULL, ctx->vregs[vreg_id].n);
-                    printf("%zu %d\n", j, leader);
+                    printf("\n");
                 }
                 #endif
 
@@ -1416,9 +1500,8 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
             #endif
 
             // allocate free register
-            int leader = n->gvn < uf_len ? uf_find(ra->uf, n->gvn) : n->gvn;
             int vreg_id = ctx->vreg_map[n->gvn];
-            if (n->gvn == leader && vreg_id > 0) {
+            if (vreg_id > 0) {
                 int class = ctx->vregs[vreg_id].mask->class;
                 if (!allocate_reg(ctx, ra, vreg_id)) {
                     commit_spill(ctx, ra, vreg_id);
@@ -1426,17 +1509,15 @@ static void allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                     j = ra->where_order;
                 }
 
-                TB_Node* def = ctx->vregs[vreg_id].n;
-                set_put(&ra->live_out, def->gvn);
+                set_put(&ra->live_out, n->gvn);
             }
 
             // allocate projections
             FOR_USERS(u, n) if (is_proj(USERN(u))) {
                 TB_Node* un = USERN(u);
 
-                int leader = un->gvn < uf_len ? uf_find(ra->uf, un->gvn) : un->gvn;
                 vreg_id = ctx->vreg_map[un->gvn];
-                if (leader == un->gvn && vreg_id > 0) {
+                if (vreg_id > 0) {
                     #if TB_OPTDEBUG_REGALLOC
                     printf("# ");
                     tb_print_dumb_node(NULL, un);

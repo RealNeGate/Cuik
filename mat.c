@@ -21,21 +21,28 @@ int bar(float a) {
     return used;
 }*/
 
-#if 0
-/* float* foo(float* b, size_t kk, size_t jj) {
-    return &b[(kk+2)*16 + (jj+1)];
-} */
-#else
 void matmul(float* dst, float* a, float* b) {
     if (dst == NULL) {
         return;
     }
 
-    for (size_t i = 0; i < 64; i++) {
-        dst[i*4 + 0] = -0.0f;
-        dst[i*4 + 1] = -0.0f;
-        dst[i*4 + 2] = -0.0f;
-        dst[i*4 + 3] = -0.0f;
+    for (size_t i = 0; i < 16; i++) {
+        dst[i*16 + 0] = -0.0f;
+        dst[i*16 + 1] = -0.0f;
+        dst[i*16 + 2] = -0.0f;
+        dst[i*16 + 3] = -0.0f;
+        dst[i*16 + 4] = -0.0f;
+        dst[i*16 + 5] = -0.0f;
+        dst[i*16 + 6] = -0.0f;
+        dst[i*16 + 7] = -0.0f;
+        dst[i*16 + 8] = -0.0f;
+        dst[i*16 + 9] = -0.0f;
+        dst[i*16 + 10] = -0.0f;
+        dst[i*16 + 11] = -0.0f;
+        dst[i*16 + 12] = -0.0f;
+        dst[i*16 + 13] = -0.0f;
+        dst[i*16 + 14] = -0.0f;
+        dst[i*16 + 15] = -0.0f;
     }
 
     for (size_t kk = 0; kk < 16; kk += 4) {
@@ -89,4 +96,3 @@ void matmul(float* dst, float* a, float* b) {
         }
     }
 }
-#endif

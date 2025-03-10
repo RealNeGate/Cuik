@@ -39,9 +39,9 @@
 #define TB_OPTDEBUG_PLACEMENT 0
 #define TB_OPTDEBUG_INLINE    0
 #define TB_OPTDEBUG_REGALLOC  1
-#define TB_OPTDEBUG_REGALLOC2 0
-#define TB_OPTDEBUG_REGALLOC3 0
-#define TB_OPTDEBUG_REGALLOC4 0
+#define TB_OPTDEBUG_REGALLOC2 1
+#define TB_OPTDEBUG_REGALLOC3 1
+#define TB_OPTDEBUG_REGALLOC4 1
 #define TB_OPTDEBUG_COMPACT   0
 #define TB_OPTDEBUG_SCHEDULE  0
 // for toggling ANSI colors
@@ -704,7 +704,7 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection) sections,
 TB_ExportChunk* tb_export_make_chunk(TB_Arena* arena, size_t size);
 void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
 
-int uf_find(int* uf, int a);
+int uf_find(int* uf, int uf_len, int a);
 void uf_union(int* uf, int x, int y);
 
 int tb_data_type_bit_size(TB_Module* m, uint8_t type);
