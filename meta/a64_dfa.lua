@@ -98,6 +98,92 @@ local function list_to_set(list)
 	return set
 end
 
+local ast_unimplemented = {}
+local function arm_ast(tree, path)
+	if path == nil then path = '' end
+	local out = {}
+	local todo = function (tree, path)
+		if not ast_unimplemented[tree._type] then
+			ast_unimplemented[tree._type] = {}
+		end
+		table.insert(ast_unimplemented[tree._type], path)
+		return 'TODO'
+	end
+	local cases = {
+		['AST.BinaryOp']              = function (tree, path)
+			table.insert(out, ast(tree.left, path..'>left'))
+			table.insert(out,     tree.op)
+			table.insert(out, ast(tree.right, path..'>right'))
+			return table.concat(out, ' ')
+		end,
+		['AST.Bool']                  = todo,
+		['AST.Concat']                = todo,
+		['AST.DotAtom']               = function (tree, path)
+			for i, v in ipairs(tree.values) do
+				if i > 1 then table.insert(out, '.') end
+				table.insert(out, ast(v, path..'>'..i))
+			end
+			return table.concat(out, '')
+		end,
+		['AST.Function']              = function (tree, path)
+			table.insert(out, tree.name)
+			table.insert(out, '(')
+			for i, a in ipairs(tree.arguments) do
+				if i > 1 then table.insert(out, ', ') end
+				table.insert(out, ast(a, path..'>'..i))
+			end
+			table.insert(out, ')')
+			return table.concat(out, '')
+		end,
+		['AST.Identifier']            = function (tree, path)
+			return tree.value
+		end,
+		['AST.Integer']               = function (tree, path)
+			return ''..tree.value
+		end,
+		['AST.Real']                  = todo,
+		['AST.Set']                   = function (tree, path)
+			table.insert(out, '[')
+			for i, v in ipairs(tree.values) do
+				if i > 1 then table.insert(out, ', ') end
+				table.insert(out, ast(v, path..'>'..i))
+			end
+			table.insert(out, ']')
+			return table.concat(out, '')
+		end,
+		['AST.SquareOp']              = todo,
+		['AST.Tuple']                 = todo,
+		['AST.TypeAnnotation']        = todo,
+		['AST.UnaryOp']               = function (tree, path)
+			table.insert(out, tree.op)
+			table.insert(out, '(')
+			table.insert(out, ast(tree.expr, path))
+			table.insert(out, ')')
+			return table.concat(out, '')
+		end,
+		['Types.Field']               = function (tree, path)
+			table.insert(out, string.format('%s.%s', tree.value.name, tree.value.field))
+			return table.concat(out, '')
+		end,
+		['Types.PstateField']         = todo,
+		['Types.RegisterMultiFields'] = todo,
+		['Types.RegisterType']        = todo,
+		['Types.String']              = todo,
+		['Values.Value']              = function (tree, path)
+			return tree.value
+		end,
+	}
+	if tree then
+		if cases[tree._type] then
+			return cases[tree._type](tree, path)
+		else
+			return 'UNKNOWN('..tree._type..')'
+		end
+	else
+		return 'NIL'
+	end
+end
+
 
 
 --------------------------------
