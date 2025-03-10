@@ -884,45 +884,58 @@ if options.analysis then
 	-- 	print(v, k)
 	-- end
 
+	-- are any groups not actually groups?
+	-- are there any child groups? (hope not)
+	-- do any instructions have aliases?
 	-- are any patterns shared by their children?
-	local inst_group_pats = 0
+	local not_groups = 0
+	local insts_with_alias = 0
+	local groups_with_sub_groups = {}
+	local inst_shared_patterns = {}
 	for _, group in ipairs(instructions) do
 		local parent_pattern = group.pattern
-		for _, inst in ipairs(group.original.children) do
-			local pattern = {}
-			for c in parent_pattern:gmatch('.') do
-				table.insert(pattern, c)
-			end
-			local bits_count = 0
-			for _, bits in ipairs(inst.encoding.values) do
-				if bits._type == 'Instruction.Encodeset.Bits' then
-					bits_count = bits_count + 1
-					local bit = bits.range.start
-					local len = bits.range.width
-					local str = bits.value.value
-					for i = 1, len do
-						local c = str:gsub(#str - i, #str - i)
-						pattern[#pattern - (bit + (i - 1))] = c
+		if group.original._type ~= 'Instruction.InstructionGroup' then
+			not_groups = not_groups + 1
+		else
+			for _, inst in ipairs(group.original.children) do
+				if inst._type == 'Instruction.InstructionGroup' then
+					table.insert(groups_with_sub_groups, group.name)
+				else
+					if #inst.children > 0 then
+						insts_with_alias = insts_with_alias + 1
 					end
 				end
-			end
-			if table.concat(pattern, '') == parent_pattern then
-				inst_group_pats = inst_group_pats + 1
-				-- print(parent_pattern, bits_count, group.name, inst.name)
-			end
-		end
-	end
-	print(string.format('inst patterns same as group = %d', inst_group_pats))
 
-	-- are any groups not actually groups?
-	local individual_instructions = 0
-	for _, group in ipairs(instructions) do
-		if group.original._type ~= 'Instruction.InstructionGroup' then
-			individual_instructions = individual_instructions + 1
-			-- print('\t', group.name, group.original._type)
+				local pattern = {}
+				for c in parent_pattern:gmatch('.') do
+					table.insert(pattern, c)
+				end
+				local bits_count = 0
+				for _, bits in ipairs(inst.encoding.values) do
+					if bits._type == 'Instruction.Encodeset.Bits' then
+						bits_count = bits_count + 1
+						local bit = bits.range.start
+						local len = bits.range.width
+						local str = bits.value.value
+						for i = 1, len do
+							local c = str:gsub(#str - i, #str - i)
+							pattern[#pattern - (bit + (i - 1))] = c
+						end
+					end
+				end
+				if table.concat(pattern, '') == parent_pattern then
+					if not inst_shared_patterns[group.name] then
+						inst_shared_patterns[group.name] = {}
+					end
+					table.insert(inst_shared_patterns[group.name], inst.name)
+				end
+			end
 		end
 	end
-	print(string.format('patterns for individual instructions = %d', individual_instructions))
+	print(string.format('patterns that are insts = %d', not_groups))
+	print(string.format('instructions with alias = %d', insts_with_alias))
+	print(string.format('groups with sub groups  = %s', dump(groups_with_sub_groups)))
+	print(inspect(inst_shared_patterns))
 
 
 
