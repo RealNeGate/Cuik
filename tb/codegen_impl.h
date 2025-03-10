@@ -131,6 +131,7 @@ static int try_create_vreg(Ctx* restrict ctx, TB_Node* n, RegMask* def_mask) {
     if (vreg_id > 0) {
         TB_ASSERT(def_mask != &TB_REG_EMPTY);
         ctx->vregs[vreg_id] = (VReg){ .n = n, .mask = def_mask, .assigned = -1, .spill_cost = NAN, .uses = 1 };
+        ctx->vregs[vreg_id].reg_width = tb__reg_width_from_dt(def_mask->class, n->dt);
 
         if (def_mask->class == REG_CLASS_STK) {
             ctx->vregs[vreg_id].spill_cost = INFINITY;

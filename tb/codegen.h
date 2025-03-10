@@ -78,6 +78,9 @@ struct VReg {
 
     RegMask* mask;
 
+    // always aligned, always power-of-two
+    int reg_width;
+
     // spill cost (sum of block_freq * uses_in_block)
     //   NaN if not computed yet
     double spill_cost;
@@ -227,6 +230,7 @@ size_t tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n);
 size_t tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 size_t tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n);
+int tb__reg_width_from_dt(int reg_class, TB_DataType dt);
 
 static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {
     return a == b ? false : tb__reg_mask_meet(ctx, a, b) != a;

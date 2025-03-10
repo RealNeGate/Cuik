@@ -964,14 +964,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
         return true;
     }
 
-    int reg_width = 1;
-    if (def_class == REG_CLASS_STK) {
-        if (vreg->n->dt.type == TB_TAG_V128)      { reg_width = 2; }
-        else if (vreg->n->dt.type == TB_TAG_V256) { reg_width = 4; }
-        else if (vreg->n->dt.type == TB_TAG_V512) { reg_width = 8; }
-    }
-
-    if (reg_assign(ctx, vreg, ra->mask, reg_width, num_regs)) {
+    if (reg_assign(ctx, vreg, ra->mask, num_regs)) {
         TB_OPTDEBUG(REGALLOC)(printf("#   assigned to "), print_reg_name(vreg->class, vreg->assigned), printf("\n"));
 
         mark_active(ctx, ra, vreg_id);
@@ -983,7 +976,7 @@ static bool allocate_reg(Ctx* restrict ctx, Rogers* restrict ra, int vreg_id) {
             vreg->class = REG_CLASS_STK;
             vreg->assigned = ra->num_spills;
             mark_active(ctx, ra, vreg_id);
-            ra->num_spills += reg_width;
+            ra->num_spills += vreg->reg_width;
 
             // resize the mask array if necessary
             size_t new_cap = ra->max_regs_in_class > ra->num_spills ? ra->max_regs_in_class : ra->num_spills;

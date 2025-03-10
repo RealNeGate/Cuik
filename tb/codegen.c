@@ -4,6 +4,15 @@
 // TUs and i want a consistent address.
 RegMask TB_REG_EMPTY = { 1, 0, 1, { 0 } };
 
+int tb__reg_width_from_dt(int reg_class, TB_DataType dt) {
+    if (reg_class == REG_CLASS_STK) {
+        if (dt.type == TB_TAG_V128)      { return 2; }
+        else if (dt.type == TB_TAG_V256) { return 4; }
+        else if (dt.type == TB_TAG_V512) { return 8; }
+    }
+    return 1;
+}
+
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
     int i = aarray_length(ctx->vregs);
     aarray_insert(ctx->vreg_map, n->gvn, i);
@@ -185,8 +194,10 @@ static void print_reg_name(int rg, int num) {
     }
 }
 
-static int reg_assign(Ctx* ctx, VReg* vreg, uint64_t* mask, int reg_width, size_t num_regs) {
+static int reg_assign(Ctx* ctx, VReg* vreg, uint64_t* mask, size_t num_regs) {
+    int reg_width = vreg->reg_width;
     TB_ASSERT(reg_width >= 1);
+
     int def_class = vreg->mask->class;
     size_t mask_word_count = (num_regs + 63) / 64;
 

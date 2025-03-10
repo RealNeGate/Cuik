@@ -116,8 +116,17 @@ static int bits64_first(uint64_t* arr, size_t cnt) {
     return arr[0] & 1 ? 0 : bits64_next(arr, cnt, 0);
 }
 
-static int ifg_degree(Briggs* ra, int i) {
+static int ifg_raw_degree(Briggs* ra, int i) {
     return ra->adj[i][0];
+}
+
+static int ifg_degree(Ctx* ctx, Briggs* ra, int i) {
+    int d = 0, w = ctx->vregs[i].reg_width;
+    FOR_N(j, 1, ra->adj[i][0]+1) {
+        int other = ra->adj[i][j];
+        d += TB_MAX(w, ctx->vregs[other].reg_width);
+    }
+    return d;
 }
 
 static void ifg_print(Ctx* restrict ctx, Briggs* ra, int i) {
@@ -176,7 +185,7 @@ static int ifg_ws_pop(IFG_Worklist* ws) {
 
 static void briggs_print_vreg(Ctx* restrict ctx, Briggs* restrict ra, VReg* vreg) {
     float cost = get_spill_cost(ctx, vreg);
-    printf("# V%-4"PRIdPTR" deg=%d cost=%.2f ", vreg - ctx->vregs, ifg_degree(ra, vreg - ctx->vregs), cost);
+    printf("# V%-4"PRIdPTR" deg=%d cost=%.2f ", vreg - ctx->vregs, ifg_raw_degree(ra, vreg - ctx->vregs), cost);
     if (vreg->hint_vreg > 0) {
         printf(" hint=V%d", vreg->hint_vreg);
     }
@@ -245,22 +254,6 @@ static void briggs_insert_op(Ctx* ctx, Briggs* ra, int bb_id, TB_Node* n, int po
     }
 
     tb__insert(ctx, ctx->f, bb, n);
-}
-
-static void split_spill_vreg(Ctx* ctx, Briggs* ra, TB_Node* v, int spill_i, RegMask* spill_rm) {
-    int num_spills = dyn_array_length(ra->spills);
-
-    // there's one shared spilled vreg for all the stack copies
-    int spill_vreg_id = ra->spill_vregs[spill_i];
-    if (spill_vreg_id == 0) {
-        VReg* spill_vreg = tb__set_node_vreg(ctx, v);
-        spill_vreg->mask = spill_rm;
-        ra->spill_vregs[spill_i] = spill_vreg - ctx->vregs;
-    } else {
-        ctx->vregs[spill_vreg_id].uses += 1;
-        ctx->vregs[spill_vreg_id].was_spilled = true;
-        aarray_insert(ctx->vreg_map, v->gvn, spill_vreg_id);
-    }
 }
 
 #define BITS64_TEST(x, i) (((x) >> (i)) & 1)
@@ -341,6 +334,7 @@ static TB_Node* spill_fancy_xbb(Ctx* ctx, Briggs* ra, int i, int spill_i, TB_Nod
         }
     }
 
+    ctx->vregs[src_vreg_id].reg_width = tb__reg_width_from_dt(ctx->vregs[src_vreg_id].class, phi->dt);
     tb_arena_free(ra->arena, pred_defs, pred_count * sizeof(TB_Node*));
     return phi;
 }
@@ -348,38 +342,6 @@ static TB_Node* spill_fancy_xbb(Ctx* ctx, Briggs* ra, int i, int spill_i, TB_Nod
 static int spill_map_get(NL_Table* spill_map, int k) {
     intptr_t p = (intptr_t) nl_table_get(spill_map, (void*) (uintptr_t) k);
     return p - 1;
-}
-
-static void briggs_split_def(Ctx* ctx, Briggs* ra, int bb, int spill_i, int pos) {
-    int num_spills = dyn_array_length(ra->spills);
-
-    TB_Node* def = ra->defs[bb*num_spills + spill_i];
-    RegMask* def_mask = ctx->constraint(ctx, def, NULL);
-    TB_ASSERT(def_mask->class != REG_CLASS_STK);
-
-    RegMask* spill_mask = ra->spill_mask[spill_i];
-    TB_Node* v = tb_alloc_node(ctx->f, TB_MACH_COPY, def->dt, 2, sizeof(TB_NodeMachCopy));
-    set_input(ctx->f, v, def, 1);
-    TB_NODE_SET_EXTRA(v, TB_NodeMachCopy, .def = spill_mask, .use = def_mask);
-
-    briggs_insert_op(ctx, ra, bb, v, pos);
-    ra->defs[bb*num_spills + spill_i] = v;
-
-    // there's one shared spilled vreg for all the stack copies
-    int spill_vreg_id = ra->spill_vregs[spill_i];
-    if (spill_vreg_id == 0) {
-        VReg* spill_vreg = tb__set_node_vreg(ctx, v);
-        spill_vreg->mask = spill_mask;
-        spill_vreg->was_spilled = true;
-
-        ra->spill_vregs[spill_i] = spill_vreg - ctx->vregs;
-    } else {
-        ctx->vregs[spill_vreg_id].uses += 1;
-        ctx->vregs[spill_vreg_id].was_spilled = true;
-        aarray_insert(ctx->vreg_map, v->gvn, spill_vreg_id);
-    }
-
-    TB_OPTDEBUG(REGALLOC4)(printf("      Spill%d: onto stack now! %%%u (we've crossed an HRP region)\n", spill_i, v->gvn));
 }
 
 static void split_fancy(Ctx* ctx, Briggs* ra) {
@@ -651,6 +613,7 @@ static void split_fancy(Ctx* ctx, Briggs* ra) {
                 TB_NODE_SET_EXTRA(v, TB_NodeMachCopy, .def = reload_rm, .use = spill_rm);
 
                 VReg* vreg = tb__set_node_vreg(ctx, v);
+                vreg->reg_width = tb__reg_width_from_dt(reload_rm->class, v->dt);
                 vreg->mask = reload_rm;
 
                 // insert reloads at the start of this block
@@ -712,6 +675,7 @@ static void split_fancy(Ctx* ctx, Briggs* ra) {
 
                         // reloads have their own vregs, but never overlap (useful for phis)
                         VReg* reload_vreg = tb__set_node_vreg(ctx, reload);
+                        reload_vreg->reg_width = tb__reg_width_from_dt(reload_mask->class, reload->dt);
                         reload_vreg->mask = NULL;
 
                         int reload_vreg_id = reload_vreg - ctx->vregs;
@@ -809,9 +773,23 @@ static void split_fancy(Ctx* ctx, Briggs* ra) {
                 set_input(f, v, pred_def, 1);
                 TB_NODE_SET_EXTRA(v, TB_NodeMachCopy, .def = spill_rm, .use = reload_rm);
 
+                int num_spills = dyn_array_length(ra->spills);
+
+                // there's one shared spilled vreg for all the stack copies
+                int spill_vreg_id = ra->spill_vregs[k];
+                if (spill_vreg_id == 0) {
+                    VReg* spill_vreg = tb__set_node_vreg(ctx, v);
+                    spill_vreg->mask = spill_rm;
+                    spill_vreg->reg_width = tb__reg_width_from_dt(REG_CLASS_STK, v->dt);
+                    ra->spill_vregs[k] = spill_vreg - ctx->vregs;
+                } else {
+                    ctx->vregs[spill_vreg_id].uses += 1;
+                    ctx->vregs[spill_vreg_id].was_spilled = true;
+                    aarray_insert(ctx->vreg_map, v->gvn, spill_vreg_id);
+                }
+
                 // place right near the end
                 TB_Node* last = bb->items[aarray_length(bb->items) - 1];
-                split_spill_vreg(ctx, ra, v, k, spill_rm);
                 briggs_insert_op(ctx, ra, i, v, aarray_length(bb->items) - (last == pred_def ? 0 : 1));
                 ra->defs[i*num_spills + k] = v;
             }
@@ -1064,7 +1042,8 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 VReg* other = &ctx->vregs[other_id];
                 if (other->mask->class == def_class && other->assigned >= 0) {
                     int other_assigned = other->assigned;
-                    mask[other_assigned / 64u] |= (1ull << (other_assigned % 64u));
+                    uint64_t allot_mask = UINT64_MAX >> (64ull - other->reg_width);
+                    mask[other_assigned / 64u] |= (allot_mask << (other_assigned % 64u));
 
                     #if 0 && TB_OPTDEBUG_REGALLOC3
                     if (def_class != 1) {
@@ -1096,9 +1075,10 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 }
             }
 
-            if (!reg_assign(ctx, vreg, mask, 1, num_regs)) {
+            if (!reg_assign(ctx, vreg, mask, num_regs)) {
                 // make any may-spills into "will-spills"
                 if (vreg->mask->may_spill) {
+                    vreg->spill_cost = INFINITY;
                     vreg->mask = intern_regmask(ctx, REG_CLASS_STK, true, 0);
                     TB_OPTDEBUG(REGALLOC3)(printf("#   assigned UNCOLORED (will be treated as spilled next time)\n"));
                 } else {
@@ -1110,11 +1090,19 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 }
                 failure = true;
             } else {
-                if (def_class == REG_CLASS_STK && vreg->assigned+1 > num_spills) {
-                    num_spills = vreg->assigned+1;
+                if (def_class == REG_CLASS_STK && vreg->assigned+vreg->reg_width > num_spills) {
+                    num_spills = vreg->assigned+vreg->reg_width;
                 }
 
-                TB_OPTDEBUG(REGALLOC3)(printf("#   assigned to "), print_reg_name(vreg->class, vreg->assigned), printf("\n"));
+                #if TB_OPTDEBUG_REGALLOC3
+                printf("#   assigned to ");
+                print_reg_name(vreg->class, vreg->assigned);
+                FOR_N(i, 1, vreg->reg_width) {
+                    printf(", ");
+                    print_reg_name(vreg->class, vreg->assigned + i);
+                }
+                printf("\n");
+                #endif
             }
         }
         cuikperf_region_end();
@@ -1289,7 +1277,6 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
     }
 
     log_debug("%s: briggs: allocating IFG skeleton (%zu nodes)", f->super.name, ra->ifg_len);
-    briggs_dump_sched(ctx, ra);
 
     ra->ifg_chunks_per_set = (ra->ifg_len + BRIGGS_BITS_PER_CHUNK - 1) / BRIGGS_BITS_PER_CHUNK;
     size_t set_size = sizeof(Briggs_Set) + ra->ifg_chunks_per_set*sizeof(Briggs_Chunk);
@@ -1641,7 +1628,7 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
 static bool ifg_is_lo_degree(Ctx* ctx, Briggs* ra, int vreg_id) {
     RegMask* mask = ctx->vregs[vreg_id].mask;
     // note the stack has infinite colors so it never spills
-    return mask->class == REG_CLASS_STK || ifg_degree(ra, vreg_id) < popcnt_reg_mask(mask);
+    return mask->class == REG_CLASS_STK || ifg_degree(ctx, ra, vreg_id) < popcnt_reg_mask(mask);
 }
 
 static void ifg_remove(Briggs* ra, int i, int j) {
@@ -1714,7 +1701,7 @@ static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
             #endif
 
             if (ctx->vregs[vreg_id].mask->class == REG_CLASS_STK) {
-                ra->max_spills += 1;
+                ra->max_spills += ctx->vregs[vreg_id].reg_width;
             }
 
             int d = ra->adj[vreg_id][0];
@@ -1742,7 +1729,7 @@ static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
         // pick next best spill
         FOR_N(i, 0, hi.count) {
             VReg* vreg = &ctx->vregs[hi.stack[i]];
-            float score = get_spill_cost(ctx, vreg) / ifg_degree(ra, hi.stack[i]);
+            float score = get_spill_cost(ctx, vreg) / ifg_degree(ctx, ra, hi.stack[i]);
 
             TB_OPTDEBUG(REGALLOC2)(briggs_print_vreg(ctx, ra, vreg));
             if (score < best_score) {
@@ -1768,7 +1755,8 @@ static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
         SimplifiedElem s = { best_spill, d };
         aarray_push(stk, s);
 
-        // TODO(NeGate): assuming 1 stack slot per vreg (will become incorrect later on)
-        ra->max_spills += 1;
+        // everything it coalesces with should agree on the data type such that
+        // this gives us a reliable "spill reg width"
+        ra->max_spills += tb__reg_width_from_dt(REG_CLASS_STK, ctx->vregs[best_spill].n->dt);
     }
 }
