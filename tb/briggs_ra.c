@@ -1,4 +1,4 @@
-// Mostly implementing Briggs' thesis "Register Allocation via Graph Coloring" +
+// Mostly implementing Briggs' thesis "Register Allocation via Graph Coloring"
 //
 // Also:
 //   https://cr.openjdk.org/~thartmann/offsite_2018/register_allocator.pdf
@@ -100,7 +100,7 @@ static int bits64_next(uint64_t* arr, size_t cnt, int x) {
     uint64_t word;
     for (;;) {
         // we're done
-        if (i >= cnt) { return -1; }
+        if (i*64 >= cnt) { return -1; }
         // if there's no more bits in the word, we move along
         word = arr[i] >> (j + 1);
         if (word != 0) {
@@ -570,25 +570,54 @@ static void split_fancy(Ctx* ctx, Briggs* ra) {
     // 1-def 1-use will basically just spill
     // everywhere between the two sites.
     if (true) {
-        uint64_t single_defuse = single_defs;
+        briggs_dump_sched(ctx, ra);
+
+        uint64_t single_defuse = 0;
+        int min[64], max[64];
         FOR_N(i, 0, num_spills) {
             if ((single_defs & (1ull << i)) == 0) { continue; }
 
             TB_Node* n = single_def[i];
-            if (n->user_count != 1) {
-                single_defuse &= ~(1ull << i);
+            if (n->user_count == 1) {
+                single_defuse |= 1ull << i;
+
+                TB_Node* use = USERN(&n->users[0]);
+
+                TB_BasicBlock* use_bb = f->scheduled[use->gvn];
+                TB_Node* bb_node = use_bb->start;
+                int pred_count = bb_node->type == TB_PROJ && bb_node->inputs[0]->type == TB_ROOT ? 0 : bb_node->input_count;
+
+                min[i] = (f->scheduled[n->gvn] - ctx->cfg.blocks) + 1;
+                max[i] = (use_bb - ctx->cfg.blocks);
+
+                // there's one use, if it has preds then maybe we only spill down one of the paths?
+                /*FOR_N(j, 0, pred_count) {
+                    TB_Node* pred = cfg_get_pred(&ctx->cfg, bb_node, j);
+                    TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+                    TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
+
+                    printf("BB%zu\n", pred_bb - ctx->cfg.blocks);
+
+                    TB_BasicBlock* curr = pred_bb;
+                    while (curr != curr->dom) {
+                        curr = curr->dom;
+                        printf("  BB%zu\n", curr - ctx->cfg.blocks);
+                    }
+                }
+                __debugbreak();*/
             }
         }
 
         uint64_t flood = 0;
-        FOR_N(i, 0, ctx->bb_count) {
-            // when used, we're off
-            flood &= ~(use_map[i] | ~single_defuse);
-            // everything in between will be time spilled
-            ra->spilled[i] |= flood;
-            // when defined, we're on
-            flood |= def_map[i] & single_defuse;
+        FOR_N(i, 0, num_spills) {
+            if ((single_defuse & (1ull << i)) == 0) { continue; }
 
+            FOR_N(j, min[i], max[i]) {
+                ra->spilled[j] |= 1ull << i;
+            }
+        }
+
+        FOR_N(i, 0, ctx->bb_count) {
             #if TB_OPTDEBUG_REGALLOC4
             printf("  BB%3zu: ", i);
             FOR_REV_N(k, 0, num_spills) {
@@ -1024,9 +1053,14 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             }
         }
 
+        size_t old_count = f->node_count;
         if (ifg_coalesce(ctx, &ra, rounds == 1)) {
             cuikperf_region_end();
             tb_arena_restore(arena, sp);
+
+            if (old_count != f->node_count) {
+                redo_dataflow(ctx, arena);
+            }
             continue;
         }
 
@@ -1062,7 +1096,6 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                     }
                 }
             }
-
             ra.ifg = NULL;
         }
 
@@ -1098,6 +1131,8 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             // un-yank, this will let us know how far we
             // need to undo the removals on a node
             int degree = ra.adj[s.vreg_id][0] = s.degree;
+
+            // printf("V%u %d\n", s.vreg_id, degree);
 
             // nothing precolored should've landed into this stack
             TB_ASSERT(vreg->assigned < 0);
@@ -1174,6 +1209,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                     dyn_array_put(ra.spills, s.vreg_id);
                     TB_OPTDEBUG(REGALLOC3)(printf("#   assigned UNCOLORED\n"));
                 }
+                // printf("  FAILURE!\n");
                 failure = true;
             } else {
                 if (def_class == REG_CLASS_STK && vreg->assigned+vreg->reg_width > num_spills) {
@@ -1199,7 +1235,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
             dyn_array_destroy(ra.spills);
             tb_arena_restore(arena, sp);
 
-            ctx->num_spills = num_spills - (1 + ctx->param_count + ctx->call_usage);
+            ctx->num_spills += num_spills - ctx->num_regs[REG_CLASS_STK];
             cuikperf_region_end();
             break;
         }
@@ -1235,7 +1271,6 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
 
         // recompute liveness
         redo_dataflow(ctx, arena);
-        // dump_sched(ctx);
 
         // time to retry
         dyn_array_clear(ra.spills);
@@ -1376,6 +1411,7 @@ static void ifg_build(Ctx* restrict ctx, Briggs* ra) {
 
     FOR_REV_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        TB_ASSERT(f->node_count <= bb->live_out.capacity);
 
         FOR_N(j, 0, live_count) {
             live[j] = bb->live_out.data[j];
@@ -1603,7 +1639,7 @@ static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro) {
                     ctx->vregs[x].uses += ctx->vregs[y].uses;
                     ctx->vregs[x].mask = meet;
                 }
-            } else {
+            } else if (0) {
                 int shared_edge = ctx->node_2addr(n);
                 if (shared_edge <= 0) { continue; }
 
@@ -1733,6 +1769,16 @@ static void ifg_remove(Briggs* ra, int i, int j) {
 
     // not found
     TB_ASSERT(0);
+}
+
+static void ifg_remove_edges2(Ctx* ctx, Briggs* ra, int vreg_id) {
+    int d = ra->adj[vreg_id][0];
+    FOR_N(j, 1, d+1) {
+        int k = ra->adj[vreg_id][j];
+        ifg_remove(ra, k, vreg_id);
+    }
+    // mark degree as 0, the entries are still there tho
+    ra->adj[vreg_id][0] = 0;
 }
 
 static void ifg_remove_edges(Ctx* ctx, Briggs* ra, int i, IFG_Worklist* lo, IFG_Worklist* hi) {

@@ -1210,23 +1210,33 @@ bool tb_opt_loops(TB_Function* f) {
                     // our IV simplify handles for now.
                     if (cast != NULL) {
                         bool good = false;
-                        uint64_t shift = 0;
+                        uint64_t scale = 0;
                         if (cast->type == TB_ZERO_EXT || cast->type == TB_SIGN_EXT) {
                             good = true;
                         } else if (cast->type == TB_SHL && lattice_is_iconst(latuni_get(f, cast->inputs[2]))) {
                             TB_ASSERT(cast->inputs[1] == n);
 
+                            Lattice* sh_amt = latuni_get(f, cast->inputs[2]);
+
+                            // if the compare's limit can be bumped up without overflow then we'll do that too
+                            Lattice* l = lattice_int_const(f, 1ull << sh_amt->_int.min);
+                            Lattice* limit = latuni_get(f, cmp->inputs[2]);
+                            if (!will_mul_overflow(f, n->dt, l, limit)) {
+                                scale = l->_int.min;
+                                good = true;
+                            }
+                        } else if (cast->type == TB_MUL && lattice_is_iconst(latuni_get(f, cast->inputs[2]))) {
                             // if the compare's limit can be bumped up without overflow then we'll do that too
                             Lattice* l = latuni_get(f, cast->inputs[2]);
                             Lattice* limit = latuni_get(f, cmp->inputs[2]);
                             if (!will_mul_overflow(f, n->dt, l, limit)) {
-                                shift = l->_int.min;
+                                scale = l->_int.min;
                                 good = true;
                             }
                         }
 
                         if (good) {
-                            TB_Node* con = make_int_node(f, cast->dt, *step_ptr << shift);
+                            TB_Node* con = make_int_node(f, cast->dt, *step_ptr * scale);
 
                             TB_Node* new_stepper = tb_alloc_node(f, TB_ADD, cast->dt, 3, sizeof(TB_NodeBinopInt));
                             set_input(f, new_stepper, n,   1);
@@ -1252,13 +1262,13 @@ bool tb_opt_loops(TB_Function* f) {
                                     ext_limit = cmp->inputs[2];
                                 }
 
-                                if (shift) {
-                                    TB_Node* con = make_int_node(f, cast->dt, shift);
+                                if (scale) {
+                                    TB_Node* con = make_int_node(f, cast->dt, scale);
 
-                                    TB_Node* shl = tb_alloc_node(f, TB_SHL, cast->dt, 3, sizeof(TB_NodeBinopInt));
-                                    set_input(f, shl, ext_limit, 1);
-                                    set_input(f, shl, con, 2);
-                                    ext_limit = shl;
+                                    TB_Node* scl = tb_alloc_node(f, TB_MUL, cast->dt, 3, sizeof(TB_NodeBinopInt));
+                                    set_input(f, scl, ext_limit, 1);
+                                    set_input(f, scl, con, 2);
+                                    ext_limit = scl;
 
                                     latuni_set(f, ext_limit, value_of(f, ext_limit));
                                     mark_node(f, ext_limit);

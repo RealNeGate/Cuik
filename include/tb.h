@@ -1354,13 +1354,23 @@ TB_API void tb_print_svg(TB_Function* f);
 
 uint64_t tb_interpret(TB_Function* f, TB_Worklist* ws, uint64_t* params);
 
+typedef enum {
+    // Ian Rogers style allocator:
+    //   "Efficient global register allocation" (2020)
+    TB_RA_ROGERS,
+
+    // Briggs-Chaitin style allocator:
+    //   "Register Allocation via Graph Coloring" (1992)
+    TB_RA_BRIGGS,
+} TB_CodegenRA;
+
 // codegen:
 //   output goes at the top of the code_arena, feel free to place multiple functions
 //   into the same code arena (although arenas aren't thread-safe you'll want one per thread
 //   at least)
 //
 //   if code_arena is NULL, the IR arena will be used.
-TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm);
+TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_CodegenRA ra, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm);
 
 // interprocedural optimizer iter
 TB_API bool tb_module_ipo(TB_Module* m);

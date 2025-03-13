@@ -337,8 +337,8 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
     printf("\n");
 
     TB_Function* f = ctx->f;
-    // tb_greedy_scheduler(f, &ctx->cfg, ws, NULL, bb);
-    tb_list_scheduler(f, &ctx->cfg, ws, NULL, bb, node_latency, node_unit_mask, 1);
+    // tb_greedy_scheduler(f, &ctx->cfg, ws, bb);
+    tb_list_scheduler(f, &ctx->cfg, ws, bb, node_latency, node_unit_mask, 1);
 
     FOR_N(i, 0, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];

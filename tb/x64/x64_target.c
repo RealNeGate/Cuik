@@ -94,6 +94,12 @@ static bool is_float32_zero(TB_Node* n) {
     return imm == 0;
 }
 
+static TB_Symbol* gimme_float32_neg_zero(Ctx* ctx) {
+    uint32_t imm = 0x80000000;
+    TB_Global* g = tb__small_data_intern(ctx->module, sizeof(float), &imm);
+    return &g->super;
+}
+
 static TB_Symbol* gimme_float32_sym(Ctx* ctx, TB_Node* n) {
     if (n->type == TB_VBROADCAST) {
         uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeFloat32)->value }.i;
@@ -109,7 +115,30 @@ static TB_Symbol* gimme_float32_sym(Ctx* ctx, TB_Node* n) {
     }
 }
 
+static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n);
+
 #include "x64_gen.h"
+
+static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n) {
+    TB_ASSERT(ctx->module->target_abi == TB_ABI_WIN64 && "How does va_start even work on SysV?");
+
+    // on Win64 va_start just means whatever is one parameter away from
+    // the parameter you give it (plus in Win64 the parameters in the stack
+    // are 8bytes, no fanciness like in SysV):
+    // void printf(const char* fmt, ...) {
+    //     va_list args;
+    //     va_start(args, fmt); // args = ((char*) &fmt) + 8;
+    //     ...
+    // }
+    TB_Node* op = tb_alloc_node(f, x86_lea, TB_TYPE_PTR, 5, sizeof(X86MemOp));
+    set_input(f, op, ctx->frame_ptr, 2);
+
+    TB_FunctionPrototype* proto = ctx->f->prototype;
+    X86MemOp* op_extra = TB_NODE_GET_EXTRA(op);
+    op_extra->mode = MODE_LD;
+    op_extra->disp = -(8 + proto->param_count*8);
+    return op;
+}
 
 static bool can_gvn(TB_Node* n) {
     return true;
@@ -198,12 +227,21 @@ static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
 }
 
 static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
-    if (n->type == TB_MACH_PROJ) {
-        printf("  ");
+    if (n->type == TB_MACH_FRAME_PTR) {
+        printf("  frameptr ");
         print_pretty_edge(ctx, n);
-        printf(" = proj ");
+    } else if (n->type == TB_PROJ) {
+        printf("  proj ");
+        print_pretty_edge(ctx, n);
+        printf(" = ");
         print_pretty_edge(ctx, n->inputs[0]);
-        printf(" ");
+        printf(", %d", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
+    } else if (n->type == TB_MACH_PROJ) {
+        printf("  proj ");
+        print_pretty_edge(ctx, n);
+        printf(" = ");
+        print_pretty_edge(ctx, n->inputs[0]);
+        printf(", %d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
         tb__print_regmask(TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def);
     } else if (n->type == TB_MACH_JUMP || n->type == x86_jcc) {
         int succ[2] = { -1, -1 };
@@ -214,7 +252,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
 
                 TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
                 int b = succ_bb - ctx->cfg.blocks;
-                if (ctx->cfg.blocks[b].fwd >= 0) {
+                if (ctx->cfg.blocks[b].fwd > 0) {
                     while (b != ctx->cfg.blocks[b].fwd) {
                         b = ctx->cfg.blocks[b].fwd;
                     }
@@ -248,7 +286,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             print_pretty_edge(ctx, n);
             printf(": ");
             tb__print_regmask(cpy->def);
-            printf(" = cpy ");
+            printf(" = ");
             print_pretty_edge(ctx, n->inputs[1]);
             printf(": ");
             tb__print_regmask(cpy->use);
@@ -517,7 +555,7 @@ static bool try_for_imm32(TB_DataType dt, TB_Node* n, int32_t* out_x) {
 static int node_2addr(TB_Node* n) {
     switch (n->type) {
         case x86_add: case x86_or: case x86_and: case x86_sub: case x86_xor:
-        case x86_vadd: case x86_vmul: case x86_vdiv:
+        case x86_vadd: case x86_vmul: case x86_vdiv: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             if (op->mode == MODE_ST) return -1;
@@ -589,7 +627,7 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         if (addr->type != TB_LOCAL) { continue; }
 
         TB_NodeLocal* local = TB_NODE_GET_EXTRA(addr);
-        local->stack_pos = ctx->stack_header + i*8;
+        local->stack_pos = -(8 + i*8);
 
         if (i >= 4 && ctx->calling_conv == &CC_WIN64) {
             // get rid of the store since it's already at that location
@@ -605,10 +643,10 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         TB_Node* n = USERN(u);
         if (n->type != TB_LOCAL) { continue; }
         TB_NodeLocal* local = TB_NODE_GET_EXTRA(n);
-        if (local->stack_pos >= 0) {
+        if (local->stack_pos == 0) {
             // each stack slot is 8bytes
+            local->stack_pos = ctx->num_spills*8;
             ctx->num_spills = align_up(ctx->num_spills + (local->size+7)/8, (local->align+7)/8);
-            local->stack_pos = -(ctx->num_spills + 1)*8;
         }
 
         if (local->type) {
@@ -663,6 +701,7 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
     TB_Function* f = ctx->f;
     if (n->type == x86_call) {
         CallingConv* cc = ctx->calling_conv;
+        int proj_count = 0;
 
         // we need to know which regs we've used, since those won't be tmps
         RegMask** ins = tb_arena_alloc(&f->tmp_arena, n->input_count * sizeof(RegMask*));
@@ -674,6 +713,16 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
         FOR_N(i, base, n->input_count) if (ins[i] != &TB_REG_EMPTY) {
             TB_ASSERT(ins[i]->count == 1);
             used[ins[i]->class] |= ins[i]->mask[0];
+        }
+
+        FOR_USERS(u, n) {
+            if (USERN(u)->type != TB_PROJ) { continue; }
+
+            RegMask* out = node_constraint(ctx, USERN(u), ins);
+            if (out != &TB_REG_EMPTY) {
+                TB_ASSERT(out->count == 1);
+                used[out->class] |= out->mask[0];
+            }
         }
 
         bool use_frame_ptr = ctx->f->features.gen & TB_FEATURE_FRAME_PTR;
@@ -688,11 +737,21 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
                     // we don't clobber the regs we use to pass params
                     ((used[i] >> j) & 1) == 0
                 ) {
-                    node_add_tmp(ctx, n, intern_regmask(ctx, i, false, 1ull << j));
+                    RegMask* rm = intern_regmask(ctx, i, false, 1ull << j);
+                    TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+                    set_input(f, proj, n, 0);
+                    TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = proj_count++, .def = rm);
+                    // node_add_tmp(ctx, n, rm);
                 }
             }
         }
         tb_arena_free(&f->tmp_arena, ins, n->input_count * sizeof(RegMask*));
+
+        // Clobber FLAGS
+        RegMask* rm = ctx->normie_mask[REG_CLASS_FLAGS];
+        TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+        set_input(f, proj, n, 0);
+        TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = proj_count++, .def = rm);
     } else if (n->type >= x86_add && n->type <= x86_ror) {
         // integer ops all produce the FLAGS
         TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
@@ -877,7 +936,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         case x86_vmov: case x86_vadd: case x86_vmul: case x86_vdiv:
-        case x86_ucomi:
+        case x86_ucomi: case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             RegMask* xmm = ctx->normie_mask[REG_CLASS_XMM];
@@ -917,8 +976,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_jcc:
         {
             if (ins) {
-                ins[1] = &TB_REG_EMPTY;
-                ins[2] = ctx->normie_mask[REG_CLASS_FLAGS];
+                ins[1] = ctx->normie_mask[REG_CLASS_FLAGS];
             }
             return &TB_REG_EMPTY;
         }
@@ -1014,6 +1072,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 }
                 used[REG_CLASS_STK] = 1 + ctx->param_count;
 
+                int param_count = 0;
                 for (size_t i = base; i < n->input_count; i++) {
                     TB_Node* in = n->inputs[i];
                     if (in->type == TB_MACH_TEMP) {
@@ -1039,6 +1098,16 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                         ins[i] = intern_regmask2(ctx, reg_class, false, cc->params[reg_class][reg_num]);
                         used[reg_class] += 1;
                     }
+                    param_count++;
+                }
+
+                if (param_count > ctx->call_usage) {
+                    ctx->call_usage = param_count;
+                    if (cc == &CC_WIN64 && ctx->call_usage > 0 && ctx->call_usage < 3) {
+                        ctx->call_usage = 4;
+                    }
+
+                    ctx->num_regs[REG_CLASS_STK] = ctx->param_count + ctx->call_usage + ctx->num_spills + 1;
                 }
             }
 
@@ -1055,23 +1124,28 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 static int op_gpr_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_GPR); }
 static int op_xmm_at(Ctx* ctx, TB_Node* n) { return op_reg_at(ctx, n, REG_CLASS_XMM); }
 
+// stack_usage is how much we subtract when entering the function:
+//
+//   [rsp + stack_usage + stack_header + i*8] CALLER PARAM
+//   [rsp + stack_usage + stack_header-8]     RPC
+//   [rsp + stack_usage]                      RBP (optional)
+//   [rsp + i*8]                              SPILLS/LOCALS
+//   [rsp + i*8]                              CALLEE PARAM
+//
 static int stk_offset(Ctx* ctx, int reg, int width) {
     if (reg == 0) {
         // return address
         return ctx->stack_usage + (ctx->stack_header - 8);
     } else if (reg < ctx->param_count + 1) {
         // argument slots (reaching outside of our stack frame)
-        return ctx->stack_usage + (reg - 1)*8;
+        return ctx->stack_usage + reg*8;
     } else if (reg < ctx->param_count + ctx->call_usage + 1) {
         // param passing slots
-        return (reg - (ctx->param_count + 1))*8;
+        return (reg - (1 + ctx->param_count))*8;
     } else {
-        int spill_num = reg - (ctx->param_count + ctx->call_usage);
-        if (width > 1) {
-            spill_num += width - 1;
-        }
-
-        return (ctx->stack_usage - ctx->stack_header) - spill_num*8;
+        // normal spill slots
+        int spill_num = reg - (1 + ctx->param_count + ctx->call_usage);
+        return ctx->call_usage*8 + spill_num*8;
     }
 }
 
@@ -1109,7 +1183,13 @@ static Val parse_cisc_operand(Ctx* restrict ctx, TB_Node* n, Val* rx, X86MemOp* 
             rm.symbol = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeMachSymbol)->sym;
         } else if (base->type == TB_MACH_FRAME_PTR) {
             rm.reg = RSP;
-            rm.imm += ctx->stack_usage - ctx->stack_header;
+            if (rm.imm < 0) {
+                // "negative" stack offsets are actually talking about the top of the stack
+                rm.imm = ctx->stack_usage + ctx->stack_header + (-rm.imm - 8);
+            } else {
+                rm.imm += ctx->call_usage*8;
+            }
+            // rm.imm += ctx->stack_usage - ctx->stack_header;
         } else {
             rm.reg = op_gpr_at(ctx, base);
         }
@@ -1429,6 +1509,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case x86_vsub:
         case x86_vmul:
         case x86_vdiv:
+        case x86_vxor:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt;
@@ -1445,6 +1526,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 case x86_vsub: op_type = FP_SUB; break;
                 case x86_vmul: op_type = FP_MUL; break;
                 case x86_vdiv: op_type = FP_DIV; break;
+                case x86_vxor: op_type = FP_XOR; break;
                 default: tb_todo();
             }
 
@@ -1928,7 +2010,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
             int dst_pos = i * 8;
             int param_gpr = CC_WIN64.params[REG_CLASS_GPR][i];
 
-            __(MOV, TB_X86_QWORD, Vbase(RSP, stack_usage + dst_pos), Vgpr(param_gpr));
+            __(MOV, TB_X86_QWORD, Vbase(RSP, stack_usage + ctx->stack_header + dst_pos), Vgpr(param_gpr));
         }
     }
 
@@ -2001,26 +2083,21 @@ static void dump_stack_layout(Ctx* restrict ctx, TB_CGEmitter* e) {
     TB_OPTDEBUG(ANSI)(E("\x1b[32m"));
     E("// STACK OF '%s' (SPACE = %zu):\n", ctx->f->super.name, stack_usage);
     FOR_REV_N(i, 0, proto->param_count) {
-        E("//  [SP + %3td] CALLER PARAM\n", stack_usage + i*8);
+        E("//  [SP + %3td] CALLER PARAM\n", stk_offset(ctx, 1+i, 1));
     }
 
     if (stack_usage > 8) {
         E("// ==============\n");
-        E("//  [SP + %3zu] RPC\n", stack_usage - 8);
+        E("//  [SP + %3zu] RPC\n", stk_offset(ctx, 0, 1));
         if (ctx->f->features.gen & TB_FEATURE_FRAME_PTR) {
-            E("//  [SP + %3zu] saved RBP\n", stack_usage - 16);
+            E("//  [SP + %3zu] saved RBP\n", stack_usage - 8);
         }
-        FOR_N(i, 0, ctx->param_count + ctx->call_usage + ctx->num_spills) {
-            int pos = stk_offset(ctx, 1 + i, 1);
-            E("//  [SP + %3d] STACK%zu\n", pos, 1 + i);
-        }
-        /* FOR_N(i, 0, ctx->num_spills) {
-            int pos = stk_offset(ctx, 1 + ctx->param_count + ctx->call_usage + i);
-            E("//  [SP + %3d] SPILL%zu\n", pos, i);
+        FOR_REV_N(i, 0, ctx->num_spills) {
+            E("//  [SP + %3td] STACK%zu\n", stk_offset(ctx, 1 + ctx->param_count + ctx->call_usage + i, 1), 1 + ctx->param_count + ctx->call_usage + i);
         }
         FOR_REV_N(i, 0, ctx->call_usage) {
-            E("//  [SP + %3td] CALLEE ARG\n", i*8);
-        } */
+            E("//  [SP + %3td] CALLEE ARG\n", stk_offset(ctx, 1 + ctx->param_count + i, 1));
+        }
     }
     TB_OPTDEBUG(ANSI)(E("\x1b[0m"));
 }

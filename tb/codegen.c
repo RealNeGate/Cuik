@@ -321,9 +321,11 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
 
             VReg* to_reg_vreg = tb__set_node_vreg(ctx, to_reg);
             to_reg_vreg->mask = xfer_mask;
+            to_reg_vreg->reg_width = tb__reg_width_from_dt(xfer_mask->class, to_reg->dt);
 
             VReg* to_stk_vreg = tb__set_node_vreg(ctx, to_stk);
             to_stk_vreg->mask = in_mask;
+            to_stk_vreg->reg_width = tb__reg_width_from_dt(in_mask->class, to_stk->dt);
 
             // TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: stack-stack reload (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, reload_n->gvn));
         } else {
@@ -343,6 +345,7 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
             // schedule the split right before use
             tb__insert_before(ctx, ctx->f, reload_n, use_n);
             VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
+            reload_vreg->reg_width = tb__reg_width_from_dt(in_mask->class, reload_n->dt);
             reload_vreg->mask = in_mask;
 
             TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: reload (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, reload_n->gvn));

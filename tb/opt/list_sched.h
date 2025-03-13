@@ -125,8 +125,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
     return best_i;
 }
 
-void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count) {
-    TB_ASSERT(phi_vals == NULL && "TODO");
+void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count) {
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     TB_OPTDEBUG(SCHEDULE)(printf("BB %zu\n", bb - cfg->blocks));

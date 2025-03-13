@@ -42,9 +42,13 @@ pat (TB_PTR_OFFSET ___ (TB_SYMBOL $root sym=$sym) ($disp: TB_ICONST ...))
 where "fits_into_int32(TB_TYPE_I64, $disp)"
 => (x86_MEMORY (TB_MACH_SYMBOL $root sym=$sym) disp="as_int32($disp)")
 
+// [symbol + offset]
+// pat (TB_PTR_OFFSET ___ (TB_SYMBOL $root sym=$sym) $index)
+// => (x86_MEMORY flags=OP_INDEXED (x86_lea ___ ___ (TB_MACH_SYMBOL $root sym=$sym)) $index scale=0)
+
 // using an lea as a memory operand is kinda useful... swag :p
-pat (x86_lea ___ ___ $base disp=$disp) => (x86_MEMORY $base disp=$disp)
-pat (x86_lea ___ ___ $base $index scale=$scale disp=$disp flags=$flags) where "$flags==OP_INDEXED" => (x86_MEMORY $base $index flags=OP_INDEXED scale=$scale disp=$disp)
+subpat (x86_lea ___ ___ $base disp=$disp) => (x86_MEMORY $base disp=$disp)
+subpat (x86_lea ___ ___ $base $index scale=$scale disp=$disp flags=$flags) where "$flags==OP_INDEXED" => (x86_MEMORY $base $index flags=OP_INDEXED scale=$scale disp=$disp)
 
 // *******************************
 // FLAGS
@@ -92,6 +96,8 @@ pat (x86_COND $cmp cond=$cond) => (x86_setcc dt=TB_TYPE_I8 ___ ___ $cmp cond=$co
 node (call)
 pat (TB_CALL $ctrl $mem (x86_MEMORY ($sym: TB_MACH_SYMBOL ...)) $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem $sym $REST)
 pat (TB_CALL $ctrl $mem $target $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem $target $REST mode=MODE_LD)
+
+pat (TB_VA_START ...) => "isel_va_start(ctx, f, n)"
 
 // *******************************
 // integer ops
@@ -172,6 +178,13 @@ node(movzx8)
 node(movsx16)
 node(movzx16)
 node(movsx32)
+
+node(vxor)
+pat (TB_FNEG dt=$dt ___ $in)
+=> (x86_vxor dt=$dt ___ ___ (TB_MACH_SYMBOL "f->root_node" sym="gimme_float32_neg_zero(ctx)") $in mode=MODE_LD)
+
+pat (TB_BITCAST dt=$dt ___ $in)
+=> (TB_MACH_COPY dt=$dt ___ $in def="ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]" use="ctx->normie_mask[TB_IS_FLOAT_TYPE($in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]")
 
 // 32 -> 64
 pat (TB_ZERO_EXT dt=$dt ___ $src)

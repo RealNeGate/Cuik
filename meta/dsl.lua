@@ -238,6 +238,29 @@ local function dfa_compile(n, head, depth, stack)
     end
 end
 
+function extra_node_type_name(t)
+    local extra_type = "X86MemOp"
+    if  t == "TB_CMP_ULE" or
+        t == "TB_CMP_ULT" or
+        t == "TB_CMP_SLE" or
+        t == "TB_CMP_SLT" or
+        t == "TB_CMP_FLE" or
+        t == "TB_CMP_FLT" or
+        t == "TB_CMP_EQ"  or
+        t == "TB_CMP_NE"  then
+        extra_type = "TB_NodeCompare"
+    elseif t == "TB_SYMBOL" then
+        extra_type = "TB_NodeSymbol"
+    elseif t == "TB_LOCAL" then
+        extra_type = "TB_NodeLocal"
+    elseif t == "TB_MACH_SYMBOL" then
+        extra_type = "TB_NodeMachSymbol"
+    elseif t == "TB_MACH_COPY" then
+        extra_type = "TB_NodeMachCopy"
+    end
+    return extra_type
+end
+
 local node_cnt = 0
 function write_node(strs, ids, n)
     -- create kids first
@@ -263,10 +286,7 @@ function write_node(strs, ids, n)
 
     -- declaration of a node
     local node_type = n[1]
-    local extra_type = "X86MemOp"
-    if node_type == "TB_MACH_SYMBOL" then
-        extra_type = "TB_NodeMachSymbol"
-    end
+    local extra_type = extra_node_type_name(n[1])
 
     local dt_name = n.dt
     if dt_name == nil then
@@ -327,9 +347,10 @@ node_basic_fields = {
 }
 
 node_extra_desc = {
-    ["TB_NodeCompare"] = { cmp_dt="TB_DataType" },
-    ["TB_NodeSymbol"]  = { sym="TB_Symbol*" },
-    ["TB_NodeLocal"]   = { stack_pos="int" },
+    ["TB_NodeCompare"]  = { cmp_dt="TB_DataType" },
+    ["TB_NodeSymbol"]   = { sym="TB_Symbol*" },
+    ["TB_NodeLocal"]    = { stack_pos="int" },
+    ["TB_NodeMachCopy"] = { def="RegMask*", use="RegMask*" },
 }
 
 function find_captures(strs, n, expr)
@@ -344,22 +365,7 @@ function find_captures(strs, n, expr)
         strs[#strs + 1] = string.format("    TB_Node* %s = %s;", n.name, expr)
     end
 
-    local extra_type = "X86MemOp"
-    if  n[1] == "TB_CMP_ULE" or
-        n[1] == "TB_CMP_ULT" or
-        n[1] == "TB_CMP_SLE" or
-        n[1] == "TB_CMP_SLT" or
-        n[1] == "TB_CMP_FLE" or
-        n[1] == "TB_CMP_FLT" or
-        n[1] == "TB_CMP_EQ"  or
-        n[1] == "TB_CMP_NE"  then
-        extra_type = "TB_NodeCompare"
-    elseif n[1] == "TB_SYMBOL" then
-        extra_type = "TB_NodeSymbol"
-    elseif n[1] == "TB_LOCAL" then
-        extra_type = "TB_NodeLocal"
-    end
-
+    local extra_type = extra_node_type_name(n[1])
     for k,v in pairs(n) do
         if v == "$REST" then
             strs[#strs + 1] = string.format("    size_t %s_LEN = %s->input_count - %d;", v, expr, k-2)
@@ -386,6 +392,7 @@ function find_captures(strs, n, expr)
 end
 
 local fallback = {}
+local subpat_map = {}
 while true do
     local t = lex()
     if t == nil then
@@ -408,7 +415,9 @@ while true do
             node_types["x86_"..desc[1]] = { id=node_type_count, name="x86_"..desc[1] }
             node_type_count = node_type_count + 1
         end
-    elseif t == "pat" then
+    elseif t == "pat" or t == "subpat" then
+        local is_subpat = t == "subpat"
+
         t = lex()
         if t ~= "(" then
             print("fuck but in parsing")
@@ -438,34 +447,47 @@ while true do
         t = lex()
         if t == "(" then
             replacement = parse_node()
+
+            local strs = accept[head]
+            if not strs then
+                strs = {}
+                accept[head] = strs
+            end
+
+            if replacement[1] == "x86_MEMORY" or replacement[1] == "x86_COND" then
+                is_operand[pattern[1]] = true
+                if is_subpat then
+                    subpat_map[pattern[1]] = true
+                end
+            end
+
+            local ids = {}
+            node_cnt = 0
+
+            strs[#strs + 1] = "do {"
+            find_captures(strs, pattern, "n")
+            if where then
+                strs[#strs + 1] = "    if (!("..where..")) {"
+                strs[#strs + 1] = "        break;"
+                strs[#strs + 1] = "    }"
+            end
+            strs[#strs + 1] = ""
+            write_node(strs, ids, replacement)
+            strs[#strs + 1] = string.format("    return k%d;", ids[replacement])
+            strs[#strs + 1] = "} while (0);"
+        else
+            -- print(inspect(pattern))
+            local strs = accept[head]
+            if not strs then
+                strs = {}
+                accept[head] = strs
+            end
+
+            strs[#strs + 1] = "{"
+            strs[#strs + 1] = string.format("    TB_Node* k = %s;", t)
+            strs[#strs + 1] = "    if (k != NULL) { return k; }"
+            strs[#strs + 1] = "}"
         end
-
-        -- print(inspect(pattern))
-
-        local strs = accept[head]
-        if not strs then
-            strs = {}
-            accept[head] = strs
-        end
-
-        if replacement[1] == "x86_MEMORY" or replacement[1] == "x86_COND" then
-            is_operand[pattern[1]] = true
-        end
-
-        local ids = {}
-        node_cnt = 0
-
-        strs[#strs + 1] = "do {"
-        find_captures(strs, pattern, "n")
-        if where then
-            strs[#strs + 1] = "    if (!("..where..")) {"
-            strs[#strs + 1] = "        break;"
-            strs[#strs + 1] = "    }"
-        end
-        strs[#strs + 1] = ""
-        write_node(strs, ids, replacement)
-        strs[#strs + 1] = string.format("    return k%d;", ids[replacement])
-        strs[#strs + 1] = "} while (0);"
 
         -- reset muh shit
         captures = {}
@@ -516,6 +538,8 @@ local function dfa_crawl(state, fail, depth)
                 -- once depth drops back to 0 we've rejoined
                 if depth > 1 then
                     dfa_crawl(v, fail, depth - 1)
+                elseif depth == 1 then
+                    dfa_crawl(v, dfa[fail][0], depth - 1)
                 end
             else
                 dfa_crawl(v, fail, depth)
@@ -625,7 +649,7 @@ else
             out:put(line)
             out:put("\n")
         end
-        if special_return_cases[k] then
+        if k ~= special_return_cases[k] and special_return_cases[k] then
             out:put("        } return x86_dfa_accept(ctx, f, n, ")
             out:put(special_return_cases[k])
             out:put(");\n")
@@ -637,8 +661,15 @@ else
     out:put("        default: return NULL;\n")
     out:put("    }\n")
     out:put("}\n\n")
-    out:put("static bool x86_is_operand[512] = {\n")
+    out:put("static bool mach_is_operand[512] = {\n")
     for k,v in pairs(is_operand) do
+        out:put("    [")
+        out:put(k)
+        out:put("] = true,\n")
+    end
+    out:put("};\n")
+    out:put("static bool mach_is_subpat[512] = {\n")
+    for k,v in pairs(subpat_map) do
         out:put("    [")
         out:put(k)
         out:put("] = true,\n")

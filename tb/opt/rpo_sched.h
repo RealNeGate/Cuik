@@ -33,7 +33,7 @@ static void fill_phis(TB_Arena* arena, ArenaArray(SchedPhi)* phis, TB_Node* succ
 }
 
 // basically just topological sort, no fancy shit
-void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb) {
+void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb) {
     TB_Arena* arena = &f->tmp_arena;
     TB_ArenaSavepoint sp = tb_arena_save(arena);
     TB_Node* end = bb->end;
@@ -101,16 +101,6 @@ void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(
                 TB_Node* phi = phis[phi_curr].phi;
                 TB_Node* val = phis[phi_curr].n;
                 phi_curr += 1;
-
-                // reserve PHI space
-                if (phi_vals && val->dt.type != TB_TAG_MEMORY) {
-                    PhiVal p;
-                    p.phi = phi;
-                    p.n   = val;
-                    p.dst = -1;
-                    p.src = -1;
-                    dyn_array_put(*phi_vals, p);
-                }
 
                 if (sched_in_bb(f, ws, bb, val)) {
                     top = sched_make_node(arena, top, val);

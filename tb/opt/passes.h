@@ -124,14 +124,6 @@ bool tb_node_mem_read_only(TB_Node* n);
 TB_Node* tb_node_mem_in(TB_Node* n);
 
 ////////////////////////////////
-// CFG
-////////////////////////////////
-typedef struct {
-    TB_Node *phi, *n;
-    int dst, src;
-} PhiVal;
-
-////////////////////////////////
 // Core optimizer
 ////////////////////////////////
 typedef struct {
@@ -422,8 +414,8 @@ typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n, TB_Node* end);
 typedef uint64_t (*TB_GetUnitMask)(TB_Function* f, TB_Node* n);
 
 // Local scheduler
-void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count);
-void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb);
+void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count);
+void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb);
 void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg);
 
 // Global scheduler

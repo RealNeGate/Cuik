@@ -192,7 +192,7 @@ typedef struct {
 typedef struct TB_Function TB_Function;
 typedef struct TB_FunctionOutput TB_FunctionOutput;
 bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types);
-TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm);
+TB_FunctionOutput* tb_codegen(TB_Function* f, int ra, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm);
 TB_Function* tb_symbol_as_function(TB_Symbol* s);
 void tb_output_print_asm(TB_FunctionOutput* out, void* fp);
 
@@ -246,7 +246,7 @@ function compile(src, optimize, decl_mappings)
                 cuik_dll.tb_opt(f, ir_worklist, false)
             end
 
-            local out = cuik_dll.tb_codegen(f, ir_worklist, nil, true)
+            local out = cuik_dll.tb_codegen(f, 0, ir_worklist, nil, true)
             cuik_dll.tb_output_print_asm(out, nil)
 
             symbols[i] = sym
@@ -339,15 +339,6 @@ function matmul_blocked(N)
     return src:tostring()
 end
 
-local src = matmul_blocked(16)
-print(src)
-
-local funcs = compile(src, true, {
-    matmul="typedef int FN_matmul(float* dst, float* a, float* b);",
-})
-
-print(inspect(funcs))
-
 function sample(N, dst, a, b)
     for i=0,N-1 do
         for j=0,N-1 do
@@ -380,7 +371,15 @@ function print_mat(N, mat)
     print(str:tostring())
 end
 
-local N = 16
+local N = 100
+
+local src = matmul_blocked(N)
+print(src)
+
+local funcs = compile(src, true, {
+    matmul="typedef int FN_matmul(float* dst, float* a, float* b);",
+})
+
 local aa = rand_mat(N)
 local bb = rand_mat(N)
 local dst = ffi.new("float[?]", N*N)
@@ -393,7 +392,7 @@ if true then
     print_mat(N, dst)
 end
 
-local tries = 100000
+local tries = 100
 local x = os.clock()
 for i=1,tries do
     funcs.matmul(dst, aa, bb)

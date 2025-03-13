@@ -170,7 +170,7 @@ bool tb_node_mem_read_only(TB_Node* n) {
 // has potential memory dep on inputs[1]
 TB_Node* tb_node_mem_in(TB_Node* n) {
     if (cfg_flags(n) & NODE_MEMORY_IN) {
-        return n->inputs[1];
+        return n->input_count > 1 ? n->inputs[1] : 0;
     }
     return NULL;
 }

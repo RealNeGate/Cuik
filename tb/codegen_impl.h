@@ -252,7 +252,8 @@ static void construct_prologue_epilogue(Ctx* restrict ctx, TB_Function* f) {
 static uint32_t x86_grammar_exp;
 static uint32_t* x86_grammar;
 
-static bool x86_is_operand[512];
+static bool mach_is_operand[512];
+static bool mach_is_subpat[512];
 static TB_Node* x86_dfa_accept(Ctx* ctx, TB_Function* f, TB_Node* n, int state);
 
 static void node_grammar_alloc(size_t cap) {
@@ -334,7 +335,7 @@ static TB_Node* node_isel_phi(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
 
 static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_Worklist* walker_ws, int depth) {
     TB_ASSERT(n->type != TB_PHI);
-    if (depth == 0 && x86_is_operand[n->type]) {
+    if (depth == 0 && mach_is_subpat[n->type]) {
         return NULL;
     }
 
@@ -353,7 +354,11 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
         if (in) {
             TB_OPTDEBUG(ISEL2)(printf("  step(%%%-3u: %-16s, %3d): ", in->gvn, tb_node_get_name(in_type), state));
 
-            if (x86_is_operand[in->type] && in != n) {
+            // either matches against COND or MEMORY
+            bool wants_operand = node_grammar_get(state << 16 | (256+1)) > 0;
+            wants_operand |= node_grammar_get(state << 16 | (257+1)) > 0;
+
+            if (mach_is_operand[in->type] && in != n && wants_operand) {
                 worklist_test_n_set(walker_ws, in);
                 tb__gvn_remove(f, in);
 
@@ -482,7 +487,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
     log_debug("%s: tmp_arena=%.1f KiB, ir_arena=%.1f KiB (post %s)", f->super.name, tb_arena_current_size(&f->tmp_arena) / 1024.0f, (tb_arena_current_size(&f->arena) - og_size) / 1024.0f, label);
 }
 
-static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
+static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
     cuikperf_region_start("compile", f->super.name);
 
     #if TB_OPTDEBUG_ISEL
@@ -712,8 +717,8 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
 
             // compute local schedule
             CUIK_TIMED_BLOCK("local sched") {
-                // tb_greedy_scheduler(f, &cfg, ws, NULL, bb);
-                tb_list_scheduler(f, &cfg, ws, NULL, bb, node_latency, node_unit_mask, FUNCTIONAL_UNIT_COUNT);
+                // tb_greedy_scheduler(f, &cfg, ws, bb);
+                tb_list_scheduler(f, &cfg, ws, bb, node_latency, node_unit_mask, FUNCTIONAL_UNIT_COUNT);
             }
 
             // a bit of slack for spills
@@ -810,8 +815,10 @@ static void compile_function(TB_Function* restrict f, TB_FunctionOutput* restric
     }
 
     CUIK_TIMED_BLOCK("regalloc") {
-        tb__rogers(&ctx, &f->tmp_arena);
-        // tb__briggs(&ctx, &f->tmp_arena);
+        switch (ra) {
+            case TB_RA_ROGERS: tb__rogers(&ctx, &f->tmp_arena); break;
+            case TB_RA_BRIGGS: tb__briggs(&ctx, &f->tmp_arena); break;
+        }
 
         worklist_clear(ws);
         nl_hashset_free(ctx.mask_intern);
