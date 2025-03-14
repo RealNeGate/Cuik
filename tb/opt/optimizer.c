@@ -1088,6 +1088,8 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
                 migrate_type(f, n, k);
                 subsume_node(f, n, k);
                 mark_users(f, k);
+				
+				progress = true;
                 n = k;
             }
         }
