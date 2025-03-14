@@ -1089,7 +1089,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
                 subsume_node(f, n, k);
                 mark_users(f, k);
 				
-				progress = true;
+                progress = true;
                 n = k;
             }
         }
