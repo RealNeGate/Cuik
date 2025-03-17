@@ -707,29 +707,29 @@ struct Subexpr {
     };
 };
 
-// # COMPRESSED EXPRESSIONS
-//   To represent a metric shitload of expressions in Cuik we compact them
-//   using a postfix notation. Instead of using pointers to refer to inputs
-//   it's implicit to this position in the expression stream.
-//
-//     1 x y * +                     +
-//                                  / \
-//                    versus       1   *
-//                                    / \
-//                                   x   y
-//
-// # CAST TYPE
-//   an Expr's cast_type is the type it'll be desugared into.
-//
-//     a + b where a and b are 16bit
-//
-//   their cast_type might be int because of C's
-//   promotion rules.
-//
-// # SYMBOL CHAIN
-//   an EXPR_SYMBOL or EXPR_UNKNOWN_SYMBOL will be part of a linked list which
-//   is used for knowing when symbols are in use.
-//
+/* # COMPRESSED EXPRESSIONS
+ *   To represent a metric shitload of expressions in Cuik we compact them
+ *   using a postfix notation. Instead of using pointers to refer to inputs
+ *   it's implicit to this position in the expression stream.
+ *
+ *     1 x y * +                     +
+ *                                  / \
+ *                    versus       1   *
+ *                                    / \
+ *                                   x   y
+ *
+ * # CAST TYPE
+ *   an Expr's cast_type is the type it'll be desugared into.
+ *
+ *     a + b where a and b are 16bit
+ *
+ *   their cast_type might be int because of C's
+ *   promotion rules.
+ *
+ * # SYMBOL CHAIN
+ *   an EXPR_SYMBOL or EXPR_UNKNOWN_SYMBOL will be part of a linked list which
+ *   is used for knowing when symbols are in use.
+ */
 struct Cuik_Expr {
     size_t count;
     bool visited;

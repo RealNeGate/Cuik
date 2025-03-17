@@ -179,8 +179,9 @@ int main(int argc, const char** argv) {
     }
 
     if (args.time) {
-        char* perf_output_path = cuik_malloc(FILENAME_MAX);
-        snprintf(perf_output_path, FILENAME_MAX, "%s.spall", args.output_name ? args.output_name : args.sources[0]->data);
+        size_t perf_output_path_size = FILENAME_MAX + 8;
+        char* perf_output_path = cuik_malloc(perf_output_path_size);
+        snprintf(perf_output_path, perf_output_path_size, "%s.spall", args.output_name ? args.output_name : args.sources[0]->data);
 
         cuikperf_start(perf_output_path);
         cuik_free(perf_output_path);

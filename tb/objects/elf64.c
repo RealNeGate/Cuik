@@ -40,8 +40,8 @@ static void put_section_symbols(DynArray(TB_ModuleSection) sections, TB_Emitter*
             if (g->super.name) {
                 name = tb_outstr_nul_UNSAFE(strtbl, g->super.name);
             } else {
-                char buf[8];
-                snprintf(buf, 8, "$%d_%td", sec_num, i);
+                char buf[35];
+                snprintf(buf, sizeof(buf), "$%d_%td", sec_num, i);
                 name = tb_outstr_nul_UNSAFE(strtbl, buf);
             }
 

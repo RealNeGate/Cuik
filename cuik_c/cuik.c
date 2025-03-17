@@ -77,8 +77,8 @@ void cuik_set_standard_defines(Cuik_CPP* cpp, const Cuik_DriverArgs* args) {
     struct tm* timeinfo = localtime(&rawtime);
 
     // Mmm dd yyyy
-    char date_str[20];
-    snprintf(date_str, 20, "\"%.3s%3d %d\"", mon_name[timeinfo->tm_mon], timeinfo->tm_mday, 1900 + timeinfo->tm_year);
+    char date_str[30];
+    snprintf(date_str, sizeof(date_str), "\"%.3s%3d %d\"", mon_name[timeinfo->tm_mon], timeinfo->tm_mday, 1900 + timeinfo->tm_year);
     cuikpp_define_cstr(cpp, "__DATE__", date_str);
 
     // The time of translation of the preprocessing translation unit: a

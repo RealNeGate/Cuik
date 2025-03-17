@@ -52,7 +52,13 @@ void tb_integrated_dbg(TB_Function* f, TB_Node* initial_n) {
                 i++;
             }
         } else if (strcmp(line, "debugger") == 0) {
+#ifdef __has_builtin
+#if __has_builtin(__builtin_debugtrap)
             __builtin_debugtrap();
+#elif __has_builtin(__builtin_trap)
+            __builtin_trap();
+#endif
+#endif
             break;
         } else if (strcmp(line, "pf") == 0) {
             tb_print_dumb(f);
