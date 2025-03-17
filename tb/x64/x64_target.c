@@ -203,7 +203,7 @@ static void print_extra(TB_Node* n) {
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
     int vreg_id = ctx->vreg_map[n->gvn];
-    if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
+    if (0 && vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
         VReg* v = &ctx->vregs[vreg_id];
         if (v->class == REG_CLASS_GPR) {
             printf("%s", GPR_NAMES[v->assigned]);
@@ -864,6 +864,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
                 TB_ASSERT(i >= 2 && i < 2 + cc->ret_count[reg_class]);
                 return intern_regmask(ctx, reg_class, false, 1u << cc->rets[reg_class][i - 2]);
+            } else if (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div) {
+                return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i ? RDX : RAX));
             }
 
             tb_todo();
@@ -1301,6 +1303,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             if (x == 0) {
                 __(XOR, TB_X86_DWORD, Vgpr(dst), Vgpr(dst));
             } else if (hi == 0 || dt == TB_X86_QWORD) {
+                // "movabs"
                 EMIT1(e, rex(dt == TB_X86_QWORD, 0, dst, 0));
                 EMIT1(e, 0xB8 + (dst & 0b111));
                 if (dt != TB_X86_QWORD) {

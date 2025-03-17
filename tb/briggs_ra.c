@@ -93,6 +93,9 @@ static void bits64_remove(uint64_t* arr, size_t x) {
     arr[x / 64] &= ~(1ull << (x % 64));
 }
 
+// static int bits64_first(uint64_t* arr, size_t cnt);
+// static int bits64_next(uint64_t* arr, size_t cnt, int x);
+
 static int bits64_next(uint64_t* arr, size_t cnt, int x) {
     // unpack coords
     size_t i = x / 64, j = x % 64;
@@ -256,7 +259,7 @@ static void briggs_insert_op(Ctx* ctx, Briggs* ra, int bb_id, TB_Node* n, int po
     tb__insert(ctx, ctx->f, bb, n);
 }
 
-static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
+static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n, bool kill_node) {
     size_t extra = extra_bytes(n);
     TB_Function* f = ctx->f;
     TB_Node* root = f->root_node;
@@ -308,6 +311,7 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
 
         RegMask* remat_mask = ctx->constraint(ctx, remat, NULL);
         reload_vreg->mask = tb__reg_mask_meet(ctx, in_mask, remat_mask);
+        reload_vreg->reg_width = tb__reg_width_from_dt(reload_vreg->mask->class, remat->dt);
         TB_ASSERT(reload_vreg->mask != &TB_REG_EMPTY && "TODO hard split from rematerializing");
 
         // if it's remat'ing a copy, we should edit the def mask to match the use
@@ -335,11 +339,13 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
     }
     tb_arena_restore(&f->tmp_arena, sp);
 
-    // delete the original def
-    ctx->vregs[ctx->vreg_map[n->gvn]].uses -= 1;
-    ctx->vreg_map[n->gvn] = 0;
-    tb__remove_node(ctx, f, n);
-    tb_kill_node(f, n);
+    if (kill_node) {
+        // delete the original def
+        ctx->vregs[ctx->vreg_map[n->gvn]].uses -= 1;
+        ctx->vreg_map[n->gvn] = 0;
+        tb__remove_node(ctx, f, n);
+        tb_kill_node(f, n);
+    }
 }
 
 #define BITS64_TEST(x, i) (((x) >> (i)) & 1)
@@ -570,8 +576,6 @@ static void split_fancy(Ctx* ctx, Briggs* ra) {
     // 1-def 1-use will basically just spill
     // everywhere between the two sites.
     if (true) {
-        briggs_dump_sched(ctx, ra);
-
         uint64_t single_defuse = 0;
         int min[64], max[64];
         FOR_N(i, 0, num_spills) {
@@ -816,7 +820,7 @@ static void split_fancy(Ctx* ctx, Briggs* ra) {
             if (spill_i >= 0) {
                 if (can_remat(ctx, n)) {
                     TB_OPTDEBUG(REGALLOC4)(printf("      Spill%d: remateralize! (%%%u)\n", spill_i, n->gvn));
-                    rematerialize(ctx, NULL, n);
+                    rematerialize(ctx, NULL, n, true);
                     j--;
 
                     // dead now
@@ -1201,6 +1205,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
                 if (vreg->mask->may_spill) {
                     vreg->spill_cost = INFINITY;
                     vreg->mask = intern_regmask(ctx, REG_CLASS_STK, true, 0);
+                    vreg->reg_width = tb__reg_width_from_dt(REG_CLASS_STK, vreg->n->dt);
                     TB_OPTDEBUG(REGALLOC3)(printf("#   assigned UNCOLORED (will be treated as spilled next time)\n"));
                 } else {
                     // if a stack slot failed to color then it means we
@@ -1803,6 +1808,31 @@ static void ifg_remove_edges(Ctx* ctx, Briggs* ra, int i, IFG_Worklist* lo, IFG_
 static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
     ArenaArray(SimplifiedElem) stk = aarray_create(ra->arena, SimplifiedElem, ra->ifg_len);
 
+    #if 0
+    // making an elimination order that's entirely silly for a gag, incomplete
+    TB_ArenaSavepoint sp = tb_arena_save(ra->arena);
+
+    size_t visited_cap = ((aarray_length(ctx->vregs) + 63) / 64);
+    uint64_t* visited = tb_arena_alloc(ra->arena, visited_cap * sizeof(uint64_t));
+    memset(visited, 0, visited_cap * sizeof(uint64_t));
+
+    FOR_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        FOR_N(j, 0, aarray_length(bb->items)) {
+            int vreg_id = ctx->vreg_map[bb->items[j]->gvn];
+            if (bits64_test_n_set(visited, vreg_id)) {
+                continue;
+            }
+
+            int d = ra->adj[vreg_id][0];
+            ifg_remove_edges2(ctx, ra, vreg_id);
+
+            SimplifiedElem s = { best_spill, d };
+            aarray_push(stk, s);
+        }
+    }
+    return stk;
+    #else
     TB_ArenaSavepoint sp = tb_arena_save(ra->arena);
     IFG_Worklist lo = ifg_ws_alloc(ctx, ra);
     IFG_Worklist hi = ifg_ws_alloc(ctx, ra);
@@ -1891,4 +1921,5 @@ static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
         // this gives us a reliable "spill reg width"
         ra->max_spills += tb__reg_width_from_dt(REG_CLASS_STK, ctx->vregs[best_spill].n->dt);
     }
+    #endif
 }

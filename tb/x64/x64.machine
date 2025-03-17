@@ -140,8 +140,13 @@ NORMIE_OP8(TB_SAR, sar)
 NORMIE_OP8(TB_ROL, rol)
 NORMIE_OP8(TB_ROR, ror)
 
-// special case for ADD
-pat (TB_ADD dt=$dt ___ $lhs $rhs) where "$dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64" => (x86_lea dt=$dt ___ ___ $lhs $rhs mode=MODE_LD flags=OP_INDEXED)
+node (div)
+node (idiv)
+
+pat (TB_UDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs) index=0)
+pat (TB_SDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs) index=0)
+pat (TB_UMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs) index=1)
+pat (TB_SMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs) index=1)
 
 // *******************************
 // float ops

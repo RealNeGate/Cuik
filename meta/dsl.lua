@@ -238,6 +238,15 @@ local function dfa_compile(n, head, depth, stack)
     end
 end
 
+node_extra_desc = {
+    ["TB_NodeCompare"]  = { cmp_dt="TB_DataType" },
+    ["TB_NodeSymbol"]   = { sym="TB_Symbol*" },
+    ["TB_NodeLocal"]    = { stack_pos="int" },
+    ["TB_NodeMachCopy"] = { def="RegMask*", use="RegMask*" },
+    ["TB_NodeMachProj"] = { index="int", def="RegMask*" },
+    ["TB_NodeProj"]     = { index="int" },
+}
+
 function extra_node_type_name(t)
     local extra_type = "X86MemOp"
     if  t == "TB_CMP_ULE" or
@@ -257,6 +266,10 @@ function extra_node_type_name(t)
         extra_type = "TB_NodeMachSymbol"
     elseif t == "TB_MACH_COPY" then
         extra_type = "TB_NodeMachCopy"
+    elseif t == "TB_MACH_PROJ" then
+        extra_type = "TB_NodeMachProj"
+    elseif t == "TB_PROJ" then
+        extra_type = "TB_NodeProj"
     end
     return extra_type
 end
@@ -344,13 +357,6 @@ end
 
 node_basic_fields = {
   ["dt"] = true,
-}
-
-node_extra_desc = {
-    ["TB_NodeCompare"]  = { cmp_dt="TB_DataType" },
-    ["TB_NodeSymbol"]   = { sym="TB_Symbol*" },
-    ["TB_NodeLocal"]    = { stack_pos="int" },
-    ["TB_NodeMachCopy"] = { def="RegMask*", use="RegMask*" },
 }
 
 function find_captures(strs, n, expr)

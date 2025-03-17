@@ -534,11 +534,17 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
         // "multi-def" nodes, they should be "live out" in the respective pred blocks
         aarray_for(i, cfg.blocks) {
             TB_BasicBlock* bb = &cfg.blocks[i];
-            aarray_for(j, bb->items) {
-                TB_Node* n = bb->items[j];
+            TB_Node* start = bb->start;
+            if (!cfg_is_region(start)) {
+                continue;
+            }
+
+            FOR_USERS(u, start) {
+                TB_Node* n = USERN(u);
                 if (n->type == TB_PHI && n->dt.type != TB_TAG_MEMORY) {
+                    TB_ASSERT(USERI(u) == 0);
                     FOR_N(k, 1, n->input_count) {
-                        TB_Node* pred = cfg_get_pred(&cfg, n->inputs[0], k - 1);
+                        TB_Node* pred = cfg_get_pred(&cfg, start, k - 1);
                         TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
 
                         TB_ASSERT(n->inputs[k]->gvn < node_count);
