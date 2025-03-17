@@ -335,13 +335,19 @@ local function parse_encoding(encodings, name)
 	return pattern, fields
 end
 
-local function walk_A64(list, instructions, parent, encodings)
+local function walk_A64(list, instructions, parents, encodings)
 	--[[ i want to track the path through the tree
 		this gives me families of instructions (SVE/SME/etc.)
 		also build a list of each level's encoding ]]
-	if not parent then parent = {} end
+	if not parents then parents = {} end
 	if not encodings then encodings = {} end
 	if not instructions then instructions = {} end
+
+	local function get_path(parents)
+		local path = {}
+		for _, p in ipairs(parents) do table.insert(path, p.name) end
+		return table.concat(path, '/')
+	end
 
 	for index, item in pairs(list) do
 		table.insert(encodings, item.encoding)
@@ -747,7 +753,7 @@ cgen(string.format([[
 
 -- decode functions
 for _, group in ipairs(instructions) do
-	cgen(string.format('void %s(uint32_t inst) {', group.name))
+	cgen(string.format('static void %s(uint32_t inst) {', group.name))
 	-- group name
 	cgen(string.format('\tchar* name = "%s";', group.name))
 	-- group fields
