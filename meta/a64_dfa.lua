@@ -99,7 +99,7 @@ local function list_to_set(list)
 end
 
 local ast_unimplemented = {}
-local function arm_ast(tree, path)
+local function ast_pp(tree, path)
 	if path == nil then path = '' end
 	local out = {}
 	local todo = function (tree, path)
@@ -107,21 +107,23 @@ local function arm_ast(tree, path)
 			ast_unimplemented[tree._type] = {}
 		end
 		table.insert(ast_unimplemented[tree._type], path)
-		return 'TODO'
+		return 'TODO('..tree._type..'('..path..'))'
 	end
 	local cases = {
 		['AST.BinaryOp']              = function (tree, path)
-			table.insert(out, ast(tree.left, path..'>left'))
-			table.insert(out,     tree.op)
-			table.insert(out, ast(tree.right, path..'>right'))
+			table.insert(out, ast_pp(tree.left, path..'>left'))
+			table.insert(out, tree.op)
+			table.insert(out, ast_pp(tree.right, path..'>right'))
 			return table.concat(out, ' ')
 		end,
-		['AST.Bool']                  = todo,
+		['AST.Bool']                  = function (tree, path)
+			return tree.value
+		end,
 		['AST.Concat']                = todo,
 		['AST.DotAtom']               = function (tree, path)
 			for i, v in ipairs(tree.values) do
 				if i > 1 then table.insert(out, '.') end
-				table.insert(out, ast(v, path..'>'..i))
+				table.insert(out, ast_pp(v, path..'>'..i))
 			end
 			return table.concat(out, '')
 		end,
@@ -130,7 +132,7 @@ local function arm_ast(tree, path)
 			table.insert(out, '(')
 			for i, a in ipairs(tree.arguments) do
 				if i > 1 then table.insert(out, ', ') end
-				table.insert(out, ast(a, path..'>'..i))
+				table.insert(out, ast_pp(a, path..'>'..i))
 			end
 			table.insert(out, ')')
 			return table.concat(out, '')
@@ -146,7 +148,7 @@ local function arm_ast(tree, path)
 			table.insert(out, '[')
 			for i, v in ipairs(tree.values) do
 				if i > 1 then table.insert(out, ', ') end
-				table.insert(out, ast(v, path..'>'..i))
+				table.insert(out, ast_pp(v, path..'>'..i))
 			end
 			table.insert(out, ']')
 			return table.concat(out, '')
@@ -157,7 +159,7 @@ local function arm_ast(tree, path)
 		['AST.UnaryOp']               = function (tree, path)
 			table.insert(out, tree.op)
 			table.insert(out, '(')
-			table.insert(out, ast(tree.expr, path))
+			table.insert(out, ast_pp(tree.expr, path))
 			table.insert(out, ')')
 			return table.concat(out, '')
 		end,
