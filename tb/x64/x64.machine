@@ -143,10 +143,10 @@ NORMIE_OP8(TB_ROR, ror)
 node (div)
 node (idiv)
 
-pat (TB_UDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs) index=0)
-pat (TB_SDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs) index=0)
-pat (TB_UMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs) index=1)
-pat (TB_SMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs) index=1)
+pat (TB_UDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
+pat (TB_SDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
+pat (TB_UMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=1)
+pat (TB_SMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=1)
 
 // *******************************
 // float ops

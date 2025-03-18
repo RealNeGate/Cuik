@@ -845,11 +845,13 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         break;
                     }
                 }
-            } else if (item_count > 1 || !cfg_is_cproj(bb->items[0])) {
+            } else if (item_count > 1 || !cfg_is_cproj(bb->start)) {
                 // if there's just empty copies we can consider it empty
-                FOR_N(j, 1, item_count) {
+                FOR_N(j, 0, item_count) {
                     TB_Node* n = bb->items[j];
-                    if (n->type == TB_MACH_COPY) {
+                    if (bb->start == n) {
+                        continue;
+                    } else if (n->type == TB_MACH_COPY) {
                         // if both dst & src match, it's not gonna emit anything
                         if (ctx.vreg_map[n->gvn] == ctx.vreg_map[n->inputs[1]->gvn]) {
                             continue;
@@ -862,7 +864,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             }
 
             if (empty) {
-                TB_Node* next = cfg_next_control(bb->items[0]);
+                TB_Node* next = cfg_next_control(bb->start);
                 TB_BasicBlock* succ = nl_map_get_checked(cfg.node_to_block, next);
                 bb->fwd = succ - cfg.blocks;
             } else {

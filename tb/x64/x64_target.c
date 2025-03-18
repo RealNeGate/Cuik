@@ -203,8 +203,8 @@ static void print_extra(TB_Node* n) {
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
     int vreg_id = ctx->vreg_map[n->gvn];
-    if (0 && vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
-        VReg* v = &ctx->vregs[vreg_id];
+    if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
+        /* VReg* v = &ctx->vregs[vreg_id];
         if (v->class == REG_CLASS_GPR) {
             printf("%s", GPR_NAMES[v->assigned]);
         } else if (v->class == REG_CLASS_XMM) {
@@ -213,14 +213,8 @@ static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
             printf("STACK%d", v->assigned);
         } else if (v->class == REG_CLASS_FLAGS) {
             printf("FLAGS");
-        }
-    } else if (n->type == TB_MACH_SYMBOL) {
-        TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
-        if (sym->name[0]) {
-            printf("%s", sym->name);
-        } else {
-            printf("sym%p", sym);
-        }
+        } */
+        printf("V%d", vreg_id);
     } else {
         printf("%%%u", n->gvn);
     }
@@ -243,22 +237,23 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         print_pretty_edge(ctx, n->inputs[0]);
         printf(", %d ", TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index);
         tb__print_regmask(TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def);
+    } else if (n->type == TB_MACH_TEMP) {
+        printf("  temp ");
+        print_pretty_edge(ctx, n);
+        printf(" = ");
+        tb__print_regmask(TB_NODE_GET_EXTRA_T(n, TB_NodeMachTemp)->def);
     } else if (n->type == TB_MACH_JUMP || n->type == x86_jcc) {
         int succ[2] = { -1, -1 };
-        FOR_USERS(u, n) {
-            if (USERN(u)->type == TB_BRANCH_PROJ) {
-                int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-                TB_Node* succ_n = USERN(u);
-
-                TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
-                int b = succ_bb - ctx->cfg.blocks;
-                if (ctx->cfg.blocks[b].fwd > 0) {
-                    while (b != ctx->cfg.blocks[b].fwd) {
-                        b = ctx->cfg.blocks[b].fwd;
-                    }
+        FOR_SUCC(s, n) {
+            int index = TB_NODE_GET_EXTRA_T(s.succ, TB_NodeProj)->index;
+            TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, s.succ);
+            int b = succ_bb - ctx->cfg.blocks;
+            if (ctx->cfg.blocks[b].fwd > 0) {
+                while (b != ctx->cfg.blocks[b].fwd) {
+                    b = ctx->cfg.blocks[b].fwd;
                 }
-                succ[index] = b;
             }
+            succ[index] = b;
         }
 
         if (n->type == x86_jcc) {
@@ -401,9 +396,38 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
         if (op->flags & OP_IMMEDIATE) {
             printf(", %"PRId32, op->imm);
         }
+
+        int first = op->mode == MODE_ST ? rx_i : rx_i+1;
+        FOR_N(i, first, n->input_count) {
+            printf(", ");
+            if (n->inputs[i]) {
+                print_pretty_edge(ctx, n->inputs[i]);
+            } else {
+                printf("___");
+            }
+        }
     } else {
-        printf("  ");
-        tb_print_dumb_node(NULL, n);
+        // tb_print_dumb_node(NULL, n);
+
+        printf("  %s ", tb_node_get_name(n->type));
+        if (n->dt.type != TB_TAG_TUPLE && n->dt.type != TB_TAG_CONTROL) {
+            print_pretty_edge(ctx, n);
+            printf(" = ");
+        }
+
+        FOR_N(i, 1, n->input_count) {
+            if (i != 1) { printf(", "); }
+            print_pretty_edge(ctx, n->inputs[i]);
+        }
+
+        if (n->type == TB_MACH_SYMBOL) {
+            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
+            if (sym->name[0]) {
+                printf("%s", sym->name);
+            } else {
+                printf("sym%p", sym);
+            }
+        }
     }
 }
 
@@ -759,6 +783,18 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
         TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = 0, .def = ctx->normie_mask[REG_CLASS_FLAGS]);
 
         // node_add_tmp(ctx, n, ctx->normie_mask[REG_CLASS_FLAGS]);
+    } else if (n->type == TB_PROJ && (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div)) {
+        TB_Node* tuple = n->inputs[0];
+        int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+        node_add_tmp(ctx, tuple, intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX));
+
+        // add the remaining projection
+        TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+        set_input(f, proj, tuple, 0);
+        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = !index);
+
+        proj = tb_opt_gvn_node(f, proj);
     }
 }
 
@@ -874,7 +910,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
         case x86_add: case x86_or:  case x86_and: case x86_sub:
         case x86_xor: case x86_mov: case x86_imul: case x86_lea:
-        case x86_cmp: case x86_test:
+        case x86_cmp: case x86_test: case x86_idiv: case x86_div:
         case x86_movzx8: case x86_movzx16:
         case x86_movsx8: case x86_movsx16: case x86_movsx32:
         {
@@ -895,9 +931,18 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     // if we're not one already
                     ins[2] = ctx->mayspill_mask[REG_CLASS_GPR];
                 }
+
+                if (n->type == x86_idiv || n->type == x86_div) {
+                    // LHS is in RAX
+                    ins[n->input_count - 2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
+
+                    // high bits for LHS are in RDX
+                    TB_ASSERT(n->inputs[n->input_count - 1]->type == TB_MACH_TEMP);
+                    ins[n->input_count - 1] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX);
+                }
             }
 
-            if (op->mode == MODE_ST) {
+            if (op->mode == MODE_ST || n->type == x86_idiv || n->type == x86_div) {
                 return &TB_REG_EMPTY;
             } else if (n->type == x86_cmp || n->type == x86_test) {
                 return ctx->normie_mask[REG_CLASS_FLAGS];
@@ -912,7 +957,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             ins[2] = ctx->normie_mask[REG_CLASS_FLAGS];
         }
         return ctx->normie_mask[REG_CLASS_GPR];
-
 
         case x86_shl: case x86_shr: case x86_rol: case x86_ror: case x86_sar:
         {
@@ -1415,31 +1459,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_sxt_a2d: {
-            // cqo/cdq (sign extend RAX into RDX)
-            if (n->dt.type == TB_TAG_I64) { EMIT1(e, 0x48); }
-            EMIT1(e, 0x99);
-            break;
-        }
-
-        case x86_idiv: {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            // idiv
-            Val rhs = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
-            TB_X86_DataType dt = legalize_int(op->dt);
-            __(IDIV, dt, &rhs);
-            break;
-        }
-
-        case x86_div: {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            // div
-            Val rhs = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
-            TB_X86_DataType dt = legalize_int(op->dt);
-            __(DIV, dt, &rhs);
-            break;
-        }
-
         case TB_FLOAT_TRUNC: {
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
@@ -1496,6 +1515,27 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
         #endif
+
+        case x86_idiv: {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            // cqo/cdq (sign extend RAX into RDX)
+            if (n->dt.type == TB_TAG_I64) { EMIT1(e, 0x48); }
+            EMIT1(e, 0x99);
+            // idiv
+            Val rhs = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
+            TB_X86_DataType dt = legalize_int(op->extra_dt);
+            __(IDIV, dt, &rhs);
+            break;
+        }
+
+        case x86_div: {
+            X86MemOp* op = TB_NODE_GET_EXTRA(n);
+            __(XOR, TB_X86_DWORD, Vgpr(RDX), Vgpr(RDX));
+            Val rhs = parse_cisc_operand(ctx, n, NULL, TB_NODE_GET_EXTRA(n));
+            TB_X86_DataType dt = legalize_int(op->extra_dt);
+            __(DIV, dt, &rhs);
+            break;
+        }
 
         case x86_lea: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);

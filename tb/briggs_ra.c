@@ -93,32 +93,6 @@ static void bits64_remove(uint64_t* arr, size_t x) {
     arr[x / 64] &= ~(1ull << (x % 64));
 }
 
-// static int bits64_first(uint64_t* arr, size_t cnt);
-// static int bits64_next(uint64_t* arr, size_t cnt, int x);
-
-static int bits64_next(uint64_t* arr, size_t cnt, int x) {
-    // unpack coords
-    size_t i = x / 64, j = x % 64;
-
-    uint64_t word;
-    for (;;) {
-        // we're done
-        if (i*64 >= cnt) { return -1; }
-        // if there's no more bits in the word, we move along
-        word = arr[i] >> (j + 1);
-        if (word != 0) {
-            j += tb_ffs64(word);
-            return i*64 + j;
-        }
-        i += 1, j = 0;
-    }
-}
-
-static int bits64_first(uint64_t* arr, size_t cnt) {
-    TB_ASSERT(cnt > 0);
-    return arr[0] & 1 ? 0 : bits64_next(arr, cnt, 0);
-}
-
 static int ifg_raw_degree(Briggs* ra, int i) {
     return ra->adj[i][0];
 }
@@ -270,6 +244,8 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n, bool kill_node
     TB_User* users = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_User));
     memcpy(users, n->users, n->user_count * sizeof(TB_User));
 
+    TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%u: remat (%%%u)\x1b[0m\n", ctx->vreg_map[n->gvn], n->gvn));
+
     // aggressive reload
     double base_bias = ctx->vregs[ctx->vreg_map[n->gvn]].spill_bias;
     for (size_t i = 0; i < user_count; i++) {
@@ -335,7 +311,7 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n, bool kill_node
             }
         }
 
-        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: remat  (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
+        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu:   use (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
     }
     tb_arena_restore(&f->tmp_arena, sp);
 
@@ -1808,7 +1784,7 @@ static void ifg_remove_edges(Ctx* ctx, Briggs* ra, int i, IFG_Worklist* lo, IFG_
 static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
     ArenaArray(SimplifiedElem) stk = aarray_create(ra->arena, SimplifiedElem, ra->ifg_len);
 
-    #if 0
+    #if 1
     // making an elimination order that's entirely silly for a gag, incomplete
     TB_ArenaSavepoint sp = tb_arena_save(ra->arena);
 
@@ -1816,21 +1792,34 @@ static ArenaArray(SimplifiedElem) ifg_simplify(Ctx* restrict ctx, Briggs* ra) {
     uint64_t* visited = tb_arena_alloc(ra->arena, visited_cap * sizeof(uint64_t));
     memset(visited, 0, visited_cap * sizeof(uint64_t));
 
-    FOR_N(i, 0, ctx->bb_count) {
+    FOR_REV_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-        FOR_N(j, 0, aarray_length(bb->items)) {
+        FOR_REV_N(j, 0, aarray_length(bb->items)) {
             int vreg_id = ctx->vreg_map[bb->items[j]->gvn];
-            if (bits64_test_n_set(visited, vreg_id)) {
+            if (vreg_id == 0 || bits64_test_n_set(visited, vreg_id)) {
                 continue;
             }
 
             int d = ra->adj[vreg_id][0];
+
+            #if TB_OPTDEBUG_REGALLOC2
+            briggs_print_vreg(ctx, ra, &ctx->vregs[vreg_id]);
+            printf("#   D=%d!", d);
+            FOR_N(k, 1, d+1) {
+                printf(" V%d", ra->adj[vreg_id][k]);
+            }
+            printf("\n");
+            #endif
+
             ifg_remove_edges2(ctx, ra, vreg_id);
 
-            SimplifiedElem s = { best_spill, d };
-            aarray_push(stk, s);
+            if (ctx->vregs[vreg_id].assigned < 0) {
+                SimplifiedElem s = { vreg_id, d };
+                aarray_push(stk, s);
+            }
         }
     }
+
     return stk;
     #else
     TB_ArenaSavepoint sp = tb_arena_save(ra->arena);

@@ -415,6 +415,30 @@ static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg
     return new_rm;
 }
 
+#define BITS64_FOR(it, set, cap) for (int it = bits64_first(set, cap); it >= 0; it = bits64_next(set, cap, it))
+
+static int bits64_next(uint64_t* arr, size_t cnt, int x) {
+    // unpack coords
+    size_t i = x / 64, j = x % 64;
+
+    uint64_t word;
+    for (;;) {
+        // we're done
+        if (i*64 >= cnt) { return -1; }
+        // chop off the bottom bits which have been processed
+        word = arr[i] & ~(UINT64_MAX >> (63 - j));
+        if (word != 0) {
+            return i*64 + tb_ffs64(word) - 1;
+        }
+        i += 1, j = 0;
+    }
+}
+
+static int bits64_first(uint64_t* arr, size_t cnt) {
+    TB_ASSERT(cnt > 0);
+    return arr[0] & 1 ? 0 : bits64_next(arr, cnt, 0);
+}
+
 static bool bits64_member(uint64_t* arr, size_t x) {
     return arr[x / 64] & (1ull << (x % 64));
 }
