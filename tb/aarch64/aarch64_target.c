@@ -67,15 +67,17 @@ static uint32_t node_flags(TB_Node* n) {
 ////////////////////////////////
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
     /* patterns
-        (xor -1 $a) = (not $a)
-        (sub 0 $a) = (neg $a)
-        (xor $a (not $b)) = (eon $a $b)
-        (and $a (not $b)) = (andn $a $b)
-        (or $a (not $b)) = (orn $a $b)
+    mandatory:
+        (rol $lhs $rhs) = (ror $lhs (sub $size $rhs))
+        (umod $lhs $rhs) = (sub $lhs (mul $rhs (udiv $lhs $rhs)))
+        (smod $lhs $rhs) = (sub $lhs (mul $rhs (sdiv $lhs $rhs)))
+    optional:
+        (<some sort of zero register optimisation>)
+        (xor $lhs (not $rhs)) = (eon $lhs $rhs)
+        (and $lhs (not $rhs)) = (andn $lhs $rhs)
+        (or $lhs (not $rhs)) = (orn $lhs $rhs)
         (add $a (mul $b $c)) = (madd $b $c $a)
         (sub $a (mul $b $c)) = (msub $b $c $a)
-        (neg (mul $a $b)) = (msub $a $b zr)
-        (umod $a $b) = (sub $a (mul $b (udiv $a $b))) = (msub $b (udiv $a $b) $a)
     */
     switch (n->type) {
         case TB_ROOT: {
@@ -107,22 +109,24 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
             return NULL;
         }
 
+        case TB_ROL: {
+            // (rol $lhs $rhs) = (ror $lhs (sub $size $rhs))
+            tb_todo();
+        }
+
         // There is no instruction for calculating the remainder.
         // You can do that manually by calculating
         // r = n − (n ÷ d) × d
         case TB_UMOD: {
-            // (umod $a $b) = (msub (udiv $a $b) $b $a)
+            // (umod $lhs $rhs) = (msub (udiv $lhs $rhs) $rhs $lhs)
             tb_todo();
-            break;
         }
         case TB_SMOD: {
-            // (umod $a $b) = (msub (sdiv $a $b) $b $a)
+            // (umod $lhs $rhs) = (msub (sdiv $lhs $rhs) $rhs $lhs)
             tb_todo();
-            break;
         }
 
-        default:
-        return NULL;
+        default: return NULL;
     }
 }
 
@@ -252,7 +256,19 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         // case TB_BITCAST:
 
         case TB_SELECT: {
-            tb_todo();
+            /* inputs
+                1 condition
+                2 truthy
+                3 falsey
+            */
+           if (TB_IS_INTEGER_TYPE(n->dt)) {
+                if (ins) {
+                    // ins[1] = ;
+                    ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+                    ins[3] = ctx->normie_mask[REG_CLASS_GPR];
+                }
+           }
+           tb_todo();
         }
 
         ////////////////////////////////
@@ -330,14 +346,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         // case TB_CMP_FLE:
 
         // case TB_FRAME_PTR:
-
-        ////////////////////////////////
-        // Special ops
-        ////////////////////////////////
-        // case TB_ADC:
-        // case TB_UDIVMOD:
-        // case TB_SDIVMOD:
-        // case TB_MULPAIR:
 
         ////////////////////////////////
         // variadic
@@ -458,18 +466,18 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         ////////////////////////////////
         // PROJECTIONS
         ////////////////////////////////
-        case TB_PROJ: {} break;
-        // case TB_BRANCH_PROJ:
-        // case TB_MACH_PROJ:
+        case TB_PROJ: break;
+        case TB_BRANCH_PROJ: break;
+        case TB_MACH_PROJ: break;
 
         ////////////////////////////////
         // MISCELLANEOUS
         ////////////////////////////////
-        // case TB_POISON:
+        case TB_POISON: break;
         // case TB_INLINE_ASM:
         // case TB_CYCLE_COUNTER:
         // case TB_PREFETCH:
-        // case TB_SYMBOL_TABLE:
+        case TB_SYMBOL_TABLE: break;
 
         ////////////////////////////////
         // CONTROL
@@ -477,18 +485,19 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         // case TB_ROOT:
         case TB_RETURN: {
             emit_ret(e, LR);
-        } break;
-        case TB_REGION:
-        case TB_NATURAL_LOOP:
-        case TB_AFFINE_LOOP:
-        case TB_PHI: {} break;
+            break;
+        }
+        case TB_REGION: break;
+        case TB_NATURAL_LOOP: break;
+        case TB_AFFINE_LOOP: break;
+        case TB_PHI: break;
         // case TB_BRANCH:
         // case TB_AFFINE_LATCH:
         // case TB_NEVER_BRANCH:
-        // case TB_ENTRY_FORK:
+        case TB_ENTRY_FORK: break;
         // case TB_DEBUGBREAK:
         // case TB_TRAP:
-        // case TB_UNREACHABLE:
+        case TB_UNREACHABLE: break;
         // case TB_DEAD:
 
         ////////////////////////////////
@@ -499,7 +508,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         // case TB_TAILCALL:       // (Control, Memory, RPC, Data, Data...) -> ()
         // case TB_DEBUG_LOCATION: // (Control, Memory) -> (Control, Memory)
         // case TB_SAFEPOINT:      // (Control, Memory, Node, Data...) -> (Control)
-        case TB_CALLGRAPH: {} break;
+        case TB_CALLGRAPH: break;
         // case TB_DEBUG_SCOPES:   // (Parent, Control...)
 
         ////////////////////////////////
@@ -570,7 +579,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 tb_todo();
             }
             emit_cs(e, CSEL, dst, lhs, rhs, cc, is64bit);
-        } break;
+            break;
+        }
 
         ////////////////////////////////
         // Bitmagic
@@ -580,25 +590,29 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_1(e, REV, dst, lhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_CLZ: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_1(e, CLZ, dst, lhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_CTZ: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_1(e, CTZ, dst, lhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_POPCNT: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_1(e, CNT, dst, lhs, is_64bit);
-        } break;
+            break;
+        }
 
         ////////////////////////////////
         // Unary operations
@@ -614,42 +628,48 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_logical(e, AND, dst, lhs, rhs, 0, 0, is_64bit);
-        } break;
+            break;
+        }
         case TB_OR: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_logical(e, ORR, dst, lhs, rhs, 0, 0, is_64bit);
-        } break;
+            break;
+        }
         case TB_XOR: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_logical(e, EOR, dst, lhs, rhs, 0, 0, is_64bit);
-        } break;
+            break;
+        }
         case TB_ADD: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_add(e, ADD, dst, lhs, rhs, 0, 0, false, is_64bit);
-        } break;
+            break;
+        }
         case TB_SUB: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_add(e, SUB, dst, lhs, rhs, 0, 0, false, is_64bit);
-        } break;
+            break;
+        }
         case TB_MUL: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_3(e, MADD, dst, lhs, rhs, ZR, is_64bit);
-        } break;
+            break;
+        }
 
         case TB_SHL: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
@@ -657,21 +677,24 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_2(e, LSLV, dst, lhs, rhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_SHR: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_2(e, LSRV, dst, lhs, rhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_SAR: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_2(e, ASRV, dst, lhs, rhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_ROL: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
@@ -679,34 +702,40 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             bool is_64bit = n->dt.type == TB_TAG_I64;
             tb_todo(); //!! arm doesn't have rotate left
             emit_dpr_2(e, RORV, dst, lhs, rhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_ROR: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_2(e, RORV, dst, lhs, rhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_UDIV: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_2(e, UDIV, dst, lhs, rhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_SDIV: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
             emit_dpr_2(e, SDIV, dst, lhs, rhs, is_64bit);
-        } break;
+            break;
+        }
         case TB_UMOD: {
             tb_unreachable();
-        } break;
+            break;
+        }
         case TB_SMOD: {
             tb_unreachable();
-        } break;
+            break;
+        }
 
         ////////////////////////////////
         // Float arithmatic
@@ -731,14 +760,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         // case TB_CMP_FLE:
 
         // case TB_FRAME_PTR:
-
-        ////////////////////////////////
-        // Special ops
-        ////////////////////////////////
-        // case TB_ADC:     // (Int, Int, Bool?) -> (Int, Bool)
-        // case TB_UDIVMOD: // (Int, Int) -> (Int, Int)
-        // case TB_SDIVMOD: // (Int, Int) -> (Int, Int)
-        // case TB_MULPAIR:
 
         ////////////////////////////////
         // variadic
@@ -775,7 +796,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
         default: {
             tb_todo();
-        } break;
+            break;
+        }
     }
 }
 
