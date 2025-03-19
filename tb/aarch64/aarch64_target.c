@@ -1,4 +1,4 @@
-#ifdef TB_HAS_AARCH64
+// #ifdef TB_HAS_AARCH64
 #include "../emitter.h"
 #include "../tb_internal.h"
 #include "aarch64_emitter.h"
@@ -66,6 +66,17 @@ static uint32_t node_flags(TB_Node* n) {
 // Instruction selection
 ////////////////////////////////
 static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
+    /* patterns
+        (xor -1 $a) = (not $a)
+        (sub 0 $a) = (neg $a)
+        (xor $a (not $b)) = (eon $a $b)
+        (and $a (not $b)) = (andn $a $b)
+        (or $a (not $b)) = (orn $a $b)
+        (add $a (mul $b $c)) = (madd $b $c $a)
+        (sub $a (mul $b $c)) = (msub $b $c $a)
+        (neg (mul $a $b)) = (msub $a $b zr)
+        (umod $a $b) = (sub $a (mul $b (udiv $a $b))) = (msub $b (udiv $a $b) $a)
+    */
     switch (n->type) {
         case TB_ROOT: {
             TB_Node* ret = n->inputs[1];
@@ -80,20 +91,34 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         }
 
         case TB_ADD: {
-            TB_Node* rhs = n->inputs[2];
-            if (rhs->type == TB_ICONST) {
-                tb_print_dumb_node(NULL, n);
-                uint64_t val = TB_NODE_GET_EXTRA_T(rhs, TB_NodeInt)->value;
-                bool lo12 = val == (val & 07777);
-                bool hi12 = val == (val & 077770000);
-                if (lo12 || hi12) {
-                    TB_Node* new = tb_alloc_node(f, A64_ADDIMM, n->dt, 2, sizeof(A64Imm12));
-                    set_input(f, new, n->inputs[1], 1);
-                    TB_NODE_SET_EXTRA(new, A64Imm12, .imm = val);
-                    return new;
-                }
-            }
+            // TB_Node* rhs = n->inputs[2];
+            // if (rhs->type == TB_ICONST) {
+            //     tb_print_dumb_node(NULL, n);
+            //     uint64_t val = TB_NODE_GET_EXTRA_T(rhs, TB_NodeInt)->value;
+            //     bool lo12 = val == (val & 07777);
+            //     bool hi12 = val == (val & 077770000);
+            //     if (lo12 || hi12) {
+            //         TB_Node* new = tb_alloc_node(f, A64_ADDIMM, n->dt, 2, sizeof(A64Imm12));
+            //         set_input(f, new, n->inputs[1], 1);
+            //         TB_NODE_SET_EXTRA(new, A64Imm12, .imm = val);
+            //         return new;
+            //     }
+            // }
             return NULL;
+        }
+
+        // There is no instruction for calculating the remainder.
+        // You can do that manually by calculating
+        // r = n − (n ÷ d) × d
+        case TB_UMOD: {
+            // (umod $a $b) = (msub (udiv $a $b) $b $a)
+            tb_todo();
+            break;
+        }
+        case TB_SMOD: {
+            // (umod $a $b) = (msub (sdiv $a $b) $b $a)
+            tb_todo();
+            break;
         }
 
         default:
@@ -111,6 +136,20 @@ static bool node_remat(TB_Node* n) {
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
     printf("CONSTRAINT %%%u, %s\n", n->gvn, tb_node_get_name(n->type));
     switch (n->type) {
+        ////////////////////////////////
+        // CONSTANTS
+        ////////////////////////////////
+        case TB_ICONST: {
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
+        case TB_F32CONST:
+        case TB_F64CONST: {
+            return ctx->normie_mask[REG_CLASS_FPR];
+        }
+
+        ////////////////////////////////
+        // PROJECTIONS
+        ////////////////////////////////
         case TB_PROJ: {
             if (n->dt.type == TB_TAG_MEMORY || n->dt.type == TB_TAG_CONTROL) {
                 return &TB_REG_EMPTY;
@@ -128,67 +167,19 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 tb_todo();
             }
         }
+        // case TB_MACH_PROJ:
 
-        case TB_ICONST: {
-            return ctx->normie_mask[REG_CLASS_GPR];
-        }
+        ////////////////////////////////
+        // MISCELLANEOUS
+        ////////////////////////////////
+        // case TB_POISON:
+        // case TB_INLINE_ASM:
+        // case TB_CYCLE_COUNTER:
+        // case TB_PREFETCH:
 
-        case TB_SELECT: {
-            tb_todo();
-        }
-
-        case TB_BSWAP:
-        case TB_CLZ:
-        case TB_CTZ:
-        case TB_POPCNT: {
-            if (ins) {
-                ins[1] = ctx->normie_mask[REG_CLASS_GPR];
-            }
-            return ctx->normie_mask[REG_CLASS_GPR];
-        }
-
-        case TB_AND:
-        case TB_OR:
-        case TB_XOR:
-        case TB_ADD:
-        case TB_SUB:
-        case TB_MUL:
-        case TB_SHL:
-        case TB_SHR:
-        case TB_SAR:
-        case TB_ROL:
-        case TB_ROR:
-        case TB_UDIV:
-        case TB_SDIV:
-        case TB_UMOD:
-        case TB_SMOD: {
-            if (ins) {
-                ins[1] = ctx->normie_mask[REG_CLASS_GPR];
-                ins[2] = ctx->normie_mask[REG_CLASS_GPR];
-            }
-            return ctx->normie_mask[REG_CLASS_GPR];
-        }
-
-        case TB_FADD:
-        case TB_FSUB:
-        case TB_FMUL:
-        case TB_FDIV:
-        case TB_FMIN:
-        case TB_FMAX: {
-            if (ins) {
-                ins[1] = ctx->normie_mask[REG_CLASS_FPR];
-                ins[2] = ctx->normie_mask[REG_CLASS_FPR];
-            }
-            return ctx->normie_mask[REG_CLASS_FPR];
-        }
-        
-        case A64_ADDIMM: {
-            if (ins) {
-                ins[1] = ctx->normie_mask[REG_CLASS_GPR];
-            }
-            return ctx->normie_mask[REG_CLASS_GPR];
-        }
-
+        ////////////////////////////////
+        // CONTROL
+        ////////////////////////////////
         case TB_RETURN: {
             if (ins) {
                 ins[1] = &TB_REG_EMPTY;
@@ -207,6 +198,169 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             }
             return &TB_REG_EMPTY;
         }
+        // case TB_PHI:
+        // case TB_BRANCH:
+        // case TB_AFFINE_LATCH:
+        // case TB_NEVER_BRANCH:
+        // case TB_DEBUGBREAK:
+        // case TB_TRAP:
+        // case TB_UNREACHABLE:
+
+        ////////////////////////////////
+        // CONTROL + MEMORY
+        ////////////////////////////////
+        // case TB_CALL:
+        // case TB_SYSCALL:
+        // case TB_TAILCALL:
+        // case TB_SAFEPOINT:
+
+        ////////////////////////////////
+        // MEMORY
+        ////////////////////////////////
+        // case TB_LOAD:
+        // case TB_STORE:
+        // case TB_MEMCPY:
+        // case TB_MEMSET:
+        // case TB_READ:
+        // case TB_WRITE:
+        // case TB_ATOMIC_LOAD:
+        // case TB_ATOMIC_XCHG:
+        // case TB_ATOMIC_ADD:
+        // case TB_ATOMIC_AND:
+        // case TB_ATOMIC_XOR:
+        // case TB_ATOMIC_OR:
+        // case TB_ATOMIC_PTROFF:
+        // case TB_ATOMIC_CAS:
+        // case TB_LOOKUP:
+
+        ////////////////////////////////
+        // POINTERS
+        ////////////////////////////////
+        // case TB_SYMBOL:
+        // case TB_PTR_OFFSET:
+
+        // Conversions
+        // case TB_TRUNCATE:
+        // case TB_FLOAT_TRUNC:
+        // case TB_FLOAT_EXT:
+        // case TB_SIGN_EXT:
+        // case TB_ZERO_EXT:
+        // case TB_UINT2FLOAT:
+        // case TB_FLOAT2UINT:
+        // case TB_INT2FLOAT:
+        // case TB_FLOAT2INT:
+        // case TB_BITCAST:
+
+        case TB_SELECT: {
+            tb_todo();
+        }
+
+        ////////////////////////////////
+        // Bitmagic
+        ////////////////////////////////
+        case TB_BSWAP:
+        case TB_CLZ:
+        case TB_CTZ:
+        case TB_POPCNT: {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_GPR];
+            }
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
+
+        case TB_FNEG: {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_FPR];
+            }
+            return ctx->normie_mask[REG_CLASS_FPR];
+        }
+
+        ////////////////////////////////
+        // Integer arithmetic
+        ////////////////////////////////
+        case TB_AND:
+        case TB_OR:
+        case TB_XOR:
+        case TB_ADD:
+        case TB_SUB:
+        case TB_MUL:
+
+        case TB_SHL:
+        case TB_SHR:
+        case TB_SAR:
+        case TB_ROL:
+        case TB_ROR:
+        case TB_UDIV:
+        case TB_SDIV:
+        case TB_UMOD:
+        case TB_SMOD: {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_GPR];
+                ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+            }
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
+
+        ////////////////////////////////
+        // Float arithmetic
+        ////////////////////////////////
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV:
+        case TB_FMIN:
+        case TB_FMAX: {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_FPR];
+                ins[2] = ctx->normie_mask[REG_CLASS_FPR];
+            }
+            return ctx->normie_mask[REG_CLASS_FPR];
+        }
+
+        ////////////////////////////////
+        // Comparisons
+        ////////////////////////////////
+        // case TB_CMP_EQ:
+        // case TB_CMP_NE:
+        // case TB_CMP_ULT:
+        // case TB_CMP_ULE:
+        // case TB_CMP_SLT:
+        // case TB_CMP_SLE:
+        // case TB_CMP_FLT:
+        // case TB_CMP_FLE:
+
+        // case TB_FRAME_PTR:
+
+        ////////////////////////////////
+        // Special ops
+        ////////////////////////////////
+        // case TB_ADC:
+        // case TB_UDIVMOD:
+        // case TB_SDIVMOD:
+        // case TB_MULPAIR:
+
+        ////////////////////////////////
+        // variadic
+        ////////////////////////////////
+        // case TB_VA_START:
+
+        ////////////////////////////////
+        // general machine nodes
+        ////////////////////////////////
+        // case TB_MACH_MOVE:
+        // case TB_MACH_COPY:
+        // case TB_MACH_JUMP:
+        // case TB_MACH_JIT_THREAD_PTR:
+        
+        ////////////////////////////////
+        // custom machine nodes
+        ////////////////////////////////
+        // case A64_ADDIMM: {
+        //     if (ins) {
+        //         ins[1] = ctx->normie_mask[REG_CLASS_GPR];
+        //     }
+        //     return ctx->normie_mask[REG_CLASS_GPR];
+        // }
 
         default:
         return &TB_REG_EMPTY;
@@ -278,30 +432,120 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
     printf("EMIT %%%u\n", n->gvn);
     switch (n->type) {
-        case TB_CALLGRAPH:
-        case TB_AFFINE_LOOP:
-        case TB_NATURAL_LOOP:
-        case TB_REGION:
-        case TB_PROJ:
-        case TB_PHI:
-        break;
-
+        ////////////////////////////////
+        // CONSTANTS
+        ////////////////////////////////
         case TB_ICONST: {
             int dst = op_reg_at(ctx, n, REG_CLASS_GPR);
             uint64_t val = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
             
             bool is_64bit = n->dt.type == TB_TAG_I64;
-            int shift = 0; bool first = true;
+            int shift = 0;
+            MoveOp op = MOVZ;
             while (val) {
                 if (val & 0xFFFF) {
-                    emit_movimm(e, dst, val & 0xFFFF, shift / 16, is_64bit, first);
-                    first = false;
+                    emit_dpi_mov(e, op, dst, val & 0xFFFF, shift, is_64bit);
+                    // emit_movimm(e, dst, val & 0xFFFF, shift / 16, is_64bit, first);
+                    op = MOVK;
                 }
-                val >>= 16, shift += 16;
+                val >>= 16, shift += 1;
             }
             break;
         }
+        // case TB_F32CONST:
+        // case TB_F64CONST:
 
+        ////////////////////////////////
+        // PROJECTIONS
+        ////////////////////////////////
+        case TB_PROJ: {} break;
+        // case TB_BRANCH_PROJ:
+        // case TB_MACH_PROJ:
+
+        ////////////////////////////////
+        // MISCELLANEOUS
+        ////////////////////////////////
+        // case TB_POISON:
+        // case TB_INLINE_ASM:
+        // case TB_CYCLE_COUNTER:
+        // case TB_PREFETCH:
+        // case TB_SYMBOL_TABLE:
+
+        ////////////////////////////////
+        // CONTROL
+        ////////////////////////////////
+        // case TB_ROOT:
+        case TB_RETURN: {
+            emit_ret(e, LR);
+        } break;
+        case TB_REGION:
+        case TB_NATURAL_LOOP:
+        case TB_AFFINE_LOOP:
+        case TB_PHI: {} break;
+        // case TB_BRANCH:
+        // case TB_AFFINE_LATCH:
+        // case TB_NEVER_BRANCH:
+        // case TB_ENTRY_FORK:
+        // case TB_DEBUGBREAK:
+        // case TB_TRAP:
+        // case TB_UNREACHABLE:
+        // case TB_DEAD:
+
+        ////////////////////////////////
+        // CONTROL + MEMORY
+        ////////////////////////////////
+        // case TB_CALL:           // (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
+        // case TB_SYSCALL:        // (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
+        // case TB_TAILCALL:       // (Control, Memory, RPC, Data, Data...) -> ()
+        // case TB_DEBUG_LOCATION: // (Control, Memory) -> (Control, Memory)
+        // case TB_SAFEPOINT:      // (Control, Memory, Node, Data...) -> (Control)
+        case TB_CALLGRAPH: {} break;
+        // case TB_DEBUG_SCOPES:   // (Parent, Control...)
+
+        ////////////////////////////////
+        // MEMORY
+        ////////////////////////////////
+        // case TB_SPLITMEM:    // (Memory) -> (Memory...)
+        // case TB_MERGEMEM:    // (Split, Memory...) -> Memory
+        // case TB_LOAD:        // (Control?, Memory, Ptr)      -> Data
+        // case TB_STORE:       // (Control, Memory, Ptr, Data) -> Memory
+        // case TB_MEMCPY:      // (Control, Memory, Ptr, Ptr, Size)  -> Memory
+        // case TB_MEMSET:      // (Control, Memory, Ptr, Int8, Size) -> Memory
+        // case TB_READ:        // (Control, Memory, Ptr)       -> (Memory, Data)
+        // case TB_WRITE:       // (Control, Memory, Ptr, Data) -> (Memory, Data)
+        // case TB_ATOMIC_LOAD:   // (Control, Memory, Ptr)        -> (Memory, Data)
+        // case TB_ATOMIC_XCHG:   // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+        // case TB_ATOMIC_ADD:    // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+        // case TB_ATOMIC_AND:    // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+        // case TB_ATOMIC_XOR:    // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+        // case TB_ATOMIC_OR:     // (Control, Memory, Ptr, Data)  -> (Memory, Data)
+        // case TB_ATOMIC_PTROFF: // (Control, Memory, Ptr, Ptr)   -> (Memory, Ptr)
+        // case TB_ATOMIC_CAS:    // (Control, Memory, Data, Data) -> (Memory, Data, Bool)
+
+        // case TB_LOOKUP:
+
+        ////////////////////////////////
+        // POINTERS
+        ////////////////////////////////
+        // case TB_LOCAL:         // () & (Int, Int) -> Ptr
+        // case TB_SYMBOL:        // () & case TB_Symbol: -> Ptr
+        // case TB_PTR_OFFSET:    // (Ptr, Int) -> Ptr
+
+        // Conversions
+        // case TB_TRUNCATE:
+        // case TB_FLOAT_TRUNC:
+        // case TB_FLOAT_EXT:
+        // case TB_SIGN_EXT:
+        // case TB_ZERO_EXT:
+        // case TB_UINT2FLOAT:
+        // case TB_FLOAT2UINT:
+        // case TB_INT2FLOAT:
+        // case TB_FLOAT2INT:
+        // case TB_BITCAST:
+
+        ////////////////////////////////
+        // Select
+        ////////////////////////////////
         case TB_SELECT: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
@@ -326,58 +570,212 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 tb_todo();
             }
             emit_cs(e, CSEL, dst, lhs, rhs, cc, is64bit);
-            break;
-        }
+        } break;
 
-        case TB_AND: case TB_OR: case TB_XOR: {
-            static LogicOp table[] = {
-                [TB_AND] = AND,
-                [TB_OR]  = ORR,
-                [TB_XOR] = EOR,
-            };
+        ////////////////////////////////
+        // Bitmagic
+        ////////////////////////////////
+        case TB_BSWAP: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_1(e, REV, dst, lhs, is_64bit);
+        } break;
+        case TB_CLZ: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_1(e, CLZ, dst, lhs, is_64bit);
+        } break;
+        case TB_CTZ: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_1(e, CTZ, dst, lhs, is_64bit);
+        } break;
+        case TB_POPCNT: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_1(e, CNT, dst, lhs, is_64bit);
+        } break;
 
+        ////////////////////////////////
+        // Unary operations
+        ////////////////////////////////
+        // case TB_FNEG:
+
+        ////////////////////////////////
+        // Integer arithmatic
+        ////////////////////////////////
+        case TB_AND: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-
-            bool is_64bit = n->dt.type == TB_TAG_I64; // legalize_int(n->dt);
-            emit_dpr_logical(e, table[n->type], dst, lhs, rhs, 0, 0, is_64bit);
-            break;
-        }
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_logical(e, AND, dst, lhs, rhs, 0, 0, is_64bit);
+        } break;
+        case TB_OR: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_logical(e, ORR, dst, lhs, rhs, 0, 0, is_64bit);
+        } break;
+        case TB_XOR: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_logical(e, EOR, dst, lhs, rhs, 0, 0, is_64bit);
+        } break;
         case TB_ADD: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-
-            bool is_64bit = n->dt.type == TB_TAG_I64; // legalize_int(n->dt);
-            emit_dp_r(e, ADD, dst, lhs, rhs, 0, 0, is_64bit);
-            break;
-        }
-        case TB_SUB:
-        case TB_MUL:
-        case TB_SMOD:
-
-        case A64_ADDIMM: {
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_add(e, ADD, dst, lhs, rhs, 0, 0, false, is_64bit);
+        } break;
+        case TB_SUB: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            uint64_t imm = TB_NODE_GET_EXTRA_T(n, A64Imm12)->imm;
-            int shift = 0;
-            if (imm == (imm & 077770000)) {
-                shift = 12;
-                imm >>= shift;
-            }
-
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dp_imm(e, ADD, dst, lhs, imm, shift, is_64bit);
-            break;
-        }
+            emit_dpr_add(e, SUB, dst, lhs, rhs, 0, 0, false, is_64bit);
+        } break;
+        case TB_MUL: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_3(e, MADD, dst, lhs, rhs, ZR, is_64bit);
+        } break;
 
-        case TB_RETURN: {
-            emit_ret(e, LR);
-            break;
-        }
+        case TB_SHL: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_2(e, LSLV, dst, lhs, rhs, is_64bit);
+        } break;
+        case TB_SHR: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_2(e, LSRV, dst, lhs, rhs, is_64bit);
+        } break;
+        case TB_SAR: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_2(e, ASRV, dst, lhs, rhs, is_64bit);
+        } break;
+        case TB_ROL: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            tb_todo(); //!! arm doesn't have rotate left
+            emit_dpr_2(e, RORV, dst, lhs, rhs, is_64bit);
+        } break;
+        case TB_ROR: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_2(e, RORV, dst, lhs, rhs, is_64bit);
+        } break;
+        case TB_UDIV: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_2(e, UDIV, dst, lhs, rhs, is_64bit);
+        } break;
+        case TB_SDIV: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            bool is_64bit = n->dt.type == TB_TAG_I64;
+            emit_dpr_2(e, SDIV, dst, lhs, rhs, is_64bit);
+        } break;
+        case TB_UMOD: {
+            tb_unreachable();
+        } break;
+        case TB_SMOD: {
+            tb_unreachable();
+        } break;
 
-        default: tb_todo();
+        ////////////////////////////////
+        // Float arithmatic
+        ////////////////////////////////
+        // case TB_FADD:
+        // case TB_FSUB:
+        // case TB_FMUL:
+        // case TB_FDIV:
+        // case TB_FMIN:
+        // case TB_FMAX:
+
+        ////////////////////////////////
+        // Comparisons
+        ////////////////////////////////
+        // case TB_CMP_EQ:
+        // case TB_CMP_NE:
+        // case TB_CMP_ULT:
+        // case TB_CMP_ULE:
+        // case TB_CMP_SLT:
+        // case TB_CMP_SLE:
+        // case TB_CMP_FLT:
+        // case TB_CMP_FLE:
+
+        // case TB_FRAME_PTR:
+
+        ////////////////////////////////
+        // Special ops
+        ////////////////////////////////
+        // case TB_ADC:     // (Int, Int, Bool?) -> (Int, Bool)
+        // case TB_UDIVMOD: // (Int, Int) -> (Int, Int)
+        // case TB_SDIVMOD: // (Int, Int) -> (Int, Int)
+        // case TB_MULPAIR:
+
+        ////////////////////////////////
+        // variadic
+        ////////////////////////////////
+        // case TB_VA_START:
+
+        ////////////////////////////////
+        // general machine nodes:
+        ////////////////////////////////
+        // case TB_MACH_MOVE:
+        // case TB_MACH_COPY:
+        // case TB_MACH_JUMP:
+        // case TB_MACH_FRAME_PTR:
+        // case TB_MACH_JIT_THREAD_PTR:
+        // case TB_MACH_SYMBOL:
+
+        ////////////////////////////////
+        // custom machine nodes
+        ////////////////////////////////
+        // case A64_ADDIMM: {
+        //     int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+        //     int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+        //     uint64_t imm = TB_NODE_GET_EXTRA_T(n, A64Imm12)->imm;
+        //     int shift = 0;
+        //     if (imm == (imm & 077770000)) {
+        //         shift = 12;
+        //         imm >>= shift;
+        //     }
+
+        //     bool is_64bit = n->dt.type == TB_TAG_I64;
+        //     emit_dp_imm(e, ADD, dst, lhs, imm, shift, is_64bit);
+        //     break;
+        // }
+
+        default: {
+            tb_todo();
+        } break;
     }
 }
 
@@ -635,7 +1033,65 @@ ICodeGen tb__aarch64_codegen = {
     .emit_call_patches  = emit_call_patches,
     .compile_function   = compile_function,
 };
-#endif
+// #endif
+
+/* condensed list of things to handle :)
+    TB_NULL = 0,
+    // CONSTANTS
+    TB_ICONST, TB_F32CONST, TB_F64CONST,
+    // PROJECTIONS
+    TB_PROJ, TB_BRANCH_PROJ, TB_MACH_PROJ,
+    // MISCELLANEOUS
+    TB_POISON, TB_INLINE_ASM, TB_CYCLE_COUNTER, TB_PREFETCH, TB_SYMBOL_TABLE,
+    // CONTROL
+    TB_ROOT, TB_RETURN,
+    TB_REGION, TB_NATURAL_LOOP, TB_AFFINE_LOOP,
+    TB_PHI, TB_BRANCH, TB_AFFINE_LATCH, TB_NEVER_BRANCH, TB_ENTRY_FORK,
+    TB_DEBUGBREAK, TB_TRAP, TB_UNREACHABLE, TB_DEAD,
+    // CONTROL + MEMORY
+    TB_CALL, TB_SYSCALL, TB_TAILCALL, TB_DEBUG_LOCATION, TB_SAFEPOINT, TB_CALLGRAPH, TB_DEBUG_SCOPES,
+    // MEMORY
+    TB_SPLITMEM, TB_MERGEMEM,
+    TB_LOAD, TB_STORE,
+    TB_MEMCPY, TB_MEMSET,
+    TB_READ, TB_WRITE,
+    TB_ATOMIC_LOAD, TB_ATOMIC_XCHG, TB_ATOMIC_ADD, TB_ATOMIC_AND, TB_ATOMIC_XOR, TB_ATOMIC_OR, TB_ATOMIC_PTROFF, TB_ATOMIC_CAS,
+    // like a multi-way branch but without the control flow aspect, but for data.
+    TB_LOOKUP,
+    // POINTERS
+    TB_LOCAL, TB_SYMBOL, TB_PTR_OFFSET,
+    // Conversions
+    TB_TRUNCATE, TB_FLOAT_TRUNC, TB_FLOAT_EXT, TB_SIGN_EXT, TB_ZERO_EXT, TB_UINT2FLOAT, TB_FLOAT2UINT, TB_INT2FLOAT, TB_FLOAT2INT, TB_BITCAST,
+    // Select
+    TB_SELECT,
+    // Bitmagic
+    TB_BSWAP, TB_CLZ, TB_CTZ, TB_POPCNT,
+    // Unary operations
+    TB_FNEG,
+    // Integer arithmatic
+    TB_AND, TB_OR, TB_XOR, TB_ADD, TB_SUB, TB_MUL,
+    TB_SHL, TB_SHR, TB_SAR, TB_ROL, TB_ROR, TB_UDIV, TB_SDIV, TB_UMOD, TB_SMOD,
+    // Float arithmatic
+    TB_FADD, TB_FSUB, TB_FMUL, TB_FDIV, TB_FMIN, TB_FMAX,
+    // Comparisons
+    TB_CMP_EQ, TB_CMP_NE, TB_CMP_ULT, TB_CMP_ULE, TB_CMP_SLT, TB_CMP_SLE, TB_CMP_FLT, TB_CMP_FLE,
+    TB_FRAME_PTR,
+    // Special ops
+    TB_ADC, TB_UDIVMOD, TB_SDIVMOD, TB_MULPAIR,
+    // variadic
+    TB_VA_START,
+    // x86 intrinsics
+    TB_X86INTRIN_LDMXCSR, TB_X86INTRIN_STMXCSR, TB_X86INTRIN_SQRT, TB_X86INTRIN_RSQRT,
+    // general machine nodes:
+    TB_MACH_MOVE, TB_MACH_COPY, TB_MACH_JUMP, TB_MACH_FRAME_PTR, TB_MACH_JIT_THREAD_PTR, TB_MACH_SYMBOL,
+    // limit on generic nodes
+    TB_NODE_TYPE_MAX,
+    // each family of machine nodes gets 256 nodes
+    // first machine op, we have some generic ops here:
+    TB_MACH_X86  = TB_ARCH_X86_64  * 0x100,
+    TB_MACH_A64  = TB_ARCH_AARCH64 * 0x100,
+    TB_MACH_MIPS = TB_ARCH_MIPS32  * 0x100,
+*/
 
 #if 0
 #ifdef TB_HAS_AARCH64
