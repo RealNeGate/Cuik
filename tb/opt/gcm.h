@@ -108,7 +108,7 @@ void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws) {
     for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
         TB_Node* n = ws->items[i];
 
-        if (is_mem_out_op(n) || n->dt.type == TB_TAG_MEMORY) {
+        if (tb_node_has_mem_out(n) || n->dt.type == TB_TAG_MEMORY) {
             // the anti-deps are applied to the tuple node (projs can't have extra inputs anyways)
             TB_Node* k = is_proj(n) ? n->inputs[0] : n;
             if (k->type != TB_ROOT) {

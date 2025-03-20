@@ -118,10 +118,9 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_MULPAIR:  return "mulpair";
         case TB_LOAD:     return "load";
         case TB_STORE:    return "store";
-        case TB_READ:     return "read";
-        case TB_WRITE:    return "write";
         case TB_VSHUFFLE: return "vshuffle";
         case TB_VBROADCAST: return "vbroadcast";
+        case TB_HARD_BARRIER: return "hard_barrier";
 
         case TB_CALL:     return "call";
         case TB_SYSCALL:  return "syscall";

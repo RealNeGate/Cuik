@@ -33,6 +33,7 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_AFFINE_LATCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH,
     [TB_NEVER_BRANCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
     [TB_ENTRY_FORK]     = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
+    [TB_SAFEPOINT]      = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT,
     [TB_MACH_JUMP]      = NODE_CTRL | NODE_TERMINATOR,
 
     [TB_LOAD]           = NODE_MEMORY_IN,
@@ -49,6 +50,7 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_ATOMIC_OR]      = NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_ATOMIC_PTROFF]  = NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_ATOMIC_CAS]     = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_HARD_BARRIER]   = NODE_MEMORY_IN | NODE_MEMORY_OUT,
 
     [TB_DEBUG_LOCATION] = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_CALL]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT,
@@ -56,10 +58,7 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_REGION]         = NODE_CTRL,
     [TB_NATURAL_LOOP]   = NODE_CTRL,
     [TB_AFFINE_LOOP]    = NODE_CTRL,
-    [TB_SAFEPOINT]      = NODE_CTRL | NODE_MEMORY_IN | NODE_SAFEPOINT,
     [TB_DEBUGBREAK]     = NODE_CTRL | NODE_MEMORY_IN,
-    [TB_READ]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
-    [TB_WRITE]          = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
 };
 
 static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
@@ -126,7 +125,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_AFFINE_LOOP]    = { NULL,              identity_region,    value_region,    },
     [TB_BRANCH]         = { ideal_branch,      NULL,               value_branch,    },
     [TB_AFFINE_LATCH]   = { ideal_branch,      NULL,               value_branch,    },
-    [TB_SAFEPOINT]      = { NULL,              identity_safepoint, value_ctrl,      },
+    [TB_SAFEPOINT]      = { NULL,              identity_safepoint, value_safepoint, },
     [TB_CALL]           = { ideal_libcall,     NULL,               value_call,      },
     [TB_TAILCALL]       = { NULL,              NULL,               value_ctrl,      },
     [TB_SYSCALL]        = { NULL,              NULL,               value_call,      },

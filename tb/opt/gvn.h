@@ -79,8 +79,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_DEBUGBREAK:
         case TB_CYCLE_COUNTER:
         case TB_MULPAIR:
-        case TB_READ:
-        case TB_WRITE:
+        case TB_HARD_BARRIER:
         case TB_ROOT:
         case TB_TRAP:
         case TB_RETURN:

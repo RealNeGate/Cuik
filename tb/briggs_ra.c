@@ -72,12 +72,6 @@ typedef struct {
     uint32_t degree;
 } SimplifiedElem;
 
-typedef struct {
-    int count;
-    int* stack;
-    uint64_t* visited;
-} IFG_Worklist;
-
 static void ifg_build(Ctx* restrict ctx, Briggs* ra);
 static void ifg_raw_edge(Briggs* ra, int i, int j);
 static bool ifg_coalesce(Ctx* restrict ctx, Briggs* ra, bool aggro);
@@ -113,12 +107,12 @@ static void ifg_print(Ctx* restrict ctx, Briggs* ra, int i) {
     }
 }
 
-static IFG_Worklist ifg_ws_alloc(Ctx* restrict ctx, Briggs* restrict ra) {
+static IFG_Worklist ifg_ws_alloc(Ctx* restrict ctx, TB_Arena* arena, int len) {
     IFG_Worklist ws = { 0 };
     ws.count = 0;
-    ws.visited = tb_arena_alloc(ra->arena, ((ra->ifg_len+63)/64) * sizeof(uint64_t)),
-    ws.stack = tb_arena_alloc(ra->arena, ra->ifg_len * sizeof(uint64_t));
-    memset(ws.visited, 0, ((ra->ifg_len+63)/64) * sizeof(uint64_t));
+    ws.visited = tb_arena_alloc(arena, ((len+63)/64) * sizeof(uint64_t)),
+    ws.stack = tb_arena_alloc(arena, len * sizeof(uint64_t));
+    memset(ws.visited, 0, ((len+63)/64) * sizeof(uint64_t));
     return ws;
 }
 

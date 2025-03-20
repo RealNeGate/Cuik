@@ -61,7 +61,9 @@ static bool same_base(TB_Node* a, TB_Node* b) {
 
 static TB_Node* next_mem_user(TB_Node* n) {
     FOR_USERS(u, n) {
-        if (is_mem_out_op(USERN(u))) { return USERN(u); }
+        if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u))) {
+            return USERN(u);
+        }
     }
 
     return NULL;
@@ -120,7 +122,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
             else if (use_n->type == TB_MERGEMEM)   { reason = MEM_END;  }
             else if (use_n->type == TB_PHI)        { reason = MEM_JOIN; }
             else if (tb_node_mem_read_only(use_n)) { reason = MEM_USE;  }
-            else if (cfg_is_mproj(use_n) || (use_i == 1 && is_mem_out_op(use_n))) {
+            else if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
                 reason = MEM_FORK;
             }
 
@@ -156,7 +158,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                     tb_kill_node(f, curr);
                 }
             }
-        } else if (curr->type != TB_PROJ && curr->type != TB_PHI && is_mem_out_op(curr)) {
+        } else if (curr->type != TB_PROJ && curr->type != TB_PHI && tb_node_has_mem_out(curr)) {
             set_input(f, curr, latest[0], 1);
             latest[0] = curr;
         }

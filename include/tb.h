@@ -317,10 +317,6 @@ typedef enum TB_NodeTypeEnum {
     //   bulk memory ops.
     TB_MEMCPY,      // (Control, Memory, Ptr, Ptr, Size)  -> Memory
     TB_MEMSET,      // (Control, Memory, Ptr, Int8, Size) -> Memory
-    //   these memory accesses represent "volatile" which means
-    //   they may produce side effects and thus cannot be eliminated.
-    TB_READ,        // (Control, Memory, Ptr)       -> (Memory, Data)
-    TB_WRITE,       // (Control, Memory, Ptr, Data) -> (Memory, Data)
     //   atomics have multiple observers (if not they wouldn't need to
     //   be atomic) and thus produce side effects everywhere just like
     //   volatiles except they have synchronization guarentees. the atomic
@@ -335,6 +331,8 @@ typedef enum TB_NodeTypeEnum {
     TB_ATOMIC_OR,     // (Control, Memory, Ptr, Data)  -> (Memory, Data)
     TB_ATOMIC_PTROFF, // (Control, Memory, Ptr, Ptr)   -> (Memory, Ptr)
     TB_ATOMIC_CAS,    // (Control, Memory, Data, Data) -> (Memory, Data, Bool)
+    //   volatile memory barrier
+    TB_HARD_BARRIER,  // (Control, Memory, MemOp) -> Memory
 
     // like a multi-way branch but without the control flow aspect, but for data.
     TB_LOOKUP,
@@ -637,6 +635,7 @@ typedef struct { // any integer binary operator
 
 typedef struct {
     TB_CharUnits align;
+    bool is_volatile;
 } TB_NodeMemAccess;
 
 typedef struct { // TB_DEBUG_LOCATION
@@ -739,7 +738,7 @@ typedef struct TB_Safepoint {
 
     uint32_t ip;    // relative to the function body.
     uint32_t count; // same as node->input_count
-    int32_t values[];
+    uint32_t values[];
 } TB_Safepoint;
 
 typedef enum {
@@ -1424,7 +1423,7 @@ TB_API TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t
 
 // memory
 TB_API TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_Node* addr, TB_CharUnits align, bool is_volatile);
-TB_API void tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile);
+TB_API TB_Node* tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile);
 TB_API void tb_builder_memcpy(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* src, TB_Node* size, TB_CharUnits align, bool is_volatile);
 TB_API void tb_builder_memset(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align, bool is_volatile);
 TB_API void tb_builder_memzero(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* size, TB_CharUnits align, bool is_volatile);
@@ -1445,7 +1444,10 @@ TB_API void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file,
 // function call
 TB_API TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
 TB_API TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
-TB_API void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, void* userdata, TB_Node* poll_site, int arg_count, TB_Node** args);
+
+// paths[0] has the normal path's symbol table written in it.
+// paths[1] has the "hit" path's symbol table written in it.
+TB_API void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args, TB_Node* paths[2]);
 
 // locals (variables but as stack vars)
 TB_API TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align);

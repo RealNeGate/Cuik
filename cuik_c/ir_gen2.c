@@ -1558,35 +1558,6 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
     }
 }
 
-static void cool_matmul_gen(TranslationUnit* tu, TB_GraphBuilder* g) {
-    int N = 8;
-    TB_DataType dt = TB_TYPE_I32;
-
-    TB_Node* dst_base = tb_builder_load(g, 0, false, TB_TYPE_PTR, tb_builder_param_addr(g, 0), 8, false);
-    TB_Node* lhs_base = tb_builder_load(g, 0, false, TB_TYPE_PTR, tb_builder_param_addr(g, 1), 8, false);
-    TB_Node* rhs_base = tb_builder_load(g, 0, false, TB_TYPE_PTR, tb_builder_param_addr(g, 2), 8, false);
-
-    // load literally all the elements
-    TB_Node** lhs = tb_arena_alloc(muh_tmp_arena, N * N * sizeof(TB_Node*));
-    TB_Node** rhs = tb_arena_alloc(muh_tmp_arena, N * N * sizeof(TB_Node*));
-
-    for (int i = 0; i < N*N; i++) {
-        lhs[i] = tb_builder_load(g, 0, false, dt, tb_builder_ptr_member(g, lhs_base, i * sizeof(int)), 4, false);
-        rhs[i] = tb_builder_load(g, 0, false, dt, tb_builder_ptr_member(g, rhs_base, i * sizeof(int)), 4, false);
-    }
-
-    for (int i = 0; i < N; i++) {
-        for (int j = 0; j < N; j++) {
-            TB_Node* sum = NULL;
-            for (int k = 0; k < N; k++) {
-                TB_Node* addend = tb_builder_binop_int(g, TB_MUL, lhs[i*N + k], rhs[k*N + j], 0);
-                sum = sum ? tb_builder_binop_int(g, TB_ADD, sum, addend, 0) : addend;
-            }
-            tb_builder_store(g, 0, true, tb_builder_ptr_member(g, dst_base, (i*4 + j) * sizeof(int)), sum, 4, false);
-        }
-    }
-}
-
 TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s) {
     // assert(s->flags & STMT_FLAGS_HAS_IR_BACKING);
     if (s->op == STMT_FUNC_DECL) {
@@ -1622,19 +1593,28 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
 
             TB_GraphBuilder* g = tb_builder_enter_from_dbg(func, section, dbg_type, NULL);
 
-            // TB_Node* paths[2];
-            // tb_builder_entry_fork(g, 2, paths);
-            // make a verified entry
+            /* {
+                TB_Node* a = tb_builder_uint(g, TB_TYPE_I32, 69);
+
+                // potentially faulting op
+                TB_Symbol* s = tb_extern_create(tu->ir_mod, -1, "poll_site", TB_EXTERNAL_SO_LOCAL);
+                TB_Node* n = tb_builder_load(g, 0, true, TB_TYPE_I32, tb_builder_symbol(g, s), 4, false);
+
+                TB_Node* paths[2];
+                tb_builder_safepoint(g, 0, n, NULL, 1, &a, paths);
+                {
+                    tb_builder_label_set(g, paths[1]);
+                    tb_builder_trap(g, 0);
+                }
+                tb_builder_label_set(g, paths[0]);
+            } */
 
             muh_tmp_arena = tb_function_get_arena(func, 1);
             muh_param_memory_vars = tb_arena_alloc(muh_tmp_arena, function_type->func.param_count * sizeof(int));
-            /* if (strcmp(s->decl.name, "matmul") == 0) {
-                cool_matmul_gen(tu, g);
-            } else */
             {
                 int split_count = 0;
                 int split_i     = -1;
-                TB_Node* split = NULL;
+                TB_Node* split  = NULL;
 
                 // check for any restricted ptrs
                 for (size_t i = 0; i < function_type->func.param_count; i++) {

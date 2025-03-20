@@ -50,6 +50,8 @@ where "fits_into_int32(TB_TYPE_I64, $disp)"
 subpat (x86_lea ___ ___ $base disp=$disp) => (x86_MEMORY $base disp=$disp)
 subpat (x86_lea ___ ___ $base $index scale=$scale disp=$disp flags=$flags) where "$flags==OP_INDEXED" => (x86_MEMORY $base $index flags=OP_INDEXED scale=$scale disp=$disp)
 
+// (ADD (LOAD ($lhs: MEMORY ...)) $rhs) => ()
+
 // *******************************
 // FLAGS
 // *******************************
@@ -60,8 +62,8 @@ node (ucomi)
 
 // compares
 #define CMP_OP(op_name, cc) \
-pat (op_name cmp_dt=$dt ___ $lhs $rhs) => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=cc) \
-pat (op_name cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)" extra_dt=$dt) cond=cc)
+pat (op_name cmp_dt=$dt ___ $lhs $rhs) where "TB_IS_INT_OR_PTR($dt)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=cc) \
+pat (op_name cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && fits_into_int32($dt, $rhs)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)" extra_dt=$dt) cond=cc)
 
 CMP_OP(TB_CMP_SLE, LE)
 CMP_OP(TB_CMP_SLT, L)
@@ -82,8 +84,8 @@ node (jcc)
 pat (TB_BRANCH dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond)
 pat (TB_AFFINE_LATCH dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond)
 
-pat (TB_BRANCH dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=E)
-pat (TB_AFFINE_LATCH dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=E)
+pat (TB_BRANCH dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE)
+pat (TB_AFFINE_LATCH dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE)
 
 // if we don't get rid of the "condition" by merging it with something
 // else then it's being directly used.

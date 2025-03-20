@@ -203,7 +203,7 @@ static void print_extra(TB_Node* n) {
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
     int vreg_id = ctx->vreg_map[n->gvn];
-    if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
+    if (0 && vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
         /* VReg* v = &ctx->vregs[vreg_id];
         if (v->class == REG_CLASS_GPR) {
             printf("%s", GPR_NAMES[v->assigned]);
@@ -397,7 +397,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
             printf(", %"PRId32, op->imm);
         }
 
-        int first = op->mode == MODE_ST ? rx_i : rx_i+1;
+        int first = rx_i+1;
         FOR_N(i, first, n->input_count) {
             printf(", ");
             if (n->inputs[i]) {
@@ -628,9 +628,14 @@ static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
         ctx->stack_header = 8;
     }
 
+    ctx->all_mask[REG_CLASS_GPR]      = new_regmask(ctx->f, REG_CLASS_GPR, false, 0xFFFF);
+    ctx->all_mask[REG_CLASS_XMM]      = new_regmask(ctx->f, REG_CLASS_XMM, false, 0xFFFF);
+    ctx->all_mask[REG_CLASS_FLAGS]    = new_regmask(ctx->f, REG_CLASS_FLAGS, false, 1);
+
     ctx->normie_mask[REG_CLASS_GPR]   = new_regmask(ctx->f, REG_CLASS_GPR, false, all_gprs);
     ctx->normie_mask[REG_CLASS_XMM]   = new_regmask(ctx->f, REG_CLASS_XMM, false, 0xFFFF);
     ctx->normie_mask[REG_CLASS_FLAGS] = new_regmask(ctx->f, REG_CLASS_FLAGS, false, 1);
+
     ctx->mayspill_mask[REG_CLASS_GPR] = new_regmask(ctx->f, REG_CLASS_GPR, true, all_gprs);
     ctx->mayspill_mask[REG_CLASS_XMM] = new_regmask(ctx->f, REG_CLASS_XMM, true, 0xFFFF);
     ctx->mayspill_mask[REG_CLASS_FLAGS] = NULL;
@@ -850,13 +855,18 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             return TB_NODE_GET_EXTRA_T(n, TB_NodeMachProj)->def;
         }
 
+        case TB_HARD_BARRIER:
         case TB_SAFEPOINT: {
             if (ins) {
                 TB_NodeSafepoint* sp = TB_NODE_GET_EXTRA(n);
                 ins[1] = &TB_REG_EMPTY;
-                ins[2] = ctx->normie_mask[REG_CLASS_GPR];
-                FOR_N(i, n->input_count - sp->saved_val_count, n->input_count) {
-                    ins[i] = ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
+                FOR_N(i, 2, n->input_count) {
+                    TB_Node* in = n->inputs[i];
+                    if (in->dt.type == TB_TAG_MEMORY) {
+                        ins[i] = &TB_REG_EMPTY;
+                    } else {
+                        ins[i] = ctx->normie_mask[TB_IS_VECTOR_TYPE(in->dt) || TB_IS_FLOAT_TYPE(in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR];
+                    }
                 }
             }
             return &TB_REG_EMPTY;
@@ -914,17 +924,16 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_movzx8: case x86_movzx16:
         case x86_movsx8: case x86_movsx16: case x86_movsx32:
         {
-            RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             if (ins) {
                 ins[1] = &TB_REG_EMPTY;
+
+                RegMask* rm = ctx->all_mask[REG_CLASS_GPR];
                 FOR_N(i, 2, n->input_count) {
                     ins[i] = n->inputs[i] ? rm : &TB_REG_EMPTY;
                 }
 
-                if (n->inputs[2] && n->inputs[2]->type == TB_MACH_FRAME_PTR) {
-                    ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSP);
-                } else if (n->inputs[2] && n->inputs[2]->type == TB_MACH_SYMBOL) {
+                if (n->inputs[2] && n->inputs[2]->type == TB_MACH_SYMBOL) {
                     ins[2] = &TB_REG_EMPTY;
                 } else if (op->mode == MODE_REG && (op->flags & OP_INDEXED) == 0) {
                     // the memory operand can be a spill slot
@@ -960,10 +969,10 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
         case x86_shl: case x86_shr: case x86_rol: case x86_ror: case x86_sar:
         {
-            RegMask* rm = ctx->normie_mask[REG_CLASS_GPR];
             if (ins) {
                 ins[1] = &TB_REG_EMPTY;
 
+                RegMask* rm = ctx->all_mask[REG_CLASS_GPR];
                 X86MemOp* op = TB_NODE_GET_EXTRA(n);
                 if ((op->flags & OP_IMMEDIATE) == 0) {
                     TB_ASSERT(op->mode == MODE_REG);
@@ -978,7 +987,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     }
                 }
             }
-            return rm;
+            return ctx->all_mask[REG_CLASS_GPR];
         }
 
         case x86_vmov: case x86_vadd: case x86_vmul: case x86_vdiv:
@@ -990,13 +999,11 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 ins[1] = &TB_REG_EMPTY;
 
                 if (op->mode == MODE_LD || op->mode == MODE_ST) {
-                    if (n->inputs[2]->type == TB_MACH_FRAME_PTR) {
-                        ins[2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RSP);
-                    } else if (n->inputs[2]->type == TB_MACH_SYMBOL) {
+                    if (n->inputs[2]->type == TB_MACH_SYMBOL) {
                         ins[2] = &TB_REG_EMPTY;
                     } else {
                         // base & index are still GPRs
-                        ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+                        ins[2] = ctx->all_mask[REG_CLASS_GPR];
                         if (op->flags & OP_INDEXED) {
                             ins[3] = ctx->normie_mask[REG_CLASS_GPR];
                         }
@@ -1313,15 +1320,15 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_CALLGRAPH:
         case TB_MACH_SYMBOL:
         case TB_MACH_FRAME_PTR:
+        case TB_HARD_BARRIER:
         case TB_UNREACHABLE:
         break;
 
-        case TB_SAFEPOINT: {
-            GPR poll = op_gpr_at(ctx, n->inputs[2]);
-            COMMENT("safepoint %p", TB_NODE_GET_EXTRA_T(n, TB_NodeSafepoint)->userdata);
-            __(TEST, TB_X86_QWORD, Vbase(poll, 0), Vgpr(RAX));
-            break;
-        }
+        case TB_SAFEPOINT:
+        COMMENT("safepoint");
+        EMIT1(e, 0x90);
+        // TB_OPTDEBUG(REGALLOC2)(EMIT1(e, 0x90));
+        break;
 
         case TB_MACH_JIT_THREAD_PTR: {
             GPR dst = op_gpr_at(ctx, n);
@@ -1969,6 +1976,8 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
     if (n->type == x86_imul) {
         return 3;
+    } else if (n->type == x86_test || n->type == x86_cmp) {
+        return 1;
     }
 
     X86MemOp* op = TB_NODE_GET_EXTRA(n);

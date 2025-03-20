@@ -123,6 +123,7 @@ typedef struct {
 // there's also the degenerate case where the bundle is always 1
 // node (most superscalars are in this camp)
 typedef struct {
+    bool has_safepoint;
     int count;
     TB_Node** arr;
 } Bundle;
@@ -202,6 +203,7 @@ struct Ctx {
     int num_regs[MAX_REG_CLASSES];
 
     NL_HashSet mask_intern;
+    RegMask* all_mask[MAX_REG_CLASSES];
     RegMask* normie_mask[MAX_REG_CLASSES];
     RegMask* mayspill_mask[MAX_REG_CLASSES];
 
@@ -222,6 +224,17 @@ extern RegMask TB_REG_EMPTY;
 
 void tb__rogers(Ctx* restrict ctx, TB_Arena* arena);
 void tb__briggs(Ctx* restrict ctx, TB_Arena* arena);
+
+typedef struct {
+    int count;
+    int* stack;
+    uint64_t* visited;
+} IFG_Worklist;
+
+static IFG_Worklist ifg_ws_alloc(Ctx* restrict ctx, TB_Arena* arena, int len);
+static void ifg_ws_remove(IFG_Worklist* ws, int vreg_id);
+static bool ifg_ws_push(IFG_Worklist* ws, int vreg_id);
+static int ifg_ws_pop(IFG_Worklist* ws);
 
 // RA helpers
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b);

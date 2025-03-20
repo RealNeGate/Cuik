@@ -101,17 +101,6 @@ void tb_node_clear_extras(TB_Function* f, TB_Node* n) {
     }
 }
 
-static TB_Node* mem_user(TB_Function* f, TB_Node* n, int slot) {
-    FOR_USERS(u, n) {
-        if ((USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_TAG_MEMORY) ||
-            (USERI(u) == slot && is_mem_out_op(USERN(u)))) {
-            return USERN(u);
-        }
-    }
-
-    return NULL;
-}
-
 static bool is_empty_bb(TB_Function* f, TB_Node* end) {
     TB_ASSERT(cfg_is_terminator(end));
     if (!cfg_is_bb_entry(end->inputs[0])) {
@@ -510,9 +499,8 @@ static bool can_gvn(TB_Node* n) {
         // are met, they'd just bloat the table tho).
         case TB_ROOT:
         case TB_CALL:
-        case TB_READ:
+        case TB_HARD_BARRIER:
         case TB_REGION:
-        case TB_WRITE:
         case TB_RETURN:
         case TB_BRANCH:
         case TB_AFFINE_LATCH:

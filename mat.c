@@ -9,8 +9,9 @@ int bar(float a) {
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
-/*uint32_t count(uint64_t bits) {
+uint32_t count(uint64_t bits) {
     uint32_t used = 0;
     for (uint32_t i = 0; i < 64; i++) {
         if (bits & (1ull << i)) {
@@ -19,9 +20,13 @@ int bar(float a) {
     }
 
     return used;
-}*/
+}
 
-void matmul(float* dst, float* a, float* b) {
+int main() {
+    printf("H %d\n", count(0b100010010001));
+}
+
+/* void matmul(float* dst, float* a, float* b) {
     if (dst == NULL) {
         return;
     }
@@ -95,4 +100,5 @@ void matmul(float* dst, float* a, float* b) {
             }
         }
     }
-}
+}*/
+

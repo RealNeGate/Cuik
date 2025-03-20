@@ -72,6 +72,8 @@ enum {
 
 #define BND(arr, i, limit) ((i) >= (limit) ? abort() : 0, arr)[i]
 
+static bool allocate_loop2(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena);
+
 static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena);
 static void compute_ordinals(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena);
 static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs);
@@ -134,21 +136,25 @@ static void rogers_coalesce(Ctx* restrict ctx, Rogers* restrict ra, int x, int y
     ra->uf_size[x] += ra->uf_size[y];
 
     TB_ASSERT(ra->uf[x] == x);
-    ArenaArray(TB_Node*) new_set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (x + 1));
+    ArenaArray(TB_Node*)* new_set = (ArenaArray(TB_Node*)*) nl_table_getp(&ra->coalesce_set, (void*) (uintptr_t) (x + 1));
     if (new_set == NULL) {
-        new_set = aarray_create(&ctx->f->arena, TB_Node*, 4);
-        nl_table_put(&ra->coalesce_set, (void*) (uintptr_t) (x + 1), new_set);
+        ArenaArray(TB_Node*) set = aarray_create(&ctx->f->arena, TB_Node*, 4);
+        nl_table_put(&ra->coalesce_set, (void*) (uintptr_t) (x + 1), set);
+
+        // lazy? yes
+        new_set = (ArenaArray(TB_Node*)*) nl_table_getp(&ra->coalesce_set, (void*) (uintptr_t) (x + 1));
     }
 
     ArenaArray(TB_Node*) old_set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (y + 1));
     if (old_set == NULL) {
-        aarray_push(new_set, yn);
+        aarray_push(*new_set, yn);
     } else {
         aarray_for(i, old_set) {
-            aarray_push(new_set, old_set[i]);
+            aarray_push(*new_set, old_set[i]);
         }
     }
-    aarray_push(new_set, xn);
+
+    aarray_push(*new_set, xn);
 }
 
 static TB_Node* rogers_hard_split(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* n, TB_Node* in, RegMask* rm, int vreg_id) {
@@ -814,6 +820,7 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
         FOR_N(j, 0, cnt) {
             if (arr[j] != n) {
                 set_put(&ra->future_active, arr[j]->gvn);
+                TB_OPTDEBUG(REGALLOC)(printf("#   sleep  %%%u\n", arr[j]->gvn));
             }
         }
 
@@ -1119,45 +1126,56 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 int leader = uf_find(ra->uf, ra->uf_len, to_spill->gvn);
                 ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
                 if (set && aarray_length(set) > 1) {
-                    VReg* vreg = tb__set_node_vreg(ctx, to_spill);
-                    vreg->mask = ctx->constraint(ctx, to_spill, NULL);
-                    FOR_USERS(u, to_spill) {
-                        if (is_proj(USERN(u))) {
-                            continue;
-                        }
-
-                        RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
-                        RegMask* new_mask = tb__reg_mask_meet(ctx, vreg->mask, in_mask);
-
-                        TB_ASSERT(new_mask != &TB_REG_EMPTY);
-                        vreg->mask = new_mask;
-                    }
-                    vreg->reg_width = tb__reg_width_from_dt(vreg->mask->class, to_spill->dt);
-
+                    bool has_phi = false; // can't split phis
                     aarray_for(i, set) {
-                        if (set[i] == to_spill) {
-                            aarray_remove(set, i);
+                        if (set[i]->type == TB_PHI) {
+                            has_phi = true;
                             break;
                         }
                     }
 
-                    TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: split from coalesce set (%%%u)\x1b[0m\n", vreg - ctx->vregs, to_spill->gvn));
-                } else {
-                    better_spill_range(ctx, ra, to_spill, old_node_count);
+                    if (!has_phi) {
+                        VReg* vreg = tb__set_node_vreg(ctx, to_spill);
+                        vreg->mask = ctx->constraint(ctx, to_spill, NULL);
+                        FOR_USERS(u, to_spill) {
+                            if (is_proj(USERN(u))) {
+                                continue;
+                            }
 
-                    VReg* vreg = node_vreg(ctx, to_spill);
-                    vreg->mask = ctx->constraint(ctx, to_spill, NULL);
-                    FOR_USERS(u, to_spill) {
-                        if (is_proj(USERN(u))) {
-                            continue;
+                            RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
+                            RegMask* new_mask = tb__reg_mask_meet(ctx, vreg->mask, in_mask);
+
+                            TB_ASSERT(new_mask != &TB_REG_EMPTY);
+                            vreg->mask = new_mask;
+                        }
+                        vreg->reg_width = tb__reg_width_from_dt(vreg->mask->class, to_spill->dt);
+
+                        aarray_for(i, set) {
+                            if (set[i] == to_spill) {
+                                aarray_remove(set, i);
+                                break;
+                            }
                         }
 
-                        RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
-                        RegMask* new_mask = tb__reg_mask_meet(ctx, vreg->mask, in_mask);
-
-                        TB_ASSERT(new_mask != &TB_REG_EMPTY);
-                        vreg->mask = new_mask;
+                        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: split from coalesce set (%%%u)\x1b[0m\n", vreg - ctx->vregs, to_spill->gvn));
+                        continue;
                     }
+                }
+
+                better_spill_range(ctx, ra, to_spill, old_node_count);
+
+                VReg* vreg = node_vreg(ctx, to_spill);
+                vreg->mask = ctx->constraint(ctx, to_spill, NULL);
+                FOR_USERS(u, to_spill) {
+                    if (is_proj(USERN(u))) {
+                        continue;
+                    }
+
+                    RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
+                    RegMask* new_mask = tb__reg_mask_meet(ctx, vreg->mask, in_mask);
+
+                    TB_ASSERT(new_mask != &TB_REG_EMPTY);
+                    vreg->mask = new_mask;
                 }
             }
         }
@@ -1367,5 +1385,110 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, TB_Node* to_spill,
 
     tb_arena_restore(&f->tmp_arena, sp);
 }
+
+#if 0
+////////////////////////////////
+// Greedy allocator
+////////////////////////////////
+static bool allocate_loop2(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena) {
+    ra->inactive_cache = tb_arena_alloc(arena, 1024 * sizeof(InactiveCacheEntry));
+    memset(ra->inactive_cache, 0, 1024 * sizeof(InactiveCacheEntry));
+
+    ra->future_active = set_create_in_arena(arena, ctx->f->node_count);
+    ra->live          = set_create_in_arena(arena, ctx->f->node_count);
+    ra->dirty_bb      = tb_arena_alloc(arena, ctx->bb_count * sizeof(int));
+    FOR_N(i, 0, ctx->bb_count) {
+        ra->dirty_bb[i] = -1;
+    }
+
+    TB_BasicBlock** scheduled = ctx->f->scheduled;
+    TB_Node* root = ctx->f->root_node;
+    compute_ordinals(ctx, ra, arena);
+
+    ra->mask_cap = ra->max_regs_in_class > ra->num_spills ? ra->max_regs_in_class : ra->num_spills;
+    ra->mask = tb_arena_alloc(arena, ((ra->mask_cap+63)/64) * sizeof(uint64_t));
+
+    IFG_Worklist queue = ifg_ws_alloc(ctx, ra->arena, aarray_length(ctx->vregs));
+    FOR_REV_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        FOR_REV_N(j, 0, aarray_length(bb->items)) {
+            int vreg_id = ctx->vreg_map[bb->items[j]->gvn];
+            ifg_ws_push(&hi, vreg_id);
+        }
+    }
+
+    ra->live = set_create_in_arena(arena, ctx->f->node_count);
+
+    int vreg_id;
+    while (vreg_id = ifg_ws_pop(&lo), vreg_id > 0) {
+        #if TB_OPTDEBUG_REGALLOC2
+        briggs_print_vreg(ctx, ra, &ctx->vregs[vreg_id]);
+        printf("#   interfere: ");
+        #endif
+
+        int def_class = vreg->mask->class;
+        int num_regs = def_class == REG_CLASS_STK ? ra->num_spills : ctx->num_regs[def_class];
+
+        size_t mask_word_count = (num_regs + 63) / 64;
+        RegMask* mask = vreg->mask;
+
+        // what the regmask holds only applies up until num_regs[class], this is mostly
+        // just relevant for the stack coloring i suppose
+        size_t nr = ctx->num_regs[mask->class];
+        uint64_t* ra_mask = ra->mask;
+        {
+            FOR_N(j, 0, mask->count) { ra_mask[j] = ~mask->mask[j]; }
+            FOR_N(j, mask->count, (nr + 63) / 64) { ra_mask[j] = UINT64_MAX; }
+            if (nr % 64) {
+                ra_mask[nr / 64] &= UINT64_MAX >> (64ull - (nr % 64));
+            }
+        }
+
+        // every node in the coalesced set needs to be checked for interference
+        int leader = uf_find(ra->uf, ra->uf_len, n->gvn);
+        ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
+        size_t cnt = set ? aarray_length(set) : 1;
+        TB_Node** arr = set ? &set[0] : &n;
+
+        TB_BasicBlock** scheduled = ctx->f->scheduled;
+        BITS64_FOR(i, ra->future_active.data, ra->future_active.capacity) {
+            TB_Node* other = ra->gvn2node[i];
+            VReg* other_vreg = &ctx->vregs[ctx->vreg_map[i]];
+            if (other_vreg->class != def_class) {
+                continue;
+            }
+
+            if (other_vreg->assigned < 0) {
+                set_remove(&ra->future_active, i);
+                continue;
+            }
+
+            cuikperf_region_start("i", NULL);
+            int other_assigned = other_vreg->assigned;
+            FOR_N(j, 0, cnt) {
+                if (interfere(ctx, ra, arr[j], other)) {
+                    TB_ASSERT(other_vreg->assigned >= 0);
+                    if (within_reg_mask(mask, other_vreg->assigned)) {
+                        TB_OPTDEBUG(REGALLOC)(printf("%%%u -- ", other->gvn), print_reg_name(def_class, other_assigned), printf("; "));
+                        dyn_array_put(ra->potential_spills, i);
+                    }
+
+                    ra_mask[other_assigned / 64ull] |= (1ull << (other_assigned % 64ull));
+                    break;
+                }
+            }
+            cuikperf_region_end();
+        }
+
+        __debugbreak();
+
+        #if TB_OPTDEBUG_REGALLOC2
+        printf("\n");
+        #endif
+    }
+
+    __debugbreak();
+}
+#endif
 
 

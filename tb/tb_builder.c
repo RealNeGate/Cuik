@@ -298,12 +298,7 @@ TB_Node* tb_inst_load(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_CharUnit
     assert(addr);
 
     if (is_volatile) {
-        TB_Node* n = tb_alloc_node(f, TB_READ, TB_TYPE_TUPLE, 3, 0);
-        set_input(f, n, f->trace.bot_ctrl, 0);
-        set_input(f, n, peek_mem_OLD(f), 1);
-        set_input(f, n, addr, 2);
-        append_mem(f, tb__make_proj(f, TB_TYPE_MEMORY, n, 0));
-        return tb__make_proj(f, dt, n, 1);
+        tb_todo();
     } else {
         TB_Node* n = tb_alloc_node(f, TB_LOAD, dt, 3, sizeof(TB_NodeMemAccess));
         set_input(f, n, f->trace.bot_ctrl, 0);
@@ -319,7 +314,7 @@ void tb_inst_store(TB_Function* f, TB_DataType dt, TB_Node* addr, TB_Node* val, 
 
     TB_Node* n;
     if (is_volatile) {
-        n = tb_alloc_node(f, TB_WRITE, TB_TYPE_MEMORY, 4, 0);
+        tb_todo();
     } else {
         n = tb_alloc_node(f, TB_STORE, TB_TYPE_MEMORY, 4, sizeof(TB_NodeMemAccess));
         TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = alignment);

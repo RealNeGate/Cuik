@@ -697,6 +697,8 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
     size_t bb_count = aarray_length(cfg.blocks);
 
+    Set has_safepoints = set_create_in_arena(&f->arena, f->node_count);
+
     size_t node_count = f->node_count;
     size_t vreg_cap = 0;
     CUIK_TIMED_BLOCK("local schedule") {
@@ -738,6 +740,10 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     printf("\n");
                 }
                 #endif
+
+                if (n->type == TB_SAFEPOINT) {
+                    set_put(&has_safepoints, n->inputs[2]->gvn);
+                }
 
                 // temps are added as extras so they don't
                 // increase the "input_count"
@@ -946,7 +952,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
         TB_OPTDEBUG(EMIT)(printf("====== EMIT %-20s ======\n", ctx.f->super.name));
 
-        ArenaArray(NodeIPPair) spft_nodes = aarray_create(&f->tmp_arena, NodeIPPair, 16);
+        ArenaArray(NodeIPPair) sfpt_nodes = aarray_create(&f->tmp_arena, NodeIPPair, 16);
         FOR_N(i, 0, final_order_count) {
             int id = final_order[i];
             TB_BasicBlock* bb = &cfg.blocks[id];
@@ -973,11 +979,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     continue;
                 }
 
-                if (tb_node_is_safepoint(n)) {
-                    NodeIPPair pair = { n, GET_CODE_POS(e) };
-                    aarray_push(spft_nodes, pair);
-                }
-
                 // TODO(NeGate): we should be checking if the bundle can support the resources we're asking for.
                 // an example is that one bundle might only be able to do 2 memory operations so "fits_as_bundle"
                 // would return true for two stores but trying to stretch things to 3 would force a split.
@@ -999,9 +1000,28 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     }
                 }
 
+                // can't have two safepoints in the same bundle
+                if (bundle.has_safepoint && set_get(&has_safepoints, n->gvn)) {
+                    legal = false;
+                }
+
                 // flush bundle
                 if (!legal && bundle.count > 0) {
                     flush_bundle(&ctx, e, &bundle);
+                }
+
+                if (set_get(&has_safepoints, n->gvn)) {
+                    TB_Node* sfpt = NULL;
+                    FOR_USERS(u, n) {
+                        if (USERN(u)->type == TB_SAFEPOINT) {
+                            sfpt = USERN(u);
+                            break;
+                        }
+                    }
+                    TB_ASSERT(sfpt != NULL);
+
+                    NodeIPPair pair = { sfpt, GET_CODE_POS(e) };
+                    aarray_push(sfpt_nodes, pair);
                 }
 
                 bundle.arr[bundle.count++] = n;
@@ -1020,26 +1040,29 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         tb_arena_free(code_arena, ctx.emit.data + ctx.emit.count, ctx.emit.capacity - ctx.emit.count);
         tb_arena_realign(code_arena);
 
-        if (aarray_length(spft_nodes) > 0) {
+        if (aarray_length(sfpt_nodes) > 0) {
             CUIK_TIMED_BLOCK("build safepoint table") {
-                ArenaArray(TB_Safepoint*) safepoints = aarray_create(code_arena, TB_Safepoint*, aarray_length(spft_nodes));
+                ArenaArray(TB_Safepoint*) safepoints = aarray_create(code_arena, TB_Safepoint*, aarray_length(sfpt_nodes));
 
                 // it's built sorted by PC to make binsearching for it easy... why? i'll probably
                 // care about it for random stack sample crap
-                aarray_for(i, spft_nodes) {
-                    TB_Node* n  = spft_nodes[i].n;
-                    uint32_t ip = spft_nodes[i].ip;
+                aarray_for(i, sfpt_nodes) {
+                    TB_Node* n  = sfpt_nodes[i].n;
+                    uint32_t ip = sfpt_nodes[i].ip;
 
-                    TB_NodeSafepoint* n_spft = TB_NODE_GET_EXTRA(n);
+                    TB_NodeSafepoint* n_sfpt = TB_NODE_GET_EXTRA(n);
+                    TB_Safepoint* sfpt = tb_arena_alloc(code_arena, sizeof(TB_Safepoint) + n_sfpt->saved_val_count*sizeof(int32_t));
+                    sfpt->node = n;
+                    sfpt->userdata = n_sfpt->userdata;
+                    sfpt->ip = ip;
+                    FOR_N(i, 0, n_sfpt->saved_val_count) {
+                        TB_Node* in = n->inputs[3 + i];
+                        VReg* vreg = &ctx.vregs[ctx.vreg_map[in->gvn]];
+                        TB_ASSERT(vreg->assigned >= 0);
 
-                    TB_Safepoint* spft = tb_arena_alloc(code_arena, sizeof(TB_Safepoint) + n_spft->saved_val_count*sizeof(int32_t));
-                    spft->node = n;
-                    spft->userdata = n_spft->userdata;
-                    spft->ip = ip;
-                    FOR_N(i, 0, n_spft->saved_val_count) {
-                        tb_todo();
+                        sfpt->values[i] = (vreg->class << 24u) | vreg->assigned;
                     }
-                    aarray_push(safepoints, spft);
+                    aarray_push(safepoints, sfpt);
                 }
 
                 func_out->safepoints = safepoints;

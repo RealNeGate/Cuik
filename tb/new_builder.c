@@ -386,6 +386,40 @@ void tb_builder_merge_mem(TB_GraphBuilder* g, int out_mem, int split_count, int 
     set_input(f, g->curr, n, 2 + out_mem);
 }
 
+void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args, TB_Node* paths[2]) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_TUPLE, 3 + arg_count, sizeof(TB_NodeBranch));
+    set_input(f, n, xfer_ctrl(g, n), 0);
+    set_input(f, n, peek_mem(g, mem_var), 1);
+    set_input(f, n, mem_op, 2);
+    FOR_N(i, 0, arg_count) {
+        set_input(f, n, args[i], i+3);
+    }
+
+    TB_Node* cproj[2];
+    cproj[0] = tb__make_proj(f, TB_TYPE_CONTROL, n, 0);
+    cproj[1] = tb__make_proj(f, TB_TYPE_CONTROL, n, 1);
+
+    TB_Node* mproj = tb__make_proj(f, TB_TYPE_MEMORY, n, 2);
+
+    TB_Node* curr = g->curr;
+    g->curr = NULL;
+
+    FOR_N(i, 0, 2) {
+        TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, curr->input_count, sizeof(TB_NodeSymbolTable));
+        set_input(f, syms, cproj[i], 0);
+        set_input(f, syms, cproj[i], 1);
+        TB_NODE_SET_EXTRA(syms, TB_NodeSymbolTable, .complete = true);
+
+        FOR_N(j, 2, curr->input_count) {
+            set_input(f, syms, curr->inputs[j], j);
+        }
+        set_input(f, syms, mproj, 2+mem_var);
+        paths[i] = syms;
+    }
+    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, .userdata = userdata, .saved_val_count = arg_count);
+}
+
 TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_Node* addr, TB_CharUnits align, bool is_volatile) {
     TB_Function* f = g->f;
     assert(addr->dt.type == TB_TAG_PTR);
@@ -396,11 +430,22 @@ TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Data
     }
     set_input(f, n, peek_mem(g, mem_var), 1);
     set_input(f, n, addr, 2);
-    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
-    return g->peep(f, n);
+    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align, .is_volatile = is_volatile);
+    n = g->peep(f, n);
+
+    if (is_volatile) {
+        // volatile operations just have a memory barrier right after them, this will stop the
+        // load from being expunged and force an ordering to the loads.
+        TB_Node* bar = tb_alloc_node(f, TB_HARD_BARRIER, TB_TYPE_MEMORY, 3, 0);
+        set_input(f, bar, g->curr->inputs[0], 0);
+        set_input(f, bar, xfer_mem(g, bar, mem_var), 1);
+        set_input(f, bar, n, 2);
+    }
+
+    return n;
 }
 
-void tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile) {
+TB_Node* tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile) {
     TB_Function* f = g->f;
     TB_ASSERT(addr->dt.type == TB_TAG_PTR);
 
@@ -409,7 +454,16 @@ void tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* a
     set_input(f, n, xfer_mem(g, n, mem_var), 1);
     set_input(f, n, addr, 2);
     set_input(f, n, val, 3);
-    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align);
+    TB_NODE_SET_EXTRA(n, TB_NodeMemAccess, .align = align, .is_volatile = is_volatile);
+
+    if (is_volatile) {
+        // volatile operations just have a memory barrier right after them, this will stop the
+        // load from being expunged and force an ordering to the loads.
+        TB_Node* bar = tb_alloc_node(f, TB_HARD_BARRIER, TB_TYPE_MEMORY, 2, 0);
+        set_input(f, bar, g->curr->inputs[0], 0);
+        set_input(f, bar, xfer_mem(g, bar, mem_var), 1);
+    }
+    return n;
 }
 
 void tb_builder_memcpy(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* src, TB_Node* size, TB_CharUnits align, bool is_volatile) {
@@ -873,19 +927,6 @@ TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_
     set_input(f, n, xfer_mem(g, mproj, mem_var), 1);
 
     return tb__make_proj(f, dt, n, 2);
-}
-
-void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, void* userdata, TB_Node* poll_site, int arg_count, TB_Node** args) {
-    TB_Function* f = g->f;
-    TB_Node* n = tb_alloc_node(f, TB_SAFEPOINT, TB_TYPE_CONTROL, 3 + arg_count, sizeof(TB_NodeSafepoint));
-    set_input(f, n, xfer_ctrl(g, n), 0);
-    set_input(f, n, peek_mem(g, mem_var), 1);
-    set_input(f, n, poll_site, 2);
-    FOR_N(i, 0, arg_count) {
-        set_input(f, n, args[i], i+3);
-    }
-    add_input_late(f, f->root_node, n);
-    TB_NODE_SET_EXTRA(n, TB_NodeSafepoint, .userdata = userdata, .saved_val_count = arg_count);
 }
 
 void tb_builder_unreachable(TB_GraphBuilder* g, int mem_var) {
