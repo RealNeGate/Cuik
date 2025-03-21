@@ -42,10 +42,6 @@ pat (TB_PTR_OFFSET ___ (TB_SYMBOL $root sym=$sym) ($disp: TB_ICONST ...))
 where "fits_into_int32(TB_TYPE_I64, $disp)"
 => (x86_MEMORY (TB_MACH_SYMBOL $root sym=$sym) disp="as_int32($disp)")
 
-// [symbol + offset]
-// pat (TB_PTR_OFFSET ___ (TB_SYMBOL $root sym=$sym) $index)
-// => (x86_MEMORY flags=OP_INDEXED (x86_lea ___ ___ (TB_MACH_SYMBOL $root sym=$sym)) $index scale=0)
-
 // using an lea as a memory operand is kinda useful... swag :p
 subpat (x86_lea ___ ___ $base disp=$disp) => (x86_MEMORY $base disp=$disp)
 subpat (x86_lea ___ ___ $base $index scale=$scale disp=$disp flags=$flags) where "$flags==OP_INDEXED" => (x86_MEMORY $base $index flags=OP_INDEXED scale=$scale disp=$disp)
@@ -81,16 +77,29 @@ pat (TB_CMP_EQ cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PT
 pat (TB_CMP_NE cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && TB_NODE_GET_EXTRA_T($rhs, TB_NodeInt)->value == 0" => (x86_COND dt=TB_TYPE_I8 (x86_test dt=TB_TYPE_I64 ___ ___ $lhs $lhs extra_dt=$dt) cond=NE)
 
 node (jcc)
-pat (TB_BRANCH dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond)
-pat (TB_AFFINE_LATCH dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond)
 
-pat (TB_BRANCH dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE)
-pat (TB_AFFINE_LATCH dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE)
+#define BRANCH(op_name) \
+pat (op_name dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond) \
+pat (op_name dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE) \
+pat (op_name dt=$dt $ctrl (TB_AND ___ $x $y)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $y extra_dt="n->inputs[1]->dt") cond=NE)
+
+BRANCH(TB_BRANCH)
+BRANCH(TB_AFFINE_LATCH)
 
 // if we don't get rid of the "condition" by merging it with something
 // else then it's being directly used.
 node (setcc)
 pat (x86_COND $cmp cond=$cond) => (x86_setcc dt=TB_TYPE_I8 ___ ___ $cmp cond=$cond)
+
+node (cmovcc)
+pat (TB_SELECT dt=$dt ___ $pred $a $b) => (x86_cmovcc dt=$dt ___ ___ $b $a (x86_test dt=TB_TYPE_I64 ___ ___ $pred $pred extra_dt="n->inputs[1]->dt") cond=NE)
+pat (TB_SELECT dt=$dt ___ (x86_COND $cmp cond=$cond) $a $b) => (x86_cmovcc dt=$dt ___ ___ $b $a $cmp cond=$cond)
+
+node (bt)
+pat (TB_AND dt=$dt ___ (TB_SHL ___ ($con: TB_ICONST ...) $y) $x) where "as_int32($con) == 1" => (x86_COND dt=TB_TYPE_I8 (x86_bt dt=TB_TYPE_I64 ___ ___ $y $x extra_dt=$dt) cond=B)
+
+node (adc)
+pat (x86_cmovcc dt=$dt ___ ___ $x (TB_ADD ___ $y ($con: TB_ICONST ...)) $pred) where "as_int32($con) == 1 && TB_NODE_GET_EXTRA_T(n, X86MemOp)->cond == B" => (x86_adc dt=$dt ___ ___ $x $pred flags="OP_IMMEDIATE" imm="0")
 
 // *******************************
 // misc
@@ -145,10 +154,10 @@ NORMIE_OP8(TB_ROR, ror)
 node (div)
 node (idiv)
 
-pat (TB_UDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
-pat (TB_SDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
-pat (TB_UMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=1)
-pat (TB_SMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=1)
+pat (TB_UDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
+pat (TB_SDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
+pat (TB_UMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=1)
+pat (TB_SMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=1)
 
 // *******************************
 // float ops

@@ -44,6 +44,9 @@ size_t tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n
         size_t cnt = aarray_length(bb->items);
         while (i < cnt && bb->items[i] != before_n) { i++; }
 
+        // place above MACH_TEMPs
+        while (i > 0 && bb->items[i - 1]->type == TB_MACH_TEMP) { i--; }
+
         aarray_push(bb->items, 0);
         memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
         bb->items[i] = n;
@@ -259,12 +262,10 @@ static void dump_sched(Ctx* restrict ctx) {
     }
 }
 
-static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask, bool conflict) {
+static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask, TB_Node* n, bool conflict) {
     TB_Function* f = ctx->f;
-    TB_Node* n = to_spill->n;
     TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill  (%%%u)\x1b[0m\n", to_spill - ctx->vregs, n->gvn));
 
-    to_spill->mask = spill_mask;
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
     // don't want weird pointer invalidation crap

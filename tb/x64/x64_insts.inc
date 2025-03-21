@@ -83,6 +83,8 @@ X(CMOVG,      "cmovg",        BINOP_EXT,  0x4F)
 X(BSF,        "bsf",          BINOP_EXT, 0xBC)
 X(BSR,        "bsr",          BINOP_EXT, 0xBD)
 
+X(BT,         "bt",           BINOP_EXT, 0xA3)
+
 // binary ops but they have an implicit CL on the righthand side
 X(SHL,       "shl",         BINOP_CL,   0xD2, 0xC0, 0x04)
 X(SHR,       "shr",         BINOP_CL,   0xD2, 0xC0, 0x05)
@@ -92,6 +94,7 @@ X(SAR,       "sar",         BINOP_CL,   0xD2, 0xC0, 0x07)
 
 X(ADD,       "add",         BINOP,      0x00, 0x80, 0x00)
 X(OR,        "or",          BINOP,      0x08, 0x80, 0x01)
+X(ADC,       "adc",         BINOP,      0x10, 0x80, 0x02)
 X(AND,       "and",         BINOP,      0x20, 0x80, 0x04)
 X(SUB,       "sub",         BINOP,      0x28, 0x80, 0x05)
 X(XOR,       "xor",         BINOP,      0x30, 0x80, 0x06)

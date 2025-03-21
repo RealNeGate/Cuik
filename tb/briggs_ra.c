@@ -238,8 +238,6 @@ static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n, bool kill_node
     TB_User* users = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_User));
     memcpy(users, n->users, n->user_count * sizeof(TB_User));
 
-    TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%u: remat (%%%u)\x1b[0m\n", ctx->vreg_map[n->gvn], n->gvn));
-
     // aggressive reload
     double base_bias = ctx->vregs[ctx->vreg_map[n->gvn]].spill_bias;
     for (size_t i = 0; i < user_count; i++) {
@@ -981,7 +979,7 @@ void tb__briggs(Ctx* restrict ctx, TB_Arena* arena) {
         FOR_N(i, 0, dyn_array_length(ra.spills)) {
             VReg* vreg = &ctx->vregs[ra.spills[i]];
             RegMask* mask = ctx->constraint(ctx, vreg->n, NULL);
-            spill_entire_lifetime(ctx, vreg, mask, true);
+            spill_entire_lifetime(ctx, vreg, mask, vreg->n, true);
         }
         dyn_array_clear(ra.spills);
         cuikperf_region_end();

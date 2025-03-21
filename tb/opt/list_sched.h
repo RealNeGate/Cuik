@@ -105,8 +105,8 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
         if (n->user_count == 1) {
             TB_Node* use = USERN(&n->users[0]);
             if (count_waiting_deps(f, ws, bb, use) == 1) {
-                // printf("  %%%u ABOUT TO BE READY, BUMP %%%u!\n", use->gvn, n->gvn);
-                score += 100;
+                score += use == bb->end ? -200 : 100;
+                if (score < 1) { score = 1; }
             }
         }
 

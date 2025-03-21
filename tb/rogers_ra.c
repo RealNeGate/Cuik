@@ -78,6 +78,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 static void compute_ordinals(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* arena);
 static bool interfere(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* lhs, TB_Node* rhs);
 
+static void rogers_remat(Ctx* ctx, Rogers* ra, TB_Node* n, bool kill_node);
 static void better_spill_range(Ctx* ctx, Rogers* restrict ra, TB_Node* to_spill, size_t old_node_count);
 
 static bool rogers_is_fixed(Ctx* ctx, Rogers* ra, int id) {
@@ -143,6 +144,7 @@ static void rogers_coalesce(Ctx* restrict ctx, Rogers* restrict ra, int x, int y
 
         // lazy? yes
         new_set = (ArenaArray(TB_Node*)*) nl_table_getp(&ra->coalesce_set, (void*) (uintptr_t) (x + 1));
+        aarray_push(*new_set, xn);
     }
 
     ArenaArray(TB_Node*) old_set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (y + 1));
@@ -153,8 +155,36 @@ static void rogers_coalesce(Ctx* restrict ctx, Rogers* restrict ra, int x, int y
             aarray_push(*new_set, old_set[i]);
         }
     }
+}
 
-    aarray_push(*new_set, xn);
+static void rogers_uncoalesce(Ctx* restrict ctx, Rogers* restrict ra, int x) {
+    int leader = uf_find(ra->uf, ra->uf_len, x);
+    ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
+    if (set == NULL) {
+        return;
+    }
+
+    // if the leader is the node being removed from the set, pick a new leader
+    int new_leader = -1;
+    for (int i = 0; i < aarray_length(set); i++) {
+        int y = set[i]->gvn;
+        if (y == x) {
+            ra->uf[y] = y;
+            aarray_remove(set, i);
+            i--;
+        } else if (leader == x) {
+            if (new_leader < 0) {
+                new_leader = y;
+            }
+
+            ra->uf[y] = new_leader;
+        }
+    }
+
+    if (new_leader >= 0) {
+        nl_table_remove(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
+        nl_table_put(&ra->coalesce_set, (void*) (uintptr_t) (new_leader + 1), set);
+    }
 }
 
 static TB_Node* rogers_hard_split(Ctx* restrict ctx, Rogers* restrict ra, TB_Node* n, TB_Node* in, RegMask* rm, int vreg_id) {
@@ -306,7 +336,8 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         FOR_N(i, 0, dyn_array_length(ra.potential_spills)) {
             VReg* vreg = &ctx->vregs[ra.potential_spills[i]];
             RegMask* mask = ctx->constraint(ctx, vreg->n, NULL);
-            spill_entire_lifetime(ctx, vreg, mask, true);
+            vreg->mask = mask;
+            spill_entire_lifetime(ctx, vreg, mask, vreg->n, true);
         }
         dyn_array_clear(ra.potential_spills);
         cuikperf_region_end();
@@ -350,6 +381,14 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                         set_input(f, n, copy, shared_edge);
                         tb__insert_before(ctx, ctx->f, copy, n);
 
+                        if (in->user_count == 0) {
+                            // delete the original def
+                            ctx->vregs[ctx->vreg_map[in->gvn]].uses -= 1;
+                            ctx->vreg_map[in->gvn] = 0;
+                            tb__remove_node(ctx, ctx->f, in);
+                            tb_kill_node(ctx->f, in);
+                        }
+
                         in = n->inputs[shared_edge];
                         changes = true;
                     }
@@ -381,6 +420,14 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                     TB_Node* pred = cfg_get_pred(&ctx->cfg, n->inputs[0], k - 1);
                     TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
                     TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
+
+                    if (in->user_count == 0) {
+                        // delete the original def
+                        ctx->vregs[ctx->vreg_map[in->gvn]].uses -= 1;
+                        ctx->vreg_map[in->gvn] = 0;
+                        tb__remove_node(ctx, ctx->f, in);
+                        tb_kill_node(ctx->f, in);
+                    }
 
                     // place at the end of the pred BB to the phi, basically the latest point
                     TB_Node* last = pred_bb->items[aarray_length(pred_bb->items) - 1];
@@ -469,8 +516,205 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
             ctx->num_spills += ra.num_spills - starting_spills;
             cuikperf_region_end();
+            printf("ROUNDS: %d\n", rounds);
             return;
         }
+
+        cuikperf_region_start("insert spills", NULL);
+
+        size_t old_node_count = ctx->f->node_count;
+        dyn_array_for(i, ra.spills) {
+            TB_Node* to_spill = ra.gvn2node[ra.spills[i]];
+            VReg* v = &ctx->vregs[ctx->vreg_map[ra.spills[i]]];
+
+            TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%u: failed (%%%u)\x1b[0m\n", ctx->vreg_map[to_spill->gvn], to_spill->gvn));
+
+            // failed to color a may_spill?
+            if (v->mask->may_spill) {
+                v->spill_cost = INFINITY;
+                v->mask = intern_regmask(ctx, REG_CLASS_STK, true, 0);
+                v->reg_width = tb__reg_width_from_dt(REG_CLASS_STK, to_spill->dt);
+                continue;
+            }
+
+            // re-eval this later
+            v->spill_cost = NAN;
+
+            if (can_remat(ctx, to_spill)) {
+                TB_Arena* tmp_arena = &ctx->f->tmp_arena;
+                TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
+                bool* reload_t = tb_arena_alloc(tmp_arena, ctx->bb_count * sizeof(bool));
+                FOR_N(i, 0, ctx->bb_count) {
+                    reload_t[i] = false;
+                }
+
+                TB_BasicBlock** scheduled = ctx->f->scheduled;
+                FOR_USERS(u, to_spill) {
+                    TB_Node* use_n = USERN(u);
+                    int use_i      = USERI(u);
+
+                    if (use_n->gvn < old_node_count && !is_proj(use_n) && use_i < use_n->input_count) {
+                        TB_BasicBlock* bb = scheduled[use_n->gvn];
+                        reload_t[bb - ctx->cfg.blocks] = true;
+                    }
+                }
+
+                rogers_remat(ctx, &ra, to_spill, false);
+                rogers_uncoalesce(ctx, &ra, to_spill->gvn);
+
+                // recompute order for dirty blocks
+                FOR_N(i, 0, ctx->bb_count) {
+                    if (!reload_t[i]) { continue; }
+                    TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+                    int timeline = 1;
+                    for (size_t j = 0; j < aarray_length(bb->items); j++) {
+                        TB_Node* n = bb->items[j];
+                        ra.order[n->gvn] = 1 + j;
+                    }
+                }
+                tb_arena_restore(tmp_arena, sp);
+
+                FOR_N(j, 1, to_spill->input_count) {
+                    // invalidate stretched input's coalescing
+                    TB_Node* in = to_spill->inputs[j];
+                    if (in == NULL) { continue; }
+
+                    // if it's coalesced with it's users, we might need to split it
+                    int vreg_id = ctx->vreg_map[in->gvn];
+                    for (size_t k = 0; k < in->user_count;) {
+                        TB_Node* un = USERN(&in->users[k]);
+                        int ui      = USERI(&in->users[k]);
+
+                        int user_vreg_id = ctx->vreg_map[un->gvn];
+                        if (user_vreg_id == vreg_id && interfere(ctx, &ra, in, un)) {
+                            RegMask* def_rm = constraint_in(ctx, un, ui);
+                            RegMask* use_rm = ctx->constraint(ctx, in, NULL);
+
+                            rogers_uncoalesce(ctx, &ra, un->gvn);
+
+                            // separate "in" from whatever set it shares with "un"
+                            VReg* new_vreg = tb__set_node_vreg(ctx, un);
+                            new_vreg->mask = def_rm;
+                            new_vreg->reg_width = tb__reg_width_from_dt(def_rm->class, in->dt);
+
+                            TB_Node* copy = rogers_hard_split(ctx, &ra, un, in, def_rm, new_vreg - ctx->vregs);
+                            set_input(ctx->f, un, copy, ui);
+                            tb__insert_before(ctx, ctx->f, copy, un);
+
+                            // hard coalesce with direct input
+                            int x = uf_find(ra.uf, ra.uf_len, un->gvn);
+                            int y = uf_find(ra.uf, ra.uf_len, copy->gvn);
+                            rogers_coalesce(ctx, &ra, x, y, un, copy);
+                        } else {
+                            k += 1;
+                        }
+                    }
+                }
+
+                // delete the original def
+                ctx->vregs[ctx->vreg_map[to_spill->gvn]].uses -= 1;
+                ctx->vreg_map[to_spill->gvn] = 0;
+                tb__remove_node(ctx, ctx->f, to_spill);
+                tb_kill_node(ctx->f, to_spill);
+            } else {
+                // insert some extra copies
+                RegMask* v_mask = ctx->constraint(ctx, to_spill, NULL);
+                if (to_spill->user_count == 1 && fixed_reg_mask(v_mask) >= 0) {
+                    TB_Node* use_n = USERN(&to_spill->users[0]);
+                    int use_i      = USERI(&to_spill->users[0]);
+                    RegMask* in_mask = constraint_in(ctx, use_n, use_i);
+
+                    TB_ASSERT(v_mask->class == in_mask->class);
+                    TB_ASSERT(v_mask->count == 1);
+                    TB_ASSERT(in_mask->count == 1);
+                    // the split mask can't be allocated into the same reg that
+                    // failed, that would defeat the whole purpose. if it does
+                    // use the same reg then we must do a proper spill, to at
+                    // least make it use the same reg for less time.
+                    if (in_mask->mask[0] != v_mask->mask[0]) {
+                        RegMask* new_mask = intern_regmask(ctx, in_mask->class, false, in_mask->mask[0] & ~v_mask->mask[0]);
+                        TB_ASSERT(new_mask->mask[0] != 0);
+
+                        v->mask = v_mask;
+                        v->spill_bias += 1e8;
+
+                        // split
+                        TB_Node* reload_n = tb_alloc_node(f, TB_MACH_COPY, to_spill->dt, 2, sizeof(TB_NodeMachCopy));
+                        set_input(f, use_n, reload_n, use_i);
+                        set_input(f, reload_n, to_spill, 1);
+                        TB_NODE_SET_EXTRA(reload_n, TB_NodeMachCopy, .def = in_mask, .use = v_mask);
+
+                        // schedule the split right before use
+                        tb__insert_before(ctx, ctx->f, reload_n, use_n);
+                        VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
+                        reload_vreg->reg_width = tb__reg_width_from_dt(in_mask->class, reload_n->dt);
+                        reload_vreg->mask = in_mask;
+
+                        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu:  split (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, reload_n->gvn));
+                        continue;
+                    }
+                }
+
+                // if the node is part of a bigger coalesced set, maybe splitting it would fix the issue
+                int leader = uf_find(ra.uf, ra.uf_len, to_spill->gvn);
+                ArenaArray(TB_Node*) set = nl_table_get(&ra.coalesce_set, (void*) (uintptr_t) (leader + 1));
+                if (set && aarray_length(set) > 1) {
+                    bool has_phi = false; // can't split phis
+                    aarray_for(i, set) {
+                        if (set[i]->type == TB_PHI) {
+                            has_phi = true;
+                            break;
+                        }
+                    }
+
+                    if (!has_phi) {
+                        VReg* vreg = tb__set_node_vreg(ctx, to_spill);
+                        vreg->mask = v_mask;
+                        FOR_USERS(u, to_spill) {
+                            if (is_proj(USERN(u))) {
+                                continue;
+                            }
+
+                            RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
+                            RegMask* new_mask = tb__reg_mask_meet(ctx, vreg->mask, in_mask);
+
+                            TB_ASSERT(new_mask != &TB_REG_EMPTY);
+                            vreg->mask = new_mask;
+                        }
+                        vreg->reg_width = tb__reg_width_from_dt(vreg->mask->class, to_spill->dt);
+
+                        aarray_for(i, set) {
+                            if (set[i] == to_spill) {
+                                aarray_remove(set, i);
+                                break;
+                            }
+                        }
+
+                        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: split from coalesce set (%%%u)\x1b[0m\n", vreg - ctx->vregs, to_spill->gvn));
+                        continue;
+                    }
+                }
+
+                better_spill_range(ctx, &ra, to_spill, old_node_count);
+
+                VReg* vreg = node_vreg(ctx, to_spill);
+                vreg->mask = v_mask;
+                FOR_USERS(u, to_spill) {
+                    if (is_proj(USERN(u))) {
+                        continue;
+                    }
+
+                    RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
+                    RegMask* new_mask = tb__reg_mask_meet(ctx, vreg->mask, in_mask);
+
+                    TB_ASSERT(new_mask != &TB_REG_EMPTY);
+                    vreg->mask = new_mask;
+                }
+            }
+        }
+
+        dyn_array_clear(ra.spills);
+        cuikperf_region_end();
 
         // reset assignments
         FOR_N(i, 1, aarray_length(ctx->vregs)) {
@@ -611,7 +855,7 @@ static TB_Node* choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, TB_N
     int useful_class = attempted_vreg->mask->class;
     FOR_N(i, 0, ctx->num_regs[useful_class]) {
         // TODO(NeGate): this is bit math & tests, we can speed this process up
-        if (ra->active[useful_class][i] > 0 && bits64_member(ra->mask, i) && within_reg_mask(useful_mask, i)) {
+        if (ra->active[useful_class][i] > 0 && bits64_member(ra->mask, i)) {
             dyn_array_put(ra->potential_spills, ra->active[useful_class][i]);
         }
     }
@@ -624,6 +868,15 @@ static TB_Node* choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, TB_N
         TB_ASSERT(ctx->vreg_map[gvn] > 0);
         VReg* vreg  = &ctx->vregs[ctx->vreg_map[gvn]];
         float score = get_spill_cost(ctx, vreg);
+
+        // we'll only spill things which can make aggressive forward progress
+        if (attempted_vreg->was_spilled && !within_reg_mask(useful_mask, vreg->assigned)) {
+            continue;
+        }
+
+        // bias higher assignments such that we try to pick smaller regs when there's ties
+        score += vreg->assigned*0.0001f;
+
         if (score < best_score) {
             if (best_spill >= 0) {
                 TB_OPTDEBUG(REGALLOC)(printf("#     %%%u is a better spill! V%d (%f is better than %f)\n", gvn, best_spill, score, best_score));
@@ -637,43 +890,15 @@ static TB_Node* choose_decent_spill(Ctx* restrict ctx, Rogers* restrict ra, TB_N
         }
     }
 
-    bool can_spill_self = false;
-    if (attempted_vreg) {
-        float self_score = get_spill_cost(ctx, attempted_vreg);
+    // flag to be more aggro next time
+    attempted_vreg->was_spilled = true;
 
-        // this limits the interference thus improving colorability
-        if (attempted_vreg->spill_bias < 1e7 && can_remat(ctx, attempted_n)) {
-            if (self_score < best_score) {
-                TB_OPTDEBUG(REGALLOC)(printf("#     self spilling! (%f is better than %f)\n", self_score, best_score));
-                cuikperf_region_end();
-                return attempted_n;
-            }
-        }
-
-        // we can only spill ourselves if that meant loosening the vreg's mask
-        if (fixed_reg_mask(attempted_vreg->mask) >= 0) {
-            RegMask* expected_mask = ctx->constraint(ctx, attempted_vreg->n, NULL);
-            FOR_USERS(u, attempted_n) {
-                RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
-                RegMask* new_mask = tb__reg_mask_meet(ctx, expected_mask, in_mask);
-
-                // shouldn't see any hard splits here?
-                if (new_mask == &TB_REG_EMPTY) {
-                    break;
-                }
-                expected_mask = new_mask;
-            }
-
-            if (attempted_vreg->mask != expected_mask) {
-                TB_OPTDEBUG(REGALLOC)(printf("#     can self spill since mask is loosened from "), tb__print_regmask(attempted_vreg->mask), printf(" to "), tb__print_regmask(expected_mask), printf("\n"));
-            }
-
-            if (attempted_vreg->mask != expected_mask && self_score < best_score) {
-                TB_OPTDEBUG(REGALLOC)(printf("#     self spilling! (%f is better than %f)\n", self_score, best_score));
-                cuikperf_region_end();
-                return attempted_n;
-            }
-        }
+    // we can only spill ourselves if that meant loosening the vreg's mask
+    float self_score = get_spill_cost(ctx, attempted_vreg);
+    if (self_score < best_score) {
+        TB_OPTDEBUG(REGALLOC)(printf("#     self spilling! (%f is better than %f)\n", self_score, best_score));
+        cuikperf_region_end();
+        return attempted_n;
     }
 
     cuikperf_region_end();
@@ -785,9 +1010,9 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
                 TB_ASSERT(other_vreg->assigned >= 0);
                 if (within_reg_mask(mask, other_vreg->assigned)) {
                     TB_OPTDEBUG(REGALLOC)(printf("%%%u -- ", other->gvn), print_reg_name(def_class, other_assigned), printf("; "));
-                    dyn_array_put(ra->potential_spills, i);
                 }
 
+                dyn_array_put(ra->potential_spills, i);
                 ra_mask[other_assigned / 64ull] |= (1ull << (other_assigned % 64ull));
                 break;
             }
@@ -819,6 +1044,7 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
         // mark all the other members of the coalesced group as future active
         FOR_N(j, 0, cnt) {
             if (arr[j] != n) {
+                TB_ASSERT(ctx->vreg_map[arr[j]->gvn] == vreg_id);
                 set_put(&ra->future_active, arr[j]->gvn);
                 TB_OPTDEBUG(REGALLOC)(printf("#   sleep  %%%u\n", arr[j]->gvn));
             }
@@ -874,8 +1100,7 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
             }
 
             TB_Node* other = ra->gvn2node[ra->spills[i]];
-
-            if (interfere(ctx, ra, n, other)) {
+            if (interfere(ctx, ra, n, other) && reg_mask_may_intersect(mask, node_vreg(ctx, other)->mask)) {
                 if (get_spill_cost(ctx, node_vreg(ctx, best_spill)) > get_spill_cost(ctx, node_vreg(ctx, other))) {
                     TB_OPTDEBUG(REGALLOC)(printf("#   ok maybe we shouldn't spill %%%u, %%%u seems better\n", other->gvn, best_spill->gvn));
                     ra->spills[i] = best_spill->gvn;
@@ -954,6 +1179,37 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
     ra->active[0] = tb_arena_alloc(arena, ra->stack_reg_count * sizeof(int));
     memset(ra->active[0], 0, ra->stack_reg_count * sizeof(int));
 
+    // pre-colored vregs should be resting not unassigned.
+    FOR_REV_N(i, 0, ctx->bb_count) {
+        TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+        FOR_REV_N(j, 0, aarray_length(bb->items)) {
+            TB_Node* n = bb->items[j];
+            int vreg_id = ctx->vreg_map[n->gvn];
+            if (vreg_id > 0 && fixed_reg_mask(ctx->vregs[vreg_id].mask) >= 0) {
+                // must account for interference against any of the previously defined regs
+                allocate_reg(ctx, ra, n);
+
+                int leader = uf_find(ra->uf, ra->uf_len, n->gvn);
+                ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
+
+                // put the pre-colored regs to rest
+                unmark_active(ctx, ra, n->gvn);
+                set_put(&ra->future_active, n->gvn);
+
+                if (set && aarray_length(set) > 0) {
+                    aarray_for(i, set) if (set[i] != n) {
+                        // put the pre-colored regs to rest
+                        set_put(&ra->future_active, set[i]->gvn);
+                    }
+                }
+            }
+        }
+    }
+
+    if (dyn_array_length(ra->spills) > 0) {
+        return false;
+    }
+
     size_t uf_len = ctx->f->node_count;
     FOR_REV_N(i, 0, ctx->bb_count) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
@@ -1007,6 +1263,28 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                 expire_interval(ctx, ra, n->gvn, i);
             }
 
+            // if anything in the active set interferes with
+            // the kill set, we need to spill around this op.
+            RegMask** kills = ctx->ins;
+            int kill_count = ctx->constraint_kill(ctx, n, kills);
+            FOR_N(k, 0, kill_count) {
+                int nr = ctx->num_regs[kills[k]->class];
+                int* active = ra->active[kills[k]->class];
+                BITS64_FOR(l, kills[k]->mask, nr) {
+                    if (active[l] > 0) {
+                        int in_use = active[l];
+
+                        TB_OPTDEBUG(REGALLOC)(printf("#   gonna clobber %%%u\n", in_use));
+                        dyn_array_put(ra->spills, in_use);
+
+                        // kill this node for now (and "EVER")
+                        unmark_active(ctx, ra, in_use);
+                        set_remove(&ra->live, in_use);
+                        set_remove(&ra->future_active, in_use);
+                    }
+                }
+            }
+
             // start intervals
             if (n->type != TB_PHI) {
                 FOR_N(k, 1, n->input_count) {
@@ -1022,169 +1300,7 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
         }
     }
 
-    if (dyn_array_length(ra->spills) > 0) {
-        cuikperf_region_start("insert spills", NULL);
-
-        size_t old_node_count = ctx->f->node_count;
-        dyn_array_for(i, ra->spills) {
-            TB_Node* to_spill = ra->gvn2node[ra->spills[i]];
-
-            // if we're a fixed vreg who fails to spill because
-            // some fuckass decided to steal MY register... ban
-            // him for doing that
-            VReg* v = &ctx->vregs[ctx->vreg_map[ra->spills[i]]];
-            int fixed = fixed_reg_mask(v->mask);
-            if (fixed >= 0) {
-                uint64_t fixed_mask = 1ull << fixed;
-                FOR_USERS(u, to_spill) {
-                    TB_Node* un = USERN(u);
-                    int ui = USERI(u);
-                    FOR_N(m, 1, un->input_count) if (m != ui && un->inputs[m]) {
-                        VReg* m_vreg = node_vreg(ctx, un->inputs[m]);
-                        if (m_vreg && m_vreg->mask->class == v->mask->class) {
-                            // if it causes a hard split then we wait a round until it stops doing that
-                            if ((m_vreg->mask->mask[0] & ~fixed_mask) != 0) {
-                                m_vreg->mask = intern_regmask(ctx, m_vreg->mask->class, m_vreg->mask->may_spill, m_vreg->mask->mask[0] & ~fixed_mask);
-
-                                if (un->inputs[m]->type == TB_MACH_COPY) {
-                                    TB_NODE_GET_EXTRA_T(un->inputs[m], TB_NodeMachCopy)->def = m_vreg->mask;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (can_remat(ctx, to_spill)) {
-                TB_Arena* tmp_arena = &ctx->f->tmp_arena;
-                TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-                bool* reload_t = tb_arena_alloc(tmp_arena, ctx->bb_count * sizeof(bool));
-                FOR_N(i, 0, ctx->bb_count) {
-                    reload_t[i] = false;
-                }
-                FOR_USERS(u, to_spill) {
-                    TB_Node* use_n = USERN(u);
-                    int use_i      = USERI(u);
-
-                    if (use_n->gvn < old_node_count && !is_proj(use_n) && use_i < use_n->input_count) {
-                        TB_BasicBlock* bb = scheduled[use_n->gvn];
-                        reload_t[bb - ctx->cfg.blocks] = true;
-                    }
-                }
-
-                rematerialize(ctx, ra->fixed, to_spill, false);
-
-                // recompute order for dirty blocks
-                FOR_N(i, 0, ctx->bb_count) {
-                    if (!reload_t[i]) { continue; }
-                    TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-                    int timeline = 1;
-                    for (size_t j = 0; j < aarray_length(bb->items); j++) {
-                        TB_Node* n = bb->items[j];
-                        ra->order[n->gvn] = 1 + j;
-                    }
-                }
-                tb_arena_restore(tmp_arena, sp);
-
-                FOR_N(j, 1, to_spill->input_count) {
-                    // invalidate stretched input's coalescing
-                    TB_Node* in = to_spill->inputs[j];
-                    if (in == NULL) { continue; }
-
-                    // if it's coalesced with it's users, we might need to split it
-                    int vreg_id = ctx->vreg_map[in->gvn];
-                    for (size_t k = 0; k < in->user_count;) {
-                        TB_Node* un = USERN(&in->users[k]);
-                        int ui      = USERI(&in->users[k]);
-
-                        int user_vreg_id = ctx->vreg_map[un->gvn];
-                        if (user_vreg_id == vreg_id && interfere(ctx, ra, in, un)) {
-                            RegMask* def_rm = ctx->constraint(ctx, un, NULL);
-                            RegMask* use_rm = constraint_in(ctx, un, ui);
-
-                            // they used to share a set, now they don't... sadge
-                            VReg* new_vreg = tb__set_node_vreg(ctx, un);
-                            new_vreg->mask = def_rm;
-                            new_vreg->reg_width = tb__reg_width_from_dt(def_rm->class, to_spill->dt);
-
-                            TB_Node* copy = rogers_hard_split(ctx, ra, un, in, def_rm, new_vreg - ctx->vregs);
-                            set_input(ctx->f, un, copy, ui);
-                            tb__insert_before(ctx, ctx->f, copy, un);
-                        } else {
-                            k += 1;
-                        }
-                    }
-                }
-
-                // delete the original def
-                ctx->vregs[ctx->vreg_map[to_spill->gvn]].uses -= 1;
-                ctx->vreg_map[to_spill->gvn] = 0;
-                tb__remove_node(ctx, ctx->f, to_spill);
-                tb_kill_node(ctx->f, to_spill);
-            } else {
-                // if the node is part of a bigger coalesced set, maybe splitting it would fix the issue
-                int leader = uf_find(ra->uf, ra->uf_len, to_spill->gvn);
-                ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
-                if (set && aarray_length(set) > 1) {
-                    bool has_phi = false; // can't split phis
-                    aarray_for(i, set) {
-                        if (set[i]->type == TB_PHI) {
-                            has_phi = true;
-                            break;
-                        }
-                    }
-
-                    if (!has_phi) {
-                        VReg* vreg = tb__set_node_vreg(ctx, to_spill);
-                        vreg->mask = ctx->constraint(ctx, to_spill, NULL);
-                        FOR_USERS(u, to_spill) {
-                            if (is_proj(USERN(u))) {
-                                continue;
-                            }
-
-                            RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
-                            RegMask* new_mask = tb__reg_mask_meet(ctx, vreg->mask, in_mask);
-
-                            TB_ASSERT(new_mask != &TB_REG_EMPTY);
-                            vreg->mask = new_mask;
-                        }
-                        vreg->reg_width = tb__reg_width_from_dt(vreg->mask->class, to_spill->dt);
-
-                        aarray_for(i, set) {
-                            if (set[i] == to_spill) {
-                                aarray_remove(set, i);
-                                break;
-                            }
-                        }
-
-                        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: split from coalesce set (%%%u)\x1b[0m\n", vreg - ctx->vregs, to_spill->gvn));
-                        continue;
-                    }
-                }
-
-                better_spill_range(ctx, ra, to_spill, old_node_count);
-
-                VReg* vreg = node_vreg(ctx, to_spill);
-                vreg->mask = ctx->constraint(ctx, to_spill, NULL);
-                FOR_USERS(u, to_spill) {
-                    if (is_proj(USERN(u))) {
-                        continue;
-                    }
-
-                    RegMask* in_mask = constraint_in(ctx, USERN(u), USERI(u));
-                    RegMask* new_mask = tb__reg_mask_meet(ctx, vreg->mask, in_mask);
-
-                    TB_ASSERT(new_mask != &TB_REG_EMPTY);
-                    vreg->mask = new_mask;
-                }
-            }
-        }
-
-        dyn_array_clear(ra->spills);
-        cuikperf_region_end();
-        return false;
-    }
-    return true;
+    return dyn_array_length(ra->spills) == 0;
 }
 
 ////////////////////////////////
@@ -1194,7 +1310,7 @@ static void expire_interval(Ctx* ctx, Rogers* restrict ra, uint32_t gvn, size_t 
     bool pause = false;
     FOR_N(k, 0, bb_i) {
         TB_BasicBlock* other = &ctx->cfg.blocks[k];
-        if (set_get(&other->live_in, gvn)) {
+        if (set_get(&other->live_out, gvn)) {
             // move to future active
             set_put(&ra->future_active, gvn);
             pause = true;
@@ -1217,8 +1333,8 @@ static void expire_interval(Ctx* ctx, Rogers* restrict ra, uint32_t gvn, size_t 
 static void better_spill_range(Ctx* ctx, Rogers* restrict ra, TB_Node* to_spill, size_t old_node_count) {
     TB_Function* f = ctx->f;
     RegMask* pre_spill_mask = ctx->constraint(ctx, to_spill, NULL);
-    // RegMask* spill_mask = ctx->mayspill_mask[pre_spill_mask->class];
-    RegMask* spill_mask = intern_regmask(ctx, REG_CLASS_STK, true, 0);
+    RegMask* spill_mask = ctx->mayspill_mask[pre_spill_mask->class];
+    // RegMask* spill_mask = intern_regmask(ctx, REG_CLASS_STK, true, 0);
 
     TB_Node* n = tb_alloc_node(f, TB_MACH_COPY, to_spill->dt, 2, sizeof(TB_NodeMachCopy));
     set_input(f, n, to_spill, 1);
@@ -1229,7 +1345,7 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, TB_Node* to_spill,
     spill_vreg->spill_cost = INFINITY;
     spill_vreg->mask = spill_mask;
     spill_vreg->reg_width = tb__reg_width_from_dt(spill_mask->class, to_spill->dt);
-    TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill  (%%%u)\x1b[0m\n", spill_vreg - ctx->vregs, n->gvn));
+    TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu:  spill (%%%u)\x1b[0m\n", spill_vreg - ctx->vregs, n->gvn));
 
     ctx->vregs[ctx->vreg_map[to_spill->gvn]].spill_bias += 1e8;
 
@@ -1251,8 +1367,8 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, TB_Node* to_spill,
         } else if (use_n->type == TB_MACH_COPY) {
             // if it's already a machine copy, inserting an extra one is useless
             TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
-            if (cpy->def->class != REG_CLASS_STK || spill_mask->class != REG_CLASS_STK) {
-                TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%d: folded reload (%%%u)\x1b[0m\n", ctx->vreg_map[use_n->gvn], use_n->gvn));
+            if (!reg_mask_is_stack(cpy->def) || !reg_mask_is_stack(spill_mask)) {
+                TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%d: reload (folded into %%%u)\x1b[0m\n", ctx->vreg_map[use_n->gvn], use_n->gvn));
                 cpy->use = spill_mask;
                 continue;
             } else {
@@ -1354,7 +1470,7 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, TB_Node* to_spill,
             if (split) {
                 // construct separate reloads
                 TB_ASSERT(reload->type == TB_MACH_COPY);
-                rematerialize(ctx, ra->fixed, reload, true);
+                rogers_remat(ctx, ra, reload, true);
             } else {
                 TB_NODE_SET_EXTRA(reload_n[i], TB_NodeMachCopy, .def = reload_vreg->mask, .use = spill_mask);
 
@@ -1384,6 +1500,86 @@ static void better_spill_range(Ctx* ctx, Rogers* restrict ra, TB_Node* to_spill,
     }
 
     tb_arena_restore(&f->tmp_arena, sp);
+}
+
+static void rogers_remat(Ctx* ctx, Rogers* ra, TB_Node* n, bool kill_node) {
+    size_t extra = extra_bytes(n);
+    TB_Function* f = ctx->f;
+    TB_Node* root = f->root_node;
+    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+
+    // don't want weird pointer invalidation crap
+    size_t user_count = n->user_count;
+    TB_User* users = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_User));
+    memcpy(users, n->users, n->user_count * sizeof(TB_User));
+
+    // aggressive reload
+    double base_bias = ctx->vregs[ctx->vreg_map[n->gvn]].spill_bias;
+    for (size_t i = 0; i < user_count; i++) {
+        TB_Node* use_n = USERN(&users[i]);
+        int use_i      = USERI(&users[i]);
+
+        // it's never in[0] lmao
+        assert(use_i != 0);
+        RegMask* in_mask = constraint_in(ctx, use_n, use_i);
+
+        // remat per use site
+        TB_Node* remat = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
+        memcpy(remat->extra, n->extra, extra);
+        FOR_N(j, 0, n->input_count) if (n->inputs[j]) {
+            remat->inputs[j] = n->inputs[j];
+            add_user(f, remat, n->inputs[j], j);
+        }
+
+        set_input(f, use_n, remat, use_i);
+
+        VReg* reload_vreg;
+        if (use_n->type == TB_PHI) {
+            TB_Node* pred = cfg_get_pred(&ctx->cfg, use_n->inputs[0], use_i - 1);
+            TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+            TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
+
+            // place at the end of the pred BB to the phi, basically the latest point
+            rogers_insert_op(ctx, pred_bb - ctx->cfg.blocks, remat, aarray_length(pred_bb->items) - 1);
+
+            // phis hard coalesce
+            int vreg_id = ctx->vreg_map[use_n->gvn];
+            reload_vreg = &ctx->vregs[vreg_id];
+            aarray_insert(ctx->vreg_map, remat->gvn, vreg_id);
+        } else {
+            // schedule the split right before use
+            tb__insert_before(ctx, ctx->f, remat, use_n);
+            reload_vreg = tb__set_node_vreg(ctx, remat);
+        }
+
+        RegMask* remat_mask = ctx->constraint(ctx, remat, NULL);
+        reload_vreg->mask = tb__reg_mask_meet(ctx, in_mask, remat_mask);
+        reload_vreg->reg_width = tb__reg_width_from_dt(reload_vreg->mask->class, remat->dt);
+        TB_ASSERT(reload_vreg->mask != &TB_REG_EMPTY && "TODO hard split from rematerializing");
+
+        // if it's remat'ing a copy, we should edit the def mask to match the use
+        if (remat->type == TB_MACH_COPY) {
+            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(remat);
+
+            // slightly harder to rematerialize than a normal remat because we tightened it
+            reload_vreg->spill_bias = base_bias + 1e8;
+            cpy->def = reload_vreg->mask;
+        } else {
+            // reloads are unlikely to spill... but not impossible
+            reload_vreg->spill_bias = base_bias + 1e7;
+        }
+
+        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu:    use (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
+    }
+    tb_arena_restore(&f->tmp_arena, sp);
+
+    if (kill_node) {
+        // delete the original def
+        ctx->vregs[ctx->vreg_map[n->gvn]].uses -= 1;
+        ctx->vreg_map[n->gvn] = 0;
+        tb__remove_node(ctx, f, n);
+        tb_kill_node(f, n);
+    }
 }
 
 #if 0

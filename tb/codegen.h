@@ -100,6 +100,7 @@ typedef int (*TmpCount)(Ctx* restrict ctx, TB_Node* n);
 
 // ins can be NULL
 typedef RegMask* (*NodeConstraint)(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
+typedef int (*NodeConstraintKill)(Ctx* restrict ctx, TB_Node* n, RegMask** kills);
 
 typedef bool (*NodeRemat)(TB_Node* n);
 
@@ -168,6 +169,8 @@ struct Ctx {
 
     // user callbacks
     NodeConstraint constraint;
+    NodeConstraintKill constraint_kill;
+
     TB_2Addr node_2addr;
     NodeRemat remat;
 
@@ -273,8 +276,13 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
 static double get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
     if (!isnan(vreg->spill_cost)) {
         return vreg->spill_cost;
+    } else if (vreg->n->type == TB_MACH_TEMP) {
+        return (vreg->spill_cost = 1.0 + vreg->spill_bias);
     } else if (can_remat(ctx, vreg->n)) {
         return (vreg->spill_cost = -1.0 + vreg->spill_bias);
+    } else if (vreg->n->type == TB_MACH_FRAME_PTR || vreg->n->user_count == 0) {
+        // no users? probably a projection that can't be spilled
+        return INFINITY;
     }
 
     double c = 0.0f;
@@ -327,7 +335,7 @@ static bool reg_mask_is_not_empty(RegMask* mask) {
 }
 
 static bool reg_mask_is_stack(RegMask* mask) {
-    return mask->class == REG_CLASS_STK;
+    return mask->class == REG_CLASS_STK || mask->may_spill;
 }
 
 static bool reg_mask_is_spill(RegMask* mask) {

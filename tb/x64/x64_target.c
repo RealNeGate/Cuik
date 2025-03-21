@@ -349,6 +349,8 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
                 n->type == x86_movsx8 || n->type == x86_movsx16 || n->type == x86_movsx32
             ) {
                 printf("  %s_%d ", name, bytes);
+            } else if (n->type == x86_cmovcc) {
+                printf("  %s%s_%d ", name, COND_NAMES[op->cond], bytes);
             } else {
                 printf("  %s%d ", name, bytes);
             }
@@ -522,7 +524,7 @@ static TB_X86_DataType legalize_float(TB_DataType dt) {
         return dt.elem_or_addrspace == TB_TAG_F64 ? TB_X86_F64x2 : TB_X86_F32x4;
     }
 
-    assert(dt.type == TB_TAG_F32 || dt.type == TB_TAG_F64);
+    TB_ASSERT(dt.type == TB_TAG_F32 || dt.type == TB_TAG_F64);
     return (dt.type == TB_TAG_F64 ? TB_X86_F64x1 : TB_X86_F32x1);
 }
 
@@ -585,7 +587,11 @@ static int node_2addr(TB_Node* n) {
             if (op->mode == MODE_ST) return -1;
             if (op->flags & OP_IMMEDIATE) return 2;
             return n->input_count - 1;
+            // return op->flags & OP_INDEXED ? 4 : 3;
         }
+
+        case x86_cmovcc: case x86_adc:
+        return 2;
 
         case x86_cmp: case x86_test:
         return 0;
@@ -607,7 +613,7 @@ static int node_2addr(TB_Node* n) {
 }
 
 static bool node_remat(TB_Node* n) {
-    return n->type == x86_lea || n->type == x86_cmp || n->type == x86_test || n->type == x86_ucomi;
+    return n->type == x86_lea || n->type == x86_cmp || n->type == x86_test || n->type == x86_ucomi || n->type == x86_bt;
 }
 
 static void init_ctx(Ctx* restrict ctx, TB_ABI abi) {
@@ -728,9 +734,35 @@ static TB_Node* mach_symbol(Ctx* restrict ctx, TB_Function* f, TB_Symbol* s) {
 
 static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
     TB_Function* f = ctx->f;
+    if (n->type >= x86_add && n->type <= x86_ror) {
+        // integer ops all produce the FLAGS
+        TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
+        set_input(f, proj, n, 0);
+        TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = 0, .def = ctx->normie_mask[REG_CLASS_FLAGS]);
+    }
+
+    if (n->type == TB_PROJ && (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div)) {
+        TB_Node* tuple = n->inputs[0];
+        int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+
+        node_add_tmp(ctx, tuple, intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX));
+
+        // add the remaining projection
+        TB_Node* proj = tb_alloc_node(f, TB_PROJ, n->dt, 1, sizeof(TB_NodeMachProj));
+        set_input(f, proj, tuple, 0);
+        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = !index);
+
+        proj = tb_opt_gvn_node(f, proj);
+    }
+}
+
+// which regs are clobbered by this node
+static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) {
+    TB_Function* f = ctx->f;
+
+    int kill_count = 0;
     if (n->type == x86_call) {
         CallingConv* cc = ctx->calling_conv;
-        int proj_count = 0;
 
         // we need to know which regs we've used, since those won't be tmps
         RegMask** ins = tb_arena_alloc(&f->tmp_arena, n->input_count * sizeof(RegMask*));
@@ -744,62 +776,30 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
             used[ins[i]->class] |= ins[i]->mask[0];
         }
 
-        FOR_USERS(u, n) {
-            if (USERN(u)->type != TB_PROJ) { continue; }
-
-            RegMask* out = node_constraint(ctx, USERN(u), ins);
-            if (out != &TB_REG_EMPTY) {
-                TB_ASSERT(out->count == 1);
-                used[out->class] |= out->mask[0];
-            }
-        }
-
         bool use_frame_ptr = ctx->f->features.gen & TB_FEATURE_FRAME_PTR;
         FOR_N(i, 1, ctx->num_classes) {
             const char* saves = cc->reg_saves[i];
             if (saves == NULL) { continue; }
 
+            uint64_t clobbers = 0;
             FOR_N(j, 0, ctx->num_regs[i]) {
                 if (saves[j] == 'C' &&
                     // if we're using the frame ptr, it should be treated as "no save"
-                    (!use_frame_ptr || cc->fp_class != i || cc->fp_reg != j) &&
-                    // we don't clobber the regs we use to pass params
-                    ((used[i] >> j) & 1) == 0
+                    (!use_frame_ptr || cc->fp_class != i || cc->fp_reg != j)
                 ) {
-                    RegMask* rm = intern_regmask(ctx, i, false, 1ull << j);
-                    TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
-                    set_input(f, proj, n, 0);
-                    TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = proj_count++, .def = rm);
-                    // node_add_tmp(ctx, n, rm);
+                    clobbers |= 1ull << j;
                 }
             }
+
+            kills[kill_count++] = intern_regmask(ctx, i, false, clobbers & ~used[i]);
         }
         tb_arena_free(&f->tmp_arena, ins, n->input_count * sizeof(RegMask*));
 
         // Clobber FLAGS
-        RegMask* rm = ctx->normie_mask[REG_CLASS_FLAGS];
-        TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
-        set_input(f, proj, n, 0);
-        TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = proj_count++, .def = rm);
-    } else if (n->type >= x86_add && n->type <= x86_ror) {
-        // integer ops all produce the FLAGS
-        TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
-        set_input(f, proj, n, 0);
-        TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = 0, .def = ctx->normie_mask[REG_CLASS_FLAGS]);
-
-        // node_add_tmp(ctx, n, ctx->normie_mask[REG_CLASS_FLAGS]);
-    } else if (n->type == TB_PROJ && (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div)) {
-        TB_Node* tuple = n->inputs[0];
-        int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-
-        node_add_tmp(ctx, tuple, intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RDX));
-
-        // add the remaining projection
-        TB_Node* proj = tb_alloc_node(f, TB_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
-        set_input(f, proj, tuple, 0);
-        TB_NODE_SET_EXTRA(proj, TB_NodeProj, .index = !index);
-
-        proj = tb_opt_gvn_node(f, proj);
+        kills[kill_count++] = ctx->normie_mask[REG_CLASS_FLAGS];
+        return kill_count;
+    } else {
+        return 0;
     }
 }
 
@@ -923,6 +923,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_cmp: case x86_test: case x86_idiv: case x86_div:
         case x86_movzx8: case x86_movzx16:
         case x86_movsx8: case x86_movsx16: case x86_movsx32:
+        case x86_cmovcc: case x86_bt: case x86_adc:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             if (ins) {
@@ -941,7 +942,9 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     ins[2] = ctx->mayspill_mask[REG_CLASS_GPR];
                 }
 
-                if (n->type == x86_idiv || n->type == x86_div) {
+                if (n->type == x86_cmovcc || n->type == x86_adc) {
+                    ins[n->input_count - 1] = ctx->normie_mask[REG_CLASS_FLAGS];
+                } else if (n->type == x86_idiv || n->type == x86_div) {
                     // LHS is in RAX
                     ins[n->input_count - 2] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
 
@@ -953,7 +956,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
             if (op->mode == MODE_ST || n->type == x86_idiv || n->type == x86_div) {
                 return &TB_REG_EMPTY;
-            } else if (n->type == x86_cmp || n->type == x86_test) {
+            } else if (n->type == x86_cmp || n->type == x86_test || n->type == x86_bt) {
                 return ctx->normie_mask[REG_CLASS_FLAGS];
             } else {
                 return ctx->normie_mask[REG_CLASS_GPR];
@@ -1648,7 +1651,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case x86_add: case x86_or:  case x86_and:
         case x86_sub: case x86_xor: case x86_mov:
         case x86_shl: case x86_shr: case x86_rol:
-        case x86_ror: case x86_sar:
+        case x86_ror: case x86_sar: case x86_cmovcc:
+        case x86_adc:
         {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt;
@@ -1671,11 +1675,13 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 case x86_rol: op_type = ROL; break;
                 case x86_ror: op_type = ROR; break;
                 case x86_sar: op_type = SAR; break;
+                case x86_cmovcc: op_type = CMOVO+op->cond; break;
+                case x86_adc: op_type = ADC; break;
             }
             Val rx, rm = parse_cisc_operand(ctx, n, &rx, op);
             if (op->mode == MODE_ST) {
                 __(op_type, dt, &rm, &rx);
-            } else if (op->flags & OP_IMMEDIATE) {
+            } else if (n->type == x86_cmovcc || (op->flags & OP_IMMEDIATE)) {
                 Val dst = op_at(ctx, n);
                 if (!is_value_match(&dst, &rm)) {
                     __(MOV, dt, &dst, &rm);
@@ -1720,7 +1726,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_cmp: case x86_test: case x86_ucomi: {
+        case x86_cmp: case x86_test: case x86_ucomi: case x86_bt: {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
             TB_X86_DataType dt = legalize(op->extra_dt);
 
@@ -1730,6 +1736,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 case x86_cmp:   op_type = CMP;      break;
                 case x86_test:  op_type = TEST;     break;
                 case x86_ucomi: op_type = FP_UCOMI; break;
+                case x86_bt:    op_type = BT;       break;
             }
             if (rx.type == VAL_IMM) {
                 __(op_type, dt, &rm, &rx);

@@ -13,6 +13,8 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n);
 // RA constraints:
 //   TODO
 static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
+//   TODO
+static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills);
 //   when we represent 2addr ops in the SSA, we define which edge is potentially
 //   shared such that lifetimes don't freak out about the fact that there's a
 //   hypothetical move before the op (which means that it'll interfere with its
@@ -525,6 +527,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         .module = f->super.module,
         .f = f,
         .constraint  = node_constraint,
+        .constraint_kill = node_constraint_kill,
         .node_2addr  = node_2addr,
         .remat       = node_remat,
         .print_pretty= print_pretty,
@@ -766,6 +769,11 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             bb->items = items;
         }
         ctx.bb_count = bb_count;
+
+        // needs to be big enough for the node_constraint_kill queries too
+        if (max_ins < REG_CLASS_COUNT) {
+            max_ins = REG_CLASS_COUNT;
+        }
         ctx.ins = tb_arena_alloc(&f->tmp_arena, max_ins * sizeof(RegMask*));
 
         log_phase_end(f, og_size, "local-sched & ra constraints");
@@ -810,6 +818,11 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                             printf("    IN[%zu]  = ", k), tb__print_regmask(ctx.ins[k]), printf(" %%%d\n", n->inputs[k]->gvn);
                         }
                     }
+                }
+
+                int kill_count = node_constraint_kill(&ctx, n, ctx.ins);
+                FOR_N(k, 0, kill_count) {
+                    printf("    KILL[%zu] = ", k), tb__print_regmask(ctx.ins[k]), printf("\n");
                 }
                 #endif
             }

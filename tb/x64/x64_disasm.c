@@ -100,6 +100,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     static const uint32_t op_map[1024] = {
         NORMIE_BINOP(0x00), // add
         NORMIE_BINOP(0x08), // or
+        NORMIE_BINOP(0x10), // adc
         NORMIE_BINOP(0x20), // and
         NORMIE_BINOP(0x28), // sub
         NORMIE_BINOP(0x30), // xor
@@ -200,6 +201,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         _0F(0x2E)        = OP_MODRM | OP_SSE | OP_DIR | OP_SCALAR,
         // shufps
         _0F(0xC6)        = OP_MODRM | OP_SSE | OP_DIR | OP_IMM8,
+        // bt r/m, reg
+        _0F(0xA3)        = OP_MODRM,
         // imul reg, r/m
         _0F(0xAF)        = OP_MODRM,
         // bswap r+
@@ -411,6 +414,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
 
         case 0x00 ... 0x05: NORMIE_BINOP(0): return "add";
         case 0x08 ... 0x0D: NORMIE_BINOP(1): return "or";
+        case 0x10 ... 0x1D: NORMIE_BINOP(2): return "adc";
         case 0x20 ... 0x25: NORMIE_BINOP(4): return "and";
         case 0x28 ... 0x2D: NORMIE_BINOP(5): return "sub";
         case 0x30 ... 0x33: NORMIE_BINOP(6): return "xor";
@@ -471,6 +475,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0xEB: case 0xE9: case 0x40FF: case 0x50FF: return "jmp";
 
         case _0F(0x1F): return "nop";
+        case _0F(0xA3): return "bt";
         case 0x68: return "push";
         case _0F(0xAF): case 0x69: case 0x6B: return "imul";
 
