@@ -13,6 +13,11 @@ static size_t extra_bytes(TB_Node* n) {
             return sizeof(TB_NodeLookup) + (l->entry_count * sizeof(TB_LookupEntry));
         }
 
+        case TB_VSHUFFLE: {
+            TB_NodeVShuffle* v = TB_NODE_GET_EXTRA(n);
+            return sizeof(TB_NodeVShuffle) + (v->width * sizeof(int));
+        }
+
         case TB_BRANCH:
         case TB_AFFINE_LATCH:
         return sizeof(TB_NodeBranch);
@@ -62,7 +67,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_PHI:
         case TB_CLZ:
         case TB_CTZ:
-        case TB_ADC:
         case TB_BSWAP:
         case TB_VA_START:
         case TB_PTR_OFFSET:
@@ -75,17 +79,16 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_DEBUGBREAK:
         case TB_CYCLE_COUNTER:
         case TB_MULPAIR:
-        case TB_READ:
-        case TB_WRITE:
+        case TB_HARD_BARRIER:
         case TB_ROOT:
         case TB_TRAP:
         case TB_RETURN:
-        case TB_MACH_MOVE:
         case TB_MACH_JUMP:
         case TB_MACH_FRAME_PTR:
         case TB_MACH_JIT_THREAD_PTR:
         case TB_FRAME_PTR:
         case TB_SPLITMEM:
+        case TB_VBROADCAST:
         return 0;
 
         case TB_SYMBOL_TABLE:
@@ -147,6 +150,9 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_MACH_PROJ:
         return sizeof(TB_NodeMachProj);
 
+        case TB_MACH_TEMP:
+        return sizeof(TB_NodeMachTemp);
+
         default: {
             int family = n->type / 0x100;
             assert(family >= 1 && family < TB_ARCH_MAX);
@@ -161,7 +167,7 @@ uint32_t gvn_hash(void* a) {
     uint32_t h = n->type + n->dt.raw + n->input_count + extra;
 
     // locals can't be put into the GVN table
-    assert(n->type != TB_LOCAL);
+    TB_ASSERT(n->type != TB_LOCAL);
 
     FOR_N(i, 0, n->input_count) {
         h += n->inputs[i] ? n->inputs[i]->gvn : 0;

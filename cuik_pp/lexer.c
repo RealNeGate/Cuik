@@ -391,7 +391,17 @@ Token lexer_read(Lexer* restrict l) {
 
 uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
     char* end;
-    uint64_t i = strtoull(str, &end, 0);
+    uint64_t num = 0;
+    if (len >= 2 && str[1] == 'b') {
+        size_t i = 2;
+        for (; i < len && (str[i] == '0' || str[i] == '1'); i++) {
+            num <<= 1;
+            num |= str[i] != '0' ? 1 : 0;
+        }
+        end = (char*) str+i;
+    } else {
+        num = strtoull(str, &end, 0);
+    }
 
     Cuik_IntSuffix suffix = INT_SUFFIX_NONE;
     if (end != &str[len]) {
@@ -440,7 +450,7 @@ uint64_t parse_int(size_t len, const char* str, Cuik_IntSuffix* out_suffix) {
 
     success:
     *out_suffix = suffix;
-    return i;
+    return num;
 }
 
 ptrdiff_t parse_char(size_t len, const char* str, int* output) {

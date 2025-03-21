@@ -243,17 +243,13 @@ rule("run", {
 })
 
 -- TB's x64 metaprogram
-if false and added["tb"] then
-    command("bin/objs/x64_gen"..exe_ext, "meta/x64_gen.c", cc.." $in -O1 -o $out")
-    command("tb/x64/x64_gen.inc", "", "bin/objs/x64_gen"..exe_ext.." $in", "bin/objs/x64_gen"..exe_ext)
+if added["tb"] then
+    command("tb/x64/x64_gen.h", "meta/dsl.lua", arg[-1].." $in tb/x64/x64.machine", "tb/x64/x64.machine")
 end
 
 -- lexer metaprogram
 command("bin/objs/lexgen"..exe_ext, "meta/lexgen.c", cc.." $in -O1 -o $out")
 command("cuik_pp/keywords.h cuik_pp/dfa.h", "bin/objs/lexgen"..exe_ext, "bin/objs/lexgen"..exe_ext)
-
--- TB metaprogram
--- command("tb/meta/foo.c", "tb/meta/dsl.lua", arg[-1].." $in")
 
 -- package freestanding headers into C file
 local x = {}
@@ -291,8 +287,12 @@ end
 
 local obj_names = table.concat(objs, " ")
 
-local exe_name = "tb"
-if options.driver then exe_name = "cuik" end
+local exe_name = "cuik"
+if not added["cuik_c"] then exe_name = "tb" end
+
+if not is_windows and not is_exe then
+    exe_name = "lib"..exe_name
+end
 
 -- placing executables into bin/
 exe_name = "bin/"..exe_name

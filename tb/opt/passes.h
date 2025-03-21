@@ -120,15 +120,8 @@ bool cfg_is_endpoint(TB_Node* n);
 
 bool tb_node_is_safepoint(TB_Node* n);
 bool tb_node_has_mem_out(TB_Node* n);
+bool tb_node_mem_read_only(TB_Node* n);
 TB_Node* tb_node_mem_in(TB_Node* n);
-
-////////////////////////////////
-// CFG
-////////////////////////////////
-typedef struct {
-    TB_Node *phi, *n;
-    int dst, src;
-} PhiVal;
 
 ////////////////////////////////
 // Core optimizer
@@ -210,20 +203,8 @@ static TB_NodeBranchProj* cfg_if_branch(TB_Node* n) {
     return NULL;
 }
 
-static bool is_mem_out_op(TB_Node* n) {
-    return n->dt.type == TB_TAG_MEMORY || (n->type >= TB_STORE && n->type <= TB_ATOMIC_CAS) || (n->type >= TB_CALL && n->type <= TB_TAILCALL) || n->type == TB_SPLITMEM || n->type == TB_MERGEMEM || n->type == TB_DEBUG_LOCATION;
-}
-
 static bool is_mem_end_op(TB_Node* n) {
     return n->type == TB_RETURN || n->type == TB_TRAP || n->type == TB_UNREACHABLE;
-}
-
-static bool is_mem_in_op(TB_Node* n) {
-    return is_mem_out_op(n) || n->type == TB_SAFEPOINT || n->type == TB_LOAD;
-}
-
-static bool is_mem_only_in_op(TB_Node* n) {
-    return n->type == TB_SAFEPOINT || n->type == TB_LOAD;
 }
 
 static bool single_use(TB_Node* n) {
@@ -425,8 +406,8 @@ typedef int (*TB_GetLatency)(TB_Function* f, TB_Node* n, TB_Node* end);
 typedef uint64_t (*TB_GetUnitMask)(TB_Function* f, TB_Node* n);
 
 // Local scheduler
-void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count);
-void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, DynArray(PhiVal*) phi_vals, TB_BasicBlock* bb);
+void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count);
+void tb_greedy_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb);
 void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg);
 
 // Global scheduler
@@ -434,7 +415,7 @@ TB_BasicBlock* tb_late_sched(TB_Function* f, TB_CFG* cfg, TB_BasicBlock* lca, TB
 void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws);
 void tb_renumber_nodes(TB_Function* f, TB_Worklist* ws);
 void tb_compact_nodes(TB_Function* f, TB_Worklist* ws);
-void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_only, bool dataflow, TB_GetLatency get_lat);
+void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_only, TB_GetLatency get_lat);
 void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg);
 
 // BB placement

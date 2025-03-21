@@ -38,6 +38,7 @@ uint64_t cuik__page_mask = 0;
 void cuik_init_terminal(void) {
     #if _WIN32
     // Raw input mode
+    // setvbuf(stdout, (char *)NULL, _IOLBF, BUFSIZ);
     SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), ENABLE_PROCESSED_INPUT);
 
     // Enable ANSI/VT sequences on windows
@@ -132,7 +133,7 @@ void tb_arena_clear(TB_Arena* arena) {
         cuik_free(c);
         c = prev;
     }
-    arena->top->avail = arena->top->data;
+    c->avail = c->data;
     arena->top = c;
 }
 

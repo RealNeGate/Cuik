@@ -73,6 +73,11 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
     TB_Node* mem = n->inputs[1];
     TB_Node* addr = n->inputs[2];
 
+    TB_NodeMemAccess* a = TB_NODE_GET_EXTRA(n);
+    if (a->is_volatile) {
+        return NULL;
+    }
+
     if (ctrl != NULL) {
         // we've dependent on code which must always be run (ROOT.mem)
         if (n->inputs[0]->type == TB_PROJ && n->inputs[0]->inputs[0]->type == TB_ROOT) {
@@ -132,6 +137,7 @@ static TB_Node* ideal_load(TB_Function* f, TB_Node* n) {
 static TB_Node* ideal_store(TB_Function* f, TB_Node* n) {
     TB_Node *mem = n->inputs[1], *addr = n->inputs[2], *val = n->inputs[3];
     TB_DataType dt = val->dt;
+
 
     #if 0
     // store is next to a non-aliasing adjacent store (or merge to non-adjacent stores)

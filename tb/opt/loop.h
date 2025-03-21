@@ -39,6 +39,8 @@ typedef struct {
     int* stk;
 } LoopSCC;
 
+bool slp_transform(TB_Function* f, LoopOpt* ctx, TB_LoopTree* loop);
+
 static void loop_add_kid(TB_LoopTree* kid, TB_LoopTree* mom) {
     kid->parent = mom;
     kid->next   = mom->kid;
@@ -97,7 +99,8 @@ static void loop_scc_walk(LoopSCC* restrict scc, TB_CFG* restrict cfg, TB_BasicB
     scc->stk[scc->stk_cnt++] = bb - cfg->blocks;
     n->on_stack = ON_STK;
 
-    // walk successors (in order to avoid weird nondeterminism)
+    // walk successors
+    // TODO(NeGate): in order to avoid weird nondeterminism
     FOR_SUCC(it, bb->end) {
         TB_BasicBlock* succ_bb = nl_map_get_checked(cfg->node_to_block, it.succ);
         LoopSCCNode* succ_n    = &scc->nodes[succ_bb - cfg->blocks];
@@ -110,15 +113,21 @@ static void loop_scc_walk(LoopSCC* restrict scc, TB_CFG* restrict cfg, TB_BasicB
             if (cfg->root_loop == NULL) {
                 cfg->root_loop = new_loop;
             } else if (new_loop != cfg->root_loop) {
-                // if we dominate the previously placed loop, we're its parent, if not
-                // then we're siblings.
-                if (slow_dommy(cfg, cfg->root_loop->header, succ_bb->start)) {
+                // if we're not dominated by the loop header, it means we should bump out of this loop nest
+                TB_LoopTree* last = NULL;
+                while (cfg->root_loop && !slow_dommy(cfg, cfg->root_loop->header, succ_bb->start)) {
+                    last = cfg->root_loop;
+                    cfg->root_loop = cfg->root_loop->parent;
+                }
+
+                if (cfg->root_loop == NULL) {
+                    TB_OPTDEBUG(LOOP)(printf("    * Loop%d is next to Loop%d\n", new_loop->id, last->id));
+                    new_loop->next = last;
+                } else {
                     TB_OPTDEBUG(LOOP)(printf("    * Loop%d is inside Loop%d\n", new_loop->id, cfg->root_loop->id));
                     loop_add_kid(new_loop, cfg->root_loop);
-                } else {
-                    new_loop->next = cfg->root_loop;
-                    cfg->root_loop = new_loop;
                 }
+                cfg->root_loop = new_loop;
             }
         }
 
@@ -146,8 +155,8 @@ static void loop_scc_walk(LoopSCC* restrict scc, TB_CFG* restrict cfg, TB_BasicB
         TB_OPTDEBUG(LOOP)(printf("  SCC(header: %%%u)\n", bb->start->gvn));
 
         // this is also the highest loop in the SCC
-        TB_LoopTree* root_loop = nl_table_get(scc->loop_map, bb->start);
-        if (root_loop == NULL) {
+        TB_LoopTree* top_loop = nl_table_get(scc->loop_map, bb->start);
+        if (top_loop == NULL) {
             // if the SCC doesn't have a loop header it HAS to be
             // a single BB that's not a cycle
             TB_ASSERT(scc_top == scc->stk_cnt+1);
@@ -165,7 +174,7 @@ static void loop_scc_walk(LoopSCC* restrict scc, TB_CFG* restrict cfg, TB_BasicB
                     loop = nl_table_get(scc->loop_map, curr->start);
                 }
 
-                if (loop != cfg->root_loop) {
+                if (loop != top_loop) {
                     if (loop->is_natural) {
                         // we can only be in this natural loop if we're between the RPO indices
                         int head_rpo = nl_map_get_checked(cfg->node_to_block, loop->header) - cfg->blocks;
@@ -260,6 +269,12 @@ static void loop_find(TB_Function* f, TB_CFG* restrict cfg, LoopOpt* restrict ct
 
         loop_scc_walk(&scc, cfg, &cfg->blocks[0]);
 
+        if (cfg->root_loop) {
+            while (cfg->root_loop->parent != NULL) {
+                cfg->root_loop = cfg->root_loop->parent;
+            }
+        }
+
         TB_OPTDEBUG(LOOP)(printf("\n%s: Final analysis:\n", f->super.name));
         loop_compute_depth(cfg->root_loop, 1);
     }
@@ -321,20 +336,24 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
 
         // loop variants are just those which are dominated by the loop header
         if (ctx->ctrl[n->gvn] == header) {
-            // we generate the cloned node now, the edges get connected later on
-            size_t extra = extra_bytes(n);
-            TB_Node* k = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
-            memcpy(k->extra, n->extra, extra);
+            if (n->input_count == 1 && n->inputs[0] == f->root_node) {
+                cloned[n->gvn] = n;
+            } else {
+                // we generate the cloned node now, the edges get connected later on
+                size_t extra = extra_bytes(n);
+                TB_Node* k = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
+                memcpy(k->extra, n->extra, extra);
 
-            cloned[n->gvn] = k;
-            aarray_push(cloned_list, n);
+                cloned[n->gvn] = k;
+                aarray_push(cloned_list, n);
 
-            // avoid forward progress problems by cloning the lattice position
-            latuni_set(f, k, latuni_get(f, n));
-            mark_node(f, n);
+                // avoid forward progress problems by cloning the lattice position
+                latuni_set(f, k, latuni_get(f, n));
+                mark_node(f, n);
 
-            FOR_N(j, 0, n->input_count) if (n->inputs[j]) { worklist_push(ws, n->inputs[j]); }
-            FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+                FOR_N(j, 0, n->input_count) if (n->inputs[j]) { worklist_push(ws, n->inputs[j]); }
+                FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+            }
         }
     }
 
@@ -350,7 +369,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
         if (i == 0) {
             k->type = TB_REGION;
             k->input_count = 0;
-        } else {
+        } else if (n != k) {
             FOR_N(j, 0, n->input_count) if (n->inputs[j]) {
                 TB_Node* new_in = n->inputs[j];
                 if (cloned[new_in->gvn] != NULL) {
@@ -458,6 +477,12 @@ static TB_Node* get_simple_loop_exit(LoopOpt* opt, TB_LoopTree* loop, TB_Node* h
 
         TB_Node* succ = USERN(u);
         TB_LoopTree* succ_loop = nl_table_get(&opt->loop_map, succ);
+        if (succ_loop == loop && succ->user_count == 1) {
+            // we didn't travel far enough
+            succ = USERN(&succ->users[0]);
+            succ_loop = nl_table_get(&opt->loop_map, succ);
+        }
+
         if (!loop_inside(loop, succ_loop)) {
             // successor leaves the loop, we want only one
             if (exit) { return NULL; }
@@ -657,7 +682,7 @@ bool tb_opt_loops(TB_Function* f) {
     // we use this early scheduling to discover if nodes are loop invariant or not
     CUIK_TIMED_BLOCK("early sched") {
         TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
-        tb_global_schedule(f, f->worklist, cfg, false, false, NULL);
+        tb_global_schedule(f, f->worklist, cfg, false, NULL);
         tb_clear_anti_deps(f, f->worklist);
 
         FOR_N(i, 0, f->node_count) { ctx.ctrl[i] = f->scheduled[i] ? f->scheduled[i]->start : NULL; }
@@ -1098,6 +1123,29 @@ bool tb_opt_loops(TB_Function* f) {
         }
     }
 
+    #if 1
+    // Run SLP on each loop (+ the main body)
+    TB_OPTDEBUG(PASSES)(printf("    * Vectorize\n"));
+    CUIK_TIMED_BLOCK("SLP") {
+        aarray_for(i, cfg.loops) {
+            TB_LoopTree* loop = cfg.loops[i];
+            if (loop->header->type != TB_NATURAL_LOOP && loop->header->type != TB_AFFINE_LOOP) {
+                continue;
+            }
+
+            if (slp_transform(f, &ctx, loop)) {
+                TB_OPTDEBUG(PASSES)(printf("      * Vectorized Loop%zu!\n", i));
+                progress = true;
+            }
+        }
+
+        if (slp_transform(f, &ctx, NULL)) {
+            TB_OPTDEBUG(PASSES)(printf("      * Vectorized Body!\n"));
+            progress = true;
+        }
+    }
+    #endif
+
     CUIK_TIMED_BLOCK("loop peeps") {
         tb_opt_peeps(f);
     }
@@ -1139,11 +1187,12 @@ bool tb_opt_loops(TB_Function* f) {
                     FOR_USERS(u2, n) {
                         if (USERN(u2) == stepper) {
                             continue;
-                        } else if ((USERN(u2)->type == TB_ZERO_EXT || USERN(u2)->type == TB_SIGN_EXT) && cast == NULL) {
-                            cast = USERN(u2);
-                        } else {
+                        } else if (cast != NULL) {
+                            // can't have multiple uses of the IV
                             cast = NULL;
                             break;
+                        } else {
+                            cast = USERN(u2);
                         }
                     }
 
@@ -1160,42 +1209,88 @@ bool tb_opt_loops(TB_Function* f) {
                     // we found a single unambiguous cast (beyond the step node), the case
                     // our IV simplify handles for now.
                     if (cast != NULL) {
-                        TB_Node* con = make_int_node(f, cast->dt, *step_ptr);
+                        bool good = false;
+                        uint64_t scale = 0;
+                        if (cast->type == TB_ZERO_EXT || cast->type == TB_SIGN_EXT) {
+                            good = true;
+                        } else if (cast->type == TB_SHL && lattice_is_iconst(latuni_get(f, cast->inputs[2]))) {
+                            TB_ASSERT(cast->inputs[1] == n);
 
-                        TB_Node* new_stepper = tb_alloc_node(f, TB_ADD, cast->dt, 3, sizeof(TB_NodeBinopInt));
-                        set_input(f, new_stepper, n,   1);
-                        set_input(f, new_stepper, con, 2);
-                        TB_NODE_SET_EXTRA(new_stepper, TB_NodeBinopInt, .ab = TB_NODE_GET_EXTRA_T(stepper, TB_NodeBinopInt)->ab);
-                        latuni_set(f, new_stepper, value_of(f, stepper));
+                            Lattice* sh_amt = latuni_get(f, cast->inputs[2]);
 
-                        set_input(f, n, new_stepper, 2);
-
-                        // stepper has one extra use which is the latch, this is easy to extend
-                        if (cmp != NULL) {
-                            TB_ASSERT(cmp->inputs[1] == stepper);
-
-                            TB_Node* ext_limit = tb_alloc_node(f, cast->type, cast->dt, 2, 0);
-                            set_input(f, ext_limit, cmp->inputs[2], 1);
-                            ext_limit = tb__gvn(f, ext_limit, 0);
-                            latuni_set(f, ext_limit, value_of(f, ext_limit));
-
-                            set_input(f, cmp, new_stepper, 1);
-                            set_input(f, cmp, ext_limit,   2);
-                            TB_NODE_SET_EXTRA(cmp, TB_NodeCompare, .cmp_dt = cast->dt);
-
-                            mark_node(f, ext_limit);
-                            mark_node_n_users(f, cmp);
+                            // if the compare's limit can be bumped up without overflow then we'll do that too
+                            Lattice* l = lattice_int_const(f, 1ull << sh_amt->_int.min);
+                            Lattice* limit = latuni_get(f, cmp->inputs[2]);
+                            if (!will_mul_overflow(f, n->dt, l, limit)) {
+                                scale = l->_int.min;
+                                good = true;
+                            }
+                        } else if (cast->type == TB_MUL && lattice_is_iconst(latuni_get(f, cast->inputs[2]))) {
+                            // if the compare's limit can be bumped up without overflow then we'll do that too
+                            Lattice* l = latuni_get(f, cast->inputs[2]);
+                            Lattice* limit = latuni_get(f, cmp->inputs[2]);
+                            if (!will_mul_overflow(f, n->dt, l, limit)) {
+                                scale = l->_int.min;
+                                good = true;
+                            }
                         }
 
-                        n->dt = cast->dt;
+                        if (good) {
+                            TB_Node* con = make_int_node(f, cast->dt, *step_ptr * scale);
 
-                        subsume_node(f, cast, n);
-                        tb_kill_node(f, stepper);
+                            TB_Node* new_stepper = tb_alloc_node(f, TB_ADD, cast->dt, 3, sizeof(TB_NodeBinopInt));
+                            set_input(f, new_stepper, n,   1);
+                            set_input(f, new_stepper, con, 2);
+                            TB_NODE_SET_EXTRA(new_stepper, TB_NodeBinopInt, .ab = TB_NODE_GET_EXTRA_T(stepper, TB_NodeBinopInt)->ab);
+                            latuni_set(f, new_stepper, value_of(f, stepper));
 
-                        latuni_set(f, n, value_of(f, n));
+                            set_input(f, n, new_stepper, 2);
 
-                        mark_node_n_users(f, n);
-                        mark_node_n_users(f, new_stepper);
+                            // stepper has one extra use which is the latch, this is easy to extend
+                            if (cmp != NULL) {
+                                TB_ASSERT(cmp->inputs[1] == stepper);
+
+                                TB_Node* ext_limit;
+                                if (cast->type == TB_ZERO_EXT || cast->type == TB_SIGN_EXT) {
+                                    ext_limit = tb_alloc_node(f, cast->type, cast->dt, 2, 0);
+                                    set_input(f, ext_limit, cmp->inputs[2], 1);
+                                    ext_limit = tb__gvn(f, ext_limit, 0);
+                                    latuni_set(f, ext_limit, value_of(f, ext_limit));
+
+                                    mark_node(f, ext_limit);
+                                } else {
+                                    ext_limit = cmp->inputs[2];
+                                }
+
+                                if (scale) {
+                                    TB_Node* con = make_int_node(f, cast->dt, scale);
+
+                                    TB_Node* scl = tb_alloc_node(f, TB_MUL, cast->dt, 3, sizeof(TB_NodeBinopInt));
+                                    set_input(f, scl, ext_limit, 1);
+                                    set_input(f, scl, con, 2);
+                                    ext_limit = scl;
+
+                                    latuni_set(f, ext_limit, value_of(f, ext_limit));
+                                    mark_node(f, ext_limit);
+                                }
+
+                                set_input(f, cmp, new_stepper, 1);
+                                set_input(f, cmp, ext_limit,   2);
+                                TB_NODE_SET_EXTRA(cmp, TB_NodeCompare, .cmp_dt = cast->dt);
+
+                                mark_node_n_users(f, cmp);
+                            }
+
+                            n->dt = cast->dt;
+
+                            subsume_node(f, cast, n);
+                            tb_kill_node(f, stepper);
+
+                            latuni_set(f, n, value_of(f, n));
+
+                            mark_node_n_users(f, n);
+                            mark_node_n_users(f, new_stepper);
+                        }
                     }
                 }
             }

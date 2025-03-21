@@ -89,6 +89,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
 
         assert((b->type == VAL_GPR || b->type == VAL_IMM) && "secondary operand is invalid!");
     } else {
+        // movd/movq add the ADDR16 prefix for reasons?
         EMIT1(e, 0x66);
     }
 
@@ -129,7 +130,6 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
     }
 
     if (inst->cat == INST_BINOP_EXT3) {
-        // movd/movq add the ADDR16 prefix for reasons?
         EMIT1(e, 0x0F);
         EMIT1(e, inst->op);
     } else {
@@ -141,7 +141,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
         }
 
         // Immediates have a custom opcode
-        assert((b->type != VAL_IMM || inst->op_i != 0 || inst->rx_i != 0) && "no immediate variant of instruction");
+        TB_ASSERT((b->type != VAL_IMM || inst->op_i != 0 || inst->rx_i != 0) && "no immediate variant of instruction");
         uint8_t opcode = b->type == VAL_IMM ? inst->op_i : inst->op;
 
         // bottom bit usually means size, 0 for 8bit, 1 for everything else.
@@ -180,7 +180,7 @@ static void inst2(TB_CGEmitter* restrict e, InstType type, const Val* a, const V
 }
 
 static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_X86_DataType dt) {
-    assert(type < COUNTOF(inst_table));
+    TB_ASSERT(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
     // most SSE instructions (that aren't mov__) are mem src only
@@ -229,7 +229,7 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
 }
 
 static void asm_inst0(TB_CGEmitter* restrict e, InstType type, TB_X86_DataType dt) {
-    assert(type < COUNTOF(inst_table));
+    TB_ASSERT(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
     if (dt == TB_X86_QWORD) {
@@ -246,7 +246,7 @@ static void asm_inst0(TB_CGEmitter* restrict e, InstType type, TB_X86_DataType d
 }
 
 static void asm_inst1(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* r) {
-    assert(type < COUNTOF(inst_table));
+    TB_ASSERT(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
 
     bool is_rex = (dt == TB_X86_BYTE || dt == TB_X86_QWORD);

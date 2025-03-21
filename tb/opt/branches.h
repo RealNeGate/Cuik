@@ -539,6 +539,24 @@ static Lattice* value_branch(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
+static Lattice* value_safepoint(TB_Function* f, TB_Node* n) {
+    TB_NodeCall* c = TB_NODE_GET_EXTRA(n);
+
+    TB_Arena* arena = get_permanent_arena(f->super.module);
+    size_t size = sizeof(Lattice) + 3*sizeof(Lattice*);
+    Lattice* l = tb_arena_alloc(arena, size);
+    *l = (Lattice){ LATTICE_TUPLE, ._elem_count = 3 };
+
+    l->elems[0] = &LIVE_IN_THE_SKY;
+    l->elems[1] = &LIVE_IN_THE_SKY;
+    // memory just flows through
+    l->elems[2] = &MEM_IN_THE_SKY;
+
+    Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
+    if (k != l) { tb_arena_free(arena, l, size); }
+    return k;
+}
+
 static TB_Node* identity_safepoint(TB_Function* f, TB_Node* n) {
     if (n->inputs[0]->type == TB_SAFEPOINT) {
         // (safepoint (safepoint X)) => (safepoint X)

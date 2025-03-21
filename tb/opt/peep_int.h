@@ -4,13 +4,34 @@ static int64_t sadd(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a +
 static int64_t ssub(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a - (uint64_t)b) & mask; }
 static int64_t smul(int64_t a, int64_t b, uint64_t mask) { return ((uint64_t)a * (uint64_t)b) & mask; }
 
+static int node_pos(TB_Node* n) {
+    switch (n->type) {
+        case TB_ICONST:
+        case TB_F32CONST:
+        case TB_F64CONST:
+        return 1;
+
+        default:
+        return 4;
+
+        case TB_PHI:
+        return 5;
+
+        case TB_SHR:
+        return 6;
+
+        case TB_SHL:
+        return 7;
+    }
+}
+
 ////////////////////////////////
 // Arithmetic
 ////////////////////////////////
 // division handled separately
 static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
     TB_NodeTypeEnum type = n->type;
-    assert(type == TB_ADD || type == TB_SUB || type == TB_MUL);
+    TB_ASSERT(type == TB_ADD || type == TB_SUB || type == TB_MUL);
 
     TB_Node* a = n->inputs[1];
     TB_Node* b = n->inputs[2];
@@ -30,7 +51,7 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
         // commutativity opts (we want a canonical form).
         int ap = node_pos(a);
         int bp = node_pos(b);
-        if (ap < bp || (ap == bp && a->gvn < b->gvn)) {
+        if (ap < bp || (ap == bp && a->gvn > b->gvn)) {
             set_input(f, n, b, 1);
             set_input(f, n, a, 2);
             return n;
@@ -52,6 +73,18 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
             set_input(f, n, con,          2);
             return n;
         }
+
+        // a + (b + c) => (a + b) + c where c is constant and b is not
+        if (b->type == type && is_iconst(f, b->inputs[2])) {
+            TB_Node* ab = tb_alloc_node(f, type, n->dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, ab, a, 1);
+            set_input(f, ab, b->inputs[1], 2);
+            latuni_set(f, ab, value_of(f, ab));
+
+            set_input(f, n, ab,           1);
+            set_input(f, n, b->inputs[2], 2);
+            return n;
+        }
     }
 
     uint64_t rhs;
@@ -68,6 +101,19 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
+static bool will_mul_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattice* b) {
+    int bits = tb_data_type_bit_size(NULL, dt.type);
+    TB_ASSERT(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
+
+    bool overflow = false;
+    uint64_t prods[4];
+    overflow |= __builtin_mul_overflow(a->_int.min, b->_int.min, &prods[0]);
+    overflow |= __builtin_mul_overflow(a->_int.max, b->_int.min, &prods[1]);
+    overflow |= __builtin_mul_overflow(a->_int.min, b->_int.max, &prods[2]);
+    overflow |= __builtin_mul_overflow(a->_int.max, b->_int.max, &prods[3]);
+    return overflow;
+}
+
 static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, TB_Node* n, Lattice* a, Lattice* b) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
@@ -76,7 +122,7 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
     int64_t amin = a->_int.min, amax = a->_int.max;
     int64_t bmin = b->_int.min, bmax = b->_int.max;
 
-    assert(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
+    TB_ASSERT(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
     bool overflow = false;
     int64_t min, max;
     switch (type) {
@@ -101,27 +147,34 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         max = ssub(amax, bmin, mask);
         if (amin != amax || bmin != bmax) {
             // Ahh sweet, Hacker's delight horrors beyond my comprehension
-            uint64_t u = (amin ^ bmax) | (amin ^ min);
-            uint64_t v = (amax ^ bmin) | (amax ^ max);
+            uint64_t u = ~(amin ^ bmax) | ~(amin ^ min);
+            uint64_t v = ~(amax ^ bmin) | ~(amax ^ max);
 
-            if ((u & v) & imin) {
+            if (((u & v) & imin) == 0) {
                 overflow = true;
                 min = imin, max = imax;
             }
         }
         break;
 
-        case TB_MUL:
-        if (bmin != bmax) {
-            return NULL;
-        }
+        case TB_MUL: {
+            uint64_t prods[4];
+            overflow |= __builtin_mul_overflow(amin, bmin, &prods[0]);
+            overflow |= __builtin_mul_overflow(amax, bmin, &prods[1]);
+            overflow |= __builtin_mul_overflow(amin, bmax, &prods[2]);
+            overflow |= __builtin_mul_overflow(amax, bmax, &prods[3]);
+            if (overflow) {
+                min = imin, max = imax;
+                break;
+            }
 
-        overflow |= __builtin_mul_overflow(amin, bmin, &min);
-        overflow |= __builtin_mul_overflow(amax, bmin, &max);
-        if (overflow) {
-            min = imin, max = imax;
+            min = prods[0], max = prods[0];
+            for (int i = 1; i < 4; i++) {
+                min = TB_MIN(min, prods[i]);
+                max = TB_MAX(max, prods[i]);
+            }
+            break;
         }
-        break;
 
         default:
         TB_ASSERT(0);
@@ -158,7 +211,7 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         uint64_t zeros = ~possible_sum_zeros & known;
         uint64_t ones  =  possible_sum_ones  & known;
 
-        return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
+        return lattice_gimme_int2(f, min, max, zeros, ones, 64);
     }
 }
 
@@ -209,6 +262,10 @@ static TB_Node* ideal_shift(TB_Function* f, TB_Node* n) {
             mark_node(f, shift);
         }
 
+        if (inner_shift == type) {
+            return shift;
+        }
+
         TB_Node* mask_node = make_int_node(f, n->dt, mask);
         TB_Node* and_node = tb_alloc_node(f, TB_AND, n->dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, and_node, shift,     1);
@@ -238,6 +295,8 @@ static TB_Node* ideal_shift(TB_Function* f, TB_Node* n) {
         n->type = TB_ADD;
         set_input(f, n, lhs, 1);
         set_input(f, n, rhs, 2);
+
+        Lattice* aaa = value_of(f, n);
         return n;
     }
 
@@ -528,48 +587,28 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         }
     }
 
-    return NULL;
-
-    #if 0
     // idk how to handle this yet
-    if (is_signed) return NULL;
+    if (is_signed) {
+        return NULL;
+    }
 
-    uint64_t sh = (64 - tb_clz64(y)) - 1; // sh = ceil(log2(y)) + w - 64
-
-    #ifndef NDEBUG
-    uint64_t sh2 = 0;
-    while(y > (1ull << sh2)){ sh2++; }    // sh' = ceil(log2(y))
-    sh2 += 63 - 64;                       // sh  = ceil(log2(y)) + w - 64
-
-    assert(sh == sh2);
-    #endif
-
-    // 128bit division here can't overflow
+    TB_ASSERT(y != 0 && y != 1);
+    // ceil(log2(y))
+    uint64_t sh = (64 - tb_clz64(y)) - 1;
+    // a = ceil(2^sh / y) = floor((2^sh + y-1) / y)
     uint64_t a = tb_div128(1ull << sh, y - 1, y);
 
     // now we can take a and sh and do:
     //   x / y  => mulhi(x, a) >> sh
-    int bits = dt.data;
-    if (bits > 32) {
-        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, 0);
-        set_input(f, mul_node, x, 1);
-        set_input(f, mul_node, make_int_node(f, dt, a), 2);
-
-        TB_Node* lo = make_proj_node(f, dt, mul_node, 0);
-        TB_Node* hi = make_proj_node(f, dt, mul_node, 1);
-
-        mark_node(f, mul_node);
-        mark_node(f, lo);
-        mark_node(f, hi);
-
-        TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, sh_node, hi, 1);
-        set_input(f, sh_node, make_int_node(f, dt, sh), 2);
-        TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
-
-        return sh_node;
-    } else {
-        TB_DataType big_dt = TB_TYPE_INTN(bits * 2);
+    int bits = tb_data_type_bit_size(NULL, n->dt.type);
+    if (dt.type != TB_TAG_I64) {
+        TB_DataType big_dt;
+        switch (dt.type) {
+            case TB_TAG_I8:  big_dt = TB_TYPE_I16; break;
+            case TB_TAG_I16: big_dt = TB_TYPE_I32; break;
+            case TB_TAG_I32: big_dt = TB_TYPE_I64; break;
+            default: tb_todo();
+        }
         sh += bits; // chopping the low half
 
         a &= (1ull << bits) - 1;
@@ -595,8 +634,25 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         mark_node(f, sh_node);
         mark_node(f, ext_node);
         return trunc_node;
+    } else {
+        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, 0);
+        set_input(f, mul_node, x, 1);
+        set_input(f, mul_node, make_int_node(f, dt, a), 2);
+
+        TB_Node* lo = make_proj_node(f, dt, mul_node, 0);
+        TB_Node* hi = make_proj_node(f, dt, mul_node, 1);
+
+        mark_node(f, mul_node);
+        mark_node(f, lo);
+        mark_node(f, hi);
+
+        TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, sh_node, hi, 1);
+        set_input(f, sh_node, make_int_node(f, dt, sh), 2);
+        TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
+
+        return sh_node;
     }
-    #endif
 }
 
 ////////////////////////////////

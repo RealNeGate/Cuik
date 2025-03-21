@@ -59,6 +59,8 @@ void nl_table_free(NL_Table tbl);
 
 void* nl_table_put(NL_Table* restrict tbl, void* k, void* v);
 void* nl_table_get(NL_Table* restrict tbl, void* k);
+void** nl_table_getp(NL_Table* restrict tbl, void* k);
+void nl_table_remove(NL_Table* restrict tbl, void* k);
 size_t nl_table_lookup(NL_Table* restrict tbl, void* k);
 
 #define nl_table_capacity(tbl) (1ull << (tbl)->exp)
@@ -359,6 +361,42 @@ void* nl_table_get(NL_Table* restrict tbl, void* k) {
     } while (i != first);
 
     return NULL;
+}
+
+void** nl_table_getp(NL_Table* restrict tbl, void* k) {
+    uint32_t h = NL_HASHSET_HASH(k);
+    size_t mask = (1 << tbl->exp) - 1;
+    size_t first = h & mask, i = first;
+
+    do {
+        if (tbl->data[i].k == NULL) {
+            return NULL;
+        } else if (tbl->data[i].k == k) {
+            return &tbl->data[i].v;
+        }
+
+        i = (i + 1) & mask;
+    } while (i != first);
+
+    return NULL;
+}
+
+void nl_table_remove(NL_Table* restrict tbl, void* k) {
+    uint32_t h = NL_HASHSET_HASH(k);
+    size_t mask = (1 << tbl->exp) - 1;
+    size_t first = h & mask, i = first;
+
+    do {
+        if (tbl->data[i].k == NULL) {
+            return;
+        } else if (tbl->data[i].k == k) {
+            tbl->data[i].k = NL_HASHSET_TOMB;
+            tbl->data[i].v = NULL;
+            return;
+        }
+
+        i = (i + 1) & mask;
+    } while (i != first);
 }
 
 #endif /* NL_HASH_SET_IMPL */

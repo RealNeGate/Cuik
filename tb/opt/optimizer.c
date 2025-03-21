@@ -35,6 +35,10 @@ TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 static void node_resize_inputs(TB_Function* f, TB_Node* n, size_t cnt) {
     if (cnt >= n->input_cap) {
         size_t new_cap = tb_next_pow2(cnt + 1);
+        if (new_cap >= UINT16_MAX) {
+            tb_panic("Too many inputs for one node");
+        }
+
         TB_Node** new_inputs = tb_arena_alloc(&f->arena, new_cap * sizeof(TB_Node*));
         if (n->inputs != NULL) {
             memcpy(new_inputs, n->inputs, cnt * sizeof(TB_Node*));
@@ -52,16 +56,19 @@ static void node_resize_inputs(TB_Function* f, TB_Node* n, size_t cnt) {
 
 // this has to move things which is not nice...
 void add_input_late(TB_Function* f, TB_Node* n, TB_Node* in) {
-    #ifndef NDEBUG
-    // if it's possible to add late inputs, we can't have extra deps.
-    FOR_N(i, n->input_count, n->input_cap) {
-        TB_ASSERT(n->inputs[i] == NULL);
+    // if there's an extra dep, we gotta shuffle it away. since
+    // the extra deps are unique i'll just move it wherever
+    TB_Node* old = n->input_count < n->input_cap ? n->inputs[n->input_count] : NULL;
+    if (old != NULL) {
+        remove_user(f, n, n->input_count);
+        n->inputs[n->input_count] = in;
+
+        tb_node_add_extra(f, n, old);
+    } else {
+        node_resize_inputs(f, n, n->input_count);
+        n->inputs[n->input_count] = in;
     }
-    #endif
 
-    node_resize_inputs(f, n, n->input_count);
-
-    n->inputs[n->input_count] = in;
     if (in) {
         add_user(f, n, in, n->input_count);
     }
@@ -92,17 +99,6 @@ void tb_node_clear_extras(TB_Function* f, TB_Node* n) {
         remove_user(f, n, i);
         n->inputs[i] = NULL;
     }
-}
-
-static TB_Node* mem_user(TB_Function* f, TB_Node* n, int slot) {
-    FOR_USERS(u, n) {
-        if ((USERN(u)->type == TB_PROJ && USERN(u)->dt.type == TB_TAG_MEMORY) ||
-            (USERI(u) == slot && is_mem_out_op(USERN(u)))) {
-            return USERN(u);
-        }
-    }
-
-    return NULL;
 }
 
 static bool is_empty_bb(TB_Function* f, TB_Node* end) {
@@ -176,7 +172,7 @@ static void mark_users(TB_Function* f, TB_Node* n) {
         // (trunc (mul a b)) => ...
         // (phi ...) => ... (usually converting into branchless ops)
         if ((type >= TB_CMP_EQ && type <= TB_CMP_FLE) ||
-            type == TB_SHL || type == TB_SHR || type == TB_MUL ||
+            type == TB_SHL || type == TB_SHR || type == TB_ADD || type == TB_MUL ||
             type == TB_STORE || type == TB_PHI) {
             mark_users_raw(f, USERN(u));
         }
@@ -206,20 +202,21 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 
 #include "mem_opt.h"
 #include "sroa.h"
-#include "loop.h"
-#include "branches.h"
 #include "print.h"
-#include "verify.h"
 #include "print_dumb.h"
+#include "loop.h"
+#include "slp.h"
+#include "branches.h"
+#include "verify.h"
 #include "print_svg.h"
 #include "compact.h"
 #include "gcm.h"
-#include "slp.h"
 #include "libcalls.h"
 #include "mem2reg.h"
 #include "rpo_sched.h"
 #include "list_sched.h"
 #include "bb_placement.h"
+#include "interp.h"
 #include "dbg.h"
 
 static bool is_dead_ctrl(TB_Function* f, TB_Node* n) {
@@ -495,16 +492,15 @@ static Lattice* value_select(TB_Function* f, TB_Node* n) {
 static bool can_gvn(TB_Node* n) {
     switch (n->type) {
         case TB_LOCAL:
-        case TB_MACH_MOVE:
+        case TB_MACH_TEMP:
         return false;
 
-        // control producing nodes can't really GVN, it doesn't make sense if
-        // they're constructed from a CFG.
+        // control producing nodes can't win from GVN (they all gonna be unique so the rules
+        // are met, they'd just bloat the table tho).
         case TB_ROOT:
         case TB_CALL:
-        case TB_READ:
+        case TB_HARD_BARRIER:
         case TB_REGION:
-        case TB_WRITE:
         case TB_RETURN:
         case TB_BRANCH:
         case TB_AFFINE_LATCH:
@@ -653,7 +649,7 @@ static void remove_user(TB_Function* f, TB_Node* n, int slot) {
 
 void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
     // try to recycle the user
-    assert(slot < n->input_count);
+    TB_ASSERT(slot < n->input_count);
     remove_user(f, n, slot);
     n->inputs[slot] = in;
     if (in != NULL) { add_user(f, n, in, slot); }
@@ -663,7 +659,9 @@ void set_input(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
 void add_user(TB_Function* f, TB_Node* n, TB_Node* in, int slot) {
     if (in->user_count >= in->user_cap) {
         size_t new_cap = ((size_t) in->user_cap) * 2;
-        assert(new_cap < UINT16_MAX);
+        if (new_cap >= UINT16_MAX) {
+            tb_panic("Too many users to one node");
+        }
 
         // resize
         TB_User* users = tb_arena_alloc(&f->arena, new_cap * sizeof(TB_User));
@@ -1088,7 +1086,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
                 migrate_type(f, n, k);
                 subsume_node(f, n, k);
                 mark_users(f, k);
-				
+
                 progress = true;
                 n = k;
             }
@@ -1195,10 +1193,78 @@ static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
     }
 }
 
+static void dump_partitions(TB_Function* f, ArenaArray(TB_Node*) partitions, int* uf) {
+    // slow and dumb printer but whatever
+    aarray_for(i, partitions) {
+        TB_Node* leader = partitions[i];
+
+        printf("Partition:\n");
+        printf("  %%%u ", leader->gvn);
+        FOR_N(j, 0, f->node_count) {
+            if (j != leader->gvn && uf[j] == leader->gvn) {
+                printf("%%%zu ", j);
+            }
+        }
+        printf("\n");
+    }
+}
+
 bool tb_opt_cprop(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
 
+    #if 0
+    bool progress = false;
+
+    tb_print_dumb(f);
+
+    // disjoint-set for the congruence classes
+    int* uf = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
+    FOR_N(i, 0, f->node_count) { uf[i] = -1; }
+
+    ArenaArray(TB_Node*) partitions = aarray_create(&f->tmp_arena, TB_Node*, 32);
+
+    // put everyone on the worklist
+    TB_Worklist* ws = f->worklist;
+    worklist_push(ws, f->root_node);
+
+    // place everyone into a partition based on opcode
+    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+        TB_Node* n = ws->items[i];
+        FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+
+        // find partition
+        TB_Node* leader = NULL;
+        aarray_for(j, partitions) {
+            if (partitions[j]->type == n->type) {
+                leader = partitions[j];
+                break;
+            }
+        }
+
+        if (leader == NULL) {
+            aarray_push(partitions, n);
+            uf[n->gvn] = n->gvn;
+        } else {
+            uf[n->gvn] = leader->gvn;
+        }
+    }
+    // remove all visited bits except the ones in the worklist
+    worklist_clear_visited(ws);
+    aarray_for(i, partitions) {
+        worklist_test_n_set(ws, partitions[i]);
+    }
+    dyn_array_set_length(ws->items, aarray_length(partitions));
+    dump_partitions(f, partitions, uf);
+    __debugbreak();
+
+    TB_Node* n;
+    while (n = worklist_pop(f->worklist), n) {
+    }
+    #else
     alloc_types(f);
+    if (UNLIKELY(f->node_count+1 >= f->type_cap)) {
+        latuni_grow(f, f->node_count+1);
+    }
     //   reset all types into TOP
     FOR_N(i, 0, f->node_count) { f->types[i] = &TOP_IN_THE_SKY; }
     //   anything unallocated should stay as NULL tho
@@ -1236,6 +1302,7 @@ bool tb_opt_cprop(TB_Function* f) {
         DO_IF(TB_OPTDEBUG_SCCP)(printf("\n"));
         FOR_USERS(u, n) { mark_node(f, USERN(u)); }
     }
+    #endif
 
     return progress;
 }
@@ -1319,16 +1386,13 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             }
         }
 
-        // const prop leaves work for the peephole optimizer and
-        // sometimes might invalidate the loop tree so we should
-        // track when it makes CFG changes.
-        TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
-        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== SCCP ===\n"));
-        major_progress |= tb_opt_cprop(f);
-
-        TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
-        if (k = tb_opt_peeps(f), k > 0) {
-            TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
+        // avoids bloating up my arenas with freed nodes
+        float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
+        if (dead_factor > 0.2f) {
+            size_t old = tb_arena_current_size(&f->arena);
+            tb_compact_nodes(f, ws);
+            size_t new = tb_arena_current_size(&f->arena);
+            TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
         }
 
         // currently only rotating loops
@@ -1336,27 +1400,25 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
         if (tb_opt_loops(f)) {
             major_progress = true;
-
-            TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
-            if (k = tb_opt_peeps(f), k > 0) {
-                TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
-            }
         }
+        // don't worry, we'll scan all the nodes regardless
+        worklist_clear(f->worklist);
 
-        // TODO(NeGate): doesn't do anything yet
-        progress |= tb_opt_vectorize(f);
+        // loop optimizer will bully the fuck out of the SCCP types, so we might
+        // as well reconstruct them using the optimistic crap
+        TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
+        DO_IF(TB_OPTDEBUG_PEEP)(printf("=== OPTIMISTIC ===\n"));
+        major_progress |= tb_opt_cprop(f);
 
-        progress |= major_progress;
+        TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
+        if (k = tb_opt_peeps(f), k > 0) {
+            TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
+        }
     } while (major_progress);
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     // if we're doing IPO then it's helpful to keep these
     if (!preserve_types) {
         tb_opt_free_types(f);
-    }
-    // avoids bloating up my arenas with freed nodes
-    float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
-    if (dead_factor > 0.2f) {
-        tb_compact_nodes(f, ws);
     }
     tb_arena_destroy(&f->tmp_arena);
 

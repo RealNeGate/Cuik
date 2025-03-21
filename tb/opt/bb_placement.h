@@ -33,6 +33,7 @@ typedef struct Trace {
     int id;
     int first_bb;
     int last_bb;
+    int dom_depth;
 
     bool complete;
 
@@ -107,9 +108,9 @@ static int trace_cmp(const void* a, const void* b) {
         // it's not unsurprising to get the exact same
         // frequency, synthetic frequencies do it all the
         // time and it which case we'll order by the RPO.
-        if (aa->freq != bb->freq) {
+        /*if (aa->freq != bb->freq) {
             return aa->freq > bb->freq ? -1 : 1;
-        }
+        }*/
     }
 
     return aa->first_bb - bb->first_bb;

@@ -119,13 +119,6 @@ static const InstDesc inst_table[] = {
     #include "x64_insts.inc"
 };
 
-// NOTE(NeGate): This is for Win64, we can handle SysV later
-#define WIN64_ABI_CALLER_SAVED ((1u << RAX) | (1u << RCX) | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11))
-#define WIN64_ABI_CALLEE_SAVED ~WIN64_ABI_CALLER_SAVED
-
-#define SYSV_ABI_CALLER_SAVED ((1u << RAX) | (1u << RDI) | (1u << RSI) | (1u << RCX) | (1u << RDX) | (1u << R8) | (1u << R9) | (1u << R10) | (1u << R11))
-#define SYSV_ABI_CALLEE_SAVED ~SYSV_ABI_CALLER_SAVED
-
 #define SYSCALL_ABI_CALLER_SAVED ((1u << RDI) | (1u << RSI) | (1u << RDX) | (1u << R10) | (1u << R8) | (1u << R9) | (1u << RAX) | (1u << R11))
 #define SYSCALL_ABI_CALLEE_SAVED ~SYSCALL_ABI_CALLER_SAVED
 

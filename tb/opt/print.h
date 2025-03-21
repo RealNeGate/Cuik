@@ -12,7 +12,7 @@ static int cool_ansi_color(uint32_t x) {
 
 const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
     switch (n_type) {
-        case TB_NULL: return "FREED";
+        case TB_NULL: return "NULL";
         case TB_UNREACHABLE: return "unreachable";
 
         case TB_BRANCH_PROJ: return "br_proj";
@@ -106,7 +106,6 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_ROL: return "rol";
         case TB_ROR: return "ror";
         case TB_SAR: return "sar";
-        case TB_ADC: return "adc";
 
         case TB_FADD: return "fadd";
         case TB_FSUB: return "fsub";
@@ -117,12 +116,11 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_FNEG: return "fneg";
 
         case TB_MULPAIR:  return "mulpair";
-        case TB_SDIVMOD:  return "sdivmod";
-        case TB_UDIVMOD:  return "udivmod";
         case TB_LOAD:     return "load";
         case TB_STORE:    return "store";
-        case TB_READ:     return "read";
-        case TB_WRITE:    return "write";
+        case TB_VSHUFFLE: return "vshuffle";
+        case TB_VBROADCAST: return "vbroadcast";
+        case TB_HARD_BARRIER: return "hard_barrier";
 
         case TB_CALL:     return "call";
         case TB_SYSCALL:  return "syscall";
@@ -131,8 +129,8 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_NEVER_BRANCH: return "never_branch";
         case TB_TAILCALL: return "tailcall";
 
+        case TB_MACH_TEMP: return "mach_temp";
         case TB_MACH_JUMP: return "mach_jump";
-        case TB_MACH_MOVE: return "mach_move";
         case TB_MACH_COPY: return "mach_copy";
         case TB_MACH_PROJ: return "mach_proj";
         case TB_MACH_SYMBOL: return "mach_symbol";
@@ -162,10 +160,15 @@ static int print_type(TB_DataType dt) {
         case TB_TAG_PTR:     return dt.elem_or_addrspace == 0 ? printf("ptr") : printf("ptr%d", dt.elem_or_addrspace);
         case TB_TAG_F32:     return printf("f32");
         case TB_TAG_F64:     return printf("f64");
-        case TB_TAG_V64:     return printf("v64["),  print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
-        case TB_TAG_V128:    return printf("v128["), print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
-        case TB_TAG_V256:    return printf("v256["), print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
-        case TB_TAG_V512:    return printf("v512["), print_type((TB_DataType){ .type = dt.elem_or_addrspace }), printf("]");
+        case TB_TAG_V64:
+        case TB_TAG_V128:
+        case TB_TAG_V256:
+        case TB_TAG_V512: {
+            int s = printf("v%d[", 1u << ((dt.type - TB_TAG_V64) + 6));
+            s += print_type((TB_DataType){ .type = dt.elem_or_addrspace });
+            s += printf("]");
+            return s;
+        }
         case TB_TAG_TUPLE:   return printf("tuple");
         case TB_TAG_CONTROL: return printf("ctrl");
         case TB_TAG_MEMORY:  return printf("mem");
@@ -325,12 +328,16 @@ static void print_branch_edge(PrinterCtx* ctx, TB_Node* n, bool fallthru) {
     printf(")");
 }
 
+static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) { return 1; }
+static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) { return 1; }
+
 static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
     print_ref_to_node(ctx, bb->start, true);
     printf("\n");
 
     TB_Function* f = ctx->f;
-    tb_greedy_scheduler(f, &ctx->cfg, ws, NULL, bb);
+    // tb_greedy_scheduler(f, &ctx->cfg, ws, bb);
+    tb_list_scheduler(f, &ctx->cfg, ws, bb, node_latency, node_unit_mask, 1);
 
     FOR_N(i, 0, dyn_array_length(ws->items)) {
         TB_Node* n = ws->items[i];
@@ -596,8 +603,18 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     }
 
                     case TB_MACH_COPY:
-                    case TB_MACH_MOVE:
                     break;
+
+                    case TB_VSHUFFLE: {
+                        TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
+                        printf(", [");
+                        FOR_N(i, 0, shuf->width) {
+                            if (i) { printf(", "); }
+                            printf("%d", shuf->indices[i]);
+                        }
+                        printf("]");
+                        break;
+                    }
 
                     default: {
                         int family = n->type / 0x100;
@@ -682,7 +699,7 @@ void tb_print(TB_Function* f) {
     ctx.cfg = tb_compute_cfg(f, &ws, &f->tmp_arena, true);
 
     // schedule nodes
-    tb_global_schedule(f, &ws, ctx.cfg, false, false, NULL);
+    tb_global_schedule(f, &ws, ctx.cfg, false, NULL);
 
     TB_BasicBlock* end_bb = NULL;
     aarray_for(i, ctx.cfg.blocks) {

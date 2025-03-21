@@ -61,7 +61,9 @@ static bool same_base(TB_Node* a, TB_Node* b) {
 
 static TB_Node* next_mem_user(TB_Node* n) {
     FOR_USERS(u, n) {
-        if (is_mem_out_op(USERN(u))) { return USERN(u); }
+        if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u))) {
+            return USERN(u);
+        }
     }
 
     return NULL;
@@ -116,11 +118,11 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
             int reason = -1;
 
             if (0) {}
-            else if (is_mem_end_op(use_n))       { reason = MEM_END;  }
-            else if (use_n->type == TB_MERGEMEM) { reason = MEM_END;  }
-            else if (use_n->type == TB_PHI)      { reason = MEM_JOIN; }
-            else if (is_mem_only_in_op(use_n))   { reason = MEM_USE;  }
-            else if (cfg_is_mproj(use_n) || (use_i == 1 && is_mem_out_op(use_n))) {
+            else if (is_mem_end_op(use_n))         { reason = MEM_END;  }
+            else if (use_n->type == TB_MERGEMEM)   { reason = MEM_END;  }
+            else if (use_n->type == TB_PHI)        { reason = MEM_JOIN; }
+            else if (tb_node_mem_read_only(use_n)) { reason = MEM_USE;  }
+            else if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
                 reason = MEM_FORK;
             }
 
@@ -156,7 +158,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                     tb_kill_node(f, curr);
                 }
             }
-        } else if (curr->type != TB_PROJ && curr->type != TB_PHI && is_mem_out_op(curr)) {
+        } else if (curr->type != TB_PROJ && curr->type != TB_PHI && tb_node_has_mem_out(curr)) {
             set_input(f, curr, latest[0], 1);
             latest[0] = curr;
         }
@@ -169,6 +171,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
         }
 
         // fixup any connected loads
+        int mem_use_count = 0;
         FOR_N(i, 0, user_cnt) {
             TB_Node* use_n = users[i].n;
             int use_i = users[i].slot;
@@ -185,7 +188,7 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                         set_input(f, use_n, latest[1 + cat], 1);
                         mark_node(f, use_n);
                     } else {
-                        assert(use_n->type == TB_LOAD);
+                        TB_ASSERT(use_n->type == TB_LOAD);
 
                         TB_Node* val = node_or_poison(f, latest[1 + cat], use_n->dt);
                         if (use_n->dt.raw != val->dt.raw) {
@@ -198,13 +201,23 @@ static void fixup_mem_node(TB_Function* f, LocalSplitter* restrict ctx, TB_Node*
                         subsume_node(f, use_n, val);
                     }
                 }
+                mem_use_count += 1;
             }
         }
 
         // "tail" such that we don't make another stack frame and more
         // importantly another "latest" array
-        if (user_cnt == 1 && users[0].reason == MEM_FORK) {
-            curr = users[0].n;
+        if (user_cnt == 1+mem_use_count) {
+            int fork_i = -1;
+            FOR_N(i, 0, user_cnt) {
+                if (users[i].reason == MEM_FORK) { fork_i = i; break; }
+            }
+
+            if (fork_i < 0) {
+                break;
+            }
+
+            curr = users[fork_i].n;
             tb_arena_restore(&f->tmp_arena, sp);
         } else {
             break;

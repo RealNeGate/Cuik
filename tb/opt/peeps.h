@@ -33,6 +33,7 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_AFFINE_LATCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH,
     [TB_NEVER_BRANCH]   = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
     [TB_ENTRY_FORK]     = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL,
+    [TB_SAFEPOINT]      = NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT,
     [TB_MACH_JUMP]      = NODE_CTRL | NODE_TERMINATOR,
 
     [TB_LOAD]           = NODE_MEMORY_IN,
@@ -49,6 +50,7 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_ATOMIC_OR]      = NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_ATOMIC_PTROFF]  = NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_ATOMIC_CAS]     = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_HARD_BARRIER]   = NODE_MEMORY_IN | NODE_MEMORY_OUT,
 
     [TB_DEBUG_LOCATION] = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_CALL]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_SAFEPOINT,
@@ -56,10 +58,7 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_REGION]         = NODE_CTRL,
     [TB_NATURAL_LOOP]   = NODE_CTRL,
     [TB_AFFINE_LOOP]    = NODE_CTRL,
-    [TB_SAFEPOINT]      = NODE_CTRL | NODE_MEMORY_IN | NODE_SAFEPOINT,
     [TB_DEBUGBREAK]     = NODE_CTRL | NODE_MEMORY_IN,
-    [TB_READ]           = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
-    [TB_WRITE]          = NODE_CTRL | NODE_MEMORY_IN | NODE_MEMORY_OUT,
 };
 
 static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
@@ -87,6 +86,9 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_SDIV]           = { ideal_int_div,     identity_int_binop, NULL             },
     [TB_UMOD]           = { ideal_int_mod,     identity_int_binop, NULL             },
     [TB_SMOD]           = { ideal_int_mod,     identity_int_binop, NULL             },
+    // floats
+    [TB_FNEG]           = { NULL,              NULL,               value_fpneg      },
+    [TB_FADD]           = { ideal_farith,      identity_flt_binop, NULL             },
     // comparisons
     [TB_CMP_EQ]         = { ideal_cmp,         identity_int_binop, value_cmp        },
     [TB_CMP_NE]         = { ideal_cmp,         identity_int_binop, value_cmp        },
@@ -123,7 +125,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_AFFINE_LOOP]    = { NULL,              identity_region,    value_region,    },
     [TB_BRANCH]         = { ideal_branch,      NULL,               value_branch,    },
     [TB_AFFINE_LATCH]   = { ideal_branch,      NULL,               value_branch,    },
-    [TB_SAFEPOINT]      = { NULL,              identity_safepoint, value_ctrl,      },
+    [TB_SAFEPOINT]      = { NULL,              identity_safepoint, value_safepoint, },
     [TB_CALL]           = { ideal_libcall,     NULL,               value_call,      },
     [TB_TAILCALL]       = { NULL,              NULL,               value_ctrl,      },
     [TB_SYSCALL]        = { NULL,              NULL,               value_call,      },
@@ -159,10 +161,15 @@ bool cfg_is_endpoint(TB_Node* n)      { return cfg_flags(n) & NODE_END; }
 bool tb_node_is_safepoint(TB_Node* n) { return cfg_flags(n) & NODE_SAFEPOINT; }
 bool tb_node_has_mem_out(TB_Node* n)  { return cfg_flags(n) & NODE_MEMORY_OUT; }
 
+bool tb_node_mem_read_only(TB_Node* n) {
+    uint32_t f = cfg_flags(n);
+    return (f & NODE_MEMORY_IN) != 0 && (f & NODE_MEMORY_OUT) == 0;
+}
+
 // has potential memory dep on inputs[1]
 TB_Node* tb_node_mem_in(TB_Node* n) {
     if (cfg_flags(n) & NODE_MEMORY_IN) {
-        return n->inputs[1];
+        return n->input_count > 1 ? n->inputs[1] : 0;
     }
     return NULL;
 }

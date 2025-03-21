@@ -60,6 +60,7 @@ struct RegMask {
 };
 
 typedef struct {
+    TB_CGEmitter* emit;
     TB_SymbolPatch* patch;
     TB_Location* loc;
     TB_Location* end;
@@ -77,18 +78,21 @@ struct VReg {
 
     RegMask* mask;
 
+    // always aligned, always power-of-two
+    int reg_width;
+
     // spill cost (sum of block_freq * uses_in_block)
     //   NaN if not computed yet
-    float spill_cost;
+    double spill_cost;
     // certain events make us more likely to bias spilling, mostly
     // if we've already spilled.
-    float spill_bias;
+    double spill_bias;
     int hint_vreg;
 
     // BRIGGS: when coalesced this number will go up
     int uses;
 
-    bool marked_spilled : 1;
+    bool was_spilled;
 };
 
 typedef struct Ctx Ctx;
@@ -96,6 +100,7 @@ typedef int (*TmpCount)(Ctx* restrict ctx, TB_Node* n);
 
 // ins can be NULL
 typedef RegMask* (*NodeConstraint)(Ctx* restrict ctx, TB_Node* n, RegMask** ins);
+typedef int (*NodeConstraintKill)(Ctx* restrict ctx, TB_Node* n, RegMask** kills);
 
 typedef bool (*NodeRemat)(TB_Node* n);
 
@@ -115,37 +120,64 @@ typedef struct {
     uint32_t target;
 } JumpTablePatch;
 
-typedef struct {
-    int count;
-    int elems[]; // vregs
-} Tmps;
-
 // like a VLIW bundle, except it can be used to model delay slots.
 // there's also the degenerate case where the bundle is always 1
 // node (most superscalars are in this camp)
 typedef struct {
+    bool has_safepoint;
     int count;
     TB_Node** arr;
 } Bundle;
+
+typedef struct {
+    // where is the stack pointer
+    uint8_t sp_class, sp_reg;
+
+    // where is the frame pointer defined (when enabled)
+    uint8_t fp_class, fp_reg;
+
+    // where is the return address
+    uint8_t rpc_class, rpc_reg;
+
+    // 'C'  caller save (volatile)
+    // 'c'  callee save (non volatile)
+    // '\0' no save
+    const char* reg_saves[8];
+
+    // when it's true we'll allocate the next
+    // available param in the class rather than matching 1-to-1 to
+    // the param slot.
+    bool flexible_param_alloc;
+
+    // param passing
+    uint8_t param_count[8];
+    uint8_t* params[8];
+
+    // return vals
+    uint8_t ret_count[8];
+    uint8_t rets[8][2];
+} CallingConv;
 
 struct Ctx {
     TB_CGEmitter emit;
 
     TB_Module* module;
     TB_Function* f;
-    TB_FeatureSet features;
     TB_Node* frame_ptr;
     TB_CFG cfg;
     TB_Worklist* walker_ws;
 
     // user callbacks
-    TmpCount tmp_count;
     NodeConstraint constraint;
+    NodeConstraintKill constraint_kill;
+
     TB_2Addr node_2addr;
     NodeRemat remat;
 
+    void (*print_pretty)(Ctx* restrict ctx, TB_Node* n);
+
     // target-dependent index
-    int abi_index;
+    CallingConv* calling_conv;
     int fallthrough;
 
     int param_count;
@@ -163,7 +195,6 @@ struct Ctx {
     // Values
     ArenaArray(VReg) vregs;   // [vid]
     ArenaArray(int) vreg_map; // [gvn] -> vid
-    NL_Table tmps_map;        // TB_Node* -> Tmps*
 
     // Regalloc
     int num_spills;
@@ -175,6 +206,7 @@ struct Ctx {
     int num_regs[MAX_REG_CLASSES];
 
     NL_HashSet mask_intern;
+    RegMask* all_mask[MAX_REG_CLASSES];
     RegMask* normie_mask[MAX_REG_CLASSES];
     RegMask* mayspill_mask[MAX_REG_CLASSES];
 
@@ -188,18 +220,34 @@ struct Ctx {
     DynArray(TB_Location) locations;
 };
 
+// Rogers RA stats collection crap
+TB_OPTDEBUG(STATS)(extern int stats_miss, stats_hit);
+
 extern RegMask TB_REG_EMPTY;
 
 void tb__rogers(Ctx* restrict ctx, TB_Arena* arena);
 void tb__briggs(Ctx* restrict ctx, TB_Arena* arena);
 
+typedef struct {
+    int count;
+    int* stack;
+    uint64_t* visited;
+} IFG_Worklist;
+
+static IFG_Worklist ifg_ws_alloc(Ctx* restrict ctx, TB_Arena* arena, int len);
+static void ifg_ws_remove(IFG_Worklist* ws, int vreg_id);
+static bool ifg_ws_push(IFG_Worklist* ws, int vreg_id);
+static int ifg_ws_pop(IFG_Worklist* ws);
+
 // RA helpers
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b);
 void tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n);
-void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
-void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n);
-void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
+size_t tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n);
+size_t tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
+size_t tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n);
+int tb__reg_width_from_dt(int reg_class, TB_DataType dt);
+void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n, bool kill_node);
 
 static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {
     return a == b ? false : tb__reg_mask_meet(ctx, a, b) != a;
@@ -216,6 +264,7 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
         case TB_F32CONST:
         case TB_F64CONST:
         case TB_MACH_COPY:
+        case TB_MACH_TEMP:
         return true;
 
         // user-defined rematerializing
@@ -224,14 +273,19 @@ static bool can_remat(Ctx* restrict ctx, TB_Node* n) {
     }
 }
 
-static float get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
+static double get_spill_cost(Ctx* restrict ctx, VReg* vreg) {
     if (!isnan(vreg->spill_cost)) {
         return vreg->spill_cost;
+    } else if (vreg->n->type == TB_MACH_TEMP) {
+        return (vreg->spill_cost = 1.0 + vreg->spill_bias);
     } else if (can_remat(ctx, vreg->n)) {
-        return (vreg->spill_cost = -1.0f + vreg->spill_bias);
+        return (vreg->spill_cost = -1.0 + vreg->spill_bias);
+    } else if (vreg->n->type == TB_MACH_FRAME_PTR || vreg->n->user_count == 0) {
+        // no users? probably a projection that can't be spilled
+        return INFINITY;
     }
 
-    float c = 0.0f;
+    double c = 0.0f;
 
     // sum of (block_freq * uses_in_block)
     FOR_USERS(u, vreg->n) {
@@ -256,6 +310,7 @@ static const char* reg_class_name(int class) {
         case 0: return "STK";
         case 1: return "GPR";
         case 2: return "XMM";
+        case 3: return "FLAGS";
         default: return NULL;
     }
 }
@@ -280,7 +335,20 @@ static bool reg_mask_is_not_empty(RegMask* mask) {
 }
 
 static bool reg_mask_is_stack(RegMask* mask) {
-    return mask->class == REG_CLASS_STK;
+    return mask->class == REG_CLASS_STK || mask->may_spill;
+}
+
+static bool reg_mask_is_spill(RegMask* mask) {
+    if (mask->class != REG_CLASS_STK || !mask->may_spill) {
+        return false;
+    }
+
+    // if any bits are set it's not a spill slot
+    FOR_N(i, 0, mask->count) {
+        if (mask->mask[0] != 0) { return false; }
+    }
+
+    return true;
 }
 
 static int popcnt_reg_mask(RegMask* mask) {
@@ -289,6 +357,10 @@ static int popcnt_reg_mask(RegMask* mask) {
         sum += tb_popcount64(mask->mask[i]);
     }
     return sum;
+}
+
+static bool within_reg_mask(RegMask* mask, uint64_t i) {
+    return i/64 < mask->count ? mask->mask[i/64] & (1ull << (i%64)) : false;
 }
 
 static int fixed_reg_mask(RegMask* mask) {
@@ -362,5 +434,33 @@ static RegMask* intern_regmask2(Ctx* ctx, int reg_class, bool may_spill, int reg
         return old_rm;
     }
     return new_rm;
+}
+
+#define BITS64_FOR(it, set, cap) for (int it = bits64_first(set, cap); it >= 0; it = bits64_next(set, cap, it))
+
+static int bits64_next(uint64_t* arr, size_t cnt, int x) {
+    // unpack coords
+    size_t i = x / 64, j = x % 64;
+
+    uint64_t word;
+    for (;;) {
+        // we're done
+        if (i*64 >= cnt) { return -1; }
+        // chop off the bottom bits which have been processed
+        word = arr[i] & ~(UINT64_MAX >> (63 - j));
+        if (word != 0) {
+            return i*64 + tb_ffs64(word) - 1;
+        }
+        i += 1, j = 0;
+    }
+}
+
+static int bits64_first(uint64_t* arr, size_t cnt) {
+    TB_ASSERT(cnt > 0);
+    return arr[0] & 1 ? 0 : bits64_next(arr, cnt, 0);
+}
+
+static bool bits64_member(uint64_t* arr, size_t x) {
+    return arr[x / 64] & (1ull << (x % 64));
 }
 

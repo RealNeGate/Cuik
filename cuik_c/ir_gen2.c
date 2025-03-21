@@ -885,6 +885,8 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                     TB_FunctionPrototype* proto = tb_function_get_prototype((TB_Function*) target);
                     TB_Node** out = tb_builder_call(g, proto, 0, tb_builder_symbol(g, target), 3, params);
                     return (ValDesc){ RVALUE, .n = out[0] };
+                } else if (strcmp(name, "__rdtsc") == 0) {
+                    return (ValDesc){ RVALUE, .n = tb_builder_cycle_counter(g) };
                 } else if (strcmp(name, "__builtin_syscall") == 0) {
                     TB_Node* num = as_rval(tu, g, &args[1]);
                     TB_Node** ir_args = tb_arena_alloc(muh_tmp_arena, (arg_count - 2) * sizeof(TB_Node*));
@@ -1557,7 +1559,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
 }
 
 TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* restrict s) {
-    assert(s->flags & STMT_FLAGS_HAS_IR_BACKING);
+    // assert(s->flags & STMT_FLAGS_HAS_IR_BACKING);
     if (s->op == STMT_FUNC_DECL) {
         Cuik_Type* type = cuik_canonical_type(s->decl.type);
         assert(type->kind == KIND_FUNC);
@@ -1591,16 +1593,28 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
 
             TB_GraphBuilder* g = tb_builder_enter_from_dbg(func, section, dbg_type, NULL);
 
-            // TB_Node* paths[2];
-            // tb_builder_entry_fork(g, 2, paths);
-            // make a verified entry
+            /* {
+                TB_Node* a = tb_builder_uint(g, TB_TYPE_I32, 69);
+
+                // potentially faulting op
+                TB_Symbol* s = tb_extern_create(tu->ir_mod, -1, "poll_site", TB_EXTERNAL_SO_LOCAL);
+                TB_Node* n = tb_builder_load(g, 0, true, TB_TYPE_I32, tb_builder_symbol(g, s), 4, false);
+
+                TB_Node* paths[2];
+                tb_builder_safepoint(g, 0, n, NULL, 1, &a, paths);
+                {
+                    tb_builder_label_set(g, paths[1]);
+                    tb_builder_trap(g, 0);
+                }
+                tb_builder_label_set(g, paths[0]);
+            } */
 
             muh_tmp_arena = tb_function_get_arena(func, 1);
             muh_param_memory_vars = tb_arena_alloc(muh_tmp_arena, function_type->func.param_count * sizeof(int));
             {
                 int split_count = 0;
                 int split_i     = -1;
-                TB_Node* split = NULL;
+                TB_Node* split  = NULL;
 
                 // check for any restricted ptrs
                 for (size_t i = 0; i < function_type->func.param_count; i++) {
@@ -1721,3 +1735,4 @@ TB_Symbol* cuikcg_top_level(TranslationUnit* restrict tu, TB_Module* m, Stmt* re
 
     return NULL;
 }
+

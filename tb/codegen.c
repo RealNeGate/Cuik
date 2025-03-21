@@ -4,6 +4,15 @@
 // TUs and i want a consistent address.
 RegMask TB_REG_EMPTY = { 1, 0, 1, { 0 } };
 
+int tb__reg_width_from_dt(int reg_class, TB_DataType dt) {
+    if (reg_class == REG_CLASS_STK) {
+        if (dt.type == TB_TAG_V128)      { return 2; }
+        else if (dt.type == TB_TAG_V256) { return 4; }
+        else if (dt.type == TB_TAG_V512) { return 8; }
+    }
+    return 1;
+}
+
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n) {
     int i = aarray_length(ctx->vregs);
     aarray_insert(ctx->vreg_map, n->gvn, i);
@@ -26,19 +35,26 @@ void tb__insert(Ctx* ctx, TB_Function* f, TB_BasicBlock* bb, TB_Node* n) {
     f->scheduled[n->gvn] = bb;
 }
 
-void tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
-    TB_BasicBlock* bb = f->scheduled[before_n->gvn];
-    tb__insert(ctx, f, bb, n);
+size_t tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n) {
+    size_t i = 0;
+    CUIK_TIMED_BLOCK("insert") {
+        TB_BasicBlock* bb = f->scheduled[before_n->gvn];
+        tb__insert(ctx, f, bb, n);
 
-    size_t i = 0, cnt = aarray_length(bb->items);
-    while (i < cnt && bb->items[i] != before_n) { i++; }
+        size_t cnt = aarray_length(bb->items);
+        while (i < cnt && bb->items[i] != before_n) { i++; }
 
-    aarray_push(bb->items, 0);
-    memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
-    bb->items[i] = n;
+        // place above MACH_TEMPs
+        while (i > 0 && bb->items[i - 1]->type == TB_MACH_TEMP) { i--; }
+
+        aarray_push(bb->items, 0);
+        memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
+        bb->items[i] = n;
+    }
+    return i;
 }
 
-void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
+size_t tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     TB_BasicBlock* bb = f->scheduled[n->gvn];
 
     size_t i = 0, cnt = aarray_length(bb->items);
@@ -48,21 +64,26 @@ void tb__remove_node(Ctx* ctx, TB_Function* f, TB_Node* n) {
     memmove(&bb->items[i], &bb->items[i + 1], (cnt - (i + 1)) * sizeof(TB_Node*));
     aarray_pop(bb->items);
     f->scheduled[n->gvn] = NULL;
+    return i;
 }
 
-void tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
-    TB_BasicBlock* bb = f->scheduled[after_n->gvn];
-    tb__insert(ctx, f, bb, n);
+size_t tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* after_n) {
+    size_t i = 0;
+    CUIK_TIMED_BLOCK("insert") {
+        TB_BasicBlock* bb = f->scheduled[after_n->gvn];
+        tb__insert(ctx, f, bb, n);
 
-    size_t i = 0, cnt = aarray_length(bb->items);
-    while (i < cnt && bb->items[i] != after_n) { i++; }
+        size_t cnt = aarray_length(bb->items);
+        while (i < cnt && bb->items[i] != after_n) { i++; }
 
-    TB_ASSERT(i != cnt);
-    i += 1;
+        TB_ASSERT(i != cnt);
+        i += 1;
 
-    aarray_push(bb->items, NULL);
-    memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
-    bb->items[i] = n;
+        aarray_push(bb->items, NULL);
+        memmove(&bb->items[i + 1], &bb->items[i], (cnt - i) * sizeof(TB_Node*));
+        bb->items[i] = n;
+    }
+    return i;
 }
 
 RegMask* tb__reg_mask_meet(Ctx* ctx, RegMask* a, RegMask* b) {
@@ -131,10 +152,6 @@ static bool reg_mask_may_intersect(RegMask* a, RegMask* b) {
         return false;
     }
 
-    if (a->may_spill && b->may_spill) {
-        return true;
-    }
-
     TB_ASSERT(a->count == b->count);
     FOR_N(i, 0, a->count) {
         if ((a->mask[i] & b->mask[i]) != 0) {
@@ -147,29 +164,32 @@ static bool reg_mask_may_intersect(RegMask* a, RegMask* b) {
 
 static void redo_dataflow(Ctx* restrict ctx, TB_Arena* arena) {
     TB_Function* f = ctx->f;
-
     aarray_for(i, ctx->cfg.blocks) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         bb->live_in  = set_create_in_arena(arena, f->node_count);
         bb->live_out = set_create_in_arena(arena, f->node_count);
     }
-
     tb_dataflow(f, arena, ctx->cfg);
 }
 
 static RegMask* constraint_in(Ctx* ctx, TB_Node* n, int i) {
+    if (n->inputs[i]->type == TB_MACH_TEMP) {
+        return TB_NODE_GET_EXTRA_T(n->inputs[i], TB_NodeMachTemp)->def;
+    }
+
     ctx->constraint(ctx, n, ctx->ins);
     return ctx->ins[i];
 }
 
 // static const char* GPR_NAMES[] = { "X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8",  "X9", "X10", "X11", "X12", "X13", "X14", "X15" };
-static const char* GPR_NAMES[] = { "RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI", "R8",  "R9", "R10", "R11", "R12", "R13", "R14", "R15" };
 static void print_reg_name(int rg, int num) {
     if (rg == 1) {
         printf("R%d", num);
         // printf("%s", GPR_NAMES[num]);
     } else if (rg == 2) {
         printf("XMM%d", num);
+    } else if (rg == 3) {
+        printf("FLAGS");
     } else if (rg == REG_CLASS_STK) {
         printf("STACK%d", num);
     } else {
@@ -178,109 +198,56 @@ static void print_reg_name(int rg, int num) {
 }
 
 static int reg_assign(Ctx* ctx, VReg* vreg, uint64_t* mask, size_t num_regs) {
+    int reg_width = vreg->reg_width;
+    TB_ASSERT(reg_width >= 1);
+
     int def_class = vreg->mask->class;
     size_t mask_word_count = (num_regs + 63) / 64;
 
-    // find unset bit
+    // reg_width is gonna enforce alignment btw, this means if it's 2 we
+    // can't assign to odd slots (only even and then *also* take up the even
+    // slots).
     int reg = -1;
-    FOR_N(j, 0, mask_word_count) {
-        if (mask[j] == UINT64_MAX) { continue; }
+    if (reg_width > 1) {
+        TB_ASSERT(tb_is_power_of_two(reg_width));
 
-        int index = mask[j] != 0 ? tb_ffs64(~mask[j]) - 1 : 0;
-        if (j*64 + index < num_regs) {
-            reg = j*64 + index;
+        uint64_t allot_mask = UINT64_MAX >> (64ull - reg_width);
+        FOR_N(j, 0, mask_word_count) {
+            uint64_t m = mask[j];
+            FOR_N(k, 0, 64 / reg_width) {
+                if (((m >> (k*reg_width)) & allot_mask) == 0) {
+                    reg = j*64 + k*reg_width;
+                    if (reg >= num_regs) {
+                        reg = -1;
+                    }
+                    goto success;
+                }
+            }
         }
-        break;
+
+        success:;
+    } else {
+        // find unset bit
+        FOR_N(j, 0, mask_word_count) {
+            uint64_t m = mask[j];
+            int index = m != 0 ? tb_ffs64(~m) - 1 : 0;
+            if (j*64 + index < num_regs) {
+                reg = j*64 + index;
+            }
+            break;
+        }
     }
 
     if (reg < 0) {
-        if (def_class != REG_CLASS_STK) {
-            TB_OPTDEBUG(REGALLOC)(printf("#   assigned UNCOLORED\n"));
-        }
-
         // failed to color.. sadge
         vreg->class    = 0;
         vreg->assigned = -1;
         return false;
     } else {
-        TB_OPTDEBUG(REGALLOC)(printf("#   assigned to "), print_reg_name(def_class, reg), printf("\n"));
-
         vreg->class    = def_class;
         vreg->assigned = reg;
         return true;
     }
-}
-
-static void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n) {
-    // TB_ASSERT(n->input_count == 1 && "for now remat only happens for simple stuff like constants");
-
-    size_t extra = extra_bytes(n);
-    TB_Function* f = ctx->f;
-    TB_Node* root = f->root_node;
-    TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
-
-    // don't want weird pointer invalidation crap
-    size_t user_count = n->user_count;
-    TB_User* users = tb_arena_alloc(&f->tmp_arena, n->user_count * sizeof(TB_User));
-    memcpy(users, n->users, n->user_count * sizeof(TB_User));
-
-    // aggressive reload
-    for (size_t i = 0; i < user_count; i++) {
-        TB_Node* use_n = USERN(&users[i]);
-        int use_i      = USERI(&users[i]);
-
-        // it's never in[0] lmao
-        assert(use_i != 0);
-        RegMask* in_mask = constraint_in(ctx, use_n, use_i);
-
-        // remat per use site
-        TB_Node* remat = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
-        memcpy(remat->extra, n->extra, extra);
-        FOR_N(j, 0, n->input_count) if (n->inputs[j]) {
-            remat->inputs[j] = n->inputs[j];
-            add_user(f, remat, n->inputs[j], j);
-        }
-
-        set_input(f, use_n, remat, use_i);
-
-        // schedule the split right before use
-        tb__insert_before(ctx, ctx->f, remat, use_n);
-        VReg* reload_vreg = tb__set_node_vreg(ctx, remat);
-
-        // reloads are unlikely to spill... but not impossible
-        reload_vreg->spill_bias = 1e9;
-
-        RegMask* remat_mask = ctx->constraint(ctx, remat, NULL);
-        reload_vreg->mask = tb__reg_mask_meet(ctx, in_mask, remat_mask);
-        assert(reload_vreg->mask != &TB_REG_EMPTY && "TODO hard split from rematerializing");
-
-        // if it's remat'ing a copy, we should edit the def mask to match the use
-        if (remat->type == TB_MACH_COPY) {
-            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(remat);
-
-            // slightly harder to rematerialize than a normal remat because we tightened it
-            reload_vreg->spill_bias = 1e10;
-            cpy->def = reload_vreg->mask;
-        }
-
-        // if we're going into a fixed-dst copy, we should hint towards that vreg
-        if (fixed_vregs && use_n->type == TB_MACH_COPY) {
-            TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(use_n);
-            int fixed = fixed_reg_mask(cpy->def);
-            if (fixed >= 0) {
-                reload_vreg->hint_vreg = fixed_vregs[cpy->def->class] + fixed;
-            }
-        }
-
-        TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: remat  (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, remat->gvn));
-    }
-    tb_arena_restore(&f->tmp_arena, sp);
-
-    // delete the original def
-    ctx->vregs[ctx->vreg_map[n->gvn]].uses -= 1;
-    ctx->vreg_map[n->gvn] = 0;
-    tb__remove_node(ctx, f, n);
-    tb_kill_node(f, n);
 }
 
 static void dump_sched(Ctx* restrict ctx) {
@@ -295,12 +262,9 @@ static void dump_sched(Ctx* restrict ctx) {
     }
 }
 
-static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask, bool conflict) {
+static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask, TB_Node* n, bool conflict) {
     TB_Function* f = ctx->f;
-    TB_Node* n = to_spill->n;
     TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: spill  (%%%u)\x1b[0m\n", to_spill - ctx->vregs, n->gvn));
-
-    to_spill->mask = spill_mask;
 
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
@@ -358,9 +322,11 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
 
             VReg* to_reg_vreg = tb__set_node_vreg(ctx, to_reg);
             to_reg_vreg->mask = xfer_mask;
+            to_reg_vreg->reg_width = tb__reg_width_from_dt(xfer_mask->class, to_reg->dt);
 
             VReg* to_stk_vreg = tb__set_node_vreg(ctx, to_stk);
             to_stk_vreg->mask = in_mask;
+            to_stk_vreg->reg_width = tb__reg_width_from_dt(in_mask->class, to_stk->dt);
 
             // TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: stack-stack reload (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, reload_n->gvn));
         } else {
@@ -380,6 +346,7 @@ static void spill_entire_lifetime(Ctx* ctx, VReg* to_spill, RegMask* spill_mask,
             // schedule the split right before use
             tb__insert_before(ctx, ctx->f, reload_n, use_n);
             VReg* reload_vreg = tb__set_node_vreg(ctx, reload_n);
+            reload_vreg->reg_width = tb__reg_width_from_dt(in_mask->class, reload_n->dt);
             reload_vreg->mask = in_mask;
 
             TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   V%zu: reload (%%%u)\x1b[0m\n", reload_vreg - ctx->vregs, reload_n->gvn));

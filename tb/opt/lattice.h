@@ -278,6 +278,7 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
 }
 
 static bool lattice_signed(LatticeInt* l) { return l->min > l->max; }
+static bool lattice_is_iconst(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
 
 static LatticeInt lattice_into_unsigned(LatticeInt i, int bits) {
     if (i.min > i.max) {
@@ -310,14 +311,14 @@ static Lattice* lattice_gimme_int2(TB_Function* f, int64_t min, int64_t max, uin
         umin = 0, umax = lattice_uint_max(bits);
     }
 
-    zeros |= ~umin;
-    ones  |=  umin;
-
     if (umin != umax) {
         // wherever the highest differing bit is we just clear everything below that
         int msb_diff = 64 - __builtin_clzll(umin ^ umax);
-        zeros &= ~(UINT64_MAX >> (64 - msb_diff));
-        ones  &= ~(UINT64_MAX >> (64 - msb_diff));
+        zeros |= ~min & ~(UINT64_MAX >> (64 - msb_diff));
+        ones  |=  min & ~(UINT64_MAX >> (64 - msb_diff));
+    } else {
+        zeros |= ~min;
+        ones  |=  min;
     }
 
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });

@@ -452,11 +452,14 @@ static void resolve_pending_exprs(Cuik_Parser* parser) {
     }
 }
 
-Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, TB_Arena* restrict arena, bool only_code_index) {
+Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cuik_Target* target, bool only_code_index) {
     assert(s != NULL);
+    // assert(target->pointer_byte_size == 8 && "other sized pointers aren't really supported yet");
 
     tls_init();
-    // assert(target->pointer_byte_size == 8 && "other sized pointers aren't really supported yet");
+
+    TB_Arena arena;
+    tb_arena_create(&arena, "Parse");
 
     int r;
     Cuik_Parser parser = { 0 };
@@ -466,7 +469,7 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
     parser.pointer_byte_size = target->pointer_byte_size;
     parser.static_assertions = dyn_array_create(int, 128);
     parser.types = init_type_table(target);
-    parser.types.arena = parser.arena = arena;
+    parser.types.arena = parser.arena = &arena;
 
     // just a shorthand so it's faster to grab
     parser.default_int = (Cuik_Type*) &target->signed_ints[CUIK_BUILTIN_INT];
@@ -529,6 +532,9 @@ Cuik_ParseResult cuikparse_run(Cuik_Version version, TokenStream* restrict s, Cu
         .types = parser.types,
         .va_list = parser.va_list,
     };
+
+    // make sure they're both updating the same arena that's owned by the TU now
+    parser.tu->types.arena = parser.types.arena = parser.arena = &parser.tu->arena;
 
     Symbol* sym = cuik_symtab_lookup(parser.symbols, atoms_putc("WinMain"));
     if (sym != NULL && sym->storage_class == STORAGE_FUNC && sym->token_start != 0) {

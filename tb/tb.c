@@ -61,6 +61,15 @@ static void init_codegen_families(void) {
     extern ICodeGen tb__wasm32_codegen;
     tb_codegen_families[TB_ARCH_WASM32] = tb__wasm32_codegen;
     #endif
+
+    // allows me to initialize all the fun tables
+    FOR_N(i, 0, TB_ARCH_MAX) {
+        if (tb_codegen_families[i].global_init) {
+            CUIK_TIMED_BLOCK("arch global init") {
+                tb_codegen_families[i].global_init();
+            }
+        }
+    }
 }
 
 static ICodeGen* tb_codegen_info(TB_Module* m) { return &tb_codegen_families[m->target_arch]; }
@@ -249,7 +258,7 @@ void tb_module_enable_chkstk(TB_Module* m) {
     }
 }
 
-TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm) {
+TB_FunctionOutput* tb_codegen(TB_Function* f, TB_CodegenRA ra, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm) {
     if (code_arena == NULL) {
         code_arena = &f->arena;
     }
@@ -259,7 +268,7 @@ TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_ar
 
     TB_FunctionOutput* func_out = tb_arena_alloc(code_arena, sizeof(TB_FunctionOutput));
     *func_out = (TB_FunctionOutput){ .parent = f, .section = f->section, .linkage = f->super.linkage };
-    m->codegen->compile_function(f, func_out, features, code_arena, emit_asm);
+    m->codegen->compile_function(f, ra, func_out, code_arena, emit_asm);
     atomic_fetch_add(&m->compiled_function_count, 1);
 
     f->output = func_out;

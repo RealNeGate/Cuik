@@ -170,6 +170,7 @@ static_assert(sizeof(TB_DataType) == 1, "im expecting this to be a byte");
 #define TB_IS_BOOL_TYPE(x)     ((x).type == TB_TAG_BOOL)
 #define TB_IS_INTEGER_TYPE(x)  ((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_I64)
 #define TB_IS_FLOAT_TYPE(x)    ((x).type == TB_TAG_F32 || (x).type == TB_TAG_F64)
+#define TB_IS_VECTOR_TYPE(x)   ((x).type >= TB_TAG_V64 && (x).type <= TB_TAG_V512)
 #define TB_IS_POINTER_TYPE(x)  ((x).type == TB_TAG_PTR)
 #define TB_IS_SCALAR_TYPE(x)   ((x).type <= TB_TAG_F64)
 #define TB_IS_INT_OR_PTR(x)    ((x).type >= TB_TAG_I8  && (x).type <= TB_TAG_PTR)
@@ -316,10 +317,6 @@ typedef enum TB_NodeTypeEnum {
     //   bulk memory ops.
     TB_MEMCPY,      // (Control, Memory, Ptr, Ptr, Size)  -> Memory
     TB_MEMSET,      // (Control, Memory, Ptr, Int8, Size) -> Memory
-    //   these memory accesses represent "volatile" which means
-    //   they may produce side effects and thus cannot be eliminated.
-    TB_READ,        // (Control, Memory, Ptr)       -> (Memory, Data)
-    TB_WRITE,       // (Control, Memory, Ptr, Data) -> (Memory, Data)
     //   atomics have multiple observers (if not they wouldn't need to
     //   be atomic) and thus produce side effects everywhere just like
     //   volatiles except they have synchronization guarentees. the atomic
@@ -334,6 +331,8 @@ typedef enum TB_NodeTypeEnum {
     TB_ATOMIC_OR,     // (Control, Memory, Ptr, Data)  -> (Memory, Data)
     TB_ATOMIC_PTROFF, // (Control, Memory, Ptr, Ptr)   -> (Memory, Ptr)
     TB_ATOMIC_CAS,    // (Control, Memory, Data, Data) -> (Memory, Data, Bool)
+    //   volatile memory barrier
+    TB_HARD_BARRIER,  // (Control, Memory, MemOp) -> Memory
 
     // like a multi-way branch but without the control flow aspect, but for data.
     TB_LOOKUP,
@@ -411,14 +410,13 @@ typedef enum TB_NodeTypeEnum {
     TB_FRAME_PTR,
 
     // Special ops
-    //   add with carry
-    TB_ADC,     // (Int, Int, Bool?) -> (Int, Bool)
-    //   division and modulo
-    TB_UDIVMOD, // (Int, Int) -> (Int, Int)
-    TB_SDIVMOD, // (Int, Int) -> (Int, Int)
     //   does full multiplication (64x64=128 and so on) returning
     //   the low and high values in separate projections
     TB_MULPAIR,
+
+    // Vector ops
+    TB_VBROADCAST,
+    TB_VSHUFFLE,
 
     // variadic
     TB_VA_START,
@@ -430,8 +428,6 @@ typedef enum TB_NodeTypeEnum {
     TB_X86INTRIN_RSQRT,
 
     // general machine nodes:
-    // does the phi move
-    TB_MACH_MOVE,
     TB_MACH_COPY,
     // (Control) -> Control
     TB_MACH_JUMP,
@@ -442,6 +438,8 @@ typedef enum TB_NodeTypeEnum {
     // isn't the pointer value itself, just a placeholder for
     // referring to a global.
     TB_MACH_SYMBOL,
+
+    TB_MACH_TEMP,
 
     // limit on generic nodes
     TB_NODE_TYPE_MAX,
@@ -596,6 +594,10 @@ typedef struct { // TB_MACH_COPY
     RegMask* def;
 } TB_NodeMachCopy;
 
+typedef struct { // TB_MACH_TEMP
+    RegMask* def;
+} TB_NodeMachTemp;
+
 typedef struct { // TB_PROJ
     int index;
 } TB_NodeProj;
@@ -633,6 +635,7 @@ typedef struct { // any integer binary operator
 
 typedef struct {
     TB_CharUnits align;
+    bool is_volatile;
 } TB_NodeMemAccess;
 
 typedef struct { // TB_DEBUG_LOCATION
@@ -692,6 +695,11 @@ typedef struct {
 } TB_NodeTailcall;
 
 typedef struct {
+    int width;
+    int indices[0];
+} TB_NodeVShuffle;
+
+typedef struct {
     const char* tag;
 
     // used for IR building
@@ -730,7 +738,7 @@ typedef struct TB_Safepoint {
 
     uint32_t ip;    // relative to the function body.
     uint32_t count; // same as node->input_count
-    int32_t values[];
+    uint32_t values[];
 } TB_Safepoint;
 
 typedef enum {
@@ -870,7 +878,28 @@ TB_API TB_Safepoint* tb_safepoint_get(TB_Function* f, uint32_t relative_ip);
 ////////////////////////////////
 // Disassembler
 ////////////////////////////////
-TB_API ptrdiff_t tb_print_disassembly_inst(TB_Arch arch, size_t length, const void* ptr);
+typedef struct TB_Disasm {
+    void* ctx;
+
+    // Input stream
+    size_t in_len;
+    size_t in_curr;
+    const uint8_t* in;
+
+    // Output stream
+    size_t out_len;
+    size_t out_curr;
+    char* out;
+
+    // symbol_handler will be called any time there's a constant
+    // or offset which the disassembler can pretty print.
+    //
+    // field_pos is measured in bits because RISC processors like to have ranges in funky places
+    bool (*symbol_handler)(struct TB_Disasm* disasm, int inst_length, uint64_t field, int field_pos, int field_len, bool is_offset);
+} TB_Disasm;
+
+TB_API bool tb_disasm_outf(TB_Disasm* disasm, const char* fmt, ...);
+TB_API ptrdiff_t tb_disasm_print(TB_Arch arch, TB_Disasm* disasm, bool has_relocs);
 
 ////////////////////////////////
 // JIT compilation
@@ -1082,6 +1111,7 @@ TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int l
 
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage);
+TB_API void tb_function_set_features(TB_Function* f, const TB_FeatureSet* features);
 
 TB_API TB_Arena* tb_function_get_arena(TB_Function* f, int i);
 
@@ -1321,13 +1351,25 @@ TB_API void tb_print(TB_Function* f);
 TB_API void tb_print_dumb(TB_Function* f);
 TB_API void tb_print_svg(TB_Function* f);
 
+uint64_t tb_interpret(TB_Function* f, TB_Worklist* ws, uint64_t* params);
+
+typedef enum {
+    // Ian Rogers style allocator:
+    //   "Efficient global register allocation" (2020)
+    TB_RA_ROGERS,
+
+    // Briggs-Chaitin style allocator:
+    //   "Register Allocation via Graph Coloring" (1992)
+    TB_RA_BRIGGS,
+} TB_CodegenRA;
+
 // codegen:
 //   output goes at the top of the code_arena, feel free to place multiple functions
 //   into the same code arena (although arenas aren't thread-safe you'll want one per thread
 //   at least)
 //
 //   if code_arena is NULL, the IR arena will be used.
-TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_Worklist* ws, TB_Arena* code_arena, const TB_FeatureSet* features, bool emit_asm);
+TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_CodegenRA ra, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm);
 
 // interprocedural optimizer iter
 TB_API bool tb_module_ipo(TB_Module* m);
@@ -1381,7 +1423,7 @@ TB_API TB_Node* tb_builder_ptr_member(TB_GraphBuilder* g, TB_Node* base, int64_t
 
 // memory
 TB_API TB_Node* tb_builder_load(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_DataType dt, TB_Node* addr, TB_CharUnits align, bool is_volatile);
-TB_API void tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile);
+TB_API TB_Node* tb_builder_store(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* addr, TB_Node* val, TB_CharUnits align, bool is_volatile);
 TB_API void tb_builder_memcpy(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* src, TB_Node* size, TB_CharUnits align, bool is_volatile);
 TB_API void tb_builder_memset(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* val, TB_Node* size, TB_CharUnits align, bool is_volatile);
 TB_API void tb_builder_memzero(TB_GraphBuilder* g, int mem_var, bool ctrl_dep, TB_Node* dst, TB_Node* size, TB_CharUnits align, bool is_volatile);
@@ -1402,7 +1444,10 @@ TB_API void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file,
 // function call
 TB_API TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
 TB_API TB_Node* tb_builder_syscall(TB_GraphBuilder* g, TB_DataType dt, int mem_var, TB_Node* target, int arg_count, TB_Node** args);
-TB_API void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, void* userdata, TB_Node* poll_site, int arg_count, TB_Node** args);
+
+// paths[0] has the normal path's symbol table written in it.
+// paths[1] has the "hit" path's symbol table written in it.
+TB_API void tb_builder_safepoint(TB_GraphBuilder* g, int mem_var, TB_Node* mem_op, void* userdata, int arg_count, TB_Node** args, TB_Node* paths[2]);
 
 // locals (variables but as stack vars)
 TB_API TB_Node* tb_builder_local(TB_GraphBuilder* g, TB_CharUnits size, TB_CharUnits align);

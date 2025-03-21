@@ -28,16 +28,20 @@
 #define TB_OPTDEBUG_LOOP      0
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
+#define TB_OPTDEBUG_SLP       0
+#define TB_OPTDEBUG_GVN       0
+#define TB_OPTDEBUG_INTERP    0
 #define TB_OPTDEBUG_MEM2REG   0
 #define TB_OPTDEBUG_ISEL      0
-#define TB_OPTDEBUG_CODEGEN   0
+#define TB_OPTDEBUG_ISEL2     0
+#define TB_OPTDEBUG_EMIT      0
 #define TB_OPTDEBUG_DATAFLOW  0
 #define TB_OPTDEBUG_PLACEMENT 0
 #define TB_OPTDEBUG_INLINE    0
-#define TB_OPTDEBUG_REGALLOC  0
-#define TB_OPTDEBUG_REGALLOC2 0
-#define TB_OPTDEBUG_SLP       0
-#define TB_OPTDEBUG_GVN       0
+#define TB_OPTDEBUG_REGALLOC  1
+#define TB_OPTDEBUG_REGALLOC2 1
+#define TB_OPTDEBUG_REGALLOC3 0
+#define TB_OPTDEBUG_REGALLOC4 0
 #define TB_OPTDEBUG_COMPACT   0
 #define TB_OPTDEBUG_SCHEDULE  0
 // for toggling ANSI colors
@@ -373,6 +377,7 @@ struct TB_Function {
 
     TB_DebugType* dbg_type;
     TB_FunctionPrototype* prototype;
+    TB_FeatureSet features;
 
     // raw parameters
     size_t param_count;
@@ -517,7 +522,6 @@ struct TB_Module {
     TB_ABI target_abi;
     TB_Arch target_arch;
     TB_System target_system;
-    TB_FeatureSet features;
     ExportList exports;
 
     // TB_Symbol*
@@ -572,6 +576,8 @@ struct ICodeGen {
     // what does CHAR_BIT mean on said platform
     int minimum_addressable_size, pointer_size;
 
+    void (*global_init)(void);
+
     // Mach nodes info
     bool (*can_gvn)(TB_Node* n);
     uint32_t (*flags)(TB_Node* n);
@@ -579,11 +585,14 @@ struct ICodeGen {
     const char* (*node_name)(int n_type);
     void (*print_extra)(TB_Node* n);
 
+    int (*is_pack_op_supported)(TB_Function* f, TB_DataType dt, TB_Node* n, int width);
+    int (*max_pack_width_for_op)(TB_Function* f, TB_DataType dt, TB_Node* n);
+
     // return the number of non-local patches
     size_t (*emit_call_patches)(TB_Module* restrict m, TB_FunctionOutput* out_f);
     // NULLable if doesn't apply
     void (*emit_win64eh_unwind_info)(TB_Emitter* e, TB_FunctionOutput* out_f, uint64_t stack_usage);
-    void (*compile_function)(TB_Function* f, TB_FunctionOutput* restrict func_out, const TB_FeatureSet* features, TB_Arena* code, bool emit_asm);
+    void (*compile_function)(TB_Function* f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code, bool emit_asm);
 };
 
 // All debug formats i know of boil down to adding some extra sections to the object file
@@ -694,6 +703,12 @@ size_t tb__layout_relocations(TB_Module* m, DynArray(TB_ModuleSection) sections,
 
 TB_ExportChunk* tb_export_make_chunk(TB_Arena* arena, size_t size);
 void tb_export_append_chunk(TB_ExportBuffer* buffer, TB_ExportChunk* c);
+
+int uf_find(int* uf, int uf_len, int a);
+void uf_union(int* uf, int x, int y);
+
+int tb_data_type_bit_size(TB_Module* m, uint8_t type);
+int tb_data_type_byte_size(TB_Module* m, uint8_t type);
 
 ////////////////////////////////
 // ANALYSIS

@@ -36,6 +36,40 @@ void* tb_jit_stack_create(void);
 #include "objects/macho.c"
 #include "objects/wasm_obj.c"
 
+int uf_find(int* uf, int uf_len, int a) {
+    if (a >= uf_len) {
+        return a;
+    }
+
+    // leader
+    int l = a;
+    while (uf[l] != l) {
+        l = uf[l];
+    }
+
+    // path compaction
+    while (uf[a] != a) {
+        int p = uf[a];
+        uf[a] = l, a = p;
+    }
+
+    return l;
+}
+
+void uf_union(int* uf, int x, int y) {
+    x = uf_find(uf, INT_MAX, x);
+    y = uf_find(uf, INT_MAX, y);
+
+    // parent should be the smaller number
+    if (x > y) {
+        SWAP(int, x, y);
+    }
+
+    if (x != y) {
+        uf[y] = x;
+    }
+}
+
 // Platform layer
 #if defined(_WIN32)
 #pragma comment(lib, "onecore.lib")
