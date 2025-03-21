@@ -71,6 +71,7 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         (rol $lhs $rhs) = (ror $lhs (sub $size $rhs))
         (umod $lhs $rhs) = (sub $lhs (mul $rhs (udiv $lhs $rhs)))
         (smod $lhs $rhs) = (sub $lhs (mul $rhs (sdiv $lhs $rhs)))
+        (fconst $a) = (iconst $a)
     optional:
         (<some sort of zero register optimisation>)
         (xor $lhs (not $rhs)) = (eon $lhs $rhs)
@@ -80,6 +81,21 @@ static TB_Node* node_isel(Ctx* restrict ctx, TB_Function* f, TB_Node* n) {
         (sub $a (mul $b $c)) = (msub $b $c $a)
     */
     switch (n->type) {
+        case TB_F32CONST: {
+            uint64_t val = 0;
+            memcpy(&val, &TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value, 4);
+            TB_Node* new = tb_alloc_node(f, TB_ICONST, (TB_DataType){.type = TB_TAG_I32}, 0, sizeof(TB_NodeInt));
+            TB_NODE_SET_EXTRA(new, TB_NodeInt, .value = val);
+            return new;
+        }
+        case TB_F64CONST: {
+            uint64_t val = 0;
+            memcpy(&val, &TB_NODE_GET_EXTRA_T(n, TB_NodeFloat64)->value, 8);
+            TB_Node* new = tb_alloc_node(f, TB_ICONST, (TB_DataType){.type = TB_TAG_I64}, 0, sizeof(TB_NodeInt));
+            TB_NODE_SET_EXTRA(new, TB_NodeInt, .value = val);
+            return new;
+        }
+
         case TB_ROOT: {
             TB_Node* ret = n->inputs[1];
             if (ret->type == TB_RETURN) {
@@ -164,8 +180,12 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 if (i == 2) { // 2, RPC
                     return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << LR);
                 } else { // >2, Params
-                    TB_ASSERT(i < 3+4); // idk bro
-                    return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i - 3));
+                    TB_ASSERT(i < 3 + 4); //?? A64 ABI says 8 regs, but 4 for now
+                    int mask = 1u << (i - 3); // starts at 3, so i-3
+                    int type = TB_IS_FLOAT_TYPE(n->dt)
+                        ? REG_CLASS_FPR
+                        : REG_CLASS_GPR;
+                    return intern_regmask(ctx, type, false, mask);
                 }
             } else {
                 tb_todo();
@@ -192,12 +212,12 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 TB_FunctionPrototype* proto = ctx->f->prototype;
                 TB_ASSERT(proto->return_count <= 2 && "At most 2 return values :(");
 
-                if (proto->return_count >= 1) {
-                    ins[3] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << X0);
-                }
-
-                if (proto->return_count >= 2) {
-                    ins[4] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << X1);
+                for (int i = 0; i < proto->return_count; i++) {
+                    int mask = 1u << i;
+                    int type = TB_IS_FLOAT_TYPE(n->inputs[3 + i]->dt)
+                        ? REG_CLASS_FPR
+                        : REG_CLASS_GPR;
+                    ins[3 + i] = intern_regmask(ctx, type, false, mask);
                 }
             }
             return &TB_REG_EMPTY;
@@ -587,37 +607,43 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         ////////////////////////////////
         case TB_BSWAP: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_1(e, REV, dst, lhs, is_64bit);
+            emit_dpr_1(e, REV, dst, src, is_64bit);
             break;
         }
         case TB_CLZ: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_1(e, CLZ, dst, lhs, is_64bit);
+            emit_dpr_1(e, CLZ, dst, src, is_64bit);
             break;
         }
         case TB_CTZ: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_1(e, CTZ, dst, lhs, is_64bit);
+            emit_dpr_1(e, CTZ, dst, src, is_64bit);
             break;
         }
         case TB_POPCNT: {
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
             bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_1(e, CNT, dst, lhs, is_64bit);
+            emit_dpr_1(e, CNT, dst, src, is_64bit);
             break;
         }
 
         ////////////////////////////////
         // Unary operations
         ////////////////////////////////
-        // case TB_FNEG:
+        case TB_FNEG: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
+            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
+            int type = n->dt.type == TB_TAG_F32 ? Single : Double;
+            emit_fp_dp_1(e, FNEG, type, dst, src);
+            break;
+        }
 
         ////////////////////////////////
         // Integer arithmatic
@@ -740,12 +766,54 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         ////////////////////////////////
         // Float arithmatic
         ////////////////////////////////
-        // case TB_FADD:
-        // case TB_FSUB:
-        // case TB_FMUL:
-        // case TB_FDIV:
-        // case TB_FMIN:
-        // case TB_FMAX:
+        case TB_FADD: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
+            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
+            emit_fp_dp_2(e, FADD, type, dst, lhs, rhs);
+            break;
+        }
+        case TB_FSUB: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
+            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
+            emit_fp_dp_2(e, FSUB, type, dst, lhs, rhs);
+            break;
+        }
+        case TB_FMUL: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
+            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
+            emit_fp_dp_2(e, FMUL, type, dst, lhs, rhs);
+            break;
+        }
+        case TB_FDIV: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
+            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
+            emit_fp_dp_2(e, FDIV, type, dst, lhs, rhs);
+            break;
+        }
+        case TB_FMIN: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
+            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
+            emit_fp_dp_2(e, FMIN, type, dst, lhs, rhs);
+            break;
+        }
+        case TB_FMAX: {
+            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
+            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
+            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
+            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
+            emit_fp_dp_2(e, FMAX, type, dst, lhs, rhs);
+            break;
+        }
 
         ////////////////////////////////
         // Comparisons
@@ -769,8 +837,31 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         ////////////////////////////////
         // general machine nodes:
         ////////////////////////////////
-        // case TB_MACH_MOVE:
-        // case TB_MACH_COPY:
+        case TB_MACH_MOVE:
+        case TB_MACH_COPY: {
+            TB_Node* dst = n;
+            TB_Node* src = n->inputs[1];
+            VReg* vdst = node_vreg(ctx, dst);
+            VReg* vsrc = node_vreg(ctx, src);
+            if (vdst->class == REG_CLASS_GPR && vsrc->class == REG_CLASS_GPR) {
+                emit_dpr_logical(e, ORR, vdst->assigned, vsrc->assigned, ZR, 0, 0, true);
+            } else
+            if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_FPR) {
+                int type = src->dt.type == TB_TAG_F64 ? Double : Single;
+                emit_fp_dp_1(e, FMOV, type, vdst->assigned, vsrc->assigned);
+            } else
+            if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_GPR) {
+                int type = dst->dt.type == TB_TAG_F64 ? Double : Single;
+                bool is_64bit = src->dt.type == TB_TAG_I64;
+                emit_fp_convint(e, FMOV_I2F, type, vdst->assigned, vsrc->assigned, false, is_64bit);
+            } else
+            if (vdst->class == REG_CLASS_GPR && vsrc->class == REG_CLASS_FPR) {
+                int type = dst->dt.type == TB_TAG_F64 ? Double : Single;
+                bool is_64bit = src->dt.type == TB_TAG_I64;
+                emit_fp_convint(e, FMOV_F2I, type, vdst->assigned, vsrc->assigned, false, is_64bit);
+            }
+            break;
+        }
         // case TB_MACH_JUMP:
         // case TB_MACH_FRAME_PTR:
         // case TB_MACH_JIT_THREAD_PTR:

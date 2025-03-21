@@ -1,3 +1,10 @@
+#include <stdint.h>
+#include <sys/types.h>
+#include "../emitter.h"
+
+#define ENUM(N) enum N typedef N; enum N
+#define STRUCT(N) struct N typedef N; struct N
+
 // provides mask of N bits
 #define BIT_MASK(N) ((1 << N) - 1)
 // get N bits from value V at offset O
@@ -8,7 +15,7 @@
 // Xn refers to the 64bit variants of the registers,
 // usually the 32bit aliases are Wn (we don't have enums
 // for them because it's not that important, they're equal)
-typedef enum {
+ENUM(GPR) {
     X0,  X1,   X2,  X3,  X4,  X5,  X6,  X7,
     X8,  X9,  X10, X11, X12, X13, X14, X15,
     X16, X17, X18, X19, X20, X21, X22, X23,
@@ -23,15 +30,15 @@ typedef enum {
 
     // not a real gpr
     GPR_NONE = -1,
-} GPR;
+};
 
-typedef enum {
+ENUM(Cond) {
     EQ, NE, CS, CC, MI, PL, VS, VC, HI, LS, GE, LT, GT, LE, AL, NV,
-} Cond;
+};
 
-typedef enum {
+ENUM(ShiftType) {
     LSL, LSR, ASR, ROR,
-} ShiftType;
+};
 
 /* UDF
     0000 0000 0000 0000 iiii iiii iiii iiii
@@ -49,13 +56,14 @@ static void emit_udf(TB_CGEmitter* restrict e, uint16_t imm) {
     i = imm16
     d = destination register
 */
-typedef enum {
+ENUM(MoveOp) {
     MOVN = 0b00, // move inverse immediate
     MOVZ = 0b10, // move zero-extended immediate
     MOVK = 0b11, // move immediate (keep other bits)
-} MoveOp;
+};
 static void emit_dpi_mov(TB_CGEmitter* restrict e, MoveOp o, GPR d, uint16_t i, uint8_t s, bool is_64bit) {
-    uint32_t inst = 0b100101 << 23;
+    //                ___100101_______________________
+    uint32_t inst = 0b00010010100000000000000000000000;
     inst |= is_64bit ? (1 << 31) : 0;
     inst |= SET_BITS(o,  2, 29);
     inst |= SET_BITS(s,  2, 21);
@@ -65,7 +73,6 @@ static void emit_dpi_mov(TB_CGEmitter* restrict e, MoveOp o, GPR d, uint16_t i, 
 }
 
 /* logical (shifted register)
-    shift m, d = n op m
     bcc0 1010 ssum mmmm iiii iinn nnnd dddd
     b = 32/64 bit
     c = opcode and/or/eor/ands
@@ -76,7 +83,7 @@ static void emit_dpi_mov(TB_CGEmitter* restrict e, MoveOp o, GPR d, uint16_t i, 
     n = 1st reg
     d = destination reg
 */
-typedef enum {
+ENUM(LogicOp) {
     //       ccu
     AND  = 0b000, // d = n & m
     BIC  = 0b001, // d = n & ~m
@@ -86,11 +93,12 @@ typedef enum {
     EON  = 0b101, // d = n ^ ~m
     ANDS = 0b110, // d = n & m (set flags)
     BICS = 0b111, // d = n & ~m (set flags)
-} LogicOp;
+};
 static void emit_dpr_logical(TB_CGEmitter* restrict e, LogicOp o, GPR d, GPR n, GPR m, uint8_t i, ShiftType s, bool is_64bit) {
     uint32_t c = GET_BITS(o, 2, 1);
     uint32_t u = GET_BITS(o, 1, 0);
-    uint32_t inst = 0b01010 << 24;
+    //                ___01010________________________
+    uint32_t inst = 0b00001010000000000000000000000000;
     inst |= is_64bit ? (1 << 31) : 0;
     inst |= SET_BITS(c, 2, 29);
     inst |= SET_BITS(s, 2, 22);
@@ -103,29 +111,29 @@ static void emit_dpr_logical(TB_CGEmitter* restrict e, LogicOp o, GPR d, GPR n, 
 }
 
 /* conditional select
-    d = c ? m : op n
     bps1 1010 110m mmmm cccc qqnn nnnd dddd
     b = 32/64 bit
     p = op
-    s = 1 is unallocated :)
+    s = always 0, 1 is unallocated :)
     m = 2nd reg
     c = condition
     q = op2
     n = 1st reg
     d = destination reg
 */
-typedef enum {
+ENUM(CondSelOp) {
     // opcode pqq
     CSEL  = 0b000, // d = c ? n : m
     CSINC = 0b001, // d = c ? n : ++m
     CSINV = 0b100, // d = c ? n : ~m
     CSNEG = 0b101, // d = c ? n : -m
-} CondSelOp;
+};
 
 static void emit_cs(TB_CGEmitter* restrict e, CondSelOp o, GPR d, GPR n, GPR m, Cond c, bool is_64bit) {
     uint32_t p = GET_BITS(o, 1, 2);
     uint32_t q = GET_BITS(o, 2, 0);
-    uint32_t inst = 0b11010110 << 21;
+    //                ___11010110_____________________
+    uint32_t inst = 0b00011010110000000000000000000000;
     inst |= is_64bit ? (1 << 31) : 0;
     inst |= SET_BITS(p, 1, 30);
     inst |= SET_BITS(m, 5, 16);
@@ -137,7 +145,6 @@ static void emit_cs(TB_CGEmitter* restrict e, CondSelOp o, GPR d, GPR n, GPR m, 
 }
 
 /* data processing (1 source)
-    d = op n
     b1s1 1010 110p pppp qqqq qqnn nnnd dddd
     b = 32/64 bit
     s = i don't know but it's always 0 according to ISA_A64_xml_A_profile-2024-09.pdf
@@ -146,7 +153,7 @@ static void emit_cs(TB_CGEmitter* restrict e, CondSelOp o, GPR d, GPR n, GPR m, 
     n = 1st register
     d = destination register
 */
-typedef enum {
+ENUM(DPR1op) {
     // op1    qqqqqq
     RBIT  = 0b000000, // reverse bits
     REV16 = 0b000001, // reverse each 2-byte halfwords
@@ -156,13 +163,12 @@ typedef enum {
     CTZ   = 0b000110, // count trailing zeros
     CNT   = 0b000111, // count set bits
     ABS   = 0b001000, // absolute of signed value
-} DPR1op;
-static void emit_dpr_1(TB_CGEmitter* restrict e, DPR1op o, GPR d, GPR n, bool is_64bit) {
-    // p is zero for these ops
-    uint32_t q = o;
-    // the docs say S  V  is 0
-    uint32_t inst = 0b1011010110 << 21;
+};
+static void emit_dpr_1(TB_CGEmitter* restrict e, DPR1op q, GPR d, GPR n, bool is_64bit) {
+    //                _1_11010110_____________________
+    uint32_t inst = 0b01011010110000000000000000000000;
     inst |= is_64bit ? (1 << 31) : 0;
+    // p is always 0 for what we care about currently
     inst |= SET_BITS(q, 6, 10);
     inst |= SET_BITS(n, 5,  5);
     inst |= SET_BITS(d, 5,  0);
@@ -170,7 +176,6 @@ static void emit_dpr_1(TB_CGEmitter* restrict e, DPR1op o, GPR d, GPR n, bool is
 }
 
 /* data processing (2 source)
-    d = n op m
     b0s1 1010 110m mmmm pppp ppnn nnnd dddd
     b = 32/64 bit
     s = always 0 apart from SUBPS (FEAT_MTE)
@@ -179,7 +184,7 @@ static void emit_dpr_1(TB_CGEmitter* restrict e, DPR1op o, GPR d, GPR n, bool is
     n = 1st register
     d = destination register
 */
-typedef enum {
+ENUM(DPR2op) {
     // op    pppppp
     UDIV = 0b000010, // d = n / m (unsigned)
     SDIV = 0b000011, // d = n / m (signed)
@@ -191,20 +196,19 @@ typedef enum {
     UMAX = 0b011001, // d = n > m ? n : m (unsigned)
     SMIN = 0b011010, // d = n < m ? n : m (signed)
     UMIN = 0b011011, // d = n < m ? n : m (unsigned)
-} DPR2op;
-static void emit_dpr_2(TB_CGEmitter* restrict e, DPR2op o, GPR d, GPR n, GPR m, bool is_64bit) {
-    // the docs say S  V  is 0 except for SUBPS, can handle that later
-    uint32_t inst = 0b0011010110 << 21;
+};
+static void emit_dpr_2(TB_CGEmitter* restrict e, DPR2op p, GPR d, GPR n, GPR m, bool is_64bit) {
+    //                _0_11010110_____________________
+    uint32_t inst = 0b00011010110000000000000000000000;
     inst |= is_64bit ? (1 << 31) : 0;
     inst |= SET_BITS(m, 5, 16);
-    inst |= SET_BITS(o, 6, 10);
+    inst |= SET_BITS(p, 6, 10);
     inst |= SET_BITS(n, 5,  5);
     inst |= SET_BITS(d, 5,  0);
     EMIT4(e, inst);
 }
 
 /*  data processing (3 source)
-    d = n * m + a (a is all 1s for mulh :))
     bpp1 1011 qqqm mmmm raaa aann nnnd dddd
     b = 32/64 bit
     p = opcode bits 5-4
@@ -215,7 +219,7 @@ static void emit_dpr_2(TB_CGEmitter* restrict e, DPR2op o, GPR d, GPR n, GPR m, 
     n = 1st register
     d = destination register
 */
-typedef enum {
+ENUM(DPR3op) {
     // opcode  ppqqqr
     MADD   = 0b000000, // d = a + n * m
     MSUB   = 0b000001, // d = a - n * m
@@ -225,14 +229,15 @@ typedef enum {
     UMADDL = 0b001010, // d = a + n * m (64bit + 32bit * 32bit) (unsigned)
     UMSUBL = 0b001011, // d = a - n * m (64bit - 32bit * 32bit) (unsigned)
     UMULH  = 0b001100, // d = (n * m) >> 64 (unsigned)
-} DPR3op;
+};
 static void emit_dpr_3(TB_CGEmitter* restrict e, DPR3op o, GPR d, GPR n, GPR m, GPR a, bool is_64bit) {
     if (o != MADD && o != MSUB) is_64bit = true;
     if (o == SMULH || o == UMULH) a = 0b11111;
     uint32_t p = GET_BITS(o, 2, 4);
     uint32_t q = GET_BITS(o, 3, 1);
     uint32_t r = GET_BITS(o, 1, 0);
-    uint32_t inst = 0b11011 << 24;
+    //                ___11011________________________
+    uint32_t inst = 0b00011011000000000000000000000000;
     inst |= is_64bit ? (1 << 31) : 0;
     inst |= SET_BITS(p, 2, 29);
     inst |= SET_BITS(q, 3, 21);
@@ -255,14 +260,14 @@ static void emit_dpr_3(TB_CGEmitter* restrict e, DPR3op o, GPR d, GPR n, GPR m, 
     n = 1st register
     d = destination register
 */
-typedef enum {
+ENUM(DPRaddop) {
     //      u
     ADD = 0b0,
     SUB = 0b1,
-} DPRaddop;
+};
 static void emit_dpr_add(TB_CGEmitter* restrict e, DPRaddop o, GPR d, GPR n, GPR m, ShiftType s, uint8_t i, bool set_flags, bool is_64bit) {
-    // shift goes here     VV
-    uint32_t inst = 0b01011000 << 21;
+    //                ___01011__0_____________________
+    uint32_t inst = 0b00001011000000000000000000000000;
     inst |= is_64bit  ? (1 << 31) : 0;
     inst |= set_flags ? (1 << 29) : 0;
     inst |= SET_BITS(o, 1, 30);
@@ -293,19 +298,109 @@ static void emit_dpr_add(TB_CGEmitter* restrict e, DPRaddop o, GPR d, GPR n, GPR
     -01                       0      0 ccmn (conditional compare negative)
     -11                       0      0 ccmp ()
 */
-typedef enum {
+ENUM(CCop) {
     CCMN, // flags = c ? n <=> ~m : f
     CCMP, // flags = c ? n <=> m : f
-} CCop;
+};
 static void emit_dpr_cc(TB_CGEmitter* restrict e, CCop o, GPR d, GPR n, GPR m, Cond c, uint8_t else_flags, bool is_64bit) {
-    // this inst spans fields mmmmmcccc
-    uint32_t inst = 0b110100010000000000 << 11;
     uint32_t s = 1;
+    //                ___11010001_________0___________
+    uint32_t inst = 0b00011010001000000000000000000000;
     inst |= is_64bit  ? (1 << 31) : 0;
     inst |= SET_BITS(o, 1, 30);
     inst |= SET_BITS(s, 1, 29);
     inst |= SET_BITS(m, 5, 16);
     inst |= SET_BITS(c, 4, 12);
+    inst |= SET_BITS(n, 5,  5);
+    inst |= SET_BITS(d, 5,  0);
+    EMIT4(e, inst);
+}
+
+
+
+ENUM(FPtype) {
+    Single = 0b00,
+    Double = 0b01,
+    Half   = 0b11,
+};
+
+/* conversion between floating-point and integer
+    b0s1 1110 tt1m mppp 0000 00nn nnnd dddd
+    b = 32/64 bit
+    s = always 0
+    t = floating point type
+    m = rmode (different meanings)
+    p = opcode
+    n = source register
+    d = destination register
+*/
+ENUM(FPconvINTop) {
+    FMOV_F2I = 0b110,
+    FMOV_I2F = 0b111,
+};
+static void emit_fp_convint(TB_CGEmitter* restrict e, FPconvINTop p, FPtype t, GPR d, GPR n, bool top_half, bool is_64bit) {
+    //                _0_11110__1_____000000__________
+    uint32_t inst = 0b00011110001000000000000000000000;
+    inst |= is_64bit ? (1 << 31) : 0;
+    inst |= SET_BITS(t, 2, 22);
+    inst |= top_half ? (1 << 19) : 0;
+    inst |= SET_BITS(p, 3, 16);
+    inst |= SET_BITS(n, 5, 5);
+    inst |= SET_BITS(d, 5, 0);
+    EMIT4(e, inst);
+}
+
+/* floating-point data-processing (1 source)
+    m0s1 1110 tt1p pppp p100 00nn nnnd dddd
+    m = always 0
+    s = always 0
+    t = floating-point type
+    p = opcode
+    n = source register
+    d = destination register
+*/
+ENUM(FPDP1op) {
+    //       oooooo
+    FMOV = 0b000000,
+    FNEG = 0b000010,
+};
+static void emit_fp_dp_1(TB_CGEmitter* restrict e, FPDP1op p, FPtype t, GPR d, GPR n) {
+    //                _0_11110__1______10000__________
+    uint32_t inst = 0b00011110001000000100000000000000;
+    inst |= SET_BITS(t, 2, 22);
+    inst |= SET_BITS(p, 6, 15);
+    inst |= SET_BITS(n, 5,  5);
+    inst |= SET_BITS(d, 5,  0);
+    EMIT4(e, inst);
+}
+
+/* floating-point data-processing (2 source)
+    a0s1 1110 tt1m mmmm pppp 10nn nnnd dddd
+    a = always 0
+    s = always 0
+    t = floating point type
+    m = 2nd source register
+    p = opcode
+    n = 1st source register
+    d = destination register
+*/
+ENUM(FPDP2op) {
+    FMUL   = 0b0000, // d = n * m
+    FDIV   = 0b0001, // d = n / m
+    FADD   = 0b0010, // d = n + m
+    FSUB   = 0b0011, // d = n - m
+    FMAX   = 0b0100, // d = n > m ? n : m (prefers NaN)
+    FMIN   = 0b0101, // d = n < m ? n : m (prefers NaN)
+    FMAXNM = 0b0110, // d = n > m ? n : m (prefers Number)
+    FMINNM = 0b0111, // d = n < m ? n : m (prefers Number)
+    FNMUL  = 0b1000, // d = -(n * m)
+};
+static void emit_fp_dp_2(TB_CGEmitter* restrict e, FPDP2op p, FPtype t, GPR d, GPR n, GPR m) {
+    //                _0_11110__1_________10__________
+    uint32_t inst = 0b00011110001000000000100000000000;
+    inst |= SET_BITS(t, 2, 22);
+    inst |= SET_BITS(m, 5, 16);
+    inst |= SET_BITS(p, 4, 12);
     inst |= SET_BITS(n, 5,  5);
     inst |= SET_BITS(d, 5,  0);
     EMIT4(e, inst);
@@ -359,6 +454,24 @@ static void emit_dpr_cc(TB_CGEmitter* restrict e, CCop o, GPR d, GPR n, GPR m, C
             csel - TB_SELECT
         > data processing (3 source)
             madd - TB_MUL
+    > data processing -- scalar floating-point and advanced simd
+        > conversion between floating-point and fixed-point
+        > conversion between floating-point and integer
+            fmov - TB_MACH_MOVE
+        > floating-point data-processing (1 source)
+            fneg - TB_FNEG
+        > floating-point compare
+        > floating-point immediate
+        > floating-point conditional compare
+        > floating-point data-processing (2 source)
+            fmul - TB_FMUL
+            fdiv - TB_FDIV
+            fadd - TB_FADD
+            fsub - TB_FSUB
+            fmax - TB_FMAX
+            fmin - TB_FMIN
+        > floating-point conditional select
+        > floating-point data-processing (3 source)
 
 nodes to implement
 // Conversions (?)

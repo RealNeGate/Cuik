@@ -15,3 +15,10 @@ int foo(int x, int y) {
     return z + 8;
 }
 
+float bar(float a) {
+    a = a + 135.0f;
+    a = a - 246.0f;
+    a = a * 69.0f;
+    a = a / 42.0f;
+    return -a;
+}
