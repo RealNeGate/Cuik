@@ -1393,6 +1393,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
+
+            tb_print_dumb(f);
         }
 
         // currently only rotating loops

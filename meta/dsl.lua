@@ -30,15 +30,14 @@ local function lexer(str)
     local i = 1
     return function()
         -- skip whitespace
-        ::loop::
-        if ch_class[str:byte(i)] == "ws" then
-            i = i + 1
-            goto loop
-        elseif str:byte(i) == 35 then -- hash are comments
-            while str:byte(i) ~= 10 do
+        while ch_class[str:byte(i)] == "ws" or str:byte(i) == 35 do
+            if ch_class[str:byte(i)] == "ws" then
                 i = i + 1
+            elseif str:byte(i) == 35 then -- hash are comments
+                while str:byte(i) ~= 10 do
+                    i = i + 1
+                end
             end
-            goto loop
         end
 
         if i > #str then

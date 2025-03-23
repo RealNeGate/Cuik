@@ -202,13 +202,13 @@ static ptrdiff_t const_eval_subexpr(Cuik_Parser* restrict parser, TokenStream* t
     // try binary operators
     if (s->op >= EXPR_PLUS && s->op <= EXPR_CMPLT) {
         Cuik_ConstVal rhs, lhs;
+        Cuik_Type* ty = types ? cuik_canonical_type(types[i]) : NULL;
 
         i = const_eval_subexpr(parser, tokens, types, exprs, i - 1, &rhs);
         if (i == CONST_ERROR) return i;
         i = const_eval_subexpr(parser, tokens, types, exprs, i, &lhs);
         if (i == CONST_ERROR) return i;
 
-        Cuik_Type* ty = types ? cuik_canonical_type(types[i]) : NULL;
         if (ty && cuik_type_is_float(ty)) {
             if (lhs.tag == CUIK_CONST_INT) { lhs.tag = CUIK_CONST_FLOAT; lhs.f = lhs.i; }
             if (rhs.tag == CUIK_CONST_INT) { rhs.tag = CUIK_CONST_FLOAT; rhs.f = rhs.i; }

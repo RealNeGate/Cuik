@@ -229,12 +229,10 @@ void* nl_hashset_put2(NL_HashSet* restrict hs, void* ptr, NL_HashFunc hash, NL_C
     size_t first = h & mask, i = first;
 
     do {
-        if (hs->data[i] == NULL) {
+        if (hs->data[i] == NULL || hs->data[i] == NL_HASHSET_TOMB) {
             hs->count++;
             hs->data[i] = ptr;
             return NULL;
-        } else if (hs->data[i] == NL_HASHSET_TOMB) {
-            // go past it
         } else if (hs->data[i] == ptr || cmp(hs->data[i], ptr)) {
             return hs->data[i];
         }

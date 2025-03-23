@@ -249,7 +249,6 @@ size_t tb__insert_before(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n
 size_t tb__insert_after(Ctx* ctx, TB_Function* f, TB_Node* n, TB_Node* before_n);
 VReg* tb__set_node_vreg(Ctx* ctx, TB_Node* n);
 int tb__reg_width_from_dt(int reg_class, TB_DataType dt);
-void rematerialize(Ctx* ctx, int* fixed_vregs, TB_Node* n, bool kill_node);
 
 static bool tb__reg_mask_less(Ctx* ctx, RegMask* a, RegMask* b) {
     return a == b ? false : tb__reg_mask_meet(ctx, a, b) != a;

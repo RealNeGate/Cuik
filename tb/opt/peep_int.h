@@ -135,7 +135,7 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
             uint64_t u = amin & bmin & ~min;
             uint64_t v = ~(amax | bmax) & max;
             // just checking the sign bits
-            if ((u | v) & imin) {
+            if ((((u | v) >> (bits - 1)) & 1) != 0) {
                 overflow = true;
                 min = imin, max = imax;
             }
@@ -150,7 +150,7 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
             uint64_t u = ~(amin ^ bmax) | ~(amin ^ min);
             uint64_t v = ~(amax ^ bmin) | ~(amax ^ max);
 
-            if (((u & v) & imin) == 0) {
+            if ((((u & v) >> (bits - 1)) & 1) == 0) {
                 overflow = true;
                 min = imin, max = imax;
             }
@@ -182,7 +182,7 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
 
     if (n != NULL && !overflow) {
         // no signed overflow?
-        TB_NODE_GET_EXTRA_T(n, TB_NodeBinopInt)->ab |= TB_ARITHMATIC_NSW;
+        // TB_NODE_GET_EXTRA_T(n, TB_NodeBinopInt)->ab |= TB_ARITHMATIC_NSW;
     }
 
     // sign extend our integers now
