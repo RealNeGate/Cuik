@@ -1,0 +1,216 @@
+extra (X86MemOp)
+
+// *******************************
+// memory operands
+// *******************************
+node (MEMORY)
+
+// [base + index]
+pat (TB_PTR_OFFSET ___ $base $index)
+=> (x86_MEMORY flags=OP_INDEXED $base $index scale=0)
+
+// [base + disp]
+pat (TB_PTR_OFFSET ___ $base ($imm: TB_ICONST ...))
+where "fits_into_int32(TB_TYPE_I64, $imm)"
+=> (x86_MEMORY $base disp="as_int32($imm)")
+
+// [base + index + disp]
+pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ $index ($imm: TB_ICONST ...)))
+where "fits_into_int32(TB_TYPE_I64, $imm)"
+=> (x86_MEMORY $base $index flags=OP_INDEXED disp="as_int32($imm)")
+
+// [base + index*scale + disp]
+pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ (TB_SHL ___ $index ($scale: TB_ICONST ...)) ($disp: TB_ICONST ...)))
+where "fits_into_scale($scale) && fits_into_int32(TB_TYPE_I64, $disp)"
+=> (x86_MEMORY dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale="as_int32($scale)" disp="as_int32($disp)")
+
+// [base + index*scale]
+pat (TB_PTR_OFFSET ___ $base (TB_SHL ___ $index ($scale: TB_ICONST ...)))
+where "fits_into_scale($scale)"
+=> (x86_MEMORY dt=TB_TYPE_PTR flags=OP_INDEXED $base $index scale="as_int32($scale)")
+
+// [base + index*scale + disp]
+pat (TB_PTR_OFFSET ___ $base (TB_ADD ___ (TB_SHL ___ $index ($scale: TB_ICONST ...)) ($disp: TB_ICONST ...)))
+where "fits_into_scale($scale) && fits_into_int32(TB_TYPE_I64, $disp)"
+=> (x86_MEMORY flags=OP_INDEXED $base $index scale="as_int32($scale)" disp="as_int32($disp)")
+
+pat (TB_LOCAL $root stack_pos=$disp) => (x86_MEMORY "ctx->frame_ptr" disp=$disp)
+
+// [symbol]
+pat (TB_SYMBOL $root sym=$sym) => (x86_MEMORY (TB_MACH_SYMBOL $root sym=$sym))
+
+// [symbol + disp]
+pat (TB_PTR_OFFSET ___ (TB_SYMBOL $root sym=$sym) ($disp: TB_ICONST ...))
+where "fits_into_int32(TB_TYPE_I64, $disp)"
+=> (x86_MEMORY (TB_MACH_SYMBOL $root sym=$sym) disp="as_int32($disp)")
+
+// using an lea as a memory operand is kinda useful... swag :p
+subpat (x86_lea ___ ___ $base disp=$disp) => (x86_MEMORY $base disp=$disp)
+subpat (x86_lea ___ ___ $base $index scale=$scale disp=$disp flags=$flags) where "$flags==OP_INDEXED" => (x86_MEMORY $base $index flags=OP_INDEXED scale=$scale disp=$disp)
+
+// (ADD (LOAD ($lhs: MEMORY ...)) $rhs) => ()
+
+// *******************************
+// FLAGS
+// *******************************
+node (COND)
+node (cmp)
+node (test)
+node (ucomi)
+
+// compares
+#define CMP_OP(op_name, cc) \
+pat (op_name cmp_dt=$dt ___ $lhs $rhs) where "TB_IS_INT_OR_PTR($dt)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=cc) \
+pat (op_name cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && fits_into_int32($dt, $rhs)" => (x86_COND dt=TB_TYPE_I8 (x86_cmp dt=TB_TYPE_I64 ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)" extra_dt=$dt) cond=cc)
+
+CMP_OP(TB_CMP_SLE, LE)
+CMP_OP(TB_CMP_SLT, L)
+CMP_OP(TB_CMP_ULE, BE)
+CMP_OP(TB_CMP_ULT, B)
+CMP_OP(TB_CMP_EQ,  E)
+CMP_OP(TB_CMP_NE,  NE)
+
+pat (TB_CMP_FLT cmp_dt=$dt ___ $lhs $rhs) => (x86_COND dt=TB_TYPE_I8 (x86_ucomi dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=B)
+pat (TB_CMP_FLE cmp_dt=$dt ___ $lhs $rhs) => (x86_COND dt=TB_TYPE_I8 (x86_ucomi dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=BE)
+pat (TB_CMP_EQ  cmp_dt=$dt ___ $lhs $rhs) where "TB_IS_FLOAT_TYPE($dt)" => (x86_COND dt=TB_TYPE_I8 (x86_ucomi dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=E)
+pat (TB_CMP_NE  cmp_dt=$dt ___ $lhs $rhs) where "TB_IS_FLOAT_TYPE($dt)" => (x86_COND dt=TB_TYPE_I8 (x86_ucomi dt=TB_TYPE_I64 ___ ___ $rhs $lhs extra_dt=$dt) cond=NE)
+
+pat (TB_CMP_EQ cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && TB_NODE_GET_EXTRA_T($rhs, TB_NodeInt)->value == 0" => (x86_COND dt=TB_TYPE_I8 (x86_test dt=TB_TYPE_I64 ___ ___ $lhs $lhs extra_dt=$dt) cond=E)
+pat (TB_CMP_NE cmp_dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "TB_IS_INT_OR_PTR($dt) && TB_NODE_GET_EXTRA_T($rhs, TB_NodeInt)->value == 0" => (x86_COND dt=TB_TYPE_I8 (x86_test dt=TB_TYPE_I64 ___ ___ $lhs $lhs extra_dt=$dt) cond=NE)
+
+node (jcc)
+
+#define BRANCH(op_name) \
+pat (op_name dt=$dt $ctrl (x86_COND $cmp cond=$cond)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl $cmp cond=$cond) \
+pat (op_name dt=$dt $ctrl $x) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $x extra_dt="n->inputs[1]->dt") cond=NE) \
+pat (op_name dt=$dt $ctrl (TB_AND ___ $x $y)) => (x86_jcc dt=TB_TYPE_TUPLE $ctrl (x86_test dt=TB_TYPE_I64 ___ ___ $x $y extra_dt="n->inputs[1]->dt") cond=NE)
+
+BRANCH(TB_BRANCH)
+BRANCH(TB_AFFINE_LATCH)
+
+// if we don't get rid of the "condition" by merging it with something
+// else then it's being directly used.
+node (setcc)
+pat (x86_COND $cmp cond=$cond) => (x86_setcc dt=TB_TYPE_I8 ___ ___ $cmp cond=$cond)
+
+node (cmovcc)
+pat (TB_SELECT dt=$dt ___ $pred $a $b) => (x86_cmovcc dt=$dt ___ ___ $b $a (x86_test dt=TB_TYPE_I64 ___ ___ $pred $pred extra_dt="n->inputs[1]->dt") cond=NE)
+pat (TB_SELECT dt=$dt ___ (x86_COND $cmp cond=$cond) $a $b) => (x86_cmovcc dt=$dt ___ ___ $b $a $cmp cond=$cond)
+
+node (bt)
+pat (TB_AND dt=$dt ___ (TB_SHL ___ ($con: TB_ICONST ...) $y) $x) where "as_int32($con) == 1" => (x86_COND dt=TB_TYPE_I8 (x86_bt dt=TB_TYPE_I64 ___ ___ $y $x extra_dt=$dt) cond=B)
+
+node (adc)
+pat (x86_cmovcc dt=$dt ___ ___ $x (TB_ADD ___ $y ($con: TB_ICONST ...)) $pred) where "as_int32($con) == 1 && TB_NODE_GET_EXTRA_T(n, X86MemOp)->cond == B" => (x86_adc dt=$dt ___ ___ $x $pred flags="OP_IMMEDIATE" imm="0")
+
+// *******************************
+// misc
+// *******************************
+node (call)
+pat (TB_CALL $ctrl $mem (x86_MEMORY ($sym: TB_MACH_SYMBOL ...)) $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem $sym $REST)
+pat (TB_CALL $ctrl $mem $target $REST) => (x86_call dt=TB_TYPE_TUPLE $ctrl $mem $target $REST mode=MODE_LD)
+
+pat (TB_VA_START ...) => "isel_va_start(ctx, f, n)"
+
+// *******************************
+// integer ops
+// *******************************
+node (mov)
+node (lea)
+
+pat ($lhs: x86_MEMORY ...) => (x86_lea dt=TB_TYPE_PTR ___ ___ $lhs mode=MODE_LD)
+
+pat (TB_LOAD dt=$dt $ctrl $mem $addr) where "TB_IS_INT_OR_PTR($dt)" => (x86_mov dt=$dt $ctrl $mem $addr mode=MODE_LD)
+pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) where "TB_IS_INT_OR_PTR($dt)" => (x86_mov dt=$dt $ctrl $mem $lhs mode=MODE_LD)
+
+pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_INT_OR_PTR(n->inputs[3]->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $addr $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
+pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) $val) where "TB_IS_INT_OR_PTR(n->inputs[3]->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
+
+#define NORMIE_OP(op_name, mnemonic) \
+node (mnemonic) \
+pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs) \
+pat (op_name dt=$dt ___ $lhs (TB_LOAD $ctrl $mem ($rhs: x86_MEMORY ...))) => (x86_ ## mnemonic dt=$dt $ctrl $mem $rhs $lhs mode=MODE_LD) \
+pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_int32($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
+pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs)
+
+#define NORMIE_OP8(op_name, mnemonic) \
+node (mnemonic) \
+pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs) \
+pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) where "fits_into_uint8($dt, $rhs)" => (x86_ ## mnemonic dt=$dt ___ ___ $lhs flags="OP_IMMEDIATE" imm="as_int32($rhs)") \
+pat (op_name dt=$dt ___ $lhs ($rhs: TB_ICONST ...)) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs)
+
+NORMIE_OP(TB_ADD, add)
+NORMIE_OP(TB_OR,  or)
+NORMIE_OP(TB_AND, and)
+NORMIE_OP(TB_SUB, sub)
+NORMIE_OP(TB_XOR, xor)
+NORMIE_OP(TB_MUL, imul)
+
+// shifts
+NORMIE_OP8(TB_SHL, shl)
+NORMIE_OP8(TB_SHR, shr)
+NORMIE_OP8(TB_SAR, sar)
+NORMIE_OP8(TB_ROL, rol)
+NORMIE_OP8(TB_ROR, ror)
+
+node (div)
+node (idiv)
+
+pat (TB_UDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
+pat (TB_SDIV dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=0)
+pat (TB_UMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=1)
+pat (TB_SMOD dt=$dt ___ $lhs $rhs) => (TB_PROJ dt=$dt (x86_div dt=TB_TYPE_TUPLE ___ ___ $rhs $lhs extra_dt=$dt) index=1)
+
+// *******************************
+// float ops
+// *******************************
+node (vmov)
+node (vzero)
+
+pat (TB_LOAD dt=$dt $ctrl $mem $addr) where "TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $addr mode=MODE_LD)
+pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) where "TB_IS_FLOAT_TYPE($dt) || TB_IS_VECTOR_TYPE($dt)" => (x86_vmov dt=$dt $ctrl $mem $lhs mode=MODE_LD)
+pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt) || TB_IS_VECTOR_TYPE(n->inputs[3]->dt)" => (x86_vmov dt=TB_TYPE_MEMORY $ctrl $mem $addr $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
+pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt) || TB_IS_VECTOR_TYPE(n->inputs[3]->dt)" => (x86_vmov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
+
+// float constants goop
+pat (TB_F32CONST $root) where "is_float32_zero(n)" => (x86_vzero dt=TB_TYPE_F32 $root)
+pat (TB_F32CONST $root) => (x86_vmov dt=TB_TYPE_F32 ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float32_sym(ctx, n)") mode=MODE_LD)
+
+pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) where "is_float32_zero($x)" => (x86_vzero dt=$dt $root)
+pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) => (x86_vmov dt=$dt ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float32_sym(ctx, n)") mode=MODE_LD)
+
+#define FLOATIE_OP(op_name, mnemonic) \
+node (mnemonic) \
+pat (op_name dt=$dt ___ $lhs $rhs) => (x86_ ## mnemonic dt=$dt ___ ___ $rhs $lhs)
+
+FLOATIE_OP(TB_FADD, vadd)
+FLOATIE_OP(TB_FSUB, vsub)
+FLOATIE_OP(TB_FMUL, vmul)
+FLOATIE_OP(TB_FDIV, vdiv)
+
+// *******************************
+// casting
+// *******************************
+node(movsx8)
+node(movzx8)
+node(movsx16)
+node(movzx16)
+node(movsx32)
+
+node(vxor)
+pat (TB_FNEG dt=$dt ___ $in)
+=> (x86_vxor dt=$dt ___ ___ (TB_MACH_SYMBOL "f->root_node" sym="gimme_float32_neg_zero(ctx)") $in mode=MODE_LD)
+
+pat (TB_BITCAST dt=$dt ___ $in)
+=> (TB_MACH_COPY dt=$dt ___ $in def="ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]" use="ctx->normie_mask[TB_IS_FLOAT_TYPE($in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]")
+
+// 32 -> 64
+pat (TB_ZERO_EXT dt=$dt ___ $src)
+where "$dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32"
+=> (x86_mov dt=TB_TYPE_I64 ___ ___ $src)
+
+// 1/8 -> 32/64
+pat (TB_ZERO_EXT dt=$dt ___ $src)
+where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && n->inputs[1]->dt.type == TB_TAG_I8"
+=> (x86_movzx8 dt=$dt ___ ___ $src)
+

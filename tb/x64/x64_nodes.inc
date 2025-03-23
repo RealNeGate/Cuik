@@ -1,0 +1,52 @@
+X(int3,    void)
+// general integer binops (GPR ins, GPR outs)
+X(add,     X86MemOp)
+X(or,      X86MemOp)
+X(and,     X86MemOp)
+X(sub,     X86MemOp)
+X(xor,     X86MemOp)
+X(cmp,     X86MemOp)
+X(mov,     X86MemOp)
+X(test,    X86MemOp)
+X(imul,    X86MemOp)
+// shifts
+X(shl,     X86MemOp)
+X(shr,     X86MemOp)
+X(sar,     X86MemOp)
+X(rol,     X86MemOp)
+X(ror,     X86MemOp)
+// misc
+//   sxt_a2d is CDQ and CQO since they sign extend the (e|r)Ax reg to (e|r)Dx
+X(lea,     X86MemOp)
+X(cmovcc,  X86MemOp)
+X(div,     X86MemOp)
+X(idiv,    X86MemOp)
+X(sxt_a2d, X86MemOp)
+X(neg,     X86MemOp)
+// casts
+X(movsx8,  X86MemOp)
+X(movzx8,  X86MemOp)
+X(movsx16, X86MemOp)
+X(movzx16, X86MemOp)
+X(movsx32, X86MemOp)
+// jump macro-op
+X(cmpjcc,  X86MemOp)
+X(testjcc, X86MemOp)
+X(ucomijcc,X86MemOp)
+X(AAAHHHH, X86MemOp)
+// float/vector ops
+X(vmov,    X86MemOp)
+X(vadd,    X86MemOp)
+X(vmul,    X86MemOp)
+X(vsub,    X86MemOp)
+X(vdiv,    X86MemOp)
+X(vmin,    X86MemOp)
+X(vmax,    X86MemOp)
+X(vxor,    X86MemOp)
+X(vzero,   X86MemOp)
+// scalar only float ops
+X(ucomi,   X86MemOp)
+// simple-high level ops
+X(static_call, X86Call)
+X(call,    X86Call)
+#undef X

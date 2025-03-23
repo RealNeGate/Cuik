@@ -1,0 +1,9 @@
+extra (A64Op)
+
+// Hello
+pat (TB_F32CONST $root value=$value) => (TB_ICONST dt=TB_TYPE_I32 $root value="*(uint32_t*) &$value")
+pat (TB_F64CONST $root value=$value) => (TB_ICONST dt=TB_TYPE_I32 $root value="*(uint64_t*) &$value")
+
+node (add_imm12)
+pat (TB_ADD dt=$dt ___ $a (TB_ICONST ... value=$b)) where "($b == ($b & 07777)) || ($b == ($b & 077770000))" => (a64_add_imm12 dt=$dt ___ $a imm=$b)
+

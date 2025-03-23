@@ -1,0 +1,16 @@
+# Unix style
+* text=lf
+# Explicitly declare text files you want to always be normalized and converted
+# to native line endings on checkout.
+*.c text eol=lf
+*.cpp text eol=lf
+*.txt text eol=lf
+*.h text eol=lf
+*.svg text eol=lf
+*.md text eol=lf
+# Denote all files that are truly binary and should not be modified.
+*.o binary
+*.obj binary
+*.png binary
+*.lib filter=lfs diff=lfs merge=lfs -text
+*.a binary

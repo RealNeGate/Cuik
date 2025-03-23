@@ -1,0 +1,90 @@
+.vs/
+.tup/
+
+build.ninja
+.ninja_log
+.ninja_deps
+
+bin/
+bin2/
+Truct/
+inspector/SDL2/
+
+# *.lib
+*.a
+
+# Prerequisites
+*.d
+
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
+
+# Linker output
+*.ilk
+*.map
+*.exp
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# NeGate crap
+*.rdbg
+*.i
+*.swp
+*.dmp
+*.json
+*.flint
+*.ttf
+cuik
+tb_unittests
+
+tests/the_fuzzer/
+tests/stb_image.c
+tests/test5.c
+tests/test5_2.c
+preprocessed.c
+
+# metaprogram artifacts
+tb/x64/x64_gen.h
+
+project.4coder
+*.cache
+tests/golden/tmp.txt
+tests/golden/tmp2.txt
+build.ninja
+*.lib
+*.csv
+*.spall
+tests/collection/foo.txt
+tests/gold/cuik.txt
+tests/gold/clang.txt
+meta/a64dfa.c
+meta/Instructions.json

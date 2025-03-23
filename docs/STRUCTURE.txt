@@ -1,0 +1,40 @@
+# LibCuik
+
+The library is compiled as a unity build found in `lib/libcuik.c`
+
+Defines:
+
+  -DCUIK_USE_TB            compiles the IRgen code.
+  -DCUIK_ALLOW_THREADS     compiles threadpool.
+
+Components:
+
+  preproc/                 C preprocessor
+
+  front/                   Parser & type checker
+
+  back/                    TB integration (irgen)
+
+  driver/                  Compiler caller helpers (compile args, traditional compiler
+                           dispatch)
+
+Flow:
+
+  At any point in the standard pipeline you can stop and introspect the data. multiple
+  options laid out vertically means they're different ways to generate such data
+
+   _______________PREPROCESSOR_________________
+  /                                            \
+  source -cuik_driver_preprocess_str-> Cuik_CPP*
+          cuik_driver_preprocess
+          cuikpp_make
+
+   ___________________________________PARSER_______________________________________
+  /                                                                                \
+  Cuik_CPP* -cuikpp_get_token_stream-> TokenStream -cuikparse_run-> Cuik_ParseResult
+
+
+   ________________TYPE CHECK_____________________
+  /                                               \
+  Cuik_ParseResult.tu --cuiksema_run-> *mutates TU*
+
