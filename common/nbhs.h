@@ -108,6 +108,66 @@ static size_t nbhs_compute_cap(size_t y) {
     return cap - (sizeof(NBHS_Table) / sizeof(void*));
 }
 
+// (X + Y) / Z = int(X/Z) + int(Y/Z) + (mod(X,Z) + mod(Y,Z)/Z
+static uint64_t tb_div128(uint64_t numhi, uint64_t numlo, uint64_t den) {
+    // https://github.com/ridiculousfish/libdivide/blob/master/libdivide.h (libdivide_128_div_64_to_64)
+    //
+    // We work in base 2**32.
+    // A uint32 holds a single digit. A uint64 holds two digits.
+    // Our numerator is conceptually [num3, num2, num1, num0].
+    // Our denominator is [den1, den0].
+    const uint64_t b = ((uint64_t)1 << 32);
+
+    // Check for overflow and divide by 0.
+    if (numhi >= den) {
+        return ~0ull;
+    }
+
+    // Determine the normalization factor. We multiply den by this, so that its leading digit is at
+    // least half b. In binary this means just shifting left by the number of leading zeros, so that
+    // there's a 1 in the MSB.
+    // We also shift numer by the same amount. This cannot overflow because numhi < den.
+    // The expression (-shift & 63) is the same as (64 - shift), except it avoids the UB of shifting
+    // by 64. The funny bitwise 'and' ensures that numlo does not get shifted into numhi if shift is
+    // 0. clang 11 has an x86 codegen bug here: see LLVM bug 50118. The sequence below avoids it.
+    int shift = __builtin_clzll(den) - 1;
+    den <<= shift;
+    numhi <<= shift;
+    numhi |= (numlo >> (-shift & 63)) & (uint64_t)(-(int64_t)shift >> 63);
+    numlo <<= shift;
+
+    // Extract the low digits of the numerator and both digits of the denominator.
+    uint32_t num1 = (uint32_t)(numlo >> 32);
+    uint32_t num0 = (uint32_t)(numlo & 0xFFFFFFFFu);
+    uint32_t den1 = (uint32_t)(den >> 32);
+    uint32_t den0 = (uint32_t)(den & 0xFFFFFFFFu);
+
+    // We wish to compute q1 = [n3 n2 n1] / [d1 d0].
+    // Estimate q1 as [n3 n2] / [d1], and then correct it.
+    // Note while qhat may be 2 digits, q1 is always 1 digit.
+    uint64_t qhat = numhi / den1;
+    uint64_t rhat = numhi % den1;
+    uint64_t c1 = qhat * den0;
+    uint64_t c2 = rhat * b + num1;
+    if (c1 > c2) qhat -= (c1 - c2 > den) ? 2 : 1;
+    uint32_t q1 = (uint32_t)qhat;
+
+    // Compute the true (partial) remainder.
+    uint64_t rem = numhi * b + num1 - q1 * den;
+
+    // We wish to compute q0 = [rem1 rem0 n0] / [d1 d0].
+    // Estimate q0 as [rem1 rem0] / [d1] and correct it.
+    qhat = rem / den1;
+    rhat = rem % den1;
+    c1 = qhat * den0;
+    c2 = rhat * b + num0;
+    if (c1 > c2) qhat -= (c1 - c2 > den) ? 2 : 1;
+    uint32_t q0 = (uint32_t)qhat;
+
+    // Return remainder if requested.
+    return ((uint64_t)q1 << 32) | q0;
+}
+
 static void nbhs_compute_size(NBHS_Table* table, size_t cap) {
     // reciprocals to compute modulo
     #if defined(__GNUC__) || defined(__clang__)
@@ -119,16 +179,12 @@ static void nbhs_compute_size(NBHS_Table* table, size_t cap) {
     #endif
 
     table->sh += 63 - 64;
+    table->a = tb_div128(1ull << table->sh, cap - 1, cap);
 
     #if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
     uint64_t d,e;
     __asm__("divq %[v]" : "=a"(d), "=d"(e) : [v] "r"(cap), "a"(cap - 1), "d"(1ull << table->sh));
-    table->a = d;
-    #elif defined(_MSC_VER)
-    uint64_t rem;
-    table->a = _udiv128(1ull << table->sh, cap - 1, cap, &rem);
-    #else
-    #error "Unsupported target"
+    assert(d == table->a);
     #endif
 
     table->cap = cap;

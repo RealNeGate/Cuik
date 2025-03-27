@@ -859,7 +859,7 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
         case LATTICE_FLTCON64: {
             TB_Node* k = tb_alloc_node(f, TB_F64CONST, n->dt, 1, sizeof(TB_NodeFloat64));
             set_input(f, k, f->root_node, 0);
-            TB_NODE_SET_EXTRA(n, TB_NodeFloat64, .value = l->_f64);
+            TB_NODE_SET_EXTRA(k, TB_NodeFloat64, .value = l->_f64);
             latuni_set(f, k, l);
             return tb__gvn(f, k, sizeof(TB_NodeFloat64));
         }
@@ -1128,7 +1128,7 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
         k = nl_hashset_put2(&f->gvn_nodes, n, gvn_hash, gvn_compare);
         if (k && (k != n)) {
             DO_IF(TB_OPTDEBUG_STATS)(f->stats.gvn_hit++);
-            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[95mGVN v%u\x1b[0m\n", k->gvn));
+            DO_IF(TB_OPTDEBUG_PEEP)(printf(" => \x1b[95mGVN %%%u\x1b[0m\n", k->gvn));
 
             migrate_type(f, n, k);
             subsume_node(f, n, k);
@@ -1389,12 +1389,11 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         // avoids bloating up my arenas with freed nodes
         float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
         if (dead_factor > 0.2f) {
+            DO_IF(TB_OPTDEBUG_PEEP)(printf("=== COMPACT ===\n"));
             size_t old = tb_arena_current_size(&f->arena);
-            tb_compact_nodes(f, ws);
+            // tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
-
-            tb_print_dumb(f);
         }
 
         // currently only rotating loops

@@ -173,11 +173,14 @@ pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt) |
 pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) $val) where "TB_IS_FLOAT_TYPE(n->inputs[3]->dt) || TB_IS_VECTOR_TYPE(n->inputs[3]->dt)" => (x86_vmov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
 
 // float constants goop
-pat (TB_F32CONST $root) where "is_float32_zero(n)" => (x86_vzero dt=TB_TYPE_F32 $root)
-pat (TB_F32CONST $root) => (x86_vmov dt=TB_TYPE_F32 ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float32_sym(ctx, n)") mode=MODE_LD)
+pat (TB_F32CONST $root) where "is_float_zero(n)" => (x86_vzero dt=TB_TYPE_F32 $root)
+pat (TB_F32CONST $root) => (x86_vmov dt=TB_TYPE_F32 ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float_sym(ctx, n)") mode=MODE_LD)
 
-pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) where "is_float32_zero($x)" => (x86_vzero dt=$dt $root)
-pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) => (x86_vmov dt=$dt ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float32_sym(ctx, n)") mode=MODE_LD)
+pat (TB_F64CONST $root) where "is_float_zero(n)" => (x86_vzero dt=TB_TYPE_F64 $root)
+pat (TB_F64CONST $root) => (x86_vmov dt=TB_TYPE_F64 ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float_sym(ctx, n)") mode=MODE_LD)
+
+pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) where "is_float_zero($x)" => (x86_vzero dt=$dt $root)
+pat (TB_VBROADCAST dt=$dt ___ ($x: TB_F32CONST $root)) => (x86_vmov dt=$dt ___ ___ (TB_MACH_SYMBOL $root sym="gimme_float_sym(ctx, n)") mode=MODE_LD)
 
 #define FLOATIE_OP(op_name, mnemonic) \
 node (mnemonic) \
@@ -191,18 +194,23 @@ FLOATIE_OP(TB_FDIV, vdiv)
 // *******************************
 // casting
 // *******************************
-node(movsx8)
-node(movzx8)
-node(movsx16)
-node(movzx16)
-node(movsx32)
+node (movsx8)
+node (movzx8)
+node (movsx16)
+node (movzx16)
+node (movsx32)
 
-node(vxor)
+node (vxor)
 pat (TB_FNEG dt=$dt ___ $in)
-=> (x86_vxor dt=$dt ___ ___ (TB_MACH_SYMBOL "f->root_node" sym="gimme_float32_neg_zero(ctx)") $in mode=MODE_LD)
+=> (x86_vxor dt=$dt ___ ___ (TB_MACH_SYMBOL "f->root_node" sym="gimme_float_neg_zero(ctx, $dt)") $in mode=MODE_LD)
 
 pat (TB_BITCAST dt=$dt ___ $in)
 => (TB_MACH_COPY dt=$dt ___ $in def="ctx->normie_mask[TB_IS_FLOAT_TYPE(n->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]" use="ctx->normie_mask[TB_IS_FLOAT_TYPE($in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR]")
+
+// 32 -> 64
+pat (TB_SIGN_EXT dt=$dt ___ $src)
+where "$dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32"
+=> (x86_movsx32 dt=TB_TYPE_I64 ___ ___ $src)
 
 // 32 -> 64
 pat (TB_ZERO_EXT dt=$dt ___ $src)

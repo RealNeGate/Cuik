@@ -1,4 +1,28 @@
 
+// INLINES ALLOWED:
+//   SMALL     + SMALL  = TRUE
+//   SMALL_MED + SMALL  = TRUE
+//   SMALL_MED + MEDIUM = TRUE
+//   MEDIUM    + SMALL  = TRUE
+typedef enum {
+    SIZE_SMALL,
+    SIZE_SMALL_MED,
+    SIZE_MEDIUM,
+    SIZE_LARGE,
+} SizeClass;
+
+typedef struct {
+    TB_Module* mod;
+    NL_HashSet visited;
+
+    size_t ws_cap;
+    size_t ws_cnt;
+    TB_Function** ws;
+
+    SizeClass* size_classes;
+    int* ref_count;
+} IPOSolver;
+
 typedef struct {
     bool on_stack;
     int index, low_link;
@@ -15,6 +39,102 @@ typedef struct {
     int index;
 } SCC;
 
+static int op_weights[256] = {
+    // loops will increase size even if it doesn't generate ops
+    [TB_NATURAL_LOOP]         = 5,
+    [TB_AFFINE_LOOP]          = 5,
+    // pointers
+    [TB_PTR_OFFSET]           = 1,
+    [TB_LOAD]                 = 1,
+    [TB_STORE]                = 1,
+    // integer binary ops
+    [TB_AND ... TB_SMOD]      = 1,
+    // float binary ops
+    [TB_FADD ... TB_FMAX]     = 1,
+    // comparisons
+    [TB_CMP_EQ ... TB_CMP_NE] = 2,
+};
+
+static int bin_count;
+static int type2bin[256];
+static int bin_weights[256];
+
+#ifndef TB_NO_THREADS
+static once_flag bin_init = ONCE_FLAG_INIT;
+#else
+static bool bin_init;
+#endif
+
+static void init_bins(void) {
+    FOR_N(i, 0, 256) {
+        int w = op_weights[i];
+
+        // if two nodes have the same weight, they can share a bin
+        int found = -1;
+        FOR_N(j, 0, bin_count) {
+            if (bin_weights[j] == w) {
+                found = j;
+                break;
+            }
+        }
+
+        if (found >= 0) {
+            type2bin[i] = found;
+        } else {
+            bin_weights[bin_count] = w;
+            type2bin[i] = bin_count++;
+        }
+    }
+}
+
+static SizeClass classify_size(TB_Function* f, TB_Worklist* ws) {
+    cuikperf_region_start("classify_size", NULL);
+
+    #ifndef TB_NO_THREADS
+    call_once(&bin_init, init_bins);
+    #else
+    if (!bin_init) {
+        bin_init = true;
+        init_bins();
+    }
+    #endif
+
+    // find all nodes
+    CUIK_TIMED_BLOCK("push all") {
+        worklist_push(ws, f->root_node);
+        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+            TB_Node* n = ws->items[i];
+            FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
+        }
+    }
+
+    int hist[256] = { 0 };
+    // tb_print_dumb(f);
+
+    // clone all nodes in kid into f (GVN while we're at it)
+    TB_Node* n;
+    while (n = worklist_pop(ws), n) {
+        if (n->type < 256) { hist[type2bin[n->type]] += 1; }
+    }
+
+    int weighted_sum = 0;
+    FOR_N(i, 0, bin_count) {
+        weighted_sum += hist[i] * bin_weights[i];
+    }
+
+    SizeClass size_class = SIZE_SMALL;
+    if (weighted_sum >= 1000) {
+        size_class = SIZE_LARGE;
+    } else if (weighted_sum >= 100) {
+        size_class = SIZE_MEDIUM;
+    } else if (weighted_sum >= 20) {
+        size_class = SIZE_SMALL_MED;
+    }
+
+    cuikperf_region_end();
+    return size_class;
+}
+
 static TB_Function* static_call_site(TB_Node* n) {
     // is this call site a static function call
     TB_ASSERT(n->type == TB_CALL || n->type == TB_TAILCALL);
@@ -24,7 +144,7 @@ static TB_Function* static_call_site(TB_Node* n) {
     return target->tag == TB_SYMBOL_FUNCTION ? (TB_Function*) target : NULL;
 }
 
-static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f) {
+static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_Worklist* ws) {
     SCCNode* n = tb_arena_alloc(scc->arena, sizeof(SCCNode));
     n->index = scc->index;
     n->low_link = scc->index;
@@ -43,10 +163,21 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f) {
         if (target != NULL) {
             SCCNode* succ = nl_table_get(&scc->nodes, target);
             if (succ == NULL) {
-                succ = scc_walk(scc, ipo, target);
+                succ = scc_walk(scc, ipo, target, ws);
                 if (n->low_link > succ->low_link) { n->low_link = succ->low_link; }
             } else if (succ->on_stack) {
                 if (n->low_link > succ->index) { n->low_link = succ->index; }
+            }
+        }
+    }
+
+    FOR_USERS(u, f->root_node) {
+        if (USERN(u)->type == TB_SYMBOL) {
+            TB_Symbol* target = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeSymbol)->sym;
+            if (target->tag != TB_SYMBOL_FUNCTION) { continue; }
+
+            FOR_USERS(u2, USERN(u)) {
+                ipo->ref_count[((TB_Function*) target)->uid] += 1;
             }
         }
     }
@@ -58,6 +189,8 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f) {
             TB_ASSERT(scc->stk_cnt > 0);
             kid_f = scc->stk[--scc->stk_cnt];
 
+            ipo->size_classes[kid_f->uid] = classify_size(f, ws);
+
             SCCNode* kid_n = nl_table_get(&scc->nodes, kid_f);
             kid_n->on_stack = false;
             ipo->ws[ipo->ws_cnt++] = kid_f;
@@ -67,42 +200,52 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f) {
     return n;
 }
 
-static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_Function* kid);
+static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Node* call_site, TB_Function* kid);
 bool tb_module_ipo(TB_Module* m) {
+    CUIK_TIMED_BLOCK("resize barrier") {
+        symbolhs_resize_barrier(&m->symbols);
+    }
+
     // fill initial worklist with all external function calls :)
     //
     // two main things we wanna know are if something is alive and when to inline (eventually
     // we can incorporate IPSCCP)
     SCC scc = { 0 };
     scc.arena    = get_temporary_arena(m);
-    // scc.fn_count = m->symbol_count[TB_SYMBOL_FUNCTION];
+    nbhs_for(entry, &m->symbols) {
+        TB_Symbol* s = *entry;
+        if (s->tag == TB_SYMBOL_FUNCTION) {
+            ((TB_Function*) s)->uid = scc.fn_count++;
+        }
+    }
 
     IPOSolver ipo = { 0 };
     ipo.ws_cap = scc.fn_count;
     ipo.ws = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
+    ipo.size_classes = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(SizeClass));
+    ipo.ref_count = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(int));
+    FOR_N(i, 0, scc.fn_count) {
+        ipo.ref_count[i] = 0;
+    }
 
-    #if 0
+    TB_Worklist ws = { 0 };
+    worklist_alloc(&ws, 500);
+
     CUIK_TIMED_BLOCK("build SCC") {
         TB_ArenaSavepoint sp = tb_arena_save(scc.arena);
         scc.stk      = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
         scc.nodes    = nl_table_arena_alloc(scc.arena, scc.fn_count);
 
         // build strongly connected components
-        TB_ThreadInfo* info = atomic_load_explicit(&m->first_info_in_module, memory_order_relaxed);
-        while (info != NULL) {
-            DynArray(TB_Symbol*) syms = info->symbols;
-            dyn_array_for(i, syms) {
-                TB_Symbol* s = syms[i];
-
-                if (s->tag == TB_SYMBOL_FUNCTION && nl_table_get(&scc.nodes, s) == NULL) {
-                    scc_walk(&scc, &ipo, (TB_Function*) s);
-                }
+        nbhs_for(entry, &m->symbols) {
+            TB_Symbol* s = *entry;
+            if (s->tag == TB_SYMBOL_FUNCTION && nl_table_get(&scc.nodes, s) == NULL) {
+                scc_walk(&scc, &ipo, (TB_Function*) s, &ws);
             }
-            info = info->next_in_module;
         }
+
         tb_arena_restore(scc.arena, sp);
     }
-    #endif
 
     // we've got our bottom up ordering on the worklist... start trying to inline callsites
     bool progress = false;
@@ -111,27 +254,42 @@ bool tb_module_ipo(TB_Module* m) {
     FOR_N(i, 0, ipo.ws_cnt) {
         TB_Function* f = ipo.ws[i];
 
-        TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s\n", f->super.name));
+        static const char* size_strs[] = { "small", "small-medium", "medium", "large" };
+        SizeClass size = ipo.size_classes[f->uid];
+
+        TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s (%s)\n", f->super.name, size_strs[size]));
 
         TB_Node* callgraph = f->root_node->inputs[0];
         TB_ASSERT(callgraph->type == TB_CALLGRAPH);
 
         size_t i = 1;
         while (i < callgraph->input_count) {
-            TB_Node* call = callgraph->inputs[i];
+            TB_Node* call = callgraph->inputs[i++];
             TB_Function* target = static_call_site(call);
+            if (target == NULL) {
+                continue;
+            }
 
-            // really simple getter/setter kind of heuristic
-            if (target && target->node_count < 15) {
-                TB_OPTDEBUG(INLINE)(printf("  -> %s (from v%u)\n", target->super.name, call->gvn));
-                inline_into(scc.arena, f, call, target);
+            SizeClass target_size = ipo.size_classes[target->uid];
+
+            bool should = false;
+            // large functions will stop inlining completely
+            if (size != SIZE_LARGE && target_size != SIZE_LARGE) {
+                if (size == SIZE_SMALL || target_size == SIZE_SMALL) {
+                    should = true;
+                }
+            }
+
+            TB_OPTDEBUG(INLINE)(printf("  -> %s (from %%%u, %s)... %s\n", target->super.name, call->gvn, size_strs[target_size], should ? "YES" : "NO"));
+
+            if (should) {
+                inline_into(scc.arena, f, &ws, call, target);
                 progress = true;
-            } else {
-                i++;
             }
         }
     }
 
+    worklist_free(&ws);
     return progress;
 }
 
@@ -167,7 +325,7 @@ static TB_Node* inline_clone_node(TB_Function* f, TB_Node* call_site, TB_Node** 
     }
 
     #if TB_OPTDEBUG_INLINE
-    printf("CLONE "), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, cloned), printf("\n");
+    // printf("CLONE "), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, cloned), printf("\n");
     #endif
 
     return cloned;
@@ -182,27 +340,25 @@ static TB_Node* inline_clone_node(TB_Function* f, TB_Node* call_site, TB_Node** 
     return  = cloned; */
 }
 
-static void inline_into(TB_Arena* arena, TB_Function* f, TB_Node* call_site, TB_Function* kid) {
+static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Node* call_site, TB_Function* kid) {
     TB_ArenaSavepoint sp = tb_arena_save(arena);
     TB_Node** clones = tb_arena_alloc(arena, kid->node_count * sizeof(TB_Node*));
     memset(clones, 0, kid->node_count * sizeof(TB_Node*));
 
     // find all nodes
-    TB_Worklist ws = { 0 };
-    worklist_alloc(&ws, kid->node_count);
     {
-        worklist_push(&ws, kid->root_node);
-        for (size_t i = 0; i < dyn_array_length(ws.items); i++) {
-            TB_Node* n = ws.items[i];
-            FOR_USERS(u, n) { worklist_push(&ws, USERN(u)); }
+        worklist_push(ws, kid->root_node);
+        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+            TB_Node* n = ws->items[i];
+            FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
         }
     }
 
     // clone all nodes in kid into f (GVN while we're at it)
-    FOR_REV_N(i, 0, dyn_array_length(ws.items)) {
-        inline_clone_node(f, call_site, clones, ws.items[i]);
+    TB_Node* n;
+    while (n = worklist_pop(ws), n) {
+        inline_clone_node(f, call_site, clones, n);
     }
-    worklist_free(&ws);
 
     {
         // TODO(NeGate): region-ify the exit point

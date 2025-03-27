@@ -126,15 +126,6 @@ TB_Node* tb_node_mem_in(TB_Node* n);
 ////////////////////////////////
 // Core optimizer
 ////////////////////////////////
-typedef struct {
-    TB_Module* mod;
-    NL_HashSet visited;
-
-    size_t ws_cap;
-    size_t ws_cnt;
-    TB_Function** ws;
-} IPOSolver;
-
 static bool cant_signed_overflow(TB_Node* n) {
     return TB_NODE_GET_EXTRA_T(n, TB_NodeBinopInt)->ab & TB_ARITHMATIC_NSW;
 }

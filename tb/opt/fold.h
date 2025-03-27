@@ -301,6 +301,15 @@ static TB_Node* identity_int_binop(TB_Function* f, TB_Node* n) {
         return n;
     }
 
+    // better not be a cyclic phi, those need special treatment
+    if (n->inputs[1]->type == TB_PHI) {
+        FOR_N(i, 1, n->inputs[1]->input_count) {
+            if (n->inputs[1]->inputs[i] == n) {
+                return n;
+            }
+        }
+    }
+
     if (n->type == TB_MUL && b == 1) {
         return n->inputs[1];
     } else if (b == 0) {

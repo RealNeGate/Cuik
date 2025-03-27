@@ -113,36 +113,11 @@ static ptrdiff_t set_pop_any(Set* s) {
     return -1;
 }
 
-static bool set_first_time(Set* s, size_t index) {
-    size_t slots = (s->capacity + 63) / 64;
-    lldiv_t d = lldiv(index, 64);
-
-    if (d.quot >= slots) {
-        s->capacity = index * 2;
-        size_t new_slots = (s->capacity + 63) / 64;
-
-        s->data = cuik_realloc(s->data, new_slots * sizeof(uint64_t));
-        if (s->data == NULL) {
-            fprintf(stderr, "TB error: Set out of memory!");
-            abort();
-        }
-
-        memset(s->data + slots, 0, (new_slots - slots) * sizeof(uint64_t));
-    }
-
-    if ((s->data[d.quot] & (1ull << d.rem)) == 0) {
-        s->data[d.quot] |= (1ull << d.rem);
-        return true;
-    }
-
-    return false;
-}
-
 static void set_put(Set* s, size_t index) {
     size_t quot = index / 64;
     size_t rem  = index % 64;
 
-    if (quot >= s->capacity) {
+    if (index >= s->capacity) {
         size_t old = s->capacity;
 
         s->capacity = quot * 2;
@@ -161,7 +136,7 @@ static void set_put(Set* s, size_t index) {
 static void set_remove(Set* s, size_t index) {
     size_t quot = index / 64;
     size_t rem  = index % 64;
-    if (quot < s->capacity) {
+    if (index < s->capacity) {
         s->data[quot] &= ~(1ull << rem);
     }
 }
@@ -169,7 +144,7 @@ static void set_remove(Set* s, size_t index) {
 static bool set_get(Set* s, size_t index) {
     size_t quot = index / 64;
     size_t rem  = index % 64;
-    if (quot >= s->capacity) {
+    if (index >= s->capacity) {
         return false;
     }
 

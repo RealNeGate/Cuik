@@ -699,6 +699,7 @@ bool tb_opt_loops(TB_Function* f) {
         loop_find(f, &cfg, &ctx);
     }
     CUIK_TIMED_BLOCK("remove safepoints") {
+        #if 0
         TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
 
         // dominating safepoint of a block
@@ -748,6 +749,7 @@ bool tb_opt_loops(TB_Function* f) {
             }
         }
         tb_arena_restore(&f->tmp_arena, sp2);
+        #endif
     }
 
     TB_Worklist tmp_ws = { 0 };
@@ -1210,7 +1212,7 @@ bool tb_opt_loops(TB_Function* f) {
                     // our IV simplify handles for now.
                     if (cast != NULL) {
                         bool good = false;
-                        uint64_t scale = 0;
+                        uint64_t scale = 1;
                         if (cast->type == TB_ZERO_EXT || cast->type == TB_SIGN_EXT) {
                             good = true;
                         } else if (cast->type == TB_SHL && lattice_is_iconst(latuni_get(f, cast->inputs[2]))) {

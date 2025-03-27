@@ -23,8 +23,8 @@
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS     0
 #define TB_OPTDEBUG_PASSES    0
-#define TB_OPTDEBUG_PEEP      1
-#define TB_OPTDEBUG_SCCP      1
+#define TB_OPTDEBUG_PEEP      0
+#define TB_OPTDEBUG_SCCP      0
 #define TB_OPTDEBUG_LOOP      0
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0
@@ -38,8 +38,8 @@
 #define TB_OPTDEBUG_DATAFLOW  0
 #define TB_OPTDEBUG_PLACEMENT 0
 #define TB_OPTDEBUG_INLINE    0
-#define TB_OPTDEBUG_REGALLOC  0
-#define TB_OPTDEBUG_REGALLOC2 0
+#define TB_OPTDEBUG_REGALLOC  1
+#define TB_OPTDEBUG_REGALLOC2 1
 #define TB_OPTDEBUG_REGALLOC3 0
 #define TB_OPTDEBUG_REGALLOC4 0
 #define TB_OPTDEBUG_COMPACT   0
@@ -397,6 +397,9 @@ struct TB_Function {
     // for legacy builder
     TB_Trace trace;
     TB_Node* last_loc;
+
+    // Bookkeeping in certain opts
+    int uid;
 
     // Optimizer related data
     struct {

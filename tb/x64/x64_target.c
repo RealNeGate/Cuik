@@ -89,30 +89,68 @@ static int32_t as_int32(TB_Node* n) {
     return i->value;
 }
 
-static bool is_float32_zero(TB_Node* n) {
-    uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
-    return imm == 0;
+static bool is_float_zero(TB_Node* n) {
+    if (n->dt.type == TB_TAG_F32) {
+        uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
+        return imm == 0;
+    } else {
+        uint64_t imm = (Cvt_F64U64) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat64)->value }.i;
+        return imm == 0;
+    }
 }
 
-static TB_Symbol* gimme_float32_neg_zero(Ctx* ctx) {
-    uint32_t imm = 0x80000000;
-    TB_Global* g = tb__small_data_intern(ctx->module, sizeof(float), &imm);
-    return &g->super;
-}
+static TB_Symbol* gimme_float_neg_zero(Ctx* ctx, TB_DataType dt) {
+    if (dt.type == TB_TAG_F32) {
+        uint32_t imm[4];
+        FOR_N(i, 0, 4) { imm[i] = 0x80000000; }
 
-static TB_Symbol* gimme_float32_sym(Ctx* ctx, TB_Node* n) {
-    if (n->type == TB_VBROADCAST) {
-        uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n->inputs[1], TB_NodeFloat32)->value }.i;
-        TB_ASSERT(n->dt.type == TB_TAG_V128);
-
-        uint32_t x[] = { imm, imm, imm, imm };
-        TB_Global* g = tb__small_data_intern(ctx->module, sizeof(x), &x);
+        TB_Global* g = tb__small_data_intern(ctx->module, sizeof(imm), imm);
         return &g->super;
     } else {
-        uint32_t imm = (Cvt_F32U32) { .f = TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value }.i;
-        TB_Global* g = tb__small_data_intern(ctx->module, sizeof(float), &imm);
+        uint64_t imm[2];
+        FOR_N(i, 0, 2) { imm[i] = 1ull << 63ull; }
+
+        TB_Global* g = tb__small_data_intern(ctx->module, sizeof(imm), imm);
         return &g->super;
     }
+}
+
+static TB_Symbol* gimme_float_sym(Ctx* ctx, TB_Node* n) {
+    size_t elem_size = 0;
+    void* elem = 0;
+
+    char x[64];
+    size_t vec_size = 0;
+    if (n->type == TB_VBROADCAST) {
+        if (n->dt.type == TB_TAG_V128) {
+            vec_size = 16;
+        } else if (n->dt.type == TB_TAG_V256) {
+            vec_size = 32;
+        } else {
+            tb_todo();
+        }
+        n = n->inputs[1];
+    }
+
+    if (n->type == TB_F32CONST) {
+        elem_size = 4;
+        elem = &TB_NODE_GET_EXTRA_T(n, TB_NodeFloat32)->value;
+    } else {
+        TB_ASSERT(n->type == TB_F64CONST);
+        elem_size = 8;
+        elem = &TB_NODE_GET_EXTRA_T(n, TB_NodeFloat64)->value;
+    }
+
+    if (vec_size == 0) {
+        vec_size = elem_size;
+    }
+
+    FOR_N(i, 0, vec_size / elem_size) {
+        memcpy(&x[i * elem_size], elem, elem_size);
+    }
+
+    TB_Global* g = tb__small_data_intern(ctx->module, vec_size, x);
+    return &g->super;
 }
 
 static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n);
