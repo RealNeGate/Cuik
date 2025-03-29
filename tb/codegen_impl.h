@@ -338,7 +338,7 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
             wants_operand |= node_grammar_get(state << 16 | (257+1)) > 0;
 
             if (mach_is_operand[in->type] && in != n && wants_operand) {
-                worklist_test_n_set(walker_ws, in);
+                bool pushed_already = !worklist_test_n_set(walker_ws, in);
                 tb__gvn_remove(f, in);
 
                 TB_OPTDEBUG(ISEL2)(printf("\n>>>\n"));
@@ -346,13 +346,18 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
                 if (new_in && new_in != n) {
                     // we can GVN machine nodes :)
                     new_in = tb_opt_gvn_node(f, new_in);
-                    subsume_node(f, in, new_in);
+                    if (!mach_is_subpat[in->type]) {
+                        subsume_node(f, in, new_in);
+                    }
 
                     // don't walk the replacement
                     worklist_push(walker_ws, new_in);
 
                     in = new_in;
                     in_type = in ? in->type : TB_NULL;
+                } else if (!pushed_already) {
+                    // node failed but hasn't been processed, treat it as a node of its own
+                    // worklist_test_n_set(walker_ws, in);
                 }
 
                 #if TB_OPTDEBUG_ISEL2
@@ -467,10 +472,8 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 }
 
 static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
-    cuikperf_region_start("compile", f->super.name);
-
     #if TB_OPTDEBUG_ISEL
-    tb_print_dumb(f);
+    // tb_print_dumb(f);
     #endif
 
     if (0) {
@@ -823,86 +826,92 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
     size_t final_order_count = 0;
 
     CUIK_TIMED_BLOCK("BB scheduling") {
-        // any empty projection blocks will mark which block they want you to jump to, if the
-        // block "forwards" to itself then it's not actually forwarding.
-        FOR_N(i, 0, bb_count) {
-            TB_BasicBlock* bb = &cfg.blocks[i];
-            bool empty = true;
+        if (bb_count == 1) {
+            // none of this shit is necessary for single BB functions
+            final_order_count = 1;
+            final_order[0] = 0;
+        } else {
+            // any empty projection blocks will mark which block they want you to jump to, if the
+            // block "forwards" to itself then it's not actually forwarding.
+            FOR_N(i, 0, bb_count) {
+                TB_BasicBlock* bb = &cfg.blocks[i];
+                bool empty = true;
 
-            size_t item_count = aarray_length(bb->items);
-            if (cfg_is_region(bb->items[0])) {
-                // if it's all phis then we've got an empty enough block for forwarding
-                FOR_N(j, 1, item_count) {
-                    if (bb->items[j]->type != TB_PHI) {
+                size_t item_count = aarray_length(bb->items);
+                if (cfg_is_region(bb->items[0])) {
+                    // if it's all phis then we've got an empty enough block for forwarding
+                    FOR_N(j, 1, item_count) {
+                        if (bb->items[j]->type != TB_PHI) {
+                            empty = false;
+                            break;
+                        }
+                    }
+                } else if (item_count > 1 || !cfg_is_cproj(bb->start)) {
+                    // if there's just empty copies we can consider it empty
+                    FOR_N(j, 0, item_count) {
+                        TB_Node* n = bb->items[j];
+                        if (bb->start == n) {
+                            continue;
+                        } else if (n->type == TB_MACH_COPY) {
+                            // if both dst & src match, it's not gonna emit anything
+                            if (ctx.vreg_map[n->gvn] == ctx.vreg_map[n->inputs[1]->gvn]) {
+                                continue;
+                            }
+                        }
+
                         empty = false;
                         break;
                     }
                 }
-            } else if (item_count > 1 || !cfg_is_cproj(bb->start)) {
-                // if there's just empty copies we can consider it empty
-                FOR_N(j, 0, item_count) {
-                    TB_Node* n = bb->items[j];
-                    if (bb->start == n) {
-                        continue;
-                    } else if (n->type == TB_MACH_COPY) {
-                        // if both dst & src match, it's not gonna emit anything
-                        if (ctx.vreg_map[n->gvn] == ctx.vreg_map[n->inputs[1]->gvn]) {
-                            continue;
-                        }
-                    }
 
-                    empty = false;
-                    break;
+                if (empty) {
+                    TB_Node* next = cfg_next_control(bb->start);
+                    TB_BasicBlock* succ = nl_map_get_checked(cfg.node_to_block, next);
+                    bb->fwd = succ - cfg.blocks;
+                } else {
+                    bb->fwd = i;
                 }
             }
 
-            if (empty) {
-                TB_Node* next = cfg_next_control(bb->start);
-                TB_BasicBlock* succ = nl_map_get_checked(cfg.node_to_block, next);
-                bb->fwd = succ - cfg.blocks;
-            } else {
-                bb->fwd = i;
-            }
-        }
+            // sometimes we forward twice (wacky cases around "empty" regions)
+            FOR_N(i, 0, bb_count) {
+                TB_BasicBlock* bb = &cfg.blocks[i];
 
-        // sometimes we forward twice (wacky cases around "empty" regions)
-        FOR_N(i, 0, bb_count) {
-            TB_BasicBlock* bb = &cfg.blocks[i];
+                int fwd = bb->fwd;
+                while (fwd != cfg.blocks[fwd].fwd) {
+                    fwd = cfg.blocks[fwd].fwd;
+                }
 
-            int fwd = bb->fwd;
-            while (fwd != cfg.blocks[fwd].fwd) {
-                fwd = cfg.blocks[fwd].fwd;
+                bb->fwd = fwd;
             }
 
-            bb->fwd = fwd;
-        }
+            // final_order_count = bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
+            final_order_count = bb_placement_trace(&f->tmp_arena, &cfg, final_order);
 
-        // final_order_count = bb_placement_rpo(&f->tmp_arena, &cfg, final_order);
-        final_order_count = bb_placement_trace(&f->tmp_arena, &cfg, final_order);
+            // insert fallthrus
+            FOR_N(i, 0, final_order_count) {
+                TB_BasicBlock* bb = &cfg.blocks[final_order[i]];
 
-        // insert fallthrus
-        FOR_N(i, 0, final_order_count) {
-            TB_BasicBlock* bb = &cfg.blocks[final_order[i]];
+                int fallthru = -1;
+                if (i + 1 < final_order_count) {
+                    fallthru = final_order[i + 1];
+                }
 
-            int fallthru = -1;
-            if (i + 1 < final_order_count) {
-                fallthru = final_order[i + 1];
-            }
+                // insert jump for the fallthru case, this matters most for the platforms which can
+                // bundle jumps (branch delay slots and VLIWs)
+                if (!cfg_is_terminator(bb->end)) {
+                    TB_Node* succ_n = cfg_next_control(bb->end);
+                    TB_BasicBlock* succ_bb = nl_map_get_checked(ctx.cfg.node_to_block, succ_n);
+                    if (succ_bb->fwd != fallthru) {
+                        TB_Node* jmp = tb_alloc_node(f, TB_MACH_JUMP, TB_TYPE_CONTROL, 1, 0);
+                        TB_User* succ = cfg_next_user(bb->end);
+                        set_input(f, USERN(succ), jmp, USERI(succ));
+                        set_input(f, jmp, bb->end, 0);
+                        bb->end = jmp;
 
-            // insert jump for the fallthru case, this matters most for the platforms which can
-            // bundle jumps (branch delay slots and VLIWs)
-            if (!cfg_is_terminator(bb->end)) {
-                TB_Node* succ_n = cfg_next_control(bb->end);
-                TB_BasicBlock* succ_bb = nl_map_get_checked(ctx.cfg.node_to_block, succ_n);
-                if (succ_bb->fwd != fallthru) {
-                    TB_Node* jmp = tb_alloc_node(f, TB_MACH_JUMP, TB_TYPE_CONTROL, 1, 0);
-                    TB_User* succ = cfg_next_user(bb->end);
-                    set_input(f, USERN(succ), jmp, USERI(succ));
-                    set_input(f, jmp, bb->end, 0);
-                    bb->end = jmp;
-
-                    aarray_push(bb->items, jmp);
-                    tb__insert(&ctx, f, bb, jmp);
+                        aarray_push(bb->items, jmp);
+                        tb__insert(&ctx, f, bb, jmp);
+                    }
                 }
             }
         }
@@ -1156,7 +1165,6 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
 
     // cleanup memory
     tb_free_cfg(&cfg);
-    cuikperf_region_end();
 
     #ifndef NDEBUG
     log_debug("%s: total allocs on ir_arena=%.1f KiB", f->super.name, f->arena.alloc_bytes / 1024.0f);

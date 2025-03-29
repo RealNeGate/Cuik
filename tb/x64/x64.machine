@@ -39,6 +39,10 @@ pat (TB_LOCAL $root stack_pos=$disp) => (x86_MEMORY "ctx->frame_ptr" disp=$disp)
 // [symbol]
 pat (TB_SYMBOL $root sym=$sym) => (x86_MEMORY (TB_MACH_SYMBOL $root sym=$sym))
 
+// [symbol + offset]
+pat (TB_PTR_OFFSET ___ (TB_SYMBOL $root sym=$sym) $offset)
+=> (x86_MEMORY (x86_lea dt=TB_TYPE_PTR ___ ___ (TB_MACH_SYMBOL $root sym=$sym) mode=MODE_LD) $offset flags=OP_INDEXED)
+
 // [symbol + disp]
 pat (TB_PTR_OFFSET ___ (TB_SYMBOL $root sym=$sym) ($disp: TB_ICONST ...))
 where "fits_into_int32(TB_TYPE_I64, $disp)"
@@ -47,6 +51,10 @@ where "fits_into_int32(TB_TYPE_I64, $disp)"
 // using an lea as a memory operand is kinda useful... swag :p
 subpat (x86_lea ___ ___ $base disp=$disp) => (x86_MEMORY $base disp=$disp)
 subpat (x86_lea ___ ___ $base $index scale=$scale disp=$disp flags=$flags) where "$flags==OP_INDEXED" => (x86_MEMORY $base $index flags=OP_INDEXED scale=$scale disp=$disp)
+
+// [rsp + offset]
+pat (TB_PTR_OFFSET ___ (x86_MEMORY (TB_MACH_FRAME_PTR ...) flags=$flags disp=$disp) ($addend: TB_ICONST ...))
+=> (x86_MEMORY "ctx->frame_ptr" flags=$flags disp="$disp + as_int32($addend)")
 
 // (ADD (LOAD ($lhs: MEMORY ...)) $rhs) => ()
 
@@ -123,8 +131,9 @@ pat ($lhs: x86_MEMORY ...) => (x86_lea dt=TB_TYPE_PTR ___ ___ $lhs mode=MODE_LD)
 pat (TB_LOAD dt=$dt $ctrl $mem $addr) where "TB_IS_INT_OR_PTR($dt)" => (x86_mov dt=$dt $ctrl $mem $addr mode=MODE_LD)
 pat (TB_LOAD dt=$dt $ctrl $mem ($lhs: x86_MEMORY ...)) where "TB_IS_INT_OR_PTR($dt)" => (x86_mov dt=$dt $ctrl $mem $lhs mode=MODE_LD)
 
-pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_INT_OR_PTR(n->inputs[3]->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $addr $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
-pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) $val) where "TB_IS_INT_OR_PTR(n->inputs[3]->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
+pat (TB_STORE $ctrl $mem $addr $val) where "TB_IS_INT_OR_PTR($val->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $addr $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
+pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) $val) where "TB_IS_INT_OR_PTR($val->dt)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs $val mode=MODE_ST extra_dt="n->inputs[3]->dt")
+pat (TB_STORE $ctrl $mem ($lhs: x86_MEMORY ...) ($val: TB_ICONST ...) flags=$flags) where "TB_IS_INT_OR_PTR($val->dt) && fits_into_int32($val->dt, $val)" => (x86_mov dt=TB_TYPE_MEMORY $ctrl $mem $lhs flags="$flags | OP_IMMEDIATE" mode=MODE_ST extra_dt="n->inputs[3]->dt" imm="as_int32($val)")
 
 #define NORMIE_OP(op_name, mnemonic) \
 node (mnemonic) \

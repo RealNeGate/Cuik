@@ -24,7 +24,7 @@ struct planet {
  * decreases performance by 25%. (I.e. do not compile this with -O3)
  * Advances with dt == 1.0
  */
-void advance(int nbodies, struct planet *bodies) {
+static void advance(int nbodies, struct planet *bodies) {
     int i, j;
 
     for (i = 0; i < nbodies; i++) {
@@ -52,7 +52,7 @@ void advance(int nbodies, struct planet *bodies) {
     }
 }
 
-double energy(int nbodies, struct planet *bodies) {
+static double energy(int nbodies, struct planet *bodies) {
     double e;
     int i, j;
 
@@ -72,7 +72,7 @@ double energy(int nbodies, struct planet *bodies) {
     return e;
 }
 
-void offset_momentum(int nbodies, struct planet *bodies) {
+static void offset_momentum(int nbodies, struct planet *bodies) {
     double px = 0.0, py = 0.0, pz = 0.0;
     int i;
     for (i = 0; i < nbodies; i++) {
@@ -123,7 +123,7 @@ struct planet bodies[NBODIES] = {
  *
  * When all advances done, rescale bodies back to obtain correct energy.
  */
-void scale_bodies(int nbodies, struct planet *bodies, double scale) {
+static void scale_bodies(int nbodies, struct planet *bodies, double scale) {
     int i;
 
     for (i = 0; i < nbodies; i++) {

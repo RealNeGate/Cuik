@@ -212,7 +212,7 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "compact.h"
 #include "gcm.h"
 #include "libcalls.h"
-#include "mem2reg.h"
+#include "mem.h"
 #include "rpo_sched.h"
 #include "list_sched.h"
 #include "bb_placement.h"
@@ -1357,6 +1357,8 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     TB_OPTDEBUG(PASSES)(printf("FUNCTION %s:\n", f->super.name));
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
 
+    uint64_t total = 0;
+
     int k;
     int rounds = 0;
 
@@ -1381,9 +1383,11 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             // work when it returns true.
             TB_OPTDEBUG(PASSES)(printf("      * Locals\n"));
             DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOCALS ===\n"));
+            uint64_t start = cuik_time_in_nanos();
             if (k = tb_opt_locals(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
             }
+            total += cuik_time_in_nanos() - start;
         }
 
         // avoids bloating up my arenas with freed nodes
@@ -1433,6 +1437,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     cuik_free(f->stats.killed);
     #endif
 
+    printf("%f", total / 1000000.0);
     f->worklist = NULL;
     return progress;
 }

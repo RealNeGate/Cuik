@@ -138,6 +138,29 @@ static TB_Node* ideal_store(TB_Function* f, TB_Node* n) {
     TB_Node *mem = n->inputs[1], *addr = n->inputs[2], *val = n->inputs[3];
     TB_DataType dt = val->dt;
 
+    #if 0
+    // combining adjacent stores
+    TB_Node* b = val;
+    KnownPointer b_ptr = known_pointer(addr);
+    if (mem->type == TB_STORE && mem->inputs[0] == n->inputs[0] && mem->user_count == 1) {
+        TB_Node* a = mem->inputs[3];
+        KnownPointer a_ptr = known_pointer(mem->inputs[2]);
+        if (a_ptr.base == b_ptr.base) {
+            if (a_ptr.offset > b_ptr.offset) {
+                SWAP(TB_Node*, a, b);
+                SWAP(KnownPointer, a_ptr, b_ptr);
+            }
+
+            int a_bytes = tb_data_type_byte_size(f->super.module, a->dt.type);
+            int b_bytes = tb_data_type_byte_size(f->super.module, b->dt.type);
+            int bytes = a_bytes + b_bytes;
+            if (TB_IS_INTEGER_TYPE(a->dt) && TB_IS_INTEGER_TYPE(b->dt) && a_ptr.offset + a_bytes == b_ptr.offset) {
+                bool valid_size = bytes == 2 || bytes == 4 || bytes == 8;
+                __debugbreak();
+            }
+        }
+    }
+    #endif
 
     #if 0
     // store is next to a non-aliasing adjacent store (or merge to non-adjacent stores)

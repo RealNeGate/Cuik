@@ -202,6 +202,8 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
 
 static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Node* call_site, TB_Function* kid);
 bool tb_module_ipo(TB_Module* m) {
+    return false;
+
     CUIK_TIMED_BLOCK("resize barrier") {
         symbolhs_resize_barrier(&m->symbols);
     }
@@ -253,6 +255,9 @@ bool tb_module_ipo(TB_Module* m) {
     TB_OPTDEBUG(INLINE)(printf("BOTTOM-UP ORDER:\n"));
     FOR_N(i, 0, ipo.ws_cnt) {
         TB_Function* f = ipo.ws[i];
+        if (f->super.tag == TB_SYMBOL_DEAD) {
+            continue;
+        }
 
         static const char* size_strs[] = { "small", "small-medium", "medium", "large" };
         SizeClass size = ipo.size_classes[f->uid];
@@ -284,7 +289,16 @@ bool tb_module_ipo(TB_Module* m) {
 
             if (should) {
                 inline_into(scc.arena, f, &ws, call, target);
+                i -= 1;
                 progress = true;
+
+                // remove edge on graph
+                ipo.ref_count[target->uid] -= 1;
+                if (ipo.ref_count[target->uid] == 0 && target->super.linkage == TB_LINKAGE_PRIVATE) {
+                    // function is now unreachable, we can kill it
+                    TB_OPTDEBUG(INLINE)(printf("     KILL!\n"));
+                    tb_function_destroy(target);
+                }
             }
         }
     }

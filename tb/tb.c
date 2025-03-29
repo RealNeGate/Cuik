@@ -404,8 +404,8 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
 
     f->gvn_nodes = nl_hashset_alloc(32);
 
-    tb_arena_create(&f->arena,     "ModulePerm");
-    tb_arena_create(&f->tmp_arena, "ModuleTmp");
+    tb_arena_create(&f->arena,     "FuncPerm");
+    tb_arena_create(&f->tmp_arena, "FuncTmp");
 
     f->section = section;
     f->node_count = 0;
@@ -464,6 +464,13 @@ void tb_function_set_prototype(TB_Function* f, TB_ModuleSectionHandle section, T
 
 TB_FunctionPrototype* tb_function_get_prototype(TB_Function* f) {
     return f->prototype;
+}
+
+void tb_function_destroy(TB_Function* f) {
+    f->super.tag = TB_SYMBOL_DEAD;
+    nl_hashset_free(f->gvn_nodes);
+    tb_arena_destroy(&f->tmp_arena);
+    tb_arena_destroy(&f->arena);
 }
 
 void* tb_global_add_region(TB_Module* m, TB_Global* g, size_t offset, size_t size) {

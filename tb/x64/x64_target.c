@@ -2056,7 +2056,7 @@ static void pre_emit(Ctx* restrict ctx, TB_CGEmitter* e, TB_Node* root) {
 
         // Align stack usage to 16bytes + header to accommodate for the RIP being pushed
         // by CALL (and frameptr if applies)
-        stack_usage = align_up(stack_usage + ctx->stack_header, 16) + (16 - ctx->stack_header);
+        stack_usage = align_up(stack_usage, 16) + (16 - ctx->stack_header);
     }
     ctx->stack_usage = stack_usage;
 
@@ -2319,7 +2319,7 @@ int max_pack_width_for_op(TB_Function* f, TB_DataType dt, TB_Node* n) {
         i = 1;
     }
 
-    TB_ASSERT(dt.type >= 7);
+    TB_ASSERT(dt.type >= 2);
     return limits[i][dt.type - 2];
 }
 

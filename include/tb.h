@@ -508,6 +508,7 @@ typedef enum {
     TB_SYMBOL_EXTERNAL,
     TB_SYMBOL_GLOBAL,
     TB_SYMBOL_FUNCTION,
+    TB_SYMBOL_DEAD,
     TB_SYMBOL_MAX,
 } TB_SymbolTag;
 
@@ -1112,6 +1113,7 @@ TB_API void tb_inst_set_exit_location(TB_Function* f, TB_SourceFile* file, int l
 // if section is NULL, default to .text
 TB_API TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage);
 TB_API void tb_function_set_features(TB_Function* f, const TB_FeatureSet* features);
+TB_API void tb_function_destroy(TB_Function* f);
 
 TB_API TB_Arena* tb_function_get_arena(TB_Function* f, int i);
 
