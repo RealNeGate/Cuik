@@ -31,7 +31,26 @@ typedef struct {
 
     Set ready_set;
     ArenaArray(ReadyNode) ready;
+
+    int* depth;
 } ListSched;
+
+// assuming the inputs are on their final leg, what
+// is the effect on register pressure.
+static int pressure_delta(ListSched* sched, TB_Node* n) {
+    int kills = 0;
+    FOR_N(i, 0, n->input_count) {
+        kills += (n->dt.type != TB_TAG_MEMORY);
+    }
+
+    // new lifetime, pressure increase
+    int defs = 0;
+    if (n->dt.type != TB_TAG_CONTROL && n->dt.type != TB_TAG_MEMORY) {
+        defs += 1;
+    }
+
+    return defs - kills;
+}
 
 // should probably move this out, it's useful elsewhere
 static void ready_up(ListSched* sched, TB_Node* n, TB_Node* end) {
@@ -69,30 +88,25 @@ static bool is_real_datatype(TB_DataType dt) {
 // * Condition attached to the terminator branch should be scheduled right before it.
 //
 // returns an index from the ready array (or -1 when it can't find an answer)
-static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, ListSched* sched, int unit_i) {
-    uint64_t unit_mask = 1ull << unit_i;
-
-    TB_OPTDEBUG(SCHEDULE)(printf("Best on Port%d?\n", unit_i));
+static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, ListSched* sched, uint64_t unit_mask, bool can_stall) {
+    TB_OPTDEBUG(SCHED1)(printf("Best on "));
+    FOR_N(i, 0, 64) if ((unit_mask >> i) & 1) {
+        TB_OPTDEBUG(SCHED1)(printf("Port%zu ", i));
+    }
+    TB_OPTDEBUG(SCHED1)(printf("?\n"));
 
     int best_i = -1;
     int best_score = 0;
     FOR_REV_N(i, 0, aarray_length(sched->ready)) {
         TB_Node* n = sched->ready[i].n;
-        uint64_t unit_mask = sched->ready[i].unit_mask;
+        uint64_t op_unit_mask = sched->ready[i].unit_mask;
         int lat = sched->ready[i].latency;
 
         // actually fits on the available machine
-        if (((unit_mask >> unit_i) & 1) == 0) { continue; }
+        if ((unit_mask & op_unit_mask) == 0) { continue; }
 
         // high latency ops should be scheduled first
         int score = lat*100;
-
-        // things which have lots of inputs are ideally processed first
-        FOR_N(j, 0, n->input_count) {
-            if (n->inputs[j] && is_real_datatype(n->inputs[j]->dt)) {
-                score += 10;
-            }
-        }
 
         // bump the score if we're chained to the previous dispatched op
         TB_ASSERT(dyn_array_length(ws->items) > 0);
@@ -101,10 +115,17 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
             score += 200;
         }
 
-        // things which produce more values are cringe
-        if (is_real_datatype(n->dt)) {
-            score -= 10;
+        int deepest_use = 0;
+        FOR_USERS(u, n) {
+            if (f->scheduled[USERN(u)->gvn] == bb) {
+                int use_depth = sched->depth[USERN(u)->gvn];
+                deepest_use = TB_MAX(deepest_use, use_depth);
+            }
         }
+
+        // score things which decrease pressure higher
+        int dt = pressure_delta(sched, n);
+        score -= dt * 50;
 
         // if we have a single use and it's waiting on us? then we
         // really wanna schedule, if it's waiting on a lot of others then
@@ -118,10 +139,14 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
             }
         }
 
-        #if TB_OPTDEBUG_SCHEDULE
+        // we wanna handle shallower uses first
+        score -= deepest_use;
+        if (score < 1) { score = 1; }
+
+        #if 0 // TB_OPTDEBUG_SCHED1
         printf("  ");
         tb_print_dumb_node(NULL, n);
-        printf("  score=%d\n", score);
+        printf("  score=%d, deepest_use=%d\n", score, deepest_use);
         #endif
 
         if (score > best_score) {
@@ -136,9 +161,66 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
 void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlock* bb, TB_GetLatency get_lat, TB_GetUnitMask get_unit_mask, int unit_count) {
     TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
 
-    TB_OPTDEBUG(SCHEDULE)(printf("BB %zu\n", bb - cfg->blocks));
+    TB_OPTDEBUG(SCHED1)(printf("BB %zu\n", bb - cfg->blocks));
+    // wanna move the increment op to the end of an affine loop
+    TB_Node* end = bb->end;
+
+    int cycle = 0;
+    ArenaArray(InFlight) active = aarray_create(&f->tmp_arena, InFlight, 32);
+
+    ListSched sched = {
+        .f = f, .get_lat = get_lat, .get_unit_mask = get_unit_mask
+    };
+    sched.ready_set = set_create_in_arena(&f->tmp_arena, f->node_count);
+    sched.ready     = aarray_create(&f->tmp_arena, ReadyNode, 32);
+    sched.depth     = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
+
+    CUIK_TIMED_BLOCK("trace") {
+        TB_Node* top = bb->start;
+
+        // DFS walk
+        TB_Worklist* ws = f->worklist;
+        worklist_clear(ws);
+        worklist_push(ws, top);
+        sched.depth[top->gvn] = 0;
+
+        FOR_USERS(u, top) {
+            if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
+                worklist_push(ws, USERN(u));
+            }
+        }
+
+        FOR_USERS(u, f->root_node) {
+            if (is_proj(USERN(u))) {
+                TB_ASSERT(USERI(u) == 0);
+                worklist_push(ws, USERN(u));
+            }
+        }
+
+        while (dyn_array_length(ws->items)) retry: {
+            TB_Node* n = ws->items[dyn_array_length(ws->items) - 1];
+
+            // process users before placing ourselves
+            FOR_USERS(u, n) {
+                TB_Node* un = USERN(u);
+                if (!worklist_test_n_set(ws, un) && f->scheduled[un->gvn] == bb) {
+                    dyn_array_put(ws->items, un);
+                    goto retry;
+                }
+            }
+
+            #if TB_OPTDEBUG_SCHED1
+            tb_print_dumb_node(NULL, n);
+            printf(" depth=%zu\n", dyn_array_length(ws->items));
+            #endif
+
+            dyn_array_pop(ws->items);
+            sched.depth[n->gvn] = dyn_array_length(ws->items);
+        }
+        worklist_clear(ws);
+    }
+
     worklist_push(ws, bb->start);
-    // TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, bb->start), printf("\n"));
 
     // first block has access to root's users
     int id = bb - cfg->blocks;
@@ -153,8 +235,6 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
         FOR_USERS(u, f->root_node) {
             if (is_proj(USERN(u))) {
                 TB_ASSERT(USERI(u) == 0);
-                // TB_OPTDEBUG(SCHEDULE)(printf("        DISPATCH "), tb_print_dumb_node(NULL, USERN(u)), printf("\n"));
-
                 worklist_push(ws, USERN(u));
             }
         }
@@ -166,18 +246,6 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             worklist_push(ws, USERN(u));
         }
     }
-
-    // wanna move the increment op to the end of an affine loop
-    TB_Node* end = bb->end;
-
-    int cycle = 0;
-    ArenaArray(InFlight) active = aarray_create(&f->tmp_arena, InFlight, 32);
-
-    ListSched sched = {
-        .f = f, .get_lat = get_lat, .get_unit_mask = get_unit_mask
-    };
-    sched.ready_set = set_create_in_arena(&f->tmp_arena, f->node_count);
-    sched.ready     = aarray_create(&f->tmp_arena, ReadyNode, 32);
 
     // fill up initial ready list (everything used by the live-ins)
     aarray_for(i, bb->items) {
@@ -192,11 +260,12 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
     uint64_t blocked_mask = UINT64_MAX >> (64 - unit_count);
 
     // btw worklist has the final schedule
+    int decode_width = 4;
+    bool stalled_last_cycle = false;
     while (aarray_length(active) > 0 || aarray_length(sched.ready) > 0) {
         cuikperf_region_start("step", NULL);
-        bool stall = true;
 
-        #if TB_OPTDEBUG_SCHEDULE
+        #if TB_OPTDEBUG_SCHED1
         TB_Node* arr[64];
         FOR_N(i, 0, unit_count) {
             arr[i] = NULL;
@@ -244,7 +313,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             }
         }
 
-        #if TB_OPTDEBUG_SCHEDULE
+        #if TB_OPTDEBUG_SCHED1
         printf("  retired %d ops [ ", retired);
         FOR_N(i, 0, aarray_length(sched.ready)) {
             printf("%%%u ", sched.ready[i].n->gvn);
@@ -252,24 +321,31 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
         printf("]\n");
         #endif
 
-        // dispatch one instruction per unit per cycle
+        // dispatch 1 op per decoder
+        bool stall = true;
         CUIK_TIMED_BLOCK("dispatch") {
-            FOR_N(i, 0, unit_count) {
-                if ((in_use_mask >> i) & 1) { continue; }
+            FOR_N(i, 0, decode_width) {
+                int idx = best_ready_node(f, ws, bb, &sched, ~in_use_mask & blocked_mask, !stalled_last_cycle);
+                if (idx < 0) {
+                    continue;
+                }
 
-                int idx = best_ready_node(f, ws, bb, &sched, i);
-                if (idx < 0) { continue; }
+                uint64_t unit_mask = ~in_use_mask & sched.ready[idx].unit_mask;
+                if (unit_mask == 0) {
+                    TB_OPTDEBUG(SCHED1)(printf("  Failed to dispatch "), tb_print_dumb_node(NULL, sched.ready[idx].n), printf("\n"));
+                    break;
+                }
 
-                TB_ASSERT((sched.ready[idx].unit_mask >> i) & 1);
+                int port = tb_ffs64(unit_mask) - 1;
                 TB_Node* n = sched.ready[idx].n;
-                in_use_mask |= 1ull << i;
+                in_use_mask |= 1ull << port;
                 stall = false;
 
                 aarray_remove(sched.ready, idx);
                 TB_ASSERT(!is_proj(n));
 
                 int end_cycle = cycle + get_lat(f, n, end);
-                aarray_push(active, (InFlight){ n, end_cycle, i });
+                aarray_push(active, (InFlight){ n, end_cycle, port });
 
                 if (n != end) {
                     // idk, it's ugly and a bookkeeping op
@@ -290,12 +366,14 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
                         worklist_push(ws, USERN(u));
                     }
 
-                    TB_OPTDEBUG(SCHEDULE)(printf("  DISPATCH "), tb_print_dumb_node(NULL, n), printf("\n"));
+                    TB_OPTDEBUG(SCHED1)(printf("  Port%d: Dispatch ", port), tb_print_dumb_node(NULL, n), printf(" (ready on t=%d)\n", end_cycle));
+                    stall = false;
                 }
             }
         }
 
         cuikperf_region_end();
+        stalled_last_cycle = stall;
         cycle += 1;
     }
 

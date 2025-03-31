@@ -228,6 +228,52 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
     emit_memory_operand(e, rx, b);
 }
 
+static void inst2sseint(TB_CGEmitter* restrict e, InstType type, const Val* a, const Val* b, TB_X86_DataType dt) {
+    TB_ASSERT(type < COUNTOF(inst_table));
+    const InstDesc* restrict inst = &inst_table[type];
+
+    bool supports_mem_dst = (type == MOVDQU || type == MOVDQA);
+    bool dir = is_value_mem(a);
+
+    bool packed    = (dt == TB_X86_F32x4 || dt == TB_X86_F64x2);
+    bool is_double = (dt == TB_X86_F64x2 || dt == TB_X86_F64x1);
+
+    TB_ASSERT(!dir || supports_mem_dst);
+    if (supports_mem_dst && dir) {
+        SWAP(const Val*, a, b);
+    }
+
+    uint8_t rx = a->reg;
+    uint8_t base, index;
+    if (b->type == VAL_MEM) {
+        base  = b->reg;
+        index = b->index != GPR_NONE ? b->index : 0;
+    } else if (b->type == VAL_XMM || b->type == VAL_GPR) {
+        base  = b->reg;
+        index = 0;
+    } else if (b->type == VAL_GLOBAL) {
+        base  = 0;
+        index = 0;
+    } else {
+        tb_todo();
+    }
+
+    if (rx >= 8 || base >= 8 || index >= 8) {
+        EMIT1(e, rex(false, rx, base, index));
+    }
+
+    if (type == MOVDQA) {
+        EMIT1(e, 0x66);
+    } else if (type == MOVDQU) {
+        EMIT1(e, 0xF3);
+    }
+
+    // extension prefix
+    EMIT1(e, 0x0F);
+    EMIT1(e, inst->op + (dir ? 0x10 : 0x00));
+    emit_memory_operand(e, rx, b);
+}
+
 static void asm_inst0(TB_CGEmitter* restrict e, InstType type, TB_X86_DataType dt) {
     TB_ASSERT(type < COUNTOF(inst_table));
     const InstDesc* restrict inst = &inst_table[type];
@@ -314,7 +360,9 @@ static void asm_inst1(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* 
 }
 
 static void asm_inst2(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* a, const Val* b) {
-    if (dt >= TB_X86_F32x1 && dt <= TB_X86_F64x2) {
+    if (dt >= TB_X86_PBYTE && dt <= TB_X86_PQWORD) {
+        inst2sseint(e, type, a, b, dt);
+    } else if (dt >= TB_X86_F32x1 && dt <= TB_X86_F64x2) {
         inst2sse(e, type, a, b, dt);
     } else {
         inst2(e, type, a, b, dt);

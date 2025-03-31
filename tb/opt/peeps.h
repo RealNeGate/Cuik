@@ -58,6 +58,7 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
     [TB_REGION]         = NODE_CTRL,
     [TB_NATURAL_LOOP]   = NODE_CTRL,
     [TB_AFFINE_LOOP]    = NODE_CTRL,
+    [TB_BLACKHOLE]      = NODE_CTRL,
     [TB_DEBUGBREAK]     = NODE_CTRL | NODE_MEMORY_IN,
 };
 
@@ -132,6 +133,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_DEBUGBREAK]     = { NULL,              NULL,               value_ctrl,      },
     [TB_TRAP]           = { NULL,              NULL,               value_ctrl,      },
     [TB_UNREACHABLE]    = { NULL,              NULL,               value_ctrl,      },
+    [TB_BLACKHOLE]      = { NULL,              NULL,               value_ctrl,      },
     [TB_DEAD]           = { NULL,              NULL,               value_dead,      },
     [TB_ROOT]           = { NULL,              NULL,               value_root,      },
 };

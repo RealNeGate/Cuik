@@ -34,6 +34,7 @@ void target_generic_fill_builtin_table(BuiltinTable* builtins) {
 
     X(__builtin_unreachable, " v");
     X(__builtin_syscall, ". v");
+    X(__builtin_blackhole, ". v");
 
     // cuik internal
     X(__c11_atomic_thread_fence,            "i v");

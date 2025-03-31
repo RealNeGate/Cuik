@@ -92,6 +92,7 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // vector op
         OP_SSE    = 4096,
         OP_SCALAR = 8192,
+        OP_SSEI   = 16384,
     };
 
     #define NORMIE_BINOP(op) [op+0] = OP_MODRM | OP_8BIT, [op+1] = OP_MODRM, [op+2] = OP_MODRM | OP_DIR | OP_8BIT, [op+3] = OP_MODRM | OP_DIR, [op+4] = OP_RAX | OP_IMM8, [op+5] = OP_RAX | OP_IMM
@@ -205,6 +206,9 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         _0F(0xA3)        = OP_MODRM,
         // imul reg, r/m
         _0F(0xAF)        = OP_MODRM,
+        // movdqa/movdqu reg, r/m
+        _0F(0x6F)        = OP_MODRM | OP_DIR | OP_SSEI,
+        _0F(0x7F)        = OP_MODRM | OP_SSEI,
         // bswap r+
         _0F2(0xC8, 0xCF) = OP_PLUSR,
         // cmovcc reg, r/m
@@ -251,6 +255,10 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
             else                                 { inst->dt = TB_X86_F32x4; } // ps     __     OPCODE
         }
 
+        flags &= ~(TB_X86_INSTR_REP | TB_X86_INSTR_REPNE);
+    } else if (props & OP_SSEI) {
+        // TODO(NeGate): classify types
+        inst->dt = TB_X86_PDWORD;
         flags &= ~(TB_X86_INSTR_REP | TB_X86_INSTR_REPNE);
     } else if (props & OP_64BIT) {
         inst->dt = TB_X86_QWORD;
@@ -456,6 +464,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case _0F(0x54): return "and";
         case _0F(0x56): return "or";
         case _0F(0x57): return "xor";
+        case _0F(0x6F): case _0F(0x7F): return "movdqu";
 
         case 0xB0 ... 0xBF: return "mov";
         case _0F(0xB6): case _0F(0xB7): return "movzx";
@@ -550,7 +559,7 @@ const char* tb_x86_reg_name(int8_t reg, TB_X86_DataType dt) {
 
     if (dt >= TB_X86_BYTE && dt <= TB_X86_QWORD) {
         return X86__GPR_NAMES[dt - TB_X86_BYTE][reg];
-    } else if (dt >= TB_X86_F32x1 && dt <= TB_X86_F64x2) {
+    } else if (dt >= TB_X86_F32x1 && dt <= TB_X86_PQWORD) {
         static const char* X86__XMM_NAMES[] = {
             "xmm0", "xmm1", "xmm2",  "xmm3",  "xmm4",  "xmm5",  "xmm6",  "xmm7",
             "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
@@ -572,6 +581,12 @@ const char* tb_x86_type_name(TB_X86_DataType dt) {
         case TB_X86_F64x1: return "qword";
         case TB_X86_F32x4: return "xmmword";
         case TB_X86_F64x2: return "xmmword";
+
+        // idk if these should be labelled as such
+        case TB_X86_PBYTE: return "xmmword";
+        case TB_X86_PWORD: return "xmmword";
+        case TB_X86_PDWORD: return "xmmword";
+        case TB_X86_PQWORD: return "xmmword";
 
         default: return "??";
     }

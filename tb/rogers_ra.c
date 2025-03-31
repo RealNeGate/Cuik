@@ -1305,6 +1305,7 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
         // mark all the other members of the coalesced group as future active
         FOR_N(j, 0, cnt) {
             if (arr[j] != n) {
+                TB_ASSERT(arr[j]->gvn < ctx->f->node_count);
                 TB_ASSERT(ctx->vreg_map[arr[j]->gvn] == vreg_id);
                 set_put(&ra->future_active, arr[j]->gvn);
                 TB_OPTDEBUG(REGALLOC)(printf("#   sleep  %%%u\n", arr[j]->gvn));
@@ -1554,12 +1555,14 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
                         ArenaArray(TB_Node*) set = nl_table_get(&ra->coalesce_set, (void*) (uintptr_t) (leader + 1));
 
                         // put the pre-colored regs to rest
+                        TB_ASSERT(n->gvn < ctx->f->node_count);
                         unmark_active(ctx, ra, n->gvn);
                         set_put(&ra->future_active, n->gvn);
 
                         if (set && aarray_length(set) > 0) {
                             aarray_for(i, set) if (set[i] != n) {
                                 // put the pre-colored regs to rest
+                                TB_ASSERT(set[i]->gvn < ctx->f->node_count);
                                 set_put(&ra->future_active, set[i]->gvn);
                             }
                         }
@@ -1685,6 +1688,8 @@ static bool allocate_loop(Ctx* restrict ctx, Rogers* restrict ra, TB_Arena* aren
 // Expire or Start intervals
 ////////////////////////////////
 static void expire_interval(Ctx* ctx, Rogers* restrict ra, uint32_t gvn, size_t bb_i) {
+    TB_ASSERT(gvn < ctx->f->node_count);
+
     bool pause = false;
     FOR_N(k, 0, bb_i) {
         TB_BasicBlock* other = &ctx->cfg.blocks[k];

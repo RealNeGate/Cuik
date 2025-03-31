@@ -558,8 +558,12 @@ static TB_X86_DataType legalize_int(TB_DataType dt) {
 
 static TB_X86_DataType legalize_float(TB_DataType dt) {
     if (dt.type == TB_TAG_V128) {
-        assert(dt.elem_or_addrspace == TB_TAG_F32 || dt.elem_or_addrspace == TB_TAG_F64);
-        return dt.elem_or_addrspace == TB_TAG_F64 ? TB_X86_F64x2 : TB_X86_F32x4;
+        switch (dt.elem_or_addrspace) {
+            case TB_TAG_I32: return TB_X86_PDWORD;
+            case TB_TAG_F32: return TB_X86_F32x4;
+            case TB_TAG_F64: return TB_X86_F64x2;
+            default: tb_todo();
+        }
     }
 
     TB_ASSERT(dt.type == TB_TAG_F32 || dt.type == TB_TAG_F64);
@@ -853,6 +857,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case TB_AFFINE_LOOP:
         case TB_NATURAL_LOOP:
         case TB_CALLGRAPH:
+        case TB_BLACKHOLE:
         case TB_DEBUG_LOCATION:
         if (ins) {
             FOR_N(i, 1, n->input_count) { ins[i] = &TB_REG_EMPTY; }
@@ -1363,6 +1368,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_MACH_FRAME_PTR:
         case TB_HARD_BARRIER:
         case TB_UNREACHABLE:
+        case TB_BLACKHOLE:
         break;
 
         case TB_SAFEPOINT:
@@ -1610,9 +1616,14 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 dt = legalize_float(n->dt);
             }
 
+            int mov_op = FP_MOV;
+            if (dt >= TB_X86_PBYTE && dt <= TB_X86_PQWORD) {
+                mov_op = MOVDQU;
+            }
+
             int op_type;
             switch (n->type) {
-                case x86_vmov: op_type = FP_MOV; break;
+                case x86_vmov: op_type = mov_op; break;
                 case x86_vadd: op_type = FP_ADD; break;
                 case x86_vsub: op_type = FP_SUB; break;
                 case x86_vmul: op_type = FP_MUL; break;
@@ -1629,7 +1640,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 if (rx.type != VAL_NONE) {
                     TB_ASSERT(n->type != x86_lea);
                     if (!is_value_match(&dst, &rx)) {
-                        __(FP_MOV, dt, &dst, &rx);
+                        __(mov_op, dt, &dst, &rx);
                     }
                 }
                 __(op_type, dt, &dst, &rm);
@@ -1996,52 +2007,49 @@ static bool fits_as_bundle(Ctx* restrict ctx, TB_Node* a, TB_Node* b) {
 }
 
 static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
-    /* if (n->type == x86_imul) {
-            return 0b00000010;
-        } else if (n->type == TB_VSHUFFLE) {
-            return 0b00100000;
+    if (n->type == x86_imul) {
+        return 0b00000010;
+    } else if (n->type == TB_VSHUFFLE) {
+        return 0b00100000;
+    }
+
+    if (n->type >= TB_MACH_X86) {
+        X86MemOp* op = TB_NODE_GET_EXTRA(n);
+
+        if (op->mode == MODE_LD) {
+            // if we're doing a load, we can only fit into ports 2 & 3
+            return 0b00001100;
+        } else if (op->mode == MODE_ST) {
+            // stores go into port 4
+            return 0b00010000;
         }
+    }
 
-        if (n->type >= TB_MACH_X86) {
-            X86MemOp* op = TB_NODE_GET_EXTRA(n);
-
-            if (op->mode == MODE_LD) {
-                // if we're doing a load, we can only fit into ports 2 & 3
-                return 0b00001100;
-            } else if (op->mode == MODE_ST) {
-                // stores go into port 4
-                return 0b00010000;
-            }
-        }
-
-        return 0b11101111; */
-    return 1;
+    return 0b11101111;
 }
 
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
     if (n->type == x86_imul) {
         return 3;
+    } else if (n->type == x86_lea) {
+        return 1;
     } else if (n->type == x86_test || n->type == x86_cmp) {
         return 1;
     }
 
     X86MemOp* op = TB_NODE_GET_EXTRA(n);
-    int lat = 1;
+    int lat = 0;
     if (n->type == x86_vadd || n->type == x86_vmul) {
         lat = 4;
+    } else if (n->type != x86_vmov && n->type != x86_mov) {
+        lat = 1;
     }
 
     if (op->mode == MODE_LD) {
-        lat += 3;
+        // L1 hit is 4 cycles
+        lat += 4;
     } else if (op->mode == MODE_ST) {
-        // bare stores are actually really cheap since they
-        // don't produce a value to be waited on, they merely
-        // queue up to be handled later.
-        if (n->type == x86_vmov || n->type == x86_mov) {
-            lat += 1;
-        } else {
-            lat += 4;
-        }
+        lat += 1;
     }
 
     return lat;

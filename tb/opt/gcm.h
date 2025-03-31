@@ -119,8 +119,11 @@ void tb_clear_anti_deps(TB_Function* f, TB_Worklist* ws) {
     }
 }
 
-static TB_BasicBlock* add_anti_deps(TB_Function* f, TB_CFG* cfg, TB_Node* ld, TB_Node* mem, TB_BasicBlock* early) {
-    TB_BasicBlock* lca = NULL;
+static void add_anti_deps(TB_Function* f, TB_CFG* cfg, TB_Node* ld, TB_Node* mem, TB_BasicBlock* early) {
+    if (mem->type == TB_SPLITMEM) {
+        return;
+    }
+
     FOR_USERS(u, mem) {
         TB_Node* un = USERN(u);
         if (USERI(u) <= un->input_count) {
@@ -130,7 +133,6 @@ static TB_BasicBlock* add_anti_deps(TB_Function* f, TB_CFG* cfg, TB_Node* ld, TB
             }
         }
     }
-    return lca;
 }
 
 TB_BasicBlock* tb_late_sched(TB_Function* f, TB_CFG* cfg, TB_BasicBlock* lca, TB_Node* n) {
@@ -333,8 +335,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     if (!tb_node_has_mem_out(n)) {
                         TB_Node* mem = tb_node_mem_in(n);
                         if (mem != NULL) {
-                            curr = add_anti_deps(f, &cfg, n, mem, curr);
-                            f->scheduled[n->gvn] = curr;
+                            add_anti_deps(f, &cfg, n, mem, curr);
                         }
                     }
 
@@ -365,7 +366,7 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                     if (!tb_node_has_mem_out(n)) {
                         TB_Node* mem = tb_node_mem_in(n);
                         if (mem != NULL) {
-                            lca = add_anti_deps(f, &cfg, n, mem, curr);
+                            add_anti_deps(f, &cfg, n, mem, curr);
                         }
                     }
 

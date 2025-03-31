@@ -72,6 +72,7 @@ static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) 
         return a != b;
     }
 
+    cuikperf_region_start("independent", NULL);
     TB_Node* shallow = a;
     TB_Node* deep = b;
     if (pairs->depth[a->gvn] > pairs->depth[b->gvn]) {
@@ -90,6 +91,7 @@ static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) 
 
         FOR_N(i, 0, n->input_count) {
             if (n->inputs[i] == shallow) {
+                cuikperf_region_end();
                 return false;
             }
 
@@ -103,6 +105,7 @@ static bool independent(TB_Function* f, PairSet* pairs, TB_Node* a, TB_Node* b) 
         }
     }
 
+    cuikperf_region_end();
     return true;
 }
 
@@ -278,7 +281,7 @@ bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* lo
     }
 
     // compute schedule for "trace"
-    {
+    CUIK_TIMED_BLOCK("trace") {
         // DFS walk
         TB_Worklist* ws = f->worklist;
         worklist_clear(ws);
@@ -326,7 +329,9 @@ bool generate_pack(TB_Function* f, PairSet* pairs, LoopOpt* ctx, TB_LoopTree* lo
     }
 
     // sort for faster adjancency queries later on
-    qsort(refs, aarray_length(refs), sizeof(MemRef), ref_cmp);
+    CUIK_TIMED_BLOCK("sort") {
+        qsort(refs, aarray_length(refs), sizeof(MemRef), ref_cmp);
+    }
 
     aarray_for(i, refs) {
         MemRef r = refs[i];

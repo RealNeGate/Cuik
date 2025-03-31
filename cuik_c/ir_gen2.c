@@ -887,6 +887,14 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                     return (ValDesc){ RVALUE, .n = out[0] };
                 } else if (strcmp(name, "__rdtsc") == 0) {
                     return (ValDesc){ RVALUE, .n = tb_builder_cycle_counter(g) };
+                } else if (strcmp(name, "__builtin_blackhole") == 0) {
+                    TB_Node** ir_args = tb_arena_alloc(muh_tmp_arena, (arg_count - 1) * sizeof(TB_Node*));
+                    for (size_t i = 1; i < arg_count; i++) {
+                        ir_args[i - 1] = as_rval(tu, g, &args[i]);
+                    }
+
+                    tb_builder_blackhole(g, arg_count - 1, ir_args);
+                    tb_arena_free(muh_tmp_arena, ir_args, (arg_count - 1) * sizeof(TB_Node*));
                 } else if (strcmp(name, "__builtin_syscall") == 0) {
                     TB_Node* num = as_rval(tu, g, &args[1]);
                     TB_Node** ir_args = tb_arena_alloc(muh_tmp_arena, (arg_count - 2) * sizeof(TB_Node*));

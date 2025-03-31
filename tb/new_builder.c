@@ -953,6 +953,14 @@ void tb_builder_debugbreak(TB_GraphBuilder* g, int mem_var) {
     set_input(g->f, n, peek_mem(g, mem_var), 1);
 }
 
+void tb_builder_blackhole(TB_GraphBuilder* g, int count, TB_Node** args) {
+    TB_Node* n = tb_alloc_node(g->f, TB_BLACKHOLE, TB_TYPE_CONTROL, 1 + count, 0);
+    set_input(g->f, n, xfer_ctrl(g, n), 0);
+    FOR_N(i, 0, count) {
+        set_input(g->f, n, args[i], 1+i);
+    }
+}
+
 void tb_builder_entry_fork(TB_GraphBuilder* g, int count, TB_Node* paths[]) {
     TB_Function* f = g->f;
     TB_ASSERT_MSG(g->curr->inputs[0] == f->params[0], "entry fork can only be applied right after the entry's cproj");

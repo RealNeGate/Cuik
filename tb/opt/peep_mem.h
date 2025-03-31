@@ -286,6 +286,7 @@ static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {
     TB_Node* split_node = n->inputs[1];
 
     // remove useless split edges
+    #if 0
     size_t i = 2;
     while (i < n->input_count) {
         if (n->inputs[i] == split_node) {
@@ -303,5 +304,8 @@ static TB_Node* ideal_merge_mem(TB_Function* f, TB_Node* n) {
 
     skip:
     return progress ? n : NULL;
+    #endif
+
+    return NULL;
 }
 

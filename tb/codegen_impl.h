@@ -473,7 +473,7 @@ static void log_phase_end(TB_Function* f, size_t og_size, const char* label) {
 
 static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_FunctionOutput* restrict func_out, TB_Arena* code_arena, bool emit_asm) {
     #if TB_OPTDEBUG_ISEL
-    // tb_print_dumb(f);
+    tb_print_dumb(f);
     #endif
 
     if (0) {
@@ -564,7 +564,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         CUIK_TIMED_BLOCK("dead node elim") {
             for (TB_Node* n; n = worklist_pop(ws), n;) {
                 if (n->user_count == 0 && !is_proj(n) && n != ctx.frame_ptr) {
-                    TB_OPTDEBUG(ISEL)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
+                    TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
                     tb_kill_node(f, n);
                 }
             }
@@ -574,15 +574,15 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         aarray_for(i, pins) {
             TB_Node* pin_n = pins[i];
 
-            TB_OPTDEBUG(ISEL)(printf("PIN    t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
+            TB_OPTDEBUG(ISEL3)(printf("PIN    t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, pin_n), printf("\n"));
             worklist_push(&walker_ws, pin_n);
 
             while (dyn_array_length(walker_ws.items) > 0) {
                 TB_Node* n = dyn_array_pop(walker_ws.items);
-                TB_OPTDEBUG(ISEL)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+                TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
                 if (!is_proj(n) && n->user_count == 0) {
-                    TB_OPTDEBUG(ISEL)(printf(" => \x1b[31mKILL\x1b[0m\n"));
+                    TB_OPTDEBUG(ISEL3)(printf(" => \x1b[31mKILL\x1b[0m\n"));
                     worklist_push(ws, n);
                     continue;
                 }
@@ -599,7 +599,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                 tb__gvn_remove(f, n);
 
                 // replace with machine op
-                TB_OPTDEBUG(ISEL)(printf("\n\n"));
+                TB_OPTDEBUG(ISEL3)(printf("\n\n"));
                 if (n->type == TB_PHI) {
                     worklist_test_n_set(&walker_ws, n);
                 } else {
@@ -612,7 +612,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                             // we can GVN machine nodes :)
                             k = tb_opt_gvn_node(f, k);
 
-                            TB_OPTDEBUG(ISEL)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
+                            TB_OPTDEBUG(ISEL3)(printf(" => \x1b[32m"), tb_print_dumb_node(NULL, k), printf("\x1b[0m\n"));
                             subsume_node(f, n, k);
 
                             // don't walk the replacement
@@ -621,7 +621,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                         }
                     } while (progress);
                 }
-                TB_OPTDEBUG(ISEL)(printf("\n"));
+                TB_OPTDEBUG(ISEL3)(printf("\n"));
 
                 node_add_tmps(&ctx, n);
 
@@ -641,7 +641,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
         CUIK_TIMED_BLOCK("dead node elim") {
             for (TB_Node* n; n = worklist_pop(ws), n;) {
                 if (n->user_count == 0 && !is_proj(n)) {
-                    TB_OPTDEBUG(ISEL)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
+                    TB_OPTDEBUG(ISEL3)(printf("  ISEL t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => \x1b[31mKILL\x1b[0m\n"));
                     tb_kill_node(f, n);
                 }
             }
@@ -689,7 +689,7 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             ctx.vreg_map[i] = 0;
         }
 
-        TB_OPTDEBUG(ISEL)(printf("=== SCHED %s ===\n", ctx.f->super.name));
+        TB_OPTDEBUG(SCHED2)(printf("=== SCHED %s ===\n", ctx.f->super.name));
 
         int max_ins = 0;
         size_t vreg_count = 1; // 0 is reserved as the NULL vreg
@@ -707,14 +707,14 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
             size_t item_count = dyn_array_length(ws->items);
             ArenaArray(TB_Node*) items = aarray_create(&f->arena, TB_Node*, item_count + 16);
 
-            TB_OPTDEBUG(ISEL)(printf(".bb%zu:\n", i));
+            TB_OPTDEBUG(SCHED2)(printf(".bb%zu:\n", i));
 
             // copy out sched
             for (size_t j = 0; j < item_count; j++) {
                 TB_Node* n = ws->items[j];
 
                 // projections cannot emit code
-                #if TB_OPTDEBUG_ISEL
+                #if TB_OPTDEBUG_SCHED2
                 if (!cfg_is_region(n)) {
                     print_pretty(&ctx, n);
                     printf("\n");

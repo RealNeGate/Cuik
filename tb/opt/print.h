@@ -32,6 +32,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
 
         case TB_VA_START: return "vastart";
         case TB_DEBUGBREAK: return "dbgbrk";
+        case TB_BLACKHOLE: return "blackhole";
 
         case TB_POISON: return "poison";
         case TB_DEAD: return "dead";

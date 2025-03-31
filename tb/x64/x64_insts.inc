@@ -138,4 +138,8 @@ X(FP_AND,    "and",         BINOP_SSE,  0x54)
 X(FP_OR,     "or",          BINOP_SSE,  0x56)
 X(FP_XOR,    "xor",         BINOP_SSE,  0x57)
 X(FP_SHUF,   "shuf",        BINOP_SSE,  0xC6)
+
+// SSE int binops
+X(MOVDQU,    "movdqu",      BINOP_SSE, 0x6F)
+X(MOVDQA,    "movdqa",      BINOP_SSE, 0x6F)
 #undef X

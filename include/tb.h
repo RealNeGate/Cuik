@@ -409,6 +409,9 @@ typedef enum TB_NodeTypeEnum {
 
     TB_FRAME_PTR,
 
+    // Consumes a value to force it to stay alive
+    TB_BLACKHOLE, // (Control) -> (Control)
+
     // Special ops
     //   does full multiplication (64x64=128 and so on) returning
     //   the low and high values in separate projections
@@ -1505,6 +1508,8 @@ TB_API void tb_builder_ret(TB_GraphBuilder* g, int mem_var, int arg_count, TB_No
 TB_API void tb_builder_unreachable(TB_GraphBuilder* g, int mem_var);
 TB_API void tb_builder_trap(TB_GraphBuilder* g, int mem_var);
 TB_API void tb_builder_debugbreak(TB_GraphBuilder* g, int mem_var);
+//   every arg has their lifetime stretched to this point.
+TB_API void tb_builder_blackhole(TB_GraphBuilder* g, int arg_count, TB_Node** args);
 
 // allows you to define multiple entry points
 TB_API void tb_builder_entry_fork(TB_GraphBuilder* g, int count, TB_Node* paths[]);
