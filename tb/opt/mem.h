@@ -1,4 +1,5 @@
 // Memory Pass, like every good pass this is a combined solver:
+//
 // * Load elimination.
 //
 // * Store elimination.
@@ -25,12 +26,6 @@ typedef struct {
 } Rename;
 
 typedef struct {
-    TB_Node* n;
-    int slot;
-    int reason;
-} MemOp;
-
-typedef struct {
     TB_Node* mem;
     int64_t offset;
     int64_t size;
@@ -49,10 +44,11 @@ typedef struct {
 typedef struct MemoryState {
     int order;
     TB_Node* start;
-    struct MemoryState* loop_tail;
+    struct MemoryState* loop_head;
 
     bool walked_once;
     bool sealed;
+    bool is_loop;
     TB_Node** phis;
 
     NL_Table non_aliasing;
@@ -315,7 +311,7 @@ static MemoryState* start_of_memory_sese(NL_Table* sese2set, TB_Node* n) {
 }
 
 // Perform renaming until we reach a fork
-static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* sese_worklist, LocalSplitter* restrict ctx, TB_Node* curr, MemoryState* state, NL_Table* non_aliasing) {
+static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* sese_worklist, LocalSplitter* restrict ctx, TB_Node* curr, MemoryState* state, NL_Table* non_aliasing, bool* out_progress) {
     TB_Node** latest = state->walked_once ? NULL : state->latest;
 
     // current aliasing set is a meet over all preds
@@ -340,7 +336,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
         }
 
         // fill in the phis (run identity rules on them too)
-        if (state->loop_tail == NULL || (state->walked_once && !state->sealed)) {
+        if (!state->is_loop || (state->walked_once && !state->sealed)) {
             FOR_N(j, 1, curr->input_count) {
                 MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
                 FOR_N(i, 0, ctx->local_count) {
@@ -389,7 +385,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
         FOR_N(j, 1, curr->input_count) {
             MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
             // first time around a loop we process it without the preds since they're incomplete
-            if (!state->loop_tail || state->walked_once) {
+            if (!state->is_loop || state->walked_once) {
                 merge_memory(f, non_aliasing, &pred->non_aliasing);
             }
         }
@@ -668,6 +664,10 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
     nl_table_for(e, non_aliasing) {
         nl_table_put(&state->non_aliasing, e->k, e->v);
     }
+
+    if (out_progress) {
+        *out_progress = false;
+    }
     return curr;
 }
 
@@ -871,57 +871,63 @@ int tb_opt_locals(TB_Function* f) {
                 }
             }
 
-            state->loop_tail = loop_tail;
+            if (loop_tail) {
+                state->is_loop = true;
+                loop_tail->loop_head = state;
+            }
         }
 
         NL_Table non_aliasing = nl_table_alloc(16);
-        DynArray(MemoryState*) loop_stack = dyn_array_create(MemoryState*, 16);
-        FOR_REV_N(i, 0, dyn_array_length(sese_worklist.items)) {
+
+        // RPO walk, any time we hit a loop tail, we re-eval the
+        // loop head and if it made progress we revert back to the
+        // loop head for processing.
+        int i = dyn_array_length(sese_worklist.items);
+        while (i--) {
             TB_Node* start = sese_worklist.items[i];
             MemoryState* state = nl_table_get(&sese2set, start);
-            MemoryState* loop_tail = state->loop_tail;
 
-            if (loop_tail) {
-                dyn_array_put(loop_stack, state);
-                dyn_array_put(loop_stack, loop_tail);
-            }
-
-            TB_Node* end = process_sese(f, &sese2set, &sese_worklist, &ctx, start, state, &non_aliasing);
-            if (dyn_array_length(loop_stack) > 0 && loop_stack[dyn_array_length(loop_stack) - 1] == state) {
-                MemoryState* tail = dyn_array_pop(loop_stack);
-                MemoryState* head = dyn_array_pop(loop_stack);
-
+            TB_Node* end = process_sese(f, &sese2set, &sese_worklist, &ctx, start, state, &non_aliasing, NULL);
+            if (state->loop_head) {
                 // revisit loop header, if it makes progress we revisit the loop body
-
-                // revisit loop body
-                FOR_REV_N(j, tail->order, head->order+1) {
-                    TB_Node* n = sese_worklist.items[j];
-                    MemoryState* state = nl_table_get(&sese2set, n);
-                    process_sese(f, &sese2set, &sese_worklist, &ctx, state->start, state, &non_aliasing);
+                bool progress;
+                process_sese(f, &sese2set, &sese_worklist, &ctx, state->loop_head->start, state->loop_head, &non_aliasing, &progress);
+                if (progress) {
+                    i = state->loop_head->order + 1;
                 }
             }
         }
+
+        // memory teardown
+        /* FOR_N(i, 0, dyn_array_length(sese_worklist.items)) {
+            TB_Node* n = sese_worklist.items[j];
+            MemoryState* state = nl_table_get(&sese2set, n);
+            nl_table_free(state->non_aliasing);
+        }
+        nl_table_free(sese2set); */
 
         first_mem = next_mem_user(f->params[1]);
-        if (first_mem->type == TB_SPLITMEM) {
-            first_mem = f->params[1];
-        }
+        if (first_mem) {
+            if (first_mem->type == TB_SPLITMEM) {
+                first_mem = f->params[1];
+            }
 
-        FOR_N(i, 0, ctx.local_count) if (!ctx.renames[i].is_alive) {
-            /* FOR_USERS(u, ctx.renames[i].addr) {
-                if (USERN(u)->type == TB_PTR_OFFSET) {
-                    FOR_USERS(u2, USERN(u)) {
-                        if (tb_node_has_mem_out(USERN(u2))) {
-                            subsume_node(f, USERN(u2), first_mem);
+            FOR_N(i, 0, ctx.local_count) if (!ctx.renames[i].is_alive) {
+                /* FOR_USERS(u, ctx.renames[i].addr) {
+                    if (USERN(u)->type == TB_PTR_OFFSET) {
+                        FOR_USERS(u2, USERN(u)) {
+                            if (tb_node_has_mem_out(USERN(u2))) {
+                                subsume_node(f, USERN(u2), first_mem);
+                            }
                         }
+                    } else if (tb_node_has_mem_out(USERN(u))) {
+                        subsume_node(f, USERN(u), first_mem);
                     }
-                } else if (tb_node_has_mem_out(USERN(u))) {
-                    subsume_node(f, USERN(u), first_mem);
-                }
-            } */
+                } */
 
-            if (!ctx.renames[i].is_mem) {
-                // tb_kill_node(f, ctx.renames[i].addr);
+                if (!ctx.renames[i].is_mem) {
+                    // tb_kill_node(f, ctx.renames[i].addr);
+                }
             }
         }
     }
