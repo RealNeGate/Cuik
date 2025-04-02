@@ -204,7 +204,7 @@ Token lexer_read(Lexer* restrict l) {
         }
         #else
         // skip whitespace
-        const char* start = current;
+        unsigned char* start = current;
         while (*current == ' ' || *current == '\t') { current++; }
 
         if (*current == '\r' || *current == '\n') {
