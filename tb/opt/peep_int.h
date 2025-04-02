@@ -209,11 +209,6 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         TB_ASSERT(0);
     }
 
-    if (n != NULL && !overflow) {
-        // no signed overflow?
-        // TB_NODE_GET_EXTRA_T(n, TB_NodeBinopInt)->ab |= TB_ARITHMATIC_NSW;
-    }
-
     // sign extend our integers now
     min |= min & imin ? ~mask : 0;
     max |= max & imin ? ~mask : 0;

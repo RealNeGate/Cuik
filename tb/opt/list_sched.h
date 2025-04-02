@@ -153,9 +153,9 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
         if (score < 1) { score = 1; }
 
         #if TB_OPTDEBUG_SCHED1
-        // printf("  ");
-        // tb_print_dumb_node(NULL, n);
-        // printf("  score=%d, deepest_use=%d\n", score, deepest_use);
+        printf("  ");
+        tb_print_dumb_node(NULL, n);
+        printf("  score=%d, deepest_use=%d\n", score, deepest_use);
         #endif
 
         if (score > best_score) {

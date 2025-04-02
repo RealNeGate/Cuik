@@ -119,6 +119,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_MULPAIR:  return "mulpair";
         case TB_LOAD:     return "load";
         case TB_STORE:    return "store";
+        case TB_DEAD_STORE: return "dead_store";
         case TB_VSHUFFLE: return "vshuffle";
         case TB_VBROADCAST: return "vbroadcast";
         case TB_HARD_BARRIER: return "hard_barrier";
@@ -532,7 +533,8 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     case TB_LOAD:
                     case TB_STORE:
                     case TB_MEMSET:
-                    case TB_MEMCPY: {
+                    case TB_MEMCPY:
+                    case TB_DEAD_STORE: {
                         TB_NodeMemAccess* mem = TB_NODE_GET_EXTRA(n);
                         printf(" !align(%d)", mem->align);
                         break;

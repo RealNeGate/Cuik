@@ -409,6 +409,9 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
     #endif
 
     for (;;) {
+        int load_count = 0;
+        TB_Node** loads = tb_arena_alloc(&f->tmp_arena, curr->user_count * sizeof(TB_Node*));
+
         // the next memory output, NULL if there's multiple
         TB_Node* next = NULL;
         FOR_USERS(u, curr) {
@@ -420,7 +423,9 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
                 continue;
             }
 
-            if (use_n->type == TB_PHI || is_mem_end_op(use_n) || use_n->type == TB_MERGEMEM) {
+            if (use_n->type == TB_LOAD && use_i == 1) {
+                loads[load_count++] = use_n;
+            } else if (use_n->type == TB_PHI || is_mem_end_op(use_n) || use_n->type == TB_MERGEMEM) {
                 next = NULL;
                 break;
             } else if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
@@ -573,76 +578,72 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
         }
 
         // fixup any connected loads
-        for (size_t i = 0; i < curr->user_count;) {
-            TB_Node* use_n = USERN(&curr->users[i]);
-            int use_i      = USERI(&curr->users[i]);
+        FOR_N(i, 0, load_count) {
+            TB_Node* use_n = loads[i];
 
-            if (use_n->type == TB_LOAD) {
-                #if TB_OPTDEBUG_MEM2REG
-                printf("    LOAD %%%u\n", use_n->gvn);
-                #endif
+            #if TB_OPTDEBUG_MEM2REG
+            printf("    LOAD %%%u\n", use_n->gvn);
+            #endif
 
-                TB_Node* val = NULL;
-                int cat = find_local_idx(ctx, use_n->inputs[2]);
-                if (cat == 0) {
-                    // normal load, try to elim
-                    TB_Node* base;
-                    SimpleMemRef ref = find_simple_mem_ref(f, ctx, use_n, &base);
+            TB_Node* val = NULL;
+            int cat = find_local_idx(ctx, use_n->inputs[2]);
+            if (cat == 0) {
+                // normal load, try to elim
+                TB_Node* base;
+                SimpleMemRef ref = find_simple_mem_ref(f, ctx, use_n, &base);
 
-                    MemorySet* set = nl_table_get(non_aliasing, base);
-                    if (set) {
-                        int idx = find_aliasing_store(ctx, set, ref.offset);
-                        if (idx < set->cnt && set->stores[idx].offset == ref.offset && set->stores[idx].size == ref.size) {
-                            TB_ASSERT(set->stores[idx].mem->type == TB_STORE);
-                            val = set->stores[idx].mem->inputs[3];
-                        }
-                    }
-                } else if (!ctx->renames[cat - 1].is_mem) {
-                    TB_ASSERT(use_n->type == TB_LOAD);
-                    val = node_or_poison(f, latest[cat], use_n->dt);
-                }
-
-                if (val != NULL) {
-                    #if TB_OPTDEBUG_MEM2REG
-                    printf("      ELIM %%%u => %%%u\n", use_n->gvn, val->gvn);
-                    #endif
-
-                    if (use_n->dt.raw != val->dt.raw) {
-                        // it's one of the half constructed phis we've got laying around
-                        if (val->type == TB_PHI && val->dt.type == TB_TAG_VOID) {
-                            val->dt = use_n->dt;
-                        } else {
-                            // insert bitcast
-                            TB_Node* cast = tb_alloc_node(f, TB_BITCAST, use_n->dt, 2, 0);
-                            set_input(f, cast, val, 1);
-                            val = cast;
-                        }
-                    }
-
-                    int old = val->user_count;
-                    subsume_node(f, use_n, val);
-                    if (val->user_count != old) {
-                        mark_node_n_users(f, val);
-                    }
-                    ctx->progress = true;
-                } else {
-                    if (cat > 0) {
-                        ctx->renames[cat - 1].is_alive = true;
-                    }
-
-                    // rewrite memory edge
-                    if (latest && use_n->inputs[1] != latest[cat]) {
-                        set_input(f, use_n, latest[cat], 1);
-                        mark_node_n_users(f, use_n);
-                        continue;
+                MemorySet* set = nl_table_get(non_aliasing, base);
+                if (set) {
+                    int idx = find_aliasing_store(ctx, set, ref.offset);
+                    if (idx < set->cnt && set->stores[idx].offset == ref.offset && set->stores[idx].size == ref.size) {
+                        TB_ASSERT(set->stores[idx].mem->type == TB_STORE);
+                        val = set->stores[idx].mem->inputs[3];
                     }
                 }
+            } else if (!ctx->renames[cat - 1].is_mem) {
+                TB_ASSERT(use_n->type == TB_LOAD);
+                val = node_or_poison(f, latest[cat], use_n->dt);
             }
 
-            i += 1;
+            if (val != NULL) {
+                #if TB_OPTDEBUG_MEM2REG
+                printf("      ELIM %%%u => %%%u\n", use_n->gvn, val->gvn);
+                #endif
+
+                if (use_n->dt.raw != val->dt.raw) {
+                    // it's one of the half constructed phis we've got laying around
+                    if (val->type == TB_PHI && val->dt.type == TB_TAG_VOID) {
+                        val->dt = use_n->dt;
+                    } else {
+                        // insert bitcast
+                        TB_Node* cast = tb_alloc_node(f, TB_BITCAST, use_n->dt, 2, 0);
+                        set_input(f, cast, val, 1);
+                        val = cast;
+                    }
+                }
+
+                int old = val->user_count;
+                subsume_node(f, use_n, val);
+                if (val->user_count != old) {
+                    mark_node_n_users(f, val);
+                }
+                ctx->progress = true;
+            } else {
+                if (cat > 0) {
+                    ctx->renames[cat - 1].is_alive = true;
+                }
+
+                // rewrite memory edge
+                if (latest && use_n->inputs[1] != latest[cat]) {
+                    set_input(f, use_n, latest[cat], 1);
+                    mark_node_n_users(f, use_n);
+                }
+            }
         }
+        tb_arena_free(&f->tmp_arena, loads, curr->user_count * sizeof(TB_Node*));
 
         if (kill) {
+            // curr->type = TB_DEAD_STORE;
             subsume_node(f, curr, kill);
         }
 
@@ -906,30 +907,42 @@ int tb_opt_locals(TB_Function* f) {
         }
         nl_table_free(sese2set); */
 
+        worklist_clear(&sese_worklist);
+
         first_mem = next_mem_user(f->params[1]);
         if (first_mem) {
             if (first_mem->type == TB_SPLITMEM) {
                 first_mem = f->params[1];
             }
+        }
 
-            FOR_N(i, 0, ctx.local_count) if (!ctx.renames[i].is_alive) {
-                /* FOR_USERS(u, ctx.renames[i].addr) {
-                    if (USERN(u)->type == TB_PTR_OFFSET) {
-                        FOR_USERS(u2, USERN(u)) {
-                            if (tb_node_has_mem_out(USERN(u2))) {
-                                subsume_node(f, USERN(u2), first_mem);
-                            }
+        FOR_N(i, 0, ctx.local_count) if (!ctx.renames[i].is_alive) {
+            // discover all dead stores and addresses
+            worklist_push(&sese_worklist, ctx.renames[i].addr);
+
+            FOR_USERS(u, ctx.renames[i].addr) {
+                if (USERN(u)->type == TB_PTR_OFFSET) {
+                    FOR_USERS(u2, USERN(u)) {
+                        if (USERN(u2)->type == TB_STORE) {
+                            worklist_push(&sese_worklist, USERN(u2));
                         }
-                    } else if (tb_node_has_mem_out(USERN(u))) {
-                        subsume_node(f, USERN(u), first_mem);
                     }
-                } */
+                } else if (USERN(u)->type == TB_STORE) {
+                    worklist_push(&sese_worklist, USERN(u));
+                }
+            }
 
-                if (!ctx.renames[i].is_mem) {
-                    // tb_kill_node(f, ctx.renames[i].addr);
+            TB_Node* n;
+            while (n = worklist_pop(&sese_worklist), n) {
+                if (n->type == TB_STORE) {
+                    subsume_node(f, n, n->inputs[1]);
+                } else {
+                    tb_kill_node(f, n);
                 }
             }
         }
+
+        worklist_free(&sese_worklist);
     }
 
     tb_arena_restore(&f->tmp_arena, sp);

@@ -114,6 +114,7 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_STORE:
         case TB_MEMCPY:
         case TB_MEMSET:
+        case TB_DEAD_STORE:
         return sizeof(TB_NodeMemAccess);
 
         case TB_ATOMIC_LOAD:

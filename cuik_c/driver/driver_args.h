@@ -15,7 +15,7 @@ X(SYNTAX,      "xe",       false, "type check only")
 X(DEPS,        "MD",       false, "write header dependencies")
 X(DEPFILE,     "MF",       true,  "write depout from -MD into a file")
 // optimizer
-X(OPTLVL,      "O",        false,  "no optimizations")
+X(OPTLVL,      "O",        false, "enabled the optimizer")
 // backend
 X(EMITIR,      "emit-ir",  false, "print IR into stdout")
 X(OUTPUT,      "o",        true,  "set the output filepath")
