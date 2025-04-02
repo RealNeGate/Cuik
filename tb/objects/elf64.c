@@ -137,7 +137,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
         put_symbol(&local_symtab, sections[i].name_pos - 5, TB_ELF64_ST_INFO(TB_ELF64_STB_LOCAL, TB_ELF64_STT_SECTION), 1 + i, 0, 0);
     }
 
-    assert(dbg_section_count == 0);
+    TB_ASSERT(dbg_section_count == 0);
 
     put_section_symbols(sections, &strtbl, &local_symtab, TB_ELF64_STB_LOCAL);
     put_section_symbols(sections, &strtbl, &global_symtab, TB_ELF64_STB_GLOBAL);
