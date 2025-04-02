@@ -211,7 +211,7 @@ Token lexer_read(Lexer* restrict l) {
             current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
             t.hit_line = true;
         }
-        int len = current - start;
+        int len = (current - start) + 1;
         #endif
 
         // check for comments
