@@ -2,12 +2,14 @@
 
 
 int foo(int* a, int b) {
-    /* if (b) {
+    if (b) {
         a[0] = 16;
     } else {
         a[0] = 5;
-    } */
+    }
+
     a[0] = 16;
+
     while (b--) {
         a[1] = 4;
         a[2] += a[1];

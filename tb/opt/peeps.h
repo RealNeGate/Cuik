@@ -38,6 +38,7 @@ static const uint32_t node_flags[TB_NODE_TYPE_MAX] = {
 
     [TB_LOAD]           = NODE_MEMORY_IN,
     [TB_STORE]          = NODE_MEMORY_IN | NODE_MEMORY_OUT,
+    [TB_DEAD_STORE]     = NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_SPLITMEM]       = NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_MERGEMEM]       = NODE_MEMORY_IN | NODE_MEMORY_OUT,
     [TB_MEMSET]         = NODE_MEMORY_IN | NODE_MEMORY_OUT,
@@ -135,6 +136,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_UNREACHABLE]    = { NULL,              NULL,               value_ctrl,      },
     [TB_BLACKHOLE]      = { NULL,              NULL,               value_ctrl,      },
     [TB_DEAD]           = { NULL,              NULL,               value_dead,      },
+    [TB_DEAD_STORE]     = { NULL,              identity_dead_store,value_mem,       },
     [TB_ROOT]           = { NULL,              NULL,               value_root,      },
 };
 

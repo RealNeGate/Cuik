@@ -296,7 +296,9 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
 
         if (n->type == x86_jcc) {
             X86MemOp* op = TB_NODE_GET_EXTRA(n);
-            printf("  j%s .bb%d else .bb%d", COND_NAMES[op->cond], succ[0], succ[1]);
+            printf("  j%s ", COND_NAMES[op->cond]);
+            print_pretty_edge(ctx, n->inputs[1]);
+            printf(" .bb%d else .bb%d", succ[0], succ[1]);
         } else {
             printf("  jmp .bb%d", succ[0]);
         }
@@ -2023,6 +2025,9 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
             // stores go into port 4
             return 0b00010000;
         }
+
+        // compares go into port 6
+        return 0b00010000;
     }
 
     return 0b11101111;

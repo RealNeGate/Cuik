@@ -169,7 +169,6 @@ uint32_t gvn_hash(void* a) {
 
     // locals can't be put into the GVN table
     TB_ASSERT(n->type != TB_LOCAL);
-
     FOR_N(i, 0, n->input_count) {
         h += n->inputs[i] ? n->inputs[i]->gvn : 0;
     }

@@ -258,14 +258,14 @@ static void inst2sseint(TB_CGEmitter* restrict e, InstType type, const Val* a, c
         tb_todo();
     }
 
-    if (rx >= 8 || base >= 8 || index >= 8) {
-        EMIT1(e, rex(false, rx, base, index));
-    }
-
     if (type == MOVDQA) {
         EMIT1(e, 0x66);
     } else if (type == MOVDQU) {
         EMIT1(e, 0xF3);
+    }
+
+    if (rx >= 8 || base >= 8 || index >= 8) {
+        EMIT1(e, rex(false, rx, base, index));
     }
 
     // extension prefix

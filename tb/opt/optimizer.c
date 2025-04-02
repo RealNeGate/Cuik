@@ -1395,7 +1395,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         if (dead_factor > 0.2f) {
             DO_IF(TB_OPTDEBUG_PEEP)(printf("=== COMPACT ===\n"));
             size_t old = tb_arena_current_size(&f->arena);
-            // tb_compact_nodes(f, ws);
+            tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
         }

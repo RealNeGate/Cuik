@@ -284,6 +284,8 @@ typedef enum TB_NodeTypeEnum {
     TB_UNREACHABLE, // (Control, Memory) -> (Control)
     //   all dead paths are stitched here
     TB_DEAD,        // (Control) -> (Control)
+    //   bookkeeping node for dead stores
+    TB_DEAD_STORE,  // (Control, Memory) -> (Memory)
 
     ////////////////////////////////
     // CONTROL + MEMORY
@@ -639,7 +641,7 @@ typedef struct { // any integer binary operator
 
 typedef struct {
     TB_CharUnits align;
-    bool is_volatile;
+    uint32_t is_volatile;
 } TB_NodeMemAccess;
 
 typedef struct { // TB_DEBUG_LOCATION

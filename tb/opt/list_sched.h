@@ -89,11 +89,13 @@ static bool is_real_datatype(TB_DataType dt) {
 //
 // returns an index from the ready array (or -1 when it can't find an answer)
 static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, ListSched* sched, uint64_t unit_mask, bool can_stall) {
+    #if 0
     TB_OPTDEBUG(SCHED1)(printf("Best on "));
     FOR_N(i, 0, 64) if ((unit_mask >> i) & 1) {
         TB_OPTDEBUG(SCHED1)(printf("Port%zu ", i));
     }
     TB_OPTDEBUG(SCHED1)(printf("?\n"));
+    #endif
 
     int best_i = -1;
     int best_score = 0;
@@ -133,6 +135,13 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
         if (n->user_count == 1) {
             TB_Node* use = USERN(&n->users[0]);
 
+            // try to schedule the condition to the
+            // branch as late as possible if it's got
+            // only one use.
+            if (can_stall && use == bb->end) {
+                continue;
+            }
+
             if (count_waiting_deps(f, ws, bb, use) == 1) {
                 score += use == bb->end ? -200 : 100;
                 if (score < 1) { score = 1; }
@@ -143,10 +152,10 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
         score -= deepest_use;
         if (score < 1) { score = 1; }
 
-        #if 0 // TB_OPTDEBUG_SCHED1
-        printf("  ");
-        tb_print_dumb_node(NULL, n);
-        printf("  score=%d, deepest_use=%d\n", score, deepest_use);
+        #if TB_OPTDEBUG_SCHED1
+        // printf("  ");
+        // tb_print_dumb_node(NULL, n);
+        // printf("  score=%d, deepest_use=%d\n", score, deepest_use);
         #endif
 
         if (score > best_score) {
@@ -179,7 +188,6 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
         TB_Node* top = bb->start;
 
         // DFS walk
-        TB_Worklist* ws = f->worklist;
         worklist_clear(ws);
         worklist_push(ws, top);
         sched.depth[top->gvn] = 0;
@@ -190,10 +198,10 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             }
         }
 
-        FOR_USERS(u, f->root_node) {
-            if (is_proj(USERN(u))) {
-                TB_ASSERT(USERI(u) == 0);
-                worklist_push(ws, USERN(u));
+        aarray_for(i, bb->items) {
+            TB_Node* n = bb->items[i];
+            if (!worklist_test(ws, n) && f->scheduled[n->gvn] == bb && count_waiting_deps(f, ws, bb, n) == 0) {
+                worklist_push(ws, n);
             }
         }
 
@@ -261,7 +269,6 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
 
     // btw worklist has the final schedule
     int decode_width = 4;
-    bool stalled_last_cycle = false;
     while (aarray_length(active) > 0 || aarray_length(sched.ready) > 0) {
         cuikperf_region_start("step", NULL);
 
@@ -325,16 +332,16 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
         bool stall = true;
         CUIK_TIMED_BLOCK("dispatch") {
             FOR_N(i, 0, decode_width) {
-                int idx = best_ready_node(f, ws, bb, &sched, ~in_use_mask & blocked_mask, !stalled_last_cycle);
+                int idx = best_ready_node(f, ws, bb, &sched, ~in_use_mask & blocked_mask, in_use_mask != 0);
                 if (idx < 0) {
                     continue;
                 }
 
                 uint64_t unit_mask = ~in_use_mask & sched.ready[idx].unit_mask;
                 if (unit_mask == 0) {
-                    TB_OPTDEBUG(SCHED1)(printf("  Failed to dispatch "), tb_print_dumb_node(NULL, sched.ready[idx].n), printf("\n"));
-                    break;
+                    continue;
                 }
+                TB_ASSERT(unit_mask != 0);
 
                 int port = tb_ffs64(unit_mask) - 1;
                 TB_Node* n = sched.ready[idx].n;
@@ -373,7 +380,6 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
         }
 
         cuikperf_region_end();
-        stalled_last_cycle = stall;
         cycle += 1;
     }
 

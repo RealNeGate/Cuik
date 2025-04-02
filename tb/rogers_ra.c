@@ -993,7 +993,7 @@ static uint32_t inactive_hash_index(uint64_t key) {
     for (size_t i = 0; i < sizeof(uint32_t); i++) {
         h = (data[i] ^ h) * 0x01000193;
     }*/
-    return (key * 11400714819323198485ull) >> (64ull - 8ull);
+    return (key * 11400714819323198485ull) >> (64ull - 7ull);
 }
 
 static int last_use_in_bb(TB_BasicBlock* blocks, TB_BasicBlock** scheduled, Rogers* restrict ra, TB_BasicBlock* bb, TB_Node* n, uint32_t n_gvn) {
@@ -1002,6 +1002,7 @@ static int last_use_in_bb(TB_BasicBlock* blocks, TB_BasicBlock** scheduled, Roge
 
     uint64_t key = n_gvn | ((bb - blocks) << 32ull);
     int hash_index = inactive_hash_index(key);
+    TB_ASSERT(hash_index < 128);
     if (ra->inactive_cache && ra->inactive_cache[hash_index].key == key) {
         // printf(" Hit!\n");
         TB_OPTDEBUG(STATS)(stats_hit += 1);

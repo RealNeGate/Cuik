@@ -249,6 +249,10 @@ static TB_Node* ideal_ptr_offset(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
+static TB_Node* identity_dead_store(TB_Function* f, TB_Node* n) {
+    return n->inputs[1];
+}
+
 static TB_Node* identity_ptr_offset(TB_Function* f, TB_Node* n) {
     Lattice* off = latuni_get(f, n->inputs[2]);
     if (lattice_int_eq(off, 0)) {
