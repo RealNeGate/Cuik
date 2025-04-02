@@ -111,9 +111,7 @@ bool cuikpp_undef(Cuik_CPP* ctx, size_t keylen, const char* key) {
 // 16byte based compare
 // it doesn't need to be aligned but the valid range must be (len + 15) & ~15
 static bool memory_equals16(const unsigned char* src1, const unsigned char* src2, size_t length) {
-    #if !USE_INTRIN
-    return memcmp(src1, src2, length) == 0;
-    #else
+    #if USE_INTRIN && CUIK__IS_X64
     size_t i = 0;
     size_t chunk_count = length / 16;
     while (chunk_count--) {
@@ -132,6 +130,8 @@ static bool memory_equals16(const unsigned char* src1, const unsigned char* src2
 
     uint16_t compare = _mm_movemask_epi8(_mm_cmpeq_epi8(in1, in2));
     return (compare | mask) == 0xFFFF;
+    #else
+    return memcmp(src1, src2, length) == 0;
     #endif
 }
 

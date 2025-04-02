@@ -15,7 +15,7 @@
 #include <sys/stat.h>
 #include <hash_map.h>
 
-#if USE_INTRIN
+#if USE_INTRIN && CUIK__IS_X64
 #include <x86intrin.h>
 #endif
 
