@@ -2,7 +2,7 @@
 
 // rpc: LR
 
-int foo(int x, int y) {
+/* int foo(int x, int y) {
     int a = x & y + 1;
     int b = x | y + 2;
     int c = x ^ y + 3;
@@ -21,4 +21,8 @@ float bar(float a) {
     a = a * 69.0f;
     a = a / 42.0f;
     return -a;
+}*/
+
+int foo(int x) {
+    return 300000000 * (x ? 16 : 5);
 }

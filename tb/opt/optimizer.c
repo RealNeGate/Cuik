@@ -340,8 +340,8 @@ static Lattice* value_region(TB_Function* f, TB_Node* n) {
 
 static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int64_t trips_max, int64_t step, int bits) {
     int64_t max;
-    if (__builtin_mul_overflow(trips_max, step, &max)) { return NULL; }
-    if (__builtin_add_overflow(max, init->_int.min, &max)) { return NULL; }
+    if (mul_overflow(trips_max, step, bits, &max)) { return NULL; }
+    if (add_overflow(max, init->_int.min, bits, &max)) { return NULL; }
 
     int64_t min = (uint64_t)init->_int.min + (uint64_t) (((uint64_t) trips_min-1)*step);
     if (step > 0) {
@@ -1437,7 +1437,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     cuik_free(f->stats.killed);
     #endif
 
-    printf("%f", total / 1000000.0);
+    // printf("%f", total / 1000000.0);
     f->worklist = NULL;
     return progress;
 }

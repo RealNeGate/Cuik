@@ -101,16 +101,45 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
     return NULL;
 }
 
+// Ripped, straight, from, Hacker's delight... mmm delight
+static uint64_t mulhs(uint64_t u, uint64_t v, int bits) {
+    int half_bits = bits / 2;
+    uint64_t mask = UINT64_MAX >> (64 - bits);
+    uint64_t u0 = u & 0xFFFF;
+    int64_t u1 = u >> half_bits;
+    uint64_t v0 = v & 0xFFFF;
+    int64_t v1 = v >> half_bits;
+    uint64_t w0 = u0*v0;
+    int64_t t = u1*v0 + (w0 >> half_bits);
+    int64_t w1 = (u0*v1) + (t & 0xFFFF);
+    int64_t w2 = (u1*v1) + (t >> half_bits);
+    return w2 + (w1 >> half_bits);
+}
+
+static bool mul_overflow(uint64_t u, uint64_t v, int bits, int64_t* out) {
+    *out = u * v;
+
+    uint64_t high = mulhs(u, v, bits);
+    return (*out < 0 ? high + 1 : high) != 0;
+}
+
+static bool add_overflow(uint64_t u, uint64_t v, int bits, int64_t* out) {
+    uint64_t res = u + v;
+
+    u = (u >> 63) + LONG_MAX;
+    return ((int64_t) ((u ^ v) | ~(v ^ res)) >= 0);
+}
+
 static bool will_mul_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattice* b) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     TB_ASSERT(a->tag == LATTICE_INT && b->tag == LATTICE_INT);
 
     bool overflow = false;
-    uint64_t prods[4];
-    overflow |= __builtin_mul_overflow(a->_int.min, b->_int.min, &prods[0]);
-    overflow |= __builtin_mul_overflow(a->_int.max, b->_int.min, &prods[1]);
-    overflow |= __builtin_mul_overflow(a->_int.min, b->_int.max, &prods[2]);
-    overflow |= __builtin_mul_overflow(a->_int.max, b->_int.max, &prods[3]);
+    int64_t prods[4];
+    overflow |= mul_overflow(a->_int.min, b->_int.min, bits, &prods[0]);
+    overflow |= mul_overflow(a->_int.max, b->_int.min, bits, &prods[1]);
+    overflow |= mul_overflow(a->_int.min, b->_int.max, bits, &prods[2]);
+    overflow |= mul_overflow(a->_int.max, b->_int.max, bits, &prods[3]);
     return overflow;
 }
 
@@ -158,11 +187,11 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         break;
 
         case TB_MUL: {
-            uint64_t prods[4];
-            overflow |= __builtin_mul_overflow(amin, bmin, &prods[0]);
-            overflow |= __builtin_mul_overflow(amax, bmin, &prods[1]);
-            overflow |= __builtin_mul_overflow(amin, bmax, &prods[2]);
-            overflow |= __builtin_mul_overflow(amax, bmax, &prods[3]);
+            int64_t prods[4];
+            overflow |= mul_overflow(amin, bmin, bits, &prods[0]);
+            overflow |= mul_overflow(amax, bmin, bits, &prods[1]);
+            overflow |= mul_overflow(amin, bmax, bits, &prods[2]);
+            overflow |= mul_overflow(amax, bmax, bits, &prods[3]);
             if (overflow) {
                 min = imin, max = imax;
                 break;
@@ -191,7 +220,7 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
 
     if (min == max) {
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
-    } else {
+    } else if (type == TB_ADD || type == TB_SUB) {
         uint64_t possible_sum_zeros = ~a->_int.known_zeros + ~b->_int.known_zeros;
         uint64_t possible_sum_ones  =  a->_int.known_ones  +  b->_int.known_ones;
         if (type == TB_SUB) {
@@ -212,6 +241,8 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         uint64_t ones  =  possible_sum_ones  & known;
 
         return lattice_gimme_int2(f, min, max, zeros, ones, 64);
+    } else {
+        return lattice_gimme_int(f, min, max, bits);
     }
 }
 
