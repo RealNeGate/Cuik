@@ -204,12 +204,14 @@ Token lexer_read(Lexer* restrict l) {
         }
         #else
         // skip whitespace
+        const char* start = current;
         while (*current == ' ' || *current == '\t') { current++; }
 
         if (*current == '\r' || *current == '\n') {
             current += (current[0] + current[1] == '\r' + '\n') ? 2 : 1;
             t.hit_line = true;
         }
+        int len = current - start;
         #endif
 
         // check for comments
@@ -276,14 +278,7 @@ Token lexer_read(Lexer* restrict l) {
                 current -= 1;
             }
 
-            #if !USE_INTRIN
-            for (unsigned char* s = start; s != current; s++) {
-                if (*s == '\\') {
-                    current = slow_identifier_lexing(l, current, start);
-                    break;
-                }
-            }
-            #else
+            #if USE_INTRIN && CUIK__IS_X64
             // check for escapes
             __m128i pattern = _mm_set1_epi8('\\');
             size_t length = current - start;
@@ -302,6 +297,13 @@ Token lexer_read(Lexer* restrict l) {
                         current = slow_identifier_lexing(l, current, start);
                         break;
                     }
+                }
+            }
+            #else
+            for (unsigned char* s = start; s != current; s++) {
+                if (*s == '\\') {
+                    current = slow_identifier_lexing(l, current, start);
+                    break;
                 }
             }
             #endif
