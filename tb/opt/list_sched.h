@@ -99,6 +99,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
 
     int best_i = -1;
     int best_score = 0;
+    int best_depth = 0;
     FOR_REV_N(i, 0, aarray_length(sched->ready)) {
         TB_Node* n = sched->ready[i].n;
         uint64_t op_unit_mask = sched->ready[i].unit_mask;
@@ -124,6 +125,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
                 deepest_use = TB_MAX(deepest_use, use_depth);
             }
         }
+        // deepest_use -= sched->depth[n->gvn];
 
         // score things which decrease pressure higher
         int dt = pressure_delta(sched, n);
@@ -149,7 +151,7 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
         }
 
         // we wanna handle shallower uses first
-        score -= deepest_use;
+        score += deepest_use * 10;
         if (score < 1) { score = 1; }
 
         #if TB_OPTDEBUG_SCHED1
@@ -158,9 +160,10 @@ static int best_ready_node(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, L
         printf("  score=%d, deepest_use=%d\n", score, deepest_use);
         #endif
 
-        if (score > best_score) {
+        if ((score == best_score && deepest_use > best_depth) || score > best_score) {
             best_i = i;
             best_score = score;
+            best_depth = deepest_use;
         }
     }
 
@@ -209,21 +212,24 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             TB_Node* n = ws->items[dyn_array_length(ws->items) - 1];
 
             // process users before placing ourselves
+            int max_depth = 0;
             FOR_USERS(u, n) {
                 TB_Node* un = USERN(u);
                 if (!worklist_test_n_set(ws, un) && f->scheduled[un->gvn] == bb) {
                     dyn_array_put(ws->items, un);
                     goto retry;
                 }
+
+                max_depth = TB_MAX(max_depth, sched.depth[un->gvn]);
             }
 
             #if TB_OPTDEBUG_SCHED1
             tb_print_dumb_node(NULL, n);
-            printf(" depth=%zu\n", dyn_array_length(ws->items));
+            printf(" depth=%d\n", max_depth + 1);
             #endif
 
             dyn_array_pop(ws->items);
-            sched.depth[n->gvn] = dyn_array_length(ws->items);
+            sched.depth[n->gvn] = max_depth + 1;
         }
         worklist_clear(ws);
     }

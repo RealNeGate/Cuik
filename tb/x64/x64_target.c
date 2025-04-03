@@ -2034,7 +2034,9 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
 }
 
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
-    if (n->type == x86_imul) {
+    if (n->type == x86_idiv || n->type == x86_div) {
+        return 30;
+    } else if (n->type == x86_imul) {
         return 3;
     } else if (n->type == x86_lea) {
         return 1;

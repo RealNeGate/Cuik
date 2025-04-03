@@ -417,15 +417,21 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
         FOR_USERS(u, curr) {
             TB_Node* use_n = USERN(u);
             int use_i = USERI(u);
+            if (use_n->type == TB_LOAD && use_i == 1) {
+                loads[load_count++] = use_n;
+            }
+        }
+
+        FOR_USERS(u, curr) {
+            TB_Node* use_n = USERN(u);
+            int use_i = USERI(u);
 
             // not a real memory use
             if (curr->type == TB_SPLITMEM && use_n->type == TB_MERGEMEM && use_i == 1) {
                 continue;
             }
 
-            if (use_n->type == TB_LOAD && use_i == 1) {
-                loads[load_count++] = use_n;
-            } else if (use_n->type == TB_PHI || is_mem_end_op(use_n) || use_n->type == TB_MERGEMEM) {
+            if (use_n->type == TB_PHI || is_mem_end_op(use_n) || use_n->type == TB_MERGEMEM) {
                 next = NULL;
                 break;
             } else if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
@@ -580,17 +586,21 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
         // fixup any connected loads
         FOR_N(i, 0, load_count) {
             TB_Node* use_n = loads[i];
+            int cat = find_local_idx(ctx, use_n->inputs[2]);
 
             #if TB_OPTDEBUG_MEM2REG
-            printf("    LOAD %%%u\n", use_n->gvn);
+            printf("    LOAD %%%u (cat=%d)\n", use_n->gvn, cat);
             #endif
 
             TB_Node* val = NULL;
-            int cat = find_local_idx(ctx, use_n->inputs[2]);
             if (cat == 0) {
                 // normal load, try to elim
                 TB_Node* base;
                 SimpleMemRef ref = find_simple_mem_ref(f, ctx, use_n, &base);
+
+                #if TB_OPTDEBUG_MEM2REG
+                printf("      REF [%%%u + %"PRId64"]\n", base->gvn, ref.offset);
+                #endif
 
                 MemorySet* set = nl_table_get(non_aliasing, base);
                 if (set) {
