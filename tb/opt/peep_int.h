@@ -230,7 +230,8 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
         // only trust which the bits in the intersection of all known bits
         uint64_t known = (a->_int.known_zeros | a->_int.known_ones)
             & (b->_int.known_zeros | b->_int.known_ones)
-            & (known_carry_zeros | known_carry_ones);
+            & (known_carry_zeros | known_carry_ones)
+            & mask;
 
         uint64_t zeros = ~possible_sum_zeros & known;
         uint64_t ones  =  possible_sum_ones  & known;
