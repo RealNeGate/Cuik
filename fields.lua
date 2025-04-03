@@ -38,7 +38,7 @@ function run_test(N)
 end
 
 for i=1,10 do
-run_test(100*i)
+    run_test(100*i)
 end
 
 -- run_test(1000)

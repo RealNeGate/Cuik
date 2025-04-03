@@ -382,11 +382,13 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
             state->sealed = true;
         }
 
-        FOR_N(j, 1, curr->input_count) {
-            MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
-            // first time around a loop we process it without the preds since they're incomplete
-            if (!state->is_loop || state->walked_once) {
-                merge_memory(f, non_aliasing, &pred->non_aliasing);
+        CUIK_TIMED_BLOCK("merge states") {
+            FOR_N(j, 1, curr->input_count) {
+                MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
+                // first time around a loop we process it without the preds since they're incomplete
+                if (!state->is_loop || state->walked_once) {
+                    merge_memory(f, non_aliasing, &pred->non_aliasing);
+                }
             }
         }
     } else {
@@ -505,7 +507,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
 
                         memory_set_insert(f, non_aliasing, set, idx, ref);
                     } else {
-                        printf("    CLOBBER %%%u\n", curr->gvn);
+                        TB_OPTDEBUG(MEM2REG)(printf("    CLOBBER %%%u\n", curr->gvn));
 
                         memory_set_clear_except(non_aliasing, set);
                         memory_set_insert(f, non_aliasing, set, 0, ref);
@@ -857,7 +859,10 @@ int tb_opt_locals(TB_Function* f) {
         NL_Table sese2set = nl_table_alloc(20);
         worklist_alloc(&sese_worklist, 20);
 
-        postorder_memory(f, &sese2set, &sese_worklist, f->params[1], ctx.local_count);
+        CUIK_TIMED_BLOCK("postorder_memory") {
+            postorder_memory(f, &sese2set, &sese_worklist, f->params[1], ctx.local_count);
+        }
+
         // printf("\n\n");
 
         MemoryState* initial_state = nl_table_get(&sese2set, f->params[1]);
@@ -897,57 +902,62 @@ int tb_opt_locals(TB_Function* f) {
         while (i--) {
             TB_Node* start = sese_worklist.items[i];
             MemoryState* state = nl_table_get(&sese2set, start);
+            TB_ASSERT(state->order == i);
 
+            cuikperf_region_start("transfer", NULL);
             TB_Node* end = process_sese(f, &sese2set, &sese_worklist, &ctx, start, state, &non_aliasing, NULL);
+            cuikperf_region_end();
+
             if (state->loop_head) {
                 // revisit loop header, if it makes progress we revisit the loop body
                 bool progress;
                 process_sese(f, &sese2set, &sese_worklist, &ctx, state->loop_head->start, state->loop_head, &non_aliasing, &progress);
-                if (progress) {
+                if (progress && i + 1 > state->loop_head->order) {
                     i = state->loop_head->order + 1;
                 }
             }
         }
 
         // memory teardown
-        /* FOR_N(i, 0, dyn_array_length(sese_worklist.items)) {
-            TB_Node* n = sese_worklist.items[j];
-            MemoryState* state = nl_table_get(&sese2set, n);
-            nl_table_free(state->non_aliasing);
+        CUIK_TIMED_BLOCK("teardown") {
+            FOR_N(i, 0, dyn_array_length(sese_worklist.items)) {
+                TB_Node* n = sese_worklist.items[i];
+                MemoryState* state = nl_table_get(&sese2set, n);
+                nl_table_for(e, &state->non_aliasing) {
+                    cuik_free(e->v);
+                }
+                nl_table_free(state->non_aliasing);
+            }
+            nl_table_free(non_aliasing);
+            nl_table_free(sese2set);
         }
-        nl_table_free(sese2set); */
 
         worklist_clear(&sese_worklist);
 
-        first_mem = next_mem_user(f->params[1]);
-        if (first_mem) {
-            if (first_mem->type == TB_SPLITMEM) {
-                first_mem = f->params[1];
-            }
-        }
+        CUIK_TIMED_BLOCK("kill nodes") {
+            FOR_N(i, 0, ctx.local_count) if (!ctx.renames[i].is_alive) {
+                // discover all dead stores and addresses
+                worklist_push(&sese_worklist, ctx.renames[i].addr);
 
-        FOR_N(i, 0, ctx.local_count) if (!ctx.renames[i].is_alive) {
-            // discover all dead stores and addresses
-            worklist_push(&sese_worklist, ctx.renames[i].addr);
-
-            FOR_USERS(u, ctx.renames[i].addr) {
-                if (USERN(u)->type == TB_PTR_OFFSET) {
-                    FOR_USERS(u2, USERN(u)) {
-                        if (USERN(u2)->type == TB_STORE) {
-                            worklist_push(&sese_worklist, USERN(u2));
+                FOR_USERS(u, ctx.renames[i].addr) {
+                    if (USERN(u)->type == TB_PTR_OFFSET) {
+                        FOR_USERS(u2, USERN(u)) {
+                            if (USERN(u2)->type == TB_STORE) {
+                                worklist_push(&sese_worklist, USERN(u2));
+                            }
                         }
+                    } else if (USERN(u)->type == TB_STORE) {
+                        worklist_push(&sese_worklist, USERN(u));
                     }
-                } else if (USERN(u)->type == TB_STORE) {
-                    worklist_push(&sese_worklist, USERN(u));
                 }
-            }
 
-            TB_Node* n;
-            while (n = worklist_pop(&sese_worklist), n) {
-                if (n->type == TB_STORE) {
-                    subsume_node(f, n, n->inputs[1]);
-                } else {
-                    tb_kill_node(f, n);
+                TB_Node* n;
+                while (n = worklist_pop(&sese_worklist), n) {
+                    if (n->type == TB_STORE) {
+                        subsume_node(f, n, n->inputs[1]);
+                    } else {
+                        tb_kill_node(f, n);
+                    }
                 }
             }
         }

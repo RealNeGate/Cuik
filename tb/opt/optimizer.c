@@ -1357,7 +1357,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     TB_OPTDEBUG(PASSES)(printf("FUNCTION %s:\n", f->super.name));
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
 
-    uint64_t total = 0;
+    // uint64_t total = 0;
 
     int k;
     int rounds = 0;
@@ -1383,11 +1383,11 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             // work when it returns true.
             TB_OPTDEBUG(PASSES)(printf("      * Locals\n"));
             DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOCALS ===\n"));
-            uint64_t start = cuik_time_in_nanos();
+            // uint64_t start = cuik_time_in_nanos();
             if (k = tb_opt_locals(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
             }
-            total += cuik_time_in_nanos() - start;
+            // total += cuik_time_in_nanos() - start;
         }
 
         // avoids bloating up my arenas with freed nodes
@@ -1395,7 +1395,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         if (dead_factor > 0.2f) {
             DO_IF(TB_OPTDEBUG_PEEP)(printf("=== COMPACT ===\n"));
             size_t old = tb_arena_current_size(&f->arena);
-            // tb_compact_nodes(f, ws);
+            tb_compact_nodes(f, ws);
             size_t new = tb_arena_current_size(&f->arena);
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
         }
