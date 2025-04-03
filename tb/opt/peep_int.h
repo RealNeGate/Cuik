@@ -11,6 +11,9 @@ static int node_pos(TB_Node* n) {
         case TB_F64CONST:
         return 1;
 
+        case TB_ADD:
+        return 2;
+
         default:
         return 4;
 
@@ -83,6 +86,18 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
 
             set_input(f, n, ab,           1);
             set_input(f, n, b->inputs[2], 2);
+            return n;
+        }
+
+        // (a + b) + c => (a + c) + b where b is constant
+        if (a->type == type && is_iconst(f, a->inputs[2])) {
+            TB_Node* ab = tb_alloc_node(f, type, n->dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, ab, a->inputs[1], 1);
+            set_input(f, ab, b, 2);
+            latuni_set(f, ab, value_of(f, ab));
+
+            set_input(f, n, ab,           1);
+            set_input(f, n, a->inputs[2], 2);
             return n;
         }
     }
