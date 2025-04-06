@@ -343,11 +343,13 @@ static TB_Node* node_isel_raw(Ctx* restrict ctx, TB_Function* f, TB_Node* n, TB_
 
                 TB_OPTDEBUG(ISEL2)(printf("\n>>>\n"));
                 TB_Node* new_in = node_isel_raw(ctx, f, in, walker_ws, depth + 1);
-                if (new_in && new_in != n) {
+                if (new_in && new_in != in) {
                     // we can GVN machine nodes :)
                     new_in = tb_opt_gvn_node(f, new_in);
                     if (!mach_is_subpat[in->type]) {
                         subsume_node(f, in, new_in);
+                    } else {
+                        set_input(f, curr, new_in,  index);
                     }
 
                     // don't walk the replacement

@@ -413,10 +413,6 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     }
                     printf("  }");
                 }
-                printf(" // branch ");
-                TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-                printf("%%%u", n->gvn);
-                TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
                 tb_arena_restore(&f->tmp_arena, sp);
                 break;
             }
@@ -656,10 +652,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                                 print_branch_edge(ctx, succ[i], false);
                                 printf("\n");
                             }
-                            printf("  } // branch ");
-                            TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-                            printf("%%%u", n->gvn);
-                            TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
+                            printf("  }");
                             tb_arena_restore(&f->tmp_arena, sp);
                         }
                         break;
@@ -667,6 +660,12 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                 }
                 break;
             }
+        }
+
+        if (n->dt.type == TB_TAG_TUPLE) {
+            TB_OPTDEBUG(ANSI)(printf(" // tuple \x1b[%dm", cool_ansi_color(n->gvn)));
+            printf("%%%u", n->gvn);
+            TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
         }
 
         printf("\n");

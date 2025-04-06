@@ -198,7 +198,12 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                 TB_Node* n = ws->items[i];
                 if (tb_node_is_pinned(n) && n->type != TB_ROOT) {
                     TB_BasicBlock* bb = f->scheduled[n->gvn];
-                    if (is_proj(n) && !tb_node_is_pinned(n->inputs[0])) {
+                    if (n->type == TB_MACH_FRAME_PTR) {
+                        TB_ASSERT(n->gvn < f->scheduled_n);
+                        f->scheduled[n->gvn] = bb0;
+                        aarray_push(pins, n);
+                        aarray_push(bb0->items, n);
+                    } else if (is_proj(n) && !tb_node_is_pinned(n->inputs[0])) {
                         // projections are always pinned but they might refer to nodes which
                         // aren't (x86 division), we can skip these here as they're technically
                         // unpinned.
@@ -450,7 +455,23 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                         set_put(&bb->kill, n->gvn);
                     }
 
-                    if (n->type != TB_PHI) {
+                    if (n->type == TB_PHI) {
+                        TB_Node* region = n->inputs[0];
+                        FOR_N(k, 1, n->input_count) {
+                            TB_Node* pred = cfg_get_pred(&cfg, region, k - 1);
+                            TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+
+                            TB_Node* in = n->inputs[k];
+                            if (!set_get(&pred_bb->kill, in->gvn)) {
+                                TB_ASSERT(in->gvn < node_count);
+
+                                // asked for from the previous block, but it should be "killed" in the PHI's block
+                                // to avoid propagating it further
+                                set_put(&pred_bb->gen, in->gvn);
+                                set_put(&bb->kill, in->gvn);
+                            }
+                        }
+                    } else {
                         FOR_N(k, 1, n->input_count) {
                             TB_Node* in = n->inputs[k];
                             if (in && !set_get(&bb->kill, in->gvn)) {
@@ -501,24 +522,6 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                     set_union(live_out, &succ_bb->live_in);
                 }
 
-                // "multi-def" nodes, they should be "live out" in the respective pred blocks
-                TB_Node* start = bb->start;
-                if (cfg_is_region(start)) {
-                    FOR_USERS(u, start) {
-                        TB_Node* n = USERN(u);
-                        if (n->type == TB_PHI && n->dt.type != TB_TAG_MEMORY) {
-                            TB_ASSERT(USERI(u) == 0);
-                            FOR_N(k, 1, n->input_count) {
-                                TB_Node* pred = cfg_get_pred(&cfg, start, k - 1);
-                                TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
-
-                                TB_ASSERT(n->inputs[k]->gvn < node_count);
-                                set_put(&pred_bb->live_out, n->inputs[k]->gvn);
-                            }
-                        }
-                    }
-                }
-
                 Set* restrict live_in = &bb->live_in;
                 Set* restrict kill = &bb->kill;
                 Set* restrict gen = &bb->gen;
@@ -538,6 +541,26 @@ void tb_dataflow(TB_Function* f, TB_Arena* arena, TB_CFG cfg) {
                         TB_Node* pred = cfg_get_pred(&cfg, bb_node, i);
                         if (pred->input_count > 0 && pred->type != TB_DEAD) {
                             worklist_push(ws, pred);
+                        }
+                    }
+                }
+            }
+
+            aarray_for(i, cfg.blocks) {
+                TB_BasicBlock* bb = &cfg.blocks[i];
+                TB_Node* start = bb->start;
+                if (cfg_is_region(start)) {
+                    FOR_USERS(u, start) {
+                        TB_Node* n = USERN(u);
+                        if (n->type == TB_PHI && n->dt.type != TB_TAG_MEMORY) {
+                            TB_ASSERT(USERI(u) == 0);
+                            FOR_N(k, 1, n->input_count) {
+                                TB_Node* pred = cfg_get_pred(&cfg, start, k - 1);
+                                TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
+
+                                TB_ASSERT(n->inputs[k]->gvn < node_count);
+                                set_put(&pred_bb->live_out, n->inputs[k]->gvn);
+                            }
                         }
                     }
                 }

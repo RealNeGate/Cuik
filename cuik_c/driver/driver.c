@@ -179,7 +179,7 @@ static void apply_func(TB_Function* f, void* arg) {
         #endif
 
         if (args->emit_ir) {
-            // tb_print_dumb(f);
+            tb_print_dumb(f);
             tb_print(f);
 
             // char* str = tb_print_c(f, ir_worklist, arenas->tmp);
@@ -368,7 +368,7 @@ static void ld_invoke(TPool* tp, BuildStepInfo* info) {
                     cuiksched_per_function(tp, s->ld.cu, mod, args, local_opt_func);
                     log_debug("Interprocedural opts...");
                 }
-            } while (tb_module_ipo(mod));
+            } while (false);//tb_module_ipo(mod));
         }
 
         if (args->emit_ir) {

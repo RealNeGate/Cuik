@@ -241,8 +241,9 @@ static void print_extra(TB_Node* n) {
 
 static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
     int vreg_id = ctx->vreg_map[n->gvn];
-    if (0 && vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
-        /* VReg* v = &ctx->vregs[vreg_id];
+    if (vreg_id > 0 && ctx->vregs && ctx->vregs[vreg_id].assigned >= 0) {
+        VReg* v = &ctx->vregs[vreg_id];
+        printf("V%d:", vreg_id);
         if (v->class == REG_CLASS_GPR) {
             printf("%s", GPR_NAMES[v->assigned]);
         } else if (v->class == REG_CLASS_XMM) {
@@ -251,8 +252,7 @@ static void print_pretty_edge(Ctx* restrict ctx, TB_Node* n) {
             printf("STACK%d", v->assigned);
         } else if (v->class == REG_CLASS_FLAGS) {
             printf("FLAGS");
-        } */
-        printf("V%d", vreg_id);
+        }
     } else {
         printf("%%%u", n->gvn);
     }
@@ -814,12 +814,6 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
 
         X86MemOp* op = TB_NODE_GET_EXTRA(n);
         size_t base = op->flags & OP_INDEXED ? 4 : 3;
-        uint64_t used[8] = { 0 };
-        FOR_N(i, base, n->input_count) if (ins[i] != &TB_REG_EMPTY) {
-            TB_ASSERT(ins[i]->count == 1);
-            used[ins[i]->class] |= ins[i]->mask[0];
-        }
-
         bool use_frame_ptr = ctx->f->features.gen & TB_FEATURE_FRAME_PTR;
         FOR_N(i, 1, ctx->num_classes) {
             const char* saves = cc->reg_saves[i];
@@ -835,7 +829,7 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
                 }
             }
 
-            kills[kill_count++] = intern_regmask(ctx, i, false, clobbers & ~used[i]);
+            kills[kill_count++] = intern_regmask(ctx, i, false, clobbers);
         }
         tb_arena_free(&f->tmp_arena, ins, n->input_count * sizeof(RegMask*));
 
