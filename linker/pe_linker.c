@@ -1086,9 +1086,9 @@ static bool pe_export(TB_Linker* l, const char* file_name) {
         }
     }
 
-    if (1) {
+    /* if (1) {
         tb_linker_print_map(l);
-    }
+    } */
 
     TB_LinkerSegment* text = tb_linker_find_segment(l, ".text");
     CUIK_TIMED_BLOCK("sort .pdata") {
