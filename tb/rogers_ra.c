@@ -2154,6 +2154,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
         }
     }
 
+    ArenaArray(TB_Node*) phis = aarray_create(ra->arena, TB_Node*, 10);
     Set has_already = set_create_in_arena(ra->arena, ctx->bb_count);
     Set ever_on_ws  = set_create_in_arena(ra->arena, ctx->bb_count);
 
@@ -2195,6 +2196,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
                     TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
 
                     if (slow_dommy2(spill_site.bb, pred_bb) || slow_dommy2(reload_site.bb, pred_bb)) {
+                        printf("BB%zu: No need for copy on this edge %zu of %%%u\n", pred_bb - ctx->cfg.blocks, 1 + j, phi->gvn);
                         // if we're dominated by the reload, we don't need a copy.
                         // this will be fixed up in the next phase btw
                         set_input(f, phi, a, 1 + j);
@@ -2214,6 +2216,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
                 }
                 set_put(&has_already, y);
                 aarray_insert(ctx->vreg_map, phi->gvn, ctx->vreg_map[spill_a->gvn]);
+                aarray_push(phis, phi);
 
                 TB_OPTDEBUG(REGALLOC)(printf("\x1b[33m#   BB%d:    phi (%%%u)\x1b[0m\n", y, phi->gvn));
 
@@ -2298,45 +2301,41 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
             use_bb = use_bb->dom;
         } while (def == NULL);
 
-        if (def != a) {
+        if (un != spill_a && def != a) {
             set_input(f, un, def, ui);
-            continue;
         } else {
             TB_ASSERT(un != a);
+            k += 1;
         }
-        k += 1;
     }
 
     // coalesce phis
-    FOR_N(bb_id, 0, ctx->bb_count) {
-        TB_BasicBlock* bb = &ctx->cfg.blocks[bb_id];
-        TB_Node* def = defs[bb_id];
-        if (def && def->type == TB_PHI) {
-            int x = uf_find(ra->uf, ra->uf_len, def->gvn);
-            FOR_N(k, 1, def->input_count) {
-                TB_Node* in = def->inputs[k];
+    aarray_for(i, phis) {
+        TB_Node* def = phis[i];
+        TB_ASSERT(def && def->type == TB_PHI);
 
-                // hard coalesce with direct input
-                int y = uf_find(ra->uf, ra->uf_len, in->gvn);
-                TB_ASSERT(in->gvn != a->gvn);
-                rogers_coalesce(ctx, ra, x, y, def, in);
-
-                printf("COALESCE %%%u -- %%%u\n", def->gvn, in->gvn);
-            }
-        }
-    }
-
-    if (self_phi) {
-        int x = uf_find(ra->uf, ra->uf_len, self_phi->gvn);
-        FOR_N(k, 1, self_phi->input_count) {
-            TB_Node* in = self_phi->inputs[k];
+        int x = uf_find(ra->uf, ra->uf_len, def->gvn);
+        FOR_N(k, 1, def->input_count) {
+            TB_Node* in = def->inputs[k];
 
             // hard coalesce with direct input
             int y = uf_find(ra->uf, ra->uf_len, in->gvn);
             TB_ASSERT(in->gvn != a->gvn);
-            rogers_coalesce(ctx, ra, x, y, self_phi, in);
+            rogers_coalesce(ctx, ra, x, y, def, in);
+        }
+    }
 
-            printf("COALESCE %%%u -- %%%u\n", self_phi->gvn, in->gvn);
+    // make sure we update the VReg mapping post-coalescing
+    aarray_for(i, phis) {
+        TB_Node* def = phis[i];
+        TB_ASSERT(def && def->type == TB_PHI);
+
+        int x = uf_find(ra->uf, ra->uf_len, def->gvn);
+        ctx->vreg_map[def->gvn] = ctx->vreg_map[x];
+
+        FOR_N(k, 1, def->input_count) {
+            TB_Node* in = def->inputs[k];
+            ctx->vreg_map[in->gvn] = ctx->vreg_map[x];
         }
     }
 }
