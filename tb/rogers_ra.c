@@ -1203,9 +1203,6 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
         // if a stack slot failed to color then it means we
         // need more stack slots (there's an indefinite amount :p)
         if (def_class == REG_CLASS_STK) {
-            // mark all the other members of the coalesced group as future active
-            TB_ASSERT(cnt == 1);
-
             // stack's active set is resizable
             if (ra->num_spills + vreg->reg_width > ra->stack_reg_count) {
                 size_t new_size = ra->stack_reg_count * 2;
@@ -1222,6 +1219,16 @@ static bool allocate_reg(Ctx* ctx, Rogers* ra, TB_Node* n) {
             vreg->assigned = ra->num_spills;
             mark_active(ctx, ra, n->gvn);
             ra->num_spills += vreg->reg_width;
+
+            // mark all the other members of the coalesced group as future active
+            FOR_N(j, 0, cnt) {
+                if (arr[j] != n) {
+                    TB_ASSERT(arr[j]->gvn < ctx->f->node_count);
+                    TB_ASSERT(ctx->vreg_map[arr[j]->gvn] == vreg_id);
+                    set_put(&ra->future_active, arr[j]->gvn);
+                    TB_OPTDEBUG(REGALLOC)(printf("#   sleep  %%%u\n", arr[j]->gvn));
+                }
+            }
 
             // resize the mask array if necessary
             size_t new_cap = ra->max_regs_in_class > ra->num_spills ? ra->max_regs_in_class : ra->num_spills;
@@ -1979,14 +1986,13 @@ static SlotIndex find_slot_index_end(Ctx* ctx, Rogers* restrict ra, TB_Node* n) 
     size_t i = ctx->bb_count;
     while (i--) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-        if (set_get(&bb->live_out, n->gvn)) { break; }
+        if (set_get(&bb->live_in, n->gvn)) {
+            int t = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, bb, n, n->gvn) - 1;
+            return (SlotIndex){ bb, t };
+        }
     }
 
-    if (i == SIZE_MAX || (i + 1 < ctx->bb_count && set_get(&ctx->cfg.blocks[i + 1].live_in, n->gvn))) {
-        i += 1;
-    }
-
-    TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+    TB_BasicBlock* bb = ctx->f->scheduled[n->gvn];
     int t = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, bb, n, n->gvn) - 1;
     return (SlotIndex){ bb, t };
 }
@@ -2195,7 +2201,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
                     TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
                     TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
 
-                    if (slow_dommy2(spill_site.bb, pred_bb) || slow_dommy2(reload_site.bb, pred_bb)) {
+                    if (slow_dommy2(reload_site.bb, pred_bb)) {
                         printf("BB%zu: No need for copy on this edge %zu of %%%u\n", pred_bb - ctx->cfg.blocks, 1 + j, phi->gvn);
                         // if we're dominated by the reload, we don't need a copy.
                         // this will be fixed up in the next phase btw
@@ -2203,7 +2209,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
                     } else {
                         TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, a->dt, 2, sizeof(TB_NodeMachCopy));
                         set_input(f, cpy, a, 1);
-                        TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = spill_mask, .use = a_def_mask);
+                        TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = a_def_mask, .use = a_def_mask);
 
                         TB_Node* last = pred_bb->items[aarray_length(pred_bb->items) - 1];
                         int t = rogers_insert_op(ctx, pred_bb - ctx->cfg.blocks, cpy, aarray_length(pred_bb->items) - (last == a ? 0 : 1));
@@ -2296,12 +2302,17 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
 
         // grab the definition from your nearest dom
         TB_Node* def = NULL;
-        do {
-            def = defs[use_bb - ctx->cfg.blocks];
-            use_bb = use_bb->dom;
-        } while (def == NULL);
+        if (self_phi && use_bb == reload_site.bb && t <= spill_site.order) {
+            def = self_phi;
+        } else {
+            do {
+                def = defs[use_bb - ctx->cfg.blocks];
+                use_bb = use_bb->dom;
+            } while (def == NULL);
+        }
 
-        if (un != spill_a && def != a) {
+        if ((un->type != TB_PHI || un != def) && def != a) {
+            printf("%%%u[%d] = %%%u\n", un->gvn, ui, def->gvn);
             set_input(f, un, def, ui);
         } else {
             TB_ASSERT(un != a);
