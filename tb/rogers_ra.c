@@ -1736,18 +1736,14 @@ static SlotIndex find_slot_index_end(Ctx* ctx, Rogers* restrict ra, TB_Node* n) 
     while (i--) {
         TB_BasicBlock* bb = &ctx->cfg.blocks[i];
         if (set_get(&bb->live_in, n->gvn)) {
-            // this block is the furthest live in block
-            int t = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, bb, n, n->gvn);
-            TB_ASSERT(t != 0);
-            return (SlotIndex){ bb, t - 1 };
+            int t = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, bb, n, n->gvn) - 1;
+            return (SlotIndex){ bb, t };
         }
     }
 
-    // no live ins? then it's a local def
     TB_BasicBlock* bb = ctx->f->scheduled[n->gvn];
-    int t = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, bb, n, n->gvn);
-    TB_ASSERT(t != 0);
-    return (SlotIndex){ bb, t - 1 };
+    int t = last_use_in_bb(ctx->cfg.blocks, ctx->f->scheduled, ra, bb, n, n->gvn) - 1;
+    return (SlotIndex){ bb, t };
 }
 
 // A and B must share the same register, for now we'll aggressively find a
@@ -1957,8 +1953,6 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
                 TB_BasicBlock* y_bb = f->scheduled[y_head->gvn];
                 TB_ASSERT(cfg_is_region(y_head));
 
-                bool is_dst_clean_reload = (slow_dommy2(reload_site.bb, y_bb) && y_bb != spill_site.bb);
-
                 TB_Node* phi = tb_alloc_node(f, TB_PHI, a->dt, 1 + y_head->input_count, 0);
                 set_input(f, phi, y_head, 0);
                 // pre-emptively insert copies, if the phi is necessary then
@@ -1968,8 +1962,12 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
                     TB_BasicBlock* pred_bb = f->scheduled[pred->gvn];
                     TB_ASSERT(pred->input_count != 0 && pred->type != TB_DEAD);
 
-                    bool is_pred_clean_reload = slow_dommy2(reload_site.bb, pred_bb);
-                    if (is_dst_clean_reload != is_pred_clean_reload) {
+                    if (slow_dommy2(reload_site.bb, pred_bb)) {
+                        printf("BB%zu: No need for copy on this edge %zu of %%%u\n", pred_bb - ctx->cfg.blocks, 1 + j, phi->gvn);
+                        // if we're dominated by the reload, we don't need a copy.
+                        // this will be fixed up in the next phase btw
+                        set_input(f, phi, a, 1 + j);
+                    } else {
                         TB_Node* cpy = tb_alloc_node(f, TB_MACH_COPY, a->dt, 2, sizeof(TB_NodeMachCopy));
                         set_input(f, cpy, a, 1);
                         TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = a_def_mask, .use = a_def_mask);
@@ -1981,9 +1979,6 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
 
                         spill_site.order += (spill_site.bb == pred_bb && t <= spill_site.order);
                         reload_site.order += (reload_site.bb == pred_bb && t <= reload_site.order);
-                    } else {
-                        printf("BB%zu: No need for copy on this edge %zu of %%%u\n", pred_bb - ctx->cfg.blocks, 1 + j, phi->gvn);
-                        set_input(f, phi, a, 1 + j);
                     }
                 }
                 set_put(&has_already, y);
@@ -2068,7 +2063,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
 
         // grab the definition from your nearest dom
         TB_Node* def = NULL;
-        if (use_bb == reload_site.bb && t <= reload_site.order) {
+        if (self_phi && use_bb == reload_site.bb && t <= spill_site.order) {
             def = self_phi;
         } else {
             do {
