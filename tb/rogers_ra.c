@@ -622,8 +622,12 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
         // gonna be modding shit too much for it to matter.
         ra.inactive_cache = NULL;
         cuikperf_region_start("insert spills", NULL);
-
         memset(just_spilled, 0, 1000);
+
+        bool* dirty_bb = tb_arena_alloc(arena, ctx->bb_count * sizeof(bool));
+        FOR_N(i, 0, ctx->bb_count) {
+            dirty_bb[i] = false;
+        }
 
         size_t old_node_count = ctx->f->node_count;
         FOR_REV_N(i, 0, dyn_array_length(ra.splits)) {
@@ -695,13 +699,6 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                 }
 
                 // we only aggressively rematerialize if we've already tried a simpler split
-                TB_Arena* tmp_arena = &ctx->f->tmp_arena;
-                TB_ArenaSavepoint sp = tb_arena_save(tmp_arena);
-                bool* reload_t = tb_arena_alloc(tmp_arena, ctx->bb_count * sizeof(bool));
-                FOR_N(i, 0, ctx->bb_count) {
-                    reload_t[i] = false;
-                }
-
                 TB_BasicBlock** scheduled = ctx->f->scheduled;
                 FOR_USERS(u, to_spill) {
                     TB_Node* use_n = USERN(u);
@@ -709,24 +706,12 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
 
                     if (use_n->gvn < old_node_count && !is_proj(use_n) && use_i < use_n->input_count) {
                         TB_BasicBlock* bb = scheduled[use_n->gvn];
-                        reload_t[bb - ctx->cfg.blocks] = true;
+                        dirty_bb[bb - ctx->cfg.blocks] = true;
                     }
                 }
 
                 rogers_remat(ctx, &ra, to_spill, false);
                 rogers_uncoalesce(ctx, &ra, to_spill->gvn);
-
-                // recompute order for dirty blocks
-                FOR_N(i, 0, ctx->bb_count) {
-                    if (!reload_t[i]) { continue; }
-                    TB_BasicBlock* bb = &ctx->cfg.blocks[i];
-                    int timeline = 1;
-                    for (size_t j = 0; j < aarray_length(bb->items); j++) {
-                        TB_Node* n = bb->items[j];
-                        ra.order[n->gvn] = 1 + j;
-                    }
-                }
-                tb_arena_restore(tmp_arena, sp);
 
                 FOR_N(j, 1, to_spill->input_count) {
                     // invalidate stretched input's coalescing
@@ -759,9 +744,25 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                             int x = uf_find(ra.uf, ra.uf_len, un->gvn);
                             int y = uf_find(ra.uf, ra.uf_len, copy->gvn);
                             rogers_coalesce(ctx, &ra, x, y, un, copy);
+
+                            TB_BasicBlock* use_bb = f->scheduled[un->gvn];
+                            dirty_bb[use_bb - ctx->cfg.blocks] = true;
                         } else {
                             k += 1;
                         }
+                    }
+                }
+
+                // recompute order for dirty blocks
+                FOR_N(i, 0, ctx->bb_count) {
+                    if (!dirty_bb[i]) { continue; }
+                    dirty_bb[i] = false;
+
+                    TB_BasicBlock* bb = &ctx->cfg.blocks[i];
+                    int timeline = 1;
+                    for (size_t j = 0; j < aarray_length(bb->items); j++) {
+                        TB_Node* n = bb->items[j];
+                        ra.order[n->gvn] = 1 + j;
                     }
                 }
 
@@ -1751,7 +1752,7 @@ static SlotIndex find_slot_index_end(Ctx* ctx, Rogers* restrict ra, TB_Node* n) 
 // jump into that range will insert copies on their end.
 static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, size_t old_node_count, bool avoid_b) {
     SlotIndex a_start = find_slot_index_start(ctx, ra, a, false);
-    SlotIndex b_start = find_slot_index_start(ctx, ra, b, true);
+    SlotIndex b_start = find_slot_index_start(ctx, ra, b, !avoid_b);
 
     // find spill point: max(a_start, b_start)
     SlotIndex spill_site = a_start;
