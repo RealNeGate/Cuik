@@ -7,7 +7,11 @@
 void* tb_out_reserve(TB_Emitter* o, size_t count) {
     if (o->count + count >= o->capacity) {
         if (o->capacity == 0) {
-            o->capacity = 64;
+            if (count < 64) {
+                o->capacity = 64;
+            } else {
+                o->capacity = count;
+            }
         } else {
             o->capacity += count;
             o->capacity *= 2;
