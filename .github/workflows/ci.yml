@@ -6,8 +6,8 @@ jobs:
     runs-on: windows-2022
     if: github.ref == 'refs/heads/master'
     steps:
-      - uses: actions/checkout@v3
-      - uses: seanmiddleditch/gha-setup-ninja@master
+      - uses: actions/checkout@v4
+      - uses: seanmiddleditch/gha-setup-ninja@v6
 
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: leafo/gh-actions-lua@v10
@@ -28,13 +28,13 @@ jobs:
         run: lua build.lua -shared -cuik -tb
 
       - name: upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: cuik-windows
           path: bin/cuik.exe
 
       - name: upload dll artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: cuik-windows
           path: bin/cuik.dll
@@ -55,7 +55,7 @@ jobs:
         timeout-minutes: 10
 
       - name: upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: cuik-linux
           path: bin/cuik
@@ -68,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - uses: seanmiddleditch/gha-setup-ninja@master
+      - uses: seanmiddleditch/gha-setup-ninja@v6
 
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
@@ -128,7 +128,7 @@ jobs:
               sha: context.sha
             })
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
 
       - name: Bundle
         run: |
