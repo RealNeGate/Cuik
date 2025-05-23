@@ -1,22 +1,23 @@
 #include <stdint.h>
 #include <sys/types.h>
 #include "../emitter.h"
+#include "../../meta/a64bitmasks.h"
 
 #define ENUM(N) enum N typedef N; enum N
 #define STRUCT(N) struct N typedef N; struct N
 
 // provides mask of N bits
-#define BIT_MASK(N) ((1 << N) - 1)
-// get N bits from value V at offset O
-#define GET_BITS(V, N, O) ((V >> O) & BIT_MASK(N))
-// set N bits at offset O from value V
-#define SET_BITS(V, N, O) ((V & BIT_MASK(N)) << O)
+#define MASK(N) ((1 << N) - 1)
+// get N bits from offset O in value V
+#define GET_BITS(O, N, V) (((V) >> O) & MASK(N))
+// move N bits of value V to offset O
+#define PUT_BITS(O, N, V) (((V) & MASK(N)) << O)
 
 // Xn refers to the 64bit variants of the registers,
 // usually the 32bit aliases are Wn (we don't have enums
 // for them because it's not that important, they're equal)
 ENUM(GPR) {
-    X0,  X1,   X2,  X3,  X4,  X5,  X6,  X7,
+    X0,  X1,  X2,  X3,  X4,  X5,  X6,  X7,
     X8,  X9,  X10, X11, X12, X13, X14, X15,
     X16, X17, X18, X19, X20, X21, X22, X23,
     X24, X25, X26, X27, X28, X29, X30,
@@ -32,7 +33,7 @@ ENUM(GPR) {
     GPR_NONE = -1,
 };
 
-ENUM(Cond) {
+ENUM(Condition) {
     EQ, NE, CS, CC, MI, PL, VS, VC, HI, LS, GE, LT, GT, LE, AL, NV,
 };
 
@@ -40,12 +41,46 @@ ENUM(ShiftType) {
     LSL, LSR, ASR, ROR,
 };
 
+ENUM(AddOp) {
+    //      u
+    ADD = 0b0,
+    SUB = 0b1,
+};
+
 /* UDF
     0000 0000 0000 0000 iiii iiii iiii iiii
     i = imm16 immediate (ignored by hardware)
 */
-static void emit_udf(TB_CGEmitter* restrict e, uint16_t imm) {
-    EMIT4(e, imm);
+static void udf(TB_CGEmitter* restrict e, uint16_t imm) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(0, 16, imm);
+    inst &= ~MASK_reserved_perm_undef_UDF_only_perm_undef;
+    inst |=  BITS_reserved_perm_undef_UDF_only_perm_undef;
+    EMIT4(e, inst);
+}
+
+/* add/sub (immediate)
+    buf1 0001 0sii iiii iiii iinn nnnd dddd
+    b = 32/64 bit
+    u = add/sub
+    f = ignore/set flags
+    s = 0/12 shift
+    i = 12 bit immediate
+    n = source register
+    d = destination register
+*/
+static void dpimm_addsub_imm(TB_CGEmitter* restrict e, bool wide, AddOp op, GPR Rd, GPR Rn, uint16_t imm12, bool shift, bool set_flags) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(31,  1, wide);
+    inst |= PUT_BITS(30,  1, op);
+    inst |= PUT_BITS(29,  1, set_flags);
+    inst |= PUT_BITS(22,  1, shift);
+    inst |= PUT_BITS(10, 12, imm12);
+    inst |= PUT_BITS( 5,  5, Rn);
+    inst |= PUT_BITS( 0,  5, Rd);
+    inst &= ~MASK_dpimm_addsub_imm;
+    inst |=  BITS_dpimm_addsub_imm;
+    EMIT4(e, inst);
 }
 
 /* move wide (immediate)
@@ -61,117 +96,185 @@ ENUM(MoveOp) {
     MOVZ = 0b10, // move zero-extended immediate
     MOVK = 0b11, // move immediate (keep other bits)
 };
-static void emit_dpi_mov(TB_CGEmitter* restrict e, MoveOp o, GPR d, uint16_t i, uint8_t s, bool is_64bit) {
-    //                ___100101_______________________
-    uint32_t inst = 0b00010010100000000000000000000000;
-    inst |= is_64bit ? (1 << 31) : 0;
-    inst |= SET_BITS(o,  2, 29);
-    inst |= SET_BITS(s,  2, 21);
-    inst |= SET_BITS(i, 16,  5);
-    inst |= SET_BITS(d,  5,  0);
+static void dpimm_movewide(TB_CGEmitter* restrict e, bool wide, MoveOp opc, GPR Rd, uint16_t imm16, uint8_t shift) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(31,  1, wide);
+    inst |= PUT_BITS(29,  2, opc);
+    inst |= PUT_BITS(21,  2, shift);
+    inst |= PUT_BITS( 5, 16, imm16);
+    inst |= PUT_BITS( 0,  5, Rd);
+    inst &= ~MASK_dpimm_movewide;
+    inst |=  BITS_dpimm_movewide;
     EMIT4(e, inst);
 }
 
-/* logical (shifted register)
-    bcc0 1010 ssum mmmm iiii iinn nnnd dddd
-    b = 32/64 bit
-    c = opcode and/or/eor/ands
-    s = shift type lsl/lsr/asr/ror
-    u = negate 2nd reg
-    m = 2nd reg (shifted)
-    i = imm6 shift amount
-    n = 1st reg
-    d = destination reg
-*/
-ENUM(LogicOp) {
-    //       ccu
-    AND  = 0b000, // d = n & m
-    BIC  = 0b001, // d = n & ~m
-    ORR  = 0b010, // d = n | m
-    ORN  = 0b011, // d = n | ~m
-    EOR  = 0b100, // d = n ^ m
-    EON  = 0b101, // d = n ^ ~m
-    ANDS = 0b110, // d = n & m (set flags)
-    BICS = 0b111, // d = n & ~m (set flags)
-};
-static void emit_dpr_logical(TB_CGEmitter* restrict e, LogicOp o, GPR d, GPR n, GPR m, uint8_t i, ShiftType s, bool is_64bit) {
-    uint32_t c = GET_BITS(o, 2, 1);
-    uint32_t u = GET_BITS(o, 1, 0);
-    //                ___01010________________________
-    uint32_t inst = 0b00001010000000000000000000000000;
-    inst |= is_64bit ? (1 << 31) : 0;
-    inst |= SET_BITS(c, 2, 29);
-    inst |= SET_BITS(s, 2, 22);
-    inst |= SET_BITS(u, 1, 21);
-    inst |= SET_BITS(m, 5, 16);
-    inst |= SET_BITS(i, 5, 10);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
-    EMIT4(e, inst);
-}
-
-/* conditional select
-    bps1 1010 110m mmmm cccc qqnn nnnd dddd
-    b = 32/64 bit
-    p = op
-    s = always 0, 1 is unallocated :)
-    m = 2nd reg
+/* conditional branch (immediate)
+    0101 0100 iiii iiii iiii iiii iiip cccc
+    i = 19 bit address
+    p = consistent?
     c = condition
-    q = op2
-    n = 1st reg
-    d = destination reg
 */
-ENUM(CondSelOp) {
-    // opcode pqq
-    CSEL  = 0b000, // d = c ? n : m
-    CSINC = 0b001, // d = c ? n : ++m
-    CSINV = 0b100, // d = c ? n : ~m
-    CSNEG = 0b101, // d = c ? n : -m
-};
-
-static void emit_cs(TB_CGEmitter* restrict e, CondSelOp o, GPR d, GPR n, GPR m, Cond c, bool is_64bit) {
-    uint32_t p = GET_BITS(o, 1, 2);
-    uint32_t q = GET_BITS(o, 2, 0);
-    //                ___11010110_____________________
-    uint32_t inst = 0b00011010110000000000000000000000;
-    inst |= is_64bit ? (1 << 31) : 0;
-    inst |= SET_BITS(p, 1, 30);
-    inst |= SET_BITS(m, 5, 16);
-    inst |= SET_BITS(c, 4, 12);
-    inst |= SET_BITS(q, 2, 10);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
+static void control_condbranch(TB_CGEmitter* restrict e, Condition cond, uint32_t address, bool consistent) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(5, 19, address);
+    inst |= PUT_BITS(4, 1, consistent);
+    inst |= PUT_BITS(0, 4, cond);
+    inst &= ~MASK_control_condbranch;
+    inst |=  BITS_control_condbranch;
     EMIT4(e, inst);
 }
 
-/* data processing (1 source)
-    b1s1 1010 110p pppp qqqq qqnn nnnd dddd
-    b = 32/64 bit
-    s = i don't know but it's always 0 according to ISA_A64_xml_A_profile-2024-09.pdf
-    p = opcode2
-    q = opcode1
-    n = 1st register
-    d = destination register
+/* exception generation
+    1101 0100 pppi iiii iiii iiii iiiq qqll
+    p = opcode
+    i = imm16
+    q = opcode 2
+    l = LL
 */
-ENUM(DPR1op) {
-    // op1    qqqqqq
-    RBIT  = 0b000000, // reverse bits
-    REV16 = 0b000001, // reverse each 2-byte halfwords
-    REV   = 0b000010, // reverse bytes
-    CLZ   = 0b000100, // count leading zeros
-    CLS   = 0b000101, // count leading signs
-    CTZ   = 0b000110, // count trailing zeros
-    CNT   = 0b000111, // count set bits
-    ABS   = 0b001000, // absolute of signed value
+static void exception_break(TB_CGEmitter* restrict e, uint16_t imm16) {
+    uint32_t inst = 0b11010100001000000000000000000000;
+    inst |= PUT_BITS(5, 16, imm16);
+    EMIT4(e, inst);
+}
+static void exception_halt(TB_CGEmitter* restrict e, uint16_t imm16) {
+    uint32_t inst = 0b11010100010000000000000000000000;
+    inst |= PUT_BITS(5, 16, imm16);
+    EMIT4(e, inst);
+}
+
+/* hints
+    1101 0101 0000 0011 0010 rrrr ppp1 1111
+    r = CRm
+    p = opcode 2
+*/
+static void hints_nop(TB_CGEmitter* restrict e) {
+    uint32_t inst = 0b11010101000000110010000000011111;
+    EMIT4(e, inst);
+}
+
+/* system register move
+    1101 0101 00d1 ssss ssss ssss ssst tttt
+    d = store/load
+    s = system register
+    t = general register
+*/
+ENUM(SystemMoveOp) {
+    SYSMOVE_STORE,
+    SYSMOVE_LOAD,
 };
-static void emit_dpr_1(TB_CGEmitter* restrict e, DPR1op q, GPR d, GPR n, bool is_64bit) {
-    //                _1_11010110_____________________
-    uint32_t inst = 0b01011010110000000000000000000000;
-    inst |= is_64bit ? (1 << 31) : 0;
-    // p is always 0 for what we care about currently
-    inst |= SET_BITS(q, 6, 10);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
+uint16_t typedef SystemReg;
+static void control_systemmove(TB_CGEmitter* restrict e, SystemMoveOp op, SystemReg Rs, GPR Rt) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(21,  1, op);
+    inst |= PUT_BITS( 5, 15, Rs);
+    inst |= PUT_BITS( 0,  5, Rt);
+    inst &= ~MASK_control_systemmove;
+    inst |=  BITS_control_systemmove;
+    EMIT4(e, inst);
+}
+
+/* unconditional branch (register)
+    1101 011p pppq qqqq rrrr rrnn nnnm mmmm
+    p = opcode
+    q = second opcode always 11111
+    r = third opcode (auth related)
+    n = address register
+    m = modifier register, auth related
+*/
+ENUM(BranchOp) {
+    //       pppp
+    BR   = 0b0000,
+    BLR  = 0b0001,
+    RET  = 0b0010,
+    ERET = 0b0100,
+    DRPS = 0b0101,
+};
+static void control_branch_reg(TB_CGEmitter* restrict e, BranchOp op, GPR Rn) {
+    uint32_t inst = 0;
+    if (op == ERET || op == DRPS) Rn = 0b11111;
+    uint32_t q = 0b11111; // always 11111
+    uint32_t r = 0b00000; // always 00000 for our use
+    uint32_t m = 0b00000; // always 00000 for our use
+    inst |= PUT_BITS(25, 4, op);
+    inst |= PUT_BITS(20, 5, q);
+    inst |= PUT_BITS(10, 6, r);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, m);
+    inst &= ~MASK_control_branch_reg;
+    inst |=  BITS_control_branch_reg;
+    EMIT4(e, inst);
+}
+
+/* unconditional branch (immediate)
+    p001 01ii iiii iiii iiii iiii iiii iiii
+    p = link?
+    i = 26 bit immediate
+*/
+static void control_branch_imm(TB_CGEmitter* restrict e, uint32_t imm26, bool with_link) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(31,  1, with_link);
+    inst |= PUT_BITS( 0, 26, imm26);
+    inst &= ~MASK_control_branch_imm;
+    inst |=  BITS_control_branch_imm;
+    EMIT4(e, inst);
+}
+
+/* compare and branch (immediate)
+    b011 010p iiii iiii iiii iiii iiit tttt
+    b = 32/64 bit
+    p = zero/not-zero
+    i = imm19
+    t = register to compare
+*/
+static void control_compbranch(TB_CGEmitter* restrict e, bool wide, bool zero, GPR Rt, uint16_t imm19) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(31,  1, wide);
+    inst |= PUT_BITS(24,  1, !zero);
+    inst |= PUT_BITS( 5, 19, imm19);
+    inst |= PUT_BITS( 0,  5, Rt);
+    inst &= ~MASK_control_compbranch;
+    inst |=  BITS_control_compbranch;
+    EMIT4(e, inst);
+}
+
+/* compare registers and branch
+    b111 0100 cccm mmmm 00ii iiii iiit tttt
+    b = 32/64 bit
+    c = condition
+    m = 2nd register
+    i = imm9 relative address
+    t = tested register
+*/
+ENUM(CompBranchCC) {
+    CB_GT, CB_GE, CB_HI, CB_HS, CB_EQ, CB_NE,
+};
+static void control_compbranch_regs(TB_CGEmitter* restrict e, bool wide, CompBranchCC cond, GPR Rt, GPR Rm, uint16_t reladdr) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(21, 3, cond);
+    inst |= PUT_BITS(16, 5, Rm);
+    inst |= PUT_BITS(5, 9, reladdr);
+    inst |= PUT_BITS(0, 5, Rt);
+    inst &= ~MASK_control_compbranch_regs;
+    inst |=  BITS_control_compbranch_regs;
+    EMIT4(e, inst);
+}
+
+/* compare register with immediate and branch
+    b111 0100 ccci iiii i0jj jjjj jjjt tttt
+    b = 32/64 bit
+    c = condition
+    i = imm6
+    j = imm9 relative address
+    t = tested register
+*/
+static void control_compbranch_imm(TB_CGEmitter* restrict e, bool wide, CompBranchCC cond, GPR Rt, uint8_t imm, uint16_t reladdr) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(21, 3, cond);
+    inst |= PUT_BITS(15, 6, imm);
+    inst |= PUT_BITS(5, 9, reladdr);
+    inst |= PUT_BITS(0, 5, Rt);
+    inst &= ~MASK_control_compbranch_imm;
+    inst |=  BITS_control_compbranch_imm;
     EMIT4(e, inst);
 }
 
@@ -197,14 +300,191 @@ ENUM(DPR2op) {
     SMIN = 0b011010, // d = n < m ? n : m (signed)
     UMIN = 0b011011, // d = n < m ? n : m (unsigned)
 };
-static void emit_dpr_2(TB_CGEmitter* restrict e, DPR2op p, GPR d, GPR n, GPR m, bool is_64bit) {
-    //                _0_11010110_____________________
-    uint32_t inst = 0b00011010110000000000000000000000;
-    inst |= is_64bit ? (1 << 31) : 0;
-    inst |= SET_BITS(m, 5, 16);
-    inst |= SET_BITS(p, 6, 10);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
+static void dpreg_dp_2src(TB_CGEmitter* restrict e, bool wide, DPR2op op, GPR Rd, GPR Rn, GPR Rm) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(31, 1, wide);
+    inst |= PUT_BITS(16, 5, Rm);
+    inst |= PUT_BITS(10, 6, op);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, Rn);
+    inst &= ~MASK_dpreg_dp_2src;
+    inst |=  BITS_dpreg_dp_2src;
+    EMIT4(e, inst);
+}
+
+/* data processing (1 source)
+    b1s1 1010 110p pppp qqqq qqnn nnnd dddd
+    b = 32/64 bit
+    s = i don't know but it's always 0 according to ISA_A64_xml_A_profile-2024-09.pdf
+    p = opcode2
+    q = opcode1
+    n = 1st register
+    d = destination register
+*/
+ENUM(DPR1op) {
+    // op1    qqqqqq
+    RBIT  = 0b000000, // reverse bits
+    REV16 = 0b000001, // reverse each 2-byte halfwords
+    REV   = 0b000010, // reverse bytes
+    CLZ   = 0b000100, // count leading zeros
+    CLS   = 0b000101, // count leading signs
+    CTZ   = 0b000110, // count trailing zeros
+    CNT   = 0b000111, // count set bits
+    ABS   = 0b001000, // absolute of signed value
+};
+static void dpreg_dp_1src(TB_CGEmitter* restrict e, bool wide, DPR1op op, GPR Rd, GPR Rn) {
+    uint32_t inst = 0;
+    uint32_t p = 0; // always 0 for what we do currently
+    inst |= PUT_BITS(31, 1, wide);
+    inst |= PUT_BITS(16, 5, p);
+    inst |= PUT_BITS(10, 6, op);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, Rd);
+    inst &= ~MASK_dpreg_dp_1src;
+    inst |=  BITS_dpreg_dp_1src;
+    EMIT4(e, inst);
+}
+
+/* logical (shifted register)
+    bcc0 1010 ssum mmmm iiii iinn nnnd dddd
+    b = 32/64 bit
+    c = opcode and/or/eor/ands
+    s = shift type lsl/lsr/asr/ror
+    u = negate 2nd reg
+    m = 2nd reg (shifted)
+    i = imm6 shift amount
+    n = 1st reg
+    d = destination reg
+*/
+ENUM(LogicOp) {
+    //       ccu
+    AND  = 0b000, // d = n & m
+    BIC  = 0b001, // d = n & ~m
+    ORR  = 0b010, // d = n | m
+    ORN  = 0b011, // d = n | ~m
+    EOR  = 0b100, // d = n ^ m
+    EON  = 0b101, // d = n ^ ~m
+    ANDS = 0b110, // d = n & m (set flags)
+    BICS = 0b111, // d = n & ~m (set flags)
+};
+static void dpreg_log_shift(TB_CGEmitter* restrict e, bool wide, LogicOp op, GPR Rd, GPR Rn, GPR Rm, uint8_t imm6, ShiftType shift) {
+    uint32_t inst = 0;
+    uint32_t code = GET_BITS(1, 2, op);
+    uint32_t neg  = GET_BITS(0, 1, op);
+    inst |= PUT_BITS(31, 1, wide);
+    inst |= PUT_BITS(29, 2, code);
+    inst |= PUT_BITS(22, 2, shift);
+    inst |= PUT_BITS(21, 1, neg);
+    inst |= PUT_BITS(16, 5, Rm);
+    inst |= PUT_BITS(10, 6, imm6);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, Rd);
+    inst &= ~MASK_dpreg_log_shift;
+    inst |=  BITS_dpreg_log_shift;
+    EMIT4(e, inst);
+}
+
+/* add/sub (shifted register)
+    buf0 1011 ss0m mmmm iiii iinn nnnd dddd
+    b = 32/64 bit
+    u = add/sub
+    f = ignore/set flags
+    s = shift type
+    m = 2nd register
+    i = shift amount
+    n = 1st register
+    d = destination register
+*/
+static void dpreg_addsub_shift(TB_CGEmitter* restrict e, bool wide, AddOp op, GPR Rd, GPR Rn, GPR Rm, uint8_t imm6, ShiftType shift, bool set_flags) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(31, 1, wide);
+    inst |= PUT_BITS(30, 1, op);
+    inst |= PUT_BITS(29, 1, set_flags);
+    inst |= PUT_BITS(22, 2, shift);
+    inst |= PUT_BITS(16, 5, Rm);
+    inst |= PUT_BITS(10, 6, imm6);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, Rd);
+    inst &= ~MASK_dpreg_addsub_shift;
+    inst |=  BITS_dpreg_addsub_shift;
+    EMIT4(e, inst);
+}
+
+/* conditional select
+    bps1 1010 110m mmmm cccc qqnn nnnd dddd
+    b = 32/64 bit
+    p = op
+    s = always 0, 1 is unallocated :)
+    m = 2nd reg
+    c = condition
+    q = op2
+    n = 1st reg
+    d = destination reg
+*/
+ENUM(CondSelOp) {
+    // opcode pqq
+    CSEL  = 0b000, // d = c ? n : m
+    CSINC = 0b001, // d = c ? n : ++m
+    CSINV = 0b100, // d = c ? n : ~m
+    CSNEG = 0b101, // d = c ? n : -m
+};
+static void dpreg_condsel(TB_CGEmitter* restrict e, bool wide, CondSelOp op, Condition cond, GPR Rd, GPR Rn, GPR Rm) {
+    uint32_t inst = 0;
+    uint32_t p = GET_BITS(2, 1, op);
+    uint32_t q = GET_BITS(0, 2, op);
+    uint32_t s = 0; // always 0
+    inst |= PUT_BITS(31, 1, wide);
+    inst |= PUT_BITS(30, 1, p);
+    inst |= PUT_BITS(29, 1, s);
+    inst |= PUT_BITS(16, 5, Rm);
+    inst |= PUT_BITS(12, 4, cond);
+    inst |= PUT_BITS(10, 2, q);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, Rd);
+    inst &= ~MASK_dpreg_condsel;
+    inst |=  BITS_dpreg_condsel;
+    EMIT4(e, inst);
+}
+
+/* conditional compare (register)
+    bps1 1010 001m mmmm cccc 0qnn nnnr ffff
+    b = 32/64 bit
+    p = opcode 1, when 0 means compare A and ¬B, when 1 means compare A and B
+    s = idk but always 1
+    m = 2nd register
+    c = condition
+    q = opcode 2 always 0, unallocated :)
+    n = 1st register
+    r = opcode 3 always 0, unallocated :)
+    f = flag literal
+
+    ---1 1010 001m mmmm cccc 0-nn nnn- vvvv
+    size         Rm     cond   Rn      nzcv
+    abc1 1010 010- ---- ---- 0d-- ---e ----
+    --0                       -      - unallocated :)
+    -01                       0      0 ccmn (conditional compare negative)
+    -11                       0      0 ccmp ()
+*/
+ENUM(CCop) {
+    CCMN, // flags = c ? n <=> ~m : f
+    CCMP, // flags = c ? n <=>  m : f
+};
+static void dpreg_condcmp_reg(TB_CGEmitter* restrict e, bool wide, CCop op, Condition cond, GPR Rn, GPR Rm, uint8_t else_flags) {
+    uint32_t inst = 0;
+    uint32_t s = 1; // always 1
+    uint32_t q = 0; // always 0
+    uint32_t r = 0; // always 0
+    inst |= PUT_BITS(31, 1, wide);
+    inst |= PUT_BITS(30, 1, op);
+    inst |= PUT_BITS(29, 1, s);
+    inst |= PUT_BITS(16, 5, Rm);
+    inst |= PUT_BITS(12, 4, cond);
+    inst |= PUT_BITS(10, 1, q);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 4, 1, r);
+    inst |= PUT_BITS( 0, 4, else_flags);
+    inst &= ~MASK_dpreg_condcmp_reg;
+    inst |=  BITS_dpreg_condcmp_reg;
     EMIT4(e, inst);
 }
 
@@ -230,100 +510,23 @@ ENUM(DPR3op) {
     UMSUBL = 0b001011, // d = a - n * m (64bit - 32bit * 32bit) (unsigned)
     UMULH  = 0b001100, // d = (n * m) >> 64 (unsigned)
 };
-static void emit_dpr_3(TB_CGEmitter* restrict e, DPR3op o, GPR d, GPR n, GPR m, GPR a, bool is_64bit) {
-    if (o != MADD && o != MSUB) is_64bit = true;
-    if (o == SMULH || o == UMULH) a = 0b11111;
-    uint32_t p = GET_BITS(o, 2, 4);
-    uint32_t q = GET_BITS(o, 3, 1);
-    uint32_t r = GET_BITS(o, 1, 0);
-    //                ___11011________________________
-    uint32_t inst = 0b00011011000000000000000000000000;
-    inst |= is_64bit ? (1 << 31) : 0;
-    inst |= SET_BITS(p, 2, 29);
-    inst |= SET_BITS(q, 3, 21);
-    inst |= SET_BITS(m, 5, 16);
-    inst |= SET_BITS(r, 1, 15);
-    inst |= SET_BITS(a, 6, 10);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
-    EMIT4(e, inst);
-}
-
-/* add/sub (shifted register)
-    buf0 1011 ss0m mmmm iiii iinn nnnd dddd
-    b = 32/64 bit
-    u = add/sub
-    f = ignore/set flags
-    s = shift type
-    m = 2nd register
-    i = shift amount
-    n = 1st register
-    d = destination register
-*/
-ENUM(DPRaddop) {
-    //      u
-    ADD = 0b0,
-    SUB = 0b1,
-};
-static void emit_dpr_add(TB_CGEmitter* restrict e, DPRaddop o, GPR d, GPR n, GPR m, ShiftType s, uint8_t i, bool set_flags, bool is_64bit) {
-    //                ___01011__0_____________________
-    uint32_t inst = 0b00001011000000000000000000000000;
-    inst |= is_64bit  ? (1 << 31) : 0;
-    inst |= set_flags ? (1 << 29) : 0;
-    inst |= SET_BITS(o, 1, 30);
-    inst |= SET_BITS(s, 2, 22);
-    inst |= SET_BITS(m, 5, 16);
-    inst |= SET_BITS(i, 6, 10);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
-    EMIT4(e, inst);
-}
-
-static void emit_dpi_add(TB_CGEmitter* restrict e, DPRaddop o, GPR d, GPR n, bool s, uint16_t i, bool is_64bit) {
-    uint32_t inst = (0b100010 << 23u);
-    inst |= is_64bit  ? (1 << 31) : 0;
-    inst |= SET_BITS(o, 1,  30);
-    inst |= SET_BITS(s, 1,  22);
-    inst |= SET_BITS(i, 12, 10);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
-    EMIT4(e, inst);
-}
-
-/* conditional compare (register)
-    bps1 1010 001m mmmm cccc 0qnn nnnr ffff
-    b = 32/64 bit
-    p = opcode 1, when 0 means compare A and ¬B, when 1 means compare A and B
-    s = idk but always 1
-    m = 2nd register
-    c = condition
-    q = opcode 2 always 0, unallocated :)
-    n = 1st register
-    r = opcode 3 always 0, unallocated :)
-    f = flag literal
-
-    ---1 1010 001m mmmm cccc 0-nn nnn- vvvv
-    size         Rm     cond   Rn      nzcv
-    abc1 1010 010- ---- ---- 0d-- ---e ----
-    --0                       -      - unallocated :)
-    -01                       0      0 ccmn (conditional compare negative)
-    -11                       0      0 ccmp ()
-*/
-ENUM(CCop) {
-    CCMN, // flags = c ? n <=> ~m : f
-    CCMP, // flags = c ? n <=> m : f
-};
-static void emit_dpr_cc(TB_CGEmitter* restrict e, CCop o, GPR d, GPR n, GPR m, Cond c, uint8_t else_flags, bool is_64bit) {
-    uint32_t s = 1;
-    //                ___11010001_________0___________
-    uint32_t inst = 0b00011010001000000000000000000000;
-    inst |= is_64bit  ? (1 << 31) : 0;
-    inst |= SET_BITS(o, 1, 30);
-    inst |= SET_BITS(s, 1, 29);
-    inst |= SET_BITS(m, 5, 16);
-    inst |= SET_BITS(c, 4, 12);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
+static void dpreg_dp_3src(TB_CGEmitter* restrict e, bool wide, DPR3op op, GPR Rd, GPR Rn, GPR Rm, GPR Ra) {
+    uint32_t inst = 0;
+    if (op != MADD && op != MSUB) wide = true;
+    if (op == SMULH || op == UMULH) Ra = 0b11111;
+    uint32_t p = GET_BITS(4, 2, op);
+    uint32_t q = GET_BITS(1, 3, op);
+    uint32_t r = GET_BITS(0, 1, op);
+    inst |= PUT_BITS(31, 1, wide);
+    inst |= PUT_BITS(29, 2, p);
+    inst |= PUT_BITS(21, 3, q);
+    inst |= PUT_BITS(16, 5, Rm);
+    inst |= PUT_BITS(15, 1, r);
+    inst |= PUT_BITS(10, 5, Ra);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, Rd);
+    inst &= ~MASK_dpreg_dp_3src;
+    inst |=  BITS_dpreg_dp_3src;
     EMIT4(e, inst);
 }
 
@@ -346,18 +549,27 @@ ENUM(FPtype) {
     d = destination register
 */
 ENUM(FPconvINTop) {
+    FCVTZS   = 0b000,
+    FCVTZU   = 0b001,
+    SCVTF    = 0b010,
+    UCVTF    = 0b011,
     FMOV_F2I = 0b110,
     FMOV_I2F = 0b111,
 };
-static void emit_fp_convint(TB_CGEmitter* restrict e, FPconvINTop p, FPtype t, GPR d, GPR n, bool top_half, bool is_64bit) {
-    //                _0_11110__1_____000000__________
-    uint32_t inst = 0b00011110001000000000000000000000;
-    inst |= is_64bit ? (1 << 31) : 0;
-    inst |= SET_BITS(t, 2, 22);
-    inst |= top_half ? (1 << 19) : 0;
-    inst |= SET_BITS(p, 3, 16);
-    inst |= SET_BITS(n, 5, 5);
-    inst |= SET_BITS(d, 5, 0);
+static void simd_dp_float2int(TB_CGEmitter* restrict e, bool wide, FPtype type, FPconvINTop op, GPR Rd, GPR Rn, bool top_half) {
+    uint32_t inst = 0;
+    if (op == FCVTZS || op == FCVTZU) top_half = 0b11;
+    if (op == SCVTF  || op == UCVTF)  top_half = 0b00;
+    uint32_t s = 0; // always 0
+    inst |= PUT_BITS(31, 1, wide);
+    inst |= PUT_BITS(29, 1, s);
+    inst |= PUT_BITS(22, 2, type);
+    inst |= PUT_BITS(19, 2, top_half);
+    inst |= PUT_BITS(16, 3, op);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, Rd);
+    inst &= ~MASK_simd_dp_float2int;
+    inst |=  BITS_simd_dp_float2int;
     EMIT4(e, inst);
 }
 
@@ -375,15 +587,26 @@ ENUM(FPDP1op) {
     FMOV = 0b000000,
     FNEG = 0b000010,
 };
-static void emit_fp_dp_1(TB_CGEmitter* restrict e, FPDP1op p, FPtype t, GPR d, GPR n) {
-    //                _0_11110__1______10000__________
-    uint32_t inst = 0b00011110001000000100000000000000;
-    inst |= SET_BITS(t, 2, 22);
-    inst |= SET_BITS(p, 6, 15);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
+static void simd_dp_floatdp1(TB_CGEmitter* restrict e, FPtype type, FPDP1op op, GPR Rd, GPR Rn) {
+    uint32_t inst = 0;
+    uint32_t m = 0; // always 0
+    uint32_t s = 0; // always 0
+    inst |= PUT_BITS(31, 1, m);
+    inst |= PUT_BITS(29, 1, s);
+    inst |= PUT_BITS(22, 2, type);
+    inst |= PUT_BITS(15, 6, op);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, Rd);
+    inst &= ~MASK_simd_dp_floatdp1;
+    inst |=  BITS_simd_dp_floatdp1;
     EMIT4(e, inst);
 }
+
+//!! floating-point compare
+
+//!! floating-point immediate
+
+//!! floating-point conditional compare
 
 /* floating-point data-processing (2 source)
     a0s1 1110 tt1m mmmm pppp 10nn nnnd dddd
@@ -406,16 +629,25 @@ ENUM(FPDP2op) {
     FMINNM = 0b0111, // d = n < m ? n : m (prefers Number)
     FNMUL  = 0b1000, // d = -(n * m)
 };
-static void emit_fp_dp_2(TB_CGEmitter* restrict e, FPDP2op p, FPtype t, GPR d, GPR n, GPR m) {
-    //                _0_11110__1_________10__________
-    uint32_t inst = 0b00011110001000000000100000000000;
-    inst |= SET_BITS(t, 2, 22);
-    inst |= SET_BITS(m, 5, 16);
-    inst |= SET_BITS(p, 4, 12);
-    inst |= SET_BITS(n, 5,  5);
-    inst |= SET_BITS(d, 5,  0);
+static void simd_dp_floatdp2(TB_CGEmitter* restrict e, FPtype type, FPDP2op op, GPR Rd, GPR Rn, GPR Rm) {
+    uint32_t inst = 0;
+    uint32_t a = 0; // always 0
+    uint32_t s = 0; // always 0
+    inst |= PUT_BITS(31, 1, a);
+    inst |= PUT_BITS(29, 1, s);
+    inst |= PUT_BITS(22, 2, type);
+    inst |= PUT_BITS(16, 5, Rm);
+    inst |= PUT_BITS(12, 4, op);
+    inst |= PUT_BITS( 5, 5, Rn);
+    inst |= PUT_BITS( 0, 5, Rd);
+    inst &= ~MASK_simd_dp_floatdp1;
+    inst |=  BITS_simd_dp_floatdp1;
     EMIT4(e, inst);
 }
+
+//!! floating-point conditional select
+
+//!! floating-point data-processing (3 source)
 
 /* A64 tree -> TB_NodeTypeEnum
     > reserved
@@ -433,6 +665,7 @@ static void emit_fp_dp_2(TB_CGEmitter* restrict e, FPDP2op p, FPtype t, GPR d, G
             brk - TB_DEBUGBREAK/TB_TRAP
         > hints
             nop
+        > system register move
         > unconditional branch (register)
             br  - TB_BRANCH
             blr - TB_CALL
@@ -441,6 +674,8 @@ static void emit_fp_dp_2(TB_CGEmitter* restrict e, FPDP2op p, FPtype t, GPR d, G
             b - TB_BRANCH
             bl - TB_CALL
         > compare and branch (immediate)
+        > compare registers and branch
+        > compare register with immediate and branch
     > data processing (register)
         > data processing (2 source)
             udiv - TB_UDIV
@@ -463,6 +698,7 @@ static void emit_fp_dp_2(TB_CGEmitter* restrict e, FPDP2op p, FPtype t, GPR d, G
             sub  - TB_SUB
         > conditional select
             csel - TB_SELECT
+        > conditional compare (register)
         > data processing (3 source)
             madd - TB_MUL
     > data processing -- scalar floating-point and advanced simd
@@ -556,165 +792,4 @@ TB_CMP_FLT,
 TB_CMP_FLE,
 
 TB_FRAME_PTR,
-*/
-
-static void emit_ret(TB_CGEmitter* restrict e, GPR rn) {
-    // 1101 0110 0101 1111 0000 00NN NNN0 0000
-    //
-    // 'ret rn' just does 'mov pc, rn', although in practice
-    // we only pass the link reg to it.
-    uint32_t inst = 0b11010110010111110000000000000000;
-    inst |= (rn & 0b11111) << 5u;
-    EMIT4(e, inst);
-}
-
-/* old stuff
-// refers to the data processing immediate operand.
-// Aarch64 has a bunch of weird immediate fields so
-// we might wanna rename this later.
-typedef struct {
-    uint16_t imm;
-    uint8_t shift;
-} Immediate;
-
-typedef enum {
-    ADD,
-    SUB,
-    UDIV,
-    SDIV,
-} DPOpcode;
-
-enum {
-    SHIFT_LSL,
-    SHIFT_LSR,
-    SHIFT_ASR,
-    SHIFT_RESERVED,
-};
-
-typedef struct {
-    uint32_t r, i;
-} DPInst;
-
-// op0  30-29
-// op1  28
-// 101  27-25
-// op2  24-21
-// op3  15-10
-#define DPR(op0, op1, op2, op3) ((op0 << 29u) | (op1 << 28) | (0b101 << 25) | (op2 << 21) | (op3 << 10))
-// op   30
-// 100  28-26
-// op0  25-23
-#define DPI(op, op0) ()
-
-#define DP3(op0, op1, op2) ((op0 << 30u) | (op1 << 28u) | (0b101 << 25u) | (op2 << 21u))
-
-static const DPInst inst_table[] = {
-    //         register                     immediate
-    [ADD]  = { DPR(0, 0, 0b1000, 0),        DPI(0, ) },
-    [SUB]  = { DPR(2, 0, 0b1000, 0),        DPI(1, 0b010) },
-    [EOR]  = { 0b01001010000 << 21u,         0 },
-
-    [UDIV] = { DPR(0, 1, 0b0110, 0b000010) },
-    [SDIV] = { DPR(0, 1, 0b0110, 0b000011) },
-};
-
-enum {
-    UBFM = DPI(0, 0b110) | (0b10 << 29u),
-
-    //                       op0
-    //                       V
-    MADD = 0b00011011000000000000000000000000,
-    MSUB = 0b00011011000000001000000000000000,
-};
-
-static void emit_ret(TB_CGEmitter* restrict e, GPR rn) {
-    // 1101 0110 0101 1111 0000 00NN NNN0 0000
-    //
-    // 'ret rn' just does 'mov pc, rn', although in practice
-    // we only pass the link reg to it.
-    uint32_t inst = 0b11010110010111110000000000000000;
-    inst |= (rn & 0b11111) << 5u;
-    EMIT4(e, inst);
-}
-
-// OP Rd, Rn, Rm, Ra
-static void emit_dp3(TB_CGEmitter* restrict e, uint32_t inst, GPR d, GPR n, GPR m, GPR a, bool _64bit) {
-    inst |= (_64bit ? (1u << 31u) : 0);
-    inst |= (m & 0x1F) << 16u;
-    inst |= (a & 0x1F) << 10u;
-    inst |= (n & 0x1F) << 5u;
-    inst |= (d & 0x1F) << 0u;
-    EMIT4(e, inst);
-}
-
-// data processing instruction
-//   OP dst, src, imm
-//
-// 0000 0000 0000 0000 0000 0000 0000 0000
-// AOOO OOOO SSII IIII IIII IINN NNND DDDD
-//
-// A - set when we're doing the 64bit variant of the instruction
-// O - is the opcode
-// S - shift
-// I - immediate
-// N - source
-// D - destination
-
-// bitfield
-static void emit_bitfield(TB_CGEmitter* restrict e, uint32_t op, GPR dst, GPR src, uint8_t immr, uint8_t imms, bool _64bit) {
-    uint32_t inst = op | (_64bit ? (1u << 31u) : 0);
-    inst |= (immr & 0b111111) << 16u;
-    inst |= (imms & 0b111111) << 10u;
-    inst |= (src  & 0b11111) << 5u;
-    inst |= (dst  & 0b11111) << 0u;
-    EMIT4(e, inst);
-}
-
-// data processing instruction
-//   OP dst, a, b
-//
-// 0000 0000 0000 0000 0000 0000 0000 0000
-// AOOO OOOO SS_M MMMM IIII IINN NNND DDDD
-// x101 1110 xx1m mmmm x000 01nn nnnd dddd  -  add Sd Sn Sm
-static void emit_dp_r(TB_CGEmitter* restrict e, DPOpcode op, GPR dst, GPR a, GPR b, uint16_t imm, uint8_t shift, bool _64bit) {
-    uint32_t inst = inst_table[op].r | (_64bit ? (1u << 31u) : 0);
-
-    if (op == ADD || op == SUB) {
-        assert(shift == 0 || shift == 12);
-        inst |= (1 << 22u);
-    } else if (op == UBFM) {
-        if (shift) inst |= (1 << 22u);
-    }
-
-    inst |= (b & 0b11111) << 16u;
-    inst |= (imm & 0xFFF) << 10u;
-    inst |= (a & 0b11111) << 5u;
-    inst |= (dst & 0b11111) << 0u;
-    EMIT4(e, inst);
-}
-
-static void emit_mov(TB_CGEmitter* restrict e, uint8_t dst, uint8_t src, bool _64bit) {
-    uint32_t inst = (_64bit ? (1 << 31u) : 0);
-
-    inst |= (0b00101010 << 24u);
-    inst |= (src & 0b11111) << 16u;
-    inst |= (0b11111) << 5u;
-    inst |= (dst & 0b11111) << 0u;
-    EMIT4(e, inst);
-}
-
-// clear means movz, else movk
-static void emit_movimm(TB_CGEmitter* restrict e, uint8_t dst, uint16_t imm, uint8_t shift, bool _64bit, bool clear) {
-    uint32_t inst = (_64bit ? (1 << 31u) : 0);
-
-    if (clear) {
-        inst |= (0b010100101 << 23u);
-    } else {
-        inst |= (0b011100101 << 23u);
-    }
-    inst |= shift << 21u;
-    inst |= imm << 5u;
-    inst |= (dst & 0b11111) << 0u;
-    EMIT4(e, inst);
-}
 */

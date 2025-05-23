@@ -300,10 +300,20 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         // case TB_FLOAT_EXT:
         // case TB_SIGN_EXT:
         // case TB_ZERO_EXT:
-        // case TB_UINT2FLOAT:
-        // case TB_FLOAT2UINT:
-        // case TB_INT2FLOAT:
-        // case TB_FLOAT2INT:
+        case TB_UINT2FLOAT:
+        case TB_INT2FLOAT: {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_GPR];
+            }
+            return ctx->normie_mask[REG_CLASS_FPR];
+        }
+        case TB_FLOAT2UINT:
+        case TB_FLOAT2INT: {
+            if (ins) {
+                ins[1] = ctx->normie_mask[REG_CLASS_FPR];
+            }
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
         // case TB_BITCAST:
 
         case TB_SELECT: {
@@ -407,7 +417,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         // general machine nodes
         ////////////////////////////////
         // case TB_MACH_MOVE:
-        // case TB_MACH_COPY:
+        case TB_MACH_COPY: {
+            TB_NodeMachCopy* move = TB_NODE_GET_EXTRA(n);
+            if (ins) {
+                ins[1] = move->use;
+            }
+            return move->def;
+        }
         // case TB_MACH_JUMP:
         // case TB_MACH_JIT_THREAD_PTR:
 
@@ -422,7 +438,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         }
 
         default:
-        return &TB_REG_EMPTY;
+            tb_todo();
+            return &TB_REG_EMPTY;
     }
 }
 
@@ -500,13 +517,13 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             int dst = op_reg_at(ctx, n, REG_CLASS_GPR);
             uint64_t val = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
 
-            bool is_64bit = n->dt.type == TB_TAG_I64;
+            bool wide = n->dt.type == TB_TAG_I64;
             int shift = 0;
             MoveOp op = MOVZ;
             while (val) {
-                if (val & 0xFFFF) {
-                    emit_dpi_mov(e, op, dst, val & 0xFFFF, shift, is_64bit);
-                    // emit_movimm(e, dst, val & 0xFFFF, shift / 16, is_64bit, first);
+                uint16_t imm = val & MASK(16);
+                if (imm != 0) {
+                    dpimm_movewide(e, wide, op, dst, imm, shift);
                     op = MOVK;
                 }
                 val >>= 16, shift += 1;
@@ -535,7 +552,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         ////////////////////////////////
         // case TB_ROOT:
         case TB_RETURN: {
-            emit_ret(e, LR);
+            control_branch_reg(e, RET, LR);
             break;
         }
         case TB_REGION: break;
@@ -597,31 +614,45 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         // case TB_FLOAT_EXT:
         // case TB_SIGN_EXT:
         // case TB_ZERO_EXT:
-        // case TB_UINT2FLOAT:
-        // case TB_FLOAT2UINT:
-        // case TB_INT2FLOAT:
-        // case TB_FLOAT2INT:
+        case TB_UINT2FLOAT:
+        case TB_FLOAT2UINT:
+        case TB_INT2FLOAT:
+        case TB_FLOAT2INT: {
+            TB_ASSERT(TB_UINT2FLOAT + 1 == TB_FLOAT2UINT && TB_FLOAT2UINT + 1 == TB_INT2FLOAT && TB_INT2FLOAT + 1 == TB_FLOAT2INT);
+            int class_lut[] = {REG_CLASS_GPR, REG_CLASS_FPR};
+            uint8_t   type1 = n->dt.type;
+            uint8_t   type2 = n->inputs[1]->dt.type;
+            bool       wide = type1 == TB_TAG_I64 || type2 == TB_TAG_I64;
+            FPtype     type = type1 == TB_TAG_F64 || type2 == TB_TAG_F64 ? Double : Single;
+            FPconvINTop  op = (FPconvINTop[]){UCVTF, FCVTZU, SCVTF, FCVTZS}[n->type - TB_UINT2FLOAT];
+            int         dst = op_reg_at(ctx, n, class_lut[(n->type - TB_UINT2FLOAT + 1) & 1]);
+            int         src = op_reg_at(ctx, n, class_lut[(n->type - TB_UINT2FLOAT + 0) & 1]);
+            simd_dp_float2int(e, wide, type, op, dst, src, false);
+            break;
+        }
         // case TB_BITCAST:
 
         ////////////////////////////////
         // Select
         ////////////////////////////////
         case TB_SELECT: {
+            //!! negate says this is borked so im just gonna todo it
+            tb_todo();
             int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
             int lhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
             int rhs = op_reg_at(ctx, n->inputs[3], REG_CLASS_GPR);
-            bool is64bit = n->dt.type == TB_TAG_I64;
-            Cond cc = 0;
+            bool wide = n->dt.type == TB_TAG_I64;
+            Condition cc = 0;
             TB_Node* cond = n->inputs[1];
             if (cond->type >= TB_CMP_EQ && cond->type <= TB_CMP_FLE) {
                 switch (cond->type) {
-                    case TB_CMP_EQ:  cc = EQ;  break;
+                    case TB_CMP_EQ:  cc = EQ; break;
                     case TB_CMP_NE:  cc = NE; break;
-                    case TB_CMP_SLT: cc = LT;  break;
+                    case TB_CMP_SLT: cc = LT; break;
                     case TB_CMP_SLE: cc = LE; break;
-                    case TB_CMP_ULT: cc = CC;  break;
+                    case TB_CMP_ULT: cc = CC; break;
                     case TB_CMP_ULE: cc = CS; break;
-                    case TB_CMP_FLT: tb_todo();  break;
+                    case TB_CMP_FLT: tb_todo(); break;
                     case TB_CMP_FLE: tb_todo(); break;
                     default: tb_unreachable();
                 }
@@ -629,39 +660,23 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 // emit cmp instruction
                 tb_todo();
             }
-            emit_cs(e, CSEL, dst, lhs, rhs, cc, is64bit);
+            dpreg_condsel(e, wide, CSEL, cc, dst, lhs, rhs);
             break;
         }
 
         ////////////////////////////////
         // Bitmagic
         ////////////////////////////////
-        case TB_BSWAP: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_1(e, REV, dst, src, is_64bit);
-            break;
-        }
-        case TB_CLZ: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_1(e, CLZ, dst, src, is_64bit);
-            break;
-        }
-        case TB_CTZ: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_1(e, CTZ, dst, src, is_64bit);
-            break;
-        }
+        case TB_BSWAP:
+        case TB_CLZ:
+        case TB_CTZ:
         case TB_POPCNT: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_1(e, CNT, dst, src, is_64bit);
+            TB_ASSERT(TB_BSWAP + 1 == TB_CLZ && TB_CLZ + 1 == TB_CTZ && TB_CTZ + 1 == TB_POPCNT);
+            bool wide = n->dt.type == TB_TAG_I64;
+            DPR1op op = (DPR1op[4]){REV, CLZ, CTZ, CNT}[n->type - TB_BSWAP];
+            int   dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int   src = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            dpreg_dp_1src(e, wide, op, dst, src);
             break;
         }
 
@@ -669,180 +684,86 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         // Unary operations
         ////////////////////////////////
         case TB_FNEG: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
-            int src = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
             int type = n->dt.type == TB_TAG_F32 ? Single : Double;
-            emit_fp_dp_1(e, FNEG, type, dst, src);
+            int  dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
+            int  src = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
+            simd_dp_floatdp1(e, type, FNEG, dst, src);
             break;
         }
 
         ////////////////////////////////
         // Integer arithmatic
         ////////////////////////////////
-        case TB_AND: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_logical(e, AND, dst, lhs, rhs, 0, 0, is_64bit);
-            break;
-        }
-        case TB_OR: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_logical(e, ORR, dst, lhs, rhs, 0, 0, is_64bit);
-            break;
-        }
+        case TB_AND:
+        case TB_OR:
         case TB_XOR: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_logical(e, EOR, dst, lhs, rhs, 0, 0, is_64bit);
-            break;
-        }
-        case TB_ADD: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_add(e, ADD, dst, lhs, rhs, 0, 0, false, is_64bit);
-            break;
-        }
-        case TB_SUB: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_add(e, SUB, dst, lhs, rhs, 0, 0, false, is_64bit);
-            break;
-        }
-        case TB_MUL: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_3(e, MADD, dst, lhs, rhs, ZR, is_64bit);
+            TB_ASSERT(TB_AND + 1 == TB_OR && TB_OR + 1 == TB_XOR);
+            bool  wide = n->dt.type == TB_TAG_I64;
+            LogicOp op = (LogicOp[]){AND, ORR, EOR}[n->type - TB_AND];
+            int    dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int    lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int    rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            dpreg_log_shift(e, wide, op, dst, lhs, rhs, 0, 0);
             break;
         }
 
-        case TB_SHL: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_2(e, LSLV, dst, lhs, rhs, is_64bit);
+        case TB_ADD:
+        case TB_SUB: {
+            TB_ASSERT(TB_ADD + 1 == TB_SUB);
+            bool wide = n->dt.type == TB_TAG_I64;
+            AddOp  op = (AddOp[]){ADD, SUB}[n->type - TB_ADD];
+            int   dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int   lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int   rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            dpreg_addsub_shift(e, wide, op, dst, lhs, rhs, 0, 0, false);
             break;
         }
-        case TB_SHR: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_2(e, LSRV, dst, lhs, rhs, is_64bit);
+
+        case TB_MUL: {
+            bool wide = n->dt.type == TB_TAG_I64;
+            int   dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int   lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int   rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            dpreg_dp_3src(e, wide, MADD, dst, lhs, rhs, ZR);
             break;
         }
-        case TB_SAR: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_2(e, ASRV, dst, lhs, rhs, is_64bit);
-            break;
-        }
-        case TB_ROL: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            tb_todo(); //!! arm doesn't have rotate left
-            emit_dpr_2(e, RORV, dst, lhs, rhs, is_64bit);
-            break;
-        }
-        case TB_ROR: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_2(e, RORV, dst, lhs, rhs, is_64bit);
-            break;
-        }
-        case TB_UDIV: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_2(e, UDIV, dst, lhs, rhs, is_64bit);
-            break;
-        }
+
+        case TB_ROL: tb_unreachable(); break; // a64 doesn't have rotate left
+        case TB_SHL:
+        case TB_SHR:
+        case TB_SAR:
+        case TB_ROR:
+        case TB_UDIV:
         case TB_SDIV: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpr_2(e, SDIV, dst, lhs, rhs, is_64bit);
+            TB_ASSERT(TB_SHL + 1 == TB_SHR && TB_SHR + 1 == TB_SAR && TB_SAR + 1 == TB_ROL && TB_ROL + 1 == TB_ROR && TB_ROR + 1 == TB_UDIV && TB_UDIV + 1 == TB_SDIV);
+            bool wide = n->dt.type == TB_TAG_I64;
+            DPR2op op = (DPR2op[]){LSLV, LSRV, ASRV, RORV, RORV, UDIV, SDIV}[n->type - TB_SHL];
+            int   dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
+            int   lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_GPR);
+            int   rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            dpreg_dp_2src(e, wide, op, dst, lhs, rhs);
             break;
         }
-        case TB_UMOD: {
-            tb_unreachable();
-            break;
-        }
-        case TB_SMOD: {
-            tb_unreachable();
-            break;
-        }
+
+        case TB_UMOD:
+        case TB_SMOD: tb_unreachable(); break;
 
         ////////////////////////////////
         // Float arithmatic
         ////////////////////////////////
-        case TB_FADD: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
-            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
-            emit_fp_dp_2(e, FADD, type, dst, lhs, rhs);
-            break;
-        }
-        case TB_FSUB: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
-            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
-            emit_fp_dp_2(e, FSUB, type, dst, lhs, rhs);
-            break;
-        }
-        case TB_FMUL: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
-            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
-            emit_fp_dp_2(e, FMUL, type, dst, lhs, rhs);
-            break;
-        }
-        case TB_FDIV: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
-            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
-            emit_fp_dp_2(e, FDIV, type, dst, lhs, rhs);
-            break;
-        }
-        case TB_FMIN: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
-            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
-            emit_fp_dp_2(e, FMIN, type, dst, lhs, rhs);
-            break;
-        }
+        case TB_FADD:
+        case TB_FSUB:
+        case TB_FMUL:
+        case TB_FDIV:
+        case TB_FMIN:
         case TB_FMAX: {
-            int dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
-            int lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
-            int rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
-            int type = n->dt.type == TB_TAG_F64 ? Double : Single;
-            emit_fp_dp_2(e, FMAX, type, dst, lhs, rhs);
+            TB_ASSERT(TB_FADD + 1 == TB_FSUB && TB_FSUB + 1 == TB_FMUL && TB_FMUL + 1 == TB_FDIV && TB_FDIV + 1 == TB_FMIN && TB_FMIN + 1 == TB_FMAX);
+            FPtype type = n->dt.type == TB_TAG_F64 ? Double : Single;
+            FPDP2op  op = (FPDP2op[]){FADD, FSUB, FMUL, FDIV, FMIN, FMAX}[n->type - TB_FADD];
+            int     dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
+            int     lhs = op_reg_at(ctx, n->inputs[1], REG_CLASS_FPR);
+            int     rhs = op_reg_at(ctx, n->inputs[2], REG_CLASS_FPR);
+            simd_dp_floatdp2(e, type, op, dst, lhs, rhs);
             break;
         }
 
@@ -874,21 +795,22 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             VReg* vdst = node_vreg(ctx, dst);
             VReg* vsrc = node_vreg(ctx, src);
             if (vdst->class == REG_CLASS_GPR && vsrc->class == REG_CLASS_GPR) {
-                emit_dpr_logical(e, ORR, vdst->assigned, vsrc->assigned, ZR, 0, 0, true);
+                bool wide = true;
+                dpreg_log_shift(e, wide, ORR, vdst->assigned, vsrc->assigned, ZR, 0, 0);
             } else
-                if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_FPR) {
-                int type = src->dt.type == TB_TAG_F64 ? Double : Single;
-                emit_fp_dp_1(e, FMOV, type, vdst->assigned, vsrc->assigned);
+            if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_FPR) {
+                FPtype type = src->dt.type == TB_TAG_F64 ? Double : Single;
+                simd_dp_floatdp1(e, type, FMOV, vdst->assigned, vsrc->assigned);
             } else
-                if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_GPR) {
-                int type = dst->dt.type == TB_TAG_F64 ? Double : Single;
-                bool is_64bit = src->dt.type == TB_TAG_I64;
-                emit_fp_convint(e, FMOV_I2F, type, vdst->assigned, vsrc->assigned, false, is_64bit);
+            if (vdst->class == REG_CLASS_FPR && vsrc->class == REG_CLASS_GPR) {
+                bool   wide = src->dt.type == TB_TAG_I64;
+                FPtype type = dst->dt.type == TB_TAG_F64 ? Double : Single;
+                simd_dp_float2int(e, wide, type, FMOV_I2F, vdst->assigned, vsrc->assigned, false);
             } else
-                if (vdst->class == REG_CLASS_GPR && vsrc->class == REG_CLASS_FPR) {
-                int type = dst->dt.type == TB_TAG_F64 ? Double : Single;
-                bool is_64bit = src->dt.type == TB_TAG_I64;
-                emit_fp_convint(e, FMOV_F2I, type, vdst->assigned, vsrc->assigned, false, is_64bit);
+            if (vdst->class == REG_CLASS_GPR && vsrc->class == REG_CLASS_FPR) {
+                bool   wide = src->dt.type == TB_TAG_I64;
+                FPtype type = dst->dt.type == TB_TAG_F64 ? Double : Single;
+                simd_dp_float2int(e, wide, type, FMOV_F2I, vdst->assigned, vsrc->assigned, false);
             }
             break;
         }
@@ -910,8 +832,8 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 imm >>= shift;
             }
 
-            bool is_64bit = n->dt.type == TB_TAG_I64;
-            emit_dpi_add(e, ADD, dst, lhs, shift, imm, is_64bit);
+            bool wide = n->dt.type == TB_TAG_I64;
+            dpimm_addsub_imm(e, wide, ADD, dst, lhs, imm, shift, false);
             break;
         }
 
