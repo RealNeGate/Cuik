@@ -618,7 +618,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_FLOAT2UINT:
         case TB_INT2FLOAT:
         case TB_FLOAT2INT: {
-            TB_ASSERT(TB_UINT2FLOAT + 1 == TB_FLOAT2UINT && TB_FLOAT2UINT + 1 == TB_INT2FLOAT && TB_INT2FLOAT + 1 == TB_FLOAT2INT);
+            static_assert(TB_UINT2FLOAT + 1 == TB_FLOAT2UINT && TB_FLOAT2UINT + 1 == TB_INT2FLOAT && TB_INT2FLOAT + 1 == TB_FLOAT2INT, "enum values not consecutive");
             int class_lut[] = {REG_CLASS_GPR, REG_CLASS_FPR};
             uint8_t   type1 = n->dt.type;
             uint8_t   type2 = n->inputs[1]->dt.type;
@@ -671,7 +671,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_CLZ:
         case TB_CTZ:
         case TB_POPCNT: {
-            TB_ASSERT(TB_BSWAP + 1 == TB_CLZ && TB_CLZ + 1 == TB_CTZ && TB_CTZ + 1 == TB_POPCNT);
+            static_assert(TB_BSWAP + 1 == TB_CLZ && TB_CLZ + 1 == TB_CTZ && TB_CTZ + 1 == TB_POPCNT, "enum values not consecutive");
             bool wide = n->dt.type == TB_TAG_I64;
             DPR1op op = (DPR1op[4]){REV, CLZ, CTZ, CNT}[n->type - TB_BSWAP];
             int   dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
@@ -697,7 +697,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_AND:
         case TB_OR:
         case TB_XOR: {
-            TB_ASSERT(TB_AND + 1 == TB_OR && TB_OR + 1 == TB_XOR);
+            static_assert(TB_AND + 1 == TB_OR && TB_OR + 1 == TB_XOR, "enum values not consecutive");
             bool  wide = n->dt.type == TB_TAG_I64;
             LogicOp op = (LogicOp[]){AND, ORR, EOR}[n->type - TB_AND];
             int    dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
@@ -709,7 +709,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
         case TB_ADD:
         case TB_SUB: {
-            TB_ASSERT(TB_ADD + 1 == TB_SUB);
+            static_assert(TB_ADD + 1 == TB_SUB, "enum values not consecutive");
             bool wide = n->dt.type == TB_TAG_I64;
             AddOp  op = (AddOp[]){ADD, SUB}[n->type - TB_ADD];
             int   dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
@@ -735,7 +735,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_ROR:
         case TB_UDIV:
         case TB_SDIV: {
-            TB_ASSERT(TB_SHL + 1 == TB_SHR && TB_SHR + 1 == TB_SAR && TB_SAR + 1 == TB_ROL && TB_ROL + 1 == TB_ROR && TB_ROR + 1 == TB_UDIV && TB_UDIV + 1 == TB_SDIV);
+            static_assert(TB_SHL + 1 == TB_SHR && TB_SHR + 1 == TB_SAR && TB_SAR + 1 == TB_ROL && TB_ROL + 1 == TB_ROR && TB_ROR + 1 == TB_UDIV && TB_UDIV + 1 == TB_SDIV, "enum values not consecutive");
             bool wide = n->dt.type == TB_TAG_I64;
             DPR2op op = (DPR2op[]){LSLV, LSRV, ASRV, RORV, RORV, UDIV, SDIV}[n->type - TB_SHL];
             int   dst = op_reg_at(ctx, n,            REG_CLASS_GPR);
@@ -757,7 +757,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_FDIV:
         case TB_FMIN:
         case TB_FMAX: {
-            TB_ASSERT(TB_FADD + 1 == TB_FSUB && TB_FSUB + 1 == TB_FMUL && TB_FMUL + 1 == TB_FDIV && TB_FDIV + 1 == TB_FMIN && TB_FMIN + 1 == TB_FMAX);
+            static_assert(TB_FADD + 1 == TB_FSUB && TB_FSUB + 1 == TB_FMUL && TB_FMUL + 1 == TB_FDIV && TB_FDIV + 1 == TB_FMIN && TB_FMIN + 1 == TB_FMAX, "enum values not consecutive");
             FPtype type = n->dt.type == TB_TAG_F64 ? Double : Single;
             FPDP2op  op = (FPDP2op[]){FADD, FSUB, FMUL, FDIV, FMIN, FMAX}[n->type - TB_FADD];
             int     dst = op_reg_at(ctx, n,            REG_CLASS_FPR);
