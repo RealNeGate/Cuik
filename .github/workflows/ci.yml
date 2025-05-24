@@ -4,7 +4,6 @@ on: [pull_request, workflow_dispatch, push]
 jobs:
   build_win:
     runs-on: windows-2022
-    if: github.ref == 'refs/heads/master'
     steps:
       - uses: actions/checkout@v4
       - uses: seanmiddleditch/gha-setup-ninja@v6
