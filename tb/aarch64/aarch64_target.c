@@ -619,14 +619,16 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_INT2FLOAT:
         case TB_FLOAT2INT: {
             static_assert(TB_UINT2FLOAT + 1 == TB_FLOAT2UINT && TB_FLOAT2UINT + 1 == TB_INT2FLOAT && TB_INT2FLOAT + 1 == TB_FLOAT2INT, "enum values not consecutive");
+            uint8_t  type1 = n->dt.type;
+            uint8_t  type2 = n->inputs[1]->dt.type;
+            bool      wide = type1 == TB_TAG_I64 || type2 == TB_TAG_I64;
+            FPtype    type = type1 == TB_TAG_F64 || type2 == TB_TAG_F64 ? Double : Single;
+            FPconvINTop op = (FPconvINTop[]){UCVTF, FCVTZU, SCVTF, FCVTZS}[n->type - TB_UINT2FLOAT];
+            // float<>int direction is encoded as parity due to the enum order
             int class_lut[] = {REG_CLASS_GPR, REG_CLASS_FPR};
-            uint8_t   type1 = n->dt.type;
-            uint8_t   type2 = n->inputs[1]->dt.type;
-            bool       wide = type1 == TB_TAG_I64 || type2 == TB_TAG_I64;
-            FPtype     type = type1 == TB_TAG_F64 || type2 == TB_TAG_F64 ? Double : Single;
-            FPconvINTop  op = (FPconvINTop[]){UCVTF, FCVTZU, SCVTF, FCVTZS}[n->type - TB_UINT2FLOAT];
-            int         dst = op_reg_at(ctx, n, class_lut[(n->type - TB_UINT2FLOAT + 1) & 1]);
-            int         src = op_reg_at(ctx, n, class_lut[(n->type - TB_UINT2FLOAT + 0) & 1]);
+            int class = n->type - TB_UINT2FLOAT;
+            int   dst = op_reg_at(ctx, n,            class_lut[(class + 1) & 1]);
+            int   src = op_reg_at(ctx, n->inputs[1], class_lut[(class + 0) & 1]);
             simd_dp_float2int(e, wide, type, op, dst, src, false);
             break;
         }
