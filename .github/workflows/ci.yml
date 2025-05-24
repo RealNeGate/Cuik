@@ -4,15 +4,14 @@ on: [pull_request, workflow_dispatch, push]
 jobs:
   build_win:
     runs-on: windows-2022
-    if: github.ref == 'refs/heads/master'
     steps:
-      - uses: actions/checkout@v3
-      - uses: seanmiddleditch/gha-setup-ninja@master
+      - uses: actions/checkout@v4
+      - uses: seanmiddleditch/gha-setup-ninja@v6
 
       - uses: ilammy/msvc-dev-cmd@v1
-      - uses: leafo/gh-actions-lua@v10
+      - uses: leafo/gh-actions-lua@v11
         with:
-          luaVersion: "5.3.0"
+          luaVersion: "luajit"
 
       - name: Download Submodules
         run: git submodule update --init --recursive
@@ -25,40 +24,46 @@ jobs:
       - name: Build Cuik DLL
         shell: cmd
         timeout-minutes: 10
-        run: lua build.lua -shared -cuik -tb
+        run: lua build.lua -x64 -a64 -shared -cuik -tb
 
       - name: upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: cuik-windows
           path: bin/cuik.exe
 
       - name: upload dll artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: cuik-windows
           path: bin/cuik.dll
+
   build_linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: seanmiddleditch/gha-setup-ninja@master
 
+      - uses: leafo/gh-actions-lua@v11
+        with:
+          luaVersion: "luajit"
+
       - name: Download LLVM & Lua
-        run: sudo apt-get install llvm clang lld lua5.3
+        run: sudo apt-get install llvm clang lld
 
       - name: Download Submodules
         run: git submodule update --init --recursive
 
       - name: Build Cuik
-        run: lua build.lua -driver
+        run: lua build.lua -x64 -a64 -driver
         timeout-minutes: 10
 
       - name: upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: cuik-linux
           path: bin/cuik
+
   tb_unittests:
     strategy:
       matrix:
@@ -68,19 +73,18 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - uses: seanmiddleditch/gha-setup-ninja@master
+      - uses: seanmiddleditch/gha-setup-ninja@v6
 
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
 
-      - uses: leafo/gh-actions-lua@v10
-        if: runner.os == 'Windows'
+      - uses: leafo/gh-actions-lua@v11
         with:
-          luaVersion: "5.3.0"
+          luaVersion: "luajit-2.1.0-beta3"
 
-      - name: Download LLVM & Lua
+      - name: Download LLVM
         if: runner.os == 'Linux'
-        run: sudo apt-get install llvm clang lld lua5.3
+        run: sudo apt-get install llvm clang lld
 
       - name: Download Submodules
         run: git submodule update --init --recursive
@@ -99,6 +103,7 @@ jobs:
       - name: Run TB unittests
         timeout-minutes: 5
         run: ./bin/tb_unittests
+
   release:
     runs-on: ubuntu-latest
     needs: [build_win, build_linux]
@@ -128,7 +133,7 @@ jobs:
               sha: context.sha
             })
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
 
       - name: Bundle
         run: |

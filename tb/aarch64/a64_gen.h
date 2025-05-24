@@ -70,9 +70,9 @@ static bool mach_is_subpat[512] = {
 #define R_POP(n, next)      (((n) << 16u) | (next))
 static void global_init(void) {
     static const uint32_t edges[] = {
-        (0)<<16 | (TB_ADD+1), R_PUSH(5),
         (0)<<16 | (TB_F32CONST+1), R_PUSH(1),
         (0)<<16 | (TB_F64CONST+1), R_PUSH(3),
+        (0)<<16 | (TB_ADD+1), R_PUSH(5),
         (1)<<16 | (0), 2,
         (2)<<16 | (TB_NULL+1), R_POP(2, 2),
         (3)<<16 | (0), 4,
