@@ -30,15 +30,26 @@ static CallingConv CC_A64PCS = {
     .fp_class  = REG_CLASS_GPR, .fp_reg  = FP, // frame pointer
     .rpc_class = REG_CLASS_GPR, .rpc_reg = LR, // return PC
     .flexible_param_alloc = true,
-
-    .reg_saves[REG_CLASS_GPR] = (char[16]){
+    
+    .reg_saves[REG_CLASS_GPR] = (char[32]){
+        // volatile/clobbered (caller saved) 'C'
+        [ 0 ... 18] = 'C', [LR] = 'C',
+        // non-volatile (callee saved) 'c'
+        [19 ... 29] = 'c', [SP] = 'c',
     },
-
-    .reg_saves[REG_CLASS_FPR] = (char[16]){
+    
+    // TODO calling convention needs float pairs (low and high 64bit)
+    // or something that's caller and callee saved at the same time
+    .reg_saves[REG_CLASS_FPR] = (char[32]){
+        // volatile/clobbered (caller saved) 'C'
+        [ 0 ...  7] = 'C',
+        [16 ... 31] = 'C',
+        // non-volatile (callee saved) 'c'
+        [ 8 ... 15] = 'c',
     },
 
     .param_count = { [REG_CLASS_GPR] = 6, [REG_CLASS_FPR] = 4 },
-    .params[REG_CLASS_GPR] = (uint8_t[]){ X0, X1, X2, X3, X4, X5, X6, X7 },
+    .params[REG_CLASS_GPR] = (uint8_t[]){ 0, 1, 2, 3, 4, 5, 6, 7 },
     .params[REG_CLASS_FPR] = (uint8_t[]){ 0, 1, 2, 3, 4, 5, 6, 7 },
 
     .ret_count = { [REG_CLASS_GPR] = 2, [REG_CLASS_FPR] = 2 },
@@ -291,7 +302,9 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         ////////////////////////////////
         // POINTERS
         ////////////////////////////////
-        // case TB_SYMBOL:
+        case TB_SYMBOL: {
+            return ctx->normie_mask[REG_CLASS_GPR];
+        }
         // case TB_PTR_OFFSET:
 
         // Conversions
