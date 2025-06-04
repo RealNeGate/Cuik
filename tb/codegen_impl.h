@@ -1048,11 +1048,19 @@ static void compile_function(TB_Function* restrict f, TB_CodegenRA ra, TB_Functi
                     TB_Node* n  = sfpt_nodes[i].n;
                     uint32_t ip = sfpt_nodes[i].ip;
 
+                    TB_Node* proj1 = USERN(proj_with_index(n, 1));
+                    TB_BasicBlock* succ_bb = nl_map_get_checked(ctx.cfg.node_to_block, proj1);
+
+                    uint32_t target = ctx.emit.labels[succ_bb->fwd];
+                    TB_ASSERT((target & 0x80000000) && "target label wasn't resolved... what?");
+
                     TB_NodeSafepoint* n_sfpt = TB_NODE_GET_EXTRA(n);
                     TB_Safepoint* sfpt = tb_arena_alloc(code_arena, sizeof(TB_Safepoint) + n_sfpt->saved_val_count*sizeof(int32_t));
+                    sfpt->func = ctx.f;
                     sfpt->node = n;
                     sfpt->userdata = n_sfpt->userdata;
                     sfpt->ip = ip;
+                    sfpt->target = target;
                     FOR_N(i, 0, n_sfpt->saved_val_count) {
                         TB_Node* in = n->inputs[3 + i];
                         VReg* vreg = &ctx.vregs[ctx.vreg_map[in->gvn]];

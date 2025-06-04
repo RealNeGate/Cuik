@@ -593,12 +593,24 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
 
     uint64_t y = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
     if (y >= (1ull << 63ull)) {
-        // we haven't implemented the large int case
-        return NULL;
+        if (is_signed) {
+            return NULL;
+        } else {
+            // if the top bit is set in the divisor then there's literally only two quotients
+            // left, from there we can reduce it to a range check.
+            TB_Node* cmp_node = tb_alloc_node(f, TB_CMP_ULE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+            set_input(f, cmp_node, n->inputs[2], 1);
+            set_input(f, cmp_node, x, 2);
+            TB_NODE_SET_EXTRA(cmp_node, TB_NodeCompare, .cmp_dt = dt);
+
+            TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, dt, 2, 0);
+            set_input(f, ext_node, cmp_node, 1);
+            return ext_node;
+        }
     } else if (y == 0) {
         return tb_alloc_node(f, TB_POISON, dt, 1, 0);
     } else if (y == 1) {
-        return x;
+        // return x;
     } else {
         // (udiv a N) => a >> log2(N) where N is a power of two
         uint64_t log2 = tb_ffs(y) - 1;
@@ -635,6 +647,8 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
     }
 
     TB_ASSERT(y != 0 && y != 1);
+    bool special = false;
+
     // ceil(log2(y))
     uint64_t sh = (64 - tb_clz64(y)) - 1;
     // a = ceil(2^sh / y) = floor((2^sh + y-1) / y)
@@ -652,7 +666,6 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
             default: tb_todo();
         }
         sh += bits; // chopping the low half
-
         a &= (1ull << bits) - 1;
 
         // extend x
@@ -688,11 +701,31 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         mark_node(f, lo);
         mark_node(f, hi);
 
+        // Granlund and Montgomery winning rn
+        if (special) {
+            TB_Node* sub_node = tb_alloc_node(f, TB_SUB, dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, sub_node, x,  1);
+            set_input(f, sub_node, hi, 2);
+            mark_node(f, sub_node);
+
+            TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, sh_node, sub_node, 1);
+            set_input(f, sh_node, make_int_node(f, dt, 1), 2);
+            mark_node(f, sh_node);
+
+            TB_Node* add_node = tb_alloc_node(f, TB_ADD, dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, add_node, sh_node, 1);
+            set_input(f, add_node, hi, 2);
+            mark_node(f, add_node);
+
+            hi = add_node;
+            sh -= 1;
+        }
+
         TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, sh_node, hi, 1);
         set_input(f, sh_node, make_int_node(f, dt, sh), 2);
-        TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
-
+        mark_node(f, sh_node);
         return sh_node;
     }
 }

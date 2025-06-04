@@ -228,6 +228,6 @@ where "$dt.type == TB_TAG_I64 && n->inputs[1]->dt.type == TB_TAG_I32"
 
 // 1/8 -> 32/64
 pat (TB_ZERO_EXT dt=$dt ___ $src)
-where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && n->inputs[1]->dt.type == TB_TAG_I8"
+where "($dt.type == TB_TAG_I32 || $dt.type == TB_TAG_I64) && ($src->dt.type == TB_TAG_I8 || $src->dt.type == TB_TAG_BOOL)"
 => (x86_movzx8 dt=$dt ___ ___ $src)
 

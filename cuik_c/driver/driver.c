@@ -404,6 +404,7 @@ static void ld_invoke(TPool* tp, BuildStepInfo* info) {
     }
 
     if (args->run) {
+        __debugbreak();
         fprintf(stderr, "C JIT unsupported here :(\n");
         goto done;
     }

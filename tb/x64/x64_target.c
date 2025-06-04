@@ -933,6 +933,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_vzero:
         return ctx->normie_mask[REG_CLASS_XMM];
 
+        case TB_MULPAIR:
+        if (ins) {
+            ins[1] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
+            ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+        }
+        return ctx->normie_mask[REG_CLASS_GPR];
+
         case TB_VSHUFFLE:
         case TB_VBROADCAST:
         if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_XMM]; }
@@ -950,7 +957,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
                 TB_ASSERT(i >= 2 && i < 2 + cc->ret_count[reg_class]);
                 return intern_regmask(ctx, reg_class, false, 1u << cc->rets[reg_class][i - 2]);
-            } else if (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div) {
+            } else if (n->inputs[0]->type == TB_MULPAIR || n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div) {
                 return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i ? RDX : RAX));
             }
 
@@ -1383,8 +1390,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
 
         case TB_NEVER_BRANCH: {
             TB_Node* proj0 = USERN(proj_with_index(n, 0));
-            TB_Node* succ_n = cfg_next_bb_after_cproj(proj0);
-            TB_BasicBlock* succ = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
+            TB_BasicBlock* succ = nl_map_get_checked(ctx->cfg.node_to_block, proj0);
             __(JMP, TB_X86_QWORD, Vlbl(succ->fwd));
             break;
         }
@@ -1871,6 +1877,13 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 }
                 __(IMUL, dt, &dst, &rm);
             }
+            break;
+        }
+
+        case TB_MULPAIR: {
+            TB_X86_DataType dt = legalize_int(n->inputs[2]->dt);
+            Val src = op_at(ctx, n->inputs[2]);
+            __(MUL, dt, &src);
             break;
         }
 
