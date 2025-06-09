@@ -416,13 +416,34 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             subsume_node(f, new_phi, old_phi->inputs[1]);
             cloned[old_phi->gvn] = old_phi->inputs[1];
 
+            TB_Node* next_val = old_phi->inputs[2];
+
+            // any inputs to next_val cannot be rewritten to redirectly refer to
+            // next val because it would cause a cycle with no phi in the middle.
+            worklist_clear(ws);
+            worklist_push(ws, next_val);
+
+            for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+                TB_Node* n = ws->items[i];
+                if (ctx->ctrl[n->gvn] == header) {
+                    #if TB_OPTDEBUG_LOOP
+                    printf("   BEFORE(");
+                    tb_print_dumb_node(NULL, n);
+                    printf(")\n");
+                    #endif
+
+                    FOR_N(j, 0, n->input_count) if (n->inputs[j] && n->inputs[j] != old_phi) {
+                        worklist_push(ws, n->inputs[j]);
+                    }
+                }
+            }
+
             // our original loop header is being repurposed as an end of loop latch, because of this
             // we need to update any phi uses such that they refer to the "next" path.
-            TB_Node* next_val = old_phi->inputs[2];
             for (size_t j = 0; j < old_phi->user_count;) {
                 TB_Node* un = USERN(&old_phi->users[j]);
 
-                if (cloned[un->gvn] && un != next_val) {
+                if (cloned[un->gvn] && un != next_val && !worklist_test_n_set(ws, un)) {
                     #if TB_OPTDEBUG_LOOP
                     printf("   USER(");
                     tb_print_dumb_node(NULL, un);
@@ -479,8 +500,12 @@ static TB_Node* get_simple_loop_exit(LoopOpt* opt, TB_LoopTree* loop, TB_Node* h
         TB_LoopTree* succ_loop = nl_table_get(&opt->loop_map, succ);
         if (succ_loop == loop && succ->user_count == 1) {
             // we didn't travel far enough
-            succ = USERN(&succ->users[0]);
-            succ_loop = nl_table_get(&opt->loop_map, succ);
+            TB_Node* next_succ = USERN(&succ->users[0]);
+            TB_LoopTree* next_loop = nl_table_get(&opt->loop_map, succ);
+            if (next_loop) {
+                succ = next_succ;
+                succ_loop = next_loop;
+            }
         }
 
         if (!loop_inside(loop, succ_loop)) {
@@ -966,6 +991,7 @@ bool tb_opt_loops(TB_Function* f) {
                     // since everything in the original header BB was cloned, there's two versions and
                     // when we're using these values past the loop exit, we need to insert a phi to resolve
                     // these conflicting definitions.
+                    size_t snapshot_count = f->node_count;
                     aarray_for(i, cloned_list) {
                         TB_Node* n = cloned_list[i];
                         if (n->dt.type == TB_TAG_CONTROL || cfg_is_fork(n)) {
@@ -974,7 +1000,6 @@ bool tb_opt_loops(TB_Function* f) {
 
                         // any nodes created during this loop close fixup shouldn't themselves need fixup btw.
                         bool is_loop_phi = n->type == TB_PHI && n->inputs[0] == header;
-                        size_t snapshot_count = f->node_count;
 
                         // lazily constructed
                         //   [0] exit, [1] body

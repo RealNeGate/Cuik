@@ -109,7 +109,7 @@ static size_t nbhs_compute_cap(size_t y) {
 }
 
 // (X + Y) / Z = int(X/Z) + int(Y/Z) + (mod(X,Z) + mod(Y,Z)/Z
-static uint64_t tb_div128(uint64_t numhi, uint64_t numlo, uint64_t den) {
+static uint64_t tb_div128(uint64_t numhi, uint64_t numlo, uint64_t den, uint64_t* out_rem) {
     // https://github.com/ridiculousfish/libdivide/blob/master/libdivide.h (libdivide_128_div_64_to_64)
     //
     // We work in base 2**32.
@@ -120,6 +120,7 @@ static uint64_t tb_div128(uint64_t numhi, uint64_t numlo, uint64_t den) {
 
     // Check for overflow and divide by 0.
     if (numhi >= den) {
+        if (out_rem) *out_rem = ~0ull;
         return ~0ull;
     }
 
@@ -165,6 +166,7 @@ static uint64_t tb_div128(uint64_t numhi, uint64_t numlo, uint64_t den) {
     uint32_t q0 = (uint32_t)qhat;
 
     // Return remainder if requested.
+    if (out_rem) *out_rem = (rem * b + num0 - q0 * den) >> shift;
     return ((uint64_t)q1 << 32) | q0;
 }
 
@@ -179,7 +181,7 @@ static void nbhs_compute_size(NBHS_Table* table, size_t cap) {
     #endif
 
     table->sh += 63 - 64;
-    table->a = tb_div128(1ull << table->sh, cap - 1, cap);
+    table->a = tb_div128(1ull << table->sh, cap - 1, cap, NULL);
 
     #if (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
     uint64_t d,e;

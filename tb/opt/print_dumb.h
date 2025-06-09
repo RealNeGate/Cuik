@@ -12,6 +12,57 @@ void tb_print_dumb_edge(Lattice** types, TB_Node* n) {
     }
 }
 
+#if 0
+static void print_float32(float value) {
+    typedef union { float f; uint32_t u; } F32U32;
+    uint32_t bits = (F32U32){ .f = value }.u;
+
+    int exp = ((bits >> 23u) & 0xFF) - 127;
+    uint64_t numer = bits & ((1u << 23u) - 1);
+
+    int int_bits   = (exp < 0 ? 0 : exp);
+    int fract_bits = 23 - int_bits;
+    if (fract_bits < 0) { fract_bits = 0; }
+
+    int64_t int_part = 0;
+    if (exp != 0 || numer != 0) {
+        int_part = (numer >> fract_bits) << int_bits;
+        int_part += 1ull << int_bits;
+    }
+    int_part = bits >> 31u ? -int_part : int_part;
+
+    printf("%lld", int_part);
+
+    if (fract_bits > 0) {
+        int zero_bits = (exp < 0 ? -exp : 0);
+        uint64_t zeros = (zero_bits * 2525223ull) >> 23ull;
+
+        // change fraction's denominator to 100,000,000,000
+        //
+        //   fract = numer * (100,000,000,000 / 2^23)
+        uint64_t fract = (1ull << 23ull) | numer;
+        fract = ((fract * 100000000000ull) >> 23ull);
+
+        uint64_t a = 1;
+        FOR_N(i, 0, zeros) { a *= 10; }
+
+        fract *= a;
+        fract >>= zero_bits;
+
+        char tmp[64];
+        FOR_N(i, 0, zeros) {
+            tmp[i] = '0';
+        }
+
+        FOR_REV_N(i, 0, 11) {
+            tmp[zeros+i] = (fract % 10) + '0';
+            fract /= 10;
+        }
+        printf(".%.*s\n", (int) zeros + 11, tmp);
+    }
+}
+#endif
+
 void tb_print_dumb_node(Lattice** types, TB_Node* n) {
     TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
     printf("%%%-4u: ", n->gvn);
@@ -88,10 +139,10 @@ void tb_print_dumb_node(Lattice** types, TB_Node* n) {
         printf("size=%u, align=%u ", l->size, l->align);
     } else if (n->type == TB_F32CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
-        printf("%f ", f->value);
+        printf("%.10f ", f->value);
     } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
-        printf("%f ", f->value);
+        printf("%.10f ", f->value);
     } else if (n->type >= 0x100) {
         int family = n->type / 0x100;
         assert(family >= 1 && family < TB_ARCH_MAX);

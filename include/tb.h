@@ -417,7 +417,8 @@ typedef enum TB_NodeTypeEnum {
     // Special ops
     //   does full multiplication (64x64=128 and so on) returning
     //   the low and high values in separate projections
-    TB_MULPAIR,
+    TB_SMULPAIR,
+    TB_UMULPAIR,
 
     // Vector ops
     TB_VBROADCAST,

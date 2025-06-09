@@ -117,18 +117,26 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
 }
 
 // Ripped, straight, from, Hacker's delight... mmm delight
-static uint64_t mulhs(uint64_t u, uint64_t v, int bits) {
-    int half_bits = bits / 2;
-    uint64_t mask = UINT64_MAX >> (64 - bits);
-    uint64_t u0 = u & 0xFFFF;
-    int64_t u1 = u >> half_bits;
-    uint64_t v0 = v & 0xFFFF;
-    int64_t v1 = v >> half_bits;
+static uint64_t mulhi64(uint64_t u, uint64_t v) {
+    uint64_t u0 = u & 0xFFFFFFFF;
+    uint64_t u1 = u >> 32;
+    uint64_t v0 = v & 0xFFFFFFFF;
+    uint64_t v1 = v >> 32;
     uint64_t w0 = u0*v0;
-    int64_t t = u1*v0 + (w0 >> half_bits);
-    int64_t w1 = (u0*v1) + (t & 0xFFFF);
-    int64_t w2 = (u1*v1) + (t >> half_bits);
-    return w2 + (w1 >> half_bits);
+    uint64_t t = u1*v0 + (w0 >> 32);
+    uint64_t w1 = (u0*v1) + (t & 0xFFFFFFFF);
+    uint64_t w2 = (u1*v1) + (t >> 32);
+    return w2 + (w1 >> 32);
+}
+
+static uint64_t mulhs(uint64_t u, uint64_t v, int bits) {
+    if (bits == 64) {
+        return mulhi64(u, v);
+    }
+
+    TB_ASSERT((bits & (bits - 1)) == 0);
+    int half = bits >> 1;
+    return (u * v) >> half;
 }
 
 static bool mul_overflow(uint64_t u, uint64_t v, int bits, int64_t* out) {
@@ -573,6 +581,12 @@ static TB_Node* identity_bits(TB_Function* f, TB_Node* n) {
 ////////////////////////////////
 // Division
 ////////////////////////////////
+typedef struct {
+    uint64_t a;
+    uint8_t sh;
+    bool add;
+} IntRecip;
+
 static TB_Node* make_int_binop(TB_Function* f, int op, TB_DataType dt, TB_Node* a, TB_Node* b) {
     TB_Node* n = tb_alloc_node(f, op, dt, 3, sizeof(TB_NodeBinopInt));
     set_input(f, n, a, 1);
@@ -580,8 +594,87 @@ static TB_Node* make_int_binop(TB_Function* f, int op, TB_DataType dt, TB_Node* 
     return n;
 }
 
+static IntRecip compute_recip_64(bool is_signed, uint64_t y) {
+    IntRecip r;
+
+    uint64_t rem;
+    r.sh = (63 - tb_clz64(y));
+    r.a = tb_div128(1ull << (r.sh - is_signed), 0, y, &rem);
+    r.add = false;
+
+    if ((y - rem) >= (1ull << r.sh)) {
+        r.a *= 2;
+
+        uint64_t rem2 = rem*2;
+        if (rem2 >= y || rem2 < rem) {
+            r.a += 1;
+        }
+        r.add = true;
+    } else if (is_signed) {
+        r.sh -= 1;
+    }
+    r.a += 1;
+    return r;
+}
+
+static void sample_div(uint64_t x, IntRecip r, uint64_t y) {
+    uint64_t expected = x / y;
+    uint64_t got = mulhi64(x, r.a);
+    if (r.add) {
+        got = ((x - got) >> 1) + got;
+    }
+    got >>= r.sh;
+
+    if (expected != got) {
+        printf("BAD!!! %#llx / %#llx = %#llx (we got %#llx)\n", x, y, expected, got);
+        abort();
+    }
+}
+
+static void tb_test_int_division(void) {
+    uint64_t cases = 0;
+    FOR_N(i, 0, 262144) {
+        uint64_t y = i + ((i>>14) * (1ull << 59ull));
+        if (y < 2 || (y & (y - 1)) == 0) {
+            printf("Skipped %zu...\n", y);
+            continue;
+        }
+
+        if (i == 262143) {
+            y = (1ull << 63ull) - 1;
+        }
+
+        IntRecip r = compute_recip_64(false, y);
+        uint64_t hi = 1ull << 63ull;
+        FOR_N(j, 0, 500) {
+            FOR_N(k, 0, 100) {
+                sample_div(j * (y-k), r, y);
+            }
+
+            FOR_N(k, 0, 100) {
+                sample_div(hi + (j * (y-k)), r, y);
+            }
+
+            sample_div(j,    r, y);
+            sample_div(hi+j, r, y);
+            cases += 202;
+        }
+    }
+    printf("Tried: %lld cases\n", cases);
+    __debugbreak();
+}
+
+static TB_Node* int_binop(TB_Function* f, int type, TB_Node* lhs, TB_Node* rhs) {
+    TB_Node* n = tb_alloc_node(f, type, lhs->dt, 3, sizeof(TB_NodeBinopInt));
+    set_input(f, n, lhs, 1);
+    set_input(f, n, rhs, 2);
+    mark_node(f, n);
+    return n;
+}
+
 static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
     bool is_signed = n->type == TB_SDIV;
+    // tb_test_int_division();
 
     // if we have a constant denominator we may be able to reduce the division into a
     // multiply and shift-right
@@ -592,25 +685,27 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
     TB_Node* x = n->inputs[1];
 
     uint64_t y = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeInt)->value;
-    if (y >= (1ull << 63ull)) {
-        if (is_signed) {
-            return NULL;
-        } else {
-            // if the top bit is set in the divisor then there's literally only two quotients
-            // left, from there we can reduce it to a range check.
-            TB_Node* cmp_node = tb_alloc_node(f, TB_CMP_ULE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
-            set_input(f, cmp_node, n->inputs[2], 1);
-            set_input(f, cmp_node, x, 2);
-            TB_NODE_SET_EXTRA(cmp_node, TB_NodeCompare, .cmp_dt = dt);
+    if (y >= (1ull << 63ull) && !is_signed) {
+        // if the top bit is set in the divisor then there's literally only two quotients
+        // left, from there we can reduce it to a range check.
+        TB_Node* cmp_node = tb_alloc_node(f, TB_CMP_ULE, TB_TYPE_BOOL, 3, sizeof(TB_NodeCompare));
+        set_input(f, cmp_node, n->inputs[2], 1);
+        set_input(f, cmp_node, x, 2);
+        TB_NODE_SET_EXTRA(cmp_node, TB_NodeCompare, .cmp_dt = dt);
 
-            TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, dt, 2, 0);
-            set_input(f, ext_node, cmp_node, 1);
-            return ext_node;
-        }
+        TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, dt, 2, 0);
+        set_input(f, ext_node, cmp_node, 1);
+        return ext_node;
     } else if (y == 0) {
         return tb_alloc_node(f, TB_POISON, dt, 1, 0);
     } else if (y == 1) {
-        // return x;
+        return x;
+    } else if (y == -1 && is_signed) {
+        // just negate it
+        TB_Node* neg = tb_alloc_node(f, TB_SUB, dt, 2, sizeof(TB_NodeBinopInt));
+        set_input(f, neg, make_int_node(f, dt, 0), 1);
+        set_input(f, neg, x, 2);
+        return neg;
     } else {
         // (udiv a N) => a >> log2(N) where N is a power of two
         uint64_t log2 = tb_ffs(y) - 1;
@@ -641,18 +736,19 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         }
     }
 
-    // idk how to handle this yet
+    bool neg = false;
     if (is_signed) {
-        return NULL;
+        if (y >> 63ull) {
+            y   = -y;
+            neg = true;
+        }
     }
 
-    TB_ASSERT(y != 0 && y != 1);
-    bool special = false;
-
-    // ceil(log2(y))
-    uint64_t sh = (64 - tb_clz64(y)) - 1;
-    // a = ceil(2^sh / y) = floor((2^sh + y-1) / y)
-    uint64_t a = tb_div128(1ull << sh, y - 1, y);
+    TB_ASSERT(y != 0 && y != 1 && (y >> 63ull) == 0);
+    IntRecip r = compute_recip_64(is_signed, y);
+    if (neg) {
+        r.a = -r.a;
+    }
 
     // now we can take a and sh and do:
     //   x / y  => mulhi(x, a) >> sh
@@ -665,8 +761,8 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
             case TB_TAG_I32: big_dt = TB_TYPE_I64; break;
             default: tb_todo();
         }
-        sh += bits; // chopping the low half
-        a &= (1ull << bits) - 1;
+        r.sh += bits; // chopping the low half
+        r.a &= (1ull << bits) - 1;
 
         // extend x
         TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, big_dt, 2, 0);
@@ -674,12 +770,12 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
 
         TB_Node* mul_node = tb_alloc_node(f, TB_MUL, big_dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, mul_node, ext_node, 1);
-        set_input(f, mul_node, make_int_node(f, big_dt, a), 2);
+        set_input(f, mul_node, make_int_node(f, big_dt, r.a), 2);
         TB_NODE_SET_EXTRA(mul_node, TB_NodeBinopInt, .ab = 0);
 
         TB_Node* sh_node = tb_alloc_node(f, TB_SHR, big_dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, sh_node, mul_node, 1);
-        set_input(f, sh_node, make_int_node(f, big_dt, sh), 2);
+        set_input(f, sh_node, make_int_node(f, big_dt, r.sh), 2);
         TB_NODE_SET_EXTRA(sh_node, TB_NodeBinopInt, .ab = 0);
 
         TB_Node* trunc_node = tb_alloc_node(f, TB_TRUNCATE, dt, 2, 0);
@@ -690,9 +786,10 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         mark_node(f, ext_node);
         return trunc_node;
     } else {
-        TB_Node* mul_node = tb_alloc_node(f, TB_MULPAIR, TB_TYPE_TUPLE, 3, 0);
+        // hi = mulhi(x, a)
+        TB_Node* mul_node = tb_alloc_node(f, is_signed ? TB_SMULPAIR : TB_UMULPAIR, TB_TYPE_TUPLE, 3, 0);
         set_input(f, mul_node, x, 1);
-        set_input(f, mul_node, make_int_node(f, dt, a), 2);
+        set_input(f, mul_node, make_int_node(f, dt, r.a), 2);
 
         TB_Node* lo = make_proj_node(f, dt, mul_node, 0);
         TB_Node* hi = make_proj_node(f, dt, mul_node, 1);
@@ -702,31 +799,25 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         mark_node(f, hi);
 
         // Granlund and Montgomery winning rn
-        if (special) {
-            TB_Node* sub_node = tb_alloc_node(f, TB_SUB, dt, 3, sizeof(TB_NodeBinopInt));
-            set_input(f, sub_node, x,  1);
-            set_input(f, sub_node, hi, 2);
-            mark_node(f, sub_node);
+        if (is_signed) {
+            if (r.add && neg) {
+                TB_Node* d = int_binop(f, TB_SUB, make_int_node(f, dt, 0), hi);
+                hi = int_binop(f, TB_ADD, hi, d);
+            }
 
-            TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
-            set_input(f, sh_node, sub_node, 1);
-            set_input(f, sh_node, make_int_node(f, dt, 1), 2);
-            mark_node(f, sh_node);
+            TB_Node* q = int_binop(f, TB_SAR, hi, make_int_node(f, dt, r.sh));
+            TB_Node* t = int_binop(f, TB_SHR, hi, make_int_node(f, dt, 63));
+            return int_binop(f, TB_ADD, q, t);
+        } else {
+            if (r.add) {
+                // hi = ((x - hi) >> 1) + hi;
+                TB_Node* q = int_binop(f, TB_SUB, x, hi);
+                TB_Node* r = int_binop(f, TB_SHR, q, make_int_node(f, dt, 1));
+                hi = int_binop(f, TB_ADD, r, hi);
+            }
 
-            TB_Node* add_node = tb_alloc_node(f, TB_ADD, dt, 3, sizeof(TB_NodeBinopInt));
-            set_input(f, add_node, sh_node, 1);
-            set_input(f, add_node, hi, 2);
-            mark_node(f, add_node);
-
-            hi = add_node;
-            sh -= 1;
+            return int_binop(f, TB_SHR, hi, make_int_node(f, dt, r.sh));
         }
-
-        TB_Node* sh_node = tb_alloc_node(f, TB_SHR, dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, sh_node, hi, 1);
-        set_input(f, sh_node, make_int_node(f, dt, sh), 2);
-        mark_node(f, sh_node);
-        return sh_node;
     }
 }
 
@@ -842,12 +933,12 @@ static Lattice* value_zext(TB_Function* f, TB_Node* n) {
 
     int dst_bits = tb_data_type_bit_size(NULL, n->dt.type);
     int src_bits = tb_data_type_bit_size(NULL, n->inputs[1]->dt.type);
-
     TB_ASSERT(src_bits != 64);
 
     if (a->_int.min == a->_int.max) {
         uint64_t mask = tb__mask(src_bits);
-        return lattice_gimme_uint(f, a->_int.min & mask, a->_int.min & mask, dst_bits);
+        int64_t min = tb__sxt(a->_int.min & mask, dst_bits, 64);
+        return lattice_gimme_uint(f, min, min, dst_bits);
     }
 
     Lattice* full_zxt_range = lattice_gimme_int(f, 0, lattice_uint_max(src_bits), src_bits);

@@ -170,6 +170,10 @@ static TB_Node* ideal_select(TB_Function* f, TB_Node* n) {
         }
 
         if (true_imm && false_imm && on_true == 1 && on_false == 0) {
+            if (n->dt.type == TB_TAG_BOOL) {
+                return src;
+            }
+
             TB_Node* ext_node = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
             set_input(f, ext_node, src, 1);
             mark_node(f, ext_node);

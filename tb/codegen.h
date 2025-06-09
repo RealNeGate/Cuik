@@ -194,6 +194,11 @@ struct Ctx {
     // figure out the max input count of all nodes before allocating it.
     RegMask** ins;
 
+    // cached set of mask for all argument passing slots, these are generally
+    // clobbered by function calls so i figured keeping a copy of them around
+    // would be nice.
+    RegMask* cached_arg_list_mask;
+
     // Values
     ArenaArray(VReg) vregs;   // [vid]
     ArenaArray(int) vreg_map; // [gvn] -> vid
@@ -391,6 +396,30 @@ static RegMask* new_regmask(TB_Function* f, int reg_class, bool may_spill, uint6
     rm->class = reg_class;
     rm->count = 1;
     rm->mask[0] = mask;
+    return rm;
+}
+
+static RegMask* new_regmask_range(TB_Function* f, int reg_class, bool may_spill, int start, int count) {
+    TB_ASSERT(count != 0);
+    int end = start + count;
+    int words = (end + 63) / 64;
+
+    RegMask* rm = tb_arena_alloc(&f->arena, sizeof(RegMask) + words*sizeof(uint64_t));
+    rm->may_spill = may_spill;
+    rm->class = reg_class;
+    rm->count = words;
+
+    // leading
+    FOR_N(j, 0, (start + 63) / 64) { rm->mask[j] = 0; }
+    if (start % 64) {
+        rm->mask[start / 64] |= UINT64_MAX << (start % 64);
+    }
+
+    // trailing
+    FOR_N(j, (start + 63) / 64, (end + 63) / 64) { rm->mask[j] = UINT64_MAX; }
+    if (end % 64) {
+        rm->mask[end / 64] &= UINT64_MAX >> (64ull - (end % 64));
+    }
     return rm;
 }
 

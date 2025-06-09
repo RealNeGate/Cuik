@@ -116,7 +116,8 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_FMIN: return "fmin";
         case TB_FNEG: return "fneg";
 
-        case TB_MULPAIR:  return "mulpair";
+        case TB_UMULPAIR: return "umulpair";
+        case TB_SMULPAIR: return "smulpair";
         case TB_LOAD:     return "load";
         case TB_STORE:    return "store";
         case TB_DEAD_STORE: return "dead_store";

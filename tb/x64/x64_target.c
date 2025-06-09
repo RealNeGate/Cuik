@@ -330,6 +330,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
     } else if (n->type == TB_ICONST) {
         int bytes;
         switch (n->dt.type) {
+            case TB_TAG_BOOL:bytes = 1; break;
             case TB_TAG_I8:  bytes = 1; break;
             case TB_TAG_I16: bytes = 2; break;
             case TB_TAG_I32: bytes = 4; break;
@@ -784,9 +785,25 @@ static void node_add_tmps(Ctx* restrict ctx, TB_Node* n) {
         TB_Node* proj = tb_alloc_node(f, TB_MACH_PROJ, TB_TYPE_I64, 1, sizeof(TB_NodeMachProj));
         set_input(f, proj, n, 0);
         TB_NODE_SET_EXTRA(proj, TB_NodeMachProj, .index = 0, .def = ctx->normie_mask[REG_CLASS_FLAGS]);
-    }
+    } else if (n->type == x86_call) {
+        X86MemOp* op = TB_NODE_GET_EXTRA(n);
+        CallingConv* cc = ctx->calling_conv;
 
-    if (n->type == TB_PROJ && (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div)) {
+        size_t base = 3;
+        if (op->mode != MODE_REG && (op->flags & OP_INDEXED)) {
+            base += 1;
+        }
+
+        int param_count = n->input_count - base;
+        if (param_count > ctx->call_usage) {
+            ctx->call_usage = param_count;
+            if (cc == &CC_WIN64 && ctx->call_usage > 0 && ctx->call_usage < 3) {
+                ctx->call_usage = 4;
+            }
+
+            ctx->num_regs[REG_CLASS_STK] = ctx->param_count + ctx->call_usage + ctx->num_spills + 1;
+        }
+    } else if (n->type == TB_PROJ && (n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div)) {
         TB_Node* tuple = n->inputs[0];
         int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
 
@@ -808,6 +825,14 @@ static int node_constraint_kill(Ctx* restrict ctx, TB_Node* n, RegMask** kills) 
     int kill_count = 0;
     if (n->type == x86_call) {
         CallingConv* cc = ctx->calling_conv;
+
+        if (ctx->call_usage > 0) {
+            if (ctx->cached_arg_list_mask == NULL) {
+                ctx->cached_arg_list_mask = new_regmask_range(f, REG_CLASS_STK, false, 1 + ctx->param_count, ctx->call_usage);
+            }
+
+            kills[kill_count++] = ctx->cached_arg_list_mask;
+        }
 
         // we need to know which regs we've used, since those won't be tmps
         RegMask** ins = tb_arena_alloc(&f->tmp_arena, n->input_count * sizeof(RegMask*));
@@ -933,15 +958,18 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_vzero:
         return ctx->normie_mask[REG_CLASS_XMM];
 
-        case TB_MULPAIR:
+        case TB_UMULPAIR:
+        case TB_SMULPAIR:
         if (ins) {
             ins[1] = intern_regmask(ctx, REG_CLASS_GPR, false, 1u << RAX);
             ins[2] = ctx->normie_mask[REG_CLASS_GPR];
         }
-        return ctx->normie_mask[REG_CLASS_GPR];
+        return &TB_REG_EMPTY;
 
         case TB_VSHUFFLE:
         case TB_VBROADCAST:
+        case TB_FLOAT_EXT:
+        case TB_FLOAT_TRUNC:
         if (ins) { ins[1] = ctx->normie_mask[REG_CLASS_XMM]; }
         return ctx->normie_mask[REG_CLASS_XMM];
 
@@ -957,7 +985,7 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
 
                 TB_ASSERT(i >= 2 && i < 2 + cc->ret_count[reg_class]);
                 return intern_regmask(ctx, reg_class, false, 1u << cc->rets[reg_class][i - 2]);
-            } else if (n->inputs[0]->type == TB_MULPAIR || n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div) {
+            } else if (n->inputs[0]->type == TB_UMULPAIR || n->inputs[0]->type == TB_SMULPAIR || n->inputs[0]->type == x86_idiv || n->inputs[0]->type == x86_div) {
                 return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << (i ? RDX : RAX));
             }
 
@@ -1178,10 +1206,8 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 int param_count = 0;
                 for (size_t i = base; i < n->input_count; i++) {
                     TB_Node* in = n->inputs[i];
-                    if (in->type == TB_MACH_TEMP) {
-                        ins[i] = TB_NODE_GET_EXTRA_T(in, TB_NodeMachTemp)->def;
-                        continue;
-                    }
+                    TB_ASSERT(in->type != TB_MACH_TEMP);
+                    // ins[i] = TB_NODE_GET_EXTRA_T(in, TB_NodeMachTemp)->def;
 
                     // on win64 we always have the XMMs and GPRs used match the param_num
                     // so if XMM2 is used, it's always the 3rd parameter.
@@ -1202,15 +1228,6 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                         used[reg_class] += 1;
                     }
                     param_count++;
-                }
-
-                if (param_count > ctx->call_usage) {
-                    ctx->call_usage = param_count;
-                    if (cc == &CC_WIN64 && ctx->call_usage > 0 && ctx->call_usage < 3) {
-                        ctx->call_usage = 4;
-                    }
-
-                    ctx->num_regs[REG_CLASS_STK] = ctx->param_count + ctx->call_usage + ctx->num_spills + 1;
                 }
             }
 
@@ -1507,7 +1524,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        #if 0
         case TB_FLOAT_EXT: {
             Val dst = op_at(ctx, n);
             Val src = op_at(ctx, n->inputs[1]);
@@ -1523,17 +1539,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case x86_neg: {
-            TB_X86_DataType dt = legalize_int(n->dt);
-            Val dst = op_at(ctx, n);
-            Val src = op_at(ctx, n->inputs[1]);
-            if (!is_value_match(&dst, &src)) {
-                __(MOV, dt, &dst, &src);
-            }
-            __(NEG, dt, &dst);
-            break;
-        }
-
+        #if 0
         case TB_UINT2FLOAT:
         case TB_INT2FLOAT: {
             TB_DataType src_dt = n->inputs[1]->dt;
@@ -1880,7 +1886,14 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             break;
         }
 
-        case TB_MULPAIR: {
+        case TB_SMULPAIR: {
+            TB_X86_DataType dt = legalize_int(n->inputs[2]->dt);
+            Val src = op_at(ctx, n->inputs[2]);
+            __(IMUL1, dt, &src);
+            break;
+        }
+
+        case TB_UMULPAIR: {
             TB_X86_DataType dt = legalize_int(n->inputs[2]->dt);
             Val src = op_at(ctx, n->inputs[2]);
             __(MUL, dt, &src);
@@ -2044,7 +2057,7 @@ static uint64_t node_unit_mask(TB_Function* f, TB_Node* n) {
 static int node_latency(TB_Function* f, TB_Node* n, TB_Node* end) {
     if (n->type == x86_idiv || n->type == x86_div) {
         return 30;
-    } else if (n->type == x86_imul) {
+    } else if (n->type == x86_imul || n->type == TB_UMULPAIR || n->type == TB_SMULPAIR) {
         return 3;
     } else if (n->type == x86_lea) {
         return 1;

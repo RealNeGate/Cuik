@@ -443,6 +443,7 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x20F6: case 0x20F7: return "not";
         case 0x30F6: case 0x30F7: return "neg";
         case 0x40F6: case 0x40F7: return "mul";
+        case 0x50F6: case 0x50F7: return "imul";
         case 0x60F6: case 0x60F7: return "div";
         case 0x70F6: case 0x70F7: return "idiv";
 

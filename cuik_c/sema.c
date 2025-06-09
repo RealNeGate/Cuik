@@ -862,7 +862,6 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                 if (type->kind == KIND_ARRAY) {
                     if (type->size == 0 && (sym->op == STMT_GLOBAL_DECL || sym->op == STMT_DECL)) {
                         sym->flags |= STMT_FLAGS_IS_RESOLVING;
-                        printf("AAA %s\n", sym->decl.name);
 
                         // try to resolve the type since it's incomplete
                         sema_stmt(tu, sym);
