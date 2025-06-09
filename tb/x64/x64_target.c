@@ -43,14 +43,14 @@ typedef struct {
 
     TB_DataType extra_dt;
 
-    int32_t disp;
-    int32_t imm;
+    union {
+        struct {
+            int32_t disp;
+            int32_t imm;
+        };
+        TB_FunctionPrototype* proto;
+    };
 } X86MemOp;
-
-typedef struct {
-    TB_FunctionPrototype* proto;
-    int param_count;
-} X86Call;
 
 static bool fits_into_uint8(TB_DataType dt, TB_Node* n) {
     TB_ASSERT(n->type == TB_ICONST);
@@ -1204,10 +1204,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                 used[REG_CLASS_STK] = 1 + ctx->param_count;
 
                 int param_count = 0;
+                TB_FunctionPrototype* proto = op->proto;
                 for (size_t i = base; i < n->input_count; i++) {
                     TB_Node* in = n->inputs[i];
                     TB_ASSERT(in->type != TB_MACH_TEMP);
                     // ins[i] = TB_NODE_GET_EXTRA_T(in, TB_NodeMachTemp)->def;
+
+                    int reg_class = TB_IS_VECTOR_TYPE(in->dt) || TB_IS_FLOAT_TYPE(in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR;
 
                     // on win64 we always have the XMMs and GPRs used match the param_num
                     // so if XMM2 is used, it's always the 3rd parameter.
@@ -1215,11 +1218,14 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
                     if (cc == &CC_WIN64) {
                         used[REG_CLASS_GPR] = used[REG_CLASS_XMM] = j;
                         used[REG_CLASS_STK] = 1 + ctx->param_count + j;
+
+                        // it should actually be placed into both...
+                        if (proto->has_varargs && j >= proto->param_count) {
+                            reg_class = REG_CLASS_GPR;
+                        }
                     }
 
-                    int reg_class = TB_IS_VECTOR_TYPE(in->dt) || TB_IS_FLOAT_TYPE(in->dt) ? REG_CLASS_XMM : REG_CLASS_GPR;
                     int reg_num = used[reg_class];
-
                     if (reg_num >= cc->param_count[reg_class]) {
                         ins[i] = intern_regmask2(ctx, REG_CLASS_STK, false, used[REG_CLASS_STK]);
                         used[REG_CLASS_STK] += 1;
@@ -1473,10 +1479,10 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 #endif
 
                 if (dst.type == VAL_GPR && src.type == VAL_XMM) {
-                    __(MOV_I2F, dt, &dst, &src);
+                    __(MOV_F2I, dt, &dst, &src);
                 } else if (dst.type == VAL_XMM && src.type == VAL_GPR) {
                     TB_X86_DataType src_dt = legalize(n->inputs[1]->dt);
-                    __(MOV_F2I, src_dt, &dst, &src);
+                    __(MOV_I2F, src_dt, &dst, &src);
                 } else {
                     int op = dt < TB_X86_F32x1 ? MOV : FP_MOV;
                     __(op, dt, &dst, &src);

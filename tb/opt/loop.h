@@ -416,7 +416,13 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             subsume_node(f, new_phi, old_phi->inputs[1]);
             cloned[old_phi->gvn] = old_phi->inputs[1];
 
+            // if we cloned the next value then it means part of that computation is done
+            // in the header and we should update the phi such that the loop body begins
+            // during the second iteration's value.
             TB_Node* next_val = old_phi->inputs[2];
+            if (cloned[next_val->gvn]) {
+                set_input(f, old_phi, cloned[next_val->gvn], 1);
+            }
 
             // any inputs to next_val cannot be rewritten to redirectly refer to
             // next val because it would cause a cycle with no phi in the middle.
@@ -427,13 +433,16 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
                 TB_Node* n = ws->items[i];
                 if (ctx->ctrl[n->gvn] == header) {
                     #if TB_OPTDEBUG_LOOP
-                    printf("   BEFORE(");
+                    printf("   AFTER(");
                     tb_print_dumb_node(NULL, n);
                     printf(")\n");
                     #endif
 
-                    FOR_N(j, 0, n->input_count) if (n->inputs[j] && n->inputs[j] != old_phi) {
-                        worklist_push(ws, n->inputs[j]);
+                    FOR_USERS(u, n) {
+                        TB_Node* un = USERN(u);
+                        if (ctx->ctrl[un->gvn] == header && un != old_phi) {
+                            worklist_push(ws, un);
+                        }
                     }
                 }
             }
@@ -443,7 +452,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             for (size_t j = 0; j < old_phi->user_count;) {
                 TB_Node* un = USERN(&old_phi->users[j]);
 
-                if (cloned[un->gvn] && un != next_val && !worklist_test_n_set(ws, un)) {
+                if (cloned[un->gvn] && un != next_val && worklist_test_n_set(ws, un)) {
                     #if TB_OPTDEBUG_LOOP
                     printf("   USER(");
                     tb_print_dumb_node(NULL, un);
@@ -677,6 +686,8 @@ bool tb_opt_loops(TB_Function* f) {
 
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     TB_CFG cfg = tb_compute_cfg(f, f->worklist, &f->tmp_arena, true);
+
+    tb_print_dumb(f);
 
     LoopOpt ctx;
     ctx.f      = f;
@@ -1068,6 +1079,9 @@ bool tb_opt_loops(TB_Function* f) {
                     }
                     progress = true;
                     tb_arena_restore(&f->tmp_arena, sp2);
+
+                    // tb_print_dumb(f);
+                    // __debugbreak();
 
                     TB_OPTDEBUG(PASSES)(printf("        * Added extra latch %%%u\n", latch->gvn));
                     TB_OPTDEBUG(PASSES)(printf("        * Added extra join %%%u\n", join->gvn));

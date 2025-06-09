@@ -220,7 +220,7 @@ static TB_Node* rogers_hard_split(Ctx* restrict ctx, Rogers* restrict ra, TB_Nod
             add_user(f, move, in->inputs[j], j);
         }
     } else {
-        move = tb_alloc_node(f, TB_MACH_COPY, n->dt, 2, sizeof(TB_NodeMachCopy));
+        move = tb_alloc_node(f, TB_MACH_COPY, in->dt, 2, sizeof(TB_NodeMachCopy));
         set_input(f, move, in, 1);
         TB_NODE_SET_EXTRA(move, TB_NodeMachCopy, .def = rm, .use = ctx->normie_mask[rm->class]);
     }
@@ -2034,6 +2034,20 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
             queue[queue_count++] = reload_site.bb - ctx->cfg.blocks;
         }
 
+        if (a->type == TB_PHI) {
+            FOR_N(i, 1, a->input_count) {
+                TB_Node* pred = cfg_get_pred(&ctx->cfg, a->inputs[0], i - 1);
+                int pred_bb = f->scheduled[pred->gvn] - ctx->cfg.blocks;
+
+                if (!set_get(&ever_on_ws, pred_bb)) {
+                    set_put(&ever_on_ws, pred_bb);
+                    queue[queue_count++] = pred_bb;
+
+                    defs[pred_bb] = a->inputs[i];
+                }
+            }
+        }
+
         while (queue_count--) {
             int x = queue[queue_count];
             ArenaArray(int) df = ra->df[x];
@@ -2068,7 +2082,7 @@ static void split_range(Ctx* ctx, Rogers* restrict ra, TB_Node* a, TB_Node* b, s
                             TB_NODE_SET_EXTRA(cpy, TB_NodeMachCopy, .def = a_def_mask, .use = a_def_mask);
 
                             TB_Node* last = pred_bb->items[aarray_length(pred_bb->items) - 1];
-                            int t = rogers_insert_op(ctx, pred_bb - ctx->cfg.blocks, cpy, aarray_length(pred_bb->items) - (last == a ? 0 : 1));
+                            int t = rogers_insert_op(ctx, pred_bb - ctx->cfg.blocks, cpy, aarray_length(pred_bb->items) - (last == a ? 1 : 0));
                             aarray_insert(ctx->vreg_map, cpy->gvn, reload_vreg_id);
                             set_input(f, phi, cpy, 1 + j);
 
