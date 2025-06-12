@@ -48,7 +48,7 @@ static CallingConv CC_A64PCS = {
         [ 8 ... 15] = 'c',
     },
 
-    .param_count = { [REG_CLASS_GPR] = 6, [REG_CLASS_FPR] = 4 },
+    .param_count = { [REG_CLASS_GPR] = 8, [REG_CLASS_FPR] = 8 },
     .params[REG_CLASS_GPR] = (uint8_t[]){ 0, 1, 2, 3, 4, 5, 6, 7 },
     .params[REG_CLASS_FPR] = (uint8_t[]){ 0, 1, 2, 3, 4, 5, 6, 7 },
 
@@ -192,17 +192,19 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
             int i = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
             if (n->inputs[0]->type == TB_ROOT) {
                 if (i == 2) { // 2, RPC
-                    return intern_regmask(ctx, REG_CLASS_GPR, false, 1u << LR);
+                    return intern_regmask2(ctx, REG_CLASS_GPR, false, LR);
                 } else { // >2, Params
                     TB_ASSERT(i < 3 + 4); //?? A64 ABI says 8 regs, but 4 for now
-                    int mask = 1u << (i - 3); // starts at 3, so i-3
                     int type = TB_IS_FLOAT_TYPE(n->dt)
                         ? REG_CLASS_FPR
                         : REG_CLASS_GPR;
-                    return intern_regmask(ctx, type, false, mask);
+                    // starts at 3, so i-3
+                    return intern_regmask2(ctx, type, false, i - 3);
                 }
             } else {
-                tb_todo();
+                if (n->inputs[0]->type == TB_CALL) {
+                    return intern_regmask2(ctx, REG_CLASS_GPR, false, 0);
+                }
             }
         }
 
@@ -275,7 +277,87 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         ////////////////////////////////
         // CONTROL + MEMORY
         ////////////////////////////////
-        // case TB_CALL:
+        case TB_CALL: {
+            // (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
+            if (ins) {
+                // control
+                ins[1] = &TB_REG_EMPTY;
+                // memory
+                ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+                // ptr
+                ins[3] = ctx->normie_mask[REG_CLASS_GPR];
+                // data
+                int ngrn = 0; // next gpr number
+                int nsrn = 0; // next fpr and simd number
+                int nprn = 0; // next scalable predicate number
+                int nsaa = 0; //?? next stack number (? how does the link and frame pointer look)
+                //?? stage B - pre-padding and extension of arguments
+                    //!! TODO: composite types
+                // stage C - assignment of args to registers and stack
+                FOR_N(i, 4, n->input_count) {
+                    int type = n->inputs[i]->dt.type;
+                    bool is_single = type == TB_TAG_F32;
+                    bool is_double = type == TB_TAG_F64;
+                    bool is_integral = type >= TB_TAG_BOOL && type <= TB_TAG_I64;
+                    bool is_pointer = type == TB_TAG_PTR;
+                    bool is_float = is_single || is_double;
+                    // C.1 float or vector and nsrn < 8 then allocate stack reg
+                    if (is_float && nsrn < 8) {
+                        ins[i] = intern_regmask2(ctx, REG_CLASS_FPR, false, nsrn);
+                        nsrn += 1;
+                        continue;
+                    }
+                    // C.2 aggr and nsrn + size <= 8 then allocate size float regs
+                    // C.3 aggr then nsrn = 8
+                    // C.4 aggr, quad, vec then round stack to 1 if align <= 8 or 2 if align >= 16
+                    //?? C.5 half, single then size = 8 (? stack reg already word sized)
+                    //!! C.6 aggr, float, vec then allocate enough stack regs
+                    if (is_float) {
+                        ins[i] = intern_regmask2(ctx, REG_CLASS_STK, false, nsaa);
+                        nsaa += 1;
+                        continue;
+                    }
+                    // C.7 it's complicated (vectors)
+                    // C.8 pure scalable type then memory & use pointer
+                    // C.9 integral, pointer then allocate int reg
+                    if ((is_integral || is_pointer) && ngrn < 8) {
+                        ins[i] = intern_regmask2(ctx, REG_CLASS_GPR, false, ngrn);
+                        ngrn += 1;
+                        continue;
+                    }
+                    // C.10 alignment 16 then align ngrn up to even
+                    // C.11 16 byte integral
+                    // C.12 composite
+                    // C.13
+                    ngrn = 8;
+                    // C.14 round nsaa to nearest multiple of max(8, input's alignment)
+                        // but stack regs are word-sized
+                    // C.15 composite
+                    // C.16 if size < 8 then size = 8
+                    // C.17
+                    ins[i] = intern_regmask2(ctx, REG_CLASS_STK, false, nsaa);
+                    nsaa += 1;
+                    continue;
+
+                    //OLD idk if good or bad
+                    // if (TB_IS_FLOAT_TYPE(n->inputs[i]->dt)) {
+                    //     if (nsrn < 8) {
+                    //         ins[i] = intern_regmask2(ctx, REG_CLASS_FPR, false, nsrn++);
+                    //     } else {
+                    //         ins[i] = intern_regmask2(ctx, REG_CLASS_STK, false, nsaa++);
+                    //     }
+                    // } else {
+                    //     if (ngrn < 8) {
+                    //         ins[i] = intern_regmask2(ctx, REG_CLASS_GPR, false, ngrn++);
+                    //     } else {
+                    //         ins[i] = intern_regmask2(ctx, REG_CLASS_STK, false, nsaa++);
+                    //     }
+                    // }
+                }
+                //!! TODO: something about context and call usage maybe
+            }
+            return &TB_REG_EMPTY;
+        }
         // case TB_SYSCALL:
         // case TB_TAILCALL:
         // case TB_SAFEPOINT:
