@@ -116,7 +116,8 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_FMIN: return "fmin";
         case TB_FNEG: return "fneg";
 
-        case TB_MULPAIR:  return "mulpair";
+        case TB_UMULPAIR: return "umulpair";
+        case TB_SMULPAIR: return "smulpair";
         case TB_LOAD:     return "load";
         case TB_STORE:    return "store";
         case TB_DEAD_STORE: return "dead_store";
@@ -413,10 +414,6 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                     }
                     printf("  }");
                 }
-                printf(" // branch ");
-                TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-                printf("%%%u", n->gvn);
-                TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
                 tb_arena_restore(&f->tmp_arena, sp);
                 break;
             }
@@ -656,10 +653,7 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                                 print_branch_edge(ctx, succ[i], false);
                                 printf("\n");
                             }
-                            printf("  } // branch ");
-                            TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-                            printf("%%%u", n->gvn);
-                            TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
+                            printf("  }");
                             tb_arena_restore(&f->tmp_arena, sp);
                         }
                         break;
@@ -667,6 +661,12 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                 }
                 break;
             }
+        }
+
+        if (n->dt.type == TB_TAG_TUPLE) {
+            TB_OPTDEBUG(ANSI)(printf(" // tuple \x1b[%dm", cool_ansi_color(n->gvn)));
+            printf("%%%u", n->gvn);
+            TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
         }
 
         printf("\n");

@@ -574,7 +574,7 @@ static TB_Node* identity_phi(TB_Function* f, TB_Node* n) {
         same = n->inputs[i];
     }
 
-    assert(same);
+    TB_ASSERT(same);
     if (f->worklist != NULL) {
         mark_users(f, n->inputs[0]);
     }

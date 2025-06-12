@@ -245,7 +245,7 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
     tb_arena_free(arena, n->inputs, n->input_cap * sizeof(TB_Node*));
     tb_arena_free(arena, n, sizeof(TB_Node) + extra);
 
-    assert(n->user_count == 0);
+    TB_ASSERT(n->user_count == 0);
     n->user_cap = n->user_count = 0;
     n->users = NULL;
     n->input_count = 0;
@@ -253,19 +253,19 @@ static void violent_kill(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_f32(TB_Function* f, TB_Node* n) {
-    assert(n->type == TB_F32CONST);
+    TB_ASSERT(n->type == TB_F32CONST);
     TB_NodeFloat32* num = TB_NODE_GET_EXTRA(n);
     return lattice_intern(f, (Lattice){ LATTICE_FLTCON32, ._f32 = num->value });
 }
 
 static Lattice* value_f64(TB_Function* f, TB_Node* n) {
-    assert(n->type == TB_F64CONST);
+    TB_ASSERT(n->type == TB_F64CONST);
     TB_NodeFloat64* num = TB_NODE_GET_EXTRA(n);
     return lattice_intern(f, (Lattice){ LATTICE_FLTCON64, ._f64 = num->value });
 }
 
 static Lattice* value_int(TB_Function* f, TB_Node* n) {
-    assert(n->type == TB_ICONST);
+    TB_ASSERT(n->type == TB_ICONST);
     TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
     if (n->dt.type == TB_TAG_PTR) {
         return num->value ? &XNULL_IN_THE_SKY : &NULL_IN_THE_SKY;
@@ -280,14 +280,14 @@ static Lattice* value_root(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_proj(TB_Function* f, TB_Node* n) {
-    assert(is_proj(n));
+    TB_ASSERT(is_proj(n));
     Lattice* l = latuni_get(f, n->inputs[0]);
     if (l == &TOP_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     } else if (l == &BOT_IN_THE_SKY) {
         return lattice_from_dt(f, n->dt);
     } else {
-        assert(l->tag == LATTICE_TUPLE);
+        TB_ASSERT(l->tag == LATTICE_TUPLE);
         int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
         return l->elems[index];
     }
@@ -328,7 +328,7 @@ static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_region(TB_Function* f, TB_Node* n) {
-    assert(cfg_is_region(n));
+    TB_ASSERT(cfg_is_region(n));
 
     FOR_N(i, 0, n->input_count) {
         Lattice* edge = latuni_get(f, n->inputs[i]);
@@ -353,7 +353,7 @@ static Lattice* affine_iv(TB_Function* f, Lattice* init, int64_t trips_min, int6
 }
 
 static TB_Node* ideal_location(TB_Function* f, TB_Node* n) {
-    assert(n->type == TB_DEBUG_LOCATION);
+    TB_ASSERT(n->type == TB_DEBUG_LOCATION);
     if (n->user_count == 0) { return NULL; }
 
     TB_Node* cproj = USERN(proj_with_index(n, 0));
@@ -411,7 +411,7 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                     // affine loop missing latch? ok then it's 1 trips
                     trips_min = trips_max = 1;
                 }
-                assert(trips_min <= trips_max);
+                TB_ASSERT(trips_min <= trips_max);
 
                 Lattice* init = latuni_get(f, n->inputs[1]);
                 if (lattice_is_const(init) && trips_max <= INT64_MAX) {
@@ -525,7 +525,7 @@ static bool can_gvn(TB_Node* n) {
             if (family == 0) {
                 return true;
             } else {
-                assert(family >= 0 && family < TB_ARCH_MAX);
+                TB_ASSERT(family >= 0 && family < TB_ARCH_MAX);
                 return tb_codegen_families[family].extra_bytes(n);
             }
         }
@@ -618,7 +618,7 @@ void tb_kill_node(TB_Function* f, TB_Node* n) {
         n->inputs[i] = NULL;
     }
 
-    // assert(n->users == NULL && "we can't kill nodes with users, that's fucking rude");
+    // TB_ASSERT(n->users == NULL && "we can't kill nodes with users, that's fucking rude");
     n->input_count = 0;
     n->type = TB_NULL;
 }
@@ -734,10 +734,8 @@ void subsume_node2(TB_Function* f, TB_Node* n, TB_Node* new_n) {
     TB_ASSERT(new_n != n);
     node_ensure_users_cap(f, new_n, n->user_count);
 
-    bool allow_cycle = cfg_is_region(n) || n->type == TB_PHI;
-    // it's also possible to have a legal cycle where we subsume away the entire body of a loop
-    if (cfg_is_region(new_n)) { allow_cycle = true; }
-
+    // these nodes can subsume themselves
+    bool allow_cycle = cfg_is_region(new_n) || new_n->type == TB_PHI;
     FOR_N(i, 0, n->user_count) {
         TB_User u = n->users[i];
         TB_Node* un = USERN(&u);

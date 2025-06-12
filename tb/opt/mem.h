@@ -49,6 +49,7 @@ typedef struct MemoryState {
     bool walked_once;
     bool sealed;
     bool is_loop;
+    bool is_dead;
     TB_Node** phis;
 
     NL_Table non_aliasing;
@@ -61,6 +62,11 @@ typedef struct {
 
     bool insert_merge;
     bool progress;
+
+    TB_Worklist* dead_worklist;
+
+    size_t postorder_len;
+    MemoryState** postorder_states;
 } LocalSplitter;
 
 static int bits_in_data_type(int pointer_size, TB_DataType dt);
@@ -256,7 +262,15 @@ static void merge_memory(TB_Function* f, NL_Table* non_aliasing, NL_Table* other
         MemorySet* this = e->v;
         MemorySet* that = nl_table_get(non_aliasing, e->k);
         if (that == NULL) {
-            nl_table_put(non_aliasing, e->k, e->v);
+            // clone it
+            MemorySet* set = cuik_malloc(sizeof(MemorySet) + this->cnt * sizeof(SimpleMemRef));
+            set->ready = true;
+            set->base = this->base;
+            set->cap = this->cnt;
+            set->cnt = this->cnt;
+            memcpy(set->stores, this->stores, this->cnt * sizeof(SimpleMemRef));
+
+            nl_table_put(non_aliasing, e->k, set);
         }
     }
 
@@ -265,34 +279,38 @@ static void merge_memory(TB_Function* f, NL_Table* non_aliasing, NL_Table* other
     printf("\n"); */
 }
 
+static TB_Node* next_of_memory_sese(TB_Node* curr) {
+    // the next memory output, NULL if there's multiple
+    TB_Node* next = NULL;
+    FOR_USERS(u, curr) {
+        TB_Node* use_n = USERN(u);
+        int use_i = USERI(u);
+
+        // not a real memory use
+        if (curr->type == TB_SPLITMEM && use_n->type == TB_MERGEMEM && use_i == 1) {
+            continue;
+        }
+
+        // memory end points
+        if (use_n->type == TB_PHI || is_mem_end_op(use_n) || use_n->type == TB_MERGEMEM) {
+            return NULL;
+        }
+
+        if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
+            if (next == NULL) { next = use_n; }
+            else { return NULL; }
+        }
+    }
+    return next;
+}
+
 static TB_Node* end_of_memory_sese(TB_Node* curr) {
     TB_OPTDEBUG(MEM2REG)(printf("SESE:\n"));
     for (;;) {
         TB_OPTDEBUG(MEM2REG)(printf("  WALK %%%u\n", curr->gvn));
 
         // the next memory output, NULL if there's multiple
-        TB_Node* next = NULL;
-        FOR_USERS(u, curr) {
-            TB_Node* use_n = USERN(u);
-            int use_i = USERI(u);
-
-            // not a real memory use
-            if (curr->type == TB_SPLITMEM && use_n->type == TB_MERGEMEM && use_i == 1) {
-                continue;
-            }
-
-            // memory end points
-            if (use_n->type == TB_PHI || is_mem_end_op(use_n) || use_n->type == TB_MERGEMEM) {
-                next = NULL;
-                break;
-            }
-
-            if (cfg_is_mproj(use_n) || (use_i == 1 && tb_node_has_mem_out(use_n))) {
-                if (next == NULL) { next = use_n; }
-                else { next = NULL; break; }
-            }
-        }
-
+        TB_Node* next = next_of_memory_sese(curr);
         if (next == NULL) {
             return curr;
         }
@@ -306,13 +324,19 @@ static MemoryState* start_of_memory_sese(NL_Table* sese2set, TB_Node* n) {
         if (state != NULL) {
             return state;
         }
-        n = n->inputs[1];
+
+        int mem_slot = 1;
+        if (is_proj(n)) { mem_slot = 0; }
+        else if (n->type == TB_MERGEMEM) { mem_slot = 2; }
+
+        n = n->inputs[mem_slot];
     }
 }
 
 // Perform renaming until we reach a fork
-static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* sese_worklist, LocalSplitter* restrict ctx, TB_Node* curr, MemoryState* state, NL_Table* non_aliasing, bool* out_progress) {
+static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* restrict ctx, TB_Node* curr, MemoryState* state, NL_Table* non_aliasing, bool* out_progress) {
     TB_Node** latest = state->walked_once ? NULL : state->latest;
+    TB_OPTDEBUG(MEM2REG)(printf("\n\n"));
 
     // current aliasing set is a meet over all preds
     nl_table_clear(non_aliasing);
@@ -321,9 +345,27 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
         if (!state->walked_once) {
             latest[0] = curr;
 
+            MemoryState* dom_pred = NULL;
+            if (state->is_loop && curr->input_count == 3) {
+                FOR_N(j, 1, curr->input_count) {
+                    MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
+                    if (pred->walked_once) {
+                        dom_pred = pred;
+                        break;
+                    }
+                }
+            }
+
             TB_Node** phis = tb_arena_alloc(&f->tmp_arena, ctx->local_count * sizeof(TB_Node*));
             TB_Node* region = curr->inputs[0];
             FOR_N(i, 0, ctx->local_count) {
+                // only values which are live-in can be alive "around", so
+                // if we know what those are we're good.
+                if (dom_pred && dom_pred->latest[1 + i] == NULL) {
+                    phis[i] = latest[1 + i] = NULL;
+                    continue;
+                }
+
                 TB_Node* new_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_VOID, curr->input_count, 0);
                 set_input(f, new_phi, region, 0);
                 mark_node(f, new_phi);
@@ -340,53 +382,66 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
             FOR_N(j, 1, curr->input_count) {
                 MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
                 FOR_N(i, 0, ctx->local_count) {
-                    if (state->phis[i]->dt.type == TB_TAG_VOID && pred->latest[1 + i]) {
-                        state->phis[i]->dt = pred->latest[1 + i]->dt;
-                    }
+                    if (state->phis[i]) {
+                        if (state->phis[i]->dt.type == TB_TAG_VOID && pred->latest[1 + i]) {
+                            state->phis[i]->dt = pred->latest[1 + i]->dt;
+                        }
 
-                    set_input(f, state->phis[i], pred->latest[1 + i], j);
+                        set_input(f, state->phis[i], pred->latest[1 + i], j);
+                    }
                 }
             }
 
             FOR_REV_N(i, 0, ctx->local_count) {
-                if (state->phis[i]->dt.type == TB_TAG_VOID) {
-                    violent_kill(f, state->phis[i]);
-                    state->phis[i] = latest[1 + i] = NULL;
+                TB_Node* n = state->phis[i];
+                if (n == NULL) {
                     continue;
                 }
 
-                TB_Node* k = identity_phi(f, state->phis[i]);
-                if (state->phis[i] != k) {
-                    TB_OPTDEBUG(MEM2REG)(printf("  RENAME %%%u => %%%u\n", state->phis[i]->gvn, k->gvn));
+                if (n->dt.type == TB_TAG_VOID && n->user_count == 0) {
+                    TB_OPTDEBUG(MEM2REG)(printf("  KILL %%%u\n", n->gvn));
+
+                    violent_kill(f, state->phis[i]);
+                    state->phis[i] = NULL;
+                    if (latest) {
+                        latest[1 + i] = NULL;
+                    }
+                    continue;
+                }
+
+                /* TB_Node* same = identity_phi(f, n);
+                if (n != same) {
+                    TB_OPTDEBUG(MEM2REG)(printf("  RENAME %%%u => %%%u\n", n->gvn, same->gvn));
 
                     // rename memory set
-                    FOR_N(i, 0, dyn_array_length(sese_worklist->items)) {
-                        TB_Node* start = sese_worklist->items[i];
-                        MemoryState* kid_state = nl_table_get(sese2set, start);
+                    FOR_N(j, 0, ctx->postorder_len) {
+                        MemoryState* kid_state = ctx->postorder_states[j];
                         MemorySet* set = nl_table_get(&kid_state->non_aliasing, state->phis[i]);
                         if (set) {
-                            set->base = k;
+                            set->base = same;
 
-                            nl_table_put(&kid_state->non_aliasing, k, set);
+                            nl_table_put(&kid_state->non_aliasing, same, set);
                             nl_table_remove(&kid_state->non_aliasing, state->phis[i]);
                         }
                     }
 
-                    subsume_node(f, state->phis[i], k);
-                    if (latest) {
-                        latest[1 + i] = k;
-                    }
-                }
+                    TB_ASSERT(same->type != TB_NULL);
+                    subsume_node(f, n, same);
+                    state->latest[1 + i] = same;
+                } else {
+                    TB_OPTDEBUG(MEM2REG)(printf("  SEALED %%%u\n", n->gvn));
+                }*/
+                TB_OPTDEBUG(MEM2REG)(printf("  SEALED %%%u\n", n->gvn));
             }
 
             state->sealed = true;
         }
 
         CUIK_TIMED_BLOCK("merge states") {
-            FOR_N(j, 1, curr->input_count) {
-                MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
-                // first time around a loop we process it without the preds since they're incomplete
-                if (!state->is_loop || state->walked_once) {
+            // first time around a loop we process it without the preds since they're incomplete
+            if (!state->is_loop || state->walked_once) {
+                FOR_N(j, 1, curr->input_count) {
+                    MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
                     merge_memory(f, non_aliasing, &pred->non_aliasing);
                 }
             }
@@ -493,16 +548,20 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
                             ref.offset >= st->offset &&
                             st->offset + st->size <= ref.offset + ref.size
                         ) {
-                            printf("    DEAD-STORE %%%u\n", curr->gvn);
+                            TB_OPTDEBUG(MEM2REG)(printf("    DEAD-STORE %%%u\n", curr->gvn));
 
-                            // migrate SESE entry up one
-                            void* sese_entry = nl_table_get(sese2set, st->mem);
-                            if (sese_entry) {
-                                nl_table_remove(sese2set, st->mem);
-                                nl_table_put(sese2set, st->mem->inputs[1], sese_entry);
+                            // if there's no PHIs in the way, we've got a straight-line store
+                            // which is post-dominated by a later... AND cooler overlapping store.
+                            TB_Node* mem_in = curr->inputs[1];
+                            while (mem_in->type != TB_MERGEMEM && mem_in->type != TB_PHI && mem_in != st->mem) {
+                                mem_in = mem_in->inputs[is_proj(mem_in) ? 0 : 1];
                             }
 
-                            subsume_node(f, st->mem, st->mem->inputs[1]);
+                            if (mem_in == st->mem) {
+                                // migrate SESE entry up one
+                                st->mem->type = TB_DEAD_STORE;
+                                worklist_push(ctx->dead_worklist, st->mem);
+                            }
                         }
 
                         memory_set_insert(f, non_aliasing, set, idx, ref);
@@ -529,21 +588,19 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
                     }
                     latest[cat] = curr;
                 } else {
-                    void* sese_entry = nl_table_get(sese2set, curr);
-                    if (sese_entry) {
-                        nl_table_put(sese2set, curr->inputs[1], sese_entry);
-                    }
-
                     // get rid of the store, we don't need it
                     latest[cat] = curr->inputs[3];
+                    latest[0] = curr;
                     kill = curr->inputs[1];
 
                     #if TB_OPTDEBUG_MEM2REG
-                    printf("      KILL %%%u\n", curr->gvn);
+                    printf("      STORE [cat=%d] = %%%u\n", cat, latest[cat]->gvn);
                     #endif
 
-                    // curr->type = TB_DEAD_STORE;
-                    // worklist_push(f->worklist, curr);
+                    curr->type = TB_DEAD_STORE;
+                    set_input(f, curr, NULL, 2);
+                    set_input(f, curr, NULL, 3);
+                    worklist_push(ctx->dead_worklist, curr);
                 }
             }
         } else if (curr->type != TB_PROJ && curr->type != TB_PHI && tb_node_has_mem_out(curr)) {
@@ -653,11 +710,6 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
             }
         }
         tb_arena_free(&f->tmp_arena, loads, curr->user_count * sizeof(TB_Node*));
-
-        if (kill) {
-            // curr->type = TB_DEAD_STORE;
-            subsume_node(f, curr, kill);
-        }
 
         // advance memory node
         if (next == NULL) {
@@ -870,7 +922,9 @@ int tb_opt_locals(TB_Function* f) {
         memcpy(initial_state->latest, latest, (1 + ctx.local_count) * sizeof(TB_Node*));
 
         // basic loop finding
-        FOR_REV_N(i, 0, dyn_array_length(sese_worklist.items)) {
+        ctx.postorder_len = dyn_array_length(sese_worklist.items);
+        ctx.postorder_states = tb_arena_alloc(&f->tmp_arena, ctx.postorder_len * sizeof(MemoryState*));
+        FOR_REV_N(i, 0, ctx.postorder_len) {
             TB_Node* start = sese_worklist.items[i];
             MemoryState* state = nl_table_get(&sese2set, start);
 
@@ -891,38 +945,42 @@ int tb_opt_locals(TB_Function* f) {
                 state->is_loop = true;
                 loop_tail->loop_head = state;
             }
+            ctx.postorder_states[i] = state;
         }
 
-        NL_Table non_aliasing = nl_table_alloc(16);
+        // we don't need it anymore for the postorder walk, we
+        // use it for tracking dead stores now.
+        worklist_clear(&sese_worklist);
+        ctx.dead_worklist = &sese_worklist;
 
         // RPO walk, any time we hit a loop tail, we re-eval the
         // loop head and if it made progress we revert back to the
         // loop head for processing.
-        int i = dyn_array_length(sese_worklist.items);
+        NL_Table non_aliasing = nl_table_alloc(16);
+        int i = ctx.postorder_len;
         while (i--) {
-            TB_Node* start = sese_worklist.items[i];
-            MemoryState* state = nl_table_get(&sese2set, start);
+            MemoryState* state = ctx.postorder_states[i];
             TB_ASSERT(state->order == i);
 
             cuikperf_region_start("transfer", NULL);
-            TB_Node* end = process_sese(f, &sese2set, &sese_worklist, &ctx, start, state, &non_aliasing, NULL);
+            TB_Node* end = process_sese(f, &sese2set, &ctx, state->start, state, &non_aliasing, NULL);
             cuikperf_region_end();
 
             if (state->loop_head) {
                 // revisit loop header, if it makes progress we revisit the loop body
                 bool progress;
-                process_sese(f, &sese2set, &sese_worklist, &ctx, state->loop_head->start, state->loop_head, &non_aliasing, &progress);
+                process_sese(f, &sese2set, &ctx, state->loop_head->start, state->loop_head, &non_aliasing, &progress);
                 if (progress && i + 1 > state->loop_head->order) {
                     i = state->loop_head->order + 1;
                 }
             }
         }
+        tb_arena_free(&f->tmp_arena, ctx.postorder_states, dyn_array_length(sese_worklist.items) * sizeof(MemoryState*));
 
         // memory teardown
         CUIK_TIMED_BLOCK("teardown") {
-            FOR_N(i, 0, dyn_array_length(sese_worklist.items)) {
-                TB_Node* n = sese_worklist.items[i];
-                MemoryState* state = nl_table_get(&sese2set, n);
+            nl_table_for(set, &sese2set) {
+                MemoryState* state = set->v;
                 nl_table_for(e, &state->non_aliasing) {
                     cuik_free(e->v);
                 }
@@ -931,8 +989,6 @@ int tb_opt_locals(TB_Function* f) {
             nl_table_free(non_aliasing);
             nl_table_free(sese2set);
         }
-
-        worklist_clear(&sese_worklist);
 
         CUIK_TIMED_BLOCK("kill nodes") {
             FOR_N(i, 0, ctx.local_count) if (!ctx.renames[i].is_alive) {
@@ -946,18 +1002,18 @@ int tb_opt_locals(TB_Function* f) {
                                 worklist_push(&sese_worklist, USERN(u2));
                             }
                         }
-                    } else if (USERN(u)->type == TB_STORE) {
+                    } else if (USERN(u)->type == TB_STORE || USERN(u)->type == TB_DEAD_STORE) {
                         worklist_push(&sese_worklist, USERN(u));
                     }
                 }
+            }
 
-                TB_Node* n;
-                while (n = worklist_pop(&sese_worklist), n) {
-                    if (n->type == TB_STORE) {
-                        subsume_node(f, n, n->inputs[1]);
-                    } else {
-                        tb_kill_node(f, n);
-                    }
+            TB_Node* n;
+            while (n = worklist_pop(&sese_worklist), n) {
+                if (n->type == TB_STORE || n->type == TB_DEAD_STORE) {
+                    subsume_node(f, n, n->inputs[1]);
+                } else {
+                    tb_kill_node(f, n);
                 }
             }
         }

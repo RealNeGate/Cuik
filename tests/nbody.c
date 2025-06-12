@@ -52,7 +52,11 @@ static void advance(int nbodies, struct planet *bodies) {
     }
 }
 
-static double energy(int nbodies, struct planet *bodies) {
+// double energy(int nbodies, struct planet *bodies);
+// void offset_momentum(int nbodies, struct planet *bodies);
+// void printf(const char* fmt, ...);
+
+double energy(int nbodies, struct planet *bodies) {
     double e;
     int i, j;
 
@@ -134,17 +138,20 @@ static void scale_bodies(int nbodies, struct planet *bodies, double scale) {
     }
 }
 
+#if 0
 int main(int argc, char **argv) {
     int n = atoi(argv[1]);
     int i;
 
     offset_momentum(NBODIES, bodies);
-    printf("%.9f\n", energy(NBODIES, bodies));
+    /* printf("%.9f\n", energy(NBODIES, bodies));
     scale_bodies(NBODIES, bodies, DT);
     for (i = 1; i <= n; i++) {
         advance(NBODIES, bodies);
     }
     scale_bodies(NBODIES, bodies, RECIP_DT);
-    printf("%.9f\n", energy(NBODIES, bodies));
+    printf("%.9f\n", energy(NBODIES, bodies)); */
     return 0;
 }
+#endif
+

@@ -207,6 +207,8 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
         // imul reg, r/m
         _0F(0xAF)        = OP_MODRM,
         // movdqa/movdqu reg, r/m
+        _0F(0x6E)        = OP_MODRM | OP_DIR | OP_SSE | OP_2DT,
+        _0F(0x7E)        = OP_MODRM | OP_SSE | OP_2DT,
         _0F(0x6F)        = OP_MODRM | OP_DIR | OP_SSEI,
         _0F(0x7F)        = OP_MODRM | OP_SSEI,
         // bswap r+
@@ -371,6 +373,9 @@ bool tb_x86_disasm(TB_X86_Inst* restrict inst, size_t length, const uint8_t* dat
     if (props & OP_2DT) {
         if (op == 0x1B6 || op == 0x1B7 || op == 0x1BE || op == 0x1BF) {
             inst->dt2 = (op == 0x1B6 || op == 0x1BE) ? TB_X86_BYTE : TB_X86_WORD;
+        } else if (op == 0x16E || op == 0x17E) {
+            inst->dt2 = inst->dt;
+            inst->dt = (rex & 8) ? TB_X86_QWORD : TB_X86_DWORD;
         } else {
             inst->dt2 = TB_X86_DWORD;
         }
@@ -399,6 +404,10 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         if (inst->dt == TB_X86_DWORD) return "cwde";
         if (inst->dt == TB_X86_QWORD) return "cdqe";
         return "??";
+    } else if (inst->opcode == 0x16E) {
+        return inst->dt2 == TB_X86_QWORD ? "movq" : "movd";
+    } else if (inst->opcode == 0x17E) {
+        return inst->dt == TB_X86_QWORD ? "movq" : "movd";
     }
 
     #define _0F(op)      0x100+op
@@ -442,6 +451,8 @@ const char* tb_x86_mnemonic(TB_X86_Inst* inst) {
         case 0x00F6: case 0x00F7: return "test";
         case 0x20F6: case 0x20F7: return "not";
         case 0x30F6: case 0x30F7: return "neg";
+        case 0x40F6: case 0x40F7: return "mul";
+        case 0x50F6: case 0x50F7: return "imul";
         case 0x60F6: case 0x60F7: return "div";
         case 0x70F6: case 0x70F7: return "idiv";
 

@@ -417,7 +417,8 @@ typedef enum TB_NodeTypeEnum {
     // Special ops
     //   does full multiplication (64x64=128 and so on) returning
     //   the low and high values in separate projections
-    TB_MULPAIR,
+    TB_SMULPAIR,
+    TB_UMULPAIR,
 
     // Vector ops
     TB_VBROADCAST,
@@ -739,9 +740,11 @@ typedef struct {
 } TB_SwitchEntry;
 
 typedef struct TB_Safepoint {
+    TB_Function* func;
     TB_Node* node; // type == TB_SAFEPOINT
     void* userdata;
 
+    uint32_t target;// relative to the function body.
     uint32_t ip;    // relative to the function body.
     uint32_t count; // same as node->input_count
     uint32_t values[];

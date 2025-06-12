@@ -67,6 +67,9 @@ struct TB_JIT {
     DynArray(TB_Breakpoint) breakpoints;
     DynArray(Tag) tags;
 
+    // PC -> safepoint
+    NL_Table safepoints;
+
     FreeList heap;
 };
 
@@ -260,6 +263,13 @@ void* tb_jit_place_function(TB_JIT* jit, TB_Function* f) {
 
     log_debug("jit: apply function %s (%p)", f->super.name, dst);
 
+    mtx_lock(&jit->lock);
+    aarray_for(i, func_out->safepoints) {
+        void* pc = dst + func_out->safepoints[i]->ip;
+        nl_table_put(&jit->safepoints, (void*) pc, func_out->safepoints[i]);
+    }
+    mtx_unlock(&jit->lock);
+
     // apply relocations, any leftovers are mapped to thunks
     for (TB_SymbolPatch* p = func_out->first_patch; p; p = p->next) {
         size_t actual_pos = p->pos;
@@ -358,6 +368,7 @@ TB_JIT* tb_jit_begin(TB_Module* m, size_t jit_heap_capacity) {
     jit->capacity = jit_heap_capacity;
     jit->heap.cookie = ALLOC_COOKIE;
     jit->heap.size = (jit_heap_capacity - sizeof(TB_JIT)) << 1;
+    jit->safepoints = nl_table_alloc(32);
 
     // a lil unsafe... im sorry momma
     tb_platform_vprotect(jit, jit_heap_capacity, TB_PAGE_RXW);
@@ -408,9 +419,12 @@ typedef struct {
     uint64_t gprs[6];
 } X64Params;
 
-// win64 trampoline ( sp pc params ctx -- rax )
+typedef uint64_t (*JIT_Trampoline)(void* sp, void* pc, X64Params* params, TB_CPUContext* cpu);
+
+// win64/sysv trampoline ( sp pc params ctx -- rax )
 __declspec(allocate(".text")) __declspec(align(16))
 static const uint8_t tb_jit__trampoline[] = {
+    #if _WIN32
     // save old SP, we'll come back for it later
     0x49, 0x89, 0x61, 0x10,                   // mov [r9 + 0x10], rsp
     // use new SP
@@ -423,6 +437,22 @@ static const uint8_t tb_jit__trampoline[] = {
     0x49, 0x8B, 0x52, 0x08,                   // mov rdx, [r10 + 0x08]
     0x4D, 0x8B, 0x42, 0x10,                   // mov r8,  [r10 + 0x10]
     0x4D, 0x8B, 0x4A, 0x18,                   // mov r9,  [r10 + 0x18]
+    #else
+    // save old SP, we'll come back for it later
+    0x48, 0x89, 0x61, 0x10,                   // mov [rcx + 0x10], rsp
+    // use new SP
+    0x48, 0x89, 0xFC,                         // mov rsp, rdi
+    // shuffle some params into win64 volatile regs
+    0x48, 0x89, 0xF0,                         // mov rax, rsi
+    0x49, 0x89, 0xD2,                         // mov r10, rdx
+    // fill GPR params
+    0x49, 0x8B, 0x3A,                         // mov rdi, [r10 + 0x00]
+    0x49, 0x8B, 0x72, 0x08,                   // mov rsi, [r10 + 0x08]
+    0x49, 0x8B, 0x52, 0x10,                   // mov rdx, [r10 + 0x10]
+    0x49, 0x8B, 0x4A, 0x18,                   // mov rcx, [r10 + 0x18]
+    0x4D, 0x8B, 0x42, 0x20,                   // mov r8,  [r10 + 0x20]
+    0x4D, 0x8B, 0x4A, 0x28,                   // mov r9,  [r10 + 0x28]
+    #endif
     0xFF, 0xD0,                               // call rax
     // restore stack & return normally
     0x48, 0x81, 0xE4, 0x00, 0x00, 0xE0, 0xFF, // and rsp, -0x200000
@@ -432,40 +462,26 @@ static const uint8_t tb_jit__trampoline[] = {
 
 static LONG except_handler(EXCEPTION_POINTERS* e) {
     TB_CPUContext* cpu = (TB_CPUContext*) (e->ContextRecord->Rsp & -STACK_SIZE);
-
-    // necessary for stack crawling later
-    cpu->pc = (void*) e->ContextRecord->Rip;
-    cpu->sp = (void*) e->ContextRecord->Rsp;
-    cpu->interrupted = true;
-    cpu->running = false;
-
     switch (e->ExceptionRecord->ExceptionCode) {
-        case EXCEPTION_GUARD_PAGE: {
-            if (e->ExceptionRecord->ExceptionInformation[1] == (uintptr_t) &cpu->poll_site[0]) {
-                return EXCEPTION_CONTINUE_SEARCH;
-            }
-
-            // we hit a safepoint poll
-            void* pc = (void*) e->ContextRecord->Rip;
-            // TB_* sp = nl_table_get(cpu->safepoints, pc);
-
-            // TODO(NeGate): copy values out of the regs/stk
-            break;
-        }
-
         case EXCEPTION_ACCESS_VIOLATION: {
             uintptr_t accessed = e->ExceptionRecord->ExceptionInformation[1];
 
-            if (accessed < 65536) {
-                // TODO(NeGate): NULLchk segv
-            } else if (accessed == (uintptr_t) &poll_site_pages[4096]) {
-                // disarm safepoint
+            // disarm safepoint poll
+            if (accessed == (uintptr_t) &poll_site_pages[4096]) {
                 cpu->poll_site = &poll_site_pages[0];
-
-                // some handling routines
             }
 
-            printf("PAUSE RIP=%p\n", cpu->pc);
+            void* pc = (void*) e->ContextRecord->Rip;
+            mtx_lock(&cpu->jit->lock);
+            TB_Safepoint* sp = nl_table_get(&cpu->jit->safepoints, pc);
+            mtx_unlock(&cpu->jit->lock);
+
+            if (sp) {
+                // continue at this new safepoint
+                printf("PAUSE RIP=%p\n", cpu->pc);
+                e->ContextRecord->Rip += sp->target - sp->ip;
+                return EXCEPTION_CONTINUE_EXECUTION;
+            }
             break;
         }
 
@@ -477,6 +493,12 @@ static LONG except_handler(EXCEPTION_POINTERS* e) {
         default:
         return EXCEPTION_CONTINUE_SEARCH;
     }
+
+    // necessary for stack crawling later
+    cpu->pc = (void*) e->ContextRecord->Rip;
+    cpu->sp = (void*) e->ContextRecord->Rsp;
+    cpu->interrupted = true;
+    cpu->running = false;
 
     // jump out of the JIT
     *e->ContextRecord = cpu->cont;
@@ -620,8 +642,7 @@ bool tb_jit_thread_call(TB_CPUContext* cpu, void* pc, uint64_t* ret, size_t arg_
             }
         }
 
-        typedef uint64_t (*Trampoline)(void* sp, void* pc, X64Params* params, TB_CPUContext* cpu);
-        uint64_t r = ((Trampoline)tb_jit__trampoline)(sp, pc, &params, cpu);
+        uint64_t r = ((JIT_Trampoline)tb_jit__trampoline)(sp, pc, &params, cpu);
         if (ret) { *ret = r; }
 
         // uninstall breakpoints

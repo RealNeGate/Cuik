@@ -207,7 +207,7 @@ static TB_User* get_single_use(TB_Node* n) {
 }
 
 static bool tb_node_is_pinned(TB_Node* n) {
-    if ((n->type >= TB_ROOT && n->type <= TB_SAFEPOINT) || is_proj(n) || cfg_is_control(n)) {
+    if ((n->type >= TB_ROOT && n->type <= TB_SAFEPOINT) || is_proj(n) || cfg_is_control(n) || n->type == TB_MACH_FRAME_PTR) {
         return true;
     }
 

@@ -1173,7 +1173,8 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             }
 
             TB_Node* addr = tb_builder_local(g, size, align);
-            if (tu->has_tb_debug_info && s->decl.name != NULL) {
+            // if (tu->has_tb_debug_info && s->decl.name != NULL) {
+            if (s->decl.name != NULL) {
                 tb_builder_local_dbg(g, addr, len, s->decl.name, cuik__as_tb_debug_type(tu->ir_mod, type));
             }
 

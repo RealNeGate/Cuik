@@ -190,7 +190,7 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
     bool packed    = (dt == TB_X86_F32x4 || dt == TB_X86_F64x2);
     bool is_double = (dt == TB_X86_F64x2 || dt == TB_X86_F64x1);
 
-    if (supports_mem_dst && dir) {
+    if (type == MOV_I2F || type == MOV_F2I || (supports_mem_dst && dir)) {
         SWAP(const Val*, a, b);
     }
 
@@ -209,7 +209,11 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
         tb_todo();
     }
 
-    if (type != FP_XOR && type != FP_AND && type != FP_OR) {
+    bool r = (type == FP_CVT64);
+    if (type == MOV_I2F || type == MOV_F2I) {
+        EMIT1(e, 0x66);
+        r = dt == TB_X86_F64x1;
+    } else if (type != FP_XOR && type != FP_AND && type != FP_OR) {
         if (!packed && type != FP_UCOMI) {
             EMIT1(e, is_double ? 0xF2 : 0xF3);
         } else if (is_double) {
@@ -218,8 +222,8 @@ static void inst2sse(TB_CGEmitter* restrict e, InstType type, const Val* a, cons
         }
     }
 
-    if (type == FP_CVT64 || rx >= 8 || base >= 8 || index >= 8) {
-        EMIT1(e, rex(false, rx, base, index));
+    if (r || rx >= 8 || base >= 8 || index >= 8) {
+        EMIT1(e, rex(r, rx, base, index));
     }
 
     // extension prefix
