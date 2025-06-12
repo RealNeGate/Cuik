@@ -666,7 +666,11 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         ////////////////////////////////
         // CONTROL + MEMORY
         ////////////////////////////////
-        // case TB_CALL:           // (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
+        case TB_CALL: {            // (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
+            int dst = op_reg_at(ctx, n->inputs[2], REG_CLASS_GPR);
+            control_branch_reg(e, BLR, dst);
+            break;
+        }
         // case TB_SYSCALL:        // (Control, Memory, Ptr, Data...) -> (Control, Memory, Data)
         // case TB_TAILCALL:       // (Control, Memory, RPC, Data, Data...) -> ()
         // case TB_DEBUG_LOCATION: // (Control, Memory) -> (Control, Memory)
@@ -700,8 +704,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         // POINTERS
         ////////////////////////////////
         // case TB_LOCAL:         // () & (Int, Int) -> Ptr
-        // () & case TB_Symbol: -> Ptr
-        case TB_SYMBOL: {
+        case TB_SYMBOL: {         // () & case TB_Symbol: -> Ptr
             /* relocation and patching
             set patterns are able to be patched
                 - ADRP + ADD
@@ -711,8 +714,10 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             int dst = op_reg_at(ctx, n, REG_CLASS_GPR);
             dpimm_pcreladdr(e, ADRP, dst, 0);
             TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_Symbol);
+            // tb_emit_symbol_patch(e->output, sym, e->count);
             if (sym->tag == TB_SYMBOL_FUNCTION) {
                 //?? i don't know all the places i need ldr instead of add
+                // maybe when i need to use the global offset table
                 bool wide = true, fp = false;
                 ldst_loadlit(e, wide, fp, dst, 0);
             } else {
