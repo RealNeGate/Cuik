@@ -601,7 +601,6 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
     }
     #endif
 
-    // printf("EMIT %%%u\n", n->gvn);
     switch (n->type) {
         case TB_MACH_FRAME_PTR: break;
 
@@ -611,17 +610,21 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         case TB_ICONST: {
             int dst = op_reg_at(ctx, n, REG_CLASS_GPR);
             uint64_t val = TB_NODE_GET_EXTRA_T(n, TB_NodeInt)->value;
-
             bool wide = n->dt.type == TB_TAG_I64;
-            int shift = 0;
-            MoveOp op = MOVZ;
-            while (val) {
-                uint16_t imm = val & MASK(16);
-                if (imm != 0) {
-                    dpimm_movewide(e, wide, op, dst, imm, shift);
-                    op = MOVK;
+
+            if (val == 0) {
+                dpreg_log_shift(e, wide, ORR, dst, ZR, ZR, 0, 0);
+            } else {
+                int shift = 0;
+                MoveOp op = MOVZ;
+                while (val) {
+                    uint16_t imm = val & MASK(16);
+                    if (imm != 0) {
+                        dpimm_movewide(e, wide, op, dst, imm, shift);
+                        op = MOVK;
+                    }
+                    val >>= 16, shift += 1;
                 }
-                val >>= 16, shift += 1;
             }
             break;
         }
@@ -709,12 +712,14 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
             set patterns are able to be patched
                 - ADRP + ADD
                 - ADRP + LDR
+                - MOV(Z,K)
             ?? for now these should be confined to patterns as used by ELF and COFF
             */
             int dst = op_reg_at(ctx, n, REG_CLASS_GPR);
             dpimm_pcreladdr(e, ADRP, dst, 0);
             TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_Symbol);
-            // tb_emit_symbol_patch(e->output, sym, e->count);
+            //?? is it this simple to add a patch
+            tb_emit_symbol_patch(e->output, sym, e->count, TB_OBJECT_RELOC_REL21);
             if (sym->tag == TB_SYMBOL_FUNCTION) {
                 //?? i don't know all the places i need ldr instead of add
                 // maybe when i need to use the global offset table
