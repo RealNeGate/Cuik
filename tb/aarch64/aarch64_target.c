@@ -35,7 +35,7 @@ static CallingConv CC_A64PCS = {
         // volatile/clobbered (caller saved) 'C'
         [ 0 ... 18] = 'C', [LR] = 'C',
         // non-volatile (callee saved) 'c'
-        [19 ... 29] = 'c', [SP] = 'c',
+        [19 ... 29] = 'c',
     },
     
     // TODO calling convention needs float pairs (low and high 64bit)
@@ -700,7 +700,27 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         // POINTERS
         ////////////////////////////////
         // case TB_LOCAL:         // () & (Int, Int) -> Ptr
-        // case TB_SYMBOL:        // () & case TB_Symbol: -> Ptr
+        // () & case TB_Symbol: -> Ptr
+        case TB_SYMBOL: {
+            /* relocation and patching
+            set patterns are able to be patched
+                - ADRP + ADD
+                - ADRP + LDR
+            ?? for now these should be confined to patterns as used by ELF and COFF
+            */
+            int dst = op_reg_at(ctx, n, REG_CLASS_GPR);
+            dpimm_pcreladdr(e, ADRP, dst, 0);
+            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_Symbol);
+            if (sym->tag == TB_SYMBOL_FUNCTION) {
+                //?? i don't know all the places i need ldr instead of add
+                bool wide = true, fp = false;
+                ldst_loadlit(e, wide, fp, dst, 0);
+            } else {
+                bool wide = true, shift = false, set_flags = false;
+                dpimm_addsub_imm(e, wide, ADD, dst, dst, 0, shift, set_flags);
+            }
+            break;
+        }
         // case TB_PTR_OFFSET:    // (Ptr, Int) -> Ptr
 
         // Conversions

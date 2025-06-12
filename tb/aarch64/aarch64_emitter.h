@@ -67,6 +67,30 @@ static void udf(TB_CGEmitter* restrict e, uint16_t imm) {
     EMIT4(e, inst);
 }
 
+/* pc rel addressing
+    pjj1 0000 iiii iiii iiii iiii iiid dddd
+    p = adr/adrp
+    j = imm lo
+    i = imm hi
+    d = destination register
+*/
+ENUM(PCRelOp) {
+    ADR  = 0,
+    ADRP = 1,
+};
+static void dpimm_pcreladdr(TB_CGEmitter* restrict e, PCRelOp op, GPR Rd, int32_t imm21) {
+    uint32_t inst = 0;
+    uint32_t immlo = GET_BITS(0,  2, imm21);
+    uint32_t immhi = GET_BITS(2, 19, imm21);
+    inst |= PUT_BITS(31,  1, op);
+    inst |= PUT_BITS(29,  2, immlo);
+    inst |= PUT_BITS( 5, 19, immhi);
+    inst |= PUT_BITS( 0,  5, Rd);
+    inst &= ~MASK_dpimm_pcreladdr;
+    inst |=  BITS_dpimm_pcreladdr;
+    EMIT4(e, inst);
+}
+
 /* add/sub (immediate)
     buf1 0001 0sii iiii iiii iinn nnnd dddd
     b = 32/64 bit
@@ -657,6 +681,25 @@ static void simd_dp_floatdp2(TB_CGEmitter* restrict e, FPtype type, FPDP2op op, 
 
 //!! floating-point data-processing (3 source)
 
+/* load register (literal)
+    pp01 1r00 iiii iiii iiii iiii iiit tttt
+    p = opcode
+    r = int/float
+    i = 19 bit immediate
+    t = target resgister
+*/
+
+static void ldst_loadlit(TB_CGEmitter* restrict e, bool wide, bool fp, GPR Rt, int32_t imm19) {
+    uint32_t inst = 0;
+    inst |= PUT_BITS(30,  1, wide);
+    inst |= PUT_BITS(26,  1, fp);
+    inst |= PUT_BITS( 5, 19, imm19);
+    inst |= PUT_BITS( 0,  5, Rt);
+    inst &= ~MASK_ldst_loadlit;
+    inst |=  BITS_ldst_loadlit;
+    EMIT4(e, inst);
+}
+
 /* A64 tree -> TB_NodeTypeEnum
     > reserved
         - UDF
@@ -727,6 +770,9 @@ static void simd_dp_floatdp2(TB_CGEmitter* restrict e, FPtype type, FPDP2op op, 
             fmin - TB_FMIN
         > floating-point conditional select
         > floating-point data-processing (3 source)
+    > loads and stores
+        > load register (literal)
+            ldr
 
 nodes to implement
 // Conversions (?)
