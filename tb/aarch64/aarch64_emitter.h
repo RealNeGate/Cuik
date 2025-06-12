@@ -227,8 +227,8 @@ static void control_branch_reg(TB_CGEmitter* restrict e, BranchOp op, GPR Rn) {
     uint32_t q = 0b11111; // always 11111
     uint32_t r = 0b00000; // always 00000 for our use
     uint32_t m = 0b00000; // always 00000 for our use
-    inst |= PUT_BITS(25, 4, op);
-    inst |= PUT_BITS(20, 5, q);
+    inst |= PUT_BITS(21, 4, op);
+    inst |= PUT_BITS(16, 5, q);
     inst |= PUT_BITS(10, 6, r);
     inst |= PUT_BITS( 5, 5, Rn);
     inst |= PUT_BITS( 0, 5, m);
