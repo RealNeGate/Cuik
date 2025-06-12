@@ -196,7 +196,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
     size_t local_sym_count = local_symtab.count / sizeof(TB_Elf64_Sym);
     dyn_array_for(i, sections) if (sections[i].reloc_count > 0) {
         assert(sections[i].reloc_pos == write_pos);
-        TB_Elf64_Rela* rels = (TB_Elf64_Rela*) &output[write_pos];
+        TB_Elf64_Rela* relocs = (TB_Elf64_Rela*) &output[write_pos];
         DynArray(TB_FunctionOutput*) funcs = sections[i].funcs;
         DynArray(TB_Global*) globals = sections[i].globals;
 
@@ -217,8 +217,14 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
                 int32_t addend;
                 memcpy(&addend, &func_out->code[p->pos], sizeof(addend));
 
-                TB_ELF_RelocType type = p->target->tag == TB_SYMBOL_GLOBAL ? TB_ELF_X86_64_PC32 : TB_ELF_X86_64_PLT32;
-                *rels++ = (TB_Elf64_Rela){
+                TB_ELF_RelocType type;
+                switch (p->type) {
+                    case TB_OBJECT_RELOC_REL32: type = TB_ELF_X86_64_PC32;  break;
+                    case TB_OBJECT_RELOC_PLT32: type = TB_ELF_X86_64_PLT32; break;
+                    default: tb_todo();
+                }
+
+                *relocs++ = (TB_Elf64_Rela){
                     .offset = actual_pos,
                     // check when we should prefer R_X86_64_GOTPCREL
                     .info   = TB_ELF64_R_INFO(symbol_id, type),

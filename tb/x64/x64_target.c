@@ -1863,7 +1863,7 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
                 // CALL rel32
                 EMIT1(e, 0xE8);
                 EMIT4(e, 0);
-                tb_emit_symbol_patch(e->output, sym, e->count - 4);
+                tb_emit_symbol_patch(e->output, sym, e->count - 4, TB_OBJECT_RELOC_REL32);
             } else {
                 Val target = parse_cisc_operand(ctx, n, NULL, op);
                 __(CALL, TB_X86_QWORD, &target);
