@@ -631,12 +631,12 @@ TB_ExternalType tb_extern_get_type(TB_External* e) {
     return e->type;
 }
 
-void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos) {
+void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos, TB_ObjectRelocType type) {
     TB_Module* m = func_out->parent->super.module;
     TB_SymbolPatch* p = tb_arena_alloc(get_permanent_arena(m), sizeof(TB_SymbolPatch));
 
     // function local, no need to synchronize
-    *p = (TB_SymbolPatch){ .target = target, .pos = pos };
+    *p = (TB_SymbolPatch){ .target = target, .pos = pos, .type = type };
     if (func_out->first_patch == NULL) {
         func_out->first_patch = func_out->last_patch = p;
     } else {

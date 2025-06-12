@@ -22,7 +22,7 @@
 // Random toggles
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS     0
-#define TB_OPTDEBUG_PASSES    0
+#define TB_OPTDEBUG_PASSES    1
 #define TB_OPTDEBUG_PEEP      0
 #define TB_OPTDEBUG_SCCP      0
 #define TB_OPTDEBUG_LOOP      0
@@ -35,13 +35,13 @@
 #define TB_OPTDEBUG_ISEL      0
 #define TB_OPTDEBUG_ISEL2     0
 #define TB_OPTDEBUG_ISEL3     0
-#define TB_OPTDEBUG_EMIT      1
+#define TB_OPTDEBUG_EMIT      0
 #define TB_OPTDEBUG_DATAFLOW  0
 #define TB_OPTDEBUG_PLACEMENT 0
 #define TB_OPTDEBUG_INLINE    0
-#define TB_OPTDEBUG_REGALLOC  0
+#define TB_OPTDEBUG_REGALLOC  1
 #define TB_OPTDEBUG_REGALLOC2 0
-#define TB_OPTDEBUG_REGALLOC3 0
+#define TB_OPTDEBUG_REGALLOC3 1
 #define TB_OPTDEBUG_REGALLOC4 0
 #define TB_OPTDEBUG_COMPACT   0
 #define TB_OPTDEBUG_SCHED1    0
@@ -102,9 +102,12 @@ typedef struct TB_LinkerSectionPiece TB_LinkerSectionPiece;
 typedef struct TB_SymbolPatch TB_SymbolPatch;
 struct TB_SymbolPatch {
     TB_SymbolPatch* next;
-    uint32_t pos;
-    bool internal; // handled already by the code gen's emit_call_patches
     TB_Symbol* target;
+    uint32_t pos;
+
+    // handled already by the code gen's emit_call_patches
+    bool internal : 1;
+    TB_ObjectRelocType type : 31;
 };
 
 struct TB_External {
@@ -730,7 +733,7 @@ TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra);
 
 TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
 
-void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos);
+void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos, TB_ObjectRelocType type);
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data);
 void tb__lattice_init(TB_Module* m);
 

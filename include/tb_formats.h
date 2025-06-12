@@ -22,6 +22,7 @@ typedef enum {
 
     // x64 only
     TB_OBJECT_RELOC_REL32,    // relative 32bit displacement
+    TB_OBJECT_RELOC_PLT32,
 
     // Aarch64 only
     TB_OBJECT_RELOC_BRANCH26, // 26bit displacement for B and BL instructions

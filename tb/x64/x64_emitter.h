@@ -51,7 +51,7 @@ static void emit_memory_operand(TB_CGEmitter* restrict e, uint8_t rx, const Val*
         EMIT1(e, ((rx & 7) << 3) | RBP);
         EMIT4(e, a->imm);
 
-        tb_emit_symbol_patch(e->output, a->symbol, e->count - 4);
+        tb_emit_symbol_patch(e->output, a->symbol, e->count - 4, TB_OBJECT_RELOC_REL32);
     } else {
         tb_unreachable();
     }
@@ -350,7 +350,7 @@ static void asm_inst1(TB_CGEmitter* e, int type, TB_X86_DataType dt, const Val* 
         }
 
         EMIT4(e, r->imm);
-        tb_emit_symbol_patch(e->output, r->symbol, e->count - 4);
+        tb_emit_symbol_patch(e->output, r->symbol, e->count - 4, TB_OBJECT_RELOC_REL32);
     } else if (r->type == VAL_LABEL) {
         EXT_OP(INST_UNARY_EXT);
         EMIT1(e, inst->op);
