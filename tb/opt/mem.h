@@ -607,31 +607,33 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             // unknown memory access, clobber everything
             nl_table_clear(non_aliasing);
 
-            int mem = curr->type == TB_MERGEMEM ? 2 : 1;
-            if (curr != latest[0] && curr->inputs[mem] != latest[0]) {
-                TB_ASSERT(curr->inputs[mem] != curr);
-                set_input(f, curr, latest[0], mem);
-                mark_node_n_users(f, curr);
-            }
+            if (latest) {
+                int mem = curr->type == TB_MERGEMEM ? 2 : 1;
+                if (curr != latest[0] && curr->inputs[mem] != latest[0]) {
+                    TB_ASSERT(curr->inputs[mem] != curr);
+                    set_input(f, curr, latest[0], mem);
+                    mark_node_n_users(f, curr);
+                }
 
-            if (curr->type == TB_MERGEMEM && ctx->insert_merge) {
-                FOR_N(i, 1, f->root_node->input_count) {
-                    TB_Node* end = f->root_node->inputs[i];
-                    if (end->type != TB_RETURN && end->type != TB_TRAP && end->type != TB_UNREACHABLE) {
-                        continue;
-                    }
-
-                    if (end->inputs[1] == curr) {
-                        size_t j = 2;
-                        FOR_N(i, 0, ctx->local_count) if (ctx->renames[i].is_mem) {
-                            TB_ASSERT(latest[1 + i] != NULL && "TODO we should place a poison?");
-                            set_input(f, curr, latest[1 + i], j++);
+                if (curr->type == TB_MERGEMEM && ctx->insert_merge) {
+                    FOR_N(i, 1, f->root_node->input_count) {
+                        TB_Node* end = f->root_node->inputs[i];
+                        if (end->type != TB_RETURN && end->type != TB_TRAP && end->type != TB_UNREACHABLE) {
+                            continue;
                         }
-                        break;
+
+                        if (end->inputs[1] == curr) {
+                            size_t j = 2;
+                            FOR_N(i, 0, ctx->local_count) if (ctx->renames[i].is_mem) {
+                                TB_ASSERT(latest[1 + i] != NULL && "TODO we should place a poison?");
+                                set_input(f, curr, latest[1 + i], j++);
+                            }
+                            break;
+                        }
                     }
                 }
+                latest[0] = curr;
             }
-            latest[0] = curr;
         }
 
         // TODO(NeGate): renaming loads
@@ -639,7 +641,9 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             // skip to mproj
             TB_ASSERT(curr->type != TB_SPLITMEM);
             curr = next_mem_user(curr);
-            latest[0] = curr;
+            if (latest) {
+                latest[0] = curr;
+            }
         }
 
         // fixup any connected loads

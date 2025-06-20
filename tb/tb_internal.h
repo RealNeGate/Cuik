@@ -389,10 +389,6 @@ struct TB_Function {
         size_t type_cap;
         Lattice** types;
 
-        // some xforms like removing branches can
-        // invalidate the loop tree.
-        bool invalidated_loops;
-
         // we throw the results of scheduling here:
         //   [value number] -> TB_BasicBlock*
         size_t scheduled_n;

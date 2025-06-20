@@ -336,9 +336,6 @@ typedef enum TB_NodeTypeEnum {
     //   volatile memory barrier
     TB_HARD_BARRIER,  // (Control, Memory, MemOp) -> Memory
 
-    // like a multi-way branch but without the control flow aspect, but for data.
-    TB_LOOKUP,
-
     ////////////////////////////////
     // POINTERS
     ////////////////////////////////
@@ -712,16 +709,6 @@ typedef struct {
     // used for IR building
     TB_Node *mem_in;
 } TB_NodeRegion;
-
-typedef struct {
-    int64_t key;
-    uint64_t val;
-} TB_LookupEntry;
-
-typedef struct {
-    size_t entry_count;
-    TB_LookupEntry entries[];
-} TB_NodeLookup;
 
 typedef struct TB_MultiOutput {
     size_t count;

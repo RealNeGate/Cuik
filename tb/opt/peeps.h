@@ -114,7 +114,6 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_FLOAT_EXT]      = { NULL,              NULL,               value_fpext      },
     [TB_INT2FLOAT]      = { NULL,              NULL,               value_int2float  },
     // misc
-    [TB_LOOKUP]         = { NULL,              NULL,               value_lookup     },
     [TB_PROJ]           = { NULL,              NULL,               value_proj       },
     [TB_BRANCH_PROJ]    = { NULL,              NULL,               value_proj       },
     [TB_SELECT]         = { ideal_select,      NULL,               value_select     },

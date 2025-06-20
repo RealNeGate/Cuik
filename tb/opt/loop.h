@@ -687,8 +687,6 @@ bool tb_opt_loops(TB_Function* f) {
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     TB_CFG cfg = tb_compute_cfg(f, f->worklist, &f->tmp_arena, true);
 
-    tb_print_dumb(f);
-
     LoopOpt ctx;
     ctx.f      = f;
     ctx.cfg    = cfg;
@@ -1079,9 +1077,6 @@ bool tb_opt_loops(TB_Function* f) {
                     }
                     progress = true;
                     tb_arena_restore(&f->tmp_arena, sp2);
-
-                    // tb_print_dumb(f);
-                    // __debugbreak();
 
                     TB_OPTDEBUG(PASSES)(printf("        * Added extra latch %%%u\n", latch->gvn));
                     TB_OPTDEBUG(PASSES)(printf("        * Added extra join %%%u\n", join->gvn));

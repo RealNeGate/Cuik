@@ -3,7 +3,7 @@ static thread_local TB_Arena* muh_tmp_arena;
 static thread_local int* muh_param_memory_vars;
 
 static thread_local TB_Node* muh_switch;
-static thread_local TB_Node* muh_default;
+static thread_local bool muh_default;
 
 // i still hate forward decls
 static TB_Node* cg_rval(TranslationUnit* tu, TB_GraphBuilder* g, Cuik_Expr* restrict e);
@@ -1102,6 +1102,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             return;
 
             // compiled the same regardless of being the previous code being dead
+            case STMT_DEFAULT:
             case STMT_COMPOUND:
             case STMT_CASE:
             case STMT_LABEL:
@@ -1111,7 +1112,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
         }
     }
 
-    if (s->op != STMT_COMPOUND && s->op != STMT_LABEL && s->op != STMT_CASE) {
+    if (s->op != STMT_COMPOUND && s->op != STMT_LABEL && s->op != STMT_CASE && s->op != STMT_DEFAULT) {
         emit_loc(tu, g, s->loc.start);
     }
 
@@ -1315,7 +1316,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             TB_Node* cond = cg_rval(tu, g, s->switch_.cond);
 
             TB_Node* old_switch = muh_switch;
-            TB_Node* old_default = muh_default;
+            bool old_default = muh_default;
             TB_Node* break_label = tb_builder_label_make(g);
 
             // push switch crap
@@ -1334,7 +1335,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
 
             // if no default case was created, we'll just make a dummy one
             // that jumps into the break_label
-            if (muh_default == NULL) {
+            if (!muh_default) {
                 TB_Node* syms = tb_builder_def_case(g, muh_switch, 1);
                 tb_builder_label_set(g, syms);
                 tb_builder_br(g, break_label);
@@ -1349,24 +1350,29 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             break;
         }
         case STMT_CASE: {
-            assert(s->case_.key == s->case_.key_max);
-
+            TB_Node* merge = NULL;
             TB_Node* prev = tb_builder_label_get(g);
-            TB_Node* syms = tb_builder_key_case(g, muh_switch, s->case_.key, 1);
-            tb_builder_label_set(g, syms);
+            if (prev || s->case_.key != s->case_.key_max) {
+                merge = tb_builder_label_make2(g, muh_switch, false);
 
-            // handle fallthru
-            if (prev != NULL) {
-                TB_Node* merge = tb_builder_label_make(g);
-                tb_builder_br(g, merge);
+                if (prev) {
+                    tb_builder_label_set(g, prev);
+                    tb_builder_br(g, merge);
+                }
+            }
 
-                tb_builder_label_set(g, prev);
-                tb_builder_br(g, merge);
+            FOR_N(key, s->case_.key, s->case_.key_max+1) {
+                TB_Node* syms = tb_builder_key_case(g, muh_switch, key, 1);
+                tb_builder_label_set(g, syms);
+                if (merge) {
+                    tb_builder_br(g, merge);
+                }
+            }
 
+            if (merge) {
                 tb_builder_label_complete(g, merge);
                 tb_builder_label_set(g, merge);
             }
-
             cg_stmt(tu, g, s->case_.body);
             break;
         }
@@ -1388,6 +1394,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
             }
 
             cg_stmt(tu, g, s->default_.body);
+            muh_default = true;
             break;
         }
 

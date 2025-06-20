@@ -43,7 +43,6 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
 
         case TB_PHI: return "phi";
         case TB_SELECT: return "select";
-        case TB_LOOKUP: return "lookup";
 
         case TB_PTR_OFFSET: return "ptr_offset";
 
@@ -588,17 +587,6 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
                         } else {
                             printf("sym%p", sym);
                         }
-                        break;
-                    }
-
-                    case TB_LOOKUP: {
-                        TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
-
-                        printf(" { default: %"PRId64, l->entries[0].val);
-                        FOR_N(i, 1, l->entry_count) {
-                            printf(", %"PRId64": %"PRId64, l->entries[i].key, l->entries[i].val);
-                        }
-                        printf("}");
                         break;
                     }
 

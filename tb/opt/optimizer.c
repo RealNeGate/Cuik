@@ -310,7 +310,7 @@ static Lattice* value_ptr_vals(TB_Function* f, TB_Node* n) {
     }
 }
 
-static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
+/* static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
     TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
     TB_DataType dt = n->dt;
     TB_ASSERT(TB_IS_INTEGER_TYPE(dt));
@@ -325,7 +325,7 @@ static Lattice* value_lookup(TB_Function* f, TB_Node* n) {
     }
 
     return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = a });
-}
+} */
 
 static Lattice* value_region(TB_Function* f, TB_Node* n) {
     TB_ASSERT(cfg_is_region(n));
@@ -791,10 +791,6 @@ static TB_Node* try_as_const(TB_Function* f, TB_Node* n, Lattice* l) {
     }
 
     if (n->type != TB_ROOT && !cfg_is_region(n) && n->inputs[0] && is_dead_ctrl(f, n->inputs[0])) {
-        if (n->type == TB_BRANCH || n->type == TB_AFFINE_LATCH) {
-            f->invalidated_loops = true;
-        }
-
         // control-dependent nodes which become considered dead will also
         // have to be dead.
         if (n->dt.type == TB_TAG_TUPLE) {
@@ -1191,35 +1187,267 @@ static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
     }
 }
 
-static void dump_partitions(TB_Function* f, ArenaArray(TB_Node*) partitions, int* uf) {
-    // slow and dumb printer but whatever
-    aarray_for(i, partitions) {
-        TB_Node* leader = partitions[i];
+// An Efficient Representation for Sparse Sets (1993), Briggs and Torczon
+typedef struct {
+    size_t count;
 
-        printf("Partition:\n");
-        printf("  %%%u ", leader->gvn);
-        FOR_N(j, 0, f->node_count) {
-            if (j != leader->gvn && uf[j] == leader->gvn) {
-                printf("%%%zu ", j);
-            }
+    int* array;
+    ArenaArray(int) stack;
+} SparseSet;
+
+static SparseSet sparse_set_alloc(TB_Arena* arena, size_t count) {
+    SparseSet s;
+    s.count = count;
+    s.array = tb_arena_alloc(arena, count * sizeof(int));
+    s.stack = aarray_create(arena, int, 16);
+    FOR_N(i, 0, s.count) {
+        s.array[i] = -1;
+    }
+    return s;
+}
+
+static void sparse_set_put(SparseSet* set, int v) {
+    TB_ASSERT(v < set->count);
+    if (set->array[v] < 0) {
+        set->array[v] = aarray_length(set->stack);
+        aarray_push(set->stack, v);
+    }
+}
+
+static void sparse_set_clear(SparseSet* set) {
+    aarray_for(i, set->stack) {
+        set->array[set->stack[i]] = -1;
+    }
+    aarray_clear(set->stack);
+}
+
+static int sparse_set_pop(SparseSet* set) {
+    if (aarray_length(set->stack) > 0) {
+        int v = aarray_pop(set->stack);
+        set->array[v] = -1;
+        return v;
+    } else {
+        return -1;
+    }
+}
+
+static void sparse_set_remove(SparseSet* set, int v) {
+    if (set->array[v] >= 0) {
+        aarray_remove(set->stack, set->array[v]);
+        set->array[v] = -1;
+    }
+}
+
+static bool sparse_set_test(SparseSet* set, int v) {
+    return set->array[v] >= 0;
+}
+
+typedef struct CProp_Node CProp_Node;
+typedef struct {
+    int id;
+
+    // not relevant past the opcode-split
+    TB_Node* og_leader;
+
+    size_t member_count;
+    CProp_Node* members;
+
+    size_t touched_count;
+    CProp_Node* touched;
+
+    size_t cprop_count;
+    CProp_Node* cprop;
+} CProp_Partition;
+
+struct CProp_Node {
+    // partition-list
+    CProp_Node* next;
+    CProp_Partition* partition;
+
+    // local "touched" set
+    CProp_Node* next_touched;
+
+    // local "cprop" set
+    CProp_Node* next_cprop;
+
+    // membership tests
+    bool in_worklist : 1;
+    bool in_touched  : 1;
+    bool in_cprop    : 1;
+
+    TB_Node* n;
+};
+
+static void cprop_dump(TB_Function* f, CProp_Partition* p) {
+    if (p->members == NULL) {
+        printf("Partition: EMPTY???\n");
+    } else {
+        printf("Partition: ");
+        tb_print_dumb_node(NULL, p->members->n);
+        printf("\n  ");
+        for (CProp_Node* node = p->members; node; node = node->next) {
+            printf("%%%u ", node->n->gvn);
         }
         printf("\n");
+    }
+}
+
+// decide the initial partitions
+static bool is_opcode_equal(TB_Node* a, TB_Node* b) {
+    if (a->type != b->type || a->input_count != b->input_count) {
+        return false;
+    }
+
+    size_t extra = extra_bytes(a);
+    return extra == 0 || memcmp(a->extra, b->extra, extra) == 0;
+}
+
+typedef struct {
+    ArenaArray(CProp_Partition*) partitions;
+    CProp_Node** nodes;
+
+    SparseSet cprop_ws;
+    SparseSet split_ws;
+
+    SparseSet touched;
+    SparseSet fallen;
+} CProp;
+
+// performs SCCP, splits partitions such that all nodes in the same
+// partition share a type.
+static void cprop_propagate(TB_Function* f, CProp* cprop) {
+    while (aarray_length(cprop->cprop_ws.stack) > 0) {
+        int p_idx = sparse_set_pop(&cprop->cprop_ws);
+        CProp_Partition* p = cprop->partitions[p_idx];
+
+        while (p->cprop_count > 0) {
+            __debugbreak();
+        }
+    }
+}
+
+static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
+    int p_idx = sparse_set_pop(&cprop->split_ws);
+    CProp_Partition* p = cprop->partitions[p_idx];
+
+    int input_count = 0;
+    for (CProp_Node* node = p->members; node; node = node->next) {
+        FOR_USERS(u, node->n) {
+            int ui = USERI(u);
+            input_count = TB_MAX(input_count, ui+1);
+        }
+    }
+
+    FOR_N(i, 0, input_count) {
+        // partitions is used as the touched set
+        sparse_set_clear(&cprop->touched);
+
+        for (CProp_Node* node = p->members; node; node = node->next) {
+            TB_Node* x = node->n;
+            FOR_USERS(u, x) {
+                TB_Node* y = USERN(u);
+                if (USERI(u) != i) { continue; }
+
+                bool split = true;
+                /* if (y->type == TB_PHI) {
+                     TB_Node* r = y->inputs[0];
+                     Lattice* ctrl = latuni_get(f, r->inputs[i - 1]);
+
+                     // don't split based on dead phi edges
+                     if (lattice_meet(f, ctrl, &LIVE_IN_THE_SKY) != ctrl) {
+                         split = false;
+                     }
+                 }*/
+
+                if (split) {
+                    CProp_Node* y_node = cprop->nodes[y->gvn];
+                    sparse_set_put(&cprop->touched, y_node->partition->id);
+
+                    // Add y to the set y.partition.touched
+                    if (!y_node->in_touched) {
+                        y_node->in_touched = true;
+
+                        // add to touched list
+                        y_node->next_touched = y_node->partition->touched;
+                        y_node->partition->touched = y_node;
+                        y_node->partition->touched_count += 1;
+                    }
+                }
+            }
+        }
+
+        // printf("\n\n\n");
+
+        aarray_for(j, cprop->touched.stack) {
+            CProp_Partition* z = cprop->partitions[cprop->touched.stack[j]];
+            if (z->member_count != z->touched_count) {
+                TB_ASSERT(z->touched_count > 0);
+
+                // create new partition Z'
+                CProp_Partition* new_z = tb_arena_alloc(&f->tmp_arena, sizeof(CProp_Partition));
+                *new_z = (CProp_Partition){
+                    .id = aarray_length(cprop->partitions),
+                };
+                aarray_push(cprop->partitions, new_z);
+
+                // split Z from the touched part of Z
+                CProp_Node* old_list = NULL;
+                for (CProp_Node* node = z->members; node;) {
+                    CProp_Node* next = node->next;
+                    if (node->in_touched) {
+                        node->partition = new_z;
+                        node->next = new_z->members;
+                        new_z->members = node;
+
+                        z->member_count -= 1;
+                        new_z->member_count += 1;
+                    } else {
+                        node->next = old_list;
+                        old_list = node;
+                    }
+                    node = next;
+                }
+                z->members = old_list;
+                TB_ASSERT(new_z->member_count == z->touched_count);
+
+                if (sparse_set_test(&cprop->split_ws, z->id)) {
+                    // unprocessed? so is the split then
+                    sparse_set_put(&cprop->split_ws, new_z->id);
+                } else {
+                    CProp_Partition* smaller = new_z->member_count < z->member_count ? new_z : z;
+                    sparse_set_put(&cprop->split_ws, smaller->id);
+                }
+
+                // printf("Split Z (%d vs %d):\n", z->id, new_z->id);
+                // cprop_dump(f, z);
+                // cprop_dump(f, new_z);
+            }
+
+            // clear Z's touched
+            for (CProp_Node* node = z->touched; node; node = node->next_touched) {
+                node->in_touched = false;
+            }
+            z->touched_count = 0;
+            z->touched = NULL;
+        }
     }
 }
 
 bool tb_opt_cprop(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
 
-    #if 0
+    #if 1
     bool progress = false;
 
     tb_print_dumb(f);
+    __debugbreak();
 
-    // disjoint-set for the congruence classes
-    int* uf = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(int));
-    FOR_N(i, 0, f->node_count) { uf[i] = -1; }
+    // disjoint-set for the eqclasses
+    CProp cprop;
+    cprop.nodes = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(CProp_Node*));
+    FOR_N(i, 0, f->node_count) { cprop.nodes[i] = NULL; }
 
-    ArenaArray(TB_Node*) partitions = aarray_create(&f->tmp_arena, TB_Node*, 32);
+    cprop.partitions = aarray_create(&f->tmp_arena, CProp_Partition*, 32);
 
     // put everyone on the worklist
     TB_Worklist* ws = f->worklist;
@@ -1231,33 +1459,82 @@ bool tb_opt_cprop(TB_Function* f) {
         FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
 
         // find partition
-        TB_Node* leader = NULL;
-        aarray_for(j, partitions) {
-            if (partitions[j]->type == n->type) {
-                leader = partitions[j];
+        CProp_Partition* p = NULL;
+        aarray_for(j, cprop.partitions) {
+            TB_Node* p_leader = cprop.partitions[j]->og_leader;
+            if (is_opcode_equal(p_leader, n)) {
+                p = cprop.partitions[j];
                 break;
             }
         }
 
-        if (leader == NULL) {
-            aarray_push(partitions, n);
-            uf[n->gvn] = n->gvn;
-        } else {
-            uf[n->gvn] = leader->gvn;
+        if (p == NULL) {
+            p = tb_arena_alloc(&f->tmp_arena, sizeof(CProp_Partition));
+            *p = (CProp_Partition){
+                .id = aarray_length(cprop.partitions),
+                .og_leader = n,
+            };
+            aarray_push(cprop.partitions, p);
+        }
+
+        CProp_Node* node = tb_arena_alloc(&f->tmp_arena, sizeof(CProp_Node));
+        *node = (CProp_Node){
+            .next = p->members,
+            .partition = p,
+            .n = n
+        };
+        p->members = node;
+        p->member_count += 1;
+        cprop.nodes[n->gvn] = node;
+    }
+    worklist_clear(ws);
+
+    cprop.cprop_ws = sparse_set_alloc(&f->tmp_arena, f->node_count);
+    cprop.split_ws = sparse_set_alloc(&f->tmp_arena, f->node_count);
+    aarray_for(i, cprop.partitions) {
+        sparse_set_put(&cprop.split_ws, i);
+        cprop_dump(f, cprop.partitions[i]);
+    }
+
+    cprop.touched = sparse_set_alloc(&f->tmp_arena, f->node_count);
+    cprop.fallen = sparse_set_alloc(&f->tmp_arena, f->node_count);
+
+    // init SCCP stuff
+    {
+        alloc_types(f);
+        if (UNLIKELY(f->node_count+1 >= f->type_cap)) {
+            latuni_grow(f, f->node_count+1);
+        }
+        //   reset all types into TOP
+        FOR_N(i, 0, f->node_count) { f->types[i] = &TOP_IN_THE_SKY; }
+        //   anything unallocated should stay as NULL tho
+        FOR_N(i, f->node_count, f->type_cap) { f->types[i] = NULL; }
+    }
+
+    // place ROOT as starting point of cprop work
+    {
+        TB_ASSERT(f->root_node->gvn == 0);
+        sparse_set_put(&cprop.cprop_ws, cprop.nodes[0]->partition->id);
+
+        cprop.nodes[0]->in_cprop = true;
+        cprop.nodes[0]->partition->cprop = cprop.nodes[0];
+        cprop.nodes[0]->partition->cprop_count = 1;
+    }
+
+    while (aarray_length(cprop.split_ws.stack) > 0 || aarray_length(cprop.cprop_ws.stack) > 0) {
+        cprop_propagate(f, &cprop);
+
+        if (aarray_length(cprop.split_ws.stack) > 0) {
+            cprop_cause_splits(f, &cprop);
         }
     }
-    // remove all visited bits except the ones in the worklist
-    worklist_clear_visited(ws);
-    aarray_for(i, partitions) {
-        worklist_test_n_set(ws, partitions[i]);
+
+    printf("\n\n\n");
+    aarray_for(i, cprop.partitions) {
+        cprop_dump(f, cprop.partitions[i]);
     }
-    dyn_array_set_length(ws->items, aarray_length(partitions));
-    dump_partitions(f, partitions, uf);
     __debugbreak();
 
-    TB_Node* n;
-    while (n = worklist_pop(f->worklist), n) {
-    }
     #else
     alloc_types(f);
     if (UNLIKELY(f->node_count+1 >= f->type_cap)) {
@@ -1350,7 +1627,6 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         TB_OPTDEBUG(STATS)(f->stats.initial = worklist_count(ws));
     }
     TB_OPTDEBUG(PEEP)(log_debug("%s: pushed %d nodes (out of %d)", f->super.name, worklist_count(f->worklist), f->node_count));
-    f->invalidated_loops = true;
 
     TB_OPTDEBUG(PASSES)(printf("FUNCTION %s:\n", f->super.name));
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
@@ -1399,13 +1675,13 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         }
 
         // currently only rotating loops
-        TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
+        /* TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
         DO_IF(TB_OPTDEBUG_PEEP)(printf("=== LOOPS OPTS ===\n"));
         if (tb_opt_loops(f)) {
             major_progress = true;
         }
         // don't worry, we'll scan all the nodes regardless
-        worklist_clear(f->worklist);
+        worklist_clear(f->worklist); */
 
         // loop optimizer will bully the fuck out of the SCCP types, so we might
         // as well reconstruct them using the optimistic crap

@@ -75,7 +75,6 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                 n->type = TB_REGION;
             }
 
-            f->invalidated_loops = true;
             return n;
         }
     }
@@ -137,8 +136,6 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
     }
 
     if (n->input_count <= 1) {
-        f->invalidated_loops = true;
-
         // 0 or 1 preds means no phis
         for (size_t i = 0; i < n->user_count;) {
             TB_User* use = &n->users[i];
@@ -240,7 +237,8 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
             }
         }
 
-        if (region->input_count > 2 && TB_IS_INTEGER_TYPE(n->dt)) {
+        #if 0
+        if (region->input_count > 2) {
             if (region->inputs[0]->type != TB_BRANCH_PROJ || region->inputs[0]->inputs[0]->type != TB_BRANCH) {
                 return NULL;
             }
@@ -262,11 +260,60 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
                 return NULL;
             }
 
+            uint64_t min = 0;
+            uint64_t max = 0;
+
+            static int used;
+            static int all_entries[65536];
+
             // verify we have a really clean looking diamond shape
             FOR_N(i, 0, n->input_count - 1) {
-                if (region->inputs[i]->type != TB_BRANCH_PROJ || region->inputs[i]->inputs[0] != parent) return NULL;
-                if (n->inputs[1 + i]->type != TB_ICONST) return NULL;
+                if (region->inputs[i]->type != TB_BRANCH_PROJ || region->inputs[i]->inputs[0] != parent) {
+                    return NULL;
+                }
+
+                TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(region->inputs[i]);
+                printf("KEY: %llu\n", p->key);
+
+                if (p->key / 256 >= 256) {
+                    overflow_histo = true;
+                } else {
+                    crude_histo[p->key / 256] += 1;
+
+                    all_entries[p->key] = used++;
+                }
+
+                min = TB_MIN(min, p->key);
+                max = TB_MAX(max, p->key);
+
+                // acceptable values to lower into table constants
+                if (n->inputs[1 + i]->type != TB_SYMBOL && n->inputs[1 + i]->type != TB_ICONST) {
+                    return NULL;
+                }
             }
+
+            int first_empty = -1;
+            FOR_N(i, 0, 256) {
+                if (crude_histo[i] == 0) {
+                    if (first_empty < 0) {
+                        first_empty = i;
+                    }
+                    continue;
+                } else if (first_empty >= 0) {
+                    printf("%3d ... %-3zu :\n", first_empty, i);
+                    first_empty = -1;
+                }
+
+                printf("%3zu         : ", i);
+                FOR_N(j, 0, crude_histo[i]) { printf("X"); }
+                printf("\n");
+            }
+
+            // Make a table representation of this big switch statement.
+            tb_print_dumb(f);
+            __debugbreak();
+
+            #if 0
 
             // convert to lookup node
             TB_Node* lookup = tb_alloc_node(f, TB_LOOKUP, n->dt, 2, sizeof(TB_NodeLookup) + (br->succ_count * sizeof(TB_LookupEntry)));
@@ -296,7 +343,9 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
             subsume_node(f, region, before);
 
             return lookup;
+            #endif
         }
+        #endif
     }
 
     return NULL;

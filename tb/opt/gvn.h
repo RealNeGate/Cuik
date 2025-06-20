@@ -8,11 +8,6 @@ static size_t extra_bytes(TB_Node* n) {
         case TB_SYMBOL:   return sizeof(TB_NodeSymbol);
         case TB_LOCAL:    return sizeof(TB_NodeLocal);
 
-        case TB_LOOKUP: {
-            TB_NodeLookup* l = TB_NODE_GET_EXTRA(n);
-            return sizeof(TB_NodeLookup) + (l->entry_count * sizeof(TB_LookupEntry));
-        }
-
         case TB_VSHUFFLE: {
             TB_NodeVShuffle* v = TB_NODE_GET_EXTRA(n);
             return sizeof(TB_NodeVShuffle) + (v->width * sizeof(int));

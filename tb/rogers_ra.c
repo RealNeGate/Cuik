@@ -786,6 +786,11 @@ void tb__rogers(Ctx* restrict ctx, TB_Arena* arena) {
                 continue;
             }
 
+            // spilling a PHI requires a bit of goop
+            if (to_spill->type == TB_PHI) {
+                __debugbreak();
+            }
+
             // re-eval this later
             v->spill_cost = NAN;
             split_range(ctx, &ra, split.target, split.failed, old_node_count, split.clobber);

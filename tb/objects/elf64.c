@@ -212,7 +212,7 @@ TB_ExportBuffer tb_elf64obj_write_output(TB_Module* m, TB_Arena* dst_arena, cons
                 if (p->target->linkage == TB_LINKAGE_PUBLIC) {
                     symbol_id += local_sym_count;
                 }
-                assert(symbol_id != 0);
+                TB_ASSERT(symbol_id != 0);
 
                 int32_t addend;
                 memcpy(&addend, &func_out->code[p->pos], sizeof(addend));
