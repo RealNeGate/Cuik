@@ -1140,13 +1140,8 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     return k ? k : n;
 }
 
-static void push_non_bottoms(TB_Function* f, TB_Node* n) {
-    // if it's a bottom there's no more steps it can take, don't recompute it
-    Lattice* l = latuni_get(f, n);
-    if (l != lattice_from_dt(f, n->dt)) { mark_node(f, n); }
-}
-
 static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
+    #if 0
     DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
     Lattice* old_type = latuni_get(f, n);
@@ -1185,6 +1180,7 @@ static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
             }
         }
     }
+    #endif
 }
 
 // An Efficient Representation for Sparse Sets (1993), Briggs and Torczon
@@ -1246,8 +1242,8 @@ typedef struct CProp_Node CProp_Node;
 typedef struct {
     int id;
 
-    // not relevant past the opcode-split
-    TB_Node* og_leader;
+    // all nodes in the partition must share type
+    Lattice* type;
 
     size_t member_count;
     CProp_Node* members;
@@ -1263,6 +1259,7 @@ struct CProp_Node {
     // partition-list
     CProp_Node* next;
     CProp_Partition* partition;
+    CProp_Partition* old_partition;
 
     // local "touched" set
     CProp_Node* next_touched;
@@ -1311,7 +1308,149 @@ typedef struct {
 
     SparseSet touched;
     SparseSet fallen;
+
+    NL_Table da_map[3];
 } CProp;
+
+static void push_non_bottoms(TB_Function* f, CProp* cprop, TB_Node* n) {
+    // if it's a bottom there's no more steps it can take, don't recompute it
+    Lattice* l = latuni_get(f, n);
+    if (l != lattice_from_dt(f, n->dt)) {
+        CProp_Node* node = cprop->nodes[n->gvn];
+        if (!node->in_cprop) {
+            node->in_cprop = true;
+
+            // add to cprop worklist
+            node->next_cprop = node->partition->cprop;
+            node->partition->cprop = node;
+            node->partition->cprop_count += 1;
+
+            sparse_set_put(&cprop->cprop_ws, node->partition->id);
+        }
+    }
+}
+
+static bool cprop_what_touched(TB_Function* f, CProp* cprop, CProp_Node* node) {
+    return node->in_touched;
+}
+
+static bool cprop_what_fallen(TB_Function* f, CProp* cprop, CProp_Node* node) {
+    return sparse_set_test(&cprop->fallen, node->n->gvn);
+}
+
+static void* cprop_what_type(TB_Function* f, CProp* cprop, CProp_Node* node) {
+    return latuni_get(f, node->n);
+}
+
+static CProp_Partition* cprop_split(TB_Function* f, CProp* cprop, CProp_Partition* z, bool what(TB_Function* f, CProp* cprop, CProp_Node* node)) {
+    // create new partition Z'
+    CProp_Partition* new_z = tb_arena_alloc(&f->tmp_arena, sizeof(CProp_Partition));
+    *new_z = (CProp_Partition){
+        .id = aarray_length(cprop->partitions),
+    };
+    aarray_push(cprop->partitions, new_z);
+
+    // split Z from the touched part of Z
+    CProp_Node* old_list = NULL;
+    for (CProp_Node* node = z->members; node;) {
+        CProp_Node* next = node->next;
+        if (what(f, cprop, node)) {
+            node->partition = new_z;
+            node->next = new_z->members;
+            new_z->members = node;
+
+            z->member_count -= 1;
+            new_z->member_count += 1;
+        } else {
+            node->next = old_list;
+            old_list = node;
+        }
+        node = next;
+    }
+    z->members = old_list;
+    TB_ASSERT(new_z->member_count == z->touched_count);
+
+    if (sparse_set_test(&cprop->split_ws, z->id)) {
+        // unprocessed? so is the split then
+        sparse_set_put(&cprop->split_ws, new_z->id);
+    } else {
+        CProp_Partition* smaller = new_z->member_count < z->member_count ? new_z : z;
+        sparse_set_put(&cprop->split_ws, smaller->id);
+    }
+    return new_z;
+}
+
+typedef void* SplitByWhat(TB_Function* f, CProp* cprop, CProp_Node* node);
+static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* root, SplitByWhat* what, int depth) {
+    nl_table_clear(&cprop->da_map[depth]);
+    size_t og_member_count = root->member_count;
+
+    bool recycled_root = false;
+    CProp_Node* new_root_list = NULL;
+    for (CProp_Node* node = root->members; node;) {
+        CProp_Node* next = node->next;
+        void* key = what(f, cprop, node);
+        void* val = nl_table_get(&cprop->da_map[depth], key);
+
+        CProp_Partition* p;
+        if (val == NULL) {
+            // new partition (the first one will just stay in the original partition)
+            if (recycled_root) {
+                p = tb_arena_alloc(&f->tmp_arena, sizeof(CProp_Partition));
+                *p = (CProp_Partition){
+                    .id = aarray_length(cprop->partitions),
+                    .type = latuni_get(f, node->n),
+                };
+                aarray_push(cprop->partitions, p);
+            } else {
+                p = root;
+                recycled_root = true;
+            }
+            nl_table_put(&cprop->da_map[depth], key, p);
+        } else {
+            p = val;
+        }
+
+        if (p != root) {
+            node->partition = p;
+            node->next = p->members;
+            p->members = node;
+
+            root->member_count -= 1;
+            p->member_count += 1;
+        } else {
+            node->next = new_root_list;
+            new_root_list = node;
+        }
+        node = next;
+    }
+    root->members = new_root_list;
+
+    size_t c = 0;
+    printf("     STARTING %zu\n", og_member_count);
+
+    // place onto worklist
+    nl_table_for(e, &cprop->da_map[depth]) {
+        CProp_Partition* p = e->v;
+        if (p == root) { continue; }
+
+        // place onto worklist "as if" we split them
+        // in the order of the hash table. this should
+        // maintain the invariant of only placing nodes
+        // log(n) times on the worklist
+        og_member_count -= p->member_count;
+        if (sparse_set_test(&cprop->split_ws, root->id)) {
+            // unprocessed? so is the split then
+            sparse_set_put(&cprop->split_ws, p->id);
+            c += p->member_count;
+        } else {
+            CProp_Partition* smaller = p->member_count < og_member_count ? p : root;
+            sparse_set_put(&cprop->split_ws, smaller->id);
+            c += smaller->member_count;
+        }
+    }
+    printf("     PUSH %zu nodes\n", c);
+}
 
 // performs SCCP, splits partitions such that all nodes in the same
 // partition share a type.
@@ -1319,11 +1458,109 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
     while (aarray_length(cprop->cprop_ws.stack) > 0) {
         int p_idx = sparse_set_pop(&cprop->cprop_ws);
         CProp_Partition* p = cprop->partitions[p_idx];
+        DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE PARTITION%d\n", p_idx));
 
         while (p->cprop_count > 0) {
+            // pop a cprop node from the worklist
+            CProp_Node* node = p->cprop;
+            p->cprop = node->next_cprop;
+            p->cprop_count -= 1;
+
+            TB_ASSERT(node->in_cprop);
+            node->in_cprop = false;
+
+            TB_Node* n = node->n;
+            DO_IF(TB_OPTDEBUG_SCCP)(printf("     t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+
+            // SCCP transfer function, we check monotonicity
+            Lattice* old_type = latuni_get(f, n);
+            Lattice* new_type = value_of(f, n);
+
+            DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m\n"));
+            if (old_type != new_type) {
+                #ifndef NDEBUG
+                // validate int
+                if (new_type->tag == LATTICE_INT) {
+                    TB_ASSERT_MSG((new_type->_int.known_ones & new_type->_int.known_zeros) == 0, "overlapping known bits?");
+                }
+
+                Lattice* glb = lattice_meet(f, old_type, new_type);
+                if (glb != new_type) {
+                    TB_OPTDEBUG(PEEP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
+                    TB_OPTDEBUG(PEEP)(printf("  "), print_lattice(old_type), printf("  =//=>  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
+                    TB_ASSERT_MSG(0, "forward progress assert!");
+                }
+                #endif
+
+                latuni_set(f, n, new_type);
+                sparse_set_put(&cprop->fallen, n->gvn);
+
+                // push affected users
+                FOR_USERS(u, n) {
+                    TB_Node* un = USERN(u);
+                    if (un->input_count != 1) {
+                        if (cfg_is_region(un)) {
+                            FOR_USERS(phi, un) if (USERN(phi)->type == TB_PHI) {
+                                push_non_bottoms(f, cprop, USERN(phi));
+                            }
+                        }
+                        push_non_bottoms(f, cprop, un);
+                    }
+                }
+
+                // push affected users with one input (wanna process these first)
+                FOR_USERS(u, n) {
+                    TB_Node* un = USERN(u);
+                    if (un->input_count == 1) {
+                        push_non_bottoms(f, cprop, un);
+                    }
+                }
+            }
+        }
+
+        // only fallen nodes can actually be in the wrong partition and need to re-eval
+        // for splitting, we first split that group then handle the more precise splitting.
+        CProp_Partition* y = p;
+        if (p->member_count != aarray_length(cprop->fallen.stack)) {
+            y = cprop_split(f, cprop, p, cprop_what_fallen);
+
+            printf("Split Z (%d vs %d):\n", p->id, y->id);
+            cprop_dump(f, p);
+            cprop_dump(f, y);
+        }
+
+        if (y->member_count > 1) {
+            printf("Split by type:\n");
+            cprop_dump(f, y);
+            printf("VVV\n");
+
+            // cache the old partitions, this is necessary for later splitting
+            for (CProp_Node* node = p->members; node; node = node->next) {
+                node->old_partition = node->partition;
+            }
+
+            cprop_split_by_what(f, cprop, y, cprop_what_type, 0);
+            nl_table_for(e, &cprop->da_map[0]) {
+                CProp_Partition* p = e->v;
+                // partitions that are TOP don't split any further, that'll happen once
+                // they settle on some real types.
+                if (p->type == &TOP_IN_THE_SKY) { continue; }
+
+                cprop_split_by_what(f, cprop, y, cprop_what_opcode, 1);
+                nl_table_for(e2, &cprop->da_map[0]) {
+                    CProp_Partition* q = e->v;
+
+                    print_lattice(q->type), printf("\n");
+                    cprop_dump(f, q);
+                }
+            }
+            printf("\n\n");
+
             __debugbreak();
         }
     }
+
+    __debugbreak();
 }
 
 static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
@@ -1349,15 +1586,15 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
                 if (USERI(u) != i) { continue; }
 
                 bool split = true;
-                /* if (y->type == TB_PHI) {
-                     TB_Node* r = y->inputs[0];
-                     Lattice* ctrl = latuni_get(f, r->inputs[i - 1]);
+                if (y->type == TB_PHI) {
+                    TB_Node* r = y->inputs[0];
+                    Lattice* ctrl = latuni_get(f, r->inputs[i - 1]);
 
-                     // don't split based on dead phi edges
-                     if (lattice_meet(f, ctrl, &LIVE_IN_THE_SKY) != ctrl) {
-                         split = false;
-                     }
-                 }*/
+                    // don't split based on dead phi edges
+                    if (lattice_meet(f, ctrl, &LIVE_IN_THE_SKY) != ctrl) {
+                        split = false;
+                    }
+                }
 
                 if (split) {
                     CProp_Node* y_node = cprop->nodes[y->gvn];
@@ -1382,41 +1619,7 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
             CProp_Partition* z = cprop->partitions[cprop->touched.stack[j]];
             if (z->member_count != z->touched_count) {
                 TB_ASSERT(z->touched_count > 0);
-
-                // create new partition Z'
-                CProp_Partition* new_z = tb_arena_alloc(&f->tmp_arena, sizeof(CProp_Partition));
-                *new_z = (CProp_Partition){
-                    .id = aarray_length(cprop->partitions),
-                };
-                aarray_push(cprop->partitions, new_z);
-
-                // split Z from the touched part of Z
-                CProp_Node* old_list = NULL;
-                for (CProp_Node* node = z->members; node;) {
-                    CProp_Node* next = node->next;
-                    if (node->in_touched) {
-                        node->partition = new_z;
-                        node->next = new_z->members;
-                        new_z->members = node;
-
-                        z->member_count -= 1;
-                        new_z->member_count += 1;
-                    } else {
-                        node->next = old_list;
-                        old_list = node;
-                    }
-                    node = next;
-                }
-                z->members = old_list;
-                TB_ASSERT(new_z->member_count == z->touched_count);
-
-                if (sparse_set_test(&cprop->split_ws, z->id)) {
-                    // unprocessed? so is the split then
-                    sparse_set_put(&cprop->split_ws, new_z->id);
-                } else {
-                    CProp_Partition* smaller = new_z->member_count < z->member_count ? new_z : z;
-                    sparse_set_put(&cprop->split_ws, smaller->id);
-                }
+                cprop_split(f, cprop, z, cprop_what_touched);
 
                 // printf("Split Z (%d vs %d):\n", z->id, new_z->id);
                 // cprop_dump(f, z);
@@ -1440,51 +1643,42 @@ bool tb_opt_cprop(TB_Function* f) {
     bool progress = false;
 
     tb_print_dumb(f);
-    __debugbreak();
 
     // disjoint-set for the eqclasses
     CProp cprop;
     cprop.nodes = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(CProp_Node*));
     FOR_N(i, 0, f->node_count) { cprop.nodes[i] = NULL; }
 
+    FOR_N(i, 0, sizeof(cprop.da_map) / sizeof(cprop.da_map[0])) {
+        cprop.da_map[i] = nl_table_alloc(20);
+    }
     cprop.partitions = aarray_create(&f->tmp_arena, CProp_Partition*, 32);
 
     // put everyone on the worklist
     TB_Worklist* ws = f->worklist;
     worklist_push(ws, f->root_node);
 
+    // place everyone into the TOP partition
+    CProp_Partition* top_p = tb_arena_alloc(&f->tmp_arena, sizeof(CProp_Partition));
+    *top_p = (CProp_Partition){
+        .id = aarray_length(cprop.partitions),
+        .type = &TOP_IN_THE_SKY,
+    };
+    aarray_push(cprop.partitions, top_p);
+
     // place everyone into a partition based on opcode
     for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
         TB_Node* n = ws->items[i];
         FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
 
-        // find partition
-        CProp_Partition* p = NULL;
-        aarray_for(j, cprop.partitions) {
-            TB_Node* p_leader = cprop.partitions[j]->og_leader;
-            if (is_opcode_equal(p_leader, n)) {
-                p = cprop.partitions[j];
-                break;
-            }
-        }
-
-        if (p == NULL) {
-            p = tb_arena_alloc(&f->tmp_arena, sizeof(CProp_Partition));
-            *p = (CProp_Partition){
-                .id = aarray_length(cprop.partitions),
-                .og_leader = n,
-            };
-            aarray_push(cprop.partitions, p);
-        }
-
         CProp_Node* node = tb_arena_alloc(&f->tmp_arena, sizeof(CProp_Node));
         *node = (CProp_Node){
-            .next = p->members,
-            .partition = p,
+            .next = top_p->members,
+            .partition = top_p,
             .n = n
         };
-        p->members = node;
-        p->member_count += 1;
+        top_p->members = node;
+        top_p->member_count += 1;
         cprop.nodes[n->gvn] = node;
     }
     worklist_clear(ws);

@@ -626,7 +626,7 @@ static void sample_div(uint64_t x, IntRecip r, uint64_t y) {
     got >>= r.sh;
 
     if (expected != got) {
-        printf("BAD!!! %#llx / %#llx = %#llx (we got %#llx)\n", x, y, expected, got);
+        printf("BAD!!! %#"PRIx64" / %#"PRIx64" = %#"PRIx64" (we got %#"PRIx64")\n", x, y, expected, got);
         abort();
     }
 }
@@ -660,7 +660,7 @@ static void tb_test_int_division(void) {
             cases += 202;
         }
     }
-    printf("Tried: %lld cases\n", cases);
+    printf("Tried: %"PRIu64" cases\n", cases);
     __debugbreak();
 }
 
