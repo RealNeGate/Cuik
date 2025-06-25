@@ -609,8 +609,12 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             if (type->kind == KIND_PTR) {
                 int64_t elem_size = cuik_canonical_type(type->ptr_to)->size;
                 con = tb_builder_uint(g, TB_TYPE_I64, is_inc ? elem_size : -elem_size);
+            } else if (type->kind == KIND_DOUBLE) {
+                con = tb_builder_float64(g, is_inc ? 1 : -1);
+            } else if (type->kind == KIND_FLOAT) {
+                con = tb_builder_float32(g, is_inc ? 1 : -1);
             } else {
-                con = tb_builder_uint(g, dt, is_inc ? 1 : -1);
+                con = tb_builder_sint(g, dt, is_inc ? 1 : -1);
             }
 
             TB_Node* loaded = NULL;
@@ -631,6 +635,8 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
             TB_Node* operation;
             if (type->kind == KIND_PTR) {
                 operation = tb_builder_ptr_array(g, loaded, con, 1);
+            } else if (type->kind == KIND_FLOAT || type->kind == KIND_DOUBLE) {
+                operation = tb_builder_binop_float(g, TB_FADD, loaded, con);
             } else {
                 TB_ArithmeticBehavior ab = type->is_unsigned ? 0 : TB_ARITHMATIC_NSW;
                 operation = tb_builder_binop_int(g, TB_ADD, loaded, con, ab);
@@ -1532,7 +1538,7 @@ static void cg_stmt(TranslationUnit* tu, TB_GraphBuilder* g, Stmt* restrict s) {
                 // returning aggregates just copies into the first parameter
                 // which is agreed to be a caller owned buffer.
                 int size = type->size, align = type->align;
-                TB_Node* first_arg = tb_builder_get_var(g, 3);
+                TB_Node* first_arg = tb_builder_get_var(g, 1);
 
                 tb_builder_memcpy(g, 0, false, first_arg, v.n, tb_builder_uint(g, TB_TYPE_I64, size), align, false);
             } else {

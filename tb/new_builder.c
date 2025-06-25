@@ -52,8 +52,10 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
     *g = (TB_GraphBuilder){ .f = f, .arena = &f->tmp_arena };
     g->peep = ws ? tb_opt_peep_node : tb_opt_gvn_node;
 
+    bool has_aggregate_return = dbg && dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
+
     // both RPC and memory are mutable vars
-    int def_count = 3 + (dbg ? 0 : f->param_count);
+    int def_count = 3 + (dbg ? has_aggregate_return : f->param_count);
     TB_Node* syms = tb_alloc_node(f, TB_SYMBOL_TABLE, TB_TYPE_VOID, def_count, sizeof(TB_NodeSymbolTable));
     set_input(f, syms, f->params[0], 0);
     set_input(f, syms, f->params[0], 1);
@@ -73,7 +75,10 @@ static TB_GraphBuilder* builder_enter_raw(TB_Function* f, TB_ModuleSectionHandle
         }
 
         // reassemble values
-        bool has_aggregate_return = dbg->func.return_count > 0 && classify_reg(abi, dbg->func.returns[0]) == RG_MEMORY;
+        if (has_aggregate_return) {
+            set_input(f, syms, f->params[3], 3);
+        }
+
         FOR_N(i, 0, param_count) {
             TB_DebugType* type = param_list[i]->field.type;
             const char* name = param_list[i]->field.name;
