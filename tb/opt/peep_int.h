@@ -50,6 +50,26 @@ static TB_Node* ideal_arith(TB_Function* f, TB_Node* n) {
             set_input(f, n, con, 2);
             return n;
         }
+
+        // (a + con1) - (b + con2) => (a - b) + (con1 - con2)
+        if (a->type == TB_ADD && is_iconst(f, a->inputs[2]) &&
+            b->type == TB_ADD && is_iconst(f, b->inputs[2])) {
+            TB_Node* con1 = a->inputs[2];
+            TB_Node* con2 = b->inputs[2];
+
+            // x = a - b
+            a->type = TB_SUB;
+            // set_input(f, a, a->inputs[1], 1);
+            set_input(f, a, b->inputs[1], 2);
+
+            // y = con1 - con2
+            b->type = TB_SUB;
+            set_input(f, b, con1, 1);
+            set_input(f, b, con2, 2);
+
+            n->type = TB_ADD;
+            return n;
+        }
     } else {
         // commutativity opts (we want a canonical form).
         int ap = node_pos(a);
@@ -166,7 +186,7 @@ static bool will_mul_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattic
     return overflow;
 }
 
-static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, TB_Node* n, Lattice* a, Lattice* b) {
+static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, TB_Node* n, Lattice* a, Lattice* b, bool congruent) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
     int64_t imin = lattice_int_min(bits);
@@ -239,6 +259,10 @@ static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataTyp
     if (min == max) {
         return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, min, ~min, min } });
     } else if (type == TB_ADD || type == TB_SUB) {
+        if (congruent) {
+            return lattice_int_const(f, 0);
+        }
+
         uint64_t possible_sum_zeros = ~a->_int.known_zeros + ~b->_int.known_zeros;
         uint64_t possible_sum_ones  =  a->_int.known_ones  +  b->_int.known_ones;
         if (type == TB_SUB) {
@@ -272,7 +296,8 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
         return &TOP_IN_THE_SKY;
     }
 
-    return value_arith_raw(f, n->type, n->dt, n, a, b);
+    bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
+    return value_arith_raw(f, n->type, n->dt, n, a, b, c);
 }
 
 ////////////////////////////////
@@ -834,8 +859,8 @@ static TB_Node* ideal_cmp(TB_Function* f, TB_Node* n) {
         if (get_int_const(n->inputs[2], &rhs) && rhs == 0) {
             // !(a < b) is (b <= a)
             switch (cmp->type) {
-                case TB_CMP_EQ: n->type = TB_CMP_NE; break;
-                case TB_CMP_NE: n->type = TB_CMP_EQ; break;
+                case TB_CMP_EQ:  n->type = TB_CMP_NE; break;
+                case TB_CMP_NE:  n->type = TB_CMP_EQ; break;
                 case TB_CMP_SLT: n->type = TB_CMP_SLE; break;
                 case TB_CMP_SLE: n->type = TB_CMP_SLT; break;
                 case TB_CMP_ULT: n->type = TB_CMP_ULE; break;
@@ -877,7 +902,8 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
 
     TB_DataType dt = n->inputs[1]->dt;
     if (TB_IS_INTEGER_TYPE(dt)) {
-        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, NULL, a, b);
+        bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
+        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, NULL, a, b, c);
 
         // ok it's really annoying that i have to deal with the "idk bro" case in the middle
         // of each but that's why it looks like this... if you were curious (which you aren't :p)
@@ -918,6 +944,14 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             return a == b ? &TRUE_IN_THE_SKY : &BOOL_IN_THE_SKY;
         } else {
             return a == b ? &FALSE_IN_THE_SKY : &BOOL_IN_THE_SKY;
+        }
+    }
+
+    if (gcf_is_congruent(f, n->inputs[1], n->inputs[2])) {
+        if (n->type == TB_CMP_EQ) {
+            return &TRUE_IN_THE_SKY;
+        } else if (n->type == TB_CMP_NE) {
+            return &FALSE_IN_THE_SKY;
         }
     }
 

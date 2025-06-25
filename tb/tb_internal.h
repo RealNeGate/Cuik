@@ -347,6 +347,9 @@ typedef struct {
     uint64_t end_const;
 } TB_InductionVar;
 
+typedef struct CProp_Node CProp_Node;
+typedef struct CProp_Partition CProp_Partition;
+
 struct TB_Function {
     TB_Symbol super;
     TB_ModuleSectionHandle section;
@@ -388,6 +391,9 @@ struct TB_Function {
         // track a lattice per node (basically all get one so a compact array works)
         size_t type_cap;
         Lattice** types;
+
+        // GCF partitions
+        CProp_Node** gcf_nodes;
 
         // we throw the results of scheduling here:
         //   [value number] -> TB_BasicBlock*
@@ -545,6 +551,8 @@ enum {
     NODE_SAFEPOINT  = 128,
     // cannot be scheduled late
     NODE_PINNED     = 256,
+    // "necessary" CFG node (in the context of the optimistic solver)
+    NODE_EFFECT     = 512,
 };
 
 struct ICodeGen {

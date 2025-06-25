@@ -242,3 +242,29 @@ void tb_print_dumb(TB_Function* f) {
     printf("=======================================\n");
 }
 
+void tb_print_dumb_fancy(TB_Function* f) {
+    printf("====== DUMP %-20s ======\n", f->super.name);
+
+    TB_Worklist ws = { 0 };
+    worklist_alloc(&ws, f->node_count);
+
+    TB_Node* root   = f->root_node;
+    Lattice** types = f->types;
+
+    dumb_walk(f, &ws, root);
+
+    FOR_REV_N(i, 0, dyn_array_length(ws.items)) {
+        // extra newline on BB boundaries
+        if (i + 1 < dyn_array_length(ws.items) && cfg_is_fork_proj(ws.items[i + 1]) && !cfg_is_fork_proj(ws.items[i])) {
+            printf("\n");
+        } else if (cfg_is_region(ws.items[i])) {
+            printf("\n");
+        }
+        tb_print_dumb_node(types, ws.items[i]);
+        printf("\n");
+    }
+    worklist_free(&ws);
+
+    printf("=======================================\n");
+}
+

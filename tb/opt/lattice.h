@@ -189,6 +189,13 @@ static bool lattice_top_or_bot(Lattice* l) {
     return l->tag <= LATTICE_TOP;
 }
 
+static bool lattice_is_top_or_constant(Lattice* l) {
+    return l->tag == LATTICE_TOP
+        || (l->tag == LATTICE_INT && l->_int.min == l->_int.max)
+        || (l->tag == LATTICE_FLTCON32 || l->tag == LATTICE_FLTCON64)
+        || (l->tag == LATTICE_NULL     || l->tag == LATTICE_PTRCON);
+}
+
 Lattice* lattice_truthy(Lattice* l) {
     switch (l->tag) {
         case LATTICE_INT:

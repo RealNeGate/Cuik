@@ -3,8 +3,8 @@
 ////////////////////////////////
 #define TB_OPTDEBUG_STATS     0
 #define TB_OPTDEBUG_PASSES    1
-#define TB_OPTDEBUG_PEEP      0
-#define TB_OPTDEBUG_SCCP      0
+#define TB_OPTDEBUG_PEEP      1
+#define TB_OPTDEBUG_SCCP      1
 #define TB_OPTDEBUG_LOOP      0
 #define TB_OPTDEBUG_SROA      0
 #define TB_OPTDEBUG_GCM       0

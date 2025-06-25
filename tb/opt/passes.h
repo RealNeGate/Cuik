@@ -363,6 +363,9 @@ static bool succ_iter_next(SuccIter* restrict it) {
     return false;
 }
 
+bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b);
+TB_Node* gcf_congruent_leader(TB_Function* f, TB_Node* n);
+
 // lovely properties
 bool cfg_is_region(TB_Node* n);
 bool cfg_is_natural_loop(TB_Node* n);

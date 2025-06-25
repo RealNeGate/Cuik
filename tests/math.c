@@ -1,5 +1,6 @@
 
 #include <stdint.h>
+#include <math.h>
 // #include <stdio.h>
 
 /*void bar() {
@@ -40,34 +41,78 @@ extern int read();
 extern int pred();
 extern int printf(const char* fmt, ...);
 
+#if 0
+#define HALF_PI 1.57079633f
+#define PI      3.14159265f
+static float sin_approx(float x) {
+    bool flip = fmodf(floorf(x/PI - 0.5f), 2.0f) > 0.0f;
+
+    // wrap around -pi/2 to pi/2
+    x = fmodf(x + HALF_PI, PI) - HALF_PI;
+
+    // she taylor my expansion
+    float y = x - (x*x*x)/6.0f + (x*x*x*x*x)/120.0f;
+    return flip ? -y : y;
+}
+#endif
+
+static int foo(int x) {
+    int y = x + 1;
+    int z = x + 1;
+    int w = z + 2;
+    return w - z;
+}
+
+struct String {
+    int64_t count;
+    char *data;
+};
+
+struct String sv_from_parts(const char *data, int64_t count) {
+    struct String sv;
+    sv.count = count;
+    sv.data = (char *)data;
+    return sv;
+}
+
 int main() {
     #if 0
+    /*int x = 3;
+    if (pred()) {
+        x = 4;
+    }
+
+    if (x == 4) {
+        printf("Hey!\n");
+    }*/
+    for (float i = 0.0f; i < 10.0f; i++) {
+        printf("Foo: %d\n", (int) i);
+    }
+    #elif 0
     int x = 1, y = 1;
     while (pred()) {
-        x += 1, y += 1;
+        if (x != y) {
+            y += 1;
+        }
+
         printf("foo %d %d\n", x, y);
+
+        x = 2 - x;
+        y = 2 - y;
     }
     #else
-    int x = 1;
-    // x is the constant 1
-    int z = read();
-    // z is defined but unknown
-    int y = z;
-    // y is congruent to z here
-    while (pred()) {
-        // some unknown predicate
-        if( y != z ) {
-            // if we know y and z are congruent
-            x = 2;
+    int i = 0;
+    int x = 1;         // x is the constant 1
+    int z = read();    // z is defined but unknown
+    int y = z;         // y is congruent to z here
+    while (++i < 100) {// some unknown predicate
+        if( y != z ) { // if we know y and z are congruent
+            x = 2;     // then we do not destroy the constant at x
         }
-        // then we do not destroy the constant at x
-        x = 2 - x;
-        // destroy easy congruence between x and 1
-        if( x != 1 ) {
-            // if we know x is a constant
-            y = 2;
+        x = 2 - x;     // destroy easy congruence between x and 1
+        if( x != 1 ) { // if we know x is a constant
+            y = 2;     // then we do not destroy the y-z congruence
         }
-        // then we do not destroy the y-z congruence
     }
     printf("x is %d\n", x); // x is always 1 here
     #endif

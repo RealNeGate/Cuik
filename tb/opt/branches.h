@@ -2,12 +2,56 @@
 static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
-    if (n->input_count == 0) {
-        return NULL;
-    } else if (n->input_count > 1) {
-        TB_ASSERT_MSG(n->type == TB_REGION, "joining region stacks doesn't apply to region's subtypes");
+    // prune dead predeccessors
+    bool changes = false;
+    size_t i = 0, extra_edges = 0;
+    while (i < n->input_count) {
+        if (is_dead_ctrl(f, n->inputs[i])) {
+            changes = true;
+            remove_input(f, n, i);
 
-        bool changes = false;
+            FOR_USERS(u, n) {
+                if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
+                    remove_input(f, USERN(u), i + 1);
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    // demote loop regions if they lose their backedge
+    if (n->input_count != 2 && cfg_is_natural_loop(n)) {
+        n->type = TB_REGION;
+        changes = true;
+    }
+
+    // kill useless phis to kill the region itself
+    if (n->input_count <= 1) {
+        // 0 or 1 preds means no phis
+        for (size_t i = 0; i < n->user_count;) {
+            TB_User* use = &n->users[i];
+            if (USERN(use)->type == TB_PHI) {
+                TB_ASSERT(USERI(use) == 0);
+                TB_ASSERT(USERN(use)->input_count == 2);
+
+                TB_Node* phi  = USERN(use);
+                TB_Node* init = phi->inputs[1];
+                if (phi == init && phi->user_count == 1) {
+                    tb_kill_node(f, phi);
+                } else {
+                    subsume_node(f, USERN(use), USERN(use)->inputs[1]);
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        return n->input_count == 1 ? n->inputs[0] : dead_node(f);
+    }
+
+    if (n->type == TB_REGION && n->input_count > 1) {
+        // joining region stacks doesn't apply to region's subtypes
         size_t i = 0;
         while (i < n->input_count) {
             if (n->inputs[i]->type == TB_REGION) {
@@ -79,26 +123,22 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         }
     }
 
-    return NULL;
-}
-
-static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
     // fold out diamond shaped patterns
     TB_Node* same = n->inputs[0];
     if (same->type == TB_BRANCH_PROJ && same->user_count == 1 && same->inputs[0]->type == TB_BRANCH) {
         same = same->inputs[0];
         if (same->user_count != n->input_count) {
-            return n;
+            return NULL;
         }
 
         // if it has phis... quit
         FOR_USERS(u, n) {
-            if (USERN(u)->type == TB_PHI) { return n; }
+            if (USERN(u)->type == TB_PHI) { return NULL; }
         }
 
         FOR_N(i, 1, n->input_count) {
             if (n->inputs[i]->type != TB_BRANCH_PROJ || n->inputs[i]->user_count != 1 || n->inputs[i]->inputs[0] != same) {
-                return n;
+                return NULL;
             }
         }
 
@@ -112,46 +152,7 @@ static TB_Node* identity_region(TB_Function* f, TB_Node* n) {
         return before;
     }
 
-    // prune dead predeccessors
-    bool changes = false;
-    size_t i = 0, extra_edges = 0;
-    while (i < n->input_count) {
-        if (is_dead_ctrl(f, n->inputs[i])) {
-            changes = true;
-            remove_input(f, n, i);
-
-            FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
-                    remove_input(f, USERN(u), i + 1);
-                }
-            }
-        } else {
-            i += 1;
-        }
-    }
-
-    // loops can't be single edge
-    if (n->input_count != 2 && cfg_is_natural_loop(n)) {
-        n->type = TB_REGION;
-    }
-
-    if (n->input_count <= 1) {
-        // 0 or 1 preds means no phis
-        for (size_t i = 0; i < n->user_count;) {
-            TB_User* use = &n->users[i];
-            if (USERN(use)->type == TB_PHI) {
-                TB_ASSERT(USERI(use) == 0);
-                TB_ASSERT(USERN(use)->input_count == 2);
-                subsume_node(f, USERN(use), USERN(use)->inputs[1]);
-            } else {
-                i += 1;
-            }
-        }
-
-        return n->input_count == 1 ? n->inputs[0] : dead_node(f);
-    }
-
-    return n;
+    return NULL;
 }
 
 static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
@@ -506,19 +507,25 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     Lattice* l = tb_arena_alloc(arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = c->proj_count };
 
-    FOR_N(i, 1, c->proj_count) {
-        l->elems[i] = &BOT_IN_THE_SKY;
-    }
-
-    FOR_USERS(u, n) {
-        if (is_proj(USERN(u))) {
-            int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-            if (index > 0) { l->elems[index] = lattice_from_dt(f, USERN(u)->dt); }
-        }
-    }
-
     // control just flows through
     l->elems[0] = latuni_get(f, n->inputs[0]);
+
+    if (l->elems[0] == &TOP_IN_THE_SKY) {
+        FOR_N(i, 1, c->proj_count) {
+            l->elems[i] = &TOP_IN_THE_SKY;
+        }
+    } else {
+        FOR_N(i, 1, c->proj_count) {
+            l->elems[i] = &BOT_IN_THE_SKY;
+        }
+
+        FOR_USERS(u, n) {
+            if (is_proj(USERN(u))) {
+                int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                if (index > 0) { l->elems[index] = lattice_from_dt(f, USERN(u)->dt); }
+            }
+        }
+    }
 
     Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
     if (k != l) { tb_arena_free(arena, l, size); }
@@ -617,16 +624,29 @@ static TB_Node* identity_safepoint(TB_Function* f, TB_Node* n) {
 
 static TB_Node* identity_phi(TB_Function* f, TB_Node* n) {
     TB_Node* same = NULL;
-    FOR_N(i, 1, n->input_count) {
-        if (n->inputs[i] == n) continue;
-        if (same && same != n->inputs[i]) return n;
-        same = n->inputs[i];
-    }
+    if (f->gcf_nodes) {
+        FOR_N(i, 1, n->input_count) {
+            // not reachable, don't care
+            Lattice* ctrl = latuni_get(f, n->inputs[0]->inputs[i - 1]);
+            if (ctrl == &LIVE_IN_THE_SKY) {
+                TB_Node* in = gcf_congruent_leader(f, n->inputs[i]);
+                if (same == NULL) { same = in; }
+                else if (!gcf_is_congruent(f, same, in)) { return n; }
+            }
+        }
+    } else {
+        FOR_N(i, 1, n->input_count) {
+            // not reachable, don't care
+            Lattice* ctrl = latuni_get(f, n->inputs[0]->inputs[i - 1]);
+            if (ctrl == &LIVE_IN_THE_SKY) {
+                if (n->inputs[i] == n) continue;
+                if (same && same != n->inputs[i]) return n;
+                same = n->inputs[i];
+            }
+        }
 
-    TB_ASSERT(same);
-    if (f->worklist != NULL) {
-        mark_users(f, n->inputs[0]);
+        TB_ASSERT(same);
     }
-
     return same;
 }
+

@@ -8,6 +8,7 @@
 //   CFG  - Control Flow Graph
 //   DSE  - Dead Store Elimination
 //   GCM  - Global Code Motion
+//   GCF  - Global Congruence Finding
 //   SROA - Scalar Replacement Of Aggregates
 //   CCP  - Conditional Constant Propagation
 //   SCCP - Sparse Conditional Constant Propagation
