@@ -692,7 +692,6 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
 bool tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop opts", NULL);
     bool progress = false;
-    tb_print(f);
 
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     TB_CFG cfg = tb_compute_cfg(f, f->worklist, &f->tmp_arena, true);
