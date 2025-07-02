@@ -414,6 +414,9 @@ struct TB_Function {
             int initial;
             int gvn_hit, gvn_tries;
             int *peeps, *identities, *rewrites, *constants, *opto_constants, *killed;
+
+            // perf counter for solver
+            uint64_t solver_n, solver_big_o, solver_time;
             #endif
         } stats;
     };

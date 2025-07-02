@@ -52,6 +52,18 @@ typedef struct {
     };
 } X86MemOp;
 
+typedef struct {
+    uint64_t min, range;
+    int succ_count;
+
+    // verify key matches this table, if not
+    // we jump to the default case.
+    size_t key_offset;
+    TB_Global* table;
+
+    uint64_t hash, shift;
+} X86JmpMulti;
+
 static bool fits_into_uint8(TB_DataType dt, TB_Node* n) {
     TB_ASSERT(n->type == TB_ICONST);
     TB_NodeInt* i = TB_NODE_GET_EXTRA(n);
@@ -153,7 +165,9 @@ static TB_Symbol* gimme_float_sym(Ctx* ctx, TB_Node* n) {
     return &g->super;
 }
 
+static bool try_for_imm32_2(TB_DataType dt, uint64_t src, int32_t* out_x);
 static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n);
+static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n);
 
 #include "x64_gen.h"
 
@@ -178,6 +192,191 @@ static TB_Node* isel_va_start(Ctx* ctx, TB_Function* f, TB_Node* n) {
     return op;
 }
 
+uint32_t pcg32_pie(uint64_t *state) {
+    uint64_t old = *state ^ 0xc90fdaa2adf85459ULL;
+    *state = *state * 6364136223846793005ULL + 0xc90fdaa2adf85459ULL;
+    uint32_t xorshifted = ((old >> 18u) ^ old) >> 27u;
+    uint32_t rot = old >> 59u;
+    return (xorshifted >> rot) | (xorshifted << ((-rot) & 31));
+}
+
+static TB_Node* isel_multi_way_branch(Ctx* ctx, TB_Function* f, TB_Node* n) {
+    TB_ASSERT(n->type == TB_BRANCH);
+
+    TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    TB_ASSERT(br->succ_count > 2);
+
+    uint64_t min = 0;
+    uint64_t max = 0;
+    FOR_USERS(u, n) {
+        TB_Node* un = USERN(u);
+        if (is_proj(un)) {
+            TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(un);
+            uint64_t key = p->key;
+
+            min = TB_MIN(min, key);
+            max = TB_MAX(max, key);
+        }
+    }
+
+    TB_Node* src = n->inputs[1];
+    if (src->dt.type != TB_TAG_I64) {
+        TB_Node* ext = tb_alloc_node(f, TB_ZERO_EXT, TB_TYPE_I64, 2, 0);
+        set_input(f, ext, src, 1);
+        src = ext;
+    }
+
+    // normalize range, x' = x - range_start
+    if (min != 0) {
+        TB_Node* con = tb_alloc_node(f, TB_ICONST, TB_TYPE_I64, 1, sizeof(TB_NodeInt));
+        set_input(f, con, f->root_node, 0);
+        TB_NODE_SET_EXTRA(con, TB_NodeInt, .value = min);
+        con = tb_opt_gvn_node(f, con);
+
+        TB_Node* sub = tb_alloc_node(f, TB_SUB, TB_TYPE_I64, 3, sizeof(TB_NodeBinopInt));
+        set_input(f, sub, src, 1);
+        set_input(f, sub, con, 2);
+        src = sub;
+    }
+
+    int32_t x;
+    TB_ASSERT(try_for_imm32_2(TB_TYPE_I64, max - min, &x));
+
+    double density = ((double)br->succ_count) / ((double) (max - min));
+    if (density > 0.25f) {
+        TB_Node* tmp = tb_alloc_node(f, TB_MACH_TEMP, TB_TYPE_I64, 1, sizeof(TB_NodeMachTemp));
+        set_input(f, tmp, f->root_node, 0);
+        TB_NODE_SET_EXTRA(tmp, TB_NodeMachTemp, .def = ctx->normie_mask[REG_CLASS_GPR]);
+
+        size_t range = (max - min) + 1;
+        TB_Global* table = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+        tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), table, range * sizeof(uint64_t), sizeof(uint64_t), 1 + range);
+
+        TB_Node* op = tb_alloc_node(f, x86_jmp_MULTI, TB_TYPE_TUPLE, 3, sizeof(X86JmpMulti));
+        set_input(f, op, n->inputs[0], 0);
+        set_input(f, op, src, 1);
+        set_input(f, op, tmp, 2);
+        TB_NODE_SET_EXTRA(op, X86JmpMulti, .min = min, .range = range, .succ_count = br->succ_count, .table = table);
+        return op;
+    } else {
+        // too sparse? split and then try to generate jump tables for the
+        // split pieces
+        uint64_t shift = 64 - tb_clz64(br->succ_count - 1);
+        int count = 0, cap = 1ull << shift;
+
+        TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+        uint64_t* keys = tb_arena_alloc(&f->tmp_arena, cap * sizeof(uint64_t));
+        FOR_USERS(u, n) {
+            TB_Node* un = USERN(u);
+            if (is_proj(un)) {
+                TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(un);
+                if (p->index != 0) {
+                    keys[count++] = p->key;
+                }
+            }
+        }
+
+        bool bad = false;
+        uint64_t sig;
+
+        // initial seed is just a large fib number
+        uint64_t state = ~11400714819323198485llu;
+
+        // if the table becomes bigger than the identity hash, we fucked up
+        uint64_t max_shift = 64 - tb_clz64((max - min) + 1);
+        while (shift < max_shift) {
+            // find magic number
+            // sig = pcg32_pie(&state);
+            // sig |= (uint64_t)pcg32_pie(&state) << 32ull;
+            sig = state;
+
+            TB_ArenaSavepoint sp2 = tb_arena_save(&f->tmp_arena);
+            Set slots = set_create_in_arena(&f->tmp_arena, 1ull << shift);
+
+            // printf("TRY %#"PRIx64" (%d slots)\n", sig, 1u << shift);
+            bad = false;
+            FOR_N(j, 0, count) {
+                uint64_t key = keys[j] - min;
+                int bucket   = (sig * key) >> (64 - shift);
+
+                // printf("  CASE 0x%"PRIx64" -> %d\n", key, bucket);
+                if (set_get(&slots, bucket)) {
+                    bad = true;
+                    break;
+                } else {
+                    set_put(&slots, bucket);
+                }
+            }
+            // printf("\n");
+            tb_arena_restore(&f->tmp_arena, sp2);
+
+            if (!bad) {
+                size_t range = (max - min) + 1;
+                size_t cap = 1ull << shift;
+
+                // src = (hash*src) >> shift
+                {
+                    TB_Node* con0 = tb_alloc_node(f, TB_ICONST, TB_TYPE_I64, 1, sizeof(TB_NodeInt));
+                    set_input(f, con0, f->root_node, 0);
+                    TB_NODE_SET_EXTRA(con0, TB_NodeInt, .value = sig);
+                    con0 = tb_opt_gvn_node(f, con0);
+
+                    TB_Node* con1 = tb_alloc_node(f, TB_ICONST, TB_TYPE_I64, 1, sizeof(TB_NodeInt));
+                    set_input(f, con1, f->root_node, 0);
+                    TB_NODE_SET_EXTRA(con1, TB_NodeInt, .value = shift);
+                    con1 = tb_opt_gvn_node(f, con1);
+
+                    TB_Node* mul = tb_alloc_node(f, TB_MUL, TB_TYPE_I64, 3, sizeof(TB_NodeBinopInt));
+                    set_input(f, mul, src, 1);
+                    set_input(f, mul, con0, 2);
+
+                    TB_Node* shr = tb_alloc_node(f, TB_SHR, TB_TYPE_I64, 3, sizeof(TB_NodeBinopInt));
+                    set_input(f, shr, mul, 1);
+                    set_input(f, shr, con1, 2);
+                    src = shr;
+                }
+
+                TB_Node* tmp = tb_alloc_node(f, TB_MACH_TEMP, TB_TYPE_I64, 1, sizeof(TB_NodeMachTemp));
+                set_input(f, tmp, f->root_node, 0);
+                TB_NODE_SET_EXTRA(tmp, TB_NodeMachTemp, .def = ctx->normie_mask[REG_CLASS_GPR]);
+
+                TB_Global* table = tb_global_create(f->super.module, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+                tb_global_set_storage(f->super.module, tb_module_get_rdata(f->super.module), table, cap * 2 * sizeof(uint64_t), sizeof(uint64_t), 2 + cap);
+
+                uint64_t* key_table = tb_global_add_region(f->super.module, table, cap * sizeof(uint64_t), range * sizeof(uint64_t));
+                FOR_N(i, 0, cap) {
+                    key_table[i] = 0;
+                }
+
+                FOR_N(i, 0, count) {
+                    uint64_t key = keys[i] - min;
+                    int bucket   = (sig * key) >> (64 - shift);
+                    key_table[bucket] = key;
+                }
+
+                // found a good compact hash table
+                TB_Node* op = tb_alloc_node(f, x86_jmp_MULTI, TB_TYPE_TUPLE, 3, sizeof(X86JmpMulti));
+                set_input(f, op, n->inputs[0], 0);
+                set_input(f, op, src, 1);
+                set_input(f, op, tmp, 2);
+                TB_NODE_SET_EXTRA(op, X86JmpMulti, .min = min, .range = range, .succ_count = br->succ_count, .table = table, .key_offset = cap * sizeof(uint64_t), .hash = sig, .shift = 64 - shift);
+                return op;
+            }
+            shift += 1;
+        }
+        tb_arena_restore(&f->tmp_arena, sp);
+
+        // pad to a power of two
+        /* while (count < cap) {
+            keys[count++] = UINT64_MAX;
+        }*/
+
+        __debugbreak();
+    }
+
+    return n;
+}
+
 static bool can_gvn(TB_Node* n) {
     return true;
 }
@@ -185,6 +384,8 @@ static bool can_gvn(TB_Node* n) {
 static uint32_t node_flags(TB_Node* n) {
     if (n->type == x86_jcc) {
         return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL | NODE_BRANCH | NODE_MEMORY_IN;
+    } else if (n->type == x86_jmp_MULTI) {
+        return NODE_CTRL | NODE_TERMINATOR | NODE_FORK_CTRL;
     }
 
     return n->dt.type == TB_TAG_MEMORY ? (NODE_MEMORY_IN | NODE_MEMORY_OUT | NODE_PINNED) : NODE_MEMORY_IN;
@@ -284,7 +485,7 @@ static void print_pretty(Ctx* restrict ctx, TB_Node* n) {
     } else if (n->type == TB_MACH_JUMP || n->type == x86_jcc) {
         int succ[2] = { -1, -1 };
         FOR_SUCC(s, n) {
-            int index = TB_NODE_GET_EXTRA_T(s.succ, TB_NodeProj)->index;
+            int index = n->type == TB_MACH_JUMP ? 0 : TB_NODE_GET_EXTRA_T(s.succ, TB_NodeProj)->index;
             TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, s.succ);
             int b = succ_bb - ctx->cfg.blocks;
             if (ctx->cfg.blocks[b].fwd > 0) {
@@ -958,6 +1159,13 @@ static RegMask* node_constraint(Ctx* restrict ctx, TB_Node* n, RegMask** ins) {
         case x86_vzero:
         return ctx->normie_mask[REG_CLASS_XMM];
 
+        case x86_jmp_MULTI:
+        if (ins) {
+            ins[1] = ctx->normie_mask[REG_CLASS_GPR];
+            ins[2] = ctx->normie_mask[REG_CLASS_GPR];
+        }
+        return &TB_REG_EMPTY;
+
         case TB_UMULPAIR:
         case TB_SMULPAIR:
         if (ins) {
@@ -1403,6 +1611,90 @@ static void bundle_emit(Ctx* restrict ctx, TB_CGEmitter* e, Bundle* bundle) {
         EMIT1(e, 0x90);
         // TB_OPTDEBUG(REGALLOC2)(EMIT1(e, 0x90));
         break;
+
+        case x86_jmp_MULTI: {
+            uint64_t min   = TB_NODE_GET_EXTRA_T(n, X86JmpMulti)->min;
+            uint64_t range = TB_NODE_GET_EXTRA_T(n, X86JmpMulti)->range;
+            int succ_count = TB_NODE_GET_EXTRA_T(n, X86JmpMulti)->succ_count;
+            uint64_t hash  = TB_NODE_GET_EXTRA_T(n, X86JmpMulti)->hash;
+            uint64_t shift = TB_NODE_GET_EXTRA_T(n, X86JmpMulti)->shift;
+
+            TB_Function* f = ctx->f;
+
+            // TODO(NeGate): consider making the position of these tables stable...
+            size_t key_offset = TB_NODE_GET_EXTRA_T(n, X86JmpMulti)->key_offset;
+            TB_Global* table = TB_NODE_GET_EXTRA_T(n, X86JmpMulti)->table;
+            uint64_t* buffer = tb_global_add_region(f->super.module, table, 0, range * sizeof(uint64_t));
+
+            TB_ArenaSavepoint sp = tb_arena_save(&f->tmp_arena);
+            Set hit = set_create_in_arena(&f->tmp_arena, range);
+
+            printf("\n");
+            int def_succ = -1;
+            FOR_USERS(u, n) {
+                if (USERN(u)->type == TB_BRANCH_PROJ) {
+                    TB_NodeBranchProj* p = TB_NODE_GET_EXTRA(USERN(u));
+                    TB_Node* succ_n = USERN(u);
+
+                    TB_BasicBlock* succ_bb = nl_map_get_checked(ctx->cfg.node_to_block, succ_n);
+                    if (p->index == 0) {
+                        def_succ = succ_bb->fwd;
+                    } else {
+                        uint64_t idx = p->key - min;
+                        if (hash) {
+                            idx = (hash*idx) >> shift;
+                        }
+
+                        JumpTablePatch patch = { .pos = &buffer[idx], succ_bb->fwd };
+                        dyn_array_put(ctx->jump_table_patches, patch);
+                        set_put(&hit, idx);
+                        printf("KEY %zu\n", p->key);
+
+                        tb_global_add_symbol_reloc(f->super.module, table, idx * sizeof(uint64_t), &f->super);
+                    }
+                }
+            }
+
+            if (def_succ >= 0) {
+                FOR_N(i, 0, range) {
+                    if (!set_get(&hit, i)) {
+                        JumpTablePatch p = { .pos = &buffer[i], def_succ };
+                        dyn_array_put(ctx->jump_table_patches, p);
+                        printf("KEY %zu\n", i + min);
+
+                        tb_global_add_symbol_reloc(f->super.module, table, i * sizeof(uint64_t), &f->super);
+                    }
+                }
+            }
+
+            // # range check
+            // sub    X, $start
+            // cmp    X, ($end - $start)
+            // ja     DEFAULT
+            // # pick a case
+            // lea    Y, [table]
+            // mov X, [Y + 8*X]
+            // add    X, Y
+            // jmp    X
+            GPR x = op_gpr_at(ctx, n->inputs[1]);
+            GPR y = op_gpr_at(ctx, n->inputs[2]);
+
+            __(LEA, TB_X86_QWORD, Vgpr(y), Vsym(&table->super,0));
+            if (key_offset) {
+                // key check
+                __(MOV, TB_X86_QWORD, Vgpr(x), Vmem(y,x,SCALE_X8,key_offset));
+                __(JNE, TB_X86_QWORD, Vlbl(def_succ));
+            } else {
+                // range check
+                __(CMP, TB_X86_QWORD, Vgpr(x), Vimm(range));
+                __(JA,  TB_X86_QWORD, Vlbl(def_succ));
+            }
+            // pick a case
+            __(MOV, TB_X86_QWORD, Vgpr(x), Vmem(y,x,SCALE_X8,0));
+            __(JMP, TB_X86_QWORD, Vgpr(x));
+            tb_arena_restore(&f->tmp_arena, sp);
+            break;
+        }
 
         case TB_MACH_JIT_THREAD_PTR: {
             GPR dst = op_gpr_at(ctx, n);

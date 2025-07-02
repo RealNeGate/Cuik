@@ -860,7 +860,7 @@ Cuik_QualType cuik__sema_subexpr(TranslationUnit* tu, Cuik_Expr* restrict _, Sub
                 Cuik_Type* type = cuik_canonical_type(sym->decl.type);
 
                 if (type->kind == KIND_ARRAY) {
-                    if (type->size == 0 && (sym->op == STMT_GLOBAL_DECL || sym->op == STMT_DECL)) {
+                    if ((type->flags & CUIK_TYPE_FLAG_COMPLETE) == 0 && type->size == 0 && (sym->op == STMT_GLOBAL_DECL || sym->op == STMT_DECL)) {
                         sym->flags |= STMT_FLAGS_IS_RESOLVING;
 
                         // try to resolve the type since it's incomplete

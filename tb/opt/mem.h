@@ -390,6 +390,8 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                         set_input(f, state->phis[i], pred->latest[1 + i], j);
                     }
                 }
+
+                // set_input(f, curr, pred->latest[0], j);
             }
 
             FOR_REV_N(i, 0, ctx->local_count) {
@@ -505,7 +507,6 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
 
         // TODO(NeGate): classify the effect
         int cat = 0;
-        TB_Node* kill = NULL;
         if (curr->type == TB_STORE) {
             cat = find_local_idx(ctx, curr->inputs[2]);
             if (cat == 0) {
@@ -591,10 +592,9 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                     // get rid of the store, we don't need it
                     latest[cat] = curr->inputs[3];
                     latest[0] = curr;
-                    kill = curr->inputs[1];
 
                     #if TB_OPTDEBUG_MEM2REG
-                    printf("      STORE [cat=%d] = %%%u\n", cat, latest[cat]->gvn);
+                    printf("      STORE [cat=%d] = %%%u (KILLED %%%u)\n", cat, latest[cat]->gvn, curr->gvn);
                     #endif
 
                     curr->type = TB_DEAD_STORE;
@@ -679,28 +679,30 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
             }
 
             if (val != NULL) {
-                #if TB_OPTDEBUG_MEM2REG
-                printf("      ELIM %%%u => %%%u\n", use_n->gvn, val->gvn);
-                #endif
+                if (latest) {
+                    #if TB_OPTDEBUG_MEM2REG
+                    printf("      ELIM %%%u => %%%u\n", use_n->gvn, val->gvn);
+                    #endif
 
-                if (use_n->dt.raw != val->dt.raw) {
-                    // it's one of the half constructed phis we've got laying around
-                    if (val->type == TB_PHI && val->dt.type == TB_TAG_VOID) {
-                        val->dt = use_n->dt;
-                    } else {
-                        // insert bitcast
-                        TB_Node* cast = tb_alloc_node(f, TB_BITCAST, use_n->dt, 2, 0);
-                        set_input(f, cast, val, 1);
-                        val = cast;
+                    if (use_n->dt.raw != val->dt.raw) {
+                        // it's one of the half constructed phis we've got laying around
+                        if (val->type == TB_PHI && val->dt.type == TB_TAG_VOID) {
+                            val->dt = use_n->dt;
+                        } else {
+                            // insert bitcast
+                            TB_Node* cast = tb_alloc_node(f, TB_BITCAST, use_n->dt, 2, 0);
+                            set_input(f, cast, val, 1);
+                            val = cast;
+                        }
                     }
-                }
 
-                int old = val->user_count;
-                subsume_node(f, use_n, val);
-                if (val->user_count != old) {
-                    mark_node_n_users(f, val);
+                    int old = val->user_count;
+                    subsume_node(f, use_n, val);
+                    if (val->user_count != old) {
+                        mark_node_n_users(f, val);
+                    }
+                    ctx->progress = true;
                 }
-                ctx->progress = true;
             } else {
                 if (cat > 0) {
                     ctx->renames[cat - 1].is_alive = true;
@@ -1021,6 +1023,9 @@ int tb_opt_locals(TB_Function* f) {
                 }
             }
         }
+
+        // tb_print_dumb(f);
+        // tb_print(f);
 
         worklist_free(&sese_worklist);
     }

@@ -172,6 +172,10 @@ static void apply_func(TB_Function* f, void* arg) {
     bool print_asm = args->assembly;
 
     const char* name = ((TB_Symbol*) f)->name;
+    if (strcmp(name, "read_") != 0) {
+        // return;
+    }
+
     CUIK_TIMED_BLOCK_ARGS("passes", name) {
         #if TB_ENABLE_LOG
         TB_Arena *a1 = tb_function_get_arena(f, 0);

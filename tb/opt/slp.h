@@ -450,9 +450,7 @@ static bool viable_vector(TB_Function* f, NL_Table* ops, TB_DataType v_dt, Vecto
             if (src != leader) { return false; }
         }
 
-        TB_Node* n = tb_alloc_node(f, TB_VBROADCAST, v_dt, 2, 0);
-        set_input(f, n, leader, 1);
-        return n;
+        return true;
     }
 
     // all have to share the same vector source... for now

@@ -118,7 +118,13 @@ bool gcf_is_congruent(TB_Function* f, TB_Node* a, TB_Node* b) {
         return a == b;
     }
 
-    return f->gcf_nodes[a->gvn]->partition == f->gcf_nodes[b->gvn]->partition;
+    if (f->gcf_nodes[a->gvn]->partition == f->gcf_nodes[b->gvn]->partition) {
+        Lattice* aa = f->types[a->gvn];
+        Lattice* bb = f->types[b->gvn];
+        return aa == &TOP_IN_THE_SKY || bb == &TOP_IN_THE_SKY ? true : aa == bb;
+    }
+
+    return false;
 }
 
 static void cprop_dump(TB_Function* f, CProp_Partition* p) {
@@ -159,12 +165,14 @@ typedef struct {
     NL_Table da_map[3];
 } CProp;
 
-static void push_non_bottoms(TB_Function* f, CProp* cprop, TB_Node* n) {
-    // if it's a bottom there's no more steps it can take, don't recompute it
-    Lattice* l = latuni_get(f, n);
-    if (l != lattice_from_dt(f, n->dt)) {
-        CProp_Node* node = cprop->nodes[n->gvn];
-        if (!node->in_cprop) {
+static void push_cprop(TB_Function* f, CProp* cprop, TB_Node* n) {
+    CProp_Node* node = cprop->nodes[n->gvn];
+    if (!node->in_cprop) {
+        Lattice* l = latuni_get(f, n);
+
+        // if it's a bottom there's no more steps it can take, don't recompute it
+        size_t leader_count = node->partition->member_count;
+        if (l != lattice_from_dt(f, n->dt) || leader_count > 1) {
             node->in_cprop = true;
 
             // add to cprop worklist
@@ -394,6 +402,7 @@ static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* r
 // partition share a type.
 static void cprop_propagate(TB_Function* f, CProp* cprop) {
     while (aarray_length(cprop->cprop_ws.stack) > 0) {
+        cuikperf_region_start("propagate", NULL);
         int p_idx = sparse_set_pop(&cprop->cprop_ws);
         CProp_Partition* p = cprop->partitions[p_idx];
 
@@ -402,7 +411,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
         #endif
 
         Lattice* old_p_type = p->type;
-        TB_Node* old_opcode = p->members->n;
+        CProp_Node* old_opcode = p->members;
 
         bool progress = false;
         while (p->cprop_count > 0) {
@@ -424,7 +433,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 if (n == leader) {
                     // we'll need to split it if we've lost our special constant and aren't
                     // the same opcode as the rest of the partition.
-                    if (!cprop_opcode_compare(n, old_opcode)) {
+                    if (!cprop_opcode_compare(node, old_opcode)) {
                         sparse_set_put(&cprop->fallen, n->gvn);
                     }
 
@@ -465,10 +474,10 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                     if (un->input_count != 1) {
                         if (cfg_is_region(un)) {
                             FOR_USERS(phi, un) if (USERN(phi)->type == TB_PHI) {
-                                push_non_bottoms(f, cprop, USERN(phi));
+                                push_cprop(f, cprop, USERN(phi));
                             }
                         }
-                        push_non_bottoms(f, cprop, un);
+                        push_cprop(f, cprop, un);
                     }
                 }
 
@@ -476,7 +485,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 FOR_USERS(u, n) {
                     TB_Node* un = USERN(u);
                     if (un->input_count == 1) {
-                        push_non_bottoms(f, cprop, un);
+                        push_cprop(f, cprop, un);
                     }
                 }
             }
@@ -560,6 +569,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             }
             // printf("\n\n");
         }
+        cuikperf_region_end();
     }
 }
 
@@ -607,8 +617,8 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
                     // SUB and COMPARE have congruence based folding rules, to trigger those
                     // we need visit the main node in CPROP when one of its inputs is visited
                     // here in SPLIT.
-                    if (y->type == TB_SUB || y->type == TB_CMP_EQ || y->type == TB_CMP_NE) {
-                        push_non_bottoms(f, cprop, y);
+                    if (y->type == TB_SUB || (y->type >= TB_CMP_EQ && y->type <= TB_CMP_FLE)) {
+                        push_cprop(f, cprop, y);
                     }
                 } else if (y->type == TB_PHI && i > 0) {
                     TB_Node* r = y->inputs[0];
@@ -669,9 +679,17 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
     }
 }
 
-bool tb_opt_cprop(TB_Function* f) {
+int tb_opt_cprop(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
-    tb_print(f);
+    cuikperf_region_start("optimistic", NULL);
+
+    #if TB_OPTDEBUG_STATS
+    // our rate is measured against our time complexity "n * log(n)"
+    uint64_t start = cuik_time_in_nanos();
+    uint64_t log2_n = 64 - tb_clz64(f->node_count);
+    f->stats.solver_n = f->node_count;
+    f->stats.solver_big_o = f->node_count * log2_n;
+    #endif
 
     // disjoint-set for the eqclasses
     CProp cprop;
@@ -753,9 +771,15 @@ bool tb_opt_cprop(TB_Function* f) {
         cprop_propagate(f, &cprop);
 
         if (aarray_length(cprop.split_ws.stack) > 0) {
+            cuikperf_region_start("cause_splits", NULL);
             cprop_cause_splits(f, &cprop);
+            cuikperf_region_end();
         }
     }
+
+    #if TB_OPTDEBUG_STATS
+    f->stats.solver_time = (cuik_time_in_nanos() - start);
+    #endif
 
     #if 0
     printf("\n\n\n");
@@ -770,7 +794,7 @@ bool tb_opt_cprop(TB_Function* f) {
     // rewrite the graph according to the maximal fixed point
     // Pass 2: ok replace with constants now
     //   fills up the entire worklist again
-    bool progress = false;
+    int rewrites = 0;
     size_t node_barrier = f->node_count;
     for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
         TB_Node* n = f->worklist->items[i];
@@ -790,18 +814,18 @@ bool tb_opt_cprop(TB_Function* f) {
         if (leader != n) {
             TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (FOLLOW)\n"));
 
-            progress = true;
+            rewrites++;
             subsume_node(f, n, leader);
             continue;
         }
 
         TB_Node* k = try_as_const(f, n, latuni_get(f, n));
         if (k != NULL) {
-            TB_OPTDEBUG(STATS)(f->stats.opto_constants++);
+            TB_OPTDEBUG(STATS)(inc_nums(f->stats.opto_constants, n->type));
             TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, k), printf(" (CONST)\n"));
 
             node->n = k;
-            progress = true;
+            rewrites++;
 
             worklist_push(ws, k);
             subsume_node(f, n, k);
@@ -811,14 +835,14 @@ bool tb_opt_cprop(TB_Function* f) {
         TB_OPTDEBUG(SCCP)(printf("\n"));
     }
 
-    tb_print(f);
     tb_arena_clear(&f->tmp_arena);
+    cuikperf_region_end();
     f->gcf_nodes = NULL;
 
-    if (!progress) {
+    if (rewrites == 0) {
         worklist_clear(ws);
     }
 
-    return progress;
+    return rewrites;
 }
 

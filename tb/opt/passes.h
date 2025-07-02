@@ -62,6 +62,7 @@ struct Lattice {
         LATTICE_FLT32,    LATTICE_FLT64,    // bottom types for floats
         LATTICE_NAN32,    LATTICE_NAN64,
         LATTICE_XNAN32,   LATTICE_XNAN64,
+        LATTICE_FLTINT32, LATTICE_FLTINT64, // floats which perfectly represent integers
         LATTICE_FLTCON32, LATTICE_FLTCON64, // _f32 and _f64
 
         // pointers:

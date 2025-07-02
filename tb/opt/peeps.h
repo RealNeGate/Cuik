@@ -90,7 +90,10 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_SMOD]           = { ideal_int_mod,     identity_int_binop, NULL             },
     // floats
     [TB_FNEG]           = { NULL,              NULL,               value_fpneg      },
-    [TB_FADD]           = { ideal_farith,      identity_flt_binop, NULL             },
+    [TB_FADD]           = { ideal_farith,      identity_flt_binop, value_farith     },
+    [TB_FSUB]           = { ideal_farith,      identity_flt_binop, value_farith     },
+    [TB_FMUL]           = { ideal_farith,      identity_flt_binop, value_farith     },
+    [TB_FDIV]           = { ideal_farith,      identity_flt_binop, value_farith     },
     // comparisons
     [TB_CMP_EQ]         = { ideal_cmp,         identity_int_binop, value_cmp        },
     [TB_CMP_NE]         = { ideal_cmp,         identity_int_binop, value_cmp        },
@@ -98,6 +101,8 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     [TB_CMP_SLE]        = { ideal_cmp,         identity_int_binop, value_cmp        },
     [TB_CMP_ULT]        = { ideal_cmp,         identity_int_binop, value_cmp        },
     [TB_CMP_ULE]        = { ideal_cmp,         identity_int_binop, value_cmp        },
+    [TB_CMP_FLT]        = { NULL,              NULL,               value_cmp        },
+    [TB_CMP_FLE]        = { NULL,              NULL,               value_cmp        },
     // bitwise ops
     [TB_AND]            = { ideal_bits,        identity_bits,      value_bits       },
     [TB_OR]             = { ideal_bits,        identity_bits,      value_bits       },
@@ -116,7 +121,7 @@ static const NodeVtable node_vtables[TB_NODE_TYPE_MAX] = {
     // misc
     [TB_PROJ]           = { NULL,              NULL,               value_proj       },
     [TB_BRANCH_PROJ]    = { NULL,              NULL,               value_proj       },
-    [TB_SELECT]         = { ideal_select,      NULL,               value_select     },
+    [TB_SELECT]         = { ideal_select,      identity_select,    value_select     },
     [TB_PHI]            = { ideal_phi,         identity_phi,       value_phi        },
     // control flow
     [TB_DEBUG_LOCATION] = { ideal_location,    NULL,               NULL             },

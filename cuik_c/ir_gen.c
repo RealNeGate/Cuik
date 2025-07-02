@@ -496,6 +496,23 @@ static void gen_global_initializer(TranslationUnit* tu, TB_Global* g, Cuik_Type*
 
         tb_global_add_symbol_reloc(tu->ir_mod, g, offset, stmt->backing.s);
         int_form = value.s.offset;
+    } else if (value.tag == CUIK_CONST_STR) {
+        size_t len = atoms_len(value.str);
+        if (type->kind == KIND_PTR) {
+            uint32_t hash = tb__murmur3_32(value.str, len);
+
+            TB_Global* dummy = tb_global_create(tu->ir_mod, 0, NULL, NULL, TB_LINKAGE_PRIVATE);
+            ((TB_Symbol*) dummy)->ordinal = ((uint64_t) tu->local_ordinal << 32ull) | hash;
+            tb_global_set_storage(tu->ir_mod, tb_module_get_rdata(tu->ir_mod), dummy, len, cuik_canonical_type(type->ptr_to)->align, 1);
+
+            char* dst = tb_global_add_region(tu->ir_mod, dummy, 0, len);
+            memcpy(dst, value.str, len);
+
+            tb_global_add_symbol_reloc(tu->ir_mod, g, offset, (TB_Symbol*) dummy);
+        } else {
+            char* dst = tb_global_add_region(tu->ir_mod, g, offset, type->size);
+            memcpy(dst, value.str, len);
+        }
     } else if (value.tag == CUIK_CONST_INT) {
         int_form = value.i;
     } else if (value.tag == CUIK_CONST_FLOAT) {

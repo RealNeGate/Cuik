@@ -838,7 +838,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
         }
         case EXPR_LOGICAL_NOT: {
             TB_Node* src = as_rval(tu, g, &args[0]);
-            return (ValDesc){ RVALUE, .n = tb_builder_cmp(g, TB_CMP_NE, src, tb_builder_uint(g, src->dt, 0)) };
+            return (ValDesc){ RVALUE, .n = tb_builder_cmp(g, TB_CMP_EQ, src, tb_builder_uint(g, src->dt, 0)) };
         }
         case EXPR_CALL: {
             Cuik_Type* return_type = cuik_canonical_type(qt);

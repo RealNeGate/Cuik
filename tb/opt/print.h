@@ -29,6 +29,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_FRAME_PTR: return "frame_ptr";
 
         case TB_LOCAL: return "local";
+        case TB_ENTRY_FORK: return "entry_fork";
 
         case TB_VA_START: return "vastart";
         case TB_DEBUGBREAK: return "dbgbrk";
@@ -50,6 +51,7 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
         case TB_PREFETCH: return "prefetch";
         case TB_INLINE_ASM: return "inlineasm";
         case TB_DEBUG_LOCATION: return "dbgloc";
+        case TB_DEBUG_SCOPES: return "dbgscopes";
         case TB_SAFEPOINT: return "safepoint";
 
         case TB_MEMSET: return "memset";

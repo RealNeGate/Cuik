@@ -210,8 +210,8 @@ Lattice* lattice_truthy(Lattice* l) {
         case LATTICE_NULL:  return &FALSE_IN_THE_SKY;
         case LATTICE_XNULL: return &TRUE_IN_THE_SKY;
 
-        default:
-        return &BOT_IN_THE_SKY;
+        case LATTICE_TOP: return &TOP_IN_THE_SKY;
+        default: return &BOT_IN_THE_SKY;
     }
 }
 
@@ -286,6 +286,7 @@ uint64_t tb__sxt(uint64_t src, uint64_t src_bits, uint64_t dst_bits) {
 
 static bool lattice_signed(LatticeInt* l) { return l->min > l->max; }
 static bool lattice_is_iconst(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max; }
+static bool lattice_is_izero(Lattice* l) { return l->tag == LATTICE_INT && l->_int.min == l->_int.max && l->_int.min == 0; }
 
 static LatticeInt lattice_into_unsigned(LatticeInt i, int bits) {
     if (i.min > i.max) {
@@ -400,6 +401,14 @@ static Lattice* lattice_dual(TB_Function* f, Lattice* type) {
     }
 }
 
+static bool lattice_is_float32_nan(Lattice* l) {
+    return l->tag == LATTICE_FLTCON32 ? isnan(l->_f32) : l == &NAN32_IN_THE_SKY;
+}
+
+static bool lattice_is_float64_nan(Lattice* l) {
+    return l->tag == LATTICE_FLTCON64 ? isnan(l->_f64) : l == &NAN64_IN_THE_SKY;
+}
+
 // greatest lower bound between a and b, note that we expect interned lattices here
 static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
     // a ^ a = a
@@ -443,15 +452,19 @@ static Lattice* lattice_meet(TB_Function* f, Lattice* a, Lattice* b) {
         //
         // * Fc meeting with things has to worry about mismatching constants and which
         //   bucket the constant fits into (nans or not).
-        case LATTICE_FLT32: case LATTICE_NAN32: case LATTICE_XNAN32: return &FLT32_IN_THE_SKY;
-        case LATTICE_FLT64: case LATTICE_NAN64: case LATTICE_XNAN64: return &FLT64_IN_THE_SKY;
-        case LATTICE_FLTCON32: if (b->tag == a->tag) {
-            bool anan = isnan(a->_f32), bnan = isnan(b->_f32);
+        case LATTICE_FLT32: return &FLT32_IN_THE_SKY;
+        case LATTICE_FLT64: return &FLT64_IN_THE_SKY;
+
+        case LATTICE_NAN32: case LATTICE_XNAN32:
+        case LATTICE_FLTCON32: if (b->tag <= LATTICE_FLTCON32) {
+            bool anan = lattice_is_float32_nan(a), bnan = lattice_is_float32_nan(b);
             return anan == bnan ? (anan ? &NAN32_IN_THE_SKY : &XNAN32_IN_THE_SKY) : &FLT32_IN_THE_SKY;
         } else {
             return &BOT_IN_THE_SKY;
         }
-        case LATTICE_FLTCON64: if (b->tag == a->tag) {
+
+        case LATTICE_NAN64: case LATTICE_XNAN64:
+        case LATTICE_FLTCON64: if (b->tag <= LATTICE_FLTCON64) {
             bool anan = isnan(a->_f64), bnan = isnan(b->_f64);
             return anan == bnan ? (anan ? &NAN64_IN_THE_SKY : &XNAN64_IN_THE_SKY) : &FLT64_IN_THE_SKY;
         } else {
@@ -502,5 +515,10 @@ static Lattice* lattice_join(TB_Function* f, Lattice* a, Lattice* b) {
     a = lattice_dual(f, a);
     b = lattice_dual(f, b);
     return lattice_dual(f, lattice_meet(f, a, b));
+}
+
+// a >= b if a /\ b = b
+static bool lattice_at_least(TB_Function* f, Lattice* a, Lattice* b) {
+    return lattice_meet(f, a, b) == b;
 }
 

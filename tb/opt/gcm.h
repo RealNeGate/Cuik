@@ -9,39 +9,10 @@ typedef struct Elem {
 // any blocks in the dom tree between and including early and late are valid schedules.
 static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_lat, TB_Node* n, TB_BasicBlock* early, TB_BasicBlock* late) {
     TB_ASSERT(early != late);
-    if (get_lat == NULL) {
+    if (get_lat == NULL || n->type == TB_MACH_TEMP) {
         return late;
     }
 
-    // if we can keep the phi moves out of the projections we might not need to
-    // compile the projection as a real BB.
-    if (late->start == late->end &&
-        late->start->type == TB_BRANCH_PROJ)
-    {
-        #if 0
-        // memory phis don't have proper move ops so we infer
-        // that we're the memory to be moved by checking our users
-        if (n->dt.type == TB_TAG_MEMORY) {
-            TB_User* phi = NULL;
-            FOR_USERS(u, n) {
-                if (USERN(u)->type == TB_PHI) {
-                    if (phi == NULL) { phi = u; }
-                    else { phi = NULL; break; }
-                }
-            }
-
-            if (phi) {
-                TB_Node* r = USERN(phi)->inputs[0];
-                TB_BasicBlock* bb = f->scheduled[r->inputs[USERI(phi) - 1]->gvn];
-
-                __debugbreak();
-                if (bb == late) { return late->dom; }
-            }
-        }
-        #endif
-    }
-
-    skip:;
     int lat = get_lat(f, n, NULL);
     if (lat >= 2) {
         TB_BasicBlock* best = late;

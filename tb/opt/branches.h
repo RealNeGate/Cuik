@@ -125,7 +125,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
 
     // fold out diamond shaped patterns
     TB_Node* same = n->inputs[0];
-    if (same->type == TB_BRANCH_PROJ && same->user_count == 1 && same->inputs[0]->type == TB_BRANCH) {
+    if (n->type == TB_REGION && same->type == TB_BRANCH_PROJ && same->user_count == 1 && same->inputs[0]->type == TB_BRANCH) {
         same = same->inputs[0];
         if (same->user_count != n->input_count) {
             return NULL;
@@ -150,6 +150,111 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
         }
         tb_kill_node(f, same);
         return before;
+    }
+
+    // this loop is empty, none of the operations require iteration so we can
+    // fold all the phis into closed-form equations and kill the backedge.
+    if (n->type == TB_AFFINE_LOOP) {
+        // if the latch and the loop header are attached to each other that means
+        // there's no CFG effects in this loop
+        TB_Node* latch = affine_loop_latch(n);
+        if (latch->inputs[0] == n) {
+            bool closed = true;
+            FOR_USERS(u, n) {
+                TB_Node* phi = USERN(u);
+                if (phi->type != TB_PHI) { continue; }
+
+                // we wanna know loop bounds
+                uint64_t trips_min = 1, trips_max = UINT64_MAX;
+                if (find_affine_indvar(phi, n) == NULL) {
+                    closed = false;
+                    break;
+                }
+            }
+
+            TB_InductionVar var;
+            if (closed && find_latch_indvar(n, latch, &var) && !var.backwards) {
+                printf("\n");
+                tb_print(f);
+
+                // construct the exact trip count, we'll integrate all our closed-form equations based
+                // on this:
+                //
+                // range = end - start
+                Lattice* start = latuni_get(f, var.phi->inputs[1]);
+                TB_Node* range = NULL;
+                if (var.end_cond) {
+                    if (lattice_is_izero(start)) {
+                        range = var.end_cond;
+                    } else {
+                        range = make_int_binop(f, TB_SUB, var.end_cond, var.phi->inputs[1]);
+                    }
+                } else {
+                    // we can probably fold this case
+                    Lattice* end = lattice_int_const(f, var.end_const);
+                    Lattice* sub = value_arith_raw(f, TB_SUB, var.phi->dt, n, end, start, false);
+                    if (lattice_is_iconst(sub)) {
+                        range = make_int_node(f, var.phi->dt, sub->_int.min);
+                    } else {
+                        TB_Node* end_cond = make_int_node(f, var.phi->dt, end->_int.min);
+                        range = make_int_binop(f, TB_SUB, end_cond, var.phi->inputs[1]);
+                    }
+                }
+
+                // if we're dealing with "<" then we wanna round our range up
+                Lattice* pad = lattice_int_const(f, var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0));
+                if (!lattice_is_izero(pad)) {
+                    Lattice* range_ty = latuni_get(f, range);
+                    Lattice* add = value_arith_raw(f, TB_ADD, var.phi->dt, n, range_ty, pad, false);
+                    if (lattice_is_iconst(add)) {
+                        range = make_int_node(f, var.phi->dt, add->_int.min);
+                    } else {
+                        TB_Node* addend = make_int_node(f, var.phi->dt, pad->_int.min);
+                        range = make_int_binop(f, TB_ADD, range, addend);
+                    }
+                }
+
+                bool is_signed = var.pred == IND_SLT || var.pred == IND_SLE;
+                TB_Node* trip_node = range;
+                if (var.step != 1) {
+                    TB_Node* step = make_int_node(f, var.phi->dt, var.step);
+                    trip_node = make_int_binop(f, is_signed ? TB_SDIV : TB_UDIV, trip_node, step);
+                }
+
+                // replace with closed-form equations
+                for (size_t i = 0; i < n->user_count;) {
+                    TB_Node* un = USERN(&n->users[i]);
+                    if (un->type == TB_PHI) {
+                        Lattice* init = latuni_get(f, un->inputs[1]);
+                        Lattice* step = latuni_get(f, un->inputs[2]->inputs[2]);
+                        TB_ASSERT(lattice_is_iconst(step));
+
+                        TB_Node* casted_trip_node = trip_node;
+                        TB_ASSERT(un->dt.raw == trip_node->dt.raw);
+
+                        TB_Node* closed_form = casted_trip_node;
+                        if (lattice_int_ne(step, 1)) {
+                            closed_form = make_int_binop(f, TB_MUL, closed_form, un->inputs[2]->inputs[2]);
+                        }
+
+                        if (!lattice_is_izero(init)) {
+                            closed_form = make_int_binop(f, TB_ADD, un->inputs[1], closed_form);
+                        }
+
+                        set_input(f, un, NULL, 0);
+                        subsume_node(f, un, closed_form);
+                        mark_node_n_users(f, closed_form);
+                    } else {
+                        i += 1;
+                    }
+                }
+
+                n->type = TB_NATURAL_LOOP;
+                printf("\n\n");
+                tb_print(f);
+                return n;
+            }
+        }
     }
 
     return NULL;
@@ -193,7 +298,7 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
 
                 TB_NodeBranchProj* header_br = cfg_if_branch(branch);
                 if (header_br) {
-                    assert(branch->input_count == 2);
+                    TB_ASSERT(branch->input_count == 2);
 
                     TB_Node *values[2];
                     FOR_USERS(u, branch) {
@@ -207,7 +312,7 @@ static TB_Node* ideal_phi(TB_Function* f, TB_Node* n) {
                             }
 
                             int phi_i = USERI(proj->users);
-                            assert(phi_i + 1 < n->input_count);
+                            TB_ASSERT(phi_i + 1 < n->input_count);
                             values[index] = n->inputs[1 + phi_i];
                         }
                     }

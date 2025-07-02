@@ -94,7 +94,8 @@ struct VReg {
     // BRIGGS: when coalesced this number will go up
     int uses;
 
-    bool was_spilled;
+    bool was_spilled : 1;
+    bool was_reload  : 1;
 };
 
 typedef struct Ctx Ctx;
@@ -118,7 +119,7 @@ typedef bool (*NodeRemat)(TB_Node* n);
 typedef int (*TB_2Addr)(TB_Node* n);
 
 typedef struct {
-    uint32_t* pos;
+    uint64_t* pos;
     uint32_t target;
 } JumpTablePatch;
 

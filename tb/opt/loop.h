@@ -531,15 +531,19 @@ static const char* ind_pred_names[] = { "ne", "slt", "sle", "ult", "ule" };
 
 // since we're looking at the rotated form:
 //
-//   i  = phi(init, i2)
-//   i2 = i + step where step is constant
-static bool affine_indvar(TB_Node* n, TB_Node* header) {
+//   i = phi(init, i2)
+//   n = i + step where step is constant
+static TB_Node* affine_indvar(TB_Node* n, TB_Node* header) {
+    if (n->type == TB_PHI) {
+        n = n->inputs[2];
+    }
+
     return (n->type == TB_ADD || n->type == TB_PTR_OFFSET)
         && TB_IS_INT_OR_PTR(n->dt)
         && n->inputs[1]->type == TB_PHI
         && n->inputs[1]->inputs[0] == header
         && n->inputs[1]->inputs[2] == n
-        && n->inputs[2]->type == TB_ICONST;
+        && n->inputs[2]->type == TB_ICONST ? n->inputs[1] : NULL;
 }
 
 static uint64_t* find_affine_indvar(TB_Node* n, TB_Node* header) {
@@ -567,8 +571,8 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
         TB_Node* b = cond->inputs[2];
 
         // flip condition
-        if ((exit_when_key && if_br->key == 0) ||
-            (!exit_when_key && if_br->key == 1)) {
+        if ((!exit_when_key && if_br->key == 0) ||
+            (exit_when_key && if_br->key == 1)) {
             if (type == TB_CMP_EQ) { type = TB_CMP_NE; }
             else if (type == TB_CMP_NE) { type = TB_CMP_EQ; }
             else {
@@ -590,8 +594,13 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
         // shit's scary if both are indvars, it's not "illegal" but also wtf
         bool backwards = false;
         TB_Node *indvar = NULL, *limit = NULL;
-        if (affine_indvar(a, header))      { indvar = a->inputs[1], limit = b; }
-        else if (affine_indvar(b, header)) { indvar = b->inputs[1], limit = a, backwards = true; }
+        if (indvar = affine_indvar(a, header), indvar) {
+            limit = b;
+        } else if (indvar = affine_indvar(b, header), indvar) {
+            limit = a;
+            backwards = true;
+            tb_todo();
+        }
 
         if (indvar) {
             // we're a real affine loop now!
@@ -603,10 +612,10 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
                 .end_cond = limit,
                 .phi  = indvar,
                 .step = TB_NODE_GET_EXTRA_T(op->inputs[2], TB_NodeInt)->value,
-                .backwards = false
+                .backwards = backwards
             };
 
-            switch (cond->type) {
+            switch (type) {
                 case TB_CMP_NE:  var->pred = IND_NE;  break;
                 case TB_CMP_ULE: var->pred = IND_ULE; break;
                 case TB_CMP_ULT: var->pred = IND_ULT; break;
@@ -683,6 +692,7 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
 bool tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop opts", NULL);
     bool progress = false;
+    tb_print(f);
 
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     TB_CFG cfg = tb_compute_cfg(f, f->worklist, &f->tmp_arena, true);
@@ -923,7 +933,7 @@ bool tb_opt_loops(TB_Function* f) {
                 TB_Node* exit_proj = get_simple_loop_exit(&ctx, loop, header, header_end);
                 if (exit_proj && (!cfg_is_cproj(exit_proj) || exit_proj->inputs[0] != header->inputs[1]->inputs[0] || header->inputs[1]->user_count != 1)) {
                     #if 1
-                    TB_OPTDEBUG(PASSES)(printf("      * Rotating loop %%%u\n", header->gvn));
+                    TB_OPTDEBUG(PASSES)(printf("      * Rotating loop %%%u %p\n", header->gvn, exit_proj));
 
                     latch = header_end;
                     int exit_loop_i = TB_NODE_GET_EXTRA_T(exit_proj, TB_NodeProj)->index;
@@ -966,9 +976,9 @@ bool tb_opt_loops(TB_Function* f) {
                     TB_User* after_exit = cfg_next_user(exit_proj);
                     mark_node_n_users(f, USERN(after_exit));
                     TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
+                    set_input(f, USERN(after_exit), join, USERI(after_exit));
                     set_input(f, join, exit_loop, 0);
                     set_input(f, join, exit_proj, 1);
-                    set_input(f, USERN(after_exit), join, USERI(after_exit));
                     loop_set_ctrl(&ctx, join, join);
                     mark_node(f, join);
                     // fill in the doms
@@ -1082,8 +1092,8 @@ bool tb_opt_loops(TB_Function* f) {
                     TB_OPTDEBUG(PASSES)(printf("        * Added extra join %%%u\n", join->gvn));
 
                     #ifndef NDEBUG
-                    TB_Node* exit_proj = get_simple_loop_exit(&ctx, loop, header, header_end);
-                    TB_ASSERT(exit_proj->inputs[0] == latch);
+                    TB_Node* exit_proj2 = get_simple_loop_exit(&ctx, loop, header, header_end);
+                    TB_ASSERT(exit_proj2->inputs[0] == latch);
                     TB_ASSERT(into_loop2->inputs[0] == latch);
                     TB_ASSERT(header->inputs[1] == into_loop2 && header->inputs[1]->user_count == 1);
                     #endif
@@ -1131,8 +1141,9 @@ bool tb_opt_loops(TB_Function* f) {
 
                         // fixed trip count loops aren't *uncommon*
                         if (init && end) {
-                            int64_t trips = (*end - *init) / step;
-                            int64_t rem   = (*end - *init) % step;
+                            int64_t pad = step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0);
+                            uint64_t trips = (*end - *init + pad) / step;
+                            uint64_t rem   = (*end - *init + pad) % step;
                             if (rem != 0 && var.pred == IND_NE) {
                                 printf("        trips: overshoot\n");
                             } else {
