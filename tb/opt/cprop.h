@@ -602,10 +602,10 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
                 if (USERI(u) != i) { continue; }
 
                 // follow the edge to the leader
-                while (y_node->leader) {
-                    y_node = y_node->leader;
-                }
-                y = y_node->n;
+                if (y_node->leader) { continue; }
+                // y_node = y_node->leader;
+                // }
+                // y = y_node->n;
 
                 bool split = true;
                 if (lattice_is_top_or_constant(y_node->partition->type)) {
@@ -682,6 +682,7 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
 int tb_opt_cprop(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
     cuikperf_region_start("optimistic", NULL);
+    tb_print(f);
 
     #if TB_OPTDEBUG_STATS
     // our rate is measured against our time complexity "n * log(n)"
@@ -834,6 +835,9 @@ int tb_opt_cprop(TB_Function* f) {
 
         TB_OPTDEBUG(SCCP)(printf("\n"));
     }
+
+    tb_print(f);
+    __debugbreak();
 
     tb_arena_clear(&f->tmp_arena);
     cuikperf_region_end();

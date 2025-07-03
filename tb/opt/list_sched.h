@@ -251,7 +251,7 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
             FOR_N(j, 0, n->input_cap) {
                 if (n->inputs[j] && f->scheduled[n->inputs[j]->gvn] == bb) {
                     int e = sched.depth[n->inputs[j]->gvn];
-                    if (d >= e) {
+                    if (d >= e && n->type != TB_PHI && n->inputs[j]->type != TB_PHI) {
                         tb_print_dumb(f);
                         tb_panic("CYCLE DETECTED BETWEEN %%%u and %%%u!!!\n", n->gvn, n->inputs[j]->gvn);
                     }

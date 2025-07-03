@@ -413,6 +413,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             printf("\n");
             #endif
 
+            tb_print_dumb(f);
             subsume_node(f, new_phi, old_phi->inputs[1]);
             cloned[old_phi->gvn] = old_phi->inputs[1];
 
@@ -424,35 +425,29 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
                 set_input(f, old_phi, cloned[next_val->gvn], 1);
             }
 
-            // any inputs to next_val cannot be rewritten to redirectly refer to
-            // next val because it would cause a cycle with no phi in the middle.
-            worklist_clear(ws);
-            worklist_push(ws, next_val);
-
-            for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-                TB_Node* n = ws->items[i];
-                if (ctx->ctrl[n->gvn] == header) {
-                    #if TB_OPTDEBUG_LOOP
-                    printf("   AFTER(");
-                    tb_print_dumb_node(NULL, n);
-                    printf(")\n");
-                    #endif
-
-                    FOR_USERS(u, n) {
-                        TB_Node* un = USERN(u);
-                        if (ctx->ctrl[un->gvn] == header && un != old_phi) {
-                            worklist_push(ws, un);
-                        }
-                    }
-                }
-            }
-
+            // HEADER:
+            //   OLD_PHI = PHI(INIT, Y)
+            //   X       = OLD_PHI + 1.0f
+            // BODY:
+            //   Y       = X + 2.0f
+            //
+            // VVV
+            //
+            // HEADER:
+            //   OLD_PHI = PHI(INIT, X)
+            // BODY:
+            //   Y = OLD_PHI + 2.0f
+            //   X = Y + 1.0f
+            //
+            // if the next_val (the original "Y" in this case) is not in the header, then rotating it
+            // can get tricky. we make all uncloned refs of the phi point to Y (thus moving Y down) and
+            // cut the cycle by making Y refer to the old phi instead of the uncloned refs
             // our original loop header is being repurposed as an end of loop latch, because of this
             // we need to update any phi uses such that they refer to the "next" path.
             for (size_t j = 0; j < old_phi->user_count;) {
                 TB_Node* un = USERN(&old_phi->users[j]);
 
-                if (cloned[un->gvn] && un != next_val && worklist_test_n_set(ws, un)) {
+                if (cloned[un->gvn] && un != next_val) {
                     #if TB_OPTDEBUG_LOOP
                     printf("   USER(");
                     tb_print_dumb_node(NULL, un);
@@ -460,6 +455,44 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
                     #endif
 
                     set_input(f, un, next_val, USERI(&old_phi->users[j]));
+
+                    // any cyclic refs are immediately replaced here are
+                    // replaced by pointing to the old_phi
+                    bool cycle = false;
+                    FOR_N(j, 0, next_val->input_count) {
+                        TB_Node* in = next_val->inputs[j];
+                        if (in == un) {
+                            #if TB_OPTDEBUG_LOOP
+                            printf("     CYCLE(");
+                            tb_print_dumb_node(NULL, next_val);
+                            printf(", %zu)\n", j);
+                            #endif
+
+                            set_input(f, next_val, old_phi, j);
+                            cycle = true;
+                        }
+                    }
+
+                    if (cycle) {
+                        // any uncloned refs of "un" refer to the old phi now
+                        for (size_t k = 0; k < un->user_count;) {
+                            TB_Node* un2 = USERN(&un->users[k]);
+                            if (!cloned[un2->gvn] && un2 != un) {
+                                #if TB_OPTDEBUG_LOOP
+                                printf("     ROTATE(");
+                                tb_print_dumb_node(NULL, un2);
+                                printf(", %d)\n", USERI(&un->users[k]));
+                                #endif
+
+                                set_input(f, un2, old_phi, USERI(&un->users[k]));
+                            } else {
+                                k += 1;
+                            }
+                        }
+
+                        set_input(f, old_phi, cloned[un->gvn], 1);
+                        set_input(f, old_phi, un, 2);
+                    }
                 } else {
                     j += 1;
                 }
@@ -691,6 +724,8 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
 
 bool tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop opts", NULL);
+    tb_print(f);
+
     bool progress = false;
 
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
@@ -1006,6 +1041,7 @@ bool tb_opt_loops(TB_Function* f) {
                     // loads with control deps on the loop's body can also
                     // safe once you're guarenteed to run at least once (ZTC)
                     loop_hoist_ops(f, into_loop2, into_loop, header);
+                    tb_print_dumb(f);
                     // since everything in the original header BB was cloned, there's two versions and
                     // when we're using these values past the loop exit, we need to insert a phi to resolve
                     // these conflicting definitions.
@@ -1032,7 +1068,7 @@ bool tb_opt_loops(TB_Function* f) {
                                 TB_Node* bb = ctx.ctrl[un->gvn];
                                 TB_LoopTree* use_loop = nl_table_get(&ctx.loop_map, bb);
 
-                                if (use_loop == NULL || bb != loop->header) {
+                                if (loop != use_loop && (use_loop == NULL || bb != loop->header)) {
                                     int flavor = loop_inside(loop, use_loop) ? 1 : 0;
 
                                     // we don't "escape" if it's just the loop phis being used in the loop body
@@ -1168,6 +1204,9 @@ bool tb_opt_loops(TB_Function* f) {
             }
         }
     }
+
+    tb_print(f);
+    __debugbreak();
 
     #if 1
     // Run SLP on each loop (+ the main body)
