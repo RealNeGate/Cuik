@@ -974,6 +974,13 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
 
     // float oddities: regardless of the comparison, they'll always be false if a NaN is involved.
     if (dt.type == TB_TAG_F32) {
+        if (a->tag == LATTICE_FLTCON32 && b->tag == LATTICE_FLTCON32) {
+            if (n->type == TB_CMP_EQ) { return a->_f32 == b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_NE) { return a->_f32 != b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_FLT) { return a->_f32 < b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_FLE) { return a->_f32 <= b->_f32 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+        }
+
         if (lattice_at_least(f, a, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
         if (lattice_at_least(f, b, &NAN32_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
 
@@ -981,6 +988,13 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             eq_id = false;
         }
     } else if (dt.type == TB_TAG_F64) {
+        if (a->tag == LATTICE_FLTCON64 && b->tag == LATTICE_FLTCON64) {
+            if (n->type == TB_CMP_EQ) { return a->_f64 == b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_NE) { return a->_f64 != b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_FLT) { return a->_f64 < b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+            if (n->type == TB_CMP_FLE) { return a->_f64 <= b->_f64 ? &TRUE_IN_THE_SKY : &FALSE_IN_THE_SKY; }
+        }
+
         if (lattice_at_least(f, a, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
         if (lattice_at_least(f, b, &NAN64_IN_THE_SKY)) { return &FALSE_IN_THE_SKY; }
 

@@ -317,6 +317,23 @@ static bool loop_inside(TB_LoopTree* a, TB_LoopTree* b) {
     return a == b;
 }
 
+static void replace_uncloned_refs(TB_Function* f, TB_Node** cloned, TB_Node* n, TB_Node* target) {
+    for (size_t i = 0; i < n->user_count;) {
+        TB_Node* un = USERN(&n->users[i]);
+        if (!cloned[un->gvn] && un != n && un->type != TB_CALLGRAPH) {
+            #if TB_OPTDEBUG_LOOP
+            printf("     ROTATE(");
+            tb_print_dumb_node(NULL, un);
+            printf(", %d, %%%u)\n", USERI(&n->users[i]), target->gvn);
+            #endif
+
+            set_input(f, un, target, USERI(&n->users[i]));
+        } else {
+            i += 1;
+        }
+    }
+}
+
 // returns the cloned loop header (with no preds)
 static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t cloned_n, TB_Node** cloned, TB_Node* header, TB_Node* latch) {
     TB_Function* f = ctx->f;
@@ -451,47 +468,58 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
                     #if TB_OPTDEBUG_LOOP
                     printf("   USER(");
                     tb_print_dumb_node(NULL, un);
-                    printf(", %d)\n", USERI(&old_phi->users[j]));
+                    printf(", %d, %%%u)\n", USERI(&old_phi->users[j]), next_val->gvn);
                     #endif
 
                     set_input(f, un, next_val, USERI(&old_phi->users[j]));
+                    TB_Node* next_val_base = is_proj(next_val) ? next_val->inputs[0] : next_val;
 
                     // any cyclic refs are immediately replaced here are
                     // replaced by pointing to the old_phi
-                    bool cycle = false;
-                    FOR_N(j, 0, next_val->input_count) {
-                        TB_Node* in = next_val->inputs[j];
-                        if (in == un) {
+                    TB_Node* cycle = NULL;
+                    FOR_N(j, 0, next_val_base->input_count) {
+                        TB_Node* in = next_val_base->inputs[j];
+                        if (in == NULL) { continue; }
+
+                        TB_Node* base = is_proj(in) ? in->inputs[0] : in;
+                        if (base == un) {
                             #if TB_OPTDEBUG_LOOP
                             printf("     CYCLE(");
-                            tb_print_dumb_node(NULL, next_val);
-                            printf(", %zu)\n", j);
+                            tb_print_dumb_node(NULL, next_val_base);
+                            printf(", %zu, %%%u)\n", j, old_phi->gvn);
                             #endif
 
-                            set_input(f, next_val, old_phi, j);
-                            cycle = true;
+                            set_input(f, next_val_base, old_phi, j);
+                            if (in != base) {
+                                // if we rotated a tuple, it's possible there's a control
+                                // phi, there's never two paths here because then the loop
+                                // wouldn't be canonically natural.
+                                TB_Node* next = cfg_next_control0(base);
+                                if (next) {
+                                    TB_Node* z = next_val_base->inputs[0];
+                                    if (is_proj(z)) { z = z->inputs[0]; }
+                                    set_input(f, z, header, 0);
+
+                                    TB_ASSERT(cfg_is_cproj(next));
+                                    set_input(f, base, header->inputs[1], 0);
+                                    set_input(f, header, next, 1);
+                                }
+                            }
+                            cycle = in;
                         }
                     }
 
                     if (cycle) {
                         // any uncloned refs of "un" refer to the old phi now
-                        for (size_t k = 0; k < un->user_count;) {
-                            TB_Node* un2 = USERN(&un->users[k]);
-                            if (!cloned[un2->gvn] && un2 != un) {
-                                #if TB_OPTDEBUG_LOOP
-                                printf("     ROTATE(");
-                                tb_print_dumb_node(NULL, un2);
-                                printf(", %d)\n", USERI(&un->users[k]));
-                                #endif
-
-                                set_input(f, un2, old_phi, USERI(&un->users[k]));
-                            } else {
-                                k += 1;
-                            }
+                        if (un->dt.type == TB_TAG_TUPLE) {
+                            TB_ASSERT(cycle->inputs[0] == un);
+                            replace_uncloned_refs(f, cloned, cycle, old_phi);
+                        } else {
+                            replace_uncloned_refs(f, cloned, un, old_phi);
                         }
 
-                        set_input(f, old_phi, cloned[un->gvn], 1);
-                        set_input(f, old_phi, un, 2);
+                        set_input(f, old_phi, cloned[cycle->gvn], 1);
+                        set_input(f, old_phi, cycle, 2);
                     }
                 } else {
                     j += 1;
