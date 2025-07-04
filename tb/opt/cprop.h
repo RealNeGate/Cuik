@@ -601,11 +601,11 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
                 CProp_Node* y_node = cprop->nodes[y->gvn];
                 if (USERI(u) != i) { continue; }
 
-                // follow the edge to the leader
-                if (y_node->leader) { continue; }
-                // y_node = y_node->leader;
-                // }
-                // y = y_node->n;
+                // don't follow follower edges
+                if (y_node->leader) {
+                    push_cprop(f, cprop, y);
+                    continue;
+                }
 
                 bool split = true;
                 if (lattice_is_top_or_constant(y_node->partition->type)) {
@@ -682,7 +682,6 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
 int tb_opt_cprop(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
     cuikperf_region_start("optimistic", NULL);
-    tb_print(f);
 
     #if TB_OPTDEBUG_STATS
     // our rate is measured against our time complexity "n * log(n)"
@@ -820,6 +819,17 @@ int tb_opt_cprop(TB_Function* f) {
             continue;
         }
 
+        /*if (cfg_is_region(n)) {
+            FOR_N(j, 0, n->input_count) {
+                printf("N%d -> N%d\n", n->inputs[j]->gvn, n->gvn);
+            }
+        } else if (cfg_is_cproj(n)) {
+            int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+            printf("N%d -> N%d [label=\"%d\"]\n", n->inputs[0]->gvn, n->gvn, index);
+        } else if (cfg_is_control(n)) {
+            printf("N%d -> N%d\n", n->inputs[0]->gvn, n->gvn);
+        }*/
+
         TB_Node* k = try_as_const(f, n, latuni_get(f, n));
         if (k != NULL) {
             TB_OPTDEBUG(STATS)(inc_nums(f->stats.opto_constants, n->type));
@@ -835,9 +845,6 @@ int tb_opt_cprop(TB_Function* f) {
 
         TB_OPTDEBUG(SCCP)(printf("\n"));
     }
-
-    tb_print(f);
-    __debugbreak();
 
     tb_arena_clear(&f->tmp_arena);
     cuikperf_region_end();

@@ -298,12 +298,18 @@ static void loop_set_ctrl(LoopOpt* ctx, TB_Node* n, TB_Node* new_ctrl) {
 
 // control dependence on the loop body can be moved to the ZTC, this allows for the hoisting of
 // loads since there's now a safe location outside of the loop where they can land.
-static void loop_hoist_ops(TB_Function* f, TB_Node* ctrl, TB_Node* earlier, TB_Node* header) {
+static void loop_hoist_ops(TB_Function* f, TB_Node* ctrl, TB_Node* earlier) {
     for (size_t i = 0; i < ctrl->user_count;) {
         TB_Node* un = USERN(&ctrl->users[i]);
         int ui      = USERI(&ctrl->users[i]);
-        if (ui == 0 && un != header) {
-            set_input(f, un, tb_node_has_mem_out(un) ? header : earlier, 0);
+        if (ui == 0 && !cfg_is_control(un) && un->type != TB_PHI) {
+            #if TB_OPTDEBUG_LOOP
+            printf("   HOIST(");
+            tb_print_dumb_node(NULL, un);
+            printf(") => %%%u\n", earlier->gvn);
+            #endif
+
+            set_input(f, un, earlier, 0);
         } else {
             i += 1;
         }
@@ -430,7 +436,6 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             printf("\n");
             #endif
 
-            tb_print_dumb(f);
             subsume_node(f, new_phi, old_phi->inputs[1]);
             cloned[old_phi->gvn] = old_phi->inputs[1];
 
@@ -752,7 +757,6 @@ void tb_compute_synthetic_loop_freq(TB_Function* f, TB_CFG* cfg) {
 
 bool tb_opt_loops(TB_Function* f) {
     cuikperf_region_start("loop opts", NULL);
-    tb_print(f);
 
     bool progress = false;
 
@@ -1068,8 +1072,8 @@ bool tb_opt_loops(TB_Function* f) {
                     }
                     // loads with control deps on the loop's body can also
                     // safe once you're guarenteed to run at least once (ZTC)
-                    loop_hoist_ops(f, into_loop2, into_loop, header);
-                    tb_print_dumb(f);
+                    loop_hoist_ops(f, header, into_loop);
+                    loop_hoist_ops(f, into_loop2, into_loop);
                     // since everything in the original header BB was cloned, there's two versions and
                     // when we're using these values past the loop exit, we need to insert a phi to resolve
                     // these conflicting definitions.
@@ -1090,7 +1094,7 @@ bool tb_opt_loops(TB_Function* f) {
                             TB_Node* un = USERN(&n->users[i]);
                             int ui      = USERI(&n->users[i]);
 
-                            if (un->gvn < snapshot_count) {
+                            if (un->gvn < snapshot_count && un->type != TB_CALLGRAPH) {
                                 // if it's not within the loop (including the kids), it's used
                                 // after the loop which means it should refer to the "new_phi"
                                 TB_Node* bb = ctx.ctrl[un->gvn];
@@ -1232,9 +1236,6 @@ bool tb_opt_loops(TB_Function* f) {
             }
         }
     }
-
-    tb_print(f);
-    __debugbreak();
 
     #if 1
     // Run SLP on each loop (+ the main body)
