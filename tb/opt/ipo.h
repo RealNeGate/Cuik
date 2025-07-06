@@ -101,6 +101,7 @@ static SizeClass classify_size(TB_Function* f, TB_Worklist* ws) {
 
     // find all nodes
     CUIK_TIMED_BLOCK("push all") {
+        worklist_clear(ws);
         worklist_push(ws, f->root_node);
         for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
             TB_Node* n = ws->items[i];
@@ -109,7 +110,6 @@ static SizeClass classify_size(TB_Function* f, TB_Worklist* ws) {
     }
 
     int hist[256] = { 0 };
-    // tb_print_dumb(f);
 
     // clone all nodes in kid into f (GVN while we're at it)
     TB_Node* n;
@@ -130,6 +130,8 @@ static SizeClass classify_size(TB_Function* f, TB_Worklist* ws) {
     } else if (weighted_sum >= 20) {
         size_class = SIZE_SMALL_MED;
     }
+
+    TB_OPTDEBUG(INLINE3)(printf("classify_size(%s) = %d\n", f->super.name, weighted_sum));
 
     cuikperf_region_end();
     return size_class;
@@ -202,8 +204,6 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
 
 static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Node* call_site, TB_Function* kid);
 bool tb_module_ipo(TB_Module* m) {
-    return false;
-
     CUIK_TIMED_BLOCK("resize barrier") {
         symbolhs_resize_barrier(&m->symbols);
     }
@@ -252,6 +252,15 @@ bool tb_module_ipo(TB_Module* m) {
     // we've got our bottom up ordering on the worklist... start trying to inline callsites
     bool progress = false;
 
+    // IPO {
+    //   SCC
+    //   forever {
+    //     bottom-up inlining (makes dirty functions)
+    //     re-opt dirty functions
+    //       edit SCC
+    //     }
+    //   }
+    // }
     TB_OPTDEBUG(INLINE)(printf("BOTTOM-UP ORDER:\n"));
     FOR_N(i, 0, ipo.ws_cnt) {
         TB_Function* f = ipo.ws[i];
@@ -299,6 +308,13 @@ bool tb_module_ipo(TB_Module* m) {
                     TB_OPTDEBUG(INLINE)(printf("     KILL!\n"));
                     tb_function_destroy(target);
                 }
+
+                // re-evaluate our code size
+                SizeClass new_size = classify_size(f, &ws);
+                if (size != new_size) {
+                    TB_OPTDEBUG(INLINE)(printf("  -> grown to %s\n", size_strs[new_size]));
+                    ipo.size_classes[f->uid] = size = new_size;
+                }
             }
         }
     }
@@ -307,96 +323,68 @@ bool tb_module_ipo(TB_Module* m) {
     return progress;
 }
 
-static TB_Node* inline_clone_node(TB_Function* f, TB_Node* call_site, TB_Node** clones, TB_Node* n) {
-    // special cases
-    if (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT) {
-        // this is a parameter, just hook it directly to the inputs of
-        // the callsite.
-        //
-        // 0:ctrl, 1:mem, 2:rpc, 3... params
-        int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-        clones[n->gvn] = call_site->inputs[index];
-
-        TB_ASSERT(clones[n->gvn]);
-        return clones[n->gvn];
-    } else if (clones[n->gvn] != NULL) {
-        return clones[n->gvn];
-    }
-
-    size_t extra = extra_bytes(n);
-    TB_Node* cloned = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
-
-    // clone extra data (i hope it's that easy lol)
-    memcpy(cloned->extra, n->extra, extra);
-    clones[n->gvn] = cloned;
-
-    // fill cloned edges
-    FOR_N(i, 0, n->input_count) if (n->inputs[i]) {
-        TB_Node* in = inline_clone_node(f, call_site, clones, n->inputs[i]);
-
-        cloned->inputs[i] = in;
-        add_user(f, cloned, in, i);
-    }
-
-    #if TB_OPTDEBUG_INLINE
-    // printf("CLONE "), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, cloned), printf("\n");
-    #endif
-
-    return cloned;
-
-    /* TB_Node* k = tb__gvn(f, cloned, extra);
-    if (k != cloned) {
-        #if TB_OPTDEBUG_INLINE
-        printf(" => GVN");
-        #endif
-    }
-    printf("\n");
-    return  = cloned; */
-}
-
 static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Node* call_site, TB_Function* kid) {
     TB_ArenaSavepoint sp = tb_arena_save(arena);
     TB_Node** clones = tb_arena_alloc(arena, kid->node_count * sizeof(TB_Node*));
     memset(clones, 0, kid->node_count * sizeof(TB_Node*));
 
-    // find all nodes
-    {
-        worklist_push(ws, kid->root_node);
-        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-            TB_Node* n = ws->items[i];
-            FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
-        }
-    }
+    // find nodes & alloc clones
+    worklist_clear(ws);
+    worklist_push(ws, kid->root_node);
+    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+        TB_Node* n = ws->items[i];
+        FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
 
-    // clone all nodes in kid into f (GVN while we're at it)
-    TB_Node* n;
-    while (n = worklist_pop(ws), n) {
-        inline_clone_node(f, call_site, clones, n);
-    }
+        if (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT) {
+            // this is a parameter, just hook it directly to the inputs of
+            // the callsite.
+            //
+            // 0:ctrl, 1:mem, 2:rpc, 3... params
+            int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+            TB_ASSERT(call_site->inputs[index]);
+            clones[n->gvn] = call_site->inputs[index];
+        } else {
+            // allocate new nodes here, we'll fill in the use-def edges later
+            size_t extra = extra_bytes(n);
+            TB_Node* cloned = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
 
-    {
-        // TODO(NeGate): region-ify the exit point
-        TB_Node* kid_root = clones[kid->root_node->gvn];
-        TB_ASSERT(kid_root->type == TB_ROOT);
-        TB_ASSERT(kid_root->input_count == 2);
+            // clone extra data (i hope it's that easy lol)
+            memcpy(cloned->extra, n->extra, extra);
+            clones[n->gvn] = cloned;
 
-        TB_Node* ret = kid_root->inputs[1];
-        TB_ASSERT(ret->type == TB_RETURN);
+            // points to root? we can GVN immediately
+            if (n->input_count == 1 && n->inputs[0] == kid->root_node) {
+                cloned->inputs[0] = f->root_node;
+                add_user(f, cloned, f->root_node, 0);
 
-        for (size_t i = 0; i < call_site->user_count;) {
-            TB_Node* un = USERN(&call_site->users[i]);
-            if (is_proj(un)) {
-                int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
-                if (index >= 2) { index += 1; }
-
-                subsume_node(f, un, ret->inputs[index]);
-            } else {
-                i += 1;
+                clones[n->gvn] = tb__gvn(f, cloned, extra);
             }
         }
+    }
 
-        subsume_node(f, kid_root, f->root_node);
-        tb_kill_node(f, call_site);
+    // fill in the use-def edges
+    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+        TB_Node* n = ws->items[i];
+        TB_Node* k = clones[n->gvn];
+        if (
+            (n->input_count == 1 && n->inputs[0] == kid->root_node) ||
+            (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT)
+        ) {
+            #if TB_OPTDEBUG_INLINE2
+            printf("REDIRECT "), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, k), printf("\n");
+            #endif
+        } else {
+            // fill cloned edges
+            FOR_N(j, 0, n->input_count) if (n->inputs[j]) {
+                TB_Node* in = clones[n->inputs[j]->gvn];
+                k->inputs[j] = in;
+                add_user(f, k, in, j);
+            }
+
+            #if TB_OPTDEBUG_INLINE2
+            printf("CLONE "), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, k), printf("\n");
+            #endif
+        }
     }
 
     // kill edge in callgraph
@@ -418,5 +406,31 @@ static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Nod
         add_input_late(f, callgraph, kid_callgraph->inputs[i]);
     }
     tb_kill_node(f, kid_callgraph);
+
+    {
+        // TODO(NeGate): region-ify the exit point
+        TB_Node* kid_root = clones[kid->root_node->gvn];
+        TB_ASSERT(kid_root->type == TB_ROOT);
+        TB_ASSERT(kid_root->input_count == 2);
+
+        TB_Node* ret = kid_root->inputs[1];
+        TB_ASSERT(ret->type == TB_RETURN);
+
+        for (size_t i = 0; i < call_site->user_count;) {
+            TB_Node* un = USERN(&call_site->users[i]);
+            if (is_proj(un)) {
+                int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
+                if (index >= 2) { index += 1; }
+
+                subsume_node(f, un, ret->inputs[index]);
+            } else {
+                i += 1;
+            }
+        }
+        tb_kill_node(f, ret);
+
+        subsume_node(f, kid_root, f->root_node);
+        tb_kill_node(f, call_site);
+    }
     tb_arena_restore(arena, sp);
 }

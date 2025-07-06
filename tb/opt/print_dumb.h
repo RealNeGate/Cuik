@@ -243,6 +243,10 @@ void tb_print_dumb(TB_Function* f) {
 }
 
 void tb_print_dumb_fancy(TB_Function* f) {
+    if (f->super.tag != TB_SYMBOL_FUNCTION) {
+        return;
+    }
+
     printf("====== DUMP %-20s ======\n", f->super.name);
 
     TB_Worklist ws = { 0 };

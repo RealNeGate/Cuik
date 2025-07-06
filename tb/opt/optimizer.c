@@ -1250,6 +1250,10 @@ static void* zalloc(size_t s) {
 }
 
 bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
+    if (f->super.tag != TB_SYMBOL_FUNCTION) {
+        return false;
+    }
+
     TB_ASSERT_MSG(f->root_node, "missing root node");
     f->worklist = ws;
 
@@ -1494,6 +1498,8 @@ int tb_opt_peeps(TB_Function* f) {
     f->stats.solver_n = f->node_count;
     f->stats.solver_big_o = f->node_count;
     #endif
+
+    tb_print(f);
 
     CUIK_TIMED_BLOCK("peephole") {
         TB_Node* n;

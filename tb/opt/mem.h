@@ -42,6 +42,8 @@ typedef struct {
 } MemorySet;
 
 typedef struct MemoryState {
+    int refs;
+
     int order;
     TB_Node* start;
     struct MemoryState* loop_head;
@@ -203,6 +205,24 @@ static void print_memory_state(NL_Table* non_aliasing) {
     }
 }
 
+static void print_var_state(LocalSplitter* restrict ctx, MemoryState* state) {
+    printf("[");
+    FOR_N(i, 0, 1 + ctx->local_count) {
+        if (i == 0) {
+            printf("ROOT:");
+        } else {
+            printf("%%%u:", ctx->renames[i - 1].addr->gvn);
+        }
+
+        if (state->latest[i]) {
+            printf("%%%u ", state->latest[i]->gvn);
+        } else {
+            printf("___ ");
+        }
+    }
+    printf("]\n");
+}
+
 static void merge_memory(TB_Function* f, NL_Table* non_aliasing, NL_Table* other) {
     /*printf("  ");
     print_memory_state(non_aliasing);
@@ -325,6 +345,10 @@ static MemoryState* start_of_memory_sese(NL_Table* sese2set, TB_Node* n) {
             return state;
         }
 
+        // can't walk past phis, that means
+        // we missed a "block"
+        TB_ASSERT(n->type != TB_PHI);
+
         int mem_slot = 1;
         if (is_proj(n)) { mem_slot = 0; }
         else if (n->type == TB_MERGEMEM) { mem_slot = 2; }
@@ -372,6 +396,12 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
 
                 phis[i] = latest[1 + i] = new_phi;
                 TB_OPTDEBUG(MEM2REG)(printf("  PHI %%%u\n", new_phi->gvn));
+
+                if (ctx->renames[i].is_mem) {
+                    // they're all part of the same set
+                    state->refs += 1;
+                    nl_table_put(sese2set, new_phi, state);
+                }
             }
 
             state->phis = phis;
@@ -385,6 +415,11 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                     if (state->phis[i]) {
                         if (state->phis[i]->dt.type == TB_TAG_VOID && pred->latest[1 + i]) {
                             state->phis[i]->dt = pred->latest[1 + i]->dt;
+                        }
+
+                        if (pred->latest[1 + i] == NULL) {
+                            TB_ASSERT(state->phis[i]->dt.type != TB_TAG_VOID);
+                            pred->latest[1 + i] = make_poison(f, state->phis[i]->dt);
                         }
 
                         set_input(f, state->phis[i], pred->latest[1 + i], j);
@@ -465,6 +500,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
     printf("\nSESE %d   [ ", state->order);
     print_memory_state(non_aliasing);
     printf("]\n");
+    print_var_state(ctx, state);
     #endif
 
     for (;;) {
@@ -623,7 +659,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                         }
 
                         if (end->inputs[1] == curr) {
-                            size_t j = 2;
+                            size_t j = 3;
                             FOR_N(i, 0, ctx->local_count) if (ctx->renames[i].is_mem) {
                                 TB_ASSERT(latest[1 + i] != NULL && "TODO we should place a poison?");
                                 set_input(f, curr, latest[1 + i], j++);
@@ -728,6 +764,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
     printf("  FINAL [ ");
     print_memory_state(non_aliasing);
     printf("]\n");
+    print_var_state(ctx, state);
     #endif
 
     // Copy out the memory state
@@ -763,13 +800,14 @@ static void postorder_memory(TB_Function* f, NL_Table* sese2set, TB_Worklist* se
     }
 
     MemoryState* state = tb_arena_alloc(&f->tmp_arena, sizeof(MemoryState) + ((1 + local_count) * sizeof(TB_Node*)));
-    *state = (MemoryState){ .order = dyn_array_length(sese_worklist->items), .start = start };
+    *state = (MemoryState){ .refs = 1, .order = dyn_array_length(sese_worklist->items), .start = start };
     state->non_aliasing = nl_table_alloc(4);
     FOR_N(i, 0, 1 + local_count) {
         state->latest[i] = NULL;
     }
     nl_table_put(sese2set, start, state);
 
+    printf("SESE %d, %%%u -- %%%u\n", state->order, start->gvn, end->gvn);
     dyn_array_put(sese_worklist->items, start);
 }
 
@@ -910,7 +948,7 @@ int tb_opt_locals(TB_Function* f) {
             latest[0] = f->params[1];
         }
 
-        // tb_print(f);
+        tb_print(f);
         // tb_print_dumb(f);
 
         TB_Worklist sese_worklist;
@@ -987,10 +1025,12 @@ int tb_opt_locals(TB_Function* f) {
         CUIK_TIMED_BLOCK("teardown") {
             nl_table_for(set, &sese2set) {
                 MemoryState* state = set->v;
-                nl_table_for(e, &state->non_aliasing) {
-                    cuik_free(e->v);
+                if (--state->refs == 0) {
+                    nl_table_for(e, &state->non_aliasing) {
+                        cuik_free(e->v);
+                    }
+                    nl_table_free(state->non_aliasing);
                 }
-                nl_table_free(state->non_aliasing);
             }
             nl_table_free(non_aliasing);
             nl_table_free(sese2set);
@@ -1025,7 +1065,8 @@ int tb_opt_locals(TB_Function* f) {
         }
 
         // tb_print_dumb(f);
-        // tb_print(f);
+        tb_print(f);
+        __debugbreak();
 
         worklist_free(&sese_worklist);
     }

@@ -671,6 +671,10 @@ static void print_bb(PrinterCtx* ctx, TB_Worklist* ws, TB_BasicBlock* bb) {
 }
 
 void tb_print(TB_Function* f) {
+    if (f->super.tag != TB_SYMBOL_FUNCTION) {
+        return;
+    }
+
     size_t old_scheduled_n = f->scheduled_n;
     TB_BasicBlock** old_scheduled = f->scheduled;
 

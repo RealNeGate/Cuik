@@ -143,6 +143,10 @@ static void local_opt_func(TB_Function* f, void* arg) {
         ir_worklist = tb_worklist_alloc();
     }
 
+    if (((TB_Symbol*) f)->tag == TB_SYMBOL_DEAD) {
+        return;
+    }
+
     Cuik_DriverArgs* args = arg;
     assert(args->optimize);
 
@@ -166,6 +170,10 @@ static void apply_func(TB_Function* f, void* arg) {
     if (ir_worklist == NULL) {
         // we just leak these btw, i don't care yet
         ir_worklist = tb_worklist_alloc();
+    }
+
+    if (((TB_Symbol*) f)->tag == TB_SYMBOL_DEAD) {
+        return;
     }
 
     Cuik_DriverArgs* args = arg;
@@ -372,7 +380,7 @@ static void ld_invoke(TPool* tp, BuildStepInfo* info) {
                     cuiksched_per_function(tp, s->ld.cu, mod, args, local_opt_func);
                     log_debug("Interprocedural opts...");
                 }
-            } while (false);//tb_module_ipo(mod));
+            } while (tb_module_ipo(mod));
         }
 
         if (args->emit_ir) {
