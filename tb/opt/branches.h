@@ -174,52 +174,7 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
 
             TB_InductionVar var;
             if (closed && find_latch_indvar(n, latch, &var) && !var.backwards) {
-                printf("\n");
-                tb_print(f);
-
-                // construct the exact trip count, we'll integrate all our closed-form equations based
-                // on this:
-                //
-                // range = end - start
-                Lattice* start = latuni_get(f, var.phi->inputs[1]);
-                TB_Node* range = NULL;
-                if (var.end_cond) {
-                    if (lattice_is_izero(start)) {
-                        range = var.end_cond;
-                    } else {
-                        range = make_int_binop(f, TB_SUB, var.end_cond, var.phi->inputs[1]);
-                    }
-                } else {
-                    // we can probably fold this case
-                    Lattice* end = lattice_int_const(f, var.end_const);
-                    Lattice* sub = value_arith_raw(f, TB_SUB, var.phi->dt, n, end, start, false);
-                    if (lattice_is_iconst(sub)) {
-                        range = make_int_node(f, var.phi->dt, sub->_int.min);
-                    } else {
-                        TB_Node* end_cond = make_int_node(f, var.phi->dt, end->_int.min);
-                        range = make_int_binop(f, TB_SUB, end_cond, var.phi->inputs[1]);
-                    }
-                }
-
-                // if we're dealing with "<" then we wanna round our range up
-                Lattice* pad = lattice_int_const(f, var.step - (var.pred == IND_SLT || var.pred == IND_ULT ? 1 : 0));
-                if (!lattice_is_izero(pad)) {
-                    Lattice* range_ty = latuni_get(f, range);
-                    Lattice* add = value_arith_raw(f, TB_ADD, var.phi->dt, n, range_ty, pad, false);
-                    if (lattice_is_iconst(add)) {
-                        range = make_int_node(f, var.phi->dt, add->_int.min);
-                    } else {
-                        TB_Node* addend = make_int_node(f, var.phi->dt, pad->_int.min);
-                        range = make_int_binop(f, TB_ADD, range, addend);
-                    }
-                }
-
-                bool is_signed = var.pred == IND_SLT || var.pred == IND_SLE;
-                TB_Node* trip_node = range;
-                if (var.step != 1) {
-                    TB_Node* step = make_int_node(f, var.phi->dt, var.step);
-                    trip_node = make_int_binop(f, is_signed ? TB_SDIV : TB_UDIV, trip_node, step);
-                }
+                TB_Node* trip_node = generate_loop_trip_count(f, var);
 
                 // replace with closed-form equations
                 for (size_t i = 0; i < n->user_count;) {
@@ -250,8 +205,6 @@ static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
                 }
 
                 n->type = TB_NATURAL_LOOP;
-                printf("\n\n");
-                tb_print(f);
                 return n;
             }
         }
@@ -612,28 +565,95 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     Lattice* l = tb_arena_alloc(arena, size);
     *l = (Lattice){ LATTICE_TUPLE, ._elem_count = c->proj_count };
 
+    // non-NULL when we need to update the IPSCCP type
+    TB_Function* callee = NULL;
+
     // control just flows through
     l->elems[0] = latuni_get(f, n->inputs[0]);
-
     if (l->elems[0] == &TOP_IN_THE_SKY) {
         FOR_N(i, 1, c->proj_count) {
             l->elems[i] = &TOP_IN_THE_SKY;
         }
     } else {
-        FOR_N(i, 1, c->proj_count) {
-            l->elems[i] = &BOT_IN_THE_SKY;
-        }
+        Lattice* target = latuni_get(f, n->inputs[2]);
+        Lattice* rets = NULL;
+        if (
+            f->super.module->during_ipsccp &&
+            target->tag == LATTICE_PTRCON &&
+            target->_ptr->tag == TB_SYMBOL_FUNCTION
+        ) {
+            // the IPSCCP rets are stored in the shape of the root node's type
+            callee = (TB_Function*) target->_ptr;
+            rets = callee->ipsccp_ret;
 
-        FOR_USERS(u, n) {
-            if (is_proj(USERN(u))) {
-                int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-                if (index > 0) { l->elems[index] = lattice_from_dt(f, USERN(u)->dt); }
+            if (rets) {
+                TB_ASSERT(rets->_elem_count >= c->proj_count);
+                FOR_N(i, 0, c->proj_count) {
+                    // skip the RPC
+                    l->elems[i] = rets->elems[i + (i >= 2 ? 1 : 0)];
+                }
+            } else {
+                // not ready yet
+                FOR_N(i, 1, c->proj_count) {
+                    l->elems[i] = &TOP_IN_THE_SKY;
+                }
+            }
+        } else {
+            FOR_N(i, 1, c->proj_count) {
+                l->elems[i] = &BOT_IN_THE_SKY;
+            }
+
+            FOR_USERS(u, n) {
+                if (is_proj(USERN(u))) {
+                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                    if (index > 0) { l->elems[index] = lattice_from_dt(f, USERN(u)->dt); }
+                }
             }
         }
     }
 
     Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
     if (k != l) { tb_arena_free(arena, l, size); }
+
+    // update the callee's "reachable" arguments
+    if (callee && k->elems[0] == &LIVE_IN_THE_SKY) {
+        size_t elem_count = 3 + callee->prototype->param_count;
+        size_t size = sizeof(Lattice) + elem_count*sizeof(Lattice*);
+        Lattice* args = tb_arena_alloc(arena, size);
+        *args = (Lattice){ LATTICE_TUPLE, ._elem_count = elem_count };
+
+        args->elems[0] = latuni_get(f, n->inputs[0]);
+        args->elems[1] = latuni_get(f, n->inputs[1]);
+        args->elems[2] = &XNULL_IN_THE_SKY; // RPC is at least not NULL
+        FOR_N(i, 3, elem_count) {
+            args->elems[i] = latuni_get(f, n->inputs[i]);
+        }
+
+        // intern & free
+        Lattice* k = latticehs_intern(&f->super.module->lattice_elements, args);
+        if (k != args) { tb_arena_free(arena, l, size); args = k; }
+
+        // move down, unless we're already there
+        Lattice* old = atomic_load_explicit(&callee->ipsccp_args, memory_order_acquire);
+        do {
+            args = old ? lattice_meet(f, args, old) : args;
+        } while (old != args && !atomic_compare_exchange_strong(&callee->ipsccp_args, &old, args));
+
+        if (old != args) {
+            #if 0
+            mtx_lock(&aaa);
+            printf("%s: ARGS: ", callee->super.name);
+            print_lattice(old ? old : &TOP_IN_THE_SKY);
+            printf(" => ");
+            print_lattice(args);
+            printf("\n");
+            mtx_unlock(&aaa);
+            #endif
+        }
+
+        push_ipsccp_job(f->super.module, callee);
+    }
+
     return k;
 }
 
@@ -754,4 +774,5 @@ static TB_Node* identity_phi(TB_Function* f, TB_Node* n) {
     }
     return same;
 }
+
 

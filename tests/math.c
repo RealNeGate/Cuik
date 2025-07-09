@@ -81,7 +81,7 @@ void stbi__refill_buffer(stbi__context *s);
     }
 }*/
 
-#if 1
+#if 0
 stbi_uc stbi__get8(stbi__context *s);
 #else
 static stbi_uc stbi__get8(stbi__context *s)
@@ -106,14 +106,20 @@ static int stbi__err(const char *str)
 int sample(stbi__context *s, int pal_len) {
     stbi_uc palette[1024];
     for (int i=0; i < pal_len; ++i) {
+        palette[i*4+3] = 0;
+
         palette[i*4+0] = stbi__get8(s);
         palette[i*4+1] = stbi__get8(s);
         palette[i*4+2] = stbi__get8(s);
         palette[i*4+3] = 255;
     }
 
+    #ifdef __CUIK__
     __builtin_blackhole(palette);
     return 0;
+    #else
+    return (long long) &palette;
+    #endif
 }
 
 extern int pred();
@@ -157,7 +163,7 @@ extern float a[];
 extern float b[];
 
 static void disabled() {
-    #if 1
+    #if 0
     bool foo = false;
     for (int i = 0; i < n && !foo; i++) {
         if (a[i] == 1.0f) {
@@ -169,7 +175,7 @@ static void disabled() {
     if (foo) {
         printf("Yipee!\n");
     }
-    #elif 0
+    #elif 1
     /* for (int i = 0; i < n; i++) {
         a[i] = 2.0f*a[i] + b[i];
     }

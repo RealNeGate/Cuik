@@ -1371,7 +1371,8 @@ typedef enum {
 TB_API TB_FunctionOutput* tb_codegen(TB_Function* f, TB_CodegenRA ra, TB_Worklist* ws, TB_Arena* code_arena, bool emit_asm);
 
 // interprocedural optimizer iter
-TB_API bool tb_module_ipo(TB_Module* m);
+typedef struct TPool TPool;
+TB_API bool tb_module_ipo(TB_Module* m, TPool* pool);
 
 ////////////////////////////////
 // Cooler IR building

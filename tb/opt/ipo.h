@@ -1,3 +1,5 @@
+#include <pool.h>
+#include <futex.h>
 
 // INLINES ALLOWED:
 //   SMALL     + SMALL  = TRUE
@@ -11,7 +13,14 @@ typedef enum {
     SIZE_LARGE,
 } SizeClass;
 
-typedef struct {
+// functions track caller -> callee, we're tracking the opposite
+// relationship for our IPSCCP solver.
+typedef struct CallGraphEdge {
+    struct CallGraphEdge* next;
+    TB_Function* caller;
+} CallGraphEdge;
+
+struct IPOSolver {
     TB_Module* mod;
     NL_HashSet visited;
 
@@ -21,7 +30,9 @@ typedef struct {
 
     SizeClass* size_classes;
     int* ref_count;
-} IPOSolver;
+
+    CallGraphEdge** call_graph;
+};
 
 typedef struct {
     bool on_stack;
@@ -38,6 +49,8 @@ typedef struct {
 
     int index;
 } SCC;
+
+static mtx_t aaa;
 
 static int op_weights[256] = {
     // loops will increase size even if it doesn't generate ops
@@ -202,8 +215,175 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
     return n;
 }
 
+static _Thread_local TB_Worklist* ipo_worklist;
+static void func_opt_task(TPool* tp, void** arg) {
+    TB_Function* f = arg[0];
+    Futex* tracker = arg[1];
+
+    cuikperf_region_start("optimize", f->super.name);
+    if (ipo_worklist == NULL) {
+        // we just leak these btw, i don't care yet
+        ipo_worklist = tb_worklist_alloc();
+    }
+
+    log_debug("OPT: %s: function local optimizer", f->super.name);
+    tb_opt(f, ipo_worklist, false);
+
+    tracker[0] += 1;
+    if (tracker[0] == tracker[1]) { // might be done?
+        futex_signal(&tracker[0]);
+    }
+    cuikperf_region_end();
+}
+
+enum {
+    IPSCCP_STATUS_IDLE,
+
+    // waiting to be processed
+    IPSCCP_STATUS_IN_LIST,
+
+    // it's in the middle of processing, we can't push it onto
+    // the list at this moment else we'll have two tasks on the
+    // same function but we still need to handle the race around
+    // retrying.
+    IPSCCP_STATUS_PROCESSING,
+
+    // if we ask to process a function which is already
+    // processing we'll just ask it to retry immediately.
+    IPSCCP_STATUS_RETRY,
+};
+
+static Lattice* ipsccp_return_type(TB_Function* f) {
+    Lattice* t = &TOP_IN_THE_SKY;
+    if (f->types == NULL) {
+        return &TOP_IN_THE_SKY;
+    }
+
+    TB_Arena* arena = get_permanent_arena(f->super.module);
+    FOR_N(i, 1, f->root_node->input_count) {
+        TB_Node* ret = f->root_node->inputs[i];
+        if (ret->type == TB_RETURN) {
+            Lattice* ctrl = latuni_get(f, ret->inputs[0]);
+            if (ctrl != &LIVE_IN_THE_SKY) {
+                continue;
+            }
+
+            size_t size = sizeof(Lattice) + ret->input_count*sizeof(Lattice*);
+            Lattice* l = tb_arena_alloc(arena, size);
+            *l = (Lattice){ LATTICE_TUPLE, ._elem_count = ret->input_count };
+
+            l->elems[0] = ctrl;
+            FOR_N(i, 1, ret->input_count) {
+                l->elems[i] = latuni_get(f, ret->inputs[i]);
+            }
+
+            // intern & free
+            Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
+            if (k != l) { tb_arena_free(arena, l, size); }
+
+            // meet over all paths
+            t = lattice_meet(f, t, k);
+        }
+    }
+
+    return t;
+}
+
+static void func_sccp_task(TPool* tp, void** arg) {
+    TB_Function* f = arg[0];
+    TB_Module* m = f->super.module;
+
+    if (ipo_worklist == NULL) {
+        // we just leak these btw, i don't care yet
+        ipo_worklist = tb_worklist_alloc();
+    }
+
+    for (;;) {
+        // retry | in_list -> processing
+        f->ipsccp_status = IPSCCP_STATUS_PROCESSING;
+
+        cuikperf_region_start("IPSCCP", f->super.name);
+        Lattice* old_type = ipsccp_return_type(f);
+
+        f->worklist = ipo_worklist;
+        // the temp arena might've been freed, let's restore it
+        if (f->tmp_arena.top == NULL) {
+            tb_arena_create(&f->tmp_arena, "Tmp");
+            TB_ASSERT(f->tmp_arena.top);
+        }
+
+        int progress = tb_opt_cprop(f, true, false);
+
+        tb_arena_destroy(&f->tmp_arena);
+        f->worklist = NULL;
+
+        // update the IPSCCP rets, this value has only one writer at any one time
+        // so we don't need a CAS
+        Lattice* new_type = ipsccp_return_type(f);
+        if (old_type != new_type) {
+            #if 0
+            mtx_lock(&aaa);
+            printf("%s: ", f->super.name);
+            print_lattice(old_type);
+            printf(" => ");
+            print_lattice(new_type);
+            printf("\n");
+            mtx_unlock(&aaa);
+            #endif
+
+            atomic_store_explicit(&f->ipsccp_ret, new_type, memory_order_release);
+            log_debug("OPT: %s: made progress, pushing users!", f->super.name);
+
+            IPOSolver* ipo = m->ipo;
+            for (CallGraphEdge* e = ipo->call_graph[f->uid]; e; e = e->next) {
+                push_ipsccp_job(m, e->caller);
+            }
+        }
+        cuikperf_region_end();
+
+        // processing -> idle, if we lose the only other option is retrying so we do that
+        if (atomic_compare_exchange_strong(&f->ipsccp_status, &(int){ IPSCCP_STATUS_PROCESSING }, IPSCCP_STATUS_IDLE)) {
+            break;
+        }
+    }
+
+    // we're done with the solver now
+    m->ipsccp_tracker[0] += 1;
+    if (m->ipsccp_tracker[0] == m->ipsccp_tracker[1]) {
+        futex_signal(&m->ipsccp_tracker[0]);
+    }
+}
+
+void push_ipsccp_job(TB_Module* m, TB_Function* f) {
+    // either...
+    // * we're not on the list, push to list.
+    // * we're processing, move to retry state.
+    int status = f->ipsccp_status, next;
+    do {
+        if (status == IPSCCP_STATUS_IDLE) {
+            next = IPSCCP_STATUS_IN_LIST;
+        } else if (status == IPSCCP_STATUS_PROCESSING) {
+            next = IPSCCP_STATUS_RETRY;
+        } else {
+            break;
+        }
+    } while (!atomic_compare_exchange_strong(&f->ipsccp_status, &status, next));
+
+    // we've moved into the list? yay!
+    if (status != next && next == IPSCCP_STATUS_IN_LIST) {
+        log_debug("OPT: %s: pushed to IPSCCP worklist", f->super.name);
+        m->ipsccp_tracker[1] += 1;
+
+        void* args[2] = { f };
+        tpool_add_task2(m->ipsccp_pool, func_sccp_task, 2, args);
+    }
+}
+
 static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Node* call_site, TB_Function* kid);
-bool tb_module_ipo(TB_Module* m) {
+bool tb_module_ipo(TB_Module* m, TPool* pool) {
+    cuikperf_region_start("IPO", NULL);
+    mtx_init(&aaa, mtx_plain);
+
     CUIK_TIMED_BLOCK("resize barrier") {
         symbolhs_resize_barrier(&m->symbols);
     }
@@ -213,12 +393,30 @@ bool tb_module_ipo(TB_Module* m) {
     // two main things we wanna know are if something is alive and when to inline (eventually
     // we can incorporate IPSCCP)
     SCC scc = { 0 };
-    scc.arena    = get_temporary_arena(m);
-    nbhs_for(entry, &m->symbols) {
-        TB_Symbol* s = *entry;
-        if (s->tag == TB_SYMBOL_FUNCTION) {
-            ((TB_Function*) s)->uid = scc.fn_count++;
+    scc.arena = get_temporary_arena(m);
+
+    // Run function-local opts and
+    CUIK_TIMED_BLOCK("initial optimize round") {
+        Futex tracker[2] = { 0 };
+        nbhs_for(entry, &m->symbols) {
+            TB_Symbol* s = *entry;
+            if (s->tag == TB_SYMBOL_FUNCTION) {
+                ((TB_Function*) s)->uid = scc.fn_count++;
+
+                void* args[2] = { s, tracker };
+                tracker[1] += 1;
+
+                tpool_add_task2(pool, func_opt_task, 2, args);
+            }
         }
+
+        // finish up our initial round of function-local optimizations
+        int64_t old;
+        while (old = tracker[0], old != tracker[1]) {
+            futex_wait(&tracker[0], old);
+        }
+
+        log_debug("Starting IPO with %"PRId64" functions", tracker[1]);
     }
 
     IPOSolver ipo = { 0 };
@@ -226,8 +424,12 @@ bool tb_module_ipo(TB_Module* m) {
     ipo.ws = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(TB_Function*));
     ipo.size_classes = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(SizeClass));
     ipo.ref_count = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(int));
+    ipo.call_graph = tb_arena_alloc(scc.arena, scc.fn_count * sizeof(CallGraphEdge*));
+    m->ipo = &ipo;
+
     FOR_N(i, 0, scc.fn_count) {
         ipo.ref_count[i] = 0;
+        ipo.call_graph[i] = NULL;
     }
 
     TB_Worklist ws = { 0 };
@@ -249,12 +451,61 @@ bool tb_module_ipo(TB_Module* m) {
         tb_arena_restore(scc.arena, sp);
     }
 
+    CUIK_TIMED_BLOCK("Call graph construction") {
+        FOR_N(i, 0, ipo.ws_cnt) {
+            TB_Function* f = ipo.ws[i];
+            TB_ASSERT(f->super.tag == TB_SYMBOL_FUNCTION);
+
+            // construct call graph
+            TB_Node* callgraph = f->root_node->inputs[0];
+            TB_ASSERT(callgraph->type == TB_CALLGRAPH);
+            FOR_N(i, 1, callgraph->input_count) {
+                TB_Node* call = callgraph->inputs[i];
+                TB_Function* target = static_call_site(call);
+                if (target != NULL) {
+                    CallGraphEdge* edge = tb_arena_alloc(scc.arena, sizeof(CallGraphEdge));
+                    edge->next   = ipo.call_graph[target->uid];
+                    edge->caller = f;
+                    ipo.call_graph[target->uid] = edge;
+                }
+            }
+        }
+    }
+
+    CUIK_TIMED_BLOCK("IPSCCP") {
+        m->during_ipsccp = true;
+        m->ipsccp_pool = pool;
+        m->ipsccp_tracker[0] = m->ipsccp_tracker[1];
+
+        // any entry-point functions will be pushed first
+        nbhs_for(entry, &m->symbols) {
+            TB_Symbol* s = *entry;
+            if (s->tag == TB_SYMBOL_FUNCTION && s->linkage == TB_LINKAGE_PUBLIC) {
+                TB_Function* f = (TB_Function*) s;
+                f->ipsccp_args = lattice_tuple_from_node(f, f->root_node);
+
+                push_ipsccp_job(m, f);
+            }
+        }
+
+        int64_t old;
+        while (old = m->ipsccp_tracker[0], old != m->ipsccp_tracker[1]) {
+            futex_wait(&m->ipsccp_tracker[0], old);
+        }
+        m->during_ipsccp = false;
+    }
+
+    cuikperf_region_end();
+    return true;
+
     // we've got our bottom up ordering on the worklist... start trying to inline callsites
     bool progress = false;
 
     // IPO {
     //   SCC
     //   forever {
+    //     IPSCCP
+    //
     //     bottom-up inlining (makes dirty functions)
     //     re-opt dirty functions
     //       edit SCC
@@ -320,6 +571,9 @@ bool tb_module_ipo(TB_Module* m) {
     }
 
     worklist_free(&ws);
+    cuikperf_region_end();
+    m->ipo = NULL;
+
     return progress;
 }
 

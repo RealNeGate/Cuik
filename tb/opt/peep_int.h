@@ -155,13 +155,11 @@ static uint64_t mulhs(uint64_t u, uint64_t v, int bits) {
     }
 
     TB_ASSERT((bits & (bits - 1)) == 0);
-    int half = bits >> 1;
-    return (u * v) >> half;
+    return (u * v) >> bits;
 }
 
 static bool mul_overflow(uint64_t u, uint64_t v, int bits, int64_t* out) {
     *out = u * v;
-
     uint64_t high = mulhs(u, v, bits);
     return (*out < 0 ? high + 1 : high) != 0;
 }
@@ -186,7 +184,7 @@ static bool will_mul_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattic
     return overflow;
 }
 
-static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, TB_Node* n, Lattice* a, Lattice* b, bool congruent) {
+static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b, bool congruent) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
     int64_t imin = lattice_int_min(bits);
@@ -301,7 +299,7 @@ static Lattice* value_arith(TB_Function* f, TB_Node* n) {
     }
 
     bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
-    return value_arith_raw(f, n->type, n->dt, n, a, b, c);
+    return value_arith_raw(f, n->type, n->dt, a, b, c);
 }
 
 ////////////////////////////////
@@ -733,7 +731,7 @@ static TB_Node* ideal_int_div(TB_Function* f, TB_Node* n) {
         return x;
     } else if (y == -1 && is_signed) {
         // just negate it
-        TB_Node* neg = tb_alloc_node(f, TB_SUB, dt, 2, sizeof(TB_NodeBinopInt));
+        TB_Node* neg = tb_alloc_node(f, TB_SUB, dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, neg, make_int_node(f, dt, 0), 1);
         set_input(f, neg, x, 2);
         return neg;
@@ -926,7 +924,7 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
     TB_DataType dt = n->inputs[1]->dt;
     if (TB_IS_INTEGER_TYPE(dt)) {
         bool c = gcf_is_congruent(f, n->inputs[1], n->inputs[2]);
-        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, NULL, a, b, c);
+        Lattice* cmp = value_arith_raw(f, TB_SUB, dt, a, b, c);
 
         // ok it's really annoying that i have to deal with the "idk bro" case in the middle
         // of each but that's why it looks like this... if you were curious (which you aren't :p)
@@ -1107,17 +1105,14 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
     }
 
     // so long as it doesn't overflow:
-    //   cast(add(a, b)) => add(cast(a), cast(b))
-    if (ext_type == TB_ZERO_EXT && src->type == TB_ADD && cant_signed_overflow(src)) {
-        TB_Node* aa = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
+    //   cast(add(a, con)) => add(cast(a), con)
+    if (src->type == TB_ADD && src->inputs[2]->type == TB_ICONST && cant_signed_overflow(src)) {
+        TB_Node* aa = tb_alloc_node(f, ext_type, n->dt, 2, 0);
         set_input(f, aa, src->inputs[1], 1);
         mark_node(f, aa);
         latuni_set(f, aa, value_of(f, aa));
 
-        TB_Node* bb = tb_alloc_node(f, TB_ZERO_EXT, n->dt, 2, 0);
-        set_input(f, bb, src->inputs[2], 1);
-        mark_node(f, bb);
-        latuni_set(f, bb, value_of(f, bb));
+        TB_Node* bb = make_int_node(f, n->dt, TB_NODE_GET_EXTRA_T(src->inputs[2], TB_NodeInt)->value);
 
         TB_Node* binop = tb_alloc_node(f, TB_ADD, n->dt, 3, sizeof(TB_NodeBinopInt));
         set_input(f, binop, aa, 1);

@@ -9,6 +9,7 @@
 #include "tb.h"
 #include "tb_formats.h"
 #include <stdalign.h>
+#include <futex.h>
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #include <immintrin.h>
@@ -404,6 +405,11 @@ struct TB_Function {
         size_t doms_n;
         TB_Node** doms;
 
+        // IPSCCP stuff
+        _Atomic(Lattice*) ipsccp_args;
+        _Atomic(Lattice*) ipsccp_ret;
+        atomic_int ipsccp_status;
+
         // nice stats
         struct {
             #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_ISEL
@@ -485,6 +491,7 @@ typedef struct {
     TB_External** data;
 } ExportList;
 
+typedef struct IPOSolver IPOSolver;
 struct TB_Module {
     bool is_jit;
     bool visited; // used by the linker
@@ -519,6 +526,10 @@ struct TB_Module {
     // interning lattice
     NBHS lattice_elements;
 
+    IPOSolver* ipo;
+    TPool* ipsccp_pool;
+    Futex ipsccp_tracker[2];
+    _Atomic bool during_ipsccp;
     _Atomic uint32_t uses_chkstk;
     _Atomic uint32_t compiled_function_count;
 

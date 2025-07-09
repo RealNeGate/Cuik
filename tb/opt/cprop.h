@@ -679,7 +679,7 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
     }
 }
 
-int tb_opt_cprop(TB_Function* f) {
+int tb_opt_cprop(TB_Function* f, bool clear_ws, bool rewrite) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
     cuikperf_region_start("optimistic", NULL);
 
@@ -691,6 +691,9 @@ int tb_opt_cprop(TB_Function* f) {
     f->stats.solver_big_o = f->node_count * log2_n;
     #endif
 
+    TB_OPTDEBUG(SCCP)(tb_print(f));
+
+    TB_ASSERT(f->tmp_arena.top);
     // disjoint-set for the eqclasses
     CProp cprop;
     cprop.nodes = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(CProp_Node*));
@@ -699,6 +702,7 @@ int tb_opt_cprop(TB_Function* f) {
     FOR_N(i, 0, sizeof(cprop.da_map) / sizeof(cprop.da_map[0])) {
         cprop.da_map[i] = nl_table_alloc(20);
     }
+    TB_ASSERT(f->tmp_arena.top);
     cprop.partitions = aarray_create(&f->tmp_arena, CProp_Partition*, 32);
 
     // put everyone on the worklist
@@ -757,6 +761,7 @@ int tb_opt_cprop(TB_Function* f) {
         cprop.nodes[0]->partition->cprop_count = 1;
     }
     f->gcf_nodes = cprop.nodes;
+    TB_ASSERT(cprop.nodes[0] != (void*) 0xDFDFDFDFDFDFDFDF);
 
     #if 0
     aarray_for(i, cprop.partitions) {
@@ -791,66 +796,68 @@ int tb_opt_cprop(TB_Function* f) {
     __debugbreak();
     #endif
 
-    // rewrite the graph according to the maximal fixed point
-    // Pass 2: ok replace with constants now
-    //   fills up the entire worklist again
     int rewrites = 0;
-    size_t node_barrier = f->node_count;
-    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-        TB_Node* n = f->worklist->items[i];
-        if (n->gvn >= node_barrier){
-            continue;
-        }
-
-        TB_OPTDEBUG(SCCP)(printf("COMBO t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
-
-        // subsume into leader of partition
-        CProp_Node* node = cprop.nodes[n->gvn];
-        while (node->leader) {
-            node = node->leader;
-        }
-
-        TB_Node* leader = node->n;
-        if (leader != n) {
-            TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (FOLLOW)\n"));
-
-            rewrites++;
-            subsume_node(f, n, leader);
-            continue;
-        }
-
-        /*if (cfg_is_region(n)) {
-            FOR_N(j, 0, n->input_count) {
-                printf("N%d -> N%d\n", n->inputs[j]->gvn, n->gvn);
+    if (rewrite) {
+        // rewrite the graph according to the maximal fixed point
+        // Pass 2: ok replace with constants now
+        //   fills up the entire worklist again
+        size_t node_barrier = f->node_count;
+        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+            TB_Node* n = f->worklist->items[i];
+            if (n->gvn >= node_barrier){
+                continue;
             }
-        } else if (cfg_is_cproj(n)) {
-            int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-            printf("N%d -> N%d [label=\"%d\"]\n", n->inputs[0]->gvn, n->gvn, index);
-        } else if (cfg_is_control(n)) {
-            printf("N%d -> N%d\n", n->inputs[0]->gvn, n->gvn);
-        }*/
 
-        TB_Node* k = try_as_const(f, n, latuni_get(f, n));
-        if (k != NULL) {
-            TB_OPTDEBUG(STATS)(inc_nums(f->stats.opto_constants, n->type));
-            TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, k), printf(" (CONST)\n"));
+            TB_OPTDEBUG(SCCP)(printf("COMBO t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
 
-            node->n = k;
-            rewrites++;
+            // subsume into leader of partition
+            CProp_Node* node = cprop.nodes[n->gvn];
+            while (node->leader) {
+                node = node->leader;
+            }
 
-            worklist_push(ws, k);
-            subsume_node(f, n, k);
-            continue;
+            TB_Node* leader = node->n;
+            if (leader != n) {
+                TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (FOLLOW)\n"));
+
+                rewrites++;
+                subsume_node(f, n, leader);
+                continue;
+            }
+
+            /*if (cfg_is_region(n)) {
+                FOR_N(j, 0, n->input_count) {
+                    printf("N%d -> N%d\n", n->inputs[j]->gvn, n->gvn);
+                }
+            } else if (cfg_is_cproj(n)) {
+                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+                printf("N%d -> N%d [label=\"%d\"]\n", n->inputs[0]->gvn, n->gvn, index);
+            } else if (cfg_is_control(n)) {
+                printf("N%d -> N%d\n", n->inputs[0]->gvn, n->gvn);
+            }*/
+
+            TB_Node* k = try_as_const(f, n, latuni_get(f, n));
+            if (k != NULL) {
+                TB_OPTDEBUG(STATS)(inc_nums(f->stats.opto_constants, n->type));
+                TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, k), printf(" (CONST)\n"));
+
+                node->n = k;
+                rewrites++;
+
+                worklist_push(ws, k);
+                subsume_node(f, n, k);
+                continue;
+            }
+
+            TB_OPTDEBUG(SCCP)(printf("\n"));
         }
-
-        TB_OPTDEBUG(SCCP)(printf("\n"));
     }
 
     tb_arena_clear(&f->tmp_arena);
     cuikperf_region_end();
     f->gcf_nodes = NULL;
 
-    if (rewrites == 0) {
+    if (clear_ws || rewrites == 0) {
         worklist_clear(ws);
     }
 

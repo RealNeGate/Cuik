@@ -146,7 +146,7 @@ if is_windows then
             ld = "link"
         end
 
-        ldflags = ldflags.." /nologo /incremental:no /debug onecore.lib msvcrt.lib libcmt.lib"
+        ldflags = ldflags.." /stack:4194304 /nologo /incremental:no /debug onecore.lib msvcrt.lib libcmt.lib"
         ldflags = ldflags.." /defaultlib:libcmt /out:"
     end
 

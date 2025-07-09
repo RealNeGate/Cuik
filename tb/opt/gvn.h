@@ -201,4 +201,27 @@ bool gvn_compare(void* a, void* b) {
 
     size_t extra = extra_bytes(x);
     return extra == 0 || memcmp(x->extra, y->extra, extra) == 0;
+
+    #if 0
+    bool skip_ctrl = x->type == TB_LOAD;
+    if (skip_ctrl) {
+        if (extra && memcmp(x->extra, y->extra, extra) != 0) {
+            return false;
+        }
+
+        // if either ctrl doms the other, these two loads match
+        if (fast_dommy(y->inputs[0], x->inputs[0])) {
+            x->inputs[0] = y->inputs[0];
+            return true;
+        }
+
+        if (fast_dommy(x->inputs[0], y->inputs[0])) {
+            return true;
+        }
+
+        return false;
+    } else {
+        return extra == 0 || memcmp(x->extra, y->extra, extra) == 0;
+    }
+    #endif
 }

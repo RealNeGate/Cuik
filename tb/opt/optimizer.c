@@ -162,8 +162,12 @@ static void mark_users_raw(TB_Function* f, TB_Node* n) {
 
 static void mark_users(TB_Function* f, TB_Node* n) {
     FOR_USERS(u, n) {
-        worklist_push(f->worklist, USERN(u));
         TB_NodeTypeEnum type = USERN(u)->type;
+        if (type == TB_CALLGRAPH) {
+            continue;
+        }
+
+        worklist_push(f->worklist, USERN(u));
 
         // tuples changing means their projections did too.
         if (type == TB_PROJ || type == TB_PTR_OFFSET) {
@@ -280,6 +284,10 @@ static Lattice* value_int(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_root(TB_Function* f, TB_Node* n) {
+    if (f->super.module->during_ipsccp) {
+        return f->ipsccp_args;
+    }
+
     return NULL;
 }
 
@@ -1134,7 +1142,26 @@ static TB_Node* peephole(TB_Function* f, TB_Node* n) {
 
                 migrate_type(f, n, k);
                 subsume_node(f, n, k);
-                mark_users(f, k);
+
+                if (k->dt.type == TB_TAG_TUPLE) {
+                    TB_ASSERT(new_type->tag == LATTICE_TUPLE);
+                    FOR_USERS(u, n) {
+                        if (is_proj(USERN(u))) {
+                            int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                            TB_ASSERT(index < new_type->_elem_count);
+
+                            // just assign the type and mark users, projections
+                            // have no real rules
+                            if (latuni_set_progress(f, USERN(u), new_type->elems[index])) {
+                                mark_users(f, USERN(u));
+                            }
+                        } else if (USERN(u)->type != TB_CALLGRAPH) {
+                            worklist_push(f->worklist, USERN(u));
+                        }
+                    }
+                } else {
+                    mark_users(f, k);
+                }
 
                 progress = true;
                 n = k;
@@ -1200,49 +1227,6 @@ TB_Node* tb_opt_peep_node(TB_Function* f, TB_Node* n) {
     return k ? k : n;
 }
 
-static void tb_opt_cprop_node(TB_Function* f, TB_Node* n) {
-    #if 0
-    DO_IF(TB_OPTDEBUG_SCCP)(printf("TYPE t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
-
-    Lattice* old_type = latuni_get(f, n);
-    Lattice* new_type = value_of(f, n);
-
-    DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m\n"));
-    if (old_type != new_type) {
-        #ifndef NDEBUG
-        // validate int
-        if (new_type->tag == LATTICE_INT) {
-            TB_ASSERT_MSG((new_type->_int.known_ones & new_type->_int.known_zeros) == 0, "overlapping known bits?");
-        }
-
-        Lattice* glb = lattice_meet(f, old_type, new_type);
-        if (glb != new_type) {
-            TB_OPTDEBUG(PEEP)(printf("\n\nFORWARD PROGRESS ASSERT!\n"));
-            TB_OPTDEBUG(PEEP)(printf("  "), print_lattice(old_type), printf("  =//=>  "), print_lattice(new_type), printf(", MEET: "), print_lattice(glb), printf("\n\n"));
-            TB_ASSERT_MSG(0, "forward progress assert!");
-        }
-        #endif
-
-        latuni_set(f, n, new_type);
-
-        // push affected users (handling one-input shit immediately)
-        FOR_USERS(u, n) {
-            TB_Node* un = USERN(u);
-            if (un->input_count == 1) {
-                tb_opt_cprop_node(f, un);
-            } else {
-                push_non_bottoms(f, un);
-                if (cfg_is_region(un)) {
-                    FOR_USERS(phi, un) if (USERN(phi)->type == TB_PHI) {
-                        push_non_bottoms(f, USERN(phi));
-                    }
-                }
-            }
-        }
-    }
-    #endif
-}
-
 static void* zalloc(size_t s) {
     void* ptr = cuik_malloc(s);
     memset(ptr, 0, s);
@@ -1282,12 +1266,12 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
         // just leads to getting to the important bits first in practice (RPO would be better but
         // more work to perform)
-        CUIK_TIMED_BLOCK("reversing") {
+        /*CUIK_TIMED_BLOCK("reversing") {
             size_t last = dyn_array_length(ws->items) - 1;
             FOR_N(i, 0, dyn_array_length(ws->items) / 2) {
                 SWAP(TB_Node*, ws->items[i], ws->items[last - i]);
             }
-        }
+        }*/
 
         TB_OPTDEBUG(STATS)(f->stats.initial = worklist_count(ws));
     }
@@ -1297,25 +1281,32 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
 
     // uint64_t total = 0;
+    enum {
+        // "major" passes don't need to re-run
+        // if they're not dirtied.
+        CPROP_DIRTY = 1,
+        LOOP_DIRTY  = 2,
+        ALL_DIRTY   = LOOP_DIRTY | CPROP_DIRTY,
+    };
 
     int k;
     int rounds = 0;
 
-    bool progress;
+    int dirty = ALL_DIRTY;
     do {
-        progress = false;
-
         rounds++;
         TB_OPTDEBUG(PASSES)(printf("  * ROUND %d:\n", rounds));
         TB_OPTDEBUG(PASSES)(printf("    * Minor rewrites\n"));
 
         // minor opts
+        cuikperf_region_start("minor opts", NULL);
         while (worklist_count(f->worklist) > 0) {
             TB_OPTDEBUG(PASSES)(printf("      * Peeps (%d nodes)\n", worklist_count(f->worklist)));
+
             // combined pessimistic solver
             if (k = tb_opt_peeps(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
-                progress = true;
+                dirty |= ALL_DIRTY;
             }
 
             #if TB_OPTDEBUG_STATS
@@ -1332,10 +1323,11 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             // uint64_t start = cuik_time_in_nanos();
             if (k = tb_opt_locals(f), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Folded %d locals into SSA\n", k));
-                progress = true;
+                dirty |= ALL_DIRTY;
             }
             // total += cuik_time_in_nanos() - start;
         }
+        cuikperf_region_end();
 
         // avoids bloating up my arenas with freed nodes
         float dead_factor = (float)f->dead_node_bytes / (float)tb_arena_current_size(&f->arena);
@@ -1347,25 +1339,32 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             TB_OPTDEBUG(PASSES)(printf("    * Node GC: %.f KiB => %.f KiB\n", old / 1024.0, new / 1024.0));
         }
 
-        // currently only rotating loops
-        TB_OPTDEBUG(PEEP)(printf("=== LOOPS OPTS ===\n"));
-        TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
-        if (tb_opt_loops(f)) {
-            progress = true;
+        if (dirty & LOOP_DIRTY) {
+            dirty &= ~LOOP_DIRTY;
+
+            TB_OPTDEBUG(PEEP)(printf("=== LOOPS OPTS ===\n"));
+            TB_OPTDEBUG(PASSES)(printf("    * Loops\n"));
+
+            // rotate loops, SLP, and strength reduction
+            if (tb_opt_loops(f)) {
+                dirty |= CPROP_DIRTY;
+            }
         }
         // don't worry, we'll scan all the nodes regardless
         worklist_clear(f->worklist);
 
         // if there was no graph changes then the last possible rewrite must've been the last run
         // of the optimistic solver... don't re-run it
-        if (rounds == 0 || progress) {
+        if (dirty & CPROP_DIRTY) {
+            dirty &= ~CPROP_DIRTY;
+
             // loop optimizer will bully the fuck out of the lattice types, so we might
             // as well reconstruct them using the optimistic crap
             TB_OPTDEBUG(PEEP)(printf("=== OPTIMISTIC ===\n"));
             TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
-            if (k = tb_opt_cprop(f), k > 0) {
+            if (k = tb_opt_cprop(f, false, true), k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
-                progress = true;
+                dirty |= LOOP_DIRTY;
             }
 
             #if TB_OPTDEBUG_STATS
@@ -1375,7 +1374,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             }
             #endif
         }
-    } while (progress);
+    } while (dirty);
     TB_ASSERT(worklist_count(ws) == 0);
     TB_ASSERT(tb_arena_is_empty(&f->tmp_arena));
     // if we're doing IPO then it's helpful to keep these
@@ -1396,7 +1395,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
 
     // printf("%f", total / 1000000.0);
     f->worklist = NULL;
-    return progress;
+    return dirty;
 }
 
 #if TB_OPTDEBUG_STATS
@@ -1499,13 +1498,28 @@ int tb_opt_peeps(TB_Function* f) {
     f->stats.solver_big_o = f->node_count;
     #endif
 
-    tb_print(f);
-
     CUIK_TIMED_BLOCK("peephole") {
-        TB_Node* n;
-        while ((n = worklist_pop(f->worklist))) {
+        int i = 0;
+
+        TB_Worklist* ws = f->worklist;
+        while (worklist_count(ws)) {
+            TB_ASSERT(i < dyn_array_length(ws->items));
+            TB_Node* n = ws->items[i];
+
+            // remove item
+            worklist_remove(ws, n);
+            dyn_array_remove(ws->items, i);
+
+            // advance to literally any other place
+            i += 1;
+            if (i >= dyn_array_length(ws->items)) {
+                i = 0;
+            }
+
             // must've dead sometime between getting scheduled and getting here.
-            if (n->type == TB_NULL) { continue; }
+            if (n->type == TB_NULL) {
+                continue;
+            }
 
             if (!is_proj(n) && n->user_count == 0) {
                 DO_IF(TB_OPTDEBUG_STATS)(inc_nums(f->stats.killed, n->type));

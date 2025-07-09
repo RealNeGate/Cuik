@@ -9,6 +9,10 @@ typedef struct Elem {
 // any blocks in the dom tree between and including early and late are valid schedules.
 static TB_BasicBlock* sched_into_good_block(TB_Function* f, TB_GetLatency get_lat, TB_Node* n, TB_BasicBlock* early, TB_BasicBlock* late) {
     TB_ASSERT(early != late);
+    if (n->type == TB_LOCAL) {
+        return early;
+    }
+
     if (get_lat == NULL || n->type == TB_MACH_TEMP) {
         return late;
     }
