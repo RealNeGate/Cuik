@@ -4,11 +4,13 @@
 
 #ifdef __APPLE__
 typedef _Atomic int32_t Futex;
+typedef int32_t FutexV;
 
 void futex_wait(Futex* f, int32_t val); // leaves if *f != val
 void futex_wait_eq(Futex* f, int32_t val); // leaves if *f == val
 #else
 typedef _Atomic int64_t Futex;
+typedef int64_t FutexV;
 
 void futex_wait(Futex* f, int64_t val); // leaves if *f != val
 void futex_wait_eq(Futex* f, int64_t val); // leaves if *f == val

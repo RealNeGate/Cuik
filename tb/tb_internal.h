@@ -410,6 +410,9 @@ struct TB_Function {
         _Atomic(Lattice*) ipsccp_ret;
         atomic_int ipsccp_status;
 
+        // IPO lock
+        Futex ipo_lock;
+
         // nice stats
         struct {
             #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP || TB_OPTDEBUG_ISEL
@@ -529,6 +532,7 @@ struct TB_Module {
     IPOSolver* ipo;
     TPool* ipsccp_pool;
     Futex ipsccp_tracker[2];
+    _Atomic bool ipsccp_progress;
     _Atomic bool during_ipsccp;
     _Atomic uint32_t uses_chkstk;
     _Atomic uint32_t compiled_function_count;

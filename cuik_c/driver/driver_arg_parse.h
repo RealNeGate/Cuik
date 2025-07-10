@@ -139,10 +139,9 @@ CUIK_API void cuik_parse_args(Cuik_Arguments* restrict args, int argc, const cha
         if (desc->has_arg) {
             if (first[alias_len + 1] != 0) {
                 insert_arg(args, type)->value = first + alias_len + 1;
-            } else if (i + 1 >= argc) {
-                fprintf(stderr, "\x1b[31merror\x1b[0m: expected argument after %s\n", first);
+            } else if (i + 1 >= argc || argv[i + 1][0] == '-') {
+                // fprintf(stderr, "\x1b[31merror\x1b[0m: expected argument after %s\n", first);
                 insert_arg(args, type)->value = arg_is_set;
-                continue;
             } else {
                 insert_arg(args, type)->value = argv[i + 1];
                 i += 1;
@@ -301,7 +300,7 @@ CUIK_API bool cuik_args_to_driver(Cuik_DriverArgs* comp_args, Cuik_Arguments* re
             SYSTEM_INFO sysinfo;
             GetSystemInfo(&sysinfo);
 
-            int n = sysinfo.dwNumberOfProcessors - 1;
+            int n = sysinfo.dwNumberOfProcessors - 2;
             comp_args->threads = (n < 1 ? 1 : n);
             #else
             assert(0 && "TODO(NeGate): implement core count detection on this platform");

@@ -578,7 +578,6 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
         Lattice* target = latuni_get(f, n->inputs[2]);
         Lattice* rets = NULL;
         if (
-            f->super.module->during_ipsccp &&
             target->tag == LATTICE_PTRCON &&
             target->_ptr->tag == TB_SYMBOL_FUNCTION
         ) {
@@ -616,7 +615,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
     if (k != l) { tb_arena_free(arena, l, size); }
 
     // update the callee's "reachable" arguments
-    if (callee && k->elems[0] == &LIVE_IN_THE_SKY) {
+    if (callee && k->elems[0] == &LIVE_IN_THE_SKY && f->super.module->during_ipsccp) {
         size_t elem_count = 3 + callee->prototype->param_count;
         size_t size = sizeof(Lattice) + elem_count*sizeof(Lattice*);
         Lattice* args = tb_arena_alloc(arena, size);

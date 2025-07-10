@@ -402,7 +402,7 @@ static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* r
 // partition share a type.
 static void cprop_propagate(TB_Function* f, CProp* cprop) {
     while (aarray_length(cprop->cprop_ws.stack) > 0) {
-        cuikperf_region_start("propagate", NULL);
+        // cuikperf_region_start("propagate", NULL);
         int p_idx = sparse_set_pop(&cprop->cprop_ws);
         CProp_Partition* p = cprop->partitions[p_idx];
 
@@ -569,7 +569,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             }
             // printf("\n\n");
         }
-        cuikperf_region_end();
+        // cuikperf_region_end();
     }
 }
 
@@ -679,9 +679,8 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
     }
 }
 
-int tb_opt_cprop(TB_Function* f, bool clear_ws, bool rewrite) {
+void tb_opt_cprop_analyze(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
-    cuikperf_region_start("optimistic", NULL);
 
     #if TB_OPTDEBUG_STATS
     // our rate is measured against our time complexity "n * log(n)"
@@ -776,9 +775,9 @@ int tb_opt_cprop(TB_Function* f, bool clear_ws, bool rewrite) {
         cprop_propagate(f, &cprop);
 
         if (aarray_length(cprop.split_ws.stack) > 0) {
-            cuikperf_region_start("cause_splits", NULL);
+            // cuikperf_region_start("cause_splits", NULL);
             cprop_cause_splits(f, &cprop);
-            cuikperf_region_end();
+            // cuikperf_region_end();
         }
     }
 
@@ -795,69 +794,74 @@ int tb_opt_cprop(TB_Function* f, bool clear_ws, bool rewrite) {
     tb_print(f);
     __debugbreak();
     #endif
+}
+
+// rewrite the graph according to the maximal fixed point
+// Pass 2: ok replace with constants now
+//   fills up the entire worklist again
+int tb_opt_cprop_rewrite(TB_Function* f) {
+    TB_Worklist* ws = f->worklist;
+    CProp_Node** nodes = f->gcf_nodes;
 
     int rewrites = 0;
-    if (rewrite) {
-        // rewrite the graph according to the maximal fixed point
-        // Pass 2: ok replace with constants now
-        //   fills up the entire worklist again
-        size_t node_barrier = f->node_count;
-        for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-            TB_Node* n = f->worklist->items[i];
-            if (n->gvn >= node_barrier){
-                continue;
-            }
-
-            TB_OPTDEBUG(SCCP)(printf("COMBO t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
-
-            // subsume into leader of partition
-            CProp_Node* node = cprop.nodes[n->gvn];
-            while (node->leader) {
-                node = node->leader;
-            }
-
-            TB_Node* leader = node->n;
-            if (leader != n) {
-                TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (FOLLOW)\n"));
-
-                rewrites++;
-                subsume_node(f, n, leader);
-                continue;
-            }
-
-            /*if (cfg_is_region(n)) {
-                FOR_N(j, 0, n->input_count) {
-                    printf("N%d -> N%d\n", n->inputs[j]->gvn, n->gvn);
-                }
-            } else if (cfg_is_cproj(n)) {
-                int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-                printf("N%d -> N%d [label=\"%d\"]\n", n->inputs[0]->gvn, n->gvn, index);
-            } else if (cfg_is_control(n)) {
-                printf("N%d -> N%d\n", n->inputs[0]->gvn, n->gvn);
-            }*/
-
-            TB_Node* k = try_as_const(f, n, latuni_get(f, n));
-            if (k != NULL) {
-                TB_OPTDEBUG(STATS)(inc_nums(f->stats.opto_constants, n->type));
-                TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, k), printf(" (CONST)\n"));
-
-                node->n = k;
-                rewrites++;
-
-                worklist_push(ws, k);
-                subsume_node(f, n, k);
-                continue;
-            }
-
-            TB_OPTDEBUG(SCCP)(printf("\n"));
+    size_t node_barrier = f->node_count;
+    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+        TB_Node* n = f->worklist->items[i];
+        if (n->gvn >= node_barrier){
+            continue;
         }
+
+        TB_OPTDEBUG(SCCP)(printf("COMBO t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n));
+
+        // subsume into leader of partition
+        CProp_Node* node = nodes[n->gvn];
+        while (node->leader) {
+            node = node->leader;
+        }
+
+        TB_Node* leader = node->n;
+        if (leader != n) {
+            TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (FOLLOW)\n"));
+
+            rewrites++;
+            subsume_node(f, n, leader);
+            continue;
+        }
+
+        /*if (cfg_is_region(n)) {
+            FOR_N(j, 0, n->input_count) {
+                printf("N%d -> N%d\n", n->inputs[j]->gvn, n->gvn);
+            }
+        } else if (cfg_is_cproj(n)) {
+            int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
+            printf("N%d -> N%d [label=\"%d\"]\n", n->inputs[0]->gvn, n->gvn, index);
+        } else if (cfg_is_control(n)) {
+            printf("N%d -> N%d\n", n->inputs[0]->gvn, n->gvn);
+        }*/
+
+        TB_Node* k = try_as_const(f, n, latuni_get(f, n));
+        if (k != NULL) {
+            TB_OPTDEBUG(STATS)(inc_nums(f->stats.opto_constants, n->type));
+            TB_OPTDEBUG(SCCP)(printf(" => "), tb_print_dumb_node(NULL, k), printf(" (CONST)\n"));
+
+            node->n = k;
+            rewrites++;
+
+            worklist_push(ws, k);
+            subsume_node2(f, n, k);
+            if (n->user_count == 0 && !is_proj(n)) {
+                tb_kill_node(f, n);
+            }
+            continue;
+        }
+
+        TB_OPTDEBUG(SCCP)(printf("\n"));
     }
 
     tb_arena_clear(&f->tmp_arena);
-    cuikperf_region_end();
     f->gcf_nodes = NULL;
 
-    if (clear_ws || rewrites == 0) {
+    if (rewrites == 0) {
         worklist_clear(ws);
     }
 

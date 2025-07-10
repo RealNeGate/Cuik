@@ -284,11 +284,11 @@ static Lattice* value_int(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_root(TB_Function* f, TB_Node* n) {
-    if (f->super.module->during_ipsccp) {
-        return f->ipsccp_args;
-    }
+    /* if (f->super.module->during_ipsccp) {
+        return ;
+    } */
 
-    return NULL;
+    return f->ipsccp_args;
 }
 
 static Lattice* value_proj(TB_Function* f, TB_Node* n) {
@@ -1353,16 +1353,20 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
         // don't worry, we'll scan all the nodes regardless
         worklist_clear(f->worklist);
 
-        // if there was no graph changes then the last possible rewrite must've been the last run
-        // of the optimistic solver... don't re-run it
         if (dirty & CPROP_DIRTY) {
             dirty &= ~CPROP_DIRTY;
 
-            // loop optimizer will bully the fuck out of the lattice types, so we might
-            // as well reconstruct them using the optimistic crap
             TB_OPTDEBUG(PEEP)(printf("=== OPTIMISTIC ===\n"));
             TB_OPTDEBUG(PASSES)(printf("    * Optimistic solver\n"));
-            if (k = tb_opt_cprop(f, false, true), k > 0) {
+
+            // loop optimizer will bully the fuck out of the lattice types, so we might
+            // as well reconstruct them using the optimistic crap
+            cuikperf_region_start("optimistic", NULL);
+            tb_opt_cprop_analyze(f);
+            k = tb_opt_cprop_rewrite(f);
+            cuikperf_region_end();
+
+            if (k > 0) {
                 TB_OPTDEBUG(PASSES)(printf("        * Rewrote %d times\n", k));
                 dirty |= LOOP_DIRTY;
             }

@@ -421,7 +421,9 @@ int bb_placement_trace(TB_Arena* arena, TB_CFG* cfg, int* dst_order);
 void tb_opt_legalize(TB_Function* f, TB_Arch arch);
 int tb_opt_peeps(TB_Function* f);
 int tb_opt_locals(TB_Function* f);
-int tb_opt_cprop(TB_Function* f, bool clear_ws, bool rewrite);
+
+void tb_opt_cprop_analyze(TB_Function* f);
+int tb_opt_cprop_rewrite(TB_Function* f);
 
 void push_ipsccp_job(TB_Module* m, TB_Function* f);
 
