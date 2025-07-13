@@ -2,6 +2,15 @@
 static TB_Node* ideal_region(TB_Function* f, TB_Node* n) {
     TB_NodeRegion* r = TB_NODE_GET_EXTRA(n);
 
+    // if there's a dead loop, we need to expunge the body such that
+    // it doesn't leave a messy trace
+    if (cfg_is_natural_loop(n) && is_dead_ctrl(f, n->inputs[0]) && n->input_count == 2) {
+        TB_Node* dead = dead_node(f);
+        set_input(f, n, NULL, 0);
+        set_input(f, n, NULL, 1);
+        return dead;
+    }
+
     // prune dead predeccessors
     bool changes = false;
     size_t i = 0, extra_edges = 0;
@@ -570,7 +579,7 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
 
     // control just flows through
     l->elems[0] = latuni_get(f, n->inputs[0]);
-    if (l->elems[0] == &TOP_IN_THE_SKY) {
+    if (l->elems[0] == &TOP_IN_THE_SKY || l->elems[0] == &DEAD_IN_THE_SKY) {
         FOR_N(i, 1, c->proj_count) {
             l->elems[i] = &TOP_IN_THE_SKY;
         }
@@ -591,21 +600,25 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
                     // skip the RPC
                     l->elems[i] = rets->elems[i + (i >= 2 ? 1 : 0)];
                 }
-            } else {
+            }
+        }
+
+        if (rets == NULL) {
+            if (f->super.module->during_ipsccp && callee != NULL) {
                 // not ready yet
                 FOR_N(i, 1, c->proj_count) {
                     l->elems[i] = &TOP_IN_THE_SKY;
                 }
-            }
-        } else {
-            FOR_N(i, 1, c->proj_count) {
-                l->elems[i] = &BOT_IN_THE_SKY;
-            }
+            } else {
+                FOR_N(i, 1, c->proj_count) {
+                    l->elems[i] = &BOT_IN_THE_SKY;
+                }
 
-            FOR_USERS(u, n) {
-                if (is_proj(USERN(u))) {
-                    int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
-                    if (index > 0) { l->elems[index] = lattice_from_dt(f, USERN(u)->dt); }
+                FOR_USERS(u, n) {
+                    if (is_proj(USERN(u))) {
+                        int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                        if (index > 0) { l->elems[index] = lattice_from_dt(f, USERN(u)->dt); }
+                    }
                 }
             }
         }
@@ -648,9 +661,9 @@ static Lattice* value_call(TB_Function* f, TB_Node* n) {
             printf("\n");
             mtx_unlock(&aaa);
             #endif
-        }
 
-        push_ipsccp_job(f->super.module, callee);
+            push_ipsccp_job(f->super.module, callee);
+        }
     }
 
     return k;
@@ -667,17 +680,16 @@ static Lattice* value_never_branch(TB_Function* f, TB_Node* n) {
 
 static Lattice* value_branch(TB_Function* f, TB_Node* n) {
     Lattice* before = latuni_get(f, n->inputs[0]);
-    if (before == &TOP_IN_THE_SKY) {
-        return &TOP_IN_THE_SKY;
-    }
-
     TB_NodeBranch* br = TB_NODE_GET_EXTRA(n);
+    if (before != &LIVE_IN_THE_SKY) {
+        return lattice_branch_none(f, br->succ_count);
+    }
 
     // constant fold branch
     assert(n->input_count == 2);
     Lattice* key = latuni_get(f, n->inputs[1]);
     if (key == &TOP_IN_THE_SKY) {
-        return &TOP_IN_THE_SKY;
+        return lattice_branch_none(f, br->succ_count);
     }
 
     if (key->tag == LATTICE_INT && key->_int.min == key->_int.max) {

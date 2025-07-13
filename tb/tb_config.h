@@ -28,5 +28,6 @@
 #define TB_OPTDEBUG_COMPACT   0
 #define TB_OPTDEBUG_SCHED1    0
 #define TB_OPTDEBUG_SCHED2    0
+#define TB_OPTDEBUG_SCHED3    0
 // for toggling ANSI colors
 #define TB_OPTDEBUG_ANSI      1

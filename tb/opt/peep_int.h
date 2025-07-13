@@ -184,6 +184,30 @@ static bool will_mul_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattic
     return overflow;
 }
 
+static bool will_add_overflow(TB_Function* f, TB_DataType dt, Lattice* a, Lattice* b) {
+    int bits = tb_data_type_bit_size(NULL, dt.type);
+
+    int64_t mask = tb__mask(bits);
+    int64_t imin = lattice_int_min(bits);
+    int64_t imax = lattice_int_max(bits);
+    int64_t amin = a->_int.min, amax = a->_int.max;
+    int64_t bmin = b->_int.min, bmax = b->_int.max;
+
+    int64_t min = sadd(amin, bmin, mask);
+    int64_t max = sadd(amax, bmax, mask);
+    if (amin != amax || bmin != bmax) {
+        // Ahh sweet, Hacker's delight horrors beyond my comprehension
+        uint64_t u = amin & bmin & ~min;
+        uint64_t v = ~(amax | bmax) & max;
+        // just checking the sign bits
+        if ((((u | v) >> (bits - 1)) & 1) != 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static Lattice* value_arith_raw(TB_Function* f, TB_NodeTypeEnum type, TB_DataType dt, Lattice* a, Lattice* b, bool congruent) {
     int bits = tb_data_type_bit_size(NULL, dt.type);
     int64_t mask = tb__mask(bits);
@@ -405,25 +429,30 @@ static Lattice* value_shift(TB_Function* f, TB_Node* n) {
 
         switch (n->type) {
             case TB_SHL: {
-                // we at least shifted this many bits therefore we
-                // at least have this many zeros at the bottom
-                zeros |= (1ull << bmin) - 1ull;
-
                 if (bmin == bmax) {
                     uint64_t new_min = (min << bmin) & mask;
                     uint64_t new_max = (max << bmin) & mask;
 
                     // we know exactly where the bits went
-                    ones <<= bmin;
+                    zeros <<= bmin;
+                    ones  <<= bmin;
+
+                    zeros |= (1ull << bmin) - 1ull;
 
                     // overflow check
                     if ((new_min >> bmin) == min &&
                         (new_max >> bmin) == max) {
                         return lattice_gimme_int2(f, new_min, new_max, zeros, ones, bits);
                     }
+                } else {
+                    // we at least shifted this many bits therefore we
+                    // at least have this many zeros at the bottom
+                    zeros |= (1ull << bmin) - 1ull;
                 }
 
-                return lattice_gimme_int2(f, lattice_int_min(bits), lattice_int_max(bits), zeros, ones, bits);
+                min = lattice_int_min(bits);
+                max = lattice_int_max(bits);
+                return lattice_intern(f, (Lattice){ LATTICE_INT, ._int = { min, max, zeros, ones } });
             }
 
             case TB_SHR: {
@@ -961,10 +990,13 @@ static Lattice* value_cmp(TB_Function* f, TB_Node* n) {
             break;
         }
     } else if (dt.type == TB_TAG_PTR && (n->type == TB_CMP_EQ || n->type == TB_CMP_NE)) {
-        if (n->type == TB_CMP_EQ) {
-            return a == b ? &TRUE_IN_THE_SKY : &BOOL_IN_THE_SKY;
-        } else {
-            return a == b ? &FALSE_IN_THE_SKY : &BOOL_IN_THE_SKY;
+        Lattice* meet = lattice_meet(f, a, b);
+        if (meet->tag == LATTICE_NULL || meet->tag == LATTICE_PTRCON) {
+            if (n->type == TB_CMP_EQ) {
+                return a == b ? &TRUE_IN_THE_SKY : &BOOL_IN_THE_SKY;
+            } else {
+                return a == b ? &FALSE_IN_THE_SKY : &BOOL_IN_THE_SKY;
+            }
         }
     }
 
@@ -1106,19 +1138,22 @@ static TB_Node* ideal_extension(TB_Function* f, TB_Node* n) {
 
     // so long as it doesn't overflow:
     //   cast(add(a, con)) => add(cast(a), con)
-    if (src->type == TB_ADD && src->inputs[2]->type == TB_ICONST && cant_signed_overflow(src)) {
-        TB_Node* aa = tb_alloc_node(f, ext_type, n->dt, 2, 0);
-        set_input(f, aa, src->inputs[1], 1);
-        mark_node(f, aa);
-        latuni_set(f, aa, value_of(f, aa));
+    if (src->type == TB_ADD && lattice_is_iconst(value_of(f, src->inputs[2]))) {
+        Lattice* lhs = value_of(f, src->inputs[1]);
+        Lattice* rhs = value_of(f, src->inputs[2]);
+        if (!will_add_overflow(f, src->dt, lhs, rhs)) {
+            TB_Node* aa = tb_alloc_node(f, ext_type, n->dt, 2, 0);
+            set_input(f, aa, src->inputs[1], 1);
+            mark_node(f, aa);
+            latuni_set(f, aa, value_of(f, aa));
 
-        TB_Node* bb = make_int_node(f, n->dt, TB_NODE_GET_EXTRA_T(src->inputs[2], TB_NodeInt)->value);
-
-        TB_Node* binop = tb_alloc_node(f, TB_ADD, n->dt, 3, sizeof(TB_NodeBinopInt));
-        set_input(f, binop, aa, 1);
-        set_input(f, binop, bb, 2);
-        TB_NODE_SET_EXTRA(binop, TB_NodeBinopInt, .ab = TB_NODE_GET_EXTRA_T(src, TB_NodeBinopInt)->ab);
-        return binop;
+            TB_Node* bb = make_int_node(f, n->dt, rhs->_int.min);
+            TB_Node* binop = tb_alloc_node(f, TB_ADD, n->dt, 3, sizeof(TB_NodeBinopInt));
+            set_input(f, binop, aa, 1);
+            set_input(f, binop, bb, 2);
+            TB_NODE_SET_EXTRA(binop, TB_NodeBinopInt, .ab = TB_NODE_GET_EXTRA_T(src, TB_NodeBinopInt)->ab);
+            return binop;
+        }
     }
 
     // Ext(phi(a: con, b: con)) => phi(Ext(a: con), Ext(b: con))

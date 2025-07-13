@@ -86,6 +86,7 @@ struct CProp_Node {
     CProp_Node* next_touched;
 
     // local "cprop" set
+    CProp_Node* prev_cprop;
     CProp_Node* next_cprop;
 
     // if we're a follower, whose the leader
@@ -151,7 +152,7 @@ static bool is_opcode_equal(TB_Node* a, TB_Node* b) {
     return extra == 0 || memcmp(a->extra, b->extra, extra) == 0;
 }
 
-typedef struct {
+struct CProp {
     ArenaArray(CProp_Partition*) partitions;
     CProp_Node** nodes;
 
@@ -163,25 +164,38 @@ typedef struct {
 
     int da_index;
     NL_Table da_map[3];
-} CProp;
+    DynArray(CProp_Partition*) da_array[3];
+};
 
 static void push_cprop(TB_Function* f, CProp* cprop, TB_Node* n) {
     CProp_Node* node = cprop->nodes[n->gvn];
     if (!node->in_cprop) {
-        Lattice* l = latuni_get(f, n);
+        node->in_cprop = true;
 
-        // if it's a bottom there's no more steps it can take, don't recompute it
-        size_t leader_count = node->partition->member_count;
-        if (l != lattice_from_dt(f, n->dt) || leader_count > 1) {
-            node->in_cprop = true;
+        // add to cprop worklist
+        node->prev_cprop = NULL;
+        node->next_cprop = node->partition->cprop;
+        node->partition->cprop = node;
+        node->partition->cprop_count += 1;
 
-            // add to cprop worklist
-            node->next_cprop = node->partition->cprop;
-            node->partition->cprop = node;
-            node->partition->cprop_count += 1;
+        sparse_set_put(&cprop->cprop_ws, node->partition->id);
+    }
+}
 
-            sparse_set_put(&cprop->cprop_ws, node->partition->id);
+static void push_cprop_users(TB_Function* f, CProp* cprop, TB_Node* n) {
+    // push affected users
+    FOR_USERS(u, n) {
+        TB_Node* un = USERN(u);
+        if (is_proj(un) || un->type == TB_CALLGRAPH) {
+            continue;
         }
+
+        if (cfg_is_region(un)) {
+            FOR_USERS(phi, un) if (USERN(phi)->type == TB_PHI) {
+                push_cprop(f, cprop, USERN(phi));
+            }
+        }
+        push_cprop(f, cprop, un);
     }
 }
 
@@ -224,6 +238,28 @@ static CProp_Partition* cprop_split(TB_Function* f, CProp* cprop, CProp_Partitio
                 new_z->follower_count += 1;
             }
 
+            if (node->in_cprop) {
+                // doubly-linked list removal
+                CProp_Node* prev_cprop = node->prev_cprop;
+                if (prev_cprop) {
+                    prev_cprop->next_cprop = node->next_cprop;
+                }
+                node->prev_cprop = prev_cprop;
+                if (z->cprop == node) {
+                    z->cprop = node->next_cprop;
+                }
+                z->cprop_count -= 1;
+
+                // add to new cprop worklist
+                node->prev_cprop = NULL;
+                node->next_cprop = new_z->cprop;
+                new_z->cprop = node;
+                new_z->cprop_count += 1;
+
+                // update global cprop WS
+                sparse_set_put(&cprop->cprop_ws, new_z->id);
+            }
+
             z->member_count -= 1;
             new_z->member_count += 1;
             TB_ASSERT(z->member_count != 0);
@@ -253,11 +289,21 @@ static void* cprop_what_opcode(TB_Function* f, CProp* cprop, CProp_Node* node) {
     return node;
 }
 
+static void* cprop_what_cfg(TB_Function* f, CProp* cprop, CProp_Node* node) {
+    static int dummy;
+
+    if (cfg_is_control(node->n)) {
+        return node->n;
+    }
+    return &dummy;
+}
+
 static void* cprop_what_partition(TB_Function* f, CProp* cprop, CProp_Node* node) {
     // just needs to be a value that old_partition can't return
     static int dummy;
 
     TB_Node* n  = node->n;
+    TB_ASSERT(cprop->da_index < n->input_count);
     TB_Node* in = n->inputs[cprop->da_index];
     if (in == NULL) {
         return &dummy;
@@ -296,7 +342,7 @@ static bool cprop_opcode_compare(void* a, void* b) {
     TB_Node* y = ((CProp_Node*) b)->n;
 
     // early outs
-    if (x->type != y->type || x->dt.raw != y->dt.raw) {
+    if (x->type != y->type || x->dt.raw != y->dt.raw || x->input_count != y->input_count) {
         return false;
     }
 
@@ -307,8 +353,9 @@ static bool cprop_opcode_compare(void* a, void* b) {
 typedef void* SplitByWhat(TB_Function* f, CProp* cprop, CProp_Node* node);
 static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* root, SplitByWhat* what, int depth) {
     nl_table_clear(&cprop->da_map[depth]);
-    size_t og_member_count = root->member_count;
+    dyn_array_clear(cprop->da_array[depth]);
 
+    size_t og_member_count = root->member_count;
     bool recycled_root = false;
     CProp_Node* new_root_list = NULL;
     for (CProp_Node* node = root->members; node;) {
@@ -334,6 +381,7 @@ static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* r
                     .input_count = leader->n->input_count,
                 };
                 aarray_push(cprop->partitions, p);
+                dyn_array_put(cprop->da_array[depth], p);
             } else {
                 p = root;
                 p->type = latuni_get(f, leader->n);
@@ -373,11 +421,9 @@ static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* r
     TB_ASSERT(root->member_count != 0);
 
     size_t c = 0;
-    // printf("     STARTING %zu\n", og_member_count);
-
     // place onto worklist
-    nl_table_for(e, &cprop->da_map[depth]) {
-        CProp_Partition* p = e->v;
+    dyn_array_for(i, cprop->da_array[depth]) {
+        CProp_Partition* p = cprop->da_array[depth][i];
         if (p == root) { continue; }
 
         // place onto worklist "as if" we split them
@@ -402,7 +448,6 @@ static void cprop_split_by_what(TB_Function* f, CProp* cprop, CProp_Partition* r
 // partition share a type.
 static void cprop_propagate(TB_Function* f, CProp* cprop) {
     while (aarray_length(cprop->cprop_ws.stack) > 0) {
-        // cuikperf_region_start("propagate", NULL);
         int p_idx = sparse_set_pop(&cprop->cprop_ws);
         CProp_Partition* p = cprop->partitions[p_idx];
 
@@ -418,6 +463,9 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             // pop a cprop node from the worklist
             CProp_Node* node = p->cprop;
             p->cprop = node->next_cprop;
+            if (p->cprop) {
+                p->cprop->prev_cprop = NULL;
+            }
             p->cprop_count -= 1;
 
             TB_ASSERT(node->partition == p);
@@ -445,8 +493,10 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             }
 
             // SCCP transfer function, we check monotonicity
+            // TB_OPTDEBUG(STATS)(uint64_t start = cuik_time_in_nanos());
             Lattice* old_type = latuni_get(f, n);
             Lattice* new_type = value_of(f, n);
+            // TB_OPTDEBUG(STATS)(n->type < TB_NODE_TYPE_MAX ? (f->stats.cprop_t[n->type] += (cuik_time_in_nanos() - start), 0) : 0);
 
             DO_IF(TB_OPTDEBUG_SCCP)(printf(" => \x1b[93m"), print_lattice(new_type), printf("\x1b[0m\n"));
             if (old_type != new_type) {
@@ -468,26 +518,20 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 sparse_set_put(&cprop->fallen, n->gvn);
                 progress = true;
 
-                // push affected users
-                FOR_USERS(u, n) {
-                    TB_Node* un = USERN(u);
-                    if (un->input_count != 1) {
-                        if (cfg_is_region(un)) {
-                            FOR_USERS(phi, un) if (USERN(phi)->type == TB_PHI) {
-                                push_cprop(f, cprop, USERN(phi));
+                if (n->dt.type == TB_TAG_TUPLE) {
+                    TB_ASSERT(new_type->tag == LATTICE_TUPLE);
+                    FOR_USERS(u, n) {
+                        if (is_proj(USERN(u))) {
+                            int index = TB_NODE_GET_EXTRA_T(USERN(u), TB_NodeProj)->index;
+                            TB_ASSERT(index < new_type->_elem_count);
+
+                            if (latuni_set_progress(f, USERN(u), new_type->elems[index])) {
+                                push_cprop_users(f, cprop, USERN(u));
                             }
                         }
-                        push_cprop(f, cprop, un);
                     }
                 }
-
-                // push affected users with one input (wanna process these first)
-                FOR_USERS(u, n) {
-                    TB_Node* un = USERN(u);
-                    if (un->input_count == 1) {
-                        push_cprop(f, cprop, un);
-                    }
-                }
+                push_cprop_users(f, cprop, n);
             }
         }
 
@@ -497,7 +541,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
         size_t fallen_cnt = aarray_length(cprop->fallen.stack);
         if (fallen_cnt > 0 && fallen_cnt < p->member_count) {
             y = cprop_split(f, cprop, p, cprop_what_fallen);
-            TB_ASSERT(y->member_count == fallen_cnt);
+            // TB_ASSERT(y->member_count - y->follower_count == fallen_cnt);
 
             /*printf("Split Z (%d vs %d):\n", p->id, y->id);
             cprop_dump(f, p);
@@ -518,7 +562,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
                 Lattice* old_type = latuni_get(f, n);
                 if (node->leader == NULL && (old_type == &TOP_IN_THE_SKY || !lattice_is_top_or_constant(old_type))) {
                     TB_Node* leader = identity(f, n);
-                    if (n != leader) {
+                    if (leader && n != leader) {
                         TB_OPTDEBUG(SCCP)(printf("     t=%d? ", ++f->stats.time), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, leader), printf(" (IDENTITY)\n"));
 
                         y->follower_count += 1;
@@ -528,20 +572,21 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             }
         }
 
+        cuikperf_region_start("splits", NULL);
         if (y->member_count > 1) {
             /*printf("Split by type:\n");
             cprop_dump(f, y);
             printf("VVV\n");*/
 
             cprop_split_by_what(f, cprop, y, cprop_what_type, 0);
-            nl_table_for(e, &cprop->da_map[0]) {
-                CProp_Partition* p = e->v;
+            dyn_array_for(i, &cprop->da_array[0]) {
+                CProp_Partition* p = cprop->da_array[0][i];
                 // we don't split constants or TOP partitions
                 if (lattice_is_top_or_constant(p->type)) { continue; }
 
                 cprop_split_by_what(f, cprop, p, cprop_what_opcode, 1);
-                nl_table_for(e2, &cprop->da_map[1]) {
-                    CProp_Partition* q = e2->v;
+                dyn_array_for(j, &cprop->da_array[1]) {
+                    CProp_Partition* q = cprop->da_array[1][j];
 
                     // cache the old partitions, this is necessary for the next layer of splitting
                     for (CProp_Node* node = q->members; node; node = node->next) {
@@ -569,7 +614,7 @@ static void cprop_propagate(TB_Function* f, CProp* cprop) {
             }
             // printf("\n\n");
         }
-        // cuikperf_region_end();
+        cuikperf_region_end();
     }
 }
 
@@ -590,12 +635,28 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
         }
     }
 
+    #if 0
+    TB_Node* p_node = NULL;
+    for (CProp_Node* node = p->members; node; node = node->next) {
+        if (node->leader == NULL) { p_node = node->n; break; }
+    }
+
+    // the opcode of all leader nodes in a partition is the same, if it's a
+    // CFG tuple node like call, it'll never discover new splits.
+    if (cfg_is_control(p_node)) {
+        return;
+    }
+    #endif
+
     FOR_N(i, 0, input_count) {
         // partitions is used as the touched set
+        cuikperf_region_start("iter", NULL);
         sparse_set_clear(&cprop->touched);
 
         for (CProp_Node* node = p->members; node; node = node->next) {
             TB_Node* x = node->n;
+
+            TB_OPTDEBUG(STATS)(uint64_t start = cuik_time_in_nanos());
             FOR_USERS(u, x) {
                 TB_Node* y = USERN(u);
                 CProp_Node* y_node = cprop->nodes[y->gvn];
@@ -644,10 +705,12 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
                     }
                 }
             }
+            TB_OPTDEBUG(STATS)(x->type < TB_NODE_TYPE_MAX ? (f->stats.cprop_t[x->type] += x->user_count, 0) : 0); // (cuik_time_in_nanos() - start), 0) : 0);
         }
-
+        cuikperf_region_end();
         // printf("\n\n\n");
 
+        cuikperf_region_start("touch", NULL);
         aarray_for(j, cprop->touched.stack) {
             CProp_Partition* z = cprop->partitions[cprop->touched.stack[j]];
             if (z->member_count - z->follower_count != z->touched_count) {
@@ -676,23 +739,15 @@ static void cprop_cause_splits(TB_Function* f, CProp* cprop) {
             z->touched_count = 0;
             z->touched = NULL;
         }
+        cuikperf_region_end();
     }
 }
 
-void tb_opt_cprop_analyze(TB_Function* f) {
+CProp tb_opt_cprop_init(TB_Function* f) {
     TB_ASSERT(worklist_count(f->worklist) == 0);
-
-    #if TB_OPTDEBUG_STATS
-    // our rate is measured against our time complexity "n * log(n)"
-    uint64_t start = cuik_time_in_nanos();
-    uint64_t log2_n = 64 - tb_clz64(f->node_count);
-    f->stats.solver_n = f->node_count;
-    f->stats.solver_big_o = f->node_count * log2_n;
-    #endif
 
     TB_OPTDEBUG(SCCP)(tb_print(f));
 
-    TB_ASSERT(f->tmp_arena.top);
     // disjoint-set for the eqclasses
     CProp cprop;
     cprop.nodes = tb_arena_alloc(&f->tmp_arena, f->node_count * sizeof(CProp_Node*));
@@ -701,7 +756,9 @@ void tb_opt_cprop_analyze(TB_Function* f) {
     FOR_N(i, 0, sizeof(cprop.da_map) / sizeof(cprop.da_map[0])) {
         cprop.da_map[i] = nl_table_alloc(20);
     }
-    TB_ASSERT(f->tmp_arena.top);
+    FOR_N(i, 0, sizeof(cprop.da_array) / sizeof(cprop.da_array[0])) {
+        cprop.da_array[i] = dyn_array_create(CProp_Partition*, 32);
+    }
     cprop.partitions = aarray_create(&f->tmp_arena, CProp_Partition*, 32);
 
     // put everyone on the worklist
@@ -748,7 +805,19 @@ void tb_opt_cprop_analyze(TB_Function* f) {
         FOR_N(i, 0, f->node_count) { f->types[i] = &TOP_IN_THE_SKY; }
         //   anything unallocated should stay as NULL tho
         FOR_N(i, f->node_count, f->type_cap) { f->types[i] = NULL; }
+        // callgraph is bookkeeping so it isn't considered in the CPROP
+        TB_ASSERT(f->root_node->inputs[0]->type == TB_CALLGRAPH);
+        f->types[f->root_node->inputs[0]->gvn] = &BOT_IN_THE_SKY;
     }
+
+    #if 0
+    cprop_split_by_what(f, &cprop, cprop.partitions[0], cprop_what_cfg, 0);
+    printf("\n\n\n");
+    aarray_for(i, cprop.partitions) {
+        cprop_dump(f, cprop.partitions[i]);
+    }
+    __debugbreak();
+    #endif
 
     // place ROOT as starting point of cprop work
     {
@@ -759,36 +828,110 @@ void tb_opt_cprop_analyze(TB_Function* f) {
         cprop.nodes[0]->partition->cprop = cprop.nodes[0];
         cprop.nodes[0]->partition->cprop_count = 1;
     }
+
     f->gcf_nodes = cprop.nodes;
-    TB_ASSERT(cprop.nodes[0] != (void*) 0xDFDFDFDFDFDFDFDF);
+    return cprop;
+}
 
-    #if 0
-    aarray_for(i, cprop.partitions) {
-        sparse_set_put(&cprop.split_ws, i);
-        cprop_dump(f, cprop.partitions[i]);
+void tb_opt_cprop_deinit(TB_Function* f, CProp* cprop) {
+    FOR_N(i, 0, sizeof(cprop->da_map) / sizeof(cprop->da_map[0])) {
+        nl_table_free(cprop->da_map[i]);
     }
+    FOR_N(i, 0, sizeof(cprop->da_array) / sizeof(cprop->da_array[0])) {
+        dyn_array_destroy(cprop->da_array[i]);
+    }
+}
 
-    __debugbreak();
+// if IPSCCP is enabled, we check for changes in the
+static TB_Function* static_call_site(TB_Node* n);
+void tb_opt_cprop_analyze(TB_Function* f, CProp* cprop, bool ipsccp) {
+    #if TB_OPTDEBUG_STATS
+    // our rate is measured against our time complexity "n * log(n)"
+    uint64_t start = cuik_time_in_nanos();
+    uint64_t log2_n = 64 - tb_clz64(f->node_count);
+    f->stats.solver_n = f->node_count;
+    f->stats.solver_big_o = f->node_count * log2_n;
     #endif
 
-    while (aarray_length(cprop.split_ws.stack) > 0 || aarray_length(cprop.cprop_ws.stack) > 0) {
-        cprop_propagate(f, &cprop);
-
-        if (aarray_length(cprop.split_ws.stack) > 0) {
-            // cuikperf_region_start("cause_splits", NULL);
-            cprop_cause_splits(f, &cprop);
-            // cuikperf_region_end();
+    if (ipsccp) {
+        // each of the function calls will be placed on the CPROP worklist again,
+        // this could be costly but probably not...
+        TB_Node* callgraph = f->root_node->inputs[0];
+        cuikperf_region_start("inflate", NULL);
+        for (size_t i = 1; i < callgraph->input_count;) {
+            TB_Node* call = callgraph->inputs[i++];
+            TB_Function* target = static_call_site(call);
+            if (target) {
+                push_cprop(f, cprop, call);
+            }
         }
+        cuikperf_region_end();
+    }
+
+    Lattice* old_args = f->types[0];
+    do {
+        if (ipsccp && f->ipsccp_args != old_args) {
+            push_cprop(f, cprop, f->root_node);
+            old_args = f->ipsccp_args;
+        }
+
+        cuikperf_region_start("cprop", NULL);
+        cprop_propagate(f, cprop);
+        cuikperf_region_end();
+
+        if (aarray_length(cprop->split_ws.stack) > 0) {
+            cuikperf_region_start("cause_splits", NULL);
+            cprop_cause_splits(f, cprop);
+            cuikperf_region_end();
+        }
+    } while (aarray_length(cprop->split_ws.stack) > 0 || aarray_length(cprop->cprop_ws.stack) > 0);
+
+    if (ipsccp) {
+        cuikperf_region_start("EA", NULL);
+        FOR_USERS(u, f->root_node) {
+            if (USERN(u)->type != TB_SYMBOL) { continue; }
+            TB_Node* target = USERN(u);
+            TB_Symbol* sym = TB_NODE_GET_EXTRA_T(target, TB_NodeSymbol)->sym;
+            if (sym->tag != TB_SYMBOL_FUNCTION) { continue; }
+
+            // if there's any users of the symbol which aren't function
+            // calls, we consider the symbol as escaped.
+            bool escape = false;
+            FOR_USERS(u2, target) {
+                if (USERN(u2)->type != TB_CALL || USERI(u2) != 2) {
+                    escape = true;
+                    break;
+                }
+            }
+
+            if (escape) {
+                TB_Function* callee = (TB_Function*) sym;
+
+                // if we moved the type, then push it
+                Lattice* new_type = lattice_tuple_from_node(f, callee->root_node);
+                Lattice* old_type = atomic_exchange(&callee->ipsccp_args, new_type);
+                if (old_type != new_type) {
+                    #if 0
+                    mtx_lock(&aaa);
+                    printf("%s: ESCAPE!!!\n", sym->name);
+                    mtx_unlock(&aaa);
+                    #endif
+
+                    push_ipsccp_job(f->super.module, callee);
+                }
+            }
+        }
+        cuikperf_region_end();
     }
 
     #if TB_OPTDEBUG_STATS
-    f->stats.solver_time = (cuik_time_in_nanos() - start);
+    f->stats.solver_time += (cuik_time_in_nanos() - start);
     #endif
 
     #if 0
     printf("\n\n\n");
-    aarray_for(i, cprop.partitions) {
-        cprop_dump(f, cprop.partitions[i]);
+    aarray_for(i, cprop->partitions) {
+        cprop_dump(f, cprop->partitions[i]);
     }
     tb_print_dumb_fancy(f);
     tb_print(f);
@@ -802,6 +945,7 @@ void tb_opt_cprop_analyze(TB_Function* f) {
 int tb_opt_cprop_rewrite(TB_Function* f) {
     TB_Worklist* ws = f->worklist;
     CProp_Node** nodes = f->gcf_nodes;
+    TB_ASSERT(nodes);
 
     int rewrites = 0;
     size_t node_barrier = f->node_count;

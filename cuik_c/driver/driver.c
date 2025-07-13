@@ -193,7 +193,7 @@ static void apply_func(TB_Function* f, void* arg) {
 
         if (args->emit_ir) {
             // tb_print_dumb(f);
-            tb_print(f);
+            // tb_print(f);
 
             // char* str = tb_print_c(f, ir_worklist, arenas->tmp);
             // printf("%s", str);
@@ -376,20 +376,11 @@ static void ld_invoke(TPool* tp, void** arg) {
 
     CUIK_TIMED_BLOCK("Backend") {
         if (args->optimize) {
-            if (tp) {
-                tb_module_ipo(mod, tp);
+            tb_module_ipo(mod, tp);
+            /* if (tp) {
             } else {
                 cuiksched_per_function(tp, s->ld.cu, mod, args, local_opt_func);
-            }
-
-            /* int t = 0;
-            do {
-                CUIK_TIMED_BLOCK("Local opts") {
-                    log_debug("Optimizing in functions... t=%d", ++t);
-                    cuiksched_per_function(tp, s->ld.cu, mod, args, local_opt_func);
-                    log_debug("Interprocedural opts...");
-                }
-            } while ();*/
+            } */
         }
 
         if (args->emit_ir) {

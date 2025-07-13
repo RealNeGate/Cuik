@@ -21,6 +21,7 @@ typedef enum {
 
 typedef struct {
     TB_Node* addr;
+    TB_DataType dt;
     bool is_mem;
     bool is_alive;
 } Rename;
@@ -87,16 +88,6 @@ static bool good_mem_op(TB_Function* f, TB_Node* n) { // ld, st, memcpy, memset
     } else {
         return false;
     }
-}
-
-static TB_Node* next_mem_user(TB_Node* n) {
-    FOR_USERS(u, n) {
-        if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u))) {
-            return USERN(u);
-        }
-    }
-
-    return NULL;
 }
 
 static int find_local_idx(LocalSplitter* restrict ctx, TB_Node* n) {
@@ -408,7 +399,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                     continue;
                 }
 
-                TB_Node* new_phi = tb_alloc_node(f, TB_PHI, TB_TYPE_VOID, curr->input_count, 0);
+                TB_Node* new_phi = tb_alloc_node(f, TB_PHI, ctx->renames[i].dt, curr->input_count, 0);
                 set_input(f, new_phi, region, 0);
                 mark_node(f, new_phi);
 
@@ -431,12 +422,7 @@ static TB_Node* process_sese(TB_Function* f, NL_Table* sese2set, LocalSplitter* 
                 MemoryState* pred = start_of_memory_sese(sese2set, curr->inputs[j]);
                 FOR_N(i, 0, ctx->local_count) {
                     if (state->phis[i]) {
-                        if (state->phis[i]->dt.type == TB_TAG_VOID && pred->latest[1 + i]) {
-                            state->phis[i]->dt = pred->latest[1 + i]->dt;
-                        }
-
                         if (pred->latest[1 + i] == NULL) {
-                            TB_ASSERT(state->phis[i]->dt.type != TB_TAG_VOID);
                             pred->latest[1 + i] = make_poison(f, state->phis[i]->dt);
                         }
 
@@ -887,6 +873,7 @@ int tb_opt_locals(TB_Function* f) {
     aarray_for(i, locals) {
         TB_Node* addr = locals[i];
         RenameMode mode = RENAME_VALUE;
+        TB_DataType dt = TB_TYPE_VOID;
 
         bool blackhole = false;
         FOR_USERS(mem, addr) {
@@ -895,14 +882,21 @@ int tb_opt_locals(TB_Function* f) {
             } else if (USERI(mem) == 1 && USERN(mem)->type == TB_PTR_OFFSET) {
                 // pointer arith are also fair game, since they'd stay in bounds (given no UB)
                 mode = RENAME_MEMORY;
+                dt = TB_TYPE_MEMORY;
             } else if (USERI(mem) != 2 || !good_mem_op(f, USERN(mem))) {
                 mode = RENAME_NONE;
                 break;
+            } else {
+                if (USERN(mem)->type == TB_LOAD) {
+                    dt = USERN(mem)->dt;
+                } else if (USERN(mem)->type == TB_STORE) {
+                    dt = USERN(mem)->inputs[3]->dt;
+                }
             }
         }
 
         done:
-        if (mode != RENAME_NONE) {
+        if (mode != RENAME_NONE && dt.type != TB_TAG_VOID) {
             // allocate new alias index
             if (mode == RENAME_MEMORY) {
                 TB_NodeLocal* local = TB_NODE_GET_EXTRA(addr);
@@ -916,6 +910,7 @@ int tb_opt_locals(TB_Function* f) {
             ctx.renames[j].is_mem = mode == RENAME_MEMORY;
             ctx.renames[j].is_alive = blackhole;
             ctx.renames[j].addr = addr;
+            ctx.renames[j].dt = dt;
             j += 1;
         }
     }
@@ -983,6 +978,7 @@ int tb_opt_locals(TB_Function* f) {
 
         // tb_print(f);
         // tb_print_dumb(f);
+        // __debugbreak();
 
         TB_Worklist sese_worklist;
         NL_Table sese2set = nl_table_alloc(20);

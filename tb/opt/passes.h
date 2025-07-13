@@ -422,9 +422,6 @@ void tb_opt_legalize(TB_Function* f, TB_Arch arch);
 int tb_opt_peeps(TB_Function* f);
 int tb_opt_locals(TB_Function* f);
 
-void tb_opt_cprop_analyze(TB_Function* f);
-int tb_opt_cprop_rewrite(TB_Function* f);
-
 void push_ipsccp_job(TB_Module* m, TB_Function* f);
 
 // Integrated IR debugger

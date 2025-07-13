@@ -1,14 +1,14 @@
 
-void tb_print_dumb_edge(Lattice** types, TB_Node* n) {
+void tb_print_dumb_edge(Lattice** types, TB_Node* n, FILE* fp) {
     if (n) {
-        TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-        printf("%%%u", n->gvn);
-        TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
+        TB_OPTDEBUG(ANSI)(fprintf(fp, "\x1b[%dm", cool_ansi_color(n->gvn)));
+        fprintf(fp, "%%%u", n->gvn);
+        TB_OPTDEBUG(ANSI)(fprintf(fp, "\x1b[0m"));
 
         // i put the assert at the bottom so the last thing printed is the erroneous node ID
-        TB_ASSERT(n->type != TB_NULL);
+        // TB_ASSERT(n->type != TB_NULL);
     } else {
-        printf("___");
+        fprintf(fp, "___");
     }
 }
 
@@ -31,7 +31,7 @@ static void print_float32(float value) {
     }
     int_part = bits >> 31u ? -int_part : int_part;
 
-    printf("%lld", int_part);
+    fprintf(fp, "%lld", int_part);
 
     if (fract_bits > 0) {
         int zero_bits = (exp < 0 ? -exp : 0);
@@ -58,119 +58,119 @@ static void print_float32(float value) {
             tmp[zeros+i] = (fract % 10) + '0';
             fract /= 10;
         }
-        printf(".%.*s\n", (int) zeros + 11, tmp);
+        fprintf(fp, ".%.*s\n", (int) zeros + 11, tmp);
     }
 }
 #endif
 
-void tb_print_dumb_node(Lattice** types, TB_Node* n) {
-    TB_OPTDEBUG(ANSI)(printf("\x1b[%dm", cool_ansi_color(n->gvn)));
-    printf("%%%-4u: ", n->gvn);
-    TB_OPTDEBUG(ANSI)(printf("\x1b[0m"));
+void tb_print_dumb_node_raw(Lattice** types, TB_Node* n, FILE* fp) {
+    TB_OPTDEBUG(ANSI)(fprintf(fp, "\x1b[%dm", cool_ansi_color(n->gvn)));
+    fprintf(fp, "%%%-4u: ", n->gvn);
+    TB_OPTDEBUG(ANSI)(fprintf(fp, "\x1b[0m"));
 
     if (types && types[n->gvn] != NULL && types[n->gvn] != &TOP_IN_THE_SKY) {
         print_lattice(types[n->gvn]);
     } else {
-        int l = print_type(n->dt);
-        FOR_N(i, l, 5) { printf(" "); }
+        int l = print_type(n->dt, fp);
+        FOR_N(i, l, 5) { fprintf(fp, " "); }
     }
-    printf(" = %s ", tb_node_get_name(n->type));
+    fprintf(fp, " = %s ", tb_node_get_name(n->type));
     if (is_proj(n)) {
         int idx = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-        printf("%d", idx);
+        fprintf(fp, "%d", idx);
         if (n->type == TB_BRANCH_PROJ && idx > 0) {
-            printf(", key=%"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeBranchProj)->key);
+            fprintf(fp, ", key=%"PRId64, TB_NODE_GET_EXTRA_T(n, TB_NodeBranchProj)->key);
         } else if (n->type == TB_MACH_PROJ) {
             TB_NodeMachProj* p = TB_NODE_GET_EXTRA(n);
-            printf(", mask=");
+            fprintf(fp, ", mask=");
             tb__print_regmask(p->def);
         }
-        printf(" ");
+        fprintf(fp, " ");
     } else if (n->type == TB_MACH_COPY) {
         TB_NodeMachCopy* cpy = TB_NODE_GET_EXTRA(n);
-        printf("def=");
+        fprintf(fp, "def=");
         tb__print_regmask(cpy->def);
-        printf(", use=");
+        fprintf(fp, ", use=");
         tb__print_regmask(cpy->use);
-        printf(" ");
+        fprintf(fp, " ");
     } else if (n->type == TB_MACH_TEMP) {
         TB_NodeMachTemp* tmp = TB_NODE_GET_EXTRA(n);
-        printf("def=");
+        fprintf(fp, "def=");
         tb__print_regmask(tmp->def);
-        printf(" ");
+        fprintf(fp, " ");
     } else if (n->type == TB_VSHUFFLE) {
         TB_NodeVShuffle* shuf = TB_NODE_GET_EXTRA(n);
         FOR_N(i, 0, shuf->width) {
-            if (i) { printf(", "); }
-            printf("%d", shuf->indices[i]);
+            if (i) { fprintf(fp, ", "); }
+            fprintf(fp, "%d", shuf->indices[i]);
         }
-        printf(" ");
+        fprintf(fp, " ");
     } else if (n->type == TB_MACH_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeMachSymbol)->sym;
         if (sym->name[0]) {
-            printf("%s ", sym->name);
+            fprintf(fp, "%s ", sym->name);
         } else {
-            printf("sym%p ", sym);
+            fprintf(fp, "sym%p ", sym);
         }
     } else if (n->type == TB_STORE) {
-        print_type(n->inputs[3]->dt);
-        printf(" ");
+        print_type(n->inputs[3]->dt, fp);
+        fprintf(fp, " ");
     } if (n->type == TB_SYMBOL) {
         TB_Symbol* sym = TB_NODE_GET_EXTRA_T(n, TB_NodeSymbol)->sym;
         if (sym->name[0]) {
-            printf("'%s' ", sym->name);
+            fprintf(fp, "'%s' ", sym->name);
         } else {
-            printf("%p ", sym);
+            fprintf(fp, "%p ", sym);
         }
     } else if (n->type >= TB_AND && n->type <= TB_SMOD) {
         TB_NodeBinopInt* b = TB_NODE_GET_EXTRA(n);
-        if (b->ab & TB_ARITHMATIC_NSW) printf("nsw ");
-        if (b->ab & TB_ARITHMATIC_NUW) printf("nuw ");
+        if (b->ab & TB_ARITHMATIC_NSW) fprintf(fp, "nsw ");
+        if (b->ab & TB_ARITHMATIC_NUW) fprintf(fp, "nuw ");
     } else if (n->type == TB_ICONST) {
         TB_NodeInt* num = TB_NODE_GET_EXTRA(n);
 
         if (num->value < 0xFFFF) {
-            printf("%"PRId64" ", num->value);
+            fprintf(fp, "%"PRId64" ", num->value);
         } else {
-            printf("%#0"PRIx64" ", num->value);
+            fprintf(fp, "%#0"PRIx64" ", num->value);
         }
     } else if (n->type == TB_LOCAL) {
         TB_NodeLocal* l = TB_NODE_GET_EXTRA(n);
-        printf("size=%u, align=%u ", l->size, l->align);
+        fprintf(fp, "size=%u, align=%u ", l->size, l->align);
     } else if (n->type == TB_F32CONST) {
         TB_NodeFloat32* f = TB_NODE_GET_EXTRA(n);
-        printf("%.10f ", f->value);
+        fprintf(fp, "%.10f ", f->value);
     } else if (n->type == TB_F64CONST) {
         TB_NodeFloat64* f = TB_NODE_GET_EXTRA(n);
-        printf("%.10f ", f->value);
+        fprintf(fp, "%.10f ", f->value);
     } else if (n->type >= 0x100) {
         int family = n->type / 0x100;
         assert(family >= 1 && family < TB_ARCH_MAX);
         tb_codegen_families[family].print_extra(n);
-        printf(" ");
+        fprintf(fp, " ");
     }
-    printf("( ");
+    fprintf(fp, "( ");
     FOR_N(i, 0, n->input_count) {
-        tb_print_dumb_edge(types, n->inputs[i]);
-        printf(" ");
+        tb_print_dumb_edge(types, n->inputs[i], fp);
+        fprintf(fp, " ");
     }
 
     bool first = true;
     FOR_N(i, n->input_count, n->input_cap) if (n->inputs[i]) {
-        if (first) { printf("| "), first = false; }
-        tb_print_dumb_edge(types, n->inputs[i]);
-        printf(" ");
+        if (first) { fprintf(fp, "| "), first = false; }
+        tb_print_dumb_edge(types, n->inputs[i], fp);
+        fprintf(fp, " ");
     }
 
-    printf(")");
+    fprintf(fp, ")");
 
     #if 0
-    printf("   [[ ");
+    fprintf(fp, "   [[ ");
     FOR_USERS(u, n) {
         tb_print_dumb_edge(types, USERN(u));
-        printf(":%d ", USERI(u));
+        fprintf(fp, ":%d ", USERI(u));
     }
-    printf("]]");
+    fprintf(fp, "]]");
     #endif
 }
 
@@ -216,8 +216,8 @@ static void dumb_walk(TB_Function* f, TB_Worklist* ws, TB_Node* n) {
 }
 
 static bool cfg_is_fork_proj(TB_Node* n) { return cfg_is_cproj(n) && cfg_is_fork(n->inputs[0]); }
-void tb_print_dumb(TB_Function* f) {
-    printf("====== DUMP %-20s ======\n", f->super.name);
+void tb_print_dumb_raw(TB_Function* f, FILE* fp) {
+    fprintf(fp, "====== DUMP %-20s ======\n", f->super.name);
 
     TB_Worklist ws = { 0 };
     worklist_alloc(&ws, f->node_count);
@@ -230,45 +230,27 @@ void tb_print_dumb(TB_Function* f) {
     FOR_REV_N(i, 0, dyn_array_length(ws.items)) {
         // extra newline on BB boundaries
         if (i + 1 < dyn_array_length(ws.items) && cfg_is_fork_proj(ws.items[i + 1]) && !cfg_is_fork_proj(ws.items[i])) {
-            printf("\n");
+            fprintf(fp, "\n");
         } else if (cfg_is_region(ws.items[i])) {
-            printf("\n");
+            fprintf(fp, "\n");
         }
-        tb_print_dumb_node(types, ws.items[i]);
-        printf("\n");
+        tb_print_dumb_node_raw(types, ws.items[i], fp);
+        fprintf(fp, "\n");
     }
     worklist_free(&ws);
-
-    printf("=======================================\n");
+    fprintf(fp, "=======================================\n");
 }
 
-void tb_print_dumb_fancy(TB_Function* f) {
-    if (f->super.tag != TB_SYMBOL_FUNCTION) {
-        return;
-    }
-
-    printf("====== DUMP %-20s ======\n", f->super.name);
-
-    TB_Worklist ws = { 0 };
-    worklist_alloc(&ws, f->node_count);
-
-    TB_Node* root   = f->root_node;
-    Lattice** types = f->types;
-
-    dumb_walk(f, &ws, root);
-
-    FOR_REV_N(i, 0, dyn_array_length(ws.items)) {
-        // extra newline on BB boundaries
-        if (i + 1 < dyn_array_length(ws.items) && cfg_is_fork_proj(ws.items[i + 1]) && !cfg_is_fork_proj(ws.items[i])) {
-            printf("\n");
-        } else if (cfg_is_region(ws.items[i])) {
-            printf("\n");
-        }
-        tb_print_dumb_node(types, ws.items[i]);
-        printf("\n");
-    }
-    worklist_free(&ws);
-
-    printf("=======================================\n");
+void tb_print_dumb_node(Lattice** types, TB_Node* n) {
+    tb_print_dumb_node_raw(types, n, stdout);
 }
 
+void tb_print_dumb(TB_Function* f) {
+    tb_print_dumb_raw(f, stdout);
+}
+
+void tb_save_dump(TB_Function* f, const char* path) {
+    FILE* fp = fopen(path, "wb");
+    tb_print_dumb_raw(f, fp);
+    fclose(fp);
+}

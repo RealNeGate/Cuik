@@ -35,6 +35,9 @@ TB_Node* make_int_node(TB_Function* f, TB_DataType dt, uint64_t x);
 TB_Node* make_proj_node(TB_Function* f, TB_DataType dt, TB_Node* src, int i);
 TB_Node* make_int_binop(TB_Function* f, TB_NodeTypeEnum type, TB_Node* lhs, TB_Node* rhs);
 
+// for random debugging stuff
+static mtx_t aaa;
+
 static void node_resize_inputs(TB_Function* f, TB_Node* n, size_t cnt) {
     if (cnt >= n->input_cap) {
         size_t new_cap = tb_next_pow2(cnt + 1);
@@ -124,6 +127,16 @@ static bool same_sorta_branch(TB_Node* n, TB_Node* n2) {
     return br && br2 && br->key == br2->key;
 }
 
+static TB_Node* next_mem_user(TB_Node* n) {
+    FOR_USERS(u, n) {
+        if (cfg_is_mproj(USERN(u)) || tb_node_has_mem_out(USERN(u))) {
+            return USERN(u);
+        }
+    }
+
+    return NULL;
+}
+
 // incremental dominators, plays nice with peepholes and has
 // a limited walk of 20 steps.
 static TB_Node* fast_idom(TB_Node* bb) {
@@ -204,9 +217,6 @@ static void mark_node_n_users(TB_Function* f, TB_Node* n) {
 #include "peep_mem.h"
 #include "peep_float.h"
 
-// Module-level opts
-#include "ipo.h"
-
 #include "mem_opt.h"
 #include "sroa.h"
 #include "print.h"
@@ -284,8 +294,9 @@ static Lattice* value_int(TB_Function* f, TB_Node* n) {
 }
 
 static Lattice* value_root(TB_Function* f, TB_Node* n) {
-    /* if (f->super.module->during_ipsccp) {
-        return ;
+    // if we reach this point, it means we're somehow processing a function which has no
+    /* if (f->super.module->during_ipsccp && f->ipsccp_args == NULL) {
+        return &TOP_IN_THE_SKY;
     } */
 
     return f->ipsccp_args;
@@ -387,7 +398,7 @@ static TB_Node* ideal_location(TB_Function* f, TB_Node* n) {
 static Lattice* value_phi(TB_Function* f, TB_Node* n) {
     // wait for region to check first
     TB_Node* r = n->inputs[0];
-    if (latuni_get(f, r) == &TOP_IN_THE_SKY) {
+    if (latuni_get(f, r) != &LIVE_IN_THE_SKY) {
         return &TOP_IN_THE_SKY;
     }
 
@@ -433,6 +444,10 @@ static Lattice* value_phi(TB_Function* f, TB_Node* n) {
                     // __debugbreak();
                 } else {
                     Lattice* init = latuni_get(f, n->inputs[1]);
+                    if (init == &TOP_IN_THE_SKY) {
+                        return &TOP_IN_THE_SKY;
+                    }
+
                     if (lattice_is_const(init) && trips_max <= INT64_MAX) {
                         Lattice* range = affine_iv(f, init, trips_min, trips_max, *step_ptr, bits);
                         if (range) { return range; }
@@ -566,6 +581,7 @@ static void inc_nums(int* arr, int i) { if (i < TB_NODE_TYPE_MAX) { arr[i]++; } 
 #endif
 
 #include "cprop.h"
+#include "ipo.h"
 
 static bool can_gvn(TB_Node* n) {
     switch (n->type) {
@@ -990,8 +1006,14 @@ static void print_lattice(Lattice* l) {
         case LATTICE_XNAN64:   printf("~NaN64");                    break;
         case LATTICE_ALLPTR:   printf("allptr");                    break;
         case LATTICE_ANYPTR:   printf("anyptr");                    break;
-        case LATTICE_PTRCON:   printf("%s", l->_ptr->name);         break;
         case LATTICE_MEMORY:   printf("memory");                    break;
+        case LATTICE_PTRCON:
+        if (l->_ptr->name[0]) {
+            printf("%s", l->_ptr->name);
+        } else {
+            printf("sym%p", l->_ptr);
+        }
+        break;
 
         case LATTICE_TUPLE: {
             printf("[");
@@ -1011,7 +1033,9 @@ static void print_lattice(Lattice* l) {
                 } else {
                     printf("%"PRId64, l->_int.min);
                 }
-            } else if (l->_int.min == INT16_MIN && l->_int.max == INT16_MAX) {
+            } else if (l->_int.min == -1 && l->_int.max == 0) {
+                printf("bool");
+            } else if (l->_int.min == INT8_MIN && l->_int.max == INT8_MAX) {
                 printf("i8");
             } else if (l->_int.min == INT16_MIN && l->_int.max == INT16_MAX) {
                 printf("i16");
@@ -1253,6 +1277,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     f->stats.constants = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
     f->stats.opto_constants = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
     f->stats.killed = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
+    f->stats.cprop_t = zalloc(TB_NODE_TYPE_MAX * sizeof(int));
     #endif
 
     TB_ASSERT(worklist_count(ws) == 0);
@@ -1362,8 +1387,10 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
             // loop optimizer will bully the fuck out of the lattice types, so we might
             // as well reconstruct them using the optimistic crap
             cuikperf_region_start("optimistic", NULL);
-            tb_opt_cprop_analyze(f);
+            CProp cprop = tb_opt_cprop_init(f);
+            tb_opt_cprop_analyze(f, &cprop, false);
             k = tb_opt_cprop_rewrite(f);
+            tb_opt_cprop_deinit(f, &cprop);
             cuikperf_region_end();
 
             if (k > 0) {
@@ -1395,6 +1422,7 @@ bool tb_opt(TB_Function* f, TB_Worklist* ws, bool preserve_types) {
     cuik_free(f->stats.constants);
     cuik_free(f->stats.opto_constants);
     cuik_free(f->stats.killed);
+    cuik_free(f->stats.cprop_t);
     #endif
 
     // printf("%f", total / 1000000.0);
@@ -1415,26 +1443,27 @@ void tb_opt_dump_stats(TB_Function* f) {
     printf("%s: stats:\n", f->super.name);
     printf("  %4d   -> %4d nodes (%.2f%%)\n", f->stats.initial, final_count, factor);
     printf("  %4d GVN hit    %4d GVN attempts\n", f->stats.gvn_hit, f->stats.gvn_tries);
-    printf("                  Identity Rewrite  (Pes)CCP (Opt)CCP Kill\n");
+    printf("                  Identity Rewrite  (Pes)CCP (Opt)CCP Kill     CPropT\n");
 
-    int d[5] = { 0 };
+    int d[6] = { 0 };
     FOR_N(i, 1, TB_NODE_TYPE_MAX) {
-        int c[5];
+        int c[6];
         c[0] = f->stats.identities[i];
         c[1] = f->stats.rewrites[i];
         c[2] = f->stats.constants[i];
         c[3] = f->stats.opto_constants[i];
         c[4] = f->stats.killed[i];
+        c[5] = f->stats.cprop_t[i];
 
         bool any = false;
-        FOR_N(j, 0, 5) {
+        FOR_N(j, 0, 6) {
             any |= c[j] > 0;
             d[j] += c[j];
         }
 
         if (any) {
             printf("%-16s: ", tb_node_get_name(i));
-            FOR_N(j, 0, 5) {
+            FOR_N(j, 0, 6) {
                 if (c[j]) {
                     printf("\x1b[32m*%-6d\x1b[0m  ", c[j]);
                 } else {
@@ -1447,6 +1476,7 @@ void tb_opt_dump_stats(TB_Function* f) {
 
     printf("  %4d rewrites    %4d identities\n", d[0], d[1]);
     printf("  %4d constants  %4d of which were optimistic\n", d[2] + d[3], d[3]);
+    printf("  %d nanos spent on value_of() calls\n", d[5]);
 
     #if TB_OPTDEBUG_PEEP || TB_OPTDEBUG_SCCP
     printf("  %4d ticks\n", f->stats.time);

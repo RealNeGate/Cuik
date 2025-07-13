@@ -290,6 +290,14 @@ TB_Node* tb_builder_select(TB_GraphBuilder* g, TB_Node* cond, TB_Node* a, TB_Nod
     return g->peep(f, n);
 }
 
+TB_Node* tb_builder_va_start(TB_GraphBuilder* g, TB_Node* src) {
+    TB_Function* f = g->f;
+    TB_Node* n = tb_alloc_node(f, TB_VA_START, TB_TYPE_PTR, 2, 0);
+    set_input(f, n, f->root_node, 0);
+    set_input(f, n, src, 1);
+    return g->peep(f, n);
+}
+
 TB_Node* tb_builder_unary(TB_GraphBuilder* g, int type, TB_Node* src) {
     TB_Function* f = g->f;
     TB_Node* n = tb_alloc_node(f, type, src->dt, 2, 0);
@@ -873,8 +881,7 @@ void tb_builder_loc(TB_GraphBuilder* g, int mem_var, TB_SourceFile* file, int li
 
 TB_Node** tb_builder_call(TB_GraphBuilder* g, TB_FunctionPrototype* proto, int mem_var, TB_Node* target, int nargs, TB_Node** args) {
     TB_Function* f = g->f;
-
-    size_t proj_count = 2 + (proto->return_count > 1 ? proto->return_count : 1);
+    size_t proj_count = 2 + proto->return_count;
 
     TB_Node* n = tb_alloc_node(f, TB_CALL, TB_TYPE_TUPLE, 3 + nargs, sizeof(TB_NodeCall));
     set_input(f, n, target, 2);

@@ -39,7 +39,7 @@ void tb_print_from_blob(IRBlob blob) {
 
         printf("  %%%-4zu: ", i);
 
-        int l = print_type(node->dt);
+        int l = print_type(node->dt, stdout);
         FOR_N(i, l, 5) { printf(" "); }
 
         printf(" = %s ( ", tb_node_get_name(node->type));

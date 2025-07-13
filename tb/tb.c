@@ -385,8 +385,7 @@ TB_FunctionPrototype* tb_prototype_create(TB_Module* m, TB_CallingConv cc, size_
 }
 
 TB_Function* tb_function_create(TB_Module* m, ptrdiff_t len, const char* name, TB_Linkage linkage) {
-    TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, len, name, sizeof(TB_Function));
-    f->super.linkage = linkage;
+    TB_Function* f = (TB_Function*) tb_symbol_alloc(m, TB_SYMBOL_FUNCTION, len, name, linkage, sizeof(TB_Function));
     return f;
 }
 
@@ -494,7 +493,7 @@ void tb_global_add_symbol_reloc(TB_Module* m, TB_Global* g, size_t offset, TB_Sy
     g->objects[g->obj_count++] = (TB_InitObj) { .type = TB_INIT_OBJ_RELOC, .offset = offset, .reloc = symbol };
 }
 
-TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size) {
+TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, TB_Linkage linkage, size_t size) {
     TB_ASSERT(tag != TB_SYMBOL_NONE);
     cuikperf_region_start("symbol_alloc", NULL);
 
@@ -505,7 +504,7 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const 
 
     TB_Symbol* s = tb_arena_alloc(&info->perm_arena, size);
     s->tag = tag;
-    s->linkage = TB_LINKAGE_PUBLIC;
+    s->linkage = linkage;
     s->name_length = len;
     s->name = tb__arena_strdup(m, len, name);
     s->module = m;
@@ -534,14 +533,13 @@ TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const 
 }
 
 TB_Symbol* tb_extern_create(TB_Module* m, ptrdiff_t len, const char* name, TB_ExternalType type) {
-    TB_External* e = (TB_External*) tb_symbol_alloc(m, TB_SYMBOL_EXTERNAL, len, name, sizeof(TB_External));
+    TB_External* e = (TB_External*) tb_symbol_alloc(m, TB_SYMBOL_EXTERNAL, len, name, TB_LINKAGE_PUBLIC, sizeof(TB_External));
     e->type = type;
     return &e->super;
 }
 
 TB_Global* tb_global_create(TB_Module* m, ptrdiff_t len, const char* name, TB_DebugType* dbg_type, TB_Linkage linkage) {
-    TB_Global* g = (TB_Global*) tb_symbol_alloc(m, TB_SYMBOL_GLOBAL, len, name, sizeof(TB_Global));
-    g->super.linkage = linkage;
+    TB_Global* g = (TB_Global*) tb_symbol_alloc(m, TB_SYMBOL_GLOBAL, len, name, linkage, sizeof(TB_Global));
     g->dbg_type = dbg_type;
     return g;
 }

@@ -348,6 +348,7 @@ typedef struct {
     uint64_t end_const;
 } TB_InductionVar;
 
+typedef struct CProp CProp;
 typedef struct CProp_Node CProp_Node;
 typedef struct CProp_Partition CProp_Partition;
 
@@ -408,6 +409,9 @@ struct TB_Function {
         // IPSCCP stuff
         _Atomic(Lattice*) ipsccp_args;
         _Atomic(Lattice*) ipsccp_ret;
+        CProp* cprop;
+
+        atomic_bool ipsccp_escape;
         atomic_int ipsccp_status;
 
         // IPO lock
@@ -422,7 +426,7 @@ struct TB_Function {
             #if TB_OPTDEBUG_STATS
             int initial;
             int gvn_hit, gvn_tries;
-            int *peeps, *identities, *rewrites, *constants, *opto_constants, *killed;
+            int *peeps, *identities, *rewrites, *constants, *opto_constants, *killed, *cprop_t;
 
             // perf counter for solver
             uint64_t solver_n, solver_big_o, solver_time;
@@ -724,7 +728,7 @@ void tb_node_clear_extras(TB_Function* f, TB_Node* n);
 
 TB_Node* tb__gvn(TB_Function* f, TB_Node* n, size_t extra);
 
-TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, size_t size);
+TB_Symbol* tb_symbol_alloc(TB_Module* m, TB_SymbolTag tag, ptrdiff_t len, const char* name, TB_Linkage linkage, size_t size);
 
 void tb_emit_symbol_patch(TB_FunctionOutput* func_out, TB_Symbol* target, size_t pos, TB_ObjectRelocType type);
 TB_Global* tb__small_data_intern(TB_Module* m, size_t len, const void* data);

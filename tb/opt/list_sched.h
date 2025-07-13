@@ -12,6 +12,10 @@ typedef struct {
 } ReadyNode;
 
 static int count_waiting_deps(TB_Function* f, TB_Worklist* ws, TB_BasicBlock* bb, TB_Node* n) {
+    if (n->type == TB_PHI && n->inputs[0] == bb->start) {
+        return 0;
+    }
+
     // we also care about extra edges here so we're iterating on input_cap
     int waiting = 0;
     FOR_N(i, 0, n->input_cap) {
@@ -200,67 +204,112 @@ void tb_list_scheduler(TB_Function* f, TB_CFG* cfg, TB_Worklist* ws, TB_BasicBlo
 
     CUIK_TIMED_BLOCK("trace") {
         TB_Node* top = bb->start;
+        int* aux_stack = tb_arena_alloc(&f->tmp_arena, aarray_length(bb->items) * sizeof(int));
+
+        int cnt = 0;
+        TB_Node** ordered = tb_arena_alloc(&f->tmp_arena, aarray_length(bb->items) * sizeof(TB_Node*));
 
         // DFS walk
         worklist_clear(ws);
         worklist_push(ws, top);
-        sched.depth[top->gvn] = 0;
+        aux_stack[0] = top->user_count;
 
-        FOR_USERS(u, top) {
-            if (USERN(u)->type == TB_PHI && USERI(u) == 0) {
-                worklist_push(ws, USERN(u));
-            }
-        }
-
+        // fill up initial ready list (everything used by the live-ins)
         aarray_for(i, bb->items) {
             TB_Node* n = bb->items[i];
-            if (!worklist_test(ws, n) && f->scheduled[n->gvn] == bb && count_waiting_deps(f, ws, bb, n) == 0) {
+            if (f->scheduled[n->gvn] == bb && n != top && count_waiting_deps(f, ws, bb, n) == 0) {
+                #if 0
+                tb_print_dumb_node(NULL, n);
+                printf(" %d\n", worklist_test(ws, n));
+                #endif
+
+                // this being true means there's duplicate nodes in the bb->items
+                TB_ASSERT(!worklist_test(ws, n));
                 worklist_push(ws, n);
+                aux_stack[dyn_array_length(ws->items) - 1] = n->user_count;
             }
         }
 
         while (dyn_array_length(ws->items)) retry: {
-            TB_Node* n = ws->items[dyn_array_length(ws->items) - 1];
-
-            // process users before placing ourselves
-            int max_depth = 0;
-            FOR_USERS(u, n) {
+            int i = dyn_array_length(ws->items) - 1;
+            TB_Node* n = ws->items[i];
+            while (aux_stack[i] > 0) {
+                // push next user in the same block
+                TB_User* u = &n->users[--aux_stack[i]];
                 TB_Node* un = USERN(u);
-                if (!worklist_test_n_set(ws, un) && f->scheduled[un->gvn] == bb) {
-                    dyn_array_put(ws->items, un);
-                    goto retry;
+                if (f->scheduled[un->gvn] != bb) {
+                    continue;
                 }
 
-                max_depth = TB_MAX(max_depth, sched.depth[un->gvn]);
+                if (!worklist_test_n_set(ws, un)) {
+                    dyn_array_put(ws->items, un);
+                    aux_stack[dyn_array_length(ws->items) - 1] = un->user_count;
+                    goto retry;
+                }
             }
 
-            #if TB_OPTDEBUG_SCHED1
-            tb_print_dumb_node(NULL, n);
-            printf(" depth=%d\n", max_depth + 1);
-            #endif
+            TB_ASSERT(cnt < aarray_length(bb->items));
+            ordered[cnt++] = n;
+            sched.depth[n->gvn] = -1;
 
             dyn_array_pop(ws->items);
-            sched.depth[n->gvn] = max_depth + 1;
         }
 
-        #ifndef NDEBUG
-        aarray_for(i, bb->items) {
-            TB_Node* n = bb->items[i];
-            int d = sched.depth[n->gvn];
+        // compute depths
+        // TB_ASSERT(cnt == aarray_length(bb->items));
+        bool cycle = false;
+        FOR_REV_N(i, 0, cnt) {
+            TB_Node* n = ordered[i];
 
-            FOR_N(j, 0, n->input_cap) {
-                if (n->inputs[j] && f->scheduled[n->inputs[j]->gvn] == bb) {
-                    int e = sched.depth[n->inputs[j]->gvn];
-                    if (d >= e && n->type != TB_PHI && n->inputs[j]->type != TB_PHI) {
-                        tb_print_dumb(f);
-                        tb_panic("CYCLE DETECTED BETWEEN %%%u and %%%u!!!\n", n->gvn, n->inputs[j]->gvn);
+            int max_depth = 0;
+            if (n->type != TB_PHI) {
+                FOR_N(i, 0, n->input_cap) {
+                    TB_Node* in = n->inputs[i];
+                    if (in && f->scheduled[in->gvn] == bb) {
+                        int d = sched.depth[in->gvn];
+                        #ifndef NDEBUG
+                        if (d < 0) {
+                            printf("CYCLE DETECTED BETWEEN %%%u and %%%u!!!\n", n->gvn, in->gvn);
+                            cycle = true;
+                        }
+                        #endif
+
+                        max_depth = TB_MAX(max_depth, d);
                     }
                 }
             }
+
+            sched.depth[n->gvn] = max_depth + 1;
+
+            #if TB_OPTDEBUG_SCHED3
+            tb_print_dumb_node(NULL, n);
+            printf(" depth=%d\n", max_depth + 1);
+            #endif
         }
-        #endif
 
         worklist_clear(ws);
+
+        if (cycle) {
+            printf("digraph G {\n");
+            FOR_REV_N(i, 0, cnt) {
+                TB_Node* n = ordered[i];
+                printf("N%d [label=\"%%%u: %s\"]\n", n->gvn, n->gvn, tb_node_get_name(n->type));
+
+                int max_depth = 0;
+                if (n->type != TB_PHI && n != top) {
+                    FOR_N(i, 0, n->input_cap) {
+                        TB_Node* in = n->inputs[i];
+                        if (in && f->scheduled[in->gvn] == bb) {
+                            printf("N%d -> N%d\n", in->gvn, n->gvn);
+                        }
+                    }
+                }
+            }
+            printf("}\n");
+
+            // tb_print_dumb(f);
+            __debugbreak();
+        }
     }
 
     TB_OPTDEBUG(SCHED1)(printf("         Dispatch "), tb_print_dumb_node(NULL, bb->start), printf("\n"));

@@ -153,29 +153,29 @@ const char* tb_node_get_name(TB_NodeTypeEnum n_type) {
     }
 }
 
-static int print_type(TB_DataType dt) {
+static int print_type(TB_DataType dt, FILE* fp) {
     switch (dt.type) {
-        case TB_TAG_VOID:    return printf("void");
-        case TB_TAG_BOOL:    return printf("bool");
-        case TB_TAG_I8:      return printf("i8");
-        case TB_TAG_I16:     return printf("i16");
-        case TB_TAG_I32:     return printf("i32");
-        case TB_TAG_I64:     return printf("i64");
-        case TB_TAG_PTR:     return dt.elem_or_addrspace == 0 ? printf("ptr") : printf("ptr%d", dt.elem_or_addrspace);
-        case TB_TAG_F32:     return printf("f32");
-        case TB_TAG_F64:     return printf("f64");
+        case TB_TAG_VOID:    return fprintf(fp, "void");
+        case TB_TAG_BOOL:    return fprintf(fp, "bool");
+        case TB_TAG_I8:      return fprintf(fp, "i8");
+        case TB_TAG_I16:     return fprintf(fp, "i16");
+        case TB_TAG_I32:     return fprintf(fp, "i32");
+        case TB_TAG_I64:     return fprintf(fp, "i64");
+        case TB_TAG_PTR:     return dt.elem_or_addrspace == 0 ? fprintf(fp, "ptr") : fprintf(fp, "ptr%d", dt.elem_or_addrspace);
+        case TB_TAG_F32:     return fprintf(fp, "f32");
+        case TB_TAG_F64:     return fprintf(fp, "f64");
         case TB_TAG_V64:
         case TB_TAG_V128:
         case TB_TAG_V256:
         case TB_TAG_V512: {
-            int s = printf("v%d[", 1u << ((dt.type - TB_TAG_V64) + 6));
-            s += print_type((TB_DataType){ .type = dt.elem_or_addrspace });
-            s += printf("]");
+            int s = fprintf(fp, "v%d[", 1u << ((dt.type - TB_TAG_V64) + 6));
+            s += print_type((TB_DataType){ .type = dt.elem_or_addrspace }, fp);
+            s += fprintf(fp, "]");
             return s;
         }
-        case TB_TAG_TUPLE:   return printf("tuple");
-        case TB_TAG_CONTROL: return printf("ctrl");
-        case TB_TAG_MEMORY:  return printf("mem");
+        case TB_TAG_TUPLE:   return fprintf(fp, "tuple");
+        case TB_TAG_CONTROL: return fprintf(fp, "ctrl");
+        case TB_TAG_MEMORY:  return fprintf(fp, "mem");
         default: tb_todo();  return 0;
     }
 }
@@ -186,7 +186,7 @@ static void print_type2(TB_DataType dt) {
     print_type(dt);
     printf("\x1b[0m");
     #else
-    print_type(dt);
+    print_type(dt, stdout);
     #endif
 }
 

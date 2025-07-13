@@ -864,7 +864,7 @@ static ValDesc cg_subexpr(TranslationUnit* tu, TB_GraphBuilder* g, Subexpr* e, C
                 } else if (strcmp(name, "__va_start") == 0) {
                     TB_Node* dst = as_rval(tu, g, &args[1]);
                     assert(args[2].kind == LVALUE);
-                    tb_builder_store(g, 0, true, dst, tb_builder_unary(g, TB_VA_START, args[2].n), 8, false);
+                    tb_builder_store(g, 0, true, dst, tb_builder_va_start(g, args[2].n), 8, false);
                 } else if (strcmp(name, "__va_arg") == 0) {
                     // classify value
                     TB_Node* src = as_rval(tu, g, &args[1]);

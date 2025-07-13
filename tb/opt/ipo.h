@@ -18,6 +18,7 @@ typedef enum {
 typedef struct CallGraphEdge {
     struct CallGraphEdge* next;
     TB_Function* caller;
+    int refs;
 } CallGraphEdge;
 
 struct IPOSolver {
@@ -50,7 +51,7 @@ typedef struct {
     int index;
 } SCC;
 
-static mtx_t aaa;
+static const char* size_strs[] = { "small", "small-medium", "medium", "large" };
 
 static int op_weights[256] = {
     // loops will increase size even if it doesn't generate ops
@@ -141,11 +142,11 @@ static SizeClass classify_size(TB_Function* f, TB_Worklist* ws) {
         size_class = SIZE_LARGE;
     } else if (weighted_sum >= 100) {
         size_class = SIZE_MEDIUM;
-    } else if (weighted_sum >= 20) {
+    } else if (weighted_sum >= 10) {
         size_class = SIZE_SMALL_MED;
     }
 
-    TB_OPTDEBUG(INLINE3)(printf("classify_size(%s) = %d\n", f->super.name, weighted_sum));
+    TB_OPTDEBUG(INLINE3)(printf("classify_size(%s) = %d (%s)\n", f->super.name, weighted_sum, size_strs[size_class]));
 
     cuikperf_region_end();
     return size_class;
@@ -158,6 +159,21 @@ static TB_Function* static_call_site(TB_Node* n) {
 
     TB_Symbol* target = TB_NODE_GET_EXTRA_T(n->inputs[2], TB_NodeSymbol)->sym;
     return target->tag == TB_SYMBOL_FUNCTION ? (TB_Function*) target : NULL;
+}
+
+static bool is_function_root(TB_Function* f) {
+    TB_Module* m = f->super.module;
+    if (f->ipsccp_escape) {
+        return true;
+    }
+
+    // COMDAT functions aren't by default alive, even if they're exported
+    // since it's possible they're not the one that ends up picked.
+    if (m->sections[f->section].comdat.type != TB_COMDAT_NONE) {
+        return false;
+    }
+
+    return f->super.linkage == TB_LINKAGE_PUBLIC;
 }
 
 static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_Worklist* ws, int depth) {
@@ -208,7 +224,6 @@ static SCCNode* scc_walk(SCC* restrict scc, IPOSolver* ipo, TB_Function* f, TB_W
             kid_f = scc->stk[--scc->stk_cnt];
 
             // printf("  %s\n", kid_f->super.name);
-            ipo->size_classes[kid_f->uid] = classify_size(f, ws);
 
             SCCNode* kid_n = nl_table_get(&scc->nodes, kid_f);
             kid_n->depth = depth;
@@ -231,8 +246,11 @@ static void func_opt_task(TPool* tp, void** arg) {
         ipo_worklist = tb_worklist_alloc();
     }
 
-    log_debug("OPT: %s: function local optimizer", f->super.name);
-    tb_opt(f, ipo_worklist, false);
+    if (1 || strcmp(f->super.name, "eval") == 0) {
+        log_debug("OPT: %s: function local optimizer", f->super.name);
+        tb_opt(f, ipo_worklist, false);
+        // __debugbreak();
+    }
 
     tracker[0] += 1;
     if (tracker[0] == tracker[1]) { // might be done?
@@ -241,280 +259,11 @@ static void func_opt_task(TPool* tp, void** arg) {
     cuikperf_region_end();
 }
 
-enum {
-    IPO_FUNC_IDLE,
+#include "ipsccp.h"
+#include "inline.h"
 
-    // we're in the process of optimizing
-    IPO_FUNC_OPT,
-
-    // we're done optimizing, we can be used as
-    // part of an inlining attempt.
-    IPO_FUNC_READY,
-};
-
-// we wanna be idle, READY -> IDLE or just IDLE
-static void ipo_lock(TB_Function* f) {
-    FutexV old = f->ipo_lock;
-    do {
-        if (old == IPO_FUNC_OPT) {
-            futex_wait(&f->ipo_lock, IPO_FUNC_OPT);
-            old = f->ipo_lock;
-        }
-    } while (old == IPO_FUNC_IDLE || atomic_compare_exchange_strong(&f->ipo_lock, &(FutexV){ IPO_FUNC_READY }, IPO_FUNC_IDLE));
-}
-
-static bool ipo_try_lock(TB_Function* f) {
-    FutexV old = f->ipo_lock;
-    return old == IPO_FUNC_IDLE || atomic_compare_exchange_strong(&f->ipo_lock, &(FutexV){ IPO_FUNC_READY }, IPO_FUNC_IDLE);
-}
-
-static void ipo_opt_task(TPool* tp, void** arg) {
-    TB_Function* f = arg[0];
-    Futex* tracker = arg[1];
-
-    cuikperf_region_start("optimize", f->super.name);
-    if (ipo_worklist == NULL) {
-        // we just leak these btw, i don't care yet
-        ipo_worklist = tb_worklist_alloc();
-    }
-
-    tb_opt(f, ipo_worklist, false);
-
-    // notify the IPO thread to stop waiting
-    f->ipo_lock = IPO_FUNC_READY;
-    futex_signal(&f->ipo_lock);
-
-    log_debug("%s: optimized!", f->super.name);
-
-    tracker[0] += 1;
-    if (tracker[0] == tracker[1]) { // might be done?
-        futex_signal(&tracker[0]);
-    }
-    cuikperf_region_end();
-}
-
-enum {
-    IPSCCP_STATUS_IDLE,
-
-    // waiting to be processed
-    IPSCCP_STATUS_IN_LIST,
-
-    // it's in the middle of processing, we can't push it onto
-    // the list at this moment else we'll have two tasks on the
-    // same function but we still need to handle the race around
-    // retrying.
-    IPSCCP_STATUS_PROCESSING,
-
-    // if we ask to process a function which is already
-    // processing we'll just ask it to retry immediately.
-    IPSCCP_STATUS_RETRY,
-};
-
-static Lattice* ipsccp_return_type(TB_Function* f) {
-    Lattice* t = &TOP_IN_THE_SKY;
-    if (f->types == NULL) {
-        return &TOP_IN_THE_SKY;
-    }
-
-    TB_Arena* arena = get_permanent_arena(f->super.module);
-    FOR_N(i, 1, f->root_node->input_count) {
-        TB_Node* ret = f->root_node->inputs[i];
-        if (ret->type == TB_RETURN) {
-            Lattice* ctrl = latuni_get(f, ret->inputs[0]);
-            if (ctrl != &LIVE_IN_THE_SKY) {
-                continue;
-            }
-
-            size_t size = sizeof(Lattice) + ret->input_count*sizeof(Lattice*);
-            Lattice* l = tb_arena_alloc(arena, size);
-            *l = (Lattice){ LATTICE_TUPLE, ._elem_count = ret->input_count };
-
-            l->elems[0] = ctrl;
-            FOR_N(i, 1, ret->input_count) {
-                l->elems[i] = latuni_get(f, ret->inputs[i]);
-            }
-
-            // intern & free
-            Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
-            if (k != l) { tb_arena_free(arena, l, size); }
-
-            // meet over all paths
-            t = lattice_meet(f, t, k);
-        }
-    }
-
-    return t;
-}
-
-static void func_sccp_task(TPool* tp, void** arg) {
-    TB_Function* f = arg[0];
-    TB_Module* m = f->super.module;
-
-    if (ipo_worklist == NULL) {
-        // we just leak these btw, i don't care yet
-        ipo_worklist = tb_worklist_alloc();
-    }
-
-    for (;;) {
-        // retry | in_list -> processing
-        f->ipsccp_status = IPSCCP_STATUS_PROCESSING;
-
-        cuikperf_region_start("IPSCCP", f->super.name);
-        Lattice* old_type = ipsccp_return_type(f);
-
-        // the temp arena might've been freed, let's restore it
-        if (f->tmp_arena.top == NULL) {
-            tb_arena_create(&f->tmp_arena, "Tmp");
-            TB_ASSERT(f->tmp_arena.top);
-        }
-
-        f->worklist = ipo_worklist;
-        tb_opt_cprop_analyze(f);
-        worklist_clear(f->worklist);
-        f->worklist = NULL;
-
-        // update the IPSCCP rets, this value has only one writer at any one time
-        // so we don't need a CAS
-        Lattice* new_type = ipsccp_return_type(f);
-        if (old_type != new_type) {
-            #if 0
-            mtx_lock(&aaa);
-            printf("%s: ", f->super.name);
-            print_lattice(old_type);
-            printf(" => ");
-            print_lattice(new_type);
-            printf("\n");
-            mtx_unlock(&aaa);
-            #endif
-
-            atomic_store_explicit(&f->ipsccp_ret, new_type, memory_order_release);
-            log_debug("OPT: %s: made progress, pushing users!", f->super.name);
-
-            IPOSolver* ipo = m->ipo;
-            for (CallGraphEdge* e = ipo->call_graph[f->uid]; e; e = e->next) {
-                push_ipsccp_job(m, e->caller);
-            }
-        }
-        cuikperf_region_end();
-
-        // processing -> idle, if we lose the only other option is retrying so we do that
-        if (atomic_compare_exchange_strong(&f->ipsccp_status, &(int){ IPSCCP_STATUS_PROCESSING }, IPSCCP_STATUS_IDLE)) {
-            break;
-        }
-    }
-
-    // we're done with the solver now
-    m->ipsccp_tracker[0] += 1;
-    if (m->ipsccp_tracker[0] == m->ipsccp_tracker[1]) {
-        futex_signal(&m->ipsccp_tracker[0]);
-    }
-}
-
-static void func_sccp_rewrite_task(TPool* tp, void** arg) {
-    TB_Function* f = arg[0];
-    TB_Module* m = f->super.module;
-
-    TB_ASSERT(ipo_worklist);
-
-    // push all the nodes back in, we didn't preserve the worklist since it's
-    // cheap to recompute it and the memory cost wouldn't been annoying.
-    TB_Worklist* ws = ipo_worklist;
-    worklist_push(ws, f->root_node);
-    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-        TB_Node* n = ws->items[i];
-        FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
-    }
-
-    f->worklist = ws;
-    tb_opt_cprop_rewrite(f);
-    f->worklist = NULL;
-
-    if (worklist_count(ws)) {
-        m->ipsccp_progress = true;
-        worklist_clear(ws);
-    }
-    tb_arena_destroy(&f->tmp_arena);
-
-    // we're done with the solver now
-    m->ipsccp_tracker[0] += 1;
-    if (m->ipsccp_tracker[0] == m->ipsccp_tracker[1]) {
-        futex_signal(&m->ipsccp_tracker[0]);
-    }
-}
-
-void push_ipsccp_job(TB_Module* m, TB_Function* f) {
-    // either...
-    // * we're not on the list, push to list.
-    // * we're processing, move to retry state.
-    int status = f->ipsccp_status, next;
-    do {
-        if (status == IPSCCP_STATUS_IDLE) {
-            next = IPSCCP_STATUS_IN_LIST;
-        } else if (status == IPSCCP_STATUS_PROCESSING) {
-            next = IPSCCP_STATUS_RETRY;
-        } else {
-            break;
-        }
-    } while (!atomic_compare_exchange_strong(&f->ipsccp_status, &status, next));
-
-    // we've moved into the list? yay!
-    if (status != next && next == IPSCCP_STATUS_IN_LIST) {
-        log_debug("OPT: %s: pushed to IPSCCP worklist", f->super.name);
-        m->ipsccp_tracker[1] += 1;
-
-        void* args[2] = { f };
-        tpool_add_task2(m->ipsccp_pool, func_sccp_task, 2, args);
-    }
-}
-
-static bool run_ipsccp(TB_Module* m, TPool* pool) {
-    m->during_ipsccp = true;
-    m->ipsccp_pool = pool;
-    m->ipsccp_tracker[0] = m->ipsccp_tracker[1] = 0;
-
-    // any entry-point functions will be pushed
-    nbhs_for(entry, &m->symbols) {
-        TB_Symbol* s = *entry;
-        if (s->tag == TB_SYMBOL_FUNCTION && s->linkage == TB_LINKAGE_PUBLIC) {
-            TB_Function* f = (TB_Function*) s;
-
-            // since this is the lowest element, any meet should
-            // yield this and thus should always win the race.
-            f->ipsccp_args = lattice_tuple_from_node(f, f->root_node);
-            push_ipsccp_job(m, f);
-        }
-    }
-
-    int64_t old;
-    while (old = m->ipsccp_tracker[0], old != m->ipsccp_tracker[1]) {
-        futex_wait(&m->ipsccp_tracker[0], old);
-    }
-    m->during_ipsccp = false;
-    m->ipsccp_tracker[0] = m->ipsccp_tracker[1] = 0;
-
-    // we can apply the rewrites now, in parallel
-    nbhs_for(entry, &m->symbols) {
-        TB_Symbol* s = *entry;
-        if (s->tag == TB_SYMBOL_FUNCTION) {
-            TB_Function* f = (TB_Function*) s;
-
-            log_debug("OPT: %s: pushed to IPSCCP worklist", f->super.name);
-            m->ipsccp_tracker[1] += 1;
-
-            void* args[2] = { f };
-            tpool_add_task2(m->ipsccp_pool, func_sccp_rewrite_task, 2, args);
-        }
-    }
-
-    while (old = m->ipsccp_tracker[0], old != m->ipsccp_tracker[1]) {
-        futex_wait(&m->ipsccp_tracker[0], old);
-    }
-    return true;
-}
-
-static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Node* call_site, TB_Function* kid);
 bool tb_module_ipo(TB_Module* m, TPool* pool) {
-    cuikperf_region_start("IPO", NULL);
+    cuikperf_region_start("Optimizer", NULL);
     mtx_init(&aaa, mtx_plain);
 
     CUIK_TIMED_BLOCK("resize barrier") {
@@ -576,7 +325,7 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
         // build strongly connected components
         nbhs_for(entry, &m->symbols) {
             TB_Symbol* s = *entry;
-            if (s->tag == TB_SYMBOL_FUNCTION && s->linkage == TB_LINKAGE_PUBLIC && nl_table_get(&scc.nodes, s) == NULL) {
+            if (s->tag == TB_SYMBOL_FUNCTION && is_function_root((TB_Function*) s) && nl_table_get(&scc.nodes, s) == NULL) {
                 scc_walk(&scc, &ipo, (TB_Function*) s, &ws, 0);
             }
         }
@@ -589,6 +338,17 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
             TB_Function* f = ipo.ws[i];
             TB_ASSERT(f->super.tag == TB_SYMBOL_FUNCTION);
 
+            #if TB_OPTDEBUG_INLINE2
+            const char* color = "white";
+            switch (ipo.size_classes[f->uid]) {
+                case SIZE_SMALL: color = "green"; break;
+                case SIZE_SMALL_MED: color = "yellow"; break;
+                case SIZE_MEDIUM: color = "orange"; break;
+                case SIZE_LARGE: color = "red"; break;
+            }
+            printf("%s [shape=box style=filled fillcolor=\"%s\"]\n", f->super.name, color);
+            #endif
+
             // construct call graph
             TB_Node* callgraph = f->root_node->inputs[0];
             TB_ASSERT(callgraph->type == TB_CALLGRAPH);
@@ -596,10 +356,29 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
                 TB_Node* call = callgraph->inputs[i];
                 TB_Function* target = static_call_site(call);
                 if (target != NULL) {
-                    CallGraphEdge* edge = tb_arena_alloc(scc.arena, sizeof(CallGraphEdge));
-                    edge->next   = ipo.call_graph[target->uid];
-                    edge->caller = f;
-                    ipo.call_graph[target->uid] = edge;
+                    CallGraphEdge* edge = NULL;
+
+                    // if we already refer to this function, we
+                    // don't need two call graph edges to it
+                    for (CallGraphEdge* e = ipo.call_graph[target->uid]; e; e = e->next) {
+                        if (e->caller == f) {
+                            edge = e;
+                            edge->refs += 1;
+                            break;
+                        }
+                    }
+
+                    if (edge == NULL) {
+                        edge = tb_arena_alloc(scc.arena, sizeof(CallGraphEdge));
+                        edge->next   = ipo.call_graph[target->uid];
+                        edge->caller = f;
+                        edge->refs   = 1;
+                        ipo.call_graph[target->uid] = edge;
+
+                        #if TB_OPTDEBUG_INLINE2
+                        printf("%s -> %s\n", f->super.name, target->super.name);
+                        #endif
+                    }
                 }
             }
         }
@@ -609,239 +388,13 @@ bool tb_module_ipo(TB_Module* m, TPool* pool) {
         run_ipsccp(m, pool);
     }
 
-    // bottom-up inlining, run the function-local optimizer as we do so since
-    // there's either openings from the IPSCCP or the inlining. we can probably
-    // squeeze some threading from this, not all the time so we'll see...
-    bool progress = false;
+    bool progress;
     CUIK_TIMED_BLOCK("Inliner") {
-        TB_OPTDEBUG(INLINE)(printf("BOTTOM-UP ORDER:\n"));
-
-        Futex tracker[2] = { 0 };
-        FOR_N(i, 0, ipo.ws_cnt) {
-            TB_Function* f = ipo.ws[i];
-            if (f->super.tag == TB_SYMBOL_DEAD) {
-                continue;
-            }
-
-            cuikperf_region_start("process", f->super.name);
-            TB_Node* callgraph = f->root_node->inputs[0];
-            TB_ASSERT(callgraph->type == TB_CALLGRAPH);
-
-            cuikperf_region_start("lock", f->super.name);
-            // lock all the nodes necessary for the inlining attempt
-            bool ready = true;
-            for (size_t i = 1; i < callgraph->input_count;) {
-                TB_Node* call = callgraph->inputs[i++];
-                TB_Function* target = static_call_site(call);
-                if (target == NULL) {
-                    continue;
-                }
-
-                if (!ipo_try_lock(target)) {
-                    log_debug("%s: waiting on %s to complete optimizing!", f->super.name, target->super.name);
-                    ready = false;
-                    break;
-                }
-            }
-
-            // if we're not ready to process we have two options, one is to wait
-            // for all the relevant functions to complete and the other is to process
-            // a function on the same depth level as ourselves
-            if (!ready) {
-                // wait for all the deps
-                for (size_t i = 1; i < callgraph->input_count;) {
-                    TB_Node* call = callgraph->inputs[i++];
-                    TB_Function* target = static_call_site(call);
-                    if (target == NULL) {
-                        continue;
-                    }
-
-                    ipo_lock(target);
-                }
-                log_debug("%s: we're ready now!", f->super.name);
-            }
-            cuikperf_region_end();
-
-            SCCNode* node = nl_table_get(&scc.nodes, f);
-
-            static const char* size_strs[] = { "small", "small-medium", "medium", "large" };
-            SizeClass size = ipo.size_classes[f->uid];
-            TB_OPTDEBUG(INLINE)(printf("* FUNCTION: %s (%s)\n", f->super.name, size_strs[size]));
-
-            for (size_t i = 1; i < callgraph->input_count;) {
-                TB_Node* call = callgraph->inputs[i++];
-                TB_Function* target = static_call_site(call);
-                if (target == NULL) {
-                    continue;
-                }
-
-                cuikperf_region_start("inline?", target->super.name);
-                SizeClass target_size = ipo.size_classes[target->uid];
-
-                bool should = false;
-                // large functions will stop inlining completely
-                if (size != SIZE_LARGE && target_size != SIZE_LARGE) {
-                    if (size == SIZE_SMALL || target_size == SIZE_SMALL) {
-                        should = true;
-                    }
-                }
-
-                TB_OPTDEBUG(INLINE)(printf("  -> %s (from %%%u, %s)... %s\n", target->super.name, call->gvn, size_strs[target_size], should ? "YES" : "NO"));
-
-                if (should) {
-                    inline_into(scc.arena, f, &ws, call, target);
-                    i -= 1;
-                    progress = true;
-
-                    // remove edge on graph
-                    ipo.ref_count[target->uid] -= 1;
-                    if (ipo.ref_count[target->uid] == 0 && target->super.linkage == TB_LINKAGE_PRIVATE) {
-                        // function is now unreachable, we can kill it
-                        TB_OPTDEBUG(INLINE)(printf("     KILL!\n"));
-                        tb_function_destroy(target);
-                    }
-
-                    // re-evaluate our code size
-                    SizeClass new_size = classify_size(f, &ws);
-                    if (size != new_size) {
-                        TB_OPTDEBUG(INLINE)(printf("  -> grown to %s\n", size_strs[new_size]));
-                        ipo.size_classes[f->uid] = size = new_size;
-                    }
-                }
-                cuikperf_region_end();
-            }
-
-            log_debug("%s: queue'd to optimize now that it has tried inlining!", f->super.name);
-            f->ipo_lock = IPO_FUNC_OPT;
-
-            // optimize the function now that we've inlined the callees we wanted
-            void* args[2] = { f, tracker };
-            tracker[1] += 1;
-            tpool_add_task2(pool, ipo_opt_task, 2, args);
-            cuikperf_region_end();
-        }
-
-        // finish up our initial round of function-local optimizations
-        int64_t old;
-        while (old = tracker[0], old != tracker[1]) {
-            futex_wait(&tracker[0], old);
-        }
+        progress = run_inliner(m, &ipo, &scc, &ws, pool);
     }
 
     worklist_free(&ws);
     cuikperf_region_end();
     m->ipo = NULL;
     return progress;
-}
-
-static void inline_into(TB_Arena* arena, TB_Function* f, TB_Worklist* ws, TB_Node* call_site, TB_Function* kid) {
-    TB_ArenaSavepoint sp = tb_arena_save(arena);
-    TB_Node** clones = tb_arena_alloc(arena, kid->node_count * sizeof(TB_Node*));
-    memset(clones, 0, kid->node_count * sizeof(TB_Node*));
-
-    // find nodes & alloc clones
-    worklist_clear(ws);
-    worklist_push(ws, kid->root_node);
-    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-        TB_Node* n = ws->items[i];
-        FOR_USERS(u, n) { worklist_push(ws, USERN(u)); }
-
-        if (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT) {
-            // this is a parameter, just hook it directly to the inputs of
-            // the callsite.
-            //
-            // 0:ctrl, 1:mem, 2:rpc, 3... params
-            int index = TB_NODE_GET_EXTRA_T(n, TB_NodeProj)->index;
-            TB_ASSERT(call_site->inputs[index]);
-            clones[n->gvn] = call_site->inputs[index];
-        } else {
-            // allocate new nodes here, we'll fill in the use-def edges later
-            size_t extra = extra_bytes(n);
-            TB_Node* cloned = tb_alloc_node(f, n->type, n->dt, n->input_count, extra);
-
-            // clone extra data (i hope it's that easy lol)
-            memcpy(cloned->extra, n->extra, extra);
-            clones[n->gvn] = cloned;
-
-            // points to root? we can GVN immediately
-            if (n->input_count == 1 && n->inputs[0] == kid->root_node) {
-                cloned->inputs[0] = f->root_node;
-                add_user(f, cloned, f->root_node, 0);
-
-                clones[n->gvn] = tb__gvn(f, cloned, extra);
-            }
-        }
-    }
-
-    // fill in the use-def edges
-    for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
-        TB_Node* n = ws->items[i];
-        TB_Node* k = clones[n->gvn];
-        if (
-            (n->input_count == 1 && n->inputs[0] == kid->root_node) ||
-            (n->type == TB_PROJ && n->inputs[0]->type == TB_ROOT)
-        ) {
-            #if TB_OPTDEBUG_INLINE2
-            printf("REDIRECT "), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, k), printf("\n");
-            #endif
-        } else {
-            // fill cloned edges
-            FOR_N(j, 0, n->input_count) if (n->inputs[j]) {
-                TB_Node* in = clones[n->inputs[j]->gvn];
-                k->inputs[j] = in;
-                add_user(f, k, in, j);
-            }
-
-            #if TB_OPTDEBUG_INLINE2
-            printf("CLONE "), tb_print_dumb_node(NULL, n), printf(" => "), tb_print_dumb_node(NULL, k), printf("\n");
-            #endif
-        }
-    }
-
-    // kill edge in callgraph
-    TB_Node* callgraph = f->root_node->inputs[0];
-    TB_ASSERT(callgraph->type == TB_CALLGRAPH);
-
-    FOR_N(i, 1, callgraph->input_count) {
-        if (callgraph->inputs[i] == call_site) {
-            set_input(f, callgraph, callgraph->inputs[callgraph->input_count - 1], i);
-            set_input(f, callgraph, NULL, callgraph->input_count - 1);
-            callgraph->input_count--;
-            break;
-        }
-    }
-
-    // append all callee callgraph edges to caller
-    TB_Node* kid_callgraph = clones[kid->root_node->inputs[0]->gvn];
-    FOR_N(i, 1, kid_callgraph->input_count) {
-        add_input_late(f, callgraph, kid_callgraph->inputs[i]);
-    }
-    tb_kill_node(f, kid_callgraph);
-
-    {
-        // TODO(NeGate): region-ify the exit point
-        TB_Node* kid_root = clones[kid->root_node->gvn];
-        TB_ASSERT(kid_root->type == TB_ROOT);
-        TB_ASSERT(kid_root->input_count == 2);
-
-        TB_Node* ret = kid_root->inputs[1];
-        TB_ASSERT(ret->type == TB_RETURN);
-
-        for (size_t i = 0; i < call_site->user_count;) {
-            TB_Node* un = USERN(&call_site->users[i]);
-            if (is_proj(un)) {
-                int index = TB_NODE_GET_EXTRA_T(un, TB_NodeProj)->index;
-                if (index >= 2) { index += 1; }
-
-                subsume_node(f, un, ret->inputs[index]);
-            } else {
-                i += 1;
-            }
-        }
-        tb_kill_node(f, ret);
-
-        subsume_node(f, kid_root, f->root_node);
-        tb_kill_node(f, call_site);
-    }
-    tb_arena_restore(arena, sp);
 }

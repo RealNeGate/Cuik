@@ -447,6 +447,29 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
                 set_input(f, old_phi, cloned[next_val->gvn], 1);
             }
 
+            // any inputs to next_val cannot be rewritten to redirectly refer to
+            // next val because it would cause a cycle with no phi in the middle.
+            worklist_clear(ws);
+            worklist_push(ws, next_val);
+
+            for (size_t i = 0; i < dyn_array_length(ws->items); i++) {
+                TB_Node* n = ws->items[i];
+                if (ctx->ctrl[n->gvn] == header) {
+                    #if TB_OPTDEBUG_LOOP
+                    printf("   AFTER(");
+                    tb_print_dumb_node(NULL, n);
+                    printf(")\n");
+                    #endif
+
+                    FOR_USERS(u, n) {
+                        TB_Node* un = USERN(u);
+                        if (ctx->ctrl[un->gvn] == header && un != old_phi) {
+                            worklist_push(ws, un);
+                        }
+                    }
+                }
+            }
+
             // HEADER:
             //   OLD_PHI = PHI(INIT, Y)
             //   X       = OLD_PHI + 1.0f
@@ -469,7 +492,7 @@ static ArenaArray(TB_Node*) loop_clone_ztc(LoopOpt* ctx, TB_Worklist* ws, size_t
             for (size_t j = 0; j < old_phi->user_count;) {
                 TB_Node* un = USERN(&old_phi->users[j]);
 
-                if (cloned[un->gvn] && un != next_val) {
+                if (cloned[un->gvn] && un != next_val && worklist_test(ws, un)) {
                     #if TB_OPTDEBUG_LOOP
                     printf("   USER(");
                     tb_print_dumb_node(NULL, un);
@@ -692,10 +715,14 @@ static bool find_latch_indvar(TB_Node* header, TB_Node* latch, TB_InductionVar* 
             return true;
         }
     } else if (affine_indvar(cond, header) && exit_when_key) {
-        TB_ASSERT(cond->type == TB_ADD || cond->type == TB_SUB);
+        TB_Node* stepper = cond;
+        if (cond->type == TB_PHI) {
+            stepper = cond->inputs[2];
+        }
 
-        int64_t step = TB_NODE_GET_EXTRA_T(cond->inputs[2], TB_NodeInt)->value;
-        if (cond->type == TB_SUB) {
+        TB_ASSERT(stepper->type == TB_ADD || stepper->type == TB_SUB);
+        int64_t step = TB_NODE_GET_EXTRA_T(stepper->inputs[2], TB_NodeInt)->value;
+        if (stepper->type == TB_SUB) {
             step = -step;
         }
 
@@ -1288,7 +1315,8 @@ bool tb_opt_loops(TB_Function* f) {
                 // rotated if there's things attached to the backedge cproj, they should've been moved above it.
                 TB_Node* header_end = end_of_bb(header);
                 TB_Node* exit_proj = get_simple_loop_exit(&ctx, loop, header, header_end);
-                if (exit_proj && (!cfg_is_cproj(exit_proj) || exit_proj->inputs[0] != header->inputs[1]->inputs[0] || header->inputs[1]->user_count != 1)) {
+                // if (exit_proj && (!cfg_is_cproj(exit_proj) || exit_proj->inputs[0] != header->inputs[1]->inputs[0] || header->inputs[1]->user_count != 1)) {
+                if (exit_proj && (!cfg_is_cproj(exit_proj) || header->inputs[1]->user_count != 1)) {
                     #if 1
                     TB_OPTDEBUG(PASSES)(printf("      * Rotating loop %%%u %p\n", header->gvn, exit_proj));
 
@@ -1330,12 +1358,15 @@ bool tb_opt_loops(TB_Function* f) {
                     // connect up to the loop
                     set_input(f, header, into_loop, 0);
                     // intercept exit path and place a region (merging the ZTC & rotated loop)
-                    TB_User* after_exit = cfg_next_user(exit_proj);
-                    mark_node_n_users(f, USERN(after_exit));
+                    TB_User after_exit = *cfg_next_user(exit_proj);
+                    mark_node_n_users(f, USERN(&after_exit));
                     TB_Node* join = tb_alloc_node(f, TB_REGION, TB_TYPE_CONTROL, 2, sizeof(TB_NodeRegion));
-                    set_input(f, USERN(after_exit), join, USERI(after_exit));
+                    set_input(f, USERN(&after_exit), join, USERI(&after_exit));
                     set_input(f, join, exit_loop, 0);
                     set_input(f, join, exit_proj, 1);
+                    // any non-CFG nodes attached to this exit projection
+                    // should be moved down to the new shared join point.
+                    loop_hoist_ops(f, exit_proj, join);
                     loop_set_ctrl(&ctx, join, join);
                     mark_node(f, join);
                     // fill in the doms
@@ -1361,10 +1392,9 @@ bool tb_opt_loops(TB_Function* f) {
                         mark_node_n_users(f, latch);
                         mark_node_n_users(f, header);
                     }
-                    // loads with control deps on the loop's body can also
-                    // safe once you're guarenteed to run at least once (ZTC)
-                    loop_hoist_ops(f, header, into_loop);
-                    loop_hoist_ops(f, into_loop2, into_loop);
+                    // if we were ctrl-dependent on successfully entering the
+                    // loop body, we need to be hooked to the header now
+                    loop_hoist_ops(f, into_loop2, header);
                     // since everything in the original header BB was cloned, there's two versions and
                     // when we're using these values past the loop exit, we need to insert a phi to resolve
                     // these conflicting definitions.

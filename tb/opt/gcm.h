@@ -150,17 +150,21 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
 
                 f->scheduled[bb->start->gvn] = bb;
                 bb->items = aarray_create(&f->tmp_arena, TB_Node*, 16);
+                aarray_push(bb->items, bb->start);
 
                 if (i == 0) {
                     // pin the ROOT's projections to the entry block
                     FOR_USERS(u, f->root_node) {
-                        f->scheduled[USERN(u)->gvn] = bb0;
-                        aarray_push(bb0->items, USERN(u));
+                        if (is_proj(USERN(u))) {
+                            f->scheduled[USERN(u)->gvn] = bb0;
+                            if (USERN(u) != bb->start) {
+                                aarray_push(bb0->items, USERN(u));
+                            }
+                        }
                     }
                 }
 
                 if (cfg_is_region(bb->start)) {
-                    aarray_push(bb->items, bb->start);
                     FOR_USERS(u, bb->start) if (USERN(u)->type == TB_PHI) {
                         f->scheduled[USERN(u)->gvn] = bb;
                         aarray_push(bb->items, USERN(u));
@@ -177,25 +181,34 @@ void tb_global_schedule(TB_Function* f, TB_Worklist* ws, TB_CFG cfg, bool early_
                         TB_ASSERT(n->gvn < f->scheduled_n);
                         f->scheduled[n->gvn] = bb0;
                         aarray_push(pins, n);
-                        aarray_push(bb0->items, n);
+                        // aarray_push(bb0->items, n);
                     } else if (is_proj(n) && !tb_node_is_pinned(n->inputs[0])) {
                         // projections are always pinned but they might refer to nodes which
                         // aren't (x86 division), we can skip these here as they're technically
                         // unpinned.
-                    } else {
+                    } else if (n->type != TB_DEAD) {
                         TB_Node* curr = n;
                         while (bb == NULL) {
                             bb = f->scheduled[curr->gvn];
+                            if (cfg_is_region(curr)) { // dead block? odd
+                                break;
+                            }
                             curr = curr->inputs[0];
+                        }
+
+                        if (bb == NULL) {
+                            continue;
                         }
 
                         TB_OPTDEBUG(GCM)(printf("%s: %%%u\n  PIN .bb%zu\n", f->super.name, n->gvn, bb - cfg.blocks));
 
                         TB_ASSERT(n->gvn < f->scheduled_n);
-                        f->scheduled[n->gvn] = bb;
                         aarray_push(pins, n);
 
-                        aarray_push(bb->items, n);
+                        if (f->scheduled[n->gvn] == NULL) {
+                            f->scheduled[n->gvn] = bb;
+                            aarray_push(bb->items, n);
+                        }
                     }
                 }
 

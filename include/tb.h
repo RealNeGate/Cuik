@@ -1408,6 +1408,7 @@ TB_API TB_Node* tb_builder_cast(TB_GraphBuilder* g, TB_DataType dt, int type, TB
 
 // ( a -- b )
 TB_API TB_Node* tb_builder_unary(TB_GraphBuilder* g, int type, TB_Node* src);
+TB_API TB_Node* tb_builder_va_start(TB_GraphBuilder* g, TB_Node* src);
 
 TB_API TB_Node* tb_builder_neg(TB_GraphBuilder* g, TB_Node* src);
 TB_API TB_Node* tb_builder_not(TB_GraphBuilder* g, TB_Node* src);

@@ -235,6 +235,21 @@ static Lattice* lattice_from_dt(TB_Function* f, TB_DataType dt) {
     }
 }
 
+static Lattice* lattice_branch_none(TB_Function* f, int succ_count) {
+    TB_Arena* arena = get_permanent_arena(f->super.module);
+
+    size_t size = sizeof(Lattice) + succ_count*sizeof(Lattice*);
+    Lattice* l = tb_arena_alloc(arena, size);
+    *l = (Lattice){ LATTICE_TUPLE, ._elem_count = succ_count };
+    FOR_N(i, 0, succ_count) {
+        l->elems[i] = &DEAD_IN_THE_SKY;
+    }
+
+    Lattice* k = latticehs_intern(&f->super.module->lattice_elements, l);
+    if (k != l) { tb_arena_free(arena, l, size); }
+    return k;
+}
+
 static Lattice* lattice_branch_goto(TB_Function* f, int succ_count, int taken) {
     TB_Arena* arena = get_permanent_arena(f->super.module);
 
